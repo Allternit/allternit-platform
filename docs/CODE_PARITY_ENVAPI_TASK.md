@@ -1,0 +1,10 @@
+# Task ENVAPI — code environments backend (allternit-cloud-api)
+Read docs/CODE_PARITY_MAP.md first. Your tag: ENVAPI. Build Contract B exactly in `cmd/allternit-cloud-api`.
+
+1. Learn the crate's patterns: routes in `src/routes/` (registered in mod.rs + the router), DB migrations in `migrations_pg/` (Postgres), auth extractors for Clerk users and for runtime devices (`src/routes/runtime_pairing.rs`), and any existing at-rest encryption helper (search for encrypt/aes/sealed/secret key; reuse it — if none exists, add AES-256-GCM with the key from an env var following how other secrets/env config are read, and document the env var in deploy docs).
+2. Migration: `code_environments` (+ `code_environment_secrets` with encrypted value, nonce, hosts). Routes per Contract B incl. default-env auto-create, validation (name 1–80 chars, secret name regex, script ≤ 64 KB, env_vars ≤ 64 KB, hosts are hostnames/wildcards), and `/resolve` restricted to runtime auth for the owner's devices. Never log or return secret values except in resolve.
+3. Update `openapi/` spec and `API.md` for the new routes.
+4. Docs: `surfaces/docs/` page `code/cloud-environments` (match the folder layout that exists — find where Code docs live and use that path, then tell the truth in NOTES about the final URL): what environments are, editing (name, network access full/limited/none + default allowed hosts, secrets write-only and redacted, setup script runs before the agent, env vars visible to anyone using the env, repos), picking one per session, status (Connecting / Setting up / Ready / Failed), archive. Add to nav. Plus a dev-docs section with the API.
+
+## What this can break
+cmd/allternit-cloud-api/src/routes → Cloud computers on paid plans, Cloud computer backups, Platform API v1, Bots on every channel, Voice; journeys "Get a cloud computer with a paid plan" (1,3), "Text your bot" (2,6). Don't touch existing routes except registering yours. The cloud-api deploy workflow runs on merge, so the migration must be additive and safe on existing data.
