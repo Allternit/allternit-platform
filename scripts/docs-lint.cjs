@@ -202,6 +202,9 @@ for (const mdxPath of collectMdxFiles(DOCS_DIR)) {
       if (mdxPath.endsWith('release-notes.mdx')) continue;
       // Provider env vars (OPENAI_API_KEY etc.) are configuration, not endorsement.
       if (mdxPath.endsWith('tools/open-notebook.mdx')) continue;
+      // Connections lists the AI apps it reads on a linked phone, and the context window
+      // page explains how each brain's own /context or session record is read.
+      if (['guides/connections.mdx', 'api/connections.mdx', 'surfaces/context-window.mdx'].some((p) => mdxPath.endsWith(p))) continue;
       fail(
         `competitor mention in ${path.relative(ROOT, mdxPath)}:${i + 1}: ${line.trim()}`
       );
