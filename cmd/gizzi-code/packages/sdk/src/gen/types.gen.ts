@@ -7044,3 +7044,115 @@ export type SessionBackgroundTasksCancelResponses = {
      */
     200: unknown;
 };
+
+export type LinkedPr = {
+    url: string;
+    owner: string;
+    repo: string;
+    number: number;
+    title: string;
+    state: 'open' | 'draft' | 'merged' | 'closed';
+    mergeable: 'clean' | 'conflict' | 'unknown';
+    additions: number;
+    deletions: number;
+    updatedAt: string;
+    detectedAt: string;
+};
+
+export type EventSessionPrsUpdated = {
+    type: 'session.prs.updated';
+    properties: {
+        sessionID: string;
+        prs: Array<LinkedPr>;
+    };
+};
+
+export type SessionPrsBulkData = {
+    body?: never;
+    path?: never;
+    query?: {
+        ids?: string;
+    };
+    url: '/session/prs';
+};
+
+export type SessionPrsBulkResponses = {
+    /**
+     * Linked PRs by session
+     */
+    200: {
+        bySession: {
+            [key: string]: Array<LinkedPr>;
+        };
+    };
+};
+
+export type SessionPrsBulkResponse = SessionPrsBulkResponses[keyof SessionPrsBulkResponses];
+
+export type SessionPrsListData = {
+    body?: never;
+    path: {
+        sessionID: string;
+    };
+    query?: never;
+    url: '/session/{sessionID}/prs';
+};
+
+export type SessionPrsErrors = {
+    /**
+     * Bad request
+     */
+    400: {
+        error: string;
+    };
+    /**
+     * Not found
+     */
+    404: {
+        message: string;
+    };
+};
+
+export type SessionPrsError = SessionPrsErrors[keyof SessionPrsErrors];
+
+export type SessionPrsResponses = {
+    /**
+     * Linked PRs
+     */
+    200: {
+        prs: Array<LinkedPr>;
+    };
+};
+
+export type SessionPrsResponse = SessionPrsResponses[keyof SessionPrsResponses];
+
+export type SessionPrsRefreshData = {
+    body?: never;
+    path: {
+        sessionID: string;
+    };
+    query?: never;
+    url: '/session/{sessionID}/prs/refresh';
+};
+
+export type SessionPrsLinkData = {
+    body: {
+        url: string;
+    };
+    path: {
+        sessionID: string;
+    };
+    query?: never;
+    url: '/session/{sessionID}/prs';
+};
+
+export type SessionPrsUnlinkData = {
+    body?: never;
+    path: {
+        sessionID: string;
+    };
+    query: {
+        url: string;
+    };
+    url: '/session/{sessionID}/prs';
+};
