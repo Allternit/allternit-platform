@@ -66,6 +66,9 @@ pub fn routes() -> Router<Arc<ApiState>> {
         )
         // Replies the app sends back to the node's gizzi runtime: answers to
         // in-chat questions, and pane_browser / pane_artifact / pane_render results.
+        // The question card polls this list (by sessionId) so it shows up
+        // even when the sync channel missed the question.asked event.
+        .route("/api/v1/questions", get(list_questions))
         .route("/api/v1/questions/:id/reply", post(reply_question))
         .route("/api/v1/questions/:id/reject", post(reject_question))
         .route("/api/v1/pane-browser/:id/reply", post(reply_pane_browser))
@@ -181,6 +184,14 @@ async fn list_messages(
         &[],
     )
     .await
+}
+
+async fn list_questions(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+    query: RawQuery,
+) -> Result<Response, ApiError> {
+    relay_agent_sessions_request(&state, &headers, "GET", with_query("/api/v1/questions", &query), &[]).await
 }
 
 async fn reply_question(
