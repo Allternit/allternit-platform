@@ -1311,10 +1311,10 @@ export class LocalCliDriver implements RuntimeDriver {
     } catch (err) {
       log.error("acp request failed", { error: err, taskId: handle.taskId })
       const tail = stderrTail.tail()
-      const error =
-        tail && tail.trim()
-          ? new Error(`${err instanceof Error ? err.message : String(err)}\n\nagent stderr:\n${tail}`)
-          : err
+      // A JSON-RPC error arrives as a plain {code, message} object; as-is it
+      // reached the chat as "[object Object]" instead of the agent's words.
+      const message = err instanceof Error ? err.message : acpErrorMessage(err)
+      const error = tail && tail.trim() ? new Error(`${message}\n\nagent stderr:\n${tail}`) : new Error(message)
       const errorEv = { type: "error", error } as AgentEvent
       yield errorEv
       await this.logEvent(handle.taskId, errorEv)
@@ -1652,10 +1652,8 @@ export class LocalCliDriver implements RuntimeDriver {
     } catch (err) {
       log.error("codex app-server request failed", { error: err, taskId: handle.taskId })
       const tail = stderrTail.tail()
-      const error =
-        tail && tail.trim()
-          ? new Error(`${err instanceof Error ? err.message : String(err)}\n\nagent stderr:\n${tail}`)
-          : err
+      const message = err instanceof Error ? err.message : acpErrorMessage(err)
+      const error = tail && tail.trim() ? new Error(`${message}\n\nagent stderr:\n${tail}`) : new Error(message)
       const errorEv = { type: "error", error } as AgentEvent
       yield errorEv
       await this.logEvent(handle.taskId, errorEv)
@@ -2752,6 +2750,17 @@ interface JsonRpcMessage {
   params?: Record<string, unknown>
   result?: unknown
   error?: unknown
+}
+
+/** The message of a JSON-RPC error object ({code, message}) or anything else thrown. */
+export function acpErrorMessage(err: unknown): string {
+  const message = (err as { message?: unknown } | null)?.message
+  if (typeof message === "string" && message.trim()) return message
+  try {
+    return typeof err === "string" ? err : JSON.stringify(err)
+  } catch {
+    return String(err)
+  }
 }
 
 /** Codex app-server nests the id in the returned thread object. */
