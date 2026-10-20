@@ -140,6 +140,10 @@
         {
           "on": "2026-10-16",
           "note": "The Bots rail's Set up your main bot dialog is the bot setup picker (components/bots/look): pick a look (A://, Gizzi, Gizzi YouTube cast) or one of your bots, or add a vendor bot / new bot / import from the same window. Phone: full-screen reference layout with bottom sheets."
+        },
+        {
+          "on": "2026-10-19",
+          "note": "Routines tab gains List / Graph / Calendar views (trigger → bot → result graph on @xyflow/react; Day/Week/Month calendar expanded client-side from each routine's schedule, This bot / All bots) and a routine details panel. Bots rail ⋯ → Templates becomes Marketplace (Agents templates, Apps connector directory, Skills one-click install); no made-up install counts."
         }
       ],
       "evidence": [
@@ -611,6 +615,10 @@
         {
           "on": "2026-10-11",
           "note": "Context window panel: per-session breakdown by category (gizzi /session/:id/context, relayed as /agent-sessions/:id/context) with plan limits, in the composer and in gizzi /context."
+        },
+        {
+          "on": "2026-10-19",
+          "note": "Settings → Usage adds per-brain split, daily cost/tokens chart, bot filter and Brain/Bot/Day breakdowns. /usage/summary group_by takes bot (session_metadata agentId) and day (tz_offset_minutes); older servers fall back to the four base dimensions."
         }
       ],
       "evidence": [

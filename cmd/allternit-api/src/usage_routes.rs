@@ -77,9 +77,12 @@ struct UsageSummaryQuery {
     organization_id: String,
     period_start: String,
     period_end: String,
-    /// O15: `surface`, `tier`, `model`, `lane` (comma-separated). When set,
-    /// the response adds a `ledger` object from `llm_usage_events`.
+    /// O15: `surface`, `tier`, `model`, `lane`, `bot`, `day` (comma-separated).
+    /// When set, the response adds a `ledger` object from `llm_usage_events`.
     group_by: Option<String>,
+    /// Viewer's UTC offset in minutes (e.g. -300 for Chicago in summer), so
+    /// `day` buckets follow their calendar. Defaults to UTC.
+    tz_offset_minutes: Option<i32>,
 }
 
 async fn usage_summary(
@@ -93,6 +96,7 @@ async fn usage_summary(
     let organization_id = query.organization_id;
     let period_start = query.period_start;
     let period_end = query.period_end;
+    let tz_offset_minutes = query.tz_offset_minutes.unwrap_or(0);
     let group_by = match query.group_by.as_deref().map(crate::usage_ledger::parse_group_by).transpose() {
         Ok(g) => g,
         Err(message) => {
@@ -163,7 +167,7 @@ async fn usage_summary(
 
         let ledger = match &group_by {
             Some(dims) => Some(
-                crate::usage_ledger::summary(&conn, &organization_id, &period_start, &period_end, dims).map_err(|e| {
+                crate::usage_ledger::summary_at_offset(&conn, &organization_id, &period_start, &period_end, dims, tz_offset_minutes).map_err(|e| {
                     (StatusCode::INTERNAL_SERVER_ERROR, json!({"error": "db_error", "message": e.to_string()}))
                 })?,
             ),
