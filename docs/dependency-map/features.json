@@ -1794,9 +1794,11 @@
         }
       ],
       "evidence": [
+        "allternit-ai/src/components/bots/meet/MeetYourBotsCard.tsx",
         "allternit-ai/src/components/bots/schedule/RoutineScheduler.tsx",
         "allternit-ai/src/views/bots/home/BotRoutinesSchedule.tsx",
-        "allternit/surfaces/docs/guides/bot-routines.mdx"
+        "allternit/surfaces/docs/guides/meet-your-bots.mdx",
+        "allternit/surfaces/docs/architecture/meet-your-bots.mdx"
       ]
     }
   ],

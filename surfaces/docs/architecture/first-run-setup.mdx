@@ -42,9 +42,9 @@ Every result card and tile tag is computed from what happened:
 
 `loadInventory()` reads provider auth, the cloud catalog, runtimes (`useRuntimes`, settled after 6 s), cloud computers, bots (`listAgents` + `findMainBot`), messaging channels (`gatewayApi.listAccounts`, `channel_oauth`), Memory Drive mounts, bot projects, MCP connectors and Subscription Fabric logins. Runtime-backed sources are marked unavailable without making the call when no computer is reachable. `buildConnectedGraph()` marks nodes `new` (this session), `conn`, `inc` (included) or `avail`, caps side groups at four, and always includes a Main bot node.
 
-## Main bot step
+## Main bot step (Meet your bots)
 
-`MAIN_BOT_STEP_ENABLED` is on: the order is where → style → ai → mainbot → connected (30 progress blocks: 6 · 12 · 18 · 24 · 30). `MainBotStep` drives the shared picker hook `useBotSetup({ context: 'onboarding' })` from `src/components/bots/look/` (see [Bot setup picker](/architecture/bot-setup-picker)). Only a real result is stored: the picker reports a `MainBotOutcome` (`{ type: 'mainbot', outcome }`), which prints Gizzi's card through `mainBotCard` and fills `SessionFacts.mainBotId`, so the connected view marks the Main bot node **set up just now**. Edit (or a new pick) clears it. The step is optional: Skip and Next both move on, and nothing is created until **Set up &lt;Name&gt;** succeeds.
+`MAIN_BOT_STEP_ENABLED` is on: the order is where → style → ai → mainbot → connected (30 progress blocks: 6 · 12 · 18 · 24 · 30). The `mainbot` step renders `MeetYourBotsCard` with `entry="setup"` (see [Meet your bots](/architecture/meet-your-bots)), on desktop, the ai.allternit.com phone layout and `PhoneOnboardingFlow`. Its main-bot page drives the shared picker hook `useBotSetup({ context: 'onboarding' })` (see [Bot setup picker](/architecture/bot-setup-picker)). The card creates nothing until **Start the job**; the step stays optional (Skip and Next both move on). Its done button continues to the connected view.
 
 ## Tests
 

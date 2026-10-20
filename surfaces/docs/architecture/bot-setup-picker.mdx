@@ -3,13 +3,13 @@ title: Bot setup picker
 description: How the shared main-bot / add-a-bot picker is built in allternit-ai, what it calls, and how results stay honest.
 ---
 
-The picker lives in `allternit-ai/src/components/bots/look/` and is used by the first-run Main bot step (`components/onboarding/setup/MainBotStep.tsx`) and the Bots rail (`views/bots/rail/PrimaryBotSetupDialog.tsx`). One build serves Allternit Desktop, ai.allternit.com (desktop and phone layouts) and the m.allternit.com PWA.
+The picker lives in `allternit-ai/src/components/bots/look/` and is used by the main-bot page of the Meet your bots card (`components/bots/meet/MainBotPanel.tsx`, first-run setup's Main bot step) and the Bots rail (`views/bots/rail/PrimaryBotSetupDialog.tsx`). One build serves Allternit Desktop, ai.allternit.com (desktop and phone layouts) and the m.allternit.com PWA.
 
 | File | What it holds |
 |---|---|
 | `bot-looks.ts` | The look catalogue (A://, Gizzi, the Gizzi YouTube cast, the vendor looks: Claude and Muse fighters, Nimbus for Dots, Pip from the Originals pack for Grok), stage/tile placement, `lookAvatarConfig` (what each look saves as), and `PROFILE_CONNECT_PRODUCT` (vendor profile → one-step connect product). |
 | `useBotSetup.ts` | The state machine: modes `look` · `vendor` · `new` · `import`, the primary action per state, Gizzi's line, and the `BotSetupOutcome` that becomes the result card. |
-| `BotLookStage.tsx` | The giant stage: out/in layers (blur/darken out 420 ms, bloom in 620 ms), A:// = `AllternitOrb` states on a loop after the blocks assemble, Gizzi's eyes, the cast's state SVGs, vendor stills, the user's own bots through `BotAvatar`. |
+| `BotLookStage.tsx` | The giant stage: out/in layers (blur/darken out 420 ms, bloom in 620 ms), A:// = `AllternitOrb` states on a loop after the blocks assemble, Gizzi's eyes, the cast's state SVGs, vendor stills, the user's own bots through `BotAvatar`. Characters are whole bodies sized to fit the stage; Gizzi's eyes follow the pointer and a tap makes the character jump and show its done state (all off with reduced motion). |
 | `BotLookTiles.tsx` | Grouped tiles (aria-pressed buttons) that scroll the pick into view, and `LookRipple`, the haptic block squares from the picked tile. |
 | `BotSetupPanels.tsx` | Per-mode panels, the disclosure (verbatim from the old dialog), the result card, the phone bottom sheet, and the real flows the picker opens. |
 | `BotSetupViews.tsx` | `BotSetupCard` (desktop dialog) and `BotSetupPhone` (reference phone layout). |
