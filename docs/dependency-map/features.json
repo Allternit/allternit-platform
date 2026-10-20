@@ -85,6 +85,10 @@
         {
           "on": "2026-10-12",
           "note": "Parity pass against ChatGPT Intelligent UI: progressive card streaming (complete statements only), per-part error boundaries with text fallback, catalog 16→38 with model-nameable design tokens, ```app inline apps through the sandbox proxy (process-isolated, heartbeat watchdog), server-side card checks and per-message card state that follows the user across devices. Model JSX and legacy sandbox parts now run in the inline-app sandbox instead of the page; the A2UI extended renderer and backend client, @allternit/ix, and the json-render and react-jsx-parser deps were removed as dead code."
+        },
+        {
+          "on": "2026-10-20",
+          "note": "Agent steps that reach a connector show the app's logo and the first three things found (process/app-preview.ts); the summary line ends with the apps' logos; links into known app hosts render as source chips (app-source-links.ts). Guide: guides/agent-steps."
         }
       ],
       "evidence": [
