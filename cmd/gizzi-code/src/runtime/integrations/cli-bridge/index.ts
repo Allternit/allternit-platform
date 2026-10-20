@@ -7,6 +7,7 @@ import { PaneArtifactTool } from "@/runtime/tools/builtins/pane-artifact"
 import { PaneBrowserTool } from "@/runtime/tools/builtins/pane-browser"
 import { MediaGenerateTool } from "@/runtime/tools/builtins/media-generate"
 import { ARTIFACT_TOOLS } from "@/runtime/tools/builtins/artifact"
+import { QuestionTool } from "@/runtime/tools/builtins/question"
 import { Log } from "@/shared/util/log"
 import { Bus } from "@/shared/bus"
 import { CLI_PERMISSION_TOOL } from "@/runtime/drivers/cli-session-flags"
@@ -103,11 +104,12 @@ export namespace CliBridge {
 
   async function listTools(sessionID: string) {
     const tools = await Promise.all(
-      TOOLS.map(async (t) => {
+      [...TOOLS, QuestionTool].map(async (t) => {
         const info = await t.init()
         const schema = z.toJSONSchema(info.parameters) as Record<string, unknown>
         delete schema.$schema
-        return { name: t.id, description: info.description, inputSchema: schema }
+        const description = t.id === QuestionTool.id ? `${QUESTION_PREFACE} ${info.description}` : info.description
+        return { name: t.id, description, inputSchema: schema }
       }),
     )
     const plan = await planFile(sessionID).catch(() => undefined)
@@ -169,6 +171,47 @@ export namespace CliBridge {
     return "asked"
   }
 
+  const QUESTION_PREFACE =
+    "Ask the user multiple-choice questions in Allternit's question card (this session has no AskUserQuestion; use this instead). After calling it, end your turn: the user's answers arrive as their next message."
+
+  /**
+   * The question tool for a CLI: shows gizzi's question card (the same one as
+   * the native `question` tool) and returns at once. A CLI gives up on a tool
+   * call after about a minute (Codex, Claude Code), and people take longer to
+   * answer, so — like the plan handoff — the CLI ends its turn and the answers
+   * start the next turn as the user's message. Dismissing the card sends
+   * nothing.
+   */
+  async function askQuestion(sessionID: string, args: any) {
+    const [{ Question }] = await Promise.all([import("@/runtime/integrations/question")])
+    const parsed = (await QuestionTool.init()).parameters.safeParse(args ?? {})
+    if (!parsed.success) {
+      return { content: [{ type: "text", text: `Invalid questions: ${parsed.error.message}` }], isError: true }
+    }
+    const questions = parsed.data.questions
+    void (async () => {
+      let answers: string[][]
+      try {
+        // No tool: the card stands on its own (there is no gizzi tool part for it).
+        answers = await Question.ask({ sessionID, questions })
+      } catch (error) {
+        if (!(error instanceof Question.RejectedError)) log.error("question failed", { sessionID, error: error instanceof Error ? error.message : String(error) })
+        return
+      }
+      const text = questions
+        .map((q, i) => `${q.question}\n→ ${answers[i]?.length ? answers[i].join(", ") : "(skipped)"}`)
+        .join("\n\n")
+      const { SessionPrompt } = await import("@/runtime/session/prompt")
+      await SessionPrompt.prompt({ sessionID, parts: [{ type: "text", text }] }).catch((error) =>
+        log.error("answer turn failed to start", { sessionID, error: error instanceof Error ? error.message : String(error) }),
+      )
+    })()
+    return {
+      content: [{ type: "text", text: "The question is on the user's screen. End your turn now and make no more tool calls; their answers arrive as their next message." }],
+      isError: false,
+    }
+  }
+
   const EXIT_REPLY = {
     asked:
       "Gizzi has asked the user to approve this plan. End your turn now and make no more tool calls. If they approve, the session switches to the build agent, which carries the plan out; if not, they reply with notes to revise it.",
@@ -211,6 +254,7 @@ export namespace CliBridge {
       // The session left plan mode: nothing to gate any more.
       if (params?.name === CLI_PERMISSION_TOOL) return { content: [{ type: "text", text: JSON.stringify({ behavior: "allow", updatedInput: params?.arguments?.input ?? {} }) }], isError: false }
     }
+    if (params?.name === QuestionTool.id) return askQuestion(sessionID, params?.arguments)
     const tool = TOOLS.find((t) => t.id === params?.name)
     if (!tool) throw new Error(`Unknown tool: ${params?.name}`)
     // Loaded on use: the session store pulls in most of the runtime.
@@ -266,7 +310,7 @@ export namespace CliBridge {
           capabilities: { tools: { listChanged: false } },
           serverInfo: { name: SERVER_NAME, version: "1.0.0" },
           instructions:
-            "Allternit session tools: the document open beside the chat (pane_artifact), the pane's browser (pane_browser), image/video generation rendered in the user's app (media_generate), and the user's Artifacts (artifact_create, artifact_update, artifact_read).",
+            "Allternit session tools: the document open beside the chat (pane_artifact), the pane's browser (pane_browser), image/video generation rendered in the user's app (media_generate), the user's Artifacts (artifact_create, artifact_update, artifact_read), and multiple-choice questions to the user (question).",
         })
       case "ping":
         return ok(req.id, {})
