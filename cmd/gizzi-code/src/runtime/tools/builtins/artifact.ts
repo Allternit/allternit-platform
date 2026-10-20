@@ -83,7 +83,7 @@ export const ArtifactCreateTool = Tool.define("artifact_create", {
       output: [
         summary(artifact),
         `Created ${artifact.kind} artifact "${artifact.title}" (id ${artifact.id}, version ${artifact.version}). ` +
-          `The user sees it as a card that opens beside the chat. Use artifact_update with base_version ${artifact.version} to revise it.`,
+          `The user sees it as a card that opens beside the chat; mention it by its title, don't link the id. Use artifact_update with base_version ${artifact.version} to revise it.`,
       ].join("\n"),
       metadata: { ok: true, artifact, truncated: false },
     }
