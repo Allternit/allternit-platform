@@ -134,7 +134,8 @@
           {
             "group": "Code mode",
             "pages": [
-              "code/cloud-environments"
+              "code/cloud-environments",
+              "code/cloud-environment-runtime"
             ]
           },
           {
