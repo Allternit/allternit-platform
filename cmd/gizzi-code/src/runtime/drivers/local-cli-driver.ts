@@ -24,7 +24,7 @@ import type {
   TaskHandle,
 } from "@/runtime/runtime-driver"
 import { claudeToolDecision, deniedMessage } from "@/runtime/bots/bot-turn"
-import { acpCanLoadSession, acpMcpServers, claudePermissionFlags, claudeSessionFlags, codexPlanParams, codexThreadRequest, opencodeResumeFlags, qwenResumeFlags, vendorSessionIdFromEvent, codexMcpConfig, withInstructions, claudeContextArgv } from "@/runtime/drivers/cli-session-flags"
+import { codexDeveloperInstructions, acpCanLoadSession, acpMcpServers, claudePermissionFlags, claudeSessionFlags, codexPlanParams, codexThreadRequest, opencodeResumeFlags, qwenResumeFlags, vendorSessionIdFromEvent, codexMcpConfig, withInstructions, claudeContextArgv } from "@/runtime/drivers/cli-session-flags"
 import { ContextBreakdown } from "@/runtime/session/context-breakdown"
 import { ContextBreakdownStore } from "@/runtime/session/context-breakdown-store"
 import { CodexContext } from "@/runtime/session/codex-context"
@@ -1598,7 +1598,7 @@ export class LocalCliDriver implements RuntimeDriver {
       const startParams = {
         cwd: cwd || process.cwd(),
         ...(model ? { model } : {}),
-        developerInstructions: systemPrompt,
+        developerInstructions: codexDeveloperInstructions(systemPrompt, this.tasks.get(handle.taskId)?.mcp),
         ...(mcpConfig ? { config: mcpConfig } : {}),
         ...codexPlanParams(this.tasks.get(handle.taskId)?.plan, this.tasks.get(handle.taskId)?.toolsOff),
       }

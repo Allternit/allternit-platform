@@ -178,3 +178,15 @@ describe("acpErrorMessage", () => {
     expect(acpErrorMessage({ code: 1 })).toBe('{"code":1}')
   })
 })
+
+describe("codexDeveloperInstructions", () => {
+  test("with the bridge, Codex is told to ask through it, not request_user_input", async () => {
+    const { codexDeveloperInstructions } = await import("../../src/runtime/drivers/cli-session-flags")
+    const mcp = { name: "allternit", url: "http://x", headers: {} }
+    const text = codexDeveloperInstructions("Be brief.", mcp)!
+    expect(text.startsWith("Be brief.")).toBe(true)
+    expect(text).toContain("mcp__allternit__question")
+    expect(text).toContain("Never use request_user_input")
+    expect(codexDeveloperInstructions("Be brief.", undefined)).toBe("Be brief.")
+  })
+})
