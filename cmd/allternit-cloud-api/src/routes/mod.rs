@@ -34,6 +34,7 @@ pub mod instances;
 pub mod inference_keys;
 pub mod jobs;
 pub mod livekit_admin;
+pub mod me_flags;
 pub mod me_usage;
 pub mod mcp_edge;
 pub mod mcp_events;
