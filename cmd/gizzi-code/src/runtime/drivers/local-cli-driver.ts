@@ -24,7 +24,7 @@ import type {
   TaskHandle,
 } from "@/runtime/runtime-driver"
 import { claudeToolDecision, deniedMessage } from "@/runtime/bots/bot-turn"
-import { acpCanLoadSession, acpMcpServers, claudePermissionFlags, claudeSessionFlags, codexPlanParams, codexThreadRequest, opencodeResumeFlags, qwenResumeFlags, vendorSessionIdFromEvent, codexMcpConfig, withInstructions, claudeContextArgv } from "@/runtime/drivers/cli-session-flags"
+import { codexDeveloperInstructions, acpCanLoadSession, acpMcpServers, claudePermissionFlags, claudeSessionFlags, codexPlanParams, codexThreadRequest, opencodeResumeFlags, qwenResumeFlags, vendorSessionIdFromEvent, codexMcpConfig, withInstructions, claudeContextArgv } from "@/runtime/drivers/cli-session-flags"
 import { ContextBreakdown } from "@/runtime/session/context-breakdown"
 import { ContextBreakdownStore } from "@/runtime/session/context-breakdown-store"
 import { CodexContext } from "@/runtime/session/codex-context"
@@ -175,6 +175,7 @@ export class LocalCliDriver implements RuntimeDriver {
       vendorSessionId: task?.vendorSessionId,
       bot: task?.bot,
       plan: task?.plan,
+      toolsOff: task?.toolsOff,
       model: task?.model,
     })
 
@@ -1310,10 +1311,10 @@ export class LocalCliDriver implements RuntimeDriver {
     } catch (err) {
       log.error("acp request failed", { error: err, taskId: handle.taskId })
       const tail = stderrTail.tail()
-      const error =
-        tail && tail.trim()
-          ? new Error(`${err instanceof Error ? err.message : String(err)}\n\nagent stderr:\n${tail}`)
-          : err
+      // A JSON-RPC error arrives as a plain {code, message} object; as-is it
+      // reached the chat as "[object Object]" instead of the agent's words.
+      const message = err instanceof Error ? err.message : acpErrorMessage(err)
+      const error = tail && tail.trim() ? new Error(`${message}\n\nagent stderr:\n${tail}`) : new Error(message)
       const errorEv = { type: "error", error } as AgentEvent
       yield errorEv
       await this.logEvent(handle.taskId, errorEv)
@@ -1597,9 +1598,9 @@ export class LocalCliDriver implements RuntimeDriver {
       const startParams = {
         cwd: cwd || process.cwd(),
         ...(model ? { model } : {}),
-        developerInstructions: systemPrompt,
+        developerInstructions: codexDeveloperInstructions(systemPrompt, this.tasks.get(handle.taskId)?.mcp),
         ...(mcpConfig ? { config: mcpConfig } : {}),
-        ...codexPlanParams(this.tasks.get(handle.taskId)?.plan),
+        ...codexPlanParams(this.tasks.get(handle.taskId)?.plan, this.tasks.get(handle.taskId)?.toolsOff),
       }
       const resumeId = this.tasks.get(handle.taskId)?.vendorSessionId
       let thread: unknown
@@ -1651,10 +1652,8 @@ export class LocalCliDriver implements RuntimeDriver {
     } catch (err) {
       log.error("codex app-server request failed", { error: err, taskId: handle.taskId })
       const tail = stderrTail.tail()
-      const error =
-        tail && tail.trim()
-          ? new Error(`${err instanceof Error ? err.message : String(err)}\n\nagent stderr:\n${tail}`)
-          : err
+      const message = err instanceof Error ? err.message : acpErrorMessage(err)
+      const error = tail && tail.trim() ? new Error(`${message}\n\nagent stderr:\n${tail}`) : new Error(message)
       const errorEv = { type: "error", error } as AgentEvent
       yield errorEv
       await this.logEvent(handle.taskId, errorEv)
@@ -1815,6 +1814,8 @@ interface CliAdapter {
       vendorSessionId?: string
       bot?: AgentTask["bot"]
       plan?: AgentTask["plan"]
+      /** No tools this turn (see AgentTask.toolsOff). */
+      toolsOff?: boolean
       /** The session's model (the picker's choice); the CLI validates it. */
       model?: string
     },
@@ -1875,6 +1876,8 @@ const CLI_ADAPTERS: Record<string, CliAdapter> = {
         // gates instead of bypassPermissions (runtime/bots/bot-turn.ts).
         ...claudePermissionFlags(ctx),
         "--disallowedTools", "AskUserQuestion",
+        // An internal completion: answer from the text alone, no tools at all.
+        ...(ctx.toolsOff ? ["--tools", ""] : []),
         ...claudeSessionFlags(ctx),
         // The picked model first; without one, the env override or Claude's default.
         ...modelFlag(
@@ -2747,6 +2750,17 @@ interface JsonRpcMessage {
   params?: Record<string, unknown>
   result?: unknown
   error?: unknown
+}
+
+/** The message of a JSON-RPC error object ({code, message}) or anything else thrown. */
+export function acpErrorMessage(err: unknown): string {
+  const message = (err as { message?: unknown } | null)?.message
+  if (typeof message === "string" && message.trim()) return message
+  try {
+    return typeof err === "string" ? err : JSON.stringify(err)
+  } catch {
+    return String(err)
+  }
 }
 
 /** Codex app-server nests the id in the returned thread object. */

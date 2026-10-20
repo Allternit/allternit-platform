@@ -33,9 +33,12 @@ export function planInstructions(cli: string, plan: NonNullable<AgentTask["plan"
   ].join(" ")
 }
 
-/** Codex thread settings for a plan turn: a read-only sandbox, so the plan agent cannot change files. */
-export function codexPlanParams(plan: AgentTask["plan"]): Record<string, unknown> {
-  return plan ? { sandbox: "read-only" } : {}
+/**
+ * Codex thread settings for a plan turn or a tools-off turn: a read-only
+ * sandbox, so the agent cannot change files (Codex can't drop its shell).
+ */
+export function codexPlanParams(plan: AgentTask["plan"], toolsOff?: boolean): Record<string, unknown> {
+  return plan || toolsOff ? { sandbox: "read-only" } : {}
 }
 
 /**
@@ -71,6 +74,21 @@ export function codexMcpConfig(mcp: AgentTask["mcp"]): Record<string, unknown> |
     [`mcp_servers.${mcp.name}.url`]: mcp.url,
     [`mcp_servers.${mcp.name}.http_headers`]: mcp.headers,
   }
+}
+
+/**
+ * Codex's developer instructions for a session turn. Codex shows MCP tools to
+ * the model only through its exec tool, so "use your question tool" made it
+ * pick its own request_user_input, which never reaches the user (it returns
+ * at once and the model sleeps waiting for an answer). With gizzi's bridge
+ * attached, name the bridge's question tool outright.
+ */
+export function codexDeveloperInstructions(systemPrompt: string | undefined, mcp: AgentTask["mcp"]): string | undefined {
+  if (!mcp) return systemPrompt
+  const ask =
+    `To ask the user anything, call the ${mcp.name} MCP server's question tool (mcp__${mcp.name}__question; through exec, tools.mcp__${mcp.name}__question) and then end your turn: their answers arrive as their next message. ` +
+    "Never use request_user_input or request_user_input_async: the user can't see or answer those."
+  return systemPrompt?.trim() ? `${systemPrompt}\n\n${ask}` : ask
 }
 
 /** ACP session MCP servers: gizzi's bridge, when the agent speaks HTTP MCP. */

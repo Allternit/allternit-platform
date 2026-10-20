@@ -45,6 +45,12 @@ export interface AgentTask {
    * hand the plan over through the bridge's plan_exit (see CliBridge).
    */
   plan?: { file: string }
+  /**
+   * The turn has gizzi's tools switched off (allternit-api's internal
+   * completions: memory extraction, decisions, lessons). The CLI gets no
+   * bridge and, where it can, none of its own tools either.
+   */
+  toolsOff?: boolean
 }
 
 export interface TaskHandle {

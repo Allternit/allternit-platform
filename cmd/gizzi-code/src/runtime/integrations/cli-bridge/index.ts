@@ -175,7 +175,7 @@ export namespace CliBridge {
   }
 
   const QUESTION_PREFACE =
-    "Ask the user multiple-choice questions in Allternit's question card (this session has no AskUserQuestion; use this instead). After calling it, end your turn: the user's answers arrive as their next message."
+    "Ask the user multiple-choice questions in Allternit's question card (this session has no AskUserQuestion or request_user_input: the user never sees those, so use this instead). After calling it, end your turn: the user's answers arrive as their next message."
 
   /**
    * The question tool for a CLI: shows gizzi's question card (the same one as
@@ -210,7 +210,7 @@ export namespace CliBridge {
       )
     })()
     return {
-      content: [{ type: "text", text: "The question is on the user's screen. End your turn now and make no more tool calls; their answers arrive as their next message." }],
+      content: [{ type: "text", text: "The question is on the user's screen. End your turn now and make no more tool calls; their answers arrive as their next message. When they do, carry on with the task you were working on, using those answers." }],
       isError: false,
     }
   }
@@ -315,7 +315,7 @@ export namespace CliBridge {
           capabilities: { tools: { listChanged: false } },
           serverInfo: { name: SERVER_NAME, version: "1.0.0" },
           instructions:
-            "Allternit session tools: the document open beside the chat (pane_artifact), the pane's browser (pane_browser), image/video generation rendered in the user's app (media_generate), the user's Artifacts (artifact_create, artifact_update, artifact_read), the task list shown as the session's Progress (todowrite), and multiple-choice questions to the user (question).",
+            "Allternit session tools: the document open beside the chat (pane_artifact), the pane's browser (pane_browser), image/video generation rendered in the user's app (media_generate), the user's Artifacts (artifact_create, artifact_update, artifact_read), the task list shown as the session's Progress (todowrite), and multiple-choice questions to the user (question). To ask the user anything, use question: the CLI's own ask-the-user tools (AskUserQuestion, request_user_input) never reach them.",
         })
       case "ping":
         return ok(req.id, {})

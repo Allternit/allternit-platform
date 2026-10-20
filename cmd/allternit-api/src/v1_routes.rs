@@ -202,7 +202,7 @@ async fn get_or_create_gizzi_session(
 /// raw gizzi fields the decide route needs to relay the decision back to the
 /// runtime (requestId) and the modal renders with (toolName, patterns,
 /// always, messageId).
-fn gizzi_permission_approval_content(props: &serde_json::Value) -> serde_json::Value {
+pub(crate) fn gizzi_permission_approval_content(props: &serde_json::Value) -> serde_json::Value {
     let permission = props
         .get("permission")
         .and_then(|v| v.as_str())

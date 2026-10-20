@@ -69,6 +69,7 @@ pub fn routes() -> Router<Arc<ApiState>> {
         // The question card polls this list (by sessionId) so it shows up
         // even when the sync channel missed the question.asked event.
         .route("/api/v1/questions", get(list_questions))
+        .route("/api/v1/permissions", get(list_permissions))
         .route("/api/v1/questions/:id/reply", post(reply_question))
         .route("/api/v1/questions/:id/reject", post(reject_question))
         .route("/api/v1/pane-browser/:id/reply", post(reply_pane_browser))
@@ -192,6 +193,14 @@ async fn list_questions(
     query: RawQuery,
 ) -> Result<Response, ApiError> {
     relay_agent_sessions_request(&state, &headers, "GET", with_query("/api/v1/questions", &query), &[]).await
+}
+
+async fn list_permissions(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+    query: RawQuery,
+) -> Result<Response, ApiError> {
+    relay_agent_sessions_request(&state, &headers, "GET", with_query("/api/v1/permissions", &query), &[]).await
 }
 
 async fn reply_question(

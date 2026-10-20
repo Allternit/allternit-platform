@@ -90,6 +90,8 @@ import { RemoteControlRoutes } from "@/runtime/server/routes/remote_control"
 import { AgentCompatRoutes } from "@/runtime/server/routes/agent-compat"
 import { createHash, randomUUID } from "node:crypto"
 
+const QUIET_POLL_PATHS = new Set(["/v1/question", "/question", "/v1/permission", "/permission", "/session/status", "/v1/session/status"])
+
 // @ts-ignore This global is needed to prevent ai-sdk from logging warnings to stdout https://github.com/vercel/ai/blob/2dc67e0ef538307f21368db32d5a12345d98831b/packages/ai/src/logger/log-warnings.ts#L85
 globalThis.AI_SDK_LOG_WARNINGS = false
 
@@ -224,7 +226,10 @@ export namespace Server {
         )
         .use(ClerkAuth.middleware())
         .use(async (c, next) => {
-          const skipLogging = c.req.path === "/log"
+          // The app polls these every few seconds (pending questions and
+          // approvals, busy state); logging each one rotated the log in minutes.
+          const skipLogging =
+            c.req.path === "/log" || (c.req.method === "GET" && QUIET_POLL_PATHS.has(c.req.path))
           if (!skipLogging) {
             log.info("request", {
               method: c.req.method,
@@ -232,14 +237,14 @@ export namespace Server {
               requestID: c.get("requestID"),
             })
           }
-          const timer = log.time("request", {
-            method: c.req.method,
-            path: c.req.path,
-          })
+          const timer = skipLogging
+            ? undefined
+            : log.time("request", {
+                method: c.req.method,
+                path: c.req.path,
+              })
           await next()
-          if (!skipLogging) {
-            timer.stop()
-          }
+          timer?.stop()
         })
         .get("/health", (c) => c.json({ status: "ok", service: "gizzi-code" }))
         .get("/golden-stream", (c) => {
