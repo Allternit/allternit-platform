@@ -533,6 +533,7 @@
               "guides/attachments",
               "guides/chat-composer",
               "guides/interactive-answers",
+              "guides/agent-steps",
               "guides/pdf-citations"
             ],
             "icon": "/icons/book.svg"

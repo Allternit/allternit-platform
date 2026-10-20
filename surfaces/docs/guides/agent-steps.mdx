@@ -1,0 +1,35 @@
+---
+title: 'Agent steps in replies'
+description: 'The working line above a reply, its summary, steps that reach your connected apps, their previews, and source chips in the answer.'
+---
+
+While the assistant works, one line above the reply shows what it is doing now, for example "Searching Slack for messages since yesterday", with a timer. When it stops, the line becomes a summary of the work, for example "Ran 2 searches, read 3 sources". Click the line to see each step in order. Click a step to see its input and result.
+
+This works the same in Chat, Code, bot threads and project threads, on Desktop, ai.allternit.com (including the phone layout) and the m.allternit.com app. Cowork lists the same steps as a card; see [Cowork session panel](/guides/cowork-session-panel#in-the-conversation).
+
+## Steps in your connected apps
+
+A step that reaches one of your connected apps (Settings → Connectors), such as Slack, Gmail, GitHub, Linear or Granola, shows the app's logo and name: "Searched **Slack** for messages since yesterday", "Read **GitHub** pull requests".
+
+- **What it found.** When the step finishes, it shows the first three things it found, such as messages, emails, pull requests, issues or notes. Each row shows who or what it is, one line of text and when, with "+N more" for the rest. A row with a link opens the item in its app.
+- **While the assistant works,** the steps stay open and the newest step shows what it found. Older steps close to one line each. When the reply is done, the steps fold back into the summary line, which ends with the logos of the apps used.
+- **Full results.** When the reply is done, the full result appears as a table or card under the steps, as before. Click a closed step to see what it found along with its raw input and result.
+- A step whose result is plain text, or not a list of things, shows no preview. Click it to see the result.
+
+## Source chips in the answer
+
+When the answer links to something in one of your apps, such as a Slack message, a GitHub commit, a Linear issue, a Gmail thread, a Notion page or a Google Drive file, the link shows as a small chip with the app's logo. You can see at a glance where each point came from. Clicking a chip asks before it opens the link, the same as any other link in a reply.
+
+## For developers
+
+Source: `allternit-ai/src/components/ai-elements/`:
+
+| File | Role |
+| --- | --- |
+| `process/ProcessBlock.tsx` | The working line, summary and step list (`line` style), and Cowork's step card (`steps` style). App logos, preview cards and the logos on the summary. |
+| `process/describe-tool.ts` | Turns a tool call into plain words. `toolApp()` finds the app behind `mcp__<server>__<tool>` and `mcp__allternit-connectors__<app>__<tool>`. Connector tools become `app-search` ("Searched Slack for …") or `app-read` ("Read GitHub pull requests") steps, summed as "Ran N searches, read N sources". |
+| `process/app-preview.ts` | `appPreview(output)`: the first three rows of a connector result (title or sender, who or where, one line of text, short time, https link, unread). It reads `structuredContent`, JSON text content or plain JSON, and returns `null` for anything that is not a list of things. Results are cached so streaming re-renders parse each one once. |
+| `app-source-links.ts` | A rehype step that runs after Streamdown's own steps. It gives links to known app hosts the `app-source-link` class and a logo, so Streamdown's link check still applies. |
+| `UnifiedMessageRenderer.tsx` | Groups tool parts into process blocks. Connector result views (`view-kit/ConnectorToolView`) show once the block is no longer streaming. |
+
+Logos come from `ConnectorLogo` (bundled `public/app-icons`, then the logos catalog, then the site's favicon). Tool output is untrusted: preview rows hold plain strings, and only https links are kept.
