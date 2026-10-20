@@ -1366,6 +1366,31 @@
       ]
     },
     {
+      "id": "feature:code-cloud-environments",
+      "label": "Code mode cloud environments",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "Per-user cloud environments a Code session starts in: network access (full, limited with an allowed-host list, none), write-only secrets redacted from output, a setup script, .env text and repos. Edited and picked per session in Code mode; stored by allternit-cloud-api; applied by gizzi-code when the session starts.",
+      "touches": [
+        "allternit/cmd/allternit-cloud-api/src/routes/code_environments.rs",
+        "allternit/cmd/allternit-cloud-api/migrations_pg/095_code_environments.sql",
+        "allternit-ai/src/views/code",
+        "allternit/cmd/gizzi-code/src/runtime/session"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-20",
+          "note": "Eoj asked for Code mode parity with the Claude Code Desktop session UI. Contract B backend: /api/v1/code-environments CRUD, archive, secrets sealed with the platform credential cipher (ALLTERNIT_CREDENTIALS_KEY), default env auto-created, and a runtime-device-only /resolve that is the one place secret values leave the server."
+        }
+      ],
+      "evidence": [
+        "allternit/cmd/allternit-cloud-api/src/routes/code_environments.rs",
+        "allternit/cmd/allternit-cloud-api/openapi/code-environments.yaml",
+        "allternit/surfaces/docs/code/cloud-environments.mdx",
+        "allternit/surfaces/docs/api/code-environments.mdx"
+      ]
+    },
+    {
       "id": "feature:bot-phones",
       "label": "Bots operate real phones",
       "product": "product:computer-use",
