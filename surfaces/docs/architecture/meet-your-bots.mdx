@@ -1,0 +1,54 @@
+---
+title: Meet your bots
+description: How the Meet your bots card is built in allternit-ai, how it creates the team at the end, and how the editable routines scheduler works.
+---
+
+The card lives in `allternit-ai/src/components/bots/meet/`. One build serves Allternit Desktop, ai.allternit.com (desktop and phone layouts) and the m.allternit.com PWA. User guide: [Meet your bots](/guides/meet-your-bots).
+
+| Entry | Mounted by | Steps |
+|---|---|---|
+| `setup` | `FirstRunSetup.tsx` at the `mainbot` step (desktop, phone layout, `PhoneOnboardingFlow`) | start · team · main · routines · job · done |
+| `botmode` | `BotLaunchpadView.tsx` through `MeetYourBotsOverlay` (desktop and the phone `BotsScreen`) when a main bot exists and the intro hasn't been seen | start · team · routines · job · done |
+
+With no main bot, `BotModeRail` still opens **Set up your main bot** first; the card follows once there is one.
+
+## Files
+
+| File | What it holds |
+|---|---|
+| `MeetYourBotsCard.tsx` | The step machine, the split/stacked layout (stacks under 780 px; pinned footer with the safe-area inset) and the drafts: team members, main-bot choice, routine drafts, job. `entry="setup"` also runs `useBotSetup({ context: 'onboarding' })` for the real picker flows. |
+| `StartStep.tsx`, `TeamNetwork.tsx`, `rigs/` | The start page: the Bots network canvas. `rigs/stage2d.ts` and `rigs/cast2d.ts` are the same files as www's `src/lib/cast/` (vendored from the Agents Anonymous 2D cast); keep them in sync. Brain badges are `public/brains/*.png`. |
+| `TeamStep.tsx`, `TemplateList.tsx`, `TeamGrid.tsx`, `MeetTile.tsx` | `BUILTIN_BOT_TEMPLATES` with category filters, pointer drag onto the grid (touch drags from the avatar handle so the list scrolls), tap to add, draggable grid nodes, the drag ghost. |
+| `MainBotPanel.tsx` | The [bot setup picker](/architecture/bot-setup-picker) stage and tiles, A:// first and default, the main bot template's `welcome` as a chat bubble. |
+| `RoutinesStep.tsx` | Routine drafts from the team's template routines on `RoutineScheduler` + `RoutineEditor`. Template routines the editor can't show (events, unusual crons) are kept and installed paused. |
+| `FirstJobStep.tsx` | Job options from `PRIMARY_BOT.firstTask` and each template's `firstTask` / `starterPrompts`. |
+| `DoneStep.tsx`, `meet-finish.ts` | The finish run and its per-item report. |
+| `team-slots.ts` | Pure helpers: grid slots, membership, handoff suggestions, routine drafts, job options. Tested in `__tests__/team-slots.test.ts`. |
+
+## Finishing
+
+Nothing is created before **Start the job**. `runFinish()` then runs in order, recording each item as `ok`, `skipped` or `failed` with the reason:
+
+1. **Main bot**: `setUpPrimaryBot` (A://, dressed with the picked look) or the vendor bot the picker connected, then `setMainBot`.
+2. **Team bots**: each template through the same apply path as the template gallery, skipping templates already on the account (`config.templateId`). Each wears its template's `look` (`castAvatarConfig`). `skipRoutines` stops the template from installing its own routines.
+3. **Routines**: each kept draft with its edited cron and on/off state.
+4. **Thread #1**: the bot's main chat, with the edited job text sent once as the user's message.
+
+A failure never stops later items. **Retry what didn't finish** reruns only failed items. Bots added afterwards from **Works well with your team** (template `handoffs` not on the team) are created with their routines paused.
+
+## Seen flag
+
+`src/lib/bots/bots-intro.ts`: one flag for both entries. Web and the PWA read and write Clerk `user.unsafeMetadata.botsIntroSeenAt`; localStorage `allternit-bots-intro-seen` is the fallback when signed out and on Desktop (its sign-in session has no Clerk client to write metadata), and a cache so the card never flashes back during load. Set on finish and on skip. `requestBotsIntroReplay()` (Bots rail **⋯** → **Replay intro**, the Bots header on a phone) reopens it in `botmode`.
+
+## Routines scheduler
+
+`src/components/bots/schedule/` is shared by the card and Bot Mode → Routines → Calendar (`views/bots/home/BotRoutinesSchedule.tsx`):
+
+- `routine-rule.ts`: `RoutineRule` (`daily` · `weekdays` · `weekly` · `monthly` · `interval` with a window), `ruleFromCron` / `ruleFromSchedule` / `ruleToCron` (round-trips every built-in template cron), `ruleLabel`, `moveRule`, `ruleForSlot`. Intervals are limited to the editor's choices (30 min, 1–4 h); anything else stays off the calendar and is listed under it.
+- `RoutineScheduler.tsx`: controlled Day (default) / Week hour grids from 6 AM to 10 PM and a Month view. Empty-slot click → `onRequestNew(day, minute)`; chip click → `onRequestEdit(id)`; vertical drag → `onMove(id, minute)` in 15-minute steps. Interval routines draw as one striped band.
+- `RoutineEditor.tsx`: dialog (bottom sheet on phones), portalled to `document.body`, Escape in the capture phase.
+- Bot Mode saves through `bot-routine.service.ts`: `createBotRoutineOnCron`, `updateBotRoutine` (PUT `/api/v1/automation/routines/:id` with `schedule_type: cron`; metadata is merged onto the stored row because the server replaces it whole) and `deleteBotRoutineById`. The API resets `next_run_at` on a schedule change.
+
+## Seeing it locally
+
+Run Vite and open `/preview-meet.html?entry=setup` or `?entry=botmode` (`&theme=dark`), at desktop or phone width. The preview is not a production rollup input.
