@@ -1544,4 +1544,59 @@ export const globalEvent = (options) => (options?.client ?? client).sse.get({ ur
  * Get the current version of the GIZZI system.
  */
 export const globalVersion = (options) => (options?.client ?? client).get({ url: '/global/version', ...options });
+/**
+ * List session background tasks
+ *
+ * Return durable background task lifecycle records for a parent session.
+ */
+export const sessionBackgroundTasksList = (options) => (options.client ?? client).get({ url: '/session/{sessionID}/background-tasks', ...options });
+/**
+ * List session tasks
+ *
+ * Return everything the session delegated: durable background tasks (shells, background subagents) and foreground subagent child sessions.
+ */
+export const sessionTasksList = (options) => (options.client ?? client).get({ url: '/session/{sessionID}/tasks', ...options });
+/**
+ * Get a session background task
+ *
+ * Return one durable background task record, including its latest output.
+ */
+export const sessionBackgroundTasksGet = (options) => (options.client ?? client).get({ url: '/session/{sessionID}/background-tasks/{taskID}', ...options });
+/**
+ * Cancel a session background task
+ *
+ * Cancel the owned child session and durably settle its task record.
+ */
+export const sessionBackgroundTasksCancel = (options) => (options.client ?? client).post({ url: '/session/{sessionID}/background-tasks/{taskID}/cancel', ...options });
+/**
+ * List linked PRs for many sessions
+ *
+ * Linked GitHub pull requests per session; omit `ids` for every session with linked PRs.
+ */
+export const sessionPrsBulk = (options) => (options?.client ?? client).get({ url: '/session/prs', ...options });
+/**
+ * List linked PRs
+ */
+export const sessionPrsList = (options) => (options.client ?? client).get({ url: '/session/{sessionID}/prs', ...options });
+/**
+ * Refresh linked PRs
+ *
+ * Force a status refresh of every linked PR on the session from GitHub.
+ */
+export const sessionPrsRefresh = (options) => (options.client ?? client).post({ url: '/session/{sessionID}/prs/refresh', ...options });
+/**
+ * Link a PR
+ */
+export const sessionPrsLink = (options) => (options.client ?? client).post({
+    url: '/session/{sessionID}/prs',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+/**
+ * Unlink a PR
+ */
+export const sessionPrsUnlink = (options) => (options.client ?? client).delete({ url: '/session/{sessionID}/prs', ...options });
 //# sourceMappingURL=sdk.gen.js.map

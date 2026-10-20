@@ -101,3 +101,8 @@ The setup script runs outside the sandbox with the proxy variables set, so with 
 - The Setup step is an assistant message whose `mode` is `environment-setup`, with one tool part named `setup`. Its output streams in `state.metadata.output`. When setup fails, the message carries an `EnvironmentSetupError`. This message is never sent to the model.
 - The runtime loads the environment from `GET /api/v1/code-environments/:id/resolve` on the cloud API (`ALLTERNIT_CLOUD_API_URL`), authenticated with its paired device token.
 - Sessions without `environmentId` run exactly as before.
+
+## Related pages
+
+- [Cloud environments](/code/cloud-environments): create and edit environments, secrets and network access.
+- [Code environments API](/api/code-environments)

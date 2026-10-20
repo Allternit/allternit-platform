@@ -1321,15 +1321,12 @@
       "status": "building",
       "description": "Code sessions link the GitHub PRs they open or push (gh pr create/view, gh api pulls, git push output, GitHub MCP PR tools); rows show a PR badge with status, a hover list and Open PR (G). gizzi stores them per session and refreshes status via gh api or GitHub REST.",
       "touches": [
-        "allternit/cmd/gizzi-code/src/runtime/session/linked-prs.ts",
         "allternit/cmd/gizzi-code/src/runtime/session",
-        "allternit/cmd/gizzi-code/src/runtime/server/routes/session.ts",
-        "allternit/cmd/gizzi-code/src/runtime/server/routes/agent-compat.ts",
-        "allternit/cmd/gizzi-code/packages/sdk/src/gen",
+        "allternit/cmd/gizzi-code/src/runtime/server",
         "allternit-ai/src/shell",
         "allternit-ai/src/views/code",
-        "allternit/surfaces/docs/guides/code-linked-prs.mdx",
-        "allternit/surfaces/docs/guides/code-session-list.mdx"
+        "allternit/cmd/allternit-api/src/agent_session_routes.rs",
+        "allternit-ai/src/lib"
       ],
       "decisions": [
         {
@@ -1372,10 +1369,11 @@
       "status": "building",
       "description": "Per-user cloud environments a Code session starts in: network access (full, limited with an allowed-host list, none), write-only secrets redacted from output, a setup script, .env text and repos. Edited and picked per session in Code mode; stored by allternit-cloud-api; applied by gizzi-code when the session starts.",
       "touches": [
-        "allternit/cmd/allternit-cloud-api/src/routes/code_environments.rs",
-        "allternit/cmd/allternit-cloud-api/migrations_pg/095_code_environments.sql",
         "allternit-ai/src/views/code",
-        "allternit/cmd/gizzi-code/src/runtime/session"
+        "allternit/cmd/gizzi-code/src/runtime/session",
+        "allternit/cmd/allternit-api/src/agent_session_routes.rs",
+        "allternit-ai/src/lib",
+        "allternit/cmd/allternit-cloud-api"
       ],
       "decisions": [
         {

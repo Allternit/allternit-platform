@@ -188,7 +188,7 @@ export namespace SessionEnvironment {
           : {
               status: "error",
               input: part.state.input,
-              error: SecretRedactor.text(result.error),
+              error: SecretRedactor.text((result as { error: string }).error),
               metadata: { output, description: title, environment: session.environment!.id },
               time: { start: part.state.status === "running" ? part.state.time.start : now, end },
             }
@@ -196,7 +196,7 @@ export namespace SessionEnvironment {
         Bus.publish(MessageV2.Event.PartUpdated, { part: savedPart })
         message.time.completed = end
         if (!result.ok) {
-          message.error = { name: "EnvironmentSetupError", message: SecretRedactor.text(result.error) }
+          message.error = { name: "EnvironmentSetupError", message: SecretRedactor.text((result as { error: string }).error) }
           message.finish = "error"
         }
         const savedMessage = (await Session.updateMessage(message)) as MessageV2.Assistant

@@ -377,10 +377,11 @@ const message = await createUserMessage(input)
         }
         return undefined
       }
-      const error = { name: "EnvironmentSetupError", message: applied.error }
+      const failed = applied as { error: string; message?: MessageV2.WithParts }
+      const error = { name: "EnvironmentSetupError", message: failed.error }
       Bus.publish(Session.Event.Error, { sessionID, error })
       SessionStatus.set(sessionID, { type: "idle" })
-      return applied.message ?? message
+      return failed.message ?? message
     } catch (error) {
       // Never let environment setup take the server down: fail this turn only.
       const text = error instanceof Error ? error.message : String(error)
