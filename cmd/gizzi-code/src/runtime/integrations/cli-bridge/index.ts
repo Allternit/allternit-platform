@@ -210,7 +210,7 @@ export namespace CliBridge {
       )
     })()
     return {
-      content: [{ type: "text", text: "The question is on the user's screen. End your turn now and make no more tool calls; their answers arrive as their next message." }],
+      content: [{ type: "text", text: "The question is on the user's screen. End your turn now and make no more tool calls; their answers arrive as their next message. When they do, carry on with the task you were working on, using those answers." }],
       isError: false,
     }
   }
