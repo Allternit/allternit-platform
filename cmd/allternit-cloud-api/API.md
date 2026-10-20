@@ -15,6 +15,7 @@ Complete REST API documentation for the Cowork Runtime system.
 - [Schedules](#schedules)
 - [Approvals](#approvals)
 - [Attachments](#attachments)
+- [Code Environments](#code-environments)
 - [Common Types](#common-types)
 - [Error Responses](#error-responses)
 
@@ -782,6 +783,125 @@ Attachments track clients watching a run.
   "detached_at": null
 }
 ```
+
+---
+
+## Code Environments
+
+Cloud environments for Code mode sessions. An environment is a per-user recipe
+a cloud Code session starts in: network policy, setup script, `.env` text,
+repos to clone, and write-only secrets. Spec: `openapi/code-environments.yaml`.
+
+**Auth:** Clerk session, an `allternit_*` API token with the `compute` scope,
+or a runtime device token (`Bearer allternit_runtime_…`) acting as its owner.
+Rows are scoped to the caller; another user's id answers 404.
+`GET /:id/resolve` accepts **only** a runtime device token owned by the
+environment's user.
+
+**Secrets:** values are encrypted at rest with the platform AES-256-GCM
+credential cipher (`ALLTERNIT_CREDENTIALS_KEY`, the same key as provider tokens
+and BYOK keys). Without that key, the secret routes and `/resolve` answer
+`503 {"error":"code_environment_secrets_not_configured"}`. Values are never
+logged and never returned except by `/resolve`.
+
+### CodeEnvironment
+
+```json
+{
+  "id": "6f1c…",
+  "name": "Default",
+  "network_access": "full",
+  "allowed_hosts": ["github.com", "registry.npmjs.org", "…"],
+  "secrets": [{ "name": "NPM_TOKEN", "hosts": ["registry.npmjs.org"], "created_at": "2026-10-20T12:00:00Z" }],
+  "setup_script": "npm ci",
+  "env_vars": "NODE_ENV=development\n",
+  "repos": [{ "url": "https://github.com/acme/web.git", "branch": "main" }],
+  "is_default": true,
+  "archived": false,
+  "created_at": "2026-10-20T12:00:00Z",
+  "updated_at": "2026-10-20T12:00:00Z"
+}
+```
+
+Validation (422 `VALIDATION_ERROR` on failure): `name` 1–80 characters;
+`network_access` one of `full`, `limited`, `none`; hosts are hostnames or
+`*.` wildcards (max 200); `setup_script` and `env_vars` at most 64 KB each;
+repos are `https://`, `ssh://` or `git@host:owner/repo` URLs (max 20), branch
+optional; secret names match `^[A-Z_][A-Z0-9_]*$`, values at most 64 KB, max
+100 secrets per environment.
+
+New environments get the default `allowed_hosts` list (GitHub plus the npm,
+Yarn, Bun, PyPI, crates.io, Go proxy, RubyGems, Maven Central, Debian and
+Ubuntu package hosts — see `DEFAULT_ALLOWED_HOSTS` in
+`src/routes/code_environments.rs`) unless the request sends its own list.
+
+### List Environments
+
+```http
+GET /api/v1/code-environments
+GET /api/v1/code-environments?archived=1
+```
+
+Returns `{ "environments": CodeEnvironment[] }`, default first, then oldest
+first. Archived rows only with `?archived=1`. A user with no live environment
+gets one named "Default" (`network_access: "full"`, `is_default: true`)
+created on the spot.
+
+### Create Environment
+
+```http
+POST /api/v1/code-environments
+```
+
+Body: `name` (required), `network_access`, `allowed_hosts`, `setup_script`,
+`env_vars`, `repos`, `is_default`. Returns `201` with the `CodeEnvironment`.
+`is_default: true` clears the flag on the user's other environments.
+
+### Update Environment
+
+```http
+PATCH /api/v1/code-environments/:id
+```
+
+Any subset of the create fields; omitted fields are unchanged. Making an
+archived environment the default answers `409`.
+
+### Archive / Unarchive
+
+```http
+POST /api/v1/code-environments/:id/archive
+POST /api/v1/code-environments/:id/unarchive
+```
+
+Returns the `CodeEnvironment`. Archiving clears `is_default`.
+
+### Set Secret
+
+```http
+POST /api/v1/code-environments/:id/secrets
+```
+
+Body `{ "name": "NPM_TOKEN", "value": "…", "hosts": ["registry.npmjs.org"] }`.
+Upserts by name and returns the `CodeEnvironment` (names and hosts only).
+
+### Delete Secret
+
+```http
+DELETE /api/v1/code-environments/:id/secrets/:name
+```
+
+Returns the `CodeEnvironment`; `404` when no such secret.
+
+### Resolve (runtime only)
+
+```http
+GET /api/v1/code-environments/:id/resolve
+Authorization: Bearer allternit_runtime_…
+```
+
+Returns the `CodeEnvironment` plus `secret_values: { "NAME": "value" }`. Used
+by gizzi-code when a cloud session starts in the environment. A Clerk session
+or API token answers `401`; a device owned by another user answers `404`.
 
 ---
 

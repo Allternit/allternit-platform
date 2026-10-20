@@ -1,0 +1,302 @@
+openapi: 3.1.0
+info:
+  title: Allternit Code Environments API
+  version: "1.0.0"
+  summary: Cloud environments that Code mode sessions start in.
+  description: |
+    Per-user environments for cloud Code sessions: network policy, setup
+    script, `.env` text, repos to clone, and write-only secrets.
+    Base URL `https://api.allternit.com`.
+
+    Authenticate with a Clerk session JWT, an `allternit_*` API token with the
+    `compute` scope, or a runtime device token (`allternit_runtime_…`), which
+    acts as its owner. Rows are scoped to the caller.
+
+    `GET /api/v1/code-environments/{id}/resolve` accepts only a runtime device
+    token owned by the environment's user. It is the only route that returns
+    secret values.
+
+    Secret values are encrypted at rest with the platform AES-256-GCM
+    credential cipher (`ALLTERNIT_CREDENTIALS_KEY`). When that key is not set,
+    the secret routes and `/resolve` answer
+    `503 {"error":"code_environment_secrets_not_configured"}`.
+servers:
+  - url: https://api.allternit.com
+security:
+  - bearerAuth: []
+tags:
+  - name: Code environments
+paths:
+  /api/v1/code-environments:
+    get:
+      operationId: listCodeEnvironments
+      summary: List environments
+      description: |
+        The caller's environments, default first then oldest first. If the
+        caller has no live environment, one named "Default" (network `full`,
+        `is_default` true) is created and returned.
+      tags: [Code environments]
+      parameters:
+        - name: archived
+          in: query
+          required: false
+          description: "`1` includes archived environments."
+          schema: { type: string, enum: ["1", "true"] }
+      responses:
+        "200":
+          description: Environments.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [environments]
+                properties:
+                  environments:
+                    type: array
+                    items: { $ref: "#/components/schemas/CodeEnvironment" }
+        "401": { $ref: "#/components/responses/Error" }
+    post:
+      operationId: createCodeEnvironment
+      summary: Create an environment
+      tags: [Code environments]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/EnvironmentInput"
+                - required: [name]
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CodeEnvironment" }
+        "401": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+  /api/v1/code-environments/{id}:
+    parameters:
+      - $ref: "#/components/parameters/EnvironmentId"
+    patch:
+      operationId: updateCodeEnvironment
+      summary: Update an environment
+      description: Omitted fields are unchanged. `is_default` true clears the flag on the caller's other environments.
+      tags: [Code environments]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/EnvironmentInput" }
+      responses:
+        "200":
+          description: Updated.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CodeEnvironment" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+  /api/v1/code-environments/{id}/archive:
+    parameters:
+      - $ref: "#/components/parameters/EnvironmentId"
+    post:
+      operationId: archiveCodeEnvironment
+      summary: Archive an environment
+      description: Hides it from the default list and clears `is_default`.
+      tags: [Code environments]
+      responses:
+        "200":
+          description: Archived.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CodeEnvironment" }
+        "404": { $ref: "#/components/responses/Error" }
+  /api/v1/code-environments/{id}/unarchive:
+    parameters:
+      - $ref: "#/components/parameters/EnvironmentId"
+    post:
+      operationId: unarchiveCodeEnvironment
+      summary: Unarchive an environment
+      tags: [Code environments]
+      responses:
+        "200":
+          description: Unarchived.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CodeEnvironment" }
+        "404": { $ref: "#/components/responses/Error" }
+  /api/v1/code-environments/{id}/secrets:
+    parameters:
+      - $ref: "#/components/parameters/EnvironmentId"
+    post:
+      operationId: setCodeEnvironmentSecret
+      summary: Set a secret
+      description: Upserts by name. The value is encrypted and never returned by this route.
+      tags: [Code environments]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, value]
+              additionalProperties: false
+              properties:
+                name:
+                  type: string
+                  pattern: "^[A-Z_][A-Z0-9_]*$"
+                  maxLength: 128
+                value:
+                  type: string
+                  minLength: 1
+                  description: At most 64 KB.
+                hosts:
+                  type: array
+                  maxItems: 200
+                  items: { $ref: "#/components/schemas/Host" }
+      responses:
+        "200":
+          description: The environment (secret names and hosts only).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CodeEnvironment" }
+        "404": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+  /api/v1/code-environments/{id}/secrets/{name}:
+    parameters:
+      - $ref: "#/components/parameters/EnvironmentId"
+      - name: name
+        in: path
+        required: true
+        schema: { type: string }
+    delete:
+      operationId: deleteCodeEnvironmentSecret
+      summary: Delete a secret
+      tags: [Code environments]
+      responses:
+        "200":
+          description: The environment.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CodeEnvironment" }
+        "404": { $ref: "#/components/responses/Error" }
+  /api/v1/code-environments/{id}/resolve:
+    parameters:
+      - $ref: "#/components/parameters/EnvironmentId"
+    get:
+      operationId: resolveCodeEnvironment
+      summary: Resolve an environment for a runtime
+      description: |
+        Runtime device token only, for a device owned by the environment's
+        user. Returns the environment plus decrypted secret values. Archived
+        environments still resolve.
+      tags: [Code environments]
+      security:
+        - runtimeDevice: []
+      responses:
+        "200":
+          description: Environment with secret values.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/CodeEnvironment"
+                  - type: object
+                    required: [secret_values]
+                    properties:
+                      secret_values:
+                        type: object
+                        additionalProperties: { type: string }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Clerk session JWT, `allternit_*` API token (compute scope), or runtime device token.
+    runtimeDevice:
+      type: http
+      scheme: bearer
+      description: Runtime device token `allternit_runtime_…`.
+  parameters:
+    EnvironmentId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string }
+  responses:
+    Error:
+      description: Error.
+      content:
+        application/json:
+          schema:
+            type: object
+  schemas:
+    Host:
+      type: string
+      description: Hostname, optionally with a leading `*.` wildcard. No scheme, port or path.
+      examples: ["registry.npmjs.org", "*.githubusercontent.com"]
+    Repo:
+      type: object
+      required: [url]
+      properties:
+        url:
+          type: string
+          description: "`https://`, `ssh://` or `git@host:owner/repo` URL."
+          maxLength: 2048
+        branch:
+          type: string
+          maxLength: 255
+    Secret:
+      type: object
+      required: [name, hosts, created_at]
+      properties:
+        name: { type: string }
+        hosts:
+          type: array
+          items: { $ref: "#/components/schemas/Host" }
+        created_at: { type: string, format: date-time }
+    EnvironmentInput:
+      type: object
+      additionalProperties: false
+      properties:
+        name: { type: string, minLength: 1, maxLength: 80 }
+        network_access: { type: string, enum: [full, limited, none] }
+        allowed_hosts:
+          type: array
+          maxItems: 200
+          items: { $ref: "#/components/schemas/Host" }
+          description: Used when network_access is limited. Omitted on create = the default list (GitHub plus common package registries).
+        setup_script: { type: string, description: "Bash, at most 64 KB." }
+        env_vars: { type: string, description: "Raw .env text, at most 64 KB." }
+        repos:
+          type: array
+          maxItems: 20
+          items: { $ref: "#/components/schemas/Repo" }
+        is_default: { type: boolean }
+    CodeEnvironment:
+      type: object
+      required: [id, name, network_access, allowed_hosts, secrets, setup_script, env_vars, repos, is_default, archived, created_at, updated_at]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        network_access: { type: string, enum: [full, limited, none] }
+        allowed_hosts:
+          type: array
+          items: { $ref: "#/components/schemas/Host" }
+        secrets:
+          type: array
+          items: { $ref: "#/components/schemas/Secret" }
+        setup_script: { type: string }
+        env_vars: { type: string }
+        repos:
+          type: array
+          items: { $ref: "#/components/schemas/Repo" }
+        is_default: { type: boolean }
+        archived: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
