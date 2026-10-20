@@ -8,6 +8,7 @@ import { PaneBrowserTool } from "@/runtime/tools/builtins/pane-browser"
 import { MediaGenerateTool } from "@/runtime/tools/builtins/media-generate"
 import { ARTIFACT_TOOLS } from "@/runtime/tools/builtins/artifact"
 import { QuestionTool } from "@/runtime/tools/builtins/question"
+import { TodoWriteTool } from "@/runtime/tools/builtins/todo"
 import { Log } from "@/shared/util/log"
 import { Bus } from "@/shared/bus"
 import { CLI_PERMISSION_TOOL } from "@/runtime/drivers/cli-session-flags"
@@ -27,7 +28,9 @@ export namespace CliBridge {
   const PROTOCOL_VERSION = "2025-06-18"
 
   /** The tools a CLI gets: the ones only gizzi can do for this session. */
-  export const TOOLS: Tool.Info[] = [PaneArtifactTool, PaneBrowserTool, MediaGenerateTool, ...ARTIFACT_TOOLS]
+  // todowrite: CLI brains (Claude Code -p has no todo tool) keep the task list
+  // that Cowork's Progress panel reads.
+  export const TOOLS: Tool.Info[] = [PaneArtifactTool, PaneBrowserTool, MediaGenerateTool, TodoWriteTool, ...ARTIFACT_TOOLS]
 
   const token = randomBytes(32).toString("hex")
 
@@ -274,6 +277,8 @@ export namespace CliBridge {
       messages: [],
       metadata: () => {},
       async ask(req) {
+        // The task list is bookkeeping, allowed for every agent (loop/agent.ts); never prompt for it.
+        if (req.permission === "todowrite") return
         return await PermissionNext.ask({ ...req, sessionID, ruleset: session.permission ?? [] })
       },
     }
@@ -310,7 +315,7 @@ export namespace CliBridge {
           capabilities: { tools: { listChanged: false } },
           serverInfo: { name: SERVER_NAME, version: "1.0.0" },
           instructions:
-            "Allternit session tools: the document open beside the chat (pane_artifact), the pane's browser (pane_browser), image/video generation rendered in the user's app (media_generate), the user's Artifacts (artifact_create, artifact_update, artifact_read), and multiple-choice questions to the user (question).",
+            "Allternit session tools: the document open beside the chat (pane_artifact), the pane's browser (pane_browser), image/video generation rendered in the user's app (media_generate), the user's Artifacts (artifact_create, artifact_update, artifact_read), the task list shown as the session's Progress (todowrite), and multiple-choice questions to the user (question).",
         })
       case "ping":
         return ok(req.id, {})

@@ -147,6 +147,10 @@
         },
         {
           "on": "2026-10-20",
+          "note": "The routines List / Graph / Calendar switch (shared RoutinesSchedule) is also on Automation Tasks (All / Routines tabs, phone screen), Cowork → Routines (RoutinesPanel) and the bot chat Routines panel (RoutinesListView); those default to every bot's routines and share one remembered view."
+        },
+        {
+          "on": "2026-10-20",
           "note": "Routines → Calendar is now the editable scheduler (RoutineScheduler/RoutineEditor): Day default, click a slot to add, click to edit, drag to move; saves the cron in place."
         }
       ],
