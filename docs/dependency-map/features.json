@@ -689,7 +689,8 @@
       "decisions": [],
       "evidence": [
         "allternit/surfaces/docs/api/cowork.mdx",
-        "allternit/surfaces/docs/api/cowork-teams.mdx"
+        "allternit/surfaces/docs/api/cowork-teams.mdx",
+        "allternit/surfaces/docs/guides/cowork-session-panel.mdx"
       ]
     },
     {
