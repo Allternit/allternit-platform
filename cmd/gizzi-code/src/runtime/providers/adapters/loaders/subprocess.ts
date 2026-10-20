@@ -222,6 +222,10 @@ export class SubprocessLanguageModel implements LanguageModelV2 {
     const planFile = sessionID && !bot ? await CliBridge.planFile(sessionID).catch(() => undefined) : undefined
     const plan = planFile ? { file: planFile } : undefined
     const systemText = extractSystemText(options.prompt ?? [])
+    // A turn with gizzi's tools off (llm.ts marks it) is one of allternit-api's
+    // internal completions: the user's text is data there, so the CLI must not
+    // act on it or ask the user anything.
+    const toolsOff = options?.headers?.["x-gizzi-tools-off"] === "1"
     const task = await driver.assign({
       taskId: generateTaskId(),
       prompt: message,
@@ -239,7 +243,8 @@ export class SubprocessLanguageModel implements LanguageModelV2 {
       // (its project's folder), not wherever gizzi was launched.
       cwd: currentWorkdir(),
       // gizzi's session tools (pane document, pane browser, media) over MCP.
-      mcp: sessionID ? bridgeConfig(sessionID) : undefined,
+      mcp: sessionID && !toolsOff ? bridgeConfig(sessionID) : undefined,
+      toolsOff,
       // A bot turn: the CLI runs isolated from the user's own settings, with
       // the bot's tool allowlist (runtime/bots/bot-turn.ts).
       bot,

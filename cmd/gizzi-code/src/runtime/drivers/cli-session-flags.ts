@@ -33,9 +33,12 @@ export function planInstructions(cli: string, plan: NonNullable<AgentTask["plan"
   ].join(" ")
 }
 
-/** Codex thread settings for a plan turn: a read-only sandbox, so the plan agent cannot change files. */
-export function codexPlanParams(plan: AgentTask["plan"]): Record<string, unknown> {
-  return plan ? { sandbox: "read-only" } : {}
+/**
+ * Codex thread settings for a plan turn or a tools-off turn: a read-only
+ * sandbox, so the agent cannot change files (Codex can't drop its shell).
+ */
+export function codexPlanParams(plan: AgentTask["plan"], toolsOff?: boolean): Record<string, unknown> {
+  return plan || toolsOff ? { sandbox: "read-only" } : {}
 }
 
 /**

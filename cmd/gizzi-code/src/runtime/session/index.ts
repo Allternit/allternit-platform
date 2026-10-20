@@ -969,6 +969,16 @@ export namespace Session {
         .then(({ Scratchpad }) => Scratchpad.cleanup(sessionID, !session.parentID))
         .catch((error) => log.warn("failed to clean session scratchpad", { sessionID, error }))
       await unshare(sessionID).catch(() => {})
+      // Stop a turn still running in it (a CLI brain keeps going otherwise)
+      // and dismiss the questions it asked: nobody can see or answer them.
+      await import("@/runtime/session/prompt")
+        .then(({ SessionPrompt }) => SessionPrompt.cancel(sessionID))
+        .catch(() => {})
+      await import("@/runtime/integrations/question")
+        .then(async ({ Question }) => {
+          for (const q of await Question.list()) if (q.sessionID === sessionID) await Question.reject(q.id)
+        })
+        .catch(() => {})
       await import("@/runtime/session/context-breakdown-store")
         .then(({ ContextBreakdownStore }) => ContextBreakdownStore.remove(sessionID))
         .catch(() => {})
