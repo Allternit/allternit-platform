@@ -12,10 +12,10 @@
  *
  * Parsing is evidence-only: a field the screen didn't plainly show is null.
  * Results are saved on the phone's app record (phone-link:devices) and a
- * background scheduler checks every app again every 6 h on a working,
- * unlocked phone that no bot is using, one app at a time.
+ * background scheduler checks each app once, re-reads signed-in AI chat apps
+ * every 6 h, and only while the phone sits idle on its Home screen.
  */
-import { catalogApp } from './phone-app-catalog.js';
+import { catalogApp, PROBE_CATEGORY } from './phone-app-catalog.js';
 import {
   classifySignIn,
   launch,
@@ -680,8 +680,10 @@ async function walkPath(
 
 // ── Scheduler ───────────────────────────────────────────────────────────────
 
-/** How often each app on a linked phone is checked again. */
+/** How often a signed-in AI chat app (the apps with plan usage) is read again. Other apps aren't re-read on a timer. */
 export const ACCOUNT_REFRESH_MS = 6 * 3600_000;
+/** A background read waits until the phone has sat on its Home screen this long (nobody is using it). */
+export const ACCOUNT_IDLE_MS = 4 * 60_000;
 /** How often the scheduler looks for a due app (one app per look). */
 export const ACCOUNT_TICK_MS = 5 * 60_000;
 /** After a phone links (or an app signs in), wait this long before the first read. */
@@ -696,15 +698,36 @@ export interface AccountSchedulerDeps {
   refreshMs?: number;
   tickMs?: number;
   kickDelayMs?: number;
+  idleMs?: number;
+  /** True when the phone sits on its Home screen (onHomeScreen on a read_ui); absent = always idle (tests). */
+  atHome?: (deviceId: string) => Promise<boolean>;
   logger?: (message: string) => void;
 }
 
 /**
- * Refreshes checks in the background: every 6 h per app on the phone (every
- * catalog app, signed in or not, so a sign-in or sign-out on the phone shows
- * up), and soon after a phone links or an app signs in. Only on a phone that
- * works (phoneWorks: never locked, offline or with accessibility off) and
- * that no bot is using; one app per tick, so reads never pile up.
+ * True when a phone's element tree (phone.read_ui) is its Home screen: the
+ * iPhone's SpringBoard has no "Application, label: …" root, only Icons; an
+ * Android window belongs to a launcher package. Pure; unit-tested.
+ */
+export function onHomeScreen(tree: string, platform: 'ios' | 'android'): boolean {
+  const lines = tree.split('\n').map((l) => l.trim()).filter(Boolean);
+  if (platform === 'android') {
+    const pkg = /package: '([^']+)'/.exec(lines.find((l) => /^Window/.test(l)) ?? '')?.[1] ?? '';
+    return /launcher|\.home$|homescreen/i.test(pkg);
+  }
+  return lines.length > 0 && !lines.some((l) => /^Application,/.test(l)) && lines.some((l) => /^Icon,/.test(l));
+}
+
+/**
+ * Background checks, kept rare because each one opens the app on the person's
+ * phone (Eoj, 2026-10-19):
+ *   - every app once, when it is first seen (a phone links, an app installs);
+ *   - signed-in AI chat apps again every 6 h, for their usage windows;
+ *   - an app right after the wizard's Check finds it signed in (kick).
+ * Other apps are never re-read on a timer: their account rarely changes, and
+ * Check in Settings › Connections reads one any time. A timed or first read
+ * waits until the phone has sat on its Home screen for ACCOUNT_IDLE_MS (not
+ * in use), on a phone that works and that no bot is using; one app per tick.
  */
 export class PhoneAccountScheduler {
   /** Last attempt per `deviceId:app`, so a failing read waits a full period too. */
@@ -731,32 +754,60 @@ export class PhoneAccountScheduler {
     this.timer = null;
   }
 
-  /** A phone just linked or an app just signed in: make its apps due and look again shortly. */
+  /**
+   * Look again shortly. With an app (the wizard's Check just found it signed
+   * in) that app is read now, idle or not; without one (Desktop started, a
+   * phone linked) nothing is forced: apps never checked are due anyway.
+   */
   kick(deviceId?: string, app?: string): void {
-    for (const key of [...this.attempted.keys()]) {
-      if (!deviceId || key === `${deviceId}:${app}` || (!app && key.startsWith(`${deviceId}:`))) this.attempted.delete(key);
+    if (deviceId && app) {
+      this.attempted.delete(`${deviceId}:${app}`);
+      this.force.add(`${deviceId}:${app}`);
     }
-    this.force.add(deviceId && app ? `${deviceId}:${app}` : deviceId ?? '*');
     const t = setTimeout(() => void this.tick(), this.deps.kickDelayMs ?? ACCOUNT_KICK_DELAY_MS);
     t.unref?.();
   }
 
-  /** The next due `{deviceId, app}`, or null. */
-  due(): { deviceId: string; app: string } | null {
+  /** The next due `{deviceId, app, forced}`, or null. */
+  due(): { deviceId: string; app: string; forced: boolean } | null {
     const period = this.deps.refreshMs ?? ACCOUNT_REFRESH_MS;
     for (const phone of this.deps.phones()) {
       if (!phoneWorks(this.deps.health(phone.deviceId), phone.expiresAt, this.now())) continue;
       if (this.deps.busy(phone.deviceId)) continue;
       for (const app of phone.apps ?? []) {
-        if (!catalogApp(app.vendor)) continue;
+        const entry = catalogApp(app.vendor);
+        if (!entry) continue;
         const key = `${phone.deviceId}:${app.vendor}`;
-        const forced = this.force.has(key) || this.force.has(phone.deviceId) || this.force.has('*');
-        const checked = app.accountCheckedAt ? Date.parse(app.accountCheckedAt) : 0;
-        const last = Math.max(forced ? 0 : Number.isFinite(checked) ? checked : 0, this.attempted.get(key) ?? 0);
-        if (this.now() - last >= period) return { deviceId: phone.deviceId, app: app.vendor };
+        if (this.force.has(key)) return { deviceId: phone.deviceId, app: app.vendor, forced: true };
+        if (this.attempted.has(key) && this.now() - this.attempted.get(key)! < period) continue;
+        const checked = app.accountCheckedAt ? Date.parse(app.accountCheckedAt) : NaN;
+        const seen = Number.isFinite(checked) || app.signedIn !== null;
+        // Never checked: once. Signed-in AI chat (usage windows): every period. Anything else: only on request.
+        if (!seen && !this.attempted.has(key)) return { deviceId: phone.deviceId, app: app.vendor, forced: false };
+        const usageApp = (app.category ?? entry.category) === PROBE_CATEGORY && app.signedIn === true;
+        if (usageApp && this.now() - (Number.isFinite(checked) ? checked : 0) >= period) return { deviceId: phone.deviceId, app: app.vendor, forced: false };
       }
     }
     return null;
+  }
+
+  /** deviceId → when the phone was first seen on its Home screen (cleared when it isn't). */
+  private readonly homeSince = new Map<string, number>();
+
+  /** True once the phone has sat on its Home screen for ACCOUNT_IDLE_MS (the first look starts the clock). */
+  private async idle(deviceId: string): Promise<boolean> {
+    if (!this.deps.atHome) return true;
+    const home = await this.deps.atHome(deviceId).catch(() => false);
+    if (!home) {
+      this.homeSince.delete(deviceId);
+      return false;
+    }
+    const since = this.homeSince.get(deviceId);
+    if (since === undefined) {
+      this.homeSince.set(deviceId, this.now());
+      return false;
+    }
+    return this.now() - since >= (this.deps.idleMs ?? ACCOUNT_IDLE_MS);
   }
 
   /** Read one due app. Returns what it read (for tests), or null when nothing was due. */
@@ -768,13 +819,19 @@ export class PhoneAccountScheduler {
       return null;
     }
     this.running = true;
+    if (!next.forced && !(await this.idle(next.deviceId))) {
+      this.running = false;
+      return null;
+    }
+    // The read leaves the phone on Home: the next app needs a fresh idle wait.
+    this.homeSince.delete(next.deviceId);
     const key = `${next.deviceId}:${next.app}`;
     this.attempted.set(key, this.now());
     this.force.delete(key);
     try {
-      const result = await this.deps.read(next);
+      const result = await this.deps.read({ deviceId: next.deviceId, app: next.app });
       if (!result.ok) this.deps.logger?.(`[PhoneAccount] ${key}: ${result.error?.code ?? 'failed'}`);
-      return { ...next, result };
+      return { deviceId: next.deviceId, app: next.app, result };
     } catch (error) {
       this.deps.logger?.(`[PhoneAccount] ${key}: ${error instanceof Error ? error.message : String(error)}`);
       return null;
