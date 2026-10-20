@@ -151,6 +151,8 @@ describe("plan turns on a CLI", () => {
   test("Codex plans in a read-only sandbox; other turns keep their settings", () => {
     expect(codexPlanParams(plan)).toEqual({ sandbox: "read-only" })
     expect(codexPlanParams(undefined)).toEqual({})
+    // A tools-off turn (internal completion) runs read-only too.
+    expect(codexPlanParams(undefined, true)).toEqual({ sandbox: "read-only" })
   })
 
   test("the instructions name the plan file and the CLI's own way to hand the plan over", () => {

@@ -375,6 +375,11 @@ export namespace LLM {
         // Always present so subprocess/ACP drivers can resolve the session
         // even if AsyncLocalStorage is not on the doStream call stack.
         "x-gizzi-session": input.sessionID,
+        // No tools this turn (allternit-api's internal completions): CLI brains
+        // then run without gizzi's bridge or their own tools (loaders/subprocess.ts).
+        ...(Object.keys(tools).some((name) => name !== "invalid" && name !== "StructuredOutput")
+          ? {}
+          : { "x-gizzi-tools-off": "1" }),
         // Subscription Fabric: this send's human action (D16), minted by the
         // chat bridge, and the request id that keys the task's idempotency.
         ...(Provider.isFabricModel(input.model)

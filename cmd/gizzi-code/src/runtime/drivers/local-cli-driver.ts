@@ -175,6 +175,7 @@ export class LocalCliDriver implements RuntimeDriver {
       vendorSessionId: task?.vendorSessionId,
       bot: task?.bot,
       plan: task?.plan,
+      toolsOff: task?.toolsOff,
       model: task?.model,
     })
 
@@ -1599,7 +1600,7 @@ export class LocalCliDriver implements RuntimeDriver {
         ...(model ? { model } : {}),
         developerInstructions: systemPrompt,
         ...(mcpConfig ? { config: mcpConfig } : {}),
-        ...codexPlanParams(this.tasks.get(handle.taskId)?.plan),
+        ...codexPlanParams(this.tasks.get(handle.taskId)?.plan, this.tasks.get(handle.taskId)?.toolsOff),
       }
       const resumeId = this.tasks.get(handle.taskId)?.vendorSessionId
       let thread: unknown
@@ -1815,6 +1816,8 @@ interface CliAdapter {
       vendorSessionId?: string
       bot?: AgentTask["bot"]
       plan?: AgentTask["plan"]
+      /** No tools this turn (see AgentTask.toolsOff). */
+      toolsOff?: boolean
       /** The session's model (the picker's choice); the CLI validates it. */
       model?: string
     },
@@ -1875,6 +1878,8 @@ const CLI_ADAPTERS: Record<string, CliAdapter> = {
         // gates instead of bypassPermissions (runtime/bots/bot-turn.ts).
         ...claudePermissionFlags(ctx),
         "--disallowedTools", "AskUserQuestion",
+        // An internal completion: answer from the text alone, no tools at all.
+        ...(ctx.toolsOff ? ["--tools", ""] : []),
         ...claudeSessionFlags(ctx),
         // The picked model first; without one, the env override or Claude's default.
         ...modelFlag(
