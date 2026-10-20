@@ -10,7 +10,7 @@ use axum::{
     http::{header, HeaderMap, StatusCode},
     response::{sse::Sse, IntoResponse, Response},
     routing::{get, post},
-    Json, Router,
+    Extension, Json, Router,
 };
 use futures::Stream;
 use reqwest::Client;
@@ -22,6 +22,7 @@ use tracing::warn;
 
 use crate::config::{read_gizzi_default_harness, AppConfig};
 use crate::db::DbHandle;
+use crate::auth::AuthUser;
 use crate::AppState;
 
 pub(crate) fn gizzi_base() -> String {
@@ -161,6 +162,10 @@ pub fn agent_session_router() -> Router<Arc<AppState>> {
         // (the terminal `/bots` chat and any other `/agent-sessions` client).
         // Those turns create no cowork_approvals row, so the approvals route
         // cannot relay them; this passes `{reply, message?}` straight through.
+        // Pending permission asks for one session, so an approval raised by a
+        // turn the app didn't stream (an answer to a question, a routine)
+        // still shows its card.
+        .route("/permissions", get(list_permissions))
         .route("/permissions/:id/reply", post(reply_permission))
         // The app's result for a pane_browser tool call (the page in the
         // session's browser pane).
@@ -1562,6 +1567,52 @@ async fn list_questions(headers: HeaderMap, Query(q): Query<ListQuestionsQuery>)
                 .filter(|r| q.session_id.as_deref().map_or(true, |sid| r["sessionID"].as_str() == Some(sid)))
                 .collect();
             Json(json!({ "questions": filtered })).into_response()
+        }
+        Err(response) => response,
+    }
+}
+
+/// Pending permission asks (gizzi `GET /v1/permission`), optionally for one
+/// session. Each gets its cowork_approvals row (as the agent-chat bridge files
+/// it for streamed turns), so the app's reply through
+/// `/api/v1/cowork/approvals` relays to the runtime for these too.
+async fn list_permissions(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    headers: HeaderMap,
+    Query(q): Query<ListQuestionsQuery>,
+) -> impl IntoResponse {
+    let client = gizzi_client(&headers);
+    match gizzi_json::<Vec<serde_json::Value>>(&client, reqwest::Method::GET, "/v1/permission", None).await {
+        Ok(all) => {
+            let filtered: Vec<serde_json::Value> = all
+                .into_iter()
+                .filter(|r| q.session_id.as_deref().map_or(true, |sid| r["sessionID"].as_str() == Some(sid)))
+                .collect();
+            let rows: Vec<(String, String)> = filtered
+                .iter()
+                .filter_map(|r| {
+                    let id = r.get("id")?.as_str().filter(|s| !s.is_empty())?;
+                    Some((id.to_string(), crate::v1_routes::gizzi_permission_approval_content(r).to_string()))
+                })
+                .collect();
+            if !rows.is_empty() {
+                let db = state.db.clone();
+                let uid = user.user_id.clone();
+                let _ = tokio::task::spawn_blocking(move || -> Result<(), rusqlite::Error> {
+                    let conn = db.connect()?;
+                    for (id, content) in rows {
+                        conn.execute(
+                            "INSERT OR IGNORE INTO cowork_approvals (id, user_id, content, source) \
+                             VALUES (?1, ?2, ?3, 'gizzi-permission')",
+                            params![id, uid, content],
+                        )?;
+                    }
+                    Ok(())
+                })
+                .await;
+            }
+            Json(json!({ "permissions": filtered })).into_response()
         }
         Err(response) => response,
     }
