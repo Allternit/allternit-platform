@@ -152,6 +152,8 @@ for (const mdxPath of collectMdxFiles(DOCS_DIR)) {
       // Native session pickup names the other CLIs; that page is the catalog.
       if (mdxPath.endsWith('cli/native-sessions.mdx')) continue;
       if (mdxPath.endsWith('cli/session.mdx')) continue;
+      // The chat composer explains which installed CLI brains ask questions with the same card.
+      if (mdxPath.endsWith('guides/chat-composer.mdx')) continue;
       // Subscription setup and its workflow index must name the supported providers.
       if (mdxPath.endsWith('surfaces/subscriptions.mdx')) continue;
       // Always-on bots explains fallback brains with real provider/model ids.
