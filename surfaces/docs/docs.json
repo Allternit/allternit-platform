@@ -130,6 +130,12 @@
             "icon": "/icons/window.svg"
           },
           {
+            "group": "Code mode",
+            "pages": [
+              "code/cloud-environments"
+            ]
+          },
+          {
             "group": "Architecture",
             "pages": [
               "architecture",
@@ -745,7 +751,8 @@
               "api/memory-reconstruction",
               "api/checkpoints",
               "api/enrollment",
-              "api/team-skills"
+              "api/team-skills",
+              "api/code-environments"
             ],
             "icon": "/icons/agent.svg"
           },
