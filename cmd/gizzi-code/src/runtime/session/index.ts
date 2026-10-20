@@ -29,6 +29,7 @@ import { PermissionNext } from "@/runtime/tools/guard/permission/next"
 import { Global } from "@/runtime/context/global"
 import type { LanguageModelV2Usage } from "@ai-sdk/provider"
 import { iife } from "@/shared/util/iife"
+import { SecretRedactor } from "@/runtime/session/environment/redactor"
 
 export namespace Session {
   const log = Log.create({ service: "session" })
@@ -70,6 +71,7 @@ export namespace Session {
       handoff: row.handoff ?? undefined,
       paused: row.paused ?? undefined,
       limit: row.limit_state ?? undefined,
+      environment: row.environment ?? undefined,
       title: row.title,
       version: row.version,
       summary,
@@ -118,6 +120,7 @@ export namespace Session {
       handoff: info.handoff ?? null,
       paused: info.paused ?? null,
       limit_state: info.limit ?? null,
+      environment: info.environment ?? null,
       slug: info.slug,
       directory: info.directory,
       title: info.title,
@@ -205,6 +208,22 @@ export namespace Session {
           label: z.string(),
           usedRatio: z.number(),
           resetAt: z.number().optional(),
+          at: z.number(),
+        })
+        .optional(),
+      /**
+       * Cloud code environment the session starts in (Contract C): status of
+       * applying it (connecting → setting_up → ready | failed), the repos to
+       * clone and the folders they landed in. Absent on local sessions.
+       */
+      environment: z
+        .object({
+          id: z.string(),
+          name: z.string(),
+          status: z.enum(["connecting", "setting_up", "ready", "failed"]),
+          error: z.string().optional(),
+          repos: z.array(z.object({ url: z.string(), branch: z.string().optional() })).optional(),
+          dirs: z.array(z.string()).optional(),
           at: z.number(),
         })
         .optional(),
@@ -359,6 +378,19 @@ export namespace Session {
         error: MessageV2.Assistant.shape.error,
       }),
     ),
+    /** Where applying a session's cloud environment stands (Contract C). */
+    EnvironmentUpdated: BusEvent.define(
+      "session.environment.updated",
+      z.object({
+        sessionID: z.string(),
+        environment: z.object({
+          id: z.string(),
+          name: z.string(),
+          status: z.enum(["connecting", "setting_up", "ready", "failed"]),
+          error: z.string().optional(),
+        }),
+      }),
+    ),
     ModelFallback: BusEvent.define(
       "session.model_fallback",
       z.object({
@@ -387,6 +419,10 @@ export namespace Session {
         harness: Info.shape.harness,
         defaultModel: Info.shape.defaultModel,
         defaultModelSource: Info.shape.defaultModelSource,
+        /** Cloud code environment to start in (applied before the first turn). */
+        environmentId: z.string().min(1).optional(),
+        /** Repos to clone into the workspace; override the environment's repos when given. */
+        repos: z.array(z.object({ url: z.string().min(1), branch: z.string().optional() })).optional(),
       })
       .optional(),
     async (input) => {
@@ -400,6 +436,15 @@ export namespace Session {
         harness: input?.harness,
         defaultModel: input?.defaultModel,
         defaultModelSource: input?.defaultModelSource,
+        environment: input?.environmentId
+          ? {
+              id: input.environmentId,
+              name: "",
+              status: "connecting",
+              repos: input.repos && input.repos.length > 0 ? input.repos : undefined,
+              at: Date.now(),
+            }
+          : undefined,
       })
     },
   )
@@ -474,6 +519,7 @@ export namespace Session {
     defaultModelSource?: Info["defaultModelSource"]
     sourceRef?: Info["sourceRef"]
     continuesFrom?: string
+    environment?: Info["environment"]
   }) {
     const result: Info = {
       id: Identifier.descending("session", input.id),
@@ -491,6 +537,7 @@ export namespace Session {
       defaultModelSource: input.defaultModelSource,
       sourceRef: input.sourceRef,
       continuesFrom: input.continuesFrom,
+      environment: input.environment,
       time: {
         created: Date.now(),
         updated: Date.now(),
@@ -693,6 +740,32 @@ export namespace Session {
       if (!row) throw new NotFoundError({ message: `Session not found: ${input.sessionID}` })
       const info = fromRow(row)
       Database.effect(() => Bus.publish(Event.Updated, { info }))
+      return info
+    })
+  }
+
+  /**
+   * Record where applying the session's cloud environment stands, and tell
+   * clients (session.updated + session.environment.updated).
+   */
+  export function setEnvironment(input: { sessionID: string; environment: NonNullable<Info["environment"]> }) {
+    return Database.use((db) => {
+      const row = db
+        .update(SessionTable)
+        .set({ environment: input.environment, time_updated: Date.now() })
+        .where(eq(SessionTable.id, input.sessionID))
+        .returning()
+        .get()
+      if (!row) throw new NotFoundError({ message: `Session not found: ${input.sessionID}` })
+      const info = fromRow(row)
+      const env = input.environment
+      Database.effect(() => {
+        Bus.publish(Event.Updated, { info })
+        Bus.publish(Event.EnvironmentUpdated, {
+          sessionID: input.sessionID,
+          environment: { id: env.id, name: env.name, status: env.status, ...(env.error ? { error: env.error } : {}) },
+        })
+      })
       return info
     })
   }
@@ -969,6 +1042,10 @@ export namespace Session {
         .then(({ Scratchpad }) => Scratchpad.cleanup(sessionID, !session.parentID))
         .catch((error) => log.warn("failed to clean session scratchpad", { sessionID, error }))
       await unshare(sessionID).catch(() => {})
+      // Cloud environment: close its egress proxy, forget its secrets.
+      await import("@/runtime/session/environment/runtime-state")
+        .then(({ EnvironmentRuntime }) => EnvironmentRuntime.dispose(sessionID))
+        .catch(() => {})
       await import("@/runtime/session/context-breakdown-store")
         .then(({ ContextBreakdownStore }) => ContextBreakdownStore.remove(sessionID))
         .catch(() => {})
@@ -990,7 +1067,9 @@ export namespace Session {
     }
   })
 
-  export const updateMessage = fn(MessageV2.Info, async (msg) => {
+  export const updateMessage = fn(MessageV2.Info, async (input) => {
+    // Cloud environment secrets never reach storage, the bus or the model.
+    const msg = SecretRedactor.deep(input)
     const time_created = msg.time.created
     const { id, sessionID, ...data } = msg
     Database.use((db) => {
@@ -1069,7 +1148,9 @@ export namespace Session {
 
   const UpdatePartInput = MessageV2.Part
 
-  export const updatePart = fn(UpdatePartInput, async (part) => {
+  export const updatePart = fn(UpdatePartInput, async (input) => {
+    // Cloud environment secrets never reach storage, the bus or the model.
+    const part = SecretRedactor.deep(input)
     const { id, messageID, sessionID, ...data } = part
     const time = Date.now()
     Database.use((db) => {
@@ -1098,7 +1179,10 @@ export namespace Session {
       field: z.string(),
       delta: z.string(),
     }),
-    async (input) => {
+    async (raw) => {
+      // A secret split across two deltas can slip through a delta; the part's
+      // final updatePart is redacted whole, which is what is stored.
+      const input = SecretRedactor.active() ? { ...raw, delta: SecretRedactor.text(raw.delta) } : raw
       const traceSeq = SessionTrace.append({
         sessionID: input.sessionID,
         kind: "part.delta",

@@ -54,6 +54,8 @@ import { TaskTool } from "@/runtime/tools/builtins/task"
 import { Tool } from "@/runtime/tools/builtins/tool"
 import { PermissionNext } from "@/runtime/tools/guard/permission/next"
 import { SessionStatus } from "@/runtime/session/status"
+import { SecretRedactor } from "@/runtime/session/environment/redactor"
+import { EnvironmentRuntime } from "@/runtime/session/environment/runtime-state"
 import { GoalEngine } from "@/runtime/automation/goal-engine"
 import { KernelTurn } from "@/runtime/kernel/compilers/turn-hook"
 import { ToolValidationRetry } from "@/runtime/tools/validation-retry"
@@ -314,6 +316,15 @@ const message = await createUserMessage(input)
     // resumes; one about to run into a limit lands here instead of failing.
     if (await holdForLimit(session, input.model)) return message
 
+    // Cloud code environment (Contract C): resolve it, clone its repos and
+    // run its setup script before the first agent turn. A failure ends this
+    // turn with the error instead of running the agent without its setup.
+    // Local sessions (no environment) never load this module.
+    if (session.environment) {
+      const blocked = await applyEnvironment(session, message)
+      if (blocked) return blocked
+    }
+
     // Bot Mode: interactive turns (user chat or teammate DM pickup) carry the
     // first-response preamble in the persona injection; routine deliveries
     // (`[routine: …]` marker) and delegated subtask turns stay quiet.
@@ -331,6 +342,56 @@ const message = await createUserMessage(input)
       releaseMcpProxy()
     }
   })
+
+  // Cancelling a session while its environment is being set up stops the setup.
+  const setupAborts = new Map<string, AbortController>()
+
+  /** Apply the session's cloud environment; returns the message to end the turn with when it failed. */
+  async function applyEnvironment(
+    session: Session.Info,
+    message: MessageV2.WithParts,
+  ): Promise<MessageV2.WithParts | undefined> {
+    const sessionID = session.id
+    const controller = new AbortController()
+    setupAborts.set(sessionID, controller)
+    const needsWork = session.environment?.status !== "ready"
+    if (needsWork) SessionStatus.set(sessionID, { type: "busy" })
+    try {
+      const { SessionEnvironment } = await import("@/runtime/session/environment")
+      const applied = await SessionEnvironment.ensure({
+        session,
+        user: message.info as MessageV2.User,
+        workspace: workdir(sessionID) ?? session.directory,
+        abort: controller.signal,
+      })
+      if (applied.ok) {
+        if (applied.note) {
+          await Session.updatePart({
+            id: Identifier.ascending("part"),
+            sessionID,
+            messageID: message.info.id,
+            type: "text",
+            text: applied.note,
+            synthetic: true,
+          })
+        }
+        return undefined
+      }
+      const error = { name: "EnvironmentSetupError", message: applied.error }
+      Bus.publish(Session.Event.Error, { sessionID, error })
+      SessionStatus.set(sessionID, { type: "idle" })
+      return applied.message ?? message
+    } catch (error) {
+      // Never let environment setup take the server down: fail this turn only.
+      const text = error instanceof Error ? error.message : String(error)
+      log.error("environment setup crashed", { sessionID, error: text })
+      Bus.publish(Session.Event.Error, { sessionID, error: { name: "EnvironmentSetupError", message: text } })
+      SessionStatus.set(sessionID, { type: "idle" })
+      return message
+    } finally {
+      if (setupAborts.get(sessionID) === controller) setupAborts.delete(sessionID)
+    }
+  }
 
   /** The wrap-up instruction a turn gets once it crosses land_at. */
   export function wrapUpReminder(window: { label: string; source: string; resetAt: string }): string {
@@ -495,6 +556,7 @@ const message = await createUserMessage(input)
 
   export function cancel(sessionID: string) {
     log.info("cancel", { sessionID })
+    setupAborts.get(sessionID)?.abort()
     const s = state()
     const match = s[sessionID]
     if (!match) {
@@ -1476,8 +1538,9 @@ const message = await createUserMessage(input)
                 run: () => ToolDispatcher.executeInitialized(item.id, args, ctx, item.execute),
               }),
           )
+          // Cloud environment secrets are hidden before the model sees output.
           const output = {
-            ...result,
+            ...SecretRedactor.deep(result),
             attachments: result.attachments?.map((attachment) => ({
               ...attachment,
               id: Identifier.ascending("part"),
@@ -1659,7 +1722,7 @@ const message = await createUserMessage(input)
           }
         }
 
-        const truncated = await Truncate.output(textParts.join("\n\n"), {}, input.agent)
+        const truncated = await Truncate.output(SecretRedactor.text(textParts.join("\n\n")), {}, input.agent)
         const metadata = {
           ...(result.metadata ?? {}),
           // MCP Apps: the host needs the untouched result (structuredContent, _meta) and the
@@ -1686,7 +1749,7 @@ const message = await createUserMessage(input)
           // result spills, expose one bounded text part and preserve only
           // non-text media/resource parts; the complete text remains at
           // metadata.outputPath.
-          content: Truncate.modelContent(result.content as Truncate.ModelContentItem[], truncated),
+          content: SecretRedactor.deep(Truncate.modelContent(result.content as Truncate.ModelContentItem[], truncated)),
         }
       }
       tools[key] = item
@@ -2529,6 +2592,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       env: {
         ...process.env,
         ...shellEnv.env,
+        // Cloud environment variables, secrets and network-policy proxy ({} for local sessions).
+        ...EnvironmentRuntime.toolEnv(input.sessionID),
         TERM: "dumb",
       },
     })

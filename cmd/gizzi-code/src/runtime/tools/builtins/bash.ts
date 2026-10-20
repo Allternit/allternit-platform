@@ -27,6 +27,7 @@ import { Sandbox } from "@/runtime/integrations/shell/sandbox"
 import { VmSession } from "@/runtime/context/vm/vm-session"
 import { BackgroundTask } from "@/runtime/session/background-task"
 import { Identifier } from "@/shared/id/id"
+import { EnvironmentRuntime } from "@/runtime/session/environment/runtime-state"
 
 const MAX_METADATA_LENGTH = 30_000
 const DEFAULT_TIMEOUT = Flag.GIZZI_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS || 2 * 60 * 1000
@@ -205,7 +206,10 @@ export const BashTool = Tool.define("bash", async () => {
       // base env, minus anything credential-shaped, plus the user's
       // bash.env_passthrough opt-ins and plugin-provided shell.env values.
       const passthrough = (await Config.get().catch(() => undefined))?.bash?.env_passthrough ?? []
-      const childEnv = ShellEnv.child(process.env, shellEnv.env, passthrough)
+      // A cloud code environment adds its .env vars, secrets and network-policy
+      // proxy here ({} for local sessions).
+      const sessionEnv = EnvironmentRuntime.toolEnv(ctx.sessionID)
+      const childEnv = ShellEnv.child(process.env, { ...shellEnv.env, ...sessionEnv }, passthrough)
 
       // ── VM Session execution ───────────────────────────────────────────────
       // When GIZZI_VM_SESSIONS is enabled (or the session has an active VM),
@@ -257,7 +261,7 @@ export const BashTool = Tool.define("bash", async () => {
             ctx.sessionID,
             params.command,
             {
-              env: shellEnv.env as Record<string, string>,
+              env: { ...(shellEnv.env as Record<string, string>), ...EnvironmentRuntime.toolEnv(ctx.sessionID, { proxy: false }) },
               timeoutSecs: Math.ceil(timeout / 1000),
               workdir: vmWorkdir,
             },
