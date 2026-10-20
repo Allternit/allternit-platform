@@ -972,6 +972,9 @@ export namespace Session {
       await import("@/runtime/session/context-breakdown-store")
         .then(({ ContextBreakdownStore }) => ContextBreakdownStore.remove(sessionID))
         .catch(() => {})
+      await import("@/runtime/session/linked-prs")
+        .then(({ LinkedPRs }) => LinkedPRs.removeSession(sessionID))
+        .catch(() => {})
       // WP-S1U-3: the session's last turn gets its ROUTE_MODEL label now.
       await import("@/runtime/routing/turn-router")
         .then((m) => m.endSession(sessionID, "session_deleted"))
@@ -1087,6 +1090,13 @@ export namespace Session {
       // Database.effect is NOT used here to avoid duplicate events.
     })
     SessionTrace.append({ sessionID, kind: "part.updated", messageID, partID: id, data: part, time })
+    // Linked PRs: a completed `gh pr create` / `git push` / GitHub MCP result
+    // links its PR to the session. Detached and wrapped; never blocks or throws.
+    if (part.type === "tool" && part.state.status === "completed") {
+      void import("@/runtime/session/linked-prs")
+        .then(({ LinkedPRs }) => LinkedPRs.observe(part))
+        .catch(() => {})
+    }
     return part
   })
 

@@ -56,6 +56,7 @@ import { Session } from "@/runtime/session"
 import { SessionPrompt } from "@/runtime/session/prompt"
 import { BackgroundTask } from "@/runtime/session/background-task"
 import { SessionTasks } from "@/runtime/session/session-tasks"
+import { LinkedPRs } from "@/runtime/session/linked-prs"
 import { McpUserProxy } from "@/runtime/tools/mcp/user-proxy"
 import { SessionRevert } from "@/runtime/session/revert"
 import { SessionSummary } from "@/runtime/session/summary"
@@ -380,6 +381,12 @@ export const AgentCompatRoutes = () =>
               session_id: props.parentSessionID ?? null,
               task: props,
             }
+          case "session.prs.updated":
+            return {
+              type: "session_prs",
+              session_id: props.sessionID ?? null,
+              prs: Array.isArray(props.prs) ? props.prs : [],
+            }
           case "session.compacted":
             return {
               type: "session_compacted",
@@ -566,6 +573,13 @@ export const AgentCompatRoutes = () =>
       if (typeof body.text !== "string" || body.text === "") return c.json({ error: "text required" }, 400)
       if (!(await findSession(sessionID))) return c.json({ error: "Session not found" }, 404)
       return c.json(await VendorMessage.append({ sessionID, text: body.text, metadata: body.metadata }))
+    })
+    // Linked PRs for the session row badges (Contract A, read-only mirror).
+    .get("/v1/agent-sessions/:sessionID/prs", async (c) => {
+      const sessionID = c.req.param("sessionID")
+      const prs = await LinkedPRs.list(sessionID)
+      LinkedPRs.refreshStale({ [sessionID]: prs })
+      return c.json({ prs })
     })
     // The surfaces' background-tasks pane (same contract as allternit-api).
     .get("/v1/agent-sessions/:sessionID/tasks", async (c) => {

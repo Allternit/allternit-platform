@@ -28,11 +28,133 @@ import { SessionTrace } from "@/runtime/session/trace"
 import { SessionSupportBundle } from "@/runtime/session/support-bundle"
 import { Scratchpad } from "@/runtime/session/scratchpad"
 import { SessionContextUsage } from "@/runtime/session/context-usage"
+import { LinkedPRs } from "@/runtime/session/linked-prs"
 
 const log = Log.create({ service: "server" })
 
 export const SessionRoutes = lazy(() =>
   new Hono()
+    // Linked PRs (Contract A). The bulk route is registered first so the
+    // literal "/prs" wins over "/:sessionID".
+    .get(
+      "/prs",
+      describeRoute({
+        summary: "List linked PRs for many sessions",
+        description:
+          "Return the GitHub pull requests linked to each session. `ids` is a comma-separated list of session IDs; omit it for every session with linked PRs. Stale statuses refresh in the background and arrive as `session.prs.updated` events.",
+        operationId: "session.prs.bulk",
+        responses: {
+          200: {
+            description: "Linked PRs by session",
+            content: { "application/json": { schema: resolver(z.object({ bySession: z.record(z.string(), LinkedPRs.Info.array()) })) } },
+          },
+        },
+      }),
+      validator("query", z.object({ ids: z.string().optional() })),
+      async (c) => {
+        const { ids } = c.req.valid("query")
+        const wanted = (ids ?? "")
+          .split(",")
+          .map((x) => x.trim())
+          .filter(Boolean)
+          .slice(0, 500)
+        let bySession: Record<string, LinkedPRs.Info[]>
+        if (wanted.length === 0) {
+          bySession = await LinkedPRs.listAll()
+        } else {
+          bySession = {}
+          await Promise.all(
+            wanted.map(async (id) => {
+              bySession[id] = await LinkedPRs.list(id)
+            }),
+          )
+        }
+        LinkedPRs.refreshStale(bySession)
+        return c.json({ bySession })
+      },
+    )
+    .get(
+      "/:sessionID/prs",
+      describeRoute({
+        summary: "List linked PRs",
+        description:
+          "Return the GitHub pull requests this session created, pushed to, or was linked to by hand. Cached statuses are returned immediately; stale ones refresh in the background.",
+        operationId: "session.prs.list",
+        responses: {
+          200: { description: "Linked PRs", content: { "application/json": { schema: resolver(z.object({ prs: LinkedPRs.Info.array() })) } } },
+          ...errors(404),
+        },
+      }),
+      validator("param", z.object({ sessionID: z.string() })),
+      async (c) => {
+        const { sessionID } = c.req.valid("param")
+        await Session.get(sessionID)
+        const prs = await LinkedPRs.list(sessionID)
+        LinkedPRs.refreshStale({ [sessionID]: prs })
+        return c.json({ prs })
+      },
+    )
+    .post(
+      "/:sessionID/prs/refresh",
+      describeRoute({
+        summary: "Refresh linked PRs",
+        description: "Force a status refresh of every linked PR on the session from GitHub, then return the list.",
+        operationId: "session.prs.refresh",
+        responses: {
+          200: { description: "Linked PRs", content: { "application/json": { schema: resolver(z.object({ prs: LinkedPRs.Info.array() })) } } },
+          ...errors(404),
+        },
+      }),
+      validator("param", z.object({ sessionID: z.string() })),
+      async (c) => {
+        const { sessionID } = c.req.valid("param")
+        await Session.get(sessionID)
+        return c.json({ prs: await LinkedPRs.refresh(sessionID) })
+      },
+    )
+    .post(
+      "/:sessionID/prs",
+      describeRoute({
+        summary: "Link a PR",
+        description: "Link a GitHub pull request URL to the session by hand.",
+        operationId: "session.prs.link",
+        responses: {
+          200: { description: "Linked PRs", content: { "application/json": { schema: resolver(z.object({ prs: LinkedPRs.Info.array() })) } } },
+          ...errors(400, 404),
+        },
+      }),
+      validator("param", z.object({ sessionID: z.string() })),
+      validator("json", z.object({ url: z.string() })),
+      async (c) => {
+        const { sessionID } = c.req.valid("param")
+        const { url } = c.req.valid("json")
+        await Session.get(sessionID)
+        const prs = await LinkedPRs.link(sessionID, url)
+        if (!prs) return c.json({ error: "Not a GitHub pull request URL (https://github.com/<owner>/<repo>/pull/<number>)" }, 400)
+        return c.json({ prs })
+      },
+    )
+    .delete(
+      "/:sessionID/prs",
+      describeRoute({
+        summary: "Unlink a PR",
+        description: "Remove a linked pull request from the session. `url` is the PR URL.",
+        operationId: "session.prs.unlink",
+        responses: {
+          200: { description: "Linked PRs", content: { "application/json": { schema: resolver(z.object({ prs: LinkedPRs.Info.array() })) } } },
+          ...errors(400, 404),
+        },
+      }),
+      validator("param", z.object({ sessionID: z.string() })),
+      validator("query", z.object({ url: z.string().optional() })),
+      async (c) => {
+        const { sessionID } = c.req.valid("param")
+        const { url } = c.req.valid("query")
+        if (!url) return c.json({ error: "url query parameter required" }, 400)
+        await Session.get(sessionID)
+        return c.json({ prs: await LinkedPRs.unlink(sessionID, url) })
+      },
+    )
     .get(
       "/:sessionID/scratchpad",
       describeRoute({
