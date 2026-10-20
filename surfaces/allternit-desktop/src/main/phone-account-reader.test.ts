@@ -7,6 +7,7 @@ import {
   parseResetTime,
   parseUsageWindows,
   pickTap,
+  onHomeScreen,
   pickTextTap,
   PhoneAccountScheduler,
   readLinkedAccount,
@@ -341,56 +342,76 @@ describe('readLinkedAccount', () => {
 });
 
 describe('PhoneAccountScheduler', () => {
+  const T0 = Date.parse('2026-10-18T12:00:00Z');
   const base = (over: Partial<PhoneLinkApp> = {}): LinkedPhone => ({
     deviceId: 'and-1',
     platform: 'android',
     storeKey: 'k',
     apps: [
-      { vendor: 'claude', signedIn: true, category: 'AI chat', ...over },
-      { vendor: 'slack', signedIn: true, category: 'Communication' },
-      { vendor: 'chatgpt', signedIn: false, category: 'AI chat' },
+      { vendor: 'claude', signedIn: true, category: 'AI chat', accountCheckedAt: '2026-10-18T11:00:00Z', ...over },
+      { vendor: 'slack', signedIn: true, category: 'Communication', accountCheckedAt: '2026-10-17T11:00:00Z' },
+      { vendor: 'chatgpt', signedIn: false, category: 'AI chat', accountCheckedAt: '2026-10-17T11:00:00Z' },
+      { vendor: 'notion', signedIn: null, category: 'Productivity' },
     ],
   });
+  const ok = { ok: true, account: null, plan: null, usage: null } as PhoneLinkAccountResult;
 
-  it('checks every app on the phone, signed in or not, one per tick, then waits 6 h', async () => {
-    let t = Date.parse('2026-10-18T12:00:00Z');
+  it('checks a new app once, re-reads only signed-in AI chat apps every 6 h, never other apps on a timer', async () => {
+    let t = T0;
     const read: string[] = [];
-    const s = new PhoneAccountScheduler({
-      phones: () => [base()],
-      health: () => healthy,
-      busy: () => false,
-      read: async (o) => {
-        read.push(o.app);
-        return { ok: true, account: null, plan: null, usage: null } as PhoneLinkAccountResult;
-      },
-      now: () => t,
-    });
-    expect((await s.tick())?.app).toBe('claude');
-    expect((await s.tick())?.app).toBe('slack');
-    expect((await s.tick())?.app).toBe('chatgpt');
+    const s = new PhoneAccountScheduler({ phones: () => [base()], health: () => healthy, busy: () => false, read: async (o) => (read.push(o.app), ok), now: () => t });
+    expect((await s.tick())?.app).toBe('notion'); // never checked: once
     expect(await s.tick()).toBeNull();
-    t += 6 * 3600_000;
+    t += 5 * 3600_000; // claude last read 11:00 → due at 17:00
     expect((await s.tick())?.app).toBe('claude');
-    expect(read).toEqual(['claude', 'slack', 'chatgpt', 'claude']);
+    t += 3 * 24 * 3600_000;
+    expect((await s.tick())?.app).toBe('claude'); // slack and the signed-out chatgpt: never on a timer
+    expect(await s.tick()).toBeNull();
+    expect(read).toEqual(['notion', 'claude', 'claude']);
   });
 
-  it('skips locked, unhealthy and busy phones, and fresh reads', async () => {
+  it('waits until the phone has sat on its Home screen a few minutes; a Check in the wizard reads at once', async () => {
+    let t = T0 + 6 * 3600_000;
+    let home = false;
+    const read: string[] = [];
+    const s = new PhoneAccountScheduler({
+      phones: () => [base({ accountCheckedAt: '2026-10-18T11:00:00Z' })],
+      health: () => healthy,
+      busy: () => false,
+      read: async (o) => (read.push(o.app), ok),
+      now: () => t,
+      atHome: async () => home,
+      idleMs: 4 * 60_000,
+    });
+    expect(await s.tick()).toBeNull(); // in an app: wait
+    home = true;
+    expect(await s.tick()).toBeNull(); // on Home: the clock starts
+    t += 5 * 60_000;
+    expect((await s.tick())?.app).toBe('claude'); // usage app, 6 h since its last read
+    s.kick('and-1', 'slack');
+    home = false;
+    expect((await s.tick())?.app).toBe('slack'); // just signed in through the wizard: read now
+    expect(await s.tick()).toBeNull(); // notion still waits for an idle phone
+    expect(read).toEqual(['claude', 'slack']);
+  });
+
+  it('skips locked, unhealthy and busy phones', async () => {
     const mk = (health: PhoneLinkHealth['state'], busy: boolean, phone: LinkedPhone = base()) =>
-      new PhoneAccountScheduler({
-        phones: () => [phone],
-        health: () => ({ ...healthy, state: health }),
-        busy: () => busy,
-        read: async () => ({ ok: true, account: null, plan: null, usage: null }),
-        now: () => Date.parse('2026-10-18T12:00:00Z'),
-      });
+      new PhoneAccountScheduler({ phones: () => [phone], health: () => ({ ...healthy, state: health }), busy: () => busy, read: async () => ok, now: () => T0 });
     expect(mk('DEVICE_LOCKED', false).due()).toBeNull();
     expect(mk('ACCESSIBILITY_OFF', false).due()).toBeNull();
     expect(mk('HEALTHY', true).due()).toBeNull();
-    expect(mk('HEALTHY', false, base({ accountCheckedAt: '2026-10-18T10:00:00Z' })).due()).toEqual({ deviceId: 'and-1', app: 'slack' });
-    expect(mk('HEALTHY', false).due()).toEqual({ deviceId: 'and-1', app: 'claude' });
+    expect(mk('HEALTHY', false).due()).toEqual({ deviceId: 'and-1', app: 'notion', forced: false });
     // A renewal warning while the signature is still valid: the phone works.
-    expect(mk('SIGNATURE_RENEWAL_REQUIRED', false, { ...base(), expiresAt: '2026-10-19T08:00:00Z' }).due()).toEqual({ deviceId: 'and-1', app: 'claude' });
+    expect(mk('SIGNATURE_RENEWAL_REQUIRED', false, { ...base(), expiresAt: '2026-10-19T08:00:00Z' }).due()).toEqual({ deviceId: 'and-1', app: 'notion', forced: false });
     expect(mk('SIGNATURE_RENEWAL_REQUIRED', false, { ...base(), expiresAt: '2026-10-18T08:00:00Z' }).due()).toBeNull();
+  });
+
+  it('knows a Home screen from an app on both platforms', () => {
+    expect(onHomeScreen("Window, {{0, 0}, {393, 852}}\n  Other, {{0, 0}, {393, 852}}\n    Icon, label: 'Weather', {{20, 80}, {64, 64}}", 'ios')).toBe(true);
+    expect(onHomeScreen("Application, label: 'ChatGPT', {{0, 0}, {393, 852}}\n  Window, {{0, 0}, {393, 852}}", 'ios')).toBe(false);
+    expect(onHomeScreen("Window(application), {{0, 0}, {720, 1600}}, package: 'com.motorola.launcher3'", 'android')).toBe(true);
+    expect(onHomeScreen("Window(application), {{0, 0}, {720, 1600}}, package: 'com.discord'", 'android')).toBe(false);
   });
 });
 

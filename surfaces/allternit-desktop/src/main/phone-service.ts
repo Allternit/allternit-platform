@@ -79,7 +79,7 @@ import { PhoneLinkHealthMonitor } from './phone-link-health.js';
 import { PhoneChannelReader, type ChannelConversation, type ReaderResult, type ScreenRecorder } from './phone-channel-readers.js';
 import type { PhoneLinkDevice, PhoneLinkHandoverResult, PhoneLinkHandoverTarget } from './phone-link-types.js';
 import { checkLinkedApp, openLinkedApp, type PhoneLinkAppResult } from './phone-app-signin.js';
-import { PhoneAccountScheduler, readLinkedAccount, type PhoneLinkAccountResult } from './phone-account-reader.js';
+import { onHomeScreen, PhoneAccountScheduler, readLinkedAccount, type PhoneLinkAccountResult } from './phone-account-reader.js';
 import { readSecret, writeSecret, deleteSecret } from './secure-store.js';
 import {
   PhoneToolRunner,
@@ -471,7 +471,7 @@ class PhoneService {
     return this.ensureLinkedBackend().botBusy(deviceId) || this.linkConsumers.has(LINK_SERIAL_PREFIX + deviceId);
   }
 
-  /** Background checks: every app on each linked phone every 6 h, one app at a time (phone-account-reader.ts). */
+  /** Background checks: each app once, signed-in AI chat apps every 6 h, only while the phone idles on Home (phone-account-reader.ts). */
   private ensureAccountScheduler(): PhoneAccountScheduler {
     if (!this.accountScheduler) {
       const backend = this.ensureLinkedBackend();
@@ -480,6 +480,12 @@ class PhoneService {
         health: (deviceId) => backend.healthOf(deviceId),
         busy: (deviceId) => this.linkedPhoneBusy(deviceId),
         read: (opts) => this.readLinkedAccount(opts),
+        atHome: async (deviceId) => {
+          const phone = backend.linkedPhones().find((p) => p.deviceId === deviceId);
+          if (!phone) return false;
+          const tree = await backend.call('phone.read_ui', LINK_SERIAL_PREFIX + deviceId, { visible_only: true, max_elements: 40 });
+          return tree.ok && onHomeScreen(String(tree.text ?? ''), phone.platform);
+        },
         logger: (m) => log.info(m),
       });
       this.accountScheduler.start();
@@ -1174,7 +1180,7 @@ class PhoneService {
     // Relay sockets for linked phones (iPhone video, Android through Phone Link) without the adb lane.
     this.ensureLinkSync();
     if (this.androidRecords().length > 0) this.ensureScreenKeeper();
-    // Account, plan and usage for signed-in AI chat apps: right after linking, then every 6 h.
+    // Apps never checked get their one check soon (when the phone is idle); AI chat usage then every 6 h.
     this.ensureAccountScheduler().kick();
   }
 
