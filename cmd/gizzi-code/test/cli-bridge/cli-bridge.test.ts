@@ -168,3 +168,13 @@ describe("plan turns on a CLI", () => {
     expect(names).not.toContain(CLI_PERMISSION_TOOL)
   })
 })
+
+describe("acpErrorMessage", () => {
+  test("a JSON-RPC error object reads as its message, not [object Object]", async () => {
+    const { acpErrorMessage } = await import("../../src/runtime/drivers/local-cli-driver")
+    expect(acpErrorMessage({ code: -32000, message: "Authentication required: 403 upgrade your plan" })).toBe(
+      "Authentication required: 403 upgrade your plan",
+    )
+    expect(acpErrorMessage({ code: 1 })).toBe('{"code":1}')
+  })
+})
