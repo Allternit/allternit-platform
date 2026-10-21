@@ -49,6 +49,7 @@ import { PermissionProfileCommand } from "@/cli/commands/permission-profile"
 import { RemoteCommand } from "@/cli/commands/remote"
 import { CronLegacyStartCommand } from "@/cli/commands/cron"
 import { AgentsCommand } from "@/cli/commands/factory/agents"
+import { TeamCommand } from "@/cli/commands/team"
 import { OrchestrationCommand } from "@/cli/commands/factory/orchestration"
 import { WorkflowsCommand } from "@/cli/commands/factory/workflows"
 import { WorkspaceCommand } from "@/cli/commands/factory/workspace"
@@ -78,6 +79,7 @@ export const COMMANDS: RegisteredCommand[] = [
   // commands (agent, agent-hub, runtime, bot, thread, mail, ac, cron,
   // cowork, cowork-team) are folded in under these.
   AgentsCommand,
+  TeamCommand,
   OrchestrationCommand,
   WorkflowsCommand,
   WorkspaceCommand,
