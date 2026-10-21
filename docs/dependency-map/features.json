@@ -1155,7 +1155,7 @@
       "label": "Artifact tools for every model (Artifacts v2)",
       "product": "product:gizzi-code",
       "status": "building",
-      "description": "artifact_create / artifact_update / artifact_read built into gizzi-code for every model, and for CLI agents over the session MCP bridge. They save to cloud-api /api/v2/artifacts with the session's credential; without one, the result carries the full payload with persisted:false and the app saves it under the same id.",
+      "description": "artifact_create / artifact_update / artifact_read (plus artifact_suggest, list, comment, share, delete, storage) built into gizzi-code for every model, and for CLI agents over the session MCP bridge. They save to cloud-api /api/v2/artifacts with the session's credential; without one, the result carries the full payload with persisted:false and the app saves it under the same id.",
       "touches": [
         "allternit/cmd/gizzi-code/src/runtime/tools",
         "allternit/cmd/gizzi-code/src/runtime/integrations",
@@ -1170,6 +1170,34 @@
       "evidence": [
         "allternit/docs/design/artifacts-v2.md",
         "allternit/surfaces/docs/tools/artifact-tools.mdx"
+      ]
+    },
+    {
+      "id": "feature:artifact-agent-watch",
+      "label": "Watch your agents work (agent presence, cursors, suggestions)",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "Doc and sheet artifacts show the agents working in them on Desktop, the ai.allternit.com phone layout and the m.allternit.com PWA: agent avatars in the header presence stack with an \"N here\" count and the agents' running cost, a labelled cursor on the block or cell an agent works on (name, cost, task), agent edits as pending suggestions with Accept / Reject and \"N suggestions · $X · Accept all\", agent comments under the agent's name, and live reload when an agent saves. gizzi's artifact_suggest posts the suggestions (text, block and cell change shapes) and artifact_read / artifact_update / artifact_suggest / artifact_comment send best-effort agent presence heartbeats with the bot or agent name, a task line, the anchor and the session cost. cloud-api stores agent presence rows, comment agent_name and artifact_suggestions (migration 096); the app applies accepted changes and saves the version, the server never rewrites bodies. In the Cowork Docs pane agent edits become tracked changes under the agent's name.",
+      "touches": [
+        "allternit/cmd/gizzi-code/src/runtime/tools",
+        "allternit/cmd/gizzi-code/src/runtime/integrations",
+        "allternit/cmd/allternit-cloud-api/src/routes/artifacts_*",
+        "allternit-ai/src/lib/artifacts",
+        "allternit-ai/src/components/artifacts",
+        "allternit-ai/src/views/cowork"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-20",
+          "note": "Eoj: reuse what exists and add it in the right parts (idea from the affectUI demo). Agent edits to existing doc/sheet content are suggestions, not direct writes; artifact_update stays for new content, other kinds, or when the user asked to apply directly. Accepting is the client's job (apply, save a version, PATCH accepted; a change that no longer applies is marked stale). Agent presence needs edit access and uses user_id agent:<session>:<slug>. Heartbeats are fire and forget with a 2.5 s timeout and never fail the tool; agent name = the bot the turn runs as, else the gizzi bot whose canonical chat it is, else Gizzi; cost = SessionUsage session total, left out when nothing was metered."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/artifact-collaboration.mdx",
+        "allternit/surfaces/docs/tools/artifact-tools.mdx",
+        "allternit/surfaces/docs/api/artifacts-v2.mdx",
+        "allternit/cmd/gizzi-code/src/runtime/tools/builtins/artifact.ts",
+        "allternit/cmd/gizzi-code/src/runtime/integrations/artifacts/index.ts"
       ]
     },
     {

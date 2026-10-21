@@ -2,3 +2,4 @@ Read an artifact's content: its kind, title, body format, current version number
 
 - id: the artifact id (starts with "art_").
 - version: optional; a specific earlier version. Leave it out for the latest.
+- task: optional short line shown to the user while you work in it, e.g. "Checking the dates".

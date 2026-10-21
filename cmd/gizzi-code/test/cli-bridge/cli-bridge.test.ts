@@ -29,6 +29,7 @@ describe("CliBridge MCP server", () => {
       "todowrite",
       "artifact_create",
       "artifact_update",
+      "artifact_suggest",
       "artifact_read",
       "artifact_list",
       "artifact_delete",

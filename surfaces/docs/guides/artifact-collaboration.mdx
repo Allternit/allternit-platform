@@ -1,6 +1,6 @@
 ---
 title: Comments, presence and versions
-description: Comment on a doc, deck, sheet or design, mention Allternit to reply or edit, see who else has it open, and what each sharing level allows.
+description: Comment on a doc, deck, sheet or design, mention Allternit to reply or edit, see who else has it open, watch agents work and review their suggestions, and what each sharing level allows.
 ---
 
 ## Comments
@@ -61,6 +61,47 @@ org; the avatars then don't appear.
 The overlapping avatars **inside** the compact Share control describe saved
 access, including the owner. They are separate from live presence and do not
 mean those people are currently online.
+
+## Watch agents work
+
+When an agent (Gizzi, or one of your bots) reads or edits a doc or sheet you
+have open, you see it working there.
+
+- **In the header.** The agent's avatar joins the presence avatars, with a
+  ring while it edits. The label shows how many are here, people and agents
+  together (**3 here**), and the agents' model cost so far (**$0.43**) when it
+  is known. Hover or focus the avatars for each agent's name and what it is
+  doing.
+- **Cursors.** A labelled cursor sits on the block or cell the agent is
+  working on. It shows the agent's name, its cost so far and a short task
+  line, such as "Fixing the date". It moves as the agent moves on, and it
+  doesn't move with an animation when your system asks for reduced motion.
+- **Suggestions.** When an agent changes content that is already there, the
+  change arrives as a suggestion; nothing in your artifact changes yet. The
+  spot is highlighted in the agent's colour. Click it, or press Enter on it,
+  to see the agent, its reason, the old text struck through and the new text
+  underlined, then choose **Accept** or **Reject**. Esc closes it. On a phone
+  this opens as a sheet from the bottom of the screen.
+- **Accept all.** While suggestions are waiting, the header shows
+  **N suggestions · $X · Accept all** (**N · Accept all** on a phone).
+  Accept all applies them in order and saves one version, noted with the
+  agents' names. A suggestion that no longer fits, because you or someone
+  else already changed that text or cell, is marked out of date and skipped.
+- **Agent comments.** When an agent asks a question in the comments, the
+  comment appears under the agent's name and avatar, not yours.
+- **Live refresh.** When an agent saves a new version of an artifact you have
+  open, it reloads. If you have unsaved edits it doesn't; a small notice says
+  **Updated by** the agent, with **Reload**.
+
+Agents save directly (a new version, no suggestions) when they create new
+content, work on other kinds of artifacts, or when you asked them to apply a
+change directly. Everything they save is in the version history, so you can
+go back. Seeing agents needs you to be signed in, and an agent can only make
+suggestions on an artifact you can edit.
+
+In the Docs editor in a Cowork pane, an agent's edits appear as tracked
+changes under the agent's name, and you accept or reject them with the
+editor's own tracked-changes controls.
 
 ## Versions
 

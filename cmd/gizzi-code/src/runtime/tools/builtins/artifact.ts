@@ -6,6 +6,8 @@ import type { MessageV2 } from "@/runtime/session/message-v2"
 import CREATE_DESCRIPTION from "@/runtime/tools/builtins/artifact-create.txt"
 import UPDATE_DESCRIPTION from "@/runtime/tools/builtins/artifact-update.txt"
 import READ_DESCRIPTION from "@/runtime/tools/builtins/artifact-read.txt"
+import SUGGEST_DESCRIPTION from "@/runtime/tools/builtins/artifact-suggest.txt"
+import * as BotTurn from "@/runtime/bots/bot-turn"
 
 /**
  * Artifacts v2 model tools (docs/design/artifacts-v2.md §5). Every result's
@@ -43,6 +45,105 @@ async function transcript(ctx: Tool.Context): Promise<MessageV2.WithParts[]> {
     return []
   }
 }
+
+// ------------------------------------------------------------ agent watch
+
+/** The name used when the session isn't one of the user's bots. */
+export const DEFAULT_AGENT_NAME = "Gizzi"
+
+/** Resolve within `ms`, else undefined; never rejects. */
+async function within<T>(ms: number, work: () => Promise<T>): Promise<T | undefined> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      work().catch(() => undefined),
+      new Promise<undefined>((resolve) => {
+        timer = setTimeout(() => resolve(undefined), ms)
+      }),
+    ])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
+
+/**
+ * The running agent's display name: the bot this turn runs as (the `bot`
+ * marker allternit-api puts on the turn), else the gizzi bot whose canonical
+ * chat this session is, else "Gizzi".
+ */
+export async function agentName(ctx: Tool.Context): Promise<string> {
+  const marked = BotTurn.resolve(ctx.sessionID, ctx.messages ?? [])?.name?.trim()
+  if (marked) return marked
+  const bot = await within(300, async () => {
+    const { findBotByCanonicalSession } = await import("@/runtime/bots/canonical-chat")
+    return findBotByCanonicalSession(ctx.sessionID)
+  })
+  return bot?.title?.trim() || bot?.name?.trim() || DEFAULT_AGENT_NAME
+}
+
+/** The session's model cost so far in USD; undefined when nothing was metered (e.g. a subscription CLI brain). */
+export async function sessionCost(sessionID: string): Promise<number | undefined> {
+  const usage = await within(500, async () => {
+    const { SessionUsage } = await import("@/runtime/session/usage")
+    return SessionUsage.getSessionUsage(sessionID)
+  })
+  const cost = usage?.total?.cost
+  return typeof cost === "number" && Number.isFinite(cost) && cost > 0 ? Math.round(cost * 10_000) / 10_000 : undefined
+}
+
+/**
+ * Best-effort agent presence on an artifact: fire and forget. Never throws and
+ * never delays the tool (the name and cost lookups run in the background too).
+ */
+export function heartbeat(
+  ctx: Tool.Context,
+  id: string,
+  input: { state: "viewing" | "editing"; task: string; anchor?: Artifacts.Anchor; name?: string; cost_usd?: number },
+): Promise<boolean> {
+  return (async () => {
+    try {
+      const [name, cost] = await Promise.all([
+        input.name ? Promise.resolve(input.name) : agentName(ctx),
+        input.cost_usd !== undefined ? Promise.resolve(input.cost_usd) : sessionCost(ctx.sessionID),
+      ])
+      return await Artifacts.presence(id, input.state, {
+        name,
+        session_id: ctx.sessionID || undefined,
+        task: input.task,
+        anchor: input.anchor,
+        cost_usd: cost,
+      })
+    } catch {
+      return false
+    }
+  })()
+}
+
+const TaskInput = z.string().max(200).optional()
+
+const ChangeInput = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("text"),
+    block: z.number().int().min(0).nullish().describe("0-based block index; null or left out searches the whole doc"),
+    find: z.string().min(1).max(20_000).describe("The exact text to replace (its first occurrence)"),
+    replace: z.string().max(20_000).describe("The new text"),
+    reason: z.string().max(500).optional().describe("One line the user sees"),
+  }),
+  z.object({
+    kind: z.literal("block"),
+    op: z.enum(["replace", "insert_after", "delete"]),
+    block: z.number().int().min(0).describe("0-based block index"),
+    markdown: z.string().max(20_000).optional().describe("New content as markdown; ignored for delete"),
+    reason: z.string().max(500).optional().describe("One line the user sees"),
+  }),
+  z.object({
+    kind: z.literal("cell"),
+    sheet: z.string().max(200).nullish().describe("Sheet name or id; null or left out = the first sheet"),
+    address: z.string().min(1).max(20).describe("A1-style cell address, e.g. B4"),
+    value: z.string().max(20_000).describe("The new value; starting with = makes it a formula"),
+    reason: z.string().max(500).optional().describe("One line the user sees"),
+  }),
+])
 
 export const ArtifactCreateTool = Tool.define("artifact_create", {
   description: CREATE_DESCRIPTION,
@@ -97,8 +198,10 @@ export const ArtifactUpdateTool = Tool.define("artifact_update", {
     body: z.string().min(1).describe("The complete new content, in the artifact's body format"),
     base_version: z.number().int().min(1).describe("The version this change is based on"),
     note: z.string().max(500).optional().describe("One line on what changed"),
+    task: TaskInput.describe("Short line shown on your cursor while you work, e.g. 'Saving the outline'"),
   }),
   async execute(params, ctx) {
+    void heartbeat(ctx, params.id, { state: "editing", task: params.task?.trim() || "Saving" })
     const known = Artifacts.fromTranscript(await transcript(ctx), params.id)
     if (known && Artifacts.isKind(known.kind)) {
       const invalid = Artifacts.validate(known.kind, known.body_format, params.body)
@@ -125,8 +228,10 @@ export const ArtifactReadTool = Tool.define("artifact_read", {
   parameters: z.object({
     id: z.string().min(1).describe("The artifact id (art_…)"),
     version: z.number().int().min(1).optional().describe("A specific version; latest when left out"),
+    task: TaskInput.describe("Short line shown to the user while you work in it, e.g. 'Checking the dates'"),
   }),
   async execute(params, ctx) {
+    void heartbeat(ctx, params.id, { state: "viewing", task: params.task?.trim() || "Reading" })
     const known = Artifacts.fromTranscript(await transcript(ctx), params.id)
     const artifact = await Artifacts.read({ id: params.id, version: params.version, known }, ctx.abort)
     const body =
@@ -221,14 +326,81 @@ export const ArtifactCommentTool = Tool.define("artifact_comment", {
     id: z.string().min(1).describe("The artifact id (art_…)"),
     body: z.string().min(1).max(10_000).optional().describe("The comment text"),
     parent_id: z.string().optional().describe("Reply to this comment id"),
+    task: TaskInput.describe("Short line shown to the user while you work, e.g. 'Asking about the dates'"),
   }),
   async execute(params, ctx) {
     if (!params.body) {
+      void heartbeat(ctx, params.id, { state: "viewing", task: params.task?.trim() || "Reading comments" })
       const items = await Artifacts.comments(params.id, ctx.abort)
       return { title: `${items.length} comments`, output: JSON.stringify(items, null, 2).slice(0, MAX_MODEL_BODY), metadata: { ok: true, items, comment: undefined as unknown, truncated: false } }
     }
-    const posted = await Artifacts.comment(params.id, { body: params.body, parent_id: params.parent_id }, ctx.abort)
+    const name = await agentName(ctx)
+    void heartbeat(ctx, params.id, { state: "viewing", task: params.task?.trim() || "Asking a question", name })
+    const posted = await Artifacts.comment(
+      params.id,
+      { body: params.body, parent_id: params.parent_id, agent_name: name },
+      ctx.abort,
+    )
     return { title: "Comment posted", output: `Posted${params.parent_id ? " a reply" : " a comment"} on ${params.id}.`, metadata: { ok: true, items: [] as any[], comment: posted as unknown, truncated: false } }
+  },
+})
+
+/** The exact change shape the cloud and the app expect (nullable locations are sent as null). */
+export function normalizeChange(change: z.infer<typeof ChangeInput>): Artifacts.Change {
+  switch (change.kind) {
+    case "text":
+      return { kind: "text", block: change.block ?? null, find: change.find, replace: change.replace }
+    case "block":
+      return change.op === "delete"
+        ? { kind: "block", op: "delete", block: change.block }
+        : { kind: "block", op: change.op, block: change.block, markdown: change.markdown ?? "" }
+    case "cell":
+      return { kind: "cell", sheet: change.sheet ?? null, address: change.address.trim().toUpperCase(), value: change.value }
+  }
+}
+
+export const ArtifactSuggestTool = Tool.define("artifact_suggest", {
+  description: SUGGEST_DESCRIPTION,
+  parameters: z.object({
+    id: z.string().min(1).describe("The artifact id (art_…); a doc or a sheet"),
+    base_version: z.number().int().min(1).describe("The version these changes are based on"),
+    changes: z.array(ChangeInput).min(1).max(50).describe("The changes, in order: text, block or cell"),
+    task: TaskInput.describe("Short line shown on your cursor while you work, e.g. 'Fixing the dates'"),
+  }),
+  async execute(params, ctx) {
+    const [name, cost] = await Promise.all([agentName(ctx), sessionCost(ctx.sessionID)])
+    const changes = params.changes.map((item) => ({
+      change: normalizeChange(item),
+      ...(item.reason?.trim() ? { reason: item.reason.trim() } : {}),
+    }))
+    void heartbeat(ctx, params.id, {
+      state: "editing",
+      task: params.task?.trim() || "Suggesting edits",
+      anchor: Artifacts.anchorOf(changes[0]?.change),
+      name,
+      cost_usd: cost,
+    })
+    const items = await Artifacts.suggest(
+      params.id,
+      {
+        base_version: params.base_version,
+        agent_name: name,
+        ...(ctx.sessionID ? { session_id: ctx.sessionID } : {}),
+        ...(cost !== undefined ? { cost_usd: cost } : {}),
+        changes,
+      },
+      ctx.abort,
+    )
+    const ids = items.map((s) => s.id)
+    return {
+      title: `${ids.length} suggestion${ids.length === 1 ? "" : "s"}`,
+      output: [
+        JSON.stringify({ id: params.id, base_version: params.base_version, suggestion_ids: ids }),
+        `Left ${ids.length} suggestion${ids.length === 1 ? "" : "s"} on ${params.id} as ${name}. Nothing is changed yet: ` +
+          `the user reviews each one and accepts or rejects it. Tell them you left suggestions to review; don't repeat them.`,
+      ].join("\n"),
+      metadata: { ok: true, artifact_id: params.id, agent_name: name, suggestions: items, truncated: false },
+    }
   },
 })
 
@@ -263,6 +435,7 @@ export const ArtifactStorageTool = Tool.define("artifact_storage", {
 export const ARTIFACT_TOOLS = [
   ArtifactCreateTool,
   ArtifactUpdateTool,
+  ArtifactSuggestTool,
   ArtifactReadTool,
   ArtifactListTool,
   ArtifactDeleteTool,

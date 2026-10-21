@@ -169,10 +169,11 @@ export namespace Artifacts {
     path: string,
     body: unknown,
     abort?: AbortSignal,
+    timeoutMs: number = TIMEOUT_MS,
   ): Promise<{ status: number; json: any } | undefined> {
     const list = await tokens()
     if (list.length === 0) return undefined
-    const signal = abort ? AbortSignal.any([abort, AbortSignal.timeout(TIMEOUT_MS)]) : AbortSignal.timeout(TIMEOUT_MS)
+    const signal = abort ? AbortSignal.any([abort, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs)
     for (const token of list) {
       let response: Response
       try {
@@ -428,10 +429,129 @@ export namespace Artifacts {
 
   export async function comment(
     id: string,
-    input: { body: string; parent_id?: string; anchor?: unknown },
+    input: { body: string; parent_id?: string; anchor?: unknown; agent_name?: string },
     abort?: AbortSignal,
   ): Promise<any> {
     return must("POST", `/api/v2/artifacts/${enc(id)}/comments`, input, "post the comment", abort)
+  }
+
+  // ----------------------------------------------------------- agent watch (presence + suggestions)
+
+  /** Where an agent is working: a doc block (0-based index) or a sheet cell. */
+  export type Anchor = { kind: "block"; block: number } | { kind: "cell"; sheet: string | null; address: string }
+
+  /**
+   * One suggested change (SPEC-agent-watch §Change shapes). `text` replaces the
+   * first `find` in block `block` (null = the whole doc, block by block);
+   * `block` replaces / inserts after / deletes a block from markdown; `cell`
+   * sets one sheet cell (a value starting with "=" is a formula).
+   */
+  export type Change =
+    | { kind: "text"; block: number | null; find: string; replace: string }
+    | { kind: "block"; op: "replace" | "insert_after" | "delete"; block: number; markdown?: string }
+    | { kind: "cell"; sheet: string | null; address: string; value: string }
+
+  export interface Suggestion {
+    id: string
+    artifact_id: string
+    base_version: number
+    agent_name: string
+    session_id: string | null
+    change: Change
+    reason: string | null
+    cost_usd: number | null
+    status: "pending" | "accepted" | "rejected" | "stale"
+    created_at: string
+    resolved_at: string | null
+  }
+
+  /** The location a change points at, used as the agent cursor's anchor. */
+  export function anchorOf(change: Change | undefined): Anchor | undefined {
+    if (!change) return undefined
+    if (change.kind === "cell") return { kind: "cell", sheet: change.sheet ?? null, address: change.address }
+    if (typeof change.block === "number") return { kind: "block", block: change.block }
+    return undefined
+  }
+
+  export interface AgentPresence {
+    name: string
+    session_id?: string
+    task?: string
+    anchor?: Anchor
+    cost_usd?: number
+  }
+
+  /** Heartbeats are best effort: a short timeout, and the caller never awaits them. */
+  export const PRESENCE_TIMEOUT_MS = 2_500
+
+  /**
+   * Show the agent in the artifact's presence stack (and its cursor at
+   * `anchor`). Never throws and never rejects; resolves false when nothing was
+   * recorded. GIZZI_ARTIFACT_PRESENCE=0 turns heartbeats off.
+   */
+  export async function presence(
+    id: string,
+    state: "viewing" | "editing" | "left",
+    agent: AgentPresence,
+  ): Promise<boolean> {
+    try {
+      if (["0", "false", "off"].includes((process.env.GIZZI_ARTIFACT_PRESENCE ?? "").toLowerCase())) return false
+      const body = {
+        state,
+        agent: {
+          name: agent.name.slice(0, 100),
+          ...(agent.session_id ? { session_id: agent.session_id } : {}),
+          ...(agent.task ? { task: agent.task.slice(0, 200) } : {}),
+          ...(agent.anchor ? { anchor: agent.anchor } : {}),
+          ...(typeof agent.cost_usd === "number" && Number.isFinite(agent.cost_usd) ? { cost_usd: agent.cost_usd } : {}),
+        },
+      }
+      const res = await cloud("POST", `/api/v2/artifacts/${enc(id)}/presence`, body, undefined, PRESENCE_TIMEOUT_MS)
+      return !!res && res.status < 300
+    } catch (error) {
+      log.debug("artifact presence heartbeat failed", { id, error: String(error) })
+      return false
+    }
+  }
+
+  export class SuggestUnavailableError extends Error {
+    constructor(why: string) {
+      super(
+        `Can't suggest edits: ${why}. Suggestions need the user's Allternit account. ` +
+          `Use artifact_update to save the change directly instead.`,
+      )
+      this.name = "SuggestUnavailableError"
+    }
+  }
+
+  export interface SuggestInput {
+    base_version: number
+    agent_name: string
+    session_id?: string
+    cost_usd?: number
+    changes: Array<{ change: Change; reason?: string }>
+  }
+
+  /** POST pending suggestions for the user to review. Needs the cloud store (no offline fallback). */
+  export async function suggest(id: string, input: SuggestInput, abort?: AbortSignal): Promise<Suggestion[]> {
+    const res = await cloud("POST", `/api/v2/artifacts/${enc(id)}/suggestions`, input, abort)
+    if (!res) throw new SuggestUnavailableError("no Allternit account is signed in here (sign in or pair this device)")
+    if (res.status === 405) throw new SuggestUnavailableError("this Allternit cloud doesn't support suggestions yet")
+    if (res.status === 404) {
+      // Our route's JSON 404 means the artifact; anything else means the route isn't there.
+      if (res.json && typeof res.json === "object" && (res.json.error || res.json.message)) {
+        throw new NotFoundError(id)
+      }
+      throw new SuggestUnavailableError("this Allternit cloud doesn't support suggestions yet")
+    }
+    if (res.status === 409) {
+      const current = typeof res.json?.current_version === "number" ? res.json.current_version : undefined
+      throw new StaleVersionError(id, input.base_version, current)
+    }
+    if (res.status >= 400) {
+      throw new RejectedError(res.status, `The artifact store refused the suggestions: ${errorMessage(res.json, res.status)}`)
+    }
+    return Array.isArray(res.json?.items) ? res.json.items : []
   }
 
   export async function storageList(id: string, scope: "personal" | "shared", prefix: string | undefined, abort?: AbortSignal): Promise<any> {

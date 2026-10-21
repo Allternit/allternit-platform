@@ -1,17 +1,25 @@
 ---
 title: 'Artifact Tools'
-description: 'The artifact_create, artifact_update and artifact_read tools gizzi gives every model for Artifacts v2'
+description: 'The artifact_create, artifact_update, artifact_suggest, artifact_read and related tools gizzi gives every model for Artifacts v2'
 ---
 
 ## Overview
 
-gizzi-code gives every model three built-in tools for **Artifacts v2**: one account-level store of typed artifacts (docs, decks, sheets, designs, dashboards, motion, pages, cards, diagrams, images and code files) that Desktop, ai.allternit.com, the phone layout, the m.allternit.com PWA, cloud computers and gizzi all read and write. The tools behave the same for every model and provider. Any CLI agent that runs inside a gizzi session gets them too, through the session's `allternit` MCP bridge.
+gizzi-code gives every model built-in tools for **Artifacts v2**: one account-level store of typed artifacts (docs, decks, sheets, designs, dashboards, motion, pages, cards, diagrams, images and code files) that Desktop, ai.allternit.com, the phone layout, the m.allternit.com PWA, cloud computers and gizzi all read and write. The tools behave the same for every model and provider. Any CLI agent that runs inside a gizzi session gets them too, through the session's `allternit` MCP bridge.
 
 | Tool | Input | Returns |
 |------|-------|---------|
 | `artifact_create` | `{kind, title, body, body_format?, icon?, meta?}` | `{id, version: 1}` |
-| `artifact_update` | `{id, body, base_version, note?}` | `{id, version}` |
-| `artifact_read` | `{id, version?}` | the body, with kind, title, format and version |
+| `artifact_update` | `{id, body, base_version, note?, task?}` | `{id, version}` |
+| `artifact_suggest` | `{id, base_version, changes, task?}` | `{id, base_version, suggestion_ids}` |
+| `artifact_read` | `{id, version?, task?}` | the body, with kind, title, format and version |
+| `artifact_list` | `{q?, kind?, scope?, limit?, cursor?}` | one line per artifact, plus a cursor for more |
+| `artifact_comment` | `{id, body?, parent_id?, task?}` | the threads (no `body`), or the posted comment |
+| `artifact_share` | `{id, visibility?, people?}` | the sharing settings (the user approves a change) |
+| `artifact_delete` | `{id}` | confirmation (the user approves each delete) |
+| `artifact_storage` | `{id, action, scope, key?, value?, prefix?}` | a page artifact's saved data |
+
+`artifact_create`, `artifact_update` and `artifact_read` work without a signed-in account (see below). The others need the user's Allternit account.
 
 The app renders every `artifact_*` tool part in the transcript as an artifact card that opens the artifact beside the chat (full screen on phones).
 
@@ -22,6 +30,53 @@ The tool descriptions carry the rule from the contract:
 - Create an artifact when the content is substantial (about 15 lines or more), self-contained, and likely to be edited or reused, or when the user asked for one ("make this an artifact", or an Output kind such as Docs or Slides was picked in the composer).
 - Otherwise answer inline. Short snippets and interactive cards stay in the chat.
 - Revise with `artifact_update` on the same id; don't create a second artifact for a revision.
+- For a doc or sheet that already has content, prefer `artifact_suggest`, so the user reviews each change. Use `artifact_update` for new content, other kinds, when the user asked to apply the change directly, or when `artifact_suggest` says suggestions aren't available.
+
+## Suggesting edits
+
+`artifact_suggest` leaves changes as pending suggestions on a doc or sheet. Nothing in the body changes until the user accepts. Input:
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `id` | string | The artifact id. It must be a `doc` or a `sheet`. |
+| `base_version` | integer | The version the changes are based on. |
+| `changes` | array of 1 to 50 | Each is one of the change shapes below, plus an optional `reason` (at most 500 characters) the user sees. |
+| `task` | string, optional | At most 200 characters, shown on the agent's cursor. Defaults to "Suggesting edits". |
+
+The three change shapes:
+
+```json
+{"kind": "text", "block": 2, "find": "about 40%", "replace": "38%", "reason": "Matches the Q3 report"}
+{"kind": "block", "op": "insert_after", "block": 4, "markdown": "## Risks\n\n- Supplier delay"}
+{"kind": "cell", "sheet": "Budget", "address": "B4", "value": "=SUM(B1:B3)"}
+```
+
+- `text` replaces the first occurrence of `find` in the plain text of block `block` (0-based). `block: null`, or leaving it out, searches the whole document block by block.
+- `block` replaces a block, inserts the markdown's blocks after it, or deletes it (`op: "delete"` ignores `markdown`).
+- `cell` sets one cell. `sheet` is a sheet name or id; `null`, or leaving it out, means the first sheet. A `value` starting with `=` is a formula. gizzi upper-cases the address.
+- Each text, markdown or value field is at most 20,000 characters.
+
+gizzi sends them to `POST /api/v2/artifacts/:id/suggestions` with:
+
+- `agent_name`: the running agent's display name. That is the bot the turn runs as (the `bot` marker allternit-api puts on a bot turn), else the gizzi bot whose canonical chat the session is, else `Gizzi`.
+- `session_id`: the gizzi session id.
+- `cost_usd`: the session's model cost so far, from gizzi's usage ledger (`SessionUsage.getSessionUsage`). It is left out when the session has no metered cost, for example on a subscription CLI brain.
+
+The result's first line is `{"id", "base_version", "suggestion_ids"}`, and the text tells the model that the user reviews each suggestion. The app applies an accepted change and saves a version (see [suggestions in the API](/api/artifacts-v2#suggestions)).
+
+Suggestions need the cloud store. Without a signed-in account, or on a cloud that doesn't have the route yet, `artifact_suggest` returns an error that tells the model to use `artifact_update` instead.
+
+## Agent presence and the task input
+
+`artifact_read`, `artifact_update`, `artifact_suggest` and `artifact_comment` each send a presence heartbeat for the agent (`POST /api/v2/artifacts/:id/presence` with `agent: {name, session_id, task, anchor, cost_usd}`), so the user sees the agent in the artifact header and its cursor at the spot it works on.
+
+- `task` is the tool's optional `task` input, or a default: "Reading", "Saving", "Suggesting edits", "Asking a question" ("Reading comments" when `artifact_comment` only reads).
+- `anchor` is the first change's location for `artifact_suggest` (`{kind: "block", block}` or `{kind: "cell", sheet, address}`). The other tools send none.
+- `artifact_read` and `artifact_comment` send `state: "viewing"`; `artifact_update` and `artifact_suggest` send `editing`.
+
+Heartbeats are best effort. They run in the background with a 2.5 second timeout, and a failed heartbeat never fails or delays the tool. Set `GIZZI_ARTIFACT_PRESENCE=0` to turn them off.
+
+`artifact_comment` also sends `agent_name`, so a comment the agent posts appears under the agent's name, not the user's.
 
 ## Kinds and body formats
 
@@ -63,7 +118,7 @@ If there is no credential, the cloud rejects every credential, the route isn't t
 - `artifact_update` returns version `base_version + 1` with `persisted: false` and `base_version`, built on the artifact this session already has in its transcript.
 - `artifact_read` falls back to the newest copy in this session's transcript.
 
-Set `GIZZI_ARTIFACTS_OFFLINE=1` to skip the cloud and always let the app persist. Set `GIZZI_DISABLE_ARTIFACT_TOOLS=1` to hide the three tools.
+Set `GIZZI_ARTIFACTS_OFFLINE=1` to skip the cloud and always let the app persist. Set `GIZZI_DISABLE_ARTIFACT_TOOLS=1` to hide all the artifact tools.
 
 ## Tool results
 
@@ -92,9 +147,10 @@ The text the model sees starts with the same fields as a JSON line, without the 
 | Unknown id, or no access | The artifact was not found; check the id or create a new one. |
 | Format doesn't fit the kind, or invalid JSON | The allowed formats for that kind, or the JSON parse error. |
 | The store refused the body (for example over 16 MiB) | The store's message. |
+| `artifact_suggest` with no account signed in, or a cloud without the route | Suggestions aren't available; use `artifact_update` instead. |
 
 ## Source
 
-- Tools: `cmd/gizzi-code/src/runtime/tools/builtins/artifact.ts` (descriptions in `artifact-create.txt`, `artifact-update.txt`, `artifact-read.txt`)
+- Tools: `cmd/gizzi-code/src/runtime/tools/builtins/artifact.ts` (descriptions in `artifact-create.txt`, `artifact-update.txt`, `artifact-suggest.txt`, `artifact-read.txt`)
 - Store client: `cmd/gizzi-code/src/runtime/integrations/artifacts/index.ts`
 - Tests: `cmd/gizzi-code/test/tool/artifact.test.ts`
