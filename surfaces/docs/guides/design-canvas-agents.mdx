@@ -1,0 +1,138 @@
+---
+title: Agents on one canvas
+description: Let several of your bots restyle frames of one design canvas at the same time, see who is working on which frame, tune their changes with sliders, pin comments to frames, and turn a frame into code.
+---
+
+On a Design canvas, several agents (Gizzi or any of your bots) can work on
+different frames at the same time. Each agent takes one frame, changes it,
+and leaves the change for you to keep or undo. Two agents never change the
+same frame at once.
+
+This works on design artifacts that are canvases. An older HTML design opens
+read-only; choose **Convert to canvas** first. You need to be signed in, and an
+agent can only change a design you can edit.
+
+## See who is working where
+
+- **Tags on frames.** Each agent working on a frame shows as a name tag on that
+  frame, in the agent's own colour: its name, its model cost so far, and a
+  short task line such as "Dark restyle". The frame gets an outline in the
+  same colour while the agent holds it. Colours stay the same for each agent.
+- **One agent per frame.** An agent claims a frame before it changes it. While
+  it holds the frame, other agents can't change it; they pick another frame
+  or wait. A claim ends when the agent releases the frame, or a few minutes
+  after the agent stops working.
+
+## Keep or Undo each change
+
+Each agent turn on a frame arrives as one change for that frame.
+
+- **In review.** The canvas shows the frame's new look right away, marked
+  **In review**. Nothing is saved until you decide.
+- **Keep** saves it as a new version of the design.
+- **Undo** throws the new look away and puts the frame back as it was.
+- **Done changes** keep an **Undo** for 24 hours. If the frame has changed
+  since, Undo says "changed since, can't undo" and leaves it alone.
+
+## The activity rail
+
+Open the rail from the canvas toolbar. On a computer it sits on the left of the
+canvas; on a phone it is a sheet from the bottom of the screen. It has three
+groups:
+
+- **In review · N**: thumbnails of frames with changes waiting for you.
+- **Doing**: what agents are working on now, with the agent, the frame and
+  **Working**. A frame handed out with Split shows **Split 2/3**.
+- **Done · N**: changes you kept or undid, with their time, and **View all**.
+
+Click a row to select the frame, zoom to it and open its card.
+
+## The frame card
+
+Click a frame that has a change to open its card next to it. It shows:
+
+- the agent, its reason ("Made the eyebrow and heading dark") and the cost.
+  When the frame has several changes, **1/2** pages through them;
+- a **Before/After** slider over the frame: drag it to see the old frame on
+  the left and the new one on the right;
+- **Keep** and **Undo**;
+- a follow-up box. What you type goes to that agent: to its bot thread when
+  the change came from one, otherwise to your current chat, starting with the
+  frame's name.
+
+## Tune a change with sliders
+
+When you ask an agent to adjust something it can't know the right value for,
+such as spacing, corner radius, a colour or density, it can give the change
+a few **controls** instead of guessing. They appear on the frame card under the
+agent's reason:
+
+- a slider for numbers ("Corner radius 0–32"),
+- a colour picker ("Accent"),
+- a choice ("Density: compact or cozy").
+
+Move one and the frame on the canvas updates as you go. **Keep** saves the
+frame with the values you picked; **Undo** throws the change away as usual.
+An agent can send controls with its own new look, or on their own, to let you
+tune the frame as it is. On a phone the controls sit in the card's sheet.
+
+## Comments pinned to frames
+
+Every open comment thread about a frame, or a layer in it, shows as a numbered
+pin on the canvas: at the layer's top-right corner, or the frame's when the
+comment is about the whole frame. The pins move with the canvas as you pan and
+zoom. Resolved threads hide their pin.
+
+- **Open a thread.** Click a pin. On a computer the comments panel opens on that
+  thread; on a phone it opens as a bottom sheet.
+- **Start a thread.** Choose **Comment** in the canvas toolbar (or press C on a
+  computer), then click a frame or a layer. The new thread is pinned to it. On
+  a phone, Comment is in the canvas sheet's actions.
+- **Questions from agents.** When an agent needs to ask you something about a
+  frame, such as "Dark or light for the hero?", its question appears as a pin
+  on that frame under the agent's name. Answer it in the thread.
+
+## Build this
+
+Select one frame, then choose **Build this** in the canvas toolbar or on the
+frame's card. A Code mode session starts in your current code environment
+with:
+
+- a prompt that names the frame,
+- the frame's layers as they are in the design,
+- a picture of the frame,
+- the design's design system.
+
+On a phone it opens phone Code mode the same way. If you don't have a code
+environment yet, Build this says so and links to setting one up.
+
+## Split frames across bots
+
+Select several frames and choose **Split to bots**. The dialog has one row per
+frame: the frame's name and a bot picker showing each bot's current load and
+cost. Write one instruction for all of them, such as "Restyle in dark mode",
+then confirm.
+
+- Each frame becomes a task in the project's [Delegate](/guides/project-delegate)
+  list, assigned to the bot you picked, or to **Auto** (whoever is free first).
+- The **Doing** group tracks the tasks while the bots work.
+- When the design doesn't belong to a project, the dialog first asks which
+  project's bots to use. With no bots yet, it links to making one.
+
+## On a phone
+
+On the ai.allternit.com phone layout and the m.allternit.com app you can watch
+and review: tags on frames, the rail as a bottom sheet, and a tap on a frame
+opens its card as a bottom sheet with Keep, Undo, the Before/After slider, any
+controls and the follow-up box. Comment pins open their thread as a bottom
+sheet, and Comment and Build this are in the canvas sheet's actions. Split to
+bots is on a computer only.
+
+## Related
+
+- [Comments, presence and versions](/guides/artifact-collaboration)
+- [Docs, Slides, Sheets and Design artifacts](/guides/artifact-editors)
+- [Delegate tasks to a project's bots](/guides/project-delegate)
+- [Code session list](/guides/code-session-list)
+- [Artifact tools](/tools/artifact-tools)
+- [Artifacts API: controls](/api/artifacts-v2#controls)

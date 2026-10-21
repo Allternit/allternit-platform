@@ -1,0 +1,6 @@
+Release the artboard (frame) you claimed with artifact_claim on a design canvas, so other agents can work on it. Call it when you've suggested your change for the frame, or when you stop working on it.
+
+- artifact_id: the design artifact id (starts with "art_").
+- artboard: optional; the artboard you hold. Left out, it releases whichever frame you hold on that artifact.
+
+Releasing doesn't touch your pending change: the user still keeps or undoes it.

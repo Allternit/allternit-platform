@@ -3,13 +3,27 @@
 //!
 //! Comments live in `artifact_comments` (migration 085). Threads are one level
 //! deep: a reply's parent must be a root, and the client rebuilds threads from
-//! `parent_id`. Anchors are stored opaquely (`{kind:'text'|'cell'|'slide'|'element', ..}`).
+//! `parent_id`. Anchors are stored opaquely (`{kind:'text'|'cell'|'slide'|'element', ..}`,
+//! up to 16 KB, every field kept as sent). A Design canvas pin is
+//! `{kind:'element', shapeId, artboard?, label?}`; an agent's anchored comment
+//! (its question pinned to a frame) is capped at 4 KB.
 //!
 //! Presence is durable and shared across cloud-api instances: clients
 //! heartbeat `POST /presence`, which upserts a row in `artifact_presence`
 //! (migration 086), and poll `GET /presence`, which returns the rows seen in
 //! the last 45 seconds. Rows older than 10 minutes are deleted
 //! opportunistically on about one request in 50.
+//!
+//! Frame claims (SPEC-agent-canvas-2026-10-20) ride on agent presence: an agent
+//! heartbeat whose anchor carries `{"artboard": "<id>"}` claims that artboard
+//! of a design canvas for as long as the heartbeat stays live (the 45 s TTL).
+//! A second live agent session that claims it gets 409 `artboard_claimed`
+//! naming the holder; `anchor: null` or `state: left` releases it.
+//!
+//! Claims hold even when an org turns presence off: agent claim rows are
+//! still written and checked (a heartbeat that claims nothing deletes the
+//! agent's row), but `GET /presence` shows nothing while presence is off.
+//! People's heartbeats are not recorded then.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -130,6 +144,32 @@ pub(crate) fn validate_anchor(anchor: &Value) -> Result<()> {
             }
         }
     }
+    // A Design canvas pin (`{kind:'element', shapeId, artboard?, label?}`):
+    // the ids the client places the pin from must be short strings.
+    if map.get("kind").and_then(Value::as_str) == Some("element") {
+        for key in ["shapeId", "artboard", "label"] {
+            match map.get(key) {
+                None | Some(Value::Null) => {}
+                Some(Value::String(s)) if s.chars().count() <= super::artifacts_suggestions::MAX_ID_CHARS => {}
+                Some(_) => {
+                    return Err(ArtifactError::bad_request(format!(
+                        "anchor.{key} must be a string of at most {} characters",
+                        super::artifacts_suggestions::MAX_ID_CHARS
+                    )))
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// An agent's comment anchor (an agent pinning a question to a frame): the
+/// same shape as a person's, at most 4 KB.
+pub(crate) fn validate_agent_comment_anchor(anchor: &Value) -> Result<()> {
+    validate_anchor(anchor)?;
+    if anchor.to_string().len() > AGENT_ANCHOR_MAX_BYTES {
+        return Err(ArtifactError::bad_request("an agent's comment anchor is limited to 4 KB"));
+    }
     Ok(())
 }
 
@@ -138,7 +178,7 @@ pub(crate) fn validate_anchor(anchor: &Value) -> Result<()> {
 // ---------------------------------------------------------------------------
 
 const COMMENT_COLUMNS: &str =
-    "id, artifact_id, version, anchor, parent_id, author_id, body, to_assistant, resolved_at, created_at";
+    "id, artifact_id, version, anchor, parent_id, author_id, body, to_assistant, resolved_at, created_at, agent_name";
 
 type CommentRow = (
     String,
@@ -151,15 +191,19 @@ type CommentRow = (
     bool,
     Option<DateTime<Utc>>,
     DateTime<Utc>,
+    Option<String>,
 );
 
 type Names = HashMap<String, (Option<String>, Option<String>)>;
 
 fn comment_json(row: &CommentRow, names: &Names) -> Value {
+    // An agent's comment is stored as 'assistant' plus its name; the name
+    // is what people see.
     let (name, image) = if row.5 == ASSISTANT_ID {
-        (Some("Gizzi".to_string()), None)
+        (Some(row.10.clone().unwrap_or_else(|| "Gizzi".to_string())), None)
     } else {
-        names.get(&row.5).cloned().unwrap_or((None, None))
+        let (n, i) = names.get(&row.5).cloned().unwrap_or((None, None));
+        (n.or_else(|| row.10.clone()), i)
     };
     json!({
         "id": row.0,
@@ -174,6 +218,7 @@ fn comment_json(row: &CommentRow, names: &Names) -> Value {
         "to_assistant": row.7,
         "resolved_at": row.8.map(ts),
         "created_at": ts(row.9),
+        "agent_name": row.10,
     })
 }
 
@@ -248,6 +293,9 @@ struct CreateComment {
     to_assistant: Option<bool>,
     /// The commenter's app will run an edit-capable reply in its open chat.
     assistant_by_client: Option<bool>,
+    /// Set when an agent posts the comment (e.g. asks the user a question):
+    /// stored as author 'assistant' under this name. Needs edit access.
+    agent_name: Option<String>,
 }
 
 async fn create_comment(
@@ -261,8 +309,19 @@ async fn create_comment(
     require(access, Access::Comment, "Commenting")?;
     let input: CreateComment = parse_json(&body)?;
     let text = validate_body(&input.body)?;
+    let agent_name = match input.agent_name.as_deref() {
+        Some(name) => {
+            require(access, Access::Edit, "Commenting as an agent")?;
+            Some(super::artifacts_suggestions::validate_agent_name(name)?)
+        }
+        None => None,
+    };
     if let Some(anchor) = &input.anchor {
-        validate_anchor(anchor)?;
+        if agent_name.is_some() {
+            validate_agent_comment_anchor(anchor)?;
+        } else {
+            validate_anchor(anchor)?;
+        }
     }
     if let Some(v) = input.version {
         if v < 1 {
@@ -305,20 +364,25 @@ async fn create_comment(
             version = parent.2;
         }
     }
-    let to_assistant = input.to_assistant.unwrap_or(false) || mentions_assistant(&text);
+    // An agent's own comment is a question for the person, never a prompt
+    // for the server-side assistant.
+    let to_assistant =
+        agent_name.is_none() && (input.to_assistant.unwrap_or(false) || mentions_assistant(&text));
+    let author_id = if agent_name.is_some() { ASSISTANT_ID } else { me.id.as_str() };
     let cid = ids::ulid();
     let inserted = sqlx::query_as::<_, CommentRow>(&format!(
-        "INSERT INTO artifact_comments (id, artifact_id, version, anchor, parent_id, author_id, body, to_assistant) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING {COMMENT_COLUMNS}"
+        "INSERT INTO artifact_comments (id, artifact_id, version, anchor, parent_id, author_id, body, to_assistant, agent_name) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING {COMMENT_COLUMNS}"
     ))
     .bind(&cid)
     .bind(&row.id)
     .bind(version)
     .bind(anchor.unwrap_or_else(|| json!({})))
     .bind(input.parent_id.as_deref())
-    .bind(&me.id)
+    .bind(author_id)
     .bind(&text)
     .bind(to_assistant)
+    .bind(agent_name.as_deref())
     .fetch_one(&state.db)
     .await?;
     let mut out = one_json(&state.db, &inserted, &me).await;
@@ -538,6 +602,134 @@ async fn assistant_reply(
 #[derive(Deserialize)]
 struct PresenceBody {
     state: String,
+    /// Set when an agent heartbeats on the caller's behalf.
+    agent: Option<AgentPresence>,
+}
+
+#[derive(Deserialize)]
+struct AgentPresence {
+    name: String,
+    session_id: Option<String>,
+    task: Option<String>,
+    anchor: Option<Value>,
+    cost_usd: Option<f64>,
+}
+
+const AGENT_TASK_MAX_CHARS: usize = 200;
+const AGENT_ANCHOR_MAX_BYTES: usize = 4 * 1024;
+const AGENT_SLUG_MAX_CHARS: usize = 64;
+
+/// Lower-case ASCII letters and digits, other runs become one '-'.
+pub(crate) fn agent_slug(name: &str) -> String {
+    let mut out = String::new();
+    for c in name.chars() {
+        if c.is_ascii_alphanumeric() {
+            out.push(c.to_ascii_lowercase());
+        } else if !out.is_empty() && !out.ends_with('-') {
+            out.push('-');
+        }
+    }
+    let out: String = out.trim_end_matches('-').chars().take(AGENT_SLUG_MAX_CHARS).collect();
+    let out = out.trim_end_matches('-').to_string();
+    if out.is_empty() {
+        "agent".to_string()
+    } else {
+        out
+    }
+}
+
+/// The presence row id for an agent: `agent:{session_id or 'none'}:{slug(name)}`.
+pub(crate) fn agent_presence_id(session_id: Option<&str>, name: &str) -> String {
+    format!("agent:{}:{}", session_id.unwrap_or("none"), agent_slug(name))
+}
+
+/// An agent cursor anchor: a JSON object of at most 4 KB.
+pub(crate) fn validate_agent_anchor(anchor: &Value) -> Result<()> {
+    if !anchor.is_object() {
+        return Err(ArtifactError::bad_request("agent.anchor must be a JSON object"));
+    }
+    if anchor.to_string().len() > AGENT_ANCHOR_MAX_BYTES {
+        return Err(ArtifactError::bad_request("agent.anchor is limited to 4 KB"));
+    }
+    Ok(())
+}
+
+/// The artboard an agent anchor claims (`anchor.artboard`), without tldraw's
+/// `shape:` prefix. None when the anchor claims nothing.
+pub(crate) fn claimed_artboard(anchor: Option<&Value>) -> Result<Option<String>> {
+    match anchor.and_then(|a| a.get("artboard")) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(id)) => {
+            let bare = super::artifacts_suggestions::bare_id(id.trim());
+            if bare.is_empty() || bare.chars().count() > super::artifacts_suggestions::MAX_ID_CHARS {
+                return Err(ArtifactError::bad_request("agent.anchor.artboard must be an artboard id"));
+            }
+            Ok(Some(bare.to_string()))
+        }
+        Some(_) => Err(ArtifactError::bad_request("agent.anchor.artboard must be an artboard id")),
+    }
+}
+
+/// The live agent, other than the caller's own agent row and session, whose
+/// anchor holds `artboard` (bare id): `(name, session_id)`.
+pub(crate) async fn artboard_holder<'e>(
+    db: impl sqlx::PgExecutor<'e>,
+    artifact_id: &str,
+    artboard: &str,
+    session_id: Option<&str>,
+    own_row: &str,
+) -> Result<Option<(Option<String>, Option<String>)>> {
+    Ok(sqlx::query_as(
+        "SELECT name, session_id FROM artifact_presence \
+         WHERE artifact_id = $1 AND kind = 'agent' AND user_id <> $4 \
+           AND last_seen > now() - ($5 * interval '1 second') \
+           AND regexp_replace(anchor->>'artboard', '^shape:', '') = $2 \
+           AND ($3::text IS NULL OR session_id IS DISTINCT FROM $3::text) \
+         ORDER BY last_seen DESC LIMIT 1",
+    )
+    .bind(artifact_id)
+    .bind(artboard)
+    .bind(session_id)
+    .bind(own_row)
+    .bind(PRESENCE_TTL_SECS)
+    .fetch_optional(db)
+    .await?)
+}
+
+/// 409 `artboard_claimed` with `holder: {name, session_id}`.
+pub(crate) fn artboard_claimed(holder: (Option<String>, Option<String>)) -> ArtifactError {
+    let name = holder.0.filter(|n| !n.trim().is_empty()).unwrap_or_else(|| "Another agent".to_string());
+    ArtifactError::coded(
+        StatusCode::CONFLICT,
+        "artboard_claimed",
+        format!("{name} is working on that artboard; pick another one or wait"),
+    )
+    .with("holder", json!({ "name": name, "session_id": holder.1 }))
+}
+
+/// A validated agent heartbeat: (row id, name, session_id, task, anchor, cost).
+type AgentRow = (String, String, Option<String>, Option<String>, Option<Value>, Option<f64>);
+
+fn validate_agent_presence(agent: &AgentPresence) -> Result<AgentRow> {
+    use super::artifacts_suggestions::{validate_agent_name, validate_cost, validate_session_id};
+    let name = validate_agent_name(&agent.name)?;
+    let session_id = validate_session_id(agent.session_id.as_deref())?;
+    let task = agent
+        .task
+        .as_deref()
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .map(|t| t.chars().take(AGENT_TASK_MAX_CHARS).collect::<String>());
+    let anchor = match &agent.anchor {
+        None | Some(Value::Null) => None,
+        Some(a) => {
+            validate_agent_anchor(a)?;
+            Some(a.clone())
+        }
+    };
+    let cost = validate_cost(agent.cost_usd)?;
+    let id = agent_presence_id(session_id.as_deref(), &name);
+    Ok((id, name, session_id, task, anchor, cost))
 }
 
 async fn presence_enabled(db: &PgPool, org_id: Option<&str>) -> Result<bool> {
@@ -570,12 +762,71 @@ async fn post_presence(
     raw: axum::body::Bytes,
 ) -> Result<StatusCode> {
     let me = caller(&state, &headers).await?;
-    let (row, _access) = load_with_access(&state.db, &id, &me).await?;
+    let (row, access) = load_with_access(&state.db, &id, &me).await?;
     let input: PresenceBody = parse_json(&raw)?;
     if !matches!(input.state.as_str(), "viewing" | "editing" | "left") {
         return Err(ArtifactError::bad_request("state must be viewing, editing or left"));
     }
-    if !presence_enabled(&state.db, row.org_id.as_deref()).await? {
+    let agent = match &input.agent {
+        Some(a) => {
+            require(access, Access::Edit, "Agent presence")?;
+            Some(validate_agent_presence(a)?)
+        }
+        None => None,
+    };
+    let enabled = presence_enabled(&state.db, row.org_id.as_deref()).await?;
+    if let Some((agent_id, name, session_id, task, anchor, cost)) = agent {
+        let claim = claimed_artboard(anchor.as_ref())?;
+        if input.state == "left" || (!enabled && claim.is_none()) {
+            // With presence off only frame claims are kept (and GET hides
+            // them): a heartbeat that claims nothing releases the agent's row.
+            sqlx::query("DELETE FROM artifact_presence WHERE artifact_id = $1 AND user_id = $2")
+                .bind(&row.id)
+                .bind(&agent_id)
+                .execute(&state.db)
+                .await?;
+        } else {
+            // Claim check and upsert under one per-artboard lock, so two agents
+            // claiming the same frame at once can't both win.
+            let mut tx = state.db.begin().await?;
+            if let Some(artboard) = claim.as_deref() {
+                sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1))")
+                    .bind(format!("artboard:{}:{artboard}", row.id))
+                    .execute(&mut *tx)
+                    .await?;
+                if let Some(holder) =
+                    artboard_holder(&mut *tx, &row.id, artboard, session_id.as_deref(), &agent_id).await?
+                {
+                    return Err(artboard_claimed(holder));
+                }
+            }
+            sqlx::query(
+                "INSERT INTO artifact_presence \
+                   (artifact_id, user_id, name, image_url, state, last_seen, kind, session_id, task, anchor, cost_usd) \
+                 VALUES ($1, $2, $3, NULL, $4, now(), 'agent', $5, $6, $7, ($8::float8)::numeric) \
+                 ON CONFLICT (artifact_id, user_id) DO UPDATE SET \
+                   name = EXCLUDED.name, image_url = NULL, state = EXCLUDED.state, last_seen = now(), \
+                   kind = 'agent', session_id = EXCLUDED.session_id, task = EXCLUDED.task, \
+                   anchor = EXCLUDED.anchor, cost_usd = EXCLUDED.cost_usd",
+            )
+            .bind(&row.id)
+            .bind(&agent_id)
+            .bind(&name)
+            .bind(&input.state)
+            .bind(session_id.as_deref())
+            .bind(task.as_deref())
+            .bind(anchor)
+            .bind(cost)
+            .execute(&mut *tx)
+            .await?;
+            tx.commit().await?;
+        }
+        if should_purge_presence() {
+            purge_stale_presence(&state.db).await;
+        }
+        return Ok(StatusCode::NO_CONTENT);
+    }
+    if !enabled {
         return Ok(StatusCode::NO_CONTENT);
     }
     let (mut name, mut image) = (me.name.clone(), me.image_url.clone());
@@ -593,11 +844,11 @@ async fn post_presence(
             .await?;
     } else {
         sqlx::query(
-            "INSERT INTO artifact_presence (artifact_id, user_id, name, image_url, state, last_seen) \
-             VALUES ($1, $2, $3, $4, $5, now()) \
+            "INSERT INTO artifact_presence (artifact_id, user_id, name, image_url, state, last_seen, kind) \
+             VALUES ($1, $2, $3, $4, $5, now(), 'user') \
              ON CONFLICT (artifact_id, user_id) DO UPDATE SET \
                name = EXCLUDED.name, image_url = EXCLUDED.image_url, \
-               state = EXCLUDED.state, last_seen = now()",
+               state = EXCLUDED.state, last_seen = now(), kind = 'user'",
         )
         .bind(&row.id)
         .bind(&me.id)
@@ -623,8 +874,20 @@ async fn get_presence(
     if !presence_enabled(&state.db, row.org_id.as_deref()).await? {
         return Ok(Json(json!({ "enabled": false, "users": [] })));
     }
-    let rows: Vec<(String, Option<String>, Option<String>, String)> = sqlx::query_as(
-        "SELECT user_id, name, image_url, state FROM artifact_presence \
+    #[allow(clippy::type_complexity)]
+    let rows: Vec<(
+        String,
+        Option<String>,
+        Option<String>,
+        String,
+        String,
+        Option<String>,
+        Option<Value>,
+        Option<f64>,
+        Option<String>,
+    )> = sqlx::query_as(
+        "SELECT user_id, name, image_url, state, kind, task, anchor, cost_usd::float8 AS cost_usd, session_id \
+         FROM artifact_presence \
          WHERE artifact_id = $1 AND user_id <> $2 \
            AND last_seen > now() - ($3 * interval '1 second') \
          ORDER BY user_id LIMIT $4",
@@ -637,8 +900,18 @@ async fn get_presence(
     .await?;
     let users: Vec<Value> = rows
         .into_iter()
-        .map(|(id, name, image_url, state)| {
-            json!({ "user_id": id, "name": name, "image_url": image_url, "state": state })
+        .map(|(id, name, image_url, state, kind, task, anchor, cost_usd, session_id)| {
+            json!({
+                "user_id": id,
+                "name": name,
+                "image_url": image_url,
+                "state": state,
+                "kind": kind,
+                "task": task,
+                "anchor": anchor,
+                "cost_usd": cost_usd,
+                "session_id": session_id,
+            })
         })
         .collect();
     Ok(Json(json!({ "enabled": true, "users": users })))

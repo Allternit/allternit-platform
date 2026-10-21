@@ -655,6 +655,24 @@
       "evidence": [
         "allternit/cmd/allternit-api/src/phone_ws.rs"
       ]
+    },
+    {
+      "source": "allternit/cmd/gizzi-code/src/runtime/tools",
+      "target": "allternit/cmd/allternit-cloud-api/src/routes/artifacts_*",
+      "kind": "HTTP /api/v2/artifacts/:id/suggestions (incl. artboard changes on design canvases), agent /presence (incl. artboard claims, 409 artboard_claimed) and comment agent_name (artifact_suggest, artifact_claim / artifact_release, agent presence heartbeats)",
+      "evidence": [
+        "allternit/cmd/gizzi-code/src/runtime/integrations/artifacts/index.ts",
+        "allternit/surfaces/docs/tools/artifact-tools.mdx"
+      ]
+    },
+    {
+      "source": "allternit-ai/src/lib/artifacts",
+      "target": "allternit/cmd/allternit-cloud-api/src/routes/artifacts_*",
+      "kind": "HTTP /api/v2/artifacts/:id/suggestions (list, PATCH, resolve; doc, sheet and artboard changes) and /presence agent fields (artifact window suggestions, presence stack, agent cursors, design canvas frame tags)",
+      "evidence": [
+        "allternit-ai/src/lib/artifacts/editors/collab-api.ts",
+        "allternit/surfaces/docs/api/artifacts-v2.mdx"
+      ]
     }
   ]
 }
