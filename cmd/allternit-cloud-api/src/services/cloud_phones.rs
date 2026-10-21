@@ -197,6 +197,20 @@ struct PhoneHostRow {
     phone_slots: i32,
 }
 
+/// The narrowest Headscale ACL rule that lets one customer reach one cloud
+/// phone: the owner's mesh user (`clerk-<id>@`, the user every device of
+/// theirs enrolls under — routes::mesh) to the phone host's mesh IP on the
+/// phone's adb and Phone Link ports only. The production policy is
+/// `autogroup:member → autogroup:self:*`, and the phone host is not owned by
+/// the customer, so without this rule the customer's Desktop cannot reach it.
+pub fn acl_rule_for(user_id: &str, mesh_ip: &str, adb_port: i32, link_port: i32) -> serde_json::Value {
+    serde_json::json!({
+        "action": "accept",
+        "src": [format!("{}@", crate::routes::mesh::mesh_user_name(user_id))],
+        "dst": [format!("{mesh_ip}:{adb_port},{link_port}")],
+    })
+}
+
 #[derive(Clone)]
 pub struct CloudPhoneService {
     db: PgPool,
@@ -372,6 +386,24 @@ impl CloudPhoneService {
         Ok(())
     }
 
+    /// ACL rules for every live cloud phone, for operators to merge into
+    /// infrastructure/mesh/headscale/policy.hujson (static file mode; there is
+    /// no live policy API in use). Sorted for stable diffs.
+    pub async fn acl_fragment(&self) -> Result<Vec<serde_json::Value>, ApiError> {
+        let rows: Vec<(String, String, i32, i32)> = sqlx::query_as(
+            "SELECT user_id, mesh_ip, adb_port, link_port FROM cloud_phones \
+             WHERE status NOT IN ('deleted', 'error') AND mesh_ip IS NOT NULL \
+               AND adb_port IS NOT NULL AND link_port IS NOT NULL \
+             ORDER BY user_id, mesh_ip, adb_port",
+        )
+        .fetch_all(&self.db)
+        .await?;
+        Ok(rows
+            .iter()
+            .map(|(user_id, ip, adb, link)| acl_rule_for(user_id, ip, *adb, *link))
+            .collect())
+    }
+
     async fn select_phone_host(&self) -> Result<PhoneHostRow, ApiError> {
         let host: Option<PhoneHostRow> = sqlx::query_as(
             r#"
@@ -425,6 +457,13 @@ mod tests {
             Some("100.64.0.9:5556")
         );
         assert_eq!(parse_adb_address("STATUS=running"), None);
+    }
+
+    #[test]
+    fn acl_rule_grants_only_the_phone_ports() {
+        let rule = acl_rule_for("user_2abc", "100.64.0.9", 5556, 6556);
+        assert_eq!(rule["src"][0], "clerk-user-2abc@");
+        assert_eq!(rule["dst"][0], "100.64.0.9:5556,6556");
     }
 
     #[test]

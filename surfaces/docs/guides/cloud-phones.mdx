@@ -16,7 +16,7 @@ A **cloud phone** is an Android phone that runs on an Allternit server instead o
 3. You run Phone Link setup on it once. This installs the Allternit Phone Link app, the same as on a phone you plug in.
 4. You sign in to the apps you want on the cloud phone, from its live screen.
 
-The cloud phone is only reachable over your private Allternit network. It is never open to the internet.
+The cloud phone is only reachable over your private Allternit network. It is never open to the internet. Only your own devices can reach it.
 
 ## For developers
 
@@ -28,7 +28,7 @@ The cloud phone is only reachable over your private Allternit network. It is nev
 | `POST` | `/api/v1/cloud-phones` | Body: optional `label`. Creates a phone and returns it as `phone` with status 201. Admin only for now. |
 | `DELETE` | `/api/v1/cloud-phones/:id` | Removes the phone and its data. |
 
-These routes accept a Clerk session, a `compute` API token, or a Desktop device token. They return 503 unless `CLOUD_PHONES_ENABLED=1` is set. A phone also needs a fleet host marked `phones_enabled` (migration `096_cloud_phones.sql`). Each phone is a [redroid](https://github.com/remote-android/redroid-doc) container started by `infrastructure/cloud-phone/run-phone.sh`. Host setup is in `infrastructure/cloud-phone/README.md`.
+These routes accept a Clerk session, a `compute` API token, or a Desktop device token. They return 503 unless `CLOUD_PHONES_ENABLED=1` is set. A phone also needs a fleet host marked `phones_enabled` (migration `099_cloud_phones.sql`). Each phone is a [redroid](https://github.com/remote-android/redroid-doc) container started by `infrastructure/cloud-phone/run-phone.sh`. Host setup is in `infrastructure/cloud-phone/README.md`.
 
 **Desktop bridge** (`window.allternit.phones` and `window.allternit.phoneLink`):
 
@@ -37,3 +37,7 @@ These routes accept a Clerk session, a `compute` API token, or a Desktop device 
 - `phoneLink.start({ platform: 'android', serial, linkHost })` runs Phone Link setup on an added phone instead of waiting for a USB cable. `serial` is the phone's `serial` from the phones list. For a cloud phone, `linkHost` is its `linkAddress`.
 
 Phones added this way list with `via: 'address'`. Cloud phones also list with `kind: 'cloud'`.
+
+When Desktop adds a cloud phone that has no Phone Link yet, it starts Android setup on it by itself, with the same `serial` and `linkHost`. It never interrupts a setup that is already running. If setup doesn't finish, Desktop tries again on later checks, waiting 10 minutes at first and doubling up to 6 hours, at most five times per app run.
+
+**Mesh access.** The production Headscale policy only lets a device reach devices owned by the same customer, and a phone host is not owned by the customer. Each phone therefore needs one ACL rule: the owner's mesh user to the host's mesh IP on that phone's adb and Phone Link ports, nothing else. `GET /api/v1/cloud-phones/acl-fragment` (admin only) lists these rules for every live phone. An operator merges them into `infrastructure/mesh/headscale/policy.hujson` and redeploys Headscale. Until then the phone is created but Desktop can't reach it. The steps are in `infrastructure/cloud-phone/README.md`.

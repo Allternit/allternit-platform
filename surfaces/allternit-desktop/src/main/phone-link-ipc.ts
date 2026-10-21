@@ -102,6 +102,14 @@ export function registerPhoneLinkIpc(handleGuarded: Guarded): PhoneLinkManager {
       if (!win.isDestroyed()) win.webContents.send('phone-link:status-changed', status);
     }
   });
+  // Cloud phones (cloud-phones.ts) start Android setup by themselves, but
+  // never over a setup the person is in the middle of.
+  phoneService.setCloudPhoneLinkStarter((target) => {
+    const state = manager.status().state;
+    if (state !== 'idle' && state !== 'ready_wifi' && state !== 'error' && state !== 'not_supported') return false;
+    manager.start('android', target);
+    return true;
+  });
   handleGuarded('phone-link:status', () => manager.status());
   handleGuarded('phone-link:devices', () => phoneService.linkedDevices());
   // Connections wizard (Settings → Connections): open a catalog app so the person

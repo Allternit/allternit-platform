@@ -109,3 +109,56 @@ export async function syncCloudPhones(manager: CloudPhoneTarget, deps: CloudPhon
   }
   return snapshot;
 }
+
+// ── automatic Phone Link setup ───────────────────────────────────────────────
+
+/** Starts Phone Link Android setup on an added phone; false when another setup is running. */
+export type CloudPhoneLinkStarter = (target: { serial: string; linkHost: string }) => boolean;
+
+const AUTO_LINK_FIRST_RETRY_MS = 10 * 60_000;
+const AUTO_LINK_MAX_RETRY_MS = 6 * 60 * 60_000;
+const AUTO_LINK_MAX_ATTEMPTS = 5;
+
+/**
+ * Runs Phone Link setup once per cloud phone that has no Phone Link record
+ * yet. A start that doesn't end in a link is retried on later sync passes
+ * with doubling backoff (10 min → 6 h), up to five tries per app run.
+ */
+export class CloudPhoneAutoLink {
+  private attempts = new Map<string, { count: number; nextAt: number }>();
+
+  constructor(private readonly now: () => number = Date.now) {}
+
+  /**
+   * `linkedHosts` are the mesh hosts of saved Android Phone Link records;
+   * `devices` the device manager's list. Returns the cloud phone ids started.
+   */
+  pass(
+    phones: CloudPhone[],
+    linkedHosts: Set<string>,
+    devices: { id: string; state: string; serial: string }[],
+    start: CloudPhoneLinkStarter,
+  ): string[] {
+    const started: string[] = [];
+    for (const phone of phones) {
+      if (phone.status !== 'running' || !phone.linkAddress) continue;
+      if (linkedHosts.has(phone.linkAddress)) {
+        this.attempts.delete(phone.id);
+        continue;
+      }
+      const device = devices.find((d) => d.id === `cloud-${phone.id}` && d.state === 'online');
+      if (!device) continue;
+      const prior = this.attempts.get(phone.id);
+      if (prior && (prior.count >= AUTO_LINK_MAX_ATTEMPTS || this.now() < prior.nextAt)) continue;
+      // One setup runs at a time; a busy manager is retried next pass without counting.
+      if (!start({ serial: device.serial, linkHost: phone.linkAddress })) continue;
+      const count = (prior?.count ?? 0) + 1;
+      const delay = Math.min(AUTO_LINK_MAX_RETRY_MS, AUTO_LINK_FIRST_RETRY_MS * 2 ** (count - 1));
+      this.attempts.set(phone.id, { count, nextAt: this.now() + delay });
+      started.push(phone.id);
+      // Setup is one-at-a-time: the rest wait for a later pass.
+      break;
+    }
+    return started;
+  }
+}

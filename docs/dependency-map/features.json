@@ -1533,7 +1533,7 @@
       "touches": [
         "allternit/cmd/allternit-cloud-api/src/services/cloud_phones.rs",
         "allternit/cmd/allternit-cloud-api/src/routes/cloud_phones.rs",
-        "allternit/cmd/allternit-cloud-api/migrations_pg/096_cloud_phones.sql",
+        "allternit/cmd/allternit-cloud-api/migrations_pg/099_cloud_phones.sql",
         "allternit/infrastructure/cloud-phone",
         "allternit/surfaces/allternit-desktop/src/main/cloud-phones.ts",
         "allternit/surfaces/allternit-desktop/src/main/phone-device-manager.ts",

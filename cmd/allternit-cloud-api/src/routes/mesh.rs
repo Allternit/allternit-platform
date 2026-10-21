@@ -54,7 +54,7 @@ pub fn routes() -> Router<Arc<ApiState>> {
 /// Maps a Clerk user id to a valid Headscale username: `clerk-` prefix plus
 /// the id forced to lowercase alphanumerics and dashes (Headscale usernames
 /// must be valid host-ish labels, and Clerk ids contain underscores).
-fn mesh_user_name(clerk_user_id: &str) -> String {
+pub(crate) fn mesh_user_name(clerk_user_id: &str) -> String {
     let mut name = String::with_capacity("clerk-".len() + clerk_user_id.len());
     name.push_str("clerk-");
     let mut last_was_dash = true; // treat the prefix dash as a dash for collapsing

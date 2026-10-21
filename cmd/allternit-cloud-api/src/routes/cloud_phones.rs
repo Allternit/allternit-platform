@@ -7,6 +7,11 @@
 //! * `POST   /api/v1/cloud-phones`      — `{ label? }` → 201 `{ phone }` with
 //!   `phone.adbAddress` (`meshIp:port`) once running.
 //! * `DELETE /api/v1/cloud-phones/:id`  — removes the container and its data.
+//! * `GET    /api/v1/cloud-phones/acl-fragment` — admin only: `{ acls }`, one
+//!   Headscale ACL rule per live phone (owner's mesh user → host mesh IP on
+//!   that phone's two ports), to merge into
+//!   infrastructure/mesh/headscale/policy.hujson. The production policy only
+//!   allows same-owner traffic, so a phone is unreachable until its rule is in.
 //!
 //! Auth: Clerk session or `compute`-scoped API token
 //! (`auth::resolve_user_scoped`), same as `/api/v1/provisioned-instances`,
@@ -47,6 +52,7 @@ async fn caller_user_id(state: &ApiState, headers: &HeaderMap) -> Result<String,
 pub fn routes() -> Router<Arc<ApiState>> {
     Router::new()
         .route("/api/v1/cloud-phones", get(list_phones).post(create_phone))
+        .route("/api/v1/cloud-phones/acl-fragment", get(acl_fragment))
         .route("/api/v1/cloud-phones/:id", delete(delete_phone))
 }
 
@@ -99,4 +105,22 @@ async fn delete_phone(
     let user_id = caller_user_id(&state, &headers).await?;
     service(&state).delete(&id, &user_id).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+async fn acl_fragment(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    ensure_enabled()?;
+    let user_id = caller_user_id(&state, &headers).await?;
+    if !crate::routes::provisioned_instances::is_admin(&user_id) {
+        return Err(ApiError::Forbidden(
+            "The mesh ACL fragment is operator-only".to_string(),
+        ));
+    }
+    let acls = service(&state).acl_fragment().await?;
+    Ok(Json(serde_json::json!({
+        "acls": acls,
+        "mergeInto": "infrastructure/mesh/headscale/policy.hujson",
+    })))
 }

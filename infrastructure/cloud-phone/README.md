@@ -53,6 +53,38 @@ or grant those devices. So a phone runs on the host's own Docker daemon.
 
 5. Set `CLOUD_PHONES_ENABLED=1` on the cloud-api and restart it.
 
+## Mesh access (needed per phone)
+
+The production Headscale policy (`infrastructure/mesh/headscale/policy.hujson`)
+has one rule, `autogroup:member → autogroup:self:*`: a device reaches only
+devices owned by the same customer. The phone host is not owned by the
+customer, so a customer's Desktop **cannot reach their cloud phone** until a
+rule for it is in the policy. The policy is a static file baked into the
+Headscale image (no live policy API is used), so this is an operator step:
+
+1. After a phone is created, fetch the rules (admin only):
+
+   ```sh
+   curl -H "Authorization: Bearer <admin token>" \
+     https://api.allternit.com/api/v1/cloud-phones/acl-fragment
+   ```
+
+   Each live phone gets exactly one rule, the narrowest the policy can say:
+   the owner's mesh user to the host's mesh IP on that phone's two ports.
+
+   ```json
+   { "action": "accept", "src": ["clerk-user-2abc@"], "dst": ["100.64.0.9:5555,6555"] }
+   ```
+
+2. Add the rules to the `acls` list in `policy.hujson`, after the
+   `autogroup:self` rule. Remove rules for deleted phones (the fragment only
+   lists live ones, so replacing the cloud-phone block with it is enough).
+3. Redeploy Headscale as in `infrastructure/mesh/headscale/OPS.md`, and
+   check `headscale policy get`.
+
+Mesh traffic is stateful, so the phone host needs no rule back to the user.
+Nothing tags the host, so the isolation model in `policy.hujson` is unchanged.
+
 ## Network safety
 
 - `run-phone.sh` refuses to bind adb to `0.0.0.0`, `::`, or any address
@@ -61,8 +93,8 @@ or grant those devices. So a phone runs on the host's own Docker daemon.
 - Ports: phone N on a host gets adb on `5555 + N` and Phone Link on
   `6555 + N`.
 - redroid's adb has no key check, so anyone who can reach `<mesh-ip>:<port>`
-  controls that phone. Mesh ACLs must limit each phone's port to its owner's
-  devices before phones are opened beyond admins.
+  controls that phone. The per-phone ACL rule above is what limits a phone's
+  ports to its owner's devices; no other customer has a rule to them.
 
 ## Resource notes
 
