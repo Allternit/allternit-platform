@@ -37,6 +37,7 @@ pub mod jobs;
 pub mod livekit_admin;
 pub mod me_flags;
 pub mod me_usage;
+pub mod a2a_edge;
 pub mod mcp_edge;
 pub mod mcp_events;
 pub mod mcp_event_callbacks;
