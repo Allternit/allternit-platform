@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+## 2.2.9 (2026-10-21)
+
+### Added
+- Agents on one canvas: `artifact_suggest` (with controls), `artifact_claim` /
+  `artifact_release` for design canvases, artboard suggestions, agent presence
+  heartbeats, and agent comments. `artifact_comment` can pin a question to a frame.
+- Ops sheets: the `ops` artifact kind (status, logs, actions).
+- Agent run tree: session tasks carry model, cost, tokens, failures and nested
+  child tasks.
+- Bot avatar on the agent cursor: `computer.action` events carry the actor and step.
+- Agent network: live-session delivery (push, turn or pull into a running CLI
+  session), live sessions with an inferred "doing" status, and the team roster.
+- Code mode: linked PRs per code session (`session.prs.*` in the SDK), and a
+  cloud code environment applied when a session starts. Secrets are redacted and
+  egress hosts are matched against the environment.
+- CLI brains get `todowrite` (Cowork Progress works with Claude CLI) and a
+  question tool on the CLI bridge.
+- Context panel: every row filled for every brain. BrainRelay measures what coding
+  CLIs actually send, and signed-in app brains report their context from the page.
+- Phone app accounts and usage windows; one coding-CLI catalog with custom CLIs.
+
+### Fixed
+- Codex asks through the bridge's question tool, not its own `request_user_input`.
+- No stray questions from internal completions or deleted sessions. After answers
+  arrive, the agent carries on with its task.
+- CLI agent errors show their message instead of `[object Object]`. The app's poll
+  requests no longer fill the log.
+- A plain-text 404 from an older cloud now means "no suggestions route", not "missing artifact".
+- `artifact_create` tells the agent to mention the artifact by its title.
+
 ## 2.2.8 (2026-10-18)
 
 ### Fixed
