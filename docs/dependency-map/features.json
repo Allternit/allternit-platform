@@ -844,10 +844,14 @@
       "label": "Bot avatars and photo sprites",
       "product": "product:digital-twin",
       "status": "live",
-      "description": "Pick a look pack, build a character, or turn a photo into an animated bot avatar.",
+      "description": "Pick a look pack, build a character, or turn a photo into an animated bot avatar. The bot's own avatar comes alive on its stage (picked bot, empty bot chat), in voice and on calls: it leans toward the pointer, follows the bot's work and voice state, swells with the voice, and a click starts voice.",
       "touches": [
         "allternit-ai/src/components/Avatar",
         "allternit-ai/src/views/agent-character",
+        "allternit-ai/src/views/bots",
+        "allternit-ai/src/components/bots",
+        "allternit-ai/src/lib/voice",
+        "allternit-ai/src/components/gateway",
         "allternit/cmd/allternit-cloud-api/src/routes/photo_*",
         "allternit/sdk/look-packs",
         "allternit/platform/packages/avatar-adapters"
@@ -856,6 +860,10 @@
         {
           "on": "2026-10-04",
           "note": "Photo avatars included with plans (Plus 5, Super 25, Ultra 50) with a $4 cost cap."
+        },
+        {
+          "on": "2026-10-21",
+          "note": "Living bot avatars: the bot's existing avatar (not a new orb look) is the presence on a dark stage with a bot-colour glow; a click starts voice (Eoj)."
         }
       ],
       "evidence": [
