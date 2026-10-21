@@ -55,6 +55,18 @@ describe('resolveAcuGatewaySpawn', () => {
 });
 
 describe('resolveAcuPython', () => {
+  it('uses the bundled driver Python when the gateway packages are staged', () => {
+    const resourcesPath = mkdtempSync(join(tmpdir(), 'allternit-acu-bundled-'));
+    mkdirSync(join(resourcesPath, 'computer-use', 'acu', 'site-packages', 'uvicorn'), { recursive: true });
+    const bin = join(resourcesPath, 'computer-use', 'driver', 'python', 'bin');
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(join(bin, 'python3'), '');
+    expect(resolveAcuPython({ packaged: true, resourcesPath, repoRoot: '/nonexistent', platform: 'darwin' })).toBe(
+      join(bin, 'python3'),
+    );
+  });
+
+
   it('prefers ALLTERNIT_ACU_PYTHON then an explicit pythonPath', () => {
     expect(
       resolveAcuPython({ packaged: false, repoRoot: '/tmp', pythonPath: '/opt/custom/python' }),

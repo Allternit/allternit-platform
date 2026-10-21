@@ -1,6 +1,6 @@
 {
   "name": "@allternit/desktop",
-  "version": "1.1.8",
+  "version": "1.1.9",
   "description": "Allternit Desktop — Electron shell loading the Allternit platform with local VM management via Apple Virtualization.framework.",
   "main": "dist/main/unified-main.js",
   "type": "module",
@@ -319,7 +319,7 @@
       "icon": "build/icon.icns",
       "category": "public.app-category.developer-tools",
       "darkModeSupport": true,
-      "identity": null,
+      "identity": "-",
       "binaries": [
         "Contents/Resources/computer-use/cua-driver",
         "Contents/Resources/computer-use/driver/python/bin/python3.12"
@@ -371,6 +371,10 @@
         {
           "from": "resources/computer-use/acu/",
           "to": "computer-use/acu/"
+        },
+        {
+          "from": "resources/computer-use/acu-site/darwin-${arch}/",
+          "to": "computer-use/acu/site-packages/"
         }
       ],
       "extendInfo": {
@@ -472,6 +476,10 @@
         {
           "from": "resources/computer-use/acu/",
           "to": "computer-use/acu/"
+        },
+        {
+          "from": "resources/computer-use/acu-site/linux-x64/",
+          "to": "computer-use/acu/site-packages/"
         }
       ]
     },
@@ -550,6 +558,10 @@
         {
           "from": "resources/computer-use/acu/",
           "to": "computer-use/acu/"
+        },
+        {
+          "from": "resources/computer-use/acu-site/win32-x64/",
+          "to": "computer-use/acu/site-packages/"
         }
       ]
     },

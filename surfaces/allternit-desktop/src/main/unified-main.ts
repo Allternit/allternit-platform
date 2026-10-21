@@ -231,6 +231,11 @@ installSocketQosGuard(net.Socket.prototype);
 log.transports.file.resolvePath = () => join(app.getPath('userData'), 'main.log');
 log.initialize();
 log.transports.file.level = 'info';
+// The bundled Pythons (driver, ACU gateway, decision runtime) inherit this:
+// bytecode written inside the .app breaks its code signature seal.
+if (app.isPackaged && !process.env.PYTHONPYCACHEPREFIX) {
+  process.env.PYTHONPYCACHEPREFIX = join(app.getPath('userData'), 'pycache');
+}
 if (!app.isPackaged) {
   log.info(
     `[Main] unpackaged userData=${app.getPath('userData')} (scratch, not a product profile; packaged sqlite stays at @allternit/desktop)`,
