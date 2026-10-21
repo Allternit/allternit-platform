@@ -85,7 +85,7 @@ Once a phone is linked, bots reach it with the same `phone.*` tools as any other
 - **Back and keys:** `phone.back` works on both. On a linked iPhone it is the swipe from the left edge. `phone.key` takes `enter`, `esc`, `tab`, `backspace`, `space`, the arrow keys, `home` and `back` on a linked Android phone; a linked iPhone takes `enter` (it submits the field) and `home`.
 - **Texts and calls (Android):** `phone.sms.send` and `phone.call.dial` work on a linked Android phone, with the same approval on your computer, the same limits and the same emergency-number block as over adb. A linked iPhone can't send texts or place calls for a bot.
 - **Read a code from a text (Android):** `phone.sms.read` reads recent texts in the inbox and can wait up to two minutes for one to arrive, for example a sign-in code an app just sent. It returns the messages and any `codes` found in them. Pass `from` to read only one sender's texts.
-- Plain-English tasks (`phone.task`) are not available on linked phones yet.
+- **Tasks and skills:** plain-English tasks (`phone.task`) and phone skills work on linked phones too: they run on the bot's brain. See [Phone runs and phone skills](/guides/phone-skills).
 - **Bot voice on calls needs a call cable.** With a cable from a linked phone to the Mac running Desktop, the bot answers that phone's calls and talks on them (on iPhone, best effort). See [Let your bot talk on its own phone](/guides/bot-voice-on-linked-phone).
 
 ## Read messaging apps in Allternit

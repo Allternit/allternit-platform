@@ -64,7 +64,8 @@ The tools are the same as for Android, so a bot doesn't need to know which kind 
 | `phone.type`, `phone.key` | Type printable ASCII (US keyboard), or press keys and shortcuts such as `enter` and `cmd+space`. |
 | `phone.home`, `phone.back` | Go to the home screen, or swipe back. |
 | `phone.open_app` | Opens an app by name through Spotlight. |
-| `phone.task`, `phone.sms.send`, `phone.sms.read`, `phone.call.dial` | Not available on an iPhone. Plain-English tasks use ARTEMIS, which is Android-only. Use your [Allternit number](/guides/messaging-channels) for texts and calls. |
+| `phone.task` | Runs on the bot's own brain, using screenshots (an iPhone on a USB Agent has no screen read). See [Phone runs and phone skills](/guides/phone-skills). |
+| `phone.sms.send`, `phone.sms.read`, `phone.call.dial` | Not available on an iPhone. Use your [Allternit number](/guides/messaging-channels) for texts and calls. |
 
 When a command gets no answer, the result is `uncertain`, never success. The bot is told to look at the screen before it tries again.
 

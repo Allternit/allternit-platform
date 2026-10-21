@@ -1,0 +1,90 @@
+---
+title: "Phone runs and phone skills"
+description: "See every step your bot took on a phone with screenshots, save a run that worked as a skill, and replay it later, or on a schedule, with no model."
+---
+
+Every time a bot uses a phone through Allternit Desktop, each step is kept in the phone's **run history**, with a small screenshot where the bot took one. A run that worked can be saved as a **phone skill**. A skill replays the same steps later with no model: it finds each button again by itself, and asks the bot's brain only when the screen has really changed. Routines can run phone skills on a schedule.
+
+This works for every kind of phone Allternit drives: Android phones over Wireless debugging, Phone-Linked phones (Android and iPhone), and iPhones on an Allternit USB Agent. It needs Allternit Desktop running on the computer the phone is connected to.
+
+## Plain-English tasks run on your bot's brain
+
+`phone.task` ("open Settings and turn on dark mode") now runs on the bot's own model, on every kind of phone. Each step reads the screen, the bot's brain picks one phone action (tap, type, swipe, back, home, key or open an app), Desktop runs it, and the loop repeats until the task is done, can't be done, or reaches its step limit (15 by default, 40 at most). A task never sends texts or places calls; those stay separate tool calls that you approve on the computer.
+
+A bot passes its `bot_id` (or a brain as `provider/model`) so the task uses its model; without one, the task uses the default model. Google ARTEMIS is now only a fallback: Desktop uses it when Desktop's local API can't be reached, for an Android phone over adb, with `GEMINI_API_KEY` set.
+
+The result says whether the task finished (`done`), its `status` (`done`, `failed`, `max_steps` or `timeout`), the result in words, each step, how many model calls it made, and its `run_id`.
+
+## Run history
+
+Each phone tool call becomes one step in the history: the tool, its arguments, whether it worked, how long it took, and a screenshot when the call returned one. Steps that ran close together form one **run**. A run starts again after five minutes with no calls, and every `phone.task` and every skill replay is its own run.
+
+What is never stored:
+
+- Text the bot typed, the body of a text message, and phone numbers. They are replaced with their length.
+- Anything older than 30 days, and anything past the newest 500 steps per phone. Screenshots stop being kept once a phone's history holds 100 MB of them.
+
+The history stays on the computer that runs Allternit Desktop, in its data folder, readable only by you.
+
+## Save a run as a skill
+
+Ask the bot to save the run ("save that as a skill called dark-mode"), or call `phone.save_skill` with the run's `run_id` and a name. To save only part of a run, give `from_step` and `to_step`. These are positions in the run, counting from 0.
+
+Only the steps that acted on the phone are kept: taps, typing, swipes, keys, back, home, opening an app and find-and-tap. Screen reads and screenshots are not. For each tap, the skill remembers the element it landed on: its label, its resource id, its type, where it was on the screen and a tiny fingerprint of how it looked. When the screen read after the step showed something new, the skill also remembers that, as the step's check.
+
+Typed text is never part of a skill. Each typing step becomes an **input** (`text1`, `text2`, or the names you give with `input_names`), and every run passes the text again.
+
+Skills never include texts or calls.
+
+## Replay a skill
+
+Call `phone.run_skill` with the skill's name, the phone, and its inputs. For each step, the replay reads the screen and looks for the step's element:
+
+1. the same resource id and label;
+2. otherwise the one element with that label;
+3. otherwise the one element with that resource id;
+4. otherwise the one element in the same place that still looks the same.
+
+Two possible matches count as no match: the replay never guesses. When no tier finds the element, the bot's brain looks at the screen once and picks it. The skill then remembers the new place for next time. After a step with a check, the replay waits up to five seconds for the screen to show what it showed when the skill was recorded. If it never does, the replay stops and reports `diverged`.
+
+The result lists each step with how its element was found (`id`, `name`, `resource`, `pixels`, `model` or `coordinates`), and `model_calls`: 0 for a clean replay.
+
+On an iPhone on a USB Agent, which has no screen read, taps replay at their recorded position.
+
+## Run a skill on a schedule
+
+A routine can run a phone skill instead of sending its bot a message. Set the routine's config to:
+
+```json
+{
+  "replay": {
+    "kind": "phone",
+    "skill": "dark-mode",
+    "serial": "link:7f3a…",
+    "inputs": { "query": "weather" }
+  }
+}
+```
+
+`serial` is optional when only one phone is connected. The routine still belongs to a bot: if a step moved, the bot's brain re-decides it. Each run is recorded like any other routine run, with the replayed steps as its output, and a replay that diverges counts as a failed run.
+
+## For developers
+
+The API is served by the local allternit-api (`cmd/allternit-api/src/phone_runs.rs`, `phone_replay.rs`, `phone_task.rs`) under `/api/v1`, with the same sign-in as the computers routes. Replays and tasks reach the phone through Desktop's phone gateway (`~/.allternit/phone-gateway.json`). Path serials are URL-encoded (`link%3A…`).
+
+| Route | Body / query | Returns |
+| --- | --- | --- |
+| `POST /phones/:serial/history` | `{run_id?, tool, args, ok, error?, duration_ms, ui?, target?, source?, image_base64?, at?}` | `{ok, id, run_id, snapshot}` |
+| `GET /phones/:serial/history` | `?run_id=` | `{serial, steps, runs, retention_days, max_steps}` |
+| `GET /phones/:serial/history/:step/snapshot` | none | PNG, max 1280 px |
+| `GET /phones/history` | none | `{phones: [{serial, steps, last_at, runs}], runs}` |
+| `GET /phones/skills` | none | `{skills: [{name, description, inputs, steps, serial, source_run, runs, healed, created_at, updated_at, last_used_at}]}` |
+| `GET /phones/skills/:name` | none | `{skill}`, with its steps and locators |
+| `POST /phones/skills` | `{run_id, name, serial?, from_step?, to_step?, description?, input_names?}` | `{ok, skill, steps}` |
+| `DELETE /phones/skills/:name` | none | `{ok}` |
+| `POST /phones/skills/:name/run` | `{serial?, inputs?, bot_id?, brain?}` | `{ok, status, skill, serial, run_id, model_calls, healed, steps, error, duration_ms}` |
+| `POST /phones/:serial/task` | `{goal, max_steps?, bot_id?, brain?}` | `{ok, status, result, steps, model_calls, run_id, serial, duration_ms}` |
+
+A step has `{id, run_id, serial, at, tool, label, args, ok, error?, duration_ms, ui?, target?, source?, thumbnail?, snapshot}`. `thumbnail` is a small PNG data URL. `source` is `bot`, `skill`, `task` or `routine`. A run summary is `{run_id, serial, started_at, ended_at, steps, failed, source, thumbnail}`, newest first. For `POST /phones/:serial/task`, use the serial `-` to let Desktop pick the only connected phone. The task route answers 503 when Desktop's phone gateway isn't running.
+
+Desktop posts a history step after every phone tool call, without waiting for it (`surfaces/allternit-desktop/src/main/phone-runs.ts`). It strips typed text first, shrinks frames to 1280 px JPEG, and attaches the element a tap landed on from the bot's last full screen read. Replays and tasks tag their gateway calls with `_run_id` and `_source`. Desktop drops those keys before running the tool.

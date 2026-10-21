@@ -17,6 +17,7 @@ import {
   type ApprovalRequest,
   type RateStore,
 } from './phone-tools.js';
+import { PhoneApiUnavailable, type PhoneApi } from './phone-runs.js';
 
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
 const OK_PARCEL = 'Result: Parcel(00000000    \'....\')';
@@ -40,7 +41,7 @@ function memoryRates(): RateStore & { data: Record<string, number[]> } {
   return { data, load: (k) => data[k] ?? [], save: (k, v) => void (data[k] = v) };
 }
 
-function runner(opts: { decision?: ApprovalDecision; handler?: Parameters<typeof makeAdb>[0]; now?: () => number; online?: string[]; artemis?: boolean; activity?: (serial: string, delta: number) => void; onDialPlaced?: (serial: string, number: string) => boolean } = {}) {
+function runner(opts: { decision?: ApprovalDecision; handler?: Parameters<typeof makeAdb>[0]; now?: () => number; online?: string[]; artemis?: boolean; activity?: (serial: string, delta: number) => void; onDialPlaced?: (serial: string, number: string) => boolean; api?: PhoneApi; env?: Record<string, string | undefined> } = {}) {
   const { adb, calls } = makeAdb(opts.handler);
   const asked: ApprovalRequest[] = [];
   const rates = memoryRates();
@@ -54,6 +55,8 @@ function runner(opts: { decision?: ApprovalDecision; handler?: Parameters<typeof
     defaultSmsSubscription: async () => 3,
     activity: opts.activity,
     onDialPlaced: opts.onDialPlaced,
+    api: () => opts.api ?? null,
+    env: () => opts.env ?? {},
   });
   return { r, calls, asked, rates };
 }
@@ -116,9 +119,23 @@ describe('argument validation', () => {
     expect(res).toMatchObject({ ok: true, mimeType: 'image/png', dataBase64: PNG.toString('base64') });
   });
 
+  it('phone.task runs on the bot brain in allternit-api for every lane', async () => {
+    const task = vi.fn(async () => ({ ok: true, status: 'done', result: 'dark mode on', model_calls: 3 }));
+    const api = { task } as unknown as PhoneApi;
+    const { r } = runner({ api, artemis: true, env: { GEMINI_API_KEY: 'k' } });
+    expect(await r.call('phone.task', { task: 'dark mode', bot_id: 'b1', max_steps: 9 })).toMatchObject({ ok: true, done: true, status: 'done' });
+    expect(task).toHaveBeenCalledWith('192.168.1.20:41234', { goal: 'dark mode', max_steps: 9, bot_id: 'b1', brain: undefined });
+  });
+
+  it('phone.task falls back to ARTEMIS only when the endpoint is down, on adb, with GEMINI_API_KEY', async () => {
+    const down = { task: async () => { throw new PhoneApiUnavailable('ECONNREFUSED'); } } as unknown as PhoneApi;
+    expect(await runner({ api: down, artemis: true }).r.call('phone.task', { task: 'x' })).toMatchObject({ error: 'artemis_unavailable' });
+    expect(await runner({ api: down, artemis: true, env: { GEMINI_API_KEY: 'k' } }).r.call('phone.task', { task: 'x' })).toMatchObject({ ok: true, via: 'artemis' });
+  });
+
   it('phone.task needs ARTEMIS and passes the model through', async () => {
     expect(await runner().r.call('phone.task', { task: 'open settings' })).toMatchObject({ error: 'artemis_unavailable' });
-    const { r } = runner({ artemis: true });
+    const { r } = runner({ artemis: true, env: { GEMINI_API_KEY: 'k' } });
     expect(await r.call('phone.task', { task: 'open settings', model: 'Pro' })).toMatchObject({ ok: true });
     expect(await r.call('phone.task', { task: '' })).toMatchObject({ error: 'invalid_args' });
     expect(await r.call('phone.task', { task: 'x', model: 'Turbo' })).toMatchObject({ error: 'invalid_args' });
