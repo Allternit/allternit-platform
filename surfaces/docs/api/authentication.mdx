@@ -15,6 +15,15 @@ The only public origin is `https://api.allternit.com` ([Cloud API](/api/cloud-ap
 | Virtual key (`ak-`) | `Authorization: Bearer ak-…` | LLM gateway on the data-plane node (`http://127.0.0.1:8013/v1`): chat completions, embeddings, files, batches, caches |
 | Runtime device token (`allternit_runtime_…`) | `Authorization: Bearer allternit_runtime_…` | Node → Cloud API: heartbeat, relay connect, rotate |
 
+### Make an Allternit API key in the app
+
+You do not need to call `/api/v1/api-keys` yourself:
+
+- **Desktop and ai.allternit.com:** open **Cloud Console**, then the **API Keys** tab.
+- **Phone and m.allternit.com:** open the ACI screen. The same key list is under your computers.
+
+The list is called **Operator keys**. Name the key, then choose **Mint compute key**. Turn on **Can run models** only when the key needs the `inference` scope, because those calls spend your prepaid credits. The button then reads **Mint compute + models key**. The full key shows once, so copy it right away. To turn off a key, press and hold **Hold to revoke**.
+
 Organization-scoped gateway admin routes under `/api/v1/gateway/*` (virtual-key management) are served by the Allternit API node, not by the hosted Cloud API, and require an organization owner or admin role.
 
 The [Allternit API](/api/allternit-api) on `:8013` is not a public auth surface. Production clients do not send tokens there. Relayed requests forward the original Clerk `Authorization` header to the node.
