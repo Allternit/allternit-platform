@@ -437,8 +437,39 @@ export namespace Artifacts {
 
   // ----------------------------------------------------------- agent watch (presence + suggestions)
 
-  /** Where an agent is working: a doc block (0-based index) or a sheet cell. */
-  export type Anchor = { kind: "block"; block: number } | { kind: "cell"; sheet: string | null; address: string }
+  /**
+   * Where an agent is working: a doc block (0-based index), a sheet cell, or
+   * an artboard of a design canvas. An artboard anchor is also the agent's
+   * claim on that frame (SPEC-agent-canvas-2026-10-20).
+   */
+  export type Anchor =
+    | { kind: "block"; block: number }
+    | { kind: "cell"; sheet: string | null; address: string }
+    | { kind: "artboard"; artboard: string }
+
+  /** A design canvas layer (allternit-ai design-canvas.ts CanvasLayer), sent verbatim. */
+  export interface CanvasLayer {
+    id: string
+    type: string
+    name?: string
+    artboard: string | null
+    x?: number
+    y?: number
+    w?: number
+    h?: number
+    rotation?: number
+    props?: Record<string, unknown>
+    asset?: Record<string, unknown>
+    [key: string]: unknown
+  }
+
+  /** The artboard fields an artboard change may patch. */
+  export interface FramePatch {
+    fill?: string
+    w?: number
+    h?: number
+    props?: Record<string, unknown>
+  }
 
   /**
    * One suggested change (SPEC-agent-watch §Change shapes). `text` replaces the
@@ -450,6 +481,16 @@ export namespace Artifacts {
     | { kind: "text"; block: number | null; find: string; replace: string }
     | { kind: "block"; op: "replace" | "insert_after" | "delete"; block: number; markdown?: string }
     | { kind: "cell"; sheet: string | null; address: string; value: string }
+    | {
+        kind: "artboard"
+        artboard: string
+        name?: string
+        frame?: FramePatch
+        /** The artboard's full new layer list, stacking order. */
+        layers: CanvasLayer[]
+        /** What it replaces, as the agent read it. */
+        before: { frame?: FramePatch; layers: CanvasLayer[] }
+      }
 
   export interface Suggestion {
     id: string
@@ -469,6 +510,7 @@ export namespace Artifacts {
   export function anchorOf(change: Change | undefined): Anchor | undefined {
     if (!change) return undefined
     if (change.kind === "cell") return { kind: "cell", sheet: change.sheet ?? null, address: change.address }
+    if (change.kind === "artboard") return { kind: "artboard", artboard: change.artboard }
     if (typeof change.block === "number") return { kind: "block", block: change.block }
     return undefined
   }
@@ -514,6 +556,69 @@ export namespace Artifacts {
     }
   }
 
+  /** Another live agent session holds the artboard (409 `artboard_claimed`). */
+  export class ClaimedError extends Error {
+    constructor(
+      readonly frame: string,
+      readonly holder: { name: string; session_id: string | null },
+    ) {
+      super(`${frame} is being worked on by ${holder.name}; pick another frame or wait.`)
+      this.name = "ClaimedError"
+    }
+  }
+
+  function claimedError(json: any, frame: string): ClaimedError | undefined {
+    if (json?.error !== "artboard_claimed" && json?.code !== "artboard_claimed") return undefined
+    const name = typeof json.holder?.name === "string" && json.holder.name ? json.holder.name : "another agent"
+    return new ClaimedError(frame, { name, session_id: json.holder?.session_id ?? null })
+  }
+
+  /**
+   * Claim an artboard of a design canvas: an agent heartbeat whose anchor is
+   * the artboard. The claim lasts while heartbeats keep coming (45 s TTL).
+   * Throws ClaimedError when another agent session holds it, and an error
+   * when there is no cloud account (claims need the store).
+   */
+  export async function claim(
+    id: string,
+    agent: AgentPresence & { anchor: { kind: "artboard"; artboard: string } },
+    frame: string,
+    abort?: AbortSignal,
+  ): Promise<void> {
+    const body = {
+      state: "editing",
+      agent: {
+        name: agent.name.slice(0, 100),
+        ...(agent.session_id ? { session_id: agent.session_id } : {}),
+        ...(agent.task ? { task: agent.task.slice(0, 200) } : {}),
+        anchor: agent.anchor,
+        ...(typeof agent.cost_usd === "number" && Number.isFinite(agent.cost_usd) ? { cost_usd: agent.cost_usd } : {}),
+      },
+    }
+    const res = await cloud("POST", `/api/v2/artifacts/${enc(id)}/presence`, body, abort, PRESENCE_TIMEOUT_MS * 2)
+    if (!res) {
+      throw new Error(
+        `Can't claim ${frame}: claims need the user's Allternit account, and none is signed in here or the cloud isn't reachable. ` +
+          `Without a claim, artifact_suggest still works; the cloud refuses it if another agent holds the frame.`,
+      )
+    }
+    if (res.status === 409) throw claimedError(res.json, frame) ?? new RejectedError(409, `Can't claim ${frame}: ${errorMessage(res.json, 409)}`)
+    if (res.status === 404) throw new NotFoundError(id)
+    if (res.status >= 400) throw new RejectedError(res.status, `Can't claim ${frame}: ${errorMessage(res.json, res.status)}`)
+  }
+
+  /** Pending suggestions on an artifact; undefined when the store can't say (offline, older cloud). Never throws. */
+  export async function pendingSuggestions(id: string, abort?: AbortSignal): Promise<Suggestion[] | undefined> {
+    try {
+      const res = await cloud("GET", `/api/v2/artifacts/${enc(id)}/suggestions?status=pending`, undefined, abort, PRESENCE_TIMEOUT_MS)
+      if (!res || res.status !== 200 || !Array.isArray(res.json?.items)) return undefined
+      return res.json.items
+    } catch (error) {
+      if (abort?.aborted) throw error
+      return undefined
+    }
+  }
+
   export class SuggestUnavailableError extends Error {
     constructor(why: string) {
       super(
@@ -546,6 +651,9 @@ export namespace Artifacts {
       throw new SuggestUnavailableError("this Allternit cloud doesn't support suggestions yet")
     }
     if (res.status === 409) {
+      const frame = input.changes.find((c) => c.change.kind === "artboard")?.change as { name?: string; artboard: string } | undefined
+      const claimed = claimedError(res.json, frame?.name || frame?.artboard || "That frame")
+      if (claimed) throw claimed
       const current = typeof res.json?.current_version === "number" ? res.json.current_version : undefined
       throw new StaleVersionError(id, input.base_version, current)
     }

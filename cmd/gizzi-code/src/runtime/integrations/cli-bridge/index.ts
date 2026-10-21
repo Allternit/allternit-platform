@@ -315,7 +315,7 @@ export namespace CliBridge {
           capabilities: { tools: { listChanged: false } },
           serverInfo: { name: SERVER_NAME, version: "1.0.0" },
           instructions:
-            "Allternit session tools: the document open beside the chat (pane_artifact), the pane's browser (pane_browser), image/video generation rendered in the user's app (media_generate), the user's Artifacts (artifact_create, artifact_update, artifact_read), the task list shown as the session's Progress (todowrite), and multiple-choice questions to the user (question). To ask the user anything, use question: the CLI's own ask-the-user tools (AskUserQuestion, request_user_input) never reach them.",
+            "Allternit session tools: the document open beside the chat (pane_artifact), the pane's browser (pane_browser), image/video generation rendered in the user's app (media_generate), the user's Artifacts (artifact_create, artifact_update, artifact_read, artifact_suggest; artifact_claim and artifact_release for one frame of a design canvas), the task list shown as the session's Progress (todowrite), and multiple-choice questions to the user (question). To ask the user anything, use question: the CLI's own ask-the-user tools (AskUserQuestion, request_user_input) never reach them.",
         })
       case "ping":
         return ok(req.id, {})

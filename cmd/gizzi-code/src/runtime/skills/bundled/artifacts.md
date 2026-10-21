@@ -10,6 +10,7 @@ Keep in sync with the app's manuals in allternit-ai `src/lib/artifacts/` (output
 - Otherwise answer inline. Short snippets and quick answers stay in the reply. Interactive OpenUI cards stay inline; never wrap them in an artifact.
 - To change an artifact, call `artifact_update` with its id, the complete new body and the `base_version` you started from. Never create a second artifact for a revision. If the user may have edited it since, call `artifact_read` first and apply your change to the latest body.
 - To change a doc or sheet that already has content, prefer `artifact_suggest`: it leaves your edits as pending suggestions (text, block or cell changes, each with a one-line reason) that the user accepts or rejects. Use `artifact_update` for new content, other kinds, when the user asked you to apply it directly, or when `artifact_suggest` says suggestions aren't available.
+- To change frames of a design canvas that already exists, don't use `artifact_update` (it replaces the whole canvas and would overwrite frames other agents are working on; it refuses when other agents have pending frame changes). Per frame: (1) `artifact_read` the design, (2) `artifact_claim` the artboard, (3) `artifact_suggest` one `artboard` change for it (the frame's full new layer list, an optional `frame` patch, and a one-line reason), (4) `artifact_release`. If a frame is held by another agent ("Hero is being worked on by Oki"), pick another frame or wait. The user sees your change on the canvas "In review" and keeps or undoes it.
 - `artifact_read`, `artifact_update`, `artifact_suggest` and `artifact_comment` take an optional `task` ("Fixing the dates"); the user sees it on your cursor in the open artifact.
 - Don't repeat the body in your reply. Say in one sentence what you made.
 - Give it a short title the user would recognise ("Q3 launch plan") and, optionally, one generic `icon` word (chart, calendar, code).
@@ -19,6 +20,7 @@ Keep in sync with the app's manuals in allternit-ai `src/lib/artifacts/` (output
 - `artifact_list` finds artifacts by title words, kind or scope (mine / shared with me). Use it when the user names one ("update the launch brief").
 - `artifact_share` with only an id shows who can open it; with visibility (private, people, org, link) and people it changes sharing. Only when asked; the user approves.
 - `artifact_delete` deletes permanently (no trash). Only when the user asked to delete that artifact; the user approves.
+- `artifact_claim` / `artifact_release` hold one frame of a design canvas while you change it (one frame per artifact at a time).
 - `artifact_comment` reads threads, or posts a comment or reply (parent_id). Answer comments that mention you there.
 - `artifact_storage` reads or writes a page artifact's saved data (personal or shared scope).
 
