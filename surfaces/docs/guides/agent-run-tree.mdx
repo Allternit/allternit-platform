@@ -1,0 +1,55 @@
+---
+title: 'Agent run tree'
+description: 'See every agent a reply started: the orchestrator, each subagent with its model, status, cost and time, and subagents nested under the agent that started them.'
+---
+
+When the assistant hands work to subagents, the agent run tree shows who did what. The agent you talk to (the orchestrator) is the card at the top. Each subagent it started gets its own card below it, and a subagent that started its own subagents has them nested under its card.
+
+## What each card shows
+
+- **Agent name**, for example `explore` or `review`.
+- **Model** the agent ran on, for example `anthropic/claude-sonnet`.
+- **Status**: Running, Done, Failed or Stopped.
+- **Task**: the short description the parent gave it.
+- **Cost**, or **tokens** in and out when the run has no dollar cost (see below).
+- **Elapsed time**, counting up while the agent runs.
+
+The header above the cards shows totals: how many agents ran, how many are still running, how many failed, and the total cost.
+
+Click a card to open that agent's own transcript.
+
+## Where it appears
+
+- **In chat.** When a reply runs two or more agents, an "Agents" row appears with the reply. Click it to open the tree.
+- **Code mode.** The Tasks pane shows the tree for the current session, next to shells and other background tasks.
+- **Bot threads.** A bot that delegates work shows the same row and tree in its thread.
+- **Phones.** On the ai.allternit.com phone layout and the m.allternit.com app, the tree draws as an indented list, one row per agent, with the same status, model, cost and time.
+
+## Retry a failed agent
+
+A failed card shows the error and a Retry button. Retry asks the parent agent to run that task again. The request appears in the chat as a normal message, and the parent gets the new result, so it can carry on with its work.
+
+## Cost on subscription brains
+
+Brains that run on a subscription (for example a Claude or ChatGPT plan signed in through Connections) report $0 per run. Their cards show tokens in and out instead of a dollar amount, and the header total counts only metered cost.
+
+## For developers
+
+The tree is drawn from one call: `GET /v1/session/{sessionID}/tasks` on gizzi-code (proxied by allternit-api as `GET /agent-sessions/{id}/tasks`). Surfaces poll it every few seconds while tasks run. Source: `cmd/gizzi-code/src/runtime/session/session-tasks.ts`.
+
+Each item (`SessionTaskItem`) has the existing fields (`id`, `kind`, `status`, `background`, `description`, `agent`, `childSessionID`, `output`, `error`, `time`) plus these fields, added without breaking older clients:
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `model` | `string` or `null` | `providerID/modelID` of the child session's latest assistant message. `null` when there is no child session or it has no assistant message yet. |
+| `cost` | `number` or `null` | Sum of `cost` over the child session's assistant messages. `null` when there is no child session. Subscription brains report `0`. |
+| `tokens` | `{ input, output }` or `null` | Summed over the same messages. `output` includes reasoning tokens; cache reads are not counted as input. |
+| `children` | item array | The child session's own tasks, built the same way. Nested at most 3 levels below the requested session; `[]` at the limit or when there are none. |
+
+Status rules:
+
+- Background tasks (shells, background subagents) keep the status and error stored on their task row, and also carry `model`, `cost`, `tokens` and `children` from their `childSessionID`.
+- Foreground subagents (child sessions without a task row) are `running` while busy. When idle, they are `failed` if the latest assistant message has an error, with `error` set to a short message taken from it (`data.message`, then `message`, then the error name); `cancelled` if that error is a user stop (`MessageAbortedError`); otherwise `completed`.
+- Surfaces map `completed` to Done, `failed` and `interrupted` to Failed, and `cancelled` to Stopped.
+
+The rollup reads message records only, not their parts, and a child session that cannot be read is listed without stats rather than failing the whole list.

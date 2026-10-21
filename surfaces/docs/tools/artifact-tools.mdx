@@ -5,7 +5,7 @@ description: 'The artifact_create, artifact_update, artifact_suggest, artifact_c
 
 ## Overview
 
-gizzi-code gives every model built-in tools for **Artifacts v2**: one account-level store of typed artifacts (docs, decks, sheets, designs, dashboards, motion, pages, cards, diagrams, images and code files) that Desktop, ai.allternit.com, the phone layout, the m.allternit.com PWA, cloud computers and gizzi all read and write. The tools behave the same for every model and provider. Any CLI agent that runs inside a gizzi session gets them too, through the session's `allternit` MCP bridge.
+gizzi-code gives every model built-in tools for **Artifacts v2**: one account-level store of typed artifacts (docs, decks, sheets, designs, dashboards, ops sheets, motion, pages, cards, diagrams, images and code files) that Desktop, ai.allternit.com, the phone layout, the m.allternit.com PWA, cloud computers and gizzi all read and write. The tools behave the same for every model and provider. Any CLI agent that runs inside a gizzi session gets them too, through the session's `allternit` MCP bridge.
 
 | Tool | Input | Returns |
 |------|-------|---------|
@@ -168,7 +168,8 @@ Heartbeats are best effort. They run in the background with a 2.5 second timeout
 | `sheet` | `application/vnd.allternit.sheet+json` |
 | `slides` | `application/vnd.allternit.slides+json` |
 | `design` | `application/vnd.allternit.design+json` or `text/html` |
-| `dashboard` | `application/vnd.allternit.openui` |
+| `dashboard` | `application/vnd.allternit.dashboard+json` (or `application/vnd.allternit.openui` for older dashboards) |
+| `ops` | `application/vnd.allternit.ops+json` |
 | `motion` | `application/vnd.allternit.motion+json` |
 | `page` | `text/html` or `text/markdown` |
 | `card` | `application/vnd.allternit.openui` |
@@ -176,7 +177,7 @@ Heartbeats are best effort. They run in the background with a 2.5 second timeout
 | `image` | `text/uri-list` (the image URL, not its data) |
 | `code` | `text/plain`, with `meta.language` and optionally `meta.filename` |
 
-The JSON and OpenUI formats (docs, sheets, slides, designs, dashboards, motion, cards) are described to the model by the app's system prompt; the tool descriptions point the model there. gizzi refuses a format that doesn't belong to the kind and a `+json` body that isn't valid JSON, with an error the model can act on.
+The JSON and OpenUI formats (docs, sheets, slides, designs, dashboards, ops sheets, motion, cards) are described to the model by the app's system prompt; the tool descriptions point the model there. gizzi refuses a format that doesn't belong to the kind and a `+json` body that isn't valid JSON, with an error the model can act on.
 
 ## Where artifacts are saved
 

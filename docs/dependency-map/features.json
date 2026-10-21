@@ -1031,7 +1031,7 @@
       "label": "Artifacts (one typed store, versions, sharing)",
       "product": "product:ai-allternit",
       "status": "building",
-      "description": "Artifacts v2: one account-level store of typed artifacts (doc, sheet, slides, design, dashboard, motion, page, card, diagram, image, code, pdf) in cloud-api Postgres with immutable versions, view/comment/edit sharing, org admin settings and a public link route. Phase 1 server side is in; gizzi's artifact_* tools are feature:artifact-model-tools; the app (one ArtifactWindow, Artifacts tab, Share dialog, Output picker, public page /a/<id>) is in allternit-ai.",
+      "description": "Artifacts v2: one account-level store of typed artifacts (doc, sheet, slides, design, dashboard, ops, motion, page, card, diagram, image, code, pdf) in cloud-api Postgres with immutable versions, view/comment/edit sharing, org admin settings and a public link route. Phase 1 server side is in; gizzi's artifact_* tools are feature:artifact-model-tools; the app (one ArtifactWindow, Artifacts tab, Share dialog, Output picker, public page /a/<id>) is in allternit-ai.",
       "touches": [
         "allternit/cmd/allternit-cloud-api/src/artifacts",
         "allternit/cmd/allternit-cloud-api/src/routes/artifacts_*",
@@ -1044,6 +1044,10 @@
         "allternit-ai/src/components/artifact-share"
       ],
       "decisions": [
+        {
+          "on": "2026-10-20",
+          "note": "Ops sheets added as artifact kind `ops` (Eoj: a deploy-sheet style artifact for DevOps, deployed sites, MCP apps and computer/VPS status). Status header with segmented progress, up to 4 action buttons that ask before every call, tabs of steps/logs/stats/fields/charts/tables. Runs on the dashboard runtime (same consent, cache and refresh); actions use createActionClient. Built-in allternit__* sources read the viewer's computers (list, get, history) and start/stop/restart them without a connector; dashboards can use the reads. Server: kinds.rs ops KindSpec, ops_connectors derives capabilities on save, runtime allows connectors for ops like dashboards. gizzi-code Artifacts.FORMATS accepts ops. All three surfaces from one component; gallery tile + Output picker /ops."
+        },
         {
           "on": "2026-10-16",
           "note": "Eoj approved the share reference and preview: a compact owner/access-avatar pill with a dark Share action, and a rounded sharing panel with inline role pickers, people list and copy confirmation. Shared styling covers the v2 artifact window on Desktop, web phone and PWA plus the legacy Cowork private/org pane. Access avatars use saved grants, separate from live presence. Existing owner/policy rules and phone/PWA read-only sharing remain; no new public access is enabled."
@@ -1106,6 +1110,10 @@
         "allternit/cmd/allternit-cloud-api/src/artifacts"
       ],
       "decisions": [
+        {
+          "on": "2026-10-20",
+          "note": "The dashboard runtime now also runs ops sheets (useDashboardRuntime takes a noun; ConsentCard takes noun + note; RunDeps.appName). createDashboardClient routes built-in allternit__* reads (computers_list, computer_get, computer_history) to the viewer's own Allternit computers before the connector bridge; the consent card lists them as Allternit. createActionClient is the write path for ops-sheet buttons only."
+        },
         {
           "on": "2026-10-09",
           "note": "Body is application/vnd.allternit.dashboard+json v1 (dashboards saved as OpenUI cards still open as cards). Queries reuse the card tool client: read-only tools only, plus one read-only SELECT through a warehouse SQL tool. First-use approval is saved to the account (the page-runtime connectors consent, with per-tool off in denied_tools) and localStorage is only a first-paint cache; signed-out viewers get no connectors. The owner's client declares capabilities.connectors so link sharing is refused. Warehouses with a per-account address (Snowflake, Databricks) or a self-run server (Redshift) are listed as setup guides, not invented endpoints. PDF export prints the dashboard; PNG export captures the rendered grid with modern-screenshot."
@@ -1927,6 +1935,53 @@
         "allternit/surfaces/docs/guides/meet-your-bots.mdx",
         "allternit/surfaces/docs/architecture/meet-your-bots.mdx",
         "allternit/cmd/allternit-cloud-api/src/routes/me_flags.rs"
+      ]
+    },
+    {
+      "id": "feature:agent-run-tree",
+      "label": "Agent run tree",
+      "product": "product:ai-allternit",
+      "status": "live",
+      "description": "When a reply or session hands work to subagents, a live tree shows the orchestrator and every agent under it: name, model, status (Running/Done/Failed/Stopped), task, cost (tokens for $0 subscription brains) and time, nested up to 3 levels, with header totals. A failed card opens its reason with Dismiss and Retry; Retry asks the parent agent to run the task again in the chat. In chat it is an 'Agents' row under replies that run 2+ agents (main chat, Cowork, Code, bot threads); Code's Tasks pane and the thread inspector's Subagents tab draw the same tree; narrow hosts and phones get an indented list. gizzi-code SessionTasks items carry model, cost, tokens, failed foreground children and nested children.",
+      "touches": [
+        "allternit-ai/src/components/agent-run-tree",
+        "allternit-ai/src/components/ai-elements",
+        "allternit-ai/src/components/bot-chat",
+        "allternit-ai/src/components/chat",
+        "allternit-ai/src/components/threads",
+        "allternit-ai/src/views/code",
+        "allternit/cmd/gizzi-code/src/runtime/session"
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/agent-run-tree.mdx",
+        "allternit/cmd/gizzi-code/src/runtime/session/session-tasks.ts"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-20",
+          "note": "Eoj: on every surface subagents show; Retry asks the parent agent to re-run (not the child in place)."
+        }
+      ]
+    },
+    {
+      "id": "feature:arc-ui-components",
+      "label": "Arc UI components",
+      "product": "product:ai-allternit",
+      "status": "live",
+      "description": "Animated controls from Arc (uiarc.dev, MIT) used across the workspace UI: buttons, form fields, tabs, sheets, toasts, progress, usage meters and more, themed through --arc-* tokens. Same source on Desktop, the phone layout and the PWA.",
+      "touches": [
+        "allternit-ai/src/components/ui"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-20",
+          "note": "Adopted every Arc component shown in the gallery except Calendar/date pickers (ours is better) and Context menu (a click opens the thing; no right-click/hover menus). Docs: architecture/ui-components."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/architecture/ui-components.mdx",
+        "allternit-ai/src/components/arc/arc-theme.css",
+        "allternit-ai/src/dev/uiarc/UiarcPreview.tsx"
       ]
     }
   ],

@@ -72,7 +72,27 @@ Live: every tile runs its own query against the viewer's connectors when opened 
 - `query.tool` is exactly the name of a connector tool you have (`<connector>__<tool>`), with `query.args`. For a warehouse SQL tool put the statement in `query.sql` and the tool's argument name in `query.sqlArg` (default "query"); only one read-only SELECT, WITH, SHOW or DESCRIBE runs. Rows come back as an array of objects or `{columns, rows}`; set `query.rowsPath` (like "data.rows") if they sit elsewhere. Name result columns to match encoding.
 - Filters: select, text or number. Use `{{filters.<id>}}` in `query.args` or `query.sql` (in SQL it becomes a quoted literal: `WHERE region = {{filters.region}}`). `format.style`: number, compact, currency, percent, text or date (optional decimals, prefix, suffix).
 - On changes ("add a region filter", "switch to weekly") keep tile ids stable so cached values and layout survive.
-- Dashboards are on paid plans (Team on by default, Enterprise when an admin turns them on).
+- Dashboards are on every plan, including Free; an org admin can turn them off.
+- Built-in `allternit__*` read tools (your computers: `allternit__computers_list`, `allternit__computer_get`, `allternit__computer_history`) work in tiles without a connector.
+
+### ops — `application/vnd.allternit.ops+json`
+A live status sheet for one running thing: a deploy, a site, an MCP app, a server or computer, a workflow run, a bot routine. A status header with a progress bar, up to 4 action buttons (Pause, Roll back, Restart…) that ask the viewer before every run, and tabs of panels. Everything reads the viewer's connectors; never put made-up values in one.
+
+```json
+{"version":1,"refreshSeconds":30,"filters":[],
+ "header":{"title":"fraud-scorer","query":{"tool":"<connector>__<tool>","args":{}},
+           "fields":{"status":"status","version":"version","environment":"environment","target":"cluster","startedAt":"started_at"},"stepsFrom":"pipeline"},
+ "actions":[{"id":"pause","label":"Pause","icon":"pause","tool":"<connector>__<tool>","args":{},"confirm":"Pause the rollout?","when":["running"]}],
+ "tabs":[{"id":"pipeline","label":"Pipeline","panels":[{"id":"pipeline","type":"steps","query":{"tool":"<connector>__<tool>","args":{}}}]},
+         {"id":"logs","label":"Logs","panels":[{"id":"log","type":"logs","query":{"tool":"<connector>__<tool>","args":{}}}]}]}
+```
+
+- Panel types: steps, logs, stats (`fields` with `baseline` and `limit`), fields (label/value lines), line, area, bar (optional `limit` line), table. Panel ids are unique across the sheet; a tab's `countFrom` shows a panel's row count.
+- Header columns are found by usual names (status, name, version…) when `header.fields` leaves them out; `startedAt` is only read when named.
+- Actions: icon is pause, play, rollback, restart, stop, retry, promote or run; `when` lists header statuses that show the button.
+- One select filter becomes a "1 of N" switcher; `{{filters.<id>}}` works in panel and action args.
+- Built-in tools need no connector: `allternit__computers_list`, `allternit__computer_get`, `allternit__computer_history` (reads) and `allternit__computer_start` / `_stop` / `_restart` (actions).
+- Ops sheets are on every plan, including Free; an org admin can turn them off.
 
 ### motion — `application/vnd.allternit.motion+json`
 A short animated explainer, data story or title card. The body is JSON, never code: every word, number, colour and duration is data.
@@ -87,7 +107,7 @@ A short animated explainer, data story or title card. The body is JSON, never co
 - Colours are #rrggbb; font is sans, serif or mono. Scenes last 0.5–60 s; at most 40 scenes and 180 s in all, 24 chart points, 12 list items. The first scene's transition is "cut"; later ones fade, wipe, slide or cut.
 - Keep text short (a headline is about 8 words). Use real figures from the conversation or the source artifact; never invent numbers. No generated footage or people.
 - Edits change only what was asked: "slow scene 2" raises that scene's duration; everything else stays.
-- Motion is on Super, Ultra and Team plans.
+- Motion is on every plan, including Free; an org admin can turn it off.
 
 ### page — `text/html` or `text/markdown`
 A complete, self-contained page: inline CSS and JS, works offline, readable on a phone (no fixed widths, 16px side padding), light and dark.

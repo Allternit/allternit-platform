@@ -99,6 +99,7 @@
               "guides/design-canvas-agents",
               "reference/artifact-share-ui",
               "guides/dashboards",
+              "guides/ops-sheets",
               "guides/artifact-modes",
               "guides/cowork-session-panel",
               "guides/code-session-list",
@@ -164,7 +165,8 @@
               "architecture/policy",
               "architecture/verification",
               "architecture/receipts",
-              "architecture/replay"
+              "architecture/replay",
+              "architecture/ui-components"
             ],
             "icon": "/icons/stack.svg"
           },
@@ -535,6 +537,7 @@
               "guides/chat-composer",
               "guides/interactive-answers",
               "guides/agent-steps",
+              "guides/agent-run-tree",
               "guides/pdf-citations"
             ],
             "icon": "/icons/book.svg"

@@ -5,6 +5,25 @@ description: 'Changelog for the Allternit platform, SDKs, and Gizzi Code CLI'
 
 # Release Notes
 
+## 2026-10-21 — New controls across the workspace
+
+The same changes apply on Desktop, on ai.allternit.com (including the phone layout) and in the m.allternit.com app.
+
+- **Saving:** save buttons keep their size while they work, then show **Saved**.
+- **Destructive actions:** deleting a bot, unpairing a computer and revoking a key now use press-and-hold. Disconnect and revoke buttons ask for confirmation in place, without a pop-up. Disconnecting a connector offers **Undo**.
+- **Copy buttons:** copy buttons on code blocks, terminal output, share links, invite links and webhook URLs confirm in place.
+- **Form fields:** pickers for models, timezones, tools and connector actions can be searched. Number fields have steppers, and times use a time picker. Settings toggles and tabs slide between options.
+- **Panels:**
+  - Side drawers and phone sheets can be dragged closed.
+  - Toasts stack, and you can swipe them away.
+  - Phone lists show **Delete** when you swipe a row.
+  - Wizards show their steps.
+  - Long lists have pages.
+  - File trees open a file with one click.
+- **Usage:** plan and voice limits show as usage meters. Tool-call inputs and outputs open as a JSON tree you can fold.
+- **Keyboard shortcuts:** you can now change the workspace shortcuts in **Settings → About → Keyboard shortcuts**. See [Desktop](/surfaces/desktop#workspace-shortcuts).
+- **Accessibility fix:** screen readers no longer announce text fields as "Input" or "Text Area".
+
 ## 2026-10-20 — App steps and source chips in replies
 
 - Steps that reach your connected apps now show the app's logo and name ("Searched **Slack** for messages since yesterday") and, when they finish, the first three things they found: messages, emails, pull requests, issues or notes, with "+N more". While the assistant works, the newest step's finds stay open. When the reply is done, the steps fold into a summary such as "Ran 2 searches, read 3 sources", followed by the logos of the apps used. See [Agent steps in replies](/guides/agent-steps).
