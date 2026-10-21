@@ -8,7 +8,7 @@
     "allternit_native": {
       "kind": "agent_email",
       "status_route": "/api/v1/agent-email/status",
-      "mcp_tools": ["allternit_mail.send", "allternit_mail.status"]
+      "mcp_tools": ["allternit_mail.send", "allternit_mail.status", "allternit_mail.list", "allternit_mail.read", "allternit_mail.read_otp"]
     }
   },
   "photon": {

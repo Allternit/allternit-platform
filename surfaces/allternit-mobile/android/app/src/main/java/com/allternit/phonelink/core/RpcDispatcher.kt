@@ -47,6 +47,13 @@ interface ServerHooks {
      * still goes out. False when there is no mesh to restart.
      */
     fun requestMeshRestart(deferred: Boolean): Boolean = false
+    /**
+     * One shell-server command (ShellServerProtocol: KEY, SMS, DIAL, SMSREAD,
+     * A11YON), starting the server first if needed. Returns what follows `OK`;
+     * throws RpcException when the server isn't running or refuses.
+     */
+    fun shell(command: String): String = throw RpcException.typed(
+        "shell_unavailable", "The phone's shell service isn't available. Connect the phone to Allternit Desktop once (USB, or Wi-Fi at home).")
 }
 
 /**
@@ -152,6 +159,11 @@ class RpcDispatcher(
             }
             "screen_service" -> screenService()
             "mesh_restart" -> meshRestart(params)
+            "key" -> synchronized(uiLock) { key(params) }
+            "sms_send" -> smsSend(params)
+            "call_dial" -> callDial(params)
+            "sms_read" -> smsRead(params)
+            "a11y_enable" -> a11yEnable(params)
             "stream_ticket" -> throw RpcException(RpcException.METHOD_NOT_FOUND, "Method not found: the Android server has no /stream", "unsupported")
             else -> throw RpcException(RpcException.METHOD_NOT_FOUND, "Method not found", "unknown_method")
         }
@@ -324,6 +336,66 @@ class RpcDispatcher(
             .put("mesh_host", cfg.meshHost ?: JSONObject.NULL)
             .put("previous_mesh_host", before.meshHost ?: JSONObject.NULL)
             .put("waited_ms", clock() - start)
+    }
+
+    // ── Shell-server methods (work without the accessibility service) ───────
+    // Texts and calls arrive only after Allternit Desktop's approval gate,
+    // rate limits and emergency-number block (phone-tools.ts); the shell
+    // server re-checks arguments and refuses emergency numbers again.
+
+    private val KEY_NAME = Regex("^(KEYCODE_[A-Z0-9_]{1,40}|[0-9]{1,3})$")
+
+    private fun key(p: JSONObject): JSONObject {
+        val code = p.optStringOrNull("code")?.trim()?.uppercase()
+            ?: p.optDoubleOrNull("keycode")?.toInt()?.toString()
+            ?: throw RpcException.invalid("Provide code, e.g. KEYCODE_ENTER")
+        if (!KEY_NAME.matches(code)) throw RpcException.invalid("code must be a KEYCODE_… name or a key number")
+        // With the accessibility service up, keys follow the tap rules (no lock screen, no protected screens).
+        ops()?.let { requireUsableScreen(it); requireNotProtected(it) }
+        hooks.shell("KEY $code")
+        return JSONObject().put("message", "Pressed $code")
+    }
+
+    private val NUMBER = Regex("^\\+?[0-9]{3,15}$")
+
+    private fun subscription(p: JSONObject): Int? {
+        val sub = p.optDoubleOrNull("subscription_id") ?: return null
+        if (sub < 0 || sub > 1000 || sub != Math.floor(sub)) throw RpcException.invalid("subscription_id must be a non-negative integer")
+        return sub.toInt()
+    }
+
+    private fun smsSend(p: JSONObject): JSONObject {
+        val to = p.optStringOrNull("to")?.takeIf { NUMBER.matches(it) } ?: throw RpcException.invalid("to must be 3–15 digits with an optional leading +")
+        val text = p.optStringOrNull("text")?.takeIf { it.isNotEmpty() && it.length <= 1000 } ?: throw RpcException.invalid("text must be 1–1000 characters")
+        val b64 = Base64.getEncoder().encodeToString(text.toByteArray(Charsets.UTF_8))
+        hooks.shell("SMS ${subscription(p) ?: -1} $to $b64")
+        return JSONObject().put("status", "submitted")
+    }
+
+    private fun callDial(p: JSONObject): JSONObject {
+        val number = p.optStringOrNull("number")?.takeIf { NUMBER.matches(it) } ?: throw RpcException.invalid("number must be 3–15 digits with an optional leading +")
+        val sub = subscription(p)
+        hooks.shell("DIAL $number" + (sub?.let { " $it" } ?: ""))
+        return JSONObject().put("status", "dialing")
+    }
+
+    /** Inbox rows newer than since_ms, as `content query` prints them (Desktop parses them like its adb lane). */
+    private fun smsRead(p: JSONObject): JSONObject {
+        val since = p.optDoubleOrNull("since_ms")?.toLong()?.takeIf { it >= 0 } ?: throw RpcException.invalid("since_ms is required (epoch ms)")
+        val from = p.optStringOrNull("from")?.replace(Regex("[\\s().-]"), "")?.takeIf { it.isNotEmpty() }
+        if (from != null && !Regex("^\\+?[0-9]{3,16}$").matches(from)) throw RpcException.invalid("from must be a phone number")
+        val raw = String(Base64.getDecoder().decode(hooks.shell("SMSREAD $since" + (from?.let { " $it" } ?: ""))), Charsets.UTF_8)
+        return JSONObject().put("raw", raw)
+    }
+
+    /** Turns the accessibility service back on through the shell server, then waits up to `wait` s for it to bind. */
+    private fun a11yEnable(p: JSONObject): JSONObject {
+        if (ops() == null) {
+            hooks.shell("A11YON")
+            val deadline = clock() + ((p.optDoubleOrNull("wait") ?: 5.0).coerceIn(0.0, 15.0) * 1000).toLong()
+            while (ops() == null && clock() < deadline) sleep(250)
+        }
+        return JSONObject().put("accessibility_enabled", ops() != null)
     }
 
     private fun screenService(): JSONObject {

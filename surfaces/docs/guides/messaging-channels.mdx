@@ -70,6 +70,16 @@ Email wizards include a reply setting for each bot:
 | **Known senders** | Replies send automatically to senders on your allowlist; everyone else waits for approval. |
 | **Auto** | The bot replies without approval. |
 
+## Your bot's inbox and sign-up codes
+
+Every bot gets its own address when it is created, on the shared bot domain (for example `researcher@bots.allternit.com`), as long as this computer is signed in to your Allternit account. A bot that was made before this, or whose address you released, gets one the first time it uses an email tool.
+
+A bot can read its own inbox. When it signs up for a site or logs in somewhere and the site emails a code or a sign-in link, the bot picks it up from the inbox and carries on. You don't have to copy the code across.
+
+Allternit spots verification email (one-time codes, "confirm your email" and magic sign-in links) as it arrives. That kind of email is kept in the inbox for the bot to read, but it does not start a new conversation and the bot doesn't reply to it. It is kept even when the sender isn't on the bot's **Who can email this bot?** list, because it comes from the site the bot is signing up on. Ordinary email still follows that list and the reply setting above.
+
+Signing up for services automatically is against some sites' terms, and email codes are only one step: CAPTCHAs and phone checks still need a person.
+
 
 ## Message status in a thread
 

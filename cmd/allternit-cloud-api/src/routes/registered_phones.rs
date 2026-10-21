@@ -171,10 +171,55 @@ pub async fn phones_for_account(
 }
 
 async fn device_account(state: &ApiState, headers: &HeaderMap) -> Result<String, ApiError> {
+    Ok(device_of(state, headers).await?.0)
+}
+
+/// `(account, runtime device id)` of the credential.
+async fn device_of(state: &ApiState, headers: &HeaderMap) -> Result<(String, String), ApiError> {
     let token = device_token_from_headers(headers)
         .ok_or_else(|| ApiError::Unauthorized("Runtime credential required".to_string()))?;
     let device = runtime_device_for_token(&state.db, token, None).await?;
-    Ok(device.user_id)
+    Ok((device.user_id, device.id))
+}
+
+/// Remember which runtime serves the phone (pg 096), for the Platform API
+/// relay (`platform_v1::phones`). Best effort: a schema without the column
+/// keeps the upsert working.
+pub async fn set_phone_runtime(db: &PgPool, account_id: &str, serial: &str, runtime_id: &str) {
+    let result = sqlx::query("UPDATE registered_phones SET runtime_id = $3 WHERE account_id = $1 AND serial = $2")
+        .bind(account_id)
+        .bind(serial.trim())
+        .bind(runtime_id)
+        .execute(db)
+        .await;
+    if let Err(e) = result {
+        tracing::debug!("registered phone runtime not stored: {e}");
+    }
+}
+
+/// The runtime that most recently served any of the account's phones (pg 096).
+pub async fn latest_phone_runtime(db: &PgPool, account_id: &str) -> Option<String> {
+    sqlx::query_scalar::<_, String>(
+        "SELECT runtime_id FROM registered_phones WHERE account_id = $1 AND runtime_id IS NOT NULL \
+         ORDER BY last_seen_at DESC NULLS LAST LIMIT 1",
+    )
+    .bind(account_id)
+    .fetch_optional(db)
+    .await
+    .ok()
+    .flatten()
+}
+
+/// The runtime a registered phone was last seen on (pg 096), when known.
+pub async fn phone_runtime(db: &PgPool, account_id: &str, serial: &str) -> Option<String> {
+    sqlx::query_scalar::<_, Option<String>>("SELECT runtime_id FROM registered_phones WHERE account_id = $1 AND serial = $2")
+        .bind(account_id)
+        .bind(serial.trim())
+        .fetch_optional(db)
+        .await
+        .ok()
+        .flatten()
+        .flatten()
 }
 
 async fn upsert_registered_phones(
@@ -182,7 +227,7 @@ async fn upsert_registered_phones(
     headers: HeaderMap,
     Json(body): Json<Value>,
 ) -> Result<Response, ApiError> {
-    let account_id = device_account(&state, &headers).await?;
+    let (account_id, runtime_id) = device_of(&state, &headers).await?;
     let phones: Vec<RegisteredPhoneInput> = serde_json::from_value(
         body.get("phones")
             .cloned()
@@ -204,6 +249,7 @@ async fn upsert_registered_phones(
     for phone in &phones {
         let phone = normalize(phone.clone())?;
         upsert_phone(&state.db, &account_id, &phone).await?;
+        set_phone_runtime(&state.db, &account_id, &phone.serial, &runtime_id).await;
     }
     Ok(Json(json!({ "ok": true, "upserted": phones.len() })).into_response())
 }

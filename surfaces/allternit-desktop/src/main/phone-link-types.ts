@@ -189,7 +189,12 @@ export interface PhoneLinkAPI {
   /** Linked phones with per-phone health, for Settings → Connections › Setup. */
   devices(): Promise<PhoneLinkDevice[]>;
   onStatusChanged(handler: (status: PhoneLinkStatus) => void): () => void;
-  start(opts: { platform: PhoneLinkPlatform }): Promise<PhoneLinkStatus>;
+  /**
+   * Android only: `serial` (`host:port`) runs setup on a phone adb reaches by
+   * address, e.g. a cloud phone, instead of over USB; `linkHost` is where its
+   * Phone Link app port is published (cloud phones' `linkAddress`).
+   */
+  start(opts: { platform: PhoneLinkPlatform; serial?: string; linkHost?: string }): Promise<PhoneLinkStatus>;
   cancel(): Promise<PhoneLinkStatus>;
   /** The user did a step the phone can't report (see PHONE_LINK_MANUAL_STATES). */
   continue(): Promise<PhoneLinkStatus>;

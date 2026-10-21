@@ -1142,6 +1142,11 @@ async fn main() {
         // Phones 2.0 phone stream relay: list registered phones + mint the
         // phone-stream ws token (Clerk/desktop-auth'd, like the computers).
         .merge(allternit_api::phone_ws::phone_api_router())
+        // Phone run history, saved phone skills (record once, replay with no
+        // model) and phone.task on the bot's brain.
+        .merge(allternit_api::phone_runs::router())
+        .merge(allternit_api::phone_replay::router())
+        .merge(allternit_api::phone_task::router())
         .merge(allternit_api::subscription_routes::router())
         .merge(allternit_api::computer_embed::api_router())
         .merge(allternit_api::bot_group_routes::router())

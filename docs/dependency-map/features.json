@@ -805,10 +805,15 @@
         {
           "on": "2026-10-08",
           "note": "Launch: card required for every project (402 payment_method_required), console Billing page with Stripe Checkout (Pay as you go / Growth), webhook sets the project's customer and plan, Growth $300 credit grant per invoice, developer terms and AUP published and accepted at key creation, SDK publish workflow."
+        },
+        {
+          "on": "2026-10-20",
+          "note": "/v1/phones (scope phones, unbound keys only): list, history, one tool, task and skill run (202, background) relayed signed as the project owner to the Desktop serving the phone (registered_phones.runtime_id, pg 096). Texts and calls still wait for the Desktop approval dialog. phone.step and phone.run.completed webhooks come from the Desktop owner ledger via /api/v1/runtime/events and fan out to the owner's projects with a subscribed endpoint."
         }
       ],
       "evidence": [
-        "allternit/surfaces/docs/api/platform/billing.mdx"
+        "allternit/surfaces/docs/api/platform/billing.mdx",
+        "allternit/surfaces/docs/api/platform/phones.mdx"
       ]
     },
     {
@@ -1489,7 +1494,8 @@
         "allternit-ai/src/components/onboarding",
         "allternit-ai/src/views/settings",
         "allternit-ai/src/lib",
-        "allternit/cmd/allternit-sideload"
+        "allternit/cmd/allternit-sideload",
+        "allternit/cmd/allternit-cloud-api/src/routes/platform_v1/phones.rs"
       ],
       "decisions": [
         {
@@ -1575,6 +1581,14 @@
         {
           "on": "2026-10-19",
           "note": "Every app on a linked phone gets a check (signed in + account; plan and usage where the app shows them), not only AI chat. iPhone paths verified screen by screen with every Settings page scrolled: ChatGPT Settings > Usage and limits (Weekly), Gemini Settings > Usage limits (Current + Weekly), Claude, plus Discord, Telegram, Instagram, Facebook, TikTok, X, YouTube and GitHub accounts; per-app account rules so feed handles are never taken; drawer says Verified reader. A renewal-window iPhone whose signature hasn't lapsed now counts as working (it was treated as offline)."
+        },
+        {
+          "on": "2026-10-20",
+          "note": "Phone runs + skills: every phone tool call posts a redacted step (typed text/SMS/numbers stripped, 1280px frame, tapped element from the last read) to allternit-api phone_runs (500 steps/30 days/100 MB per phone); a run saved by name is a phone skill (phone_replay: class/label/resource-id/relative box/8x8 hash locators, checks, {{input}} text) replayed through the Desktop phone gateway with no model and one gizzi re-decision per moved step; phone.task runs on the bot brain for every lane (phone_task, ARTEMIS only as fallback); routines run skills via config.replay {kind: phone}."
+        },
+        {
+          "on": "2026-10-20",
+          "note": "Phones on the Platform API: allternit-api adds POST /api/v1/phones/:serial/tool (one gateway call, approval kept) and background task/skill runs; every recorded step and run end writes phone.step / phone.run.completed to the owner ledger for the cloud forwarder (no frames, screen text or typed values)."
         }
       ],
       "evidence": [
@@ -1592,7 +1606,39 @@
         "allternit/cmd/allternit-sideload/README.md",
         "allternit/surfaces/docs/guides/bot-voice-on-linked-phone.mdx",
         "allternit/surfaces/allternit-desktop/src/main/phone-account-reader.ts",
-        "allternit/surfaces/allternit-desktop/src/main/phone-account-specs.ts"
+        "allternit/surfaces/allternit-desktop/src/main/phone-account-specs.ts",
+        "allternit/surfaces/allternit-desktop/src/main/phone-runs.ts",
+        "allternit/cmd/allternit-api/src/phone_runs.rs",
+        "allternit/cmd/allternit-api/src/phone_replay.rs",
+        "allternit/cmd/allternit-api/src/phone_task.rs",
+        "allternit/surfaces/docs/guides/phone-skills.mdx"
+      ]
+    },
+    {
+      "id": "feature:cloud-phones",
+      "label": "Cloud phones in Phone Link",
+      "product": "product:computer-use",
+      "status": "building",
+      "description": "Android phones (redroid) on phone-enabled fleet hosts that Desktop adds to Phone Link by adb address over the mesh. Off by default: CLOUD_PHONES_ENABLED and provisioned_hosts.phones_enabled.",
+      "touches": [
+        "allternit/cmd/allternit-cloud-api/src/services/cloud_phones.rs",
+        "allternit/cmd/allternit-cloud-api/src/routes/cloud_phones.rs",
+        "allternit/cmd/allternit-cloud-api/migrations_pg/099_cloud_phones.sql",
+        "allternit/infrastructure/cloud-phone",
+        "allternit/surfaces/allternit-desktop/src/main/cloud-phones.ts",
+        "allternit/surfaces/allternit-desktop/src/main/phone-device-manager.ts",
+        "allternit/surfaces/allternit-desktop/src/main/phone-link-android.ts"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-20",
+          "note": "Code only, off by default (Eoj). Redroid needs binder + a privileged container, so phones run on the host's Docker, not in unprivileged Incus containers; adb and the Phone Link port bind to the host's mesh IP only. Create is admin-only; no Stripe product until Eoj approves pricing."
+        }
+      ],
+      "evidence": [
+        "allternit/infrastructure/cloud-phone/README.md",
+        "allternit/surfaces/docs/guides/cloud-phones.mdx",
+        "allternit/cmd/allternit-cloud-api/src/routes/cloud_phones.rs"
       ]
     },
     {

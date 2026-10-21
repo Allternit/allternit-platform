@@ -32,6 +32,7 @@ const meshDep = {
     if (!enrollment) throw new Error('Desktop is not signed in to an Allternit account.');
     return enrollment;
   },
+  loopbackFor: (target: string) => meshManager.loopbackFor(target),
 };
 
 /** GET /schema on an iCTRL runner; null when it doesn't answer or has none. */
@@ -101,6 +102,14 @@ export function registerPhoneLinkIpc(handleGuarded: Guarded): PhoneLinkManager {
       if (!win.isDestroyed()) win.webContents.send('phone-link:status-changed', status);
     }
   });
+  // Cloud phones (cloud-phones.ts) start Android setup by themselves, but
+  // never over a setup the person is in the middle of.
+  phoneService.setCloudPhoneLinkStarter((target) => {
+    const state = manager.status().state;
+    if (state !== 'idle' && state !== 'ready_wifi' && state !== 'error' && state !== 'not_supported') return false;
+    manager.start('android', target);
+    return true;
+  });
   handleGuarded('phone-link:status', () => manager.status());
   handleGuarded('phone-link:devices', () => phoneService.linkedDevices());
   // Connections wizard (Settings → Connections): open a catalog app so the person
@@ -118,10 +127,14 @@ export function registerPhoneLinkIpc(handleGuarded: Guarded): PhoneLinkManager {
     if (typeof opts?.deviceId !== 'string' || typeof opts?.computerId !== 'string') throw new Error('deviceId and computerId are required');
     return phoneService.handover({ deviceId: opts.deviceId, computerId: opts.computerId });
   });
-  handleGuarded('phone-link:start', (_event, opts?: { platform?: PhoneLinkPlatform }) => {
+  handleGuarded('phone-link:start', (_event, opts?: { platform?: PhoneLinkPlatform; serial?: unknown; linkHost?: unknown }) => {
     const platform = opts?.platform;
     if (platform !== 'ios' && platform !== 'android') throw new Error('platform must be ios or android');
-    return manager.start(platform);
+    // Android only: set up a phone adb reaches by address (cloud phone) instead of over USB.
+    const serial = typeof opts?.serial === 'string' ? opts.serial.trim() : '';
+    if (serial && !/^[A-Za-z0-9.\-[\]:%]+:\d{1,5}$/.test(serial)) throw new Error('serial must be host:port');
+    const linkHost = typeof opts?.linkHost === 'string' && /^[A-Za-z0-9.\-[\]:%]+:\d{1,5}$/.test(opts.linkHost.trim()) ? opts.linkHost.trim() : undefined;
+    return manager.start(platform, platform === 'android' && serial ? { serial, ...(linkHost ? { linkHost } : {}) } : undefined);
   });
   handleGuarded('phone-link:cancel', () => manager.cancel());
   handleGuarded('phone-link:continue', () => manager.continue());

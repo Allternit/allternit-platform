@@ -11,8 +11,8 @@ android {
         applicationId = "com.allternit.phonelink"
         minSdk = 26
         targetSdk = 35
-        versionCode = 7
-        versionName = "0.3.3"
+        versionCode = 8
+        versionName = "0.3.4"
     }
 
     buildTypes {

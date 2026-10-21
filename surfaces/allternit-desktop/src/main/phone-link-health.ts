@@ -58,7 +58,7 @@ export const SIGNATURE_WARNING_MS = 24 * 3600_000;
 
 /** What the person does when Android's accessibility service is off. */
 export const ACCESSIBILITY_OFF_ACTION =
-  'On your phone, open Settings › Accessibility › Allternit Phone Link and turn it on, or run Phone Link setup again from Settings › Connections › Setup.';
+  'Allternit tried to turn it back on over Wi-Fi and couldn\'t. On your phone, open Settings › Accessibility › Allternit Phone Link and turn it on, or plug the phone in and run Phone Link setup again from Settings › Connections › Setup.';
 
 /** The Android helper's error when its accessibility service isn't bound (RpcDispatcher.requireOps). */
 export function isAccessibilityOffError(message: string): boolean {

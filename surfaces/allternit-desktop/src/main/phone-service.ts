@@ -18,8 +18,10 @@ import { mcpHostManager } from './mcp-host-manager.js';
 import { createAdbCall, ensureAdb, resolveAdb } from './phone-adb.js';
 import { ArtemisManager } from './phone-artemis.js';
 import { PhoneDeviceManager, type StoredPhone } from './phone-device-manager.js';
+import { CloudPhoneAutoLink, fetchCloudPhones, syncCloudPhones, type CloudPhoneLinkStarter, type CloudPhonesDeps, type CloudPhonesSnapshot } from './cloud-phones.js';
 import { fileStore, readJson, writeJson } from './phone-store-file.js';
 import { newGatewayToken, startPhoneGateway, type PhoneGatewayHandover } from './phone-gateway.js';
+import { httpPhoneApi, PhoneRunRecorder } from './phone-runs.js';
 import { execFileSync } from 'node:child_process';
 import { handOver, handoverKey, handoverTargets, importHandover, openHandover, type HandoverClientDeps, type HandoverStores } from './phone-link-handover.js';
 import { findUxplay } from './phone-airplay.js';
@@ -110,10 +112,15 @@ export function dialogGate(): ApprovalGate {
     async request(req: ApprovalRequest) {
       const shown = dialog.showMessageBox({
         type: 'question',
-        title: req.kind === 'sms' ? 'Allow this text?' : 'Allow this call?',
-        message: req.kind === 'sms' ? 'Your bot wants to send a text from your phone' : 'Your bot wants to place a call from your phone',
+        title: req.kind === 'sms' ? 'Allow this text?' : req.kind === 'sms_read' ? 'Allow reading texts?' : 'Allow this call?',
+        message:
+          req.kind === 'sms'
+            ? 'Your bot wants to send a text from your phone'
+            : req.kind === 'sms_read'
+              ? 'Your bot wants to read recent texts on your phone'
+              : 'Your bot wants to place a call from your phone',
         detail: req.summary,
-        buttons: [req.kind === 'sms' ? 'Send' : 'Call', 'Deny'],
+        buttons: [req.kind === 'sms' ? 'Send' : req.kind === 'sms_read' ? 'Allow' : 'Call', 'Deny'],
         defaultId: 1,
         cancelId: 1,
         noLink: true,
@@ -195,6 +202,9 @@ class PhoneService {
   private linkConsumers = new Map<string, () => void>();
   private linkDetachTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private linkSyncTimer: ReturnType<typeof setInterval> | null = null;
+  private cloudPhoneTimer: ReturnType<typeof setInterval> | null = null;
+  private cloudPhoneAutoLink = new CloudPhoneAutoLink();
+  private cloudPhoneLinkStarter: CloudPhoneLinkStarter | null = null;
   private scrcpyServerReady: Promise<string> | null = null;
   private usbAgents: UsbAgentManager | null = null;
   private artemis: ArtemisManager | null = null;
@@ -625,6 +635,7 @@ class PhoneService {
       lazy.binary = async (args, opts) => (await this.ensureAdbCall()).binary(args, opts);
       this.artemis = this.artemis ?? new ArtemisManager(this.dir(), undefined, (serial, running) =>
         this.manager?.noteAgentActivity(serial, running ? 1 : -1));
+      const phoneApi = httpPhoneApi(() => URLS.API, () => backendManager.getLocalAuthHeaders());
       const runner = new PhoneToolRunner({
         adb: lazy,
         gate: dialogGate(),
@@ -636,6 +647,13 @@ class PhoneService {
         activity: (serial, delta) => this.manager?.noteAgentActivity(serial, delta),
         links: () => this.ensureLinkedBackend(),
         onDialPlaced: (serial, number) => this.callBridge?.noteOutboundDial(serial, number) ?? false,
+        // Run history (with frames) + phone.task on the bot's brain + phone skills, all in the local API.
+        recorder: new PhoneRunRecorder({
+          api: () => phoneApi,
+          shrink: async (dataBase64) => shrinkFrame(dataBase64),
+          onError: (error) => log.debug(`[Phone] run history step not recorded: ${error instanceof Error ? error.message : String(error)}`),
+        }),
+        api: () => phoneApi,
       });
       this.runner = runner;
       const token = newGatewayToken();
@@ -663,6 +681,8 @@ class PhoneService {
           spawnScrcpy: scrcpy
             ? (serial, title) => spawnSidecar(scrcpy, ['-s', serial, '--window-title', title, '--stay-awake'], { stdio: 'ignore', windowsHide: true })
             : null,
+          // Cloud phones sit behind a per-session mesh loopback proxy.
+          resolveMeshTarget: (target) => meshManager.loopbackFor(target).catch(() => null),
         });
         manager.start();
         manager.on('devices', () => {
@@ -1396,6 +1416,63 @@ class PhoneService {
     if (readJson<StoredUsbAgent[]>(path.join(dir, 'usb-agents.json'), []).length > 0) {
       await this.ensureUsbReady().catch((error) => log.warn('[Phone] USB Agent could not start:', error));
     }
+    this.startCloudPhoneSync();
+  }
+
+  // ── cloud phones (cloud-phones.ts) ────────────────────────────────────────
+
+  private cloudPhonesDeps(): CloudPhonesDeps {
+    return {
+      baseUrl: (process.env.ALLTERNIT_CLOUD_API_URL || URLS.CLOUD_API).replace(/\/$/, ''),
+      accessToken: async () => (await authManager.getSession())?.accessToken || null,
+    };
+  }
+
+  /**
+   * Bring the account's cloud phones into Phone Link now and every 10 min
+   * (so a later sign-in or a new phone shows up). The Android lane (adb) only
+   * starts when the account actually has a cloud phone; while the server has
+   * cloud phones off (503) this costs one small request per pass.
+   */
+  private startCloudPhoneSync(): void {
+    if (this.cloudPhoneTimer) return;
+    const pass = () => void this.syncCloudPhones().catch((error) => log.debug('[Phone] cloud phone sync failed:', error));
+    pass();
+    this.cloudPhoneTimer = setInterval(pass, 10 * 60_000);
+    this.cloudPhoneTimer.unref?.();
+  }
+
+  /** One sync pass; also what the renderer's phones.cloudPhones() runs. */
+  async syncCloudPhones(): Promise<CloudPhonesSnapshot> {
+    const deps = this.cloudPhonesDeps();
+    if (!this.manager) {
+      const snapshot = await fetchCloudPhones(deps);
+      if (!snapshot.available || !snapshot.phones.some((p) => p.status === 'running')) return snapshot;
+    }
+    const manager = await this.ensureReady();
+    const snapshot = await syncCloudPhones(manager, {
+      ...deps,
+      loopbackFor: (target) => meshManager.loopbackFor(target),
+      logger: (line) => log.info(line),
+    });
+    // A cloud phone with no Phone Link yet gets setup started for it, once
+    // (with backoff), exactly as phoneLink.start({ serial, linkHost }) would.
+    if (snapshot.available && this.cloudPhoneLinkStarter) {
+      const linked = new Set(
+        fileAndroidLinkStore(path.join(this.dir(), 'phone-link-android.json'))
+          .all()
+          .map((r) => r.meshHost)
+          .filter((h): h is string => Boolean(h)),
+      );
+      const started = this.cloudPhoneAutoLink.pass(snapshot.phones, linked, manager.list(), this.cloudPhoneLinkStarter);
+      for (const id of started) log.info(`[Phone] started Phone Link setup on cloud phone ${id}`);
+    }
+    return snapshot;
+  }
+
+  /** Set by phone-link-ipc.ts: how a cloud phone's automatic Phone Link setup starts. */
+  setCloudPhoneLinkStarter(starter: CloudPhoneLinkStarter): void {
+    this.cloudPhoneLinkStarter = starter;
   }
 
   private registerShim(): void {
@@ -1549,6 +1626,8 @@ class PhoneService {
     this.screenKeeper = null;
     if (this.linkSyncTimer) clearInterval(this.linkSyncTimer);
     this.linkSyncTimer = null;
+    if (this.cloudPhoneTimer) clearInterval(this.cloudPhoneTimer);
+    this.cloudPhoneTimer = null;
     for (const [serial, socket] of this.linkSockets) {
       socket.stop();
       this.cancelLinkDetach(serial);
@@ -1562,6 +1641,14 @@ class PhoneService {
     this.gatewayClose?.();
     fs.rmSync(this.gatewayFile, { force: true });
   }
+}
+
+/** A run-history frame: at most 1280 px tall, JPEG, so a step post stays small. */
+function shrinkFrame(dataBase64: string): string | null {
+  const img = nativeImage.createFromBuffer(Buffer.from(dataBase64, 'base64'));
+  if (img.isEmpty()) return null;
+  const { height } = img.getSize();
+  return (height > 1280 ? img.resize({ height: 1280, quality: 'good' }) : img).toJPEG(72).toString('base64');
 }
 
 export const phoneService = new PhoneService();

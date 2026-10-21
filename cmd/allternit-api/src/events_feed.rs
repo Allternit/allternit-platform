@@ -68,6 +68,11 @@ pub enum Kind {
     /// `netops::alerts` opened an attention item (something needs fixing).
     AttentionOpened,
     AttentionResolved,
+    /// One phone tool call finished (`phone_runs`), from a bot, skill, task or
+    /// the Platform API.
+    PhoneStep,
+    /// A phone task or skill replay ended (`phone_task`, `phone_replay`).
+    PhoneRunCompleted,
 }
 
 impl Kind {
@@ -100,6 +105,8 @@ impl Kind {
             Kind::RoutineFailed => None,
             Kind::AttentionOpened => Some("attention.opened"),
             Kind::AttentionResolved => Some("attention.resolved"),
+            Kind::PhoneStep => Some("phone.step"),
+            Kind::PhoneRunCompleted => Some("phone.run.completed"),
         }
     }
 }
@@ -132,6 +139,8 @@ pub fn classify(event_type: &str, payload: &Value) -> Option<Kind> {
         "routine.failed" | "routine.paused" => Some(Kind::RoutineFailed),
         "attention.opened" => Some(Kind::AttentionOpened),
         "attention.resolved" => Some(Kind::AttentionResolved),
+        "phone.step" => Some(Kind::PhoneStep),
+        "phone.run.completed" => Some(Kind::PhoneRunCompleted),
         _ => None,
     }
 }

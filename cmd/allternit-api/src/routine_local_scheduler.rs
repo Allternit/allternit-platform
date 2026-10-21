@@ -22,6 +22,11 @@
 //! * **Monitor.** `config.monitor.command` runs through the normal tool path
 //!   (`shell.exec`: permission policy + host-control gate). Unchanged output
 //!   is a silent `skipped` run with no model turn.
+//! * **Phone skill.** `config.replay = {"kind": "phone", "skill": name,
+//!   "serial"?: phone serial, "inputs"?: {name: value}}` replays a saved
+//!   phone skill (`phone_replay`) through the Desktop phone gateway with no
+//!   model turn; only a step whose element moved re-decides, on the
+//!   routine's bot's brain. The step report is the run output.
 //! * **Record.** Every run is a `routine_runs` row (the Automation Tasks run
 //!   history) and, for bots, a `routine.*` event on the bot ledger.
 //! * **Needs a bot.** A local routine with no `agent_id` is never claimed
@@ -324,6 +329,19 @@ pub trait RoutineDriver: Send + Sync {
         agent_id: &str,
         instruction: &str,
     ) -> impl Future<Output = Option<Result<String, String>>> + Send;
+    /// `config.replay = {kind: "phone", skill, serial?, inputs?}`: replay a
+    /// saved phone skill with no model turn (`phone_replay`). `Ok` is the
+    /// run report as JSON text; a diverged or failed replay is `Err`.
+    fn run_phone_skill(
+        &self,
+        r: &LocalRoutine,
+        skill: &str,
+        serial: Option<&str>,
+        inputs: &[(String, String)],
+    ) -> impl Future<Output = Result<String, String>> + Send {
+        let _ = (r, skill, serial, inputs);
+        std::future::ready(Err("phone skills can't run on this driver".to_string()))
+    }
 }
 
 pub struct GizziDriver {
@@ -351,6 +369,18 @@ impl RoutineDriver for GizziDriver {
         )
     }
 
+    async fn run_phone_skill(&self, r: &LocalRoutine, skill: &str, serial: Option<&str>, inputs: &[(String, String)]) -> Result<String, String> {
+        // A moved step re-decides on the routine's bot's brain.
+        let model = crate::phone_replay::brain(&self.state.db, r.agent_id.as_deref(), None);
+        let report = crate::phone_replay::run_skill(&self.state.data_dir, skill, serial, inputs, model, "routine", None).await?;
+        crate::phone_runs::record_run_completed(&self.state.db, &report, "routine");
+        if report.get("ok").and_then(Value::as_bool) == Some(true) {
+            Ok(phone_skill_summary(skill, &report))
+        } else {
+            Err(report.get("error").and_then(Value::as_str).unwrap_or("the phone skill didn't finish").to_string())
+        }
+    }
+
     async fn run_monitor(&self, user_id: &str, command: &str) -> Result<String, String> {
         use crate::permission_policy::{evaluate, PermissionAction};
         match evaluate(self.state.config.active_permission_policy().as_ref(), "shell.exec", None, None) {
@@ -373,6 +403,39 @@ impl RoutineDriver for GizziDriver {
         }
         Ok(result.get("stdout").and_then(Value::as_str).unwrap_or("").to_string())
     }
+}
+
+/// The run output for a replayed phone skill: one line per step.
+fn phone_skill_summary(skill: &str, report: &Value) -> String {
+    let steps = report.get("steps").and_then(Value::as_array).cloned().unwrap_or_default();
+    let mut out = format!(
+        "Phone skill \"{skill}\" ran {} step{} with {} model call{} (run {}).",
+        steps.len(),
+        if steps.len() == 1 { "" } else { "s" },
+        report.get("model_calls").and_then(Value::as_u64).unwrap_or(0),
+        if report.get("model_calls").and_then(Value::as_u64) == Some(1) { "" } else { "s" },
+        report.get("run_id").and_then(Value::as_str).unwrap_or("?"),
+    );
+    for s in steps {
+        out.push_str(&format!(
+            "\n- {}{}",
+            s.get("label").and_then(Value::as_str).unwrap_or("step"),
+            s.get("via").and_then(Value::as_str).map(|v| format!(" (found by {v})")).unwrap_or_default()
+        ));
+    }
+    out
+}
+
+/// `config.replay` when it names a phone skill: (skill, serial, inputs).
+fn phone_replay_of(config: &Value) -> Option<(String, Option<String>, Vec<(String, String)>)> {
+    let replay = config.get("replay")?;
+    if replay.get("kind").and_then(Value::as_str) != Some("phone") {
+        return None;
+    }
+    let skill = replay.get("skill").and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty())?.to_string();
+    let serial = replay.get("serial").and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
+    let inputs = replay.get("inputs").and_then(Value::as_object).map(crate::phone_replay::inputs_of).unwrap_or_default();
+    Some((skill, serial, inputs))
 }
 
 fn truncate(text: &str, cap: usize) -> String {
@@ -645,6 +708,11 @@ pub async fn execute<D: RoutineDriver>(db: &DbHandle, driver: &D, r: &LocalRouti
 
     let timeout_secs = r.timeout_seconds.filter(|t| *t > 0).unwrap_or(DEFAULT_TIMEOUT_SECS);
     let work = async {
+        // A phone skill replays with no model turn and needs no bot thread.
+        if let Some((skill, serial, inputs)) = phone_replay_of(&r.config) {
+            let out = driver.run_phone_skill(r, &skill, serial.as_deref(), &inputs).await?;
+            return Ok((out, "succeeded"));
+        }
         let agent_id = r.agent_id.as_deref().ok_or("this routine has no bot; assign it to a bot to run it")?;
         let bot = bot.as_ref().ok_or("the routine's agent no longer exists")?;
         let text = if let Some(command) = r.config.pointer("/monitor/command").and_then(Value::as_str) {

@@ -228,7 +228,7 @@ export type WebhookEndpoint = {
 export type Event = {
   id: string;
   object: "event";
-  type: "approval.requested" | "message.received" | "message.status" | "registration.updated" | "inbox.item.created" | "call.started" | "call.ended" | "call.transcript.ready" | "usage.threshold" | "webhook.test";
+  type: "approval.requested" | "message.received" | "message.status" | "registration.updated" | "inbox.item.created" | "call.started" | "call.ended" | "call.transcript.ready" | "usage.threshold" | "phone.step" | "phone.run.completed" | "webhook.test";
   /**
    * Unix seconds.
    */
@@ -375,6 +375,104 @@ export type ToolsetApprovalRequired = {
     approver?: "owner" | "api_key";
   };
   result?: ToolsetResult;
+};
+
+export type Phone = {
+  object?: "phone";
+  serial?: string;
+  name?: (string | null);
+  model?: (string | null);
+  /**
+   * Connected to the Desktop right now.
+   */
+  online?: boolean;
+  desktop_online?: boolean;
+  last_seen_at?: (string | null);
+  /**
+   * {enabled, botName} when a bot answers this phone's calls.
+   */
+  call_bridge?: (Record<string, unknown> | null);
+};
+
+export type PhoneList = {
+  data?: Array<Phone>;
+  has_more?: boolean;
+  next_cursor?: (string | null);
+};
+
+export type PhoneSkillList = {
+  data?: Array<{
+    object?: "phone.skill";
+    name?: string;
+    inputs?: Array<string>;
+    [key: string]: unknown;
+  }>;
+  has_more?: boolean;
+  next_cursor?: (string | null);
+};
+
+export type PhoneStep = {
+  object?: "phone.step";
+  id?: string;
+  run_id?: string;
+  serial?: string;
+  at?: string;
+  tool?: string;
+  label?: string;
+  /**
+   * Redacted: typed text, numbers and bodies are {redacted: true, len}.
+   */
+  args?: Record<string, unknown>;
+  ok?: boolean;
+  error?: (string | null);
+  duration_ms?: number;
+  /**
+   * bot, skill, task, routine or api.
+   */
+  source?: (string | null);
+  /**
+   * A frame is kept on the Desktop.
+   */
+  snapshot?: boolean;
+};
+
+export type PhoneHistory = {
+  object?: "phone.history";
+  serial?: string;
+  steps?: Array<PhoneStep>;
+  runs?: Array<{
+    object?: "phone.run";
+    run_id?: string;
+    serial?: string;
+    started_at?: string;
+    ended_at?: string;
+    steps?: number;
+    failed?: number;
+    source?: (string | null);
+  }>;
+  retention_days?: number;
+  max_steps?: number;
+};
+
+export type PhoneRunStarted = {
+  object?: "phone.run";
+  run_id?: string;
+  serial?: (string | null);
+  skill?: (string | null);
+  status?: "running";
+};
+
+export type PhoneToolResult = {
+  object?: "phone.tool_result";
+  ok: boolean;
+  run_id?: string;
+  tool?: string;
+  /**
+   * On ok: false, e.g. approval_denied, approval_timeout, rate_limited, not_found, accessibility_off.
+   */
+  error?: string;
+  message?: string;
+  [key: string]: unknown;
 };
 
 export type ListAccountsQuery = {
@@ -741,7 +839,7 @@ export type ListWebhooksResponse = {
 
 export type CreateWebhookRequest = {
   url: string;
-  events: Array<"*" | "approval.requested" | "message.received" | "message.status" | "registration.updated" | "inbox.item.created" | "call.started" | "call.ended" | "call.transcript.ready" | "usage.threshold">;
+  events: Array<"*" | "approval.requested" | "message.received" | "message.status" | "registration.updated" | "inbox.item.created" | "call.started" | "call.ended" | "call.transcript.ready" | "usage.threshold" | "phone.step" | "phone.run.completed">;
   description?: string;
 };
 
@@ -939,3 +1037,60 @@ export type UpdateComputerSettingsRequest = {
 };
 
 export type UpdateComputerSettingsResponse = ComputerSettings;
+
+export type ListPhonesResponse = PhoneList;
+
+export type ListPhoneSkillsResponse = PhoneSkillList;
+
+export type RunPhoneSkillRequest = {
+  /**
+   * The phone; omit for the only connected one.
+   */
+  serial?: string;
+  /**
+   * A value for each of the skill's inputs.
+   */
+  inputs?: Record<string, string>;
+  bot_id?: string;
+  /**
+   * provider/model
+   */
+  brain?: string;
+};
+
+export type RunPhoneSkillResponse = PhoneRunStarted;
+
+export type GetPhoneHistoryQuery = {
+  /**
+   * Only this run's steps.
+   */
+  run_id?: string;
+};
+
+export type GetPhoneHistoryResponse = PhoneHistory;
+
+export type CallPhoneToolRequest = {
+  /**
+   * e.g. phone.tap (the phone. prefix is optional).
+   */
+  name: string;
+  arguments?: Record<string, unknown>;
+  /**
+   * Group several calls into one run in the history (default: a new api- run).
+   */
+  run_id?: string;
+};
+
+export type CallPhoneToolResponse = PhoneToolResult;
+
+export type RunPhoneTaskRequest = {
+  goal: string;
+  max_steps?: number;
+  bot_id?: string;
+  /**
+   * provider/model
+   */
+  brain?: string;
+};
+
+export type RunPhoneTaskResponse = PhoneRunStarted;

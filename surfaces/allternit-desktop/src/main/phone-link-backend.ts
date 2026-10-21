@@ -21,7 +21,7 @@ import { ANDROID_VENDOR_PACKAGES, type AndroidLinkStore } from './phone-link-and
 import { catalogApp, catalogAppByName, catalogPhoneApps, nameCatalogApps } from './phone-app-catalog.js';
 import { verifiedReader } from './phone-account-specs.js';
 import { scanLan, type DiscoveryDeps } from './phone-link-discovery.js';
-import { PACKAGE_RE, resolveApp, type ToolErrorCode, type ToolResult, type UsbPhoneBackend } from './phone-tools.js';
+import { ANDROID_KEYS, PACKAGE_RE, resolveApp, type ToolErrorCode, type ToolResult, type UsbPhoneBackend } from './phone-tools.js';
 import {
   ACCESSIBILITY_OFF_ACTION,
   isAccessibilityOffError,
@@ -84,6 +84,39 @@ export interface PhoneLinkBackendDeps {
   now?: () => number;
   logger?: (message: string) => void;
 }
+
+/**
+ * How often Desktop may turn a linked Android phone's accessibility service
+ * back on through its shell service (a11y_enable), per phone. Someone who
+ * turned it off on purpose isn't fought every call.
+ */
+export const A11Y_HEAL_MS = 5 * 60_000;
+const a11yHealAt = new Map<string, number>();
+
+/**
+ * Asks a linked Android phone to turn its accessibility service back on over
+ * Wi-Fi (the helper's shell service runs `settings put secure …`), at most
+ * once per A11Y_HEAL_MS. True when the service is bound again, so the caller
+ * retries instead of asking for the cable.
+ */
+export async function healAccessibility(deviceId: string, client: IctrlLike, now: number, log?: (m: string) => void): Promise<boolean> {
+  const last = a11yHealAt.get(deviceId);
+  if (last !== undefined && now - last < A11Y_HEAL_MS) return false;
+  a11yHealAt.set(deviceId, now);
+  try {
+    const res = await client.call<{ accessibility_enabled?: boolean }>('a11y_enable', { wait: 6 }, 15_000);
+    const on = res?.accessibility_enabled === true;
+    log?.(`phone-link: accessibility on ${deviceId} ${on ? 'turned back on over Wi-Fi' : 'did not come back over Wi-Fi'}`);
+    return on;
+  } catch (error) {
+    log?.(`phone-link: a11y_enable on ${deviceId} failed: ${error instanceof Error ? error.message : String(error)}`);
+    return false;
+  }
+}
+
+/** An older helper without a method answers "Method not found". */
+const METHOD_MISSING_RE = /method not found|unknown_method/i;
+const UPDATE_HELPER = 'This phone\'s Phone Link app is older than this feature. Plug the phone in and run Phone Link setup again (Settings › Connections › Setup) to update it.';
 
 /** How often a healthy phone's apps are re-read, so an app installed after setup shows up. */
 export const APPS_REFRESH_MS = 10 * 60_000;
@@ -220,9 +253,7 @@ export class PhoneLinkBackend implements UsbPhoneBackend {
       case 'phone.home':
         return await this.simple(phone, 'home');
       case 'phone.back':
-        if (phone.platform === 'ios') {
-          return fail('unsupported', 'iPhone has no Back button. Tap the app\'s back control instead.');
-        }
+        if (phone.platform === 'ios') return await this.iosBack(phone);
         return await this.simple(phone, 'back');
       case 'phone.open_app':
         return await this.openApp(phone, a);
@@ -233,13 +264,15 @@ export class PhoneLinkBackend implements UsbPhoneBackend {
       case 'phone.find_and_tap':
         return await this.findAndTap(phone, a);
       case 'phone.key':
-        return fail('unsupported', 'Phone-Linked phones don\'t take hardware keys. Tap the on-screen control instead.');
+        return await this.key(phone, a);
       case 'phone.task':
         return fail('unsupported', 'Plain-English tasks aren\'t available on a linked phone yet. Use phone.read_ui, phone.find_and_tap and the other phone tools.');
+      // Texts, calls and inbox reads reach the phone only through PhoneToolRunner
+      // (approval gate, rate limits, emergency block) → sendSms / dial / readSms.
       case 'phone.sms.send':
-        return fail('unsupported', 'Texts aren\'t available on a linked phone yet. Use an Android phone over adb.');
       case 'phone.call.dial':
-        return fail('unsupported', 'Calls aren\'t available on a linked phone yet. Use an Android phone over adb.');
+      case 'phone.sms.read':
+        return fail('unsupported', 'Texts and calls on a linked phone go through the phone tools, which ask the user to approve each one.');
       default:
         return fail('unknown_tool', `No phone tool named ${name}.`);
     }
@@ -348,6 +381,36 @@ export class PhoneLinkBackend implements UsbPhoneBackend {
     return phone ? (this.deps.resolveHost ?? defaultResolveHost)(phone) : null;
   }
 
+  // ── texts and calls (after PhoneToolRunner's gate) ──────────────────────
+
+  /** Texts, calls and inbox reads run on the Android helper's shell service; an iPhone can't. */
+  canText(serial: string): boolean {
+    return this.linkedPhone(serial)?.platform === 'android';
+  }
+
+  async sendSms(serial: string, to: string, text: string, subscriptionId: number | null): Promise<ToolResult> {
+    const phone = this.linkedPhone(serial);
+    if (phone?.platform !== 'android') return fail('unsupported', 'Texts need an Android phone.');
+    const res = await this.invoke(phone, 'sms_send', { to, text, ...(subscriptionId !== null ? { subscription_id: subscriptionId } : {}) }, 20_000);
+    if (!res.ok) return helperMissing(res.result);
+    return { ok: true, status: 'submitted', note: 'Handed to the phone\'s SMS service; delivery is not confirmed.' };
+  }
+
+  async dial(serial: string, number: string, subscriptionId: number | null): Promise<ToolResult> {
+    const phone = this.linkedPhone(serial);
+    if (phone?.platform !== 'android') return fail('unsupported', 'Calls need an Android phone.');
+    const res = await this.invoke(phone, 'call_dial', { number, ...(subscriptionId !== null ? { subscription_id: subscriptionId } : {}) }, 20_000);
+    return res.ok ? { ok: true } : helperMissing(res.result);
+  }
+
+  async readSms(serial: string, sinceMs: number, from: string | null): Promise<{ ok: true; raw: string } | ToolResult> {
+    const phone = this.linkedPhone(serial);
+    if (phone?.platform !== 'android') return fail('unsupported', 'Reading texts needs an Android phone.');
+    const res = await this.invoke<{ raw?: unknown }>(phone, 'sms_read', { since_ms: Math.max(0, Math.floor(sinceMs)), ...(from ? { from } : {}) }, 20_000);
+    if (!res.ok) return helperMissing(res.result);
+    return { ok: true, raw: typeof res.value?.raw === 'string' ? res.value.raw : '' };
+  }
+
   // ── calls ────────────────────────────────────────────────────────────────
 
   private async invoke<T>(phone: LinkedPhone, method: string, params: Record<string, unknown> = {}, timeoutMs?: number): Promise<{ ok: true; value: T } | { ok: false; result: ToolResult }> {
@@ -359,6 +422,20 @@ export class PhoneLinkBackend implements UsbPhoneBackend {
       const value = await this.callHealing<T>(phone, host, method, params, timeoutMs);
       return { ok: true, value };
     } catch (error) {
+      // Android accessibility off: turn it back on over Wi-Fi first, then retry once.
+      if (
+        phone.platform === 'android' &&
+        error instanceof IctrlError &&
+        isAccessibilityOffError(error.message) &&
+        (await healAccessibility(phone.deviceId, this.deps.client(phone, host), this.now(), this.deps.logger))
+      ) {
+        this.deps.health?.observe?.(phone.deviceId, 'ui_ok');
+        try {
+          return { ok: true, value: await this.callHealing<T>(phone, host, method, params, timeoutMs) };
+        } catch (again) {
+          return { ok: false, result: await this.mapError(phone, host, again) };
+        }
+      }
       return { ok: false, result: await this.mapError(phone, host, error) };
     }
   }
@@ -397,6 +474,51 @@ export class PhoneLinkBackend implements UsbPhoneBackend {
       const id = a.package ?? a.bundle_id;
       return id ? [{ packageName: id, label: a.name || id }] : [];
     });
+  }
+
+  /**
+   * phone.key on a linked phone. Android: home and back through the helper,
+   * every other key through its shell service (`input keyevent`). iPhone has
+   * no key injection over Wi-Fi: enter types a newline (submits the field),
+   * home goes home, anything else is refused.
+   */
+  private async key(phone: LinkedPhone, a: Record<string, unknown>): Promise<ToolResult> {
+    const combo = typeof a.combo === 'string' ? a.combo.trim().toLowerCase() : '';
+    if (!combo) return fail('invalid_args', 'combo is required, e.g. "enter".');
+    if (combo === 'home') return this.simple(phone, 'home');
+    if (phone.platform === 'ios') {
+      if (combo === 'enter' || combo === 'return') {
+        const res = await this.invoke(phone, 'type', { text: '\n' });
+        return res.ok ? { ok: true } : res.result;
+      }
+      return fail('unsupported', 'On a Phone-Linked iPhone, phone.key takes enter or home. Tap the on-screen control for anything else.');
+    }
+    if (combo === 'back') return this.simple(phone, 'back');
+    const code = ANDROID_KEYS[combo];
+    if (!code) return fail('invalid_args', `On Android, combo is one of: home, back, ${Object.keys(ANDROID_KEYS).join(', ')}.`);
+    const res = await this.invoke(phone, 'key', { code });
+    return res.ok ? { ok: true } : helperMissing(res.result);
+  }
+
+  /**
+   * iPhone Back: the edge swipe from the left, (1, 45% down) → (60% across)
+   * in ~300 ms, in the phone's point space (the runner accepts x near 0).
+   * The size comes from the latest screenshot (taken at scale 1, so points)
+   * or device_info.
+   */
+  private async iosBack(phone: LinkedPhone): Promise<ToolResult> {
+    let size = this.screens.get(phone.deviceId) ?? null;
+    if (!size) {
+      const info = await this.invoke<{ point_width?: unknown; point_height?: unknown; screen_width?: unknown; screen_height?: unknown }>(phone, 'device_info', {}, 5_000);
+      if (!info.ok) return info.result;
+      const w = Number(info.value?.point_width ?? info.value?.screen_width);
+      const h = Number(info.value?.point_height ?? info.value?.screen_height);
+      if (!(w > 0 && h > 0)) return fail('phone_failed', 'The iPhone did not report its screen size.');
+      size = { width: w, height: h };
+    }
+    const y = Math.round(size.height * 0.45);
+    const res = await this.invoke(phone, 'drag', { from_x: 1, from_y: y, to_x: Math.round(size.width * 0.6), to_y: y, duration: 0.3 });
+    return res.ok ? { ok: true, note: 'Swiped from the left edge (iPhone Back). Take a screenshot to check the app went back.' } : res.result;
   }
 
   private async simple(phone: LinkedPhone, method: string): Promise<ToolResult> {
@@ -550,6 +672,11 @@ export class PhoneLinkBackend implements UsbPhoneBackend {
     });
     return res.ok ? { ok: true, message: res.value?.message, matched: res.value?.matched } : res.result;
   }
+}
+
+/** An older helper without the method: say how to update instead of a raw "Method not found". */
+function helperMissing(result: ToolResult): ToolResult {
+  return !result.ok && METHOD_MISSING_RE.test(result.message) ? fail('unsupported', UPDATE_HELPER) : result;
 }
 
 /** A launch failure that means the app isn't on the phone (Android helper: "… is not installed (or has no launcher activity)"). */
@@ -804,7 +931,8 @@ export async function probeLinkedPhone(
   try {
     const info = await c.call<{ system?: { accessibility_enabled?: unknown } }>('device_info', {}, 5000);
     // Android: the app answers with its accessibility service off; every screen read would fail.
-    if (phone.platform === 'android' && info?.system?.accessibility_enabled === false) {
+    // Turn it back on over Wi-Fi (the helper's shell service) before asking for the cable.
+    if (phone.platform === 'android' && info?.system?.accessibility_enabled === false && !(await healAccessibility(phone.deviceId, c, Date.now()))) {
       return { ...base, whoami: { deviceId: whoami.device_id }, call: 'accessibility_off' };
     }
     let accessibilityOff = false;
@@ -812,7 +940,13 @@ export async function probeLinkedPhone(
       accessibilityOff = error instanceof Error && isAccessibilityOffError(error.message);
       return null;
     });
-    if (accessibilityOff) return { ...base, whoami: { deviceId: whoami.device_id }, call: 'accessibility_off' };
+    if (accessibilityOff) {
+      if (!(phone.platform === 'android' && (await healAccessibility(phone.deviceId, c, Date.now())))) {
+        return { ...base, whoami: { deviceId: whoami.device_id }, call: 'accessibility_off' };
+      }
+      const again = await c.call<{ locked?: boolean }>('is_locked').catch(() => null);
+      return { ...base, whoami: { deviceId: whoami.device_id }, call: again?.locked === true ? 'locked' : 'ok' };
+    }
     return { ...base, whoami: { deviceId: whoami.device_id }, call: locked?.locked === true ? 'locked' : 'ok' };
   } catch (error) {
     return { ...base, whoami: { deviceId: whoami.device_id }, call: error instanceof IctrlError && error.needsRepair ? 'needs_repair' : 'failed' };

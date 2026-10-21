@@ -6,7 +6,7 @@ import org.json.JSONObject
 /** Method catalogue served at GET /schema, plus the GET /skill manual. */
 object Schema {
     const val PROTOCOL_VERSION = 1
-    const val SERVER_VERSION = "0.3.3-android"
+    const val SERVER_VERSION = "0.3.4-android"
     const val PLATFORM = "android"
 
     /** Feature tags (a subset of iCTRL's, plus android-only ones). */
@@ -14,6 +14,7 @@ object Schema {
         "envelope_v1", "page_source_filter", "visible_only", "max_depth", "find_element_ref",
         "clear_text", "open_url", "stop_server", "screenshot_jpeg", "screen_text",
         "system_metrics", "android", "coordinate_pixels", "back_button", "page_source_structured", "screen_service", "mesh_restart",
+        "key", "sms_send", "call_dial", "sms_read", "a11y_enable",
     )
 
     class P(val name: String, val type: String, val required: Boolean, val description: String)
@@ -94,6 +95,25 @@ object Schema {
         M("activate_app", "Bring an installed app to the front.", listOf(P("bundle_id", "string", true, "Package name")), "{message}"),
         M("terminate_app", "Best effort: leaves the app (Home) and kills its background process. Android does not let a normal app force-stop another.", listOf(P("bundle_id", "string", true, "Package name")), "{message, best_effort:true}"),
         M("open_url", "Open a URL or deep link.", listOf(P("url", "string", true, "URL")), "{message, handler}"),
+        M("key", "Press a key through the shell service (`input keyevent`). Refused on the lock screen and protected screens while the accessibility service is up.", listOf(
+            P("code", "string", true, "KEYCODE_… name (KEYCODE_ENTER, KEYCODE_BACK…) or key number"),
+        ), "{message}"),
+        M("sms_send", "Send one text from the phone's SIM through the shell service. Allternit Desktop asks the user to approve every text first.", listOf(
+            P("to", "string", true, "Phone number, 3–15 digits, optional leading +"),
+            P("text", "string", true, "1–1000 characters"),
+            P("subscription_id", "integer", false, "SIM subscription id (default SMS SIM if omitted)"),
+        ), "{status: 'submitted'}"),
+        M("call_dial", "Place a call from the phone's SIM through the shell service. Allternit Desktop asks the user to approve every call first. Emergency numbers are refused.", listOf(
+            P("number", "string", true, "Phone number, 3–15 digits, optional leading +"),
+            P("subscription_id", "integer", false, "SIM subscription id"),
+        ), "{status: 'dialing'}"),
+        M("sms_read", "Inbox texts newer than since_ms, newest first, as `content query` rows (address, body, date). Works while the phone is locked.", listOf(
+            P("since_ms", "number", true, "Epoch milliseconds"),
+            P("from", "string", false, "Only texts whose sender contains this number"),
+        ), "{raw}"),
+        M("a11y_enable", "Turn Phone Link's accessibility service back on through the shell service (no cable), then wait for it to bind.", listOf(
+            P("wait", "number", false, "Seconds to wait for the service to bind (default 5, max 15)"),
+        ), "{accessibility_enabled}"),
         M("wait", "Sleep.", listOf(P("duration", "number", false, "Seconds (default 1, max 30)")), "{message}"),
     )
 

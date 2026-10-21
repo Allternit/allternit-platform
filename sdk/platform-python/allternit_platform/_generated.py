@@ -39,7 +39,7 @@ PhoneNumberList = TypedDict('PhoneNumberList', {'data': List["PhoneNumber"], 'ha
 Message = TypedDict('Message', {'id': str, 'object': Literal['message'], 'account_id': Optional[str], 'number_id': str, 'direction': Literal['inbound', 'outbound'], 'from': str, 'to': str, 'body': str, 'segments': int, 'status': Literal['sent', 'simulated', 'received', 'failed'], 'error_code': Optional[str], 'media': List[Dict[str, Any]], 'created_at': str}, total=False)
 MessageList = TypedDict('MessageList', {'data': List["Message"], 'has_more': bool, 'next_cursor': Optional[str]}, total=False)
 WebhookEndpoint = TypedDict('WebhookEndpoint', {'id': str, 'object': Literal['webhook_endpoint'], 'url': str, 'events': List[str], 'description': Optional[str], 'created_at': str}, total=False)
-Event = TypedDict('Event', {'id': str, 'object': Literal['event'], 'type': Literal['approval.requested', 'message.received', 'message.status', 'registration.updated', 'inbox.item.created', 'call.started', 'call.ended', 'call.transcript.ready', 'usage.threshold', 'webhook.test'], 'created': int, 'project_id': str, 'account_id': Optional[str], 'data': Dict[str, Any]}, total=False)
+Event = TypedDict('Event', {'id': str, 'object': Literal['event'], 'type': Literal['approval.requested', 'message.received', 'message.status', 'registration.updated', 'inbox.item.created', 'call.started', 'call.ended', 'call.transcript.ready', 'usage.threshold', 'phone.step', 'phone.run.completed', 'webhook.test'], 'created': int, 'project_id': str, 'account_id': Optional[str], 'data': Dict[str, Any]}, total=False)
 Computer = TypedDict('Computer', {'id': str, 'object': Literal['computer'], 'name': str, 'status': Literal['provisioning', 'starting', 'running', 'stopping', 'stopped', 'error', 'deleted'], 'account_id': Optional[str], 'key_id': str, 'created_at': str, 'started_at': Optional[str], 'metadata': Dict[str, Any]}, total=False)
 ComputerList = TypedDict('ComputerList', {'data': List["Computer"], 'has_more': bool, 'next_cursor': Optional[str]}, total=False)
 ComputerEvent = TypedDict('ComputerEvent', {'id': str, 'type': Literal['computer.action'], 'ts': str, 'data': Dict[str, Any]}, total=False)
@@ -48,6 +48,13 @@ ComputerSettings = TypedDict('ComputerSettings', {'hosted_driver_enabled': bool,
 ToolsetCall = TypedDict('ToolsetCall', {'toolset': Literal['computer', 'browser'], 'member': str, 'input': Dict[str, Any], 'run_id': str, 'turn_id': str, 'call_index': int, 'model_frame': Dict[str, Any], 'coordinate_space': Literal['pixels', 'normalized_1000'], 'approval_grant': str, 'browser_session_id': str, 'enable': List[str], 'agent_id': str, 'agent_name': str, 'step': str}, total=False)
 ToolsetResult = TypedDict('ToolsetResult', {'is_error': bool, 'content': List[Dict[str, Any]], 'browser_state': Dict[str, Any], 'screen': Dict[str, Any], 'error': str}, total=False)
 ToolsetApprovalRequired = TypedDict('ToolsetApprovalRequired', {'error': Dict[str, Any], 'approval': Dict[str, Any], 'result': "ToolsetResult"}, total=False)
+Phone = TypedDict('Phone', {'object': Literal['phone'], 'serial': str, 'name': Optional[str], 'model': Optional[str], 'online': bool, 'desktop_online': bool, 'last_seen_at': Optional[str], 'call_bridge': Optional[Dict[str, Any]]}, total=False)
+PhoneList = TypedDict('PhoneList', {'data': List["Phone"], 'has_more': bool, 'next_cursor': Optional[str]}, total=False)
+PhoneSkillList = TypedDict('PhoneSkillList', {'data': List[Dict[str, Any]], 'has_more': bool, 'next_cursor': Optional[str]}, total=False)
+PhoneStep = TypedDict('PhoneStep', {'object': Literal['phone.step'], 'id': str, 'run_id': str, 'serial': str, 'at': str, 'tool': str, 'label': str, 'args': Dict[str, Any], 'ok': bool, 'error': Optional[str], 'duration_ms': int, 'source': Optional[str], 'snapshot': bool}, total=False)
+PhoneHistory = TypedDict('PhoneHistory', {'object': Literal['phone.history'], 'serial': str, 'steps': List["PhoneStep"], 'runs': List[Dict[str, Any]], 'retention_days': int, 'max_steps': int}, total=False)
+PhoneRunStarted = TypedDict('PhoneRunStarted', {'object': Literal['phone.run'], 'run_id': str, 'serial': Optional[str], 'skill': Optional[str], 'status': Literal['running']}, total=False)
+PhoneToolResult = TypedDict('PhoneToolResult', {'object': Literal['phone.tool_result'], 'ok': bool, 'run_id': str, 'tool': str, 'error': str, 'message': str}, total=False)
 
 
 class AccountsResource:
@@ -702,7 +709,7 @@ class WebhooksResource:
             return self._client.request("GET", f"/v1/webhooks", query=q, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
         return self._client.paginate(_fetch, after if after is not NOT_GIVEN else None)
 
-    def create(self, *, url: str, events: List[Literal['*', 'approval.requested', 'message.received', 'message.status', 'registration.updated', 'inbox.item.created', 'call.started', 'call.ended', 'call.transcript.ready', 'usage.threshold']], description: str = NOT_GIVEN, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+    def create(self, *, url: str, events: List[Literal['*', 'approval.requested', 'message.received', 'message.status', 'registration.updated', 'inbox.item.created', 'call.started', 'call.ended', 'call.transcript.ready', 'usage.threshold', 'phone.step', 'phone.run.completed']], description: str = NOT_GIVEN, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
         """Create a webhook endpoint
 
         `url` must be public https. The response carries `secret` once.
@@ -1235,6 +1242,95 @@ class ComputersResource:
         return self._client.request("PATCH", f"/v1/computer_settings", body=_body, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
 
 
+class PhonesResource:
+    def __init__(self, client: Transport) -> None:
+        self._client = client
+
+    def list(self, *, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "PhoneList":
+        """List the owner's phones
+
+        The project owner's own phones, linked to their Allternit Desktop (Phone Link, adb or a USB Agent). Requires the `phones` scope and a key that is not bound to an account (403 `account_bound_key`).
+        While the Desktop is offline the phones the cloud last saw are listed with `online: false` and `desktop_online: false`. Not paginated (a person links a handful).
+
+        ``GET /v1/phones``
+        """
+        return self._client.request("GET", f"/v1/phones", timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def list_skills(self, *, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "PhoneSkillList":
+        """List saved phone skills
+
+        Recorded phone runs that replay with no model. Each lists the `inputs` a run must pass (typed text is never stored). 503 `phone_desktop_offline` while the Desktop is offline.
+
+        ``GET /v1/phones/skills``
+        """
+        return self._client.request("GET", f"/v1/phones/skills", timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def run_skill(self, name: str, *, serial: str = NOT_GIVEN, inputs: Dict[str, Any] = NOT_GIVEN, bot_id: str = NOT_GIVEN, brain: str = NOT_GIVEN, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "PhoneRunStarted":
+        """Replay a phone skill
+
+        Starts the replay in the background and answers 202 with its `run_id`. Each step is a `phone.step` webhook; the end is `phone.run.completed`. A step whose element moved re-decides once on `bot_id`'s brain (or `brain`). Skills never send texts or place calls.
+
+        ``POST /v1/phones/skills/{name}/run``
+        """
+        _body: Dict[str, Any] = {}
+        if serial is not NOT_GIVEN:
+            _body['serial'] = serial
+        if inputs is not NOT_GIVEN:
+            _body['inputs'] = inputs
+        if bot_id is not NOT_GIVEN:
+            _body['bot_id'] = bot_id
+        if brain is not NOT_GIVEN:
+            _body['brain'] = brain
+        return self._client.request("POST", f"/v1/phones/skills/{_q(name)}/run", body=_body, idempotency_key=idempotency_key, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def get_history(self, serial: str, *, run_id: str = NOT_GIVEN, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "PhoneHistory":
+        """A phone's run history
+
+        Every phone tool call on this phone (500 steps / 30 days), newest run first. Typed text, numbers and message bodies are redacted on the Desktop; frames and screen text stay there.
+
+        ``GET /v1/phones/{serial}/history``
+        """
+        _query: Dict[str, Any] = {}
+        if run_id is not NOT_GIVEN:
+            _query['run_id'] = run_id
+        return self._client.request("GET", f"/v1/phones/{_q(serial)}/history", query=_query, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def call_tool(self, serial: str, *, name: str, arguments: Dict[str, Any] = NOT_GIVEN, run_id: str = NOT_GIVEN, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "PhoneToolResult":
+        """Run one phone tool
+
+        One phone tool through the Desktop phone gateway, exactly as a bot calls it: `phone.devices`, `phone.screenshot`, `phone.read_ui`, `phone.screen_text`, `phone.tap`, `phone.type`, `phone.find_and_tap`, `phone.swipe`, `phone.home`, `phone.back`, `phone.key`, `phone.open_app`, `phone.sms.read`, `phone.sms.send`, `phone.call.dial`.
+        `phone.sms.send` and `phone.call.dial` wait for the person to approve on their Desktop (up to 80 s; then 503 `phone_timeout`); a refusal is a 200 result with `ok: false, error: approval_denied`. Tool failures are 200 with `ok: false`. 409 `phone_offline` when the phone isn't connected, 503 `phone_desktop_offline` / `phone_gateway_unavailable` when the Desktop or its phone gateway isn't running. The call is a `phone.step` webhook like any other.
+
+        ``POST /v1/phones/{serial}/tool``
+        """
+        _body: Dict[str, Any] = {}
+        if name is not NOT_GIVEN:
+            _body['name'] = name
+        if arguments is not NOT_GIVEN:
+            _body['arguments'] = arguments
+        if run_id is not NOT_GIVEN:
+            _body['run_id'] = run_id
+        return self._client.request("POST", f"/v1/phones/{_q(serial)}/tool", body=_body, idempotency_key=idempotency_key, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def run_task(self, serial: str, *, goal: str, max_steps: int = NOT_GIVEN, bot_id: str = NOT_GIVEN, brain: str = NOT_GIVEN, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "PhoneRunStarted":
+        """Give a phone a goal
+
+        The phone task loop on the Desktop (read the screen, one action, repeat) with `bot_id`'s brain, `brain`, or the default. Answers 202 with the `run_id`; each step is a `phone.step` webhook and the end is `phone.run.completed`. Tasks never send texts or place calls. At most 5 minutes.
+
+        ``POST /v1/phones/{serial}/task``
+        """
+        _body: Dict[str, Any] = {}
+        if goal is not NOT_GIVEN:
+            _body['goal'] = goal
+        if max_steps is not NOT_GIVEN:
+            _body['max_steps'] = max_steps
+        if bot_id is not NOT_GIVEN:
+            _body['bot_id'] = bot_id
+        if brain is not NOT_GIVEN:
+            _body['brain'] = brain
+        return self._client.request("POST", f"/v1/phones/{_q(serial)}/task", body=_body, idempotency_key=idempotency_key, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+
 def _q(v: str) -> str:
     from urllib.parse import quote
     return quote(str(v), safe='')
@@ -1256,3 +1352,4 @@ class GeneratedResources:
         self.channels = ChannelsResource(client)
         self.twin = TwinResource(client)
         self.computers = ComputersResource(client)
+        self.phones = PhonesResource(client)

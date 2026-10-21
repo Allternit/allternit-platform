@@ -502,6 +502,9 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         // the provisioned container is reached via the runtime relay like
         // any registered node.
         .merge(routes::provisioned_instances::routes())
+        // Cloud Android phones (redroid) for Phone Link. Off unless
+        // CLOUD_PHONES_ENABLED=1; every route answers 503 otherwise.
+        .merge(routes::cloud_phones::routes())
         // Data-plane JWT public key (decision A1): nodes fetch cloud-api's
         // Ed25519 verifying key at startup. Public, fail-closed 503 when
         // ALLTERNIT_DP_JWT_SEED is unset.

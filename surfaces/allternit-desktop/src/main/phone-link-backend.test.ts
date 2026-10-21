@@ -117,16 +117,13 @@ describe('PhoneLinkBackend lane mapping', () => {
     expect(client.calls.at(-1)).toEqual({ method: 'type', params: { text: 'héllo emoji 🎉' } });
   });
 
-  it('home maps to home; back is Android-only with a plain sentence on iOS', async () => {
-    const client = fakeClient({ home: () => ({}), back: () => ({}) });
+  it('home maps to home; back on iPhone is the left-edge swipe sized from device_info', async () => {
+    const client = fakeClient({ home: () => ({}), back: () => ({}), device_info: () => ({ point_width: 400, point_height: 800 }), drag: () => ({}) });
     const b = backend(client);
     expect(await b.call('phone.home', 'link:dev-1', {})).toEqual({ ok: true });
     expect(client.calls.at(-1)?.method).toBe('home');
-    expect(await b.call('phone.back', 'link:dev-1', {})).toEqual({
-      ok: false,
-      error: 'unsupported',
-      message: "iPhone has no Back button. Tap the app's back control instead.",
-    });
+    expect(await b.call('phone.back', 'link:dev-1', {})).toMatchObject({ ok: true });
+    expect(client.calls.at(-1)).toEqual({ method: 'drag', params: { from_x: 1, from_y: 360, to_x: 240, to_y: 360, duration: 0.3 } });
     const droid = backend(client, [android]);
     expect(await droid.call('phone.back', 'link:dev-2', {})).toEqual({ ok: true });
     expect(client.calls.at(-1)?.method).toBe('back');
@@ -172,14 +169,39 @@ describe('PhoneLinkBackend lane mapping', () => {
     expect(await b.call('phone.find_and_tap', 'link:dev-1', {})).toMatchObject({ error: 'invalid_args' });
   });
 
-  it('sms, calls, keys and plain-English tasks stay unsupported with a plain sentence', async () => {
+  it('keys: Android through the shell service, iPhone enter types a newline, other iPhone keys refused', async () => {
+    const client = fakeClient({ key: () => ({}), type: () => ({}), back: () => ({}) });
+    const droid = backend(client, [android]);
+    expect(await droid.call('phone.key', 'link:dev-2', { combo: 'Enter' })).toEqual({ ok: true });
+    expect(client.calls.at(-1)).toEqual({ method: 'key', params: { code: 'KEYCODE_ENTER' } });
+    expect(await droid.call('phone.key', 'link:dev-2', { combo: 'back' })).toEqual({ ok: true });
+    expect(client.calls.at(-1)?.method).toBe('back');
+    expect(await droid.call('phone.key', 'link:dev-2', { combo: 'f13' })).toMatchObject({ error: 'invalid_args' });
+    const ios = backend(client);
+    expect(await ios.call('phone.key', 'link:dev-1', { combo: 'enter' })).toEqual({ ok: true });
+    expect(client.calls.at(-1)).toEqual({ method: 'type', params: { text: '\n' } });
+    expect(await ios.call('phone.key', 'link:dev-1', { combo: 'tab' })).toMatchObject({ error: 'unsupported' });
+  });
+
+  it('texts, calls and inbox reads go to the Android helper; an old helper says to update', async () => {
+    const client = fakeClient({ sms_send: () => ({ status: 'submitted' }), sms_read: () => ({ raw: 'Row: 0 address=555, body=hi, date=1' }) });
+    const droid = backend(client, [android]);
+    expect(droid.canText('link:dev-2')).toBe(true);
+    expect(await droid.sendSms('link:dev-2', '+15550102030', 'hi', null)).toMatchObject({ ok: true, status: 'submitted' });
+    expect(client.calls.at(-1)).toEqual({ method: 'sms_send', params: { to: '+15550102030', text: 'hi' } });
+    expect(await droid.readSms('link:dev-2', 5, null)).toEqual({ ok: true, raw: 'Row: 0 address=555, body=hi, date=1' });
+    const old = backend(fakeClient({ call_dial: () => { throw new IctrlError('rpc_error', 'Method not found'); }, is_locked: () => ({ locked: false }) }), [android]);
+    expect(await old.dial('link:dev-2', '+15550102030', null)).toMatchObject({ ok: false, error: 'unsupported', message: expect.stringContaining('older') });
+    expect(backend(client).canText('link:dev-1')).toBe(false);
+  });
+
+  it('texts and calls never reach the helper from call() (the runner gates them); tasks stay unsupported', async () => {
     const client = fakeClient({});
     const b = backend(client);
     for (const [name, args, hint] of [
-      ['phone.key', { combo: 'enter' }, 'hardware keys'],
       ['phone.task', { task: 'open settings' }, 'Plain-English tasks'],
-      ['phone.sms.send', { to: '+15550102030', text: 'hi' }, 'Texts'],
-      ['phone.call.dial', { number: '+15550102030' }, 'Calls'],
+      ['phone.sms.send', { to: '+15550102030', text: 'hi' }, 'approve'],
+      ['phone.call.dial', { number: '+15550102030' }, 'approve'],
     ] as const) {
       const res = await b.call(name, 'link:dev-1', args);
       expect(res).toMatchObject({ ok: false, error: 'unsupported' });

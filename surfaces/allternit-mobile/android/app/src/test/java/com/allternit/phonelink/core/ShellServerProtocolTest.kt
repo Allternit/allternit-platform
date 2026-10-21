@@ -42,6 +42,24 @@ class ShellServerProtocolTest {
         )) assertTrue(bad, ShellServerProtocol.parseCommand(bad).isFailure)
     }
 
+    @Test fun parsesTheOneShotCommandsAndRefusesBadArguments() {
+        val b64 = java.util.Base64.getEncoder().encodeToString("Hi, it's me".toByteArray())
+        assertEquals(Command.Key("KEYCODE_ENTER"), ShellServerProtocol.parseCommand("KEY KEYCODE_ENTER").getOrThrow())
+        assertEquals(Command.Sms(-1, "+15551234567", "Hi, it's me"), ShellServerProtocol.parseCommand("SMS -1 +15551234567 $b64").getOrThrow())
+        assertEquals(Command.Dial("5551234567", 2), ShellServerProtocol.parseCommand("DIAL 5551234567 2").getOrThrow())
+        assertEquals(Command.SmsRead(1700000000000, null), ShellServerProtocol.parseCommand("SMSREAD 1700000000000").getOrThrow())
+        assertEquals(Command.A11yOn, ShellServerProtocol.parseCommand("A11YON").getOrThrow())
+        for (bad in listOf(
+            "KEY 1;reboot", "KEY keycode_enter", "DIAL 911", "DIAL +1911", "SMS -1 112 $b64", "SMS 1 555;id $b64",
+            "SMS 1 5551234567 not*base64", "SMSREAD -5", "SMSREAD 1 55'5", "A11YON now",
+        )) assertTrue(bad, ShellServerProtocol.parseCommand(bad).isFailure)
+        assertEquals(
+            "a/.B:${ShellServerProtocol.ACCESSIBILITY_COMPONENT}",
+            ShellServerProtocol.withAccessibility("a/.B"),
+        )
+        assertEquals(ShellServerProtocol.ACCESSIBILITY_COMPONENT, ShellServerProtocol.withAccessibility("null"))
+    }
+
     @Test fun readLineStopsAtTheNewlineAndLeavesRawBytes() {
         val input = ByteArrayInputStream("OK\n\u0001\u0002".toByteArray())
         assertEquals("OK", ShellServerProtocol.readLine(input))

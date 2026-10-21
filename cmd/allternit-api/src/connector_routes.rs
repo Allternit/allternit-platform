@@ -3103,7 +3103,7 @@ mod tests {
             .and_then(|v| v.as_array())
             .map(|a| a.iter().filter_map(|t| t.as_str()).collect())
             .unwrap_or_default();
-        assert_eq!(tools, vec!["allternit_mail.send", "allternit_mail.status"]);
+        assert_eq!(tools, vec!["allternit_mail.send", "allternit_mail.status", "allternit_mail.list", "allternit_mail.read", "allternit_mail.read_otp"]);
 
         // Meta entry makes it curated (catalog merge never consults the
         // sidecar for it) and marks the native backend.
