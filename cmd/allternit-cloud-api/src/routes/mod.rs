@@ -74,6 +74,7 @@ pub mod runtime_viewer;
 pub mod schedules;
 pub mod slack_app;
 pub mod tasks;
+pub mod team;
 #[cfg(test)]
 pub mod test_support;
 pub mod files;
