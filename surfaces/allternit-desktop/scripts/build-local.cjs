@@ -76,7 +76,15 @@ try {
   shell = true;
 }
 
-const result = spawnSync(command, [...args, ...extraArgs, ...process.argv.slice(2)], {
+let argv = [...args, ...extraArgs, ...process.argv.slice(2)];
+// Ad-hoc signing (mac.identity "-") opens every file in the bundle (~26k) in
+// parallel; the default 256-descriptor limit fails it with EMFILE.
+if (process.platform === 'darwin' && !shell) {
+  argv = ['-c', 'ulimit -n 65536 2>/dev/null || ulimit -n "$(sysctl -n kern.maxfilesperproc)" 2>/dev/null; exec "$0" "$@"', command, ...argv];
+  command = '/bin/sh';
+}
+
+const result = spawnSync(command, argv, {
   stdio: 'inherit',
   env: process.env,
   shell,
