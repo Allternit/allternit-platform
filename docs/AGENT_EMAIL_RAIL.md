@@ -90,9 +90,14 @@ agent subdomain junked; if you ignored the subdomain advice, your root domain to
 
 ## Automated signups (agents registering for services)
 
-Agents can receive verification emails and magic links — the inbound path delivers
-them to the agent's Factory mail thread, and full bodies are readable via
-`GET /api/v1/messages/[id]` with the agent's key. Caveats:
+Agents can receive verification emails and magic links. Each inbound message is
+scanned for one-time codes and sign-in links (`cmd/allternit-api/src/email_otp.rs`);
+verification mail is stored without starting a bot turn or a reply, and the bot
+reads it with the `allternit_mail.read_otp` MCP tool (optionally waiting up to 120 s).
+`allternit_mail.list` / `allternit_mail.read` read the inbox; `read` fetches full
+bodies via `GET /api/v1/messages/[id]` with the agent's key when the webhook copy
+was truncated. New bots get a mailbox automatically (`ALLTERNIT_BOT_EMAIL_AUTO=0`
+turns that off). Caveats:
 
 - Many services' ToS prohibit automated accounts; a signup spree can burn the
   subdomain's reputation even when technically successful. Keep the approval gate
