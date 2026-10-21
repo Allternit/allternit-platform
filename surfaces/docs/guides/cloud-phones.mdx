@@ -28,7 +28,7 @@ The cloud phone is only reachable over your private Allternit network. It is nev
 | `POST` | `/api/v1/cloud-phones` | Body: optional `label`. Creates a phone and returns it as `phone` with status 201. Admin only for now. |
 | `DELETE` | `/api/v1/cloud-phones/:id` | Removes the phone and its data. |
 
-These routes accept a Clerk session, a `compute` API token, or a Desktop device token. They return 503 unless `CLOUD_PHONES_ENABLED=1` is set. A phone also needs a fleet host marked `phones_enabled` (migration `099_cloud_phones.sql`). Each phone is a [redroid](https://github.com/remote-android/redroid-doc) container started by `infrastructure/cloud-phone/run-phone.sh`. Host setup is in `infrastructure/cloud-phone/README.md`.
+These routes accept a Clerk session, a `compute` API token, or a Desktop device token. They return 503 unless `CLOUD_PHONES_ENABLED=1` is set. A phone also needs a fleet host marked `phones_enabled` (migration `101_cloud_phones.sql`). Each phone is a [redroid](https://github.com/remote-android/redroid-doc) container started by `infrastructure/cloud-phone/run-phone.sh`. Host setup is in `infrastructure/cloud-phone/README.md`.
 
 **Desktop bridge** (`window.allternit.phones` and `window.allternit.phoneLink`):
 
