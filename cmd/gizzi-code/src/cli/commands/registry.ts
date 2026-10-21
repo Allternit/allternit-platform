@@ -38,6 +38,8 @@ import { ArtifactCommand } from "@/cli/commands/artifact"
 import { ProgramsCommand } from "@/cli/commands/programs"
 import { OrgCommand } from "@/cli/commands/org"
 import { LabsCommand } from "@/cli/commands/labs"
+import { HookCommand } from "@/cli/commands/hook"
+import { TeamMcpCommand } from "@/cli/commands/team-mcp"
 import { UdemyCommand } from "@/cli/commands/udemy"
 import { VaultCommand } from "@/cli/commands/vault"
 import { CodemapCommand } from "@/cli/commands/codemap"
@@ -131,6 +133,8 @@ export const COMMANDS: RegisteredCommand[] = [
   ProfileCommand,
   PermissionProfileCommand,
   RemoteCommand,
+  HookCommand,
+  TeamMcpCommand,
   // Hidden: installed cron supervisors still exec `gizzi cron start`.
   CronLegacyStartCommand,
 ]

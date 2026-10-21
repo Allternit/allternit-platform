@@ -7,6 +7,7 @@
 pub mod backend;
 pub mod delivery;
 pub mod http;
+pub mod live_delivery;
 pub mod execenv;
 pub mod home_migrate;
 pub mod peer;

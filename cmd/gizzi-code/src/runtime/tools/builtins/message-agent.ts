@@ -31,6 +31,7 @@ import { findBotByCanonicalSession, isCanonicalBotSession } from "@/runtime/bots
 import { createHash, randomBytes } from "node:crypto"
 import { appendBotInbox, checkInboxGuard, INBOX_PAIR_LIMIT } from "@/runtime/bots/bot-inbox"
 import { AppRoutingError, fetchAppRoster, isAppBotSession, routeToAppBot } from "@/runtime/bots/app-bot-routing"
+import { sendToAddress } from "@/runtime/live/team-mcp"
 
 /**
  * The single gating predicate (D5): message_agent is offered only when the
@@ -125,7 +126,18 @@ type MessageAgentResult = {
     threadId?: string
     status?: string
     receipt?: unknown
+    /** C1 delivery fields, for live sessions and terminal-bound bots. */
+    state?: string
+    tier?: string
+    hopId?: string
+    note?: string
   }
+}
+
+/** One C1 sentence: `delivered (push): pushed into the running Claude Code turn`. */
+function c1Output(name: string, r: { state?: string; tier?: string | null; note?: string | null }): string {
+  const head = `${r.state ?? "failed"}${r.tier ? ` (${r.tier})` : ""}`
+  return `${name}: ${head}${r.note ? ` — ${r.note}` : ""}`
 }
 
 export const MessageAgentTool = Tool.define("message_agent", {
@@ -138,6 +150,9 @@ export const MessageAgentTool = Tool.define("message_agent", {
       .describe("Plain-text task or message for the target bot (omit only with target \"list\")"),
   }),
   async execute(params, ctx): Promise<MessageAgentResult> {
+    if (params.target.includes("/") && !LIST_TARGETS.has(params.target.trim().toLowerCase())) {
+      return executeForAddress(params, ctx.sessionID, ctx.callID)
+    }
     if (!(await isCanonicalBotSession(ctx.sessionID))) return executeForAppBot(params, ctx.sessionID, ctx.callID)
 
     // The sender is the bot whose canonical session is running this turn.
@@ -192,6 +207,49 @@ export const MessageAgentTool = Tool.define("message_agent", {
   },
 })
 
+/** message_agent to a live session address (`person/session`): delivered by the engine, C1 result. */
+async function executeForAddress(
+  params: { target: string; message?: string },
+  sessionID: string,
+  callID?: string,
+): Promise<MessageAgentResult> {
+  const message = (params.message ?? "").trim()
+  if (!message) throw new BotStoreError("message_agent: message must not be empty")
+  const to = params.target.trim()
+  let r: { state?: string; tier?: string | null; note?: string | null; hopId?: string; status?: string }
+  try {
+    r = (await isAppBotSession(sessionID))
+      ? await routeToAppBot(sessionID, to, message, 5, {
+          traceparent: traceparentFor(sessionID),
+          idempotencyKey: idempotencyKeyFor(sessionID, callID),
+        })
+      : await sendToAddress(to, message, { idempotencyKey: idempotencyKeyFor(sessionID, callID) })
+  } catch (error) {
+    if (error instanceof AppRoutingError && error.status === 429) {
+      return {
+        title: "Held: loop guard",
+        output: error.message,
+        metadata: { target: to, from: sessionID, delivered: false, status: "held", state: "held", receipt: { state: "held", reason: "loop_guard" } },
+      }
+    }
+    throw new BotStoreError(`message_agent: ${(error as Error).message}`)
+  }
+  const state = r.state === "verified" ? "delivered" : (r.state ?? r.status ?? "failed")
+  return {
+    title: `Messaged ${to}`,
+    output: c1Output(to, { ...r, state }),
+    metadata: {
+      target: to,
+      from: sessionID,
+      delivered: state === "delivered",
+      state,
+      tier: r.tier ?? undefined,
+      hopId: r.hopId,
+      note: r.note ?? undefined,
+    },
+  }
+}
+
 /** message_agent for a bot made in the Allternit app (allternit-api roster + threads). */
 async function executeForAppBot(
   params: { target: string; message?: string },
@@ -225,6 +283,15 @@ async function executeForAppBot(
       title: "Held: loop guard",
       output: result.message,
       metadata: { target: params.target, from, delivered: false, status: "held", receipt: { state: "held", reason: "loop_guard" } },
+    }
+  }
+  if (!result.bot && result.tier !== undefined) {
+    const c1 = result as unknown as { state?: string; tier?: string; note?: string; hopId?: string; target?: string }
+    const state = c1.state ?? result.status
+    return {
+      title: `Messaged ${c1.target ?? params.target}`,
+      output: c1Output(c1.target ?? params.target, { ...c1, state }),
+      metadata: { target: c1.target ?? params.target, from, delivered: state === "delivered", state, tier: c1.tier, hopId: c1.hopId, note: c1.note },
     }
   }
   const name = result.bot.name
