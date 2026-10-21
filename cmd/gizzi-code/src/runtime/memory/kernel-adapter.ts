@@ -30,32 +30,6 @@ export namespace MemoryKernelAdapter {
     return process.env.GIZZI_MEMORY_KERNEL !== "0"
   }
 
-  /**
-   * Tell Memory Drive → Activity what this agent did with the person's
-   * memory (a recall, a save, a removal). Fire and forget: never blocks or
-   * fails the tool. Older APIs answer 404 and nothing is shown.
-   */
-  export function report(
-    kind: "recalled" | "saved" | "forgot",
-    title: string,
-    items: { text: string; source?: string }[],
-    sessionId?: string,
-  ): void {
-    if (!enabled()) return
-    platformRequest(
-      "POST",
-      "/api/v1/memory/drive/activity",
-      {
-        kind,
-        title,
-        items: items.slice(0, 20).map((i) => ({ text: i.text, source: i.source ?? "" })),
-        source: sessionId ? `gizzi:session/${sessionId}` : undefined,
-        session: sessionId,
-      },
-      { timeoutMs: TIMEOUT_MS },
-    ).catch(() => {})
-  }
-
   /** Canonical recall over the user's indexed memory. Empty on failure. */
   export async function search(query: string, limit = 10): Promise<KernelHit[]> {
     if (!enabled() || !query.trim()) return []

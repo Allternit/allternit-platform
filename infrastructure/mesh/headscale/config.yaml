@@ -1,11 +1,5 @@
 # Headscale configuration for allternit-headscale (Fly.io).
 # Schema verified against headscale v0.29.2 config-example.yaml.
-#
-# NOTE (2026-10-17): this app is LEGACY. Production runs on the mail VPS
-# (/etc/headscale/config.yaml there); the DERP block below was updated to
-# match production (embedded DERP region 999 "allternit", no Tailscale-run
-# relays) so the checked-in config stays truthful. This file is not deployed
-# anywhere automatically.
 
 # Public URL clients (tailscaled / tsnet) use to reach this control server.
 # Fly terminates TLS at the edge and forwards plain HTTP to :8080.
@@ -33,20 +27,15 @@ prefixes:
   v6: fd7a:115c:a1e0::/48
   allocation: sequential
 
-# Relay map: match production — our own embedded DERP relay (region 999
-# "allternit") plus STUN, and NO Tailscale-run relays (urls: []). On the VPS
-# this serves derp over the same listener as the control plane and
-# stun_listen_addr answers UDP :3478.
+# Relay map: use Tailscale's public DERP fleet; do NOT run the embedded
+# DERP server for now. Revisit if we want a lax-local relay later.
 derp:
   server:
-    enabled: true
-    region_id: 999
-    region_code: allternit
-    region_name: allternit
-    stun_listen_addr: 0.0.0.0:3478
-  urls: []
+    enabled: false
+  urls:
+    - https://controlplane.tailscale.com/derpmap/default
   paths: []
-  auto_update_enabled: false
+  auto_update_enabled: true
   update_frequency: 3h
 
 # We pin the image tag instead of self-checking for updates.

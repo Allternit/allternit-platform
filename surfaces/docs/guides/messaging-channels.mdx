@@ -71,21 +71,6 @@ Email wizards include a reply setting for each bot:
 | **Auto** | The bot replies without approval. |
 
 
-## Message status in a thread
-
-When a bot posts to a channel, the thread shows how far the message got:
-
-- **Sent**: the platform accepted it. That doesn't mean anyone has read it. Only WhatsApp reports **Delivered** and **Read**.
-- **Unconfirmed**: Allternit couldn't confirm it went out, for example because the platform timed out or Allternit restarted mid-send. It is not sent again automatically, so check the chat before you resend. Allternit marks it **Sent** later if it sees the message in the chat.
-- **Rate limited, not sent**: the platform asked Allternit to slow down and nothing was sent. Sending again after a short wait is safe.
-
-Hover a status (or use a screen reader) for a one-line explanation.
-
-If Allternit restarts while a bot is answering, the chat gets a short note asking you to send your message again. Messages that arrived but hadn't been answered yet are answered after the restart.
-- **Failed**: the platform refused it, for example because the channel was deleted.
-
-Developers: see [Channel gateway API](/guides/channel-gateway-api).
-
 ## Limits
 
 - Replies to regulated or consequential messages should be checked by a person; set Email to **Approve** while you are testing.

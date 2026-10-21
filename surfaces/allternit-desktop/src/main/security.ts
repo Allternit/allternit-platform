@@ -27,7 +27,6 @@ import {
   type WebContents,
 } from 'electron';
 import log from 'electron-log';
-import { ESPRESSIF_VID, pickEspressifPort, usbId } from './phone-usb-agent-firmware.js';
 
 /** Schemes a renderer-initiated openExternal is allowed to use. */
 const ALLOWED_EXTERNAL_SCHEMES = new Set(['https:', 'http:', 'mailto:']);
@@ -181,21 +180,7 @@ export function installSessionSecurityHandlers(session: Session): void {
   });
 
   session.setPermissionCheckHandler((_webContents, permission, requestingOrigin) => {
-    // serial: the Connect an iPhone setup flashes an Allternit USB Agent board.
-    return (permission === 'media' || permission === 'serial') && isTrustedAppUrl(requestingOrigin);
-  });
-
-  // Web Serial for first-party pages, Espressif boards only (USB Agent
-  // setup). No picker: the board the user just plugged in is chosen; any
-  // other serial device is never offered to the page.
-  session.setDevicePermissionHandler((details) => {
-    if (details.deviceType !== 'serial' || !isTrustedAppUrl(details.origin)) return false;
-    const device = details.device as { vendorId?: string | number };
-    return usbId(device.vendorId) === ESPRESSIF_VID;
-  });
-  session.on('select-serial-port', (event, portList, webContents, callback) => {
-    event.preventDefault();
-    callback(isTrustedAppUrl(webContents.getURL()) ? pickEspressifPort(portList) : '');
+    return permission === 'media' && isTrustedAppUrl(requestingOrigin);
   });
 
   session.setDisplayMediaRequestHandler(

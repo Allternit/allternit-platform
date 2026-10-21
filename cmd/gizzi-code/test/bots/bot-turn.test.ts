@@ -140,26 +140,12 @@ describe("claude-cli bot spawn args", () => {
     expect(args).not.toContain("--append-system-prompt")
   })
 
-  test("a bot with no allowlist asks for anything beyond reading, still isolated", () => {
+  test("a bot with no allowlist or gates keeps running its tools, still isolated", () => {
     const args = argv({ bot: { id: "agent-2" } })
-    expect(args).not.toContain("bypassPermissions")
-    expect(after(args, "--permission-mode")).toBe("default")
-    expect(after(args, "--permission-prompt-tool")).toBe("stdio")
+    expect(after(args, "--permission-mode")).toBe("bypassPermissions")
     expect(after(args, "--setting-sources")).toBe("")
     expect(args).toContain("--disable-slash-commands")
-    const allowed = after(args, "--allowedTools").split(",")
-    expect(allowed).toEqual(expect.arrayContaining(["Read", "Glob", "Grep", "WebSearch", "mcp__allternit"]))
-    for (const risky of ["Bash", "Write", "Edit", "WebFetch"]) expect(allowed).not.toContain(risky)
-  })
-
-  test("GIZZI_BOT_BYPASS_PERMISSIONS=1 restores the old behavior for unrestricted bots only", () => {
-    process.env.GIZZI_BOT_BYPASS_PERMISSIONS = "1"
-    try {
-      expect(after(argv({ bot: { id: "agent-2" } }), "--permission-mode")).toBe("bypassPermissions")
-      expect(after(argv({ bot: { id: "agent-1", allowedTools: ["file_read"] } }), "--permission-mode")).toBe("default")
-    } finally {
-      delete process.env.GIZZI_BOT_BYPASS_PERMISSIONS
-    }
+    expect(args).not.toContain("--allowedTools")
   })
 })
 
@@ -188,17 +174,5 @@ describe("MCP server instructions in the turn system", () => {
     const { header, loaded } = await turnPrompt({ bot, userSystem: `+${PERSONA}` })
     expect(loaded).not.toContain("mcpInstructions")
     expect(header).not.toContain("# MCP Server Instructions")
-  })
-})
-
-describe("tool decisions for a bot with no allowlist", () => {
-  const bot: BotTurn.BotTurnInfo = { id: "agent-2" }
-  test("reads run, everything else asks a person, nothing is silently refused", () => {
-    for (const t of ["Read", "Grep", "WebSearch"]) expect(BotTurn.claudeToolDecision(bot, t, "allternit")).toBe("allow")
-    expect(BotTurn.claudeToolDecision(bot, "mcp__allternit__memory", "allternit")).toBe("allow")
-    for (const t of ["Bash", "Write", "Edit", "WebFetch", "mcp__other__x"]) expect(BotTurn.claudeToolDecision(bot, t, "allternit")).toBe("ask")
-  })
-  test("a restricted bot still refuses tools outside its allowlist", () => {
-    expect(BotTurn.claudeToolDecision({ id: "a", allowedTools: ["file_read"] }, "Bash")).toBe("deny")
   })
 })

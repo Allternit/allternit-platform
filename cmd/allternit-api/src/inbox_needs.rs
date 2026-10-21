@@ -17,7 +17,6 @@
 //! | `vendor_result` | `vendor_tickets` finished / failed / expired            | review (open)          |
 //! | `draft`       | `inbox_items` `autonomy.draft` cards (autonomy level kept a draft) | review (open) |
 //! | `factory_approval` | `factory_approvals` pending (a Factory node waiting on you) | approve / reject |
-//! | `attention`   | `attention_items` unresolved (failed or missed routine, no bot, lost run record …) | retry / dismiss |
 //! | `memory_import` | active `memory_facts` not yet in the Memory Drive (no import yet) | open Settings → Memory |
 //!
 //! `inbox_state` (V232) only remembers dismissals and snoozes. Routes live in
@@ -88,13 +87,6 @@ fn item(id: String, kind: &str, source: &str, bot_id: &str, bot_name: &str, thre
     })
 }
 
-/// Pass `detail.provenance` (contract C4: who the input came from) through to the card.
-fn with_provenance(it: &mut Value, detail: &Value) {
-    if let Some(p) = detail.get("provenance").filter(|p| p.is_object()) {
-        it["provenance"] = p.clone();
-    }
-}
-
 /// Every open item for `user_id`, newest first, with dismissed and snoozed ones removed.
 /// `unanswered_min` is how long an inbound message may sit before it counts.
 pub fn collect(conn: &Connection, user_id: &str, unanswered_min: i64) -> rusqlite::Result<Vec<Value>> {
@@ -130,13 +122,9 @@ pub fn collect(conn: &Connection, user_id: &str, unanswered_min: i64) -> rusqlit
         let held = authority == "allternit" && action.starts_with("post to ") && detail["text"].is_string();
         if held {
             let provider = provider.unwrap_or_else(|| action.trim_start_matches("post to ").to_string());
-            let mut it = item(format!("approval:{id}"), "held_send", &provider, &bot, &bot_name, Some(&thread), title.clone(), format!("{bot_name} wants to post on {provider}: {}", snippet(detail["text"].as_str().unwrap_or(""), 120)), &at, ("approve", "Send"), true);
-            with_provenance(&mut it, &detail);
-            out.push(it);
+            out.push(item(format!("approval:{id}"), "held_send", &provider, &bot, &bot_name, Some(&thread), title.clone(), format!("{bot_name} wants to post on {provider}: {}", snippet(detail["text"].as_str().unwrap_or(""), 120)), &at, ("approve", "Send"), true));
         } else {
-            let mut it = item(format!("approval:{id}"), "approval", if authority == "vendor" { "vendor" } else { "tool" }, &bot, &bot_name, Some(&thread), title.clone(), format!("{bot_name} needs approval: {}", snippet(&action, 120)), &at, ("approve", "Approve"), true);
-            with_provenance(&mut it, &detail);
-            out.push(it);
+            out.push(item(format!("approval:{id}"), "approval", if authority == "vendor" { "vendor" } else { "tool" }, &bot, &bot_name, Some(&thread), title.clone(), format!("{bot_name} needs approval: {}", snippet(&action, 120)), &at, ("approve", "Approve"), true));
         }
     }
 
@@ -298,36 +286,6 @@ pub fn collect(conn: &Connection, user_id: &str, unanswered_min: i64) -> rusqlit
         out.push(it);
     }
 
-    // Attention items: something failed or needs fixing (`netops::alerts`). Dismiss resolves them.
-    let mut st = conn.prepare(
-        "SELECT i.id, i.kind, i.severity, COALESCE(i.bot_id, ''), COALESCE(a.name, ''), i.thread_id, i.summary, i.opened_at,
-                i.retry_json IS NOT NULL, i.provenance_json, i.attempts, i.detail_json
-         FROM attention_items i LEFT JOIN agents a ON a.id = i.bot_id
-         WHERE i.owner = ?1 AND i.resolved_at IS NULL AND i.kind != 'digest' ORDER BY i.opened_at DESC LIMIT ?2",
-    )?;
-    for r in st.query_map(params![user_id, PER_SOURCE], |r| {
-        Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?, r.get::<_, String>(4)?, r.get::<_, Option<String>>(5)?, r.get::<_, String>(6)?, r.get::<_, String>(7)?, r.get::<_, bool>(8)?, r.get::<_, Option<String>>(9)?, r.get::<_, i64>(10)?, r.get::<_, Option<String>>(11)?))
-    })? {
-        let (id, kind, severity, bot, bot_name, thread, summary, at, retryable, prov, attempts, detail) = r?;
-        let mut it = item(format!("attention:{id}"), "attention", &kind, &bot, &bot_name, thread.as_deref(), None, summary, &at, if retryable { ("retry", if kind == "tool_changed" { "Approve tool" } else { "Retry" }) } else { ("open", "Open") }, false);
-        if kind == "tool_changed" {
-            // The tool and a one-line "what changed" (old vs new description, 200 chars each).
-            let d: Value = detail.and_then(|d| serde_json::from_str(&d).ok()).unwrap_or(Value::Null);
-            it["tool"] = d["tool"].clone();
-            it["serverId"] = d["serverId"].clone();
-            let cut = |v: &Value| v.as_str().map(|s| s.chars().take(200).collect::<String>());
-            it["change"] = json!({ "reason": d["reason"], "old": cut(&d["oldDescription"]), "new": cut(&d["newDescription"]) });
-        }
-        it["severity"] = json!(severity);
-        it["attentionKind"] = json!(kind);
-        it["attempts"] = json!(attempts);
-        it["actions"] = if retryable { json!(["retry", "dismiss"]) } else { json!(["dismiss"]) };
-        if let Some(p) = prov.and_then(|p| serde_json::from_str::<Value>(&p).ok()) {
-            it["provenance"] = p;
-        }
-        out.push(it);
-    }
-
     // Drop what the owner already handled (unless the item changed since).
     let mut st = conn.prepare("SELECT item_id, state, until, item_at FROM inbox_state WHERE owner = ?1")?;
     // Memories saved before the Memory Drive, not yet moved into it.
@@ -475,7 +433,6 @@ async fn send_held(state: &Arc<AppState>, owner: &str, approval_id: &str) -> Val
         Ok(crate::channel_gateway::SendOutcome::Sent { .. }) | Ok(crate::channel_gateway::SendOutcome::Replay { .. }) => json!({ "state": "sent" }),
         Ok(crate::channel_gateway::SendOutcome::Unconfirmed { .. }) => json!({ "state": "unconfirmed" }),
         Ok(crate::channel_gateway::SendOutcome::Rejected(m)) => json!({ "state": "rejected", "error": m }),
-        Ok(crate::channel_gateway::SendOutcome::RateLimited { retry_after_secs, .. }) => json!({ "state": "rate_limited", "retryAfterSecs": retry_after_secs }),
         Ok(_) => json!({ "state": "not_sent" }),
         Err(e) => json!({ "state": "error", "error": e }),
     }
@@ -486,14 +443,6 @@ async fn dismiss(State(state): State<Arc<AppState>>, Extension(user): Extension<
         Ok(i) => i,
         Err(r) => return r,
     };
-    // A problem is closed for good (and told to the other devices) instead of hidden.
-    if let Some(attention_id) = id.strip_prefix("attention:") {
-        if let Ok(conn) = state.db.connect() {
-            crate::netops::alerts::resolve(&conn, &user.user_id, attention_id, "dismissed");
-        }
-        changed(&state, &it, "dismiss");
-        return Json(json!({ "id": id, "state": "dismissed" })).into_response();
-    }
     if let Err(e) = remember(&state, &user.user_id, &it, "dismissed", None) {
         return err(StatusCode::INTERNAL_SERVER_ERROR, "DB_ERROR", &e.to_string());
     }
@@ -711,40 +660,5 @@ mod tests {
         let c = st.db.connect().unwrap();
         let state: String = c.query_row("SELECT state FROM gateway_approvals WHERE id = 'ap1'", [], |r| r.get(0)).unwrap();
         assert_eq!(state, "denied");
-    }
-
-    #[tokio::test]
-    async fn collect_lists_attention_items_with_actions_and_provenance_and_dismiss_resolves() {
-        let st = setup().await;
-        {
-            let c = st.db.connect().unwrap();
-            let mut it = crate::netops::alerts::Item { owner: "user-a".into(), kind: "routine_failed".into(), severity: "critical".into(), bot_id: Some("bot-a".into()), source: "routine".into(), source_id: "r1".into(), summary: "Briefing failed".into(), retry: Some(json!({ "routineId": "r1" })), ..Default::default() };
-            crate::netops::alerts::open(&c, &it);
-            it.kind = "dead_letter".into();
-            it.retry = None;
-            it.bot_id = None;
-            it.provenance = Some(json!({ "trust": "web", "sourceKind": "email" }));
-            crate::netops::alerts::open(&c, &it);
-            crate::netops::alerts::open(&c, &crate::netops::alerts::Item { owner: "user-b".into(), kind: "routine_failed".into(), source: "routine".into(), source_id: "x".into(), summary: "Not yours".into(), ..Default::default() });
-            thread(&c, "t2", "bot-a", "user-a", "needs_you", "waiting");
-            c.execute("INSERT INTO gateway_approvals (id, owner, thread_id, bot_id, authority, action, detail_json, state, created_at) VALUES ('ap1','user-a','t2','bot-a','allternit','send','{\"provenance\":{\"trust\":\"stranger\"}}','pending',?1)", params![ago(2)]).unwrap();
-        }
-        let c = st.db.connect().unwrap();
-        let all = collect(&c, "user-a", 30).unwrap();
-        let a = all.iter().find(|i| i["id"] == "attention:routine_failed:r1").expect("attention row");
-        assert_eq!((a["kind"].as_str(), a["severity"].as_str(), a["botName"].as_str()), (Some("attention"), Some("critical"), Some("Ledger")));
-        assert_eq!(a["actions"], json!(["retry", "dismiss"]));
-        assert_eq!(a["primary"]["action"], "retry");
-        let d = all.iter().find(|i| i["id"] == "attention:dead_letter:r1").unwrap();
-        assert_eq!((d["actions"].clone(), d["provenance"]["trust"].as_str()), (json!(["dismiss"]), Some("web")));
-        assert!(!all.iter().any(|i| i["summary"] == "Not yours"));
-        let ap = all.iter().find(|i| i["id"] == "approval:ap1").unwrap();
-        assert_eq!(ap["provenance"]["trust"], "stranger");
-        let app = needs_router().with_state(st.clone());
-        let (s, v) = call(&app, "user-a", "/inbox/attention:routine_failed:r1/dismiss", json!({})).await;
-        assert_eq!((s, v["state"].as_str()), (StatusCode::OK, Some("dismissed")));
-        assert!(!collect(&c, "user-a", 30).unwrap().iter().any(|i| i["id"] == "attention:routine_failed:r1"));
-        let how: String = c.query_row("SELECT resolution FROM attention_items WHERE id = 'routine_failed:r1'", [], |r| r.get(0)).unwrap();
-        assert_eq!(how, "dismissed");
     }
 }

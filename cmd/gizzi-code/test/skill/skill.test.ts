@@ -269,35 +269,6 @@ description: A skill in the .agents/skills directory.
   })
 })
 
-test("discovers skills from a project .allternit/skills/ directory", async () => {
-  await using tmp = await tmpdir({
-    git: true,
-    init: async (dir) => {
-      const skillDir = path.join(dir, ".allternit", "skills", "built-skill")
-      await Bun.write(
-        path.join(skillDir, "SKILL.md"),
-        `---
-name: built-skill
-description: A skill the Skill Builder wrote to .allternit/skills.
----
-
-# Built Skill
-`,
-      )
-    },
-  })
-
-  await Instance.provide({
-    directory: tmp.path,
-    fn: async () => {
-      const skills = await Skill.all()
-      const built = skills.find((s) => s.name === "built-skill")
-      expect(built).toBeDefined()
-      expect(built!.location).toContain(".allternit/skills/built-skill/SKILL.md")
-    },
-  })
-})
-
 test("discovers global skills from ~/.agents/skills/ directory", async () => {
   await using tmp = await tmpdir({ git: true })
 

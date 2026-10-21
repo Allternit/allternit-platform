@@ -124,26 +124,6 @@ const wasmEmbedPlugin = {
         });
     },
 };
-// Inline the built-in craft skills' files (src/runtime/skills/craftFiles.ts): the
-// binary has no source tree, so readCraft() returns this snapshot instead of walking disk.
-const craftEmbedPlugin = {
-    name: "craft-embed",
-    setup(build) {
-        build.onLoad({ filter: /[\\/]runtime[\\/]skills[\\/]craftFiles\.ts$/ }, async () => {
-            const { walkCraft } = await import(resolve("src/runtime/skills/craftFiles.ts"));
-            const snapshot = walkCraft(resolve("src/runtime/skills/bundled/craft"));
-            const kb = Math.round(JSON.stringify(snapshot).length / 1024);
-            console.log(`   ✓ Craft skills inlined: ${Object.keys(snapshot).join(", ") || "none"} (${kb} KB)`);
-            return {
-                contents: `const SNAPSHOT = ${JSON.stringify(snapshot)};
-export const CRAFT_DIR = "";
-export function walkCraft() { return SNAPSHOT; }
-export function readCraft() { return SNAPSHOT; }`,
-                loader: "js",
-            };
-        });
-    },
-};
 // Embed .md and .txt files as string constants at bundle time
 const textEmbedPlugin = {
     name: "text-embed",
@@ -423,7 +403,7 @@ const workerBundleResult = await Bun.build({
     features: FEATURES,
     conditions: ["browser"],
     external: ["electron", "chromium-bidi/*", "playwright-core/*"],
-    plugins: [craftEmbedPlugin, wasmEmbedPlugin, textEmbedPlugin, bundlePlugin],
+    plugins: [wasmEmbedPlugin, textEmbedPlugin, bundlePlugin],
 });
 if (!workerBundleResult.success) {
     console.error("Worker bundle failed:");
@@ -446,7 +426,7 @@ const bundleResult = await Bun.build({
     features: FEATURES,
     conditions: ["browser"],
     external: ["electron", "chromium-bidi/*", "playwright-core/*"],
-    plugins: [craftEmbedPlugin, wasmEmbedPlugin, textEmbedPlugin, bundlePlugin],
+    plugins: [wasmEmbedPlugin, textEmbedPlugin, bundlePlugin],
 });
 if (!bundleResult.success) {
     console.error("Bundle failed:");

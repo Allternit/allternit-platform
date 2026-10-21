@@ -31,7 +31,6 @@ const localEngineName = process.platform === 'win32' ? 'allternit-local-engine.e
 const gizziName = process.platform === 'win32' ? 'gizzi-code.exe' : 'gizzi-code';
 const voiceName = process.platform === 'win32' ? 'allternit-voice-service.exe' : 'allternit-voice-service';
 const ttsName = process.platform === 'win32' ? 'allternit-tts.exe' : 'allternit-tts';
-const factoryName = process.platform === 'win32' ? 'allternit-factory.exe' : 'allternit-factory';
 
 const required = [
   {
@@ -59,11 +58,17 @@ const required = [
     label: 'TTS program (allternit-tts, GPL-3.0, started by the voice service)',
     buildStep: 'scripts/build-desktop.sh',
   },
-  {
-    path: path.join(resourcesDir, 'bin', factoryName),
-    label: 'allternit-factory (the Allternit Factory engine and its pane engine: terminals, agent panes; Desktop runs it, gizzi finds it next to itself)',
-    buildStep: 'npm run prepare:factory',
-  },
+  // allternit-factory is Unix-only for now (its pane engine, which runs every
+  // terminal, serves a Unix socket), so Windows ships without it.
+  ...(process.platform === 'win32'
+    ? []
+    : [
+        {
+          path: path.join(resourcesDir, 'bin', 'allternit-factory'),
+          label: 'allternit-factory (the Allternit Factory engine and its pane engine: terminals, agent panes; Desktop runs it, gizzi finds it next to itself)',
+          buildStep: 'npm run prepare:factory',
+        },
+      ]),
   {
     path: path.join(resourcesDir, 'bin', process.platform === 'win32' ? 'system-one.exe' : 'system-one'),
     label: 'System One (S1) server binary',
@@ -286,30 +291,6 @@ if (!fs.existsSync(connectorBundlePath)) {
     const mb = (fs.statSync(connectorBundlePath).size / 1024 / 1024).toFixed(1);
     log(`✓ Connector sidecar bundle (${mb} MB, markers ok) (${connectorBundlePath})`);
   }
-}
-
-// Desktop's own subscription gateway (prepare-subs-gateway.cjs): the entry,
-// the adapters it loads, its migrations and Playwright must all be there.
-const subsGatewayDir = path.join(resourcesDir, 'subs-gateway');
-const subsGatewayRequired = [
-  path.join('src', 'main.js'),
-  'package.json',
-  path.join('adapters', 'chatgpt-android-app', 'aai.js'),
-  path.join('adapters', 'chatgpt-web', 'manifest.yaml'),
-  path.join('migrations', '0001_init.sql'),
-  path.join('node_modules', 'playwright-core', 'package.json'),
-  ...(process.platform === 'darwin' ? [path.join('bin', 'ax-bridge')] : []),
-];
-const subsGatewayMissing = subsGatewayRequired.filter((rel) => !fs.existsSync(path.join(subsGatewayDir, rel)));
-if (subsGatewayMissing.length > 0) {
-  failed = true;
-  process.stderr.write(
-    `[verify-packaged-resources] ✗ Subscription gateway bundle incomplete: ${subsGatewayMissing.join(', ')}\n` +
-    `    Expected under: ${subsGatewayDir}\n` +
-    '    Build it with: npm run prepare:subs-gateway\n'
-  );
-} else {
-  log(`✓ Subscription gateway bundle (${subsGatewayDir})`);
 }
 
 if (failed) {

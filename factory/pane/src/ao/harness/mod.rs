@@ -273,7 +273,7 @@ impl FsCtx {
             path_dirs.insert(0, managed_bin);
         }
         FsCtx {
-            home: allternit_factory_engine::platform::user_home_or("/"),
+            home: std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/")),
             path_dirs,
             app_root: PathBuf::from("/"),
         }
@@ -290,15 +290,7 @@ impl FsCtx {
     }
 
     fn which(&self, bin: &str) -> bool {
-        // Windows CLIs are `<bin>.exe` or `<bin>.cmd` (npm shims).
-        let names: Vec<String> = if cfg!(windows) {
-            vec![bin.to_string(), format!("{bin}.exe"), format!("{bin}.cmd")]
-        } else {
-            vec![bin.to_string()]
-        };
-        self.path_dirs
-            .iter()
-            .any(|dir| names.iter().any(|name| is_executable(&dir.join(name))))
+        self.path_dirs.iter().any(|dir| is_executable(&dir.join(bin)))
     }
 }
 
@@ -337,8 +329,8 @@ fn absent_skips_sync(driver: &Driver, cfg: &ToolCfg, ctx: &FsCtx) -> bool {
 /// so plain concatenation is used (documented in the P4 notes).
 pub(crate) fn expand(p: &str) -> PathBuf {
     if let Some(rest) = p.strip_prefix('~') {
-        let home = allternit_factory_engine::platform::user_home_or("/");
-        PathBuf::from(format!("{}{rest}", home.display()))
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/".to_string());
+        PathBuf::from(format!("{home}{rest}"))
     } else {
         PathBuf::from(p)
     }
@@ -598,10 +590,7 @@ pub(crate) fn run(args: &[String]) -> std::io::Result<i32> {
         .unwrap_or_default();
 
     let manifest = load_manifest()?;
-    // Only the sync side copies from the source skills dir. `install` runs on
-    // machines that never have it (customer Macs, cloud computers), where this
-    // check used to fail every install.
-    if command != "install" && !exists(&manifest.source.skills_dir) {
+    if !exists(&manifest.source.skills_dir) {
         eprintln!("Source skills dir not found: {}", manifest.source.skills_dir);
         return Ok(1);
     }

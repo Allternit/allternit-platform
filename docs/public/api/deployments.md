@@ -19,7 +19,7 @@ All routes are nested under `/api/v1/beta/deployments`.
 |-------|------|----------|-------------|
 | `agent_id` | string | no | Agent to invoke on each scheduled run. |
 | `cron` | string | yes | Standard five-field cron expression. |
-| `metadata` | object | no | Arbitrary key/value object. Defaults to `{}`. `metadata.prompt` (string) is the user message each run sends to the agent; the node's in-process session worker executes runs and sets the run to `succeeded`/`failed`. A run with no prompt fails with `empty_prompt`. |
+| `metadata` | object | no | Arbitrary key/value object. Defaults to `{}`. |
 
 ### Example
 

@@ -132,13 +132,6 @@ pub fn parity_of(gaps: &[(String, String)]) -> &'static str {
 pub struct ApiErr(StatusCode, Value);
 
 impl ApiErr {
-    /// The error text, for callers outside this module.
-    pub(crate) fn message(&self) -> String {
-        self.1["error"].as_str().map(str::to_string).unwrap_or_else(|| self.1.to_string())
-    }
-}
-
-impl ApiErr {
     pub(crate) fn new(s: StatusCode, m: impl Into<String>) -> Self {
         ApiErr(s, json!({ "error": m.into() }))
     }
@@ -362,9 +355,7 @@ pub fn agent_gateway_router() -> Router<Arc<AppState>> {
         .route("/bots/:bot_id/vendor-memory", get(vendor_memory_h))
         .route("/bots/:bot_id/vendor-memory/:record_id/promote", post(promote_memory_h))
         // Vendor accounts on a cloud computer (V221): move host, sign in there, check.
-        .merge(crate::gateway_vendor_host::routes())
-        // One-step connect: subscription/key/endpoint/channel in, ready bots out.
-        .merge(crate::gateway_connect::routes());
+        .merge(crate::gateway_vendor_host::routes());
     Router::new().nest("/gateway", g)
 }
 
@@ -386,7 +377,7 @@ struct CreateAccount {
     expires_at: Option<String>,
 }
 
-pub(crate) const AUTH_TYPES: &[&str] =
+const AUTH_TYPES: &[&str] =
     &["oauth", "browser_session", "api_key", "desktop_session", "local_endpoint", "channel_oauth", "mcp_plugin"];
 
 async fn create_account(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Json(b): Json<CreateAccount>) -> Response {
@@ -666,28 +657,14 @@ pub(crate) fn adapter_for_auth(vendor: &str, auth_type: &str) -> Option<&'static
         ("openai", "browser_session") => Some("chatgpt-subscription"),
         ("openai", "desktop_session") => Some("chatgpt-dots"),
         ("kimi", "browser_session") => Some("kimi-subscription"),
-        // Gemini Spark and Slashy are their own vendors (not google/Gemini chat), so their browser logins get their own adapters.
-        ("gemini-spark", "browser_session") => Some("gemini-spark-subscription"),
-        ("slashy", "browser_session") => Some("slashy-subscription"),
-        ("abacusai", "browser_session") => Some("abacusai-bot-subscription"),
         // Google/Microsoft browser logins run on their web adapters (the
         // gemini-web / copilot-web pools the accounts sign in through).
         ("google", "browser_session") => Some("gemini-subscription"),
         ("microsoft", "browser_session") => Some("copilot-subscription"),
         ("hermes", _) => Some("hermes"),
-        // Bot-project connectors register under their vendor id, whatever the credential shape.
-        (v, _) => DIRECT_ADAPTER_VENDORS.iter().copied().find(|d| *d == v),
+        _ => None,
     }
 }
-
-/// Bot-project connectors whose gateway adapter id is the vendor id itself
-/// (services/subscription-gateway/adapters/<id>). Without this, an account for
-/// them reaches the gateway with no adapter and every call is UNSUPPORTED.
-pub(crate) const DIRECT_ADAPTER_VENDORS: &[&str] = &[
-    "openclaw", "openmausbot", "codync", "hivekeep", "invisible-dots", "opendots-copilotkit", "openmuse-copilotkit",
-    "openbot-copilotkit", "ds-bot", "openbot-nightly", "rakazo", "frockbot", "sidemates", "nanomuse", "vellum-assistant",
-    "gawkbot", "opendots-anil", "munder-difflin", "happy", "iris", "poke", "instinct", "flip", "cue", "pally",
-];
 
 /// `agent.list` for an account's vendor adapter, via a transient binding.
 pub(crate) async fn discover_agents(db: &DbHandle, tx: &dyn crate::gateway_runner::AaiTransport, owner: &str, aid: &str) -> Result<Vec<Value>, (StatusCode, String, String)> {
@@ -1914,10 +1891,6 @@ mod tests {
         assert_eq!(adapter_for_auth("kimi", "browser_session"), Some("kimi-subscription"));
         assert_eq!(adapter_for_auth("google", "browser_session"), Some("gemini-subscription"));
         assert_eq!(adapter_for_auth("google", "api_key"), None);
-        assert_eq!(adapter_for_auth("openmausbot", "api_key"), Some("openmausbot"));
-        assert_eq!(adapter_for_auth("poke", "api_key"), Some("poke"));
-        assert_eq!(adapter_for_auth("abacusai", "browser_session"), Some("abacusai-bot-subscription"));
-        assert_eq!(adapter_for_auth("unknown-vendor", "api_key"), None);
         assert_eq!(adapter_for_auth("microsoft", "browser_session"), Some("copilot-subscription"));
         assert_eq!(adapter_for_auth("microsoft", "desktop_session"), None);
         assert_eq!(adapter_for_auth("hermes", "local_endpoint"), Some("hermes"));

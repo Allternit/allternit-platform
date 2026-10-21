@@ -10,12 +10,9 @@ import type { AdapterRegistry } from "../adapters/registry.js";
 import { listOpenBreakers } from "../breakers.js";
 import type { Db } from "../store/db.js";
 import { listAccounts, listQuotaPools } from "../store/queries.js";
-import { browserLanesRoutable } from "../local_desktop.js";
 
-// The person's own computer with browser sign-ins off (local_desktop.ts): no
-// browser account is routable here.
 export function buildSnapshot(db: Db, registry: AdapterRegistry, now = new Date()): FabricSnapshot {
-  const accounts = browserLanesRoutable() ? listAccounts(db) : [];
+  const accounts = listAccounts(db);
   const session_health: Record<string, SessionHealth> = {};
   for (const account of accounts) {
     session_health[account.account_id] = account.session_health;

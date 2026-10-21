@@ -249,18 +249,6 @@ The CLI searches for a config file in this order inside the project:
 
 If none exist, the wizard defaults to `gizzi.json`. For global scope it writes to the equivalent path under `~/.config/gizzi-code/`.
 
-## Tool-change holds
-
-Gizzi pins each MCP server's tools. A pin is a sha256 of the tool's name, description, input schema and annotations, kept in `mcp-tool-pins.json` in Gizzi's config directory.
-
-- The first time Gizzi sees a server, it pins everything that server lists.
-- After that, a tool that is **new** or **changed** (a different description, schema or annotations) is held out of the tool list. The model never sees it, and Gizzi logs which tools were held and why.
-- When Gizzi runs under an Allternit runtime (`ALLTERNIT_API_URL` is set and you are signed in), it asks the runtime to check the pins (`POST /mcp/pins/check`) instead of using the local file. A held tool opens a **Tool changed** item in your [inbox](/guides/needs-you-inbox); tap **Approve tool** there and the tool returns on the next listing, on every surface. The local pins file is used only if there is no runtime or it can't be reached.
-- Offline fallback: start Gizzi once with `GIZZI_MCP_APPROVE_TOOLS=<server>` (comma-separate several servers, or use `*`) to re-pin the tools as they are listed now. Use it only when no runtime is reachable.
-- Removed tools only narrow what the model can do, so they take effect at once.
-
-Bots in the app have the same rule on the server side, for every attached MCP server: a tool change leaves that tool out of the bot's list and opens one **Tool changed** item per tool in your Inbox (Desktop, phone and the PWA). **Approve tool** re-pins that tool and closes the item. See [Red-team suite](/guides/red-team-suite).
-
 ## Disabling MCP support
 
 MCP support is enabled by default. To disable it for a session:

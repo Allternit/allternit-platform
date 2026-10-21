@@ -50,12 +50,6 @@ const MONITOR_OUTPUT_CAP: usize = 4 * 1024;
 const RUN_OUTPUT_CAP: usize = 8 * 1024;
 /// Failed runs in a row before a routine pauses itself.
 pub const AUTO_PAUSE_AFTER: i64 = 3;
-/// A run that takes longer than this is cut off and fails with `outcome_reason = timeout`.
-pub const DEFAULT_TIMEOUT_SECS: i64 = 1800;
-/// Most `skipped` rows written for the occurrences missed in one gap.
-const MISSED_ROWS_CAP: usize = 30;
-/// Longest a run may start after it was due before it counts as missed.
-const MIN_GRACE_SECS: i64 = 300;
 /// SQL predicate: the routine has an agent to run it.
 const HAS_AGENT: &str = "agent_id IS NOT NULL AND TRIM(agent_id) != ''";
 /// SQL expression: the row's metadata as a JSON object (NULL/garbage → {}).
@@ -103,14 +97,10 @@ pub struct LocalRoutine {
     pub config: Value,
     pub metadata: Value,
     pub next_run_at: Option<String>,
-    /// Seconds a run may take before it is cut off (`routines.timeout_seconds`; default [`DEFAULT_TIMEOUT_SECS`]).
-    pub timeout_seconds: Option<i64>,
-    /// How late a scheduled run started, set by [`claim_due`] when it ran past its grace period.
-    pub late_by_ms: Option<i64>,
 }
 
 const COLS: &str = "id, user_id, agent_id, name, description, schedule_type, schedule_expression, \
-                    config, metadata, next_run_at, timeout_seconds";
+                    config, metadata, next_run_at";
 
 fn map_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<LocalRoutine> {
     let parse = |s: Option<String>| s.and_then(|s| serde_json::from_str(&s).ok()).unwrap_or(Value::Null);
@@ -125,8 +115,6 @@ fn map_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<LocalRoutine> {
         config: parse(row.get(7)?),
         metadata: parse(row.get(8)?),
         next_run_at: row.get(9)?,
-        timeout_seconds: row.get(10)?,
-        late_by_ms: None,
     })
 }
 
@@ -169,59 +157,14 @@ fn backfill(db: &DbHandle, now: DateTime<Utc>) -> rusqlite::Result<()> {
 /// never run until one is assigned) and drop their cursor so they don't sit
 /// "due" in the UI.
 pub fn flag_agentless(conn: &rusqlite::Connection) -> rusqlite::Result<usize> {
-    let flagged = conn.execute(
+    conn.execute(
         &format!(
             "UPDATE routines SET metadata = json_set({META}, '$.needsAgent', json('true')), next_run_at = NULL
              WHERE execution_domain = 'local' AND NOT ({HAS_AGENT})
                AND (json_extract({META}, '$.needsAgent') IS NOT 1 OR next_run_at IS NOT NULL)"
         ),
         [],
-    )?;
-    sync_needs_bot_items(conn);
-    Ok(flagged)
-}
-
-/// One `routine_needs_bot` attention item per active agentless local routine; closed
-/// once the routine has a bot (or stops being active). A dismissed item is not
-/// re-opened for the same routine.
-fn sync_needs_bot_items(conn: &rusqlite::Connection) {
-    use crate::netops::alerts;
-    let missing: Vec<(String, String, String)> = (|| -> rusqlite::Result<_> {
-        let mut st = conn.prepare(&format!(
-            "SELECT r.id, r.user_id, r.name FROM routines r
-             WHERE r.execution_domain = 'local' AND r.status = 'active' AND NOT ({HAS_AGENT})
-               AND NOT EXISTS (SELECT 1 FROM attention_items a WHERE a.id = 'routine_needs_bot:' || r.id
-                               AND (a.resolved_at IS NULL OR a.resolution = 'dismissed'))"
-        ))?;
-        let rows = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
-        Ok(rows.filter_map(Result::ok).collect())
-    })()
-    .unwrap_or_default();
-    for (id, owner, name) in missing {
-        alerts::open(conn, &alerts::Item {
-            owner,
-            kind: "routine_needs_bot".into(),
-            severity: "warn".into(),
-            source: "routine".into(),
-            source_id: id,
-            summary: format!("\"{name}\" has no bot to run it, so it never runs. Assign it to a bot."),
-            detail: json!({ "routine": name }),
-            ..Default::default()
-        });
-    }
-    let fixed: Vec<(String, String)> = (|| -> rusqlite::Result<_> {
-        let mut st = conn.prepare(&format!(
-            "SELECT a.id, a.owner FROM attention_items a WHERE a.kind = 'routine_needs_bot' AND a.resolved_at IS NULL
-               AND NOT EXISTS (SELECT 1 FROM routines r WHERE r.id = a.source_id AND r.execution_domain = 'local'
-                               AND r.status = 'active' AND NOT ({HAS_AGENT}))"
-        ))?;
-        let rows = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
-        Ok(rows.filter_map(Result::ok).collect())
-    })()
-    .unwrap_or_default();
-    for (id, owner) in fixed {
-        alerts::resolve(conn, &owner, &id, "fixed");
-    }
+    )
 }
 
 /// Claim due routines by advancing their cursor first (compare-and-set).
@@ -245,66 +188,10 @@ fn claim_due(db: &DbHandle, now: DateTime<Utc>) -> rusqlite::Result<Vec<LocalRou
             params![r.id, next, r.next_run_at],
         )?;
         if changed == 1 {
-            let mut r = r;
-            if let Some(due_at) = r.next_run_at.as_deref().and_then(|t| DateTime::parse_from_rfc3339(t).ok()).map(|t| t.with_timezone(&Utc)) {
-                let late = now - due_at;
-                let interval = next_run(&r.schedule_type, &r.schedule_expression, due_at, false).map_or(0, |t| (t - due_at).num_seconds());
-                let grace = chrono::Duration::seconds(MIN_GRACE_SECS.max(interval / 10));
-                if late > grace {
-                    r.late_by_ms = Some(late.num_milliseconds());
-                    record_missed(&conn, &r, due_at, now);
-                }
-            }
             claimed.push(r);
         }
     }
     Ok(claimed)
-}
-
-/// A scheduled run started later than its grace period. Every occurrence skipped
-/// before the one that is about to run gets a `skipped` row
-/// (`outcome_reason = missed_runtime_offline`, at most [`MISSED_ROWS_CAP`]), and a
-/// `routine_missed` attention item tells the owner.
-fn record_missed(conn: &rusqlite::Connection, r: &LocalRoutine, due_at: DateTime<Utc>, now: DateTime<Utc>) {
-    let mut occurrences = Vec::new();
-    let mut t = due_at;
-    while t <= now && occurrences.len() <= MISSED_ROWS_CAP {
-        occurrences.push(t);
-        match next_run(&r.schedule_type, &r.schedule_expression, t, false) {
-            Some(n) => t = n,
-            None => break,
-        }
-    }
-    // The last occurrence is the run that follows; with a long gap the list is cut at the cap.
-    let missed = if occurrences.len() > MISSED_ROWS_CAP { MISSED_ROWS_CAP } else { occurrences.len().saturating_sub(1) };
-    for at in &occurrences[..missed] {
-        let wrote = conn.execute(
-            "INSERT INTO routine_runs (id, routine_id, status, scheduled_at, started_at, finished_at, duration_ms,
-                 output, error, triggered_by, metadata, outcome_reason)
-             VALUES (?1, ?2, 'skipped', ?3, ?3, ?4, 0, 'missed', NULL, 'schedule', '{}', 'missed_runtime_offline')",
-            params![uuid::Uuid::new_v4().to_string(), r.id, at.to_rfc3339(), now.to_rfc3339()],
-        );
-        if let Err(e) = wrote {
-            warn!(routine = %r.id, error = %e, "could not record a missed run");
-        }
-    }
-    let late_min = r.late_by_ms.unwrap_or(0) / 60_000;
-    let summary = if missed > 0 {
-        format!("\"{}\" missed {missed} run{} while this computer was off or asleep.", r.name, if missed == 1 { "" } else { "s" })
-    } else {
-        format!("\"{}\" started {late_min} min late: this computer was off or asleep when it was due.", r.name)
-    };
-    crate::netops::alerts::open(conn, &crate::netops::alerts::Item {
-        owner: r.user_id.clone(),
-        kind: "routine_missed".into(),
-        severity: "warn".into(),
-        bot_id: r.agent_id.clone(),
-        source: "routine".into(),
-        source_id: r.id.clone(),
-        summary,
-        detail: json!({ "routine": r.name, "dueAt": due_at.to_rfc3339(), "lateByMs": r.late_by_ms, "missedRuns": missed }),
-        ..Default::default()
-    });
 }
 
 // ─── Delivery ───────────────────────────────────────────────────────────────
@@ -514,26 +401,6 @@ pub struct RunOutcome {
     pub session_id: Option<String>,
     /// This failure was the [`AUTO_PAUSE_AFTER`]th in a row and paused the routine.
     pub auto_paused: bool,
-    /// Why a run did not succeed (`routine_runs.outcome_reason`), see [`classify`].
-    pub reason: Option<&'static str>,
-}
-
-/// `routine_runs.outcome_reason` for a failed run, from its error text.
-pub fn classify(error: &str) -> &'static str {
-    let e = error.to_lowercase();
-    if e.contains("timed out") {
-        "timeout"
-    } else if e.contains("has no bot") || e.contains("no longer exists") || e.contains("needs an agent") {
-        "no_bot"
-    } else if e.contains("lane_blocked") || e.contains("auth_required") || e.contains("challenge") || e.contains("sign in") || e.contains("signed out") {
-        "lane_blocked"
-    } else if e.contains("quota") || e.contains("rate_limit") || e.contains("rate limit") || e.contains("429") || e.contains("credit") || e.contains("billing") {
-        "quota"
-    } else if e.contains("restart") || e.contains("aborted") || e.contains("shutting down") {
-        "runtime_restart"
-    } else {
-        "model_error"
-    }
 }
 
 /// User-facing reason stored in `metadata.autoPaused.reason`.
@@ -580,61 +447,6 @@ fn record_streak(conn: &rusqlite::Connection, id: &str, status: &str, error: Opt
     paused == 1
 }
 
-/// The run's outcome could not be stored: keep it as a `dead_letter` attention item so it is never lost.
-fn dead_letter(db: &DbHandle, r: &LocalRoutine, outcome: &RunOutcome, run_id: &str, why: String) {
-    warn!(routine = %r.id, error = %why, "could not record a routine run");
-    let item = crate::netops::alerts::Item {
-        owner: r.user_id.clone(),
-        kind: "dead_letter".into(),
-        severity: "warn".into(),
-        bot_id: r.agent_id.clone(),
-        source: "routine".into(),
-        source_id: run_id.to_string(),
-        summary: format!("A run of \"{}\" finished ({}) but its record could not be saved.", r.name, outcome.status),
-        detail: json!({ "routineId": r.id, "status": outcome.status, "error": outcome.error, "output": outcome.output.as_deref().map(|o| truncate(o, 1024)), "reason": outcome.reason, "storeError": why }),
-        ..Default::default()
-    };
-    // A fresh connection: the one that failed may be the problem.
-    if let Ok(c) = db.connect() {
-        crate::netops::alerts::open(&c, &item);
-    }
-}
-
-/// Tell the owner about a failed run, or close the open problems after a good one.
-/// Every failure opens `routine_failed` (also when the routine has no bot); an
-/// auto-pause escalates it to critical. A good run resolves it, and resolves
-/// `routine_missed` when it started on time.
-fn alert_for_outcome(conn: &rusqlite::Connection, r: &LocalRoutine, outcome: &RunOutcome, run_id: &str, trigger: &Trigger) {
-    use crate::netops::alerts;
-    if outcome.status != "failed" {
-        alerts::resolve_source(conn, &r.user_id, "routine_failed", &r.id, "fixed");
-        if r.late_by_ms.is_none() {
-            alerts::resolve_source(conn, &r.user_id, "routine_missed", &r.id, "fixed");
-        }
-        return;
-    }
-    let error = outcome.error.as_deref().unwrap_or("it failed");
-    let flagged_critical = r.metadata.get("critical").and_then(Value::as_bool).unwrap_or(false);
-    let (severity, summary) = if outcome.auto_paused {
-        ("critical", format!("\"{}\" was paused after {AUTO_PAUSE_AFTER} failed runs in a row: {}", r.name, truncate(error, 160)))
-    } else {
-        (if flagged_critical { "critical" } else { "warn" }, format!("\"{}\" failed: {}", r.name, truncate(error, 160)))
-    };
-    alerts::open(conn, &alerts::Item {
-        owner: r.user_id.clone(),
-        kind: "routine_failed".into(),
-        severity: severity.into(),
-        bot_id: r.agent_id.clone(),
-        source: "routine".into(),
-        source_id: r.id.clone(),
-        summary,
-        detail: json!({ "routine": r.name, "runId": run_id, "reason": outcome.reason, "error": error, "trigger": trigger.as_str(), "autoPaused": outcome.auto_paused }),
-        retry: Some(json!({ "routineId": r.id })),
-        ..Default::default()
-    });
-    let _ = conn.execute("UPDATE routine_runs SET alerted_at = ?2 WHERE id = ?1", params![run_id, Utc::now().to_rfc3339()]);
-}
-
 /// Run one routine end to end and record it. Never panics on a bad run —
 /// the failure is the recorded result.
 pub async fn execute<D: RoutineDriver>(db: &DbHandle, driver: &D, r: &LocalRoutine, trigger: Trigger) -> RunOutcome {
@@ -643,8 +455,7 @@ pub async fn execute<D: RoutineDriver>(db: &DbHandle, driver: &D, r: &LocalRouti
     let mut session_used: Option<String> = None;
     let bot = r.agent_id.as_deref().and_then(|id| bot_info(db, id));
 
-    let timeout_secs = r.timeout_seconds.filter(|t| *t > 0).unwrap_or(DEFAULT_TIMEOUT_SECS);
-    let work = async {
+    let result: Result<(String, &'static str), String> = async {
         let agent_id = r.agent_id.as_deref().ok_or("this routine has no bot; assign it to a bot to run it")?;
         let bot = bot.as_ref().ok_or("the routine's agent no longer exists")?;
         let text = if let Some(command) = r.config.pointer("/monitor/command").and_then(Value::as_str) {
@@ -669,15 +480,8 @@ pub async fn execute<D: RoutineDriver>(db: &DbHandle, driver: &D, r: &LocalRouti
         session_used = Some(session.clone());
         let reply = driver.send_turn(&session, agent_id, &text).await?;
         Ok((reply, "succeeded"))
-    };
-    let result: Result<(String, &'static str), String> =
-        match tokio::time::timeout(std::time::Duration::from_secs(timeout_secs as u64), work).await {
-            Ok(res) => res,
-            Err(_) => Err(format!(
-                "timed out after {} (this routine's limit)",
-                if timeout_secs % 60 == 0 { format!("{} min", timeout_secs / 60) } else { format!("{timeout_secs} s") }
-            )),
-        };
+    }
+    .await;
 
     let outcome = match result {
         Ok((out, status)) => RunOutcome {
@@ -686,12 +490,10 @@ pub async fn execute<D: RoutineDriver>(db: &DbHandle, driver: &D, r: &LocalRouti
             error: None,
             session_id: session_used,
             auto_paused: false,
-            reason: None,
         },
         Err(e) => RunOutcome {
             status: "failed",
             output: None,
-            reason: Some(classify(&e)),
             error: Some(truncate(&e, RUN_OUTPUT_CAP)),
             session_id: session_used,
             auto_paused: false,
@@ -700,14 +502,13 @@ pub async fn execute<D: RoutineDriver>(db: &DbHandle, driver: &D, r: &LocalRouti
     let mut outcome = outcome;
     let finished = Utc::now();
 
-    let run_id = uuid::Uuid::new_v4().to_string();
     if let Ok(conn) = db.connect() {
-        let inserted = conn.execute(
+        let _ = conn.execute(
             "INSERT INTO routine_runs (id, routine_id, status, scheduled_at, started_at, finished_at, duration_ms,
-                 output, error, triggered_by, metadata, outcome_reason, late_by_ms)
-             VALUES (?1, ?2, ?3, ?4, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                 output, error, triggered_by, metadata)
+             VALUES (?1, ?2, ?3, ?4, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             params![
-                run_id,
+                uuid::Uuid::new_v4().to_string(),
                 r.id,
                 outcome.status,
                 started.to_rfc3339(),
@@ -717,13 +518,8 @@ pub async fn execute<D: RoutineDriver>(db: &DbHandle, driver: &D, r: &LocalRouti
                 outcome.error,
                 trigger.as_str(),
                 json!({ "sessionId": outcome.session_id }).to_string(),
-                outcome.reason,
-                r.late_by_ms,
             ],
         );
-        if let Err(e) = inserted {
-            dead_letter(db, r, &outcome, &run_id, e.to_string());
-        }
         let _ = conn.execute(
             "UPDATE routines SET last_run_at = ?2,
                  metadata = json_set(
@@ -735,9 +531,6 @@ pub async fn execute<D: RoutineDriver>(db: &DbHandle, driver: &D, r: &LocalRouti
         );
         outcome.auto_paused =
             record_streak(&conn, &r.id, outcome.status, outcome.error.as_deref(), &finished.to_rfc3339());
-        alert_for_outcome(&conn, r, &outcome, &run_id, &trigger);
-    } else {
-        dead_letter(db, r, &outcome, &run_id, "database unavailable".into());
     }
 
     if let (Some(agent_id), Some(bot)) = (r.agent_id.as_deref(), bot.as_ref()) {
@@ -896,8 +689,6 @@ mod tests {
         turns: Mutex<Vec<(String, String)>>,
         monitor: Mutex<String>,
         fail: bool,
-        /// Milliseconds `send_turn` takes (the timeout test).
-        delay_ms: u64,
         creates: AtomicUsize,
     }
 
@@ -911,9 +702,6 @@ mod tests {
             Ok(id)
         }
         async fn send_turn(&self, s: &str, _b: &str, t: &str) -> Result<String, String> {
-            if self.delay_ms > 0 {
-                tokio::time::sleep(std::time::Duration::from_millis(self.delay_ms)).await;
-            }
             if self.fail {
                 return Err("provider_rate_limit".into());
             }
@@ -964,7 +752,7 @@ mod tests {
             .db
             .connect()
             .unwrap()
-            .execute("UPDATE routines SET next_run_at = ?2 WHERE id = ?1", params![id, (Utc::now() - chrono::Duration::minutes(2)).to_rfc3339()])
+            .execute("UPDATE routines SET next_run_at = '2000-01-01T00:00:00+00:00' WHERE id = ?1", params![id])
             .unwrap();
     }
 
@@ -1140,122 +928,5 @@ mod tests {
         let d = Fake::default();
         assert_eq!(run_startup(&state.db, &d).await, 1);
         assert_eq!(runs(&state, "r5"), vec!["succeeded"]);
-    }
-
-    fn attention(state: &AppState, id: &str) -> Option<(String, String, Option<String>)> {
-        state
-            .db
-            .connect()
-            .unwrap()
-            .query_row("SELECT severity, kind, resolved_at FROM attention_items WHERE id = ?1", params![id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
-            .optional()
-            .unwrap()
-    }
-
-    #[test]
-    fn errors_classify_into_outcome_reasons() {
-        for (e, want) in [
-            ("timed out after 30 min (this routine's limit)", "timeout"),
-            ("this routine has no bot; assign it to a bot to run it", "no_bot"),
-            ("the routine's agent no longer exists", "no_bot"),
-            ("LANE_BLOCKED: challenge presented", "lane_blocked"),
-            ("AUTH_REQUIRED", "lane_blocked"),
-            ("provider_rate_limit", "quota"),
-            ("The operation was aborted.", "runtime_restart"),
-            ("500 internal error from the model", "model_error"),
-        ] {
-            assert_eq!(classify(e), want, "{e}");
-        }
-    }
-
-    #[tokio::test]
-    async fn a_run_past_its_timeout_fails_with_the_reason_and_alerts() {
-        let state = setup("timeout").await;
-        insert(&state, "rt", "interval", "1h", json!({}), Some("bot-1"));
-        state.db.connect().unwrap().execute("UPDATE routines SET timeout_seconds = 1 WHERE id = 'rt'", []).unwrap();
-        let r = get_routine(&state.db, "rt").unwrap().unwrap();
-        let d = Fake { delay_ms: 5000, ..Default::default() };
-        let started = std::time::Instant::now();
-        let out = execute(&state.db, &d, &r, Trigger::Schedule).await;
-        assert!(started.elapsed() < std::time::Duration::from_secs(4));
-        assert_eq!((out.status, out.reason), ("failed", Some("timeout")));
-        let reason: String = state.db.connect().unwrap().query_row("SELECT outcome_reason FROM routine_runs WHERE routine_id = 'rt'", [], |r| r.get(0)).unwrap();
-        assert_eq!(reason, "timeout");
-        assert_eq!(attention(&state, "routine_failed:rt").map(|a| a.0), Some("warn".into()));
-    }
-
-    #[tokio::test]
-    async fn a_failure_opens_routine_failed_with_retry_and_the_next_success_resolves_it() {
-        let state = setup("alert").await;
-        insert(&state, "ra", "interval", "1h", json!({}), Some("bot-1"));
-        let r = get_routine(&state.db, "ra").unwrap().unwrap();
-        let bad = Fake { fail: true, ..Default::default() };
-        execute(&state.db, &bad, &r, Trigger::Schedule).await;
-        let (sev, kind, resolved) = attention(&state, "routine_failed:ra").expect("opened");
-        assert_eq!((sev.as_str(), kind.as_str(), resolved), ("warn", "routine_failed", None));
-        let c = state.db.connect().unwrap();
-        let (retry, reason, alerted): (String, String, Option<String>) = c
-            .query_row("SELECT (SELECT retry_json FROM attention_items WHERE id = 'routine_failed:ra'), outcome_reason, alerted_at FROM routine_runs WHERE routine_id = 'ra'", [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
-            .unwrap();
-        assert_eq!((retry.as_str(), reason.as_str()), (r#"{"routineId":"ra"}"#, "quota"));
-        assert!(alerted.is_some());
-        let opened: i64 = c.query_row("SELECT COUNT(*) FROM runtime_user_events WHERE event_type = 'attention.opened'", [], |r| r.get(0)).unwrap();
-        assert_eq!(opened, 1);
-        // Three failures in a row pause it and raise the item to critical.
-        execute(&state.db, &bad, &r, Trigger::Schedule).await;
-        execute(&state.db, &bad, &r, Trigger::Schedule).await;
-        assert_eq!(attention(&state, "routine_failed:ra").map(|a| a.0), Some("critical".into()));
-        execute(&state.db, &Fake::default(), &r, Trigger::Manual { user_id: "user-a".into() }).await;
-        assert!(attention(&state, "routine_failed:ra").unwrap().2.is_some(), "a good run resolves it");
-    }
-
-    #[tokio::test]
-    async fn a_gap_writes_missed_rows_and_one_alert() {
-        let state = setup("missed").await;
-        insert(&state, "rm", "interval", "1d", json!({}), Some("bot-1"));
-        let now = Utc::now();
-        // Due 51 h ago: occurrences at -51 h, -27 h and -3 h are past; the last one is the run that follows.
-        state.db.connect().unwrap().execute("UPDATE routines SET next_run_at = ?2 WHERE id = ?1", params!["rm", (now - chrono::Duration::hours(51)).to_rfc3339()]).unwrap();
-        let d = Fake::default();
-        assert_eq!(run_due(&state.db, &d, now).await, 1);
-        assert_eq!(runs(&state, "rm"), vec!["skipped", "skipped", "succeeded"]);
-        let c = state.db.connect().unwrap();
-        let reasons: i64 = c.query_row("SELECT COUNT(*) FROM routine_runs WHERE outcome_reason = 'missed_runtime_offline'", [], |r| r.get(0)).unwrap();
-        let late: Option<i64> = c.query_row("SELECT late_by_ms FROM routine_runs WHERE status = 'succeeded'", [], |r| r.get(0)).unwrap();
-        assert_eq!(reasons, 2);
-        assert!(late.unwrap() >= 50 * 3600 * 1000);
-        let (sev, kind, resolved) = attention(&state, "routine_missed:rm").expect("opened");
-        assert_eq!((sev.as_str(), kind.as_str(), resolved), ("warn", "routine_missed", None));
-    }
-
-    #[tokio::test]
-    async fn an_agentless_routine_opens_needs_bot_and_assigning_a_bot_closes_it() {
-        let state = setup("needsbot").await;
-        insert(&state, "rn", "interval", "1h", json!({}), None);
-        let d = Fake::default();
-        assert_eq!(run_due(&state.db, &d, Utc::now()).await, 0);
-        assert_eq!(attention(&state, "routine_needs_bot:rn").map(|a| a.2), Some(None));
-        // Another tick does not add a second open (or a second push).
-        run_due(&state.db, &d, Utc::now()).await;
-        let c = state.db.connect().unwrap();
-        let opened: i64 = c.query_row("SELECT COUNT(*) FROM runtime_user_events WHERE event_type = 'attention.opened'", [], |r| r.get(0)).unwrap();
-        assert_eq!(opened, 1);
-        c.execute("UPDATE routines SET agent_id = 'bot-1' WHERE id = 'rn'", []).unwrap();
-        run_due(&state.db, &d, Utc::now()).await;
-        assert!(attention(&state, "routine_needs_bot:rn").unwrap().2.is_some());
-    }
-
-    #[tokio::test]
-    async fn a_run_record_that_cannot_be_saved_becomes_a_dead_letter() {
-        let state = setup("dead").await;
-        insert(&state, "rd", "interval", "1h", json!({}), Some("bot-1"));
-        let r = get_routine(&state.db, "rd").unwrap().unwrap();
-        state.db.connect().unwrap().execute_batch("ALTER TABLE routine_runs RENAME TO routine_runs_gone").unwrap();
-        let out = execute(&state.db, &Fake::default(), &r, Trigger::Schedule).await;
-        assert_eq!(out.status, "succeeded");
-        let c = state.db.connect().unwrap();
-        let (kind, detail): (String, String) = c.query_row("SELECT kind, detail_json FROM attention_items WHERE kind = 'dead_letter'", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
-        assert_eq!(kind, "dead_letter");
-        assert!(detail.contains("\"routineId\":\"rd\"") && detail.contains("storeError"), "{detail}");
     }
 }

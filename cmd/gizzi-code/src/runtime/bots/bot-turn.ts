@@ -146,34 +146,15 @@ export function claudeToolNames(ids: readonly string[] | undefined): string[] {
   return [...out]
 }
 
-/**
- * Tools a bot with no allowlist may run without asking: reading and searching
- * only. Shell, file writes, web fetches and anything else go to the person
- * through the app's approval flow (see `claudeToolDecision`).
- */
-export const UNRESTRICTED_FREE_TOOLS: readonly string[] = ["Read", "Glob", "Grep", "LS", "NotebookRead", "TodoWrite", "WebSearch"]
-
-/**
- * Escape hatch for the old behavior: `GIZZI_BOT_BYPASS_PERMISSIONS=1` runs
- * unrestricted bots with `bypassPermissions` again.
- */
-export function legacyBypass(env: NodeJS.ProcessEnv = process.env): boolean {
-  return env.GIZZI_BOT_BYPASS_PERMISSIONS === "1" || env.GIZZI_BOT_BYPASS_PERMISSIONS === "true"
-}
-
 /** True when the bot's tools are restricted (allowlist or approval gates). */
 export function restricted(bot: BotTurnInfo): boolean {
   return Boolean(bot.gated) || (bot.allowedTools?.length ?? 0) > 0 || (bot.askTools?.length ?? 0) > 0
 }
 
-/**
- * Tools the CLI may run without asking: the allowlist minus ask-each-time
- * tools (or, with no allowlist, the read-only set), plus gizzi's bridge.
- */
+/** Tools the CLI may run without asking: the allowlist minus ask-each-time tools, plus gizzi's bridge. */
 export function claudePreapproved(bot: BotTurnInfo, bridgeName?: string): string[] {
   const ask = new Set(claudeToolNames(bot.askTools))
-  const base = restricted(bot) ? claudeToolNames(bot.allowedTools) : [...UNRESTRICTED_FREE_TOOLS]
-  const allowed = base.filter((name) => !ask.has(name))
+  const allowed = claudeToolNames(bot.allowedTools).filter((name) => !ask.has(name))
   if (bridgeName) allowed.push(`mcp__${bridgeName}`)
   return [...new Set(allowed)]
 }
@@ -190,19 +171,17 @@ export function claudePreapproved(bot: BotTurnInfo, bridgeName?: string): string
  * out). `--disable-slash-commands` drops personal skills; `--strict-mcp-config`
  * keeps the user's own MCP servers out (only gizzi's bridge loads).
  *
- * Permissions: every bot runs in `default` mode with its pre-approved tools
- * and every other permission request sent to gizzi over stdio
- * (`--permission-prompt-tool stdio`), where `claudeToolDecision` allows,
- * refuses, or routes it to the app's approval flow. A restricted bot's
- * pre-approved tools are its allowlist; a bot with no allowlist gets the
- * read-only set and asks the person for everything else (shell, writes, web
- * fetches). `GIZZI_BOT_BYPASS_PERMISSIONS=1` restores the old
- * `bypassPermissions` for unrestricted bots.
+ * Permissions: a bot with no allowlist and no gates keeps
+ * `bypassPermissions` (unchanged behavior). A restricted bot runs in
+ * `default` mode with its allowlist pre-approved and every other permission
+ * request sent to gizzi over stdio (`--permission-prompt-tool stdio`), where
+ * `claudeToolDecision` refuses it, or routes it to the app's approval flow
+ * when the tool is ask-each-time or the bot has approval gates.
  */
 export function claudeBotFlags(bot: BotTurnInfo, bridgeName?: string): string[] {
   const flags = ["--setting-sources", "", "--disable-slash-commands"]
   if (bridgeName) flags.push("--strict-mcp-config")
-  if (!restricted(bot) && legacyBypass()) {
+  if (!restricted(bot)) {
     flags.push("--permission-mode", "bypassPermissions")
     return flags
   }
@@ -215,18 +194,16 @@ export function claudeBotFlags(bot: BotTurnInfo, bridgeName?: string): string[] 
 export type ToolDecision = "allow" | "ask" | "deny"
 
 /**
- * What gizzi answers when a bot's Claude CLI asks to use a tool that was not
- * pre-approved: allowlisted (or read-only, for a bot with no allowlist) →
- * allow; ask-each-time, any other tool on a bot with approval gates, or any
- * other tool on a bot with no allowlist → ask a person (the app's approval
- * flow); anything else → deny with a clear reason.
+ * What gizzi answers when a restricted bot's Claude CLI asks to use a tool
+ * that was not pre-approved: allowlisted → allow; ask-each-time, or any
+ * other tool on a bot with approval gates → ask a person (the app's
+ * approval flow); anything else → deny with a clear reason.
  */
 export function claudeToolDecision(bot: BotTurnInfo, toolName: string, bridgeName?: string): ToolDecision {
   if (claudeToolNames(bot.askTools).includes(toolName)) return "ask"
   const allowed = claudePreapproved(bot, bridgeName)
   if (allowed.includes(toolName)) return "allow"
   if (allowed.some((name) => name.startsWith("mcp__") && toolName.startsWith(name + "__"))) return "allow"
-  if (!restricted(bot)) return "ask"
   return bot.gated ? "ask" : "deny"
 }
 

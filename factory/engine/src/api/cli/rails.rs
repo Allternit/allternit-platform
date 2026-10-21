@@ -547,24 +547,15 @@ enum WihCmd {
     List {
         #[arg(long)]
         ready: bool,
-        /// Every open node (not DONE/FAILED/CANCELLED/CLOSED):
-        /// `<dag> <node> <ready|claimed|waiting> <title…>`.
-        #[arg(long, conflicts_with = "ready")]
-        all: bool,
         #[arg(long = "dag")]
         dag_id: Option<String>,
     },
     Pickup {
-        /// `<node>` or `<dag>/<node>`.
         node_id: String,
-        /// The node's DAG. Optional: found from the node id when it names
-        /// exactly one node across all DAGs.
         #[arg(long = "dag")]
-        dag_id: Option<String>,
-        /// Who claims it. Defaults to the calling bot
-        /// (`$ALLTERNIT_FACTORY_BOT@$ALLTERNIT_FACTORY_TEAM`), else the caller.
+        dag_id: String,
         #[arg(long = "agent")]
-        agent_id: Option<String>,
+        agent_id: String,
         #[arg(long)]
         role: Option<String>,
         #[arg(long)]
@@ -1007,7 +998,7 @@ where
             }
         },
         Commands::Wih(cmd) => match cmd {
-            WihCmd::List { ready, all, dag_id } => {
+            WihCmd::List { ready, dag_id } => {
                 let events = ledger.query(LedgerQuery::default()).await?;
                 let dag_ids = if let Some(dag_id) = dag_id {
                     vec![dag_id]
@@ -1052,26 +1043,6 @@ where
                             if let Some(node) = dag.nodes.get(&node_id) {
                                 println!("{dag_id} {node_id} {}", node.title);
                             }
-                        }
-                    }
-                } else if all {
-                    for dag_id in dag_ids {
-                        let dag = project_dag(&events_for_dag(&events, &dag_id), &dag_id);
-                        let ready = ready_nodes(&dag);
-                        let mut nodes: Vec<_> = dag.nodes.iter().collect();
-                        nodes.sort_by(|a, b| a.0.cmp(b.0));
-                        for (node_id, node) in nodes {
-                            if matches!(node.status.as_str(), "DONE" | "FAILED" | "CANCELLED" | "CLOSED") {
-                                continue;
-                            }
-                            let state = if active.contains_key(node_id) {
-                                "claimed"
-                            } else if ready.contains(node_id) {
-                                "ready"
-                            } else {
-                                "waiting"
-                            };
-                            println!("{dag_id} {node_id} {state} {}", node.title);
                         }
                     }
                 } else {
@@ -1121,29 +1092,6 @@ where
                 role,
                 fresh,
             } => {
-                let events = ledger.query(LedgerQuery::default()).await?;
-                let (dag_id, node_id) = match resolve_pickup_dag(&events, dag_id, &node_id) {
-                    Ok(pair) => pair,
-                    Err(fact) => {
-                        eprintln!("error: {fact}");
-                        std::process::exit(64);
-                    }
-                };
-                let agent_id = agent_id.filter(|a| !a.trim().is_empty()).unwrap_or_else(default_pickup_agent);
-                // Claiming a node you already hold is a no-op that reports the
-                // WIH you have, not an error.
-                if let Some(wih_id) = active_wih_nodes(&events).get(&node_id) {
-                    let holder = project_wih(&events, wih_id).and_then(|w| w.agent_id);
-                    if holder.as_deref() == Some(agent_id.as_str()) {
-                        println!("wih_id: {wih_id}");
-                        return Ok(());
-                    }
-                    eprintln!(
-                        "refused: {dag_id}/{node_id} is already claimed by {} ({wih_id}); hand it off with `gizzi workspace node handoff {dag_id}/{node_id} --to {agent_id}`",
-                        holder.unwrap_or_else(|| "another agent".into())
-                    );
-                    std::process::exit(1);
-                }
                 let gate = stores.gate().await?;
                 let pickup = gate
                     .wih_pickup_detailed(
@@ -2148,7 +2096,7 @@ async fn run_hook_command(root: &Path, stores: &Stores, ledger: &Arc<Ledger>, cm
             // AsyncReadExt is imported only on unix at the top of this file.
             use tokio::io::AsyncReadExt as _;
             let read = tokio::io::stdin().read_to_string(&mut raw).await;
-            let home = crate::platform::user_home();
+            let home = std::env::var_os("HOME").map(PathBuf::from);
             let parsed = read
                 .map_err(anyhow::Error::from)
                 .and_then(|_| serde_json::from_str::<Value>(&raw).map_err(anyhow::Error::from))
@@ -2590,11 +2538,6 @@ async fn run_tmux_transport(
     pane_name: String,
     watch: bool,
 ) -> Result<()> {
-    if cfg!(windows) {
-        anyhow::bail!(
-            "the tmux transport needs tmux, which doesn't run on Windows; use the pane engine (agent panes) or the socket transport instead"
-        );
-    }
     let recipient = format!("tmux:{}", pane_name);
     loop {
         let pending = bus.poll_pending_for(&recipient, Some("tmux"), 5).await?;
@@ -3622,47 +3565,6 @@ fn active_wih_nodes(events: &[AllternitEvent]) -> HashMap<String, String> {
         }
     }
     active
-}
-
-/// `wih pickup`'s DAG: `--dag`, else a `<dag>/<node>` node argument, else the
-/// one DAG whose projection contains the node. Errors name what to pass.
-fn resolve_pickup_dag(
-    events: &[AllternitEvent],
-    dag_flag: Option<String>,
-    node_arg: &str,
-) -> std::result::Result<(String, String), String> {
-    let (dag_from_arg, node_id) = match node_arg.split_once('/') {
-        Some((d, n)) if !d.is_empty() && !n.is_empty() => (Some(d.to_string()), n.to_string()),
-        _ => (None, node_arg.to_string()),
-    };
-    if let Some(dag) = dag_flag.filter(|d| !d.trim().is_empty()).or(dag_from_arg) {
-        return Ok((dag, node_id));
-    }
-    let owners: Vec<String> = collect_dag_ids(events)
-        .into_iter()
-        .filter(|dag_id| project_dag(&events_for_dag(events, dag_id), dag_id).nodes.contains_key(&node_id))
-        .collect();
-    match owners.as_slice() {
-        [one] => Ok((one.clone(), node_id)),
-        [] => Err(format!(
-            "node {node_id} is in no DAG this workspace knows; check the id with `gizzi workspace node list`, or pass `<dag>/<node>`"
-        )),
-        many => Err(format!(
-            "node {node_id} is in more than one DAG ({}); pass `<dag>/{node_id}` or `--dag <dag>`",
-            many.join(", ")
-        )),
-    }
-}
-
-/// Default claimant: the calling Factory bot (`<bot>@<team>`), else the
-/// person or agent running the command.
-fn default_pickup_agent() -> String {
-    let env = |k: &str| std::env::var(k).ok().filter(|v| !v.trim().is_empty());
-    match (env("ALLTERNIT_FACTORY_BOT"), env("ALLTERNIT_FACTORY_TEAM")) {
-        (Some(bot), Some(team)) => format!("{bot}@{team}"),
-        (Some(bot), None) => bot,
-        _ => crate::agents::spawn::caller_identity(None),
-    }
 }
 
 fn matches_trace(

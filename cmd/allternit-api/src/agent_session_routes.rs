@@ -2807,25 +2807,12 @@ pub(crate) fn gizzi_message_error(body: &[u8]) -> Option<String> {
 
 /// Run one user turn in a session and return the assistant's text.
 pub(crate) async fn send_bot_turn(db: &DbHandle, session_id: &str, bot_id: &str, text: &str) -> Result<String, String> {
-    // Vendor-bound bots run through the Agent Gateway; never a native brain,
-    // unless the owner opted in to a fallback brain (disclosed in the reply).
-    if let Some(vendor) = crate::gateway_runner::intercept_turn_with_fallback(session_id, text, Default::default(), |brain| {
-        let db = db.clone();
-        async move { native_turn_on(&db, session_id, bot_id, text, Some(&brain)).await }
-    })
-    .await
-    {
+    // Vendor-bound bots run through the Agent Gateway; never a native brain.
+    if let Some(vendor) = crate::gateway_runner::intercept_turn(session_id, text, Default::default()).await {
         return vendor;
     }
-    native_turn_on(db, session_id, bot_id, text, None).await
-}
-
-/// The native (placed or local gizzi) half of [`send_bot_turn`]. `brain` =
-/// `"provider/model"` overrides the bot's model for a fallback turn.
-async fn native_turn_on(db: &DbHandle, session_id: &str, bot_id: &str, text: &str, brain: Option<&str>) -> Result<String, String> {
-    let brain_ref = brain.and_then(|b| b.split_once('/')).map(|(p, m)| json!(GizziModelRef::new(p.to_string(), m.to_string(), None)));
     if let Some(target) = crate::placement::session_target(db, session_id) {
-        let mut body = json!({ "text": text, "metadata": { "model": brain_ref.clone().unwrap_or_else(|| bot_turn_model(db, session_id, bot_id)) } });
+        let mut body = json!({ "text": text, "metadata": { "model": bot_turn_model(db, session_id, bot_id) } });
         if let Some(system) = bot_turn_system(db, session_id, bot_id) {
             body["system"] = json!(format!("+{system}"));
         }
@@ -2833,10 +2820,7 @@ async fn native_turn_on(db: &DbHandle, session_id: &str, bot_id: &str, text: &st
         let reply = crate::placement::call(&target, reqwest::Method::POST, &path, Some(body)).await?;
         return placed_turn_report(&reply);
     }
-    let (client, path, mut payload) = native_turn_request(db, session_id, bot_id, text).await?;
-    if let Some(m) = brain_ref {
-        payload["model"] = m;
-    }
+    let (client, path, payload) = native_turn_request(db, session_id, bot_id, text).await?;
     match gizzi_json::<GizziMessage>(&client, reqwest::Method::POST, &path, Some(payload)).await {
         Ok(message) => {
             if let Some(error) = message.info.error.as_ref().and_then(|e| e.message.clone()) {
@@ -3475,7 +3459,6 @@ mod tests {
             computer_guest_tokens: Arc::new(tokio::sync::RwLock::new(
                 std::collections::HashMap::new(),
             )),
-            phone_link: crate::phone_ws::PhoneLinkRegistry::new_http(),
             passkey_state: None,
             resource_class_catalog:
                 crate::fabric::sku::ResourceClassCatalog::from_db(&db_for_init)

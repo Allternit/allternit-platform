@@ -217,30 +217,3 @@ pub fn spend_today<'a>(runs: impl IntoIterator<Item = (&'a Value, &'a Value)>, o
     }
     (g, o)
 }
-
-/// Replay and eval live model calls today (UTC), globally and for `org`.
-/// They are metered on the usage ledger (`source = replay`) and never land
-/// on a run's `budget_usage`, so [`spend_today`] alone does not see them;
-/// the daily caps count both.
-pub fn replay_spend_today(conn: &rusqlite::Connection, org: &str) -> rusqlite::Result<(Spend, Spend)> {
-    conn.query_row(
-        "SELECT COALESCE(SUM(prompt_tokens + completion_tokens), 0), COALESCE(SUM(cost_microdollars), 0),
-                COALESCE(SUM(CASE WHEN tenant_id = ?2 THEN prompt_tokens + completion_tokens ELSE 0 END), 0),
-                COALESCE(SUM(CASE WHEN tenant_id = ?2 THEN cost_microdollars ELSE 0 END), 0)
-         FROM llm_usage_events
-         WHERE source = 'replay' AND substr(created_at, 1, 10) = ?1 AND status != 'in_progress'",
-        rusqlite::params![today(), org],
-        |r| {
-            let (gt, gc, ot, oc): (i64, i64, i64, i64) = (r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?);
-            Ok((
-                Spend { tokens: gt.max(0) as u64, usd: gc.max(0) as f64 / 1_000_000.0 },
-                Spend { tokens: ot.max(0) as u64, usd: oc.max(0) as f64 / 1_000_000.0 },
-            ))
-        },
-    )
-}
-
-/// `a + b`, per dimension.
-pub fn add(a: Spend, b: Spend) -> Spend {
-    Spend { tokens: a.tokens + b.tokens, usd: a.usd + b.usd }
-}

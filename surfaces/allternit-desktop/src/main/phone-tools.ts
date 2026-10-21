@@ -1,8 +1,6 @@
 /**
- * Bot-facing phone tools: screenshot, tap, type, swipe, home, back, key,
- * open_app, task, sms.send, call.dial. Android phones (Lane 2a) run them over
- * adb; iPhones on an Allternit USB Agent (phone-usb-agent.ts) run the same
- * names through the board, so a bot uses one set of tools for both.
+ * Bot-facing phone tools (Lane 2a): screenshot, tap, type, swipe, open_app,
+ * task, sms.send, call.dial.
  *
  * Everything here is transport-agnostic: the adb runner, approval gate, rate
  * store and ARTEMIS client are injected, so the argument validation and the
@@ -11,8 +9,6 @@
  */
 
 import { createHash } from 'node:crypto';
-import type { PhoneLinkHealth } from './phone-link-health.js';
-import { catalogApp, catalogAppByName } from './phone-app-catalog.js';
 
 // ── Injected collaborators ──────────────────────────────────────────────────
 
@@ -53,28 +49,6 @@ export interface ArtemisClient {
   runTask(serial: string, task: string, model: 'Flash' | 'Pro'): Promise<unknown>;
 }
 
-/** iPhones on a USB Agent. Serials start with "usb:". */
-export interface UsbPhoneBackend {
-  has(serial: string): boolean;
-  serials(): string[];
-  call(name: string, serial: string, args: Record<string, unknown>): Promise<ToolResult>;
-}
-
-/** A Phone-Linked phone as phone.devices lists it, health included. */
-export interface LinkedPhoneDevice {
-  serial: string;
-  platform: 'ios' | 'android';
-  via: 'phone-link';
-  route: 'iphone-app-ictrl' | 'android-app';
-  name?: string;
-  health?: PhoneLinkHealth;
-}
-
-/** Phone-Linked phones (iPhone helper + Android app, one iCTRL lane). Serials start with "link:". */
-export interface PhoneLinkBackend extends UsbPhoneBackend {
-  linkedDevices(): Promise<LinkedPhoneDevice[]>;
-}
-
 export interface PhoneToolDeps {
   adb: AdbCall;
   gate: ApprovalGate;
@@ -86,17 +60,6 @@ export interface PhoneToolDeps {
   onlineSerials: () => string[];
   /** The phone's default SMS subscription id, or null when it can't be read. */
   defaultSmsSubscription?: (serial: string) => Promise<number | null>;
-  /** iPhones on a USB Agent, when that lane is running. */
-  usb?: () => UsbPhoneBackend | null;
-  /** Notified as +/-1 while an acting tool call runs on a serial (takeover banner). */
-  activity?: (serial: string, delta: number) => void;
-  /** Phone-Linked phones, when any are linked. Consulted exactly like usb. */
-  links?: () => PhoneLinkBackend | null;
-  /**
-   * An approved dial went out (phone-call-bridge.ts): true when the phone has
-   * Call audio set up, so the bot joins the call once it connects.
-   */
-  onDialPlaced?: (serial: string, number: string) => boolean;
 }
 
 // ── Result shapes ───────────────────────────────────────────────────────────
@@ -112,21 +75,7 @@ export type ToolErrorCode =
   | 'blocked_number'
   | 'unknown_app'
   | 'artemis_unavailable'
-  | 'adb_failed'
-  // A Phone-Linked phone answered with an error (iCTRL protocol)
-  | 'phone_failed'
-  // USB Agent (iPhone) states
-  | 'unsupported'
-  | 'disarmed'
-  | 'device_locked'
-  | 'no_screen'
-  | 'not_calibrated'
-  | 'calibration_failed'
-  | 'uncertain'
-  // Phone Link lane states
-  | 'pairing_invalid'
-  // element lookup (phone.find_and_tap)
-  | 'not_found';
+  | 'adb_failed';
 
 export type ToolResult =
   | { ok: true; [key: string]: unknown }
@@ -141,22 +90,22 @@ const fail = (error: ToolErrorCode, message: string, extra: { retryAfterSec?: nu
 
 // ── Tool catalogue (what the MCP shim advertises) ───────────────────────────
 
-const serialProp = { type: 'string', description: 'Phone serial from phone.devices: Android phones as "host:port", iPhones on a USB Agent as "usb:…", Phone-Linked phones as "link:…". Optional when exactly one phone is online.' };
+const serialProp = { type: 'string', description: 'Phone serial from phone.devices. Optional when exactly one phone is online.' };
 
 export const PHONE_TOOLS = [
   {
     name: 'phone.devices',
-    description: 'List connected phones: Android phones (adb), iPhones on an Allternit USB Agent (serial "usb:…"), and Phone-Linked phones with the AI apps signed in (serial "link:…", with per-phone health).',
+    description: 'List paired phones with model, Android version, battery, SIMs and connection state.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
     name: 'phone.screenshot',
-    description: 'Take a screenshot of the phone. Returns a base64 image (PNG on Android, JPEG of the AirPlay mirror on USB-Agent iPhones, JPEG on Phone-Linked phones) with its width and height. Tap coordinates are pixels of this image; on Phone-Linked phones coordinate_space says the space taps use ("pixels", or "points" when the image is 1:1 points).',
+    description: 'Take a screenshot of the phone. Returns a base64 PNG.',
     inputSchema: { type: 'object', properties: { serial: serialProp }, additionalProperties: false },
   },
   {
     name: 'phone.tap',
-    description: 'Tap at pixel coordinates from the latest screenshot. On iPhone the result says whether the screen changed; take a new screenshot before the next tap.',
+    description: 'Tap at pixel coordinates (from the screenshot).',
     inputSchema: {
       type: 'object',
       properties: { serial: serialProp, x: { type: 'integer', minimum: 0 }, y: { type: 'integer', minimum: 0 } },
@@ -171,35 +120,6 @@ export const PHONE_TOOLS = [
       type: 'object',
       properties: { serial: serialProp, text: { type: 'string', maxLength: 500 } },
       required: ['text'],
-      additionalProperties: false,
-    },
-  },
-  {
-    name: 'phone.read_ui',
-    description: 'Read the screen as text: one line per element (class, label, id, bounds). On Phone-Linked phones it uses the helper\'s own read; on Android it parses the accessibility dump; on a USB-Agent iPhone use phone.screenshot instead.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        serial: serialProp,
-        filter: { type: 'object', properties: { label: { type: 'string' }, type: { type: 'string' } }, additionalProperties: false },
-        visible_only: { type: 'boolean' },
-        max_elements: { type: 'integer', minimum: 1, maximum: 1000 },
-      },
-      additionalProperties: false,
-    },
-  },
-  {
-    name: 'phone.screen_text',
-    description: 'All readable text on the screen, one line per element. Works on Phone-Linked phones and Android over adb; not on a USB-Agent iPhone.',
-    inputSchema: { type: 'object', properties: { serial: serialProp }, additionalProperties: false },
-  },
-  {
-    name: 'phone.find_and_tap',
-    description: 'Find an element on the screen and tap its centre. element_id is a resource id (Android), accessibility id or label; match narrows by label text. Works on Phone-Linked phones and Android over adb; not on a USB-Agent iPhone.',
-    inputSchema: {
-      type: 'object',
-      properties: { serial: serialProp, element_id: { type: 'string', maxLength: 200 }, match: { type: 'string', maxLength: 200 } },
-      required: ['element_id'],
       additionalProperties: false,
     },
   },
@@ -221,28 +141,8 @@ export const PHONE_TOOLS = [
     },
   },
   {
-    name: 'phone.home',
-    description: 'Go to the home screen.',
-    inputSchema: { type: 'object', properties: { serial: serialProp }, additionalProperties: false },
-  },
-  {
-    name: 'phone.back',
-    description: 'Go back (Android back button; on iPhone, the swipe from the left edge).',
-    inputSchema: { type: 'object', properties: { serial: serialProp }, additionalProperties: false },
-  },
-  {
-    name: 'phone.key',
-    description: 'Press a key or shortcut: enter, esc, tab, backspace, space, up/down/left/right, or a combo like cmd+space (iPhone hardware-keyboard shortcuts).',
-    inputSchema: {
-      type: 'object',
-      properties: { serial: serialProp, combo: { type: 'string', maxLength: 40 } },
-      required: ['combo'],
-      additionalProperties: false,
-    },
-  },
-  {
     name: 'phone.open_app',
-    description: 'Open an app. Android: package name (com.android.settings) or common name (settings, chrome, camera…). iPhone: the app name as shown on the home screen (Spotlight).',
+    description: 'Open an app by Android package name (com.android.settings) or common name (settings, chrome, camera…).',
     inputSchema: {
       type: 'object',
       properties: { serial: serialProp, app: { type: 'string', maxLength: 128 } },
@@ -279,7 +179,7 @@ export const PHONE_TOOLS = [
   {
     name: 'phone.call.dial',
     description:
-      'Place a call from the phone\'s own SIM. The user must approve every call. When Call audio is set up for this phone in Allternit Desktop (audio cable + "Bot answers calls"), you talk on the call once it connects; otherwise this only dials and you can\'t speak or listen.',
+      'Place a call from the phone\'s own SIM. Dial only — the bot cannot speak on a carrier call. The user must approve every call.',
     inputSchema: {
       type: 'object',
       properties: { serial: serialProp, number: { type: 'string' }, subscription_id: { type: 'integer', minimum: 0 } },
@@ -349,19 +249,7 @@ const APP_ALIASES: Record<string, string> = {
   youtube: 'com.google.android.youtube',
 };
 
-const ANDROID_KEYS: Record<string, string> = {
-  enter: 'KEYCODE_ENTER',
-  esc: 'KEYCODE_ESCAPE',
-  tab: 'KEYCODE_TAB',
-  backspace: 'KEYCODE_DEL',
-  space: 'KEYCODE_SPACE',
-  up: 'KEYCODE_DPAD_UP',
-  down: 'KEYCODE_DPAD_DOWN',
-  left: 'KEYCODE_DPAD_LEFT',
-  right: 'KEYCODE_DPAD_RIGHT',
-};
-
-export const PACKAGE_RE = /^[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z][a-zA-Z0-9_]*)+$/;
+const PACKAGE_RE = /^[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z][a-zA-Z0-9_]*)+$/;
 
 export function resolveApp(app: unknown): string | null {
   if (typeof app !== 'string') return null;
@@ -389,66 +277,6 @@ export function canonicalHash(value: Record<string, unknown>): string {
       return acc;
     }, {});
   return createHash('sha256').update(JSON.stringify(sorted)).digest('hex');
-}
-
-// ── Screen reading (phone.read_ui / phone.screen_text / phone.find_and_tap) ──
-// The text form is shared with the Phone Link lane's page_source: one line
-// per element — class, label (text || content-desc), id (resource-id), bounds
-// as {{x, y}, {w, h}}.
-
-export interface UiElement {
-  className: string;
-  /** text || content-desc. */
-  label: string;
-  /** resource-id. */
-  id: string;
-  bounds: string;
-  rect: { x: number; y: number; w: number; h: number };
-}
-
-const XML_ENTITIES: Record<string, string> = { quot: '"', amp: '&', lt: '<', gt: '>', apos: "'" };
-
-function unescapeXml(value: string): string {
-  return value.replace(/&(#x?[0-9a-fA-F]+|\w+);/g, (all, entity: string) => {
-    if (entity.startsWith('#x') || entity.startsWith('#X')) return String.fromCodePoint(parseInt(entity.slice(2), 16));
-    if (entity.startsWith('#')) return String.fromCodePoint(parseInt(entity.slice(1), 10));
-    return XML_ENTITIES[entity] ?? all;
-  });
-}
-
-/** uiautomator dump XML (binary-clean, from `exec-out … /dev/tty`) → elements. */
-export function parseUiDump(xml: string): UiElement[] {
-  const out: UiElement[] = [];
-  for (const tag of xml.matchAll(/<node\b[^>]*?>/g)) {
-    const attrs: Record<string, string> = {};
-    for (const m of tag[0].matchAll(/([\w:.-]+)="([^"]*)"/g)) attrs[m[1]] = unescapeXml(m[2]);
-    if (!attrs.class) continue;
-    const bounds = /^\[(\d+),(\d+)\]\[(\d+),(\d+)\]$/.exec(attrs.bounds ?? '');
-    if (!bounds) continue;
-    const [x1, y1, x2, y2] = [Number(bounds[1]), Number(bounds[2]), Number(bounds[3]), Number(bounds[4])];
-    out.push({
-      className: attrs.class,
-      label: attrs.text || attrs['content-desc'] || '',
-      id: attrs['resource-id'] || '',
-      bounds: `{{${x1}, ${y1}}, {${x2 - x1}, ${y2 - y1}}}`,
-      rect: { x: x1, y: y1, w: x2 - x1, h: y2 - y1 },
-    });
-  }
-  return out;
-}
-
-/** The shared text form: `class "label" [id] {{x, y}, {w, h}}` (empty fields omitted). */
-export function formatUiElement(el: UiElement): string {
-  return [el.className, el.label ? `"${el.label}"` : '', el.id ? `[${el.id}]` : '', el.bounds].filter(Boolean).join(' ');
-}
-
-function parseFilter(a: Record<string, unknown>): { label?: string; type?: string } | ToolResult {
-  if (a.filter === undefined) return {};
-  if (typeof a.filter !== 'object' || a.filter === null) return fail('invalid_args', 'filter must be an object like { label, type }.');
-  const f = a.filter as { label?: unknown; type?: unknown };
-  if (f.label !== undefined && typeof f.label !== 'string') return fail('invalid_args', 'filter.label must be a string.');
-  if (f.type !== undefined && typeof f.type !== 'string') return fail('invalid_args', 'filter.type must be a string.');
-  return { label: f.label, type: f.type };
 }
 
 const isInt = (v: unknown, max = COORD_MAX): v is number => Number.isInteger(v) && (v as number) >= 0 && (v as number) <= max;
@@ -501,32 +329,14 @@ export class PhoneToolRunner {
 
   async call(name: string, args: unknown): Promise<ToolResult> {
     const a = (args && typeof args === 'object' ? args : {}) as Record<string, unknown>;
-    const usb = this.deps.usb?.() ?? null;
-    const links = this.deps.links?.() ?? null;
-    if (name === 'phone.devices') {
-      const android = this.deps.onlineSerials();
-      const iphones = usb?.serials() ?? [];
-      const linked = links ? await links.linkedDevices() : [];
-      return {
-        ok: true,
-        serials: [...android, ...iphones, ...linked.map((d) => d.serial)],
-        devices: [...android.map((serial) => ({ serial, platform: 'android' })), ...iphones.map((serial) => ({ serial, platform: 'ios', via: 'usb-agent' })), ...linked],
-      };
-    }
+    if (name === 'phone.devices') return { ok: true, serials: this.deps.onlineSerials() };
 
     const known = PHONE_TOOLS.some((t) => t.name === name);
     if (!known) return fail('unknown_tool', `No phone tool named ${name}.`);
 
-    const serial = this.resolveSerial(a.serial, usb, links);
+    const serial = this.resolveSerial(a.serial);
     if (typeof serial !== 'string') return serial;
-    if (usb?.has(serial)) return usb.call(name, serial, a);
-    if (links?.has(serial)) return links.call(name, serial, a);
 
-    // Anything that operates the phone screen/SIM marks the phone busy, so
-    // the UI can show a takeover banner while a bot is mid-action. Reads
-    // (devices/screenshot) don't.
-    const acting = name !== 'phone.devices' && name !== 'phone.screenshot';
-    if (acting) this.deps.activity?.(serial, 1);
     try {
       switch (name) {
         case 'phone.screenshot':
@@ -537,12 +347,6 @@ export class PhoneToolRunner {
           return await this.type(serial, a);
         case 'phone.swipe':
           return await this.swipe(serial, a);
-        case 'phone.home':
-          return (await this.sh(serial, ['shell', 'input', 'keyevent', 'KEYCODE_HOME'])) ?? { ok: true };
-        case 'phone.back':
-          return (await this.sh(serial, ['shell', 'input', 'keyevent', 'KEYCODE_BACK'])) ?? { ok: true };
-        case 'phone.key':
-          return await this.key(serial, a);
         case 'phone.open_app':
           return await this.openApp(serial, a);
         case 'phone.task':
@@ -551,31 +355,23 @@ export class PhoneToolRunner {
           return await this.smsSend(serial, a);
         case 'phone.call.dial':
           return await this.callDial(serial, a);
-        case 'phone.read_ui':
-          return await this.readUi(serial, a);
-        case 'phone.screen_text':
-          return await this.screenText(serial);
-        case 'phone.find_and_tap':
-          return await this.findAndTap(serial, a);
         default:
           return fail('unknown_tool', `No phone tool named ${name}.`);
       }
     } catch (error) {
       return fail('adb_failed', error instanceof Error ? error.message : String(error));
-    } finally {
-      if (acting) this.deps.activity?.(serial, -1);
     }
   }
 
-  private resolveSerial(raw: unknown, usb: UsbPhoneBackend | null, links: PhoneLinkBackend | null): string | ToolResult {
-    const online = [...this.deps.onlineSerials(), ...(usb?.serials() ?? []), ...(links?.serials() ?? [])];
+  private resolveSerial(raw: unknown): string | ToolResult {
+    const online = this.deps.onlineSerials();
     if (raw !== undefined) {
       if (typeof raw !== 'string' || !raw) return fail('invalid_args', 'serial must be a non-empty string.');
       if (!online.includes(raw)) return fail('device_offline', `Phone ${raw} is not connected.`);
       return raw;
     }
     if (online.length === 1) return online[0];
-    if (online.length === 0) return fail('device_offline', 'No phone is connected. Link one in Settings → Subscriptions, or connect an Android phone or USB Agent in Settings → Computers → Phones.');
+    if (online.length === 0) return fail('device_offline', 'No phone is connected. Connect one in Settings → Computers → Phones.');
     return fail('device_required', `Several phones are connected (${online.join(', ')}); pass serial.`);
   }
 
@@ -634,77 +430,14 @@ export class PhoneToolRunner {
     return (await this.sh(serial, ['shell', 'input', 'swipe', ...coords.map(String), String(duration)])) ?? { ok: true };
   }
 
-  private async key(serial: string, a: Record<string, unknown>): Promise<ToolResult> {
-    const code = typeof a.combo === 'string' ? ANDROID_KEYS[a.combo.toLowerCase()] : undefined;
-    if (!code) return fail('invalid_args', `On Android, combo is one of: ${Object.keys(ANDROID_KEYS).join(', ')}.`);
-    return (await this.sh(serial, ['shell', 'input', 'keyevent', code])) ?? { ok: true };
-  }
-
-  /** `uiautomator dump` to stdout, binary so CRLF never corrupts the XML. */
-  private async uiDump(serial: string): Promise<string | ToolResult> {
-    const buf = await this.deps.adb.binary(['exec-out', 'uiautomator', 'dump', '/dev/tty'], { serial, timeoutMs: 15_000 });
-    const xml = buf.toString('utf8');
-    if (!xml.includes('<node')) return fail('adb_failed', 'Could not read the screen.');
-    return xml;
-  }
-
-  private async readUi(serial: string, a: Record<string, unknown>): Promise<ToolResult> {
-    const filter = parseFilter(a);
-    if ('ok' in filter) return filter;
-    const max = a.max_elements === undefined ? 200 : a.max_elements;
-    if (!Number.isInteger(max) || (max as number) < 1 || (max as number) > 1000) {
-      return fail('invalid_args', 'max_elements must be 1–1000.');
-    }
-    const xml = await this.uiDump(serial);
-    if (typeof xml !== 'string') return xml;
-    let els = parseUiDump(xml);
-    if (filter.label) els = els.filter((e) => e.label.toLowerCase().includes(filter.label!.toLowerCase()));
-    if (filter.type) els = els.filter((e) => e.className.toLowerCase().includes(filter.type!.toLowerCase()));
-    return { ok: true, text: els.slice(0, max as number).map(formatUiElement).join('\n') };
-  }
-
-  private async screenText(serial: string): Promise<ToolResult> {
-    const xml = await this.uiDump(serial);
-    if (typeof xml !== 'string') return xml;
-    const lines = [...new Set(parseUiDump(xml).map((e) => e.label).filter(Boolean))];
-    return { ok: true, text: lines.join('\n') };
-  }
-
-  private async findAndTap(serial: string, a: Record<string, unknown>): Promise<ToolResult> {
-    if (typeof a.element_id !== 'string' || !a.element_id.trim()) return fail('invalid_args', 'element_id is required.');
-    if (a.match !== undefined && typeof a.match !== 'string') return fail('invalid_args', 'match must be a string.');
-    const xml = await this.uiDump(serial);
-    if (typeof xml !== 'string') return xml;
-    const id = a.element_id.trim().toLowerCase();
-    const match = typeof a.match === 'string' ? a.match.toLowerCase() : undefined;
-    const found = parseUiDump(xml).find(
-      (e) =>
-        (e.id.toLowerCase() === id || e.id.toLowerCase().endsWith(`:${id}`) || e.id.toLowerCase().endsWith(`/${id}`)) &&
-        (!match || e.label.toLowerCase().includes(match)),
-    );
-    if (!found) {
-      return fail('not_found', `No element matching "${a.element_id}"${match ? ` with label containing "${a.match}"` : ''} is on the screen.`);
-    }
-    const x = found.rect.x + Math.floor(found.rect.w / 2);
-    const y = found.rect.y + Math.floor(found.rect.h / 2);
-    return (await this.sh(serial, ['shell', 'input', 'tap', String(x), String(y)])) ?? { ok: true, element: a.element_id };
-  }
-
   private async openApp(serial: string, a: Record<string, unknown>): Promise<ToolResult> {
-    // A package, a catalog id or name ("whatsapp", "Google Drive"), or a built-in alias.
-    const key = typeof a.app === 'string' ? a.app.trim() : '';
-    const entry = key && !PACKAGE_RE.test(key) ? catalogApp(key.toLowerCase()) ?? catalogAppByName(key.toLowerCase()) : undefined;
-    const alias = resolveApp(a.app);
-    const candidates = [...(entry?.android ?? []), ...(alias ? [alias] : [])];
-    if (candidates.length === 0) return fail('unknown_app', `"${String(a.app)}" is not a package name or a known app name. Use the package, e.g. com.android.settings.`);
-    for (const pkg of candidates) {
-      // A carrier stub (versionName "stub(…)") only opens an install page: not installed.
-      const info = await this.deps.adb(['shell', 'dumpsys', 'package', pkg], { serial });
-      if (/versionName=stub/i.test(info.stdout)) continue;
-      const res = await this.deps.adb(['shell', 'monkey', '-p', pkg, '-c', 'android.intent.category.LAUNCHER', '1'], { serial });
-      if (res.code === 0 && !/No activities found|monkey aborted/i.test(res.stdout + res.stderr)) return { ok: true, package: pkg };
+    const pkg = resolveApp(a.app);
+    if (!pkg) return fail('unknown_app', `"${String(a.app)}" is not a package name or a known app name. Use the package, e.g. com.android.settings.`);
+    const res = await this.deps.adb(['shell', 'monkey', '-p', pkg, '-c', 'android.intent.category.LAUNCHER', '1'], { serial });
+    if (res.code !== 0 || /No activities found|monkey aborted/i.test(res.stdout + res.stderr)) {
+      return fail('unknown_app', `${pkg} is not installed or has no launcher activity.`);
     }
-    return fail('unknown_app', `${entry?.name ?? candidates[0]} is not installed on the phone.`);
+    return { ok: true, package: pkg };
   }
 
   private async task(serial: string, a: Record<string, unknown>): Promise<ToolResult> {
@@ -784,14 +517,6 @@ export class PhoneToolRunner {
     if (res.code !== 0 || /Error|Exception|Permission Denial/i.test(res.stdout + res.stderr)) {
       return fail('adb_failed', (res.stderr || res.stdout).trim().slice(0, 300) || 'The phone refused to place the call.');
     }
-    const bridged = this.deps.onDialPlaced?.(serial, number) === true;
-    return {
-      ok: true,
-      status: 'dialing',
-      bridged,
-      note: bridged
-        ? 'Call placed. You join the call through Call audio as soon as it connects.'
-        : 'Call placed. Call audio is not set up for this phone, so you cannot speak or listen on this call.',
-    };
+    return { ok: true, status: 'dialing', note: 'Call placed. The bot cannot speak or listen on a carrier call.' };
   }
 }

@@ -8,8 +8,8 @@
  * If a release job already lipo'd/copied the binary here, this is a no-op.
  * Otherwise cargo build --release -p allternit-factory for the host and copy.
  *
- * Every platform, Windows included: the pane engine serves terminals over a
- * Unix socket on macOS/Linux and a named pipe on Windows.
+ * Skipped on Windows: the pane engine is Unix-only. Windows Gizzi drives a
+ * Factory on another machine (SPEC §1).
  */
 
 'use strict';
@@ -22,7 +22,7 @@ const desktopDir = path.resolve(__dirname, '..');
 const repoRoot = path.resolve(desktopDir, '..', '..');
 const { cargoBinaryCandidates } = require('./cargo-target.cjs');
 const resourcesBin = path.join(desktopDir, 'resources', 'bin');
-const name = process.platform === 'win32' ? 'allternit-factory.exe' : 'allternit-factory';
+const name = 'allternit-factory';
 const dest = path.join(resourcesBin, name);
 
 function log(message) {
@@ -57,6 +57,10 @@ function cargoBuild() {
 }
 
 function main() {
+  if (process.platform === 'win32') {
+    log('skipped on Windows (the pane engine is Unix-only)');
+    return;
+  }
   if (alreadyStaged()) {
     log(`already staged ${dest}`);
     return;
@@ -71,7 +75,7 @@ function main() {
   }
   fs.mkdirSync(resourcesBin, { recursive: true });
   fs.copyFileSync(source, dest);
-  if (process.platform !== 'win32') fs.chmodSync(dest, 0o755);
+  fs.chmodSync(dest, 0o755);
   log(`staged ${source} -> ${dest}`);
 }
 

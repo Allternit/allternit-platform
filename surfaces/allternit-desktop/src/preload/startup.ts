@@ -29,8 +29,6 @@ contextBridge.exposeInMainWorld('startup', {
   onProgress: (callback: (percent: number) => void) => subscribe('progress', callback),
   /** Main-process push: local backend connected. */
   onComplete: (callback: () => void) => subscribe<unknown>('complete', callback),
-  /** Main-process push: sign-in or pairing failed (shown on the welcome step). */
-  onLoginFailed: (callback: (message: string) => void) => subscribe('auth:login-failed', callback),
   /** Main-process push: startup failure message. */
   onError: (callback: (message: string) => void) => subscribe('error', callback),
   /** Main-process push: show the folder-grant step (consumer Cowork P1). */

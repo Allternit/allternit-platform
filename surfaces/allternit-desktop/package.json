@@ -11,7 +11,7 @@
     "electron"
   ],
   "scripts": {
-    "dev": "npm run build:auth-renderer && npm run build:call-bridge && NODE_ENV=development electron .",
+    "dev": "npm run build:auth-renderer && NODE_ENV=development electron .",
     "dev:auth-renderer": "vite --config vite.auth-renderer.config.ts --port 5174",
     "prepare:platform-static": "node scripts/prepare-platform-static.cjs",
     "prepare:office-addins": "node scripts/prepare-office-addins.cjs",
@@ -22,24 +22,22 @@
     "prepare:office-engine": "node scripts/prepare-office-engine.cjs",
     "prepare:api-binary": "node scripts/prepare-api-binary.cjs",
     "prepare:connector-catalog": "node scripts/prepare-connector-catalog.cjs",
-    "build": "npm run build:auth-renderer && npm run build:call-bridge && npm run build:main && npm run build:preload",
-    "build:call-bridge": "node scripts/build-call-bridge.cjs",
+    "build": "npm run build:auth-renderer && npm run build:main && npm run build:preload",
     "build:auth-renderer": "node scripts/build-auth-renderer.cjs",
     "build:main": "tsc -p src/main/tsconfig.json",
     "build:preload": "tsc -p src/preload/tsconfig.json",
     "download:lima": "node scripts/download-lima.cjs",
     "prepare:lume": "node scripts/prepare-lume.cjs",
     "prepare:factory": "node scripts/prepare-factory.cjs",
-    "prepare:sideload": "node scripts/prepare-sideload.cjs",
     "config:company": "cd ../.. && pnpm run config:company:write",
-    "build:electron": "npm run config:company && npm run prepare:platform-static && npm run prepare:office-addins && npm run prepare:cua-driver && npm run prepare:allternit-driver && npm run prepare:acu-gateway && npm run download:lima && npm run prepare:lume && npm run prepare:factory && npm run prepare:sideload && npm run prepare:mesh-node && npm run prepare:office-engine && npm run prepare:api-binary && npm run prepare:connector-catalog && npm run prepare:connector-sidecar && npm run prepare:subs-gateway && npm run prepare:system-one && npm run runtime:stamp && npm run build && npm run verify:packaged-resources && node scripts/build-local.cjs --mac",
-    "build:electron:dmg": "npm run config:company && npm run prepare:platform-static && npm run prepare:office-addins && npm run prepare:cua-driver && npm run prepare:allternit-driver && npm run prepare:acu-gateway && npm run download:lima && npm run prepare:lume && npm run prepare:factory && npm run prepare:sideload && npm run prepare:mesh-node && npm run prepare:office-engine && npm run prepare:api-binary && npm run prepare:connector-catalog && npm run prepare:connector-sidecar && npm run prepare:subs-gateway && npm run prepare:system-one && npm run runtime:stamp && npm run build && npm run verify:packaged-resources && node scripts/build-local.cjs --mac dmg",
+    "build:electron": "npm run config:company && npm run prepare:platform-static && npm run prepare:office-addins && npm run prepare:cua-driver && npm run prepare:allternit-driver && npm run prepare:acu-gateway && npm run download:lima && npm run prepare:lume && npm run prepare:factory && npm run prepare:mesh-node && npm run prepare:office-engine && npm run prepare:api-binary && npm run prepare:connector-catalog && npm run prepare:connector-sidecar && npm run prepare:system-one && npm run runtime:stamp && npm run build && npm run verify:packaged-resources && node scripts/build-local.cjs --mac",
+    "build:electron:dmg": "npm run config:company && npm run prepare:platform-static && npm run prepare:office-addins && npm run prepare:cua-driver && npm run prepare:allternit-driver && npm run prepare:acu-gateway && npm run download:lima && npm run prepare:lume && npm run prepare:factory && npm run prepare:mesh-node && npm run prepare:office-engine && npm run prepare:api-binary && npm run prepare:connector-catalog && npm run prepare:connector-sidecar && npm run prepare:system-one && npm run runtime:stamp && npm run build && npm run verify:packaged-resources && node scripts/build-local.cjs --mac dmg",
     "start": "electron .",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit -p src/main/tsconfig.json && tsc --noEmit -p src/preload/tsconfig.json && tsc -p src/renderer/call-bridge/tsconfig.json",
+    "typecheck": "tsc --noEmit -p src/main/tsconfig.json && tsc --noEmit -p src/preload/tsconfig.json",
     "test:e2e": "pnpm run build && playwright test",
-    "pack": "npm run prepare:platform-static && npm run prepare:office-addins && npm run prepare:cua-driver && npm run prepare:allternit-driver && npm run prepare:acu-gateway && npm run download:lima && npm run prepare:lume && npm run prepare:factory && npm run prepare:sideload && npm run prepare:mesh-node && npm run prepare:office-engine && npm run prepare:api-binary && npm run prepare:connector-catalog && npm run prepare:connector-sidecar && npm run prepare:subs-gateway && npm run prepare:system-one && npm run runtime:stamp && npm run verify:packaged-resources && node scripts/build-local.cjs --dir",
-    "dist": "npm run prepare:platform-static && npm run prepare:office-addins && npm run prepare:cua-driver && npm run prepare:allternit-driver && npm run prepare:acu-gateway && npm run download:lima && npm run prepare:lume && npm run prepare:factory && npm run prepare:sideload && npm run prepare:mesh-node && npm run prepare:office-engine && npm run prepare:api-binary && npm run prepare:connector-catalog && npm run prepare:connector-sidecar && npm run prepare:subs-gateway && npm run prepare:system-one && npm run runtime:stamp && npm run build && npm run verify:packaged-resources && node scripts/build-local.cjs",
+    "pack": "npm run prepare:platform-static && npm run prepare:office-addins && npm run prepare:cua-driver && npm run prepare:allternit-driver && npm run prepare:acu-gateway && npm run download:lima && npm run prepare:lume && npm run prepare:factory && npm run prepare:mesh-node && npm run prepare:office-engine && npm run prepare:api-binary && npm run prepare:connector-catalog && npm run prepare:connector-sidecar && npm run prepare:system-one && npm run runtime:stamp && npm run verify:packaged-resources && node scripts/build-local.cjs --dir",
+    "dist": "npm run prepare:platform-static && npm run prepare:office-addins && npm run prepare:cua-driver && npm run prepare:allternit-driver && npm run prepare:acu-gateway && npm run download:lima && npm run prepare:lume && npm run prepare:factory && npm run prepare:mesh-node && npm run prepare:office-engine && npm run prepare:api-binary && npm run prepare:connector-catalog && npm run prepare:connector-sidecar && npm run prepare:system-one && npm run runtime:stamp && npm run build && npm run verify:packaged-resources && node scripts/build-local.cjs",
     "verify:packaged-resources": "node scripts/verify-packaged-resources.cjs",
     "stage:api-binary": "node scripts/stage-api-binary.cjs",
     "runtime:stamp": "node scripts/runtime-package.cjs stamp",
@@ -47,7 +45,6 @@
     "runtime:publish": "node scripts/runtime-package.cjs publish",
     "stage:local-engine": "node scripts/stage-local-engine-binary.cjs",
     "prepare:connector-sidecar": "node scripts/prepare-connector-sidecar.cjs",
-    "prepare:subs-gateway": "node scripts/prepare-subs-gateway.cjs",
     "prepare:system-one": "node scripts/prepare-system-one.cjs"
   },
   "dependencies": {
@@ -56,7 +53,6 @@
     "electron-log": "^5.2.0",
     "electron-store": "^8.2.0",
     "fix-path": "^4.0.0",
-    "livekit-client": "2.22.3",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "update-electron-app": "^3.0.0",
@@ -193,17 +189,6 @@
       {
         "from": "resources/connector-sidecar/dist",
         "to": "connector-sidecar/dist"
-      },
-      {
-        "from": "resources/subs-gateway",
-        "to": "subs-gateway"
-      },
-      {
-        "from": "resources/subs-gateway/node_modules",
-        "to": "subs-gateway/node_modules",
-        "filter": [
-          "**/*"
-        ]
       },
       {
         "from": "../phone-remote/server",
@@ -376,11 +361,6 @@
       "extendInfo": {
         "NSAppleEventsUsageDescription": "Allternit uses automation to carry out computer-use actions you approve.",
         "NSMicrophoneUsageDescription": "Allternit uses the microphone for voice calls and on-device dictation.",
-        "NSDesktopFolderUsageDescription": "Allternit opens projects and runs your agents in folders you choose on the Desktop.",
-        "NSDocumentsFolderUsageDescription": "Allternit opens projects and runs your agents in folders you choose in Documents.",
-        "NSDownloadsFolderUsageDescription": "Allternit reads files you choose from Downloads.",
-        "NSRemovableVolumesUsageDescription": "Allternit opens projects you choose on external drives.",
-        "NSNetworkVolumesUsageDescription": "Allternit opens projects you choose on network drives.",
         "NSSpeechRecognitionUsageDescription": "Allternit uses speech recognition to transcribe your voice during calls."
       }
     },

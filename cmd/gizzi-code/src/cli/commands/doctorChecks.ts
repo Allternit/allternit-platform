@@ -143,7 +143,7 @@ export async function checkGatewayReachability(deps: GatewayCheckDeps = {}): Pro
 export type CronCheckDeps = {
   isRunning: () => Promise<boolean>
   /** Supervision probe from cron supervision (slice 4); null = not wired. */
-  supervised?: () => Promise<{ launchdPlist: string | null; systemdUnit: string | null; scheduledTask?: string | null; supported: boolean } | null>
+  supervised?: () => Promise<{ launchdPlist: string | null; systemdUnit: string | null; supported: boolean } | null>
   /** Read an installed unit file (tests inject); null when unreadable. */
   readUnit?: (p: string) => string | null
 }
@@ -167,8 +167,8 @@ export async function checkCronDaemon(deps: CronCheckDeps): Promise<DoctorCheck[
   const sup = deps.supervised ? await deps.supervised() : null
   if (sup === null) {
     checks.push({ id: "cron-autostart", section: "Cron", status: "info", message: "autostart: not configured (`gizzi workflows wake jobs enable` to supervise the daemon)" })
-  } else if (sup.launchdPlist || sup.systemdUnit || sup.scheduledTask) {
-    const unitPath = (sup.launchdPlist ?? sup.systemdUnit ?? sup.scheduledTask)!
+  } else if (sup.launchdPlist || sup.systemdUnit) {
+    const unitPath = (sup.launchdPlist ?? sup.systemdUnit)!
     const read =
       deps.readUnit ??
       ((p: string) => {

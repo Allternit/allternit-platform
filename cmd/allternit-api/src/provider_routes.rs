@@ -50,10 +50,8 @@ pub fn provider_router() -> Router<Arc<AppState>> {
             "/providers/:id/connect/confirm",
             post(confirm_provider_connect),
         )
-        .route("/providers/:id/connect/code", post(submit_provider_connect_code))
         .route("/providers/auth/status", get(list_provider_auth_status))
         .route("/providers/video/generate", post(generate_video))
-        .merge(crate::cli_tools::router())
         .route("/media/catalog", get(crate::media::handlers::get_media_catalog))
         .route(
             "/media/video/jobs",
@@ -483,34 +481,6 @@ struct ProviderAuthStatusRow {
     auth_profile_id: Option<String>,
     chat_profile_ids: Vec<String>,
     details: Option<serde_json::Value>,
-    /// One-click install (crate::cli_tools) for CLI rows, else omitted.
-    #[serde(skip_serializing_if = "serde_json::Value::is_null")]
-    install: serde_json::Value,
-}
-
-/// Attach the one-click install offer to every CLI row.
-fn with_install(mut rows: Vec<ProviderAuthStatusRow>) -> Vec<ProviderAuthStatusRow> {
-    for row in &mut rows {
-        if let Some(binary) = cli_binary_for(&row.provider_id) {
-            row.install = crate::cli_tools::install_json(&row.provider_id, binary);
-        }
-    }
-    rows
-}
-
-/// The CLI binary this runtime runs for a provider id (`claude`, `claude-cli`,
-/// `grok`, ...), if it is a CLI brain.
-pub(crate) fn cli_binary_for(id: &str) -> Option<&'static str> {
-    if let Some((binary, meta)) = subscription_provider(id) {
-        if !meta.api_key_only {
-            return Some(binary);
-        }
-        return None;
-    }
-    CLI_PROVIDER_SPECS
-        .iter()
-        .find(|(spec_id, ..)| *spec_id == id)
-        .map(|&(_, _, binary, _)| binary)
 }
 
 fn compute_provider_status(provider_type: &str, api_key_env_var: Option<&str>) -> String {
@@ -1162,8 +1132,6 @@ fn auth_status_from_row(row: &ProviderRow) -> ProviderAuthStatusRow {
     let status = match row.status.as_str() {
         "active" => "ok",
         "missing_key" => "missing",
-        // A CLI brain whose binary isn't on this computer (one-click Install).
-        "offline" if row.provider_type == "subprocess" => "not_installed",
         "offline" => "unknown",
         "ready_no_models" => "not_required",
         _ if is_local => "not_required",
@@ -1185,7 +1153,6 @@ fn auth_status_from_row(row: &ProviderRow) -> ProviderAuthStatusRow {
         } else {
             Vec::new()
         },
-        install: serde_json::Value::Null,
         details: Some(json!({
             "provider_type": row.provider_type,
             "base_url": row.base_url,
@@ -1243,7 +1210,6 @@ fn auth_status_from_gizzi_provider(
         auth_required,
         auth_profile_id: None,
         chat_profile_ids: Vec::new(),
-        install: serde_json::Value::Null,
         details: Some(json!({
             "provider_type": provider_type,
             "model_count": model_count,
@@ -1259,8 +1225,6 @@ fn auth_status_live_from_row(row: &ProviderRow) -> ProviderAuthStatusRow {
     let status = match row.status.as_str() {
         "active" => "ok",
         "missing_key" => "missing",
-        // A CLI brain whose binary isn't on this computer (one-click Install).
-        "offline" if row.provider_type == "subprocess" => "not_installed",
         "offline" => "unknown",
         "ready_no_models" => "not_required",
         _ if is_local => "not_required",
@@ -1278,7 +1242,6 @@ fn auth_status_live_from_row(row: &ProviderRow) -> ProviderAuthStatusRow {
         auth_required,
         auth_profile_id: None,
         chat_profile_ids: Vec::new(),
-        install: serde_json::Value::Null,
         details: Some(json!({
             "provider_type": row.provider_type.clone(),
             "model_count": row.models.len(),
@@ -1337,7 +1300,7 @@ async fn list_provider_auth_status(
                     providers.push(live);
                 }
             }
-            return Json(json!({ "providers": with_install(providers) })).into_response();
+            return Json(json!({ "providers": providers })).into_response();
         }
         (discover_result, auth_result) => {
             if let Err(error) = discover_result {
@@ -1389,7 +1352,7 @@ async fn list_provider_auth_status(
 
     let providers: Vec<ProviderAuthStatusRow> = all.iter().map(auth_status_live_from_row).collect();
 
-    Json(json!({ "providers": with_install(providers) })).into_response()
+    Json(json!({ "providers": providers })).into_response()
 }
 
 /// GET /providers/:id/quota — plan usage windows (5-hour, weekly, …) for a
@@ -1714,7 +1677,7 @@ fn subscription_provider(id: &str) -> Option<(&'static str, SubscriptionProvider
                 id: "grok",
                 label: "Grok",
                 model: "grok",
-                login: &["login"],
+                login: &[],
                 page: "https://grok.com/",
                 api_key_only: false,
             },
@@ -1937,11 +1900,6 @@ fn subscription_auth_check(id: &str, binary: &str) -> bool {
         "zai" | "z.ai" | "glm" => {
             std::env::var("ZAI_API_KEY").is_ok() || std::env::var("ZHIPU_API_KEY").is_ok()
         }
-        // `grok --version` runs signed out too; `grok login` saves ~/.grok/auth.json.
-        "grok" => {
-            cli_alive(binary, &["--version"], None)
-                && (home_file(&[".grok", "auth.json"]).exists() || std::env::var("XAI_API_KEY").is_ok())
-        }
         // Generic agent-runtime CLI: if the binary is on PATH and answers a
         // version/help probe, assume the user has already installed and
         // authenticated it locally. This matches the Multica model where users
@@ -1952,35 +1910,11 @@ fn subscription_auth_check(id: &str, binary: &str) -> bool {
     }
 }
 
-#[derive(Debug, Default, Deserialize)]
-struct ConnectBody {
-    /// The user isn't at this computer (the request came through the relay):
-    /// prefer a device-code sign-in they can finish on any device.
-    #[serde(default)]
-    remote: bool,
-}
-
-/// The sign-in argv for a provider: device-code variants when the user is
-/// remote and the CLI has one (Codex, Grok); Claude's own flow already works
-/// remotely (link, then paste the code the page shows).
-fn login_argv(provider: &str, default: &'static [&'static str], remote: bool) -> (&'static [&'static str], Option<String>) {
-    match (provider, remote) {
-        ("codex-cli", true) => (
-            &["login", "--device-auth"],
-            Some("If OpenAI rejects the code, turn on \"device code authorization for Codex\" in ChatGPT Settings → Security, then try again.".to_string()),
-        ),
-        ("grok", true) => (&["login", "--device-auth"], None),
-        _ => (default, None),
-    }
-}
-
 async fn connect_provider(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
     headers: HeaderMap,
-    body: Option<Json<ConnectBody>>,
 ) -> Response {
-    let remote = body.map(|Json(b)| b.remote).unwrap_or(false);
     if get_user(&headers).is_none() {
         return unauthorized();
     }
@@ -2091,72 +2025,38 @@ async fn connect_provider(
         .into_response();
     }
 
-    let Some(binary_path) = crate::cli_tools::resolve_binary(binary) else {
+    if command_on_path(binary).is_none() {
         return Json(json!({
             "status": "not_installed",
             "provider": id,
             "label": meta.label,
             "binary": binary,
             "page": meta.page,
-            "install": crate::cli_tools::install_json(&id, binary),
-        }))
-        .into_response();
-    };
-
-    if meta.login.is_empty() {
-        // No CLI sign-in command: the user signs in by the vendor's own means.
-        return Json(json!({
-            "status": "started",
-            "provider": id,
-            "label": meta.label,
-            "page": meta.page,
         }))
         .into_response();
     }
 
-    // Keep the CLI's own sign-in running with its output captured, so the
-    // link / device code / paste prompt reach the UI on any device.
-    let (argv, hint) = login_argv(meta.id, meta.login, remote);
-    match crate::cli_tools::start_login(meta.id, &binary_path, argv, hint).await {
-        Ok(login) => Json(json!({
+    // Fire-and-forget: the CLI opens the user's browser / sign-in flow itself.
+    let spawned = std::process::Command::new(binary)
+        .args(meta.login)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
+
+    match spawned {
+        Ok(_) => Json(json!({
             "status": "started",
             "provider": id,
             "label": meta.label,
             "page": meta.page,
-            "login": login,
         }))
         .into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": "spawn_failed", "details": e, "page": meta.page})),
+            Json(json!({"error": "spawn_failed", "details": e.to_string(), "page": meta.page})),
         )
             .into_response(),
-    }
-}
-
-#[derive(Debug, Deserialize)]
-struct ConnectCodeBody {
-    code: String,
-}
-
-/// Paste the code a sign-in page showed the user into the waiting CLI (Claude).
-async fn submit_provider_connect_code(
-    Path(id): Path<String>,
-    headers: HeaderMap,
-    Json(body): Json<ConnectCodeBody>,
-) -> Response {
-    if get_user(&headers).is_none() {
-        return unauthorized();
-    }
-    let Some((_, meta)) = subscription_provider(&id) else {
-        return (StatusCode::NOT_FOUND, Json(json!({"error": "unknown_provider"}))).into_response();
-    };
-    if body.code.trim().is_empty() || body.code.len() > 4096 {
-        return (StatusCode::BAD_REQUEST, Json(json!({"error": "invalid_code"}))).into_response();
-    }
-    match crate::cli_tools::submit_code(meta.id, &body.code).await {
-        Ok(()) => Json(json!({"ok": true})).into_response(),
-        Err(error) => (StatusCode::CONFLICT, Json(json!({"error": error}))).into_response(),
     }
 }
 
@@ -2184,16 +2084,11 @@ async fn connect_provider_status(
         crate::onboarding_routes::persist_cli_default(
             &state, meta.id, meta.label, binary, meta.model,
         );
-        crate::cli_tools::note_signed_in(meta.id).await;
     }
-    let login = crate::cli_tools::login_view(meta.id).await;
-    // A sign-in that ended without the CLI reporting signed in failed.
-    let failed = !connected && matches!(login, Some((_, true, _)));
     Json(json!({
-        "status": if connected { "success" } else if failed { "failed" } else { "pending" },
+        "status": if connected { "success" } else { "pending" },
         "provider": id,
         "label": meta.label,
-        "login": login.map(|(view, ..)| view),
     }))
     .into_response()
 }

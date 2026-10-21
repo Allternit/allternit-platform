@@ -341,7 +341,7 @@ pub async fn rebind_if_moved<R: ThreadRuntime>(db: &DbHandle, rt: &R, owner: &st
     let conn = db.connect().map_err(|e| e.to_string())?;
     let thread: String = conn.query_row("SELECT thread_id FROM bot_thread_sessions WHERE session_id = ?1", params![session], |r| r.get(0)).map_err(|e| e.to_string())?;
     conn.execute("UPDATE channel_conversation_bindings SET thread_id = ?1, updated_at = ?2 WHERE id = ?3", params![thread, now(), binding.id]).map_err(|e| e.to_string())?;
-    Ok(crate::channel_gateway::binding_by_id(db, &binding.id))
+    Ok(crate::channel_gateway::find_binding(db, &binding.provider, &binding.conversation))
 }
 
 // ---------------------------------------------------------------- existing threads
@@ -673,8 +673,8 @@ pub fn reachable(db: &DbHandle, owner: &str, person: &str) -> Vec<BindingRow> {
     let mut seen = std::collections::HashSet::new();
     ids.into_iter()
         .filter_map(|bid| {
-            let provider: String = conn.query_row("SELECT provider FROM channel_conversation_bindings WHERE id = ?1", params![bid], |r| r.get(0)).ok()?;
-            seen.insert(provider).then(|| crate::channel_gateway::binding_by_id(db, &bid)).flatten()
+            let (provider, conversation): (String, String) = conn.query_row("SELECT provider, external_conversation_id FROM channel_conversation_bindings WHERE id = ?1", params![bid], |r| Ok((r.get(0)?, r.get(1)?))).ok()?;
+            seen.insert(provider.clone()).then(|| crate::channel_gateway::find_binding(db, &provider, &conversation)).flatten()
         })
         .collect()
 }

@@ -34,46 +34,11 @@ pub fn factory_home() -> PathBuf {
     home_dir().join(".allternit/factory")
 }
 
-/// The managed dir `allternit-factory pane harness install` puts CLI tools in:
-/// `$ALLTERNIT_FACTORY_HARNESS_HOME`, else `<Factory home>/harness`. While only
-/// the pre-Factory `~/.ao/harness` exists, that one (its venvs bake in
-/// absolute paths, so it is never moved).
-pub fn harness_root() -> PathBuf {
-    if let Some(dir) = std::env::var_os("ALLTERNIT_FACTORY_HARNESS_HOME").filter(|d| !d.is_empty()) {
-        return PathBuf::from(dir);
-    }
-    let new = factory_home().join("harness");
-    let legacy = home_dir().join(".ao/harness"); // old-names: keep (installs made before the Factory)
-    if !new.exists() && legacy.exists() {
-        legacy
-    } else {
-        new
-    }
-}
-
-/// `<harness root>/bin`: the installed CLIs plus the private Node they run on.
-pub fn harness_bin_dir() -> PathBuf {
-    harness_root().join("bin")
-}
-
-/// Put [`harness_bin_dir`] first on this process's `PATH` (once), so CLIs the
-/// harness installed, and the Node they need, resolve here and in every child
-/// process. Call it at startup, before any threads read the environment.
-pub fn prepend_harness_bin_to_path() {
-    let bin = harness_bin_dir();
-    let existing = std::env::var_os("PATH").unwrap_or_default();
-    if std::env::split_paths(&existing).any(|p| p == bin) {
-        return;
-    }
-    let mut paths = vec![bin];
-    paths.extend(std::env::split_paths(&existing));
-    if let Ok(joined) = std::env::join_paths(paths) {
-        std::env::set_var("PATH", joined);
-    }
-}
-
 fn home_dir() -> PathBuf {
-    crate::platform::user_home_or("/")
+    std::env::var_os("HOME")
+        .filter(|h| !h.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/"))
 }
 
 /// Where agent transcripts, runner files and spawn-gate settings live.
@@ -319,9 +284,6 @@ impl Registry {
                 anyhow::bail!("locking {}: {}", lock_path.display(), std::io::Error::last_os_error());
             }
         }
-        // Windows: LockFileEx through std (released when the handle closes).
-        #[cfg(windows)]
-        lock.lock().with_context(|| format!("locking {}", lock_path.display()))?;
         let out = f();
         drop(lock); // closing the descriptor releases the flock
         out

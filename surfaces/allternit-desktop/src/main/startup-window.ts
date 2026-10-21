@@ -27,7 +27,6 @@ const BRAND_NAME = 'Allternit';
 const TAGLINE = 'Your AI platform, right on your desktop';
 const TERMS_URL = 'https://allternit.com/terms';
 const PRIVACY_URL = 'https://allternit.com/privacy';
-const DEVICES_URL = 'https://platform.allternit.com/devices';
 
 // A://TERNIT wordmark, ink (dark-on-light) variant. Canonical source:
 // surfaces/ai.allternit.com/public/brand/a-protocol/a-ternit-wordmark.svg
@@ -255,17 +254,6 @@ function buildStartupHtml(initialStep: StartupInitialStep): string {
     .folder-actions .btn { border: 1px solid var(--border); background: var(--panel); color: var(--text); }
     .folder-actions .btn-primary { background: var(--btn-primary-bg); color: var(--btn-primary-fg); border-color: var(--btn-primary-bg); }
 
-    .login-error {
-      margin-top: 14px;
-      max-width: 360px;
-      font-size: 12px;
-      line-height: 1.5;
-      text-align: center;
-      color: var(--down);
-    }
-    .login-error a { display: block; margin-top: 4px; color: var(--text); }
-    .login-error.hidden, .login-error a.hidden { display: none; }
-
     .version {
       position: absolute;
       bottom: 12px;
@@ -282,10 +270,6 @@ function buildStartupHtml(initialStep: StartupInitialStep): string {
     ${WORDMARK_SVG}
     <div class="tagline">${TAGLINE}</div>
     <button type="button" class="btn btn-primary" id="btn-get-started">Get started</button>
-    <div class="login-error hidden" id="login-error" role="alert">
-      <span id="login-error-text"></span>
-      <a class="hidden" id="login-error-devices" href="${DEVICES_URL}" target="_blank" rel="noreferrer">Manage your machines</a>
-    </div>
     <div class="footer-legal">
       By continuing, you agree to the
       <a href="${TERMS_URL}" target="_blank" rel="noreferrer">Terms of Service</a>
@@ -389,20 +373,6 @@ function buildStartupHtml(initialStep: StartupInitialStep): string {
           node.style.color = 'var(--text)';
         }
       });
-      // Sign-in or pairing failed (e.g. the plan's machine limit): say why on
-      // the welcome step so "Get started" isn't a silent dead end.
-      if (typeof api.onLoginFailed === 'function') {
-        api.onLoginFailed(function (message) {
-          var box = document.getElementById('login-error');
-          var text = document.getElementById('login-error-text');
-          var devices = document.getElementById('login-error-devices');
-          if (!box || !text) return;
-          text.textContent = message || 'Sign-in did not finish. Try again.';
-          if (devices) devices.classList.toggle('hidden', !/machine limit/i.test(message || ''));
-          box.classList.remove('hidden');
-          if (btn) btn.textContent = 'Try again';
-        });
-      }
       api.onError(function (message) {
         var node = document.getElementById('status');
         if (node) {

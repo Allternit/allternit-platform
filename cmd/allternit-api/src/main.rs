@@ -112,6 +112,7 @@ use allternit_api::stream::stream_router;
 use allternit_api::swarm_routes::swarm_router;
 use allternit_api::task_routes;
 use allternit_api::team_skill_routes::team_skill_router;
+#[cfg(unix)]
 use allternit_api::terminal_routes::{terminal_router, TerminalSessionStore};
 use allternit_api::permission_policy::ApprovalStore;
 use allternit_api::tool_routes;
@@ -137,10 +138,6 @@ use tokio::sync::RwLock;
 
 #[tokio::main]
 async fn main() {
-    // CLI brains installed by the Factory harness (one-click Install) live in
-    // its managed bin; put it first on PATH so they, and the private Node they
-    // may need, resolve here and in every child process.
-    allternit_factory_engine::registry::prepend_harness_bin_to_path();
     // Git pre-receive hook mode for Memory Drive pushes: validate and exit
     // before any config, database or secret is loaded.
     if std::env::args().nth(1).as_deref() == Some(allternit_api::memory_drive_transport::HOOK_ARG) {
@@ -469,11 +466,6 @@ async fn main() {
     if stranded > 0 {
         tracing::warn!(stranded, "bot threads were mid-turn at restart; moved to waiting on you");
     }
-    // Channel posts cut off mid-send: mark them unconfirmed (never re-posted blindly).
-    let interrupted = allternit_api::channel_gateway::recover_interrupted_sends(&db);
-    if interrupted > 0 {
-        tracing::warn!(interrupted, "channel posts were mid-send at restart; marked unconfirmed");
-    }
     // On an Allternit cloud computer: pair it as a Factory peer computer and
     // keep its engine's peer port on the mesh (no-op anywhere else).
     allternit_api::cloud_computer_peer::spawn_if_cloud_computer();
@@ -583,7 +575,6 @@ async fn main() {
         desktop_host_provisioner,
         bot_desktop_sessions: Arc::new(RwLock::new(HashMap::new())),
         computer_guest_tokens: Arc::new(RwLock::new(HashMap::new())),
-        phone_link: allternit_api::phone_ws::PhoneLinkRegistry::new_http(),
         rails,
         vm_sessions: new_vm_session_store(),
         cowork_scheduler,
@@ -595,6 +586,7 @@ async fn main() {
         office_cli_watches: Arc::new(RwLock::new(HashMap::new())),
         office_cli_mcp_sessions: Arc::new(RwLock::new(HashMap::new())),
         design_skill_cache,
+        #[cfg(unix)]
         terminal_sessions: TerminalSessionStore::new(),
         mcp_dispatcher: allternit_api::mcp_dispatcher::McpDispatcher::new(),
         approval_store: Arc::new(ApprovalStore::new()),
@@ -655,21 +647,6 @@ async fn main() {
         tracing::info!(adopted, "people: adopted existing chats");
     }
     allternit_api::discord_gateway::spawn_bound(state.clone());
-    // Channel turns accepted before the restart: queued ones run now, ones cut off mid-turn
-    // are marked interrupted (never run twice); unconfirmed posts are checked against history.
-    {
-        let st = state.clone();
-        tokio::spawn(async move {
-            let (requeued, interrupted) = allternit_api::channel_transports::recover_channel_turns(&st).await;
-            if requeued + interrupted > 0 {
-                tracing::warn!(requeued, interrupted, "channel turns recovered after restart");
-            }
-            let confirmed = allternit_api::channel_transports::reconcile_unconfirmed(&st).await;
-            if confirmed > 0 {
-                tracing::info!(confirmed, "unconfirmed channel posts confirmed from platform history");
-            }
-        });
-    }
     // Keep this runtime's phone numbers in step with the cloud (inert until the runtime is paired).
     allternit_api::phone_sync::spawn(state.clone());
     allternit_api::computer_idle::spawn_idle_sweeper(state.clone(), shutdown_tx.subscribe());
@@ -871,13 +848,6 @@ async fn main() {
         shutdown_tx.subscribe(),
     );
 
-    // Managed session worker: executes queued /beta/work session and
-    // deployment runs through Gizzi (ALLTERNIT_SESSION_WORKER=0 disables).
-    allternit_api::session_worker::spawn_session_worker(
-        Arc::clone(&state),
-        shutdown_tx.subscribe(),
-    );
-
     // Desktop capacity monitor and autoscale signaler.
     {
         let period = std::time::Duration::from_secs(
@@ -1017,7 +987,6 @@ async fn main() {
             state.clone(),
             allternit_api::placement::passthrough,
         )))
-        .merge(allternit_api::card_meta::card_meta_router())
         .merge(allternit_api::placement::placement_router())
         .merge(beta_session_router())
         .merge(cloud_agents_router())
@@ -1031,8 +1000,6 @@ async fn main() {
         .merge(memory_reconstruction_router())
         .merge(allternit_api::memory_notes_routes::memory_notes_router())
         .merge(allternit_api::memory_consolidation::memory_consolidation_router())
-        .merge(allternit_api::memory_chunks::memory_chunks_router())
-        .merge(allternit_api::memory_entity_pages::memory_entity_pages_router())
         .merge(research_task_router())
         .merge(user_profile_router())
         .merge(canvas_router())
@@ -1129,9 +1096,6 @@ async fn main() {
         .merge(allternit_api::factory_peer_proxy::router())
         .merge(allternit_api::computer_groups::router())
         .merge(allternit_api::computer_ws::computer_api_router())
-        // Phones 2.0 phone stream relay: list registered phones + mint the
-        // phone-stream ws token (Clerk/desktop-auth'd, like the computers).
-        .merge(allternit_api::phone_ws::phone_api_router())
         .merge(allternit_api::subscription_routes::router())
         .merge(allternit_api::computer_embed::api_router())
         .merge(allternit_api::bot_group_routes::router())
@@ -1224,14 +1188,6 @@ async fn main() {
             "/ws/computers",
             allternit_api::computer_ws::computer_ws_router(),
         )
-        // Phones 2.0: the desktop-attached phone-link session socket. Behind
-        // the auth middleware like /ws/computers/* — the Desktop's
-        // `x-allternit-desktop-access-token` credential resolves to the
-        // account the phones register under.
-        .nest(
-            "/ws/phone-link",
-            allternit_api::phone_ws::phone_link_router(),
-        )
         .nest(
             "/mcp",
             mcp_router()
@@ -1260,8 +1216,6 @@ async fn main() {
         .nest("/api", allternit_api::group_rooms::router())
         .nest("/api", playground_router())
         .nest("/api", checkpoints_router())
-        // Code mode's Changes pane: POST /api/v1/git/diff.
-        .nest("/api", allternit_api::git_routes::git_router())
         .nest("/api", design_connector_router())
         .nest("/api", allternit_api::mcp_apps::mcp_apps_router())
         // Keys page for the vendor-bot connector: /api/v1/vendor-bots/:id/connector*.
@@ -1434,13 +1388,6 @@ async fn main() {
             "/ws/computers",
             allternit_api::computer_ws::computer_vnc_public_router(),
         )
-        // Phones 2.0: public phone-stream route (like the computer VNC
-        // route) — the HMAC phone-stream token IS the credential; the route
-        // is mounted OUTSIDE the auth middleware.
-        .nest(
-            "/ws/phones",
-            allternit_api::phone_ws::phone_stream_public_router(),
-        )
         // Cross-machine bot peer fabric (BOT_TEAMMATES_SPEC Phase 3): mounts
         // on the public router because inbound peer traffic carries a peer
         // key, not a Clerk JWT — every handler self-gates (desktop token /
@@ -1479,14 +1426,14 @@ async fn main() {
         public = public.merge(fallback_router());
     }
 
-    // Combine protected + public; terminal routes (501 on Windows, no pane
-    // engine socket there) must be nested before `with_state`.
+    // Combine protected + public; terminal routes are Unix-only (mux
+    // communicates over a UDS) and must be nested before `with_state`.
     let combined = protected.merge(public);
+    #[cfg(unix)]
     let combined = combined.nest("/terminal", terminal_router());
     let mut app = combined.with_state(state.clone());
     // Automation Tasks routines with execution_domain = 'local' run here.
     allternit_api::routine_local_scheduler::spawn(state.clone());
-    allternit_api::netops::spawn(state.clone());
     // gizzi enforces bots' spend limits; bring its copy up to date (P8.1).
     allternit_api::spend_limits::spawn_sync(state.clone());
     // Bots' saved memory is tidied weekly on their own model (P7.4).
@@ -1518,11 +1465,6 @@ async fn main() {
     allternit_api::memory_consolidation::spawn(state.clone());
     // Memory Drive nightly Dream (one commit + report per drive per night).
     allternit_api::memory_dream::spawn(state.clone());
-    allternit_api::memory_capture::spawn(state.db.clone());
-    // Memory Drive: read saved memories and new chats from the person's own
-    // assistant logins on their Sessions computer (read-only, every 6 h).
-    allternit_api::vendor_memory::spawn(state.clone());
-    allternit_api::ledger::spawn(state.db.clone());
 
     // Mount cowork scheduler routes if scheduler is active. These routes
     // create/update/delete schedules and self-gate nothing, so they must be

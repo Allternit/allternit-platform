@@ -541,7 +541,6 @@ mod tests {
             desktop_host_provisioner: None,
             bot_desktop_sessions: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             computer_guest_tokens: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
-            phone_link: crate::phone_ws::PhoneLinkRegistry::new_http(),
             rails,
             vm_sessions: crate::vm_session_routes::new_vm_session_store(),
             cowork_scheduler: None,
@@ -552,6 +551,7 @@ mod tests {
                 crate::office_routes::OfficeRuntimeFile::default(),
             )),
             design_skill_cache: crate::design_connector_routes::DesignSkillCache::new(),
+            #[cfg(unix)]
             terminal_sessions: crate::terminal_routes::TerminalSessionStore::new(),
             office_cli_docs: Arc::new(RwLock::new(HashMap::new())),
             office_cli_watches: Arc::new(RwLock::new(HashMap::new())),

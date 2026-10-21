@@ -21,7 +21,6 @@ pub use crate::agents::{backend, execenv, peer, registry, spawn, view};
 pub use crate::api::{cli, mcp, service};
 #[cfg(feature = "dolt")]
 pub use crate::core::dolt;
-pub use crate::core::platform;
 pub use crate::core::{compact, index, ledger, projections, prompt, query, replay};
 pub use crate::gate::{constraints, egress, fence, hook, killswitch, policy};
 pub use crate::orchestration::{attention, bus, mail, observer, send, steer};

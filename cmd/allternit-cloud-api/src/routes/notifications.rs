@@ -84,9 +84,6 @@ pub const DEFAULTS: &[(&str, bool)] = &[
     ("subscription.login_needed", true),
     ("subscription.signed_in", false),
     ("usage.threshold", true),
-    // A failed or missed routine, a bot with no one to run it: the server pushes it and sends it again until it is fixed.
-    ("attention.opened", true),
-    ("attention.resolved", false),
 ];
 
 /// Only look at events stored this recently (the sink polls every few seconds).
@@ -240,9 +237,6 @@ fn enc(v: &str) -> String {
 }
 
 /// The push-links scheme the app reads (`allternit-ai` `lib/gateway/push-links.ts`).
-/// The answer pages agents make (answer-me-with-html) are served here; a push may open one.
-pub const ARTIFACTS_ORIGIN: &str = "https://artifacts.allternit.com/";
-
 fn thread_link(bot: Option<&str>, thread: Option<&str>) -> Option<String> {
     Some(format!("/?allternit_thread={}&bot={}", enc(thread?), enc(bot?)))
 }
@@ -332,12 +326,6 @@ pub fn message_for(event: &str, data: &Value) -> Option<PushMessage> {
             msg.body = s(data, &["reason", "detail"]).map(|r| clip(r, 200)).or(thread_title.map(|t| format!("In “{}”", clip(t, 120)))).unwrap_or_else(|| "Open the thread to reply.".into());
             msg.tag = format!("needs-{}", thread.or(bot).unwrap_or("you"));
             msg.high_urgency = true;
-            // An agent waiting on an answer page (answer-me-with-html steering): the notification opens that page.
-            // Only artifacts.allternit.com links; the page key rides in the fragment.
-            if let Some(page) = s(data, &["url"]).filter(|u| u.starts_with(ARTIFACTS_ORIGIN) && !u.contains(['\n', '\r', ' '])) {
-                msg.url = page.to_string();
-                msg.tag = format!("needs-page-{}", clip(s(data, &["page_id", "pageId"]).unwrap_or("page"), 40));
-            }
         }
         "message.received" => {
             let provider = s(data, &["channel", "provider"]);
@@ -406,22 +394,6 @@ pub fn message_for(event: &str, data: &Value) -> Option<PushMessage> {
             // The two replace each other.
             msg.tag = format!("login-{login}");
             msg.url = "/".into();
-        }
-        "attention.opened" | "attention.resolved" => {
-            let id = s(data, &["attention_id", "attentionId"]).unwrap_or("attention");
-            let summary = s(data, &["summary"]).map(|t| clip(t, 200));
-            if event == "attention.opened" {
-                let critical = s(data, &["severity"]) == Some("critical");
-                msg.high_urgency = critical;
-                msg.title = if critical { "Needs fixing now".into() } else { "Something needs fixing".into() };
-                msg.body = summary.unwrap_or_else(|| "Open Allternit to see what happened.".into());
-            } else {
-                msg.title = "Fixed".into();
-                msg.body = summary.unwrap_or_else(|| "A problem was fixed.".into());
-            }
-            // Opened, re-sent and resolved all share one tag, so the notification is replaced, not stacked.
-            msg.tag = format!("attention-{id}");
-            msg.url = s(data, &["action_url", "actionUrl"]).filter(|u| u.starts_with('/')).unwrap_or("/").to_string();
         }
         "usage.threshold" => {
             let meter = s(data, &["meter"]).unwrap_or("usage");
@@ -650,11 +622,6 @@ mod tests {
 
         let m = message_for("thread.needs_user", &json!({ "botName": "Olive", "thread_id": "t1", "bot_id": "b1", "reason": "Which date works?" })).unwrap();
         assert_eq!((m.title.as_str(), m.body.as_str(), m.tag.as_str()), ("Olive needs you", "Which date works?", "needs-t1"));
-        // An answer page link opens the page itself; any other URL is ignored.
-        let m = message_for("thread.needs_user", &json!({ "botName": "Claude Code", "reason": "Which database?", "url": "https://artifacts.allternit.com/p-abc.html#k=1f", "page_id": "abc" })).unwrap();
-        assert_eq!((m.url.as_str(), m.tag.as_str()), ("https://artifacts.allternit.com/p-abc.html#k=1f", "needs-page-abc"));
-        let m = message_for("thread.needs_user", &json!({ "botName": "X", "url": "https://evil.example/a" })).unwrap();
-        assert_eq!(m.url.as_str(), "/");
 
         let m = message_for("call.ended", &json!({ "missed": true, "from": "+1 555 0100", "call_id": "c1" })).unwrap();
         assert_eq!((m.title.as_str(), m.tag.as_str()), ("Missed call from +1 555 0100", "call-c1"));
@@ -667,12 +634,6 @@ mod tests {
         assert_eq!((m.tag.as_str(), m.url.as_str()), ("login-l1", "/"));
         let back = message_for("subscription.signed_in", &json!({ "provider": "chatgpt", "loginId": "l1" })).unwrap();
         assert_eq!(back.tag, m.tag, "signed in replaces sign-in needed");
-
-        let m = message_for("attention.opened", &json!({ "attentionId": "routine_failed:r1", "severity": "warn", "summary": "Morning briefing failed: the bot is signed out.", "actionUrl": "/?bot=b1" })).unwrap();
-        assert_eq!((m.title.as_str(), m.body.as_str(), m.tag.as_str(), m.url.as_str()), ("Something needs fixing", "Morning briefing failed: the bot is signed out.", "attention-routine_failed:r1", "/?bot=b1"));
-        let m = message_for("attention.opened", &json!({ "attention_id": "x", "severity": "critical", "summary": "s", "action_url": "https://evil.example" })).unwrap();
-        assert_eq!((m.title.as_str(), m.url.as_str()), ("Needs fixing now", "/"));
-        assert!(default_enabled("attention.opened") && !default_enabled("attention.resolved"));
 
         let m = message_for("usage.threshold", &json!({ "meter": "cloud_spend", "percent": 80.0, "used": 81.5, "limit": 100.0, "period": "2026-10" })).unwrap();
         assert_eq!((m.title.as_str(), m.body.as_str(), m.tag.as_str()), ("You've used 80% of your monthly cloud budget", "$81.50 of $100.00 so far this month.", "usage-cloud_spend-2026-10"));

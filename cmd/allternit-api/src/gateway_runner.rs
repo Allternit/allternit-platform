@@ -6,9 +6,7 @@
 //! * A bot whose execution binding is `type=vendor` runs its turns remotely
 //!   through the AAI (`POST {gateway}/aai/call`). No binding, or `type=allternit`,
 //!   is today's native path, unchanged. A vendor bot that is not READY never
-//!   falls back to a native brain, unless its owner opted in with
-//!   `agents.config.fallbackBrain` ([`run_with_fallback`]: always disclosed in
-//!   the reply and as a `lane.fallback` thread event).
+//!   falls back to a native brain.
 //! * One `remote_thread_bindings` row per thread generation. A handoff moves the
 //!   old one ACTIVE -> HANDOFF_PENDING -> CLOSED; the next turn opens a new one
 //!   (possibly on a different execution binding).
@@ -914,17 +912,6 @@ fn bridge_event(db: &DbHandle, cx: &Cx, remote: &Value, ev: &Value) -> Result<bo
         return Ok(false);
     }
     match ty {
-        // A vendor agent paused on a custom tool only Allternit can run
-        // (Claude Managed Agents): the thread needs someone to answer it via
-        // POST /threads/:id/gateway/tool-result.
-        "agent.task.updated" if ev["payload"]["kind"] == "needs_attention" => {
-            let tools: Vec<String> = ev["payload"]["customToolCalls"]
-                .as_array()
-                .map(|a| a.iter().filter_map(|c| c["name"].as_str().or_else(|| c.as_str()).map(str::to_string)).collect())
-                .unwrap_or_default();
-            let line = if tools.is_empty() { "The agent is waiting for a tool result".to_string() } else { format!("The agent is waiting for: {}", tools.join(", ")) };
-            set_thread_status(db, &cx.bot_id, &cx.thread_id, "needs_you", &line);
-        }
         "agent.approval.requested" => {
             let rref = ev["payload"]["approvalId"].as_str().or(remote_event).unwrap_or_default();
             let action = ev["payload"]["action"].as_str().or_else(|| ev["payload"]["summary"].as_str()).unwrap_or("vendor approval");
@@ -973,38 +960,6 @@ pub async fn sync_thread(db: &DbHandle, tx: &dyn AaiTransport, owner: &str, thre
     Ok(pull_events(db, tx, &cx, &remote).await?.0)
 }
 
-/// Answer a vendor agent's custom tool call (`agent.tool.called` with
-/// `custom: true`): the result goes back on the thread's open remote context
-/// as `agent.context.message` with `toolResult`, then the vendor's next events
-/// are pulled into the thread.
-pub async fn answer_tool_call(db: &DbHandle, tx: &dyn AaiTransport, owner: &str, thread_id: &str, tool_use_id: &str, result: &str, is_error: bool) -> Result<usize, RunErr> {
-    if tool_use_id.trim().is_empty() {
-        return Err(RunErr::new(400, "BAD_REQUEST", "toolUseId is required"));
-    }
-    let conn = db.connect()?;
-    let sid: Option<String> = conn
-        .query_row(
-            "SELECT s.session_id FROM bot_thread_sessions s JOIN bot_threads t ON t.id = s.thread_id WHERE t.id = ?1 AND t.user_id = ?2 ORDER BY s.generation DESC LIMIT 1",
-            params![thread_id, owner],
-            |r| r.get(0),
-        )
-        .optional()?;
-    let sid = sid.ok_or_else(|| RunErr::new(404, "NOT_FOUND", "thread not found"))?;
-    let cx = resolve(db, &sid)?.ok_or_else(|| RunErr::new(409, "NOT_VENDOR_BOUND", "this thread's bot is not bound to a vendor agent"))?;
-    let remote = remote_for(db, &cx.thread_id, cx.generation)?
-        .filter(|r| s(r, "state") == "ACTIVE")
-        .ok_or_else(|| RunErr::new(409, "CONTEXT_LOST", "the vendor conversation for this thread is not open"))?;
-    let input = json!({
-        "contextId": s(&remote, "externalContextId"),
-        "correlationId": format!("tool-{tool_use_id}"),
-        "text": result,
-        "toolResult": { "toolUseId": tool_use_id, "isError": is_error },
-    });
-    vcall(db, tx, &cx.owner, "agent.context.message", &cx.exec, input).await.map_err(|e| fail(db, &cx, Some(&remote), &e))?;
-    set_thread_status(db, &cx.bot_id, &cx.thread_id, "working", "Tool result sent");
-    Ok(pull_events(db, tx, &cx, &remote).await?.0)
-}
-
 // ---------------------------------------------------------------- approvals
 
 pub(crate) fn create_approval(db: &DbHandle, cx: &Cx, authority: &str, action: &str, remote_ref: Option<&str>, detail: Value, corr: Option<&str>) -> Result<String, RunErr> {
@@ -1023,7 +978,7 @@ pub(crate) fn create_approval(db: &DbHandle, cx: &Cx, authority: &str, action: &
     )?;
     // The approval card the app already renders; the authority rides along so
     // the card can show the vendor badge.
-    let card = json!({ "type": "gateway_approval", "approvalId": aid, "authority": authority, "threadId": cx.thread_id, "action": action, "vendor": s(&cx.exec, "vendor"), "provenance": detail.get("provenance") });
+    let card = json!({ "type": "gateway_approval", "approvalId": aid, "authority": authority, "threadId": cx.thread_id, "action": action, "vendor": s(&cx.exec, "vendor") });
     let _ = conn.execute(
         "INSERT OR IGNORE INTO cowork_approvals (id, user_id, content, source, dismissed) VALUES (?1, ?2, ?3, ?4, 0)",
         params![aid, cx.owner, card.to_string(), format!("gateway:{authority}")],
@@ -1035,7 +990,7 @@ pub(crate) fn create_approval(db: &DbHandle, cx: &Cx, authority: &str, action: &
         Some(&cx.session_id),
         "approval.requested",
         ("system", "gateway"),
-        json!({ "approvalId": aid, "authority": authority, "action": action, "remoteRef": remote_ref, "provenance": detail.get("provenance") }),
+        json!({ "approvalId": aid, "authority": authority, "action": action, "remoteRef": remote_ref }),
         None,
     );
     set_thread_status(db, &cx.bot_id, &cx.thread_id, "needs_you", &format!("Approval needed ({authority}): {action}"));
@@ -1125,87 +1080,6 @@ pub async fn respond_approval(
 
 // ---------------------------------------------------------------- process-wide entry points
 
-// ---------------------------------------------------------------- fallback lane (opt-in)
-
-/// Errors that mean "the vendor session needs a check": the only ones a bot
-/// that opted in to a fallback brain answers around.
-fn fallback_eligible(code: &str) -> bool {
-    matches!(code, "BINDING_NOT_READY" | "LANE_BLOCKED" | "AUTH_REQUIRED" | "AUTH_REVOKED")
-}
-
-/// `agents.config.fallbackBrain` (`"provider/model"`), when the owner set one.
-pub(crate) fn fallback_brain(db: &DbHandle, bot_id: &str) -> Option<String> {
-    let conn = db.connect().ok()?;
-    let brain: Option<String> = conn
-        .query_row("SELECT json_extract(config, '$.fallbackBrain') FROM agents WHERE id = ?1 AND json_valid(config)", params![bot_id], |r| r.get(0))
-        .optional()
-        .ok()
-        .flatten()
-        .flatten();
-    brain.map(|b| b.trim().to_string()).filter(|b| b.contains('/') && !b.starts_with('/') && !b.ends_with('/'))
-}
-
-fn title_case(s: &str) -> String {
-    let mut c = s.chars();
-    c.next().map(|f| f.to_uppercase().collect::<String>() + c.as_str()).unwrap_or_default()
-}
-
-/// [`run_turn`] for a caller that can run the same turn on a native brain.
-/// `Ok(None)` = not a vendor thread. When the vendor session is not usable
-/// (not READY, LANE_BLOCKED, AUTH_REQUIRED) and the bot opted in to a
-/// `fallbackBrain`, `native(brain)` answers instead: a `lane.fallback`
-/// `{from, to, reason}` event lands on the thread and the reply opens with one
-/// disclosure line. Without the opt-in the refusal is unchanged.
-pub async fn run_with_fallback<R, F, Fut>(
-    db: &DbHandle,
-    tx: &dyn AaiTransport,
-    rt: &R,
-    session_id: &str,
-    text: &str,
-    opts: TurnOpts,
-    native: F,
-) -> Option<Result<String, String>>
-where
-    R: ThreadRuntime,
-    F: FnOnce(String) -> Fut,
-    Fut: std::future::Future<Output = Result<String, String>>,
-{
-    match run_turn(db, tx, rt, session_id, text, opts).await {
-        Ok(None) => None,
-        Ok(Some(r)) => Some(r.reply.ok_or_else(|| "the vendor accepted the turn and has not replied yet".to_string())),
-        Err(e) => {
-            let cx = resolve(db, session_id).ok().flatten();
-            let brain = cx.as_ref().filter(|_| fallback_eligible(&e.code)).and_then(|cx| fallback_brain(db, &cx.bot_id).map(|b| (cx, b)));
-            let Some((cx, brain)) = brain else { return Some(Err(e.message)) };
-            let vendor = s(&cx.exec, "vendor");
-            let provider = title_case(&vendor);
-            let model = brain.split_once('/').map(|(_, m)| m).unwrap_or(&brain).to_string();
-            led(
-                db,
-                &cx.bot_id,
-                &cx.thread_id,
-                None,
-                "lane.fallback",
-                ("system", "gateway"),
-                json!({ "from": vendor, "to": brain, "reason": e.code, "message": e.message }),
-                None,
-            );
-            Some(native(brain).await.map(|reply| format!("Answered by {model} because your {provider} session needs a check.\n\n{reply}")))
-        }
-    }
-}
-
-/// [`run_with_fallback`] on the process-wide runtime. `None` = native path.
-pub async fn intercept_turn_with_fallback<F, Fut>(session_id: &str, text: &str, opts: TurnOpts, native: F) -> Option<Result<String, String>>
-where
-    F: FnOnce(String) -> Fut,
-    Fut: std::future::Future<Output = Result<String, String>>,
-{
-    let rt = RUNTIME.get()?;
-    let runtime = crate::thread_routes::GizziRuntime { db: rt.db.clone() };
-    run_with_fallback(&rt.db, rt.tx.as_ref(), &runtime, session_id, text, opts, native).await
-}
-
 /// `send_bot_turn` hook: `None` = native path. `Some` = the vendor turn's reply
 /// (or the reason it did not run).
 pub async fn intercept_turn(session_id: &str, text: &str, opts: TurnOpts) -> Option<Result<String, String>> {
@@ -1289,26 +1163,6 @@ pub fn gateway_runner_router() -> Router<Arc<AppState>> {
         .route("/threads/:id/approvals", get(list_approvals_h))
         .route("/threads/:id/gateway/sync", post(sync_h))
         .route("/gateway/approvals/:id/respond", post(respond_h))
-        .route("/threads/:id/gateway/tool-result", post(tool_result_h))
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ToolResultBody {
-    tool_use_id: String,
-    result: String,
-    #[serde(default)]
-    is_error: bool,
-}
-
-async fn tool_result_h(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Path(thread_id): Path<String>, Json(b): Json<ToolResultBody>) -> Response {
-    let Some(rt) = RUNTIME.get() else {
-        return RunErr::new(503, "GATEWAY_OFFLINE", "the agent gateway is not connected").into_response();
-    };
-    match answer_tool_call(&state.db, rt.tx.as_ref(), &user.user_id, &thread_id, &b.tool_use_id, &b.result, b.is_error).await {
-        Ok(n) => Json(json!({ "sent": true, "events": n })).into_response(),
-        Err(e) => e.into_response(),
-    }
 }
 
 #[derive(Deserialize)]
@@ -1776,29 +1630,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_custom_tool_call_needs_you_until_its_result_is_sent_back() {
-        let st = setup("toolresult").await;
-        let f = Fake::default();
-        f.push(json!({ "type": "agent.tool.called", "remote_event_id": "e1", "payload": { "custom": true, "toolUseId": "tu-1", "name": "lookup_order", "input": { "id": 7 } } }));
-        f.push(json!({ "type": "agent.task.updated", "remote_event_id": "e2", "payload": { "kind": "needs_attention", "reason": "custom_tool_result_required", "customToolCalls": [{ "toolUseId": "tu-1", "name": "lookup_order" }] } }));
-        turn(&st, &f, "s-th-vendor", "where is order 7?", key("k1")).await.unwrap();
-        assert_eq!(thread_status(&st), "needs_you");
-        let line: String = st.db.connect().unwrap().query_row("SELECT status_line FROM bot_threads WHERE id='th-vendor'", [], |r| r.get(0)).unwrap();
-        assert!(line.contains("lookup_order"), "{line}");
-        // Only the owner's thread, only with a tool id.
-        assert_eq!(answer_tool_call(&st.db, &f, "user-b", "th-vendor", "tu-1", "x", false).await.unwrap_err().code, "NOT_FOUND");
-        assert_eq!(answer_tool_call(&st.db, &f, "user-a", "th-vendor", " ", "x", false).await.unwrap_err().code, "BAD_REQUEST");
-        assert_eq!(answer_tool_call(&st.db, &f, "user-a", "th-native", "tu-1", "x", false).await.unwrap_err().code, "NOT_VENDOR_BOUND");
-        f.push(json!({ "type": "agent.message.completed", "remote_event_id": "e3", "payload": { "text": "Order 7 shipped." } }));
-        answer_tool_call(&st.db, &f, "user-a", "th-vendor", "tu-1", "{\"status\":\"shipped\"}", false).await.unwrap();
-        let sent = f.calls.lock().unwrap().iter().rev().find(|(op, _)| op == "agent.context.message").unwrap().1.clone();
-        assert_eq!(sent["toolResult"], json!({ "toolUseId": "tu-1", "isError": false }));
-        assert_eq!(sent["text"], "{\"status\":\"shipped\"}");
-        assert_eq!(sent["contextId"], "ctx-1");
-        assert_ne!(thread_status(&st), "needs_you");
-    }
-
-    #[tokio::test]
     async fn vendor_approval_needs_you_and_only_a_human_answers_it() {
         let st = setup("vapproval").await;
         let f = Fake::default();
@@ -1892,29 +1723,6 @@ mod tests {
         assert_eq!(e.code, "BINDING_NOT_READY");
         assert_eq!(thread_status(&st), "needs_you");
         assert!(f.calls.lock().unwrap().is_empty());
-    }
-
-    #[tokio::test]
-    async fn opted_in_bot_answers_on_its_fallback_brain_with_a_disclosure_and_an_event() {
-        let st = setup("fallback").await;
-        let f = Fake::default();
-        st.db.connect().unwrap().execute("UPDATE bot_execution_bindings SET state='NEEDS_AUTH'", []).unwrap();
-        st.db.connect().unwrap().execute("UPDATE agents SET config='{\"fallbackBrain\":\"anthropic/claude-sonnet-5-5\"}' WHERE id='bot-vendor'", []).unwrap();
-        let r = run_with_fallback(&st.db, &f, &Rt, "s-th-vendor", "hi", key("k"), |brain| async move { Ok(format!("native on {brain}")) }).await.unwrap().unwrap();
-        assert_eq!(r, "Answered by claude-sonnet-5-5 because your Acme session needs a check.\n\nnative on anthropic/claude-sonnet-5-5");
-        assert_eq!(count_events(&st, "lane.fallback"), 1);
-        assert!(f.calls.lock().unwrap().is_empty(), "the vendor lane was not called");
-    }
-
-    #[tokio::test]
-    async fn no_fallback_without_the_opt_in_and_a_native_bot_is_left_alone() {
-        let st = setup("nofallback").await;
-        let f = Fake::default();
-        st.db.connect().unwrap().execute("UPDATE bot_execution_bindings SET state='NEEDS_AUTH'", []).unwrap();
-        let r = run_with_fallback(&st.db, &f, &Rt, "s-th-vendor", "hi", key("k"), |_| async { Ok("native".to_string()) }).await.unwrap();
-        assert!(r.unwrap_err().contains("not READY"));
-        assert_eq!(count_events(&st, "lane.fallback"), 0);
-        assert!(run_with_fallback(&st.db, &f, &Rt, "s-th-native", "hi", key("k2"), |_| async { Ok("native".to_string()) }).await.is_none());
     }
 
     #[tokio::test]

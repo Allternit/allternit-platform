@@ -464,10 +464,6 @@ pub(crate) fn append_event(
 
     // Reserve the write lock before reading MAX(seq), otherwise concurrent
     // deferred transactions can select the same next sequence.
-    let trace = event
-        .session_id
-        .as_deref()
-        .and_then(|sid| crate::netops::hops::trace_for_session(&conn, sid));
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let seq: i64 = tx.query_row(
         "SELECT COALESCE(MAX(seq), 0) + 1 FROM bot_events WHERE bot_id = ?1",
@@ -477,9 +473,8 @@ pub(crate) fn append_event(
     let insert_result = tx.execute(
         "INSERT INTO bot_events (
              id, bot_id, seq, session_id, goal_id, wih_id, task_id, run_id,
-             event_type, actor_type, actor_id, payload, idempotency_key, occurred_at,
-             trace_id, span_id, parent_span_id
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+             event_type, actor_type, actor_id, payload, idempotency_key, occurred_at
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
         params![
             event.id,
             event.bot_id,
@@ -495,9 +490,6 @@ pub(crate) fn append_event(
             event.payload,
             body.idempotency_key,
             event.occurred_at,
-            trace.as_ref().map(|t| t.0.as_str()),
-            trace.as_ref().map(|t| t.1.as_str()),
-            trace.as_ref().map(|t| t.2.as_str()),
         ],
     );
     match insert_result {

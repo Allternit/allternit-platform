@@ -45,13 +45,6 @@ pub fn phone_key(bot_e164: &str, caller_e164: &str) -> String {
     format!("phone:{bot_e164}:{caller_e164}")
 }
 
-/// The conversation key for calls on a bot's linked real phone (contract C4):
-/// `linked:<deviceId>:<callerE164>`, or `unknown` when the caller withheld their
-/// number. Withheld callers on one phone share a thread.
-pub fn linked_key(device_id: &str, caller_e164: Option<&str>) -> String {
-    format!("linked:{device_id}:{}", caller_e164.filter(|c| is_e164(c)).unwrap_or("unknown"))
-}
-
 // ---------------------------------------------------------------- numbers
 
 #[derive(Debug, Clone, PartialEq)]
@@ -127,28 +120,6 @@ pub async fn resolve_thread_async<R: ThreadRuntime>(db: &DbHandle, rt: &R, numbe
     Ok((thread_id, session))
 }
 
-/// The thread (and its live session) for a call on a bot's linked real phone
-/// (`device_id`, shown to the owner as `label`). No number directory is involved:
-/// the phone is wired to the owner's computer. `caller_e164` is `None` (or not
-/// E.164) when the caller withheld their number.
-pub async fn resolve_thread_for_line_async<R: ThreadRuntime>(db: &DbHandle, rt: &R, bot_id: &str, device_id: &str, label: &str, caller_e164: Option<&str>) -> Result<(String, String), String> {
-    if device_id.is_empty() {
-        return Err("the linked phone has no device id".into());
-    }
-    let caller = caller_e164.filter(|c| is_e164(c));
-    let key = linked_key(device_id, caller);
-    let who = caller.unwrap_or("withheld caller");
-    let title = format!("Phone: {who} on {label}");
-    let objective = format!("Calls between {who} and this bot on the linked phone {label}.");
-    let session = crate::thread_routes::channel_thread(db, rt, bot_id, "phone", &key, &title, &objective).await?;
-    let thread_id: String = db
-        .connect()
-        .map_err(|e| e.to_string())?
-        .query_row("SELECT thread_id FROM bot_thread_sessions WHERE session_id = ?1", params![session], |r| r.get(0))
-        .map_err(|e| e.to_string())?;
-    Ok((thread_id, session))
-}
-
 // ---------------------------------------------------------------- connect (HTTP)
 
 #[derive(serde::Deserialize)]
@@ -199,8 +170,9 @@ async fn sms_relay_h(axum::extract::State(state): axum::extract::State<Arc<crate
     if events.is_empty() {
         return Json(json!({ "ok": true, "ignored": true })).into_response();
     }
-    // Recorded before the queue hears back (it redelivers on an error); the bot turn runs after.
-    crate::channel_transports::accept_and_ack(&state, &acct, tx, events, Default::default()).await
+    // Ack fast: a bot turn can outlive the relay's wait. The queue retries.
+    tokio::spawn(async move { crate::channel_transports::dispatch_events(&state, &acct, tx, events).await });
+    Json(json!({ "ok": true })).into_response()
 }
 
 /// cloud-api's SMS envelope → one inbound message, shaped like [`sms_normalize`].
@@ -413,10 +385,6 @@ impl ChannelTransport for SmsTransport {
     fn provider(&self) -> &'static str {
         "sms"
     }
-    /// Files go out as links to the owner's cloud storage.
-    fn capabilities(&self) -> crate::channel_gateway::Capabilities {
-        crate::channel_gateway::Capabilities { text: true, threads: false, history: false, files_out: true, files_in: false, reactions: false, edits: false, delivery_receipts: false, per_bot_identity: false }
-    }
     /// Telnyx: Ed25519 over `<telnyx-timestamp>|<raw body>`, base64 signature, base64 public key.
     fn verify(&self, secret: &str, headers: &HeaderMap, body: &[u8]) -> Result<(), String> {
         use ed25519_dalek::{Signature, Verifier, VerifyingKey};
@@ -452,17 +420,14 @@ impl ChannelTransport for SmsTransport {
                 Ok(r) => match r.status {
                     200..=299 => r.body["messageId"].as_str().map(str::to_string).ok_or_else(|| PostError::Uncertain("the cloud accepted the text but returned no messageId".into())),
                     500..=599 => Err(PostError::Uncertain(format!("cloud returned {}", r.status))),
-                    // The cloud's daily texting cap is a 429 too, but waiting a minute won't
-                    // clear it: it's a definite refusal with its own slug, not a throttle.
-                    429 if r.body["error"].as_str() == Some("daily_limit") => Err(PostError::Rejected("cloud returned 429: daily_limit".into())),
-                    429 => Err(PostError::rate_limited(&r.body)),
+                    429 => Err(PostError::Rejected("rate limited".into())),
                     s => Err(PostError::Rejected(format!("cloud returned {s}: {}", r.body["error"].as_str().unwrap_or("send refused")))),
                 },
             };
             match sent {
                 Ok(id) => last = Some(id),
                 // Part of the reply already went out: resending the whole thing would double it.
-                Err(PostError::Rejected(e) | PostError::RateLimited { detail: e, .. }) if i > 0 => return Err(PostError::Uncertain(format!("part {} of {} not sent: {e}", i + 1, parts.len()))),
+                Err(PostError::Rejected(e)) if i > 0 => return Err(PostError::Uncertain(format!("part {} of {} not sent: {e}", i + 1, parts.len()))),
                 Err(e) => return Err(e),
             }
         }
@@ -715,30 +680,6 @@ mod tests {
         assert_ne!(t1, t2);
         assert!(resolve_thread_async(&st.db, &Rt, "nope", "+14155550123").await.is_err());
         assert!(resolve_thread_async(&st.db, &Rt, "num-1", "555").await.is_err());
-    }
-
-    #[tokio::test]
-    async fn linked_phone_calls_get_their_own_thread_per_device_and_caller() {
-        let st = setup("linked").await;
-        assert_eq!(linked_key("SER1", Some("+14155550123")), "linked:SER1:+14155550123");
-        assert_eq!(linked_key("SER1", Some("Restricted")), "linked:SER1:unknown");
-        assert_eq!(linked_key("SER1", None), "linked:SER1:unknown");
-        let (t1, s1) = resolve_thread_for_line_async(&st.db, &Rt, "bot-1", "SER1", "Moto", Some("+14155550123")).await.unwrap();
-        assert_eq!(resolve_thread_for_line_async(&st.db, &Rt, "bot-1", "SER1", "Moto", Some("+14155550123")).await.unwrap(), (t1.clone(), s1));
-        // Not the number's thread: a linked phone is its own line.
-        let (tn, _) = resolve_thread_async(&st.db, &Rt, "num-1", "+14155550123").await.unwrap();
-        assert_ne!(t1, tn);
-        // Withheld callers on one phone share one thread; another phone is another thread.
-        let (w1, _) = resolve_thread_for_line_async(&st.db, &Rt, "bot-1", "SER1", "Moto", None).await.unwrap();
-        let (w2, _) = resolve_thread_for_line_async(&st.db, &Rt, "bot-1", "SER1", "Moto", Some("anonymous")).await.unwrap();
-        assert_eq!(w1, w2);
-        assert_ne!(w1, t1);
-        let (o, _) = resolve_thread_for_line_async(&st.db, &Rt, "bot-1", "SER2", "Pixel", None).await.unwrap();
-        assert_ne!(o, w1);
-        let (title, key): (String, String) = st.db.connect().unwrap().query_row("SELECT title, json_extract(origin, '$.channelKey') FROM bot_threads WHERE id = ?1", params![w1], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
-        assert_eq!((title.as_str(), key.as_str()), ("Phone: withheld caller on Moto", "linked:SER1:unknown"));
-        assert!(resolve_thread_for_line_async(&st.db, &Rt, "bot-1", "", "Moto", None).await.is_err());
-        assert!(resolve_thread_for_line_async(&st.db, &Rt, "bot-nope", "SER1", "Moto", None).await.is_err());
     }
 
     #[tokio::test]

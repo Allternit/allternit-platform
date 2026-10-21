@@ -57,8 +57,6 @@ import { PlatformUsagePage } from "@/pages/console/platform/UsagePage";
 import { PlatformComputersPage } from "@/pages/console/platform/ComputersPage";
 import { PlatformWebhooksPage } from "@/pages/console/platform/WebhooksPage";
 import { PlatformBillingPage } from "@/pages/console/platform/BillingPage";
-import { SetupPage } from "@/pages/SetupPage";
-import { useFirstRunSetup } from "@/lib/use-first-run-setup";
 import { usePlatformAuth } from "@/lib/platform-auth-client";
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
@@ -98,20 +96,13 @@ const consoleStubRoutes: Array<{ path: string; element: React.ReactNode }> = [
 
 function HomeRoute() {
   const auth = usePlatformAuth();
-  // New accounts (no org, no keys, no setup record) go to first-run setup once.
-  // Anything unknown resolves to the dashboard, so existing users never wait on it.
-  const firstRun = useFirstRunSetup(auth.isLoaded && !!auth.isSignedIn);
 
-  if (!auth.isLoaded || (auth.isSignedIn && firstRun === "checking")) {
+  if (!auth.isLoaded) {
     return (
       <div className="flex h-screen w-full items-center justify-center bg-[var(--bg-primary)]">
         <div className="size-8 animate-spin rounded-full border-2 border-[var(--accent-primary)] border-t-transparent" />
       </div>
     );
-  }
-
-  if (auth.isSignedIn && firstRun === "setup") {
-    return <Navigate to="/setup" replace />;
   }
 
   if (auth.isSignedIn) {
@@ -155,14 +146,6 @@ export default function App() {
   return (
     <Routes>
       <Route path="/" element={<HomeRoute />} />
-      <Route
-        path="/setup"
-        element={
-          <RequireAuth>
-            <SetupPage />
-          </RequireAuth>
-        }
-      />
       <Route path="/models/*" element={<ModelsPage />} />
       <Route path="/plans/*" element={<PlansPage />} />
       <Route path="/billing/*" element={<BillingRoute />} />

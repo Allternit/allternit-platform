@@ -77,28 +77,6 @@
      "message_delivered"
     ]
    }
-  },
-  {
-   "id": "review_rejects",
-   "goal": "Reply to the thread",
-   "params": {
-    "writable_resources": [
-     "thread:th_1"
-    ]
-   },
-   "script": {
-    "decide": {
-     "T04": "fail"
-    }
-   },
-   "expect": {
-    "status": "failed",
-    "stopped_at": "T04",
-    "not_visited": [
-     "T05",
-     "T06"
-    ]
-   }
   }
  ]
 }

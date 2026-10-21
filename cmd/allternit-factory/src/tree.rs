@@ -607,9 +607,6 @@ fn serve(ctx: &Ctx, args: ServeArgs) -> u8 {
     } else {
         match args.socket {
             Some(path) => Some(path),
-            // Windows has no Unix socket listener: the engine serves HTTP on
-            // its port only (that is what Desktop and gizzi use there).
-            None if cfg!(windows) => None,
             None => match std::env::var_os("HOME").filter(|h| !h.is_empty()) {
                 Some(home) => Some(PathBuf::from(home).join(".allternit/factory/factory.sock")),
                 None => {
@@ -629,7 +626,7 @@ fn serve(ctx: &Ctx, args: ServeArgs) -> u8 {
     let peer = match peer_port {
         None => None,
         Some(port) => {
-            let home = allternit_factory_engine::platform::user_home();
+            let home = std::env::var_os("HOME").filter(|h| !h.is_empty()).map(PathBuf::from);
             match allternit_factory_engine::api::peer::PeerOptions::resolve(port, home.as_deref()) {
                 Ok(opts) => Some(opts),
                 Err(e) => return fail(ctx, Code::Usage, &format!("{e:#}"), Some("Pair this computer first, or start without --peer-port.")),
@@ -848,10 +845,12 @@ fn workspace(ctx: &Ctx, cmd: WorkspaceCmd) -> u8 {
                 return crate::work::node_list_mine(ctx);
             }
             let mut args = vec!["wih".to_string(), "list".to_string()];
-            args.push(if ready { "--ready" } else { "--all" }.into());
+            if ready {
+                args.push("--ready".into());
+            }
             opt(&mut args, "--dag", dag);
             let shape: fn(&str) -> serde_json::Value =
-                if ready { node_list_ready_json } else { node_list_open_json };
+                if ready { node_list_ready_json } else { node_list_claimed_json };
             run_shaped(ctx, Target::Rails(args), Some(shape))
         }
         WorkspaceCmd::Approve { node, gate, judge, actor, reason, dry_run: dry } => {
@@ -925,18 +924,15 @@ fn node_list_ready_json(text: &str) -> serde_json::Value {
     json!({ "nodes": nodes })
 }
 
-/// `wih list --all` prints `<dag> <node> <state> <title…>` per open node
-/// (state: ready, claimed or waiting).
-fn node_list_open_json(text: &str) -> serde_json::Value {
+/// `wih list` prints `<wih> <node>` per claimed (open) node.
+fn node_list_claimed_json(text: &str) -> serde_json::Value {
     let nodes: Vec<_> = text
         .lines()
         .filter_map(|line| {
-            let mut parts = line.trim().splitn(4, ' ');
-            let dag = parts.next().filter(|s| !s.is_empty())?;
+            let mut parts = line.split_whitespace();
+            let wih = parts.next()?;
             let node = parts.next()?;
-            let state = parts.next()?;
-            let title = parts.next().unwrap_or("");
-            Some(json!({ "dag": dag, "node": node, "title": title, "state": state }))
+            Some(json!({ "wih": wih, "node": node, "state": "claimed" }))
         })
         .collect();
     json!({ "nodes": nodes })
@@ -953,12 +949,9 @@ mod tests {
             json!({ "nodes": [{ "dag": "d1", "node": "n2", "title": "Fix the build", "state": "ready" }] })
         );
         assert_eq!(
-            node_list_open_json("d1 n2 claimed Fix the build\nd1 n3 waiting Ship it\n"),
-            json!({ "nodes": [
-                { "dag": "d1", "node": "n2", "title": "Fix the build", "state": "claimed" },
-                { "dag": "d1", "node": "n3", "title": "Ship it", "state": "waiting" },
-            ] })
+            node_list_claimed_json("wih_1 n2\n"),
+            json!({ "nodes": [{ "wih": "wih_1", "node": "n2", "state": "claimed" }] })
         );
-        assert_eq!(node_list_open_json(""), json!({ "nodes": [] }));
+        assert_eq!(node_list_claimed_json(""), json!({ "nodes": [] }));
     }
 }

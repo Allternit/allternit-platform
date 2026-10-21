@@ -3162,7 +3162,7 @@ pub async fn run_service_with_peer(
         // Not paired at start: listen once this computer is paired (a cloud
         // computer pairs itself after its engine is already up).
         None => {
-            if let Some(home) = crate::platform::user_home() {
+            if let Some(home) = std::env::var_os("HOME").filter(|h| !h.is_empty()) {
                 let state = state.clone();
                 tokio::spawn(async move {
                     let opts = wait_until_paired(std::path::Path::new(&home), PAIRING_POLL).await;
@@ -3201,10 +3201,7 @@ pub async fn run_service_with_peer(
     }
     #[cfg(not(unix))]
     if let Some(path) = socket {
-        anyhow::bail!(
-            "--socket {} is not supported on this platform (no Unix sockets); the engine serves HTTP on its port, so drop --socket",
-            path.display()
-        );
+        anyhow::bail!("unix socket {} is not supported on this platform", path.display());
     }
 
     axum::serve(listener, app.into_make_service_with_connect_info::<std::net::SocketAddr>()).await?;

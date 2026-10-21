@@ -280,11 +280,10 @@ def _context_uia(p: dict[str, Any], pid_hint: int | None, elements: dict[str, An
     point, from UI Automation. No page URL (the address bar is just an edit
     control; URLs stay the browser toolset's business)."""
     try:
-        from .com_init import init_com
-
-        init_com(multithreaded=False)
+        import comtypes  # type: ignore
         import comtypes.client  # type: ignore
 
+        comtypes.CoInitialize()
         comtypes.client.GetModule("UIAutomationCore.dll")
         from comtypes.gen import UIAutomationClient as U  # type: ignore
 

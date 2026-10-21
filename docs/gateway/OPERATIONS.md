@@ -12,7 +12,7 @@ Index: [README.md](README.md). Setup for a dev machine: [QUICKSTART.md](QUICKSTA
 
 | Variable | Default | Effect | Source |
 |---|---|---|---|
-| `SUBS_GATEWAY_STATE_DIR` | `~/.allternit/subscriptions/` | State, `state.db`, `gateway.sock` (on Windows a named pipe `\\.\pipe\allternit-subs-gateway-<hash of the state dir>`), `keychain.json`, `policy.yaml` | `src/config.ts` |
+| `SUBS_GATEWAY_STATE_DIR` | `~/.allternit/subscriptions/` | State, `state.db`, `gateway.sock`, `keychain.json`, `policy.yaml` | `src/config.ts` |
 | `SUBS_GATEWAY_ADAPTERS_DIR` | built-in adapters dir | Where `adapters/*/aai.ts` are loaded from | `src/config.ts` |
 | `SUBS_GATEWAY_KEYCHAIN` | `keychain` | `file` or `keychain`; anything else throws | `src/config.ts` |
 | `SUBS_GATEWAY_TCP`, `_TCP_HOST`, `_TCP_PORT` | off, `127.0.0.1`, `7788` | TCP listener (token required). Unix socket is always on. | `src/config.ts` |

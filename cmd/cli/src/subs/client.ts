@@ -8,21 +8,16 @@
  * account cli-token).
  */
 import { execFileSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
 import http from 'node:http';
 import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 
 export function gatewayStateDir(env: NodeJS.ProcessEnv = process.env): string {
   return env.SUBS_GATEWAY_STATE_DIR ?? join(homedir(), '.allternit', 'subscriptions');
 }
 
-// Same rule as the gateway's gatewaySocketPathFor: a named pipe on Windows.
-export function gatewaySocketPath(env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): string {
-  const stateDir = gatewayStateDir(env);
-  if (platform !== 'win32') return join(stateDir, 'gateway.sock');
-  const id = createHash('sha256').update(resolve(stateDir).toLowerCase()).digest('hex').slice(0, 16);
-  return `\\\\.\\pipe\\allternit-subs-gateway-${id}`;
+export function gatewaySocketPath(env: NodeJS.ProcessEnv = process.env): string {
+  return join(gatewayStateDir(env), 'gateway.sock');
 }
 
 export function resolveGatewayToken(env: NodeJS.ProcessEnv = process.env): string {

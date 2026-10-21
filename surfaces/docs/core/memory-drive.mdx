@@ -16,14 +16,6 @@ implements the published format and includes none of its code). The kernel's
 | --- | --- |
 | `memory_drive.rs` | Storage core: bare repo init, snapshot/tree/file/history/diff, the entry format, path/size/secret validation, batch commits published with `update-ref` compare-and-swap, `validate_push`. |
 | `memory_drive_service.rs` | Registry (`memory_drives`, one row per drive, pointing at a `brains` row), provisioning, the index projection, import. |
-| `memory_drive_text_import.rs` | Imports from other assistants (pasted lists, the export prompt's answer) and the shared checks every import runs. |
-| `memory_copies.rs` | Copies of the drive and ledger in a chosen folder or the person's own git remote. |
-| `ledger_edit.rs` | Applies an edited ledger file to the real bot, routine, workflow, workspace file or skill. |
-| `ledger_restore.rs` | Restores a ledger into an account: preview, paused schedules, credentials never written back. |
-| `ledger.rs`, `ledger_repo.rs` | The ledger: collects everything the person built into files and commits hourly snapshots to `ledger.git`. |
-| `memory_capture.rs` | Capture switches, owner-only channel capture, Gizzi turns, the periodic agent-folder import, counts and forget-by-source. |
-| `memory_drive_chat_import.rs` | Finds memories in exported chats with the memory model, and imports the facts the person keeps. |
-| `memory_drive_agent_import.rs` | Imports from Claude Code, Codex, Hermes and OpenClaw memory files on the computer. |
 | `memory_drive_writer.rs` | The one writer for personal memory. Every kernel write path calls `commit_facts`. |
 | `memory_drive_transport.rs` | The pre-receive hook (the API binary run as `allternit-api memory-drive-pre-receive`). |
 | `memory_drive_scopes.rs` | Shared drives, the permission matrix, mounts, the questions board, the cowork mirror. |

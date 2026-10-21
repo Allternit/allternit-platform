@@ -11,8 +11,7 @@ The agent workspace UI (`ai.allternit.com`) lives in the private satellite repo
 ## Quick start
 
 Requires Node 22+ (pnpm 10 via `packageManager` field) and the stable Rust toolchain
-(`rust-toolchain.toml`). Building `allternit-api` also needs `protoc`
-(`brew install protobuf` / `apt-get install protobuf-compiler`).
+(`rust-toolchain.toml`).
 
 ```bash
 # Install Node dependencies (pnpm only — never npm/bun for workspace deps)

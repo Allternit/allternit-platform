@@ -505,13 +505,8 @@ pub fn handoff_all_in_flight(
     let ids: Vec<String> = {
         let mut stmt = conn
             .prepare(
-                // Only work that has started: a queued job (an idle Cowork
-                // session's placeholder, or a tool record that never closed)
-                // stays local and is picked up again on the next launch.
-                // Handing those off sent every idle session to the cloud on
-                // each quit (Eoj 2026-10-15: idle sessions needn't keep running).
                 "SELECT id FROM cowork_jobs
-                 WHERE state IN ('leased','running')",
+                 WHERE state IN ('queued','leased','running')",
             )
             .map_err(store_err)?;
         let rows = stmt

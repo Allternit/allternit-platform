@@ -14,9 +14,6 @@ The macOS Accessibility API is the OS-sanctioned automation interface: the user 
 | `AxReplayDriver` (static snapshots or a scripted app) | `_shared/ax/replay.ts` |
 | Claude Desktop transport | `claude-desktop/ax/` (pack `claude-ax-v1`, bundle `com.anthropic.claudefordesktop`) |
 | ChatGPT.app transport for `chatgpt-dots` | `chatgpt-dots/ax/` (pack `chatgpt-app-ax-v1`, bundle `com.openai.chat`) |
-| ChatGPT desktop-app transport | `chatgpt-desktop/` (pack `chatgpt-desktop-ax-v1`, bundles `com.openai.chat` + `com.openai.codex`) |
-| Kimi desktop-app transport | `kimi-desktop/` (pack `kimi-desktop-ax-v1`, bundle `com.moonshot.kimichat`) |
-| Generic chat-app provider for route `desktop-app-ax` (contract table `AX_CHAT_CONTRACT`) | `_shared/ax/chat-app.ts` + offline `chat-app-fixtures.ts` |
 
 ## How the lane works
 
@@ -54,12 +51,6 @@ Programmatic: `createClaudeDesktopProvider({ transport: "ax", axBinPath, axConse
 Every selector is **unverified**. Trees under `claude-desktop/ax/fixtures/*.json` are hand-built structure, not recordings. Nothing
 here has attached to a running app. Electron apps expose web content to AX only after `AXManualAccessibility=true` (set by `attach`);
 whether Claude Desktop's remotely loaded claude.ai view exposes the composer/turns with the labels guessed here is the main open question.
-
-**2026-10-17 (this Mac, read-only recon):** the Accessibility permission for the `ax-bridge` helper **is granted**
-(`{"cmd":"trust"}` → `trusted:true`). None of the three vendor apps were running (ChatGPT.app `com.openai.codex` v26.908.70816,
-Claude.app v2.42304.0, Kimi.app `com.moonshot.kimichat` v3.2.15 — all Electron (this Mac's ChatGPT.app is OpenAI's Electron build, not the native `com.openai.chat`); Claude re-verified to refuse a debug port,
-the other two carry no such vendor check), and none were launched to force a recording, so every pack below stays
-hand-built/unverified until a consented live session. Bundle analysis only — no app data was read.
 
 ## Needs a consented live session
 

@@ -17,8 +17,6 @@ import {
 } from "../store/queries.js";
 import { firefoxProfileFor, readFirefoxCookies, type ImportableCookie, type SessionStorageKey } from "../worker/login_browser.js";
 import { callerOf, requireScope, type GatewayDeps } from "./server.js";
-import type { LaneRuntime } from "../worker/pool.js";
-import { BROWSER_LANES_OFF, browserLanesEnabled } from "../local_desktop.js";
 
 const patchAccountSchema = z
   .object({ preferred: z.literal(true).optional(), label: z.string().trim().min(1).max(60).optional() })
@@ -35,7 +33,7 @@ const connectSchema = z.object({
 });
 
 // The providers people pick from in Settings; each gains an adapter in turn.
-const KNOWN_PROVIDERS: Record<string, string> = { chatgpt: "ChatGPT", claude: "Claude", kimi: "Kimi", google: "Gemini", microsoft: "Copilot", abacusai: "Abacus.AI", "gemini-spark": "Gemini Spark", slashy: "Slashy" };
+const KNOWN_PROVIDERS: Record<string, string> = { chatgpt: "ChatGPT", claude: "Claude", kimi: "Kimi", google: "Gemini", microsoft: "Copilot" };
 
 export function providerName(provider: string): string {
   return KNOWN_PROVIDERS[provider] ?? provider.charAt(0).toUpperCase() + provider.slice(1);
@@ -259,10 +257,6 @@ export function accountsRouter(deps: GatewayDeps, opts: AccountsRouterOptions = 
 
   // Opens the login window and starts watching for the sign-in.
   const openLogin = async (account: Account) => {
-    // The person's own computer: no browser sign-in until they turn browser lanes on (local_desktop.ts).
-    if (!browserLanesEnabled(deps.config.stateDir)) {
-      return { error: 409, body: { error: "browser_lanes_off", detail: BROWSER_LANES_OFF } };
-    }
     const origin = manifestFor(account.provider)?.origins[0];
     if (!origin) return { error: 409, body: { error: "no_adapter_for_provider", provider: account.provider } };
     const lane = { provider: account.provider, account_id: account.account_id };
@@ -320,13 +314,12 @@ export function accountsRouter(deps: GatewayDeps, opts: AccountsRouterOptions = 
   router.get("/v1/providers", requireScope("accounts:manage"), (_req: Request, res: Response) => {
     const registered = new Set((deps.adapterRegistry?.adapters ?? []).map((a) => a.manifest.provider as string));
     const ids = [...new Set([...Object.keys(KNOWN_PROVIDERS), ...registered])];
-    const lanesOn = browserLanesEnabled(deps.config.stateDir);
     res.json(
       ids.map((id) => ({
         id,
         name: providerName(id),
         supported: registered.has(id),
-        login_supported: registered.has(id) && Boolean(deps.loginBrowser && deps.pool) && lanesOn,
+        login_supported: registered.has(id) && Boolean(deps.loginBrowser && deps.pool),
       }))
     );
   });
@@ -579,56 +572,6 @@ export function accountsRouter(deps: GatewayDeps, opts: AccountsRouterOptions = 
     if (parsed.data.preferred === true) setPreferredAccount(deps.db, account.account_id);
     const fresh = getAccount(deps.db, account.account_id);
     res.json(fresh ? accountView(fresh) : null);
-  });
-
-  // Memory Drive reads: what the provider remembers about the person, the
-  // history list and one past chat. Read-only and non-spending: they never
-  // type, click or send, and an account mid-task answers 409 busy.
-  const memoryRead = <T>(read: (rt: LaneRuntime, req: Request) => Promise<T> | null) =>
-    async (req: Request, res: Response) => {
-      const account = getAccount(deps.db, req.params.id);
-      if (!account) {
-        res.status(404).json({ error: "account_not_found", account_id: req.params.id });
-        return;
-      }
-      if (!account.enabled) {
-        res.status(409).json({ error: "account_disabled", account_id: account.account_id });
-        return;
-      }
-      if (!deps.pool) {
-        res.status(503).json({ error: "no_worker_pool" });
-        return;
-      }
-      try {
-        const out = await deps.pool.readForMemory({ provider: account.provider, account_id: account.account_id }, (rt) => read(rt, req));
-        if (out.ok) {
-          if (out.value === null) res.status(404).json({ error: "not_found" });
-          else res.json(out.value);
-          return;
-        }
-        const status = out.reason === "not_supported" ? 501 : 409;
-        res.status(status).json({ error: out.reason, session_health: out.health ?? account.session_health, user_action: userActionFor(account) });
-      } catch (err) {
-        res.status(502).json({ error: "read_failed", detail: err instanceof Error ? err.message.slice(0, 200) : "read failed" });
-      }
-    };
-
-  router.get("/v1/accounts/:id/memory", requireScope("accounts:manage"), memoryRead((rt) => rt.readMemory?.() ?? null));
-  router.get(
-    "/v1/accounts/:id/threads",
-    requireScope("accounts:manage"),
-    memoryRead((rt, req) => {
-      const limit = Math.max(1, Math.min(100, Number(req.query.limit) || 20));
-      return rt.listThreads?.({ limit }) ?? null;
-    })
-  );
-  const readThread = memoryRead((rt, req) => rt.readThreadText?.(String(req.params.threadId)) ?? null);
-  router.get("/v1/accounts/:id/threads/:threadId", requireScope("accounts:manage"), (req: Request, res: Response) => {
-    if (!/^[\w-]{1,80}$/.test(String(req.params.threadId))) {
-      res.status(400).json({ error: "bad_thread_id" });
-      return;
-    }
-    return readThread(req, res);
   });
 
   router.post(

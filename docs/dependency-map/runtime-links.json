@@ -119,84 +119,6 @@
       "label": "cloud computer guest (in-VM agent)",
       "kind": "module",
       "path": "allternit/cmd/allternit-computer-cloud/guest"
-    },
-    {
-      "id": "allternit/hardware/usb-agent",
-      "label": "Allternit USB Agent firmware",
-      "kind": "module",
-      "path": "allternit/hardware/usb-agent"
-    },
-    {
-      "id": "external:openmausbot-local-api",
-      "label": "openmausbot authenticated local API",
-      "kind": "external",
-      "path": "allternit/services/subscription-gateway/adapters/openmausbot/provider.ts"
-    },
-    {
-      "id": "external:codync-local-api",
-      "label": "codync authenticated local API",
-      "kind": "external",
-      "path": "allternit/services/subscription-gateway/adapters/codync/provider.ts"
-    },
-    {
-      "id": "external:hivekeep-local-api",
-      "label": "hivekeep authenticated local API",
-      "kind": "external",
-      "path": "allternit/services/subscription-gateway/adapters/hivekeep/provider.ts"
-    },
-    {
-      "id": "external:invisible-dots-local-api",
-      "label": "Invisible Dots authenticated local API",
-      "kind": "external",
-      "path": "allternit/services/subscription-gateway/adapters/invisible-dots/provider.ts"
-    },
-    {
-      "id": "external:opendots-copilotkit-runtime",
-      "label": "CopilotKit OpenDots authenticated local runtime and Intelligence realtime",
-      "kind": "external",
-      "path": "allternit/services/subscription-gateway/adapters/opendots-copilotkit/provider.ts"
-    },
-    {
-      "id": "external:ds-bot-dsh",
-      "label": "DS Bot DSH signed-cookie local session RPC",
-      "kind": "external",
-      "path": "allternit/services/subscription-gateway/adapters/ds-bot/provider.ts"
-    },
-    {
-      "id": "external:openmuse-copilotkit-runtime",
-      "label": "OpenMuse live AG-UI HTTP runtime",
-      "kind": "external",
-      "path": "allternit/services/subscription-gateway/adapters/openmuse-copilotkit/provider.ts"
-    },
-    {
-      "id": "allternit/cmd/allternit-sideload",
-      "label": "allternit-sideload (Phone Link Apple ID signer)",
-      "kind": "crate",
-      "path": "allternit/cmd/allternit-sideload"
-    },
-    {
-      "id": "external:apple-developer-services",
-      "label": "Apple ID sign-in (GrandSlam) + developer services",
-      "kind": "external",
-      "path": "allternit/cmd/allternit-sideload/src/signer.rs"
-    },
-    {
-      "id": "external:anisette-v3",
-      "label": "anisette v3 server (anisette.allternit.com, not hosted yet)",
-      "kind": "external",
-      "path": "allternit/cmd/allternit-sideload/README.md"
-    },
-    {
-      "id": "allternit/cmd/allternit-api/src/phone_ws.rs",
-      "label": "phone stream relay",
-      "kind": "module",
-      "path": "allternit/cmd/allternit-api/src/phone_ws.rs"
-    },
-    {
-      "id": "allternit/cmd/allternit-cloud-api/src/routes/registered_phones.rs",
-      "label": "registered phones",
-      "kind": "module",
-      "path": "allternit/cmd/allternit-cloud-api/src/routes/registered_phones.rs"
     }
   ],
   "edges": [
@@ -463,7 +385,7 @@
     },
     {
       "source": "allternit/cmd/allternit-api/src/computer_*",
-      "target": "allternit/cmd/allternit-api/src/agency_api/decisions",
+      "target": "allternit/cmd/allternit-api/src/agency_api",
       "kind": "in-process call: run_subtask's typed decisions (decisions::decide_value, kinds element/verify), the safety monitor (kind safety), the Best-of-N judge (kind judge, fast tiers then oracle under the cost cap) and their outcomes (decisions::record_outcome)",
       "evidence": [
         "allternit/cmd/allternit-api/src/computer_subtask.rs",
@@ -475,7 +397,7 @@
       ]
     },
     {
-      "source": "allternit/cmd/allternit-api/src/agency_api/decisions",
+      "source": "allternit/cmd/allternit-api/src/agency_api",
       "target": "allternit/domains/decision-runtime",
       "kind": "HTTP POST /v1/score on loopback (ALLTERNIT_DECISIONS_LOCAL_URL + token)",
       "evidence": [
@@ -518,142 +440,6 @@
         "allternit-ai/src/components/computers/ComputerTransferControls.tsx",
         "allternit/cmd/allternit-api/src/computer_history.rs",
         "allternit/cmd/allternit-api/src/computer_transfer.rs"
-      ]
-    },
-    {
-      "source": "allternit/surfaces/allternit-desktop",
-      "target": "allternit/hardware/usb-agent",
-      "kind": "TCP USBA/1 on port 7300, board dials in over Wi-Fi (found via mDNS _allternit-usba._tcp): mutual HMAC handshake, signed sequenced input commands; USB serial setup (prov: Wi-Fi, desk id, 32-byte key)",
-      "evidence": [
-        "allternit/surfaces/allternit-desktop/src/main/phone-usb-agent-protocol.ts",
-        "allternit/surfaces/allternit-desktop/src/main/phone-usb-agent-provision.ts",
-        "allternit/hardware/usb-agent/firmware/usb_agent/usb_agent.ino"
-      ]
-    },
-    {
-      "source": "allternit-ai/src/components/computers",
-      "target": "allternit/surfaces/allternit-desktop",
-      "kind": "Electron IPC phone:* (Android pairing, screenshots, in-app live view: phone:stream-* pushes Annex-B H.264 chunks + phone:stream-{start,stop,status,input,display-power}) and phone:usb-* (USB Agent setup, calibrate, stop, forget)",
-      "evidence": [
-        "allternit/surfaces/allternit-desktop/src/preload/index.ts",
-        "allternit/surfaces/allternit-desktop/src/main/phone-ipc.ts",
-        "allternit/surfaces/allternit-desktop/src/main/phone-scrcpy.ts",
-        "allternit/surfaces/allternit-desktop/src/main/phone-stream.ts",
-        "allternit-ai/src/lib/phones-bridge.ts"
-      ]
-    },
-    {
-      "source": "allternit/services/subscription-gateway",
-      "target": "external:openmausbot-local-api",
-      "kind": "authenticated loopback HTTP; request-matched native bot replies",
-      "evidence": [
-        "allternit/services/subscription-gateway/adapters/openmausbot/provider.ts",
-        "allternit/surfaces/docs/guides/local-vendor-bots.mdx"
-      ]
-    },
-    {
-      "source": "allternit/services/subscription-gateway",
-      "target": "external:codync-local-api",
-      "kind": "authenticated loopback HTTP; request-matched native bot replies",
-      "evidence": [
-        "allternit/services/subscription-gateway/adapters/codync/provider.ts",
-        "allternit/surfaces/docs/guides/local-vendor-bots.mdx"
-      ]
-    },
-    {
-      "source": "allternit/services/subscription-gateway",
-      "target": "external:hivekeep-local-api",
-      "kind": "authenticated loopback HTTP; request-matched native bot replies",
-      "evidence": [
-        "allternit/services/subscription-gateway/adapters/hivekeep/provider.ts",
-        "allternit/surfaces/docs/guides/local-vendor-bots.mdx"
-      ]
-    },
-    {
-      "source": "allternit/services/subscription-gateway",
-      "target": "external:invisible-dots-local-api",
-      "kind": "authenticated loopback HTTP; accepted message IDs matched to native conversation replies",
-      "evidence": [
-        "allternit/services/subscription-gateway/adapters/invisible-dots/provider.ts",
-        "allternit/surfaces/docs/guides/local-vendor-bots.mdx"
-      ]
-    },
-    {
-      "source": "allternit/services/subscription-gateway",
-      "target": "external:opendots-copilotkit-runtime",
-      "kind": "owner-token loopback HTTP and approved Intelligence WebSocket origin; isolated conversation IDs",
-      "evidence": [
-        "allternit/services/subscription-gateway/adapters/opendots-copilotkit/provider.ts",
-        "allternit/surfaces/docs/guides/local-vendor-bots.mdx"
-      ]
-    },
-    {
-      "source": "allternit/services/subscription-gateway",
-      "target": "external:ds-bot-dsh",
-      "kind": "launch-token exchange and signed-cookie loopback RPC; caller-matched completed turns",
-      "evidence": [
-        "allternit/services/subscription-gateway/adapters/ds-bot/provider.ts",
-        "allternit/surfaces/docs/guides/local-vendor-bots.mdx"
-      ]
-    },
-    {
-      "source": "allternit/services/subscription-gateway",
-      "target": "external:openmuse-copilotkit-runtime",
-      "kind": "access-key session exchange and authenticated loopback AG-UI SSE; own thread/run completion",
-      "evidence": [
-        "allternit/services/subscription-gateway/adapters/openmuse-copilotkit/provider.ts",
-        "allternit/surfaces/docs/guides/local-vendor-bots.mdx"
-      ]
-    },
-    {
-      "source": "allternit/cmd/gizzi-code/src/runtime/drivers",
-      "target": "allternit/cmd/gizzi-code/src/runtime/session",
-      "kind": "events",
-      "evidence": [
-        "allternit/cmd/gizzi-code/src/runtime/drivers/local-cli-driver.ts",
-        "allternit/cmd/gizzi-code/src/runtime/session/cli-background-tasks.ts"
-      ]
-    },
-    {
-      "source": "allternit/surfaces/allternit-desktop",
-      "target": "allternit/cmd/allternit-sideload",
-      "kind": "sidecar (optional; JSON lines over stdio, signs the iPhone helper with the user's Apple ID)",
-      "evidence": [
-        "allternit/surfaces/allternit-desktop/src/main/phone-ios-runner.ts",
-        "allternit/surfaces/allternit-desktop/scripts/prepare-sideload.cjs"
-      ]
-    },
-    {
-      "source": "allternit/cmd/allternit-sideload",
-      "target": "external:apple-developer-services",
-      "kind": "HTTPS (isideload): Apple ID login + 2FA, certificates, App IDs, devices, profiles",
-      "evidence": [
-        "allternit/cmd/allternit-sideload/src/signer.rs"
-      ]
-    },
-    {
-      "source": "allternit/cmd/allternit-sideload",
-      "target": "external:anisette-v3",
-      "kind": "HTTPS + WebSocket anisette v3 (provisioning, headers)",
-      "evidence": [
-        "allternit/cmd/allternit-sideload/src/main.rs"
-      ]
-    },
-    {
-      "source": "allternit/cmd/allternit-api/src/phone_ws.rs",
-      "target": "allternit/cmd/allternit-cloud-api/src/routes/registered_phones.rs",
-      "kind": "authenticated HTTP (runtime device bearer): upsert + list registered phones by account; identity + last_seen only, never stream data",
-      "evidence": [
-        "allternit/cmd/allternit-api/src/phone_ws.rs",
-        "allternit/cmd/allternit-cloud-api/src/routes/registered_phones.rs"
-      ]
-    },
-    {
-      "source": "surface:ai",
-      "target": "allternit/cmd/allternit-api/src/phone_ws.rs",
-      "kind": "authenticated HTTP + public token-gated websocket (/api/v1/phones, /api/v1/phones/:serial/ws-token, /ws/phones/:serial/stream)",
-      "evidence": [
-        "allternit/cmd/allternit-api/src/phone_ws.rs"
       ]
     }
   ]

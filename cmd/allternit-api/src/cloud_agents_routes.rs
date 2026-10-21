@@ -20,11 +20,6 @@
 //!    gating stamps `requires_approval` on stored `tool_calls` events (see
 //!    `beta_session_routes::append_event`).
 //!
-//! Runs (`input` at create, `user.message` events) are executed by the
-//! node's in-process `session_worker`, which appends `agent_message` →
-//! `agent.message`, `tool_calls` → `agent.tool_use`, and the terminal
-//! `turn.completed`/`turn.failed` + `session.idle` events.
-//!
 //! Completions/Responses (`agents_v1_routes`) are a separate Layer A surface
 //! and are untouched here. There is deliberately no public `/runtimes`
 //! resource and no `OpenAI-Beta` header requirement.
@@ -449,7 +444,6 @@ fn translate_event(
             ),
         ],
         "user_interrupt" => vec![base("user.interrupt", data, event_id.to_string())],
-        "agent_message" => vec![base("agent.message", data, event_id.to_string())],
         "tool_calls" => vec![base("agent.tool_use", data, event_id.to_string())],
         "turn_completed" => vec![base("turn.completed", data, event_id.to_string())],
         "turn_failed" => vec![base("turn.failed", data, event_id.to_string())],
@@ -1177,9 +1171,8 @@ async fn send_cloud_events(
                     Ok::<Value, rusqlite::Error>(event)
                 }
                 "user.interrupt" => {
-                    let cancelled = tx.execute(
-                        "UPDATE beta_work_tasks SET status = 'cancelled', error = 'interrupted',
-                         lease_worker_id = NULL, lease_expires_at = NULL, updated_at = CURRENT_TIMESTAMP
+                    tx.execute(
+                        "UPDATE beta_work_tasks SET status = 'cancelled', updated_at = CURRENT_TIMESTAMP
                          WHERE session_id = ?1 AND user_id = ?2
                          AND status IN ('queued', 'leased', 'running')",
                         params![session_id, user_id],
@@ -1190,17 +1183,6 @@ async fn send_cloud_events(
                         "user_interrupt",
                         &event.data.clone().unwrap_or_else(|| json!({})),
                     )?;
-                    // Close the interrupted turn here: the session worker
-                    // sees the task cancelled and stops without writing
-                    // terminal events of its own.
-                    if cancelled > 0 {
-                        beta::emit_turn_terminal(
-                            &tx,
-                            &session_id,
-                            "failed",
-                            &json!({"error": "interrupted", "code": "interrupted", "retryable": false}),
-                        )?;
-                    }
                     tx.commit()?;
                     Ok::<Value, rusqlite::Error>(event)
                 }

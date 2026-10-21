@@ -6,10 +6,6 @@
 //!   option scoring on MLX (Apple silicon) or llama.cpp (everything else).
 //! - `head`: the slot for the kind's live flywheel heads (`super::flywheel`),
 //!   expanded per decision; empty until a head earns promotion.
-//! - `open`: a self-hosted open-weight decision model behind the
-//!   Jev/SystemOne wire format (`POST /v1/systemone`): Liquid d1-3B,
-//!   Cloudflare Clef / Clef-flash (SGLang), vLLM-SR d3. Off until
-//!   `ALLTERNIT_DECISIONS_OPEN_URL` is set; no vendor gate, it is ours.
 //! - `vendor` (OpenAI Decisions API), `typesafe` (TypeSafe Jev): optional
 //!   vendor fast paths (`super::vendors`), off unless a key is set and the
 //!   decision's project is enabled for them.
@@ -120,53 +116,6 @@ impl DecisionBackend for LocalScorer {
     }
 }
 
-// ── open-weight decision model (Jev/SystemOne wire format) ───────────────────
-
-pub struct OpenWeights;
-
-impl OpenWeights {
-    pub const DEFAULT_MODEL: &'static str = "LiquidAI/d1-3B";
-
-    /// The `/v1/systemone` endpoint: a full URL, or a base URL it is appended to.
-    fn url() -> Option<String> {
-        env("ALLTERNIT_DECISIONS_OPEN_URL").map(|u| {
-            let u = u.trim_end_matches('/');
-            if u.ends_with("/v1/systemone") { u.to_string() } else { format!("{u}/v1/systemone") }
-        })
-    }
-}
-
-#[async_trait]
-impl DecisionBackend for OpenWeights {
-    fn name(&self) -> &'static str {
-        "open"
-    }
-    fn vision(&self) -> bool {
-        false
-    }
-    fn enabled(&self) -> bool {
-        Self::url().is_some()
-    }
-    async fn decide(&self, q: &Query<'_>) -> Result<Answer, String> {
-        let url = Self::url().ok_or("open-weight decision model not configured")?;
-        let model = env("ALLTERNIT_DECISIONS_OPEN_MODEL").unwrap_or_else(|| Self::DEFAULT_MODEL.into());
-        let mut rq = LocalScorer::client().post(&url).json(&super::vendors::TypeSafeJev::request(q, &model));
-        if let Some(t) = env("ALLTERNIT_DECISIONS_OPEN_TOKEN") {
-            rq = rq.bearer_auth(t);
-        }
-        let resp = rq.send().await.map_err(|e| format!("open-weight model unreachable: {}", e.without_url()))?;
-        let status = resp.status();
-        let v: Value = resp.json().await.map_err(|e| format!("open-weight model reply: {}", e.without_url()))?;
-        if !status.is_success() {
-            let msg = v["error"]["message"].as_str().or(v["error"].as_str()).or(v["detail"].as_str()).unwrap_or("");
-            return Err(format!("open-weight model {status}: {}", truncate(msg, 200)));
-        }
-        let mut a = super::vendors::TypeSafeJev::parse(&v, &q.ids).map_err(|e| e.replace("typesafe", "open-weight model"))?;
-        a.detail["model"] = v["model"].as_str().map(Value::from).unwrap_or_else(|| Value::from(model));
-        Ok(a)
-    }
-}
-
 // ── oracle (planner model via gizzi) ────────────────────────────────────────
 
 pub struct Oracle;
@@ -249,7 +198,7 @@ fn truncate(s: &str, n: usize) -> String {
 
 /// The configured chain, in escalation order.
 pub fn chain() -> Vec<Box<dyn DecisionBackend>> {
-    let order = env("ALLTERNIT_DECISIONS_CHAIN").unwrap_or_else(|| "head,local,open,vendor,typesafe,oracle".into());
+    let order = env("ALLTERNIT_DECISIONS_CHAIN").unwrap_or_else(|| "head,local,vendor,typesafe,oracle".into());
     order
         .split(',')
         .filter_map(|n| backend(n.trim()))
@@ -260,7 +209,6 @@ pub fn backend(name: &str) -> Option<Box<dyn DecisionBackend>> {
     Some(match name {
         "head" => Box::new(super::flywheel::HeadSlot),
         "local" => Box::new(LocalScorer),
-        "open" => Box::new(OpenWeights),
         "vendor" => Box::new(super::vendors::OpenAiDecisions),
         "typesafe" => Box::new(super::vendors::TypeSafeJev),
         "oracle" => Box::new(Oracle),

@@ -7,12 +7,6 @@ export const ADAPTER_ID = "claude-desktop";
 export const AGENT_ID = "claude-desktop";
 export const APP_NAME = "Claude"
 export const COWORK_AGENT_ID = "claude-desktop:cowork";
-/**
- * Route ids this adapter serves (the parallel route registry keys on these exact ids).
- * Claude is AX-only: the CDP route is vendor-blocked (CLAUDE_CDP_AUTH, see README recon, re-verified
- * 2026-10-17 against v2.42304.0), so only `desktop-app-ax` is registered.
- */
-export const ROUTE_IDS = ["desktop-app-ax"] as const;
 /** Process name of /Applications/Claude.app (CFBundleExecutable). */
 export const PROCESS_NAME = "Claude";;
 
@@ -49,7 +43,7 @@ export const PACING = {
   max_tasks_per_day: 200,
 };
 
-export const CLAUDE_DESKTOP_MANIFEST: AdapterManifest = Object.assign(adapterManifestSchema.parse({
+export const CLAUDE_DESKTOP_MANIFEST: AdapterManifest = adapterManifestSchema.parse({
   adapter_id: ADAPTER_ID,
   adapter_version: "0.1.0",
   provider: "claude",
@@ -86,4 +80,4 @@ export const CLAUDE_DESKTOP_MANIFEST: AdapterManifest = Object.assign(adapterMan
       },
     ],
   },
-}), { routes: ROUTE_IDS }); // gateway-local hint (zod strips unknown keys at yaml load; programmatic manifests can carry them)
+});

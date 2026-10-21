@@ -154,27 +154,14 @@ for (const mdxPath of collectMdxFiles(DOCS_DIR)) {
       if (mdxPath.endsWith('cli/session.mdx')) continue;
       // Subscription setup and its workflow index must name the supported providers.
       if (mdxPath.endsWith('surfaces/subscriptions.mdx')) continue;
-      // Always-on bots explains fallback brains with real provider/model ids.
-      if (mdxPath.endsWith('guides/always-on-bots.mdx')) continue;
-      // First-run setup and the sign-in screen name the subscription brains and vendor bots people can connect.
-      if (['guides/first-run-setup.mdx', 'architecture/first-run-setup.mdx', 'surfaces/sign-in.mdx'].some((p) => mdxPath.endsWith(p))) continue;
-      // The bot setup picker names the vendor bots it connects and quotes their on-screen labels.
-      if (['guides/bot-setup-picker.mdx', 'architecture/bot-setup-picker.mdx'].some((p) => mdxPath.endsWith(p))) continue;
-      // Runtime task visibility and the local vendor catalog describe named CLI integrations.
-      if (['surfaces/native-agent.mdx', 'guides/local-vendor-bots.mdx'].some((p) => mdxPath.endsWith(p))) continue;
       // Bot isolation documents provider-specific CLI flags, config paths and login behavior.
       if (mdxPath.endsWith('surfaces/bots.mdx')) continue;
       if (mdxPath.endsWith('guides/subscriptions.mdx')) continue;
       // The subscription gateway API reference names supported providers and routing IDs.
       if (mdxPath.endsWith('api/subscription-gateway.mdx')) continue;
-      // The providers API reference uses provider routing ids (claude-cli, codex-cli) and shows
-      // each CLI's real sign-in output for one-click install and sign-in.
-      if (mdxPath.endsWith('api/providers.mdx')) continue;
       // Vendor-bot pages must name the vendors whose bots and connectors they cover.
       if (['guides/bot-phone.mdx', 'guides/keep-vendor-bots-online.mdx', 'guides/vendor-bots-on-the-phone.mdx', 'guides/vendor-bots-use-your-phone.mdx', 'guides/how-vendor-bots-connect.mdx', 'guides/allternit-bot-cli.mdx'].some((p) => mdxPath.endsWith(p))) continue;
       if (mdxPath.endsWith('guides/platform-workflows.mdx')) continue;
-      // Phone Link drives the vendor AI apps signed in on the user's own phone; it has to name them.
-      if (mdxPath.endsWith('guides/phone-link.mdx')) continue;
       // Vendor bots connect to named vendor accounts; photo avatars run on the
       // named subscription/key lanes and quote their on-screen button labels.
       if (mdxPath.endsWith('guides/vendor-bots.mdx')) continue;
@@ -183,18 +170,15 @@ for (const mdxPath of collectMdxFiles(DOCS_DIR)) {
       if (mdxPath.endsWith('plugins/guides/porting.mdx')) continue;
       // Connecting AI apps (approvals, MCP Events subscriptions) has to name the apps people connect.
       if (['guides/connected-apps.mdx', 'guides/mcp-events.mdx'].some((p) => mdxPath.endsWith(p))) continue;
-      // The Allternit Factory runs bots on named harnesses and vendor accounts (and sends text
-      // into their panes, matching each harness's own paste placeholder); these pages
+      // The Allternit Factory runs bots on named harnesses and vendor accounts; these pages
       // and the generated contract reference have to name which ones (binding badges, harness ids).
-      if (['factory/agents.mdx', 'factory/overview.mdx', 'factory/orchestration.mdx', 'factory/api-reference.mdx'].some((p) => mdxPath.endsWith(p))) continue;
+      if (['factory/agents.mdx', 'factory/overview.mdx', 'factory/api-reference.mdx'].some((p) => mdxPath.endsWith(p))) continue;
       // Memory Drive is shared with other agents (install steps for Claude Code, Codex, their
       // session ids), and hosted agents name provider/model ids; these pages have to name them.
       if (['guides/memory-drive.mdx', 'core/memory-drive.mdx', 'cli/memory.mdx', 'api/platform/agents.mdx', 'api/memory-drive.mdx'].some((p) => mdxPath.endsWith(p))) continue;
       // A project's own model key is set per provider (`PUT /v1/model_keys/anthropic`); the
       // conversations billing note and the SDK examples have to name that provider id.
       if (['api/platform/conversations.mdx', 'api/platform/sdks/python.mdx', 'api/platform/sdks/typescript.mdx'].some((p) => mdxPath.endsWith(p))) continue;
-      // Skills load from each CLI's real config directories; the page has to name those paths.
-      if (mdxPath.endsWith('core/skills.mdx')) continue;
       // The computer toolset absorbs each model family's native computer-use tool and the hosted
       // driver plugs into those SDKs, so these pages have to name the providers and SDK classes.
       if (['api/platform/hosted-computers.mdx', 'tools/computer-toolset.mdx', 'tools/computer-use.mdx', 'core/computer-use-engine.mdx'].some((p) => mdxPath.endsWith(p))) continue;

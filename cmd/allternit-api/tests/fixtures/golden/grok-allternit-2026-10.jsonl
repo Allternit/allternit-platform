@@ -1,8 +1,0 @@
-{"step": "admit", "name": "ask", "thread": "th-golden", "via": "vendor_mcp", "fromKind": "bot", "fromId": "bot-grok", "to": "bot-allternit", "key": "k-ask", "text": "Can you summarize today's open tasks?"}
-{"step": "admit", "name": "reply", "thread": "th-golden", "via": "message_agent", "fromKind": "bot", "fromId": "bot-allternit", "to": "bot-grok", "key": "k-reply", "parent": "ask", "text": "Three open tasks: invoice review, site check, follow-up email."}
-{"step": "advance", "hop": "ask", "state": "delivered"}
-{"step": "advance", "hop": "ask", "state": "read"}
-{"step": "advance", "hop": "ask", "state": "answered"}
-{"step": "advance", "hop": "reply", "state": "delivered"}
-{"step": "advance", "hop": "reply", "state": "read"}
-{"step": "advance", "hop": "reply", "state": "answered"}

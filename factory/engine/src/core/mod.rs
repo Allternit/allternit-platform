@@ -10,7 +10,6 @@ pub mod query;
 pub mod replay;
 pub mod ids;
 pub mod io;
-pub mod platform;
 pub mod types;
 
 pub mod telemetry {

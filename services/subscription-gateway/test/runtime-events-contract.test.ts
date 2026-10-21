@@ -76,7 +76,7 @@ describe("runtime event sync contract", () => {
       }) as unknown as typeof fetch,
     });
     await n.notifyTerminal({ task_id: "t1", status: "needs_user", caller_id: "bot-1", requester_kind: "bot", thread_id: null, detail: null });
-    expect(calls).toEqual(["http://127.0.0.1:18013/api/factory/peers/bot-1/send"]);
+    expect(calls).toEqual(["http://127.0.0.1:18013/api/rails/peers/bot-1/send"]);
     expect("mcp" in (n as unknown as Record<string, unknown>)).toBe(false);
   });
 });

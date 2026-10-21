@@ -7,18 +7,12 @@
 //!
 //! | field | claude | codex | gizzi | kimi / grok | agy |
 //! |---|---|---|---|---|---|
-//! | persona | `CLAUDE.local.md` block → guidance | `AGENTS.md` → guidance | `GIZZI.md` → guidance | `AGENTS.md` → guidance | `AGENTS.md` → guidance |
+//! | persona | `CLAUDE.md` block → guidance | `AGENTS.md` → guidance | `GIZZI.md` → guidance | `AGENTS.md` → guidance | `AGENTS.md` → guidance |
 //! | memory | context pack + `LEARNED.md` → delivered (partial without a WIH pack path) | same | same | same | same |
 //! | skills | `.claude/skills/<name>` | `.codex/skills/<name>` | `.gizzi/skills/<name>` | unavailable (no project skills folder) | unavailable |
-//! | tools | `.allternit/bot/<slug>/mcp.json` via `--mcp-config` | `.codex/config.toml` `[mcp_servers.allternit]` | `.gizzi/gizzi.json` `mcp.allternit` | unavailable (no project MCP config) | unavailable |
-//! | permissions | spawn's `--settings` file (outside the workdir) → delivered | `-c hooks.PreToolUse=…` argv → delivered | partial (policy in block) | partial | partial |
+//! | tools | `.mcp.json` `mcpServers.allternit` | `.codex/config.toml` `[mcp_servers.allternit]` | `.gizzi/gizzi.json` `mcp.allternit` | unavailable (no project MCP config) | unavailable |
+//! | permissions | `.claude/settings.json` PreToolUse Gate hook → delivered | `-c hooks.PreToolUse=…` argv → delivered | partial (policy in block) | partial | partial |
 //! | model | `--model X` | `--model X` | `--model X` | `--model X` | unavailable |
-//!
-//! Repo hygiene: delivery never edits a file git tracks for Claude (persona
-//! goes to `CLAUDE.local.md`, tools and the Gate hook go through argv files in
-//! the bot folder / the spawn log dir). Every file it creates inside a git
-//! workdir is added to that repo's `info/exclude`, so a pane never leaves
-//! untracked Allternit files behind for a commit to sweep up.
 //!
 //! Secrets: no credential value is ever written into a pane file. MCP auth is
 //! an env var NAME (`${NAME}` for claude, `bearer_token_env_var` for codex,
@@ -190,7 +184,7 @@ fn kind_of(harness: &str) -> Option<Kind> {
 /// Instruction file the harness reads at its workdir root.
 pub fn instruction_file(harness: &str) -> Option<&'static str> {
     Some(match kind_of(harness)? {
-        Kind::Claude => "CLAUDE.local.md",
+        Kind::Claude => "CLAUDE.md",
         Kind::Gizzi => "GIZZI.md",
         Kind::Codex | Kind::Kimi | Kind::Grok | Kind::Agy => "AGENTS.md",
     })
@@ -380,7 +374,7 @@ fn deliver_skills(req: &DeliveryRequest<'_>, rel: &str, w: &mut Writer<'_>) -> L
     }
 }
 
-fn deliver_tools(req: &DeliveryRequest<'_>, kind: Kind, w: &mut Writer<'_>, argv: &mut Vec<String>) -> Result<Label> {
+fn deliver_tools(req: &DeliveryRequest<'_>, kind: Kind, w: &mut Writer<'_>) -> Result<Label> {
     let p = req.profile;
     let Some(url) = p.mcp_url.as_deref() else {
         w.notes.push("tools: no connector URL for this bot".into());
@@ -398,20 +392,14 @@ fn deliver_tools(req: &DeliveryRequest<'_>, kind: Kind, w: &mut Writer<'_>, argv
     }
     let wrote = match kind {
         Kind::Claude => {
-            // A config file in the bot folder, passed with `--mcp-config`, so the
-            // repo's own `.mcp.json` (often tracked) is never edited.
-            let path = bot_dir(req.workdir, &p.slug).join("mcp.json");
+            let path = req.workdir.join(".mcp.json");
+            let mut v = read_json(&path)?;
             let mut server = json!({ "type": "http", "url": url });
             if let Some(n) = &p.mcp_auth_env {
                 server["headers"] = json!({ "Authorization": format!("Bearer ${{{n}}}") });
             }
-            let v = json!({ "mcpServers": { MCP_SERVER_NAME: server } });
-            let wrote = w.write(&path, format!("{}\n", serde_json::to_string_pretty(&v)?).as_bytes())?;
-            if wrote {
-                argv.push("--mcp-config".to_string());
-                argv.push(path.to_string_lossy().to_string());
-            }
-            wrote
+            obj(&mut v, "mcpServers")?.insert(MCP_SERVER_NAME.into(), server);
+            w.write(&path, format!("{}\n", serde_json::to_string_pretty(&v)?).as_bytes())?
         }
         Kind::Gizzi => {
             let path = req.workdir.join(".gizzi/gizzi.json");
@@ -475,75 +463,38 @@ fn url_carries_credentials(url: &str) -> bool {
 }
 
 fn deliver_claude_hook(req: &DeliveryRequest<'_>, gate: &GateTarget, w: &mut Writer<'_>) -> Result<Label> {
-    // The spawn writes the Gate hook into its own settings file beside the
-    // spawn log and passes it with `--settings` (see `hook::hook_settings_file`
-    // and `hook::gate_spawn`). Writing it into the workdir's
-    // `.claude/settings.json` too ran the hook twice and rewrote a file the repo
-    // tracks, so delivery only checks that a hook command can be built.
     let target = HookTarget {
         factory_bin: &gate.bin,
         root: &gate.root,
         workspace: Some(req.workdir),
         wih_id: gate.wih_id.as_deref(),
     };
-    if hook_command(HookFlavor::Claude, target).trim().is_empty() {
-        return Err(anyhow!("no Gate hook command for this engine binary"));
-    }
-    w.notes.push("permissions: Gate hook delivered through the spawn's --settings file".into());
-    Ok(Label::Delivered)
-}
-
-/// Add every file delivery created inside a git workdir to that repo's
-/// `info/exclude`, unless git already tracks it. Best effort: a workdir that
-/// is not a git checkout, or a git error, changes nothing.
-fn exclude_from_git(workdir: &Path, written: &[PathBuf], notes: &mut Vec<String>) {
-    let git = |args: &[&str]| std::process::Command::new("git").arg("-C").arg(workdir).args(args).output();
-    let Ok(out) = git(&["rev-parse", "--path-format=absolute", "--git-path", "info/exclude"]) else { return };
-    if !out.status.success() {
-        return;
-    }
-    let exclude = PathBuf::from(String::from_utf8_lossy(&out.stdout).trim());
-    let Ok(top) = git(&["rev-parse", "--show-toplevel"]) else { return };
-    let top = PathBuf::from(String::from_utf8_lossy(&top.stdout).trim());
-    let existing = std::fs::read_to_string(&exclude).unwrap_or_default();
-    let known: std::collections::BTreeSet<&str> = existing.lines().map(str::trim).collect();
-    let mut add: Vec<String> = vec![];
-    for path in written {
-        let canon = std::fs::canonicalize(path).unwrap_or_else(|_| path.clone());
-        let Ok(rel) = canon.strip_prefix(&top) else {
-            continue;
-        };
-        let rel = rel.to_string_lossy().replace('\\', "/");
-        // The bot folder is excluded as a whole.
-        let entry = if rel.starts_with(".allternit/bot/") { "/.allternit/bot/".to_string() } else { format!("/{rel}") };
-        if known.contains(entry.as_str()) || add.contains(&entry) {
-            continue;
-        }
-        let tracked = git(&["ls-files", "--error-unmatch", "--", &rel]).map(|o| o.status.success()).unwrap_or(false);
-        if tracked {
-            notes.push(format!("{rel} is tracked by git; delivery changed it in place"));
-            continue;
-        }
-        add.push(entry);
-    }
-    if add.is_empty() {
-        return;
-    }
-    let mut text = existing;
-    if !text.is_empty() && !text.ends_with('\n') {
-        text.push('\n');
-    }
-    text.push_str("# Allternit Factory bot delivery (local only)\n");
-    for e in &add {
-        text.push_str(e);
-        text.push('\n');
-    }
-    if let Some(dir) = exclude.parent() {
-        let _ = std::fs::create_dir_all(dir);
-    }
-    if std::fs::write(&exclude, text).is_err() {
-        notes.push(format!("could not update {}", exclude.display()));
-    }
+    let cmd = hook_command(HookFlavor::Claude, target);
+    let path = req.workdir.join(".claude/settings.json");
+    let mut v = read_json(&path)?;
+    let hooks = obj(&mut v, "hooks")?;
+    let list = hooks.entry("PreToolUse".to_string()).or_insert_with(|| json!([]));
+    let arr = list.as_array_mut().ok_or_else(|| anyhow!("hooks.PreToolUse is not a list"))?;
+    // Drop an earlier Allternit gate entry (re-entry, moved binary, new WIH),
+    // keep every other hook.
+    // The gate command is `<engine> internal hook --root <ws> <flavor>-pretool …`
+    // (see `hook_command`), so match the engine's hook verb and the flavor, not a
+    // fixed substring that a --root in between would break.
+    let sub = HookFlavor::Claude.subcommand();
+    let legacy = format!("hook {sub}"); // entries written before the --root form
+    let is_gate = |c: &str| (c.contains("internal hook") && c.contains(sub)) || c.contains(&legacy);
+    arr.retain(|e| {
+        !e.get("hooks")
+            .and_then(|h| h.as_array())
+            .map(|hs| hs.iter().any(|h| h.get("command").and_then(|c| c.as_str()).map(is_gate).unwrap_or(false)))
+            .unwrap_or(false)
+    });
+    arr.push(json!({
+        "matcher": "*",
+        "hooks": [{ "type": "command", "command": cmd, "timeout": 30 }]
+    }));
+    let wrote = w.write(&path, format!("{}\n", serde_json::to_string_pretty(&v)?).as_bytes())?;
+    Ok(if wrote { Label::Delivered } else { Label::Partial })
 }
 
 /// Deliver the bot into its pane. Never fails part-way silently: a field that
@@ -650,7 +601,7 @@ pub fn deliver(req: &DeliveryRequest<'_>) -> Result<DeliveryReport> {
     fields.insert(Field::Skills, skills);
 
     // tools
-    let tools = deliver_tools(req, kind, &mut w, &mut argv).unwrap_or_else(|e| {
+    let tools = deliver_tools(req, kind, &mut w).unwrap_or_else(|e| {
         w.notes.push(format!("tools: {e:#}"));
         Label::Unavailable
     });
@@ -686,7 +637,6 @@ pub fn deliver(req: &DeliveryRequest<'_>) -> Result<DeliveryReport> {
     };
     let record_path = dir.join(DELIVERY_RECORD);
     w.write(&record_path, format!("{}\n", serde_json::to_string_pretty(&record)?).as_bytes())?;
-    exclude_from_git(req.workdir, &w.written, &mut w.notes);
     report.notes.extend(std::mem::take(&mut w.notes));
     report.files_written = w.written;
     Ok(report)
@@ -771,25 +721,22 @@ mod tests {
         for f in [Field::Memory, Field::Skills, Field::Tools, Field::Model, Field::Permissions] {
             assert_eq!(r.fields[&f], Label::Delivered, "{f:?}: {:?}", r.notes);
         }
-        let mcp_path = bot_dir(&wd, "builder").join("mcp.json");
-        assert_eq!(r.argv, vec!["--model".to_string(), "opus".into(), "--mcp-config".into(), mcp_path.to_string_lossy().to_string()]);
+        assert_eq!(r.argv, vec!["--model", "opus"]);
         assert!(wd.join(".claude/skills/review/SKILL.md").is_file());
-        // The repo's own files are untouched: the Gate hook rides on the
-        // spawn's --settings file and the connector on --mcp-config.
         let settings: Value = serde_json::from_str(&std::fs::read_to_string(wd.join(".claude/settings.json")).unwrap()).unwrap();
         assert_eq!(settings["theme"], "dark");
-        assert_eq!(settings["hooks"]["PreToolUse"].as_array().unwrap().len(), 1);
-        let repo_mcp: Value = serde_json::from_str(&std::fs::read_to_string(wd.join(".mcp.json")).unwrap()).unwrap();
-        assert!(repo_mcp["mcpServers"].get("allternit").is_none());
-        let mcp: Value = serde_json::from_str(&std::fs::read_to_string(&mcp_path).unwrap()).unwrap();
+        assert_eq!(settings["hooks"]["PreToolUse"].as_array().unwrap().len(), 2);
+        let gate_cmd = settings["hooks"]["PreToolUse"][1]["hooks"][0]["command"].as_str().unwrap();
+        // The gate hook is the engine itself: `allternit-factory internal hook --root <ws> claude-pretool …`.
+        assert!(gate_cmd.contains("internal hook --root") && gate_cmd.contains("claude-pretool"), "{gate_cmd}");
+        let mcp: Value = serde_json::from_str(&std::fs::read_to_string(wd.join(".mcp.json")).unwrap()).unwrap();
+        assert_eq!(mcp["mcpServers"]["other"]["command"], "x");
         assert_eq!(mcp["mcpServers"]["allternit"]["headers"]["Authorization"], "Bearer ${ALLTERNIT_MCP_TOKEN}");
-        // Persona goes to CLAUDE.local.md, never the project's CLAUDE.md.
-        assert!(std::fs::read_to_string(wd.join("CLAUDE.local.md")).unwrap().contains(BLOCK_BEGIN));
-        assert!(!wd.join("CLAUDE.md").exists());
-        // Re-entry converges.
+        // Re-entry converges: one gate hook, not two.
         let r2 = deliver(&req).unwrap();
         assert_eq!(r2.fields, r.fields);
-        assert_eq!(r2.argv, r.argv);
+        let settings: Value = serde_json::from_str(&std::fs::read_to_string(wd.join(".claude/settings.json")).unwrap()).unwrap();
+        assert_eq!(settings["hooks"]["PreToolUse"].as_array().unwrap().len(), 2);
         assert_eq!(load_fields(&wd, "builder").unwrap(), r.fields);
     }
 
@@ -881,32 +828,12 @@ mod tests {
         p.persona = format!("token is {TOKEN}");
         let r = deliver(&DeliveryRequest { profile: &p, harness: "claude", workdir: &wd, context_pack_path: None, gate: None }).unwrap();
         assert_eq!(r.fields[&Field::Persona], Label::Unavailable);
-        assert!(!wd.join("CLAUDE.local.md").exists());
+        assert!(!wd.join("CLAUDE.md").exists());
         // A credential in the connector URL is refused.
         let mut p = profile(tmp.path());
         p.mcp_url = Some("https://mcp.allternit.com/mcp?token=abc".into());
         let r = deliver(&DeliveryRequest { profile: &p, harness: "claude", workdir: &tmp.path().join("u"), context_pack_path: None, gate: None }).unwrap();
         assert_eq!(r.fields[&Field::Tools], Label::Unavailable);
-    }
-
-    #[test]
-    fn git_workdir_stays_clean() {
-        let tmp = tempfile::tempdir().unwrap();
-        let wd = tmp.path().join("repo");
-        std::fs::create_dir_all(wd.join(".claude")).unwrap();
-        let git = |args: &[&str]| std::process::Command::new("git").arg("-C").arg(&wd).args(args).output().unwrap();
-        if !git(&["init", "-q"]).status.success() {
-            return; // no git on this machine
-        }
-        std::fs::write(wd.join(".claude/settings.json"), "{\"hooks\":{}}\n").unwrap();
-        std::fs::write(wd.join("CLAUDE.md"), "# Project\n").unwrap();
-        git(&["add", "."]);
-        git(&["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "init"]);
-        let p = profile(tmp.path());
-        deliver(&DeliveryRequest { profile: &p, harness: "claude", workdir: &wd, context_pack_path: None, gate: Some(gate(tmp.path())) }).unwrap();
-        let status = String::from_utf8(git(&["status", "--porcelain"]).stdout).unwrap();
-        assert!(status.trim().is_empty(), "delivery left the repo dirty:\n{status}");
-        assert_eq!(std::fs::read_to_string(wd.join("CLAUDE.md")).unwrap(), "# Project\n");
     }
 
     #[test]

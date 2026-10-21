@@ -60,12 +60,6 @@ async fn low_confidence_escalates_and_the_budget_caps_it() {
 }
 
 #[tokio::test]
-async fn ties_go_to_the_earlier_option() {
-    let r = route(&chain(vec![0.5, 0.5], 0)[..1], &q(false, None), 0.6, Duration::from_secs(1)).await;
-    assert_eq!(r.choice, Some(0));
-}
-
-#[tokio::test]
 async fn image_skips_blind_backends() {
     let r = route(&chain(vec![0.9, 0.1], 0), &q(false, Some("data:image/png;base64,AA==")), 0.6, Duration::from_secs(1)).await;
     assert_eq!(r.backend, Some("oracle"));
@@ -79,52 +73,4 @@ fn oracle_replies_parse_only_to_known_ids() {
     assert_eq!(parse_choice("Sure: {\"choice\": \"done\"}", &ids), Some("done"));
     assert_eq!(parse_choice("`__abstain__`", &ids), Some("__abstain__"));
     assert_eq!(parse_choice(r#"{"choice":"el_9"}"#, &ids), None);
-}
-
-/// A one-shot SystemOne server: answers `reply` and hands back the request body.
-async fn systemone_stub(reply: Value) -> (String, tokio::sync::oneshot::Receiver<Value>) {
-    use axum::{routing::post, Json, Router};
-    let (tx, rx) = tokio::sync::oneshot::channel();
-    let tx = std::sync::Arc::new(std::sync::Mutex::new(Some(tx)));
-    let app = Router::new().route(
-        "/v1/systemone",
-        post(move |Json(body): Json<Value>| {
-            let (tx, reply) = (tx.clone(), reply.clone());
-            async move {
-                if let Some(tx) = tx.lock().unwrap().take() {
-                    let _ = tx.send(body);
-                }
-                Json(reply)
-            }
-        }),
-    );
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-    (format!("http://{addr}"), rx)
-}
-
-#[tokio::test]
-async fn open_weights_speaks_systemone() {
-    use super::backends::{backend, OpenWeights};
-    let reply = serde_json::json!({
-        "model": "LiquidAI/d1-3B",
-        "answers": { "decision": { "choice": "b", "confidence": 0.82, "probabilities": { "a": 0.18, "b": 0.82 } } },
-        "usage": { "input_tokens": 40, "output_tokens": 0 },
-    });
-    let (url, rx) = systemone_stub(reply).await;
-    // SAFETY of env mutation: only this test reads ALLTERNIT_DECISIONS_OPEN_*.
-    std::env::set_var("ALLTERNIT_DECISIONS_OPEN_URL", &url);
-    let b = backend("open").expect("open backend is registered");
-    assert!(b.enabled());
-    let a = b.decide(&q(false, None)).await.unwrap();
-    std::env::remove_var("ALLTERNIT_DECISIONS_OPEN_URL");
-    assert_eq!(a.probs, vec![0.18, 0.82]);
-    assert_eq!(a.detail["model"], "LiquidAI/d1-3B");
-    let sent = rx.await.unwrap();
-    assert_eq!(sent["model"], OpenWeights::DEFAULT_MODEL);
-    assert_eq!(sent["state"], "c");
-    assert_eq!(sent["questions"]["decision"]["type"], "choice");
-    assert_eq!(sent["questions"]["decision"]["criteria"]["b"], "B");
-    assert!(!OpenWeights.enabled());
 }

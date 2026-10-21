@@ -146,18 +146,15 @@ mkdir -p "$REPO"
 tar -xzf "$SUBSFAB/gateway.tar.gz" -C "$REPO"
 cd "$REPO"
 echo "== pnpm install (gateway + workspace deps)"
-# CI=true: a lockfile/workspace layout change makes pnpm want to rebuild
-# node_modules, which it refuses without a TTY (this runs under nohup).
-CI=true pnpm install --filter subscription-gateway... --reporter=append-only
+pnpm install --filter subscription-gateway... --reporter=append-only
 
 # 7. Boot the gateway (file keychain — D3/D15 Sessions-machine store). DISPLAY
 #    puts the adapter's Chrome and the login Chrome on the streamed desktop.
 mkdir -p "$STATE_DIR"
 chmod 700 "$STATE_DIR"
-# Stop a gateway from an older setup that ran it outside systemd. Its command
-# line is `node …/tsx/dist/cli.mjs src/main.ts` (+ a node child), so match on
-# src/main.ts, then wait for the TCP port to free up (EADDRINUSE otherwise).
-if [ -d /run/systemd/system ]; then systemctl stop allternit-subs-gateway 2>/dev/null || true; fi
+# Stop a previous gateway. Its command line is `node …/tsx/dist/cli.mjs
+# src/main.ts` (+ a node child), so match on src/main.ts, then wait for the
+# TCP port to free up — re-running setup must not collide (EADDRINUSE).
 for p in $(pgrep -f "src/main.ts" || true); do [ "$p" != "$$" ] && kill "$p" || true; done
 for _ in $(seq 1 20); do
   pgrep -f "src/main.ts" >/dev/null || break
@@ -184,54 +181,17 @@ echo "login browser: $LOGIN_BROWSER"
 # redeploy from origin/main must not drop it.
 GATEWAY_ENV="$STATE_DIR/gateway.env"
 if [ -f "$GATEWAY_ENV" ]; then
+  set -a; . "$GATEWAY_ENV"; set +a
   echo "gateway env: $(grep -oE '^[A-Z_]+' "$GATEWAY_ENV" | tr '\n' ' ')"
 fi
-: > "$LOG"
-if [ -d /run/systemd/system ]; then
-  # A systemd unit, so the gateway comes back after a reboot or a move of the
-  # computer (a nohup'd process does not: 2026-10-14 the moved Sessions box
-  # booted with no gateway). Same name as the cloud computer image's unit.
-  cat > /etc/systemd/system/allternit-subs-gateway.service <<UNIT
-[Unit]
-Description=Allternit subscription gateway (Sessions computer)
-After=network-online.target allternit-desktop.service
-Wants=network-online.target
-
-[Service]
-WorkingDirectory=$REPO/services/subscription-gateway
-Environment=DISPLAY=$DISPLAY_NUM
-Environment=SUBS_GATEWAY_STATE_DIR=$STATE_DIR
-Environment=SUBS_GATEWAY_KEYCHAIN=file
-Environment=SUBS_GATEWAY_TCP=1
-Environment=SUBS_GATEWAY_TCP_HOST=0.0.0.0
-Environment=SUBS_GATEWAY_LOGIN_BROWSER=$LOGIN_BROWSER
-EnvironmentFile=-$GATEWAY_ENV
-ExecStartPre=/bin/mkdir -p $STATE_DIR
-ExecStartPre=/bin/chmod 700 $STATE_DIR
-ExecStart=$REPO/services/subscription-gateway/node_modules/.bin/tsx src/main.ts
-Restart=on-failure
-RestartSec=5
-StandardOutput=append:$LOG
-StandardError=append:$LOG
-
-[Install]
-WantedBy=multi-user.target
-UNIT
-  systemctl daemon-reload
-  systemctl enable allternit-subs-gateway >/dev/null 2>&1
-  systemctl restart allternit-subs-gateway
-  echo "gateway pid: $(systemctl show -p MainPID --value allternit-subs-gateway) (systemd)"
-else
-  if [ -f "$GATEWAY_ENV" ]; then set -a; . "$GATEWAY_ENV"; set +a; fi
-  DISPLAY="$DISPLAY_NUM" \
-  SUBS_GATEWAY_STATE_DIR="$STATE_DIR" \
-  SUBS_GATEWAY_KEYCHAIN=file \
-  SUBS_GATEWAY_TCP=1 \
-  SUBS_GATEWAY_TCP_HOST=0.0.0.0 \
-  SUBS_GATEWAY_LOGIN_BROWSER="$LOGIN_BROWSER" \
-  setsid nohup ./node_modules/.bin/tsx src/main.ts > "$LOG" 2>&1 < /dev/null &
-  echo "gateway pid: $! (no systemd: will not survive a reboot)"
-fi
+DISPLAY="$DISPLAY_NUM" \
+SUBS_GATEWAY_STATE_DIR="$STATE_DIR" \
+SUBS_GATEWAY_KEYCHAIN=file \
+SUBS_GATEWAY_TCP=1 \
+SUBS_GATEWAY_TCP_HOST=0.0.0.0 \
+SUBS_GATEWAY_LOGIN_BROWSER="$LOGIN_BROWSER" \
+setsid nohup ./node_modules/.bin/tsx src/main.ts > "$LOG" 2>&1 < /dev/null &
+echo "gateway pid: $!"
 
 # 8. Wait for the listeners (the UDS health route validates Host, so the log
 #    line is the readiness signal here)

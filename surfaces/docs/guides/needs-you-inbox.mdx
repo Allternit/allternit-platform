@@ -17,8 +17,6 @@ Your bots work on their own until something needs a person. The **Needs you** in
 | **Unanswered** | A person messaged a bot and nobody has answered for 30 minutes. | **Reply** |
 | **Not delivered** | A message from a bot failed to send, or may not have gone through. | **Open** |
 | **Vendor result** | A vendor bot finished, failed or ran out of time on a ticket you directed. | **Review** |
-| **Needs fixing** | A routine failed or was missed, a routine has no bot, or a run's result could not be saved. A red "urgent" tag means it paused itself or was flagged critical. A "Why" line says where the input came from when that matters. | **Retry** (runs the routine now) or **Open** |
-| **Tool changed** | A tool on a connected MCP server is new, or its description, schema or annotations changed since you approved it. The row names the tool and shows one line of what changed (old and new description, up to 200 characters each). The tool stays out of your bots' tool lists until you approve it. | **Approve tool** |
 | **Draft** | A bot wrote a message but kept it as a draft, because its [autonomy level](/guides/bot-autonomy) on that channel is *Draft only*. | **Review** |
 
 Send, Approve and Deny act on the real thing. **Send** on a held message posts it right away. **Send** on an email sends it. Nothing is a copy that can fall out of step.
@@ -26,20 +24,19 @@ Send, Approve and Deny act on the real thing. **Send** on a held message posts i
 ## Where to find it
 
 - **Desktop and the web app:** the **Inbox** button in the left rail, next to **Phones**. The number on it is how many items need you.
-- **Phone and the m.allternit.com phone app:** open the menu and tap the **Inbox** tray icon at the top right. It opens as a full-screen sheet.
+- **Phone and the m.allternit.com phone app:** open the menu and tap **Inbox**. It opens as a full-screen sheet.
 - **A bot's phone:** when something needs you from that bot, a banner at the top of its home screen says so ("2 things need you"). Tap it to see just that bot's items.
 
 ## Handling items
 
 - The main button does the job and the item leaves the list. If it can't be done (for example email isn't connected), the item stays and says why.
-- **Needs fixing** items close on their own when the next run works. **Dismiss** (the ×) closes one for good and tells your other devices; it does not come back unless the same routine fails again.
-- **Dismiss** (the ×) hides any other item. **Snooze** (the clock) hides it for an hour.
+- **Dismiss** (the ×) hides an item. **Snooze** (the clock) hides it for an hour.
 - A dismissed or snoozed item comes back if it changes: a person writes again, a task asks for you again.
 - Handling an item on one device updates the others. Items also leave on their own once they are dealt with somewhere else (you approved it in the thread, the person got an answer).
 
 ## Notifications
 
-On Allternit Desktop a new item raises the same system notification as before (new message, missed call, something waiting for approval) while the window is hidden, and the Inbox count updates at once. In the browser and on the phone app, the count refreshes every minute and whenever you come back to Allternit. Push notifications for messages and calls on those devices work as described in [Call and message notifications](/guides/call-notifications). **Needs fixing** items are pushed by your Allternit API when they open, again an hour later, and then daily at 9:00 until fixed; see [Notifications](/guides/notifications).
+On Allternit Desktop a new item raises the same system notification as before (new message, missed call, something waiting for approval) while the window is hidden, and the Inbox count updates at once. In the browser and on the phone app, the count refreshes every minute and whenever you come back to Allternit. Push notifications for messages and calls on those devices work as described in [Call and message notifications](/guides/call-notifications).
 
 ## For developers
 

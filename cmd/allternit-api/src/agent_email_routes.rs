@@ -290,8 +290,6 @@ struct SendEmailExtra<'a> {
     skip_approval: bool,
     /// Files to attach (already size-checked by `channel_files::parse`).
     attachments: &'a [crate::channel_files::ChannelFile],
-    /// The bot thread this send belongs to (its trust floor and provenance apply).
-    bot_thread: Option<&'a str>,
 }
 
 /// Approval-gated outbound send, shared by the REST route and the internal MCP
@@ -339,13 +337,7 @@ async fn send_email_inner(
         req.text = Some(crate::openui_text::to_plain_text(text));
     }
     // Autonomy (the owner's per-place level) can only tighten here: a hold means mailflare's review.
-    let body_text = req.text.as_deref().or(req.html.as_deref()).unwrap_or("");
-    let autonomy = crate::autonomy::email_eval_ctx(&state.db, user_id, &req.agent_id, &req.to, extra.bot_thread, body_text);
-    if let Some(crate::autonomy::Eval { verdict: crate::autonomy::Verdict::Block { reason }, .. }) = &autonomy {
-        let act = crate::autonomy::Action { owner: user_id, bot_id: &req.agent_id, channel: "email", persons: vec![req.to.clone()], action: "message", amount_cents: 0 };
-        crate::autonomy::record(&state.db, &act, autonomy.as_ref().map(|e| e.level.as_str()).unwrap_or("default"), "blocked", reason);
-        return Err(err(StatusCode::FORBIDDEN, "egress_blocked", reason));
-    }
+    let autonomy = crate::autonomy::email_eval(&state.db, user_id, &req.agent_id, &req.to);
     let held = autonomy.as_ref().is_some_and(|e| e.held());
     let extra = SendEmailExtra { skip_approval: extra.skip_approval && !held, ..extra };
 
@@ -433,11 +425,10 @@ async fn send_email_inner(
         .collect();
     {
         let conn = state.db.connect().map_err(internal)?;
-        let provenance = extra.bot_thread.and_then(|t| crate::netops::provenance::latest_tainted(&conn, t)).map(|v| v.to_string());
         conn.execute(
             "INSERT INTO agent_email_outbound
-                 (id, agent_id, user_id, thread_id, idempotency_key, to_address, subject, snippet, status, updated_at, reply_inbound_id, provenance_json)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'pending_approval', CURRENT_TIMESTAMP, ?9, ?10)",
+                 (id, agent_id, user_id, thread_id, idempotency_key, to_address, subject, snippet, status, updated_at, reply_inbound_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'pending_approval', CURRENT_TIMESTAMP, ?9)",
             params![
                 outbound_id,
                 req.agent_id,
@@ -447,8 +438,7 @@ async fn send_email_inner(
                 req.to,
                 req.subject,
                 snippet,
-                extra.reply_inbound_id,
-                provenance
+                extra.reply_inbound_id
             ],
         )
         .map_err(internal)?;
@@ -648,19 +638,6 @@ fn sender_has_thread(conn: &rusqlite::Connection, agent_id: &str, from_lower: &s
 /// here. Approval policy (mode, allowlist, domain verification, caps, kill
 /// switch) is re-read here so a settings change mid-conversation applies to
 /// the next reply, not the next restart.
-/// The bot thread an inbound email conversation lives in (same key as the inbound handler).
-fn email_bot_thread(db: &crate::db::DbHandle, agent_id: &str, from: &str, subject: &str) -> Option<String> {
-    let key = format!("email:{}:{}", from.to_lowercase(), crate::thread_routes::conversation_subject(subject));
-    db.connect()
-        .ok()?
-        .query_row(
-            "SELECT id FROM bot_threads WHERE bot_id = ?1 AND json_extract(origin, '$.channelKey') = ?2 AND status NOT IN ('done', 'failed') ORDER BY updated_at DESC LIMIT 1",
-            params![agent_id, key],
-            |r| r.get(0),
-        )
-        .ok()
-}
-
 async fn send_reply_for_turn(
     state: &Arc<AppState>,
     db: &crate::db::DbHandle,
@@ -726,15 +703,10 @@ async fn send_reply_for_turn(
     let mut plan = decide_reply_plan(mode, channel.domain_verified, sender_known, domain_allowed, over_cap);
     // An explicit autonomy level for this place overrides the reply mode: Send and tell me /
     // Act within limits answer directly (never past the reply caps or on an unverified domain).
-    let bot_thread = email_bot_thread(db, agent_id, from, subject);
-    if let Some(e) = crate::autonomy::email_eval_ctx(db, &owner, agent_id, &reply_recipient(from, reply_to.as_deref()), bot_thread.as_deref(), reply) {
+    if let Some(e) = crate::autonomy::email_eval(db, &owner, agent_id, &reply_recipient(from, reply_to.as_deref())) {
         if !e.held() && !over_cap && channel.domain_verified {
             plan = ReplyPlan::Direct;
         }
-    }
-    // A tainted conversation never auto-sends: the reply goes to review whatever the mode says.
-    if bot_thread.as_deref().and_then(|t| db.connect().ok().and_then(|c| crate::netops::provenance::trust_floor(&c, t))).is_some_and(|f| f.tainted()) {
-        plan = ReplyPlan::Approval;
     }
     info!(
         agent_id = %agent_id,
@@ -772,7 +744,6 @@ async fn send_reply_for_turn(
             reply_inbound_id: Some(inbound_id),
             headers: Some(&headers),
             skip_approval: plan == ReplyPlan::Direct,
-            bot_thread: bot_thread.as_deref(),
             ..SendEmailExtra::default()
         },
     )
@@ -1099,16 +1070,13 @@ async fn receive_inbound_email(
     // Who may email the bot (audit S16): a sender the email channel's policy
     // doesn't allow is acknowledged, not delivered, and audited. No reply is
     // sent, so a forged From can't turn the bot into a bounce relay.
-    let from_owner;
     {
         let conn = match state.db.connect() {
             Ok(conn) => conn,
             Err(e) => return internal(e).into_response(),
         };
         let sender = crate::channel_auth::email_address(from);
-        let rule = crate::channel_auth::email_rule(&conn, &agent_id);
-        let allowed = rule.as_ref().map(|(rule, _)| rule.allows(Some(&sender))).unwrap_or(false);
-        from_owner = rule.as_ref().map(|(rule, _)| rule.is_owner(Some(&sender))).unwrap_or(false);
+        let allowed = crate::channel_auth::email_rule(&conn, &agent_id).map(|(rule, _)| rule.allows(Some(&sender))).unwrap_or(false);
         if !allowed {
             crate::channel_auth::record_rejection(
                 &conn,
@@ -1166,32 +1134,14 @@ async fn receive_inbound_email(
         let from_s = from.to_string();
         let subject_s = subject.unwrap_or("(no subject)").to_string();
         let body_s = text_body.or(snippet).unwrap_or("(no body)").to_string();
-        let owner_s = relayed.owner.clone();
         tokio::spawn(async move {
             let stripped = crate::agent_email_reply::strip_quoted_history(&body_s);
             let turn_body = if stripped.is_empty() { body_s.clone() } else { stripped };
-            if from_owner {
-                crate::memory_capture::owner_channel_turn(&db, &owner_s, &crate::memory_capture::channel_label("email", &crate::thread_routes::conversation_subject(&subject_s)), &turn_body);
-            }
             let rt = crate::thread_routes::GizziRuntime { db: db.clone() };
             let key = format!("email:{}:{}", from_s.to_lowercase(), crate::thread_routes::conversation_subject(&subject_s));
             let text = format!("[email from {from_s}] Subject: {subject_s}\n\n{turn_body}");
             match crate::thread_routes::channel_thread(&db, &rt, &agent, "email", &key, &subject_s, &body_s).await {
                 Ok(session) => {
-                    // Provenance: the owner's own address is `owner`, a known person `contact`,
-                    // anyone else a `stranger`. Outside text reaches the model fenced.
-                    let text = match email_bot_thread(&db, &agent, &from_s, &subject_s).zip(db.connect().ok()) {
-                        Some((thread, conn)) => {
-                            let trust = if from_owner { crate::netops::provenance::Trust::Owner } else { crate::netops::provenance::sender_trust(&conn, &owner_s, &from_s) };
-                            let before = crate::netops::provenance::trust_floor(&conn, &thread);
-                            let label = crate::netops::provenance::label(&conn, &thread, trust, "email", &from_s, &turn_body);
-                            if label.trust.tainted() && !before.is_some_and(|f| f.tainted()) {
-                                crate::thread_routes::enforce_envelope(&db, &thread).await;
-                            }
-                            format!("[email from {from_s}] Subject: {subject_s}\n\n{}", crate::netops::provenance::fence(&turn_body, &label))
-                        }
-                        None => text,
-                    };
                     match crate::agent_session_routes::send_bot_turn(&db, &session, &agent, &text).await {
                         Ok(reply) => {
                             if let Err(e) = send_reply_for_turn(

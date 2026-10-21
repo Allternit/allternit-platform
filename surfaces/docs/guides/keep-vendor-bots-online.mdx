@@ -30,12 +30,6 @@ Moving the account back to **this device** works the same way: you sign in again
 - **A vendor check or restriction** (a bot check, a limited account) is never worked around. The account stays blocked until you resolve it in the viewer.
 - Vendor terms still apply. Running a subscription in a browser can conflict with a vendor's terms, exactly as it can on your own computer. See the disclosure in [Vendor bots](/guides/vendor-bots).
 
-## Know when a vendor bot goes quiet
-
-A signed-in account that stops working (signed out, a bot check, the vendor's page changed) used to be found when a message failed. Your Sessions computer now re-checks each account every 3 minutes with the free sign-in check, and Allternit opens a **Lane down** item in [Needs you](/guides/needs-you-inbox) within about five minutes. It is critical when one of the affected bots has a phone number or takes texts. See [Lane status](/guides/lane-status) for the **Settings → Status** panel and what is checked.
-
-An account whose browser is closed to save memory is not woken for the check, so a cloud computer that is asleep is not kept awake by it.
-
 ## For developers
 
 Everything lives in `cmd/allternit-api/src/gateway_vendor_host.rs` (runtime side, migration `V221__vendor_account_host.sql`). The cloud API needs no change: it already relays to a runtime and wakes a sleeping cloud computer.

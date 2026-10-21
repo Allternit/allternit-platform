@@ -256,8 +256,7 @@ export class ChatGPTDotsProvider extends BaseAaiProvider {
     if (!(await this.o.driver.openDot(dot.id))) return fail("CONTEXT_NOT_FOUND", `Could not open dot "${dot.name}".`);
     const after = await this.check(); if (!after.ok) return after;
     if (after.value.view !== "dot") return fail("CONTEXT_NOT_FOUND", `Dot "${dot.name}" did not open.`);
-    // Random suffix: after a gateway restart the counter starts over, and a new context must never take the id of a lost one.
-    const id = `cd-ctx-${++this.n}-${Math.random().toString(36).slice(2, 8)}`;
+    const id = `cd-ctx-${++this.n}`;
     const c: Ctx = {
       id, agentId: `${AGENT_ID}:${dot.id}`, dotId: dot.id, dotName: dot.name, threadId: input.threadId ?? id, closed: false, events: [], seq: 0,
       baseline: after.value.turns.length, seen: new Map(), tasks: new Map(), msgN: 0, activity: false, done: new Map(), lock: Promise.resolve(), sending: 0,

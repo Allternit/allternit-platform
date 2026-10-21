@@ -16,14 +16,13 @@ import type { AccountObservation } from "@allternit/subscription-fabric-contract
 import type { DeclarativeChatConfig } from "@allternit/subscription-adapter-sdk";
 import { readFileSync } from "node:fs";
 import { WebChatAdapter, loadManifestAt, type WebChatOptions } from "../_shared/web-chat.js";
-import { adapterFile } from "../_shared/adapter-file.js";
 
 export const THREAD_URL_PATTERN = /^https:\/\/copilot\.microsoft\.com\/chats\/([\w-]+)/;
 
 export function copilotWebConfig(overrides: Partial<DeclarativeChatConfig> = {}): DeclarativeChatConfig {
   return {
-    manifest: loadManifestAt(adapterFile(import.meta.url, "copilot-web", "./manifest.yaml")),
-    selectorsYaml: readFileSync(adapterFile(import.meta.url, "copilot-web", "./selectors/v1.yaml"), "utf8"),
+    manifest: loadManifestAt(new URL("./manifest.yaml", import.meta.url)),
+    selectorsYaml: readFileSync(new URL("./selectors/v1.yaml", import.meta.url), "utf8"),
     threadUrlPattern: THREAD_URL_PATTERN,
     banners: [
       { kind: "limit_banner", pattern: /(reached|hit) (your |the )?(daily |usage |message )?limit/i, blocksSend: true },

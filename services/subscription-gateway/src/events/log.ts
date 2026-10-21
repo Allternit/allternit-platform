@@ -13,7 +13,7 @@ import type { SseHub } from "./sse.js";
 import type { Notifier } from "./notify.js";
 
 // §A1 AdapterEvent tags + D11 heartbeat + lifecycle + internal kinds.
-export type EventKind = AdapterEvent["t"] | "progress.heartbeat" | "task.created" | "task.status" | "notify.failed" | "route.choice";
+export type EventKind = AdapterEvent["t"] | "progress.heartbeat" | "task.created" | "task.status" | "notify.failed";
 
 export const TERMINAL_STATUSES = ["completed", "partial", "needs_user", "failed"] as const;
 export type TerminalStatus = (typeof TERMINAL_STATUSES)[number];

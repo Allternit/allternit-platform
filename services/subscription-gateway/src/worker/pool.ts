@@ -8,7 +8,6 @@ import { existsSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { chromium, type BrowserContext } from "playwright";
-import { launchHiddenChrome, type HiddenChrome } from "./hidden_chrome.js";
 import {
   createPageLease,
   createResolver,
@@ -29,14 +28,11 @@ import type {
   SessionHealth,
   SubscriptionAdapter,
   TaskAttempt,
-  VendorMemory,
-  VendorThreadSummary,
-  VendorThreadText,
 } from "@allternit/subscription-fabric-contracts";
 import type { AdapterRegistry, LoadedAdapter } from "../adapters/registry.js";
 import type { EventLog } from "../events/log.js";
 import type { Db } from "../store/db.js";
-import { accountHasActiveTasks, accountHasLiveTasks, getAccount, upsertAccount } from "../store/queries.js";
+import { accountHasActiveTasks, getAccount, upsertAccount } from "../store/queries.js";
 import { workerKeyId, type WorkerKey, type WorkerSupervisor } from "./supervisor.js";
 
 export type LaneKey = WorkerKey;
@@ -53,11 +49,6 @@ export interface LaneRuntime {
   // adapters that can't observe them leave the account's fields as they were).
   readAccount?(): Promise<AccountObservation>;
   readPlan?(): Promise<string | null>;
-  // Memory Drive reads (read-only, non-spending); absent when the adapter
-  // has none.
-  readMemory?(): Promise<VendorMemory>;
-  listThreads?(opts: { limit: number }): Promise<VendorThreadSummary[]>;
-  readThreadText?(id: string): Promise<VendorThreadText | null>;
   close(): Promise<void>;
   // False once the browser behind this runtime is gone (crashed, killed, or
   // its window closed). Optional so fakes without a browser stay alive.
@@ -81,7 +72,6 @@ export interface WorkerPoolDeps {
   log?: EventLog; // challenge transitions surface one account-scoped ledger event
   logger?: (line: string) => void;
   sessionImport?: PlaywrightLauncherDeps["sessionImport"];
-  hiddenChrome?: PlaywrightLauncherDeps["hiddenChrome"];
   // After a verification check appears: how often the pool looks again, and
   // for how long (defaults 15 s, 10 min).
   challengeRecheckMs?: number;
@@ -155,7 +145,6 @@ export class WorkerPool {
         profilesDir: deps.profilesDir ?? process.cwd(),
         sessionImport: deps.sessionImport,
         logger: deps.logger,
-        hiddenChrome: deps.hiddenChrome,
       });
   }
 
@@ -205,41 +194,6 @@ export class WorkerPool {
     this.lastUsed.set(workerKeyId(lane), this.now());
     const runtime = this.lanes.get(workerKeyId(lane))?.runtime ?? null;
     return runtime && runtime.isAlive?.() === false ? null : runtime;
-  }
-
-  // Canary: one non-spending re-probe of a lane whose browser is already
-  // resident. Never launches (an idle-closed lane stays closed), never touches
-  // lastUsed (a canary must not keep a browser alive), and skips a lane that
-  // is mid-activation. Returns null when there was nothing to probe.
-  async probeResident(lane: LaneKey): Promise<{ health: SessionHealth; adapter_id: string; adapter_version: string } | null> {
-    const id = workerKeyId(lane);
-    const entry = this.lanes.get(id);
-    if (!entry || this.activations.has(id) || entry.runtime.isAlive?.() === false) return null;
-    let health: SessionHealth;
-    try {
-      health = healthFromProbe(await entry.runtime.probe());
-    } catch {
-      health = "provider_down";
-    }
-    this.persistHealth(lane, health);
-    const previous = entry.health;
-    entry.health = health;
-    if (health === "challenge_presented") this.watchChallenge(lane);
-    if (health === "challenge_presented" && previous !== "challenge_presented") {
-      this.deps.log?.append({
-        task_id: `account:${lane.account_id}`,
-        kind: "needs_user",
-        payload: {
-          account_id: lane.account_id,
-          reason: "challenge",
-          message:
-            "Provider presented a verification interstitial — solve it in the Sessions window; it is never auto-retried",
-        },
-        callers: [],
-      });
-    }
-    const manifest = entry.runtime.adapter.manifest;
-    return { health, adapter_id: manifest.adapter_id, adapter_version: manifest.adapter_version };
   }
 
   healthFor(lane: LaneKey): SessionHealth | null {
@@ -376,25 +330,6 @@ export class WorkerPool {
     return runtime;
   }
 
-  /**
-   * Run one read-only Memory Drive read on the account's ready page. Waits
-   * for nothing: an account whose page a task is using answers `busy` (a
-   * read must never disturb a running chat; queued or needs-you tasks don't
-   * count), one that isn't signed in answers its health.
-   */
-  async readForMemory<T>(lane: LaneKey, read: (runtime: LaneRuntime) => Promise<T> | null): Promise<
-    { ok: true; value: T } | { ok: false; reason: "busy" | "not_supported" | "not_ready"; health?: SessionHealth | null }
-  > {
-    if (accountHasLiveTasks(this.deps.db, lane.account_id)) return { ok: false, reason: "busy" };
-    const runtime = await this.activate(lane);
-    const health = this.healthFor(lane);
-    if (health !== "ready") return { ok: false, reason: "not_ready", health };
-    if (accountHasLiveTasks(this.deps.db, lane.account_id)) return { ok: false, reason: "busy" };
-    const pending = read(runtime);
-    if (!pending) return { ok: false, reason: "not_supported" };
-    return { ok: true, value: await pending };
-  }
-
   /** Refresh public account identity on a resident ready page; no navigation or send. */
   async refreshAccount(lane: LaneKey): Promise<void> {
     const resident = this.lanes.get(workerKeyId(lane));
@@ -517,11 +452,6 @@ export interface PlaywrightLauncherDeps {
   // 8 s). Single-page apps (Kimi) draw the signed-in UI after
   // domcontentloaded; judging at once reads a signed-in page as logged out.
   probeSettleMs?: number;
-  // The person's own computer (local_desktop.ts): `refuse` = no browser lane
-  // here (off, or no Google Chrome), with the sentence to show; `executable` =
-  // run that installed Google Chrome hidden (hidden_chrome.ts). Unset = a
-  // Sessions computer: headed Chrome as before.
-  hiddenChrome?: () => { executable: string } | { refuse: string };
 }
 
 // Wait until the page shows something decisive: the signed-in marker, a
@@ -554,34 +484,20 @@ export function createPlaywrightLauncher(deps: PlaywrightLauncherDeps): Launcher
     }
 
     const userDataDir = isAbsolute(profileRef) ? profileRef : join(deps.profilesDir, profileRef);
-    let hidden: HiddenChrome | null = null;
-    let context: BrowserContext;
-    const own = deps.hiddenChrome?.();
-    if (own) {
-      if ("refuse" in own) throw new Error(own.refuse);
-      // The person's own computer: hidden, on the account's own profile.
-      hidden = await launchHiddenChrome(userDataDir, { executable: own.executable });
-      context = hidden.context;
-    } else {
-      // Sessions window: headed, real Chrome, persistent profile. Never closed
-      // on auth walls or challenges — the human drives it; pool.shutdown() owns
-      // the lifecycle.
-      context = await chromium.launchPersistentContext(userDataDir, {
-        channel: "chrome",
-        headless: false,
-        // After a crash or kill -9 Chrome otherwise floats a "Restore pages?"
-        // bubble over the provider page on every relaunch.
-        args: ["--hide-crash-restore-bubble", "--start-maximized"],
-        // The page follows the window. Playwright's default 1280x720 viewport plus
-        // Chrome's toolbars made the window taller than a 720p Sessions display,
-        // so its bottom (composer, buttons) sat off-screen in the viewer.
-        viewport: null,
-      });
-    }
-    const closeContext = async () => {
-      if (hidden) await hidden.close();
-      else await context.close().catch(() => {});
-    };
+    // Sessions window: headed, real Chrome, persistent profile. Never closed
+    // on auth walls or challenges — the human drives it; pool.shutdown() owns
+    // the lifecycle.
+    const context: BrowserContext = await chromium.launchPersistentContext(userDataDir, {
+      channel: "chrome",
+      headless: false,
+      // After a crash or kill -9 Chrome otherwise floats a "Restore pages?"
+      // bubble over the provider page on every relaunch.
+      args: ["--hide-crash-restore-bubble", "--start-maximized"],
+      // The page follows the window. Playwright's default 1280x720 viewport plus
+      // Chrome's toolbars made the window taller than a 720p Sessions display,
+      // so its bottom (composer, buttons) sat off-screen in the viewer.
+      viewport: null,
+    });
     try {
       if (deps.sessionImport) {
         const n = await deps.sessionImport(userDataDir, context);
@@ -608,9 +524,6 @@ export function createPlaywrightLauncher(deps: PlaywrightLauncherDeps): Launcher
       context.on("close", () => {
         alive = false;
       });
-      void hidden?.closed.then(() => {
-        alive = false;
-      });
       return {
         adapter,
         isAlive: () => alive,
@@ -620,9 +533,6 @@ export function createPlaywrightLauncher(deps: PlaywrightLauncherDeps): Launcher
           ? { readAccount: () => adapter.readAccount!(new AbortController().signal) }
           : {}),
         ...(adapter.readPlan ? { readPlan: () => adapter.readPlan!(new AbortController().signal) } : {}),
-        ...(adapter.readMemory ? { readMemory: () => adapter.readMemory!(new AbortController().signal) } : {}),
-        ...(adapter.listThreads ? { listThreads: (o: { limit: number }) => adapter.listThreads!(o, new AbortController().signal) } : {}),
-        ...(adapter.readThreadText ? { readThreadText: (id: string) => adapter.readThreadText!(id, new AbortController().signal) } : {}),
         async probe(): Promise<ProbeResult> {
           const resolver = makeResolver(lease);
           await settleForProbe(
@@ -650,11 +560,11 @@ export function createPlaywrightLauncher(deps: PlaywrightLauncherDeps): Launcher
           if (closed) return;
           closed = true;
           await adapter.detach().catch(() => {});
-          await closeContext();
+          await context.close().catch(() => {});
         },
       };
     } catch (err) {
-      await closeContext();
+      await context.close().catch(() => {});
       throw err;
     }
   };

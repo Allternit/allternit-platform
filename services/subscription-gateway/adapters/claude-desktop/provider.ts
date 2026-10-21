@@ -199,8 +199,7 @@ export class ClaudeDesktopProvider extends BaseAaiProvider {
       await this.o.driver.newChat();
     }
     const after = await this.check(); if (!after.ok) return after;
-    // Random suffix: after a gateway restart the counter starts over, and a new context must never take the id of a lost one.
-    const id = `cd-ctx-${++this.n}-${Math.random().toString(36).slice(2, 8)}`;
+    const id = `cd-ctx-${++this.n}`;
     const c: Ctx = { id, threadId: input.threadId ?? id, closed: false, events: [], seq: 0, baseline: after.value.turns.length, seen: new Map(), cues: new Set(), cowork, msgN: 0, activity: false, done: new Map(), lock: Promise.resolve(), sending: 0 };
     this.ctxs.set(id, c);
     this.push(c, "agent.context.opened", "best_effort", { title: input.title ?? null, mode: cowork ? "cowork" : "chat" }, "allternit", id);

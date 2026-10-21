@@ -31,9 +31,6 @@ Everything a person would want to hear about on a runtime (Allternit Desktop or 
 | `inbox.item.created` | `inbox.item.created` | A new Inbox card (an autonomy draft or digest). |
 | `subscription.login_needed` | `subscription.login_needed` | See [Subscriptions logins](#subscriptions-logins). |
 | `subscription.signed_in` | `subscription.signed_in` | |
-| `attention.opened` | `attention.opened` | A [needs-you attention item](/guides/needs-you-inbox) opened, escalated or is re-notified (a failed, missed or bot-less routine, a lost run record). `data`: `attentionId`, `kind`, `severity`, `summary`, `actionUrl`, `botName`. |
-| `attention.resolved` | `attention.resolved` | The item was fixed (for example the next run succeeded), dismissed or retried. Not pushed by default. |
-| `routine.failed`, `routine.paused` | none | Kept on the bot ledger; the alert reaches people through `attention.opened` instead, so a failure is never pushed twice. |
 | `inbox.changed` | none | Desktop refresh only. |
 | everything else | none | Stays on the runtime. |
 

@@ -62,16 +62,16 @@ body[data-theme='light'] {
 
 html[data-theme='dark'],
 body[data-theme='dark'] {
-  --surface: var(--bg-elevated, #262625);
-  --chrome-bg: var(--bg-primary, #1f1f1e);
+  --surface: var(--bg-elevated, #2a211a);
+  --chrome-bg: var(--bg-primary, #1a1612);
   --border: var(--border-subtle, rgba(212, 176, 140, 0.12));
   --border-strong: rgba(212, 176, 140, 0.22);
   --text: var(--text-primary, #ececec);
   --text-dim: var(--text-secondary, #9b9b9b);
-  --hover: var(--bg-secondary, #262625);
-  --pressed: color-mix(in srgb, var(--bg-secondary, #262625) 92%, var(--text-primary, #ececec));
-  --active-bg: color-mix(in srgb, var(--accent-chat, #d97757) 14%, var(--bg-secondary, #262625));
-  --canvas: var(--shell-view-bg, var(--bg-primary, #1f1f1e));
+  --hover: var(--bg-secondary, #2a211a);
+  --pressed: color-mix(in srgb, var(--bg-secondary, #2a211a) 92%, var(--text-primary, #ececec));
+  --active-bg: color-mix(in srgb, var(--accent-chat, #d97757) 14%, var(--bg-secondary, #2a211a));
+  --canvas: var(--shell-view-bg, var(--bg-primary, #1a1612));
 }
 
 html,
@@ -3989,8 +3989,8 @@ body[data-theme='dark'] {
   --color-text-primary: var(--text-primary, #ececec);
   --color-text-secondary: var(--text-secondary, #9b9b9b);
   --color-text-tertiary: color-mix(in srgb, var(--text-secondary, #9b9b9b) 72%, var(--text-primary, #ececec));
-  --color-bg-page: var(--bg-elevated, #262625);
-  --color-bg-subtle: var(--bg-secondary, #262625);
+  --color-bg-page: var(--bg-elevated, #2a211a);
+  --color-bg-subtle: var(--bg-secondary, #2a211a);
   --color-border-default: var(--border-subtle, rgba(212, 176, 140, 0.12));
   --color-border-strong: rgba(212, 176, 140, 0.22);
 }

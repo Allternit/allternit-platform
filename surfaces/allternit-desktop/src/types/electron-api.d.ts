@@ -51,6 +51,26 @@ export interface BackendAPI {
   onDownloadProgress(handler: (progress: { stage: string; percent: number }) => void): () => void;
 }
 
+export interface BonsaiStatus {
+  installed: boolean;
+  running: boolean;
+  installing: boolean;
+  url: string;
+  revisions?: { source?: string; model?: string; mlxWheel?: string };
+  installDir: string;
+  error?: string;
+}
+
+export interface BonsaiAPI {
+  getStatus(): Promise<BonsaiStatus>;
+  install(): Promise<void>;
+  cancelInstall(): Promise<boolean>;
+  start(): Promise<void>;
+  stop(): Promise<boolean>;
+  remove(): Promise<void>;
+  onProgress(handler: (progress: { stage: string; message: string }) => void): () => void;
+}
+
 export type S1Backend = 'laya_bundled' | 'system_one_local' | 'auto';
 
 export interface LayaCheckpoint {
@@ -374,6 +394,27 @@ export interface FeatureFlagsAPI {
   onChanged(handler: (key: string, value: unknown) => void): () => void;
 }
 
+export type SiwcState =
+  | 'disabled' | 'signed_out' | 'signing_in' | 'signed_in'
+  | 'plan_usage_disabled' | 'needs_reauth' | 'error';
+
+/** Sign in with ChatGPT status. Never contains tokens. */
+export interface SiwcStatus {
+  enabled: boolean;
+  state: SiwcState;
+  email?: string;
+  expiresAt?: string;
+  detail?: string;
+}
+
+export interface SiwcAPI {
+  status(): Promise<SiwcStatus>;
+  signIn(opts?: { enablePlanUsage?: boolean }): Promise<{ ok: true; status: SiwcStatus } | { ok: false; error: string; status: SiwcStatus }>;
+  cancel(): Promise<SiwcStatus>;
+  signOut(): Promise<SiwcStatus & { revocationConfirmed: boolean }>;
+  onStatusChanged(handler: (status: SiwcStatus) => void): () => void;
+}
+
 export interface PersistedStateAPI {
   get(key: string): Promise<unknown>;
   set(key: string, value: unknown): Promise<boolean>;
@@ -581,7 +622,6 @@ export interface PhoneInfoData {
   host: string;
   port: number;
   streaming: boolean;
-  agentBusy: boolean;
 }
 
 export interface PhonePairingStatus {
@@ -603,25 +643,6 @@ export interface PhonesAPI {
   forget(id: string): Promise<void>;
   startScrcpy(serial: string): Promise<{ ok: boolean; error?: string }>;
   stopScrcpy(serial: string): Promise<void>;
-  // In-app live view (scrcpy-server video + input; starts only on request).
-  startStream(serial: string, opts?: PhoneStreamOptions): Promise<{ ok: true } | { ok: false; message: string }>;
-  stopStream(serial: string): Promise<void>;
-  streamStatus(serial: string): Promise<PhoneStreamStatus>;
-  onStreamMeta(serial: string, cb: (meta: PhoneStreamMeta) => void): () => void;
-  onStreamChunk(serial: string, cb: (chunk: ArrayBuffer) => void): () => void;
-  onStreamEnd(serial: string, cb: (info: { reason: string }) => void): () => void;
-  sendStreamInput(serial: string, events: PhoneInputEvent[]): Promise<{ ok: boolean; message?: string }>;
-  setStreamDisplayPower(serial: string, on: boolean): Promise<{ ok: boolean; message?: string }>;
-  // User comms (Phones 2.0 Phase 3): texts/calls through the phone's own SIM.
-  // No serial — main resolves the user's linked phone.
-  smsList(): Promise<PhoneSmsListResult>;
-  smsMessages(address: string, afterTimestamp?: number): Promise<PhoneSmsMessagesResult>;
-  smsSendUser(to: string, text: string): Promise<PhoneSmsSendResult>;
-  callDialUser(number: string, opts?: { confirmEmergency?: boolean }): Promise<PhoneDialResult>;
-  callEnd(): Promise<{ ok: boolean; message?: string }>;
-  callState(): Promise<{ state: 'idle' | 'dialing' | 'active'; number?: string }>;
-  listApps(serial: string): Promise<PhoneListAppsResult>;
-  onCommsEvent(cb: (ev: PhoneCommsEvent) => void): () => void;
   tryOpenApp(serial: string, app: string): Promise<{ ok: boolean; message?: string }>;
   screenshot(serial: string): Promise<{ ok: boolean; dataBase64?: string; message?: string }>;
   installArtemis(): Promise<unknown>;
@@ -629,65 +650,11 @@ export interface PhonesAPI {
   onPairing(handler: (status: PhonePairingStatus) => void): () => void;
 }
 
-export interface PhoneStreamOptions {
-  maxSize?: number;
-  videoBitrate?: number;
-  maxFps?: number;
-}
-
-export interface PhoneStreamMeta {
-  deviceName: string;
-  width: number;
-  height: number;
-  codec: 'h264';
-}
-
-// User comms (Phones 2.0 Phase 3) — shapes mirrored from phone-user-comms.ts.
-export interface PhoneSmsThread {
-  address: string;
-  displayName?: string;
-  lastSnippet: string;
-  lastTimestamp: number;
-  unreadCount?: number;
-}
-
-export interface PhoneSmsMessage {
-  id: string;
-  direction: 'in' | 'out';
-  body: string;
-  timestamp: number;
-}
-
-export interface PhoneAppInfo {
-  pkg: string;
-  versionName?: string;
-}
-
-export type PhoneSmsListResult = { ok: true; threads: PhoneSmsThread[] } | { ok: false; message: string };
-export type PhoneSmsMessagesResult = { ok: true; messages: PhoneSmsMessage[] } | { ok: false; message: string };
-export type PhoneSmsSendResult = { ok: true; status: 'submitted'; emergency?: true } | { ok: false; message: string };
-export type PhoneDialResult = { ok: true; status: 'dialing'; emergency?: true } | { ok: false; message: string };
-export type PhoneListAppsResult = { ok: true; apps: PhoneAppInfo[] } | { ok: false; message: string };
-export type PhoneCommsEvent = { type: 'sms'; address: string };
-
-export type PhoneStreamStatus =
-  | { state: 'idle' }
-  | { state: 'starting' }
-  | { state: 'live'; meta: PhoneStreamMeta }
-  | { state: 'ended'; reason: string }
-  | { state: 'error'; message: string };
-
-export type PhoneInputEvent =
-  | { type: 'touch'; action: 'down' | 'move' | 'up'; pointerId: number; x: number; y: number; pressure?: number }
-  | { type: 'key'; action: 'down' | 'up'; keyCode: number; metaState?: number }
-  | { type: 'text'; text: string }
-  | { type: 'scroll'; x: number; y: number; hScroll?: number; vScroll?: number }
-  | { type: 'back' } | { type: 'home' } | { type: 'app_switch' } | { type: 'power' };
-
 export interface AllternitDesktopAPI {
   sdk: { getBackendUrl(): Promise<string> };
   connection: ConnectionAPI;
   backend: BackendAPI;
+  bonsai: BonsaiAPI;
   systemOne: SystemOneAPI;
   vm: VmSetupAPI;
   window: WindowAPI;
@@ -705,8 +672,8 @@ export interface AllternitDesktopAPI {
   tunnel: TunnelAPI;
   permissionGuide: PermissionGuideAPI;
   phones: PhonesAPI;
-  phoneLink: import('../main/phone-link-types').PhoneLinkAPI;
   featureFlags: FeatureFlagsAPI;
+  siwc: SiwcAPI;
   findInPage: FindInPageAPI;
   locale: LocaleAPI;
   menuBar: MenuBarAPI;

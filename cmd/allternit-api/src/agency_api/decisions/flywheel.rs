@@ -13,9 +13,6 @@
 //!   the last transition, so each state has to be re-earned (hysteresis).
 //!   Every transition, automatic or manual, is written to
 //!   `decision_head_audit`.
-//! - When the kind has **replay evidence** (a decisions admin's batch replay
-//!   with `overrides.decision_heads`), promotion also has to pass the replay
-//!   acceptance rule (`acceptance`); the evidence id lands in the audit row.
 //! - A **live** head is tried first in the chain (the `head` slot of
 //!   `ALLTERNIT_DECISIONS_CHAIN`); a miss or low confidence escalates as usual.
 //!
@@ -24,11 +21,8 @@
 //! succeeded there before). It needs no training job and answers from one
 //! indexed SQLite read. With no traffic it stays in shadow.
 //!
-//! Trained heads register through the same `Head` trait: `head.embed`
-//! (`embed_head`, a CPU-trained scorer over EmbeddingGemma 2 vectors) and
-//! `head.rules` (`rules_head`, a decision list compiled to tier S0). They are
-//! built by the admin endpoints in `training` and answer only once a version
-//! is stored for the kind (`Head::ready`).
+//! Training (datasets, adapters, the decision model) is not here; it runs in
+//! its own track and its heads register through the same `Head` trait.
 
 use super::backends::{Answer, DecisionBackend, Query};
 use crate::db::DbHandle;
@@ -50,27 +44,6 @@ pub struct HeadInput<'a> {
     pub kind: &'a str,
     pub key: &'a str,
     pub ids: &'a [&'a str],
-    pub context: &'a str,
-    pub question: Option<&'a str>,
-    /// Option texts, in `ids` order.
-    pub texts: &'a [&'a str],
-    /// Embeddings, computed before `predict` (which is sync on a SQLite
-    /// connection) for heads that `embeds()`; `None` otherwise.
-    pub vectors: Option<&'a Vectors>,
-    /// The stored decision, when there is one (a replay, the shadow pass): a
-    /// trained head does not answer for a decision it was fit on.
-    pub decision_id: Option<&'a str>,
-    /// A stored version to answer with instead of the newest (a replay's
-    /// `{head, version}` override, for heads with `stored_versions()`).
-    pub pin: Option<i64>,
-}
-
-/// A decision's embeddings, all from one model.
-#[derive(Clone, Debug)]
-pub struct Vectors {
-    pub model: String,
-    pub state: Vec<f32>,
-    pub options: Vec<Vec<f32>>,
 }
 
 /// One head's answer: the chosen option's index and one probability per option.
@@ -84,40 +57,8 @@ pub trait Head: Send + Sync {
     fn name(&self) -> &'static str;
     /// The decision kinds it is registered for.
     fn applies(&self, kind: &str) -> bool;
-    /// Whether it can answer for `kind` at all (a trained head: a version
-    /// is stored). Heads that are not ready are not run or registered.
-    fn ready(&self, _conn: &Connection, _kind: &str) -> bool {
-        true
-    }
-    /// Whether it needs `HeadInput::vectors`.
-    fn embeds(&self) -> bool {
-        false
-    }
     /// `None` when it has no answer for this decision.
     fn predict(&self, conn: &Connection, input: &HeadInput<'_>) -> rusqlite::Result<Option<HeadAnswer>>;
-    /// The head's version: a replay override may pin it (`{"head", "version"}`).
-    fn version(&self) -> &'static str {
-        "1"
-    }
-    /// Same input, same answer. Replays sample a nondeterministic head `k`
-    /// times for pass@k; a deterministic one once (pass@k = pass@1).
-    fn deterministic(&self) -> bool {
-        true
-    }
-    /// Trained heads: versions are stored per kind (`training`), numbered
-    /// 1, 2, ...; `version()` does not name them.
-    fn stored_versions(&self) -> bool {
-        false
-    }
-    /// Needs the decision's text (context, question), which a replay finds
-    /// only in the harvested example.
-    fn needs_text(&self) -> bool {
-        false
-    }
-    /// The version answering for `kind` now (replay evidence must match it).
-    fn current_version(&self, _conn: &Connection, _kind: &str) -> String {
-        self.version().to_string()
-    }
 }
 
 /// Exact-match lookup over past outcomes.
@@ -158,15 +99,13 @@ pub fn lookup_probs(n: usize, i: usize, s: i64, f: i64) -> Vec<f64> {
 }
 
 static LOOKUP: LookupHead = LookupHead;
-static EMBED: super::embed_head::EmbedHead = super::embed_head::EmbedHead;
-static RULES: super::rules_head::RulesHead = super::rules_head::RulesHead;
 
-/// The registered heads.
+/// The registered heads. A trained head from the model track joins here.
 pub fn heads() -> Vec<&'static dyn Head> {
-    vec![&LOOKUP, &RULES, &EMBED]
+    vec![&LOOKUP]
 }
 
-pub fn head_by_name(name: &str) -> Option<&'static dyn Head> {
+fn head_by_name(name: &str) -> Option<&'static dyn Head> {
     heads().into_iter().find(|h| h.name() == name)
 }
 
@@ -209,16 +148,11 @@ pub struct Bar {
     pub max_overconfidence: f64,
     /// Off for kinds a head must never take over by itself (`safety`).
     pub auto_promote: bool,
-    /// Replay acceptance (`acceptance`): with replay evidence for the kind,
-    /// the candidate's accuracy may trail the served baseline by at most this.
-    pub replay_epsilon: f64,
-    /// Samples per decision for pass@k on nondeterministic heads.
-    pub replay_k: u32,
 }
 
 impl Default for Bar {
     fn default() -> Self {
-        Self { min_samples: 200, promote_at: 0.97, demote_at: 0.93, min_demote_samples: 50, window: 1000, max_overconfidence: 0.05, auto_promote: true, replay_epsilon: 0.01, replay_k: 5 }
+        Self { min_samples: 200, promote_at: 0.97, demote_at: 0.93, min_demote_samples: 50, window: 1000, max_overconfidence: 0.05, auto_promote: true }
     }
 }
 
@@ -242,8 +176,6 @@ pub fn bar(kind: &str) -> Bar {
     b.min_samples = b.min_samples.max(1);
     b.window = b.window.max(b.min_samples).max(b.min_demote_samples);
     b.demote_at = b.demote_at.min(b.promote_at);
-    b.replay_epsilon = b.replay_epsilon.clamp(0.0, 1.0);
-    b.replay_k = b.replay_k.clamp(1, 50);
     b
 }
 
@@ -382,18 +314,7 @@ pub fn current_state(conn: &Connection, head: &str, kind: &str) -> Option<String
 }
 
 pub fn transition(conn: &Connection, head: &str, kind: &str, to: &str, reason: &str, actor: &str, m: &Metrics) -> rusqlite::Result<()> {
-    transition_with(conn, head, kind, to, reason, actor, m, None)
-}
-
-/// [`transition`] with extra audit detail merged into `metrics_json` (the
-/// replay acceptance: `replay_evidence_id` and the checks it passed).
-#[allow(clippy::too_many_arguments)]
-pub fn transition_with(conn: &Connection, head: &str, kind: &str, to: &str, reason: &str, actor: &str, m: &Metrics, extra: Option<Value>) -> rusqlite::Result<()> {
     let (from, _) = state(conn, head, kind)?;
-    let mut audit = serde_json::to_value(m).unwrap_or_else(|_| json!({}));
-    if let (Some(a), Some(Value::Object(x))) = (audit.as_object_mut(), extra) {
-        a.extend(x);
-    }
     let now = super::super::store::now();
     conn.execute(
         "UPDATE decision_heads SET state = ?3, state_since = ?4, updated_at = ?4 WHERE head = ?1 AND kind = ?2",
@@ -402,7 +323,7 @@ pub fn transition_with(conn: &Connection, head: &str, kind: &str, to: &str, reas
     conn.execute(
         "INSERT INTO decision_head_audit (id, head, kind, from_state, to_state, reason, actor, metrics_json, at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-        params![super::super::store::new_id("hda"), head, kind, from, to, reason, actor, audit.to_string(), now],
+        params![super::super::store::new_id("hda"), head, kind, from, to, reason, actor, serde_json::to_string(m).unwrap_or_default(), now],
     )?;
     tracing::info!(head, kind, from = %from, to, reason, actor, "decision head transition");
     Ok(())
@@ -415,34 +336,13 @@ pub fn evaluate(conn: &Connection, kind: &str) -> rusqlite::Result<Vec<(String, 
 
 pub fn evaluate_with(conn: &Connection, kind: &str, b: &Bar) -> rusqlite::Result<Vec<(String, String)>> {
     let mut out = Vec::new();
-    for h in heads().into_iter().filter(|h| h.applies(kind) && h.ready(conn, kind)) {
+    for h in heads().into_iter().filter(|h| h.applies(kind)) {
         let (st, since) = state(conn, h.name(), kind)?;
         let m = metrics(conn, h.name(), kind, &since, b.window)?;
-        let Some((to, why)) = next_state(&st, &m, b) else { continue };
-        // B5: going live also needs the latest batch replay for the kind to
-        // pass, when a replay set exists (no evidence: the live bar alone).
-        let mut extra = None;
-        let mut why = why;
-        if to == LIVE {
-            if let Some(ev) = super::acceptance::latest(conn, h.name(), kind)? {
-                // A retrained head's evidence is for an older version: it has
-                // to be replayed again before it can go live.
-                let current = h.current_version(conn, kind);
-                if ev.head_version != current {
-                    tracing::info!(head = h.name(), kind, evidence = %ev.id, "promotion held back: replay evidence is for version {}, not {current}", ev.head_version);
-                    continue;
-                }
-                let v = super::acceptance::judge(&ev, b);
-                if !v.passed {
-                    tracing::info!(head = h.name(), kind, evidence = %ev.id, "promotion held back by replay evidence: {}", v.summary());
-                    continue;
-                }
-                why = format!("{why}; replay {}: {}", ev.id, v.summary());
-                extra = Some(json!({ "replay_evidence_id": ev.id, "acceptance": v }));
-            }
+        if let Some((to, why)) = next_state(&st, &m, b) {
+            transition(conn, h.name(), kind, to, &why, "flywheel", &m)?;
+            out.push((h.name().to_string(), to.to_string()));
         }
-        transition_with(conn, h.name(), kind, to, &why, "flywheel", &m, extra)?;
-        out.push((h.name().to_string(), to.to_string()));
     }
     Ok(out)
 }
@@ -471,23 +371,7 @@ impl DecisionBackend for LiveHead {
         true
     }
     async fn decide(&self, q: &Query<'_>) -> Result<Answer, String> {
-        let vectors = if self.head.embeds() {
-            super::embed_head::embed_decision(crate::memory_index::global(), q.context, q.question, &q.texts).await
-        } else {
-            None
-        };
-        let input = HeadInput {
-            owner: &self.owner,
-            kind: q.kind,
-            key: &self.key,
-            ids: &q.ids,
-            context: q.context,
-            question: q.question,
-            texts: &q.texts,
-            vectors: vectors.as_ref(),
-            decision_id: None,
-            pin: None,
-        };
+        let input = HeadInput { owner: &self.owner, kind: q.kind, key: &self.key, ids: &q.ids };
         let predicted = with_head_conn(&self.db, |conn| self.head.predict(conn, &input)).map_err(|e| e.to_string())?;
         match predicted {
             Some(a) => Ok(Answer { probs: a.probs, abstain: false, detail: json!({ "head": self.head.name() }) }),
@@ -542,12 +426,7 @@ pub fn expand(chain: Vec<Box<dyn DecisionBackend>>, db: &DbHandle, owner: &str, 
     let live: Vec<&'static dyn Head> = db
         .connect()
         .ok()
-        .map(|c| {
-            heads()
-                .into_iter()
-                .filter(|h| h.applies(kind) && current_state(&c, h.name(), kind).as_deref() == Some(LIVE) && h.ready(&c, kind))
-                .collect()
-        })
+        .map(|c| heads().into_iter().filter(|h| h.applies(kind) && current_state(&c, h.name(), kind).as_deref() == Some(LIVE)).collect())
         .unwrap_or_default();
     let mut out: Vec<Box<dyn DecisionBackend>> = Vec::with_capacity(chain.len() + live.len());
     for b in chain {
@@ -572,33 +451,6 @@ pub struct Shadow {
     pub key: String,
     pub ids: Vec<String>,
     pub has_image: bool,
-    /// Held in memory for the shadow pass only, never stored here.
-    pub context: String,
-    pub question: Option<String>,
-    pub texts: Vec<String>,
-    /// Filled by [`prepare_shadow`] when an embedding head will run.
-    pub vectors: Option<Vectors>,
-}
-
-/// Before the (blocking) shadow pass: embed the decision when a ready,
-/// non-retired head needs vectors. Async, so the embedding call never ties
-/// up a blocking thread or a SQLite connection.
-pub async fn prepare_shadow(db: &DbHandle, s: &mut Shadow) {
-    if s.has_image {
-        return;
-    }
-    let needed = db
-        .connect()
-        .map(|c| {
-            heads().into_iter().any(|h| {
-                h.embeds() && h.applies(&s.kind) && h.ready(&c, &s.kind) && current_state(&c, h.name(), &s.kind).as_deref() != Some(RETIRED)
-            })
-        })
-        .unwrap_or(false);
-    if needed {
-        let texts: Vec<&str> = s.texts.iter().map(String::as_str).collect();
-        s.vectors = super::embed_head::embed_decision(crate::memory_index::global(), &s.context, s.question.as_deref(), &texts).await;
-    }
 }
 
 /// Run every registered, non-retired head for the decision's kind and record
@@ -625,20 +477,8 @@ pub fn record_shadow(db: &DbHandle, s: &Shadow) -> rusqlite::Result<()> {
         return Ok(());
     }
     let ids: Vec<&str> = s.ids.iter().map(String::as_str).collect();
-    let texts: Vec<&str> = s.texts.iter().map(String::as_str).collect();
-    let input = HeadInput {
-        owner: &s.owner,
-        kind: &s.kind,
-        key: &s.key,
-        ids: &ids,
-        context: &s.context,
-        question: s.question.as_deref(),
-        texts: &texts,
-        vectors: s.vectors.as_ref(),
-        decision_id: Some(&s.decision_id),
-        pin: None,
-    };
-    for h in heads().into_iter().filter(|h| h.applies(&s.kind) && h.ready(&conn, &s.kind)) {
+    let input = HeadInput { owner: &s.owner, kind: &s.kind, key: &s.key, ids: &ids };
+    for h in heads().into_iter().filter(|h| h.applies(&s.kind)) {
         let (st, _) = state(&conn, h.name(), &s.kind)?;
         if st == RETIRED {
             continue;
@@ -739,7 +579,7 @@ pub fn list(conn: &Connection) -> rusqlite::Result<Value> {
         data.push(json!({
             "object": "decision_head", "head": head, "kind": kind, "state": st, "state_since": since, "updated_at": updated,
             "metrics": m, "bar": b, "next": next_state(&st, &m, &b).map(|(to, why)| json!({ "state": to, "reason": why })),
-            "audit": audit, "model": super::training::latest_summary(conn, &head, &kind)?,
+            "audit": audit,
         }));
     }
     Ok(json!({ "object": "list", "data": data, "registered": heads().iter().map(|h| h.name()).collect::<Vec<_>>() }))

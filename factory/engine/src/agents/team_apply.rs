@@ -667,9 +667,7 @@ pub fn spawn_env(bot: &EffectiveBot, team: &str, bot_id: Option<&str>) -> BTreeM
 
 fn classify_spawn_failure(fact: &str) -> &'static str {
     let lower = fact.to_ascii_lowercase();
-    if is_folder_privacy_denial(&lower) {
-        "needs_person"
-    } else if lower.contains("pane engine") || lower.contains("could not start") || lower.contains("connection refused") {
+    if lower.contains("pane engine") || lower.contains("could not start") || lower.contains("connection refused") {
         "transport"
     } else if lower.contains("spawn gate") || lower.contains("refus") || lower.contains("already exists") {
         "refused"
@@ -678,14 +676,6 @@ fn classify_spawn_failure(fact: &str) -> &'static str {
     } else {
         "internal"
     }
-}
-
-/// The agent died because macOS privacy (TCC) kept the pane host out of its
-/// workdir: `getcwd: … Operation not permitted` from the shell, or EPERM on
-/// the folder. A person has to grant the permission; retrying won't help.
-fn is_folder_privacy_denial(lower: &str) -> bool {
-    lower.contains("operation not permitted")
-        && (lower.contains("getcwd") || lower.contains("current directory") || lower.contains("working directory"))
 }
 
 /// Run an engine future to completion from this synchronous code, on its own
@@ -1071,20 +1061,8 @@ fn spawn_one(
         Ok(_) => StepResult::new(step, StepOutcome::Ok, format!("started pane {slug} ({harness}) in {}; {reg_fact}", workdir.display())),
         Err(e) => {
             let fact = format!("{e:#}");
-            let code = if backend::is_transport(&e) && !is_folder_privacy_denial(&fact.to_ascii_lowercase()) {
-                "transport"
-            } else {
-                classify_spawn_failure(&fact)
-            };
-            let fact = if code == "needs_person" {
-                format!(
-                    "pane spawn failed: macOS blocked the pane host from {} ({fact}). Allow Allternit Desktop under System Settings → Privacy & Security → Files and Folders (Desktop/Documents/Downloads) or Full Disk Access, or use a workdir outside those folders",
-                    workdir.display()
-                )
-            } else {
-                format!("pane spawn failed: {fact}")
-            };
-            StepResult::failed(step, code, fact)
+            let code = if backend::is_transport(&e) { "transport" } else { classify_spawn_failure(&fact) };
+            StepResult::failed(step, code, format!("pane spawn failed: {fact}"))
         }
     };
     r.delivered = Some(report.fields);
@@ -1277,13 +1255,6 @@ mod tests {
     }
 
     #[test]
-    fn folder_privacy_denial_needs_a_person() {
-        let tail = "agent exited immediately — transcript tail:\nshell-init: error retrieving current directory: getcwd: cannot access parent directories: Operation not permitted";
-        assert_eq!(classify_spawn_failure(tail), "needs_person");
-        assert_eq!(classify_spawn_failure("connection refused by pane engine"), "transport");
-    }
-
-    #[test]
     fn spawn_on_a_machine_checks_the_paired_computers() {
         let home = tempfile::tempdir().unwrap();
         std::env::set_var("ALLTERNIT_FACTORY_HOME", home.path());
@@ -1297,7 +1268,7 @@ mod tests {
             let root = tempfile::tempdir().unwrap();
             let res = apply(root.path(), &t, None, &spawn, opts);
             // Nothing is delivered here for a remote bot.
-            assert!(!root.path().join("CLAUDE.local.md").exists());
+            assert!(!root.path().join("CLAUDE.md").exists());
             (res[0].code.clone(), res[0].fact.clone())
         };
         // A real, online computer (by name, any case): started there through

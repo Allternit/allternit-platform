@@ -72,9 +72,6 @@ pub struct NodeCandidate {
     pub last_seen_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub credential_expires_at: DateTime<Utc>,
-    /// The user pinned this node as their default (`user_node_preferences`,
-    /// surface `'*'`). A healthy pinned node beats every other rule.
-    pub preferred: bool,
 }
 
 impl NodeCandidate {
@@ -106,12 +103,10 @@ impl NodeStore for PgNodeStore<'_> {
     async fn candidate_nodes(&self, user_id: &str) -> Result<Vec<NodeCandidate>, ApiError> {
         let rows = sqlx::query_as::<_, NodeCandidateRow>(
             r#"
-            SELECT d.id, d.name, d.kind, d.status, d.last_seen_at, d.created_at,
-                   d.credential_expires_at, (p.node_id IS NOT NULL) AS preferred
-            FROM runtime_devices d
-            LEFT JOIN user_node_preferences p
-              ON p.user_id = d.user_id AND p.surface = '*' AND p.node_id = d.id
-            WHERE d.user_id = $1 AND d.revoked_at IS NULL
+            SELECT id, name, kind, status, last_seen_at, created_at,
+                   credential_expires_at
+            FROM runtime_devices
+            WHERE user_id = $1 AND revoked_at IS NULL
             "#,
         )
         .bind(user_id)
@@ -130,7 +125,6 @@ struct NodeCandidateRow {
     last_seen_at: Option<DateTime<Utc>>,
     created_at: DateTime<Utc>,
     credential_expires_at: DateTime<Utc>,
-    preferred: bool,
 }
 
 impl NodeCandidateRow {
@@ -144,16 +138,14 @@ impl NodeCandidateRow {
             last_seen_at: self.last_seen_at,
             created_at: self.created_at,
             credential_expires_at: self.credential_expires_at,
-            preferred: self.preferred,
         }
     }
 }
 
-/// Resolve the caller's default data-plane node. A healthy node the user
-/// pinned (`user_node_preferences`, surface `'*'`) wins; otherwise the
-/// healthy device with the most recent activity, regardless of kind — a
-/// provisioned container outranks a desktop only when its `last_seen_at` is
-/// fresher. An unhealthy pinned node is skipped, never routed to.
+/// Resolve the caller's default data-plane node: the healthy device with the
+/// most recent activity, regardless of kind. All kinds are treated
+/// uniformly — a provisioned container outranks a desktop only when its
+/// `last_seen_at` is fresher.
 ///
 /// Returns `ApiError::PreconditionRequired` (428, "pair a device") when the
 /// user has no healthy node.
@@ -188,12 +180,12 @@ pub async fn resolve_default_node_preferring(
                 && candidate.credential_expires_at > Utc::now()
         })
         .collect();
-    // The pinned node wins, then a relay-connected one, then the most recent
-    // activity; ties break on the id so the choice is deterministic.
+    // Most recent activity wins; ties break on the id so the choice is
+    // deterministic across calls.
     healthy.sort_by(|a, b| {
-        b.preferred
-            .cmp(&a.preferred)
-            .then_with(|| connected.contains(&b.device_id).cmp(&connected.contains(&a.device_id)))
+        connected
+            .contains(&b.device_id)
+            .cmp(&connected.contains(&a.device_id))
             .then_with(|| b.recency().cmp(&a.recency()))
             .then_with(|| a.device_id.cmp(&b.device_id))
     });
@@ -278,7 +270,6 @@ mod tests {
             last_seen_at: last_seen,
             created_at: Utc::now() - Duration::days(30),
             credential_expires_at: credential_expires,
-            preferred: false,
         }
     }
 
@@ -308,31 +299,6 @@ mod tests {
             ApiError::PreconditionRequired(message) => message.clone(),
             other => panic!("expected PreconditionRequired, got {other}"),
         }
-    }
-
-    #[tokio::test]
-    async fn a_healthy_pinned_node_beats_a_fresher_connected_one() {
-        let mut pinned = online("cloud", NodeKind::PROVISIONED, 40);
-        pinned.preferred = true;
-        let store = MockStore {
-            candidates: vec![online("mac", NodeKind::LOCAL, 1), pinned.clone()],
-        };
-        let connected: std::collections::HashSet<String> = ["mac".to_string()].into();
-        let node = resolve_default_node_preferring(&store, "user_1", &connected).await.unwrap();
-        assert_eq!(node.device_id, "cloud");
-
-        // A stale pinned node is skipped, not routed to.
-        let mut stale = candidate(
-            "cloud",
-            NodeKind::PROVISIONED,
-            "online",
-            Some(Utc::now() - Duration::hours(2)),
-            Utc::now() + Duration::days(30),
-        );
-        stale.preferred = true;
-        let store = MockStore { candidates: vec![online("mac", NodeKind::LOCAL, 1), stale] };
-        let node = resolve_default_node(&store, "user_1").await.unwrap();
-        assert_eq!(node.device_id, "mac");
     }
 
     #[tokio::test]
@@ -516,20 +482,6 @@ mod tests {
         .execute(pool)
         .await
         .unwrap();
-        sqlx::query(
-            r#"
-            CREATE TABLE user_node_preferences (
-                user_id TEXT NOT NULL,
-                surface TEXT NOT NULL DEFAULT '*',
-                node_id TEXT NOT NULL,
-                updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (user_id, surface)
-            )
-            "#,
-        )
-        .execute(pool)
-        .await
-        .unwrap();
     }
 
     async fn insert_device(pool: &sqlx::PgPool, row: &NodeCandidate) {
@@ -575,25 +527,6 @@ mod tests {
 
         let error = resolve_default_node(&store, "someone_else").await.unwrap_err();
         assert!(matches!(error, ApiError::PreconditionRequired(_)));
-    }
-
-    #[tokio::test]
-    async fn pg_store_marks_the_pinned_node_and_it_wins() {
-        let pool = test_pool().await;
-        create_runtime_devices(&pool).await;
-        insert_device(&pool, &online("rt_mac", NodeKind::LOCAL, 5)).await;
-        insert_device(&pool, &online("rt_cloud", NodeKind::PROVISIONED, 60)).await;
-        let store = PgNodeStore::new(&pool);
-        assert_eq!(resolve_default_node(&store, "user_1").await.unwrap().device_id, "rt_mac");
-
-        sqlx::query("INSERT INTO user_node_preferences (user_id, surface, node_id) VALUES ('user_1', '*', 'rt_cloud')")
-            .execute(&pool)
-            .await
-            .unwrap();
-        let candidates = store.candidate_nodes("user_1").await.unwrap();
-        assert!(candidates.iter().any(|c| c.device_id == "rt_cloud" && c.preferred));
-        assert!(candidates.iter().any(|c| c.device_id == "rt_mac" && !c.preferred));
-        assert_eq!(resolve_default_node(&store, "user_1").await.unwrap().device_id, "rt_cloud");
     }
 
     const MIGRATION_012: &str = include_str!("../../migrations_pg/012_data_plane_nodes.sql");

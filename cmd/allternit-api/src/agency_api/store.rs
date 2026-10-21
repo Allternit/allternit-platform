@@ -23,20 +23,6 @@ pub const EV_RUN_STATE: &str = "agency.run.state";
 pub const EV_RUN_EVENT: &str = "agency.event";
 pub const EV_CAMPAIGN_STATE: &str = "agency.campaign.state";
 pub const EV_REPLAY_STATE: &str = "agency.replay.state";
-pub const EV_REPLAY_BATCH_STATE: &str = "agency.replay_batch.state";
-/// C2: a run's trace-monitor findings (keyed by run id).
-pub const EV_FINDINGS_STATE: &str = "agency.run_findings.state";
-/// C5: eval suites and eval runs.
-pub const EV_EVAL_SUITE_STATE: &str = "agency.eval_suite.state";
-pub const EV_EVAL_RUN_STATE: &str = "agency.eval_run.state";
-/// C6: harness learning. Searches, proposals, the per-task-type graph
-/// version registry and the audit trail (all owned by [`SYSTEM_OWNER`]).
-pub const EV_HARNESS_SEARCH_STATE: &str = "agency.harness_search.state";
-pub const EV_HARNESS_PROPOSAL_STATE: &str = "agency.harness_proposal.state";
-pub const EV_HARNESS_VERSIONS_STATE: &str = "agency.harness_versions.state";
-pub const EV_HARNESS_AUDIT_STATE: &str = "agency.harness_audit.state";
-/// Owner of server-wide objects (harness versions apply to every user's runs).
-pub const SYSTEM_OWNER: &str = "system";
 
 static WRITE_LOCK: Mutex<()> = Mutex::const_new(());
 
@@ -101,8 +87,7 @@ impl Inner {
                 let id = p["run_id"].as_str().unwrap_or_default().to_string();
                 self.events.entry(id).or_default().push(p["event"].clone());
             }
-            EV_CAMPAIGN_STATE | EV_REPLAY_STATE | EV_REPLAY_BATCH_STATE | EV_FINDINGS_STATE | EV_EVAL_SUITE_STATE | EV_EVAL_RUN_STATE
-            | EV_HARNESS_SEARCH_STATE | EV_HARNESS_PROPOSAL_STATE | EV_HARNESS_VERSIONS_STATE | EV_HARNESS_AUDIT_STATE => {
+            EV_CAMPAIGN_STATE | EV_REPLAY_STATE => {
                 let key = (ty.to_string(), p["id"].as_str().unwrap_or_default().to_string(), p["owner"].as_str().unwrap_or_default().to_string());
                 self.objects.insert(key, (p["object"].clone(), self.tick));
             }
@@ -116,13 +101,7 @@ struct Shared {
     _ledger: Arc<Ledger>,
     inner: RwLock<Inner>,
     scans: AtomicUsize,
-    /// C2: called with the run id after every terminal transition is durable.
-    on_terminal: std::sync::OnceLock<TerminalHook>,
 }
-
-/// Called after a run's terminal `run.status_changed` is durable (the trace
-/// monitor). It must not block: it spawns its work.
-pub type TerminalHook = Arc<dyn Fn(&str) + Send + Sync>;
 
 /// One index per ledger: `store(st)` builds an `AgencyStore` per request, so
 /// the index must outlive the handle.
@@ -132,7 +111,7 @@ fn shared_for(ledger: &Arc<Ledger>) -> Arc<Shared> {
     let mut g = INDEXES.lock().unwrap_or_else(|e| e.into_inner());
     g.get_or_insert_with(HashMap::new)
         .entry(Arc::as_ptr(ledger) as usize)
-        .or_insert_with(|| Arc::new(Shared { _ledger: ledger.clone(), inner: RwLock::new(Inner::default()), scans: AtomicUsize::new(0), on_terminal: Default::default() }))
+        .or_insert_with(|| Arc::new(Shared { _ledger: ledger.clone(), inner: RwLock::new(Inner::default()), scans: AtomicUsize::new(0) }))
         .clone()
 }
 
@@ -150,11 +129,6 @@ impl AgencyStore {
     pub fn new(ledger: Arc<Ledger>) -> Self {
         let shared = shared_for(&ledger);
         Self { ledger, shared }
-    }
-
-    /// Install the terminal hook once per ledger (later calls are no-ops).
-    pub fn set_terminal_hook(&self, f: impl FnOnce() -> TerminalHook) {
-        self.shared.on_terminal.get_or_init(f);
     }
 
     /// Number of full-ledger scans done to build the index (test hook: stays
@@ -315,11 +289,6 @@ impl AgencyStore {
         self.emit(&rid, rec.run["version"].as_i64().unwrap_or(0), "run.status_changed",
                   json!({ "data": { "from": from, "to": to, "terminal": terminal, "reason": reason, "run_receipt_id": null } }))
             .await?;
-        if terminal {
-            if let Some(h) = self.shared.on_terminal.get() {
-                h(&rid);
-            }
-        }
         Ok(rec)
     }
 
@@ -400,14 +369,6 @@ impl AgencyStore {
     pub async fn daily_spend(&self, org: &str) -> anyhow::Result<(super::guard::Spend, super::guard::Spend)> {
         let g = self.index().await?;
         Ok(super::guard::spend_today(g.runs.values().map(|(r, _)| (&r.run, &r.task_ir)), org))
-    }
-
-    /// [`daily_spend`] plus today's replay and eval live model calls (usage
-    /// ledger, `source = replay`): what the daily caps count.
-    pub async fn daily_spend_all(&self, db: &crate::db::DbHandle, org: &str) -> anyhow::Result<(super::guard::Spend, super::guard::Spend)> {
-        let (g, o) = self.daily_spend(org).await?;
-        let (rg, ro) = super::guard::replay_spend_today(&db.connect()?, org)?;
-        Ok((super::guard::add(g, rg), super::guard::add(o, ro)))
     }
 
     /// A daily spending cap (global or org) is reached: halt spend durably

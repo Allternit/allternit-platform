@@ -34,7 +34,7 @@ use std::sync::Arc;
 
 use crate::channel_gateway::{Identity, Inbound, Outbound, PostError, Receipt};
 use crate::channel_gateway::ChannelTransport;
-use crate::channel_transports::{teams_normalize, Account, HttpReq, HttpSend};
+use crate::channel_transports::{dispatch_events, teams_normalize, Account, HttpReq, HttpSend};
 use crate::db::DbHandle;
 use crate::relay_auth::{RelaySecret, RelayedAuth};
 use crate::AppState;
@@ -58,13 +58,17 @@ async fn teams_app_webhook(State(state): State<Arc<AppState>>, auth: RelayedAuth
     let Ok(activity) = serde_json::from_slice::<Value>(&auth.body) else {
         return (StatusCode::BAD_REQUEST, Json(json!({ "error": "invalid_json" }))).into_response();
     };
-    // Recorded before the queue hears back (it redelivers on an error); bot turns run after.
-    let (Some(acct), Some(tx)) = (ensure_account(&state.db, owner), cloud_transport(&state, owner)) else {
-        return Json(json!({ "ok": true, "ignored": true })).into_response();
-    };
-    let names: Vec<String> = crate::channel_transports::member_bots(&state.db, &acct).iter().map(|b| b.name.clone()).collect();
-    let events = normalize_activity(&activity, &names);
-    crate::channel_transports::accept_and_ack(&state, &acct, tx, events, Default::default()).await
+    // Ack fast: bot turns can outlive any platform timeout. The queue retries.
+    let st = state.clone();
+    let owner = owner.to_string();
+    tokio::spawn(async move {
+        if let (Some(acct), Some(tx)) = (ensure_account(&st.db, &owner), cloud_transport(&st, &owner)) {
+            let names: Vec<String> = crate::channel_transports::member_bots(&st.db, &acct).iter().map(|b| b.name.clone()).collect();
+            let events = normalize_activity(&activity, &names);
+            dispatch_events(&st, &acct, tx, events).await;
+        }
+    });
+    Json(json!({ "ok": true })).into_response()
 }
 
 /// Normalize one relayed Bot Framework activity into channel inbounds, with
@@ -245,9 +249,6 @@ impl ChannelTransport for TeamsAppCloudTransport {
     fn provider(&self) -> &'static str {
         "teams"
     }
-    fn capabilities(&self) -> crate::channel_gateway::Capabilities {
-        crate::channel_gateway::Capabilities { text: true, threads: false, history: false, files_out: false, files_in: false, reactions: true, edits: true, delivery_receipts: false, per_bot_identity: true }
-    }
     fn verify(&self, _secret: &str, _headers: &HeaderMap, _body: &[u8]) -> Result<(), String> {
         Err("the shared Teams app is authenticated at the cloud edge, not on this runtime".into())
     }
@@ -283,7 +284,7 @@ impl ChannelTransport for TeamsAppCloudTransport {
         let resp = self.http.post_json(req).await.map_err(PostError::Uncertain)?;
         match resp.status {
             200..=299 => Ok(Receipt { remote_id: resp.body["id"].as_str().unwrap_or_default().to_string(), relayed: false }),
-            429 => Err(PostError::rate_limited(&resp.body)),
+            429 => Err(PostError::Rejected("rate limited".into())),
             500..=599 => Err(PostError::Uncertain(format!("cloud teams send returned {}", resp.status))),
             s => Err(PostError::Rejected(format!("cloud teams send returned {s}: {}", resp.body))),
         }

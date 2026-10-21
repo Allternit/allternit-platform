@@ -15,12 +15,6 @@ on:
         required: false
         type: boolean
         default: true
-      platforms:
-        description: 'Platforms to build (a partial run makes no release)'
-        required: false
-        type: choice
-        options: [all, windows, macos, linux]
-        default: all
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -83,7 +77,6 @@ jobs:
 
   # Build macOS .dmg (arm64 + x64, universal)
   build-macos:
-    if: github.event_name != 'workflow_dispatch' || inputs.platforms == 'all' || inputs.platforms == 'macos'
     name: Build macOS
     needs: [unit-tests, release-preflight]
     # macos-15, not macos-latest: macos-latest is macOS 26, and Zig 0.15.2
@@ -180,26 +173,10 @@ jobs:
         # prost-build (allternit-agent-system-rails) shells out to protoc.
         run: brew install protobuf
 
-      # Reuse last build's allternit-api and allternit-factory when no Rust input changed
-      # (.github/scripts/prebuilt-rust-bin.mjs); a hit skips the cargo builds.
-      - name: Restore prebuilt Rust binaries
-        uses: actions/cache/restore@v4
-        with:
-          path: .prebuilt/rust-macos
-          key: prebuilt-rust-macos-${{ github.sha }}-${{ github.run_id }}
-          restore-keys: prebuilt-rust-macos-
-
-      - name: Reuse prebuilt Rust binaries if unchanged
-        id: prebuilt
-        shell: bash
-        run: node .github/scripts/prebuilt-rust-bin.mjs check --dir .prebuilt/rust-macos
-
       - name: Build allternit-api (x86_64)
-        if: steps.prebuilt.outputs.hit != 'true'
         run: cargo build --release --target x86_64-apple-darwin --manifest-path cmd/allternit-api/Cargo.toml
 
       - name: Build allternit-api (aarch64)
-        if: steps.prebuilt.outputs.hit != 'true'
         run: cargo build --release --target aarch64-apple-darwin --manifest-path cmd/allternit-api/Cargo.toml
 
       - name: Create universal allternit-api binary
@@ -305,10 +282,8 @@ jobs:
         # every terminal (allternit-api /terminal, gizzi /pty), and gizzi finds
         # it next to itself in resources/bin. Universal lipo matches api/gizzi.
         run: |
-          if [ "${{ steps.prebuilt.outputs.hit }}" != true ]; then
-            cargo build --release -p allternit-factory --target x86_64-apple-darwin
-            cargo build --release -p allternit-factory --target aarch64-apple-darwin
-          fi
+          cargo build --release -p allternit-factory --target x86_64-apple-darwin
+          cargo build --release -p allternit-factory --target aarch64-apple-darwin
           mkdir -p surfaces/allternit-desktop/resources/bin
           lipo -create \
             target/x86_64-apple-darwin/release/allternit-factory \
@@ -316,39 +291,6 @@ jobs:
             -output surfaces/allternit-desktop/resources/bin/allternit-factory
           chmod +x surfaces/allternit-desktop/resources/bin/allternit-factory
           lipo -info surfaces/allternit-desktop/resources/bin/allternit-factory
-
-      - name: Record Rust binaries for reuse
-        if: steps.prebuilt.outputs.hit != 'true'
-        shell: bash
-        run: node .github/scripts/prebuilt-rust-bin.mjs save --dir .prebuilt/rust-macos --bin target/x86_64-apple-darwin/release/allternit-api --bin target/aarch64-apple-darwin/release/allternit-api --bin target/x86_64-apple-darwin/release/allternit-factory --bin target/aarch64-apple-darwin/release/allternit-factory
-
-      - name: Save prebuilt Rust binaries
-        if: steps.prebuilt.outputs.hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: .prebuilt/rust-macos
-          key: prebuilt-rust-macos-${{ github.sha }}-${{ github.run_id }}
-
-      # ── Step 3e3: Build the Phone Link Apple ID signer (optional) ──────────
-      - name: Build allternit-sideload (optional)
-        # Signs the iPhone helper with the user's Apple ID (phone-ios-runner.ts
-        # SideloadSigner). Its own cargo workspace (see its Cargo.toml), hence
-        # --manifest-path. OPTIONAL until anisette.allternit.com is hosted:
-        # a failure here ships Desktop without iPhone setup instead of failing
-        # the release (release-preflight.mjs lists it as advisory).
-        continue-on-error: true
-        run: |
-          for t in x86_64-apple-darwin aarch64-apple-darwin; do
-            cargo build --release --manifest-path cmd/allternit-sideload/Cargo.toml --target "$t" \
-              --target-dir target/sideload
-          done
-          mkdir -p surfaces/allternit-desktop/resources/bin
-          lipo -create \
-            target/sideload/x86_64-apple-darwin/release/allternit-sideload \
-            target/sideload/aarch64-apple-darwin/release/allternit-sideload \
-            -output surfaces/allternit-desktop/resources/bin/allternit-sideload
-          chmod +x surfaces/allternit-desktop/resources/bin/allternit-sideload
-          lipo -info surfaces/allternit-desktop/resources/bin/allternit-sideload
 
       # ── Step 3f: Stage CUA Lume (Apple Virtualization) ──────────────────────
       - name: Stage Lume virtualization helper
@@ -378,14 +320,6 @@ jobs:
         # inside the app — without it the packaged app has no connector
         # sidecar at all.
         run: node scripts/prepare-connector-sidecar.cjs
-        working-directory: surfaces/allternit-desktop
-
-      - name: Build subscription gateway bundle
-        # services/subscription-gateway bundled for Desktop's own gateway
-        # (src/main/subs-gateway-manager.ts): phone and desktop-app lanes with
-        # no Sessions computer. node:sqlite, no native module; on macOS the
-        # script also builds the ax-bridge accessibility helper.
-        run: node scripts/prepare-subs-gateway.cjs
         working-directory: surfaces/allternit-desktop
 
       - name: Build System One (S1) binary + stage Laya scripts
@@ -431,7 +365,6 @@ jobs:
 
   # Build Windows NSIS installer
   build-windows:
-    if: github.event_name != 'workflow_dispatch' || inputs.platforms == 'all' || inputs.platforms == 'windows'
     name: Build Windows
     needs: [unit-tests, release-preflight]
     # windows-latest ships only VS2026 (major 18), which node-gyp 11.x cannot
@@ -516,22 +449,7 @@ jobs:
         with:
           token: ${{ secrets.ALLTERNIT_AI_CHECKOUT_TOKEN }}
 
-      # Reuse last build's allternit-api and allternit-factory when no Rust input changed
-      # (.github/scripts/prebuilt-rust-bin.mjs); a hit skips the cargo builds.
-      - name: Restore prebuilt Rust binaries
-        uses: actions/cache/restore@v4
-        with:
-          path: .prebuilt/rust-windows
-          key: prebuilt-rust-windows-${{ github.sha }}-${{ github.run_id }}
-          restore-keys: prebuilt-rust-windows-
-
-      - name: Reuse prebuilt Rust binaries if unchanged
-        id: prebuilt
-        shell: bash
-        run: node .github/scripts/prebuilt-rust-bin.mjs check --dir .prebuilt/rust-windows
-
       - name: Build allternit-api (Windows)
-        if: steps.prebuilt.outputs.hit != 'true'
         run: cargo build --release --target x86_64-pc-windows-msvc --manifest-path cmd/allternit-api/Cargo.toml
 
       - name: Copy allternit-api binary
@@ -581,62 +499,10 @@ jobs:
           # No espeak-ng (GPL-3.0) in the voice service: it lives in allternit-tts.
           bash scripts/check-voice-no-gpl.sh surfaces/allternit-desktop/resources/bin/allternit-voice-service.exe
 
-      - name: Build local-engine sidecar (Windows)
-        # Model Lab's local model engine (services/local-engine; cargo bin name
-        # local-engine). prepare-platform-static and verify-packaged-resources
-        # require resources/bin/allternit-local-engine.exe on win32. GPU
-        # detection on Windows: nvidia-smi, then WMI Win32_VideoController.
-        shell: bash
-        run: |
-          cargo build --release --target x86_64-pc-windows-msvc --manifest-path services/local-engine/Cargo.toml
-          mkdir -p surfaces/allternit-desktop/resources/bin
-          cp target/x86_64-pc-windows-msvc/release/local-engine.exe \
-             surfaces/allternit-desktop/resources/bin/allternit-local-engine.exe
-          ls -lh surfaces/allternit-desktop/resources/bin/allternit-local-engine.exe
-
-      # ── Zig + allternit-factory: terminals and the Factory on Windows ──────
-      # allternit-api's /terminal routes and gizzi's /pty run every terminal in
-      # the Factory pane engine, which serves a named pipe on Windows (ConPTY
-      # under it). Its libghostty-vt is built by Zig 0.15.2
-      # (factory/pane/build.rs maps x86_64-pc-windows-msvc).
-      - name: Install Zig 0.15.2
-        shell: bash
-        run: |
-          curl -fsSL https://ziglang.org/download/0.15.2/zig-x86_64-windows-0.15.2.zip -o "$RUNNER_TEMP/zig.zip"
-          echo "3a0ed1e8799a2f8ce2a6e6290a9ff22e6906f8227865911fb7ddedc3cc14cb0c  $RUNNER_TEMP/zig.zip" | sha256sum -c -
-          unzip -q "$RUNNER_TEMP/zig.zip" -d "$RUNNER_TEMP"
-          echo "ZIG=$RUNNER_TEMP/zig-x86_64-windows-0.15.2/zig.exe" >> "$GITHUB_ENV"
-          # Keep Zig's global cache on the checkout's drive (D:). The default
-          # (%LOCALAPPDATA%\zig) is on C:, and Zig 0.15.2's Run step asserts a
-          # cwd-relative path, which can't cross drives (build panicked in
-          # Run.zig convertPathArg on run 39097556771).
-          echo "ZIG_GLOBAL_CACHE_DIR=$RUNNER_TEMP/zig-global-cache" >> "$GITHUB_ENV"
-          "$RUNNER_TEMP/zig-x86_64-windows-0.15.2/zig.exe" version
-
-      - name: Build allternit-factory engine (Windows)
-        # Desktop runs it (factory-engine-manager.ts); its pane engine owns
-        # every terminal. prepare-factory.cjs then finds it already staged.
-        shell: bash
-        run: |
-          if [ "${{ steps.prebuilt.outputs.hit }}" != true ]; then
-            cargo build --release -p allternit-factory --target x86_64-pc-windows-msvc
-          fi
-          mkdir -p surfaces/allternit-desktop/resources/bin
-          cp target/x86_64-pc-windows-msvc/release/allternit-factory.exe \
-             surfaces/allternit-desktop/resources/bin/allternit-factory.exe
-          ls -lh surfaces/allternit-desktop/resources/bin/allternit-factory.exe
-
-      - name: Record Rust binaries for reuse
-        if: steps.prebuilt.outputs.hit != 'true'
-        shell: bash
-        run: node .github/scripts/prebuilt-rust-bin.mjs save --dir .prebuilt/rust-windows --bin target/x86_64-pc-windows-msvc/release/allternit-api.exe --bin target/x86_64-pc-windows-msvc/release/allternit-factory.exe
-
-      - name: Save prebuilt Rust binaries
-        if: steps.prebuilt.outputs.hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: .prebuilt/rust-windows
-          key: prebuilt-rust-windows-${{ github.sha }}-${{ github.run_id }}
+      # Terminals on Windows: allternit-api's /terminal routes (cfg(unix)) and
+      # gizzi's /pty dial the Factory pane engine's Unix socket, and this job
+      # doesn't build allternit-factory, so Windows Desktop has no terminals,
+      # as before (allternit-mux was macOS/Linux only too).
 
       - name: Build open-connector sidecar bundle
         # services/open-connector is a plain npm project excluded from the
@@ -645,14 +511,6 @@ jobs:
         # inside the app — without it the packaged app has no connector
         # sidecar at all.
         run: node scripts/prepare-connector-sidecar.cjs
-        working-directory: surfaces/allternit-desktop
-
-      - name: Build subscription gateway bundle
-        # services/subscription-gateway bundled for Desktop's own gateway
-        # (src/main/subs-gateway-manager.ts): phone and desktop-app lanes with
-        # no Sessions computer. node:sqlite, no native module; on macOS the
-        # script also builds the ax-bridge accessibility helper.
-        run: node scripts/prepare-subs-gateway.cjs
         working-directory: surfaces/allternit-desktop
 
       - name: Build System One (S1) binary + stage Laya scripts
@@ -677,7 +535,11 @@ jobs:
       - name: Package with electron-builder
         # --publish never: publishing happens ONLY in the release job, which
         # collects artifacts from all build jobs. Never publish here.
+        # ALLTERNIT_ALLOW_MISSING_LOCAL_ENGINE: the local-engine crate's unix-only
+        # deps are untested on the windows runner; 1.1.0 shipped without this
+        # sidecar. Follow-up: make local-engine compile for windows and drop this.
         env:
+          ALLTERNIT_ALLOW_MISSING_LOCAL_ENGINE: "1"
           NODE_OPTIONS: --max-old-space-size=12288
         run: npm run dist -- --publish never
         working-directory: surfaces/allternit-desktop
@@ -695,7 +557,6 @@ jobs:
   # Build Linux unpacked dir (smoke-test the linux electron-builder target;
   # artifacts are NOT attached to the GitHub release)
   build-linux:
-    if: github.event_name != 'workflow_dispatch' || inputs.platforms == 'all' || inputs.platforms == 'linux'
     name: Build Linux
     needs: [unit-tests, release-preflight]
     runs-on: ubuntu-latest
@@ -767,22 +628,7 @@ jobs:
         timeout-minutes: 10
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
 
-      # Reuse last build's allternit-api when no Rust input changed
-      # (.github/scripts/prebuilt-rust-bin.mjs); a hit skips the cargo builds.
-      - name: Restore prebuilt Rust binaries
-        uses: actions/cache/restore@v4
-        with:
-          path: .prebuilt/rust-linux
-          key: prebuilt-rust-linux-${{ github.sha }}-${{ github.run_id }}
-          restore-keys: prebuilt-rust-linux-
-
-      - name: Reuse prebuilt Rust binaries if unchanged
-        id: prebuilt
-        shell: bash
-        run: node .github/scripts/prebuilt-rust-bin.mjs check --dir .prebuilt/rust-linux
-
       - name: Build allternit-api (Linux)
-        if: steps.prebuilt.outputs.hit != 'true'
         run: cargo build --release --target x86_64-unknown-linux-gnu --manifest-path cmd/allternit-api/Cargo.toml
 
       - name: Copy allternit-api binary
@@ -791,18 +637,6 @@ jobs:
           cp target/x86_64-unknown-linux-gnu/release/allternit-api \
              surfaces/allternit-desktop/resources/bin/allternit-api
           chmod +x surfaces/allternit-desktop/resources/bin/allternit-api
-
-      - name: Record Rust binaries for reuse
-        if: steps.prebuilt.outputs.hit != 'true'
-        shell: bash
-        run: node .github/scripts/prebuilt-rust-bin.mjs save --dir .prebuilt/rust-linux --bin target/x86_64-unknown-linux-gnu/release/allternit-api
-
-      - name: Save prebuilt Rust binaries
-        if: steps.prebuilt.outputs.hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: .prebuilt/rust-linux
-          key: prebuilt-rust-linux-${{ github.sha }}-${{ github.run_id }}
 
       - name: Build voice service sidecar (Linux)
         # Same as macOS/Windows: allternit-voice-service (STT + API, no GPL)
@@ -843,14 +677,6 @@ jobs:
         # inside the app — without it the packaged app has no connector
         # sidecar at all.
         run: node scripts/prepare-connector-sidecar.cjs
-        working-directory: surfaces/allternit-desktop
-
-      - name: Build subscription gateway bundle
-        # services/subscription-gateway bundled for Desktop's own gateway
-        # (src/main/subs-gateway-manager.ts): phone and desktop-app lanes with
-        # no Sessions computer. node:sqlite, no native module; on macOS the
-        # script also builds the ax-bridge accessibility helper.
-        run: node scripts/prepare-subs-gateway.cjs
         working-directory: surfaces/allternit-desktop
 
       - name: Build System One (S1) binary + stage Laya scripts

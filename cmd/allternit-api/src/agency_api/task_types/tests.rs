@@ -69,15 +69,9 @@ fn completion_contract_matches_the_verifier_gate() {
         assert_eq!(gate.evidence_required, crit, "{}: gate requires exactly the contract", t.id);
         assert_eq!(g.node("persist").unwrap().evidence_required, crit, "{}", t.id);
 
-        // Every criterion has exactly one producer, and it's a verifier-side node
-        // (an S1 node's S2 escalation twin, `x-twin_of`, produces it in its stead).
-        for n in g.nodes.iter().filter(|n| twin_of(n).is_some()) {
-            let primary = g.node(twin_of(n).unwrap()).unwrap_or_else(|| panic!("{}: {} twins a missing node", t.id, n.node_id));
-            assert_eq!(evidence_of(n), evidence_of(primary), "{}: twin {} must produce what it stands in for", t.id, n.node_id);
-            assert_eq!(primary.on_failure.target.as_deref(), Some(n.node_id.as_str()), "{}: {} escalates to its twin", t.id, primary.node_id);
-        }
+        // Every criterion has exactly one producer, and it's a verifier-side node.
         for c in &crit {
-            let producers: Vec<_> = g.nodes.iter().filter(|n| evidence_of(n) == Some(c.as_str()) && twin_of(n).is_none()).collect();
+            let producers: Vec<_> = g.nodes.iter().filter(|n| evidence_of(n) == Some(c.as_str())).collect();
             assert_eq!(producers.len(), 1, "{}: criterion {c} needs one producer", t.id);
             let p = producers[0];
             assert!(matches!(p.node_kind.as_str(), "VERIFY" | "POLICY" | "WAIT" | "CONTROL"),
@@ -151,12 +145,8 @@ fn generative_nodes_route_to_the_pool_and_deterministic_ones_stay_s0() {
                 assert_eq!(plan.cognitive_role, Role::S0, "{} {id}", t.id);
             }
         }
-        assert!(out.plans.iter().any(|(_, p)| matches!(p.cognitive_role, Role::S1 | Role::S2)), "{}: some step must be cognitive", t.id);
+        assert!(out.plans.iter().any(|(_, p)| p.cognitive_role == Role::S2), "{}: some step must be generative", t.id);
     }
-}
-
-fn twin_of(n: &graph::GraphNode) -> Option<&str> {
-    n.extensions.as_ref()?.get("x-twin_of")?.as_str()
 }
 
 fn g_waits(t: &TaskType) -> Vec<String> {
@@ -200,7 +190,7 @@ fn eval_sets_pass_with_the_scripted_executor() {
                 // Verifier-owned completion: every contract criterion is backed by a receipt ref.
                 let p = completion_policy(get(tt).unwrap()).unwrap();
                 assert!(allternit_factory_engine::judge::completion::missing_evidence(&p, &out.evidence).is_empty(), "{tag}");
-                assert!(out.visited.iter().all(|(_, ok)| *ok) || out.visited.iter().any(|(n, _)| n.ends_with("_deep") || n.ends_with("_s2")), "{tag}");
+                assert!(out.visited.iter().all(|(_, ok)| *ok) || out.visited.iter().any(|(n, _)| n.ends_with("_deep")), "{tag}");
             }
         }
         assert!(statuses.contains("completed"), "{tt}: needs a passing case");

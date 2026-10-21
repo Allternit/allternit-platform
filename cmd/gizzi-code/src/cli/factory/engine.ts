@@ -255,7 +255,7 @@ export async function runEngine<T = unknown>(args: string[], opts: RunEngineOpti
       const errCode: EngineErrorCode = docCode ?? mapped ?? "transport"
       const fact =
         doc?.fact ||
-        engineStderrFact(stderr) ||
+        stderr.trim().split("\n").filter(Boolean).pop() ||
         (signal ? `The engine was stopped by ${signal}` : `The engine exited with code ${exit}`)
       reject(new FactoryEngineError({ code: errCode, exitCode: exit, fact, action: doc?.action || null }))
     })
@@ -329,19 +329,3 @@ export function passThroughSync(args: string[], opts: Omit<RunEngineOptions, "ti
   }
   return res.status ?? EXIT.transport
 }
-
-/**
- * The line of the engine's stderr that says what went wrong. Clap and the
- * engine print `error: <fact>` first and a "try --help" hint last, so prefer
- * the `error:` line over the last one.
- */
-export function engineStderrFact(stderr: string): string | undefined {
-  const lines = stderr
-    .split("\n")
-    .map((l) => l.replace(/\x1b\[[0-9;]*m/g, "").trim())
-    .filter(Boolean)
-  const err = lines.find((l) => /^error:/i.test(l))
-  if (err) return err.replace(/^error:\s*/i, "")
-  return lines.pop()
-}
-

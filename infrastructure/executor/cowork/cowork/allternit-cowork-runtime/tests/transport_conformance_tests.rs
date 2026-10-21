@@ -1666,25 +1666,3 @@ async fn test_memory_delete_is_user_scoped() {
     let left = sqlite_store::search_memory_entries(&conn, "user-1", Some("a://local/bot/ledger"), None, 50, 0).unwrap();
     assert!(left.is_empty());
 }
-
-/// Quit-time handoff sends only started work to the cloud: a queued job
-/// (an idle Cowork session) stays local and untouched.
-#[tokio::test]
-async fn test_handoff_all_skips_queued_jobs() {
-    let fx = setup().await;
-    let mut conn = open(&fx.db_path);
-    assert_eq!(job_state(&conn, &fx.job_id), "queued");
-    let handed = sqlite_store::handoff_all_in_flight(&mut conn).unwrap();
-    assert!(handed.is_empty());
-    let caps: String = conn
-        .query_row("SELECT required_capabilities FROM cowork_jobs WHERE id = ?1", rusqlite::params![fx.job_id], |r| r.get(0))
-        .unwrap();
-    assert!(!caps.contains("compute.cloud"));
-    assert!(!event_rows(&conn, &fx.run_id).iter().any(|e| e.0 == "continuation.handed_off"));
-
-    conn.execute("UPDATE cowork_jobs SET state = 'running' WHERE id = ?1", rusqlite::params![fx.job_id]).unwrap();
-    let handed = sqlite_store::handoff_all_in_flight(&mut conn).unwrap();
-    assert_eq!(handed.len(), 1);
-    assert_eq!(job_state(&conn, &fx.job_id), "queued");
-}
-

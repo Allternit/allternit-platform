@@ -27,22 +27,12 @@ Sensitivity uses `PUBLIC`, `INTERNAL`, `RESTRICTED`, `SECRET`. Eligibility is a 
 
 On main, untrusted text passed between nodes is wrapped in a fence with a random per-render nonce. The compiler-level enforcement across all context is not on main.
 
-## Trust labels on bot input
-
-Every input that reaches a bot thread carries one of seven labels, most trusted first: `owner`, `team`, `contact`, `vendor_bot`, `tool_output`, `web`, `stranger`. "Tainted" means below `team`.
-
-- **Where it is set.** Channel inbound maps the owner's handle to `owner`, a person the twin knows to `contact` and everyone else to `stranger`. Inbound email does the same. A thread made by the owner is `owner`; one made by a bot or the coordinator is `team`.
-- **What is recorded.** `content_provenance` stores the label, source, scanner score and flags, and a hash of the excerpt. `bot_threads.trust_floor` holds the lowest label seen and only ever goes down.
-- **The scanner.** `injection_score` and `scan_text` flag a message and mark a tainted one down to `stranger`. They never block on their own.
-- **What the label gates.** A tainted thread asks before every send, its write and send tools are set to ask, and the approval carries `provenance_json` (`trust`, `sourceKind`, `sourceRef`, `excerpt`, `flags`). Outside text reaches the model in a nonce fence. See [Prompt injection defense](/guides/injection-defense).
-
 ## Availability
 
 | Part | Status |
 |------|--------|
 | Trust and sensitivity enums | **IMPLEMENTED (contract)** |
 | Nonce-fenced untrusted text | **ENABLED · INTERNAL** |
-| Trust labels on channel, email and thread input; trust floor | **ENABLED · INTERNAL** |
 | Compiler-enforced fencing | **DESIGN** |
 
 ## Developer relevance
@@ -51,6 +41,5 @@ Label everything you emit. Treat unlabeled input as `UNTRUSTED`.
 
 ## Related
 
-- [Prompt injection defense](/guides/injection-defense)
 - [Projections](/architecture/context-memory/projections)
 - [Threat model](/architecture/verification-safety/threat-model)

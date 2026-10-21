@@ -83,25 +83,10 @@ curl -X POST http://localhost:8013/api/v1/sessions \
 }
 ```
 
-`status` is `running` while the initial input's run is queued or
-executing. Runs are executed by the node's in-process session worker: it
-leases the work task, runs one turn on the Gizzi runtime
-(`TERMINAL_SERVER_URL`, default `http://127.0.0.1:4096`) with the agent's
-model, instructions and effective tool permissions, and appends
-`agent.tool_use` (tool calls; `ask` tools carry `requires_approval`) and
-`agent.message` (the reply). The turn then ends with `turn.completed` or
-`turn.failed`, followed by `session.idle`, and the session returns to
-`idle`. A `turn.failed` carries `error`, `code` and `retryable` (for
-example `code: "gizzi_unreachable", retryable: true` when the runtime is
-not running; send the input again once it is). Session budgets are
-enforced: an exhausted budget fails the turn with `code:
-"budget_exhausted"` or `"budget_exceeded"`.
-
-Operators can turn the worker off with `ALLTERNIT_SESSION_WORKER=0`; runs
-then wait for an external worker on [`/beta/work`](./work-queue.md).
-`ALLTERNIT_SESSION_WORKER_CONCURRENCY` (default 2) bounds concurrent turns
-and `ALLTERNIT_SESSION_WORKER_TURN_TIMEOUT_SECS` (default 600) bounds one
-turn. With no input the session is `idle`.
+`status` is `running` while the initial input's run is queued. When the
+work task is acked (`POST /beta/work/:id/ack`), the session returns to
+`idle` and the event list includes `turn.completed` then `session.idle`.
+With no input it is `idle`.
 
 ---
 
@@ -161,9 +146,8 @@ Archiving is one-way. Subsequent `POST /sessions/:id/events` calls return
 `POST /sessions/:id/events`
 
 Accepts user events. `user.message` enqueues a run exactly like the beta
-surface's `POST /run`; `user.interrupt` cancels queued and running work
-(the worker aborts the Gizzi turn), records `turn.failed` with `code:
-"interrupted"`, and returns the session to `idle`; `user.tool_result` is accepted and recorded.
+surface's `POST /run`; `user.interrupt` cancels queued work and returns the
+session to `idle`; `user.tool_result` is accepted and recorded.
 
 ### Request body
 

@@ -15,7 +15,6 @@ import { Session } from "@/runtime/session"
 import { Discovery } from "@/runtime/skills/discovery"
 import { Glob } from "@/shared/util/glob"
 import { BUNDLED_SKILLS } from "@/runtime/skills/bundledSkills"
-import { craftRoot, materializeCraftSkills } from "@/runtime/skills/craftSkills"
 import { conditionalSkillDirectories } from "@/runtime/skills/loadSkillsDir"
 import ignore from "ignore"
 
@@ -185,12 +184,6 @@ export namespace Skill {
           order: order++,
         })
       }
-      // Craft skills carry files, so they are extracted to disk and parsed like any skill there.
-      const craft: Root = { path: craftRoot(), source: "builtin", label: "builtin" }
-      for (const location of await materializeCraftSkills(craft.path)) {
-        const candidate = await parseFile(location, craft)
-        if (candidate) candidates.push({ ...candidate, builtin: true })
-      }
     }
 
     if (!Flag.GIZZI_DISABLE_EXTERNAL_SKILLS) {
@@ -198,9 +191,8 @@ export namespace Skill {
       for (const brand of [".claude", ".agents", ".openclaw", ".allternit"]) {
         await scanRoot({ path: path.join(Global.Path.home, brand, "skills"), source: "user", label: brand })
       }
-      // Project ".allternit/skills" is where the Skill Builder and skill import write.
       for await (const found of Filesystem.up({
-        targets: [".claude", ".agents", ".openclaw", ".allternit"],
+        targets: [".claude", ".agents", ".openclaw"],
         start: Instance.directory,
         stop: Instance.worktree,
       })) {
@@ -266,7 +258,7 @@ export namespace Skill {
       skills,
       collisions: collisions.toSorted((a, b) => a.name.localeCompare(b.name)),
       roots: scannedRoots,
-      dirs: [...new Set(Object.values(skills).filter((item) => !item.location.startsWith("builtin://")).map((item) => path.dirname(item.location)))],
+      dirs: [...new Set(Object.values(skills).filter((item) => !item.builtin).map((item) => path.dirname(item.location)))],
     }
   }
 

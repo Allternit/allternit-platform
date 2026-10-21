@@ -18,19 +18,14 @@ export const stopType = (e: MaEvent): string => String((e.stop_reason as { type?
 export const isTurnEnd = (e: MaEvent) => e.type === "session.status_terminated" || (e.type === "session.status_idle" && stopType(e) !== "requires_action");
 export const isPaused = (e: MaEvent) => e.type === "session.status_idle" && stopType(e) === "requires_action";
 
-/**
- * `live`: the event arrived on the session's SSE stream as it happened. Managed Agents streams whole `agent.message`
- * events (no token-level deltas), so each one becomes one delta + completed pair; `buffered: true` marks a message that
- * was only recovered from history (backfill after a disconnect, adoption, or a read while no stream was open).
- */
-export function normalize(e: MaEvent, opts: { live?: boolean } = {}): Draft[] {
+export function normalize(e: MaEvent): Draft[] {
   switch (e.type) {
     case "user.message":
       return [{ type: "agent.activity.started", source: "allternit", suffix: "user", payload: { state: "message_sent", text: textOf(e.content), queued: e.processed_at == null } }];
     case "agent.message": {
       const text = textOf(e.content);
       return [
-        { type: "agent.message.delta", source: "vendor", suffix: "delta", payload: { text, buffered: !opts.live, granularity: "event" } },
+        { type: "agent.message.delta", source: "vendor", suffix: "delta", payload: { text, buffered: true } },
         { type: "agent.message.completed", source: "vendor", suffix: "completed", payload: { text } },
       ];
     }
@@ -48,12 +43,7 @@ export function normalize(e: MaEvent, opts: { live?: boolean } = {}): Draft[] {
     case "agent.mcp_tool_result":
       return [{ type: "agent.tool.called", source: "vendor", suffix: "result", payload: { phase: "result", toolUseId: e.tool_use_id ?? e.mcp_tool_use_id, isError: Boolean(e.is_error) } }];
     case "agent.custom_tool_use":
-      // The agent waits (idle, requires_action) until Allternit answers with user.custom_tool_result.
-      return [{ type: "agent.tool.called", source: "vendor", suffix: "call", payload: {
-        phase: "use", custom: true, toolUseId: e.id, name: e.name, input: e.input, sessionThreadId: e.session_thread_id ?? null, awaiting: "allternit" } }];
-    case "user.custom_tool_result":
-      return [{ type: "agent.tool.called", source: "allternit", suffix: "result", payload: {
-        phase: "result", custom: true, toolUseId: e.custom_tool_use_id, isError: Boolean(e.is_error), text: textOf(e.content) } }];
+      return [{ type: "agent.tool.called", source: "vendor", suffix: "call", payload: { phase: "use", custom: true, toolUseId: e.id, name: e.name, input: e.input } }];
     case "user.tool_confirmation":
       return [{ type: "agent.approval.resolved", source: "allternit", suffix: "resolved", payload: {
         approvalId: e.tool_use_id, outcome: e.result === "allow" ? "approved" : "denied", authority: "vendor" } }];
@@ -65,9 +55,3 @@ export function normalize(e: MaEvent, opts: { live?: boolean } = {}): Draft[] {
     default: return [];
   }
 }
-
-/** Event ids an idle(requires_action) is waiting on (tool confirmations and custom tool results). */
-export const waitingOn = (e: MaEvent): string[] => {
-  const ids = (e.stop_reason as { event_ids?: unknown } | undefined)?.event_ids;
-  return Array.isArray(ids) ? ids.map(String) : [];
-};

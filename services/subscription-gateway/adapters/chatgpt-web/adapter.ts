@@ -15,11 +15,7 @@ import {
   type ReconcileResult,
   type Task,
   type TaskAttempt,
-  type VendorMemory,
-  type VendorThreadSummary,
-  type VendorThreadText,
 } from "@allternit/subscription-fabric-contracts";
-import { chatgptMemory, chatgptThreads, chatgptThreadText } from "../_shared/vendor-memory.js";
 import {
   DeclarativeChatAdapter,
   attachFiles,
@@ -50,7 +46,6 @@ import {
   userTurnFingerprint,
   type DivergencePolicy,
 } from "../_shared/web-chat.js";
-import { adapterFile } from "../_shared/adapter-file.js";
 
 export {
   isProfileLockError,
@@ -76,13 +71,13 @@ const DISMISS_BUTTON = /^(close|dismiss|not now|maybe later|no thanks|skip|got i
 
 export function loadManifest(): AdapterManifest {
   const raw = yamlLoad(
-    readFileSync(adapterFile(import.meta.url, "chatgpt-web", "./manifest.yaml"), "utf8")
+    readFileSync(new URL("./manifest.yaml", import.meta.url), "utf8")
   );
   return adapterManifestSchema.parse(raw);
 }
 
 export function selectorsYaml(): string {
-  return readFileSync(adapterFile(import.meta.url, "chatgpt-web", "./selectors/v1.yaml"), "utf8");
+  return readFileSync(new URL("./selectors/v1.yaml", import.meta.url), "utf8");
 }
 
 export function chatGPTWebConfig(
@@ -174,81 +169,6 @@ export class ChatGPTWebAdapter extends DeclarativeChatAdapter {
           ? null
           : { remaining_pct: read.pct, resets_at: null, observed_at: new Date().toISOString() },
     };
-  }
-
-  // ── Memory Drive reads ────────────────────────────────────────────────
-  // chatgpt.com's own same-origin endpoints, called in the page with the
-  // page's own session (the bearer never leaves the page). Read-only:
-  // nothing is typed, clicked or sent, and the page isn't navigated.
-
-  private async inPage<T>(fn: (arg: string) => Promise<T>, arg = ""): Promise<T> {
-    const page = this.attachedPage();
-    if (!page) throw new Error("memory read called before attach()");
-    await page.evaluate("globalThis.__name ??= (fn) => fn");
-    return page.evaluate(fn, arg);
-  }
-
-  async readMemory(_signal: AbortSignal): Promise<VendorMemory> {
-    const raw = await this.inPage(async () => {
-      const tok = await fetch("/api/auth/session", { credentials: "include" })
-        .then((r) => (r.ok ? r.json() : null))
-        .then((j: { accessToken?: string } | null) => j?.accessToken ?? null)
-        .catch(() => null);
-      const get = async (path: string) => {
-        try {
-          const r = await fetch(path, { credentials: "include", headers: tok ? { authorization: `Bearer ${tok}` } : {} });
-          return { ok: r.ok, body: r.ok ? await r.json() : null };
-        } catch {
-          return { ok: false, body: null };
-        }
-      };
-      return {
-        memories: await get("/backend-api/memories?include_memory_entries=true"),
-        instructions: await get("/backend-api/user_system_messages"),
-      };
-    });
-    return chatgptMemory(raw);
-  }
-
-  async listThreads(opts: { limit: number }, _signal: AbortSignal): Promise<VendorThreadSummary[]> {
-    const body = await this.inPage(async (limit: string) => {
-      const tok = await fetch("/api/auth/session", { credentials: "include" })
-        .then((r) => (r.ok ? r.json() : null))
-        .then((j: { accessToken?: string } | null) => j?.accessToken ?? null)
-        .catch(() => null);
-      const r = await fetch(`/backend-api/conversations?offset=0&limit=${limit}&order=updated&is_archived=false`, {
-        credentials: "include",
-        headers: tok ? { authorization: `Bearer ${tok}` } : {},
-      }).catch(() => null);
-      return r && r.ok ? r.json() : null;
-    }, String(Math.max(1, Math.min(100, opts.limit))));
-    return chatgptThreads(body);
-  }
-
-  async readThreadText(id: string, _signal: AbortSignal): Promise<VendorThreadText | null> {
-    const raw = await this.inPage(async (conv: string) => {
-      const tok = await fetch("/api/auth/session", { credentials: "include" })
-        .then((r) => (r.ok ? r.json() : null))
-        .then((j: { accessToken?: string } | null) => j?.accessToken ?? null)
-        .catch(() => null);
-      const r = await fetch(`/backend-api/conversation/${encodeURIComponent(conv)}`, {
-        credentials: "include",
-        headers: tok ? { authorization: `Bearer ${tok}` } : {},
-      }).catch(() => null);
-      if (!r || !r.ok) return null;
-      type Node = { id?: string; parent?: string | null; message?: { author?: { role?: string }; content?: { content_type?: string; parts?: unknown[] }; metadata?: { is_visually_hidden_from_conversation?: boolean } } | null };
-      const j = (await r.json()) as { title?: unknown; update_time?: unknown; current_node?: string; mapping?: Record<string, Node> };
-      // Reduced in the page: ids, roles and text parts only.
-      const nodes = Object.values(j.mapping ?? {}).map((n) => ({
-        id: String(n.id ?? ""),
-        parent: n.parent ?? null,
-        role: n.message?.author?.role ?? null,
-        text: (n.message?.content?.parts ?? []).filter((p): p is string => typeof p === "string").join("\n"),
-        hidden: n.message?.metadata?.is_visually_hidden_from_conversation === true,
-      }));
-      return { title: j.title ?? null, updated: j.update_time ?? null, current: j.current_node ?? null, nodes };
-    }, id);
-    return raw ? chatgptThreadText(id, raw.title, raw.updated, raw.current, raw.nodes) : null;
   }
 
   override async *execute(task: Task, ctx: ExecutionContext): AsyncIterable<AdapterEvent> {

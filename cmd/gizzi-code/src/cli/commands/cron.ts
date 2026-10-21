@@ -195,7 +195,7 @@ export const CronCommand = cmd({
             if (!sup.supported) {
               process.stdout.write(`Autostart: ${colors.yellow("unsupported on " + process.platform)}\n`);
             } else {
-              const unit = sup.launchdPlist ?? sup.systemdUnit ?? sup.scheduledTask;
+              const unit = sup.launchdPlist ?? sup.systemdUnit;
               process.stdout.write(`Autostart: ${unit ? colors.green(`installed (${unit})`) : colors.dim("not installed — `gizzi workflows wake jobs enable`")}\n`);
             }
 

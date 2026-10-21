@@ -16,14 +16,13 @@ import { installSocketQosGuard } from './socket-qos.js';
 import * as http from 'node:http';
 import * as https from 'node:https';
 import * as os from 'node:os';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { createMotionRender } from './motion-render.js';
 import Store from 'electron-store';
 import log from 'electron-log';
 import { updateElectronApp } from 'update-electron-app';
 import fixPath from 'fix-path';
 import { installDesktopCompanion } from './desktop-companion.js';
-import { startPetHookServer, type PetHookServer } from './pet-hook-server.js';
 import { isPairingLink, pairingCodeFromUrl } from './pairing-link.js';
 import { approvePairing, describePairingRequest } from './pairing-approval.js';
 import { backendManager } from './backend-manager.js';
@@ -32,8 +31,9 @@ import { officeEngineManager } from './office-engine-manager.js';
 import { factoryEngineManager, bundledGizziBinary } from './factory-engine-manager.js';
 import { fabricWorkerManager, type FabricWorkerState } from './fabric-worker-manager.js';
 import { readSecret, writeSecret, deleteSecret, FABRIC_WORKER_TOKEN_KEY } from './secure-store.js';
+import { createSiwcManager, SIWC_FLAG, type SiwcManager } from './siwc.js';
+import { startSiwcBroker, type SiwcBroker } from './siwc-broker.js';
 import { localEngineManager } from './local-engine-manager.js';
-import { installWindowsGizziOnPath } from './windows-gizzi-path.js';
 import {
   editorForFile,
   extractOfficeFileArg,
@@ -47,10 +47,10 @@ import {
   buildBotPhoneWindowUrl,
   BOT_PHONE_WINDOW_SIZE,
 } from './bot-computer-window.js';
+import { bonsaiCompanion } from './bonsai-companion-manager.js';
 import { systemOne } from './system-one-manager.js';
 import { gizziManager } from './gizzi-manager.js';
 import { connectorSidecarManager } from './connector-sidecar-manager.js';
-import { subsGatewayManager } from './subs-gateway-manager.js';
 import { gizziDaemonManager } from './gizzi-daemon-manager.js';
 import { PORTS, URLS, devUiUrl, apiUrl, notebookUrl, staticUiUrl } from './config.js';
 import { acceptsDeviceToken, isPublicCloudCatalogPath, rewriteCloudApiToProtocol, shouldInjectDesktopIdentity } from './api-protocol.js';
@@ -95,7 +95,6 @@ import { acuGatewayManager } from './acu-gateway-manager.js';
 import { phoneRemoteManager } from './phone-remote-manager.js';
 import { phoneService } from './phone-service.js';
 import { registerPhoneIpc } from './phone-ipc.js';
-import { registerPhoneLinkIpc } from './phone-link-ipc.js';
 import {
   createCaptureSession,
   stopCaptureSession,
@@ -483,7 +482,10 @@ async function startGizziRuntime(): Promise<string> {
     existingPassword,
     apiToken: session?.accessToken,
     runtimeId: session?.runtimeId,
-    extraEnv: authManager.getConnectorSidecarEnvironment(),
+    extraEnv: {
+      ...authManager.getConnectorSidecarEnvironment(),
+      ...(await siwcLaunchEnvironment()),
+    },
   });
 }
 
@@ -716,6 +718,8 @@ interface StoreSchema {
   openLinksInApp?: boolean;
   /** Whether the startup onboarding wizard (welcome → sign-in) has been completed or skipped */
   startupWizardCompleted: boolean;
+  /** First-launch "Answer me with artifact" skill bootstrap has been launched (answer-me-with-html). */
+  answerMeArtifactBootstrapped?: boolean;
   permissions: {
     /** Whether the user has been shown the permission guide during onboarding */
     promptedDuringOnboarding: boolean;
@@ -787,7 +791,6 @@ const desktopCompanion = installDesktopCompanion({
   origin: () => activePlatformUrl,
   main: () => mainWindow,
   preload: join(__dirname, '../preload/index.js'),
-  showMain: () => showOrReopenMainWindow(),
   openHud: (agentId) => openHudForCompanion(agentId),
   closeHud: () => hideHudWindow(),
   moveHudWithPet: (dx, dy) => {
@@ -797,23 +800,6 @@ const desktopCompanion = installDesktopCompanion({
     return true;
   },
 });
-
-// Terminal agents (gizzi, Claude Code, Codex, scripts) drive the same pet through a loopback hook port.
-let petHookServer: PetHookServer | null = null;
-app.whenReady().then(async () => {
-  try {
-    petHookServer = await startPetHookServer({
-      port: PORTS.PET_HOOK,
-      dir: app.getPath('userData'),
-      report: (client, state, ttlMs) => { desktopCompanion.reportActivity(`hook:${client}`, state, ttlMs); },
-      bubble: (_client, text, ttlMs) => { desktopCompanion.showBubble(text, ttlMs); },
-    });
-    log.info(`[Main] desktop pet hook on ${petHookServer.url}`);
-  } catch (err) {
-    log.warn('[Main] desktop pet hook port not started', err);
-  }
-});
-app.on('will-quit', () => { void petHookServer?.close(); });
 
 /**
  * Bring the main window up, recreating it if it was closed. With the desktop
@@ -1339,9 +1325,6 @@ async function initializeBundledMode(): Promise<void> {
     // Local engine: allternit-api reads LOCAL_ENGINE_URL at request time (it
     // proxies /api/local-engine/* per request), but readiness is ~1s with the
     // ECONNREFUSED fast-path, so it still starts in the parallel group.
-    // A start failure is passed to the API as LOCAL_ENGINE_START_ERROR so Model
-    // Lab shows why the engine is missing instead of a bare 502.
-    let localEngineStartError = null as string | null;
     const localEngineTask = (async (): Promise<string | null> => {
       try {
         const url = await localEngineManager.ensureStarted();
@@ -1349,17 +1332,9 @@ async function initializeBundledMode(): Promise<void> {
         return url;
       } catch (engineErr) {
         log.warn('[Main] Local engine failed to start, continuing without it:', engineErr);
-        localEngineStartError = (engineErr instanceof Error ? engineErr.message : String(engineErr)).slice(0, 500);
         return null;
       }
     })();
-    // Windows: gizzi on PATH via a gizzi.cmd shim + per-user PATH entry
-    // (windows-gizzi-path.ts). Independent of the Factory engine starting.
-    if (app.isPackaged && process.platform === 'win32') {
-      installWindowsGizziOnPath(process.resourcesPath)
-        .then((r) => log.info('[Main] gizzi on PATH (Windows):', JSON.stringify(r)))
-        .catch((err) => log.warn('[Main] Could not put gizzi on PATH (Windows):', err));
-    }
     // Factory engine: allternit-api proxies /api/factory/* to it per request
     // (ALLTERNIT_FACTORY_URL), so it starts in the parallel group. A packaged
     // app also puts `gizzi` on PATH and removes the retired rails/ao tools.
@@ -1371,21 +1346,13 @@ async function initializeBundledMode(): Promise<void> {
         } else {
           log.warn('[Main] Factory engine unavailable; /api/factory will answer 502 until it starts');
         }
-        // Windows puts gizzi on PATH with a .cmd shim instead
-        // (installWindowsGizziOnPath above); ~/.local/bin links are Unix-only.
-        if (app.isPackaged && process.platform !== 'win32') {
+        if (app.isPackaged) {
           factoryEngineManager.installCli(bundledGizziBinary(process.resourcesPath));
         }
       } catch (factoryErr) {
         log.warn('[Main] Factory engine failed to start, continuing without it:', factoryErr);
       }
     })();
-    // Subscription gateway (subs-gateway-manager.ts): phone and desktop-app
-    // lanes on this computer. The API only needs its port, reserved here; the
-    // gateway itself finishes starting in the background.
-    const subsGatewayTask = subsGatewayManager.prepare().then(() => {
-      void subsGatewayManager.start();
-    });
     const [gizziUrl, , , , localEngineUrl] = await Promise.all([
       gizziTask,
       officeTask,
@@ -1394,7 +1361,6 @@ async function initializeBundledMode(): Promise<void> {
       localEngineTask,
       factoryTask,
       decisionsTask,
-      subsGatewayTask,
     ]);
 
     // Step 2 — allternit-api (Rust operator API, port ${PORTS.API} — VM, rails, terminal)
@@ -1419,7 +1385,6 @@ async function initializeBundledMode(): Promise<void> {
         extraEnv: {
           ...(meshBridge ? { ALLTERNIT_MESH_BRIDGE_URL: meshBridge } : {}),
           ...(localEngineUrl ? { LOCAL_ENGINE_URL: localEngineUrl } : {}),
-          ...(localEngineStartError ? { LOCAL_ENGINE_START_ERROR: localEngineStartError } : {}),
           ...computerUseDriverManager.getLaunchEnvironment(),
           ...decisionRuntimeManager.getLaunchEnvironment(),
           ...acuGatewayManager.getLaunchEnvironment(),
@@ -1464,6 +1429,11 @@ async function initializeBundledMode(): Promise<void> {
       serviceState.fabricWorker = { status: 'down', detail: 'Worker unavailable — restart the app' };
       pushServiceState();
     }
+
+    // Bonsai companion follows the app lifecycle: auto-start when installed.
+    bonsaiCompanion.getStatus()
+      .then((status) => (status.installed && !status.running ? bonsaiCompanion.start() : undefined))
+      .catch((err) => log.warn('[Bonsai] auto-start skipped:', err));
 
     updateSplash('Connecting to platform…', 80);
 
@@ -1741,6 +1711,27 @@ async function initializeBundledMode(): Promise<void> {
           log.error('[Main] Daemon onboarding failed:', err);
         }
       });
+    }
+
+    // ── First-launch: "Answer me with artifact" skill bootstrap ────────────
+    // The Allternit fork of answer-me-with-html ships a machine bootstrap that
+    // links the skill into every installed CLI's skills dir and injects the
+    // always-on rules file. Idempotent and silent; runs only when the skill is
+    // present on the machine. Marked before spawn so a failed attempt never
+    // retries on every launch; never blocks startup.
+    if (isFirstLaunch && !store.get('answerMeArtifactBootstrapped')) {
+      try {
+        const bootstrapScript = join(os.homedir(), '.agents', 'skills', 'answer-me-with-html', 'scripts', 'bootstrap.mjs');
+        if (fs.existsSync(bootstrapScript)) {
+          store.set('answerMeArtifactBootstrapped', true);
+          const child = spawn('node', [bootstrapScript, '--quiet'], { detached: true, stdio: 'ignore' });
+          child.on('error', (err) => log.warn('[Main] answer-me bootstrap spawn failed:', err));
+          child.unref();
+          log.info('[Main] answer-me-with-html bootstrap launched (first launch)');
+        }
+      } catch (err) {
+        log.warn('[Main] answer-me bootstrap skipped:', err);
+      }
     }
 
     // ── Service Watchdog: Maintain backend health ──────────────────────────
@@ -2749,12 +2740,12 @@ async function shutdownAllServices(): Promise<void> {
   await backendManager.stopBackend();
   await localEngineManager.stop();
   connectorSidecarManager.stop();
-  subsGatewayManager.stop();
   officeEngineManager.stop();
   factoryEngineManager.stop();
   meshManager.stop().catch(() => {}); // best-effort mesh sidecar shutdown
   notebookManager.stop();
   voiceManager.stop();
+  bonsaiCompanion.stop();
   systemOne.stop();
   computerUseDriverManager.stop();
   decisionRuntimeManager.stop();
@@ -2844,8 +2835,14 @@ ipcMain.handle('decision-runtime:get-status', () => decisionRuntimeManager.getSt
 
 // Phones (Lane 2a): Android over Wi-Fi, no cable — see phone-device-manager.ts
 registerPhoneIpc(handleGuarded);
-// Phone Link: setup for using the AI apps signed in on the user's phone.
-registerPhoneLinkIpc(handleGuarded);
+
+// Bonsai local image companion (install / lifecycle / removal)
+ipcMain.handle('bonsai:get-status', () => bonsaiCompanion.getStatus());
+handleGuarded('bonsai:install', () => bonsaiCompanion.install());
+handleGuarded('bonsai:cancel-install', () => bonsaiCompanion.cancelInstall());
+handleGuarded('bonsai:start', () => bonsaiCompanion.start());
+handleGuarded('bonsai:stop', () => { bonsaiCompanion.stop(); return true; });
+handleGuarded('bonsai:remove', () => bonsaiCompanion.remove());
 
 // System One (S1) + Laya (install / repair / lifecycle / checkpoint swap)
 ipcMain.handle('system-one:get-status', () => systemOne.getStatus());
@@ -4571,6 +4568,66 @@ handleGuarded('miniApps:removeRelease', (_event, id: string, registryUrl?: strin
 });
 ipcMain.handle('miniApps:listReleaseInstalls', () => listReleaseInstalls());
 ipcMain.handle('miniApps:getReleaseInstall', (_event, id: string) => getReleaseInstallState(id));
+
+// ─── Sign in with ChatGPT (feature.siwc, default OFF; Desktop main only) ────
+// OpenAI's documented ChatGPT-plan flow. Credentials stay in the secure store;
+// the renderer only ever sees status. gizzi-code gets access tokens one
+// request at a time from a loopback broker (see siwc-broker.ts).
+
+let siwcManager: SiwcManager | null = null;
+let siwcBroker: SiwcBroker | null = null;
+function siwc(): SiwcManager {
+  if (siwcManager) return siwcManager;
+  const manager = createSiwcManager({
+    flagEnabled: () => featureFlagManager.get<boolean>(SIWC_FLAG) === true,
+    readSecret,
+    writeSecret,
+    deleteSecret,
+    openExternal: (url) => {
+      openExternalAllowlisted(url);
+    },
+    logger: (message) => log.info(message),
+  });
+  manager.onStatusChange((status) => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed()) window.webContents.send('siwc:status-changed', status);
+    }
+  });
+  featureFlagManager.onChange((key) => {
+    if (key !== SIWC_FLAG) return;
+    if (featureFlagManager.get<boolean>(SIWC_FLAG) !== true) manager.cancelSignIn();
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed()) window.webContents.send('siwc:status-changed', manager.status());
+    }
+  });
+  siwcManager = manager;
+  return manager;
+}
+
+/** Broker env for gizzi-code. The broker answers only while the flag is on. */
+async function siwcLaunchEnvironment(): Promise<Record<string, string>> {
+  try {
+    if (!siwcBroker) siwcBroker = await startSiwcBroker(siwc());
+    return siwcBroker.env();
+  } catch (error) {
+    log.warn('[SIWC] Token broker failed to start:', error);
+    return {};
+  }
+}
+
+ipcMain.handle('siwc:status', () => siwc().status());
+handleGuarded('siwc:signIn', async (_event, opts?: { enablePlanUsage?: boolean }) => {
+  try {
+    return { ok: true as const, status: await siwc().signIn({ enablePlanUsage: opts?.enablePlanUsage === true }) };
+  } catch (error) {
+    return { ok: false as const, error: error instanceof Error ? error.message : String(error), status: siwc().status() };
+  }
+});
+handleGuarded('siwc:cancel', () => {
+  siwc().cancelSignIn();
+  return siwc().status();
+});
+handleGuarded('siwc:signOut', () => siwc().signOut());
 
 // ─── OAuth broker (main-process token vault; tokens never cross IPC) ────────
 

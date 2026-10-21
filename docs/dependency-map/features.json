@@ -30,7 +30,7 @@
         },
         {
           "on": "2026-10-08",
-          "note": "Any file or folder can be attached (no allow-list; text sniffed by content). Cards appear at once with Reading…; video/audio/other files go as Allternit Cloud links; sent messages show chips, not extracted text. Eoj: no grey ring on the composer; the tray only shows behind a reply strip or attachment cards."
+          "note": "Any file or folder can be attached (no allow-list; text sniffed by content). Cards appear at once with Reading\u2026; video/audio/other files go as Allternit Cloud links; sent messages show chips, not extracted text. Eoj: no grey ring on the composer; the tray only shows behind a reply strip or attachment cards."
         }
       ],
       "evidence": [
@@ -44,7 +44,7 @@
       "label": "Interactive answers",
       "product": "product:ai-allternit",
       "status": "live",
-      "description": "Assistant replies can include an interactive card written in OpenUI Lang inside an openui code fence (38 components: layout, metrics, tables, line/area/bar/pie charts, tabs, checklists, inputs that recompute on the page), built up statement by statement while the reply streams; buttons and choices send a follow-up message; Query()/Mutation() read and (with an Allow each time) change data through the user's MCP connectors. When components can't do it, an ```app fence draws a small HTML/JS app inline in the reply, in the MCP sandbox proxy with no network, themed with --viz-* variables and watched by a heartbeat. allternit-api checks each finished reply's cards against the catalog (card_check frame: diagnostics + text fallback) and stores the checks and the user's card state per message (message_card_meta). The app sends the model manual with every chat turn unless Settings says Text only; channels get cards as readable text and apps as one line.",
+      "description": "Assistant replies can include an interactive card written in OpenUI Lang inside an openui code fence: metrics, tables, charts, steps and inputs that recompute on the page; buttons and choices send a follow-up message; Query()/Mutation() read and (with an Allow each time) change data through the user's MCP connectors. The app sends the model manual with every chat turn unless Settings says Text only; channels get the card as readable text.",
       "touches": [
         "allternit-ai/src/lib/openui",
         "allternit-ai/src/components/ai-elements",
@@ -58,12 +58,7 @@
         "allternit-ai/src/views/UIForge",
         "allternit/cmd/allternit-api/src/openui_*",
         "allternit/cmd/allternit-api/src/channel_*",
-        "allternit/cmd/allternit-api/src/mcp_*",
-        "allternit/cmd/allternit-api/src/card_*",
-        "allternit/cmd/allternit-api/src/v1_*",
-        "allternit-ai/src/lib/apps",
-        "allternit-ai/src/components/chat",
-        "allternit-ai/src/components/artifact"
+        "allternit/cmd/allternit-api/src/mcp_*"
       ],
       "decisions": [
         {
@@ -72,7 +67,7 @@
         },
         {
           "on": "2026-10-08",
-          "note": "The app (not gizzi-code) sends the manual as systemPrompt / '+' system, so each build only asks for components it renders and the TUI and channels never get it. Settings → Response style → Layout and visuals (Auto / Text only) is per device, like the Memory switches, to avoid a manual prod migration."
+          "note": "The app (not gizzi-code) sends the manual as systemPrompt / '+' system, so each build only asks for components it renders and the TUI and channels never get it. Settings \u2192 Response style \u2192 Layout and visuals (Auto / Text only) is per device, like the Memory switches, to avoid a manual prod migration."
         },
         {
           "on": "2026-10-08",
@@ -81,16 +76,11 @@
         {
           "on": "2026-10-08",
           "note": "Removed the [v:...] pseudo-syntax, AllternitOpenUIRenderer/registry, BlueprintCanvas, the test-only code-compiler and the fake render_walkthrough tool. Design mode previews the reply's card with DESIGN.md tokens; UI Forge is the card playground."
-        },
-        {
-          "on": "2026-10-12",
-          "note": "Parity pass against ChatGPT Intelligent UI: progressive card streaming (complete statements only), per-part error boundaries with text fallback, catalog 16→38 with model-nameable design tokens, ```app inline apps through the sandbox proxy (process-isolated, heartbeat watchdog), server-side card checks and per-message card state that follows the user across devices. Model JSX and legacy sandbox parts now run in the inline-app sandbox instead of the page; the A2UI extended renderer and backend client, @allternit/ix, and the json-render and react-jsx-parser deps were removed as dead code."
         }
       ],
       "evidence": [
         "allternit/surfaces/docs/guides/interactive-answers.mdx",
-        "allternit/surfaces/docs/release-notes.mdx",
-        "allternit/cmd/allternit-api/migrations/V251__message_card_meta.sql"
+        "allternit/surfaces/docs/release-notes.mdx"
       ]
     },
     {
@@ -136,16 +126,11 @@
         {
           "on": "2026-10-11",
           "note": "Character avatars use shared optical sizing and activity animation. Gizzi YouTube joins the picker; Allternit Series replaces Office Professionals choices; Codex Carry has true transparent backgrounds. Category selection uses one accessible portalled control."
-        },
-        {
-          "on": "2026-10-16",
-          "note": "The Bots rail's Set up your main bot dialog is the bot setup picker (components/bots/look): pick a look (A://, Gizzi, Gizzi YouTube cast) or one of your bots, or add a vendor bot / new bot / import from the same window. Phone: full-screen reference layout with bottom sheets."
         }
       ],
       "evidence": [
         "allternit/surfaces/docs/guides/bot-threads.mdx",
-        "allternit/surfaces/docs/guides/bot-templates.mdx",
-        "allternit/surfaces/docs/guides/bot-setup-picker.mdx"
+        "allternit/surfaces/docs/guides/bot-templates.mdx"
       ]
     },
     {
@@ -180,65 +165,12 @@
         {
           "on": "2026-10-06",
           "note": "Bot email on customer domains runs through mx.allternit.com on the standby server, not the prod VPS."
-        },
-        {
-          "on": "2026-10-13",
-          "note": "Unified channel API = the existing ChannelTransport/channel_gateway, extended (no new gateway, AgentChat reference only): per-adapter capabilities, RateLimited outcome (429 + Retry-After, retryable by correlation id), delivery-status read, restart recovery of pending sends, and conversation lookup scoped to owner + connection (fixes a Telegram/WhatsApp-personal cross-owner routing bug)."
         }
       ],
       "evidence": [
         "allternit/surfaces/docs/guides/messaging-channels.mdx",
-        "allternit/surfaces/docs/guides/channel-gateway-api.mdx",
-        "allternit/docs/channels/UNIFIED_CHANNEL_API.md",
         "allternit/surfaces/docs/guides/whatsapp-business.mdx",
         "allternit/cmd/allternit-cloud-api/src/routes/phone.rs"
-      ]
-    },
-    {
-      "id": "feature:vendor-subscription-bots",
-      "label": "Vendor subscriptions as bots",
-      "product": "product:digital-twin",
-      "status": "building",
-      "description": "Connect a subscription or vendor agent you already have (ChatGPT, Claude, Gemini, Copilot, Kimi, Grok Bot, ChatGPT dots, Claude Managed Agents, OpenClaw, Hermes, Meta Muse) in one step; each chat, GPT, Project, Gem or bot there becomes a ready Allternit bot run through the Agent Gateway (AAI).",
-      "touches": [
-        "allternit-ai/src/components/gateway",
-        "allternit-ai/src/lib/gateway",
-        "allternit/cmd/allternit-api/src/gateway_*",
-        "allternit/services/subscription-gateway",
-        "allternit-ai/src/components/bots",
-        "allternit/surfaces/allternit-desktop",
-        "allternit-ai/src/views/settings"
-      ],
-      "decisions": [
-        {
-          "on": "2026-10-17",
-          "note": "Eoj, 2026-10-17: Allternit Desktop bundles and runs the subscription gateway (subs-gateway-manager.ts; scripts/prepare-subs-gateway.cjs → resources/subs-gateway, node:sqlite so no native module, Electron's Node, ~/.allternit/subscriptions with the file secret store; skipped where ALLTERNIT_LOCAL_SUBS_GATEWAY=1 already). allternit-api ALLTERNIT_LOCAL_SUBS_GATEWAY=fallback: a bound, running, allowed Sessions computer answers first, else Desktop's own gateway; =1 (cloud computer image) stays primary; /subscriptions/status reports local, fallback and sessions_computer. D15 becomes a lane rule: phone and desktop-app lanes run on the person's own computer; browser lanes there are off until turned on (GET/PUT /v1/settings/browser-lanes; off = no browser account routes, web route offline, login 409 browser_lanes_off) and then run in the installed Google Chrome — never Chrome for Testing (OpenAI geoblocks it, too many checks) — headless=new on the account's profile, automation features off, Chrome's normal user agent (HeadlessChrome is held by Cloudflare; live check on chatgpt.com passed), attached over CDP (worker/hidden_chrome.ts). Model-picker chats (POST /v1/tasks chat.create/continue with a provider) ask the same RouteDirector at turn start; phone/desktop-app routes run through the route's AAI adapter (routes/app-route-tasks.ts) with worker-identical task events, thread → app conversation persisted (migration 0013); NO_ROUTE keeps the FabricRouter browser path. Settings → Subscriptions › Runs on shows This computer / the Sessions computer, Add a Sessions computer, and the Browser sign-ins on this computer switch. Pairing handover to a Sessions computer: Mac → Sessions computer only (approve-on-phone is a future note, not built)."
-        },
-        {
-          "on": "2026-10-17",
-          "note": "Deterministic route router for signed-in apps (spec P0 + the Settings API): six routes in a fixed order (android-app -> iphone-app-ictrl -> desktop-app-cdp -> desktop-app-ax -> web -> iphone-app-usb-agent), selected by a pure function of (vendor, eligible routes, order, override) and logged with its reason. A route is eligible only when signed in, online, and every capability-contract item (§3, 7 items) passed the /aai/conformance suite for the CURRENT app version — results stored per (vendor, route, app_version); an app update re-arms ineligibility until the suite re-runs. The chosen route is written into the vendor's binding; the AAI host consults the router only at turn start, so failover is strictly between-turn and a streaming turn never switches; no eligible route answers the typed NO_ROUTE (\"phone offline, no other signed-in route\") — never a weaker fallback. desktop-app-cdp applies only while the shipped app accepts its debug flag unmodified (launch-time probe per app version; never patch/re-sign/inject a vendor binary — otherwise desktop-app-ax or the phone). Settings API: GET /v1/routes + PUT /v1/routes/:vendor/override (400 unless eligible). Phone routes register now but their adapters are a follow-up task: eligible stays false with the failing items until conformance passes — never assumed. Gateway-local: services/subscription-gateway/src/routes/* (registry, contract, select, store, director), migration 0012, test/routes-router.test.ts."
-        },
-        {
-          "on": "2026-10-13",
-          "note": "Gap closure: website/app products need the person's consent once per account (needs_consent); extra turns on one website/desktop subscription queue in order with a visible status instead of failing; AAI contexts persist across gateway restarts; GET /aai/events/stream (SSE); one broken adapter no longer blocks the rest; Managed Agents streams events and answers custom tools (POST /threads/:id/gateway/tool-result); bots with no allowlist ask before shell, writes and web fetches (GIZZI_BOT_BYPASS_PERMISSIONS=1 restores the old default). Live vendor verification remains an owner-run gate (scripts/e2e/gateway-live-check.sh)."
-        },
-        {
-          "on": "2026-10-12",
-          "note": "One-step POST /gateway/connect replaces the manual account/state/discover/bind/READY walk; the step-by-step wizard stays as the advanced path. Only Grok Bot is verified live; the web-subscription and dots lanes are offline-verified only."
-        },
-        {
-          "on": "2026-10-16",
-          "note": "The bot setup picker's vendor tiles (Claude, Dots, Grok, Muse) run the real VENDOR_PACKS profiles and the one-step connect (useOneStepConnect shared with QuickConnect); the Claude desktop app profile opens ConnectionWizard."
-        }
-      ],
-      "evidence": [
-        "allternit/docs/gateway/QUICKSTART.md",
-        "allternit/docs/gateway/AAI_REST.md",
-        "allternit/cmd/allternit-api/src/gateway_connect.rs",
-        "allternit/scripts/e2e/gateway-live-check.sh",
-        "allternit/surfaces/docs/guides/bot-setup-picker.mdx",
-        "allternit/services/subscription-gateway/src/routes/director.ts",
-        "allternit/surfaces/docs/api/subscription-gateway.mdx"
       ]
     },
     {
@@ -287,14 +219,6 @@
         {
           "on": "2026-10-07",
           "note": "Remote bots are mirrored over the peer port instead of a Mesh pane endpoint, so the other computer's pane shell is not exposed."
-        },
-        {
-          "on": "2026-10-17",
-          "note": "Sends to Claude Code bots no longer queue forever: a collapsed paste ([Pasted text #N], Codex [Pasted Content]) counts as landed, a failed paste is cleared line by line, and the idle probe retries. Spawn records folder trust for Claude Code and Kimi. Plain `workspace node list` shows every open node."
-        },
-        {
-          "on": "2026-10-17",
-          "note": "Terminal bots never wait on an approval prompt: Kimi panes start with --auto and Gemini panes with --yolo (ACP mode and kimi subcommands untouched), as Claude, Codex and Qwen already ran auto-approve behind the Gate."
         }
       ],
       "evidence": [
@@ -314,11 +238,7 @@
         "allternit/cmd/allternit-api/src/memory_retrieve",
         "allternit/cmd/allternit-api/src/memory_consolidation",
         "allternit/cmd/allternit-api/src/memory_relations",
-        "allternit/services/memory",
-        "allternit-ai/src/views/settings",
-        "allternit-ai/src/views/cowork",
-        "allternit-ai/src/components/ai-elements",
-        "allternit/services/subscription-gateway"
+        "allternit/services/memory"
       ],
       "decisions": [
         {
@@ -328,18 +248,6 @@
         {
           "on": "2026-10-06",
           "note": "Computer sync runs inside the Desktop app, two-way, with no main copy."
-        },
-        {
-          "on": "2026-10-16",
-          "note": "Eoj: Memory Drive keeps its name and grows into the user's ledger: import any company's memory, capture from every channel, hold every asset, store where the user wants (plan dag_952346). Phase 1 adds the export-prompt import for 10 assistants and import from Claude Code, Codex, Hermes and OpenClaw files."
-        },
-        {
-          "on": "2026-10-17",
-          "note": "Eoj: agent folders on by default (off switch, Forget prunes and a forget sticks). Every memory action is visible: Searched/Saved to Memory Drive rows in the chat thought stream, a Memory Drive Activity log (memory_activity, V266) and live Dream steps. Next: vendor memory pages and past chats read automatically from signed-in logins."
-        },
-        {
-          "on": "2026-10-17",
-          "note": "Eoj: reading vendor memory is automatic once Memory Drive is on. vendor_memory reads each signed-in login (disclosure acknowledged, vendors switch on by default) every 6 h through the gateway's read-only routes: saved memories and instructions word for word, plus new chats distilled from the person's own messages. It never sends. ChatGPT and Claude first."
         }
       ],
       "evidence": [
@@ -369,28 +277,11 @@
         {
           "on": "2026-10-02",
           "note": "Cloud Voice priced at $0.08 per minute, with 100 minutes in Plus."
-        },
-        {
-          "on": "2026-10-16",
-          "note": "Voice Stage redesign shipped: output-audio-driven melting A-block mark (speaking state), typewriter captions with screen-reader twins, bot avatar as stage speaker in bot chats, docked-bar live transcript, 28 named voices with one-shot previews, first-run intro sheet. Design doc: allternit-ai docs/VOICE_STAGE_DESIGN.md."
-        },
-        {
-          "on": "2026-10-18",
-          "note": "Calls on a bot's own linked phone run through the same voice worker: POST /api/v1/voice/linked-calls creates the room (voice_linked_call_rooms), GET /api/v1/voice/calls/live lists live calls for web/PWA, runtime thread key linked:<deviceId>:<caller>, billed as Cloud Voice minutes (engine cloud) under ALLTERNIT_VOICE_BILLING_MODE."
         }
       ],
       "evidence": [
         "allternit/surfaces/docs/guides/voice.mdx",
-        "allternit/surfaces/docs/api/voice-tickets.mdx",
-        "allternit/surfaces/docs/surfaces/voice.mdx",
-        "allternit-ai/src/components/voice/VoiceBotAvatar.tsx",
-        "allternit-ai/src/components/voice/useTypewriter.ts",
-        "allternit-ai/src/components/voice/useVoiceLevelChannel.ts",
-        "allternit-ai/src/components/voice/VoiceIntroSheet.tsx",
-        "allternit-ai/src/lib/voice/preview.ts",
-        "allternit/surfaces/docs/guides/bot-voice-on-linked-phone.mdx",
-        "allternit/surfaces/docs/guides/voice-call-runtime-routes.mdx",
-        "allternit/surfaces/docs/tools/voice-calls.mdx"
+        "allternit/surfaces/docs/api/voice-tickets.mdx"
       ]
     },
     {
@@ -417,7 +308,7 @@
       "decisions": [
         {
           "on": "2026-10-09",
-          "note": "Driver spec §8: computer-use task suite (domains/computer-use/suite) — 40 tasks (20 Mac run, 20 Linux/Windows await a test machine), code-only checkers, runner with pixel/read_ui/subtask/replay modes, pass^3 and determinism report."
+          "note": "Driver spec \u00a78: computer-use task suite (domains/computer-use/suite) \u2014 40 tasks (20 Mac run, 20 Linux/Windows await a test machine), code-only checkers, runner with pixel/read_ui/subtask/replay modes, pass^3 and determinism report."
         },
         {
           "on": "2026-10-09",
@@ -429,11 +320,11 @@
         },
         {
           "on": "2026-10-07",
-          "note": "Agent cursor overlay (computer toolset P5) in every computer viewer, from vendored MIT @trycua/cursor-motion, driven by computer.action events; style in Settings → Computers."
+          "note": "Agent cursor overlay (computer toolset P5) in every computer viewer, from vendored MIT @trycua/cursor-motion, driven by computer.action events; style in Settings \u2192 Computers."
         },
         {
           "on": "2026-10-10",
-          "note": "D1b (task K5): the driver gained native guest engines — engines/atspi.py (AT-SPI reads, AT-SPI action/text/value acting, xdotool pixels, scrot+Pillow screenshots) and engines/uia.py (UIA reads on one MTA thread, invoke/value/selection/toggle patterns, user32 input, System.Drawing screenshots) — plus a hello capability report and Linux/Windows safety context. No platform-specific import crashes off-mac; guests without the deps report degraded and fail closed."
+          "note": "D1b (task K5): the driver gained native guest engines \u2014 engines/atspi.py (AT-SPI reads, AT-SPI action/text/value acting, xdotool pixels, scrot+Pillow screenshots) and engines/uia.py (UIA reads on one MTA thread, invoke/value/selection/toggle patterns, user32 input, System.Drawing screenshots) \u2014 plus a hello capability report and Linux/Windows safety context. No platform-specific import crashes off-mac; guests without the deps report degraded and fail closed."
         }
       ],
       "evidence": [
@@ -484,7 +375,7 @@
       "label": "Cloud computer backups and restore points",
       "product": "product:cloud-computers",
       "status": "live",
-      "description": "Every customer cloud computer is backed up off-site each night, encrypted. Owners can take up to 5 restore points, roll back to one, and download a full copy of the computer from Settings → Computers on every surface.",
+      "description": "Every customer cloud computer is backed up off-site each night, encrypted. Owners can take up to 5 restore points, roll back to one, and download a full copy of the computer from Settings \u2192 Computers on every surface.",
       "touches": [
         "allternit-ai/src/components/computers",
         "allternit-ai/src/lib",
@@ -678,52 +569,11 @@
         {
           "on": "2026-10-11",
           "note": "Floating mode controls, shell rail tabs and the Chat/Cowork toggle share glass selection, Allternit slash details and accessible interaction motion across Desktop, web and PWA."
-        },
-        {
-          "on": "2026-10-15",
-          "note": "Phone drawer reorganized around the desktop mode wheel (Home · Bots · Code · ACI, from src/shell/mode-buttons.ts): it shows only the active mode's rail and recents, with the A://TERNIT wordmark (A://TERNIT BOTS / A://TERNIT ACI at a smaller size in Bots and ACI, per Eoj 2026-10-16; gizzi code lockup in Code). Code, Bots, ACI, Tasks and Customize rows left the drawer; Inbox and Phones became icons; Customize moved into phone Settings; PhoneBotDrawer merged into PhoneDrawer."
-        },
-        {
-          "on": "2026-10-18",
-          "note": "Phone UI gained iOS-style gesture physics on a shared pan/spring core: back-stack navigation with edge-swipe-back and screen push/pop, swipe actions on recents and messages (delete, reply), bottom-sheet detents with velocity fling, long-press peek, drag-to-reorder, pull-to-refresh, toast swipe-dismiss. Desktop behavior unchanged (phone-gated); reduced motion disables tracking."
         }
       ],
       "evidence": [
         "allternit/surfaces/docs/surfaces/mobile.mdx",
-        "allternit-ai/src/fabric-session/phone/PhoneShell.tsx",
-        "allternit-ai/src/fabric-session/phone/PhoneDrawer.tsx",
-        "allternit-ai/src/fabric-session/phone/PhoneModeWheel.tsx",
-        "allternit-ai/src/fabric-session/phone/gestures/pan.ts",
-        "allternit-ai/src/fabric-session/phone/ScreenStack.tsx",
-        "allternit-ai/src/fabric-session/phone/phone-ui-store.ts"
-      ]
-    },
-    {
-      "id": "feature:bot-home-screen",
-      "label": "Bots on the Home Screen",
-      "product": "product:allternit-mobile-pwa",
-      "status": "building",
-      "description": "Save a bot to an iPhone or Android Home Screen as its own icon (avatar + name) that opens the bot's chat: m.allternit.com/b/<id> page and per-bot manifest (Pages Functions), the Add to Home Screen guide in the bot's menu (QR code on Desktop).",
-      "touches": [
-        "allternit-ai/src/fabric-session",
-        "allternit-ai/src/views",
-        "allternit-ai/src/lib",
-        "surface:pwa",
-        "surface:ai",
-        "surface:desktop"
-      ],
-      "decisions": [
-        {
-          "on": "2026-10-16",
-          "note": "Eoj: no App Store app, so no real iOS widget. Bots go on the Home Screen as their own web-app icons with a guide that walks the person through it; tapping the icon opens the bot's existing chat screen, not a new landing page."
-        }
-      ],
-      "evidence": [
-        "allternit/surfaces/docs/guides/bot-home-screen.mdx",
-        "allternit-ai/src/fabric-session/phone/BotHomeLinkHost.tsx",
-        "allternit-ai/src/views/bots/BotHomeScreenGuide.tsx",
-        "allternit-ai/src/lib/bots/bot-home-link.ts",
-        "allternit-ai/fabric-session-pwa-functions/b/[id].js"
+        "allternit-ai/src/fabric-session/phone/PhoneShell.tsx"
       ]
     },
     {
@@ -738,10 +588,6 @@
         "allternit/surfaces/platform.allternit.com"
       ],
       "decisions": [
-        {
-          "on": "2026-10-13",
-          "note": "Managed sessions now execute: an in-process session worker in allternit-api (session_worker.rs) leases queued /beta/work session and deployment tasks, runs them as Gizzi turns with the agent's model, system prompt and effective permissions, appends tool_calls/agent_message events (budget and approval gating apply), honors interrupt/stop and fails retryably when Gizzi is down. ALLTERNIT_SESSION_WORKER=0 disables it; tasks with a sandbox_image are left for external workers."
-        },
         {
           "on": "2026-10-07",
           "note": "Phases 3 to 5 deployed; P4 channels and twin merged (#1394)."
@@ -764,7 +610,7 @@
       "label": "Hosted computer driver",
       "product": "product:platform-api",
       "status": "building",
-      "description": "Platform API /v1/computers: hosted computers that run a model's computer and browser tool calls, with drop-in drivers for the Anthropic SDK, OpenAI and Gemini, an MCP server, approvals and per-key limits. Both published SDKs (@allternit/computer-driver, allternit-computer-driver) also expose contract v2's structured members (read_ui … skills) as typed client methods and the computer_v2 function tool.",
+      "description": "Platform API /v1/computers: hosted computers that run a model's computer and browser tool calls, with drop-in drivers for the Anthropic SDK, OpenAI and Gemini, an MCP server, approvals and per-key limits. Both published SDKs (@allternit/computer-driver, allternit-computer-driver) also expose contract v2's structured members (read_ui \u2026 skills) as typed client methods and the computer_v2 function tool.",
       "touches": [
         "allternit/cmd/allternit-cloud-api/src/routes/platform_v1",
         "allternit/sdk/computer-driver",
@@ -841,7 +687,7 @@
         },
         {
           "on": "2026-10-09",
-          "note": "D2: contract v2 (allternit.computer.v2) ships — the 17 pixel members plus read_ui/act/run_batch/verify through the driver sidecar, request_human (lease pause, live view with input enabled, POST /api/v1/computers/:id/human-done resume) and use_credential (sealed vault + macOS Keychain + Bitwarden/1Password CLI adapters + RFC 6238 TOTP; values never enter the model context or logs; optional app/domain bindings). gizzi offers the structured members as the computer_v2 function tool to every model family (Claude keeps its native toolset for the pixel members). Windows this-device input moves off the Cua CLI fallback onto the sidecar over token-gated loopback TCP."
+          "note": "D2: contract v2 (allternit.computer.v2) ships \u2014 the 17 pixel members plus read_ui/act/run_batch/verify through the driver sidecar, request_human (lease pause, live view with input enabled, POST /api/v1/computers/:id/human-done resume) and use_credential (sealed vault + macOS Keychain + Bitwarden/1Password CLI adapters + RFC 6238 TOTP; values never enter the model context or logs; optional app/domain bindings). gizzi offers the structured members as the computer_v2 function tool to every model family (Claude keeps its native toolset for the pixel members). Windows this-device input moves off the Cua CLI fallback onto the sidecar over token-gated loopback TCP."
         },
         {
           "on": "2026-10-09",
@@ -893,7 +739,7 @@
       "status": "building",
       "description": "POST /v1/decisions (alias /v1/systemone) in allternit-api's Agency Kernel: one choice over up to 255 caller options, answered by the owned local scorer (one-pass option scoring on MLX or llama.cpp, Qwen3.5-4B), escalating under a per-kind threshold to optional vendor adapters (off by default, per project) and the planner model through gizzi, within a latency budget, with abstain. Every decision and its outcome is stored (V245 decisions). The flywheel (V247) runs registered heads in shadow, promotes/demotes them on outcome accuracy with hysteresis and an audit trail, and serves live heads first (head.lookup: exact-match over past outcomes, <10 ms). GET/PUT /v1/decisions/heads.",
       "touches": [
-        "allternit/cmd/allternit-api/src/agency_api/decisions",
+        "allternit/cmd/allternit-api/src/agency_api",
         "allternit/domains/decision-runtime",
         "allternit/surfaces/allternit-desktop"
       ],
@@ -987,19 +833,9 @@
         "allternit-ai/src/lib/artifacts",
         "allternit-ai/src/components/settings",
         "allternit-ai/src/views/library",
-        "allternit-ai/src/views/design",
-        "allternit-ai/src/views/cowork",
-        "allternit-ai/src/components/artifact-share"
+        "allternit-ai/src/views/design"
       ],
       "decisions": [
-        {
-          "on": "2026-10-16",
-          "note": "Eoj approved the share reference and preview: a compact owner/access-avatar pill with a dark Share action, and a rounded sharing panel with inline role pickers, people list and copy confirmation. Shared styling covers the v2 artifact window on Desktop, web phone and PWA plus the legacy Cowork private/org pane. Access avatars use saved grants, separate from live presence. Existing owner/policy rules and phone/PWA read-only sharing remain; no new public access is enabled."
-        },
-        {
-          "on": "2026-10-14",
-          "note": "Every Make something new tile opens an artifact session (Eoj: dashboards, motion and page opened no session; the others had no working pane). Kinds without an Office/Design editor (dashboard, motion, page, build, image, video, research) open a studio pane: empty state, then a rendering card shaped like the result (img-fx mosaic for image/video, skeleton + working beam otherwise) with the agent's live thought and tool steps, then the result in its ArtifactWindow with the kind's editor. Dashboard/Motion/Page sessions bind to the artifact their agent makes (artifact_create, then artifact_update). media_generate shows the same card inline in chat. Design canvas drops tldraw's menu/helper/share chrome, shows the style panel only with a selection or drawing tool, and follows the app theme."
-        },
         {
           "on": "2026-10-11",
           "note": "Artifact toolbar and inline mode tabs use the UI font, a single horizontally scrolling row, and neutral glass selection across Desktop, web phone and PWA; reduced transparency and increased contrast get solid selection surfaces."
@@ -1026,7 +862,7 @@
         },
         {
           "on": "2026-10-10",
-          "note": "Craft editors Phase 1: `pdf` joins the kind contract (default body format application/pdf) on both sides — cloud-api KINDS allow-list and the app registry. PDFs open in the workspace through the embedded PdfCraft WASM editor over the craft:1 postMessage bridge served from office.allternit.com/craft/pdf/ (see feature:craft-editors). .pdf uploads become pdf-kind records."
+          "note": "Craft editors Phase 1: `pdf` joins the kind contract (default body format application/pdf) on both sides \u2014 cloud-api KINDS allow-list and the app registry. PDFs open in the workspace through the embedded PdfCraft WASM editor over the craft:1 postMessage bridge served from office.allternit.com/craft/pdf/ (see feature:craft-editors). .pdf uploads become pdf-kind records."
         }
       ],
       "evidence": [
@@ -1036,8 +872,7 @@
         "allternit/surfaces/docs/guides/artifact-apps.mdx",
         "allternit/surfaces/docs/api/artifact-runtime.mdx",
         "allternit/surfaces/docs/guides/artifact-editors.mdx",
-        "allternit/surfaces/docs/guides/artifact-collaboration.mdx",
-        "allternit/surfaces/docs/reference/artifact-share-ui.mdx"
+        "allternit/surfaces/docs/guides/artifact-collaboration.mdx"
       ]
     },
     {
@@ -1125,7 +960,7 @@
       "label": "Craft editors (embedded WASM editors over craft:1)",
       "product": "product:ai-allternit",
       "status": "building",
-      "description": "The vendored craft editors (PdfCraft, PhotoCraft, FilmCraft) run sandboxed in cross-origin iframes served from office.allternit.com/craft/<app>/ and speak the craft:1 postMessage protocol with the workspace host page: token-validated handshake, craft:open with transferable bytes, craft:save-request -> host persists -> craft:save-ack, and a craft:command channel so agents drive the same visible editor. Phase 1 (2026-10-10) wired the pdf kind end to end; Phase 2 (2026-10-10) wired the image kind: PhotoCraft opens the stored layered source (.pcraft/PSD in artifact runtime storage) when there is one, saves the source back to storage, flattens a PNG per save that becomes the new artifact version (R2 URL body), and gains a Download PSD export. Phase 3 (2026-10-10) is live: the video kind opens in the embedded FilmCraft editor (VideoCraftEditor over the same bridge; the video embed loads ?empty=1 so FilmCraft skips its demo project), the project source (.fcproj) round-trips through artifact runtime storage (craft/source.fcproj, personal scope), footage is a media-plane ref in meta.media (never bytes in the 20 MB text budget), the user's save requests an MP4 export (file.exportMedia) whose uploaded URL becomes the new text/uri-list version body, media_generate videos and uploaded video files land as video-kind artifacts, and the phone/PWA surfaces get view + an Edit entry to the full editor (trim-adapted phone UX is not claimed). The editor bundles serve cross-origin from office.allternit.com only — there is no allternit-ai public/craft mirror (the earlier note claiming one was wrong; image/pdf never had one either).",
+      "description": "The vendored craft editors (PdfCraft, PhotoCraft, FilmCraft) run sandboxed in cross-origin iframes served from office.allternit.com/craft/<app>/ and speak the craft:1 postMessage protocol with the workspace host page: token-validated handshake, craft:open with transferable bytes, craft:save-request -> host persists -> craft:save-ack, and a craft:command channel so agents drive the same visible editor. Phase 1 (2026-10-10) wired the pdf kind end to end; Phase 2 (2026-10-10) wired the image kind: PhotoCraft opens the stored layered source (.pcraft/PSD in artifact runtime storage) when there is one, saves the source back to storage, flattens a PNG per save that becomes the new artifact version (R2 URL body), and gains a Download PSD export. Phase 3 (2026-10-10) is live: the video kind opens in the embedded FilmCraft editor (VideoCraftEditor over the same bridge; the video embed loads ?empty=1 so FilmCraft skips its demo project), the project source (.fcproj) round-trips through artifact runtime storage (craft/source.fcproj, personal scope), footage is a media-plane ref in meta.media (never bytes in the 20 MB text budget), the user's save requests an MP4 export (file.exportMedia) whose uploaded URL becomes the new text/uri-list version body, media_generate videos and uploaded video files land as video-kind artifacts, and the phone/PWA surfaces get view + an Edit entry to the full editor (trim-adapted phone UX is not claimed). The editor bundles serve cross-origin from office.allternit.com only \u2014 there is no allternit-ai public/craft mirror (the earlier note claiming one was wrong; image/pdf never had one either).",
       "touches": [
         "allternit-ai/src/components/craft",
         "allternit-ai/src/lib/artifacts",
@@ -1144,11 +979,11 @@
         },
         {
           "on": "2026-10-10",
-          "note": "Phase 3 app-independent parts: `video` joins the kind contract — cloud-api KINDS gains the kind (default body format application/vnd.allternit.video+json) and the app registry gains the allow-list entry (interim rendering as code; no editor until the host-wiring slice). The craft_store runtime gate already admitted image|video (PR #1477), so no server gate change was needed. FilmCraft bundle rebuilt cleanly with CRAFT_FEATURES=embed (the video xtask forwards CRAFT_FEATURES to cargo --features; documented in vendor/craft/VENDOR.md for the future CI job) and published to office.allternit.com/craft/video/ plus mirrored into allternit-ai public/craft/video/. Server: cmd/allternit-cloud-api/src/artifacts/kinds.rs; app: src/lib/artifacts/{types,kinds}.ts."
+          "note": "Phase 3 app-independent parts: `video` joins the kind contract \u2014 cloud-api KINDS gains the kind (default body format application/vnd.allternit.video+json) and the app registry gains the allow-list entry (interim rendering as code; no editor until the host-wiring slice). The craft_store runtime gate already admitted image|video (PR #1477), so no server gate change was needed. FilmCraft bundle rebuilt cleanly with CRAFT_FEATURES=embed (the video xtask forwards CRAFT_FEATURES to cargo --features; documented in vendor/craft/VENDOR.md for the future CI job) and published to office.allternit.com/craft/video/ plus mirrored into allternit-ai public/craft/video/. Server: cmd/allternit-cloud-api/src/artifacts/kinds.rs; app: src/lib/artifacts/{types,kinds}.ts."
         },
         {
           "on": "2026-10-10",
-          "note": "Phase 3 host wiring: VideoCraftEditor (src/components/craft/CraftEditor.tsx) + video-io.ts. Open ladder: stored craft/source.fcproj wins, with the footage bytes re-imported under the same virtual path so a stored project's clip references resolve (the editor's file table is per-session; OPFS restore helps the same browser); first-time opens import the footage the meta.media ref points at and the host issues file.saveAs {path} so the app's own Save never prompts. Save routing by name extension (FilmCraft's adapter sends no format; meta.path is the virtual path): .fcproj -> runtime storage + a host-requested file.exportMedia {path} MP4 export; the export's save-request -> uploadAttachmentToCloud -> new text/uri-list version body with meta.media = {url, mime}; anything else (audio stems, caption sidecars) -> craft/export.<ext>. media_generate video outputs become video-kind drafts (project body + media-plane ref in meta) via from-transcript selectedToDraft; the library gains Upload video. Phone/PWA v1 is the playable view plus an Edit video entry that mounts the full FilmCraft (trim adaptation deferred, flagged). Bridge: video embeds load ?empty=1. Docs: guides/artifact-modes.mdx + docs/design/artifacts-v2.md app-contract bullet. Server untouched (the craft_store gate has admitted video since #1477). Office CSP fix (live bug the smoke caught): the #1475 _headers fix made script-src 'self' 'wasm-unsafe-eval' actually apply to /craft/* — and every vendored app's index.html boots from an INLINE script, so all three editors silently failed to boot (blank iframe, host handshake timeout; PDF/image/video alike, in-product verification had not caught it). Fixed by adding 'unsafe-inline' to the /craft/* script-src (surfaces/office.allternit.com/public/_headers): the office origin carries no credentials, apps run in opaque-origin sandboxed iframes, and connect-src 'none' + COOP/COEP remain. A live boot check (handshake -> craft:open -> command round-trip against the deployed bundle) is now documented in vendor/craft/VENDOR.md as required for the future CI job — strings|grep craft:1 does not catch a CSP-blocked boot. Live-boot fixes the smoke caught (nothing had ever booted the embed end-to-end; CSP only started applying with #1475's _headers-at-root fix): (1) office /craft/* CSP — script-src gains 'unsafe-inline' (vendored index.html files boot from inline scripts; a hash would churn per build), connect-src 'self' (the same-origin .wasm fetch), plus Access-Control-Allow-Origin:* and Cross-Origin-Resource-Policy: cross-origin (the sandboxed iframe's opaque origin module-loads its own glue/wasm). (2) bridge.ts speaks the crate's actual wire: bare kebab-case types (hello, open, save-request — no craft: prefix) and numeric command ids — the two sides were written against PROTOCOL.md independently and never integrated; PROTOCOL.md now documents the real wire. (3) Host→app posts must target '*' (explicit origins are never delivered to opaque-origin windows); app→host arrive with origin 'null' and the host pins event.source to its own iframe. (4) craft-host's wasm transport dropped EVERY [json, ArrayBuffer] message (the string-only parse returned early), so no craft:open bytes ever reached any app — fixed in the crate (Allternit-authored, not upstream) and the FilmCraft bundle rebuilt with CRAFT_FEATURES=embed. The image/pdf bundles embed the same latent transport bug and must be rebuilt the same way (same crate, no code change) before their editors can open documents — flagged follow-up, not done here to avoid redeploying live surfaces outside this slice. The future CI job must run a live boot check (handshake → open with bytes → one command), not just strings|grep craft:1."
+          "note": "Phase 3 host wiring: VideoCraftEditor (src/components/craft/CraftEditor.tsx) + video-io.ts. Open ladder: stored craft/source.fcproj wins, with the footage bytes re-imported under the same virtual path so a stored project's clip references resolve (the editor's file table is per-session; OPFS restore helps the same browser); first-time opens import the footage the meta.media ref points at and the host issues file.saveAs {path} so the app's own Save never prompts. Save routing by name extension (FilmCraft's adapter sends no format; meta.path is the virtual path): .fcproj -> runtime storage + a host-requested file.exportMedia {path} MP4 export; the export's save-request -> uploadAttachmentToCloud -> new text/uri-list version body with meta.media = {url, mime}; anything else (audio stems, caption sidecars) -> craft/export.<ext>. media_generate video outputs become video-kind drafts (project body + media-plane ref in meta) via from-transcript selectedToDraft; the library gains Upload video. Phone/PWA v1 is the playable view plus an Edit video entry that mounts the full FilmCraft (trim adaptation deferred, flagged). Bridge: video embeds load ?empty=1. Docs: guides/artifact-modes.mdx + docs/design/artifacts-v2.md app-contract bullet. Server untouched (the craft_store gate has admitted video since #1477). Office CSP fix (live bug the smoke caught): the #1475 _headers fix made script-src 'self' 'wasm-unsafe-eval' actually apply to /craft/* \u2014 and every vendored app's index.html boots from an INLINE script, so all three editors silently failed to boot (blank iframe, host handshake timeout; PDF/image/video alike, in-product verification had not caught it). Fixed by adding 'unsafe-inline' to the /craft/* script-src (surfaces/office.allternit.com/public/_headers): the office origin carries no credentials, apps run in opaque-origin sandboxed iframes, and connect-src 'none' + COOP/COEP remain. A live boot check (handshake -> craft:open -> command round-trip against the deployed bundle) is now documented in vendor/craft/VENDOR.md as required for the future CI job \u2014 strings|grep craft:1 does not catch a CSP-blocked boot. Live-boot fixes the smoke caught (nothing had ever booted the embed end-to-end; CSP only started applying with #1475's _headers-at-root fix): (1) office /craft/* CSP \u2014 script-src gains 'unsafe-inline' (vendored index.html files boot from inline scripts; a hash would churn per build), connect-src 'self' (the same-origin .wasm fetch), plus Access-Control-Allow-Origin:* and Cross-Origin-Resource-Policy: cross-origin (the sandboxed iframe's opaque origin module-loads its own glue/wasm). (2) bridge.ts speaks the crate's actual wire: bare kebab-case types (hello, open, save-request \u2014 no craft: prefix) and numeric command ids \u2014 the two sides were written against PROTOCOL.md independently and never integrated; PROTOCOL.md now documents the real wire. (3) Host\u2192app posts must target '*' (explicit origins are never delivered to opaque-origin windows); app\u2192host arrive with origin 'null' and the host pins event.source to its own iframe. (4) craft-host's wasm transport dropped EVERY [json, ArrayBuffer] message (the string-only parse returned early), so no craft:open bytes ever reached any app \u2014 fixed in the crate (Allternit-authored, not upstream) and the FilmCraft bundle rebuilt with CRAFT_FEATURES=embed. The image/pdf bundles embed the same latent transport bug and must be rebuilt the same way (same crate, no code change) before their editors can open documents \u2014 flagged follow-up, not done here to avoid redeploying live surfaces outside this slice. The future CI job must run a live boot check (handshake \u2192 open with bytes \u2192 one command), not just strings|grep craft:1."
         }
       ],
       "evidence": [
@@ -1183,48 +1018,6 @@
       ]
     },
     {
-      "id": "feature:agency-descent",
-      "label": "Agency Descent (decision flywheel)",
-      "product": "product:ai-allternit",
-      "status": "building",
-      "description": "Agency work moves down the tiers as it repeats: open-weight and trained decision heads, opt-in training data (per-org consent, DLP-redacted, shared heads), the Descent dashboard (tier mix, cheap share, escalations, oracle spend) and memory recall in Agency runs.",
-      "touches": [
-        "allternit-ai/src/views/settings",
-        "allternit-ai/src/lib/agent-rules",
-        "allternit/cmd/allternit-api/src/kernel_ui",
-        "allternit/cmd/allternit-api/src/agency_api/decisions",
-        "allternit/cmd/allternit-api/src/agency_api/task_types",
-        "allternit/cmd/allternit-api/src/agency_api/replays",
-        "allternit/cmd/allternit-api/src/agency_api/evals",
-        "allternit/cmd/allternit-api/src/agency_api/harness",
-        "allternit/cmd/allternit-api/src/agency_api/memory_*",
-        "allternit/cmd/allternit-api/src/agency_api/monitor_*",
-        "allternit/domains/decision-runtime"
-      ],
-      "decisions": [
-        {
-          "on": "2026-10-12",
-          "note": "Training data is opt-in per organization; trained decision heads are shared across opted-in organizations; open-weight baselines instead of paid decision vendors; cloud test first. No GPU: trained heads train and run on CPU."
-        },
-        {
-          "on": "2026-10-13",
-          "note": "C2 + C5: a deterministic trace monitor checks every terminal run (no sampling) and stores findings (GET /v1/runs/:id/findings); an optional trace.error decision, labelled by the deterministic verdict, lets a head learn it later. Evals are trajectory graders over recorded-only replays or the scripted runner (/v1/evals/*), with regression cases promoted from runs and a manual CI gate (scripts/agency-eval-gate.mjs, 2 pp drop / any high-stakes failure). Replay and eval live model calls count against the same daily spend caps as runs."
-        },
-        {
-          "on": "2026-10-13",
-          "note": "Live S1 decisions in all six Agency graphs (journaled, never re-decided); CPU-trained decision heads (head.embed over EmbeddingGemma 2, head.rules compiled to S0) trained as background jobs on pooled opted-in data; replay overrides and replay-backed acceptance for head promotion; entity pages in memory recall; harness learning (C6): workflow edits proposed by deterministic operators or the planner model, scored on evals + recorded-only replays, accepted by a VERA-style rule and versioned only after human approval, with rollback."
-        }
-      ],
-      "evidence": [
-        "allternit/surfaces/docs/api/agency/decisions.mdx",
-        "allternit/surfaces/docs/api/agency/evals.mdx",
-        "allternit/cmd/allternit-api/src/agency_api/monitor.rs",
-        "allternit/cmd/allternit-api/src/agency_api/evals/mod.rs",
-        "allternit-ai/src/views/settings/agent-rules/DescentTab.tsx",
-        "allternit-ai/src/views/settings/agent-rules/DecisionTrainingCard.tsx"
-      ]
-    },
-    {
       "id": "feature:background-tasks",
       "label": "Background tasks pane",
       "product": "product:ai-allternit",
@@ -1238,8 +1031,7 @@
         "allternit/cmd/gizzi-code/src/runtime/server",
         "allternit/cmd/gizzi-code/src/runtime/tools",
         "allternit/cmd/allternit-cloud-api",
-        "allternit/cmd/gizzi-code/src/cli",
-        "allternit/cmd/gizzi-code/src/runtime/drivers"
+        "allternit/cmd/gizzi-code/src/cli"
       ],
       "decisions": [
         {
@@ -1249,457 +1041,12 @@
         {
           "on": "2026-10-11",
           "note": "cloud-api relays the task routes for ai.allternit.com. A TUI attached to a runtime session mirrors its shells and agents into the task table (ids tui_*, no daemon Bus events, so the pane refreshes every 10s); a surface's Stop settles the row and the TUI stops the task. Background-task restart cleanup now runs once per process and skips tui_* rows."
-        },
-        {
-          "on": "2026-10-12",
-          "note": "Code session pane selector is collapsed into a multi-select Panes menu with open-state checks and running-task count. Six code tool bodies share Browser shell surfaces on desktop, phone and popup. Terminal uses one tab bar with folder/branch context and bare shell chrome."
-        },
-        {
-          "on": "2026-10-14",
-          "note": "Claude CLI stream-json task lifecycle now mirrors into the same durable task list. Keep the owning CLI alive after its foreground result while tasks remain; poll bounded task output and forward targeted stop_task controls with acknowledgement. Missing terminal notifications become interrupted, never completed. No API shape or separate Desktop/phone implementation."
         }
       ],
       "evidence": [
         "allternit/docs/upstream/background-scenarios.md",
         "allternit/cmd/gizzi-code/test/session/session-tasks.test.ts",
-        "allternit/cmd/gizzi-code/test/session/background-shell.test.ts",
-        "allternit/cmd/gizzi-code/test/session/cli-background-tasks.test.ts"
-      ]
-    },
-    {
-      "id": "feature:code-file-workflow",
-      "label": "Code session file browser and editor",
-      "product": "product:ai-allternit",
-      "status": "building",
-      "description": "Code sessions keep a searchable folder tree beside tabbed file previews and editors, with hover/focus/touch Edit actions, session draft retention, save/error handling, and changed-file navigation into the editor across Desktop and both phone layouts.",
-      "touches": [
-        "allternit-ai/src/views/code",
-        "allternit-ai/src/components/canvas",
-        "allternit-ai/src/lib/agents"
-      ],
-      "decisions": [
-        {
-          "on": "2026-10-12",
-          "note": "Eoj requested the functional file workflow from Claude Desktop references, beyond pane colors. Added persistent tree/editor split, file tabs, hover Edit, responsive tree, unsaved-draft protection, file:line opening, grouped changes and full-hunk review. File API requests use current runtime routing and auth. Verified with file-workflow, editor, Changes, pane-manager, terminal, file API and console tests plus desktop/phone/dark layout review. Desktop needs its next build and the PWA needs its separate deployment."
-        }
-      ],
-      "evidence": [
-        "allternit-ai/src/views/code/CodeFilesPane.tsx",
-        "allternit-ai/src/views/code/CodeFilesPane.test.tsx",
-        "allternit-ai/src/views/code/CodeDiffPanel.tsx",
-        "allternit/surfaces/docs/surfaces/native-agent.mdx"
-      ]
-    },
-    {
-      "id": "feature:bot-phones",
-      "label": "Bots operate real phones",
-      "product": "product:computer-use",
-      "status": "live",
-      "description": "A bot sees and operates a real phone through one set of phone.* tools: a spare Android over Wi-Fi (adb + Google ARTEMIS), or an iPhone with an Allternit USB Agent (USB mouse/keyboard board + AirPlay mirror). Connected in Desktop; usable from every surface.",
-      "touches": [
-        "allternit-ai/src/views/settings",
-        "allternit-ai/src/components/subscriptions",
-        "allternit/surfaces/allternit-desktop",
-        "allternit/hardware/usb-agent",
-        "allternit-ai/src/components/computers",
-        "allternit-ai/src/components/phone-link",
-        "allternit-ai/src/components/onboarding",
-        "allternit-ai/src/views/settings",
-        "allternit-ai/src/lib",
-        "allternit/cmd/allternit-sideload"
-      ],
-      "decisions": [
-        {
-          "on": "2026-10-02",
-          "note": "Lane 2a: Android over Wi-Fi with QR wireless-debugging pairing, adb downloaded and SHA-verified (never bundled), ARTEMIS sidecar for plain-English tasks; texts and calls need a native approval, are rate limited and block emergency numbers (#1197)."
-        },
-        {
-          "on": "2026-10-13",
-          "note": "Old services/android-bridge connector retired: it needed a harness that exists only on one machine and its send_sms had no approval or rate limit (#1517)."
-        },
-        {
-          "on": "2026-10-13",
-          "note": "Allternit USB Agent (Eoj named it): iPhone with no app, no Mac Mirroring and no developer account. ESP32-S3 USB HID board + UxPlay AirPlay receiver (GPL-3.0, separate process, PIN-protected) + calibration and closed-loop aiming adapted from esp32-iphone-agent (MIT). USBA/1: mutual HMAC handshake, per-connection session key, signed sequenced commands, boots disarmed, only the button arms it, lease and auto-disarm; key set only over USB. Same phone.* tools; phone.home/back/key added for both platforms. Not yet checked with a real board on Eoj's iPhone 17 Pro."
-        },
-        {
-          "on": "2026-10-13",
-          "note": "Opening Settings no longer downloads adb for people with no Android phone; the tool gateway starts on its own for iPhone-only users."
-        },
-        {
-          "on": "2026-10-14",
-          "note": "One-step setup: Desktop ships the USB Agent firmware (reproducible image + SHA-256 manifest, built by hardware/usb-agent/build-firmware.sh; source public, Eoj OK'd publishing) and Set up flashes it with esptool-js over Web Serial before writing Wi-Fi and the key. Desktop allows serial only for first-party pages and Espressif boards (VID 0x303A), auto-picked. Boards on older firmware show Update available."
-        },
-        {
-          "on": "2026-10-16",
-          "note": "Phone Link (SPEC-signed-in-apps-routing): bots use the AI apps already signed in on the user's own phone instead of vendor tokens (Sign in with ChatGPT removed, #1584). Desktop main state machine phone-link.ts + window.allternit.phoneLink IPC; Android USB to Wi-Fi in main, iPhone via an iCTRL fork set up over the cable is next. UI owned by the setup-flow track (onboarding 'Your AI' step + PhoneLinkSetup window)."
-        },
-        {
-          "on": "2026-10-16",
-          "note": "Phone Link setup UI (ai, PhoneLinkSetup / PhoneLinkPanel / usePhoneLink): one screen per backend state with Eoj's per-state copy, Apple ID and 2FA forms that clear after submit and never log, a highlighted 'Turn on Developer Mode?' popup callout after the restart, and a result card listing each app's sign-in state. iPhone has no 'Coming soon': an unfinished backend step is a plain error. Opened from Settings > Subscriptions, Settings > Computers > Phones and onboarding Your AI ('Use the apps on your devices'; done only at ready_wifi). Web, phone layout and PWA show 'Set up from Allternit Desktop'."
-        },
-        {
-          "on": "2026-10-16",
-          "note": "iPhone helper signing with the user's own Apple ID, no Xcode: allternit-sideload sidecar (Rust over isideload 0.4.6, MIT), JSON lines over stdio with Desktop's SideloadSigner. Password only on stdin and zeroized; Apple session, signing key and anisette identity in the macOS Keychain (com.allternit.sideload) so re-signs skip password and 2FA. Stable per-team ids com.allternit.phonelink.<team> reuse App IDs; the runner's .xctest takes the runner's id (isideload's extension handling bypassed via its lower-level APIs; upstream PR drafted). Its own cargo workspace (russh 0.60.3 vs isideload aes-gcm conflict). OPTIONAL in packaging until anisette.allternit.com is hosted; hosting, licence review (apple-codesign-quick is LGPL-2.1) and Apple ToS are open."
-        },
-        {
-          "on": "2026-10-17",
-          "note": "Android Phone Link setup installs the Phone Link app over the cable (accessibility service, iCTRL protocol on :8200, starts on boot) instead of wireless debugging; linked phones are found again by device id when their Wi-Fi address changes."
-        },
-        {
-          "on": "2026-10-17",
-          "note": "In-app linked-Android live view (Phase 1): scrcpy-server pinned to v5.0.1 with a recorded SHA-256, downloaded on first use from the official release (never bundled); phone-scrcpy.ts implements the v5 wire protocol (dummy byte, 64-byte device name, h264 codec id, 12-byte session packets for rotation/size, 12-byte frame headers stripped before IPC), one shared PhoneStreamManager session per serial exposed to the renderer over phone:stream-* IPC with Annex-B H.264 chunks as structured-clone Buffers; input (touch/key/text/scroll/back/home/app_switch/power) and SET_DISPLAY_POWER encoded per control_msg.c. Agent-takeover banner: PhoneInfo.agentBusy fed by tool-runner and ARTEMIS activity counters. Streams start only on renderer request; the external scrcpy window stays a secondary action."
-        },
-        {
-          "on": "2026-10-17",
-          "note": "Settings → Computers → Phones labels each lane on its own: 'Screen & control' (adb + scrcpy, status 'Screen: …') and 'Phone Link — AI apps' (status 'Apps: …'), and a linked Android row says 'Screen not connected' while no phone is online on the screen lane — a healthy Phone Link pill had read as the whole phone being connected. Post-pair adb connect retries POST_PAIR_CONNECT_ATTEMPTS (4) times for mDNS lag and stops at once on cancel."
-        },
-        {
-          "on": "2026-10-17",
-          "note": "Bots reach Phone-Linked phones through one iCTRL lane in PhoneToolRunner (link: serials) with read_ui/find_and_tap/screen_text on every lane and per-phone health; remount and signature renewal are manual states."
-        },
-        {
-          "on": "2026-10-17",
-          "note": "Phone first (Eoj): Phone Link is the main way to connect an app; browser sign-ins are the fallback. Settings → Subscriptions opens with Link a phone and Linked phones (moved from Computers → Phones, which keeps a pointer plus the Android cable tools and the USB Agent), then Apps and channels: one row per app built only from live data (phone.devices apps + gateway accounts/providers + routes), never a UI list. The apps Phone Link looks for are data: surfaces/allternit-desktop/src/main/phone-app-catalog.json, 101 apps (the gateway's AI vendors with their provider ids, Telegram, and apps that have a connector, keyed by the connector id with its category), every store id checked against the App Store lookup API and Google Play (scripts/verify-phone-app-catalog.mjs). Desktop re-reads a healthy phone's apps every 10 min (Android replaces, iPhone only adds) and only ever probes AI chat apps by launching them. Connector detail pages say which linked phones have the app. No 'coming soon' rows. With Linked phones out of Computers → Phones, its 'Screen not connected' line is dropped; the 'Apps:' pill stays."
-        },
-        {
-          "on": "2026-10-17",
-          "note": "Phone Link helpers join the customer's Headscale mesh with embedded userspace tsnet (no OS VPN slot); keys come from /api/v1/mesh/enroll (Desktop passing them at cable setup is the next step); relays are our own DERP. tsnet log uploads to Tailscale are switched off in every Allternit mesh node (phones and the gizzi mesh-node sidecar). Live 2026-10-17: moto controlled from France over the mesh on LTE with Wi-Fi off."
-        },
-        {
-          "on": "2026-10-17",
-          "note": "iPhone Phone Link helper 1.98.12-allternit.2 (published + pinned) joins the user's mesh via sealed config; only local clients may use the one-shot pairing grant. Live 2026-10-17: iPhone on a phone hotspot (different network, no cable, helper started on the phone) driven from France over the mesh: ChatGPT opened, read_ui 208 lines, plaintext pairing over the mesh refused (403). Production mesh isolates customers (autogroup:self) since the same day. Android 0.2.1 runs the mesh in its own process."
-        },
-        {
-          "on": "2026-10-18",
-          "note": "Bot voice on a linked phone (CONTRACT-linked-phone-voice-2026-10-18): a call cable from the phone's headset port to a USB sound card on the Mac running Desktop. Desktop answers after one ring (Android adb KEYCODE_CALL, iPhone tap Accept via iCTRL, best effort), joins LiveKit room call-lp-<uuid> as linked-phone-<deviceId>, and the allternit-voice worker runs the bot as for a SIP call. Per-phone callBridge settings (Settings > Subscriptions > Linked phones > Call audio); call.started gains an optional line field; same CallScreen + phone-mirror switch on all three surfaces. dtmf/transfer/hold unsupported in v1. Bluetooth HFP (Moto) and iPhone Continuity were dropped first."
-        }
-      ],
-      "evidence": [
-        "allternit/surfaces/allternit-desktop/src/main/phone-app-catalog.json",
-        "allternit/surfaces/docs/guides/connectors.mdx",
-        "allternit/surfaces/docs/guides/phone-for-your-bot.mdx",
-        "allternit/surfaces/docs/guides/usb-agent.mdx",
-        "allternit/surfaces/docs/guides/phone-link.mdx",
-        "allternit-ai/src/components/phone-link/PhoneLinkSetup.tsx",
-        "allternit/hardware/usb-agent/README.md",
-        "allternit/surfaces/allternit-desktop/src/main/phone-tools.ts",
-        "allternit/surfaces/allternit-desktop/src/main/phone-usb-agent.ts",
-        "allternit/surfaces/allternit-desktop/src/main/phone-scrcpy.ts",
-        "allternit/surfaces/allternit-desktop/src/main/phone-stream.ts",
-        "allternit/cmd/allternit-sideload/README.md",
-        "allternit/surfaces/docs/guides/bot-voice-on-linked-phone.mdx"
-      ]
-    },
-    {
-      "id": "feature:phone-stream-relay",
-      "label": "Phone stream relay (Phones 2.0)",
-      "product": "product:computer-use",
-      "status": "building",
-      "description": "Any surface views and controls a linked Android through the account's Desktop app: the browser opens /ws/phones/:serial/stream with a short-lived HMAC token (purpose phone_stream, read-only by default, ACI-gated full control, 4401 close at expiry), and the Desktop's phone-link session socket (/ws/phone-link/session, desktop-credential auth) relays the scrcpy H.264 stream and JSON control envelopes both ways. Registry is in-memory in allternit-api; cloud PG registered_phones rows (identity + last_seen only) are the persistence, so GET /api/v1/phones can say \"linked but Desktop offline\".",
-      "touches": [
-        "allternit/cmd/allternit-api/src/phone_ws.rs",
-        "allternit/cmd/allternit-cloud-api/src/routes/registered_phones.rs",
-        "allternit-ai/src/components/phone-link"
-      ],
-      "decisions": [
-        {
-          "on": "2026-10-17",
-          "note": "Phones 2.0 relay lane (approved plan): mirrors the computer_ws VNC proxy minus VNC — frames are opaque (binary video + JSON text). Read-only is enforced at the pipe (a read-only token's browser->desktop frames are dropped) because the payload is never parsed. One active stream per phone-link socket: a socket may hello many phones (all register online) but streams one serial at a time; scrcpy is one device per process, so the Desktop opens one socket per streamed phone. Full-control tokens reuse the computer_ws ACI confirmation-grant pattern."
-        }
-      ],
-      "evidence": [
-        "allternit/cmd/allternit-api/src/phone_ws.rs",
-        "allternit/cmd/allternit-cloud-api/src/routes/registered_phones.rs"
-      ]
-    },
-    {
-      "id": "feature:local-vendor-bots",
-      "label": "Local vendor bot adapters",
-      "product": "product:digital-twin",
-      "status": "building",
-      "description": "Connections for 31 of the 33 pictured bot projects: native vendor APIs (OpenMausBot, Codync, Hivekeep, Invisible Dots, CopilotKit OpenDots/OpenMuse/OpenBot, DS Bot, Nightly OpenBot, Rakazo, FrockBot, Sidemates, nanoMuse, Vellum Assistant, Open Dots by Anil, Gawkbot, Munder Difflin, Happy), browser sign-in (Gemini Spark, Slashy, AbacusAI), macOS Messages (Iris, Poke, Instinct, Flip, Cue, Pally), and existing vendors (Grok Bot, OpenAI Dots, Muse, Cadu via Hermes). Noodle and Omnibots are on hold. Live account verification is pending.",
-      "touches": [
-        "allternit-ai/src/components/gateway",
-        "allternit-ai/src/lib/gateway",
-        "allternit-ai/src/views/agent-view",
-        "allternit/cmd/allternit-api",
-        "allternit/services/subscription-gateway",
-        "allternit-ai/src/lib/bots"
-      ],
-      "decisions": [
-        {
-          "on": "2026-10-13",
-          "note": "Catalog identification is separate from implemented connections. Native adapters match vendor requests and refuse unsupported control capabilities."
-        },
-        {
-          "on": "2026-10-14",
-          "note": "Coverage of all 33 pictured projects is settled: a connector only where the vendor's own source exposes authenticated bot discovery, send and attributable replies. Hosted apps without an API, session-cookie-only, end-to-end-encrypted, keystroke-driven and unauthenticated projects are marked No supported connection instead of being proxied."
-        },
-        {
-          "on": "2026-10-14",
-          "note": "Eoj: every project should connect. Browser sign-in and Messages routes are used where no API exists; projects that would need a large separate bridge (Noodle's QUIC Hub link) or reverse engineering (Omnibots) are on hold."
-        },
-        {
-          "on": "2026-10-14",
-          "note": "Eoj: all connected bots must talk together in group chats and look like their own product. Vendor members now answer inline in rooms through their connector with the room history (one standing thread per room), never a native model; each connector has its own look pack (brand accent + logo; Messages assistants use an iMessage face). allternit-api routes direct connectors by vendor id (DIRECT_ADAPTER_VENDORS) so account discovery works."
-        }
-      ],
-      "evidence": [
-        "allternit/surfaces/docs/guides/local-vendor-bots.mdx",
-        "allternit/services/subscription-gateway/adapters/hivekeep/provider.ts",
-        "allternit/services/subscription-gateway/adapters/invisible-dots/provider.ts",
-        "allternit/services/subscription-gateway/adapters/opendots-copilotkit/provider.ts",
-        "allternit/services/subscription-gateway/adapters/ds-bot/provider.ts",
-        "allternit/services/subscription-gateway/adapters/openmuse-copilotkit/provider.ts",
-        "allternit/services/subscription-gateway/adapters/openbot-nightly/provider.ts",
-        "allternit/services/subscription-gateway/adapters/rakazo/provider.ts",
-        "allternit/services/subscription-gateway/adapters/frockbot/provider.ts",
-        "allternit/services/subscription-gateway/adapters/sidemates/provider.ts",
-        "allternit/services/subscription-gateway/adapters/nanomuse/provider.ts",
-        "allternit/services/subscription-gateway/adapters/vellum-assistant/provider.ts",
-        "allternit-ai/src/lib/gateway/bot-projects.ts"
-      ]
-    },
-    {
-      "id": "feature:desktop-pet",
-      "label": "Desktop pets and animated avatars (Petdex standard)",
-      "product": "product:ai-allternit",
-      "status": "building",
-      "description": "Bot avatars play Petdex-standard sprite sheets (8 columns of 192x208, 11 rows: idle, running-right/left, waving, jumping, failed, waiting, running, review, sleep, special). Characters without real frames hop, rock, slump and spin in code (PortraitPetMotion). One pet-activity signal (lib/agents/pet-activity.ts) follows every session store and bot/vendor thread. In-app avatars (rail, headers, surface mascot, A:// orb) react to it. The Desktop pet window gets that state over IPC from the main window and plays it (walk rows while roaming), with a mail badge for replies that finished while you were away; click opens quick chat, double-click shows or hides the app. Terminal agents drive the same pet through a token-guarded loopback hook port (127.0.0.1:7787; gizzi built in, a hook script for Claude Code and Codex), and the pet shows speech bubbles in a click-through window above it. The free character builder renders Petdex v2 sheets with walk rows turned toward the direction of travel.",
-      "touches": [
-        "allternit-ai/src/lib/agents",
-        "allternit-ai/src/views/bots",
-        "allternit-ai/src/pages",
-        "allternit-ai/src/components/desktop-companion",
-        "allternit/surfaces/allternit-desktop",
-        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/pet",
-        "allternit-ai/src/lib/bots"
-      ],
-      "evidence": [
-        "allternit-ai/src/views/bots/AnimatedBotSprite.tsx",
-        "allternit/surfaces/allternit-desktop/src/main/desktop-companion.ts",
-        "allternit-ai/scripts/avatar-cast/pet-sheet-pack.py",
-        "allternit-ai/src/lib/agents/pet-activity.ts",
-        "allternit-ai/src/views/bots/ActiveAgentMascot.tsx",
-        "allternit-ai/src/pages/DesktopCompanionPage.tsx",
-        "allternit/surfaces/allternit-desktop/src/main/pet-activity-hub.ts",
-        "allternit/surfaces/allternit-desktop/src/main/pet-hook-server.ts",
-        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/pet/desktopPetHook.ts",
-        "allternit-ai/src/lib/bots/character-builder/recipe.ts",
-        "allternit-ai/src/views/bots/PortraitPetMotion.tsx",
-        "allternit-ai/public/avatar-packs/gizzi-brawl",
-        "allternit-ai/public/avatar-packs/dot-friends"
-      ],
-      "decisions": [
-        {
-          "on": "2026-10-15",
-          "note": "Eoj approved the desktop pet plan (8 PRs) after seeing Hermes Agent + Petdex. Sheets adopt the Petdex standard. Avatars without real frames hop (free approach). Muse in Gizzi Brawl is Jolly. Hook port 127.0.0.1:7787, not shared with anything else. Plan: agent-ledger/summaries/2026-10-15-2245-claude-desktop-pets-petdex.md."
-        },
-        {
-          "on": "2026-10-16",
-          "note": "Eoj approved the full-size code-drawn Gizzi YouTube rig sheets (\"yes they are right\"). PR 2 ships them plus Gemini, Muse and Muse Wonder as Petdex v2 sheets, swapped in place at the same URLs so saved bots upgrade."
-        },
-        {
-          "on": "2026-10-16",
-          "note": "Phase 3: every Gizzi Brawl fighter and Super form redrawn as a Petdex v2 sheet and swapped in at the same URLs; Super Codex, Super Grok and Gizzi Lightning added to the pack. Eoj asked for ChatGPT-dots-style characters in Dot Friends \"like theirs but our own\" so users recognise them: Bleu, Lily, Sunny, Rosie added with v2 sheets."
-        }
-      ]
-    },
-    {
-      "id": "feature:cli-brain-install-signin",
-      "label": "One-click install and sign-in for CLI brains",
-      "product": "product:ai-allternit",
-      "status": "building",
-      "description": "Settings → Subscriptions installs CLI brains (Claude Code, Codex, Grok, …) on the active computer with the Factory's pinned, licence-gated installer (private Node when the machine has none), then signs in with a link and code shown on any device, so a cloud computer can run them while the user's Mac is off.",
-      "touches": [
-        "allternit-ai/src/components/settings",
-        "allternit-ai/src/lib",
-        "allternit-ai/src/components/chat",
-        "allternit/cmd/allternit-api",
-        "allternit/factory/pane",
-        "allternit/factory/engine",
-        "allternit/cmd/gizzi-code/src/runtime/providers"
-      ],
-      "evidence": [
-        "allternit/cmd/allternit-api/src/cli_tools.rs",
-        "allternit-ai/src/lib/cli-connect.ts",
-        "allternit-ai/src/components/settings/CliConnectFlow.tsx"
-      ],
-      "decisions": [
-        {
-          "on": "2026-10-16",
-          "note": "Eoj: build plan step D (Install → Sign in → Connected for any computer) so his always-on cloud computer can run CLI brains. Reuses the Factory harness installer, not a second manifest; sign-in captures the CLI's own link/code instead of opening a browser nobody sees."
-        }
-      ]
-    },
-    {
-      "id": "feature:gateway-embeddings-proxy",
-      "label": "Gateway /v1/embeddings proxies to a configured provider",
-      "product": "product:ai-allternit",
-      "status": "building",
-      "description": "POST /v1/embeddings on the LLM gateway no longer stops at fake-or-501: when ALLTERNIT_GATEWAY_EMBED_URL names an OpenAI-compatible backend the operator runs (self-hosted or cloud), validated requests are proxied transparently and status, body, model id, and usage all come from the provider. Unset keeps the safe 501 allternit.not_configured; the hash-fake path stays fenced behind ALLTERNIT_GATEWAY_ALLOW_FAKE_PROVIDERS=1. The end-user `user` field is accepted but never forwarded upstream.",
-      "touches": [
-        "allternit/cmd/allternit-api"
-      ],
-      "evidence": [
-        "allternit/cmd/allternit-api/src/llm_gateway/embeddings.rs",
-        "allternit/surfaces/docs/api/embeddings.mdx"
-      ],
-      "decisions": [
-        {
-          "on": "2026-10-16",
-          "note": "Eoj: embeddings must route through the gateway API like chat does. Gateway-specific env (ALLTERNIT_GATEWAY_EMBED_URL) instead of memory_index's ALLTERNIT_EMBED_URL so the public surface stays 501-unconfigured by default and never silently points at a sidecar."
-        }
-      ]
-    },
-    {
-      "id": "feature:attention-alerts",
-      "label": "Attention alerts (no silent failures)",
-      "product": "product:ai-allternit",
-      "status": "building",
-      "description": "Server-owned alerts: every failed, missed or bot-less routine (and later a down lane, a loop guard hold or a held send) opens one attention item, pushes it, re-notifies until fixed and shows in the needs-you inbox with Retry and Dismiss.",
-      "touches": [
-        "allternit/cmd/allternit-api",
-        "allternit/cmd/allternit-cloud-api",
-        "allternit-ai/src/components/inbox",
-        "allternit-ai/src/lib/inbox"
-      ],
-      "evidence": [
-        "allternit/surfaces/docs/guides/needs-you-inbox.mdx",
-        "allternit/surfaces/docs/guides/bot-routines.mdx",
-        "allternit/surfaces/docs/api/inbox.mdx",
-        "allternit/cmd/allternit-api/src/netops/alerts.rs"
-      ],
-      "decisions": [
-        {
-          "on": "2026-10-16",
-          "note": "Agent-network Phase 1 WP1 (SPEC-agent-network-phase1-2026-10-16): alerts move from a client poller to the runtime; routine.failed is pushed only as attention.opened. Eoj: SMS for critical alerts is opt-in, off by default (not built yet)."
-        }
-      ]
-    },
-    {
-      "id": "feature:sign-in-screen",
-      "label": "Sign-in screen",
-      "product": "product:ai-allternit",
-      "status": "live",
-      "description": "The sign-in and sign-up pages on the web, the Desktop first-run, terminal login and the phone/PWA sign-in screen, with the sign-in stage (an auto-looping preview of the four real views: Home, Bots, Code, ACI) beside the real Clerk sign-in rail.",
-      "touches": [
-        "allternit-ai/src/components/auth",
-        "allternit-ai/src/pages",
-        "allternit-ai/src/components/onboarding",
-        "allternit-ai/src/fabric-session",
-        "surface:ai",
-        "surface:pwa",
-        "surface:desktop"
-      ],
-      "decisions": [
-        {
-          "on": "2026-10-16",
-          "note": "AuthPreview replaced by the approved sign-in stage (the earlier SignInShowcase, ai #573, was superseded before merging): SignInStage loops the four real views (Home, Bots, Code, ACI) with the A://TERNIT lockup beside SignInRail, Clerk styled with variant=\"stage\"; phone puts the stage on top. Desktop shell keeps Continue in browser."
-        }
-      ],
-      "evidence": [
-        "allternit/surfaces/docs/surfaces/sign-in.mdx",
-        "allternit-ai/src/components/auth/sign-in-stage/SignInStage.tsx",
-        "allternit-ai/src/components/auth/sign-in-stage/SignInLayout.tsx",
-        "allternit-ai/src/lib/platform-auth-client.tsx"
-      ]
-    },
-    {
-      "id": "feature:first-run-setup",
-      "label": "First-run setup with Gizzi + A://",
-      "product": "product:ai-allternit",
-      "status": "building",
-      "description": "The first time an account opens Allternit, Gizzi and A:// ask where agents run, the style, the default brain (including ChatGPT/Claude/Kimi subscriptions via the Sessions computer) and the main bot (the bot setup picker: a look + name + the main-bot disclosure, or a vendor bot / new bot / import), log each real outcome as a result card while the workspace graph builds, then show everything actually connected before landing on Home. Desktop, ai.allternit.com (desktop and phone layouts) and the m.allternit.com PWA.",
-      "touches": [
-        "allternit-ai/src/components/onboarding",
-        "allternit-ai/src/fabric-session",
-        "allternit-ai/src/components/subscriptions",
-        "allternit-ai/src/lib/subscriptions",
-        "allternit-ai/src/services",
-        "allternit-ai/src/shell",
-        "allternit/cmd/allternit-api/src/onboarding_*",
-        "allternit-ai/src/components/bots",
-        "allternit-ai/src/views/bots",
-        "allternit-ai/src/components/gateway"
-      ],
-      "decisions": [
-        {
-          "on": "2026-10-16",
-          "note": "Eoj approved the Main.dc.html setup prototype: graph field left, Gizzi + A:// rail right, OpenUI result cards per step, block ripple only on a choice, connected view at the end. Built on the existing wizard logic; welcome screen dropped (signed-in users go straight to setup)."
-        },
-        {
-          "on": "2026-10-16",
-          "note": "Eoj: subscription brains (subs-chatgpt/claude/kimi) lead the Your AI step with the real SubscriptionConnect flow and the D16 disclosure; never shown connected before the fabric login is ready."
-        },
-        {
-          "on": "2026-10-16",
-          "note": "Eoj: a Main bot step will slot between Your AI and Connected; the step machine has it behind MAIN_BOT_STEP_ENABLED (off) until its design lands."
-        },
-        {
-          "on": "2026-10-16",
-          "note": "Eoj approved the MainBot.dc.html prototype (\"I approve them all\"): MAIN_BOT_STEP_ENABLED on; step 4 is the shared bot setup picker (giant character stage, look tiles, existing disclosure, Set up <Name> via setUpPrimaryBot with the look saved as the avatar), also connecting vendor bots, creating and importing bots."
-        }
-      ],
-      "evidence": [
-        "allternit/surfaces/docs/guides/first-run-setup.mdx",
-        "allternit/surfaces/docs/architecture/first-run-setup.mdx",
-        "allternit/surfaces/docs/api/onboarding.mdx",
-        "allternit/surfaces/docs/guides/bot-setup-picker.mdx",
-        "allternit/surfaces/docs/architecture/bot-setup-picker.mdx"
-      ]
-    },
-    {
-      "id": "feature:platform-console-onboarding",
-      "label": "Console sign-in and developer setup",
-      "product": "product:cloud-console",
-      "status": "building",
-      "description": "platform.allternit.com sign-in/sign-up with the looping API/Models/Compute/Runs previews, and the first-run setup for new accounts (organization, where workloads run, API key, first call, plan) ending in a connected view of the account.",
-      "touches": [
-        "allternit/surfaces/platform.allternit.com"
-      ],
-      "decisions": [
-        {
-          "on": "2026-10-16",
-          "note": "Approved prototype Platform.dc.html ported to React. Setup is offered only to sure-new accounts (no setup record, no org, both key lists empty); any unknown falls back to the Dashboard. 'Where it runs' is an account preference (Clerk unsafeMetadata), not routing; Run it uses the new gateway key against /v1/chat/completions like the Playground."
-        }
-      ],
-      "evidence": [
-        "allternit/surfaces/docs/surfaces/platform-console-onboarding.mdx",
-        "allternit/surfaces/platform.allternit.com/src/lib/__tests__/platform-setup.test.ts"
-      ]
-    },
-    {
-      "id": "feature:public-preview-embed",
-      "label": "Public preview of the real Home (www.allternit.com hero)",
-      "product": "product:ai-allternit",
-      "status": "building",
-      "description": "ai.allternit.com/embed/<home|code|aci|bots>: the real shell for any visitor, framed in the www.allternit.com hero, Four modes and phone sections. Every view reads an in-memory sample workspace (bots, projects, artifacts, automation, a Code repo); always signed out, no API traffic or service worker, scripted replies per mode and preview voice (no model), Allternit Cloud Kimi K3 default, visitor account menu, sign-up nudge on writes. postMessage mode contract with the site. Continue in Allternit hands the request to the app via ?q=.",
-      "touches": [
-        "allternit-ai/src/embed",
-        "allternit-ai/src/lib",
-        "allternit-ai/src/lib/agents",
-        "allternit-ai/src/lib/voice",
-        "allternit-ai/src/views/chat",
-        "allternit-ai/src/shell",
-        "allternit-ai/src/fabric-session"
-      ],
-      "decisions": [
-        {
-          "on": "2026-10-17",
-          "note": "Eoj: the hero embeds the real app like other platforms do, not a copy. Signed-out visitors get no inference: sends and voice open the real UI and answer from a large bank of scripted replies; model picker on Allternit Cloud by default."
-        },
-        {
-          "on": "2026-10-18",
-          "note": "Eoj: every view in the preview runs on a sample workspace (no errors or empty pages), model selections stay Allternit Cloud; the www Four modes and phone sections become live frames of the embed, not recordings; ai.allternit.com and platform.allternit.com sign-ins are both real, two product lanes, labelled as such."
-        }
-      ],
-      "evidence": [
-        "allternit/surfaces/docs/surfaces/public-embed.mdx",
-        "allternit-ai/src/embed/__tests__/scripted-replies.test.ts",
-        "allternit-ai/src/lib/__tests__/launch-prompt.test.ts",
-        "allternit-ai/src/embed/__tests__/preview-api.test.ts",
-        "allternit-ai/src/embed/__tests__/embed-modes.test.ts"
+        "allternit/cmd/gizzi-code/test/session/background-shell.test.ts"
       ]
     }
   ],
@@ -1995,58 +1342,6 @@
       ],
       "evidence": [
         "allternit/surfaces/docs/guides/project-appearance.mdx"
-      ]
-    },
-    {
-      "id": "journey:first-run-setup",
-      "label": "Set up a new account",
-      "description": "From the first signed-in launch to Home with a computer, a style, a default brain and a main bot.",
-      "steps": [
-        {
-          "at": "allternit-ai/src/shell",
-          "says": "OnboardingGate (Desktop/web) or PhoneFirstRunGate (phone) asks the setup config whether this account finished setup."
-        },
-        {
-          "at": "allternit-ai/src/components/onboarding",
-          "says": "Gizzi + A:// ask where it runs, style and default brain; each choice runs the real connect flow and prints a result card."
-        },
-        {
-          "at": "allternit-ai/src/components/subscriptions",
-          "says": "A subscription brain connects on the Sessions computer and needs the provider-terms disclosure before it becomes the default."
-        },
-        {
-          "at": "allternit-ai/src/components/bots",
-          "says": "Step 4: the bot setup picker sets up the main bot (setUpPrimaryBot with the picked look and name) or connects/creates/imports a bot; Gizzi's card appears only on a real result."
-        },
-        {
-          "at": "allternit-ai/src/services",
-          "says": "Open Allternit saves onboardingComplete and the default model to the setup config, then Home shows."
-        }
-      ],
-      "evidence": [
-        "allternit/surfaces/docs/guides/first-run-setup.mdx"
-      ]
-    },
-    {
-      "id": "journey:platform-first-run",
-      "label": "New developer: sign in to first API call",
-      "description": "From the console sign-in to a created org, a gateway key and a real first call.",
-      "steps": [
-        {
-          "at": "allternit/surfaces/platform.allternit.com",
-          "says": "Clerk sign-in (GitHub, Google, email) beside the looping console previews."
-        },
-        {
-          "at": "allternit/surfaces/platform.allternit.com",
-          "says": "On /, a sure-new account (no setup record, no org, no keys) is sent to /setup once."
-        },
-        {
-          "at": "allternit/surfaces/platform.allternit.com",
-          "says": "Creates the Clerk org and sandbox project, a gateway key shown once, runs one real /v1/chat/completions call, picks a plan, then shows the connected view and opens the Dashboard."
-        }
-      ],
-      "evidence": [
-        "allternit/surfaces/docs/surfaces/platform-console-onboarding.mdx"
       ]
     }
   ]

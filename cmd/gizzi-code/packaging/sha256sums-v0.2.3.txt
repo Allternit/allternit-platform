@@ -1,0 +1,10 @@
+# Real sha256 hashes of the gizzi-code/0.2.3 release assets on
+# https://github.com/Gizziio/allternit-platform (downloaded and verified
+# 2026-09-03). The packaging manifests track version 1.0.2, whose hashes are
+# filled in by `bash script/update-packaging-hashes.sh` once the 1.0.2
+# release assets are published. This file is the reference/evidence for the
+# hash-update workflow.
+1235fcf20e4fa6a4b39d35deacfbe68c14fc7c105cca0f03a6026f345bd98b5e  gizzi-code-v0.2.3-darwin-arm64.tar.gz
+cace86e4ca402b24562ffc09e1772aef8caae96459408a1e1327f260eae043ef  gizzi-code-v0.2.3-linux-arm64.tar.gz
+7647c935a895551f98d79bfa2bb78786a7822cc105d18196f42b21699b48a19b  gizzi-code-v0.2.3-linux-x64.tar.gz
+31f498634d960a6a9466c6d07d595f261abe8422cd65a25fbfe57901ef6c7a25  gizzi-code-v0.2.3-windows-x64.zip

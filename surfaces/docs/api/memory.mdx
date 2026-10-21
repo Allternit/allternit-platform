@@ -34,9 +34,8 @@ All endpoints require a valid bearer token in the `Authorization` header. See [A
 | `POST` | `/api/memory/events` | Create a memory event. |
 | `POST` | `/api/memory/query` | Query memory with a natural-language prompt. |
 | `GET`  | `/api/memory/edges` | List memory edges. |
-| `GET`  | `/api/memory/entities` | List memory entities, and search entity pages (`pages`). |
+| `GET`  | `/api/memory/entities` | List memory entities. |
 | `POST` | `/api/memory/entities` | Create a memory entity. |
-| `GET`  | `/api/memory/entities/:id` | One entity page and every item that mentions it. |
 | `GET`  | `/api/memory/stats` | Memory statistics. |
 | `GET`  | `/api/memory/session` | Read a session memory key. |
 | `GET`  | `/api/memory/session/list` | List all keys for a session. |
@@ -238,37 +237,6 @@ GET /api/memory/edges?source=:source
 GET /api/memory/entities?agentId=:agentId&type=:type&q=:q
 ```
 
-The response is `{"entities": [...], "pages": [...]}`. `entities` lists the stored entity rows (filtered by `agentId`, `type` and `q`); `pages` lists your [entity pages](#entity-pages) that match `q` (all of them, most mentioned first, when `q` is absent): exact name or alias first, then a name or alias that contains `q`, then a page whose text does.
-
-```json
-{
-  "entities": [],
-  "pages": [
-    { "id": "ent_9f2c41d07a3be5c1d2e4f6a8", "name": "Allternit Platform", "kind": "name",
-      "aliases": ["AP"], "mention_count": 7, "target_count": 5, "updated_at": "2026-10-13 09:12:44" }
-  ]
-}
-```
-
-### Get an entity page
-
-```http
-GET /api/memory/entities/:id
-```
-
-Returns `page` (structured), `text` (the page as Markdown) and `mentions` (every fact, observation, document and note that mentions the entity, most mentions first). Another user's page id returns `404`.
-
-### Entity pages
-
-Your memory keeps one page per recurring entity, so agents follow entities instead of searching again (the CorpusMap pattern). Pages are built from your facts, observations, documents (including passages written by memory adapters such as open-notebook) and notes, in the background, with no model calls:
-
-- **Mentions** are capitalized names (`Dana Whitfield`, `Bank of America`, `ACME`), emails, URLs, `@handles`, code identifiers (backticked, `a::b`, `snake_case`) and the names and aliases of your entities (`properties.aliases`), which match in any case.
-- **Merging** is exact and explicit: spellings that normalize to the same key (`Acme Corp.`, `ACME corp`, `Acme-Corp`) are one entity, and so are names tied by alias evidence: `Allternit Platform (AP)` when the acronym is the initials, `X aka Y`, or an entity's aliases. Names are never merged by similarity, and never across users.
-- **A page** exists for every entity you created and every name mentioned by at least two items. It holds the name, kind, aliases, the top facts and observations, the documents and notes that mention it (each with a one-line snippet) and related entities by co-mention.
-- **Updates** are incremental: only items whose text changed are read again, and only the pages whose mentions changed are rewritten. The same memory always gives the same pages.
-
-When an Agency run's goal names an entity, the run's recalled memory starts with that entity's page and the documents that mention it, ahead of the other hits.
-
 ### Create an entity
 
 ```http
@@ -381,7 +349,7 @@ DELETE /api/memory/session?session_id=:session_id&key=:key
 | `201 Created` | Created | Document, event, or entity created. |
 | `400 Bad Request` | Invalid request | Missing `session_id`/`key`, invalid body. |
 | `401 Unauthorized` | Unauthorized | Missing or invalid bearer token. |
-| `404 Not Found` | Not found | Session memory key or entity page not found. |
+| `404 Not Found` | Not found | Session memory key not found. |
 | `503 Service Unavailable` | Unavailable | Memory service unreachable during consolidation/query. |
 | `500 Internal Server Error` | Server error | Contact support. |
 

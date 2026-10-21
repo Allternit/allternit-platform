@@ -3,8 +3,6 @@ title: "Voice in the app"
 description: "Developer guide to the app-side Voice Session client: modules, endpoints, the Desktop bridge, cloud tickets and joinCallAudio."
 ---
 
-This guide documents the app-side voice UI, which ships in the workspace UI built from the separate `allternit-ai` repository (Allternit Desktop, ai.allternit.com and the m.allternit.com PWA). Paths below are relative to that repo unless they start with `allternit/`. The wire protocol is allternit-ai `docs/VOICE_SESSION_PROTOCOL.md` (frozen v1); "design doc §" references are to the Voice Stage design notes in allternit-ai `docs/VOICE_STAGE_DESIGN.md`.
-
 ## The rule
 
 Voice is input/output only. The agent loop doesn't move.
@@ -27,23 +25,12 @@ There is no separate voice path to the model.
 | `conversation.ts` | `VoiceConversation`: turn → send/steer/stop+queue, reply → `speak.delta` sentence by sentence (markdown flattened, code left on screen), barge-in → Stop, phase/caption/tool-step state for the UI. |
 | `replies.ts` | Reply adapters: `replyFromTranscript` (bot-chat transcript fold, used by threads and the phone's bots) and `useStoreReply` (the session store, used by Chat). |
 | `useVoiceConversation.ts` | React glue; `resolveVoiceEndpoint()` applies Settings › Voice. |
-| `settings.ts` | `useVoiceSettings` (persisted per device under `allternit-voice-settings`), `chooseEngine` (Automatic mode), and the voice identity map: `VOICE_NAMES` gives every Kokoro voice id a plain Register-1 name (design doc §4.6), `voiceDisplayName` / `voiceLanguageLabel` resolve what the settings rows show. |
-| `preview.ts` | One-shot voice preview for Settings → Voice: one fixed sentence through the best real path — the sidecar's sample clip (`GET /v1/voices/{id}/sample`), or synthesis in the browser engine's Kokoro worker (speak role only, kept loaded as a singleton). Never a Voice Session: no mic, no ticket, no minutes. Custom (cloud) voices have no one-shot path, so their preview button is disabled with a reason. One preview at a time. |
+| `settings.ts` | `useVoiceSettings` (persisted per device under `allternit-voice-settings`) and `chooseEngine` (Automatic mode). |
 | `engine-status.ts` | Device packs/voices from `GET /v1/models` and `GET /v1/voices`; pack download. |
 | `spoken.ts` | Marks spoken user messages so bubbles show "Spoken". |
 | `call-audio.ts` | LiveKit join behind `joinCallAudio` (phone calls). |
 
 UI lives in `src/components/voice/` (`VoiceSession` hosts `VoiceBar` and `VoiceFullScreen`; `VoiceOrb` wraps the brand `AllternitOrb`; `SpokenLabel`) and `src/components/settings/VoiceSettingsPanel.tsx`.
-
-## Voice identity and preview (design doc §4.6)
-
-`VOICE_NAMES` (in `settings.ts`) maps every Kokoro speaker id (`src/lib/voice/local/voices.ts`) to a plain texture name ("Gentle", "Crisp", "Calm"); the test suite fails if the engine gains an id the map doesn't name. Settings rows show the mapped name with the accent (`af_`/`am_` American, `bf_`/`bm_` British) and the raw id in small type. Custom voices (`custom:<id>`) keep their owner-given name and stay in the same Voice list, with a disabled Preview button and its reason.
-
-`previewVoice()` speaks one fixed sentence (`VOICE_PREVIEW_TEXT`) through the best available real path, never a Voice Session: the Desktop sidecar has no arbitrary-TTS endpoint, so there the preview plays the engine's baked sample clip for that voice; in the browser the fixed sentence is synthesized in the page's own Kokoro worker (speak role only — a stub answers for the listen role, so previews never download the recognition models). Cloud voice has no one-shot path and previews shouldn't spend plan minutes, so custom voices don't preview. `previewVoiceAvailability()` decides the disabled state and its reason; starting a preview cancels the one in flight.
-
-## First-run sheet (design doc §4.7)
-
-`VoiceIntroSheet` is mounted by `VoiceSession`, so every entry point (composer mic, Talk button, full-screen) shows the "Talk with Allternit" sheet exactly once. It renders only while the persisted `voiceIntroSeen` flag is false; every dismissal — Start voice, Choose where voice runs (opens Settings › Voice via `allternit:open-settings`), Esc, the close button — sets the flag. It portals over the voice UI (z-index above `VoiceFullScreen`) and uses the voice tokens: white surface, neutral-fill controls.
 
 ## Surfaces
 
@@ -59,11 +46,9 @@ Phone sizing comes from `useIsPhoneViewport()`: full-screen controls are 60 px r
 
 ## Endpoint resolution
 
-- **Device, in the browser (web and PWA):** no bridge → `resolveDeviceEndpoint()` returns `engine: 'device'`, `wsUrl: 'local://voice'`. `VoiceSessionClient` opens that URL as a `LocalSocket` (`src/lib/voice/local/socket.ts`), a WebSocket-shaped in-process transport, so reconnects, playback and barge-in are the same code as for a real socket. See "On-device voice in the browser" below.
-- **Device (Desktop):** `window.allternit.voice.getSessionEndpoint()` → `{ wsUrl?, httpUrl?, port?, token? }` from the preload bridge. Desktop builds without that bridge fall back to `http://127.0.0.1:8001` (this repo's `PORTS.VOICE`, `allternit/surfaces/allternit-desktop/src/main/config.ts`) and no token. `isAvailable()` false → `engine-not-installed`. Web and the PWA never connect to loopback.
-- **Cloud:** `POST {cloud-api}/api/v1/voice/tickets` (cloud-api from `getCloudApiBaseUrl()`, normally `https://api.allternit.com`; Clerk bearer) → `{ ticket, wsUrl, expiresAt }`. The ticket lasts 60 seconds and works once, so every connect and reconnect fetches a new one. The session URL is `wsUrl`, or `VITE_VOICE_CLOUD_URL` when the response has none; it must be `wss://` or the client refuses. Status mapping: no token or 401 → `signed-out`; 402 → `no-cloud-minutes` (Free plan); other errors, including 503 → `cloud-unavailable` (retried with backoff). Full API: [Voice Tickets and Usage API](/api/voice-tickets).
-- **Minutes:** Settings › Voice reads `GET {cloud-api}/api/v1/voice/usage/month` → `{ usedSeconds, includedSeconds, overageRateUsdPerMin }` and shows "X of 100 included minutes used", plus overage. Signed out or failing: the plan line only, never a guessed number.
-- **Automatic** (`chooseEngine`): device when packs report ready (in the browser also `deviceAuto`: models already downloaded, capable machine, not a phone) and the measured RTF ≤ 0.9 (averaged over the first 3 utterances; unmeasured counts as fine); else cloud when signed in; else a message naming what's missing.
+- **Device (Desktop only):** `window.allternit.voice.getSessionEndpoint()` → `{ wsUrl?, httpUrl?, port?, token? }` from the preload bridge. Desktop builds without that bridge fall back to `http://127.0.0.1:8001` (platform `PORTS.VOICE`) and no token. `isAvailable()` false → `engine-not-installed`. Web and the PWA never connect to loopback.
+- **Cloud:** `POST /api/v1/voice/tickets` (allternit-api via `runtimeApiUrl`, bearer auth) → `{ ticket, url?, expiresAt? }`. The session URL is `url` or `VITE_VOICE_CLOUD_URL`; it must be `wss://` or the client refuses. Status mapping: no token or 401 → `signed-out`; 402 → `no-cloud-minutes`; other errors → `cloud-unavailable` (retried with backoff).
+- **Automatic** (`chooseEngine`): device when packs report ready and the measured RTF ≤ 0.9 (averaged over the first 3 utterances; unmeasured counts as fine); else cloud when signed in; else a message naming what's missing.
 
 RTF is measured only on audio received after the client sent `speak.done`, so waiting for model text doesn't count against the device.
 
@@ -91,31 +76,15 @@ Parsed defensively; confirm or adjust with the engine owner.
 
 ## Phone calls: `joinCallAudio`
 
-Call controls (`sendCallControl` in `src/lib/gateway/call.ts`) post straight to cloud-api `POST /api/v1/voice/calls/{callId}/control` through `cloudApiFetch`, which attaches the signed-in user's Clerk token. They do not go through the local gateway, so Desktop, ai.allternit.com's phone layout and the m.allternit.com PWA share this one path. A refusal or network failure throws `CallControlError` (`status` 0 when the request never completed) and CallScreen shows "Couldn't send that. Try again."
-
 `joinCallAudio(callId, { mode: 'listen' | 'talk', token, url, room })` in `src/lib/gateway/call-webrtc.ts`. The caller (CallScreen) gets `{token, url, room}` from the `listen` or `takeover` call control and passes them in; the function doesn't fetch tokens. It lazy-loads `livekit-client` (Apache-2.0), connects to `url` (production: `wss://livekit.allternit.com`), plays every remote audio track through hidden `<audio data-call-audio>` elements, unlocks playback with `startAudio()` (the call runs from a click), publishes the mic only in `talk`, and returns `{ callId, leave }`. It resolves `null` (and disconnects) when credentials are missing, the connect fails, or the mic is refused in `talk`, so the UI never claims a person is on the call when they aren't.
 
 ## Tests
 
-`src/lib/voice/__tests__/`: an in-memory mock Voice Session server (`mock-voice-server.ts`) drives `session-client.test.ts`; `conversation.test.ts`, `voice-lib.test.ts` (PCM, the shipped playback worklet, endpoints, Automatic mode, engine parsing), `voice-names.test.ts` (the identity map covers every engine voice id, `voiceIntroSeen`), `preview.test.ts` (preview availability reasons, one-at-a-time cancellation, sample and synthesized paths) and `call-audio.test.ts` (fake LiveKit room). UI: `src/components/voice/__tests__/` (including `voice-intro.test.tsx` for the first-run sheet's gate and every dismissal path); `src/components/settings/__tests__/VoiceSettingsPanel.test.tsx`.
+`src/lib/voice/__tests__/`: an in-memory mock Voice Session server (`mock-voice-server.ts`) drives `session-client.test.ts`; `conversation.test.ts`, `voice-lib.test.ts` (PCM, the shipped playback worklet, endpoints, Automatic mode, engine parsing) and `call-audio.test.ts` (fake LiveKit room). UI: `src/components/voice/__tests__/`.
 
 ## What replaced what
 
 The quick voice bar and full-screen voice replace `components/chat/VoiceModeOverlay.tsx` and `components/ai-elements/voice-call-mode.tsx`. The orphaned `ai-elements/voice-{presence,overlay,session,toolbar,controls,selector,visualizer,provider}.tsx` were removed with the ShellApp `VoicePresence` mount. Dictation (`useComposerVoice`) keeps Desktop's IPC transcription and uses a Voice Session elsewhere instead of a loopback `/v1/stt`. The legacy `providers/voice-provider` + `services/voice` (bot voice previews/TTS on Desktop) remain for the bot voice settings panel.
-
-## On-device voice in the browser
-
-`src/lib/voice/local/`. The Voice Session protocol, spoken in-process:
-
-- `engine.ts` — `LocalVoiceEngine`: takes the client frames (JSON + PCM16 mic audio), emits `session.ready` (engine `device`), `speech.*`, `transcript.final`, `turn.ended`, `speak.*` and binary PCM16 speech. Turns end on VAD silence (`vad` mode; "smart" is treated as `vad` for now). Speech is synthesized sentence by sentence (`takeSentences`). Barge-in: VAD speech start while speaking cancels synthesis and sends `speak.interrupted`. The heavy work sits behind the `EngineBackend` interface, which tests fake.
-- `worker-backend.ts` + `worker.ts` — two module Web Workers running sherpa-onnx WebAssembly: **listen** (Silero VAD + Moonshine tiny, 45 MB) and **speak** (Kokoro-82M fp32, 378 MB). Separate workers keep VAD live while Kokoro synthesizes. A synthesis call can't be interrupted mid-sentence; chunks that arrive after a cancel are dropped, and the next sentence isn't started.
-- `model-store.ts` / `manifest.ts` — one object per file at `{VITE_VOICE_MODEL_BASE}/v1/{vad|stt|tts}/{path}` (default `https://runtime.allternit.com/voice-models`; the host needs `Access-Control-Allow-Origin`). Each file is hashed while streaming (`sha256.ts`), checked against the pinned size and sha256 in `manifest.ts`, then stored in the Cache API (`allternit-voice-models-v1`). `scripts/voice-models-mirror.mjs` builds that layout and manifest from the same pinned archives as the native packs (`services/voice/src/models.rs`); upload its output to the host.
-- `capability.ts` — `assessCapability()`: Worker, WebAssembly, AudioWorklet, Cache API, secure context; phone detection; memory and cores. Explicit "This device" works wherever the engine can run (models download on first use, with progress in the voice bar and full screen). Automatic requires `autoCapable` and downloaded models, so it never starts a 420 MB download by itself and prefers cloud on phones. The measured-RTF rule still applies.
-- `vite-plugins/voice-engine.ts` — serves the browser build of sherpa-onnx wasm and its wrapper scripts under `/voice-engine/` (dev middleware and emitted build assets), never in the JS bundle, from `VOICE_ENGINE_DIR` (default `vite-plugins/voice-engine-build/`: `sherpa-onnx-wasm.{js,wasm}` plus the upstream `sherpa-onnx-{asr,tts,vad}.js`). With the directory absent it serves nothing. The served set carries `LICENSE-GPL-3.0.txt` and `SOURCE.txt`: the sherpa-onnx wasm links espeak-ng (GPL-3.0-or-later), so it is its own clearly licensed asset, used only through postMessage. The PWA build emits the same assets on its own origin.
-- **Browser engine build and the flag.** The engine is built and checked in a real browser. `vite-plugins/voice-engine-build/` holds the browser WebAssembly (sherpa-onnx v1.13.8 `build-wasm-simd-web.sh`, emscripten 4.0.23, MEMFS, no models embedded; VAD + Moonshine + Kokoro in one module, 14 MB wasm + 91 KB glue) plus the unmodified upstream `sherpa-onnx-{asr,tts,vad}.js` wrappers; the vite plugin serves them under `/voice-engine/` with `LICENSE-GPL-3.0.txt` and `SOURCE.txt`. The npm package `sherpa-onnx` cannot be used (its wasm is the Node/NODERAWFS build). The exact build recipe is published in `Allternit/allternit-tts` (`wasm/BUILD.md`). The engine stays **off** until `VITE_VOICE_BROWSER_ENGINE=on` is set for the build (unset → Settings says "isn't available in the browser yet", Automatic never picks it); with it on, set `VITE_VOICE_MODEL_BASE` only if the models are not at `runtime.allternit.com/voice-models`. To rebuild the wasm, follow the recipe and copy `sherpa-onnx-wasm-web.{js,wasm}` to `sherpa-onnx-wasm.{js,wasm}` in that directory. Real-browser check (headless Chrome, fake mic from a 16 kHz wav, models from a local CORS server): session ready ~12 s cold on a busy machine, a spoken question became the exact transcript, `turn.ended` fired within 0.1 s of speech end, and `speak.delta` produced Kokoro PCM (first audio ~4 s for one sentence on that busy machine; single-threaded wasm).
-- Service workers: the model cache is not a SW cache. `public/sw.js`, `public/fabric-session-service-worker.js` and `public/boot.js` leave caches named `allternit-voice-models-*` alone when they clear old caches; the SW never precaches model or engine files.
-
-Tests: `src/lib/voice/local/__tests__/` (protocol conformance with a fake backend, model download/verify, capability and Automatic rules).
 
 ## Related
 

@@ -4,5 +4,3 @@ export { AxBridgeDriver, type AxDriver, type AxBridgeOptions, type SpawnFn } fro
 export { AxReplayDriver, type AxReplayOptions, type AxAction } from "./replay.js";
 export * from "./page.js";
 export * from "./build.js";
-export * from "./chat-app.js";
-export * from "./chat-app-fixtures.js";

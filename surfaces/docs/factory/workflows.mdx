@@ -146,18 +146,6 @@ gizzi workflows wake run
 
 This replaces `gizzi cron` for Factory work. See [Wake](/architecture/work-runtime/wake).
 
-### Keep scheduled jobs running
-
-`gizzi workflows wake jobs start` runs the jobs daemon in the foreground. `gizzi workflows wake jobs enable` makes it start at login and restart if it crashes, using each OS's own mechanism:
-
-| OS | What `enable` installs | Removed by |
-|---|---|---|
-| macOS | LaunchAgent `~/Library/LaunchAgents/com.allternit.gizzi.cron.plist` | `gizzi workflows wake jobs disable` |
-| Linux | systemd user unit `~/.config/systemd/user/com.allternit.gizzi.cron.service` | `gizzi workflows wake jobs disable` |
-| Windows | Task Scheduler task `Allternit\com.allternit.gizzi.cron` (runs at logon as you, no admin rights, no console window; definition saved in `%USERPROFILE%\AppData\Local\gizzi\autostart`) | `gizzi workflows wake jobs disable` |
-
-Run `enable` from the installed `gizzi` binary, not through `bun`/`node`. `gizzi workflows wake jobs status` and `gizzi doctor` show whether autostart is installed.
-
 ## Gates
 
 A wait-gate holds a node until something outside the team happens: a person approves, a timer passes, a GitHub run or PR finishes.

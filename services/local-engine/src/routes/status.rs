@@ -180,18 +180,8 @@ fn detect_gpu(ram: &RamInfo) -> Option<Vec<GpuInfo>> {
     {
         detect_linux_gpu().ok()
     }
-    #[cfg(target_os = "windows")]
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
-        let gpus: Vec<GpuInfo> = crate::hardware::gpu_probe::windows_gpus()
-            .into_iter()
-            .map(|g| GpuInfo { name: g.name, memory_total_mb: g.memory_total_mb, memory_used_mb: g.memory_used_mb })
-            .collect();
-        let _ = ram;
-        (!gpus.is_empty()).then_some(gpus)
-    }
-    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
-    {
-        let _ = ram;
         None
     }
 }

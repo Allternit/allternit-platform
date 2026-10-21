@@ -1,17 +1,14 @@
-// §1 store — node:sqlite via ./sqlite.ts (WAL) + file-ordered, idempotent migration runner.
-import { Database } from "./sqlite.js";
+// §1 store — better-sqlite3 (WAL) + file-ordered, idempotent migration runner.
+import Database from "better-sqlite3";
 import { mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-export type Db = Database;
+export type Db = Database.Database;
 
-// SUBS_GATEWAY_MIGRATIONS_DIR: the bundled gateway in Allternit Desktop
-// (scripts/prepare-subs-gateway.cjs) may place this module in a shared chunk,
-// so import.meta.url no longer sits next to migrations/.
-const DEFAULT_MIGRATIONS_DIR =
-  process.env.SUBS_GATEWAY_MIGRATIONS_DIR ||
-  fileURLToPath(new URL("./migrations/", import.meta.url));
+const DEFAULT_MIGRATIONS_DIR = fileURLToPath(
+  new URL("./migrations/", import.meta.url)
+);
 
 export interface OpenDatabaseOptions {
   migrationsDir?: string;

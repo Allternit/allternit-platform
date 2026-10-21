@@ -9,58 +9,6 @@ Every bot has an avatar. It shows in bot chips, the rail, thread headers, and as
 
 When you pick a bot (in the Bots top deck, the launchpad, or the chat composer), the guide on screen changes from Gizzi to that bot's avatar. Bots with an animated sprite sheet animate while they work. Image and vendor avatars get a gentle motion while the bot is active. With no bot selected, Gizzi stays as before. If your system is set to reduce motion, the avatar stays still.
 
-### How animated avatars move
-
-Animated avatars react to what their bot is doing, everywhere the bot appears (the rail, headers, the phone drawer and Bots screen): they run while a tool works, look thoughtful while the bot thinks or writes, wait when the bot needs you, wave when a reply finishes, jump when a plan finishes and slump when something fails. After five minutes with nothing going on they doze off. Mentioning a bot again makes its avatar wave. The Allternit orb works the same way: it moves while the main bot works or thinks. Characters drawn with real frames for each state really walk and wave. Characters whose sheets don't have real frames hop instead of pretending to walk, so every avatar moves in a way that looks intended.
-
-Characters with real frames for every state: the whole **Gizzi YouTube** cast (Gizzi, Dropsy, Crescent, rimraf, Yessir, Modem, Spicy, Gem, Ini, Goldie, the Acolyte and the Host), every **Gizzi Brawl** fighter and Super form (including Super Codex, Super Grok and Gizzi Lightning, new to the picker), and the four fuzzy dots in **Dot Friends**: Bleu, Lily, Sunny and Rosie. Bots already using one of these switch to the new frames by themselves.
-
-## Desktop pet
-
-Allternit Desktop can keep your bot on your desktop as a small pet that floats above other windows.
-
-- **Click** it for quick work with that bot. **Double-click** it to show or hide the Allternit window. **Drag** it anywhere. **Right-click** for its menu: Quick chat, Pet, size and visibility, Reset position, Walk around when idle, and Hide desktop pet. To turn the pet on or off, open **Settings → Desktop pet** (under Desktop app) and use **Show pet on desktop**; the same page has Walk around when idle, Pet settings and Reset position. You can also bring a hidden pet back from the Allternit icon in the menu bar: **Show Desktop Pet**.
-- It shows what your bots are doing, whichever bot is busy: it runs while a tool runs, looks things over while a bot thinks, waits when a bot needs you, waves when a reply finishes, jumps when a plan is done, and slumps when something fails. After five quiet minutes it falls asleep. Every avatar does this. Characters with drawn frames play them, and the rest (portraits, uploads, photos, generated avatars) hop, rock, slump, dim and spin.
-- If a reply finishes while the Allternit window is hidden or in the background, the pet wears a mail badge. It goes away when you go back to Allternit or open quick chat.
-- In **Pet, size and visibility** you pick which bot it is and how big it is (48 to 160 px). The Gizzi terminal pet wears the same bot.
-- With **Walk around when idle** on (the default, also in **Pet, size and visibility**), the pet strolls along its row when nothing is happening and stays put while a bot works. Characters with drawn frames walk; the rest hop along. It never walks if your system is set to reduce motion. Wherever it stops is remembered.
-- If a reply finishes in Allternit while you're elsewhere, a speech bubble says **Reply ready**. When a bot needs your answer, it says **Needs your answer**.
-
-### Terminal agents
-
-The pet also follows agents running in your terminal.
-
-- **Gizzi** reports on its own while Allternit Desktop is running: thinking, running a tool, waiting for your permission, and a wave when a turn ends. To turn this off, set `GIZZI_DESKTOP_PET_HOOK=0`.
-- **Claude Code, Codex and other tools** can use the hook script that Desktop writes next to its settings. On macOS that folder is `~/Library/Application Support/@allternit/desktop/`; on Linux it's `~/.config/@allternit/desktop/`. The script does nothing if Desktop isn't running, and it never holds up the agent for more than a second.
-
-For Claude Code, add hooks to `~/.claude/settings.json`:
-
-```json
-{
-  "hooks": {
-    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "\"$HOME/Library/Application Support/@allternit/desktop/desktop-pet-hook.sh\" thinking claude" }] }],
-    "PreToolUse": [{ "matcher": "*", "hooks": [{ "type": "command", "command": "\"$HOME/Library/Application Support/@allternit/desktop/desktop-pet-hook.sh\" tool claude" }] }],
-    "PostToolUse": [{ "matcher": "*", "hooks": [{ "type": "command", "command": "\"$HOME/Library/Application Support/@allternit/desktop/desktop-pet-hook.sh\" tool-done claude" }] }],
-    "Notification": [{ "hooks": [{ "type": "command", "command": "\"$HOME/Library/Application Support/@allternit/desktop/desktop-pet-hook.sh\" waiting claude" }] }],
-    "Stop": [{ "hooks": [{ "type": "command", "command": "\"$HOME/Library/Application Support/@allternit/desktop/desktop-pet-hook.sh\" turn-done claude" }] }]
-  }
-}
-```
-
-For Codex, add this to `~/.codex/config.toml`. Use your full home path, because Codex doesn't expand `~`:
-
-```toml
-notify = ["/Users/you/Library/Application Support/@allternit/desktop/desktop-pet-hook.sh", "turn-done", "codex"]
-```
-
-Codex only reports finished turns, so with Codex the pet waves but doesn't run.
-
-To make the pet say something from a script, run `desktop-pet-hook.sh bubble "Tests pass"`.
-
-<Note>
-Terminal states fade on their own: running and thinking last two minutes unless the agent reports again, so a closed terminal never leaves the pet stuck. A terminal agent's reply doesn't add the mail badge, because there's nothing waiting in Allternit.
-</Note>
-
 ## Avatar packs
 
 In **Create bot** or **Edit bot → Look**, choose a pack and a character. Some characters have animated sheets (idle, walk, run, jump, sad, sleep, action, and a signature move); the rest are still portraits.
@@ -88,12 +36,8 @@ key, upload or AI. It's drawn by your browser on your device and is free.
    until you do.
 
 Your character becomes the bot's picture everywhere (chips, the bot rail, thread
-headers). Above the composer and as the desktop pet it animates like the sprite
-packs: it idles and blinks, waves, jumps, slumps when something fails, waits for
-you, works, looks things over, sleeps and spins. When the desktop pet strolls it
-turns and walks the way it's going. Characters made before October 2026 keep
-their older animation until you open them in **Edit bot** and press **Use as
-avatar** again. **Edit bot** reopens the builder on the
+headers). Above the composer it animates like the sprite packs: idle, blink,
+walk, run, jump, sad, sleep, and a spin. **Edit bot** reopens the builder on the
 same character. With *reduce motion* on, the preview stays still.
 
 <Note>
@@ -123,20 +67,7 @@ Photo avatars are still portraits; animated sheets aren't made from photos.
 
 - **Resolution:** `resolveBotAvatarConfig` (`src/lib/agents/bot-avatar-config.ts`) reads the edited `config.avatar` first, then the decoded legacy column, then the deterministic profile. `BotAvatar` and `ActiveAgentMascot` share it.
 - **Mascot:** `useActiveSurfaceAgent(surface)` (`src/lib/agents/surface-agent-context.ts`) resolves which bot represents a surface (surface selection, then open bot-thread metadata, then none). `<ActiveAgentMascot>` (`src/views/bots/ActiveAgentMascot.tsx`) renders `VendorAgentAvatar` for vendor bots, animates sheet avatars (`avatar.pet.spriteUrl`) on canvas driven by `MascotActivityState`, and otherwise delegates to `BotAvatar`. Callers: `AgentModeGizzi` and `LaunchHeader`.
-- **Sheet engine:** sheets follow the [Petdex](https://github.com/crafter-station/petdex) standard: 8 columns of 192×208 cells. `src/lib/agents/pet-sheet.ts` defines the eleven pet states (`idle`, `running-right`, `running-left`, `waving`, `jumping`, `failed`, `waiting`, `running`, `review`, plus our `sleep` and `special`) with Petdex row order, frame counts and frame times. `detectPetLayout` reads a sheet's layout from its height: 11 rows is `petdex-v2`, a 9-row sheet under `/gizzi-brawl/` is `legacy-brawl-9` (idle, working, done, walk, jump, thinking, sleep, waiting, error), and any other 9-row sheet is `legacy-pack-9` (idle, blink, walk, run, jump, sad, sleep, action, special). `petRowFor` maps a state to a row. Legacy sheets have no real locomotion frames, so moving states play the idle row with a code hop (`petHopAt`), mirrored for `running-left`. `AnimatedBotSprite` takes either a pet state or the older `MascotActivityState` (`petStateFromMascot` maps `working` → `running`, `done` → `waving`, `error` → `failed`) and an optional `layout` hint.
-- **Pet activity:** `src/lib/agents/pet-activity.ts` is the one signal for what agents are doing. Sources call `reportPetActivity(key, signal, { botId })` with `thinking`, `tool`, `tool-done`, `waiting`, `turn-done`, `plan-done`, `failed` or `idle`; readers use `usePetState(botId?)`, `getPetState` or `subscribePetState`. Thinking shows `review`, a running tool `running`, blocked on the person `waiting`; a finished turn waves, a finished plan jumps and a failure slumps, each for a few seconds (`PET_ONE_SHOT_MS`). When several sources are active the pet shows the most important (`PET_PRIORITY`: failed, waiting, running, review, jumping, waving). After 5 minutes with no activity it sleeps. Every `createModeSessionStore` store reports turn start and end from its `streamingBySession` flags (Stop goes idle, not a wave) and tool calls from the stream; `useThreadStore` reports bot and vendor thread status changes, skipping incognito threads and threads already finished when loaded.
-- **In-app reactions:** `BotAvatarMotion` (every bot avatar) reads `usePetState(botId)` when no explicit `state` is passed, and provides it to the sprite inside. `ActiveAgentMascot` reads `usePetState(botId, { unattributed: true })`, so plain chat turns with no bot attached move the surface's own mascot. The A:// orb maps `running` to working and `review` to thinking. Components take either vocabulary (`AvatarState` in `pet-sheet.ts`); `mascotStateFrom` maps pet states back to the five app states for pack expression art, CSS motions and the orb. Re-mentioning a bot reports a wave for it from `ChatComposer`.
-- **Desktop pet (Electron):** `surfaces/allternit-desktop/src/main/desktop-companion.ts` owns the pet window, and `pet-activity-hub.ts` decides what it plays. The app window sends its pet state with `allternitCompanion.activity.report(state)` (IPC `companion:activity`, accepted only from the main window). Sources are combined in priority order, with optional expiry for sources that can vanish (the hook port). The pet window gets `{ state, unread, moving }` on `companion:activity` and can fetch it with `activity.get()`. `unread` is set when a turn finishes (`waving`) while the main window isn't focused, and is cleared when the main window gains focus or quick chat opens. `allternitCompanion.toggleMain()` (`companion:toggle-main`) shows or hides the main window. Roaming (`roam` setting, default on) walks the window along its row at 70 px/s to a point at least 120 px away, after a 6 to 18 s idle pause. It stops for any activity, a drag, quick chat or the HUD, and saves the stop position. Roaming waits for the pet page to send its reduced-motion preference (`activity.setReducedMotion`, IPC `companion:motion-pref`), so pages without walk support never move.
-- **Avatars without drawn frames:** `src/views/bots/PortraitPetMotion.tsx` gives them free motion for each pet state, the way Petdex hops pets that have no sheet. This covers portrait-only pack characters, uploads and photo sprites (through `PackAvatarImage`), geometric and pet-face avatars, the Gizzi mascot and `AgentAvatar` configs. The motions are: `hop` for running and walking (mirrored for `running-left`), `jump`, `wave`, `wait`, `review`, `failed` (desaturated slump), `sleep` (dimmed) and `spin` for `special`. It reads the state from `BotAvatarMotion`'s context or a `state` prop, and it only runs from `PORTRAIT_MOTION_MIN_SIZE` (40 px) up. While it runs, it switches off `BotAvatarMotion`'s own breathing (`:has(.ppm)`). With reduced motion it is paused. Characters with a sheet never get it.
-- **Desktop pet (page):** `allternit-ai/src/components/desktop-companion/DesktopCompanionBridge.tsx` (main window) reports the overall `getPetState()` on mount and on every change through `subscribePetState`, for all bots, not only the pet's own. `src/pages/DesktopCompanionPage.tsx` (`?surface=pet`) reads `{ state, unread, moving }` with `useCompanionActivity()` (`bridge.ts`; malformed payloads are dropped by `parseCompanionActivity`) and plays `petPlayState(activity)`: `running-left` / `running-right` while idle and moving, otherwise the state. It passes that to `<BotAvatar state>`, which then ignores the pet window's own (empty) activity store; the A:// orb follows it too. A click waits `PET_DOUBLE_CLICK_MS` (250 ms): a second click calls `toggleMain()`, otherwise quick chat opens. Desktop builds without `toggleMain` open quick chat at once; builds without `activity` show the still pet. Tests: `src/components/desktop-companion/__tests__/desktop-pet.test.tsx`.
-- **Desktop pet hook port:** `surfaces/allternit-desktop/src/main/pet-hook-server.ts`, started at launch on `127.0.0.1:7787` (`PORTS.PET_HOOK`). If something else holds that port, it uses any free port. On start it writes `<userData>/desktop-pet-hook.json` as `{ "version": 1, "url", "port", "token" }` with mode 0600. The token is 32 random bytes and is kept across restarts. Beside it goes `desktop-pet-hook.sh` (mode 0700). Every request needs `Authorization: Bearer <token>`, a `Host` of `127.0.0.1:<port>` or `localhost:<port>`, and no `Origin` header, so browsers and DNS rebinding are refused. Bodies are JSON, 4 KB at most.
-  - `POST /state` takes `{ "state", "client"?, "ttlMs"? }`. `state` is a signal (`thinking`, `tool`, `tool-done`, `waiting`, `turn-done`, `plan-done`, `failed`, `idle`) or a pet state. It becomes source `hook:<client>` in the activity hub. Every state expires: ongoing states after 2 minutes (`waiting` after 10), one-shots as in the app, and `ttlMs` is clamped to 1 s–10 min. `idle` clears the source.
-  - `POST /bubble` takes `{ "text", "client"?, "ttlMs"? }`. The text is cut to one line of at most 140 characters. It shows for 1.5–30 s, default 5.
-  - `GET /health` returns `{ "ok": true }`.
-  - Errors: 401 bad token, 403 Origin or Host, 400 bad JSON or unknown state, 413 too large.
-- **Speech bubbles:** `showBubble(text, ttlMs)` in `desktop-companion.ts` uses a separate click-through window (240×64, `focusable: false`, JavaScript off). It loads a `data:` page with escaped text and a `default-src 'none'` CSP, sits above the pet and follows it through drags, walks and resizes. It never shows while the pet is hidden or quick chat is open. The app's own transitions also produce bubbles: `waiting` with the main window away says "Needs your answer", and a finished reply that sets the badge says "Reply ready". Only the `app` source sets `unread`.
-- **gizzi:** `cmd/gizzi-code/src/cli/ui/ink-app/pet/desktopPetHook.ts`. `useDesktopPetHook` in `REPL.tsx` maps loading, running tools and pending approvals to signals. When a turn ends it sends `turn-done`, it refreshes ongoing states every minute, and it sends `idle` on exit. It reads the hook file beside `desktopPetSettingsPath()` and only ever posts to loopback.
-- **Packs:** the manifest is `src/views/agent-view/components/create-bot/avatar-packs.ts`; files live in `public/avatar-packs/<pack>/<sprite>.webp` (512×512 portrait) and `<sprite>-sheet.webp`: either a Petdex v2 sheet (1536×2288, 8 × 11) or a legacy sheet (1536×1872, 8 × 9), both of 192×208 frames, rows in the orders listed above, base anchored bottom-center. Petdex v2 sheets for the Gizzi YouTube cast are drawn in code by `scripts/avatar-cast/pet-sheet-*.cjs` and packed by `pet-sheet-pack.py`; see `scripts/avatar-cast/README.md`. The Gizzi Brawl sheets and the four new Dot Friends (2026-10-16) were generated as one image per state row through the ChatGPT image lane and packed into the same 8 × 11 layout; the walk and run rows are drawn side-on, and three fight rows per fighter (attack, guard, KO) feed the Gizzi Brawl game only, not the avatar sheet. The asset spec is `AVATAR_PACKS.md` beside the manifest.
+- **Packs:** the manifest is `src/views/agent-view/components/create-bot/avatar-packs.ts`; files live in `public/avatar-packs/<pack>/<sprite>.webp` (512×512 portrait) and `<sprite>-sheet.webp` (1536×1872, 8 columns × 9 rows of 192×208 frames, rows in the order listed above, base anchored bottom-center). The asset spec is `AVATAR_PACKS.md` beside the manifest.
 - **Photo pipeline:** **Make sprite** only prepares the card. Approval is the only call site of `generatePhotoSprite` (`src/lib/bots/photo-sprite.ts`). The ChatGPT lane mints a single-use person proof for `avatar.photo_sprite` and submits an `image.generate` task with an image input. The OpenAI lane uses `generateImagesMediaPlane` with `referenceImage`. Output is center-cropped to a PNG of at most 256 px, keeping hard edges for pixel style. `buildAvatarConfigFromEditor` writes `{ type: "image", uri, likeness: { source: "photo", style, consentAttestedAt } }`.
 - **Included lane (cloud API):** `GET /api/v1/avatars/photo/allowance` returns `{ available, reason, plan, limit, used, remaining, resetsAt }`, where `reason` is `not_configured`, `no_subscription`, `paused` or `allowance_exhausted`. `POST /api/v1/avatars/photo` takes `{ photo, style, consentAttestedAt }` and returns `{ image, remaining, limit, resetsAt }` (`image` is a base64 PNG). Errors: 400 bad input or no consent, 402 `no_subscription`, 429 `allowance_exhausted`, 503 `not_configured` or `paused`, 422 `provider_rejected`, 502 `provider_error`. Both take a Clerk session or an API token with the `compute` scope. The code is `cmd/allternit-cloud-api/src/routes/photo_avatars.rs`. Monthly limits are `photo_avatars_per_month` on the plan list in `billing_subscriptions.rs`. The server builds the prompt from the style, downscales the photo to 1024 px or less in memory, and calls OpenAI images edit (`gpt-image-1`, 1024×1024, medium). The source photo is never stored or logged. Each use is reserved in `photo_avatar_usage` (migration `044`) under a lane-wide advisory lock. It's marked `used` only when an image comes back and `released` otherwise. A reservation that's never settled stops counting after 10 minutes.
 - **Included lane spend guard:** every reservation also checks the lane's total for the month across all users. Each image is counted at $0.042, against `ALLTERNIT_AVATAR_MONTHLY_BUDGET_USD` (default `4.00`). At the cap the lane reports `paused` instead of making a paid call. An OpenAI `insufficient_quota` or billing error releases the reservation and pauses the lane for 30 minutes. The key is `OPENAI_API_KEY` from the service's EnvironmentFile; `ALLTERNIT_AVATAR_OPENAI_API_KEY` overrides it. With no key, the allowance reports `not_configured` and the app hides the lane.
@@ -150,25 +81,16 @@ Photo avatars are still portraits; animated sheets aren't made from photos.
     "type": "image",
     "uri": "data:image/webp;base64,…",
     "pet": { "spriteUrl": "data:image/webp;base64,…",
-             "frameWidth": 192, "frameHeight": 208, "columns": 8, "rows": 11 },
+             "frameWidth": 192, "frameHeight": 208, "columns": 8, "rows": 9 },
     "character": { "source": "builder", "version": 1,
                    "shape": "bunny", "color": "#60a5fa",
                    "finish": "plush", "accessory": "scarf" }
   }
   ```
   
-  The sheet is a Petdex v2 sheet, 1536×2288: 8 columns by 11 rows of 192×208
-  cells. The rows, with the frames each uses, are idle (6, with a blink on frame
-  3), running-right (8), running-left (8), waving (4), jumping (5), failed (8),
-  waiting (6), running (6), review (6), sleep (8) and special (8). Unused cells
-  are transparent. `CHARACTER_SHEET.rowSpecs` in `recipe.ts` maps each row to a
-  pose in `scene.ts` (`stroll`, `wave`, `wait`, `review` and the original poses).
-  The walk rows turn the character `CHARACTER_SIDE_YAW` (1.15 rad, about 65°)
-  toward the direction of travel. A full 90° profile hid round characters' faces.
-  The walk rows also use a side gait: arms swing forward and back, and feet step
-  out in front. Sheets saved before this change are 1536×1872 (8×9, rows idle,
-  blink, walk, run, jump, sad, sleep, action, special). Renderers tell the two
-  apart by image height, so both keep playing. Avatar renderers need no special case: the portrait is
+  The sheet is 1536×1872: 8 columns by 9 rows of 192×208 cells, with rows idle,
+  blink, walk, run, jump, sad, sleep, action and special. That is the same layout
+  as the pack sheets. Avatar renderers need no special case: the portrait is
   `uri` and the animation is `pet`. `character` is only read by the editor to
   reopen the builder. Unknown ids or colors fall back to defaults. three.js loads
   lazily, only when the tab opens. Source: `allternit-ai/src/lib/bots/character-builder/`.

@@ -10,6 +10,7 @@ import type {
 } from "./types"
 import { MediaMode as MediaModeEnum } from "./types"
 import * as pollinations from "./drivers/pollinations"
+import * as bonsai from "./drivers/bonsai"
 import * as openaiImage from "./drivers/openai-image"
 import * as minimax from "./drivers/minimax"
 
@@ -33,6 +34,14 @@ export const MEDIA_PROVIDERS: MediaProvider[] = [
     modes: ["video"],
     authType: "none",
     description: "Free, no-signup video generation via pollinations.ai",
+    tier: "free",
+  },
+  {
+    id: "bonsai-local",
+    name: "Bonsai Local",
+    modes: ["image"],
+    authType: "none",
+    description: "Local image generation when a Bonsai-compatible local engine is running",
     tier: "free",
   },
   {
@@ -61,6 +70,8 @@ function driverFor(providerID: string): MediaDriver | undefined {
       return pollinations.imageDriver()
     case "pollinations-video":
       return pollinations.videoDriver()
+    case "bonsai-local":
+      return bonsai.localDriver()
     case "openai-image":
       return openaiImage.driver()
     case "minimax":

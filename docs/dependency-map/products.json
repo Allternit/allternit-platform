@@ -48,8 +48,7 @@
         "allternit-ai/src/shell",
         "allternit/cmd/allternit-api",
         "allternit/cmd/gizzi-code",
-        "allternit/cmd/allternit-factory",
-        "allternit/cmd/allternit-sideload"
+        "allternit/cmd/allternit-factory"
       ],
       "uses": [
         "product:allternit-api",
@@ -515,13 +514,7 @@
         "allternit/tools/system-one-local",
         "allternit-ai/src/components/kernel-observe",
         "allternit-ai/src/lib/kernel-observe",
-        "allternit/cmd/allternit-api/src/agency_api/mod_*",
-        "allternit/cmd/allternit-api/src/agency_api/executor",
-        "allternit/cmd/allternit-api/src/agency_api/task_types",
-        "allternit/cmd/allternit-api/src/agency_api/decisions",
-        "allternit/cmd/allternit-api/src/agency_api/replays",
-        "allternit/cmd/allternit-api/src/agency_api/evals",
-        "allternit/cmd/allternit-api/src/agency_api/harness",
+        "allternit/cmd/allternit-api/src/agency_api",
         "allternit/cmd/allternit-api/src/kernel_ui",
         "allternit/cmd/allternit-cloud-api/src/routes/agency_*"
       ],

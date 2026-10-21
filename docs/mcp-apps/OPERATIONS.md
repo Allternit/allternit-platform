@@ -26,6 +26,8 @@ Read by `allternit-api` (found by grepping `env::var` in the files these feature
 | `ALLTERNIT_COMMERCE_OPERATOR_USER_IDS` | `commerce.rs` | Comma-separated user ids allowed to refund. |
 | `ALLTERNIT_COMMERCE_PLATFORM_FEE_BPS`, `..._FIXED_MINOR` | `commerce.rs` | Platform fee; both default 0. |
 
+Desktop-only SIWC settings are in [SIWC.md](SIWC.md).
+
 ## Sandbox deploy
 
 The sandbox origin is `https://mcp-sandbox.gizziio.com`, served by the Cloudflare Pages project `allternit-mcp-sandbox`.

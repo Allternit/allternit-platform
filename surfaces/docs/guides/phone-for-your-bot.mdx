@@ -5,42 +5,18 @@ description: Connect a spare Android phone over Wi-Fi so your bot can see and op
 
 Connect a spare Android phone to Allternit Desktop, with no cable, and your bot can look at its screen, tap, type, swipe, open apps and do plain-English tasks on it. With your approval each time, it can also send a text or place a call from the phone's own SIM.
 
-Connecting a phone is **Desktop only**: adb runs in the Desktop app. On ai.allternit.com and the m.allternit.com phone app, Settings → Computers → Phones says to connect a phone from Allternit Desktop, and the paired phone is usable from every device. For an iPhone, see [An iPhone for your bot (Allternit USB Agent)](/guides/usb-agent). For a bot's own number and live AI calls, see [Messaging channels](/guides/messaging-channels) and [Calls and texts in threads](/guides/calls-and-texts).
+Connecting a phone is **Desktop only**: adb runs in the Desktop app. On ai.allternit.com and the m.allternit.com phone app, Settings → Computers → Phones shows "Connect a phone from Allternit Desktop." and the paired phone is usable from every device. For a bot's own number and live AI calls, see [Messaging channels](/guides/messaging-channels) and [Calls and texts in threads](/guides/calls-and-texts).
 
 ## What you need
 
 - A spare Android phone on Android 11 or newer, on the **same Wi-Fi network** as your computer.
 - Allternit Desktop (macOS, Windows or Linux).
-- Optional: [scrcpy](https://github.com/Genymobile/scrcpy) if you also want the phone in a separate window on your computer. The in-app live view does not need it — Desktop runs its own pinned copy of the scrcpy server.
+- Optional: [scrcpy](https://github.com/Genymobile/scrcpy) to watch and control the phone from a window on your computer. The bot works without it.
 - Optional, for plain-English tasks: Python 3.12+ tooling (`git` and `uv`) and a model key for Google ARTEMIS, which Allternit installs on request.
-
-## Watch and control the phone in the app
-
-Settings → Computers → Phones shows the phone's screen **live**, inside Desktop: video streams from a pinned `scrcpy-server` that Desktop pushes and starts on the phone over the existing wireless-debugging connection — no cable, no separate app, and nothing to install. Tap, type and swipe go straight to the phone; rotating it just works. Press **Stop** any time: the server is torn down on the phone and everything (display timeout, wake state) is restored.
-
-A live view starts only when you ask for it, never on its own. While a bot is mid-action on the phone — running tools or an ARTEMIS task — the phone card shows a **takeover banner**, so you can see the bot is driving before you touch the screen. If the phone drops off Wi-Fi, the live view ends by itself; reconnect the phone and start it again.
-
-The separate scrcpy window (if you installed scrcpy) still works as an alternative.
 
 ## Connect a phone
 
-Open **Settings → Computers → Phones → Connect an Android phone**.
-
-The phone appears in the **Phones** list as one row, and reads **Screen: Connected** once it's online. If the same phone is also linked through [Phone Link](/guides/phone-link), the same row shows **Apps: …** too: one phone, one row, both statuses.
-
-Each row has one button, **Open**: the Allternit phone (the floating phone from the rail) opens on its **Linked phone** lane, and the phone's live screen fills it. The **⋯** menu has the rest:
-
-- **Open in separate window**: the scrcpy window, if you installed scrcpy.
-- **Connect screen**: for a phone that only has Phone Link so far.
-- **Use on Sessions computer**: hands a linked phone to your Sessions computer.
-- **Set up again**: when Phone Link needs you.
-- **Forget**: removes the phone's screen pairing.
-
-The rail's Phones button lists connected phones under **Connected phones**. Choosing one opens it the same way.
-
-### The Allternit phone: two lanes
-
-The phone frame's title bar has a toggle: **Allternit** shows your bot's phone (its messages, channels and apps), and **Linked phone** shows a real phone's live screen. On the Allternit lane, a drop-down under it picks the bot. On the Linked phone lane the phone's screen fills the whole frame, and the frame takes the phone's shape; with more than one phone online, the picker sits in the title bar. Tap, type and swipe go to the phone. Use the phone's own navigation bar (back, home, recents) on its screen; Esc is back on your keyboard. **Expand** makes the frame large and centered. The screen has no toolbar of its own: the **⋯** button in the title bar has **Apps on this phone** (each app by name, from Phone Link), **Screenshot** and **Screen off on phone**. **⋯ → Open in separate window** in Settings opens the phone in scrcpy's own window instead. On ai.allternit.com's phone layout and the m.allternit.com app, the frame fills the screen with the same toggle.
+Open **Settings → Computers → Phones → Connect a phone**.
 
 1. On the phone, open **Settings → About phone** and tap **Build number** seven times to turn on Developer options. Then open **Settings → System → Developer options** and turn on **Wireless debugging**.
 2. In Wireless debugging, tap **Pair device with QR code**, then scan the code Desktop shows. No QR scanner? Tap **Pair device with pairing code** instead, and type the address and six-digit code into Desktop.
@@ -55,13 +31,12 @@ Paired phones are remembered and reconnect on their own when they come back on t
 | --- | --- |
 | `phone.screenshot` | See the screen. |
 | `phone.tap`, `phone.type`, `phone.swipe` | Operate it. `phone.type` accepts printable ASCII. |
-| `phone.home`, `phone.back`, `phone.key` | Home and Back buttons, and keys such as `enter`, `tab` and the arrow keys. |
 | `phone.open_app` | Open an app by package name or a common name such as `settings`. |
 | `phone.task` | Do a plain-English task through Google ARTEMIS. |
 | `phone.sms.send` | Send one text from the phone's SIM. |
 | `phone.call.dial` | Place a call from the phone's SIM. |
 
-Bots reach these tools through the `allternit-phone` MCP server that Desktop runs while a phone is paired. The same tools drive iPhones on an [Allternit USB Agent](/guides/usb-agent); `phone.devices` lists both.
+Bots reach these tools through the `allternit-phone` MCP server that Desktop runs while a phone is paired.
 
 ### Texts and calls always ask you first
 
@@ -69,7 +44,7 @@ Every `phone.sms.send` and `phone.call.dial` shows a confirmation on your comput
 
 Texts and calls are person-to-person. Limits: a text at most every 15 seconds, 10 an hour and 30 a day; a call at most every 10 seconds, 10 an hour and 30 a day. There is no bulk sending, and emergency numbers are blocked.
 
-A text is reported as **submitted** to the phone's messaging service, not delivered. Without extra hardware a call is **dialled** only: Android does not let apps capture carrier call audio, so the bot can't speak or listen on it. With a call cable from the phone to the Mac running Allternit Desktop, the bot can answer calls on the phone after one ring and talk on calls it places, on the same call screen as an Allternit number. See [Let your bot talk on its own phone](/guides/bot-voice-on-linked-phone). Without the cable, live AI voice calls use your Allternit number.
+A text is reported as **submitted** to the phone's messaging service, not delivered. A call is **dialled** only: the bot cannot speak or listen on a carrier call (Android does not allow apps to capture call audio). Live AI voice calls use your Allternit number instead.
 
 ## Limits
 
@@ -80,8 +55,7 @@ A text is reported as **submitted** to the phone's messaging service, not delive
 
 ## For developers
 
-- Code: `surfaces/allternit-desktop/src/main/phone-*.ts` (`phone-device-manager.ts`, `phone-tools.ts`, `phone-artemis.ts`, `phone-adb.ts`, `phone-gateway.ts`, `phone-scrcpy.ts` — the pinned scrcpy v5.0.1 wire protocol — and `phone-stream.ts` — one shared session per phone).
-- adb is not bundled (Google's platform-tools licence does not permit redistribution). Desktop uses an adb you already have, or downloads the pinned official platform-tools r37.0.1 from `dl.google.com` the first time you connect an Android phone (not when you only open Settings), and verifies its SHA-256 before unpacking.
-- The in-app live view uses the official `scrcpy-server` binary, pinned to v5.0.1 with a recorded SHA-256 (`phone-scrcpy.ts`), downloaded on first use from the Genymobile GitHub release. The server speaks the v5.0.1 protocol: a dummy byte, a 64-byte device name, a codec id, then 12-byte session packets (rotation/size) and 12-byte frame headers around the Annex-B stream — main strips the headers and forwards raw H.264 to the renderer over IPC, where a WebCodecs client decodes it and sends `PhoneInputEvent`s back.
+- Code: `surfaces/allternit-desktop/src/main/phone-*.ts` (`phone-device-manager.ts`, `phone-tools.ts`, `phone-artemis.ts`, `phone-adb.ts`, `phone-gateway.ts`).
+- adb is not bundled (Google's platform-tools licence does not permit redistribution). Desktop uses an adb you already have, or downloads the pinned official platform-tools r37.0.1 from `dl.google.com` on first use and verifies its SHA-256 before unpacking.
 - Google ARTEMIS is pinned to one commit and installed on request into the Desktop data folder; its MCP server runs as a per-phone sidecar that stops when Desktop quits.
 - The tool gateway listens on `127.0.0.1` only and needs a per-launch token written to `~/.allternit/phone-gateway.json` (mode 0600).

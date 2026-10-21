@@ -214,8 +214,6 @@ struct CreateRoute {
     runtime_id: String,
     provider: String,
     label: Option<String>,
-    /// The bot this address belongs to; only an always-on bot's messages fail over.
-    bot_id: Option<String>,
 }
 
 async fn create_route(
@@ -240,7 +238,7 @@ async fn create_route(
     let key = new_key();
     let id = uuid::Uuid::new_v4().to_string();
     sqlx::query(
-        "INSERT INTO channel_inbound_routes (id, key_hash, user_id, runtime_id, provider, label, bot_id) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+        "INSERT INTO channel_inbound_routes (id, key_hash, user_id, runtime_id, provider, label) VALUES ($1, $2, $3, $4, $5, $6)",
     )
     .bind(&id)
     .bind(sha256_hex(&key))
@@ -248,7 +246,6 @@ async fn create_route(
     .bind(&body.runtime_id)
     .bind(&body.provider)
     .bind(&body.label)
-    .bind(body.bot_id.as_deref().filter(|b| !b.is_empty() && b.len() <= 128))
     .execute(&state.db)
     .await?;
     Ok((
@@ -643,28 +640,18 @@ pub(crate) async fn deliver_route(state: &Arc<ApiState>, route_id: &str) -> Resu
         let Some((id, method, query, headers, body, received_at, attempts)) = claimed else {
             return Ok(());
         };
-        let route: Option<(String, String, String, Option<String>, Option<String>)> = sqlx::query_as(
-            "SELECT user_id, runtime_id, provider, bot_id, label FROM channel_inbound_routes WHERE id = $1 AND revoked_at IS NULL",
+        let route: Option<(String, String, String)> = sqlx::query_as(
+            "SELECT user_id, runtime_id, provider FROM channel_inbound_routes WHERE id = $1 AND revoked_at IS NULL",
         )
         .bind(route_id)
         .fetch_optional(&state.db)
         .await?;
-        let Some((user_id, runtime_id, provider, bot_id, label)) = route else {
+        let Some((user_id, runtime_id, provider)) = route else {
             sqlx::query("UPDATE channel_inbound_queue SET dead_at = now(), last_error = 'address revoked' WHERE route_id = $1 AND delivered_at IS NULL AND dead_at IS NULL")
                 .bind(route_id)
                 .execute(&state.db)
                 .await?;
             return Ok(());
-        };
-        // Always-on bots: while the home computer is offline, a failover cloud computer gets the message.
-        let home_runtime = runtime_id.clone();
-        let runtime_id = if provider == MCP_EVENTS_PROVIDER {
-            runtime_id
-        } else {
-            let connected = super::runtime_relay::connected_runtime_ids().await;
-            super::runtime_presence::delivery_runtime(&state.db, &user_id, &runtime_id, bot_id.as_deref(), label.as_deref(), &connected, Utc::now())
-                .await
-                .unwrap_or(runtime_id)
         };
         let route = Route { id: route_id.to_string(), user_id, runtime_id, provider };
         let headers: HashMap<String, String> = serde_json::from_value(headers).unwrap_or_default();
@@ -686,7 +673,7 @@ pub(crate) async fn deliver_route(state: &Arc<ApiState>, route_id: &str) -> Resu
                 .await?;
             // A connector event is not a channel message: the runtime decides what (if anything) to tell the owner.
             if route.provider != MCP_EVENTS_PROVIDER {
-                super::web_push::notify_channel_message(&state.db, &route.user_id, &route.id, &route.provider, &home_runtime);
+                super::web_push::notify_channel_message(&state.db, &route.user_id, &route.id, &route.provider, &route.runtime_id);
             }
             continue;
         }
@@ -694,13 +681,6 @@ pub(crate) async fn deliver_route(state: &Arc<ApiState>, route_id: &str) -> Resu
         let give_up = is_dead(status, attempts, Utc::now() - received_at > chrono::Duration::hours(GIVE_UP_AFTER_HOURS));
         if give_up {
             tracing::warn!(route_id = %route.id, queue_id = id, provider = %route.provider, ?status, attempts, error = ?error, "channel event dead: not delivered to the runtime");
-            // Not a silent drop: tell the owner (critical attention item, resolved when the runtime is back).
-            if let Err(e) = super::runtime_presence::open_alert(
-                &state.db, &route.user_id, &home_runtime, "queue_gave_up", "critical",
-                "A message couldn't be delivered to your computer after 24 hours and was dropped.",
-            ).await {
-                tracing::warn!(route_id = %route.id, "couldn't raise the give-up alert: {e}");
-            }
         }
         sqlx::query(
             "UPDATE channel_inbound_queue

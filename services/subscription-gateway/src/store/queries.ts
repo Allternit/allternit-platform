@@ -476,25 +476,6 @@ export function deleteAccount(db: Db, accountId: string): void {
 
 // A task still in flight on this account: pinned by routing or route
 // decision, or with an attempt on it. Terminal tasks don't count.
-// A task that is using the account's page right now (not merely queued or
-// waiting on its owner). Memory Drive reads skip such an account; a stale
-// queued task must never block them.
-export function accountHasLiveTasks(db: Db, accountId: string): boolean {
-  const row = db
-    .prepare(
-      `SELECT 1 FROM tasks t
-       WHERE t.status IN ('routing', 'waiting_worker', 'running', 'streaming', 'provider_running')
-         AND (
-           json_extract(t.routing, '$.account_id') = ?
-           OR json_extract(t.route_decision, '$.primary.account_id') = ?
-           OR EXISTS (SELECT 1 FROM task_attempts a WHERE a.task_id = t.task_id AND a.account_id = ?)
-         )
-       LIMIT 1`
-    )
-    .get(accountId, accountId, accountId);
-  return row !== undefined;
-}
-
 export function accountHasActiveTasks(db: Db, accountId: string): boolean {
   const row = db
     .prepare(
@@ -1131,49 +1112,4 @@ export function recordImageChatUse(
     now
   );
   return db.prepare("SELECT * FROM image_chats WHERE chat_id = ?").get(chatId) as ImageChat;
-}
-
-// ---------------------------------------------------------------------------
-// Lane canaries (0010): one row per non-spending probe of a connected account.
-// ---------------------------------------------------------------------------
-
-export interface CanaryRun {
-  id: string;
-  account_id: string;
-  adapter_id: string;
-  kind: "probe" | "turn";
-  started_at: string;
-  ended_at: string | null;
-  outcome: "pass" | "fail";
-  health: string;
-  latency_ms: number | null;
-  error: string | null;
-  evidence_ref: string | null;
-}
-
-export function insertCanaryRun(db: Db, run: Omit<CanaryRun, "id">): CanaryRun {
-  const row: CanaryRun = { id: randomUUID(), ...run };
-  db.prepare(
-    `INSERT INTO canary_runs (id, account_id, adapter_id, kind, started_at, ended_at, outcome, health, latency_ms, error, evidence_ref)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).run(
-    row.id, row.account_id, row.adapter_id, row.kind, row.started_at, row.ended_at,
-    row.outcome, row.health, row.latency_ms, row.error, row.evidence_ref
-  );
-  return row;
-}
-
-export function latestCanaryRun(db: Db, accountId: string, outcome?: "pass" | "fail"): CanaryRun | null {
-  const row = db
-    .prepare(
-      `SELECT * FROM canary_runs WHERE account_id = ? ${outcome ? "AND outcome = ?" : ""}
-       ORDER BY started_at DESC LIMIT 1`
-    )
-    .get(...(outcome ? [accountId, outcome] : [accountId])) as CanaryRun | undefined;
-  return row ?? null;
-}
-
-/** Keeps a week of probes; called from the canary tick. */
-export function pruneCanaryRuns(db: Db, olderThanIso: string): void {
-  db.prepare("DELETE FROM canary_runs WHERE started_at < ?").run(olderThanIso);
 }

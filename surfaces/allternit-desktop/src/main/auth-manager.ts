@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, net, powerMonitor, safeStorage, session, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, net, safeStorage, session, shell } from 'electron';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -28,9 +28,8 @@ import log from 'electron-log';
 import WebSocket from 'ws';
 import { URLS } from './config.js';
 import { dropRuntimeCredentialForGizzi, isGizziProviderListPath } from './relay-gizzi-credential.js';
-import { isDesktopAuthNavigation, shouldPairWithLateClerkToken } from './desktop-auth-url.js';
+import { isDesktopAuthNavigation } from './desktop-auth-url.js';
 import { ClerkTokenBroker } from './clerk-token-broker.js';
-import { cloudAccountMismatch, type CloudReconnectResult } from './cloud-account.js';
 import {
   consumeProvisionedBootstrap,
   provisionedPairingBody,
@@ -58,7 +57,6 @@ const LOCAL_STORAGE_HEADER = 'allternit-local-aes-gcm-v1\n';
  */
 const AUTH_WINDOW_PATH_PREFIX = '/__desktop_auth__';
 const AUTH_SESSION_PARTITION = 'persist:allternit-auth';
-
 
 const AUTH_FILE_MIME_TYPES: Record<string, string> = {
   '.html': 'text/html',
@@ -266,21 +264,6 @@ export class DesktopAuthManager {
       log.info('[Auth] Clerk session token received from renderer; resolver present:', Boolean(this.clerkTokenResolver), 'email:', email || '(none)');
       if (normalized.token) this.cacheClerkToken(normalized.token);
       if (email) this.applyAccountEmail(email);
-      if (shouldPairWithLateClerkToken({
-        waiting: Boolean(this.clerkTokenResolver),
-        token: normalized.token,
-        paired: Boolean(this.session),
-        pairingInFlight: Boolean(this.pendingPairing),
-      })) {
-        // A sign-in that finished after its pairing expired (or after the
-        // wait was dropped): the person is signed in, so pair with this token
-        // instead of leaving the window on "Completing runtime pairing".
-        log.info('[Auth] Late Clerk token with no pairing in progress; starting a new pairing with it');
-        this.closeAuthWindow();
-        this.pendingClerkEmail = preferredEmail(email, emailFromJwt(normalized.token));
-        void this.handleLoginRequest(normalized.token);
-        return;
-      }
       this.clerkTokenResolver?.(normalized);
       this.clerkTokenResolver = null;
       this.clerkTokenRejecter = null;
@@ -289,7 +272,6 @@ export class DesktopAuthManager {
     // The renderer asks on every runtime API call; Electron main injects the
     // real credentials, so this must never hold a request up.
     ipcMain.handle('auth:get-clerk-token', () => this.getClerkToken(RENDERER_CLERK_WAIT_MS));
-    ipcMain.handle('auth:reconnect-cloud', () => this.reconnectCloud());
 
     ipcMain.handle('auth:clerk-error', (_event, message: string) => {
       log.warn('[Auth] Clerk renderer error:', message);
@@ -303,11 +285,6 @@ export class DesktopAuthManager {
 
   async initialize(): Promise<void> {
     log.info('[Auth] Initializing paired runtime identity');
-    // After sleep the relay socket is usually dead without a TCP reset; the
-    // watchdog would notice within ~75s, but the phone is in use right now.
-    powerMonitor?.on?.('resume', () => {
-      if (this.session) this.reconnectRuntimeRelay();
-    });
     this.quarantineLegacyOAuthSession();
     this.runtimeIdentity = this.readIdentityFromDisk();
     this.session = this.runtimeIdentity ? this.toSession(this.runtimeIdentity) : null;
@@ -551,13 +528,13 @@ export class DesktopAuthManager {
     this.writeAccountsToDisk(next);
   }
 
-  private async handleLoginRequest(clerkToken?: string): Promise<void> {
+  private async handleLoginRequest(): Promise<void> {
     const visibleWindow = this.splashWindow
       || BrowserWindow.getAllWindows().find((candidate) => candidate.isVisible() && !candidate.isDestroyed());
     visibleWindow?.setAlwaysOnTop(false);
 
     try {
-      const session = await this.startPairing(undefined, clerkToken);
+      const session = await this.startPairing();
       this.notifySplash('auth:login-success', 'Runtime paired — starting Allternit…');
       this.signInResolver?.(session);
       this.signInResolver = null;
@@ -573,7 +550,7 @@ export class DesktopAuthManager {
     }
   }
 
-  private async startPairing(bootstrap?: ProvisionedBootstrap, clerkToken?: string): Promise<DesktopAuthSession> {
+  private async startPairing(bootstrap?: ProvisionedBootstrap): Promise<DesktopAuthSession> {
     if (this.pendingPairing) return this.pendingPairing.promise;
 
     const { publicKey, privateKey } = generateKeyPairSync('ed25519');
@@ -635,9 +612,7 @@ export class DesktopAuthManager {
     // load the React/Clerk renderer, and wait for the user to sign in.
     void (async () => {
       try {
-        const clerk = clerkToken
-          ? { token: clerkToken, userId: '', email: this.pendingClerkEmail ?? '' }
-          : await this.requestClerkSession({ hidden: false });
+        const clerk = await this.requestClerkSession({ hidden: false });
         this.closeAuthWindow();
         this.pendingClerkEmail = preferredEmail(clerk.email, emailFromJwt(clerk.token));
         this.cacheClerkToken(clerk.token);
@@ -969,47 +944,6 @@ export class DesktopAuthManager {
     return this.clerkTokens.get(maxWaitMs);
   }
 
-  /**
-   * Renews the cloud (Clerk) sign-in of the paired device without re-pairing.
-   * Once Clerk's session has ended the hidden refresh can only time out, so
-   * the user signs in again in the visible auth window. Only the account this
-   * device is paired to is accepted.
-   */
-  async reconnectCloud(): Promise<CloudReconnectResult> {
-    if (!this.session) return { ok: false, error: 'This device is not signed in.' };
-    if (this.pendingPairing) return { ok: false, error: 'Sign-in is already in progress.' };
-    // A background refresh may own the (hidden) auth window: end it first, and
-    // wait for the window to close so its close event can't end this sign-in.
-    this.clerkTokenRejecter?.(new Error('Replaced by a visible sign-in'));
-    this.clerkTokenResolver = null;
-    this.clerkTokenRejecter = null;
-    const previous = this.authWindow;
-    if (previous && !previous.isDestroyed()) {
-      await new Promise<void>((resolve) => {
-        previous.once('closed', () => resolve());
-        previous.close();
-      });
-    }
-    this.authWindow = null;
-    try {
-      const clerk = await this.requestClerkSession({ hidden: false });
-      this.closeAuthWindow();
-      const mismatch = cloudAccountMismatch(this.session, clerk.userId);
-      if (mismatch) {
-        await session.fromPartition(AUTH_SESSION_PARTITION).clearStorageData();
-        return { ok: false, error: mismatch };
-      }
-      this.cacheClerkToken(clerk.token);
-      const email = preferredEmail(clerk.email, emailFromJwt(clerk.token));
-      if (email) this.applyAccountEmail(email);
-      log.info('[Auth] Cloud sign-in renewed');
-      return { ok: true };
-    } catch (error) {
-      this.closeAuthWindow();
-      return { ok: false, error: error instanceof Error ? error.message : 'Sign-in failed' };
-    }
-  }
-
   private async refreshClerkToken(): Promise<string> {
     if (this.pendingPairing) {
       const cached = this.clerkTokens.cachedToken();
@@ -1260,9 +1194,6 @@ export class DesktopAuthManager {
       return;
     }
     if (!response.ok) throw new Error(`Runtime heartbeat failed (${response.status})`);
-    // The heartbeat is what makes this Mac read "online"; never let it run
-    // without a relay behind it, or every phone request answers offline.
-    if (!this.relaySocket && !this.relayReconnectTimer) this.connectRuntimeRelay();
   }
 
   private persistIdentity(identity: PersistedRuntimeIdentity): void {
@@ -1385,10 +1316,7 @@ export class DesktopAuthManager {
       }
     });
     socket.addEventListener('close', () => {
-      // A socket the watchdog or a reconnect already dropped can close late:
-      // its cleanup must not tear down the connection that replaced it.
-      if (this.relaySocket !== socket) return;
-      this.relaySocket = null;
+      if (this.relaySocket === socket) this.relaySocket = null;
       this.stopRelayWatchdog();
       for (const local of this.relayLocalSockets.values()) local.close(1012, 'Relay disconnected');
       this.relayLocalSockets.clear();
@@ -1415,10 +1343,7 @@ export class DesktopAuthManager {
       }
       if (Date.now() - this.relayLastMessageAt > 75_000) {
         log.warn('[Auth] Runtime relay heartbeat timed out; reconnecting');
-        // terminate(), not close(): a dead connection never answers the close
-        // handshake, and waiting on it leaves the Mac heartbeating "online"
-        // with no relay. Reconnect now instead of on the late close event.
-        this.reconnectRuntimeRelay();
+        this.relaySocket.close(4000, 'Relay heartbeat timeout');
       }
     }, 30_000);
     this.relayWatchdogTimer.unref?.();
@@ -1756,11 +1681,9 @@ export class DesktopAuthManager {
   }
 
   private reconnectRuntimeRelay(): void {
-    this.stopRelayWatchdog();
     if (this.relaySocket) {
-      const stale = this.relaySocket;
+      this.relaySocket.close();
       this.relaySocket = null;
-      try { stale.terminate(); } catch { /* already gone */ }
     }
     for (const socket of this.relayLocalSockets.values()) socket.close(1012, 'Relay reconnecting');
     this.relayLocalSockets.clear();

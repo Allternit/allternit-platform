@@ -74,26 +74,6 @@ curl https://api.allternit.com/api/runtime/discover \
 
 The probe uses a short timeout (1.5 seconds) so that the endpoint remains fast even when the runtime is not running.
 
-## Runtime presence
-
-The cloud API tracks whether each paired runtime is awake.
-
-`POST /api/v1/runtime-presence/heartbeat` is sent by the runtime every 60 seconds. It is signed like `POST /api/v1/runtime/events` (`x-allternit-runtime-id`, `x-allternit-runtime-ts`, `x-allternit-runtime-sig`). Body, at most 64 KiB:
-
-```json
-{ "runtimeId": "rt_…", "nextDue": [ { "routineId": "r1", "title": "Morning briefing", "at": "2026-10-16T08:00:00Z" } ] }
-```
-
-`nextDue` lists the routines due in the next 24 hours (at most 50). A bad signature is `401`.
-
-`GET /api/v1/runtime-presence` returns the signed-in owner's runtimes:
-
-```json
-[ { "runtimeId": "rt_…", "name": "Eoj's Mac", "online": false, "lastSeen": "2026-10-16T07:41:00Z", "wakeable": false, "nextDue": [] } ]
-```
-
-`online` is true with a live relay connection or a heartbeat in the last 3 minutes. A once-a-minute sweeper opens an `attention.opened` event for a missed routine (`missed_run`), for messages waiting more than 10 minutes (`queue_waiting`) and for the 24-hour give-up (`queue_gave_up`, critical). It sends `attention.resolved` when the runtime is back.
-
 ## Error codes
 
 | HTTP status | Code | Meaning |

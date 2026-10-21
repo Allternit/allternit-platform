@@ -355,8 +355,6 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         .merge(routes::allternit_events::routes())
         // Runtimes forward their bot_events ledger into the event backbone (relay-signature auth in the handler).
         .merge(routes::runtime_events::routes())
-        // Runtime heartbeats (relay-signed) and the owner's presence list (agent network WP4).
-        .merge(routes::runtime_presence::routes())
         // MCP Events client (P6): public Standard Webhooks receiver for events from a user's
         // connected MCP servers + the runtime's signed subscription registration.
         .merge(routes::mcp_event_callbacks::routes())
@@ -501,9 +499,6 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         // 503 mesh_not_configured when HEADSCALE_API_KEY is unset.
         .merge(routes::mesh::routes())
         .merge(routes::paired_computers::routes())
-        // Phone stream relay (Phones 2.0): the account's runtime upserts and
-        // lists its registered phones with its device credential.
-        .merge(routes::registered_phones::routes())
         // BYO-VPS deploy wizard: Clerk session verified per-request (injected
         // as the wizard's AuthenticatedUser), checkpoints in wizard_sessions.
         .merge(routes::wizard::routes(&state))

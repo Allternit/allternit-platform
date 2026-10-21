@@ -71,71 +71,6 @@ allternit-desktop/
 
 The main process registers many other channels (for example `miniApps:*`); see `src/main/unified-main.ts`.
 
-## Cloud sign-in
-
-Desktop holds two sign-ins. The **device pairing** (a runtime token) keeps the computer linked to your account. The **cloud sign-in** (a Clerk session) is what cloud features such as artifacts use. Desktop renews the cloud sign-in in the background from a hidden sign-in window. When the Clerk session itself has ended, the background renewal can't work, and cloud views show **Sign in to see your artifacts**.
-
-Press **Sign in** there. A sign-in window opens; sign in with the account this device is paired to and the list loads. The device stays paired, so nothing has to be set up again. Signing in with a different account is refused and names the right one.
-
-For developers: the renderer calls `window.allternit.auth.reconnectCloud()` (IPC `auth:reconnect-cloud`, `AuthManager.reconnectCloud` in `src/main/auth-manager.ts`). It returns `{ ok: true }` or `{ ok: false, error }`. The account check is `cloudAccountMismatch` in `src/main/cloud-account.ts`. On the web and in older Desktop builds, `signInToCloud()` (`allternit-ai/src/lib/cloud-sign-in.ts`) falls back to `/sign-in` or the full device sign-in.
-
-Cloud calls carry only the Clerk bearer (and `X-Allternit-Tenant-Id`). `buildAuthHeaders(targetUrl)` adds the Desktop identity headers (`X-Allternit-User-Id`, `X-Allternit-User-Email`) only for the app's own origin and the loopback runtime: api.allternit.com reads identity from the JWT, and its CORS preflight refuses those headers, which made every direct cloud call fail as if offline. Pass the request URL when calling it for a cloud route.
-
-**When the cloud can't be reached.** The local API checks the device token with api.allternit.com (`verify_runtime_device_token` in `cmd/allternit-api/src/connector_routes.rs`). If the cloud can't be reached (no network, DNS failure, a 5xx or 429), it uses this device's last successful check instead, for up to 7 days, so Desktop keeps working on your own files. The last check is kept in `device-identity-cache.json` in the data folder, keyed by a SHA-256 of the token (never the token itself). A token the cloud rejects is refused straight away; the saved check never covers a rejection.
-
-## Code mode panes
-
-The **Panes** menu at the top right of a Code session lists Terminal, Changes,
-Browser, Computer, Files, Artifacts, Transcript and Tasks. A new session opens
-with Terminal.
-
-- **Pick a pane** to show it in place of the one you're using. Picking a pane
-  that's already open (checked) closes it.
-- **Open beside** opens a pane as its own card next to the others. Each card
-  docks left, right or bottom, resizes, and can open in a new window from its
-  own menu.
-- Opening a file from the console's Problems tab switches to Files.
-- **Changes** shows the session folder's uncommitted work: changed files and
-  new (untracked) files, with line counts. It reads `POST /api/v1/git/diff` on
-  the local API (`cmd/allternit-api/src/git_routes.rs`).
-  - **Edit** (pencil) turns that file's diff into an editor in place. Save
-    with ⌘S or **Save** and the diff comes back updated. **Open beside** opens
-    it in the Files pane instead.
-  - **Undo** on a block of changes puts just that block back. **Undo all
-    changes** on a file puts the whole file back to its last saved-in-git
-    version; for a new file it deletes the file, after you confirm.
-  - Both use `POST /api/v1/git/discard` (`{ path, file, patch?, untracked? }`):
-    with `patch` it reverses one hunk after `git apply -R --check`; without it
-    runs `git checkout -- file`, or deletes an untracked file only when
-    `untracked: true`.
-
-On a phone, each pane opens full screen from the header's pane menu.
-
-Code: `allternit-ai/src/views/code/pane-manager/` (`switchPane`, `openPane`).
-
-## Replies that stop streaming
-
-A session shows **Working** while its reply streams in. If the stream goes
-quiet for 30 seconds, or you open a session that still says Working, the app
-checks the saved conversation. When the agent's reply is already finished
-there, the session stops showing Working and shows the saved reply. A turn
-that is still running is left alone. This covers a reply stream lost across a
-Desktop restart; the turn itself still runs and saves normally.
-
-Code: `allternit-ai/src/lib/agents/mode-session-store.ts` (`reconcileStream`,
-`serverTurnFinished`).
-
-## Quitting with work in progress
-
-When Desktop quits, it hands work that has **started** (a cowork job that is
-leased or running) to the cloud continuation so it can finish. Idle Cowork
-sessions and queued jobs stay on this computer and are picked up again on
-the next launch; they are not sent to the cloud.
-
-Code: `handoffInFlightToCloud` in `surfaces/allternit-desktop/src/main/unified-main.ts`
-calls `POST /api/v1/fabric/transport/continuation/handoff-all`, which runs
-`handoff_all_in_flight` in `allternit-cowork-runtime/src/sqlite_store.rs`.
-
 ## Allternit Factory views
 
 <Note>
@@ -154,7 +89,7 @@ Desktop is the graphical product for the [Allternit Factory](/factory/overview).
 | Live terminals | Code mode's terminal wall shows every Terminal bot's pane with a `bot@team` and node header. These are the same panes as `gizzi agents wall`, so a keystroke in either shows up in both. Hosted bots open their Gizzi session, and Vendor bots open their thread |
 | Per-bot device | The bot phone gets a Work app: that bot's nodes and approvals |
 
-The views draw the same picture for the same input (no random layout), show "—" when empty, and take counts from the judge, never from narrative. Desktop ships `allternit-factory` and `gizzi` in `resources/bin` and puts `gizzi` on your PATH at first run: on macOS/Linux as a `~/.local/bin/gizzi` link, on Windows as a `%LOCALAPPDATA%\Allternit\bin\gizzi.cmd` shim with that folder appended to your user PATH (open a new terminal to pick it up; the uninstaller removes the shim).
+The views draw the same picture for the same input (no random layout), show "—" when empty, and take counts from the judge, never from narrative. Desktop ships `allternit-factory` and `gizzi` in `resources/bin` and puts `gizzi` on your PATH at first run.
 
 ## How this relates to the Agency Kernel
 

@@ -37,20 +37,10 @@ pub enum TransferMode {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum CallEvent {
-    /// `line` (C1) is sent when known; on a linked phone `numberId` is null.
-    Started { direction: String, from: String, to: String, number_id: String, line: Option<Value> },
+    Started { direction: String, from: String, to: String, number_id: String },
     TranscriptDelta { speaker: Speaker, text: String, is_final: bool, segment_id: String },
     Dtmf { digits: String, from: String },
-    /// `unsupported`: the control the line can't do (linked phone: dtmf,
-    /// transfer, hold); the state is otherwise unchanged.
-    StateChanged {
-        held: bool,
-        muted_bot: bool,
-        muted_caller: bool,
-        speaker: Option<Speaker>,
-        recording: bool,
-        unsupported: Option<&'static str>,
-    },
+    StateChanged { held: bool, muted_bot: bool, muted_caller: bool, speaker: Option<Speaker>, recording: bool },
     Transferred { to: String, mode: TransferMode, ok: bool, reason: Option<String> },
     Takeover { by: String, active: bool },
     VoicemailDetected { action: String },
@@ -74,29 +64,17 @@ impl CallEvent {
     /// camelCase payload; always includes `callId`.
     pub fn payload(&self, call_id: &str) -> Value {
         let mut v = match self {
-            CallEvent::Started { direction, from, to, number_id, line } => {
-                let linked = super::line::is_linked_phone(line.as_ref());
-                let number = if linked { Value::Null } else { json!(number_id) };
-                let mut v = json!({"direction": direction, "from": from, "to": to, "numberId": number});
-                if let Some(l) = line {
-                    v["line"] = l.clone();
-                }
-                v
+            CallEvent::Started { direction, from, to, number_id } => {
+                json!({"direction": direction, "from": from, "to": to, "numberId": number_id})
             }
             CallEvent::TranscriptDelta { speaker, text, is_final, segment_id } => {
                 json!({"speaker": speaker, "text": text, "final": is_final, "segmentId": segment_id})
             }
             CallEvent::Dtmf { digits, from } => json!({"digits": digits, "from": from}),
-            CallEvent::StateChanged { held, muted_bot, muted_caller, speaker, recording, unsupported } => {
-                let mut v = json!({
-                    "held": held, "mutedBot": muted_bot, "mutedCaller": muted_caller, "speaker": speaker,
-                    "recording": recording
-                });
-                if let Some(action) = unsupported {
-                    v["unsupported"] = json!(action);
-                }
-                v
-            }
+            CallEvent::StateChanged { held, muted_bot, muted_caller, speaker, recording } => json!({
+                "held": held, "mutedBot": muted_bot, "mutedCaller": muted_caller, "speaker": speaker,
+                "recording": recording
+            }),
             CallEvent::Transferred { to, mode, ok, reason } => {
                 let mut v = json!({"to": to, "mode": mode, "ok": ok});
                 if let Some(r) = reason {
@@ -287,7 +265,6 @@ mod tests {
             from: "+1".into(),
             to: "+2".into(),
             number_id: "n".into(),
-            line: None,
         });
         let b = s.envelope(&t("hi"));
         let c = s.envelope(&t("there"));
@@ -303,33 +280,13 @@ mod tests {
     }
 
     #[test]
-    fn started_carries_the_line() {
-        let lp = json!({"kind": "linked_phone", "deviceId": "ZY22", "label": "Moto", "platform": "android"});
-        let p = CallEvent::Started { direction: "inbound".into(), from: "+1".into(), to: "".into(), number_id: "".into(), line: Some(lp.clone()) }
-            .payload("c");
-        assert_eq!(p["line"], lp);
-        assert!(p["numberId"].is_null());
-        let num = json!({"kind": "number", "numberId": "n1"});
-        let p = CallEvent::Started { direction: "inbound".into(), from: "+1".into(), to: "+2".into(), number_id: "n1".into(), line: Some(num.clone()) }
-            .payload("c");
-        assert_eq!((p["numberId"].as_str(), &p["line"]), (Some("n1"), &num));
-        let p = CallEvent::Started { direction: "inbound".into(), from: "+1".into(), to: "+2".into(), number_id: "".into(), line: None }.payload("c");
-        assert!(p.get("line").is_none());
-        assert_eq!(p["numberId"], "");
-    }
-
-    #[test]
     fn payload_shapes() {
-        let p = CallEvent::StateChanged { held: true, muted_bot: false, muted_caller: true, speaker: None, recording: false, unsupported: None }
+        let p = CallEvent::StateChanged { held: true, muted_bot: false, muted_caller: true, speaker: None, recording: false }
             .payload("c");
         assert_eq!(
             p,
             json!({"held":true,"mutedBot":false,"mutedCaller":true,"speaker":null,"recording":false,"callId":"c"})
         );
-        let p = CallEvent::StateChanged { held: false, muted_bot: false, muted_caller: false, speaker: None, recording: false, unsupported: Some("hold") }
-            .payload("c");
-        assert_eq!(p["unsupported"], "hold");
-        assert_eq!(p["held"], false);
         let p = CallEvent::Ended { duration_sec: 42, reason: "caller_hangup".into(), recording_ref: None, answered: true, missed: false }
             .payload("c");
         assert_eq!(p, json!({"durationSec":42,"reason":"caller_hangup","answered":true,"callId":"c"}));

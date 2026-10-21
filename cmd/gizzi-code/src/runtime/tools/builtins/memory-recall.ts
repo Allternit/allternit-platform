@@ -15,7 +15,7 @@ export const MemoryRecallTool = Tool.define("memory_recall", {
   parameters: z.object({
     query: z.string().describe("Words to look for. Leave empty to list everything (bounded)."),
   }),
-  async execute(params, ctx) {
+  async execute(params, _ctx) {
     const query = params.query.trim()
     const hits = await MemoryService.searchEntries(query, 60)
     // Server recall over the indexed drive adds paraphrase matches.
@@ -29,12 +29,6 @@ export const MemoryRecallTool = Tool.define("memory_recall", {
         metadata: { count, ids: [] as string[] },
       }
     }
-    MemoryKernelAdapter.report(
-      "recalled",
-      `Used ${count} memor${count === 1 ? "y" : "ies"} from Memory Drive`,
-      [...hits.map((h) => ({ text: h.text, source: h.entry?.source })), ...extra.map((k) => ({ text: k.text.split("\n")[0], source: k.source ?? "" }))],
-      ctx.sessionID,
-    )
     const lines = hits.map((h) => {
       const e = h.entry
       const meta = e ? ` (id: ${e.id}; source: ${e.source}; added: ${e.added}${e.metadata.memory_type ? `; type: ${e.metadata.memory_type}` : ""})` : ""

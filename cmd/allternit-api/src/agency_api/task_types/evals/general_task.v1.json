@@ -71,41 +71,6 @@
      "requirements_satisfied"
     ]
    }
-  },
-  {
-   "id": "review_abstains_escalates",
-   "goal": "Outline the launch checklist",
-   "script": {
-    "decide": {
-     "G05": "abstain"
-    },
-    "wait": {
-     "G06": "open"
-    }
-   },
-   "expect": {
-    "status": "completed",
-    "visited": [
-     "G05_s2"
-    ]
-   }
-  },
-  {
-   "id": "review_rejects",
-   "goal": "Answer the customer question",
-   "script": {
-    "decide": {
-     "G05": "fail"
-    }
-   },
-   "expect": {
-    "status": "failed",
-    "stopped_at": "G05",
-    "not_visited": [
-     "G05_s2",
-     "G06"
-    ]
-   }
   }
  ]
 }

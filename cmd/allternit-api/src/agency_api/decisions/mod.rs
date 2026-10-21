@@ -11,15 +11,9 @@
 //! The host re-checks that the chosen option is still valid before acting.
 //! A decision is never authorization: policy runs first, always.
 
-pub mod acceptance;
 pub mod backends;
-pub mod descent;
-pub mod embed_head;
 pub mod flywheel;
-pub mod harvest;
-pub mod rules_head;
 pub mod store;
-pub mod training;
 pub mod vendors;
 
 use super::{ApiError, ApiResult, RequestId};
@@ -211,8 +205,7 @@ pub async fn route(chain: &[Box<dyn DecisionBackend>], q: &Query<'_>, thr: f64, 
     let Some((name, a)) = best else {
         return Routed { choice: None, probs: vec![], confidence: 0.0, abstained: true, escalated, backend: None, attempts };
     };
-    // Argmax, never a sample; a tie goes to the earlier option (deterministic).
-    let top = (0..a.probs.len()).rev().max_by(|&i, &j| a.probs[i].total_cmp(&a.probs[j]));
+    let top = (0..a.probs.len()).max_by(|&i, &j| a.probs[i].total_cmp(&a.probs[j]));
     let confidence = if a.abstain { 0.0 } else { top.map(|i| a.probs[i]).unwrap_or(0.0) };
     let abstained = a.abstain || (q.allow_abstain && confidence < thr);
     Routed {
@@ -237,9 +230,9 @@ pub async fn create_decision(
 }
 
 /// In-process entry for hosts inside allternit-api (computer use's
-/// `run_subtask`, the agency driver's S1 nodes): the same validation, routing and store as
+/// `run_subtask`): the same validation, routing and store as
 /// `POST /v1/decisions`, without the HTTP hop. `body` is the request JSON.
-pub async fn decide_value(st: &AppState, user: &AuthUser, body: Value) -> Result<Value, String> {
+pub async fn decide_value(st: &Arc<AppState>, user: &AuthUser, body: Value) -> Result<Value, String> {
     let rid = RequestId(super::store::new_id("req"));
     let d: DecisionIn = serde_json::from_value(body).map_err(|e| format!("invalid decision request: {e}"))?;
     decide(st, user, &rid, &d).await.map_err(|e| e.body["error"]["message"].as_str().unwrap_or("decision failed").to_string())
@@ -253,7 +246,6 @@ pub fn record_outcome(st: &AppState, user: &AuthUser, id: &str, status: &str, la
     let detail: Option<String> = detail.map(|d| d.chars().take(4000).collect());
     match store::set_outcome(&st.db, id, &user.user_id, status, label, detail.as_deref(), &super::store::now()) {
         Ok(Some(_)) => {
-            relabel(&st.db, id, status, label);
             learn(&st.db, id, &user.user_id);
             Ok(())
         }
@@ -262,7 +254,7 @@ pub fn record_outcome(st: &AppState, user: &AuthUser, id: &str, status: &str, la
     }
 }
 
-async fn decide(st: &AppState, user: &AuthUser, rid: &RequestId, d: &DecisionIn) -> Result<Value, ApiError> {
+async fn decide(st: &Arc<AppState>, user: &AuthUser, rid: &RequestId, d: &DecisionIn) -> Result<Value, ApiError> {
     let started = Instant::now();
     validate(d, rid)?;
     let (context, image) = match &d.context {
@@ -302,7 +294,7 @@ async fn decide(st: &AppState, user: &AuthUser, rid: &RequestId, d: &DecisionIn)
 
 #[allow(clippy::too_many_arguments)]
 fn finish(
-    st: &AppState,
+    st: &Arc<AppState>,
     user: &AuthUser,
     rid: &RequestId,
     d: &DecisionIn,
@@ -355,32 +347,16 @@ fn finish(
                 key,
                 ids: q.ids.iter().map(|s| s.to_string()).collect(),
                 has_image,
-                context: context.to_string(),
-                question: q.question.map(str::to_string),
-                texts: q.texts.iter().map(|s| s.to_string()).collect(),
-                vectors: None,
             };
             if let Err(e) = flywheel::record_key(&st.db, &shadow) {
                 tracing::warn!("decision flywheel key: {e}");
             }
-            // Opt-in harvest: training examples for the flywheel's trained heads.
-            let example = harvest::Example {
-                decision_id: &id,
-                scope: &harvest::scope_of(user),
-                kind,
-                created_at: &created_at,
-                context,
-                question: q.question,
-                options: &options,
-                backend,
-                choice: choice.as_deref(),
-                confidence: r.confidence,
-                threshold: thr,
-            };
-            if let Err(e) = harvest::record(&st.db, &example) {
-                tracing::warn!("decision harvest: {e}");
-            }
-            shadow_pass(st.db.clone(), shadow);
+            let db = st.db.clone();
+            off_path(move || {
+                if let Err(e) = flywheel::record_shadow(&db, &shadow) {
+                    tracing::warn!("decision flywheel shadow: {e}");
+                }
+            });
         }
     }
     json!({
@@ -409,33 +385,6 @@ fn off_path(f: impl FnOnce() + Send + 'static) {
             h.spawn_blocking(f);
         }
         Err(_) => f(),
-    }
-}
-
-/// The heads' shadow pass, off the latency path: embed first (async) when an
-/// embedding head will run, then the SQLite work on the blocking pool.
-fn shadow_pass(db: crate::db::DbHandle, mut shadow: flywheel::Shadow) {
-    let record = |db: &crate::db::DbHandle, shadow: &flywheel::Shadow| {
-        if let Err(e) = flywheel::record_shadow(db, shadow) {
-            tracing::warn!("decision flywheel shadow: {e}");
-        }
-    };
-    match tokio::runtime::Handle::try_current() {
-        Ok(h) => {
-            h.spawn(async move {
-                flywheel::prepare_shadow(&db, &mut shadow).await;
-                let _ = tokio::task::spawn_blocking(move || record(&db, &shadow)).await;
-            });
-        }
-        Err(_) => record(&db, &shadow),
-    }
-}
-
-/// An outcome landed: relabel the decision's harvested example, if any.
-fn relabel(db: &crate::db::DbHandle, id: &str, status: &str, label: Option<&str>) {
-    let res = db.connect().and_then(|c| harvest::on_outcome(&c, id, status, label, &super::store::now()));
-    if let Err(e) = res {
-        tracing::warn!("decision harvest outcome: {e}");
     }
 }
 
@@ -484,7 +433,6 @@ pub async fn patch_decision(
     }
     match store::set_outcome(&st.db, &id, &user.user_id, &o.status, o.label.as_deref(), o.detail.as_deref(), &super::store::now()) {
         Ok(Some(v)) => {
-            relabel(&st.db, &id, &o.status, o.label.as_deref());
             learn(&st.db, &id, &user.user_id);
             Ok(Json(v).into_response())
         }
@@ -497,7 +445,3 @@ pub async fn patch_decision(
 mod tests;
 #[cfg(test)]
 mod flywheel_tests;
-#[cfg(test)]
-mod training_tests;
-#[cfg(test)]
-mod acceptance_tests;

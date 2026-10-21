@@ -5,3 +5,7 @@
 ao/swarm-mirofish   # Eoj 2026-09-18: real feature work (90 commits), "needs to be worked out more"
 ao/p8-d             # Swarm D permission policies, likely part of swarm-mirofish effort
 wip/cloud-api-quota-oauth-0915   # 2026-09-25: rescued uncommitted shared-checkout work (cloud-api api_keys/quota + gizzi oauth quota); owner unknown, preserved for pickup
+ao/voice-callworker   # 2026-10-03: voice-swarm branch, tip today, local==origin (not abandoned); unmerged — Eoj decides merge vs delete (see .steering/checkpoint.md)
+ao/voice-engine-p1    # 2026-10-03: voice engine phase 1, tip today, local==origin; unmerged — owner decision pending
+ao/voice-integrate    # 2026-10-03: voice integration branch (+36 commits), tip today, local==origin; unmerged — owner decision pending
+ao/voice-session      # 2026-10-03: voice session Track B notes+code, tip today, local==origin; unmerged — owner decision pending

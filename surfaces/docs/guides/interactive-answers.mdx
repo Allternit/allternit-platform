@@ -1,11 +1,9 @@
 ---
 title: 'Interactive answers'
-description: 'Cards and inline apps in assistant replies: what they can do, the Layout and visuals setting, live data from your connectors, how they stream, and how the app tells the model about them.'
+description: 'Cards in assistant replies: what they can do, the Layout and visuals setting, live data from your connectors, and how the app tells the model about them.'
 ---
 
-An assistant reply can include an interactive card: metrics, tables, line, area, bar and pie charts, tabs, timelines, checklists, steps, comparisons, and inputs that recompute on the page. Cards can also show live data from your connected apps and, with your approval each time, make changes through them. The model doesn't write HTML or code for a card. It picks from a fixed set of 38 Allternit components, and the app builds the card piece by piece while the reply streams.
-
-When the components can't do the job (sound, a drawing canvas, a game, a simulation), the assistant can instead put a small **inline app** in the reply: a self-contained HTML and JavaScript app that runs in a sandbox, with no network, styled to match the app.
+An assistant reply can include an interactive card: metrics, tables, bar charts, steps, comparisons, and inputs that recompute on the page. Cards can also show live data from your connected apps and, with your approval each time, make changes through them. The model doesn't write HTML or code. It picks from a fixed set of Allternit components, and the app renders them while the reply streams.
 
 Cards work the same in Chat, Cowork, Code, bot threads, the HUD and Design mode, on Desktop, ai.allternit.com (including the phone layout) and the m.allternit.com app.
 
@@ -13,8 +11,7 @@ Cards work the same in Chat, Cowork, Code, bot threads, the HUD and Design mode,
 
 - **Inputs update instantly.** Moving a slider or changing a number recomputes the card on your device. Nothing is sent to the model.
 - **Buttons and numbered choices** send their label to the assistant as your next message.
-- **What you set is remembered.** Reopen the chat and the card is as you left it, on any device you're signed in on: what you set is saved with the message. The device you used keeps a copy too, so it also works offline and on older servers.
-- **A card that can't be drawn still says what it meant.** If part of a card can't be shown, the rest still renders and a short note lists what was left out. If nothing can be drawn, the card's text appears instead (its title, numbers, rows and options), never a blank box or raw code.
+- **What you set is remembered.** Reopen the chat and the card is as you left it. This is kept on the device you used.
 - **Live data** comes from your connected apps (Settings → Connectors). A card that reads data loads it when it opens. A card that changes data only does so when you press its button, and shows an **Allow** bar with the exact tool and arguments first. Nothing changes until you approve. **Cancel** leaves everything as it was.
 - **Numbers say where they come from.** Every metric carries a note: your input, an estimate, or a named source.
 
@@ -31,7 +28,7 @@ The setting is saved on each device, like the Memory switches. On phones it's in
 
 ### In Slack, Telegram, email and other channels
 
-Channels can't show cards, so a card in a bot's reply is sent there as readable text: the title, numbers (worked out from the card's starting values), table rows, chart values, steps, and numbered options with "Reply with a number or the option." Voice calls read the card aloud the same way. If a card can't be read, it becomes one line saying to open the reply in Allternit. An inline app always becomes one line naming it. The raw card code and app source are never posted. This covers Slack, Discord, Telegram, WhatsApp, Teams, SMS, email and voice (allternit-api `openui_text.rs`).
+Channels can't show cards, so a card in a bot's reply is sent there as readable text: the title, numbers (worked out from the card's starting values), table rows, steps, and numbered options with "Reply with a number or the option." Voice calls read the card aloud the same way. If a card can't be read, it becomes one line saying to open the reply in Allternit. The raw card code is never posted. This covers Slack, Discord, Telegram, WhatsApp, Teams, SMS, email and voice (allternit-api `openui_text.rs`).
 
 ## For developers
 
@@ -40,19 +37,12 @@ Source: `allternit-ai/src/lib/openui/`:
 | File | Role |
 | --- | --- |
 | `answers-library.tsx` | The component library, plus `interactiveAnswersPrompt()`, the model manual generated from the same schemas. |
-| `answers-more.tsx` | The layout, display, chart and extra input components, and the design tokens the model can name. |
-| `InteractiveAnswer.tsx` | Renders one card: progressive streaming, actions, saved state, tool calls, the **Allow** bar, failure fallback. |
-| `card-stream.ts` | Cuts a streaming card after its last complete statement. |
-| `card-text.ts` | A card as readable text (the fallback when it can't be drawn) and the parser's diagnostics. |
-| `card-meta.tsx` | The server's checks and the state saved with each message, provided per message by the transcript. |
-| `catalog.json` | The catalog as the server sees it (names, parameter order, required parameters); a test keeps it in step with the library. |
+| `InteractiveAnswer.tsx` | Renders one card: actions, saved state, tool calls, the **Allow** bar. |
 | `openui-fences.ts` | Splits reply text into markdown and card fences (also while streaming). |
 | `answer-instructions.ts` | Builds the manual sent with each chat turn; empty when Settings says Text only. |
 | `card-tools.ts` | The user's connector tools for `Query()`/`Mutation()` and the rules for running them. |
 | `card-state.ts` | Per-card saved state on the device. |
 | `answer-prefs.ts` | The Layout and visuals setting. |
-
-Inline apps: `allternit-ai/src/lib/apps/inline-app.ts` (document, theme variables, manual) and `src/components/ai-elements/InlineAppFrame.tsx` (the frame, previews and watchdog). Server side: allternit-api `openui_text.rs` (card text, `check_reply`/`check_card`), `card_meta.rs` (checks and card state per message, migration `V251__message_card_meta.sql`) and the `card_check` frame in the chat bridge (`v1_routes.rs`).
 
 Built on [OpenUI](https://www.openui.com/docs) (`@openuidev/react-lang`, MIT).
 
@@ -75,7 +65,7 @@ ask = Button("Round up each share")
 ```
 ````
 
-Text before and after the fence renders as normal markdown. While a fence is still streaming, the card is drawn up to its last complete statement (every bracket closed, no string left open), so components appear whole, one at a time, and a number never shows half-typed. Until the `root = …` line has arrived, the card's shape holds its place. Unknown components and broken lines are skipped; the rest of the card still renders.
+Text before and after the fence renders as normal markdown. An unclosed fence at the end of a streaming reply renders as far as it has arrived. Unknown components and broken lines are skipped; the rest of the card still renders.
 
 ### Live data: Query and Mutation
 
@@ -106,39 +96,14 @@ The rules are enforced in `card-tools.ts`, not only in the prompt:
 
 ### Design
 
-Cards follow common inline-card guidelines for chat apps, on Allternit's neutral polish tokens: system type within body and body-small sizes, a title, at most two actions in the footer, no scrolling inside the card, WCAG AA contrast, light and dark themes, and 44 px touch targets on phones. Each card has two zones: a controls panel (a Section holding inputs, shown as a soft inset with white fields) and the result, where the first Metric in a row is shown large as the answer and the rest are listed beside it. Number fields show grouped values (10,000) and whole currency amounts drop the cents. Result numbers animate only right after you change an input; the first paint and data refreshes show the value at once. While a card streams in, each new component slides in, text fades in, bars grow, lines draw and the card's height eases to fit, with a mono working beam after 1.5 s; a card loaded from history appears at once. Nothing animates with reduced motion on. Spacing, radius and chart colours are design tokens (`gap: "xs" | "sm" | "md" | "lg"`, `--iu-series-1…6`), so the model never writes pixels or colours. The manual asks for one short sentence before the card, and tells the model not to repeat the card's numbers in its text.
+Cards follow common inline-card guidelines for chat apps, on Allternit's neutral polish tokens: system type within body and body-small sizes, a title, at most two actions in the footer, no scrolling inside the card, WCAG AA contrast, light and dark themes, and 44 px touch targets on phones. Each card has two zones: a controls panel (a Section holding inputs, shown as a soft inset with white fields) and the result, where the first Metric in a row is shown large as the answer and the rest are listed beside it. Number fields show grouped values (10,000) and whole currency amounts drop the cents. Result numbers animate only right after you change an input; the first paint, streaming and data refreshes show the value at once, and nothing animates with reduced motion on. While a card streams, one steady placeholder holds its place (its title, "Building card" and the card's shape, with a mono working beam after 1.5 s), so numbers never flash in digit by digit. The finished card replaces it once with a short fade. The manual asks for one short sentence before the card, and tells the model not to repeat the card's numbers in its text.
 
 ### What runs where
 
 - **On the page (deterministic):** `$name` state, expressions (`+ - * /`, comparisons, `?:`) and `@` built-ins are evaluated by the OpenUI runtime. No `eval`, no network, no model call.
 - **Through the user's connectors:** `Query()` and `Mutation()`, under the rules above.
 - **Back to the model:** a `Button` without an action, and `Choice`, send their label as the next user message.
-- Links open only when they are `http(s)`; `Image` and `Link` components take `https` URLs only, and images load with no referrer. No other card code runs.
-- **Inline apps** (below) are the one place model-written code runs, and only in the sandbox.
-
-### Server check
-
-At the end of every chat turn, allternit-api checks each card the reply wrote against the catalog (`openui_catalog.json`, a copy of the app's `catalog.json`): unknown components, too many or too few values, names used but never defined, a missing `root`, lines that can't be read. It sends the result to the app as a `card_check` frame (per card: its key, the diagnostics and the card as text) and stores it with the message, so a reload shows the same.
-
-What the user sets on a card is saved with the message through `PUT /api/v1/agent-sessions/:id/messages/:messageId/card-state` (merged per card, at most 32 cards and 16 KB per card), and comes back with the history from `GET /api/v1/agent-sessions/:id/card-meta`. Rows belong to the user who wrote them.
-
-### Inline apps
-
-When a card's components can't do it, the model writes a fenced block tagged `app` with a title:
-
-````markdown
-```app title="Drum machine"
-<div class="pads">…</div>
-<style>.pads { color: var(--viz-text); background: var(--viz-panel); }</style>
-<script>/* Web Audio … */</script>
-```
-````
-
-- It runs inline in the reply through the MCP sandbox proxy: another site (so another process under site isolation), an opaque origin, `connect-src 'none'`, scripts and styles only inline or from the library CDNs pages may use.
-- It gets the app's theme as CSS variables (`--viz-text`, `--viz-text-2`, `--viz-text-3`, `--viz-card`, `--viz-panel`, `--viz-panel-2`, `--viz-border`, `--viz-border-strong`, `--viz-accent`, the status colours, `--font-sans`, `--font-mono`, and the MCP Apps `--color-*` names), updated live when you switch light or dark. HTML artifacts that use these variables follow the theme in the artifact window too.
-- The frame grows with the app. While the reply streams, its markup and styles show as a preview with scripts removed; the app starts once the fence closes.
-- A heartbeat watchdog closes an app that stops responding (an endless loop) and offers **Restart**. It only judges an app that's on screen in a visible tab.
-- Model-made JSX previews and the older `sandbox` reply parts run the same way, never in the app's own page.
+- Links open only when they are `http(s)`. No other code runs. Anything that needs real code stays an artifact.
 
 ### Components
 
@@ -160,26 +125,6 @@ When a card's components can't do it, the model writes a fenced block tagged `ap
 | `Toggle` | `(label, $value)` | Writes `true`/`false`. |
 | `Button` | `(label, action?, variant?)` | No action: sends the label to the model. With `Action([...])`: runs those steps. Put buttons in `Answer`'s actions. |
 | `Choice` | `(question, options)` | Numbered options; the pick is sent to the model. |
-| `Stack` | `(children, direction?, gap?)` | `vertical` (default) or `horizontal`; `gap`: `xs`, `sm`, `md`, `lg`. |
-| `Grid` | `(children, columns?, gap?)` | 2–4 equal columns; one column on phones. |
-| `Panel` | `(title?, children)` | A soft inset box, e.g. one option in a Grid. |
-| `Divider` | `()` | A thin line. |
-| `Tabs` / `Tab` | `(tabs)` / `(title, children)` | 2–5 views; switching is local. |
-| `Collapsible` | `(title, children, open?)` | Details the user can open. |
-| `Badge` | `(label, tone?)` | `neutral`, `info`, `success`, `warning`, `danger`. |
-| `KeyValue` | `(items, format?, unit?)` | `[{ "label", "value" }]`; values may be expressions. |
-| `List` | `(items)` | Bullets. |
-| `Quote` | `(content, cite?)` | A quotation. |
-| `Code` | `(content, language?)` | A snippet in monospace; never run. |
-| `Timeline` | `(items)` | `[{ "time", "title", "detail" }]`. |
-| `Image` | `(src, alt, caption?, ratio?)` | `https` only; `wide`, `square`, `tall`. |
-| `Link` | `(label, url)` | `https` only; opens in a new tab. |
-| `Progress` | `(label, value, max?, format?, unit?)` | Progress toward a goal. |
-| `LineChart` / `AreaChart` | `(labels, values?, series?, format?, unit?)` | One line from `values`, or up to 6 from `series: [{ "name", "values" }]`; hover shows values. |
-| `PieChart` | `(labels, values, format?, unit?)` | 2–6 slices as a ring with a legend and percentages. |
-| `TextField` | `(label, $value, placeholder?)` | Writes a string. |
-| `DateField` | `(label, $value)` | Writes `YYYY-MM-DD`. |
-| `Checklist` | `(label?, items, $value)` | Writes the ticked items; `@Count($done)` works in expressions. |
 
 ### Model instructions
 
@@ -187,7 +132,7 @@ The app, not gizzi-code, sends the manual. On every chat turn it builds `interac
 
 - Each build only asks for the components it can render, and older Desktop builds never get instructions they can't show.
 - The terminal (`gizzi` TUI) and channels never get the manual.
-- **Text only** sends nothing (no card manual and no inline-apps manual).
+- **Text only** sends nothing.
 - With the same tools, the text is byte-identical turn to turn, so it stays in the provider's prompt cache. A send waits at most 1.5 s for the connector tool list, then goes without tools.
 
 The manual is generated from the component schemas, so it can't drift from the renderer. The same manual and a live preview are in **UI Forge**, a playground for writing and checking cards.

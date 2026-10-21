@@ -18,13 +18,8 @@
 //! and [`catalog_contract`] / [`criteria`] from `catalog` (small hooks marked
 //! "WP-X1 hook"). WP-X2: `executor::generic` drives these graphs for real,
 //! behind the [`ENABLE_ENV`] per-type enable list.
-//!
-//! B1: `cognitive_role: "S1"` nodes are live decisions ([`s1`]): a typed
-//! choice through the Decision Runtime, journaled per (run, node), with an
-//! S2 twin (`x-twin_of`) on the ESCALATE edge for abstentions.
 
 pub mod runner;
-pub mod s1; // B1: live S1 decision nodes
 #[cfg(test)]
 mod exec_tests;
 
@@ -122,45 +117,17 @@ pub fn graph(t: &TaskType) -> Result<ComputeGraph> {
 /// a writing graph has none, or a resource has the wrong scheme. Policy still
 /// has to authorize the actual effect at the graph's POLICY node.
 pub fn instantiate(t: &TaskType, task_id: &str, writable: &[String]) -> Result<ComputeGraph> {
-    bind(graph(t)?, t.id, t.write_scheme, task_id, writable)
-}
-
-/// C6: the TaskIR key a run's pinned harness graph version lives under
-/// (`{task_type, graph_id, version, graph}`; absent = the shipped graph).
-pub const GRAPH_VERSION_KEY: &str = "graph_version";
-
-/// The unbound graph a run was compiled with: its pinned harness version
-/// (C6), else the shipped one.
-pub fn graph_for_ir(t: &TaskType, ir: &Value) -> Result<ComputeGraph> {
-    match ir.get(GRAPH_VERSION_KEY).map(|v| &v["graph"]).filter(|g| g.is_object()) {
-        Some(g) => Ok(ComputeGraph::from_json(&g.to_string())?),
-        None => graph(t),
-    }
-}
-
-/// [`instantiate`] for a compiled run: pinned harness version, else shipped.
-pub fn instantiate_for_ir(t: &TaskType, ir: &Value, task_id: &str, writable: &[String]) -> Result<ComputeGraph> {
-    bind(graph_for_ir(t, ir)?, t.id, t.write_scheme, task_id, writable)
-}
-
-/// The graph as the compiled TaskIR carries it (`nodes`, `edges`, `wih_policy`).
-pub fn template_graph_of(g: &ComputeGraph, writable: &[String], graph_id: &str, task_id: &str) -> Result<TemplateGraph> {
-    to_template_graph(g, writable, graph_id, task_id)
-}
-
-/// Bind a graph to a task id and its declared writable resources, then
-/// validate it (shared by [`instantiate`] and replays of candidate graphs).
-pub fn bind(mut g: ComputeGraph, label: &str, write_scheme: Option<&str>, task_id: &str, writable: &[String]) -> Result<ComputeGraph> {
     if task_id.is_empty() {
-        bail!("{label} requires a task id");
+        bail!("{} requires a task id", t.id);
     }
+    let mut g = graph(t)?;
     g.task_id = Some(task_id.to_owned());
-    match write_scheme {
-        None if !writable.is_empty() => bail!("{label} never writes; declare no writable resources"),
+    match t.write_scheme {
+        None if !writable.is_empty() => bail!("{} never writes; declare no writable resources", t.id),
         None => {}
         Some(scheme) => {
             if writable.is_empty() {
-                bail!("{label} requires declared writable resources");
+                bail!("{} requires declared writable resources", t.id);
             }
             for r in writable {
                 let ok = match r.split_once(':') {
@@ -168,7 +135,7 @@ pub fn bind(mut g: ComputeGraph, label: &str, write_scheme: Option<&str>, task_i
                     None => false,
                 };
                 if !ok {
-                    bail!("{label} writable resources must be `{}:<ref>` refs (got `{r}`)", if scheme.is_empty() { "<scheme>" } else { scheme });
+                    bail!("{} writable resources must be `{}:<ref>` refs (got `{r}`)", t.id, if scheme.is_empty() { "<scheme>" } else { scheme });
                 }
             }
             for n in g.nodes.iter_mut().filter(|n| binds_write_set(n)) {
@@ -179,7 +146,7 @@ pub fn bind(mut g: ComputeGraph, label: &str, write_scheme: Option<&str>, task_i
     }
     let errors = graph::validate(&g, PrimitiveRegistry::global());
     if !errors.is_empty() {
-        bail!("invalid {label} graph: {errors:?}");
+        bail!("invalid {} graph: {errors:?}", t.id);
     }
     Ok(g)
 }

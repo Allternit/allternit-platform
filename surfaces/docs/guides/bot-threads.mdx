@@ -48,18 +48,7 @@ A bot's own chat (its main chat or one of its threads) can hand a task to anothe
 - **Ownership.** The calling bot comes from the chat's session, never from the model's input, and the target must belong to the same account. Group rooms, regular chats and subagents do not get the tool.
 - **Terminal bots** (made with `gizzi agents bot`, kept in `~/.gizzi/bots`) keep the inbox model: the message lands in the target's inbox and its reply arrives later as a background message.
 
-In the chat's process block the call reads **Handed to Scout**, with a **receipt chip** beside it that shows how far the hand-off got: **Delivered**, then **Read** (the target started its turn), then **Answered**. A failed turn reads **Failed** with the reason. On a phone the chip wraps under the line.
-
-### Receipts, the loop guard and retries
-
-- **Receipts.** Every hand-off is recorded as a hop with a state: `stored → delivered → read → answered`, or `failed` / `held` with a reason. The tool result carries it as `receipt`.
-- **Loop guard.** Two bots can pass at most **12 messages in 10 minutes** (either direction), a chain can be at most **8 bots deep**, and a hand-off that sends the same text back to a bot already on the chain is refused. A held hand-off is not delivered; the caller gets a one-sentence "Held: …" and a **loop guard** item appears in your attention list. Terminal (gizzi) bots get the same 12-in-10-minutes guard from their inbox.
-- **Retries are safe.** The tool sends an idempotency key made from the session and the tool call, so a retried call returns the earlier result instead of asking the bot twice.
-- **One trace.** The hand-off carries a W3C `traceparent` header, so the whole chain (for example Grok to A:// to Gizzi) shares one trace id.
-
-## Timeline
-
-The thread pane has a **Timeline** section: the hand-offs, events and model windows of the thread as one tree. Each hand-off shows its receipt, how long it took, and the model and tokens where they were recorded. It is built from Allternit's own ledger, so it works with OpenTelemetry off. Cost per hop and OpenTelemetry spans are not part of it yet.
+In the chat's process block the call reads **Handed to Scout**.
 
 ## Context generations
 
@@ -86,8 +75,7 @@ These authenticated routes belong to the private Allternit API data plane, norma
 | PUT | `/api/v1/threads/:id/deps` | Set dependencies. |
 | GET | `/api/v1/threads/:id/events` | Read lifecycle events. |
 | POST | `/api/v1/bot-routing/roster` | `{sessionId}` → the bot behind a bot chat session and the account's other bots. 404 when the session is not a bot's chat. |
-| POST | `/api/v1/bot-routing/message` | `{sessionId, target, message, waitSeconds?, idempotencyKey?}` plus an optional `traceparent` header → start or continue the target bot's task thread; returns `status` (`done` with `reply`, `started`, or `failed`), `threadId`, `bot` and `receipt` (`{state, hopId, reason?}`). A replayed `idempotencyKey` returns the earlier result with `replayed: true`. 429 when the loop guard holds the hand-off. |
-| GET | `/api/v1/threads/:id/timeline` | The thread's span tree: `{threadId, traceIds, spans: [{kind: hop \| event \| generation, state, latencyMs, model, tokensIn, tokensOut, children}]}`. |
+| POST | `/api/v1/bot-routing/message` | `{sessionId, target, message, waitSeconds?}` → start or continue the target bot's task thread; returns `status` (`done` with `reply`, `started`, or `failed`), `threadId` and `bot`. |
 
 Continue with [project coordination](/guides/project-coordination) or [artifact modes](/guides/artifact-modes).
 

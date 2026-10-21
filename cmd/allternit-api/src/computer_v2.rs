@@ -387,44 +387,26 @@ struct ResolvedForUse {
 pub fn credential_backends() -> Vec<(&'static str, bool)> {
     vec![
         ("vault", true),
-        ("keychain", OS_KEYCHAIN_SUPPORTED),
+        ("keychain", cfg!(target_os = "macos")),
         ("bitwarden", which_like("bw")),
         ("onepassword", which_like("op")),
     ]
 }
 
-/// The OS credential store backs source "keychain": the macOS Keychain or
-/// the Windows Credential Manager. Elsewhere there is none.
-const OS_KEYCHAIN_SUPPORTED: bool = cfg!(any(target_os = "macos", target_os = "windows"));
-
-/// What source "keychain" is called on this OS, for messages.
-const OS_KEYCHAIN_NAME: &str = if cfg!(target_os = "windows") {
-    "this computer's Windows Credential Manager"
-} else {
-    "this Mac's Keychain"
-};
-
 fn which_like(name: &str) -> bool {
-    find_on_path(name).is_some()
-}
-
-/// Find a CLI on PATH. PATH is split with the OS's list separator (`:` on
-/// Unix, `;` on Windows), not the directory separator; on Windows the
-/// executable extensions are tried too (`bw` from npm is `bw.cmd`).
-fn find_on_path(name: &str) -> Option<std::path::PathBuf> {
-    find_in_path_list(&std::env::var_os("PATH")?, name, cfg!(windows))
-}
-
-fn find_in_path_list(paths: &std::ffi::OsStr, name: &str, windows: bool) -> Option<std::path::PathBuf> {
-    let names: Vec<String> = if windows {
-        vec![format!("{name}.exe"), format!("{name}.cmd"), format!("{name}.bat"), name.to_string()]
-    } else {
-        vec![name.to_string()]
-    };
-    std::env::split_paths(paths)
-        .filter(|dir| !dir.as_os_str().is_empty())
-        .flat_map(|dir| names.iter().map(move |n| dir.join(n)))
-        .find(|p| p.is_file())
+    let paths = std::env::var("PATH").unwrap_or_default();
+    paths.split(std::path::MAIN_SEPARATOR).any(|dir| {
+        let mut p = std::path::PathBuf::from(dir);
+        p.push(name);
+        #[cfg(windows)]
+        {
+            if p.exists() {
+                return true;
+            }
+            p.set_extension("exe");
+        }
+        p.exists()
+    })
 }
 
 /// macOS Keychain backend: generic passwords under the `allternit.computer`
@@ -443,90 +425,20 @@ async fn keychain_secret(name: &str) -> Result<Option<String>, Fail> {
     Ok(Some(String::from_utf8_lossy(&out.stdout).trim_end().to_string()))
 }
 
-/// Windows Credential Manager backend: generic credentials whose target is
-/// `allternit.computer/<name>` (add one with
-/// `cmdkey /generic:allternit.computer/<name> /user:<name> /pass:<value>`).
-/// Only "not found" falls through; any other failure is an error.
-#[cfg(target_os = "windows")]
-async fn keychain_secret(name: &str) -> Result<Option<String>, Fail> {
-    let target = format!("allternit.computer/{name}");
-    tokio::task::spawn_blocking(move || wincred_read(&target))
-        .await
-        .map_err(|e| Fail::from(format!("couldn't reach the Windows Credential Manager: {e}")))?
-}
-
-#[cfg(target_os = "windows")]
-fn wincred_read(target: &str) -> Result<Option<String>, Fail> {
-    use windows_sys::Win32::Foundation::{GetLastError, ERROR_NOT_FOUND};
-    use windows_sys::Win32::Security::Credentials::{CredFree, CredReadW, CREDENTIALW, CRED_TYPE_GENERIC};
-
-    let wide: Vec<u16> = target.encode_utf16().chain(std::iter::once(0)).collect();
-    let mut cred: *mut CREDENTIALW = std::ptr::null_mut();
-    // SAFETY: `wide` is NUL-terminated and outlives the call; `cred` is an out-pointer.
-    let ok = unsafe { CredReadW(wide.as_ptr(), CRED_TYPE_GENERIC, 0, &mut cred) };
-    if ok == 0 {
-        // SAFETY: reads this thread's last-error value.
-        let err = unsafe { GetLastError() };
-        if err == ERROR_NOT_FOUND {
-            return Ok(None);
-        }
-        return Err(Fail::from(format!("couldn't read the Windows Credential Manager (error {err})")));
-    }
-    // SAFETY: CredReadW succeeded, so `cred` points at a valid CREDENTIALW whose
-    // blob is CredentialBlobSize bytes; it is freed exactly once below.
-    let bytes = unsafe {
-        let c = &*cred;
-        if c.CredentialBlob.is_null() || c.CredentialBlobSize == 0 {
-            Vec::new()
-        } else {
-            std::slice::from_raw_parts(c.CredentialBlob, c.CredentialBlobSize as usize).to_vec()
-        }
-    };
-    unsafe { CredFree(cred as *const std::ffi::c_void) };
-    Ok(Some(decode_credential_blob(&bytes)))
-}
-
-/// Credential Manager blobs written by cmdkey and the Control Panel are
-/// UTF-16LE; other tools store UTF-8. A NUL byte means UTF-16 (UTF-8 text
-/// never has one); otherwise valid UTF-8 wins, then UTF-16.
-#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
-fn decode_credential_blob(bytes: &[u8]) -> String {
-    let utf16 = || {
-        if bytes.len() % 2 != 0 {
-            return None;
-        }
-        let units: Vec<u16> = bytes.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
-        String::from_utf16(&units).ok()
-    };
-    if bytes.contains(&0) {
-        if let Some(s) = utf16() {
-            return s.trim_end_matches('\0').to_string();
-        }
-    }
-    match std::str::from_utf8(bytes) {
-        Ok(s) => s.to_string(),
-        Err(_) => utf16().unwrap_or_else(|| String::from_utf8_lossy(bytes).into_owned()),
-    }
-}
-
-/// No OS credential store here: an explicit `source: "keychain"` is an
-/// error, never a silent "not found".
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+#[cfg(not(target_os = "macos"))]
 async fn keychain_secret(_name: &str) -> Result<Option<String>, Fail> {
-    Err(Fail::from(
-        "source \"keychain\" isn't available on this OS (it uses the macOS Keychain or the Windows Credential Manager); use source \"vault\", \"bitwarden\" or \"onepassword\"",
-    ))
+    Ok(None)
 }
 
 /// Bitwarden CLI adapter (team vaults). Needs `bw` on PATH and an unlocked
 /// session (`BW_SESSION`); the item is looked up by name.
 async fn bitwarden_secret(name: &str) -> Result<Option<String>, Fail> {
-    let Some(bw) = find_on_path("bw") else {
+    if !which_like("bw") {
         return Err(Fail::from(
             "the Bitwarden CLI (bw) isn't installed on this computer; install it or use source \"vault\" or \"keychain\"",
         ));
-    };
-    let out = tokio::process::Command::new(bw)
+    }
+    let out = tokio::process::Command::new("bw")
         .args(["get", "password", name])
         .env("BW_SESSION", std::env::var("BW_SESSION").unwrap_or_default())
         .kill_on_drop(true)
@@ -542,12 +454,12 @@ async fn bitwarden_secret(name: &str) -> Result<Option<String>, Fail> {
 /// 1Password CLI adapter (team vaults). Needs `op` on PATH and a signed-in
 /// account; reads the item's password field.
 async fn onepassword_secret(name: &str) -> Result<Option<String>, Fail> {
-    let Some(op) = find_on_path("op") else {
+    if !which_like("op") {
         return Err(Fail::from(
             "the 1Password CLI (op) isn't installed on this computer; install it or use source \"vault\" or \"keychain\"",
         ));
-    };
-    let out = tokio::process::Command::new(op)
+    }
+    let out = tokio::process::Command::new("op")
         .args(["item", "get", name, "--fields", "label=password", "--reveal"])
         .kill_on_drop(true)
         .output()
@@ -560,7 +472,7 @@ async fn onepassword_secret(name: &str) -> Result<Option<String>, Fail> {
 }
 
 /// Resolve the credential from the requested source (the sealed vault, then
-/// the OS credential store — macOS Keychain / Windows Credential Manager — by default). Never logs the value.
+/// this Mac's Keychain by default). Never logs the value.
 async fn resolve_credential(user: &AuthUser, input: &Value) -> Result<ResolvedForUse, Fail> {
     let name = input.get("name").and_then(Value::as_str).unwrap_or_default();
     if name.is_empty() {
@@ -575,7 +487,7 @@ async fn resolve_credential(user: &AuthUser, input: &Value) -> Result<ResolvedFo
             return Ok(ResolvedForUse { credential_type, value, bind });
         }
     }
-    if (source.is_none() && OS_KEYCHAIN_SUPPORTED) || source == Some("keychain") {
+    if source.is_none() || source == Some("keychain") {
         if let Some(value) = keychain_secret(name).await? {
             return Ok(ResolvedForUse { credential_type: crate::aci_credentials::CredentialType::Env, value, bind: None });
         }
@@ -592,18 +504,10 @@ async fn resolve_credential(user: &AuthUser, input: &Value) -> Result<ResolvedFo
     }
     let where_ = match source {
         Some(s) => format!("source '{s}'"),
-        None if OS_KEYCHAIN_SUPPORTED => format!("the vault or {OS_KEYCHAIN_NAME}"),
-        None => "the vault".to_string(),
-    };
-    let os_hint = if cfg!(target_os = "windows") {
-        " or `cmdkey /generic:allternit.computer/<name> /user:<name> /pass:<value>`"
-    } else if cfg!(target_os = "macos") {
-        " or `security add-generic-password -s allternit.computer -a <name> -w`"
-    } else {
-        ""
+        None => "the vault or this Mac's Keychain".to_string(),
     };
     Err(Fail::from(format!(
-        "no credential named '{name}' in {where_}. Add one with POST /api/aci/credentials{os_hint}."
+        "no credential named '{name}' in {where_}. Add one with POST /api/aci/credentials or `security add-generic-password -s allternit.computer -a <name> -w`."
     )))
 }
 
@@ -691,39 +595,6 @@ async fn use_credential(user: &AuthUser, target: &Target, input: &Value) -> Resu
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn path_lookup_splits_on_the_list_separator_not_the_dir_separator() {
-        let a = tempfile::tempdir().unwrap();
-        let b = tempfile::tempdir().unwrap();
-        std::fs::write(b.path().join("bw"), b"").unwrap();
-        let list = std::env::join_paths([a.path(), b.path()]).unwrap();
-        assert_eq!(super::find_in_path_list(&list, "bw", false), Some(b.path().join("bw")));
-        assert_eq!(super::find_in_path_list(&list, "op", false), None);
-        // A directory named like the tool is not the tool.
-        std::fs::create_dir(a.path().join("op")).unwrap();
-        assert_eq!(super::find_in_path_list(&list, "op", false), None);
-    }
-
-    #[test]
-    fn path_lookup_tries_windows_executable_extensions() {
-        let a = tempfile::tempdir().unwrap();
-        std::fs::write(a.path().join("bw.cmd"), b"").unwrap();
-        std::fs::write(a.path().join("op.exe"), b"").unwrap();
-        let list = std::env::join_paths([a.path()]).unwrap();
-        assert_eq!(super::find_in_path_list(&list, "bw", true), Some(a.path().join("bw.cmd")));
-        assert_eq!(super::find_in_path_list(&list, "op", true), Some(a.path().join("op.exe")));
-        assert_eq!(super::find_in_path_list(&list, "bw", false), None);
-    }
-
-    #[test]
-    fn credential_blobs_decode_utf16_from_cmdkey_and_utf8_from_others() {
-        let utf16: Vec<u8> = "hunter2".encode_utf16().flat_map(|u| u.to_le_bytes()).collect();
-        assert_eq!(super::decode_credential_blob(&utf16), "hunter2");
-        assert_eq!(super::decode_credential_blob(b"abcd"), "abcd");
-        assert_eq!(super::decode_credential_blob("pässwörd".as_bytes()), "pässwörd");
-        assert_eq!(super::decode_credential_blob(b""), "");
-    }
-
     use super::*;
     use serde_json::json;
 

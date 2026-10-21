@@ -76,27 +76,3 @@ test("path-scoped skills remain hidden until a matching file is touched", async 
     },
   })
 })
-
-test("craft built-ins load from their extracted folder and user skills still override them", async () => {
-  await using project = await tmpdir({
-    git: true,
-    init: async (root) => {
-      await writeSkill(root, ".gizzi/skills/ui-motion", "ui-motion", "Project override of ui-motion")
-    },
-  })
-  await Instance.provide({
-    directory: project.path,
-    fn: async () => {
-      for (const name of ["motion-reel", "brush-film", "film-studio", "visual-design", "generative-art"]) {
-        const skill = await Skill.get(name)
-        expect({ name, source: skill?.source, builtin: skill?.builtin }).toEqual({ name, source: "builtin", builtin: true })
-        expect(await Bun.file(skill!.location).exists()).toBe(true)
-        expect(skill!.content).not.toContain("${SKILL_DIR}")
-      }
-      const override = await Skill.get("ui-motion")
-      expect(override?.description).toBe("Project override of ui-motion")
-      const shadowed = (await Skill.collisions()).find((item) => item.name === "ui-motion")?.shadowed ?? []
-      expect(shadowed.some((item) => item.builtin)).toBe(true)
-    },
-  })
-})

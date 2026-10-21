@@ -17,6 +17,5 @@ pub mod team;
 pub mod team_apply;
 pub mod team_pack;
 pub mod team_plan;
-pub mod trust;
 pub mod view;
 pub mod whoami;

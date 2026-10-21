@@ -57,12 +57,7 @@ curl -fsSL https://install.allternit.com/install | bash
 or download the DMG from `https://github.com/Allternit/desktop/releases/latest`.
 
 Release builds are produced by `.github/workflows/release-desktop.yml`
-(tag `desktop-v*`) — see **Development** below. A manual run
-(`gh workflow run release-desktop.yml -f platforms=windows`) can build one
-platform for testing; a partial run makes no release. Each build reuses the
-previous `allternit-api` and `allternit-factory` binaries when none of their
-Rust inputs changed (`.github/scripts/prebuilt-rust-bin.mjs`), which skips
-the longest compile (~24 min on Windows). CI artifacts are currently
+(tag `desktop-v*`) — see **Development** below. CI artifacts are currently
 **unsigned/unnotarized** (no Apple Developer ID cert, no Windows cert — see
 `docs/SIGNING.md`), so macOS Gatekeeper requires right-click → Open on first
 launch, and the Windows `.exe` will show SmartScreen warnings.

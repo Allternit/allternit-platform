@@ -1,21 +1,11 @@
 # claude-desktop adapter (Agent Gateway, lane `ui_bridge`, guarantee `best_effort`, mode `linked`)
 
-Routes: `desktop-app-ax` (macOS Accessibility — the supported route). `desktop-app-cdp` is NOT registered:
-Claude refuses a debugging port without an Anthropic-signed token (recon finding 1, re-verified 2026-10-17).
-
 Drives the user's own signed-in **Claude desktop app** (`/Applications/Claude.app`, Electron, v2.16120.0, bundle id
 `com.anthropic.claudefordesktop`) including its **Cowork** agent mode, over local CDP. Account = the user's own Claude
 subscription; no API key, and Allternit never reads claude.ai cookies/tokens. Same vendor id (`claude`) as the official-lane adapter
 `claude-managed-agents`, so both lanes share the Claude look pack. Events are `best_effort`/`inferred`, never `exact`.
 
-**STATUS: offline-complete, NOT live-verified, and the CDP route is vendor-blocked (see first finding).**
-
-**Re-verification 2026-10-17 (read-only, this Mac):** `/Applications/Claude.app` is v2.42304.0, bundle
-`com.anthropic.claudefordesktop`, Electron; the deny-list (with `remote-debugging-port`, `remote-debugging-pipe`,
-`ignore-certificate-errors`, `host-resolver-rules`, `host-rules`, `disable-web-security`, …) and the "refusing to
-start" exit path are still present in `.vite/build/index.pre.js`. The app was NOT running and was not launched;
-no AX tree could be recorded, so every selector below (DOM and AX) stays UNVERIFIED. The macOS Accessibility
-permission for the `ax-bridge` helper IS granted on this machine (`trust` → true).
+**STATUS: offline-complete, NOT live-verified, and the CDP route is probably vendor-blocked (see first finding).**
 
 ## Recon (read-only, bundle extracted with `@electron/asar`; the running app was not touched, no user-data read, no network)
 
@@ -66,20 +56,6 @@ Non-English locales read as drift by design. "Always allow" is deliberately neve
   (+cooldown, `retryAfterMs`); verification banner -> `LANE_BLOCKED` (latched); drift -> `ADAPTER_DRIFT` (latched, `clearHalt()` releases);
   own pacing limits -> `RATE_LIMITED`; approval answered in-app -> `cancelled`.
 - Registration: `aai.ts` exports `createAaiRegistration(env)` (port from `SUBS_GATEWAY_CLAUDE_DESKTOP_CDP_PORT`, default 9232); the CDP driver connects lazily.
-
-## Contract (spec §3) — route `desktop-app-ax`
-
-| Item | Status | How / why |
-|---|---|---|
-| Start a chat | Implemented | `contextOpen` → "New chat" (AX press). |
-| Continue a chat | Implemented | `contextMessage` → composer `setValue` + "Send message". |
-| Pick the model/mode the app offers | Implemented (Chat + Cowork) | `claude-desktop:cowork` sub-agent switches mode and opens a New task; per-model picking is not offered by this adapter (the app's model picker has no verified selectors). |
-| Read the reply as it streams + know when it is finished | Implemented | `agent.message.delta`/`agent.message.completed` events; completion = the "Stop response" control leaves the AX tree/DOM (a real app signal, not screen-idle). |
-| Stop mid-stream | Implemented | `contextCancel` → "Stop response"; `confirmed` only when the page shows it stopped. |
-| Send attachments (image, file) | **Blocked** | The macOS open panel is a separate process outside the ax-bridge contract; pasteboard injection is deliberately not attempted. Not declared in the manifest (AAI v0.1 has no attachment field). |
-| Get outputs back | Text: implemented (`best_effort` from the AX static text — never exact on `ui_bridge`); generated images/files: **Blocked** (no download path without driving vendor save dialogs; undeclared). |
-| List and reopen past threads | **Blocked in this adapter** | The v1 driver seam has no threads surface and AAI v0.1 has no threads op; the Cowork/sidebar markup is unverified offline. The sibling desktop adapters ship this as extension methods — landing here needs the same live-session evidence first. |
-| Usage-limit / sign-out / verification-wall as typed errors | Implemented | `RATE_LIMITED` (+`retryAfterMs` parsed from the banner), `AUTH_REQUIRED`→`AUTH_REVOKED`, `LANE_BLOCKED` latched on the verification wall, `ADAPTER_DRIFT` latched with selector evidence. |
 
 ## Files
 `manifest.ts` · `selectors.ts` · `driver.ts` (seam) · `cdp-driver.ts` (loopback-only, consent-gated `launchWithDebugPort`) · `observe.ts` (HTML -> page state) ·

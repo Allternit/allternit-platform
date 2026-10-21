@@ -65,12 +65,6 @@ Answers the saved policy. `400` for an unknown level, `404` for a bot that is no
 
 Today's actions (UTC day) by channel and outcome (`sent`, `held`, `drafted`).
 
-## Envelope and guards
-
-`GET /api/v1/agents/{id}/envelope` returns `{envelope, known}`; `PUT` with `{envelope}` sets it. Values: `read_only` (the check returns `Block`), `draft`, `act_after_approval`, `act_within_scope` (default). It is stored at `agents.config.envelope`.
-
-On top of the place level, `evaluate_ctx` applies three guards that can only tighten the verdict: the envelope, the thread's `trust_floor` (a tainted thread holds every send), and egress (a secret in the text blocks and opens an `egress_held` attention item; PII, internal paths, and a destination outside `agents.config.egressAllowlist` that is not an existing counterparty hold). Every egress check is written to `egress_decisions`. A blocked send returns a `Block` verdict (HTTP 403 `egress_blocked` on email). See [Prompt injection defense](/guides/injection-defense).
-
 ## Where the check runs
 
 | Path | Where |

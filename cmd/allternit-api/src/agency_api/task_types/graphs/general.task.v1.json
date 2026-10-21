@@ -136,7 +136,7 @@
    "node_id": "G05",
    "primitive_id": "ver.verify_requirements",
    "node_kind": "VERIFY",
-   "cognitive_role": "S1",
+   "cognitive_role": "S2",
    "inputs": [
     "candidate:response",
     "receipt:deliverables"
@@ -151,29 +151,11 @@
    "lock_scope": [],
    "evidence_required": [],
    "on_failure": {
-    "strategy": "ESCALATE",
-    "target": "G05_s2"
+    "strategy": "FAIL"
    },
    "extensions": {
     "x-title": "Review against the goal",
-    "x-evidence": "requirements_satisfied",
-    "x-decision": {
-     "kind": "verify",
-     "question": "Does the result meet the goal?",
-     "options": [
-      {
-       "id": "pass",
-       "text": "The result meets the goal."
-      },
-      {
-       "id": "fail",
-       "text": "The result does not meet the goal."
-      }
-     ],
-     "pass": [
-      "pass"
-     ]
-    }
+    "x-evidence": "requirements_satisfied"
    },
    "capability_request": {
     "schema_id": "allternit.kernel.CapabilityRequestV1",
@@ -327,42 +309,6 @@
     "trust_requirement": "INTERNAL",
     "budget": {}
    }
-  },
-  {
-   "node_id": "G05_s2",
-   "primitive_id": "ver.verify_requirements",
-   "node_kind": "VERIFY",
-   "cognitive_role": "S2",
-   "inputs": [
-    "candidate:response",
-    "receipt:deliverables"
-   ],
-   "outputs": [
-    "receipt:review"
-   ],
-   "read_set": [
-    "state.task"
-   ],
-   "write_set": [],
-   "lock_scope": [],
-   "evidence_required": [],
-   "on_failure": {
-    "strategy": "FAIL"
-   },
-   "extensions": {
-    "x-title": "Review against the goal (escalated)",
-    "x-evidence": "requirements_satisfied",
-    "x-twin_of": "G05"
-   },
-   "capability_request": {
-    "schema_id": "allternit.kernel.CapabilityRequestV1",
-    "schema_version": "1.0.0",
-    "capability": "cap.general.review",
-    "modality": "TEXT",
-    "latency_class": "NORMAL",
-    "trust_requirement": "INTERNAL",
-    "budget": {}
-   }
   }
  ],
  "edges": [
@@ -419,16 +365,6 @@
   {
    "from": "G03_deep",
    "to": "G04",
-   "edge_kind": "NORMAL"
-  },
-  {
-   "from": "G05",
-   "to": "G05_s2",
-   "edge_kind": "FAILURE"
-  },
-  {
-   "from": "G05_s2",
-   "to": "G06",
    "edge_kind": "NORMAL"
   }
  ],

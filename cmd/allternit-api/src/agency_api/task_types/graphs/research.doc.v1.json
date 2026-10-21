@@ -257,7 +257,7 @@
    "node_id": "R09",
    "primitive_id": "ver.verify_requirements",
    "node_kind": "VERIFY",
-   "cognitive_role": "S1",
+   "cognitive_role": "S2",
    "inputs": [
     "receipt:document"
    ],
@@ -271,29 +271,11 @@
    "lock_scope": [],
    "evidence_required": [],
    "on_failure": {
-    "strategy": "ESCALATE",
-    "target": "R09_s2"
+    "strategy": "FAIL"
    },
    "extensions": {
     "x-title": "Review document against the goal",
-    "x-evidence": "requirements_satisfied",
-    "x-decision": {
-     "kind": "verify",
-     "question": "Does the result meet the goal?",
-     "options": [
-      {
-       "id": "pass",
-       "text": "The result meets the goal."
-      },
-      {
-       "id": "fail",
-       "text": "The result does not meet the goal."
-      }
-     ],
-     "pass": [
-      "pass"
-     ]
-    }
+    "x-evidence": "requirements_satisfied"
    },
    "capability_request": {
     "schema_id": "allternit.kernel.CapabilityRequestV1",
@@ -418,41 +400,6 @@
     "trust_requirement": "INTERNAL",
     "budget": {}
    }
-  },
-  {
-   "node_id": "R09_s2",
-   "primitive_id": "ver.verify_requirements",
-   "node_kind": "VERIFY",
-   "cognitive_role": "S2",
-   "inputs": [
-    "receipt:document"
-   ],
-   "outputs": [
-    "receipt:review"
-   ],
-   "read_set": [
-    "state.task"
-   ],
-   "write_set": [],
-   "lock_scope": [],
-   "evidence_required": [],
-   "on_failure": {
-    "strategy": "FAIL"
-   },
-   "extensions": {
-    "x-title": "Review document against the goal (escalated)",
-    "x-evidence": "requirements_satisfied",
-    "x-twin_of": "R09"
-   },
-   "capability_request": {
-    "schema_id": "allternit.kernel.CapabilityRequestV1",
-    "schema_version": "1.0.0",
-    "capability": "cap.research.review",
-    "modality": "TEXT",
-    "latency_class": "NORMAL",
-    "trust_requirement": "INTERNAL",
-    "budget": {}
-   }
   }
  ],
  "edges": [
@@ -524,16 +471,6 @@
   {
    "from": "R04_deep",
    "to": "R05",
-   "edge_kind": "NORMAL"
-  },
-  {
-   "from": "R09",
-   "to": "R09_s2",
-   "edge_kind": "FAILURE"
-  },
-  {
-   "from": "R09_s2",
-   "to": "gate",
    "edge_kind": "NORMAL"
   }
  ],

@@ -88,33 +88,6 @@ export async function appendBotInbox(
   return envelope
 }
 
-/** Loop guard for the store-bot path: same 12-per-10-minutes rule the API applies to app bots. */
-export const INBOX_PAIR_LIMIT = 12
-export const INBOX_PAIR_WINDOW_MS = 10 * 60_000
-
-/**
- * Would one more message from `from` to `botName` pass the loop guard? Counts
- * the envelopes from `from` still waiting in the target's inbox.jsonl whose
- * timestamps fall inside the window. Unreadable inbox counts as 0.
- */
-export async function checkInboxGuard(
-  botName: string,
-  from: string,
-  now = Date.now(),
-): Promise<{ held: boolean; count: number }> {
-  let raw = ""
-  try {
-    raw = await readFile(inboxPath(botName), "utf8")
-  } catch {
-    return { held: false, count: 0 }
-  }
-  const count = parseEnvelopes(raw).filter((e) => {
-    const t = Date.parse(e.at)
-    return e.from === from && Number.isFinite(t) && now - t < INBOX_PAIR_WINDOW_MS
-  }).length
-  return { held: count >= INBOX_PAIR_LIMIT, count }
-}
-
 /**
  * Count pending envelopes in the bot's inbox.jsonl (non-empty lines).
  * Returns 0 when there is no inbox or it is unreadable — a pending-message

@@ -73,10 +73,6 @@ gizzi orchestration drain builder@product-build             # the oldest message
 gizzi orchestration drain builder@product-build --all       # every message, oldest first
 ```
 
-### How a paste is verified
-
-A terminal send checks that the pane is idle (its screen holds still for 800 ms; a prompt that is still repainting after a turn gets up to three tries). It then pastes the text as a bracketed paste and reads the pane back. The paste counts as landed when the end of the text shows on screen, or, for long or multi-line text, when a new collapsed-paste placeholder appears: Claude Code shows `[Pasted text #N +M lines]` for more than 3 lines or about 800 characters, and Codex shows `[Pasted Content N chars]`. Enter is pressed only after the landing has been seen twice in a row. If nothing lands within 8 seconds, the whole input is cleared with one Ctrl-U per line it could wrap to (never Ctrl-C), and the message is queued.
-
 Each message goes through the same verified paste as a send, and is marked delivered only after the paste is read back from the pane. The first message that can't be delivered (busy pane, pane gone, paste not verified) stays queued and stops the drain, so the order holds. Run one drain per bot at a time.
 
 ## Capture, transcript and feed

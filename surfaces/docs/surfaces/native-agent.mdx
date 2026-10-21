@@ -161,30 +161,6 @@ Use **+** for another shell. Switching tabs keeps shells mounted; closing a
 shell tab disposes its session. The final tab stays open. The workspace button
 starts a fresh terminal in the same folder in the console workspace.
 
-### Watch background tasks
-
-Open **Panes → Tasks** in a Code session to see **Running** and **Finished**
-work. Each row shows its state and elapsed time. Open a shell task for its
-latest output; native subagent tasks can also open their child-session
-transcript. The Panes control keeps a running-task count when the pane is closed.
-
-Claude CLI background tasks appear in this same list, including tasks that
-continue after the chat reply finishes. Their output and terminal outcome come
-from the CLI, rather than from the assistant saying a task is running. CLI-owned
-agents show the progress/result the provider reports; they do not gain a Gizzi
-child-session transcript merely by being mirrored into the list.
-
-**Stop** targets the selected background task. A rejected or unacknowledged CLI
-stop remains an error; it is not shown as a successful cancellation. If the CLI
-connection disappears without a terminal outcome, its active tasks become
-**interrupted**. A finished chat reply does not imply all background work finished.
-
-With Claude CLI, a resumed conversation can prepend an old task notification
-and its automated-message reminder to the next request. The provider may then
-ignore that request and the app shows **turn produced no model output**. Retry
-with a clear new request, or start a new thread. This is a provider conversation
-limitation; the Tasks pane still shows the task's observed outcome.
-
 ### Browse, preview and edit files
 
 The Files pane keeps the folder tree beside your open files. Click a file to

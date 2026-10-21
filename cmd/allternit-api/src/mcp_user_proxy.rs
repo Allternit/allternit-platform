@@ -333,7 +333,7 @@ async fn handle_rpc(state: &Arc<AppState>, claims: &ProxyClaims, body: &Value, a
         "tools/list" => {
             let connectors = load_user_connectors(state, &claims.user_id, allow_private).await;
             let modes = load_install_modes(state, &claims.user_id).await;
-            (rpc_result(&id, list_tools(state, &claims.user_id, &connectors, &modes, allow_private).await), None, "ok")
+            (rpc_result(&id, list_tools(&connectors, &modes, allow_private).await), None, "ok")
         }
         "tools/call" => {
             let name = params.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string();
@@ -470,8 +470,6 @@ where
 /// Union of the connectors' model-visible tools, namespaced. A connector that
 /// cannot be reached or whose credentials are dead contributes nothing.
 async fn list_tools(
-    state: &Arc<AppState>,
-    user_id: &str,
     connectors: &[Connector],
     modes: &std::collections::HashMap<String, PermissionMode>,
     allow_private: bool,
@@ -490,14 +488,7 @@ async fn list_tools(
     for ((connector, prefix), listing) in connectors.iter().zip(&prefixes).zip(listed) {
         match listing {
             Ok(Ok(items)) => {
-                // Tool pinning: a new or changed tool stays out of the bot's list until the
-                // owner approves it in the inbox (opens a `tool_changed` item).
-                let visible: Vec<Value> = items.into_iter().filter(tool_visible_to_model).collect();
-                let allowed: Vec<String> = match state.db.connect() {
-                    Ok(conn) => crate::mcp_server_routes::check_pins(&conn, user_id, &connector.id, &visible).0,
-                    Err(_) => Vec::new(), // fail closed: no pin store, no tools
-                };
-                for mut tool in visible.into_iter().filter(|t| t["name"].as_str().is_some_and(|n| allowed.iter().any(|a| a == n))) {
+                for mut tool in items.into_iter().filter(tool_visible_to_model) {
                     let Some(name) = tool.get("name").and_then(|n| n.as_str()).map(String::from) else { continue };
                     tool["name"] = json!(namespaced(prefix, &name));
                     // Additive: which connector this tool came from, for hosts that render its
@@ -757,28 +748,6 @@ mod e2e {
         assert_eq!(show["_meta"][CONNECTOR_META_KEY]["id"], "conn-1");
         assert_eq!(show["title"], "Dashboard");
         assert_eq!(show["inputSchema"]["properties"]["range"]["type"], "string");
-    }
-
-    #[tokio::test]
-    async fn tools_list_holds_a_changed_tool_and_opens_one_item() {
-        let (state, _server, _) = fixture().await;
-        // First listing pins everything; then one tool's pin goes stale (the server changed it).
-        rpc(&state, "user-1", "tools/list", json!({})).await;
-        state.db.connect().unwrap().execute("UPDATE mcp_tool_pins SET hash = 'old' WHERE server_id = 'conn-1' AND tool = 'plain'", []).unwrap();
-        for _ in 0..2 {
-            let names = tool_names(&rpc(&state, "user-1", "tools/list", json!({})).await);
-            assert!(!names.iter().any(|n| n == "dash-server__plain"));
-            assert!(names.iter().any(|n| n == "dash-server__show_dashboard"));
-        }
-        let conn = state.db.connect().unwrap();
-        let open: i64 = conn.query_row("SELECT COUNT(*) FROM attention_items WHERE kind = 'tool_changed' AND resolved_at IS NULL", [], |r| r.get(0)).unwrap();
-        assert_eq!(open, 1);
-        // Approve from the inbox: the tool comes back.
-        let (spec,): (String,) = conn.query_row("SELECT retry_json FROM attention_items WHERE kind = 'tool_changed'", [], |r| Ok((r.get(0)?,))).unwrap();
-        let p = serde_json::from_str::<Value>(&spec).unwrap()["pinApprove"].clone();
-        crate::mcp_server_routes::pin_tool(&conn, "user-1", p["serverId"].as_str().unwrap(), p["tool"].as_str().unwrap(), p["hash"].as_str().unwrap(), None);
-        let names = tool_names(&rpc(&state, "user-1", "tools/list", json!({})).await);
-        assert!(names.iter().any(|n| n == "dash-server__plain"));
     }
 
     fn install(state: &Arc<AppState>, user: &str, connector: &str, mode: &str) {

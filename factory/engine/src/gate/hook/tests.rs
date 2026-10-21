@@ -301,23 +301,8 @@ fn gate_argv_rewrites_bypass_flags() {
     assert!(joined.contains("-c sandbox_mode=\"danger-full-access\""));
     assert!(joined.contains("approval_policy=\"never\""));
 
-}
-
-#[test]
-fn acp_harnesses_never_ask_in_a_pane() {
-    let v = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<String>>();
-    // A Terminal bot: nobody answers kimi's per-command prompt in the pane.
-    assert_eq!(gate_argv(&v(&["kimi"]), None), v(&["kimi", "--auto"]));
-    assert_eq!(gate_argv(&v(&["kimi", "--model", "k2", "--yolo"]), None), v(&["kimi", "--model", "k2", "--auto"]));
-    assert_eq!(gate_argv(&v(&["/opt/kimi-code", "-y", "--auto"]), None), v(&["/opt/kimi-code", "--auto"]));
-    assert_eq!(
-        gate_argv(&v(&["gemini", "--approval-mode", "default", "-m", "pro"]), None),
-        v(&["gemini", "-m", "pro", "--yolo"])
-    );
-    // ACP mode, kimi's subcommands and `kimi -p` (it refuses --auto) keep their argv.
-    for cmd in [v(&["kimi", "acp"]), v(&["kimi", "session", "list"]), v(&["kimi", "-p", "hi"]), v(&["gemini", "--experimental-acp"])] {
-        assert_eq!(gate_argv(&cmd, None), cmd);
-    }
+    let kimi: Vec<String> = vec!["kimi".into(), "--yolo".into()];
+    assert_eq!(gate_argv(&kimi, None), kimi);
 }
 
 #[test]

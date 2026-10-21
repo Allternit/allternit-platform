@@ -288,7 +288,6 @@ dependencies = [
  "usvg",
  "uuid",
  "webauthn-rs",
- "windows-sys 0.59.0",
  "zip 0.6.6",
 ]
 
@@ -11739,7 +11738,6 @@ dependencies = [
  "js-sys",
  "log",
  "mime",
- "mime_guess",
  "native-tls",
  "percent-encoding",
  "pin-project-lite",

@@ -178,12 +178,11 @@ This file is:
 | Provider | Setup | Quality | Cost | Privacy |
 |----------|-------|---------|------|---------|
 | **Keyword** (default) | Nothing | Low | Free | 100% local |
-| **Allternit (EmbeddingGemma 2)** | `ALLTERNIT_EMBED_URL` (shared `serve-embed.sh`, :7719) | Excellent | Free | Local |
 | **OpenAI** | `OPENAI_API_KEY` | Excellent | $0.02/1M tokens | Cloud |
 | **Ollama** | `ollama run nomic-embed-text` | Good | Free | Local |
 | **Local ONNX** | Download 20MB model | Good | Free | Local |
 
-**Recommendation:** Start with keyword (works immediately). Use `createAllternitEmbedder()` for semantic search: it is the same EmbeddingGemma 2 server the rest of Allternit embeds with, so vectors are shared and nothing leaves the machine.
+**Recommendation:** Start with keyword (works immediately). Add Ollama when you want semantic search without cloud costs. Use OpenAI only if you need the absolute best quality.
 
 ---
 

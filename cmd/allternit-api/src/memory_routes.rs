@@ -579,7 +579,7 @@ struct EntityRow {
 
 async fn list_entities(
     State(state): State<Arc<AppState>>,
-    Extension(auth): Extension<AuthUser>,
+    Extension(_user): Extension<AuthUser>,
     headers: HeaderMap,
     Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> impl axum::response::IntoResponse {
@@ -598,19 +598,6 @@ async fn list_entities(
     let agent_id = params.get("agentId").cloned();
     let entity_type = params.get("type").cloned();
     let q = params.get("q").cloned();
-
-    // Entity pages (`memory_entity_pages`) of the authenticated user that
-    // match `q` (the most mentioned when there is no `q`).
-    let pages = {
-        let (db, uid, q) = (state.db.clone(), auth.user_id.clone(), q.clone());
-        tokio::task::spawn_blocking(move || {
-            db.connect().and_then(|c| crate::memory_entity_pages::search_pages(&c, &uid, q.as_deref(), 50))
-        })
-        .await
-        .ok()
-        .and_then(Result::ok)
-        .unwrap_or_default()
-    };
 
     let rows = tokio::task::spawn_blocking(move || {
         let conn = db.connect()?;
@@ -649,14 +636,14 @@ async fn list_entities(
     .await;
 
     match rows {
-        Ok(Ok(data)) => (StatusCode::OK, Json(json!({"entities": data, "pages": pages}))),
+        Ok(Ok(data)) => (StatusCode::OK, Json(json!({"entities": data}))),
         Ok(Err(e)) => {
             tracing::warn!("DB error listing entities: {}", e);
-            (StatusCode::OK, Json(json!({"entities": [], "pages": pages})))
+            (StatusCode::OK, Json(json!({"entities": []})))
         }
         Err(e) => {
             tracing::warn!("DB task panicked: {}", e);
-            (StatusCode::OK, Json(json!({"entities": [], "pages": pages})))
+            (StatusCode::OK, Json(json!({"entities": []})))
         }
     }
 }
@@ -996,10 +983,6 @@ async fn record_observation_v2_handler(
         }
     };
 
-    if payload.session_id.as_deref().is_some_and(|s| state.db.is_session_ephemeral(s).unwrap_or(false)) {
-        return (StatusCode::OK, Json(json!({"status": "skipped", "reason": "incognito"})));
-    }
-
     match crate::memory_kernel_service::record_observation(
         &state.db,
         &user.user_id,
@@ -1045,29 +1028,6 @@ async fn recall_v2_handler(
     .await
     {
         Ok((results, recall_id, query_vec)) => {
-            // Memory Drive → Activity and the chat turn show what was used.
-            let used: Vec<(String, String)> = results
-                .iter()
-                .filter(|r| r.item_type != "observation")
-                .map(|r| (r.content.clone(), r.metadata.get("source").and_then(|v| v.as_str()).unwrap_or_default().to_string()))
-                .collect();
-            if let (false, Some(session)) = (used.is_empty(), payload.session_id.clone()) {
-                let (db, owner) = (state.db.clone(), user.user_id.clone());
-                let n = used.len();
-                tokio::task::spawn_blocking(move || {
-                    crate::memory_activity::record_db(
-                        &db,
-                        &owner,
-                        crate::memory_activity::Activity {
-                            kind: "recalled",
-                            title: format!("Used {n} {} from Memory Drive", if n == 1 { "memory" } else { "memories" }),
-                            items: used,
-                            session: Some(session),
-                            ..Default::default()
-                        },
-                    )
-                });
-            }
             // M1 retrieve path in SHADOW (WP-M1c): the caller gets the
             // incumbent's set; the S1 pipeline's would-be set is logged
             // against `recall_id` in the background.
@@ -1110,11 +1070,6 @@ async fn retain_turn_v2_handler(
             )
         }
     };
-
-    // Incognito chats are never remembered, whichever surface sends them.
-    if payload.session_id.as_deref().is_some_and(|s| state.db.is_session_ephemeral(s).unwrap_or(false)) {
-        return (StatusCode::OK, Json(json!({"status": "skipped", "reason": "incognito"})));
-    }
 
     // User turns: record now, extract in the background with the model
     // (memory_extraction), so the chat never waits on memory.

@@ -30,6 +30,9 @@ export const FLAG_DEFINITIONS: Record<string, FlagDefinition> = {
   'feature.hyperframes':   { type: 'boolean', default: false },
   'feature.view-modes':    { type: 'boolean', default: true  },
   'feature.workspace-dnd': { type: 'boolean', default: true  },
+  // Sign in with ChatGPT (ChatGPT plan usage). Desktop only; needs OpenAI
+  // approval for a paid/hosted app — see docs/SIWC_NOTES.md.
+  'feature.siwc':          { type: 'boolean', default: false },
 };
 
 type ChangeHandler = (key: string, value: FlagValue) => void;

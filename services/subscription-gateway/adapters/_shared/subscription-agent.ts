@@ -79,15 +79,13 @@ const TERMINAL = new Set(["completed", "partial", "failed", "cancelled", "needs_
 
 /** Gateway task failure → AAI error code (the vendor's own words stay in the message). */
 function mapTaskError(task: Record<string, unknown>): AaiResult<never> {
-  const err = (task.error ?? {}) as { class?: string; detail?: string; user_action?: string | null; cooldown_s?: number | null; evidence_ref?: string | null };
+  const err = (task.error ?? {}) as { class?: string; detail?: string; user_action?: string | null; cooldown_s?: number | null };
   const msg = [err.detail, err.user_action].filter(Boolean).join(" ") || `Claude didn't finish (${String(task.status)}).`;
   const cls = err.class ?? "";
-  // A failed browser step carries its proof (screenshot, selector, DOM excerpt) as evidence_ref (GET /v1/evidence/:id).
-  const details = err.evidence_ref ? { details: { evidenceRef: err.evidence_ref, taskId: task.task_id } } : {};
-  if (task.status === "needs_user" || /verification|challenge|captcha/.test(cls)) return fail("LANE_BLOCKED", msg, details);
-  if (/auth|login|signed_out|session/.test(cls)) return fail("AUTH_REQUIRED", msg, details);
-  if (/rate|limit|quota|usage/.test(cls)) return fail("RATE_LIMITED", msg, err.cooldown_s ? { retryAfterMs: err.cooldown_s * 1000, ...details } : details);
-  return fail("VENDOR_UNAVAILABLE", msg, details);
+  if (task.status === "needs_user" || /verification|challenge|captcha/.test(cls)) return fail("LANE_BLOCKED", msg);
+  if (/auth|login|signed_out|session/.test(cls)) return fail("AUTH_REQUIRED", msg);
+  if (/rate|limit|quota|usage/.test(cls)) return fail("RATE_LIMITED", msg, err.cooldown_s ? { retryAfterMs: err.cooldown_s * 1000 } : undefined);
+  return fail("VENDOR_UNAVAILABLE", msg);
 }
 
 export class SubscriptionAgentProvider extends BaseAaiProvider {

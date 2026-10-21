@@ -9,10 +9,9 @@
 //! the task type's completion contract (`missing_evidence`).
 //!
 //! The script decides only what a real executor would observe: which nodes
-//! fail, which WAIT gates open, which verifier evidence is withheld and
-//! which option each S1 decision node picks (B1, [`super::s1`]).
+//! fail, which WAIT gates open, and which verifier evidence is withheld.
 
-use super::{evidence_of, instantiate, require, s1};
+use super::{evidence_of, instantiate, require};
 use crate::agency_api::executor::scripted_pool;
 use allternit_factory_engine::judge::completion::missing_evidence;
 use allternit_factory_engine::kernel::graph::ComputeGraph;
@@ -37,9 +36,6 @@ pub struct Script {
     /// Criteria whose verifier commits without producing an evidence receipt.
     #[serde(default)]
     pub withhold: HashSet<String>,
-    /// S1 nodes: the option id picked (`abstain` escalates); default: the first option.
-    #[serde(default)]
-    pub decide: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -102,7 +98,7 @@ fn close(id: &str, ok: bool) -> Result<(), String> {
 }
 
 fn next(g: &ComputeGraph, from: &str, kind: &str) -> Option<String> {
-    s1::next(g, from, kind)
+    g.edges.iter().find(|e| e.from == from && e.kind() == kind).map(|e| e.to.clone())
 }
 
 /// Instantiate `task_type` for `goal`/`params` and run it under `script`.
@@ -119,18 +115,10 @@ pub fn run_scripted(task_type: &str, goal: &str, params: &Value, script: &Script
         Ok(g) => g,
         Err(e) => return Outcome::new(Status::Refused, e.to_string()),
     };
-    let _ = goal; // the scripted executor's outputs don't depend on the goal text
-    run_graph(t, &g, script)
-}
-
-/// C6: walk an already instantiated graph of `t` (a shipped graph, an
-/// approved harness version or a candidate) under `script`.
-pub fn run_graph(t: &super::TaskType, g: &ComputeGraph, script: &Script) -> Outcome {
     let Some(policy) = super::completion_policy(t) else {
         return Outcome::new(Status::Refused, format!("{} has no completion contract", t.id));
     };
-    let task_id = g.task_id.clone().unwrap_or_default();
-    let g = g.clone();
+    let _ = goal; // the scripted executor's outputs don't depend on the goal text
 
     let pool = scripted_pool(&g);
     let cfg = RouterConfig::default();
@@ -144,13 +132,7 @@ pub fn run_graph(t: &super::TaskType, g: &ComputeGraph, script: &Script) -> Outc
             out.reason = format!("graph has no node {cur}");
             return out;
         };
-        // S1 nodes go to the Decision Runtime (scripted here), not the pool.
-        let s1_spec = s1::is_s1(node).then(|| s1::spec(node));
-        let routed = match &s1_spec {
-            Some(sp) => Ok(s1::plan(node, sp.as_ref().unwrap_or(&s1::Spec::default()))),
-            None => router.route(node, &ledger),
-        };
-        let plan = match routed {
+        let plan = match router.route(node, &ledger) {
             Ok(p) => p,
             Err(e) => {
                 out.reason = format!("route {cur}: {e}");
@@ -165,27 +147,7 @@ pub fn run_graph(t: &super::TaskType, g: &ComputeGraph, script: &Script) -> Outc
             .filter(|c| !out.evidence.iter().any(|e| e.starts_with(&format!("{c}:"))))
             .collect();
 
-        let mut branch: Option<String> = None;
-        let (ok, wait_parked) = if let Some(sp) = &s1_spec {
-            let route = match sp {
-                Ok(sp) => {
-                    let a = s1::scripted(&sp.options(&HashMap::new()), script.decide.get(&cur).map(String::as_str), script.fail.contains(&cur));
-                    s1::route(&g, &cur, sp, &a)
-                }
-                Err(_) => s1::Route::Escalate,
-            };
-            match route {
-                s1::Route::Commit(t) => { branch = t; (unmet.is_empty(), false) }
-                s1::Route::Escalate => (false, false),
-                s1::Route::Reject(c) => {
-                    let _ = close(&cur, false);
-                    out.visited.push((cur.clone(), false));
-                    out.reason = format!("{cur} decided `{c}`");
-                    out.stopped_at = Some(cur);
-                    return out;
-                }
-            }
-        } else if node.primitive_id == GATE_PRIMITIVE && !node.evidence_required.is_empty() {
+        let (ok, wait_parked) = if node.primitive_id == GATE_PRIMITIVE && !node.evidence_required.is_empty() {
             out.missing = missing_evidence(&policy, &out.evidence);
             (out.missing.is_empty(), false)
         } else if node.node_kind == "WAIT" {
@@ -217,7 +179,7 @@ pub fn run_graph(t: &super::TaskType, g: &ComputeGraph, script: &Script) -> Outc
                     out.evidence.push(format!("{c}:receipt:{task_id}:{cur}"));
                 }
             }
-            match branch.or_else(|| next(&g, &cur, "NORMAL")) {
+            match next(&g, &cur, "NORMAL") {
                 Some(n) => cur = n,
                 None if g.completion_nodes.contains(&cur) => {
                     out.status = Status::Completed;

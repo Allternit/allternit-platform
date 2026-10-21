@@ -2,60 +2,7 @@
 
 ## Unreleased
 
-## 2.2.7 (2026-10-16)
-
 ### Added
-- Built-in craft skills for visual work, available to every model: `motion-reel`
-  (motion-graphics videos with a synced score), `brush-film` (hand-painted
-  animated shorts in p5.brush), `film-studio` (review contract for video work),
-  `ui-motion` (product UI motion with a frame-strip check), `visual-design`
-  (UI design with a desktop and phone screenshot review) and `generative-art`
-  (seeded generative art with a parameter viewer). They are brand-neutral and
-  carry their own scripts and templates, which are extracted to
-  `skills-builtin/` in the data directory on first load. A user or project
-  skill with the same name still overrides them.
-- When signed in, each message you type in the TUI is sent to Memory Drive's
-  capture intake (Settings → Memory → Sources → Gizzi), so Memory Drive can
-  learn from CLI sessions. Turning that source off, being signed out or
-  offline, or an older API all skip it quietly.
-- `message_agent` sends a trace id and an idempotency key with every hand-off,
-  and returns a receipt. A terminal bot's inbox holds further messages from
-  the same sender after a short burst and says why, to stop bot-to-bot loops.
-
-### Fixed
-- Skills in a project's `.allternit/skills` folder (where the Skill Builder
-  and skill import write) now load in sessions.
-
-### Removed
-- The `bonsai-local` local-model driver and its model registry entry. No
-  local model ships with gizzi-code.
-
-## 2.2.6 (2026-10-14)
-
-### Fixed
-- Wait for the CLI stop acknowledgement even when its task-stopped notification
-  arrives first. Give the CLI time to persist final task state before shutdown.
-
-## 2.2.5 (2026-10-14, release cancelled before publication)
-
-### Fixed
-- Claude CLI background jobs now appear in Tasks with live output and provider
-  status. The CLI remains connected after its foreground reply while work runs.
-- Stopping a CLI task targets that task and waits for provider acknowledgement.
-  Lost CLI connections show interrupted work, and bot tool permissions continue
-  to apply to background work.
-
-## 2.2.4 (2026-10-14)
-
-### Added
-- Background tasks: `bash` with `run_in_background` runs the command as a
-  durable background task. Its output streams as `background.task.updated`,
-  the exit code settles it, and `task_stop` kills the process tree. Not
-  available while the session runs in a VM. Background subagents use the
-  same task record, so Desktop and the web can show a background-tasks pane.
-- `createAllternitEmbedder`: brain memories can embed through the shared
-  local EmbeddingGemma 2 server (`ALLTERNIT_EMBED_URL`, default
-  `http://127.0.0.1:7719`), the same vector space allternit-api uses.
 - Artifacts v2 model tools for every model: `artifact_create`,
   `artifact_update` and `artifact_read`. They save to the cloud store
   (`/api/v2/artifacts`) when gizzi has a credential; otherwise the result
@@ -63,10 +10,6 @@
   under the same id. CLI agents get them over the session MCP bridge too.
   `GIZZI_DISABLE_ARTIFACT_TOOLS=1` hides them; `GIZZI_ARTIFACTS_OFFLINE=1`
   skips the cloud.
-
-### Changed
-- Bots with no allowlist now ask before running shell commands, writing
-  files or fetching from the web.
 
 ## 2.2.3 (2026-10-07)
 

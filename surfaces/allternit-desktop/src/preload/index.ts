@@ -99,6 +99,32 @@ const enginesAPI = {
   },
 };
 
+// ─── Bonsai local image companion ─────────────────────────────────────────────
+
+export interface BonsaiStatus {
+  installed: boolean;
+  running: boolean;
+  installing: boolean;
+  url: string;
+  revisions?: { source?: string; model?: string; mlxWheel?: string };
+  installDir: string;
+  error?: string;
+}
+
+const bonsaiAPI = {
+  getStatus: (): Promise<BonsaiStatus> => ipcRenderer.invoke('bonsai:get-status'),
+  install: (): Promise<void> => ipcRenderer.invoke('bonsai:install'),
+  cancelInstall: (): Promise<boolean> => ipcRenderer.invoke('bonsai:cancel-install'),
+  start: (): Promise<void> => ipcRenderer.invoke('bonsai:start'),
+  stop: (): Promise<boolean> => ipcRenderer.invoke('bonsai:stop'),
+  remove: (): Promise<void> => ipcRenderer.invoke('bonsai:remove'),
+  onProgress: (handler: (progress: { stage: string; message: string }) => void): (() => void) => {
+    const listener = (_: IpcRendererEvent, p: { stage: string; message: string }) => handler(p);
+    ipcRenderer.on('bonsai:progress', listener);
+    return () => ipcRenderer.removeListener('bonsai:progress', listener);
+  },
+};
+
 // ─── System One (S1) + Laya ───────────────────────────────────────────────────
 // Settings → Models & tiers reads install state from here (Q28/Q29).
 
@@ -324,8 +350,6 @@ const authAPI = {
   signOut: (): Promise<void> => ipcRenderer.invoke('auth:sign-out'),
   hardSignOut: (): Promise<void> => ipcRenderer.invoke('auth:sign-out'),
   getClerkToken: (): Promise<string | null> => ipcRenderer.invoke('auth:get-clerk-token'),
-  /** Sign in to the cloud again (same account) when the Clerk session has ended. */
-  reconnectCloud: (): Promise<{ ok: true } | { ok: false; error: string }> => ipcRenderer.invoke('auth:reconnect-cloud'),
   onSessionUpdated: (handler: (session: { userId: string; userEmail: string }) => void): (() => void) => {
     const listener = (_: IpcRendererEvent, session: { userId: string; userEmail: string }) => handler(session);
     ipcRenderer.on('auth:session-updated', listener);
@@ -632,74 +656,7 @@ const permissionGuideAPI = {
   },
 };
 
-// ─── Phones (Android over Wi-Fi; iPhone over an Allternit USB Agent) ─────────────────────
-
-// ─── In-app live view (scrcpy-server video + input) ─────────────────────────
-// Types mirror the renderer contract in src/types/electron-api.d.ts and the
-// main-side protocol in src/main/phone-scrcpy.ts; a WebCodecs client decodes
-// the Annex-B chunks and sends PhoneInputEvents back.
-
-type PhoneStreamOptions = { maxSize?: number; videoBitrate?: number; maxFps?: number };
-type PhoneStreamMeta = { deviceName: string; width: number; height: number; codec: 'h264' };
-type PhoneStreamStatus =
-  | { state: 'idle' }
-  | { state: 'starting' }
-  | { state: 'live'; meta: PhoneStreamMeta }
-  | { state: 'ended'; reason: string }
-  | { state: 'error'; message: string };
-type PhoneInputEvent =
-  | { type: 'touch'; action: 'down' | 'move' | 'up'; pointerId: number; x: number; y: number; pressure?: number }
-  | { type: 'key'; action: 'down' | 'up'; keyCode: number; metaState?: number }
-  | { type: 'text'; text: string }
-  | { type: 'scroll'; x: number; y: number; hScroll?: number; vScroll?: number }
-  | { type: 'back' } | { type: 'home' } | { type: 'app_switch' } | { type: 'power' };
-
-// Chunks cross IPC as Buffers and arrive here as Uint8Array views; hand the
-// caller a standalone ArrayBuffer (the contract's chunk type).
-function toArrayBuffer(data: unknown): ArrayBuffer {
-  if (data instanceof ArrayBuffer) return data;
-  if (data instanceof Uint8Array) return data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer;
-  return new ArrayBuffer(0);
-}
-
-// Refcounted per-serial subscription: main pushes to a webContents while it
-// has at least one subscriber for that serial.
-const streamSubCounts = new Map<string, number>();
-function streamSubscribe(serial: string): void {
-  const count = streamSubCounts.get(serial) ?? 0;
-  streamSubCounts.set(serial, count + 1);
-  if (count === 0) void ipcRenderer.invoke('phone:stream-subscribe', serial);
-}
-function streamUnsubscribe(serial: string): void {
-  const count = (streamSubCounts.get(serial) ?? 0) - 1;
-  if (count > 0) {
-    streamSubCounts.set(serial, count);
-  } else {
-    streamSubCounts.delete(serial);
-    void ipcRenderer.invoke('phone:stream-unsubscribe', serial);
-  }
-}
-
-// ─── Phone Link (phone-link.ts) ───────────────────────────────────────────────
-// Apple ID credentials pass through once to main; nothing here stores them.
-
-const phoneLinkAPI = {
-  status: (): Promise<unknown> => ipcRenderer.invoke('phone-link:status'),
-  devices: (): Promise<unknown> => ipcRenderer.invoke('phone-link:devices'),
-  handoverTargets: (): Promise<unknown> => ipcRenderer.invoke('phone-link:handover-targets'),
-  handover: (opts: { deviceId: string; computerId: string }): Promise<unknown> => ipcRenderer.invoke('phone-link:handover', opts),
-  start: (opts: { platform: 'ios' | 'android' }): Promise<unknown> => ipcRenderer.invoke('phone-link:start', opts),
-  cancel: (): Promise<unknown> => ipcRenderer.invoke('phone-link:cancel'),
-  continue: (): Promise<unknown> => ipcRenderer.invoke('phone-link:continue'),
-  retry: (): Promise<unknown> => ipcRenderer.invoke('phone-link:retry'),
-  submitAppleId: (creds: { appleId: string; password: string }): Promise<unknown> => ipcRenderer.invoke('phone-link:submit-apple-id', creds),
-  submitTwoFactor: (code: string): Promise<unknown> => ipcRenderer.invoke('phone-link:submit-two-factor', code),
-  onStatusChanged: (handler: (status: unknown) => void): (() => void) => {
-    const listener = (_: IpcRendererEvent, status: unknown) => handler(status);
-    ipcRenderer.on('phone-link:status-changed', listener);
-    return () => ipcRenderer.removeListener('phone-link:status-changed', listener);
-  },
-};
+// ─── Phones (Lane 2a: Android over Wi-Fi) ─────────────────────────────────────
 
 const phonesAPI = {
   status: (): Promise<unknown> => ipcRenderer.invoke('phone:status'),
@@ -709,114 +666,9 @@ const phonesAPI = {
   forget: (id: string): Promise<void> => ipcRenderer.invoke('phone:forget', id),
   startScrcpy: (serial: string): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('phone:scrcpy-start', serial),
   stopScrcpy: (serial: string): Promise<void> => ipcRenderer.invoke('phone:scrcpy-stop', serial),
-  startStream: (serial: string, opts?: PhoneStreamOptions): Promise<{ ok: true } | { ok: false; message: string }> =>
-    ipcRenderer.invoke('phone:stream-start', serial, opts ?? {}),
-  stopStream: (serial: string): Promise<void> => ipcRenderer.invoke('phone:stream-stop', serial),
-  streamStatus: (serial: string): Promise<PhoneStreamStatus> => ipcRenderer.invoke('phone:stream-status', serial),
-  onStreamMeta: (serial: string, cb: (meta: PhoneStreamMeta) => void): (() => void) => {
-    const listener = (_: IpcRendererEvent, s: string, meta: PhoneStreamMeta) => {
-      if (s === serial) cb(meta);
-    };
-    ipcRenderer.on('phone:stream-meta', listener);
-    streamSubscribe(serial);
-    return () => {
-      ipcRenderer.removeListener('phone:stream-meta', listener);
-      streamUnsubscribe(serial);
-    };
-  },
-  onStreamChunk: (serial: string, cb: (chunk: ArrayBuffer) => void): (() => void) => {
-    const listener = (_: IpcRendererEvent, s: string, chunk: Uint8Array) => {
-      if (s === serial) cb(toArrayBuffer(chunk));
-    };
-    ipcRenderer.on('phone:stream-chunk', listener);
-    streamSubscribe(serial);
-    return () => {
-      ipcRenderer.removeListener('phone:stream-chunk', listener);
-      streamUnsubscribe(serial);
-    };
-  },
-  onStreamEnd: (serial: string, cb: (info: { reason: string }) => void): (() => void) => {
-    const listener = (_: IpcRendererEvent, s: string, info: { reason: string }) => {
-      if (s === serial) cb(info);
-    };
-    ipcRenderer.on('phone:stream-end', listener);
-    streamSubscribe(serial);
-    return () => {
-      ipcRenderer.removeListener('phone:stream-end', listener);
-      streamUnsubscribe(serial);
-    };
-  },
-  sendStreamInput: (serial: string, events: PhoneInputEvent[]): Promise<{ ok: boolean; message?: string }> =>
-    ipcRenderer.invoke('phone:stream-input', serial, events),
-  setStreamDisplayPower: (serial: string, on: boolean): Promise<{ ok: boolean; message?: string }> =>
-    ipcRenderer.invoke('phone:stream-display-power', serial, on),
-  // User comms (Phones 2.0 Phase 3): texts/calls through the phone's own SIM.
-  // No serial — main resolves the user's linked phone.
-  smsList: (): Promise<unknown> => ipcRenderer.invoke('phone:comms-sms-list'),
-  smsMessages: (address: string, afterTimestamp?: number): Promise<unknown> =>
-    ipcRenderer.invoke('phone:comms-sms-messages', address, afterTimestamp),
-  smsSendUser: (to: string, text: string): Promise<unknown> => ipcRenderer.invoke('phone:comms-sms-send', to, text),
-  callDialUser: (number: string, opts?: { confirmEmergency?: boolean }): Promise<unknown> =>
-    ipcRenderer.invoke('phone:comms-call-dial', number, opts),
-  callEnd: (): Promise<unknown> => ipcRenderer.invoke('phone:comms-call-end'),
-  callState: (): Promise<unknown> => ipcRenderer.invoke('phone:comms-call-state'),
-  listApps: (serial: string): Promise<unknown> => ipcRenderer.invoke('phone:comms-list-apps', serial),
-  // Call bridge (bot answers carrier calls through an audio cable to this Mac).
-  // serial = the mirror's key: adb serial, or link:<deviceId> for an iPhone.
-  callBridgeGet: (serial: string): Promise<unknown> => ipcRenderer.invoke('phone:call-bridge-get', serial),
-  callBridgeSet: (serial: string, cfg: {
-    enabled: boolean;
-    botId: string | null;
-    /** Optional: shown read-only on web/PWA ("answered by <bot>"). */
-    botName?: string | null;
-    inputDeviceId: string | null;
-    inputLabel: string | null;
-    outputDeviceId: string | null;
-    outputLabel: string | null;
-  }): Promise<unknown> => ipcRenderer.invoke('phone:call-bridge-set', serial, cfg),
-  callBridgeStatus: (): Promise<unknown> => ipcRenderer.invoke('phone:call-bridge-status'),
-  onCallBridgeEvent: (cb: (ev: unknown) => void): (() => void) => {
-    const listener = (_: IpcRendererEvent, ev: unknown) => cb(ev);
-    ipcRenderer.on('phone:call-bridge-event', listener);
-    // Starting the watcher also wires the broadcast (cheap: idle phones aren't polled).
-    void ipcRenderer.invoke('phone:call-bridge-status').catch(() => {});
-    return () => ipcRenderer.removeListener('phone:call-bridge-event', listener);
-  },
-  onCommsEvent: (cb: (ev: unknown) => void): (() => void) => {
-    const listener = (_: IpcRendererEvent, ev: unknown) => cb(ev);
-    ipcRenderer.on('phone:comms-event', listener);
-    void ipcRenderer.invoke('phone:comms-subscribe');
-    return () => {
-      ipcRenderer.removeListener('phone:comms-event', listener);
-      void ipcRenderer.invoke('phone:comms-unsubscribe');
-    };
-  },
   tryOpenApp: (serial: string, app: string): Promise<{ ok: boolean; message?: string }> => ipcRenderer.invoke('phone:try-open-app', serial, app),
   screenshot: (serial: string): Promise<{ ok: boolean; dataBase64?: string; message?: string }> => ipcRenderer.invoke('phone:screenshot', serial),
   installArtemis: (): Promise<unknown> => ipcRenderer.invoke('phone:artemis-install'),
-  home: (serial: string): Promise<{ ok: boolean; message?: string }> => ipcRenderer.invoke('phone:home', serial),
-  // Channel readers: messaging apps on the linked phone (Discord first), read by driving their UI.
-  channelApps: (): Promise<Array<{ app: string; name: string }>> => ipcRenderer.invoke('phone:channel-apps'),
-  channelCached: (app: string, conversationId?: string): Promise<unknown> => ipcRenderer.invoke('phone:channel-cached', app, conversationId),
-  channelConversations: (app: string): Promise<unknown> => ipcRenderer.invoke('phone:channel-conversations', app),
-  channelMessages: (app: string, conversation: unknown): Promise<unknown> => ipcRenderer.invoke('phone:channel-messages', app, conversation),
-  channelSend: (app: string, conversation: unknown, text: string): Promise<unknown> => ipcRenderer.invoke('phone:channel-send', app, conversation, text),
-  channelClip: (app: string, conversation: unknown): Promise<unknown> => ipcRenderer.invoke('phone:channel-clip', app, conversation),
-  channelCachedClip: (app: string, conversationId: string): Promise<unknown> => ipcRenderer.invoke('phone:channel-cached-clip', app, conversationId),
-  usbStatus: (): Promise<unknown> => ipcRenderer.invoke('phone:usb-status'),
-  usbPorts: (): Promise<string[]> => ipcRenderer.invoke('phone:usb-ports'),
-  usbIdentify: (port: string): Promise<unknown> => ipcRenderer.invoke('phone:usb-identify', port),
-  usbSetup: (port: string, ssid: string, password: string, name: string): Promise<unknown> =>
-    ipcRenderer.invoke('phone:usb-setup', port, ssid, password, name),
-  usbFirmware: (): Promise<unknown> => ipcRenderer.invoke('phone:usb-firmware'),
-  usbCalibrate: (boardId: string): Promise<{ ok: boolean; message?: string }> => ipcRenderer.invoke('phone:usb-calibrate', boardId),
-  usbStop: (boardId: string): Promise<{ ok: boolean; message?: string }> => ipcRenderer.invoke('phone:usb-stop', boardId),
-  usbForget: (boardId: string): Promise<void> => ipcRenderer.invoke('phone:usb-forget', boardId),
-  onUsbDevices: (handler: (boards: unknown) => void): (() => void) => {
-    const listener = (_: IpcRendererEvent, boards: unknown) => handler(boards);
-    ipcRenderer.on('phone:usb-devices', listener);
-    return () => ipcRenderer.removeListener('phone:usb-devices', listener);
-  },
   onDevices: (handler: (phones: unknown) => void): (() => void) => {
     const listener = (_: IpcRendererEvent, phones: unknown) => handler(phones);
     ipcRenderer.on('phone:devices', listener);
@@ -838,6 +690,21 @@ const featureFlagsAPI = {
     const listener = (_: IpcRendererEvent, data: { key: string; value: unknown }) => handler(data.key, data.value);
     ipcRenderer.on('featureFlags:changed', listener);
     return () => ipcRenderer.removeListener('featureFlags:changed', listener);
+  },
+};
+
+// ─── Sign in with ChatGPT (feature.siwc) ──────────────────────────────────────
+// Status only — tokens live in main and never cross this bridge.
+
+const siwcAPI = {
+  status: (): Promise<unknown> => ipcRenderer.invoke('siwc:status'),
+  signIn: (opts?: { enablePlanUsage?: boolean }): Promise<unknown> => ipcRenderer.invoke('siwc:signIn', opts),
+  cancel: (): Promise<unknown> => ipcRenderer.invoke('siwc:cancel'),
+  signOut: (): Promise<unknown> => ipcRenderer.invoke('siwc:signOut'),
+  onStatusChanged: (handler: (status: unknown) => void): (() => void) => {
+    const listener = (_: IpcRendererEvent, status: unknown) => handler(status);
+    ipcRenderer.on('siwc:status-changed', listener);
+    return () => ipcRenderer.removeListener('siwc:status-changed', listener);
   },
 };
 
@@ -1103,6 +970,7 @@ const allternitDesktopAPI = {
   connection: connectionAPI,
   backend: backendAPI,
   engines: enginesAPI,
+  bonsai: bonsaiAPI,
   systemOne: systemOneAPI,
   vm: vmAPI,
   window: windowAPI,
@@ -1121,8 +989,8 @@ const allternitDesktopAPI = {
   tunnel: tunnelAPI,
   permissionGuide: permissionGuideAPI,
   phones: phonesAPI,
-  phoneLink: phoneLinkAPI,
   featureFlags: featureFlagsAPI,
+  siwc: siwcAPI,
   findInPage: findInPageAPI,
   locale: localeAPI,
   menuBar: menuBarAPI,
@@ -1175,7 +1043,7 @@ console.log('[preload] Allternit Desktop preload loaded.');
 // Small, purpose-specific bridge for the independent desktop companion windows.
 contextBridge.exposeInMainWorld('allternitCompanion', {
   getState: () => ipcRenderer.invoke('companion:get'),
-  update: (patch: { enabled?: boolean; size?: number; agentId?: string | null; roam?: boolean }) => ipcRenderer.invoke('companion:update', patch),
+  update: (patch: { enabled?: boolean; size?: number; agentId?: string | null }) => ipcRenderer.invoke('companion:update', patch),
   resetPosition: () => ipcRenderer.invoke('companion:reset'),
   open: (panel: 'chat' | 'settings' = 'chat') => ipcRenderer.invoke('companion:open', panel),
   close: () => ipcRenderer.invoke('companion:close'),
@@ -1188,17 +1056,4 @@ contextBridge.exposeInMainWorld('allternitCompanion', {
     ipcRenderer.on('companion:state', listener);
     return () => ipcRenderer.removeListener('companion:state', listener);
   },
-  // Desktop pet activity. The app window reports its pet state; the pet window
-  // plays it, shows the unread badge and walks when roaming.
-  activity: {
-    report: (state: string) => ipcRenderer.send('companion:activity', state),
-    get: () => ipcRenderer.invoke('companion:activity-get'),
-    on: (callback: (activity: unknown) => void) => {
-      const listener = (_event: IpcRendererEvent, activity: unknown) => callback(activity);
-      ipcRenderer.on('companion:activity', listener);
-      return () => ipcRenderer.removeListener('companion:activity', listener);
-    },
-    setReducedMotion: (reduced: boolean) => ipcRenderer.send('companion:motion-pref', reduced),
-  },
-  toggleMain: () => ipcRenderer.invoke('companion:toggle-main'),
 });

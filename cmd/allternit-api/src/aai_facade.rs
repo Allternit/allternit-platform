@@ -5,8 +5,6 @@
 
 use crate::agent_gateway_routes::{rows, s};
 use crate::gateway_runner::{self, RunErr, TurnOpts};
-use crate::netops::hops::{self, Admit, HopIn};
-use crate::netops::provenance::{self, Trust};
 use crate::AppState;
 use rusqlite::params;
 use serde_json::{json, Value};
@@ -144,14 +142,6 @@ pub struct SendIn<'a> {
     pub allternit_approval_id: Option<String>,
     /// Which façade opened a new thread (recorded as its origin).
     pub via: &'a str,
-    /// The caller's `traceparent` (MCP `_meta`, A2A `message.metadata`).
-    pub traceparent: Option<String>,
-    /// Same key, same result: a replay returns the earlier hop.
-    pub idempotency_key: Option<String>,
-    /// Who is sending, for the hop receipt and the trust label: the owner's own
-    /// vendor bot (`vendor_bot`, team trust) or an outside agent (`stranger`).
-    pub from_kind: &'a str,
-    pub from_id: &'a str,
 }
 
 /// One thread turn, through the same runner path as the REST message route.
@@ -161,30 +151,6 @@ pub async fn send(state: &Arc<AppState>, user_id: &str, i: SendIn<'_>) -> Result
     if bot_ok == 0 {
         return Err(FacadeErr::new(404, "NOT_FOUND", "bot not found"));
     }
-    let via_hop = if i.via == "a2a" { "a2a" } else { "vendor_mcp" };
-    let hop_id = match hops::admit(
-        &conn,
-        &HopIn {
-            owner: user_id.to_string(),
-            via: via_hop.into(),
-            from_kind: i.from_kind.into(),
-            from_id: i.from_id.into(),
-            to_bot_id: i.bot_id.into(),
-            thread_id: i.thread_id.map(str::to_string),
-            idempotency_key: i.idempotency_key.clone(),
-            traceparent: i.traceparent.clone(),
-            text: i.text.into(),
-        },
-    ) {
-        Admit::Go { hop_id, .. } => hop_id,
-        Admit::Held { sentence, .. } => return Err(FacadeErr::new(429, "LOOP_GUARD", sentence)),
-        Admit::Replay { hop_id, result, thread_id, .. } => {
-            let mut v = result.unwrap_or_else(|| json!({ "threadId": thread_id, "reply": null, "pending": true, "events": 0 }));
-            v["replayed"] = json!(true);
-            v["receipt"] = hops::receipt(&conn, &hop_id);
-            return Ok(v);
-        }
-    };
     let thread_id = match i.thread_id {
         Some(t) => {
             let (bot, _, _) = owned_thread(state, user_id, t)?;
@@ -209,42 +175,19 @@ pub async fn send(state: &Arc<AppState>, user_id: &str, i: SendIn<'_>) -> Result
         params![thread_id],
         |r| r.get(0),
     )?;
-    let trust = if i.from_kind == "stranger" { Trust::Stranger } else { Trust::VendorBot };
-    provenance::label(&conn, &thread_id, trust, i.via, i.from_id, i.text);
-    hops::advance(&conn, &hop_id, "delivered", None, Some(&thread_id), None);
     drop(conn);
     let opts = TurnOpts { correlation_id: i.correlation_id, consequential: i.consequential, allternit_approval_id: i.allternit_approval_id };
     let tx = gateway_runner::transport(state);
     let rt = crate::thread_routes::GizziRuntime { db: state.db.clone() };
-    if let Ok(c) = state.db.connect() {
-        hops::advance(&c, &hop_id, "read", None, None, None);
-    }
-    let ran: Result<Value, FacadeErr> = async {
-        match gateway_runner::run_turn(&state.db, tx.as_ref(), &rt, &session, i.text, opts).await? {
-            Some(r) => Ok(json!({ "threadId": thread_id, "reply": r.reply, "pending": r.reply.is_none(), "events": r.events })),
-            None => {
-                let reply = crate::agent_session_routes::send_bot_turn(&state.db, &session, i.bot_id, i.text)
-                    .await
-                    .map_err(|e| FacadeErr::new(502, "TURN_FAILED", e))?;
-                Ok(json!({ "threadId": thread_id, "reply": reply, "pending": false, "events": 0 }))
-            }
+    match gateway_runner::run_turn(&state.db, tx.as_ref(), &rt, &session, i.text, opts).await? {
+        Some(r) => Ok(json!({ "threadId": thread_id, "reply": r.reply, "pending": r.reply.is_none(), "events": r.events })),
+        None => {
+            let reply = crate::agent_session_routes::send_bot_turn(&state.db, &session, i.bot_id, i.text)
+                .await
+                .map_err(|e| FacadeErr::new(502, "TURN_FAILED", e))?;
+            Ok(json!({ "threadId": thread_id, "reply": reply, "pending": false, "events": 0 }))
         }
     }
-    .await;
-    if let Ok(c) = state.db.connect() {
-        match &ran {
-            // A reply that is still pending (an approval is waiting) stays `read`.
-            Ok(v) if v["pending"] == true => {}
-            Ok(v) => hops::advance(&c, &hop_id, "answered", None, None, Some(v)),
-            Err(e) => hops::advance(&c, &hop_id, "failed", Some(&e.code), None, None),
-        }
-    }
-    ran.map(|mut v| {
-        if let Ok(c) = state.db.connect() {
-            v["receipt"] = hops::receipt(&c, &hop_id);
-        }
-        v
-    })
 }
 
 #[cfg(test)]
@@ -300,13 +243,13 @@ mod tests {
     #[tokio::test]
     async fn send_surfaces_409_and_428_and_hides_other_users_threads() {
         let st = setup("send", "PAUSED").await;
-        let e = send(&st, "user-a", SendIn { bot_id: "bot-vendor", thread_id: Some("th-vendor"), text: "hi", correlation_id: None, consequential: false, allternit_approval_id: None, via: "mcp", traceparent: None, idempotency_key: None, from_kind: "vendor_bot", from_id: "t" }).await.unwrap_err();
+        let e = send(&st, "user-a", SendIn { bot_id: "bot-vendor", thread_id: Some("th-vendor"), text: "hi", correlation_id: None, consequential: false, allternit_approval_id: None, via: "mcp" }).await.unwrap_err();
         assert_eq!((e.status, e.code.as_str()), (409, "BINDING_NOT_READY"));
         st.db.connect().unwrap().execute("UPDATE bot_execution_bindings SET state='READY'", []).unwrap();
-        let e = send(&st, "user-a", SendIn { bot_id: "bot-vendor", thread_id: Some("th-vendor"), text: "delete it", correlation_id: Some("k1".into()), consequential: true, allternit_approval_id: None, via: "mcp", traceparent: None, idempotency_key: None, from_kind: "vendor_bot", from_id: "t" }).await.unwrap_err();
+        let e = send(&st, "user-a", SendIn { bot_id: "bot-vendor", thread_id: Some("th-vendor"), text: "delete it", correlation_id: Some("k1".into()), consequential: true, allternit_approval_id: None, via: "mcp" }).await.unwrap_err();
         assert_eq!(e.status, 428);
         assert!(e.approval_id.is_some());
-        let e = send(&st, "user-b", SendIn { bot_id: "bot-vendor", thread_id: Some("th-vendor"), text: "hi", correlation_id: None, consequential: false, allternit_approval_id: None, via: "mcp", traceparent: None, idempotency_key: None, from_kind: "vendor_bot", from_id: "t" }).await.unwrap_err();
+        let e = send(&st, "user-b", SendIn { bot_id: "bot-vendor", thread_id: Some("th-vendor"), text: "hi", correlation_id: None, consequential: false, allternit_approval_id: None, via: "mcp" }).await.unwrap_err();
         assert_eq!(e.status, 404);
         // The pending approval is listed, and events page by cursor.
         assert_eq!(approvals_list(&st, "user-a", "th-vendor", Some("pending")).unwrap().len(), 1);

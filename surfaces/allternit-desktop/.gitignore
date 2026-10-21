@@ -7,7 +7,6 @@ resources/office-engine/
 
 # Staged open-connector sidecar bundle (prepare:connector-sidecar)
 resources/connector-sidecar/dist/
-resources/subs-gateway/
 
 # Staged Cua Driver binary (prepare:cua-driver downloads this at build time)
 resources/computer-use/cua-driver

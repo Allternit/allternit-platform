@@ -20,7 +20,6 @@ pub fn inbox_router() -> Router<Arc<AppState>> {
             get(list_inbox).patch(update_inbox).post(create_inbox),
         )
         .merge(crate::inbox_needs::needs_router())
-        .merge(crate::netops::router())
 }
 
 #[derive(Deserialize)]

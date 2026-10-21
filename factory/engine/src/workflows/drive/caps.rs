@@ -209,9 +209,6 @@ impl FileLock {
                     .with_context(|| format!("flock {}", path.display()));
             }
         }
-        // Windows: LockFileEx through std (released when the handle closes).
-        #[cfg(windows)]
-        file.lock().with_context(|| format!("lock {}", path.display()))?;
         Ok(Self { _file: file })
     }
 
@@ -229,14 +226,6 @@ impl FileLock {
                     return Ok(None);
                 }
                 return Err(err).with_context(|| format!("flock {}", path.display()));
-            }
-        }
-        #[cfg(windows)]
-        match file.try_lock() {
-            Ok(()) => {}
-            Err(std::fs::TryLockError::WouldBlock) => return Ok(None),
-            Err(std::fs::TryLockError::Error(e)) => {
-                return Err(e).with_context(|| format!("lock {}", path.display()))
             }
         }
         Ok(Some(Self { _file: file }))

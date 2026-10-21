@@ -310,12 +310,6 @@ async fn api_v1_paths_and_kernel_run_aliases_resolve() {
     assert!(h.get("allternit-request-id").is_some(), "agency version layer applies");
     assert_eq!(hit("GET", "/api/v1/kernel/runs/run_alias/events".into(), None).await.0, 200);
     assert_eq!(hit("GET", "/api/v1/kernel/runs/run_nope".into(), None).await.0, 404);
-    // the flywheel views read the decision routes under /api/v1 too
-    for uri in ["/api/v1/decisions/training", "/api/v1/decisions/heads", "/api/v1/descent?days=7"] {
-        let (st_, h) = hit("GET", uri.to_string(), None).await;
-        assert_eq!(st_, 200, "{uri}");
-        assert!(h.get("allternit-request-id").is_some(), "agency version layer applies to {uri}");
-    }
     // /api/v1/runs stays Cowork's: not served by this router
     assert_eq!(hit("GET", "/api/v1/runs".into(), None).await.0, 404);
 }

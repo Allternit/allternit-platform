@@ -6,7 +6,6 @@
 
 use crate::aai_facade::{self, FacadeErr, SendIn};
 use crate::auth::AuthUser;
-use crate::netops::hops;
 use crate::AppState;
 use axum::{
     extract::{Extension, Path, State},
@@ -125,10 +124,6 @@ pub async fn handle(state: &Arc<AppState>, user_id: &str, bot_id: &str, req: Val
                     consequential: meta["consequential"].as_bool().unwrap_or(false),
                     allternit_approval_id: meta["allternitApprovalId"].as_str().map(str::to_string),
                     via: "a2a",
-                    traceparent: meta["traceparent"].as_str().map(str::to_string),
-                    idempotency_key: p["message"]["messageId"].as_str().map(|m| hops::derive_key(&["a2a", bot_id, m])),
-                    from_kind: "stranger",
-                    from_id: meta["agentId"].as_str().or(p["message"]["role"].as_str()).unwrap_or("a2a-client"),
                 },
             )
             .await;

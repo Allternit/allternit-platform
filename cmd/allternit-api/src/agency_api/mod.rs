@@ -19,15 +19,7 @@ pub mod compiler;
 pub mod decisions;
 pub mod effects; // WP-C3a/C3b effect connectors
 pub mod executor;
-/// C5: eval harness (trajectory graders, suites, regression gate) built on replay.
-pub mod evals;
 pub mod guard;
-pub mod harness; // C6: harness learning
-pub mod memory_context; // Agency Descent: memory in the context step
-/// C2: trace monitor over every terminal run (`/v1/runs/:id/findings`).
-pub mod monitor;
-/// B4: replays with overrides (decision heads, model class, graph) and batches.
-pub mod replays;
 pub mod safety;
 pub mod store;
 /// WP-X1: task types beyond BUG_FIX (graphs, completion contracts, eval sets).
@@ -61,7 +53,7 @@ use serde_json::{json, Value};
 use std::convert::Infallible;
 use std::sync::Arc;
 use std::time::Duration;
-use store::{new_id, now, AgencyStore, RunRecord, EV_CAMPAIGN_STATE, TERMINAL};
+use store::{new_id, now, AgencyStore, RunRecord, EV_CAMPAIGN_STATE, EV_REPLAY_STATE, TERMINAL};
 
 /// Dated API versions this server serves; the first is the default.
 pub const SUPPORTED_VERSIONS: &[&str] = &["2026-09-29"];
@@ -190,7 +182,6 @@ pub fn agency_router() -> Router<Arc<AppState>> {
         .route("/v1/runs/:run_id/receipts/verification", get(run_receipts_verify))
         .route("/v1/receipts/:receipt_id", get(get_receipt))
         .route("/v1/runs/:run_id/graph", get(run_graph))
-        .route("/v1/runs/:run_id/findings", get(run_findings))
         .route("/v1/attention", get(list_attention))
         .route("/v1/attention/:attention_id", get(get_attention))
         .route("/v1/attention/:attention_id/responses", post(respond_attention))
@@ -206,45 +197,16 @@ pub fn agency_router() -> Router<Arc<AppState>> {
         .route("/v1/campaigns/:campaign_id/pause", post(pause_campaign))
         .route("/v1/campaigns/:campaign_id/resume", post(resume_campaign))
         .route("/v1/campaigns/:campaign_id/cancel", post(cancel_campaign))
-        .route("/v1/replays", post(replays::create_replay))
-        .route("/v1/replays/batch", post(replays::create_batch))
-        .route("/v1/replays/batch/:batch_id", get(replays::get_batch))
-        .route("/v1/replays/:replay_id", get(replays::get_replay))
-        .route("/v1/replays/:replay_id/results", get(replays::get_replay_results))
-        // C5: eval suites, eval runs over replay / the scripted runner, regression cases from runs.
-        .route("/v1/evals/suites", post(evals::create_suite).get(evals::list_suites))
-        .route("/v1/evals/suites/:suite_id", get(evals::get_suite))
-        .route("/v1/evals/runs", post(evals::create_eval_run))
-        .route("/v1/evals/runs/:eval_run_id", get(evals::get_eval_run))
-        .route("/v1/evals/cases/from-run/:run_id", post(evals::case_from_run))
-        // C6: harness learning (decisions admins)
-        .route("/v1/harness/proposals", post(harness::create_proposals).get(harness::list_proposals))
-        .route("/v1/harness/proposals/:proposal_id", get(harness::get_proposal))
-        .route("/v1/harness/proposals/:proposal_id/approve", post(harness::approve_proposal))
-        .route("/v1/harness/proposals/:proposal_id/reject", post(harness::reject_proposal))
-        .route("/v1/harness/searches/:search_id", get(harness::get_search))
-        .route("/v1/harness/versions/:task_type", get(harness::get_versions))
-        .route("/v1/harness/versions/:task_type/rollback", post(harness::rollback))
-        .route("/v1/harness/audit", get(harness::list_audit))
+        .route("/v1/replays", post(create_replay))
+        .route("/v1/replays/:replay_id", get(get_replay))
+        .route("/v1/replays/:replay_id/results", get(get_replay_results))
         // Decision Runtime (E1): typed decisions; /v1/systemone is the compatibility alias.
         .route("/v1/decisions", post(decisions::create_decision))
         .route("/v1/systemone", post(decisions::create_decision))
         .route("/v1/decisions/:decision_id", get(decisions::get_decision).patch(decisions::patch_decision))
         // Decision flywheel (E5): heads, their metrics and state; manual moves for decisions admins.
         .route("/v1/decisions/heads", get(decisions::flywheel::list_heads))
-        // Decision harvest (Agency Descent): per-org opt-in and labelled JSONL datasets.
-        .route("/v1/decisions/training", get(decisions::harvest::get_training).put(decisions::harvest::put_training))
-        .route("/v1/decisions/datasets/:kind", get(decisions::harvest::get_dataset))
-        // Agency Descent: tier mix, escalations and oracle spend over time.
-        .route("/v1/descent", get(decisions::descent::get_descent))
         .route("/v1/decisions/heads/:head/:kind", axum::routing::put(decisions::flywheel::put_head))
-        // Trained heads (Agency Descent B2/C1): CPU-trained head.embed, compiled head.rules; decisions admins.
-        .route("/v1/decisions/heads/train/:kind", post(decisions::training::train_head))
-        .route("/v1/decisions/heads/compile/:kind", post(decisions::training::compile_head))
-        .route("/v1/decisions/heads/:head/:kind/versions", get(decisions::training::list_versions))
-        .route("/v1/decisions/heads/jobs/:job_id", get(decisions::training::get_job))
-        // B5: run the promotion acceptance check (live bar + replay evidence) for one head and kind.
-        .route("/v1/decisions/heads/:head/:kind/acceptance", post(decisions::acceptance::check_head))
         .route("/v1/capabilities", get(|| async { Json(page(catalog::capabilities())) }))
         .route("/v1/agents", get(|| async { Json(page(vec![catalog::agent_object()])) }))
         .route("/v1/authority-profiles", get(|| async { Json(page(catalog::authority_profiles())) }))
@@ -255,25 +217,8 @@ pub fn agency_router() -> Router<Arc<AppState>> {
 /// Read aliases for the Kernel UI: the paired-runtime relay only forwards
 /// `/api/v1/*`, and `/api/v1/runs` belongs to Cowork, so runs are read at
 /// `/v1/kernel/runs/{id}[/events]` (nested under `/api` in `main.rs`). Same
-/// handlers, auth and version layer as `/v1/runs/{id}[/events]`. The Kernel
-/// UI's flywheel views (training opt-in, Descent) read the decision routes
-/// the same way: `/api/v1/decisions/{training,heads,datasets/:kind}` and
-/// `/api/v1/descent`.
+/// handlers, auth and version layer as `/v1/runs/{id}[/events]`.
 pub fn kernel_alias_router() -> Router<Arc<AppState>> {
-    kernel_run_aliases().merge(
-        Router::new()
-            .route("/v1/decisions/training", get(decisions::harvest::get_training).put(decisions::harvest::put_training))
-            .route("/v1/decisions/datasets/:kind", get(decisions::harvest::get_dataset))
-            .route("/v1/decisions/heads", get(decisions::flywheel::list_heads))
-            .route("/v1/descent", get(decisions::descent::get_descent))
-            .layer(axum::middleware::from_fn(version_layer)),
-    )
-}
-
-/// Only the run aliases, for the root `/v1` mount: [`agency_router`] already
-/// serves the decision and descent routes there, and axum panics at startup on
-/// a second handler for the same path.
-pub fn kernel_run_aliases() -> Router<Arc<AppState>> {
     Router::new()
         .route("/v1/kernel/runs/:run_id", get(get_run))
         .route("/v1/kernel/runs/:run_id/events", get(run_events))
@@ -332,7 +277,6 @@ async fn create_run(
     let req: Value = serde_json::from_slice(&body)
         .map_err(|e| ApiError::new(400, "INPUT", "ERR_INPUT_INVALID", format!("invalid JSON: {e}"), &rid))?;
     executor::resume_inflight_once(&st);
-    monitor::install(&st);
     let s = store(&st);
     let _g = s.lock().await;
     if let Some(prev) = s.find_by_idempotency(&user.user_id, &key).await.map_err(|e| ApiError::internal(e, &rid))? {
@@ -372,8 +316,6 @@ async fn create_run(
         "metadata": compiled.metadata, "resolved": resolved, "effect_receipt_ids": [],
     });
     let mut task_ir = compiled.task_ir.clone();
-    // C6: new runs use the task type's active (approved) harness graph version.
-    harness::pin_active_version(&s, &mut task_ir).await.map_err(|e| ApiError::internal(e, &rid))?;
     task_ir["request_hash"] = json!(request_hash(&req));
     let org = guard::org_of(&user);
     task_ir["org_id"] = json!(org);
@@ -704,7 +646,7 @@ fn resolve_attention_linked<'a>(
     // day, or an operator raised it); an approval cannot override it.
     let cap_org = org.clone();
     let cap_lifted = if att["reason"] == guard::CAP_REASON && kind == "approval" {
-        let (g, o) = s.daily_spend_all(&st.db, &cap_org).await.map_err(|e| ApiError::internal(e, rid))?;
+        let (g, o) = s.daily_spend(&cap_org).await.map_err(|e| ApiError::internal(e, rid))?;
         if guard::Limits::from_env().daily_reached(&g, &o).is_some() {
             return Err(ApiError::new(409, "STATE", "ERR_BUDGET_CAP_REACHED", "the daily budget cap is still reached", rid));
         }
@@ -926,33 +868,8 @@ async fn run_graph(
         "node_id": n.get("node_id").unwrap_or(&n["id"]), "primitive_id": n["primitive_id"],
         "role": n.get("cognitive_role").unwrap_or(&n["role"]), "kind": n.get("node_kind").cloned().unwrap_or(json!("task")), "lifecycle": "DECLARE"
     })).collect();
-    // C2: trace-monitor summary (counts only; the findings are on their own endpoint).
-    let findings = monitor::stored(&store(&st), &run_id, &rec.owner).await.ok().flatten().map(|f| monitor::summary_of(&f));
     Ok(Json(json!({ "object": "graph", "graph_id": ir["dag_id"], "version": 1, "template_id": ir["template"]["id"],
-                    "template_source": ir["template"]["source"], "nodes": nodes, "edges": ir["edges"], "findings": findings })).into_response())
-}
-
-/// C2: the trace monitor's findings for a terminal run (owner only). Runs the
-/// deterministic checks on demand when the monitor has not stored any yet.
-async fn run_findings(
-    State(st): State<Arc<AppState>>,
-    Extension(user): Extension<AuthUser>,
-    Extension(rid): Extension<RequestId>,
-    Path(run_id): Path<String>,
-) -> ApiResult {
-    monitor::install(&st);
-    let s = store(&st);
-    let rec = owned(s.load_run(&run_id).await.map_err(|e| ApiError::internal(e, &rid))?, &user, &rid)?;
-    if !TERMINAL.contains(&rec.run["status"].as_str().unwrap_or_default()) {
-        return Err(ApiError::new(409, "STATE", "ERR_RUN_NOT_FINISHED", format!("run is {}; findings are computed when it ends",
-            rec.run["status"].as_str().unwrap_or("unknown")), &rid));
-    }
-    if let Some(f) = monitor::stored(&s, &run_id, &rec.owner).await.map_err(|e| ApiError::internal(e, &rid))? {
-        return Ok(Json(f).into_response());
-    }
-    let f = monitor::monitor_run(&st, &run_id, false).await.map_err(|e| ApiError::internal(e, &rid))?
-        .ok_or_else(|| ApiError::not_found("run", &rid))?;
-    Ok(Json(f).into_response())
+                    "template_source": ir["template"]["source"], "nodes": nodes, "edges": ir["edges"] })).into_response())
 }
 
 // ── artifacts & receipts ────────────────────────────────────────────────────
@@ -1122,4 +1039,84 @@ async fn campaign_control(
     Ok(Json(c).into_response())
 }
 
-// ── replays: see `replays` (overrides, batch, recorded_only) ──
+// ── replays (recorded_only) ─────────────────────────────────────────────────
+
+async fn create_replay(
+    State(st): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Extension(rid): Extension<RequestId>,
+    Json(body): Json<Value>,
+) -> ApiResult {
+    let obj = body.as_object().ok_or_else(|| ApiError::new(400, "INPUT", "ERR_INPUT_INVALID", "body must be an object", &rid))?;
+    if let Some(k) = obj.keys().find(|k| !matches!(k.as_str(), "source_run_id" | "effects" | "overrides")) {
+        return Err(ApiError::new(400, "INPUT", "ERR_INPUT_UNSUPPORTED", format!("unknown field `{k}`"), &rid).param(Some(k.clone())));
+    }
+    if obj.get("effects").is_some_and(|e| e != "recorded_only") {
+        return Err(ApiError::new(400, "INPUT", "ERR_INPUT_UNSUPPORTED", "effects must be recorded_only", &rid).param(Some("effects".into())));
+    }
+    if obj.get("overrides").is_some_and(|o| o.as_object().is_some_and(|o| !o.is_empty())) {
+        return Err(ApiError::new(400, "INPUT", "ERR_INPUT_UNSUPPORTED", "replay overrides are not available in the alpha", &rid).param(Some("overrides".into())));
+    }
+    let src = obj.get("source_run_id").and_then(Value::as_str).unwrap_or_default().to_string();
+    owned(store(&st).load_run(&src).await.map_err(|e| ApiError::internal(e, &rid))?, &user, &rid)?;
+    let cs = st.rails.receipts.chain_store().map_err(|e| ApiError::internal(e, &rid))?;
+    let cassette = allternit_factory_engine::replay::record_cassette(&cs, &src, None, 0)
+        .ok()
+        .filter(|c| !c.entries.is_empty())
+        .ok_or_else(|| ApiError::new(422, "STATE", "ERR_REPLAY_UNRECORDED", "source run has no recorded receipts to replay", &rid))?;
+    let id = new_id("rpl");
+    let total = cassette.entries.len();
+    let report = allternit_factory_engine::replay::replay_report(&cs, cassette, None, &id).map_err(|e| ApiError::internal(e, &rid))?;
+    use allternit_factory_engine::replay::Verdict;
+    let verdict = match report.verdict {
+        Verdict::Identical => "equivalent",
+        Verdict::ExpectedDivergence => "diverged_expected",
+        Verdict::UnexpectedDivergence => "diverged_unexpected",
+    };
+    let report = serde_json::to_value(report).unwrap_or(Value::Null);
+    let divergences: Vec<Value> = report["divergences"].as_array().cloned().unwrap_or_default().into_iter().map(|d| {
+        let expected = d["expected"].as_bool().unwrap_or(false);
+        json!({ "step_ref": format!("{}#{}", d["node_id"].as_str().unwrap_or_default(), d["seq"]),
+                "kind": if expected { "expected" } else { "unexpected" }, "type": d["kind"],
+                "source_receipt_id": d["source_receipt_id"], "replay_receipt_id": d["replay_receipt_id"] })
+    }).collect();
+    let results = json!({ "object": "replay_results", "replay_id": id, "verdict": verdict, "decisions_total": total,
+                          "decisions_matched": total.saturating_sub(divergences.len()), "divergences": divergences,
+                          "has_more": false, "next_cursor": null });
+    let ts = now();
+    let replay = json!({ "id": id, "object": "replay", "source_run_id": src, "effects": "recorded_only",
+                         "status": "completed", "verdict": verdict, "created_at": ts, "finished_at": ts,
+                         "results_url": format!("/v1/replays/{id}/results"), "error": null, "results": results });
+    store(&st).save_object(EV_REPLAY_STATE, &id, &user.user_id, &replay).await.map_err(|e| ApiError::internal(e, &rid))?;
+    Ok((StatusCode::ACCEPTED, Json(without_results(&replay))).into_response())
+}
+
+fn without_results(r: &Value) -> Value {
+    let mut r = r.clone();
+    if let Some(o) = r.as_object_mut() {
+        o.remove("results");
+    }
+    r
+}
+
+async fn get_replay(
+    State(st): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Extension(rid): Extension<RequestId>,
+    Path(id): Path<String>,
+) -> ApiResult {
+    let r = store(&st).load_object(EV_REPLAY_STATE, &id, &user.user_id).await.map_err(|e| ApiError::internal(e, &rid))?
+        .ok_or_else(|| ApiError::not_found("replay", &rid))?;
+    Ok(Json(without_results(&r)).into_response())
+}
+
+async fn get_replay_results(
+    State(st): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Extension(rid): Extension<RequestId>,
+    Path(id): Path<String>,
+) -> ApiResult {
+    let r = store(&st).load_object(EV_REPLAY_STATE, &id, &user.user_id).await.map_err(|e| ApiError::internal(e, &rid))?
+        .ok_or_else(|| ApiError::not_found("replay", &rid))?;
+    Ok(Json(r["results"].clone()).into_response())
+}

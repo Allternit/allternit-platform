@@ -35,8 +35,6 @@ http://127.0.0.1:8013/api/v1
 | `POST` | `/api/v1/providers/:id/connect` | Start a provider connect flow |
 | `GET` | `/api/v1/providers/:id/connect/status` | Check connect status |
 | `POST` | `/api/v1/providers/:id/connect/confirm` | Confirm a completed connect flow |
-| `POST` | `/api/v1/providers/:id/connect/code` | Paste the code a sign-in page showed into the waiting CLI |
-| `POST` | `/api/v1/cli-tools/:id/install` | Install a CLI brain (pinned, licence-gated), streamed as SSE |
 | `GET` | `/api/v1/providers/auth/status` | List auth status for all providers |
 | `POST` | `/api/v1/providers/video/generate` | Generate a video via a media provider |
 | `GET` | `/api/v1/media/catalog` | Media generation catalog |
@@ -154,71 +152,12 @@ curl https://api.allternit.com/api/v1/providers/provider-a/models \
 
 For subprocess providers, `supported` may be `false` because the runtime owns model discovery, but `allow_freeform` remains `true`.
 
-## Install a CLI brain
-
-`POST /api/v1/cli-tools/:id/install` installs a CLI brain (Claude Code, Codex, Grok, Kimi, Qwen, …) on the computer this runtime runs on. It runs the Factory's version-pinned installer, `allternit-factory pane harness install <tool>`, whose pins and licences come from `factory/pane/src/ao/harness/harness.json`.
-
-Tools are installed into the harness's managed `bin/`: `~/.allternit/factory/harness/bin`, or `$ALLTERNIT_FACTORY_HARNESS_HOME/bin` if that's set. allternit-api and gizzi put that folder first on their `PATH` at startup, so the tool works right away.
-
-On a computer without `npm`, the installer first downloads a private Node 22 from nodejs.org into the same folder and checks it against Node's published `SHASUMS256.txt`. Nothing system-wide is changed. When the install succeeds, gizzi reloads so the brain appears in the model picker.
-
-```bash
-curl -N -X POST https://api.allternit.com/api/v1/cli-tools/claude-cli/install \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"acceptTerms": true}'
-```
-
-The response is `text/event-stream`. It sends `log` events while the install runs, then one `done` event:
-
-```text
-event: log
-data: {"line":"== Claude Code =="}
-
-event: done
-data: {"ok":true,"path":"/Users/you/.allternit/factory/harness/bin/claude"}
-```
-
-| Error | Meaning |
-|-------|---------|
-| `404 {"error":"unknown_tool"}` | This provider has no one-click install. |
-| `409 {"error":"terms_required","license","termsUrl"}` | The tool's maker has its own terms (Claude Code, Cursor, Antigravity, …). Show them and resend with `acceptTerms: true`. |
-| `409 {"error":"install_in_progress"}` | An install of this tool is already running. |
-| `409 {"error":"install_unavailable"}` | One-click install isn't supported on this computer (Windows today). |
-
-In `GET /api/v1/providers/auth/status`, every CLI row has an `install` object: `{available, requiresTerms, license, termsUrl, pin}`. A CLI whose binary isn't on the computer reports `status: "not_installed"`.
-
 ## Connect a provider
 
 ```bash
 curl -X POST https://api.allternit.com/api/v1/providers/cli-provider/connect \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"remote": true}'
+  -H "Authorization: Bearer $TOKEN"
 ```
-
-For CLI brains, connect starts the CLI's own sign-in on that computer and keeps it running with its output captured. The sign-in link, any device code, and a "paste the code" prompt all come back in `login`, so the user can finish on any device:
-
-```json
-{
-  "status": "started",
-  "provider": "codex-cli",
-  "label": "Codex",
-  "login": {
-    "url": "https://auth.openai.com/codex/device",
-    "code": "ZWBG-JYPGA",
-    "needsCode": false,
-    "exited": false,
-    "error": null,
-    "hint": "If OpenAI rejects the code, turn on \"device code authorization for Codex\" in ChatGPT Settings → Security, then try again."
-  }
-}
-```
-
-- Send `remote: true` when the user isn't at that computer, for example a cloud computer reached through the relay. Codex and Grok then use device-code sign-in: open the link, enter the code, and it finishes by itself. Without `remote`, the CLI also opens a browser on that computer.
-- Claude Code works the same either way. The user opens the link and signs in, and the page shows a code. When `login.needsCode` is `true`, send that code to `/connect/code`.
-- `login.url` and `login.code` can be `null` for the first few seconds. Keep polling `/connect/status`.
-- A sign-in is stopped after 15 minutes. Starting a new one replaces any earlier one for the same provider.
 
 ### Response states
 
@@ -245,23 +184,9 @@ curl https://api.allternit.com/api/v1/providers/cli-provider/connect/status \
 {
   "status": "success",
   "provider": "cli-provider",
-  "label": "CLI Provider",
-  "login": { "url": "https://…", "code": null, "needsCode": false, "exited": true, "error": null, "hint": null }
+  "label": "CLI Provider"
 }
 ```
-
-`status` is `success` once the CLI reports signed in, `failed` if its sign-in ended without that (see `login.error`), and `pending` otherwise. When it succeeds, the brain becomes the default and gizzi reloads.
-
-## Paste a sign-in code
-
-```bash
-curl -X POST https://api.allternit.com/api/v1/providers/claude-cli/connect/code \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"code": "the-code-from-the-sign-in-page"}'
-```
-
-The response is `{"ok": true}`, or `409 {"error": "no_login_waiting"}` if no sign-in is waiting for a code.
 
 ## Confirm connect
 

@@ -15,9 +15,6 @@ use std::time::Duration;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
 
-pub mod requirements;
-pub use requirements::{HardwareRequirements, OffloadRequirement, RequirementFit};
-
 /// A single catalog entry.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CatalogEntry {
@@ -28,12 +25,6 @@ pub struct CatalogEntry {
     pub pipeline_tag: Option<String>,
     pub last_modified: Option<String>,
     pub source: String,
-    /// Agency model class this entry serves (e.g. `mc.local.s2`).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub model_class: Option<String>,
-    /// Measured footprint and memory paths; `/recommend` gates on them.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub requirements: Option<HardwareRequirements>,
 }
 
 impl CatalogEntry {
@@ -46,21 +37,15 @@ impl CatalogEntry {
             pipeline_tag: Some("text-generation".to_string()),
             last_modified: None,
             source: "seed".to_string(),
-            model_class: seed.model_class.clone(),
-            requirements: seed.requirements.clone(),
         }
     }
 }
 
 /// In-repo seed entry.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SeedEntry {
     pub repo_id: String,
     pub source_tag: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub model_class: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub requirements: Option<HardwareRequirements>,
 }
 
 /// Cached poll result.
@@ -135,14 +120,7 @@ impl CatalogService {
 
     /// Return the merged catalog.
     pub async fn catalog(&self, source: CatalogSource, limit: usize) -> Vec<CatalogEntry> {
-        let mut polled = self.cache.read().await.entries.clone();
-        // A polled copy of a curated seed keeps the seed's class and requirements.
-        for entry in polled.iter_mut() {
-            if let Some(seed) = self.seeds.iter().find(|s| s.repo_id == entry.repo_id) {
-                entry.model_class = seed.model_class.clone();
-                entry.requirements = seed.requirements.clone();
-            }
-        }
+        let polled = self.cache.read().await.entries.clone();
         let mut merged: Vec<CatalogEntry> = match source {
             CatalogSource::All => {
                 let mut by_id: HashMap<String, CatalogEntry> = HashMap::new();
@@ -303,8 +281,6 @@ impl CatalogService {
                     pipeline_tag,
                     last_modified,
                     source: "polled".to_string(),
-                    model_class: None,
-                    requirements: None,
                 });
             }
         }
@@ -364,42 +340,34 @@ fn load_seeds() -> Vec<SeedEntry> {
             SeedEntry {
                 repo_id: "bartowski/Llama-3.2-3B-Instruct-GGUF".into(),
                 source_tag: "newest".into(),
-                ..Default::default()
             },
             SeedEntry {
                 repo_id: "bartowski/Llama-3.2-1B-Instruct-GGUF".into(),
                 source_tag: "newest".into(),
-                ..Default::default()
             },
             SeedEntry {
                 repo_id: "bartowski/Qwen2.5-7B-Instruct-GGUF".into(),
                 source_tag: "newest".into(),
-                ..Default::default()
             },
             SeedEntry {
                 repo_id: "bartowski/Qwen2.5-14B-Instruct-GGUF".into(),
                 source_tag: "newest".into(),
-                ..Default::default()
             },
             SeedEntry {
                 repo_id: "bartowski/Mistral-7B-Instruct-v0.3-GGUF".into(),
                 source_tag: "newest".into(),
-                ..Default::default()
             },
             SeedEntry {
                 repo_id: "bartowski/DeepSeek-R1-Distill-Qwen-7B-GGUF".into(),
                 source_tag: "newest".into(),
-                ..Default::default()
             },
             SeedEntry {
                 repo_id: "bartowski/Phi-4-mini-instruct-GGUF".into(),
                 source_tag: "newest".into(),
-                ..Default::default()
             },
             SeedEntry {
                 repo_id: "bartowski/gemma-2-9b-it-GGUF".into(),
                 source_tag: "newest".into(),
-                ..Default::default()
             },
         ]
     })
@@ -430,33 +398,6 @@ mod tests {
     fn seed_loads() {
         let seeds = load_seeds();
         assert!(!seeds.is_empty());
-    }
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn polled_copy_of_a_curated_seed_keeps_its_requirements() {
-        let dir = tempfile::tempdir().unwrap();
-        let service = CatalogService::new(dir.path());
-        {
-            let mut cache = service.cache.write().await;
-            cache.entries = vec![CatalogEntry {
-                repo_id: "unsloth/Qwen3.8-27B-GGUF".into(),
-                downloads: 6_000_000,
-                likes: 500,
-                tags: vec!["gguf".into()],
-                pipeline_tag: None,
-                last_modified: None,
-                source: "polled".into(),
-                model_class: None,
-                requirements: None,
-            }];
-        }
-        let all = service.catalog(CatalogSource::All, 100).await;
-        let dense = all.iter().find(|e| e.repo_id == "unsloth/Qwen3.8-27B-GGUF").unwrap();
-        assert_eq!(dense.source, "polled");
-        assert_eq!(dense.model_class.as_deref(), Some("mc.local.s2"));
-        assert_eq!(dense.requirements.as_ref().unwrap().quantization, "UD-Q4_K_XL");
-        let flash = all.iter().find(|e| e.repo_id == "unsloth/Qwen3.8-Flash-Next-GGUF").unwrap();
-        assert!(flash.requirements.as_ref().unwrap().offload.is_some());
     }
 
     #[test]

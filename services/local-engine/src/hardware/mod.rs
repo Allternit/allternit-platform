@@ -8,8 +8,6 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 use sysinfo::System;
 
-pub mod gpu_probe;
-
 /// Detected backend capabilities.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BackendCapabilities {
@@ -126,7 +124,7 @@ pub fn detect() -> HardwareProfile {
 
     let mut backends = BackendCapabilities::default();
     backends.metal = cfg!(target_os = "macos") && apple_chip.is_some();
-    backends.cuda = cfg!(any(target_os = "linux", target_os = "windows")) && has_nvidia_gpu();
+    backends.cuda = cfg!(target_os = "linux") && has_nvidia_gpu();
 
     let hardware_id = stable_hardware_id(
         &cpu_model,
@@ -265,31 +263,7 @@ fn detect_gpu_info(
     (None, None, None, None, false)
 }
 
-/// Windows: nvidia-smi for NVIDIA cards (exact VRAM and usage), else the
-/// first display adapter WMI reports (AMD/Intel; VRAM when WMI knows it).
-#[cfg(target_os = "windows")]
-fn detect_gpu_info(
-    _sys: &System,
-) -> (
-    Option<String>,
-    Option<u64>,
-    Option<u64>,
-    Option<String>,
-    bool,
-) {
-    match gpu_probe::windows_gpus().into_iter().next() {
-        Some(gpu) => (
-            Some(gpu.name),
-            gpu.memory_total_mb.map(|mb| mb * 1024 * 1024),
-            gpu.memory_used_mb.map(|mb| mb * 1024 * 1024),
-            None,
-            false,
-        ),
-        None => (None, None, None, None, false),
-    }
-}
-
-#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 fn detect_gpu_info(
     _sys: &System,
 ) -> (
@@ -302,7 +276,6 @@ fn detect_gpu_info(
     (None, None, None, None, false)
 }
 
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn apple_chip_generation(name: &str) -> Option<String> {
     let lower = name.to_lowercase();
     if lower.contains("m4") {
@@ -328,12 +301,7 @@ fn has_nvidia_gpu() -> bool {
         .unwrap_or(false)
 }
 
-#[cfg(target_os = "windows")]
-fn has_nvidia_gpu() -> bool {
-    !gpu_probe::nvidia_smi().is_empty()
-}
-
-#[cfg(not(any(target_os = "linux", target_os = "windows")))]
+#[cfg(not(target_os = "linux"))]
 fn has_nvidia_gpu() -> bool {
     false
 }

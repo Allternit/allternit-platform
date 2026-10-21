@@ -55,23 +55,10 @@ In **Settings → What your bot can do on its own → Exceptions for a person**,
 
 Everything the bot held, drafted or told you about lands in your Inbox. Open the card to go to the conversation. Holds that need your OK also appear as the usual approval card.
 
-## What this bot may do at all
-
-On the bot's page, **What this bot may do** sets an outer limit that your levels cannot go past:
-
-| Envelope | What it means |
-|---|---|
-| **Read only** | The bot looks things up and answers you. It sends nothing. |
-| **Draft only** | It writes the message; you send it. |
-| **Ask first** | It asks you before every send or action. |
-| **Act within limits** | It acts on its own wherever your levels allow. This is the default. |
-
-Built-in bots come with one that fits the job. Bots that contact clients start on **Ask first**. Payments and contracts always need your OK, whatever the envelope. See [Prompt injection defense](/guides/injection-defense) for what else holds a send.
-
 ## Good to know
 
 - A call that needs your OK is not placed until you approve it. The bot is told to try again once you have.
 - Email keeps the mailbox's own reply mode until you choose a level for it. Once you choose one, your level decides: **Send and tell me** and **Act within limits** reply directly, but only for a verified domain and never past the reply caps. **Ask first** and **Draft only** send the email to the review queue.
 - AI apps and vendor bots that text, call or email through your bot follow the same levels.
 
-See [Autonomy API](/api/autonomy) for developers, and [Prompt injection defense](/guides/injection-defense) for how content from outside holds a send.
+See [Autonomy API](/api/autonomy) for developers.

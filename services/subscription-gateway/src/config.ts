@@ -1,18 +1,9 @@
 // §1 config — env (SUBS_GATEWAY_*) + optional flat-key policy file.
-import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { defaultAdaptersDir } from "./adapters/registry.js";
 import type { KeychainBackendKind } from "./security/keychain.js";
-
-// Windows has no unix sockets: the same transport is a named pipe, one per
-// state dir so two gateways (e.g. a smoke boot) never share a pipe.
-export function gatewaySocketPathFor(stateDir: string, platform: NodeJS.Platform = process.platform): string {
-  if (platform !== "win32") return join(stateDir, "gateway.sock");
-  const id = createHash("sha256").update(resolve(stateDir).toLowerCase()).digest("hex").slice(0, 16);
-  return `\\\\.\\pipe\\allternit-subs-gateway-${id}`;
-}
 
 export interface TcpConfig {
   enabled: boolean;
@@ -52,18 +43,12 @@ export interface Config {
   // AAI host (/aai/*). disabled = per-adapter kill switch (env SUBS_GATEWAY_AAI_DISABLED, csv of adapterIds);
   // loopback = the Allternit-bot provider reaching allternit-api (base default `${apiBase}/api/v1`,
   // SUBS_GATEWAY_AAI_LOOPBACK_BASE / _BOTS csv; bearer via SUBS_GATEWAY_AAI_LOOPBACK_TOKEN).
-  // queueWaitMs / queueMax: turns on one UI-bridge account (desktop app, subscription tab) run up to the lane's
-  // maxParallel at once and the rest wait in order, at most queueMax of them for at most queueWaitMs
-  // (SUBS_GATEWAY_AAI_QUEUE_WAIT_MS, default 600000; SUBS_GATEWAY_AAI_QUEUE_MAX, default 8).
-  aai: { disabled: string[]; loopbackBaseUrl: string; loopbackBots: string[]; queueWaitMs?: number; queueMax?: number };
+  aai: { disabled: string[]; loopbackBaseUrl: string; loopbackBots: string[] };
   // Close a subscription's Chrome after this many idle minutes (no task in
   // flight for the account); the next task relaunches it. Default 10 (same as the cloud computer image): resident
   // Chromes for every account pinned a Sessions computer at load ~190 and hung
   // the gateway (2026-10-04). 0 keeps Chrome resident. Env: SUBS_GATEWAY_LANE_IDLE_MIN.
   laneIdleCloseMin: number;
-  // Lane health canary (free, non-spending probe of resident lanes) every N seconds; 0 turns it off.
-  // Env: SUBS_GATEWAY_CANARY_SEC. Default 180.
-  canaryIntervalSec: number;
 }
 
 const ENV_PREFIX = "SUBS_GATEWAY_";
@@ -172,7 +157,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     stateDir,
     dbPath: join(stateDir, "state.db"),
     artifactsDir: join(stateDir, "artifacts"),
-    udsPath: gatewaySocketPathFor(stateDir),
+    udsPath: join(stateDir, "gateway.sock"),
     adaptersDir: env[`${ENV_PREFIX}ADAPTERS_DIR`] ?? defaultAdaptersDir(),
     keychainBackend: keychainEnv ?? "keychain",
     tcp: {
@@ -193,10 +178,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       disabled: csvList(env[`${ENV_PREFIX}AAI_DISABLED`]),
       loopbackBaseUrl: env[`${ENV_PREFIX}AAI_LOOPBACK_BASE`] ?? `${env[`${ENV_PREFIX}API_BASE`] ?? "http://127.0.0.1:18013"}/api/v1`,
       loopbackBots: csvList(env[`${ENV_PREFIX}AAI_LOOPBACK_BOTS`]),
-      queueWaitMs: positiveInt(env[`${ENV_PREFIX}AAI_QUEUE_WAIT_MS`], 600_000, `${ENV_PREFIX}AAI_QUEUE_WAIT_MS`),
-      queueMax: positiveInt(env[`${ENV_PREFIX}AAI_QUEUE_MAX`], 8, `${ENV_PREFIX}AAI_QUEUE_MAX`),
     },
     laneIdleCloseMin: nonNegativeInt(env[`${ENV_PREFIX}LANE_IDLE_MIN`], 10, `${ENV_PREFIX}LANE_IDLE_MIN`),
-    canaryIntervalSec: nonNegativeInt(env[`${ENV_PREFIX}CANARY_SEC`], 180, `${ENV_PREFIX}CANARY_SEC`),
   };
 }

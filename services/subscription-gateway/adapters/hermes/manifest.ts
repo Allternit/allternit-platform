@@ -17,7 +17,7 @@ export const TERMS_WARNING =
 /**
  * Honest capability declaration. Everything not true here answers UNSUPPORTED (enforced by runConformance).
  * - context: the OpenAI-compatible endpoint is stateless per request, so a context is Allternit-side history (see README);
- *   contexts are isolated by construction, and the gateway persists that history so they resume across restarts.
+ *   contexts are isolated by construction and resumable only while this process holds them.
  * - tools/plugins/tasks/approvals: Hermes runs skills and channels itself; none of that is visible through chat
  *   completions, so none of it is claimed.
  */

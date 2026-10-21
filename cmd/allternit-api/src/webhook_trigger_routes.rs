@@ -820,7 +820,6 @@ mod tests {
             desktop_host_provisioner: None,
             bot_desktop_sessions: Arc::new(RwLock::new(std::collections::HashMap::new())),
             computer_guest_tokens: Arc::new(RwLock::new(std::collections::HashMap::new())),
-            phone_link: crate::phone_ws::PhoneLinkRegistry::new_http(),
             passkey_state: None,
             resource_class_catalog:
                 crate::fabric::sku::ResourceClassCatalog::from_db(&db_for_init)

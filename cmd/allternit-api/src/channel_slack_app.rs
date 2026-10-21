@@ -118,10 +118,6 @@ impl ChannelTransport for SlackAppTransport {
     fn provider(&self) -> &'static str {
         "slack"
     }
-    /// No replay: events missed while offline wait in the cloud queue instead.
-    fn capabilities(&self) -> crate::channel_gateway::Capabilities {
-        crate::channel_gateway::Capabilities { text: true, threads: true, history: false, files_out: true, files_in: true, reactions: true, edits: true, delivery_receipts: false, per_bot_identity: true }
-    }
     /// Shared-app events arrive over the authenticated cloud→runtime relay
     /// (the cloud already verified Slack's signature); there is nothing to
     /// verify again here.
@@ -184,7 +180,7 @@ impl SlackAppTransport {
                 let ts = resp.body.get("ts").and_then(Value::as_str).unwrap_or_default().to_string();
                 Ok(Receipt { remote_id: ts, relayed: false })
             }
-            429 => Err(PostError::rate_limited(&resp.body)),
+            429 => Err(PostError::Rejected("rate limited by the Slack shared app lane".into())),
             500..=599 => Err(PostError::Uncertain(format!("cloud slack send returned {}", resp.status))),
             _ => Err(PostError::Rejected(format!(
                 "cloud slack send refused: {}",
@@ -245,15 +241,13 @@ pub fn slack_app_webhook_router_with(secret: Arc<dyn crate::relay_auth::RelaySec
     Router::new().route(SLACK_APP_EVENTS_PATH, post(shared_events_h)).layer(crate::relay_auth::secret_layer(secret))
 }
 
-/// The connection an inbound team maps to for the owner the cloud relayed it
-/// for: their shared-app connection whose sealed metadata names the team, else
-/// their 'legacy' connection (V216) answered by the env-token transport.
-/// `None` = that owner has no connection. Scoped to the owner because several
-/// people in one Slack workspace can each connect it.
-fn account_for_team(db: &DbHandle, owner: &str, team_id: &str) -> Option<crate::channel_transports::Account> {
+/// The connection an inbound team maps to: a shared-app connection whose
+/// sealed metadata names the team, else the owner's 'legacy' connection
+/// (V216) answered by the env-token transport. `None` = no connection at all.
+fn account_for_team(db: &DbHandle, team_id: &str) -> Option<crate::channel_transports::Account> {
     let shared = accounts(db, "slack", None)
         .into_iter()
-        .find(|a| a.owner == owner && crate::channel_transports::pick(&a.secret, "teamId") == team_id);
+        .find(|a| crate::channel_transports::pick(&a.secret, "teamId") == team_id);
     if shared.is_some() {
         return shared;
     }
@@ -263,9 +257,9 @@ fn account_for_team(db: &DbHandle, owner: &str, team_id: &str) -> Option<crate::
     let row: Option<(String, String)> = conn
         .query_row(
             "SELECT id, owner FROM provider_account_bindings
-             WHERE owner = ?1 AND vendor = 'slack' AND auth_type = 'channel_oauth' AND external_account_id = 'legacy'
+             WHERE vendor = 'slack' AND auth_type = 'channel_oauth' AND external_account_id = 'legacy'
              ORDER BY created_at LIMIT 1",
-            params![owner],
+            [],
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .ok();
@@ -361,10 +355,13 @@ async fn shared_events_h(State(state): State<Arc<AppState>>, auth: crate::relay_
     let Some(team_id) = envelope.team_id.as_deref() else {
         return (StatusCode::BAD_REQUEST, Json(json!({ "error": "missing teamId" }))).into_response();
     };
-    let Some(acct) = account_for_team(&state.db, &auth.owner, team_id) else {
-        tracing::warn!(%team_id, "slack shared-app event for a team this owner has not connected; ignored");
+    let Some(acct) = account_for_team(&state.db, team_id) else {
+        tracing::warn!(%team_id, "slack shared-app event for a team with no connection; ignored");
         return Json(json!({ "ok": true, "ignored": true })).into_response();
     };
+    if acct.owner != auth.owner {
+        return (StatusCode::FORBIDDEN, Json(json!({ "error": "team belongs to another owner" }))).into_response();
+    }
     let Some(tx) = transport_for_account(&state, &acct) else {
         return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({ "error": "slack_not_configured" }))).into_response();
     };
@@ -408,8 +405,11 @@ async fn shared_events_h(State(state): State<Arc<AppState>>, auth: crate::relay_
         }
     }
     let files = crate::channel_attachments::inbound_files("slack", &envelope.event.clone().unwrap_or(Value::Null));
-    // Recorded before the cloud queue hears back (it redelivers on an error); the turns run after.
-    crate::channel_transports::accept_and_ack(&state, &acct, tx, events, files).await
+    let st = state.clone();
+    tokio::spawn(async move {
+        crate::channel_transports::dispatch_events_with_files(&st, &acct, tx, events, files).await;
+    });
+    Json(json!({ "ok": true })).into_response()
 }
 
 // ---------------------------------------------------------------- connect

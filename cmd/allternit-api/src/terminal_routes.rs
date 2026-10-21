@@ -18,10 +18,6 @@
 //!   the engine when it is down), or `$ALLTERNIT_FACTORY_PANE_SOCKET`. The
 //!   binary is `$ALLTERNIT_FACTORY_BIN`, else `allternit-factory` next to
 //!   this executable, else on `PATH`.
-//! - Transport: a Unix socket on macOS/Linux. On Windows the pane engine
-//!   listens on a named pipe and `ensure` reports its marker file path; the
-//!   pipe is `\\.\pipe\<that path>` (see [`pipe_name`]). Only the dial
-//!   differs; the protocol is the same newline JSON.
 
 use axum::{
     body::Body,
@@ -38,6 +34,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::net::UnixStream;
 use tokio::sync::Mutex;
 use tracing::{debug, warn};
 use uuid::Uuid;
@@ -47,51 +44,6 @@ use crate::AppState;
 // ─────────────────────────────────────────────────────────────────────────────
 // Pane engine socket client
 // ─────────────────────────────────────────────────────────────────────────────
-
-/// One connection to the pane engine.
-#[cfg(unix)]
-type PaneStream = tokio::net::UnixStream;
-#[cfg(windows)]
-type PaneStream = tokio::net::windows::named_pipe::NamedPipeClient;
-
-/// The named pipe the pane engine serves for `socket` (the path `pane tty
-/// ensure` reports). Mirrors the pane's own mapping (interprocess
-/// `GenericNamespaced` prepends `\\.\pipe\`); a value that already is a
-/// local pipe path (e.g. a preset `$ALLTERNIT_FACTORY_PANE_SOCKET`) is kept.
-#[cfg_attr(not(windows), allow(dead_code))]
-pub(crate) fn pipe_name(socket: &std::path::Path) -> String {
-    let s = socket.to_string_lossy();
-    if s.starts_with(r"\\.\pipe\") {
-        s.into_owned()
-    } else {
-        format!(r"\\.\pipe\{s}")
-    }
-}
-
-#[cfg(unix)]
-async fn dial(path: &std::path::Path) -> std::io::Result<PaneStream> {
-    tokio::net::UnixStream::connect(path).await
-}
-
-#[cfg(windows)]
-async fn dial(path: &std::path::Path) -> std::io::Result<PaneStream> {
-    use tokio::net::windows::named_pipe::ClientOptions;
-    // ERROR_PIPE_BUSY: every server instance is taken; the engine creates a
-    // new one per accepted connection, so wait briefly and retry.
-    const ERROR_PIPE_BUSY: i32 = 231;
-    let name = pipe_name(path);
-    let mut tries = 0;
-    loop {
-        match ClientOptions::new().open(&name) {
-            Ok(client) => return Ok(client),
-            Err(e) if e.raw_os_error() == Some(ERROR_PIPE_BUSY) && tries < 50 => {
-                tries += 1;
-                tokio::time::sleep(Duration::from_millis(20)).await;
-            }
-            Err(e) => return Err(e),
-        }
-    }
-}
 
 /// Pane engine errors, mapped to HTTP statuses at the route.
 #[derive(Debug)]
@@ -120,16 +72,13 @@ impl PaneError {
     }
 }
 
-pub(crate) fn factory_bin() -> PathBuf {
+fn factory_bin() -> PathBuf {
     if let Some(bin) = std::env::var_os("ALLTERNIT_FACTORY_BIN").filter(|v| !v.is_empty()) {
         return PathBuf::from(bin);
     }
     if let Some(sibling) = std::env::current_exe()
         .ok()
-        .and_then(|exe| {
-            exe.parent()
-                .map(|dir| dir.join(format!("allternit-factory{}", std::env::consts::EXE_SUFFIX)))
-        })
+        .and_then(|exe| exe.parent().map(|dir| dir.join("allternit-factory")))
         .filter(|p| p.is_file())
     {
         return sibling;
@@ -206,15 +155,15 @@ impl TerminalSessionStore {
             .ok_or_else(|| PaneError::Unavailable("pane tty ensure reported no socket".into()))
     }
 
-    async fn connect(&self) -> Result<PaneStream, PaneError> {
+    async fn connect(&self) -> Result<UnixStream, PaneError> {
         let mut socket = self.socket.lock().await;
         if let Some(path) = socket.as_ref() {
-            if let Ok(stream) = dial(path).await {
+            if let Ok(stream) = UnixStream::connect(path).await {
                 return Ok(stream);
             }
         }
         let path = self.ensure().await?;
-        let stream = dial(&path).await.map_err(|e| {
+        let stream = UnixStream::connect(&path).await.map_err(|e| {
             PaneError::Unavailable(format!("the Factory pane engine is not reachable at {}: {e}", path.display()))
         })?;
         *socket = Some(path);
@@ -224,7 +173,7 @@ impl TerminalSessionStore {
     /// Opens a connection and sends one request (the pane engine serves one
     /// request per connection). Returns the reader, positioned at the
     /// response line.
-    async fn open(&self, method: &str, params: Value) -> Result<BufReader<PaneStream>, PaneError> {
+    async fn open(&self, method: &str, params: Value) -> Result<BufReader<UnixStream>, PaneError> {
         let mut stream = self.connect().await?;
         let frame = json!({ "id": Uuid::new_v4().to_string(), "method": method, "params": params });
         let mut line = frame.to_string();
@@ -236,7 +185,7 @@ impl TerminalSessionStore {
         Ok(BufReader::new(stream))
     }
 
-    async fn read_response(reader: &mut BufReader<PaneStream>) -> Result<Value, PaneError> {
+    async fn read_response(reader: &mut BufReader<UnixStream>) -> Result<Value, PaneError> {
         let mut buf = String::new();
         let n = reader
             .read_line(&mut buf)
@@ -265,24 +214,7 @@ impl TerminalSessionStore {
 }
 
 fn default_shell() -> String {
-    if cfg!(windows) {
-        // Empty: the pane engine's default shell (PowerShell on Windows).
-        String::new()
-    } else {
-        "/bin/zsh".into()
-    }
-}
-
-/// The argv for a new terminal. Empty runs the pane engine's default shell.
-/// On Windows a Unix shell path (the web UI defaults to `/bin/zsh`) can't
-/// run, so it also means the default shell (PowerShell).
-fn shell_command(shell: &str) -> Vec<String> {
-    let shell = shell.trim();
-    if shell.is_empty() || (cfg!(windows) && shell.starts_with('/')) {
-        Vec::new()
-    } else {
-        vec![shell.to_string()]
-    }
+    "/bin/zsh".into()
 }
 
 fn default_cols() -> u16 {
@@ -425,7 +357,7 @@ async fn create_terminal(
                 "cwd": cwd,
                 "cols": request.cols,
                 "rows": request.rows,
-                "command": shell_command(&request.shell),
+                "command": [request.shell],
                 // Browser shells need a real terminal type whatever the
                 // engine inherited (an engine started from a service can
                 // have TERM=dumb).
@@ -586,33 +518,6 @@ async fn terminal_stream(
 }
 
 #[cfg(test)]
-mod transport_tests {
-    use super::*;
-
-    #[test]
-    fn pipe_name_prefixes_the_marker_path_like_the_pane_engine() {
-        assert_eq!(
-            pipe_name(std::path::Path::new(r"C:\Users\me\AppData\herdr\ao\herdr.sock")),
-            r"\\.\pipe\C:\Users\me\AppData\herdr\ao\herdr.sock"
-        );
-        assert_eq!(pipe_name(std::path::Path::new(r"\\.\pipe\x")), r"\\.\pipe\x");
-    }
-
-    #[test]
-    fn shell_command_runs_the_default_shell_when_empty() {
-        assert!(shell_command("").is_empty());
-        assert!(shell_command("  ").is_empty());
-        if cfg!(windows) {
-            assert!(shell_command("/bin/zsh").is_empty());
-            assert_eq!(shell_command("pwsh.exe"), vec!["pwsh.exe".to_string()]);
-        } else {
-            assert_eq!(shell_command("/bin/zsh"), vec!["/bin/zsh".to_string()]);
-        }
-    }
-}
-
-// The fake engine below listens on a Unix socket.
-#[cfg(all(test, unix))]
 mod tests {
     //! The routes against a fake pane engine that speaks the real wire
     //! protocol (one request per connection, `factory.terminal.*`) and echoes
@@ -639,7 +544,7 @@ mod tests {
         changed: Notify,
     }
 
-    async fn serve_conn(fake: Arc<Fake>, stream: tokio::net::UnixStream) {
+    async fn serve_conn(fake: Arc<Fake>, stream: UnixStream) {
         let (read, mut write) = stream.into_split();
         let mut lines = BufReader::new(read);
         let mut line = String::new();

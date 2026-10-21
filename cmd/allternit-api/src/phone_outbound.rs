@@ -215,7 +215,6 @@ pub async fn text_attributed<R: ThreadRuntime>(db: &DbHandle, rt: &R, http: Arc<
         }),
         Ok(SendOutcome::ReadOnly) => Err(OutError::Failed("That conversation is read-only.".into())),
         Ok(SendOutcome::Unconfirmed { .. }) => Err(OutError::Failed("I couldn't confirm the text went out; check the thread before resending.".into())),
-        Ok(SendOutcome::RateLimited { .. }) => Err(OutError::Failed("Texting is rate limited right now; nothing was sent. Try again in a minute.".into())),
         Ok(SendOutcome::Denied(m)) => Err(OutError::Failed(m)),
         Ok(SendOutcome::ApprovalRequired { .. }) => Err(OutError::Failed("That text is waiting for your approval.".into())),
         Ok(other) => Err(OutError::Failed(format!("The text wasn't sent ({other:?})."))),
@@ -237,10 +236,6 @@ pub async fn call<R: ThreadRuntime>(db: &DbHandle, rt: &R, http: Arc<dyn HttpSen
     let act = crate::autonomy::Action { owner: &n.owner, bot_id: &n.bot_id, channel: "call", persons: vec![to.to_string()], action: "call", amount_cents: 0 };
     let aut = crate::autonomy::evaluate(db, &act, false);
     let corr = format!("call:{to}");
-    if let Some(crate::autonomy::Eval { verdict: crate::autonomy::Verdict::Block { reason }, .. }) = &aut {
-        crate::autonomy::record(db, &act, aut.as_ref().map(|e| e.level.as_str()).unwrap_or("default"), "blocked", reason);
-        return Err(OutError::Failed(reason.clone()));
-    }
     let mut consume: Option<String> = None;
     if let Some(e) = aut.as_ref().filter(|e| e.held()) {
         let reason = match &e.verdict {
@@ -311,7 +306,7 @@ pub async fn add_contact(db: &DbHandle, http: Arc<dyn HttpSend>, n: &PhoneNumber
 
 // ---------------------------------------------------------------- HTTP
 
-pub(crate) fn runtime(state: &Arc<AppState>) -> crate::coordinator_routes::GizziCoordinator {
+fn runtime(state: &Arc<AppState>) -> crate::coordinator_routes::GizziCoordinator {
     crate::coordinator_routes::GizziCoordinator { state: state.clone() }
 }
 

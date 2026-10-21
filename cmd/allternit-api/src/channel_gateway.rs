@@ -112,52 +112,6 @@ pub enum PostError {
     Rejected(String),
     /// Timeout / transport failure / 5xx: the message may or may not exist.
     Uncertain(String),
-    /// The platform throttled the post (definite: nothing was posted). Safe to
-    /// retry after `retry_after_secs` when the platform said how long.
-    RateLimited { retry_after_secs: Option<u64>, detail: String },
-}
-
-impl PostError {
-    /// A 429 reply: the wait the platform asked for, from the JSON body
-    /// (Discord `retry_after`, Telegram `parameters.retry_after`, the cloud
-    /// relays' `retryAfter`). Slack sends it only as a header, so it may be absent.
-    pub fn rate_limited(body: &Value) -> PostError {
-        let secs = ["/retry_after", "/parameters/retry_after", "/retryAfter"]
-            .iter()
-            .find_map(|p| body.pointer(p).and_then(|v| v.as_f64().or_else(|| v.as_str().and_then(|s| s.parse().ok()))))
-            .filter(|s| s.is_finite() && *s >= 0.0)
-            .map(|s| s.ceil() as u64);
-        PostError::RateLimited { retry_after_secs: secs, detail: "rate limited".into() }
-    }
-}
-
-/// What a provider can do, from its adapter's code (not a promise about the
-/// platform at large). `history: false` means the adapter cannot replay missed
-/// messages, which is different from a conversation with no new messages.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Capabilities {
-    pub text: bool,
-    /// Replies can stay inside a platform thread.
-    pub threads: bool,
-    /// `fetch_since` can replay messages missed while disconnected.
-    pub history: bool,
-    pub files_out: bool,
-    pub files_in: bool,
-    /// Reaction changes arrive as events.
-    pub reactions: bool,
-    /// Edits and deletes arrive as events.
-    pub edits: bool,
-    /// The platform reports delivered/read for our posts. Without it, "sent"
-    /// only means the platform accepted the post.
-    pub delivery_receipts: bool,
-    /// Each bot can post under its own name (otherwise posts are prefixed "Name: ").
-    pub per_bot_identity: bool,
-}
-
-impl Capabilities {
-    pub const TEXT_ONLY: Capabilities =
-        Capabilities { text: true, threads: false, history: false, files_out: false, files_in: false, reactions: false, edits: false, delivery_receipts: false, per_bot_identity: false };
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -170,10 +124,6 @@ pub struct Identity {
 #[async_trait]
 pub trait ChannelTransport: Send + Sync {
     fn provider(&self) -> &'static str;
-    /// What this adapter supports. Default: plain text only.
-    fn capabilities(&self) -> Capabilities {
-        Capabilities::TEXT_ONLY
-    }
     /// Verify the platform signature/token on an inbound webhook.
     fn verify(&self, secret: &str, headers: &HeaderMap, body: &[u8]) -> Result<(), String>;
     /// Payload -> zero or more normalized events (unknown shapes yield none).
@@ -184,11 +134,9 @@ pub trait ChannelTransport: Send + Sync {
     async fn post_files(&self, _out: &Outbound, _files: &[crate::channel_files::ChannelFile]) -> Result<Receipt, PostError> {
         Err(PostError::Rejected("attachments_unsupported".into()))
     }
-    /// Events after `cursor` for a conversation (reconnect). Adapters without
-    /// replay keep this default, which says so instead of returning an empty
-    /// list that would read as "nothing was missed".
+    /// Events after `cursor` for a conversation (reconnect). Default: none.
     async fn fetch_since(&self, _channel: &str, _thread: Option<&str>, _cursor: Option<&str>) -> Result<Vec<Inbound>, String> {
-        Err(HISTORY_UNSUPPORTED.into())
+        Ok(vec![])
     }
 }
 
@@ -231,54 +179,6 @@ fn b_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<BindingRow> {
     })
 }
 
-/// Returned by `fetch_since` when the adapter has no replay.
-pub const HISTORY_UNSUPPORTED: &str = "history_unsupported";
-
-pub fn binding_by_id(db: &DbHandle, id: &str) -> Option<BindingRow> {
-    let conn = db.connect().ok()?;
-    conn.query_row(&format!("SELECT {B_COLS} FROM channel_conversation_bindings WHERE id = ?1"), params![id], b_row).ok()
-}
-
-/// The binding for an external conversation as one owner's connection sees it.
-///
-/// Conversation keys are not unique across owners or connections: a Telegram
-/// private chat is keyed by the person's user id, so the same person messaging
-/// two owners' bots (or two bots of one owner) produces the same key. Lookups
-/// for inbound routing and sends must use this, never [`find_binding`].
-/// `account: None` matches any of the owner's connections; bindings made
-/// before connections were recorded (no account) match any connection.
-pub fn find_binding_for(db: &DbHandle, owner: &str, account: Option<&str>, provider: &str, conversation: &str) -> Option<BindingRow> {
-    let conn = db.connect().ok()?;
-    conn.query_row(
-        &format!(
-            "SELECT {B_COLS} FROM channel_conversation_bindings
-             WHERE owner = ?1 AND provider = ?2 AND external_conversation_id = ?3
-               AND (?4 IS NULL OR account_binding_id IS NULL OR account_binding_id = ?4)
-             ORDER BY (account_binding_id IS NOT NULL AND account_binding_id = ?4) DESC, created_at LIMIT 1"
-        ),
-        params![owner, provider, conversation, account],
-        b_row,
-    )
-    .ok()
-}
-
-/// The binding for a conversation inside one platform workspace (Discord
-/// server, Slack team), for adapter code that has the workspace but no owner
-/// in hand. `None` workspace falls back to [`find_binding`].
-pub fn find_binding_in_workspace(db: &DbHandle, provider: &str, conversation: &str, workspace: Option<&str>) -> Option<BindingRow> {
-    let Some(ws) = workspace else { return find_binding(db, provider, conversation) };
-    let conn = db.connect().ok()?;
-    conn.query_row(
-        &format!("SELECT {B_COLS} FROM channel_conversation_bindings WHERE provider = ?1 AND external_conversation_id = ?2 AND external_workspace_id = ?3 ORDER BY created_at LIMIT 1"),
-        params![provider, conversation, ws],
-        b_row,
-    )
-    .ok()
-}
-
-/// Unscoped lookup by provider + conversation key. Only for single-tenant
-/// legacy paths with no owner in hand (the env-token Slack install); see
-/// [`find_binding_for`].
 pub fn find_binding(db: &DbHandle, provider: &str, conversation: &str) -> Option<BindingRow> {
     let conn = db.connect().ok()?;
     conn.query_row(
@@ -324,15 +224,10 @@ pub fn ensure_binding(db: &DbHandle, owner: &str, thread_id: &str, provider: &st
 /// binding replies through that connection, not the owner's first one of the
 /// same platform.
 pub fn ensure_binding_on(db: &DbHandle, owner: &str, thread_id: &str, provider: &str, ev: &Inbound, account: Option<&str>) -> rusqlite::Result<BindingRow> {
-    let conn = db.connect()?;
-    if let Some(b) = find_binding_for(db, owner, account, provider, &ev.conversation) {
-        // A binding from before connections were recorded adopts the one the message came in on.
-        if let (None, Some(a)) = (&b.account, account) {
-            conn.execute("UPDATE channel_conversation_bindings SET account_binding_id = ?1, updated_at = ?2 WHERE id = ?3 AND account_binding_id IS NULL", params![a, now(), b.id])?;
-            return binding_by_id(db, &b.id).ok_or(rusqlite::Error::QueryReturnedNoRows);
-        }
+    if let Some(b) = find_binding(db, provider, &ev.conversation) {
         return Ok(b);
     }
+    let conn = db.connect()?;
     let account: Option<String> = match account {
         Some(a) => Some(a.to_string()),
         None => conn
@@ -346,7 +241,7 @@ pub fn ensure_binding_on(db: &DbHandle, owner: &str, thread_id: &str, provider: 
          VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,1,0,'LIVE',?10,?10)",
         params![bid, owner, thread_id, provider, account, ev.workspace, ev.channel, ev.conversation, ev.thread, now()],
     )?;
-    binding_by_id(db, &bid).ok_or(rusqlite::Error::QueryReturnedNoRows)
+    find_binding(db, provider, &ev.conversation).ok_or(rusqlite::Error::QueryReturnedNoRows)
 }
 
 fn ts_key(s: &str) -> (u64, u64, String) {
@@ -438,19 +333,6 @@ pub fn record_inbound(db: &DbHandle, b: &BindingRow, ev: &Inbound) -> Result<Rec
             }
         }
     }
-    // Provenance: who sent it. The owner's own handle is `owner`, a person the twin knows is
-    // `contact`, anyone else is a `stranger`. The scanner flags and down-ranks; the floor drops.
-    if ev.kind == InboundKind::Message {
-        if let Some(text) = ev.text.as_deref().filter(|t| !t.is_empty()) {
-            let who = ev.user.as_deref().unwrap_or("");
-            let trust = crate::netops::provenance::sender_trust(&conn, &b.owner, who);
-            let before = crate::netops::provenance::trust_floor(&conn, &b.thread_id);
-            let label = crate::netops::provenance::label(&conn, &b.thread_id, trust, &b.provider, who, text);
-            if label.trust.tainted() && !before.is_some_and(|f| f.tainted()) {
-                crate::thread_routes::enforce_envelope_bg(db, &b.thread_id);
-            }
-        }
-    }
     if let Some(bot) = bot_of_thread(db, &b.thread_id) {
         led(
             db,
@@ -486,10 +368,7 @@ fn advance(conn: &rusqlite::Connection, binding: &str, col: &str, value: &str) {
 /// Reconnect: pull everything after `lastInboundCursor` and record it. Replays
 /// of what we already have are no-ops. Returns the number of new events.
 pub async fn resume(db: &DbHandle, tx: &dyn ChannelTransport, b: &BindingRow) -> Result<usize, String> {
-    if !tx.capabilities().history {
-        return Err(HISTORY_UNSUPPORTED.into());
-    }
-    let fresh = binding_by_id(db, &b.id).unwrap_or_else(|| b.clone());
+    let fresh = find_binding(db, &b.provider, &b.conversation).unwrap_or_else(|| b.clone());
     let mut events = tx.fetch_since(fresh.channel.as_deref().unwrap_or_default(), fresh.external_thread.as_deref(), fresh.last_inbound.as_deref()).await?;
     events.sort_by(|a, b| match (&a.cursor, &b.cursor) {
         (Some(x), Some(y)) if cursor_after(x, y) => std::cmp::Ordering::Greater,
@@ -498,37 +377,12 @@ pub async fn resume(db: &DbHandle, tx: &dyn ChannelTransport, b: &BindingRow) ->
     });
     let mut n = 0;
     for ev in events {
-        let cur = binding_by_id(db, &b.id).unwrap_or_else(|| b.clone());
+        let cur = find_binding(db, &b.provider, &b.conversation).unwrap_or_else(|| b.clone());
         if record_inbound(db, &cur, &ev)? == Recorded::New {
             n += 1;
         }
     }
     Ok(n)
-}
-
-/// Check a binding's `unconfirmed` posts against the platform's history: our
-/// own messages found there confirm the matching post (same text). Only our
-/// own messages are taken; missed user messages are left to normal ingress, so
-/// nothing here starts or skips a bot turn. Returns how many posts it confirmed.
-pub async fn reconcile_binding(db: &DbHandle, tx: &dyn ChannelTransport, b: &BindingRow) -> Result<usize, String> {
-    if !tx.capabilities().history {
-        return Err(HISTORY_UNSUPPORTED.into());
-    }
-    let count = |db: &DbHandle| -> i64 {
-        db.connect()
-            .ok()
-            .and_then(|c| c.query_row("SELECT COUNT(*) FROM channel_message_log WHERE binding_id = ?1 AND direction = 'outbound' AND state = 'unconfirmed'", params![b.id], |r| r.get(0)).ok())
-            .unwrap_or(0)
-    };
-    let before = count(db);
-    if before == 0 {
-        return Ok(0);
-    }
-    let events = tx.fetch_since(b.channel.as_deref().unwrap_or_default(), b.external_thread.as_deref(), None).await?;
-    for ev in events.into_iter().filter(|e| e.own && e.kind == InboundKind::Message) {
-        record_inbound(db, b, &ev)?;
-    }
-    Ok((before - count(db)).max(0) as usize)
 }
 
 // ---------------------------------------------------------------- outbound
@@ -556,9 +410,6 @@ pub enum SendOutcome {
     ReadOnly,
     NoBinding,
     Rejected(String),
-    /// Throttled by the platform; nothing was posted. Retrying with the same
-    /// correlation id after `retry_after_secs` is safe.
-    RateLimited { retry_after_secs: Option<u64>, correlation_id: String },
     /// Same correlation id as an earlier send; that send's state.
     Replay { state: String, remote_id: Option<String> },
 }
@@ -645,7 +496,7 @@ pub async fn send(db: &DbHandle, tx: &dyn ChannelTransport, owner: &str, thread_
         .map_err(|e| e.to_string())?;
     if let Some((state, remote_id)) = prior {
         // Held or refused sends are re-evaluated (policy may have changed, approval may have landed).
-        if !matches!(state.as_str(), "awaiting_approval" | "denied" | "drafted" | "rate_limited") {
+        if state != "awaiting_approval" && state != "denied" && state != "drafted" {
             return Ok(SendOutcome::Replay { state, remote_id });
         }
     }
@@ -659,12 +510,7 @@ pub async fn send(db: &DbHandle, tx: &dyn ChannelTransport, owner: &str, thread_
     }
     // Autonomy: the owner's level for this bot x channel x person (draft / ask / tell / limits).
     let act = crate::autonomy::Action { owner, bot_id: &bot_id, channel: &b.provider, persons: binding_persons(&b), action: "message", amount_cents: 0 };
-    let aut = crate::autonomy::evaluate_ctx(db, &act, false, &crate::autonomy::Ctx { thread_id: Some(thread_id), text, destination: "" });
-    if let Some(crate::autonomy::Eval { verdict: crate::autonomy::Verdict::Block { reason }, .. }) = &aut {
-        log_unposted(&conn, db, owner, &b, &bot_id, thread_id, &corr, text, "denied", "failed", reason);
-        crate::autonomy::record(db, &act, aut.as_ref().map(|e| e.level.as_str()).unwrap_or("default"), "blocked", reason);
-        return Ok(SendOutcome::Denied(reason.clone()));
-    }
+    let aut = crate::autonomy::evaluate(db, &act, false);
     if let Some(crate::autonomy::Eval { verdict: crate::autonomy::Verdict::Draft { reason }, .. }) = &aut {
         log_unposted(&conn, db, owner, &b, &bot_id, thread_id, &corr, text, "drafted", "pending", reason);
         crate::autonomy::finish(db, &act, aut.as_ref(), "drafted", &corr, text, reason, Some(thread_id), json!({ "correlationId": corr, "text": text }));
@@ -701,7 +547,7 @@ pub async fn send(db: &DbHandle, tx: &dyn ChannelTransport, owner: &str, thread_
                 Some(a) => a,
                 None => {
                     let cx = Cx { owner: owner.into(), thread_id: thread_id.into(), bot_id: bot_id.clone(), generation, session_id, exec: json!({ "vendor": b.provider }) };
-                    let made = create_approval(db, &cx, "allternit", &format!("post to {}", b.provider), None, json!({ "text": text, "channel": b.channel, "provenance": crate::netops::provenance::latest_tainted(&conn, thread_id) }), Some(&corr)).map_err(|e| e.message)?;
+                    let made = create_approval(db, &cx, "allternit", &format!("post to {}", b.provider), None, json!({ "text": text, "channel": b.channel }), Some(&corr)).map_err(|e| e.message)?;
                     if let Some(why) = &aut_hold {
                         crate::autonomy::finish(db, &act, aut.as_ref(), "held", &corr, text, why, Some(thread_id), json!({ "correlationId": corr, "approvalId": made, "text": text }));
                     }
@@ -765,20 +611,6 @@ pub async fn send(db: &DbHandle, tx: &dyn ChannelTransport, owner: &str, thread_
             );
             Ok(SendOutcome::Rejected(why))
         }
-        Err(PostError::RateLimited { retry_after_secs, detail }) => {
-            set("rate_limited", None);
-            led(
-                db,
-                &bot_id,
-                thread_id,
-                None,
-                "channel.message.sent",
-                ("bot", &bot_id),
-                json!({ "provider": b.provider, "bindingId": b.id, "correlationId": corr, "text": text, "state": "rate_limited", "delivery": "failed", "reason": detail, "retryAfterSecs": retry_after_secs }),
-                Some(format!("chan:{}:rate_limited:{corr}", b.id)),
-            );
-            Ok(SendOutcome::RateLimited { retry_after_secs, correlation_id: corr })
-        }
         Err(PostError::Uncertain(why)) => {
             set("unconfirmed", None);
             crate::autonomy::record(db, &act, aut.as_ref().map(|e| e.level.as_str()).unwrap_or("default"), "sent", "delivery unconfirmed");
@@ -797,81 +629,11 @@ pub async fn send(db: &DbHandle, tx: &dyn ChannelTransport, owner: &str, thread_
     }
 }
 
-/// Restart recovery for outbound posts. A row still `pending` was recorded
-/// before its post call and the process died before the outcome came back:
-/// the message may or may not exist on the platform. Each becomes
-/// `unconfirmed` (shown as Pending, never re-posted blindly; an echo or a
-/// delivery receipt can still confirm it) with a `channel.message.pending`
-/// event, so the thread says so instead of waiting forever. Call once at
-/// startup, before anything sends. Returns how many were moved.
-pub fn recover_interrupted_sends(db: &DbHandle) -> usize {
-    let Ok(conn) = db.connect() else { return 0 };
-    let rows: Vec<(String, String, String, Option<String>, String, String)> = conn
-        .prepare(
-            "SELECT l.id, l.binding_id, l.thread_id, l.correlation_id, l.detail_json, b.provider
-             FROM channel_message_log l JOIN channel_conversation_bindings b ON b.id = l.binding_id
-             WHERE l.direction = 'outbound' AND l.state = 'pending'",
-        )
-        .and_then(|mut q| q.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)))?.collect())
-        .unwrap_or_default();
-    let mut moved = 0;
-    for (row, binding, thread, corr, detail, provider) in rows {
-        let n = conn
-            .execute("UPDATE channel_message_log SET state = 'unconfirmed', updated_at = ?2 WHERE id = ?1 AND state = 'pending'", params![row, now()])
-            .unwrap_or(0);
-        if n == 0 {
-            continue;
-        }
-        moved += 1;
-        let corr = corr.unwrap_or_default();
-        if let Some(bot) = bot_of_thread(db, &thread) {
-            let text = serde_json::from_str::<Value>(&detail).ok().and_then(|d| d["text"].as_str().map(str::to_string));
-            led(
-                db,
-                &bot,
-                &thread,
-                None,
-                "channel.message.pending",
-                ("bot", &bot),
-                json!({ "provider": provider, "bindingId": binding, "correlationId": corr, "text": text, "state": "unconfirmed", "reason": "interrupted by a restart; it may not have been delivered" }),
-                Some(format!("chan:{binding}:pending:{corr}")),
-            );
-        }
-    }
-    moved
-}
-
-/// One outbound post's delivery state, as recorded. `state` is one of
-/// pending | confirmed | unconfirmed | failed | rate_limited |
-/// awaiting_approval | denied | drafted. `confirmed` means the platform
-/// accepted the post; `delivery` carries a receipt (delivered/read) only when
-/// the platform sent one (see [`Capabilities::delivery_receipts`]).
-pub fn delivery_status(db: &DbHandle, owner: &str, thread_id: &str, correlation_id: &str) -> Option<Value> {
-    let conn = db.connect().ok()?;
-    let (state, remote_id, detail, updated_at, provider): (String, Option<String>, String, String, String) = conn
-        .query_row(
-            "SELECT l.state, l.remote_id, l.detail_json, l.updated_at, b.provider
-             FROM channel_message_log l JOIN channel_conversation_bindings b ON b.id = l.binding_id
-             WHERE l.owner = ?1 AND l.thread_id = ?2 AND l.direction = 'outbound' AND l.correlation_id = ?3",
-            params![owner, thread_id, correlation_id],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
-        )
-        .optional()
-        .ok()??;
-    let d: Value = serde_json::from_str(&detail).unwrap_or(Value::Null);
-    Some(json!({
-        "correlationId": correlation_id, "provider": provider, "state": state, "remoteId": remote_id,
-        "delivery": d.get("delivery").cloned().unwrap_or(Value::Null), "reason": d.get("reason").cloned().unwrap_or(Value::Null), "updatedAt": updated_at,
-    }))
-}
-
 // ---------------------------------------------------------------- HTTP
 
 pub fn channel_gateway_router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/gateway/threads/:thread_id/channel-send", post(channel_send_h).layer(axum::extract::DefaultBodyLimit::max(crate::channel_files::MAX_REQUEST_BYTES)))
-        .route("/gateway/threads/:thread_id/channel", get(channel_info_h))
-        .route("/gateway/threads/:thread_id/channel-messages/:correlation_id", get(channel_message_h))
         .route("/gateway/channel-accounts/:id/telegram-webhook", post(telegram_webhook_h))
         .route("/gateway/channel-accounts/telegram", post(telegram_connect_h))
         .route("/gateway/channel-accounts/telegram/managed/available", get(telegram_managed_available_h))
@@ -1308,28 +1070,6 @@ async fn channel_send_h(State(state): State<Arc<AppState>>, Extension(user): Ext
     outcome_response(send(&state.db, tx.as_ref(), &user.user_id, &thread_id, &req).await)
 }
 
-/// The thread's channel: provider, whether it can be written, and what the
-/// provider supports. `online: false` means no transport could be built (the
-/// connection is gone or not configured), not that the platform is down.
-async fn channel_info_h(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Path(thread_id): Path<String>) -> Response {
-    let Some(b) = binding_for_thread(&state.db, &user.user_id, &thread_id) else {
-        return (StatusCode::NOT_FOUND, Json(json!({ "error": "this thread has no channel binding", "code": "NO_BINDING" }))).into_response();
-    };
-    let tx = transport_for(&state, &b);
-    Json(json!({
-        "bindingId": b.id, "provider": b.provider, "accountId": b.account, "conversation": b.conversation,
-        "readOnly": b.read_only || !b.bidirectional, "online": tx.is_some(), "capabilities": tx.map(|t| t.capabilities()),
-    }))
-    .into_response()
-}
-
-async fn channel_message_h(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Path((thread_id, correlation_id)): Path<(String, String)>) -> Response {
-    match delivery_status(&state.db, &user.user_id, &thread_id, &correlation_id) {
-        Some(v) => Json(v).into_response(),
-        None => (StatusCode::NOT_FOUND, Json(json!({ "error": "no outbound message with that correlation id on this thread", "code": "NOT_FOUND" }))).into_response(),
-    }
-}
-
 fn outcome_response(r: Result<SendOutcome, String>) -> Response {
     match r {
         Ok(SendOutcome::Sent { remote_id, relayed, correlation_id }) => Json(json!({ "state": "sent", "remoteId": remote_id, "relayed": relayed, "correlationId": correlation_id })).into_response(),
@@ -1339,17 +1079,6 @@ fn outcome_response(r: Result<SendOutcome, String>) -> Response {
         Ok(SendOutcome::ReadOnly) => (StatusCode::FORBIDDEN, Json(json!({ "error": "this conversation is read-only", "code": "READ_ONLY" }))).into_response(),
         Ok(SendOutcome::NoBinding) => (StatusCode::NOT_FOUND, Json(json!({ "error": "this thread has no channel binding", "code": "NO_BINDING" }))).into_response(),
         Ok(SendOutcome::Rejected(m)) => (StatusCode::BAD_GATEWAY, Json(json!({ "error": m, "code": "CHANNEL_REJECTED" }))).into_response(),
-        Ok(SendOutcome::RateLimited { retry_after_secs, correlation_id }) => {
-            let mut resp = (
-                StatusCode::TOO_MANY_REQUESTS,
-                Json(json!({ "error": "the platform is rate limiting posts; nothing was sent", "code": "RATE_LIMITED", "retryAfterSecs": retry_after_secs, "correlationId": correlation_id })),
-            )
-                .into_response();
-            if let Some(v) = retry_after_secs.and_then(|s| axum::http::HeaderValue::from_str(&s.to_string()).ok()) {
-                resp.headers_mut().insert(axum::http::header::RETRY_AFTER, v);
-            }
-            resp
-        }
         Ok(SendOutcome::Replay { state, remote_id }) => Json(json!({ "state": state, "remoteId": remote_id, "replay": true })).into_response(),
         Err(e) => (StatusCode::BAD_REQUEST, Json(json!({ "error": e }))).into_response(),
     }
@@ -1432,10 +1161,6 @@ impl ChannelTransport for SlackTransport {
     fn provider(&self) -> &'static str {
         "slack"
     }
-    /// Legacy env-token install: replays thread history; posts as the app (other bots are prefixed).
-    fn capabilities(&self) -> Capabilities {
-        Capabilities { text: true, threads: true, history: true, files_out: false, files_in: true, reactions: true, edits: true, delivery_receipts: false, per_bot_identity: false }
-    }
     fn verify(&self, secret: &str, headers: &HeaderMap, body: &[u8]) -> Result<(), String> {
         crate::slack_webhook_routes::verify_slack_signature(secret, headers, body)
     }
@@ -1472,10 +1197,6 @@ impl ChannelTransport for SlackTransport {
             .send()
             .await
             .map_err(|e| PostError::Uncertain(format!("chat.postMessage request failed: {e}")))?;
-        if resp.status().as_u16() == 429 {
-            let secs = crate::channel_transports::retry_after_header(resp.headers());
-            return Err(PostError::rate_limited(&crate::channel_transports::with_retry_after(429, Value::Null, secs)));
-        }
         if resp.status().is_server_error() {
             return Err(PostError::Uncertain(format!("chat.postMessage returned {}", resp.status())));
         }
@@ -1577,14 +1298,10 @@ pub async fn post_reply(db: &DbHandle, tx: &dyn ChannelTransport, b: &BindingRow
             }
             Err(format!("reply delivery unconfirmed: {why}"))
         }
-        Err(e @ (PostError::Rejected(_) | PostError::RateLimited { .. })) => {
-            let (state, why) = match e {
-                PostError::RateLimited { detail, .. } => ("rate_limited", detail),
-                PostError::Rejected(why) | PostError::Uncertain(why) => ("failed", why),
-            };
-            let _ = conn.execute("UPDATE channel_message_log SET state=?1, updated_at=?2 WHERE binding_id=?3 AND direction='outbound' AND correlation_id=?4", params![state, now(), b.id, corr]);
+        Err(PostError::Rejected(why)) => {
+            let _ = conn.execute("UPDATE channel_message_log SET state='failed', updated_at=?1 WHERE binding_id=?2 AND direction='outbound' AND correlation_id=?3", params![now(), b.id, corr]);
             if let Some(bot) = bot_of_thread(db, &b.thread_id) {
-                led(db, &bot, &b.thread_id, None, "channel.message.sent", ("bot", &bot), json!({ "provider": b.provider, "bindingId": b.id, "correlationId": corr, "text": reply, "state": state, "delivery": "failed", "reason": why }), Some(format!("chan:{}:{state}:{corr}", b.id)));
+                led(db, &bot, &b.thread_id, None, "channel.message.sent", ("bot", &bot), json!({ "provider": b.provider, "bindingId": b.id, "correlationId": corr, "text": reply, "state": "failed", "delivery": "failed", "reason": why }), Some(format!("chan:{}:failed:{corr}", b.id)));
             }
             Err(why)
         }
@@ -1610,9 +1327,6 @@ mod tests {
         fn provider(&self) -> &'static str {
             "slack"
         }
-        fn capabilities(&self) -> Capabilities {
-            Capabilities { history: true, ..Capabilities::TEXT_ONLY }
-        }
         fn verify(&self, _s: &str, _h: &HeaderMap, _b: &[u8]) -> Result<(), String> {
             Ok(())
         }
@@ -1629,7 +1343,6 @@ mod tests {
             match mode {
                 "reject" => Err(PostError::Rejected("channel_not_found".into())),
                 "uncertain" => Err(PostError::Uncertain("timeout".into())),
-                "ratelimit" => Err(PostError::RateLimited { retry_after_secs: Some(3), detail: "rate limited".into() }),
                 _ => Ok(Receipt { remote_id: format!("1700000100.{n:06}"), relayed: !self.identity(out.identity.as_deref()).exact }),
             }
         }
@@ -2227,146 +1940,5 @@ mod tests {
         let response = telegram_managed_available_h(State(st)).await;
         let bytes = http_body_util::BodyExt::collect(response.into_body()).await.unwrap().to_bytes();
         assert_eq!(serde_json::from_slice::<Value>(&bytes).unwrap(), json!({ "available": false }));
-    }
-
-    // ------------------------------------------------ unified channel API (spec allternit-unified-channel-api)
-
-    fn add_thread(st: &Arc<AppState>, owner: &str, bot: &str, thread: &str) {
-        let c = st.db.connect().unwrap();
-        c.execute("INSERT OR IGNORE INTO agents (id, user_id, name, model, provider, is_bot, config) VALUES (?1,?2,'b','m','p',1,'{}')", params![bot, owner]).unwrap();
-        c.execute(
-            "INSERT INTO bot_threads (id, user_id, bot_id, title, status, last_activity_at, created_at, updated_at) VALUES (?1,?2,?3,'T','working','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')",
-            params![thread, owner, bot],
-        )
-        .unwrap();
-    }
-
-    fn tg(chat: &str) -> Inbound {
-        Inbound {
-            kind: InboundKind::Message, workspace: None, channel: chat.into(), conversation: format!("telegram:{chat}"), thread: None, remote_id: format!("{chat}:1"),
-            message_id: "1".into(), text: Some("hi".into()), user: Some(chat.into()), reaction: None, added: None, cursor: Some("1".into()), own: false,
-        }
-    }
-
-    #[tokio::test]
-    async fn the_same_conversation_key_never_routes_to_another_owner_or_connection() {
-        let st = setup("scope").await;
-        add_thread(&st, "user-b", "bot-b", "th-b");
-        add_thread(&st, "user-a", "bot-2", "th-a2");
-        // One Telegram person DMs two owners' bots: both chats are keyed by the person's id.
-        let e = tg("4242");
-        let a = ensure_binding_on(&st.db, "user-a", "th-1", "telegram", &e, Some("acct-a")).unwrap();
-        let b = ensure_binding_on(&st.db, "user-b", "th-b", "telegram", &e, Some("acct-b")).unwrap();
-        assert_ne!(a.id, b.id);
-        assert_eq!((b.owner.as_str(), b.thread_id.as_str()), ("user-b", "th-b"));
-        assert_eq!(find_binding_for(&st.db, "user-b", Some("acct-b"), "telegram", &e.conversation).unwrap().id, b.id);
-        assert!(find_binding_for(&st.db, "user-c", None, "telegram", &e.conversation).is_none());
-        // Owner B's message is recorded on B's thread only.
-        assert_eq!(record_inbound(&st.db, &b, &e).unwrap(), Recorded::New);
-        let on_a: i64 = st.db.connect().unwrap().query_row("SELECT COUNT(*) FROM channel_message_log WHERE binding_id = ?1", params![a.id], |r| r.get(0)).unwrap();
-        assert_eq!(on_a, 0);
-        // Two connections of one owner (two Telegram bots) keep separate conversations.
-        let a2 = ensure_binding_on(&st.db, "user-a", "th-a2", "telegram", &e, Some("acct-a2")).unwrap();
-        assert_ne!(a2.id, a.id);
-        assert_eq!(ensure_binding_on(&st.db, "user-a", "th-1", "telegram", &e, Some("acct-a")).unwrap().id, a.id);
-    }
-
-    #[tokio::test]
-    async fn a_binding_made_before_connections_were_recorded_adopts_the_connection_it_hears_from() {
-        let st = setup("adopt").await;
-        let e = tg("77");
-        st.db
-            .connect()
-            .unwrap()
-            .execute(
-                "INSERT INTO channel_conversation_bindings (id, owner, thread_id, provider, external_channel_id, external_conversation_id, created_at, updated_at) VALUES ('ccb-old','user-a','th-1','telegram','77','telegram:77','2026-01-01','2026-01-01')",
-                [],
-            )
-            .unwrap();
-        let b = ensure_binding_on(&st.db, "user-a", "th-1", "telegram", &e, Some("acct-a")).unwrap();
-        assert_eq!((b.id.as_str(), b.account.as_deref()), ("ccb-old", Some("acct-a")));
-        let n: i64 = st.db.connect().unwrap().query_row("SELECT COUNT(*) FROM channel_conversation_bindings", [], |r| r.get(0)).unwrap();
-        assert_eq!(n, 1, "no duplicate conversation");
-    }
-
-    #[tokio::test]
-    async fn a_rate_limited_send_posts_nothing_and_the_same_correlation_id_can_retry() {
-        let st = setup("rl").await;
-        let f = Fake::default();
-        bound(&st, &f);
-        *f.mode.lock().unwrap() = "ratelimit";
-        let req = SendReq { text: "hello".into(), correlation_id: Some("c-rl".into()), ..Default::default() };
-        assert_eq!(send(&st.db, &f, "user-a", "th-1", &req).await.unwrap(), SendOutcome::RateLimited { retry_after_secs: Some(3), correlation_id: "c-rl".into() });
-        assert_eq!(delivery_status(&st.db, "user-a", "th-1", "c-rl").unwrap()["state"], "rate_limited");
-        *f.mode.lock().unwrap() = "ok";
-        assert!(matches!(send(&st.db, &f, "user-a", "th-1", &req).await.unwrap(), SendOutcome::Sent { .. }));
-        let st_now = delivery_status(&st.db, "user-a", "th-1", "c-rl").unwrap();
-        assert_eq!(st_now["state"], "confirmed");
-        assert!(st_now["delivery"].is_null(), "accepted is not a delivery receipt");
-        // Another owner can't read it.
-        assert!(delivery_status(&st.db, "user-b", "th-1", "c-rl").is_none());
-    }
-
-    #[tokio::test]
-    async fn sends_cut_off_by_a_restart_become_unconfirmed_once() {
-        let st = setup("recover").await;
-        let f = Fake::default();
-        let b = bound(&st, &f);
-        st.db
-            .connect()
-            .unwrap()
-            .execute(
-                "INSERT INTO channel_message_log (id, owner, binding_id, thread_id, direction, kind, correlation_id, state, detail_json, created_at, updated_at) VALUES ('cml-x','user-a',?1,'th-1','outbound','message','c-x','pending','{\"text\":\"hi\"}','t','t')",
-                params![b.id],
-            )
-            .unwrap();
-        assert_eq!(recover_interrupted_sends(&st.db), 1);
-        assert_eq!(recover_interrupted_sends(&st.db), 0);
-        assert_eq!(delivery_status(&st.db, "user-a", "th-1", "c-x").unwrap()["state"], "unconfirmed");
-        assert_eq!(events(&st, "channel.message.pending"), 1);
-        // A retry with that correlation id reports it; it is never re-posted.
-        let r = send(&st.db, &f, "user-a", "th-1", &SendReq { text: "hi".into(), correlation_id: Some("c-x".into()), ..Default::default() }).await.unwrap();
-        assert!(matches!(r, SendOutcome::Replay { ref state, .. } if state == "unconfirmed"));
-        assert!(f.posted.lock().unwrap().is_empty());
-    }
-
-    #[test]
-    fn rate_limit_waits_are_read_from_each_platforms_body() {
-        let secs = |v: Value| match PostError::rate_limited(&v) {
-            PostError::RateLimited { retry_after_secs, .. } => retry_after_secs,
-            other => panic!("{other:?}"),
-        };
-        assert_eq!(secs(json!({ "retry_after": 1.2 })), Some(2)); // Discord
-        assert_eq!(secs(json!({ "parameters": { "retry_after": 30 } })), Some(30)); // Telegram
-        assert_eq!(secs(json!({ "retryAfter": "5" })), Some(5));
-        assert_eq!(secs(json!({ "error": "ratelimited" })), None); // Slack: header only
-    }
-
-    #[tokio::test]
-    async fn an_adapter_without_replay_says_so_instead_of_reporting_nothing_missed() {
-        struct NoReplay;
-        #[async_trait]
-        impl ChannelTransport for NoReplay {
-            fn provider(&self) -> &'static str {
-                "slack"
-            }
-            fn verify(&self, _s: &str, _h: &HeaderMap, _b: &[u8]) -> Result<(), String> {
-                Ok(())
-            }
-            fn normalize(&self, _p: &Value) -> Vec<Inbound> {
-                vec![]
-            }
-            fn identity(&self, r: Option<&str>) -> Identity {
-                Identity { id: r.map(str::to_string), exact: true }
-            }
-            async fn post(&self, _o: &Outbound) -> Result<Receipt, PostError> {
-                Err(PostError::Rejected("no".into()))
-            }
-        }
-        let st = setup("noreplay").await;
-        let b = bound(&st, &Fake::default());
-        assert!(!NoReplay.capabilities().history);
-        assert_eq!(resume(&st.db, &NoReplay, &b).await.unwrap_err(), HISTORY_UNSUPPORTED);
-        assert_eq!(NoReplay.fetch_since("C1", None, None).await.unwrap_err(), HISTORY_UNSUPPORTED);
     }
 }

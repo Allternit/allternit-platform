@@ -1,26 +1,15 @@
 # Voice call routes (runtime side)
 
-Source: `cmd/allternit-api/src/voice_calls.rs`, migrations `V218__voice_calls.sql` and `V267__voice_calls_line.sql` (nullable `number_id`, `line` JSON). Developer guide with the full contract: `surfaces/docs/guides/voice-call-runtime-routes.mdx`.
+Source: `cmd/allternit-api/src/voice_calls.rs`, migration `V218__voice_calls.sql`. Developer guide with the full contract: `surfaces/docs/guides/voice-call-runtime-routes.mdx`.
 
 cloud-api relays a phone call's start, its events and its bot turns to the runtime. The routes are public to the Clerk middleware and authenticate themselves.
 
 | Route | Purpose |
 | --- | --- |
-| `POST /api/v1/voice/calls` | Start. Body `{callId, botId, ownerId, numberId?, line?, from, to, direction, room, startedAt}` (see [Lines](#lines)). Returns `{threadId, sessionId}`. Idempotent per `callId`. If `numberId` is unknown on this runtime, it is registered from the signed body (bot number = `to` inbound, `from` outbound); a bot that isn't the owner's returns 422. `call.ended` carries `answered` / `missed` (see CALL_WORKER.md §4.1). |
+| `POST /api/v1/voice/calls` | Start. Body `{callId, botId, ownerId, numberId, from, to, direction, room, startedAt}`. Returns `{threadId, sessionId}`. Idempotent per `callId`. If `numberId` is unknown on this runtime, it is registered from the signed body (bot number = `to` inbound, `from` outbound); a bot that isn't the owner's returns 422. `call.ended` carries `answered` / `missed` (see CALL_WORKER.md §4.1). |
 | `POST /api/v1/voice/calls/{callId}/events` | Body `{events:[{type, n, payload, occurredAt}]}`. Writes `call.*` events to the call's thread. |
 | `POST /api/v1/voice/calls/{callId}/turn` | Body `{text, segmentId}`. Runs a bot turn, streams SSE (`text.delta`, `tool`, `done`, `error`). |
 | `DELETE /api/v1/voice/calls/{callId}/turn` | Barge-in. Always 204. |
-
-## Lines
-
-A call is on a **line** (contract C1 in `CONTRACT-linked-phone-voice-2026-10-18.md`), stored as JSON in `voice_calls.line`:
-
-- `{kind:"number", numberId}`: a Telnyx number. A start with no `line` (older cloud-api) is a number call from `numberId`. If both are sent they must agree (else 400). `from` and `to` must be E.164. Everything above applies: number lookup or registration, the owner and bot check, the number's sender allowlist, and the thread key `phone:<botE164>:<callerE164>` shared with texts.
-- `{kind:"linked_phone", deviceId, serial?, label, platform}`: a bot's own real phone wired to the owner's computer (Android serial or iPhone udid as `deviceId`; `platform` is `android` or `ios`; `label` defaults to `deviceId`). `numberId` is absent and stored as NULL. There is no number lookup: the bot must belong to the signed owner (else 403). `from`/`to` may be null or not E.164 (withheld caller, unknown own number), stored as `''`, at most 64 characters. The thread is `channel_thread(bot, "phone", "linked:<deviceId>:<callerE164 or unknown>")`, titled `Phone: <caller or withheld caller> on <label>`. Withheld callers on one phone share the `unknown` thread.
-
-Sender role on a linked line: the caller is labelled with `netops::provenance` the way a text to a number is. A caller matching the owner's verified phone identity (`factory_owner_identities`, channel `sms`/`phone`) or the owner's own person row is `owner`; a known person is `contact`; everyone else, and every withheld caller, is `stranger`. A linked phone has no channel account, so no caller is refused: a stranger lowers the thread's trust floor and gets the tainted (receptionist) tool envelope.
-
-Events are stored with their payload intact, so `call.started` keeps its `line`. A transcript line from a withheld caller has actor id `unknown`, and the call summary says the caller number was withheld.
 
 ## Signature
 

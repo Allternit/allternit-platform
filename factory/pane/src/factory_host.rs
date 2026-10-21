@@ -85,7 +85,11 @@ pub fn factory_path(rel: &str, legacy: Option<PathBuf>) -> PathBuf {
 
 /// `$HOME/<rel>` (for the pre-Factory locations [`factory_path`] falls back to).
 pub fn home_path(rel: &str) -> PathBuf {
-    allternit_factory_engine::platform::user_home_or("/").join(rel)
+    std::env::var_os("HOME")
+        .filter(|h| !h.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/"))
+        .join(rel)
 }
 
 /// A path a child process can execute with herdr's argv to reach this engine.
@@ -100,9 +104,11 @@ pub(crate) fn bin_path() -> io::Result<PathBuf> {
 
 /// `~/.allternit/factory/bin`, the engine's state root (API.md §1).
 fn launcher_dir() -> io::Result<PathBuf> {
-    let home = allternit_factory_engine::platform::user_home()
+    let home = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .filter(|home| !home.is_empty())
         .ok_or_else(|| io::Error::other("HOME is not set; cannot place the pane launcher"))?;
-    Ok(home.join(".allternit").join("factory").join("bin"))
+    Ok(PathBuf::from(home).join(".allternit").join("factory").join("bin"))
 }
 
 fn launcher_script(exe: &Path, prefix: &[String]) -> String {

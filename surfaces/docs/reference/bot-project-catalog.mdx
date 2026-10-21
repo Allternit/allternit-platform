@@ -1,0 +1,16 @@
+---
+title: "Bot project catalog contract"
+description: "Discovery records, connection boundaries and asset provenance."
+---
+
+`allternit-ai/src/lib/gateway/bot-projects.ts` holds discovery records. It is intentionally separate from `vendor-packs.ts`, whose profiles drive the connection wizard and execution bindings. Never manufacture a profile from a project URL.
+
+`BotProjectCatalog` is shared by GatewayLibrary and VendorPickList. It renders search, availability filters, identity marks and verified upstream links. Discovery entries cannot invoke onConnect or onPick. Their stable IDs distinguish Nightly and CopilotKit OpenBot, and the separate Dots and Muse implementations. No model-provider alias resolves these IDs to an executable pack.
+
+Status and identity are distinct fields. `planned` currently requires a verified identity; `researching` entries carry source hints transcribed from the reference, not assertions of canonical ownership. Project links must use verified HTTPS destinations. Do not publish unresolved source hints as login URLs.
+
+Original PNG assets and commit-pinned URLs are recorded in `public/assets/vendors/bot-project-sources.json`. Existing provider marks may identify a research lead but do not certify its product capabilities. Missing images fall back to a monogram. Before adding more marks, inspect official source assets and trademark guidance; code licensing alone does not establish trademark rights.
+
+Before graduating a project to a vendor pack, implement and test authentication, revocation, account isolation, agent discovery, messaging, reconnect, cancellation and upstream approval forwarding. Record capability limits explicitly. Phone access must use an authorized reachable runtime; phone localhost is not the desktop runtime.
+
+Changing discovery metadata does not change account connection truth. Document an implemented adapter's supported version and tested capabilities separately. Desktop, web phone and PWA consume the same component; publishing each surface follows its release process.

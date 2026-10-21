@@ -50,9 +50,7 @@ pub enum HarnessGate {
     Hook,
     /// No hook, but an ACP server: when driven over ACP the client answers
     /// every `session/request_permission` with the gate's verdict
-    /// (gizzi-code `acp-gate.ts`), so nothing waits on a person. In a
-    /// Terminal bot's pane it runs in the vendor's never-ask mode instead
-    /// (`kimi --auto`, `gemini --yolo`).
+    /// (gizzi-code `acp-gate.ts`), so nothing waits on a person.
     Acp,
     /// No hook; runs auto-approve inside Allternit's execution environment
     /// (worktree, env allowlist, egress guard). Not lease-precise.
@@ -1221,54 +1219,8 @@ fn gate_argv_claude_or_other(cmd: &[String], settings_path: Option<&Path>) -> Ve
             }
             out
         }
-        HarnessGate::Acp => gate_acp_terminal(cmd),
-        HarnessGate::Ungated => cmd.to_vec(),
+        HarnessGate::Acp | HarnessGate::Ungated => cmd.to_vec(),
     }
-}
-
-/// kimi/gemini outside ACP mode (a Terminal bot's pane): no client answers
-/// their permission prompts there, so a bot stopped on every command. Use the
-/// vendor's never-ask mode, as codex and qwen get; confinement is Allternit's
-/// execution environment. ACP mode (`kimi acp`, `gemini --experimental-acp`),
-/// kimi's other subcommands and its `-p` prompt mode are left alone.
-fn gate_acp_terminal(cmd: &[String]) -> Vec<String> {
-    let name = shell::basename(cmd[0].trim()).to_ascii_lowercase();
-    let (drop, add): (&[&str], &str) = match name.as_str() {
-        "kimi" | "kimi-code" => {
-            // Subcommands, and `-p` prompt mode, which refuses `--yolo`/`--auto`.
-            let prompt_mode = cmd.iter().any(|w| w == "-p" || w == "--prompt" || w.starts_with("--prompt="));
-            if prompt_mode || cmd.get(1).is_some_and(|w| !w.starts_with('-')) {
-                return cmd.to_vec();
-            }
-            // `--yolo` still asks for risky actions; `--auto` never asks.
-            (&["-y", "--yolo", "--auto"], "--auto")
-        }
-        "gemini" => {
-            if cmd.iter().any(|w| w == "--experimental-acp" || w == "--acp") {
-                return cmd.to_vec();
-            }
-            (&["-y", "--yolo"], "--yolo")
-        }
-        _ => return cmd.to_vec(),
-    };
-    let mut out = vec![cmd[0].clone()];
-    let mut skip_next = false;
-    for w in &cmd[1..] {
-        if skip_next {
-            skip_next = false;
-            continue;
-        }
-        if drop.contains(&w.as_str()) || w.starts_with("--approval-mode=") {
-            continue;
-        }
-        if w == "--approval-mode" {
-            skip_next = true;
-            continue;
-        }
-        out.push(w.clone());
-    }
-    out.push(add.to_string());
-    out
 }
 
 #[cfg(test)]

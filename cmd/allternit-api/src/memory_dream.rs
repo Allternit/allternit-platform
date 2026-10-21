@@ -180,8 +180,6 @@ pub fn schema() -> Value {
 pub struct Evidence {
     pub id: String,
     pub session: Option<String>,
-    /// The label the turn was recorded with (`telegram:chat/…`, `gizzi:session/…`), if valid.
-    pub label: Option<String>,
     pub kind: String,
     pub at: String,
     pub content: String,
@@ -221,7 +219,7 @@ pub fn shown_entries(conn: &Connection, drive: &DriveRecord, snapshot: &Snapshot
 
 pub fn evidence(conn: &Connection, owner: &str) -> Result<Vec<Evidence>> {
     let mut stmt = conn.prepare(
-        "SELECT o.id,o.session_id,o.kind,o.timestamp,o.content,o.source FROM memory_observations o
+        "SELECT o.id,o.session_id,o.kind,o.timestamp,o.content FROM memory_observations o
          WHERE o.user_id=?1 AND o.timestamp >= datetime('now','-1 day')
            AND o.kind IN ('turn_user','turn_assistant','explicit_memory')
            AND (o.session_id IS NULL OR NOT EXISTS(SELECT 1 FROM ephemeral_sessions s WHERE s.session_id=o.session_id))
@@ -233,9 +231,6 @@ pub fn evidence(conn: &Connection, owner: &str) -> Result<Vec<Evidence>> {
             Ok(Evidence {
                 id: r.get(0)?,
                 session: r.get(1)?,
-                label: r
-                    .get::<_, Option<String>>(5)?
-                    .filter(|l| l.contains(':') && crate::memory_drive::validate_source(l).is_ok()),
                 kind: r.get(2)?,
                 at: r.get::<_, Option<String>>(3)?.unwrap_or_default(),
                 content: content.chars().take(EVIDENCE_CHARS).collect(),
@@ -358,7 +353,7 @@ pub fn check(plan: &Plan, shown: &[Shown], evidence: &[Evidence], today: chrono:
         let first = turns[l.evidence[0].as_str()];
         let source = match first.session.as_deref().filter(|s| session_ok(s)) {
             Some(s) => format!("/?session={s}"),
-            None => first.label.clone().unwrap_or_else(|| format!("allternit:observation/{}", first.id)),
+            None => format!("allternit:observation/{}", first.id),
         };
         let mut entry = Entry { id: crate::memory_drive_writer::new_entry_id(), text, source, added: today.to_string(), metadata: Default::default() };
         entry.metadata.insert("memory_type".into(), "procedure".into());
@@ -492,23 +487,10 @@ fn parse_plan(raw: &str) -> Option<Plan> {
         .or_else(|| trimmed.strip_prefix("```"))
         .map(|s| s.trim_end_matches("```").trim())
         .unwrap_or(trimmed);
-    serde_json::from_str(body).ok().or_else(|| {
-        // A plain-text reply may wrap the JSON in a sentence or two.
-        let (start, end) = (raw.find('{')?, raw.rfind('}')?);
-        serde_json::from_str(raw.get(start..=end)?).ok()
-    })
+    serde_json::from_str(body).ok()
 }
 
 /// Run (or re-run) the Dream for `date`. Idempotent per drive and date.
-/// One Dream step in Memory Drive → Activity, shown live in the Dreams list.
-fn step(conn: &Connection, owner: &str, run: &str, title: String, extra: Value) {
-    crate::memory_activity::record(
-        conn,
-        owner,
-        crate::memory_activity::Activity { kind: "dream", title, extra: Some(extra), run: Some(run.to_string()), ..Default::default() },
-    );
-}
-
 pub async fn run(db: DbHandle, owner: String, date: chrono::NaiveDate, complete: Complete) -> Result<Option<DreamRow>> {
     let date_s = date.format("%Y-%m-%d").to_string();
     let (drive, id, base, shown, turns) = {
@@ -532,26 +514,16 @@ pub async fn run(db: DbHandle, owner: String, date: chrono::NaiveDate, complete:
     let Some(drive) = drive else {
         return Ok(None);
     };
-    step(
-        &db.connect()?,
-        &owner,
-        &id,
-        format!("Reading {} memories and {} recent messages", shown.len(), turns.len()),
-        json!({ "step": "gather", "memories": shown.len(), "turns": turns.len() }),
-    );
     if shown.is_empty() && turns.is_empty() {
         let conn = db.connect()?;
-        step(&conn, &owner, &id, "Nothing to review".into(), json!({ "step": "done", "status": "no_changes" }));
         finish(&conn, &id, "no_changes", None, Some(&format!("# Dream {date_s}\n\nNo memories or recent conversations to review.\n")), &Summary::default(), None)?;
         return Ok(get(&conn, &owner, &id)?);
     }
-    step(&db.connect()?, &owner, &id, "Asking the model what to merge, learn and prune".into(), json!({ "step": "plan" }));
     let raw = complete(prompt(&date_s, &shown, &turns)).await;
     let conn = db.connect()?;
     let Some(plan) = raw.as_deref().and_then(parse_plan) else {
         // Memory is untouched; the next sweep retries (bounded).
         let msg = if raw.is_none() { "The model did not answer. Memory was not changed." } else { "The model's answer was not usable. Memory was not changed." };
-        step(&conn, &owner, &id, msg.into(), json!({ "step": "done", "status": "failed" }));
         finish(&conn, &id, "failed", None, None, &Summary::default(), Some(msg))?;
         return Ok(get(&conn, &owner, &id)?);
     };
@@ -570,23 +542,6 @@ fn apply_plan(db: &DbHandle, owner: &str, drive: &DriveRecord, id: &str, base: &
     let session_ok = |s: &str| service::session_is_owned(&conn, owner, s).unwrap_or(false);
     let checked = check(plan, shown, turns, date, &session_ok);
     let report = report_markdown(&date_s, &checked);
-    let sm = &checked.summary;
-    step(
-        &conn,
-        owner,
-        id,
-        format!("Checked the plan against your memories: {} changes kept, {} dropped", checked.ops.len(), sm.skipped),
-        json!({ "step": "check", "kept": checked.ops.len(), "skipped": sm.skipped }),
-    );
-    let done = |status: &str, title: String| {
-        step(
-            &conn,
-            owner,
-            id,
-            title,
-            json!({ "step": "done", "status": status, "merged": sm.merged, "resolved": sm.resolved, "lessons": sm.lessons, "pruned": sm.pruned, "proposals": sm.proposals }),
-        )
-    };
     // Twin facts are only ever proposed for the owner's review.
     for p in &checked.proposals {
         let body = crate::twin_persona::MemoryBody {
@@ -605,7 +560,6 @@ fn apply_plan(db: &DbHandle, owner: &str, drive: &DriveRecord, id: &str, base: &
     }
     if checked.ops.is_empty() {
         finish(&conn, id, "no_changes", None, Some(&report), &checked.summary, None)?;
-        done("no_changes", "No changes needed".into());
         return Ok(());
     }
     let message = format!("Dream {date_s}");
@@ -616,10 +570,6 @@ fn apply_plan(db: &DbHandle, owner: &str, drive: &DriveRecord, id: &str, base: &
             Ok(r) => {
                 conn.execute("UPDATE memory_dreams SET base_revision=?2 WHERE id=?1", params![id, expected])?;
                 finish(&conn, id, "applied", Some(&r.revision), Some(&report), &checked.summary, None)?;
-                done(
-                    "applied",
-                    format!("Saved: {} merged, {} resolved, {} lessons, {} pruned", sm.merged, sm.resolved, sm.lessons, sm.pruned),
-                );
                 return Ok(());
             }
             Err(ServiceError::Drive(DriveError::Conflict { .. })) if attempt < 2 => {
@@ -640,19 +590,16 @@ fn apply_plan(db: &DbHandle, owner: &str, drive: &DriveRecord, id: &str, base: &
                 expected = head;
                 if ops.is_empty() {
                     finish(&conn, id, "no_changes", None, Some(&report), &checked.summary, None)?;
-                    done("no_changes", "Your memory changed meanwhile; nothing left to apply".into());
                     return Ok(());
                 }
             }
             Err(e) => {
                 finish(&conn, id, "failed", None, None, &checked.summary, Some(&format!("Memory was not changed: {e}")))?;
-                done("failed", format!("Memory was not changed: {e}"));
                 return Ok(());
             }
         }
     }
     finish(&conn, id, "failed", None, None, &checked.summary, Some("Memory kept changing during the Dream; it will retry."))?;
-    done("failed", "Memory kept changing during the Dream; it will retry".into());
     Ok(())
 }
 
@@ -756,7 +703,6 @@ pub fn undo(db: &DbHandle, owner: &str, dream_id: &str) -> std::result::Result<D
                     "UPDATE memory_dreams SET status='undone',undo_revision=?2,updated_at=CURRENT_TIMESTAMP WHERE id=?1",
                     params![dream_id, revision],
                 )?;
-                step(&conn, owner, dream_id, format!("Undid the Dream of {}", dream.date), json!({ "step": "undo", "status": "undone" }));
                 return Ok(get(&conn, owner, dream_id)?.ok_or(UndoError::Service(ServiceError::NotFound))?);
             }
             Err(ServiceError::Drive(DriveError::Conflict { .. })) => continue,
@@ -877,7 +823,7 @@ mod tests {
         Shown { path: "facts.md".into(), entry: entry(id, text, added), uses }
     }
     fn turn(id: &str) -> Evidence {
-        Evidence { id: id.into(), session: Some("s1".into()), label: None, kind: "turn_user".into(), at: "2026-10-06".into(), content: "x".into() }
+        Evidence { id: id.into(), session: Some("s1".into()), kind: "turn_user".into(), at: "2026-10-06".into(), content: "x".into() }
     }
     fn today() -> chrono::NaiveDate {
         chrono::NaiveDate::from_ymd_opt(2026, 10, 6).unwrap()
@@ -931,7 +877,6 @@ mod tests {
     fn malformed_model_output_is_rejected() {
         assert!(parse_plan("not json").is_none());
         assert!(parse_plan("```json\n{\"merges\":[],\"contradictions\":[],\"lessons\":[],\"prune\":[],\"twin_proposals\":[]}\n```").is_some());
-        assert!(parse_plan("Here is the plan:\n{\"merges\":[],\"contradictions\":[],\"lessons\":[],\"prune\":[],\"twin_proposals\":[]}\nDone.").is_some());
     }
 
     fn snap(es: &[(&str, &str)]) -> Snapshot {

@@ -11,7 +11,6 @@ import { MemoryOrchestrator } from './orchestrator.js';
 import type { IngestRequest, QueryRequest } from './types/memory.types.js';
 import type { ModelConfig } from './models/local-model.js';
 import { VectorStore } from './store/vector-store.js';
-import { ApiMemoryBackend } from './store/api-memory-backend.js';
 import { observability } from './utils/observability.js';
 
 const app: express.Application = express();
@@ -24,15 +23,7 @@ app.use(express.json({ limit: '10mb' }));
 // Initialize orchestrator
 const orchestrator = new MemoryOrchestrator();
 let isInitialized = false;
-// Semantic recall comes from allternit-api's memory plane when
-// ALLTERNIT_API_TOKEN is set (the local index is the offline fallback);
-// MemoryStore already mirrors every write, so the backend does not resend.
-const localVectors = new VectorStore();
-const vectorStore: Pick<ApiMemoryBackend, 'addMemory' | 'removeMemory' | 'similaritySearch' | 'getStats'> | VectorStore =
-  ApiMemoryBackend.fromEnv(localVectors, {
-    mirrorWrites: false,
-    lookup: (id) => orchestrator.getMemory(id),
-  }) ?? localVectors;
+const vectorStore = new VectorStore();
 
 /**
  * Initialize memory agent
@@ -464,7 +455,6 @@ app.delete('/api/memory/:id', async (req, res) => {
     const deleted = orchestrator.deleteMemory(id);
     
     if (deleted) {
-      await vectorStore.removeMemory(id);
       res.json({ success: true, memory_id: id });
     } else {
       res.status(404).json({ success: false, error: 'Memory not found' });

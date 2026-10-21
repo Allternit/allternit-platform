@@ -386,7 +386,6 @@ import { IssueFlagBanner } from '../components/PromptInput/IssueFlagBanner';
 import { useIssueFlagBanner } from '../hooks/useIssueFlagBanner';
 import { CompanionSprite, CompanionFloatingBubble, MIN_COLS_FOR_FULL_SPRITE } from '../pet/CompanionSprite';
 import { fireCompanionObserver } from '../pet/observer';
-import { useDesktopPetHook } from '../pet/desktopPetHook';
 import { DevBar } from '../components/DevBar';
 // Session manager removed - using AppState now
 import type { RemoteSessionConfig } from '../remote/RemoteSessionManager';
@@ -1825,8 +1824,6 @@ export function REPL({
     const inProgressToolUses = lastAssistant.message.content.filter(b => b.type === 'tool_use' && inProgressToolUseIDs.has(b.id));
     return inProgressToolUses.length > 0 && inProgressToolUses.every(b => b.type === 'tool_use' && b.name === SLEEP_TOOL_NAME);
   }, [messages, inProgressToolUseIDs]);
-  // The Allternit Desktop pet follows this session too (loopback hook port; nothing sent without Desktop).
-  useDesktopPetHook({ isLoading, toolRunning: inProgressToolUseIDs.size > 0, waiting: Boolean(isWaitingForApproval) });
   // Orb choreography for the running tool (search tools get the radar sweep).
   const activeToolOrbState = useMemo(() => {
     if (inProgressToolUseIDs.size === 0) return undefined;

@@ -222,5 +222,8 @@ mod tests {
 /// The current user's home directory (catalog root). `HOME` on unix,
 /// `USERPROFILE` on Windows — no new dependency.
 pub fn home_dir() -> Option<PathBuf> {
-    allternit_factory_engine::platform::user_home()
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+        .filter(|p| !p.as_os_str().is_empty())
 }

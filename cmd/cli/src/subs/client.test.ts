@@ -82,8 +82,3 @@ test('followTaskEvents reads SSE, stops at a terminal event, and acks ids', asyn
     rmSync(dir, { recursive: true, force: true });
   }
 });
-
-test('gatewaySocketPath uses the gateway named pipe on Windows', () => {
-  const pipe = gatewaySocketPath({ SUBS_GATEWAY_STATE_DIR: '/tmp/subs-state' }, 'win32');
-  assert.match(pipe, /^\\\\\.\\pipe\\allternit-subs-gateway-[0-9a-f]{16}$/);
-});

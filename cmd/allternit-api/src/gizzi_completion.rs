@@ -38,49 +38,16 @@ pub async fn complete_ephemeral(
 
 /// [`complete_ephemeral`] with a JSON-schema constrained reply (O10). gizzi
 /// enforces the schema through its StructuredOutput tool; the structured
-/// object is returned as JSON text. CLI-backed providers (claude-cli,
-/// codex-cli) can't call that tool and fail the turn; [`run_structured`] then
-/// asks once more in plain text with the schema in the prompt, so callers
-/// always validate the JSON themselves.
+/// object is returned as JSON text. Providers that do not honor the format
+/// still answer in text, which is returned as-is, so callers keep validating.
 pub async fn complete_ephemeral_structured(
     prompt: &str,
     system: Option<&str>,
     model: Option<&(String, String)>,
     schema: &serde_json::Value,
 ) -> Option<String> {
-    run_structured(prompt, &[], system, model, schema, &mut None).await.map(|(t, _)| t)
-}
-
-/// gizzi's error when a provider couldn't produce the StructuredOutput call.
-fn structured_output_unsupported(error: Option<&str>) -> bool {
-    error.is_some_and(|e| e.to_ascii_lowercase().contains("structured output"))
-}
-
-/// The plain-text retry prompt: the original prompt plus the schema.
-fn plain_json_prompt(prompt: &str, schema: &serde_json::Value) -> String {
-    format!("{prompt}\n\nReply with one JSON object only, no other text, matching this JSON schema:\n{schema}")
-}
-
-/// A structured turn, retried once as plain text when the provider can't do
-/// structured output. `provider_error` ends up holding the error of the last
-/// attempt (none after a successful retry).
-async fn run_structured(
-    prompt: &str,
-    images: &[String],
-    system: Option<&str>,
-    model: Option<&(String, String)>,
-    schema: &serde_json::Value,
-    provider_error: &mut Option<String>,
-) -> Option<(String, Usage)> {
     let format = json!({ "type": "json_schema", "schema": schema, "retryCount": 1 });
-    if let Some(reply) = run(prompt, images, system, model, true, true, Some(&format), provider_error).await {
-        return Some(reply);
-    }
-    if !structured_output_unsupported(provider_error.as_deref()) {
-        return None;
-    }
-    *provider_error = None;
-    run(&plain_json_prompt(prompt, schema), images, system, model, true, true, None, provider_error).await
+    run(prompt, &[], system, model, true, true, Some(&format), &mut None).await.map(|(t, _)| t)
 }
 
 /// One typed decision from the planner model (the Decision Runtime's oracle):
@@ -94,8 +61,9 @@ pub async fn complete_decision(
     model: Option<&(String, String)>,
     schema: &serde_json::Value,
 ) -> Result<(String, Usage), String> {
+    let format = json!({ "type": "json_schema", "schema": schema, "retryCount": 1 });
     let mut provider_error = None;
-    let reply = run_structured(prompt, images, system, model, schema, &mut provider_error).await;
+    let reply = run(prompt, images, system, model, true, true, Some(&format), &mut provider_error).await;
     match (reply, provider_error) {
         (_, Some(e)) => Err(e),
         (Some(r), None) => Ok(r),
@@ -462,23 +430,4 @@ pub(crate) fn record_ledger(provider_id: &str, model_id: &str, session_id: &str,
         elapsed.as_millis() as u64,
         usage.is_some(),
     ));
-}
-
-#[cfg(test)]
-mod structured_fallback_tests {
-    use super::*;
-
-    #[test]
-    fn only_the_structured_output_failure_triggers_a_plain_retry() {
-        assert!(structured_output_unsupported(Some("Model did not produce structured output")));
-        assert!(!structured_output_unsupported(Some("You've hit your usage limit")));
-        assert!(!structured_output_unsupported(None));
-    }
-
-    #[test]
-    fn plain_retry_prompt_carries_the_schema() {
-        let p = plain_json_prompt("Find facts.", &json!({ "type": "object", "required": ["memories"] }));
-        assert!(p.starts_with("Find facts.\n\nReply with one JSON object only"));
-        assert!(p.contains(r#""required":["memories"]"#));
-    }
 }

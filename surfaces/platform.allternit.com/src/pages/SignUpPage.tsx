@@ -37,12 +37,15 @@ export function SignUpPage() {
         signInForceRedirectUrl={redirectUrl}
         appearance={cleanCardAppearance}
       />
-      <p className="ob-alt">
+      <div className="mt-6 border-t border-[var(--border-subtle)] pt-5 text-center text-[13px] text-[var(--text-secondary)]">
         Already have an account?{" "}
-        <Link to={signInUrl}>
+        <Link
+          to={signInUrl}
+          className="font-medium text-[var(--accent-primary)] underline underline-offset-2 transition-colors hover:text-[var(--text-primary)]"
+        >
           Sign in
         </Link>
-      </p>
+      </div>
     </AuthPageShell>
   );
 }

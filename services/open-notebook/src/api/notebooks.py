@@ -4,7 +4,6 @@ from fastapi import APIRouter, HTTPException, Query
 from uuid import uuid4
 
 from db.surreal_client import db, extract_id
-from core.retriever import retriever
 from models import Notebook, NotebookCreate, NotebookUpdate, NotebookShareRequest
 
 router = APIRouter(prefix="/api/notebooks", tags=["notebooks"])
@@ -119,9 +118,7 @@ async def delete_notebook(notebook_id: str):
         sid = extract_id(source)
         await db.delete("source", sid)
 
-    # Local chunks and their copy in the Allternit memory plane (needs the
-    # notebook record for the owner check, so before it is deleted).
-    await retriever.clear_notebook(notebook_id)
+    await db.query("DELETE FROM chunk WHERE notebook_id = $nb", {"nb": notebook_id})
     await db.query("DELETE FROM message WHERE notebook_id = $nb", {"nb": notebook_id})
 
     await db.delete("notebook", notebook_id)

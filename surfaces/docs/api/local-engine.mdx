@@ -537,8 +537,7 @@ data: [DONE]
 | `404 Not Found` | `no_running_runtime` | No healthy runtime is serving the requested model (chat completions). |
 | `409 Conflict` | `model import already tracked` | Model id is already present in the cache. |
 | `501 Not Implemented` | `unsupported_backend` | The requested backend is not yet supported by the controller. |
-| `502 Bad Gateway` | `local_engine_unavailable` | Local Engine controller is unreachable. The body's `error` is a readable sentence, `code` the stable code, `message` the transport error. |
-| `503 Service Unavailable` | `local_engine_start_failed` | Desktop tried to start the controller and it failed; `error` says why (Desktop passes the reason to the API as `LOCAL_ENGINE_START_ERROR`). |
+| `502 Bad Gateway` | `local_engine_unavailable` | Local Engine controller is unreachable. |
 | `502 Bad Gateway` | `failed to read upstream response` | Upstream returned a response but the body could not be read. |
 | `503 Service Unavailable` | `no_free_port` | Controller could not allocate a free TCP port. |
 | `500 Internal Server Error` | — | Unexpected platform or controller error. |

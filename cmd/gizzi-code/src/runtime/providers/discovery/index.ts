@@ -21,6 +21,7 @@ import { discoverSubprocessProviders } from "./subprocess"
 import { discoverLocalProviders } from "./local"
 import { discoverAllternitCloud } from "./allternit-cloud"
 import { discoverSubscriptionFabric } from "../fabric/discovery"
+import { discoverSiwc } from "../siwc/discovery"
 
 export { getCachedAllternitPlan, refreshAllternitPlan } from "./allternit-cloud"
 
@@ -98,6 +99,9 @@ export const Discovery = {
         discoverAllternitCloud(),
         discoverSubprocessProviders(),
         discoverLocalProviders(),
+        // Before the fabric catalog: first discovery wins a provider id, and
+        // SIWC is the preferred path for the ChatGPT subscription lane.
+        discoverSiwc(),
         discoverSubscriptionFabric(),
         ..._hooks.map((h) => h()),
       ])

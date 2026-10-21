@@ -25,14 +25,8 @@ import { accountsRouter, type AccountsRouterOptions } from "./routes_accounts.js
 import { capabilitiesRouter } from "./routes_capabilities.js";
 import { catalogRouter } from "./routes_catalog.js";
 import { statsRouter } from "./routes_stats.js";
-import { evidenceRouter } from "./routes_evidence.js";
 import { aaiRouter } from "./routes_aai.js";
-import { routesRouter } from "./routes_routes.js";
-import { settingsRouter } from "./routes_settings.js";
-import { phoneHandoverRouter, type PhoneHandoverRelay } from "./routes_phone_handover.js";
 import type { AaiHost } from "../aai/registry.js";
-import type { RouteDirector } from "../routes/director.js";
-import type { AppRouteTasks } from "../routes/app-route-tasks.js";
 
 export interface GatewayDeps {
   db: Db;
@@ -49,10 +43,6 @@ export interface GatewayDeps {
   loginBrowser?: LoginBrowser; // login mode — POST /v1/accounts/:id/login
   accountsOptions?: AccountsRouterOptions; // login watcher poll + cookie reader (tests)
   aai?: AaiHost; // AAI host — POST /aai/call (one AaiRouter per process)
-  routeDirector?: RouteDirector; // deterministic route router — GET/PUT /v1/routes
-  appRouteTasks?: AppRouteTasks; // POST /v1/tasks chats on a phone / desktop-app route (same router as bot turns)
-  phoneHandover?: PhoneHandoverRelay; // /v1/phone/handover*; default: Desktop's phone gateway on this computer
-  aaiStream?: { pollMs?: number; heartbeatMs?: number }; // GET /aai/events/stream timing (tests)
   allowedOrigins?: string[]; // default: empty — every Origin is rejected
   version?: string;
 }
@@ -143,31 +133,23 @@ export function createServer(deps: GatewayDeps): Express {
   app.use(capabilitiesRouter(deps));
   app.use(catalogRouter(deps));
   app.use(statsRouter(deps));
-  app.use(evidenceRouter(deps));
   app.use(aaiRouter(deps));
-  app.use(routesRouter(deps));
-  app.use(settingsRouter(deps));
-  app.use(phoneHandoverRouter(deps));
 
   app.use((_req, res) => res.status(404).json({ error: "not_found" }));
   return app;
 }
 
 // UDS default transport: unlink any stale socket, bind, then chmod 0600.
-// A Windows named pipe (\\.\pipe\...) has no file to unlink or chmod.
 export function listenUds(app: Express, udsPath: string): Promise<Server> {
-  const pipe = udsPath.startsWith("\\\\.\\pipe\\");
-  if (!pipe) {
-    mkdirSync(dirname(udsPath), { recursive: true });
-    try {
-      unlinkSync(udsPath);
-    } catch {
-      // no stale socket — fine
-    }
+  mkdirSync(dirname(udsPath), { recursive: true });
+  try {
+    unlinkSync(udsPath);
+  } catch {
+    // no stale socket — fine
   }
   return new Promise((resolve, reject) => {
     const server = app.listen(udsPath, () => {
-      if (!pipe) chmodSync(udsPath, 0o600);
+      chmodSync(udsPath, 0o600);
       resolve(server);
     });
     server.on("error", reject);

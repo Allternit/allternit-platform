@@ -65,13 +65,11 @@ pub mod bot_desktop_admin;
 pub mod bot_desktop_stream;
 pub mod bot_event_routes;
 pub mod events_feed;
-pub mod netops;
 pub mod routine_local_scheduler;
 pub mod agent_gateway_routes;
 pub mod thread_routes;
 pub mod bot_routing;
 pub mod gateway_routing;
-pub mod gateway_connect;
 pub mod gateway_runner;
 pub mod gateway_vendor_host;
 #[cfg(test)]
@@ -85,7 +83,6 @@ pub mod discord_gateway;
 pub mod channel_discord_app;
 pub mod channel_gateway;
 pub mod openui_text;
-pub mod card_meta;
 pub mod channel_phone;
 pub mod phone_outbound;
 pub mod phone_sync;
@@ -131,7 +128,6 @@ pub mod brain_routes;
 pub mod canvas_routes;
 pub mod chat_routes;
 pub mod checkpoints_routes;
-pub mod git_routes;
 pub mod cli_provider_detector;
 pub mod cloud_credentials_routes;
 pub mod cloud_agents_routes;
@@ -149,7 +145,6 @@ pub mod computer_idle;
 pub mod computer_screens;
 pub mod computer_audit;
 pub mod computer_ws;
-pub mod phone_ws;
 pub mod computer_replay;
 pub mod computer_history;
 pub mod computer_transfer;
@@ -290,20 +285,8 @@ pub mod memory_dream;
 pub mod memory_drive_twin;
 pub mod memory_drive_cowork;
 pub mod memory_drive_text_import;
-pub mod memory_drive_agent_import;
-pub mod memory_drive_chat_import;
-pub mod memory_capture;
-pub mod memory_activity;
-pub mod vendor_memory;
-pub mod ledger;
-pub mod ledger_repo;
-pub mod ledger_restore;
-pub mod ledger_edit;
-pub mod memory_copies;
 #[cfg(test)]
 mod memory_drive_tests;
-pub mod memory_chunks;
-pub mod memory_entity_pages;
 pub mod memory_index;
 pub mod memory_extraction;
 pub mod memory_relations;
@@ -327,7 +310,6 @@ pub mod platform_static;
 pub mod playground_routes;
 pub mod pricing;
 pub mod provider_routes;
-pub mod cli_tools;
 pub mod queue_routes;
 pub mod rails;
 pub mod remote_control_routes;
@@ -347,7 +329,6 @@ pub mod skills_routes;
 pub mod skill_catalog_install;
 pub mod server_tool_routes;
 pub mod session_memory_service;
-pub mod session_worker;
 pub mod slack_webhook_routes;
 pub mod ssh_key_routes;
 pub mod ssh_routes;
@@ -357,8 +338,8 @@ pub mod swarm_routes;
 pub mod tag_routes;
 pub mod task_routes;
 pub mod team_skill_routes;
-// Code Mode terminals on the Factory pane engine (Unix socket, or a named
-// pipe on Windows).
+// Unix-only: talks to the Factory pane engine over a UDS (tokio::net::UnixStream).
+#[cfg(unix)]
 pub mod terminal_routes;
 pub mod token_crypto;
 pub mod tool_routes;
@@ -395,6 +376,7 @@ use rails::RailsState;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+#[cfg(unix)]
 use terminal_routes::TerminalSessionStore;
 use tokio::sync::RwLock;
 use vm_session_routes::VmSessionStore;
@@ -429,27 +411,7 @@ pub mod test_helpers {
             company: config::CompanyConfig::default(),
             user: config::UserConfig::default(),
         };
-        app_state_with_config_and_os(temp, config, vm_driver, os_control_plane, None).await
-    }
-
-    /// Like [`app_state`], with a stubbed phone directory — for phone relay
-    /// route tests that must not touch the network.
-    pub async fn app_state_with_phone_directory(
-        temp: &Path,
-        directory: Arc<dyn crate::phone_ws::PhoneDirectory>,
-    ) -> Arc<AppState> {
-        let config = AppConfig {
-            company: config::CompanyConfig::default(),
-            user: config::UserConfig::default(),
-        };
-        app_state_with_config_and_os(
-            temp,
-            config,
-            None,
-            None,
-            Some(crate::phone_ws::PhoneLinkRegistry::new(directory)),
-        )
-        .await
+        app_state_with_config_and_os(temp, config, vm_driver, os_control_plane).await
     }
 
     /// Like `app_state`, with an explicit config — for tests that exercise
@@ -458,7 +420,7 @@ pub mod test_helpers {
         temp: &Path,
         config: AppConfig,
     ) -> Arc<AppState> {
-        app_state_with_config_and_os(temp, config, None, None, None).await
+        app_state_with_config_and_os(temp, config, None, None).await
     }
 
     /// Serialize tests that mutate the process-wide
@@ -517,7 +479,6 @@ pub mod test_helpers {
         config: AppConfig,
         vm_driver: Option<Arc<dyn allternit_driver_interface::ExecutionDriver>>,
         os_control_plane: Option<crate::fabric::os_client::OsControlPlaneClient>,
-        phone_link: Option<Arc<crate::phone_ws::PhoneLinkRegistry>>,
     ) -> Arc<AppState> {
         let db = db::DbHandle::new(temp.join("test.db")).expect("test db");
         let auth_config = auth::AuthConfig::from_app_config(&config);
@@ -552,8 +513,6 @@ pub mod test_helpers {
             desktop_host_provisioner: None,
             bot_desktop_sessions: Arc::new(RwLock::new(HashMap::new())),
             computer_guest_tokens: Arc::new(RwLock::new(HashMap::new())),
-            phone_link: phone_link
-                .unwrap_or_else(crate::phone_ws::PhoneLinkRegistry::new_http),
             rails,
             vm_sessions: vm_session_routes::new_vm_session_store(),
             cowork_scheduler: None,
@@ -565,6 +524,7 @@ pub mod test_helpers {
             office_cli_watches: Arc::new(RwLock::new(HashMap::new())),
             office_cli_mcp_sessions: Arc::new(RwLock::new(HashMap::new())),
             design_skill_cache: DesignSkillCache::new(),
+            #[cfg(unix)]
             terminal_sessions: TerminalSessionStore::new(),
             mcp_dispatcher: crate::mcp_dispatcher::McpDispatcher::new(),
             approval_store: Arc::new(permission_policy::ApprovalStore::new()),
@@ -658,12 +618,6 @@ pub struct AppState {
     /// refusal.
     pub computer_guest_tokens: Arc<RwLock<HashMap<String, String>>>,
 
-    /// Phones 2.0 phone-link relay: in-memory registry of the desktop-attached
-    /// phone sessions for THIS instance plus the cloud `registered_phones`
-    /// directory client. Persistence lives only in cloud PG (identity +
-    /// last_seen); no stream data is ever persisted or logged.
-    pub phone_link: Arc<crate::phone_ws::PhoneLinkRegistry>,
-
     /// Rails service state (Ledger, Gate, Leases, etc.)
     pub rails: RailsState,
     /// Persistent VM sessions — each gizzi-code session gets one VM that stays
@@ -687,7 +641,8 @@ pub struct AppState {
     pub office_cli_mcp_sessions: OfficeCliMcpState,
     /// Daemon-side Open Design skill cache with hot-reload semantics.
     pub design_skill_cache: DesignSkillCache,
-    /// Code Mode terminals on the Factory pane engine.
+    /// Code Mode terminals on the Factory pane engine. Unix-only (pane engine UDS).
+    #[cfg(unix)]
     pub terminal_sessions: TerminalSessionStore,
     /// Attached MCP servers reachable through the server-side MCP dispatcher.
     pub mcp_dispatcher: crate::mcp_dispatcher::McpDispatcher,

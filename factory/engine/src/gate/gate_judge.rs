@@ -800,7 +800,7 @@ impl Gate {
     /// target or an undeclared credential store is denied.
     async fn gate2_blocklist(&self, wih_id: &str, command: Option<&str>) -> Result<Option<String>> {
         let Some(command) = command else { return Ok(None) };
-        let home = crate::platform::user_home();
+        let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
         let allow = crate::hook::blocklist::allow_list(&self.wih_credential_allow(wih_id).await?, home.as_deref());
         let strict = self.wih_fence_strict(wih_id).await?;
         Ok(crate::hook::blocklist::check_command(command, std::path::Path::new("/"), home.as_deref(), &allow, strict))

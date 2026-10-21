@@ -76,8 +76,9 @@ async fn discord_app_webhook(axum::extract::State(state): axum::extract::State<A
     let Some(tx) = crate::channel_transports::build_transport("discord", &acct.secret, Arc::new(crate::channel_transports::ReqwestSend)) else {
         return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({ "error": "discord_not_configured" }))).into_response();
     };
-    // Recorded before the queue hears back (it redelivers on an error); the bot turns run after.
-    crate::channel_transports::accept_and_ack(&state, &acct, tx, events, Default::default()).await
+    // Ack fast: bot turns can outlive the relay's wait. The queue retries.
+    tokio::spawn(async move { crate::channel_transports::dispatch_events(&state, &acct, tx, events).await });
+    Json(json!({ "ok": true })).into_response()
 }
 
 /// One cloud envelope as the "@name text" message `route_inbound` understands.
@@ -176,7 +177,7 @@ impl DiscordAppTransport {
             return (safe_name(out.identity.as_deref().unwrap_or("Allternit")), None, out.text.clone());
         };
         let Ok(conn) = db.connect() else { return (safe_name(out.identity.as_deref().unwrap_or("Allternit")), None, out.text.clone()) };
-        let binding = find_binding_in_workspace(db, "discord", &format!("discord:{}", out.channel), out.workspace.as_deref());
+        let binding = find_binding(db, "discord", &format!("discord:{}", out.channel));
         let owner = binding.as_ref().map(|b| b.owner.clone());
         let bots: Vec<(String, Option<String>)> = owner
             .as_ref()
@@ -293,9 +294,6 @@ impl ChannelTransport for DiscordAppTransport {
     fn provider(&self) -> &'static str {
         "discord"
     }
-    fn capabilities(&self) -> crate::channel_gateway::Capabilities {
-        crate::channel_gateway::Capabilities { text: true, threads: false, history: false, files_out: false, files_in: false, reactions: true, edits: true, delivery_receipts: false, per_bot_identity: true }
-    }
 
     /// A relayed delivery is accepted when it carries either Discord's own
     /// Ed25519 signature (interactions) checked against the app's public key,
@@ -370,9 +368,8 @@ impl ChannelTransport for DiscordAppTransport {
                 self.remember(&id, &out.channel, &bot);
                 Ok(Receipt { remote_id: id, relayed: true })
             }
-            // The cloud's "not set up here" answer is definite; any other 503 may be an outage.
-            503 if crate::channel_transports::not_configured(&resp.body) => Err(PostError::Rejected(resp.body["error"].as_str().unwrap_or("discord_not_configured").to_string())),
-            429 => Err(PostError::rate_limited(&resp.body)),
+            503 => Err(PostError::Rejected(resp.body["error"].as_str().unwrap_or("discord_not_configured").to_string())),
+            429 => Err(PostError::Rejected("rate limited".into())),
             500..=599 => Err(PostError::Uncertain(format!("cloud returned {}", resp.status))),
             s => Err(PostError::Rejected(format!("cloud returned {s}: {}", resp.body))),
         }

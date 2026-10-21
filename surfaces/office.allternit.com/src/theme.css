@@ -185,13 +185,13 @@
    DARK THEME
    ========================================================================== */
 [data-theme='dark'] {
-  --bg-primary: #1f1f1e;
-  --bg-secondary: #262625;
-  --bg-tertiary: #30302e;
-  --bg-hover: rgba(255, 255, 255, 0.05);
-  --bg-active: rgba(255, 255, 255, 0.08);
-  --bg-elevated: #262625;
-  --bg-card: #222221;
+  --bg-primary: #1a1612;
+  --bg-secondary: #2a211a;
+  --bg-tertiary: #362b22;
+  --bg-hover: rgba(212, 191, 168, 0.06);
+  --bg-active: rgba(212, 191, 168, 0.1);
+  --bg-elevated: #2a211a;
+  --bg-card: #221b15;
 
   --bg-gradient: radial-gradient(circle at center, #252525 0%, #161616 100%);
   --bg-grid: linear-gradient(to right, rgba(255, 255, 255, 0.02) 1px, transparent 1px),
@@ -201,18 +201,18 @@
   --text-secondary: #9b9b9b;
   --text-tertiary: #6e6e6e;
   --text-disabled: rgba(155, 155, 155, 0.45);
-  --text-inverse: #1f1f1e;
+  --text-inverse: #1a1612;
 
-  --border-subtle: rgba(255, 255, 255, 0.07);
-  --border-default: rgba(255, 255, 255, 0.1);
-  --border-strong: rgba(255, 255, 255, 0.16);
-  --border-hover: rgba(255, 255, 255, 0.22);
+  --border-subtle: rgba(212, 176, 140, 0.1);
+  --border-default: rgba(212, 176, 140, 0.16);
+  --border-strong: rgba(212, 176, 140, 0.24);
+  --border-hover: rgba(212, 176, 140, 0.3);
   --border-focus: rgba(212, 176, 140, 0.42);
 
-  --glass-bg: rgba(31, 31, 30, 0.74);
-  --glass-bg-thick: rgba(36, 36, 35, 0.94);
-  --glass-bg-elevated: rgba(40, 40, 39, 0.88);
-  --glass-border: rgba(255, 255, 255, 0.1);
+  --glass-bg: rgba(28, 22, 17, 0.74);
+  --glass-bg-thick: rgba(33, 26, 20, 0.94);
+  --glass-bg-elevated: rgba(38, 30, 24, 0.88);
+  --glass-border: rgba(212, 176, 140, 0.16);
 
   --accent-primary: var(--nude-400);
   --accent-secondary: var(--sand-500);

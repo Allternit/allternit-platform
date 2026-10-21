@@ -1253,25 +1253,6 @@ pub(crate) async fn chat_send_human_action(
     }
 }
 
-/// The turn's card checks, per gizzi message, in the order its parts arrived.
-fn card_checks_by_message(card_texts: &std::collections::BTreeMap<String, (String, String)>) -> Vec<(String, Vec<serde_json::Value>)> {
-    let mut out: Vec<(String, Vec<serde_json::Value>)> = Vec::new();
-    for (message_id, text) in card_texts.values() {
-        let checks: Vec<serde_json::Value> = crate::openui_text::check_reply(text)
-            .iter()
-            .map(|c| crate::card_meta::check_json(c, &crate::card_meta::card_key(&c.code)))
-            .collect();
-        if checks.is_empty() {
-            continue;
-        }
-        match out.iter_mut().find(|(m, _)| m == message_id) {
-            Some((_, all)) => all.extend(checks),
-            None => out.push((message_id.clone(), checks)),
-        }
-    }
-    out
-}
-
 /// 5. Filter message.part.delta events for this session and convert to
 ///    the content_block_delta SSE format the frontend expects.
 /// 6. Close the stream when session.status becomes idle.
@@ -1858,9 +1839,6 @@ async fn agent_chat_bridge(
         // This session's assistant messages: only their file parts are files
         // the model generated (the user's attachments are file parts too).
         let mut assistant_messages = std::collections::HashSet::<String>::new();
-        // Final text of this turn's assistant text parts that hold a card
-        // (part id → gizzi message id, text): checked at the end of the turn.
-        let mut card_texts = std::collections::BTreeMap::<String, (String, String)>::new();
         // File parts already framed (a replay and the live stream can overlap).
         let mut file_frames_sent = std::collections::HashSet::<String>::new();
         // Resume: deltas up to this trace sequence came from the replay; the
@@ -2039,17 +2017,6 @@ async fn agent_chat_bridge(
                                 .is_some_and(|t| !t.is_empty())
                             {
                                 saw_text = true;
-                            }
-                            // Interactive answers: keep the latest full text of a
-                            // part with a card; it's checked when the turn ends.
-                            let text = part.get("text").and_then(|v| v.as_str()).unwrap_or("");
-                            let message_id = part.get("messageID").and_then(|v| v.as_str()).unwrap_or("");
-                            if !part_id.is_empty()
-                                && !message_id.is_empty()
-                                && part.get("sessionID").and_then(|v| v.as_str()) == Some(session_id.as_str())
-                                && crate::openui_text::has_fence(text)
-                            {
-                                card_texts.insert(part_id.to_string(), (message_id.to_string(), text.to_string()));
                             }
                         }
                         // A file the model generated → an artifact card.
@@ -2415,25 +2382,6 @@ async fn agent_chat_bridge(
             finish.error.as_deref(),
         )
         .await;
-        // Interactive answers: check every card this turn wrote against the
-        // catalog, tell the app (diagnostics + text fallback per card) and
-        // keep the result with the message so a reload shows the same.
-        for (message_id, checks) in card_checks_by_message(&card_texts) {
-            yield Ok(sse_frame(trace_cursor).data(json!({
-                "type": "card_check",
-                "messageId": msg_id,
-                "gizziMessageId": message_id,
-                "cards": checks,
-            }).to_string()));
-            let db = state.db.clone();
-            let uid = user_id_for_record.clone();
-            let sid = session_id.clone();
-            let _ = tokio::task::spawn_blocking(move || {
-                let conn = db.connect()?;
-                crate::card_meta::record_checks(&conn, &uid, &sid, &message_id, &checks)
-            })
-            .await;
-        }
         yield Ok(sse_frame(trace_cursor).data(
             cowork_turn_finish_frame(&msg_id, &finish, last_usage.as_ref()).to_string(),
         ));
