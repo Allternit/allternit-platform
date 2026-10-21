@@ -498,6 +498,8 @@ Each stored message is scanned for one-time codes and magic links (`email_otp::e
 
 A message with `is_verification` set is stored with `guard_reason = 'verification'` and `reply_status = 'skipped'`: it starts **no bot turn and no reply**. It is stored even when the sender is outside the bot's email sender policy (no rejection is recorded for it), since sign-up mail comes from the site, not a contact. The bot reads it with the `allternit_mail.read_otp` tool.
 
+The webhook copy has no HTML and is cut at 4000 characters. When a message isn't marked as verification and its copy was cut short or had no text, the runtime fetches the full message from mailflare in the background (30-second limit) and extracts again, so a code or link that only appears in the HTML still reaches `read_otp`. That second pass never starts a turn.
+
 ### Inbox tools (MCP)
 
 The internal connectors MCP endpoint serves these `allternit_mail.*` tools in-process, next to `allternit_mail.send` and `allternit_mail.status`. Every tool takes `agent_id`, and ownership is checked against the calling user.
@@ -508,7 +510,7 @@ The internal connectors MCP endpoint serves these `allternit_mail.*` tools in-pr
 | `allternit_mail.read` | `id` from `list` | The whole message: `{text, html, full_body, attachments, codes, links, ...}`. When the stored body was cut at the webhook's 4000-character limit (or is missing), the full body and attachment links come from mailflare `GET /api/v1/messages/[id]` with the bot's own read-scope key, and codes and links are extracted again. Marks the message read. |
 | `allternit_mail.read_otp` | `from`, `subject_contains`, `since_s` (default 600), `wait_s` (0 to 120) | The newest verification email in the window: `{found: true, code, link, codes, links, from, subject, received_at}`. With `wait_s` it polls every 2 seconds until one arrives or the wait ends, then returns `{found: false}`. |
 
-`list`, `read_otp` and `send` give the bot a mailbox first when it has none, the same way `POST /api/v1/agents` does for every new bot (`is_bot: true`): the local mailflare admin key when set, otherwise the cloud-brokered `POST /api/v1/runtime-devices/me/bot-email/mailboxes` on the default bot domain. Provisioning is idempotent and best effort. Set `ALLTERNIT_BOT_EMAIL_AUTO=0` to turn automatic mailboxes off.
+`list`, `read_otp` and `send` give the bot a mailbox first when it has none, the same way `POST /api/v1/agents` does for every new bot (`is_bot: true`): the local mailflare admin key when set, otherwise the cloud-brokered `POST /api/v1/runtime-devices/me/bot-email/mailboxes` on the default bot domain. Hosted bots created through the Platform API agent upsert get one the same way. Provisioning is idempotent and best effort. If the cloud already has the bot's mailbox but this runtime lost its key, the runtime asks again with `reissue: true`: the cloud keeps the address, makes a new relay route, key and webhook, removes the old ones, and answers `200` in the provisioning shape. Set `ALLTERNIT_BOT_EMAIL_AUTO=0` to turn automatic mailboxes off.
 
 ### Provision phone
 

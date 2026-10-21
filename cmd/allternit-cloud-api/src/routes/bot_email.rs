@@ -15,7 +15,10 @@
 //!      relay route, with its own signing secret,
 //!
 //!   and answers `201 {address, mailboxId, apiKey, webhookSecret, mailUrl}` once.
-//!   Calling again for the same bot returns 409 `already_provisioned`.
+//!   Calling again for the same bot returns 409 `already_provisioned`, unless the
+//!   body says `reissue: true` (the runtime lost its copy): then the existing
+//!   mailbox keeps its address and gets a new relay route, key and webhook (the
+//!   old ones are removed), answered `200` in the same shape.
 //! * `DELETE /api/v1/runtime-devices/me/bot-email/mailboxes/:mailbox_id` undoes
 //!   it (webhook, key, mailbox, route).
 //!
@@ -121,6 +124,10 @@ struct ProvisionBody {
     display_name: Option<String>,
     /// A verified customer domain of this user; the platform bot domain when absent.
     domain: Option<String>,
+    /// The runtime lost the mailbox's key: rotate the existing mailbox's
+    /// credentials instead of answering 409 `already_provisioned`.
+    #[serde(default)]
+    reissue: bool,
 }
 
 /// `acme.com`, lower-cased and without a trailing dot; `None` unless it is a
@@ -241,13 +248,18 @@ async fn provision(State(state): State<Arc<ApiState>>, headers: HeaderMap, Json(
     if body.agent_id.trim().is_empty() {
         return Err(ApiError::BadRequest("agentId is required".into()));
     }
-    let existing: Option<(String,)> = sqlx::query_as("SELECT address FROM bot_email_mailboxes WHERE runtime_id = $1 AND agent_id = $2 AND deleted_at IS NULL")
-        .bind(&runtime_id)
-        .bind(&body.agent_id)
-        .fetch_optional(&state.db)
-        .await?;
-    if let Some((address,)) = existing {
-        return Ok((StatusCode::CONFLICT, Json(json!({ "error": "already_provisioned", "address": address }))).into_response());
+    let existing: Option<(String, String, Option<String>, Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT address, mailbox_id, route_id, webhook_id, api_key_id FROM bot_email_mailboxes WHERE runtime_id = $1 AND agent_id = $2 AND deleted_at IS NULL",
+    )
+    .bind(&runtime_id)
+    .bind(&body.agent_id)
+    .fetch_optional(&state.db)
+    .await?;
+    if let Some((address, mailbox_id, old_route, old_webhook, old_key)) = existing {
+        if !body.reissue {
+            return Ok((StatusCode::CONFLICT, Json(json!({ "error": "already_provisioned", "address": address }))).into_response());
+        }
+        return reissue(&state, &cfg, &user_id, &runtime_id, &body.agent_id, &address, &mailbox_id, old_route, old_webhook, old_key).await;
     }
 
     // A customer domain must be this user's and verified.
@@ -370,6 +382,77 @@ async fn provision(State(state): State<Arc<ApiState>>, headers: HeaderMap, Json(
         Json(json!({ "address": address, "mailboxId": mailbox_id, "apiKey": api_key, "webhookSecret": webhook_secret, "mailUrl": cfg.base, "provider": "mailflare" })),
     )
         .into_response())
+}
+
+/// New relay route, key and webhook for a mailbox the runtime already owns
+/// (it lost its sealed copy). The new ones are made first; only then are the old
+/// webhook, key and route removed, so a failure leaves the old set working.
+#[allow(clippy::too_many_arguments)]
+async fn reissue(
+    state: &Arc<ApiState>,
+    cfg: &MailConfig,
+    user_id: &str,
+    runtime_id: &str,
+    agent_id: &str,
+    address: &str,
+    mailbox_id: &str,
+    old_route: Option<String>,
+    old_webhook: Option<String>,
+    old_key: Option<String>,
+) -> Result<Response, ApiError> {
+    let key = new_key();
+    let route_id = uuid::Uuid::new_v4().to_string();
+    sqlx::query("INSERT INTO channel_inbound_routes (id, key_hash, user_id, runtime_id, provider, label) VALUES ($1, $2, $3, $4, 'email', $5)")
+        .bind(&route_id)
+        .bind(sha256_hex(&key))
+        .bind(user_id)
+        .bind(runtime_id)
+        .bind(format!("bot email {agent_id}"))
+        .execute(&state.db)
+        .await?;
+    let revoke_route = |db: sqlx::PgPool, id: String| async move {
+        let _ = sqlx::query("UPDATE channel_inbound_routes SET revoked_at = now() WHERE id = $1").bind(id).execute(&db).await;
+    };
+    let relay_url = format!("{}/channels/in/{}", public_base(), key);
+    let key_resp = match call(cfg, reqwest::Method::POST, "/api/api-keys", Some(json!({ "name": format!("bot {agent_id}"), "scopes": ["send", "read"], "mailboxIds": [mailbox_id] }))).await {
+        Ok(v) => v,
+        Err((s, d)) => {
+            revoke_route(state.db.clone(), route_id).await;
+            return Ok(mail_error("create the mailbox key", s, &d));
+        }
+    };
+    let api_key = key_resp.get("key").or_else(|| key_resp.get("token")).and_then(Value::as_str).unwrap_or_default().to_string();
+    let api_key_id = key_resp.get("id").and_then(Value::as_str).map(str::to_string);
+    let hook = match call(cfg, reqwest::Method::POST, "/api/webhooks", Some(json!({ "url": relay_url, "events": ["message.inbound"], "mailboxId": mailbox_id }))).await {
+        Ok(v) => v,
+        Err((s, d)) => {
+            if let Some(id) = &api_key_id {
+                let _ = call(cfg, reqwest::Method::DELETE, &format!("/api/api-keys/{id}"), None).await;
+            }
+            revoke_route(state.db.clone(), route_id).await;
+            return Ok(mail_error("create the mailbox webhook", s, &d));
+        }
+    };
+    let webhook_id = hook.get("id").and_then(Value::as_str).map(str::to_string);
+    let webhook_secret = hook.get("secret").and_then(Value::as_str).unwrap_or_default().to_string();
+    sqlx::query("UPDATE bot_email_mailboxes SET route_id = $1, webhook_id = $2, api_key_id = $3 WHERE mailbox_id = $4 AND runtime_id = $5")
+        .bind(&route_id)
+        .bind(&webhook_id)
+        .bind(&api_key_id)
+        .bind(mailbox_id)
+        .bind(runtime_id)
+        .execute(&state.db)
+        .await?;
+    if let Some(id) = old_webhook {
+        let _ = call(cfg, reqwest::Method::DELETE, &format!("/api/webhooks/{id}"), None).await;
+    }
+    if let Some(id) = old_key {
+        let _ = call(cfg, reqwest::Method::DELETE, &format!("/api/api-keys/{id}"), None).await;
+    }
+    if let Some(id) = old_route {
+        revoke_route(state.db.clone(), id).await;
+    }
+    Ok(Json(json!({ "address": address, "mailboxId": mailbox_id, "apiKey": api_key, "webhookSecret": webhook_secret, "mailUrl": cfg.base, "provider": "mailflare", "reissued": true })).into_response())
 }
 
 async fn teardown(State(state): State<Arc<ApiState>>, headers: HeaderMap, Path(mailbox_id): Path<String>) -> Result<Response, ApiError> {

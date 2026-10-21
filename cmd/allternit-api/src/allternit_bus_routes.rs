@@ -766,16 +766,26 @@ pub(crate) async fn provision_email_brokered(
     let local = local_part_candidates(requested_local_part, &bot_name, agent_id)?.into_iter().next().unwrap_or_else(|| sanitize_local_part(agent_id));
     let bearer = crate::phone_sync::runtime_bearer()
         .ok_or_else(|| err(StatusCode::CONFLICT, "runtime_not_paired", "Sign this computer in to your Allternit account to give bots email."))?;
-    let resp = reqwest::Client::new()
-        .post(format!("{}/api/v1/runtime-devices/me/bot-email/mailboxes", crate::phone_sync::cloud_base().trim_end_matches('/')))
-        .bearer_auth(bearer)
-        .timeout(std::time::Duration::from_secs(30))
-        .json(&serde_json::json!({ "agentId": agent_id, "localPart": local, "displayName": bot_name, "domain": domain }))
-        .send()
-        .await
-        .map_err(|e| err(StatusCode::BAD_GATEWAY, "cloud_unreachable", e.to_string()))?;
-    let status = resp.status();
-    let body: serde_json::Value = resp.json().await.unwrap_or(serde_json::Value::Null);
+    let request = |reissue: bool| {
+        reqwest::Client::new()
+            .post(format!("{}/api/v1/runtime-devices/me/bot-email/mailboxes", crate::phone_sync::cloud_base().trim_end_matches('/')))
+            .bearer_auth(&bearer)
+            .timeout(std::time::Duration::from_secs(30))
+            .json(&serde_json::json!({ "agentId": agent_id, "localPart": local, "displayName": bot_name, "domain": domain, "reissue": reissue }))
+            .send()
+    };
+    let resp = request(false).await.map_err(|e| err(StatusCode::BAD_GATEWAY, "cloud_unreachable", e.to_string()))?;
+    let mut status = resp.status();
+    let mut body: serde_json::Value = resp.json().await.unwrap_or(serde_json::Value::Null);
+    // The cloud already has this bot's mailbox but this runtime lost its key
+    // (the channel row was cleared or the database restored): have the cloud
+    // reissue the mailbox's key and webhook, keeping the address.
+    if status == StatusCode::CONFLICT && body.get("error").and_then(|v| v.as_str()) == Some("already_provisioned") {
+        info!(agent_id = %agent_id, "agent-email: cloud already has this bot's mailbox; reissuing its credentials");
+        let resp = request(true).await.map_err(|e| err(StatusCode::BAD_GATEWAY, "cloud_unreachable", e.to_string()))?;
+        status = resp.status();
+        body = resp.json().await.unwrap_or(serde_json::Value::Null);
+    }
     if status == StatusCode::SERVICE_UNAVAILABLE {
         return Err(err(StatusCode::NOT_IMPLEMENTED, "email_domain_not_configured", "Bot email isn't available on Allternit's cloud yet."));
     }
