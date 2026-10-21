@@ -539,7 +539,8 @@ export namespace Artifacts {
     if (res.status === 405) throw new SuggestUnavailableError("this Allternit cloud doesn't support suggestions yet")
     if (res.status === 404) {
       // Our route's JSON 404 means the artifact; anything else means the route isn't there.
-      if (res.json && typeof res.json === "object" && (res.json.error || res.json.message)) {
+      // (A plain-text 404 parses to `{message}`, so look for the store's `code`/`error`.)
+      if (res.json && typeof res.json === "object" && (res.json.code || res.json.error)) {
         throw new NotFoundError(id)
       }
       throw new SuggestUnavailableError("this Allternit cloud doesn't support suggestions yet")
