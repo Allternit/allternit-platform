@@ -1864,6 +1864,88 @@
         "allternit/surfaces/docs/architecture/meet-your-bots.mdx",
         "allternit/cmd/allternit-cloud-api/src/routes/me_flags.rs"
       ]
+    },
+    {
+      "id": "feature:live-sessions",
+      "label": "Live agent sessions and inferred doing status",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "Discovers every live CLI agent session on a computer (Claude Code session files, the Codex thread index, Factory panes, Gizzi hook runs) and reads a no-token 'doing' line from each session's own transcript and task files. Sessions ride the runtime presence heartbeat; `GET /api/v1/live-sessions` and `gizzi agents sessions` list them.",
+      "touches": [
+        "allternit/factory/engine",
+        "allternit/cmd/allternit-api",
+        "allternit/cmd/gizzi-code/src/cli"
+      ],
+      "decisions": [],
+      "evidence": [
+        "allternit/factory/engine/src/agents/live_sessions.rs",
+        "allternit/cmd/allternit-api/src/netops/presence.rs",
+        "allternit/cmd/gizzi-code/src/cli/commands/factory/agents.ts"
+      ]
+    },
+    {
+      "id": "feature:live-session-delivery",
+      "label": "Messages into running CLI sessions (push/turn/pull)",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "Bot and teammate messages land in a running Claude Code session through its messaging socket, in Codex through `codex queue`, in Factory panes through the pane send path, at the next hook for Codex/Gemini/Cursor/Copilot (`gizzi hook`), or through the MCP `check_inbox` long-poll. Every send reports delivered/queued/held/refused plus its tier and is recorded as an agent hop. Ported in part from Reason Network (Apache-2.0).",
+      "touches": [
+        "allternit/factory/engine",
+        "allternit/cmd/allternit-api",
+        "allternit/cmd/gizzi-code/src/cli",
+        "allternit/cmd/gizzi-code/src/runtime/tools"
+      ],
+      "decisions": [],
+      "evidence": [
+        "allternit/factory/engine/src/agents/live_delivery.rs",
+        "allternit/factory/engine/src/agents/delivery.rs",
+        "allternit/factory/engine/src/orchestration/send.rs",
+        "allternit/cmd/allternit-api/src/bot_routing.rs",
+        "allternit/cmd/gizzi-code/src/cli/commands/hook.ts",
+        "allternit/cmd/gizzi-code/src/runtime/live",
+        "allternit/cmd/gizzi-code/src/runtime/tools/builtins/message-agent.ts"
+      ]
+    },
+    {
+      "id": "feature:team-roster",
+      "label": "Team roster of teammates' live sessions",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "People in the caller's Clerk organization, their computers and their live sessions and bots, with status, doing line, tier and unread/held counts, on Desktop, the ai.allternit.com phone layout and the m PWA (Bots launchpad), plus `gizzi team`. Sending relays signed through the cloud to the teammate's runtime.",
+      "touches": [
+        "allternit/cmd/allternit-cloud-api",
+        "allternit-ai/src/views/bots",
+        "allternit/cmd/gizzi-code/src/cli"
+      ],
+      "decisions": [],
+      "evidence": [
+        "allternit/cmd/allternit-cloud-api/src/routes/team.rs",
+        "allternit/cmd/allternit-cloud-api/src/routes/runtime_presence.rs",
+        "allternit-ai/src/views/team",
+        "allternit/cmd/gizzi-code/src/cli/commands/team.ts"
+      ]
+    },
+    {
+      "id": "feature:a2a-public-edge",
+      "label": "A2A v1.0 public edge, contacts and peer-agent policy",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "Bots can opt in to a signed A2A v1.0 Agent Card at the cloud edge. Outside agents call SendMessage/GetTask/CancelTask; teammates are accepted, contacts are held for approval in the needs-you inbox (peer_held), strangers are refused. Contacts are added by card URL and their card hash is pinned.",
+      "touches": [
+        "allternit/cmd/allternit-cloud-api",
+        "allternit/cmd/allternit-api",
+        "allternit-ai/src/components/inbox",
+        "allternit-ai/src/lib/inbox"
+      ],
+      "decisions": [],
+      "evidence": [
+        "allternit/cmd/allternit-cloud-api/src/routes/a2a_edge.rs",
+        "allternit/cmd/allternit-api/src/a2a_routes.rs",
+        "allternit/cmd/allternit-api/src/autonomy.rs",
+        "allternit/cmd/allternit-api/src/inbox_needs.rs",
+        "allternit-ai/src/components/bot-phone/A2aReach.tsx",
+        "allternit-ai/src/components/inbox/InboxPanel.tsx"
+      ]
     }
   ],
   "journeys": [

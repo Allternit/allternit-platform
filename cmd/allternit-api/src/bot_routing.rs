@@ -89,7 +89,14 @@ pub struct RosterBody {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MessageBody {
+    /// The calling bot's session. Empty for a teammate's send relayed by the cloud (`fromKind: "team"`).
+    #[serde(default)]
     pub session_id: String,
+    /// `"team"` when the cloud relays a teammate's `POST /team/send` (WP13).
+    #[serde(default, alias = "from_kind")]
+    pub from_kind: Option<String>,
+    #[serde(default)]
+    pub from: Option<TeamSender>,
     pub target: String,
     pub message: String,
     pub wait_seconds: Option<u64>,
@@ -663,17 +670,28 @@ fn person_of(db: &DbHandle, user_id: &str) -> String {
     email.and_then(|e| e.split('@').next().map(str::to_string)).filter(|p| !p.is_empty()).unwrap_or_else(|| user_id.to_string())
 }
 
+/// A teammate (same Clerk org) sending through the cloud's team roster.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TeamSender {
+    #[serde(default)]
+    pub user_id: String,
+    #[serde(default)]
+    pub display: String,
+}
+
 /// Deliver into a running session (C2) instead of a task thread: peer policy
 /// first, then the loop guard and receipt, then the engine's one send path.
-pub async fn route_live(db: &DbHandle, root: &std::path::Path, caller: &Caller, live: LiveTarget, message: &str, ctx: &HopCtx) -> Result<Value, RouteError> {
+pub async fn route_live(db: &DbHandle, root: &std::path::Path, caller: &Caller, team: Option<&TeamSender>, live: LiveTarget, message: &str, ctx: &HopCtx) -> Result<Value, RouteError> {
     use allternit_factory_engine::send::{self, ApiLink, SendCtx, SendRequest};
     let text = message.trim();
     if text.is_empty() {
         return Err(RouteError::BadRequest("The message is empty. Say what the other agent should do.".into()));
     }
     let (to_id, to_name) = live.key();
-    // The owner's peer-agent policy (WP14 sets the team/contact/stranger defaults).
-    if let Some(eval) = crate::autonomy::evaluate(
+    // The owner's peer-agent policy (WP14 sets the team/contact/stranger defaults). Teammates are accepted (C8).
+    if team.is_some() {
+    } else if let Some(eval) = crate::autonomy::evaluate(
         db,
         &crate::autonomy::Action { owner: &caller.user_id, bot_id: &caller.bot_id, channel: "peer_agent", persons: vec![to_id.clone()], action: "message", amount_cents: 0 },
         true,
@@ -696,8 +714,8 @@ pub async fn route_live(db: &DbHandle, root: &std::path::Path, caller: &Caller, 
             &HopIn {
                 owner: caller.user_id.clone(),
                 via: "message_agent".into(),
-                from_kind: "bot".into(),
-                from_id: caller.bot_id.clone(),
+                from_kind: if team.is_some() { "team".into() } else { "bot".into() },
+                from_id: team.map_or_else(|| caller.bot_id.clone(), |t| t.user_id.clone()),
                 to_bot_id: to_id.clone(),
                 thread_id: None,
                 idempotency_key: ctx.idempotency_key.clone(),
@@ -712,14 +730,27 @@ pub async fn route_live(db: &DbHandle, root: &std::path::Path, caller: &Caller, 
             Admit::Go { hop_id, .. } => hop_id,
         }
     };
-    let person = person_of(db, &caller.user_id);
-    let from = format!("{person}/{}", norm(&caller.name).replace(' ', "-"));
+    let (person, from) = match team {
+        Some(t) => {
+            let p = norm(&t.display).replace(' ', "-");
+            (t.display.clone(), format!("{p}/agent"))
+        }
+        None => {
+            let person = person_of(db, &caller.user_id);
+            let from = format!("{person}/{}", norm(&caller.name).replace(' ', "-"));
+            (person, from)
+        }
+    };
+    let (trust, source_kind, source_ref) = match team {
+        Some(t) => (crate::netops::provenance::Trust::Team, "team", t.user_id.clone()),
+        None => (crate::netops::provenance::Trust::Owner, "bot", caller.bot_id.clone()),
+    };
     // Trusted senders pass through unchanged; anything else is fenced (C3).
     let fenced = db
         .connect()
         .map(|conn| {
             let thread = caller.thread_id.clone().unwrap_or_else(|| format!("hop:{hop_id}"));
-            let label = crate::netops::provenance::label(&conn, &thread, crate::netops::provenance::Trust::Owner, "bot", &caller.bot_id, text);
+            let label = crate::netops::provenance::label(&conn, &thread, trust, source_kind, &source_ref, text);
             crate::netops::provenance::fence(text, &label)
         })
         .unwrap_or_else(|_| text.to_string());
@@ -731,7 +762,7 @@ pub async fn route_live(db: &DbHandle, root: &std::path::Path, caller: &Caller, 
         root: root.to_path_buf(),
         registry: allternit_factory_engine::agents::registry::Registry::open_default(),
         api: ApiLink::default(),
-        sender: format!("agent:{}", caller.bot_id),
+        sender: team.map_or_else(|| format!("agent:{}", caller.bot_id), |t| format!("team:{}", t.user_id)),
     };
     let req = SendRequest {
         to,
@@ -827,6 +858,22 @@ async fn hop_advance_route(State(state): State<Arc<AppState>>, Extension(user): 
 }
 
 async fn message_route(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, headers: HeaderMap, Json(body): Json<MessageBody>) -> Response {
+    // A teammate's send relayed by the cloud: no calling bot, live sessions only.
+    if body.from_kind.as_deref() == Some("team") && body.session_id.is_empty() {
+        let team = body.from.clone().unwrap_or_default();
+        let caller = Caller { bot_id: "team".into(), user_id: user.user_id.clone(), name: team.display.clone(), session_id: String::new(), thread_id: None, project_id: None };
+        let Some(live) = live_target(&state.db, &caller, &body.target) else {
+            return Json(json!({ "state": "refused", "status": "refused", "tier": null, "note": "That session isn't running on this computer any more.", "target": body.target })).into_response();
+        };
+        let ctx = HopCtx {
+            traceparent: headers.get("traceparent").and_then(|v| v.to_str().ok()).map(str::to_string),
+            idempotency_key: body.idempotency_key.clone().filter(|k| !k.trim().is_empty()),
+        };
+        return match route_live(&state.db, &state.rails.root_dir, &caller, Some(&team), live, &body.message, &ctx).await {
+            Ok(v) => Json(v).into_response(),
+            Err(e) => refuse(e),
+        };
+    }
     let db = state.db.clone();
     let (uid, sid) = (user.user_id.clone(), body.session_id.clone());
     let caller = match tokio::task::spawn_blocking(move || authorize(&db, &uid, &sid)).await {
@@ -840,7 +887,7 @@ async fn message_route(State(state): State<Arc<AppState>>, Extension(user): Exte
             traceparent: headers.get("traceparent").and_then(|v| v.to_str().ok()).map(str::to_string),
             idempotency_key: body.idempotency_key.clone().filter(|k| !k.trim().is_empty()),
         };
-        return match route_live(&state.db, &state.rails.root_dir, &caller, live, &body.message, &ctx).await {
+        return match route_live(&state.db, &state.rails.root_dir, &caller, None, live, &body.message, &ctx).await {
             Ok(v) => Json(v).into_response(),
             Err(e) => refuse(e),
         };

@@ -103,7 +103,7 @@ fn codex_dir() -> PathBuf {
 }
 
 fn hooks_file() -> PathBuf {
-    home().join(".allternit").join("live-sessions").join("hooks.json")
+    std::env::var_os("ALLTERNIT_HOOKS_FILE").map_or_else(|| home().join(".allternit").join("live-sessions").join("hooks.json"), PathBuf::from)
 }
 
 fn pid_alive(pid: u32) -> bool {
@@ -618,5 +618,61 @@ mod tests {
         assert!(mine.iter().any(|s| s.address == "eoj/app-gizzi" && s.status == "busy" && s.tier == "push"));
         assert!(mine.iter().any(|s| s.address == "eoj/app-gizzi-2" && s.status == "idle"));
         assert_eq!(repo_slug("git@github.com:Allternit/allternit-platform.git").as_deref(), Some("Allternit/allternit-platform"));
+    }
+}
+
+// ---------------------------------------------------------------- delivery source
+
+/// The default session source for WP11's `live_delivery`: this machine's discovered
+/// sessions, plus the push facts delivery needs (socket path, Codex thread, hooks).
+pub struct Discovered;
+
+impl Discovered {
+    fn delivery_view(s: LiveSession) -> super::live_delivery::LiveSession {
+        let socket = (s.harness == "claude")
+            .then(|| s.pid)
+            .flatten()
+            .and_then(|pid| std::fs::read(claude_dir().join("sessions").join(format!("{pid}.json"))).ok())
+            .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
+            .and_then(|v| v["messagingSocketPath"].as_str().filter(|p| !p.is_empty()).map(str::to_string));
+        let waiting = super::live_delivery::is_waiting(&s.name);
+        super::live_delivery::LiveSession {
+            codex_thread: (s.harness == "codex").then(|| s.session_id.clone()),
+            hooks_installed: s.tier == "turn" || read_hooks().iter().any(|h| h.session == s.session_id),
+            messaging_socket_path: socket,
+            messaging_token: None,
+            waiting_inbox: waiting,
+            address: s.address,
+            name: s.name,
+            harness: s.harness,
+            machine: s.machine,
+            machine_name: s.machine_name,
+            pid: s.pid,
+            session_id: s.session_id,
+            pane_id: s.pane_id,
+            bot_id: s.bot_id,
+            cwd: s.cwd,
+            repo: s.repo,
+            branch: s.branch,
+            status: s.status,
+            since: s.since,
+            doing: s.doing.unwrap_or_default(),
+            tier: s.tier,
+            unread: s.unread,
+        }
+    }
+}
+
+impl super::live_delivery::SessionLookup for Discovered {
+    fn find(&self, address: &str) -> Option<super::live_delivery::LiveSession> {
+        let want = address.to_lowercase();
+        let name = want.rsplit('/').next().unwrap_or(&want).to_string();
+        <LiveSession as SessionLookup>::all()
+            .into_iter()
+            .find(|s| s.address == want || (!want.contains('/') && s.name == name))
+            .map(Self::delivery_view)
+    }
+    fn list(&self) -> Vec<super::live_delivery::LiveSession> {
+        <LiveSession as SessionLookup>::all().into_iter().map(Self::delivery_view).collect()
     }
 }

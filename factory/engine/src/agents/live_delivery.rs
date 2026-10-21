@@ -104,8 +104,9 @@ pub fn set_lookup(l: Arc<dyn SessionLookup>) {
     }
 }
 
+/// The registered source, else this machine's discovered sessions (`live_sessions::Discovered`).
 pub fn lookup() -> Option<Arc<dyn SessionLookup>> {
-    lookup_slot().read().ok().and_then(|g| g.clone())
+    lookup_slot().read().ok().and_then(|g| g.clone()).or_else(|| Some(Arc::new(super::live_sessions::Discovered)))
 }
 
 /// C1 result of a live delivery.
@@ -243,7 +244,7 @@ pub fn inbox_dir() -> PathBuf {
 /// File-safe key of a session name (the part of the address after `/`).
 pub fn inbox_key(address_or_name: &str) -> String {
     let name = address_or_name.rsplit('/').next().unwrap_or(address_or_name);
-    name.chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' { c } else { '-' }).collect()
+    name.to_lowercase().chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' { c } else { '-' }).collect()
 }
 
 /// Is the session parked in `check_inbox` right now? (`gizzi team-mcp` touches

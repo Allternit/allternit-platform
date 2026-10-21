@@ -6,6 +6,7 @@ import { join } from "node:path"
 
 process.env.ALLTERNIT_FACTORY_HOME = mkdtempSync(join(tmpdir(), "gizzi-live-inbox-"))
 delete process.env.ALLTERNIT_LIVE_SESSION
+process.env.ALLTERNIT_HOOKS_FILE = join(process.env.ALLTERNIT_FACTORY_HOME, "hooks.json")
 const { inboxDir, inboxKey, markRead, readPending, unreadNotice } = await import("../../../src/runtime/live/inbox")
 const { formatFor, runHook, takesMail } = await import("../../../src/cli/commands/hook")
 const { toolList, rosterText } = await import("../../../src/runtime/live/team-mcp")

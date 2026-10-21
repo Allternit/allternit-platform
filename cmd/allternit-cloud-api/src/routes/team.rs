@@ -288,7 +288,7 @@ async fn send(State(state): State<Arc<ApiState>>, headers: HeaderMap, Json(body)
         &runtime_id,
         RelayRequest {
             method: "POST".into(),
-            path: "/bot-routing/message".into(),
+            path: "/api/v1/bot-routing/message".into(),
             headers: HashMap::new(),
             body: STANDARD.encode(payload.to_string()),
             body_encoding: "base64".into(),

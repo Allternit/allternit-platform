@@ -11,9 +11,9 @@
  *
  * Free of CLI imports so bun tests can drive it against a temp factory home.
  */
-import { appendFile, mkdir, readFile, stat, utimes, writeFile } from "node:fs/promises"
+import { appendFile, mkdir, readFile, rename, stat, utimes, writeFile } from "node:fs/promises"
 import { homedir } from "node:os"
-import { basename, join } from "node:path"
+import { basename, dirname, join } from "node:path"
 
 export interface InboxMessage {
   id: string
@@ -35,7 +35,37 @@ export function inboxDir(): string {
 /** File-safe key of a session name (the part of an address after `/`); same rule as the engine's `inbox_key`. */
 export function inboxKey(addressOrName: string): string {
   const name = addressOrName.split("/").pop() ?? addressOrName
-  return name.replace(/[^A-Za-z0-9._-]/g, "-")
+  return name.toLowerCase().replace(/[^a-z0-9._-]/g, "-")
+}
+
+/** Where hook runs are recorded for live-session discovery (the engine's `live_sessions.rs` reads it). */
+export function hooksFile(): string {
+  return process.env.ALLTERNIT_HOOKS_FILE || join(homedir(), ".allternit/live-sessions/hooks.json")
+}
+
+/** Record one hook run: `{sessions: {<id>: {harness, cwd, transcript_path, pid, last_hook}}}`. Drops entries older than 6 h. */
+export async function recordHook(entry: { session: string; harness: string; cwd: string; transcript?: string; pid?: number }): Promise<void> {
+  const path = hooksFile()
+  let doc: { sessions?: Record<string, Record<string, unknown>> } = {}
+  try {
+    doc = JSON.parse(await readFile(path, "utf8"))
+  } catch {}
+  const sessions = doc.sessions ?? {}
+  const cutoff = Date.now() - 6 * 3600_000
+  for (const [id, v] of Object.entries(sessions)) {
+    if (Date.parse(String(v.last_hook ?? "")) < cutoff) delete sessions[id]
+  }
+  sessions[entry.session] = {
+    harness: entry.harness,
+    cwd: entry.cwd,
+    ...(entry.transcript ? { transcript_path: entry.transcript } : {}),
+    ...(entry.pid ? { pid: entry.pid } : {}),
+    last_hook: new Date().toISOString(),
+  }
+  await mkdir(dirname(path), { recursive: true })
+  const tmp = `${path}.${process.pid}.tmp`
+  await writeFile(tmp, JSON.stringify({ sessions }), { mode: 0o600 })
+  await rename(tmp, path)
 }
 
 /** This session's inbox key: `$ALLTERNIT_LIVE_SESSION`, else `<dir>-<harness>`. */

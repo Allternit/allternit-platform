@@ -10,7 +10,7 @@
  */
 import type { CommandModule } from "yargs"
 import { basename } from "node:path"
-import { markRead, readPending, sessionKey, type InboxMessage } from "@/runtime/live/inbox"
+import { markRead, readPending, recordHook, sessionKey, type InboxMessage } from "@/runtime/live/inbox"
 
 type Ev = "start" | "prompt" | "tool" | "stop" | "end" | "doing"
 
@@ -94,7 +94,7 @@ export async function runHook(
   input: Record<string, unknown> = {},
 ): Promise<{ out?: string; ids: string[]; key?: string }> {
   const ev = normalizeEvent(event)
-  if (!ev || !takesMail(harness, event)) return { ids: [] }
+  if (!ev) return { ids: [] }
   if (harness === "grok" && (input.subagentType || (ev === "stop" && input.reason !== "end_turn"))) return { ids: [] }
   const roots = input.workspace_roots as string[] | undefined
   const cwd =
@@ -104,6 +104,18 @@ export async function runHook(
     process.env.GEMINI_CWD ??
     process.env.CLAUDE_PROJECT_DIR ??
     process.cwd()
+  // Every hook run marks the session live (and busy) for live-session discovery.
+  const sessionId = [input.session_id, input.sessionId, input.thread_id, input.conversation_id].find((v) => typeof v === "string") as
+    | string
+    | undefined
+  await recordHook({
+    session: sessionId ?? sessionKey(harness, cwd),
+    harness,
+    cwd,
+    transcript: typeof input.transcript_path === "string" ? input.transcript_path : undefined,
+    pid: process.ppid,
+  }).catch(() => {})
+  if (!takesMail(harness, event)) return { ids: [] }
   const key = sessionKey(harness, cwd)
   const pending = await readPending(key)
   if (!pending.length) {
