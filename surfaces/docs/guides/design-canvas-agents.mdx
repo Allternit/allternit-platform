@@ -1,6 +1,6 @@
 ---
 title: Agents on one canvas
-description: Let several of your bots restyle frames of one design canvas at the same time, see who is working on which frame, and keep or undo each change.
+description: Let several of your bots restyle frames of one design canvas at the same time, see who is working on which frame, tune their changes with sliders, pin comments to frames, and turn a frame into code.
 ---
 
 On a Design canvas, several agents (Gizzi or any of your bots) can work on
@@ -60,6 +60,52 @@ Click a frame that has a change to open its card next to it. It shows:
   the change came from one, otherwise to your current chat, starting with the
   frame's name.
 
+## Tune a change with sliders
+
+When you ask an agent to adjust something it can't know the right value for,
+such as spacing, corner radius, a colour or density, it can give the change
+a few **controls** instead of guessing. They appear on the frame card under the
+agent's reason:
+
+- a slider for numbers ("Corner radius 0–32"),
+- a colour picker ("Accent"),
+- a choice ("Density: compact or cozy").
+
+Move one and the frame on the canvas updates as you go. **Keep** saves the
+frame with the values you picked; **Undo** throws the change away as usual.
+An agent can send controls with its own new look, or on their own, to let you
+tune the frame as it is. On a phone the controls sit in the card's sheet.
+
+## Comments pinned to frames
+
+Every open comment thread about a frame, or a layer in it, shows as a numbered
+pin on the canvas: at the layer's top-right corner, or the frame's when the
+comment is about the whole frame. The pins move with the canvas as you pan and
+zoom. Resolved threads hide their pin.
+
+- **Open a thread.** Click a pin. On a computer the comments panel opens on that
+  thread; on a phone it opens as a bottom sheet.
+- **Start a thread.** Choose **Comment** in the canvas toolbar (or press C on a
+  computer), then click a frame or a layer. The new thread is pinned to it. On
+  a phone, Comment is in the canvas sheet's actions.
+- **Questions from agents.** When an agent needs to ask you something about a
+  frame, such as "Dark or light for the hero?", its question appears as a pin
+  on that frame under the agent's name. Answer it in the thread.
+
+## Build this
+
+Select one frame, then choose **Build this** in the canvas toolbar or on the
+frame's card. A Code mode session starts in your current code environment
+with:
+
+- a prompt that names the frame,
+- the frame's layers as they are in the design,
+- a picture of the frame,
+- the design's design system.
+
+On a phone it opens phone Code mode the same way. If you don't have a code
+environment yet, Build this says so and links to setting one up.
+
 ## Split frames across bots
 
 Select several frames and choose **Split to bots**. The dialog has one row per
@@ -77,12 +123,16 @@ then confirm.
 
 On the ai.allternit.com phone layout and the m.allternit.com app you can watch
 and review: tags on frames, the rail as a bottom sheet, and a tap on a frame
-opens its card as a bottom sheet with Keep, Undo, the Before/After slider and
-the follow-up box. Split to bots is on a computer only.
+opens its card as a bottom sheet with Keep, Undo, the Before/After slider, any
+controls and the follow-up box. Comment pins open their thread as a bottom
+sheet, and Comment and Build this are in the canvas sheet's actions. Split to
+bots is on a computer only.
 
 ## Related
 
 - [Comments, presence and versions](/guides/artifact-collaboration)
 - [Docs, Slides, Sheets and Design artifacts](/guides/artifact-editors)
 - [Delegate tasks to a project's bots](/guides/project-delegate)
+- [Code session list](/guides/code-session-list)
 - [Artifact tools](/tools/artifact-tools)
+- [Artifacts API: controls](/api/artifacts-v2#controls)

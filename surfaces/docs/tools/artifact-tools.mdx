@@ -16,7 +16,7 @@ gizzi-code gives every model built-in tools for **Artifacts v2**: one account-le
 | `artifact_release` | `{artifact_id, artboard?}` | confirmation |
 | `artifact_read` | `{id, version?, task?}` | the body, with kind, title, format and version |
 | `artifact_list` | `{q?, kind?, scope?, limit?, cursor?}` | one line per artifact, plus a cursor for more |
-| `artifact_comment` | `{id, body?, parent_id?, task?}` | the threads (no `body`), or the posted comment |
+| `artifact_comment` | `{id, body?, parent_id?, anchor?, artboard?, task?}` | the threads (no `body`), or the posted comment |
 | `artifact_share` | `{id, visibility?, people?}` | the sharing settings (the user approves a change) |
 | `artifact_delete` | `{id}` | confirmation (the user approves each delete) |
 | `artifact_storage` | `{id, action, scope, key?, value?, prefix?}` | a page artifact's saved data |
@@ -92,7 +92,7 @@ Several agents can restyle frames of one design canvas (`application/vnd.alltern
 
 ### The artboard change
 
-The model sends `{kind: "artboard", artboard, layers, frame?, reason?}`:
+The model sends `{kind: "artboard", artboard, layers?, frame?, controls?, reason?}`:
 
 ```json
 {"kind": "artboard", "artboard": "shape:hero", "frame": {"fill": "#0b0b0f"},
@@ -103,6 +103,8 @@ The model sends `{kind: "artboard", artboard, layers, frame?, reason?}`:
 
 - `layers` is the frame's **full** new layer list, bottom first: every layer it keeps plus new ones. Kept layers keep their ids; new layers get ids no other artboard uses.
 - `frame` optionally patches the artboard (`fill`, `w`, `h`, `props`).
+- `layers` left out means the frame's layers as they are now. That makes a controls-only change; a change with no layers, no frame patch and no controls is refused.
+- `controls` optionally adds up to 12 sliders (see [Controls](#controls)).
 
 Before posting, gizzi:
 
@@ -113,6 +115,32 @@ Before posting, gizzi:
 - refuses artboard changes for an HTML design (it has no artboards until the user converts it) and for other kinds.
 
 The heartbeat's anchor is the held frame when the change is for it, otherwise the first change's artboard. A frame another agent holds comes back as the same plain error as `artifact_claim`. The result tells the model the canvas shows the change "In review" for the user to keep or undo.
+
+### Controls
+
+When the user is tuning something on a frame (spacing, corner radius, colour, density, size), the tool description and the `artifacts` skill tell the model to offer 2 to 5 `controls` instead of guessing one value. The user moves them on the frame card and keeps the result.
+
+```json
+{"kind": "artboard", "artboard": "shape:pricing",
+ "controls": [{"id": "radius", "label": "Corner radius", "type": "range", "layer": "shape:card", "prop": "radius", "min": 0, "max": 32, "step": 1, "value": 12},
+              {"id": "density", "label": "Density", "type": "select", "layer": null, "prop": "frame.padding", "options": ["compact", "cozy"], "value": "cozy"}],
+ "reason": "Pick the radius you like"}
+```
+
+Each control is `{id, label, type, layer, prop, value}` plus `min`, `max` and `step` for a `range` and `options` for a `select`; a `color` has only a `value`. `layer` is a layer id in the change, or `null` for the artboard; `prop` is a key in that layer's props, `x`/`y`/`w`/`h`, or `frame.<key>` for an artboard prop. `value` is what the layers use now. Before posting, gizzi writes each `layer` as a `shape:` id and refuses a layer that isn't in the change, a `frame.` prop with a layer, a range value outside `min` to `max`, a select value that isn't an option, a duplicate id, more than 12 controls, or over 64 KB. The cloud checks the same rules (`400 bad_controls`; see [controls](/api/artifacts-v2#controls)).
+
+### Pinned questions
+
+To ask the user about one frame, the model calls `artifact_comment` with `body` and `artboard`. gizzi reads the design and posts the comment with an `element` anchor under the agent's name (`agent_name`), and the app shows it as a numbered pin on that frame:
+
+```json
+{"kind": "element", "shapeId": "shape:hero", "artboard": "shape:hero", "label": "Hero"}
+```
+
+- With only `artboard`, the pin is the frame itself (`shapeId` equals `artboard`).
+- With `anchor: {kind: "element", shapeId: "<layer id>"}` as well, the pin sits on that layer. `anchor` alone works too: the frame comes from the layer. Other anchor fields are kept as given; `label` defaults to the layer or frame name.
+- An unknown artboard lists the design's artboards; an unknown layer, or a layer on another frame, is a plain error. `artboard` on an artifact that isn't a canvas is refused.
+- The anchor is at most 4 KB of JSON (the cloud's limit for agent comments). A reply (`parent_id`) keeps its thread's pin, so gizzi doesn't resolve an anchor for it.
 
 ### artifact_update on a design
 
@@ -128,7 +156,7 @@ The heartbeat's anchor is the held frame when the change is for it, otherwise th
 
 Heartbeats are best effort. They run in the background with a 2.5 second timeout, and a failed heartbeat never fails or delays the tool. Set `GIZZI_ARTIFACT_PRESENCE=0` to turn them off.
 
-`artifact_comment` also sends `agent_name`, so a comment the agent posts appears under the agent's name, not the user's.
+`artifact_comment` also sends `agent_name`, so a comment the agent posts appears under the agent's name, not the user's. On a design it can pin the comment to a frame (see [Pinned questions](#pinned-questions)).
 
 ## Kinds and body formats
 
@@ -202,6 +230,8 @@ The text the model sees starts with the same fields as a JSON line, without the 
 | `artifact_suggest` with no account signed in, or a cloud without the route | Suggestions aren't available; use `artifact_update` instead. |
 | `artifact_claim` or an artboard `artifact_suggest` on a frame another agent holds (cloud `409 artboard_claimed`) | "Hero is being worked on by Oki; pick another frame or wait." |
 | An artboard change for a frame that changed since `base_version` | Nothing was suggested; read the design again and rebuild that frame. |
+| A control that points at a layer not in the change, or a value outside its range or options (cloud `400 bad_controls`) | Which control is wrong and why. |
+| `artifact_comment` with an `artboard` the design doesn't have | The design's artboards. |
 | `artifact_update` on a design with other agents' pending frame changes | Who is changing which frame, and the claim, suggest and release flow to use instead. |
 
 ## Source

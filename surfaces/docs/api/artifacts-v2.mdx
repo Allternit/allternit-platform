@@ -309,7 +309,18 @@ Comments are threaded: a root comment plus replies one level deep. They are stor
 | `DELETE /api/v2/artifacts/:id/comments/:cid` | the author or the owner | | `204`. Deleting a root deletes its replies. |
 | `POST /api/v2/artifacts/:id/comments/assistant-reply` | edit | `{ parent_id, body }` | the reply, `201`, with `author_id: "assistant"` |
 
-A comment has `id`, `artifact_id`, `version`, `anchor`, `parent_id`, `author_id`, `author_name`, `author_image_url`, `agent_name`, `body`, `to_assistant`, `resolved_at` and `created_at`. `body` is 1 to 4000 characters. `anchor` is an opaque object up to 16 KB; the app writes `{ kind: "text" | "cell" | "slide" | "element", ... }`. A comment that mentions `@gizzi` or `@allternit` is stored with `to_assistant: true`. Docs have no Commenter level, so a viewer of a doc can't comment.
+A comment has `id`, `artifact_id`, `version`, `anchor`, `parent_id`, `author_id`, `author_name`, `author_image_url`, `agent_name`, `body`, `to_assistant`, `resolved_at` and `created_at`. `body` is 1 to 4000 characters. `anchor` is an opaque object up to 16 KB; the app writes `{ kind: "text" | "cell" | "slide" | "element", ... }`. A comment that mentions `@gizzi` or `@allternit` is stored with `to_assistant: true`.
+
+**Comment anchors.** The server stores `anchor` exactly as sent, every field kept, so the app can add fields without a server change. It checks only that it is an object up to 16 KB whose `kind`, when present, is `text`, `cell`, `slide` or `element`. On a Design canvas a comment pinned to a frame or layer uses the `element` kind:
+
+```json
+{ "kind": "element", "shapeId": "shape:title", "artboard": "shape:hero", "label": "Title" }
+```
+
+- `shapeId` is the layer's shape id, or the artboard's own id when the comment is about the whole frame (`shapeId` equals `artboard`).
+- `artboard` is the artboard's shape id and `label` the name shown in the thread. When present, `shapeId`, `artboard` and `label` must be strings of at most 200 characters, otherwise `400`.
+- The app draws a numbered pin for each open thread anchored on the canvas, at the layer's top-right corner (or the frame's, for a frame anchor). Resolved threads hide their pin. A reply inherits its root's anchor.
+- A comment posted with `agent_name` (an agent's question pinned to a frame) has a smaller limit: its `anchor` is at most 4 KB. Docs have no Commenter level, so a viewer of a doc can't comment.
 
 An agent posts under its own name by sending `agent_name` (gizzi's `artifact_comment` does this). The comment is then stored with `author_id: "assistant"` and that `agent_name`, and `author_name` comes back as the agent name. On every read, `author_name` falls back to `agent_name` when the author has no profile name. `agent_name` is `null` for comments people write.
 
@@ -322,7 +333,7 @@ Presence is shared by every Cloud API instance. Each heartbeat upserts one row p
 | `POST /api/v2/artifacts/:id/presence` | view (edit with `agent`) | `{ state: "viewing" \| "editing" \| "left", agent? }` | `204` |
 | `GET /api/v2/artifacts/:id/presence` | view | | `{ enabled, users: [{ user_id, name, image_url, state, kind, task, anchor, cost_usd, session_id }] }`, without you |
 
-Send a heartbeat about every 15 seconds. `GET` returns the entries seen in the last 45 seconds, up to 200, ordered by `user_id`. `left` deletes the caller's entry. Entries older than 10 minutes are deleted as a side effect of about one request in 50. When the owner's organization turned presence off, `GET` returns `{ enabled: false, users: [] }` and `POST` does nothing.
+Send a heartbeat about every 15 seconds. `GET` returns the entries seen in the last 45 seconds, up to 200, ordered by `user_id`. `left` deletes the caller's entry. Entries older than 10 minutes are deleted as a side effect of about one request in 50. When the owner's organization turned presence off, `GET` returns `{ enabled: false, users: [] }` and a person's `POST` does nothing. Agent frame claims still work then (see [frame claims](#frame-claims)).
 
 ### Agent presence
 
@@ -349,6 +360,7 @@ On a design canvas, an agent claims an artboard before it changes it, so two age
 - **Keep it.** Each heartbeat from the holder keeps the claim. It lasts as long as the heartbeats do (the 45-second TTL).
 - **Release.** A heartbeat with `anchor: null` (or without an artboard), or `state: "left"`, releases it. A claim whose heartbeats stop lapses after 45 seconds.
 - An agent row holds one frame at a time: claiming another frame moves the claim.
+- **Presence turned off.** Claims hold even when the owner's organization turned presence off, so agents still never change the same frame. The server writes and checks agent claim rows as usual, and a heartbeat that claims nothing deletes the agent's row instead of storing it. `GET /presence` still returns `{ enabled: false, users: [] }`, so nobody sees the claims, but a second agent's claim or artboard suggestion still gets `409 artboard_claimed`.
 - Artboard ids compare without tldraw's `shape:` prefix, so `hero` and `shape:hero` are the same frame. `anchor.artboard` must be a string of 1 to 200 characters, otherwise `400`.
 
 ## Suggestions
@@ -404,6 +416,35 @@ Any other pair, including an HTML design (`text/html`), is `400 unsupported_kind
 - The artboard must exist in the current body (`422 unknown_artboard`). A body that isn't a v2 canvas yet isn't checked.
 - Limits: `layers` and `before` at most 2 MB of JSON each, and at most 2000 layers each, otherwise `400 change_too_large`. A request is at most 16 MB.
 - While another live agent session holds the artboard (see [frame claims](#frame-claims)), the `POST` is refused with `409 artboard_claimed` and the same `holder`. The holder's own session, and anyone when no one holds the frame, can suggest.
+- `controls` (optional) adds generated sliders to the change; see [controls](#controls).
+
+### Controls
+
+An artboard change can carry `controls`: sliders, colour pickers and selects the user moves on the frame card before keeping the change. An agent sends them when the user is tuning something (spacing, radius, colour, density) instead of guessing one value.
+
+```json
+"controls": [
+  { "id": "radius", "label": "Corner radius", "type": "range", "layer": "shape:card", "prop": "radius", "min": 0, "max": 32, "step": 1, "value": 12 },
+  { "id": "accent", "label": "Accent", "type": "color", "layer": "shape:cta", "prop": "fill", "value": "#6366f1" },
+  { "id": "density", "label": "Density", "type": "select", "layer": null, "prop": "frame.padding", "options": ["compact", "cozy"], "value": "cozy" }
+]
+```
+
+| Field | Rule |
+|---|---|
+| `id` | 1 to 64 characters, unique in the change |
+| `label` | 1 to 200 characters, shown on the card |
+| `type` | `range`, `color` or `select` |
+| `layer` | the id of a layer in the change's `layers` (with or without `shape:`), or `null` (or left out) for the artboard itself |
+| `prop` | a key in the layer's `props`, or `x`, `y`, `w`, `h`. A `frame.` prefix (`frame.padding`) targets the artboard's props and needs `layer: null` |
+| `range` | finite numbers `min` less than `max`, optional `step` greater than 0 and at most `max - min`, and a numeric `value` from `min` to `max` |
+| `color` | a non-empty colour string `value` (at most 200 characters) |
+| `select` | 1 to 50 non-empty string `options`, and a `value` that is one of them |
+
+- At most 12 controls and 64 KB of JSON per change. An empty list stores no controls.
+- Any problem is `400` with code `bad_controls` and a message naming the control. Unknown fields are dropped.
+- A controls-only change is fine: `layers` equal to `before.layers`, plus `controls`.
+- **The client applies controls.** Moving one rewrites the previewed after state live (`applyControl(change, controlId, value)` in the app). **Keep** saves the tweaked state as the new version and records the final values in that version's `meta`. The stored suggestion keeps the values the agent sent.
 
 **Applying is pure and client side.** Remove every layer whose `artboard` is the change's artboard, insert `layers` where the first removed one sat (or at the end when there were none), and patch the artboard with `frame`. The change is **stale** when the artboard no longer exists. While a change is pending the canvas shows the after state, marked "In review". **Keep** saves a version with it and marks it `accepted`; **Undo** restores `before` and marks it `rejected`. A kept change can still be undone for 24 hours if the artboard still matches its `layers`.
 

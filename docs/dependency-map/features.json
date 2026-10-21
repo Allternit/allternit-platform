@@ -1202,10 +1202,10 @@
     },
     {
       "id": "feature:agents-on-one-canvas",
-      "label": "Agents on one canvas (frame claims, Keep / Undo per frame, activity rail, Split to bots)",
+      "label": "Agents on one canvas (frame claims, Keep / Undo per frame, activity rail, Split to bots, comment pins, controls, Build this)",
       "product": "product:ai-allternit",
       "status": "building",
-      "description": "Several agents (Gizzi or any of the user's bots) restyle frames of one Design canvas at the same time, on Desktop, the ai.allternit.com phone layout and the m.allternit.com PWA. Each agent claims an artboard before it edits (a claim is an agent presence heartbeat whose anchor is {artboard}; another live agent session gets 409 artboard_claimed naming the holder) and shows as a name tag with cost and task on that frame. Each agent turn on a frame lands as one pending artboard suggestion (the frame's full new layer list plus before); the canvas shows the after state In review, Keep saves a version and Undo restores before, with a 24 h Undo on Done rows. An activity rail (In review / Doing / Done) and a frame card (Before/After wipe, Keep, Undo, follow-up to the agent) sit on the canvas; Split to bots turns selected frames into Delegate tasks. Phones view and review only. gizzi: artifact_claim / artifact_release, artifact_suggest takes an artboard change and fills before from the canvas, heartbeats carry the held frame, artifact_update refuses a design with other sessions' pending frame changes. cloud-api: suggestions accept design canvases with the artboard kind (2 MB / 2000 layer caps, unknown_artboard, layer_id_in_use), no new table.",
+      "description": "Several agents (Gizzi or any of the user's bots) restyle frames of one Design canvas at the same time, on Desktop, the ai.allternit.com phone layout and the m.allternit.com PWA. Each agent claims an artboard before it edits (a claim is an agent presence heartbeat whose anchor is {artboard}; another live agent session gets 409 artboard_claimed naming the holder) and shows as a name tag with cost and task on that frame. Each agent turn on a frame lands as one pending artboard suggestion (the frame's full new layer list plus before); the canvas shows the after state In review, Keep saves a version and Undo restores before, with a 24 h Undo on Done rows. An activity rail (In review / Doing / Done) and a frame card (Before/After wipe, Keep, Undo, follow-up to the agent) sit on the canvas; Split to bots turns selected frames into Delegate tasks. Phones view and review only. gizzi: artifact_claim / artifact_release, artifact_suggest takes an artboard change and fills before from the canvas, heartbeats carry the held frame, artifact_update refuses a design with other sessions' pending frame changes. cloud-api: suggestions accept design canvases with the artboard kind (2 MB / 2000 layer caps, unknown_artboard, layer_id_in_use), no new table. Claims hold when an org turns presence off (agent claim rows are still written and checked; GET /presence hides them). Phase 2 (Claude Design parity): numbered comment pins on frames and layers (element anchors {kind:element, shapeId, artboard, label}, a Comment tool, agents pin questions with artifact_comment artboard/anchor, agent anchors capped at 4 KB); generated sliders on artboard changes (controls: range/color/select, at most 12 and 64 KB, 400 bad_controls; the frame card applies them live and Keep records the final values in the version meta); Build this turns one frame into a Code mode session (prompt, layer JSON, PNG, design system) through the existing Code mode session path.",
       "touches": [
         "allternit/cmd/allternit-cloud-api/src/routes/artifacts_*",
         "allternit/cmd/gizzi-code/src/runtime/tools",
@@ -1213,12 +1213,18 @@
         "allternit/cmd/gizzi-code/src/runtime/skills",
         "allternit-ai/src/lib/artifacts",
         "allternit-ai/src/components/artifacts",
-        "allternit-ai/src/components/design"
+        "allternit-ai/src/components/design",
+        "allternit-ai/src/lib/agents",
+        "allternit-ai/src/views/code"
       ],
       "decisions": [
         {
           "on": "2026-10-20",
           "note": "Eoj said go to the Agents on one canvas page (idea from Kaptea). It lives in the existing Design canvas (DesignTldrawCanvas); the agents are any of the user's bots, picked per frame through Delegate; it builds on agent-watch (presence, cost, suggestions, agent identity), no parallel system and no new table. Claims ride on agent presence (45 s TTL, one frame per agent session); artboard changes carry the full layer list plus before and are applied client side; ids use tldraw's shape: prefix and the server compares them without it. Order: agent-watch merges first, then Phase 1, then Phase 2. Split is desktop only in Phase 1."
+        },
+        {
+          "on": "2026-10-20",
+          "note": "Phase 2 (SPEC-agent-canvas-phase2-2026-10-20): comment pins reuse the existing comments route and its opaque anchor (16 KB for people, 4 KB for an agent's anchored comment; element anchors check shapeId/artboard/label are short strings); controls ride on the artboard change JSON (no new column) and the server only validates them; Build this uses the existing Code mode session start path, not a second one. Also fixed a Phase 1 gap: with presence turned off by the org, the presence POST was a no-op, so frame claims stopped working; claims are now enforced regardless and hidden from GET while presence is off."
         }
       ],
       "evidence": [
@@ -1226,6 +1232,7 @@
         "allternit/surfaces/docs/api/artifacts-v2.mdx",
         "allternit/surfaces/docs/tools/artifact-tools.mdx",
         "allternit/cmd/allternit-cloud-api/src/routes/artifacts_suggestions.rs",
+        "allternit/cmd/allternit-cloud-api/src/routes/artifacts_comments.rs",
         "allternit/cmd/gizzi-code/src/runtime/tools/builtins/artifact.ts"
       ]
     },
@@ -1924,6 +1931,37 @@
     }
   ],
   "journeys": [
+    {
+      "id": "journey:agents-on-one-canvas",
+      "label": "Several agents restyle one design canvas",
+      "description": "From asking bots to restyle frames to keeping, tuning or undoing each frame's change.",
+      "steps": [
+        {
+          "at": "allternit-ai/src/components/design",
+          "says": "On the Design canvas you split frames to bots (or ask one agent); each agent's tag sits on its frame."
+        },
+        {
+          "at": "allternit/cmd/gizzi-code/src/runtime/tools",
+          "says": "Each agent reads the design, claims its frame with artifact_claim, and sends one artboard change (optionally with controls) with artifact_suggest, or pins a question with artifact_comment."
+        },
+        {
+          "at": "allternit/cmd/allternit-cloud-api/src/routes/artifacts_*",
+          "says": "The cloud refuses a frame another live agent holds (409 artboard_claimed), validates the change and its controls, and stores it pending."
+        },
+        {
+          "at": "allternit-ai/src/lib/artifacts",
+          "says": "The app shows the after state In review; you move the controls, then Keep saves a version or Undo restores the frame."
+        },
+        {
+          "at": "allternit-ai/src/views/code",
+          "says": "Build this on one frame starts a Code mode session with the frame's layers and a picture of it."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/design-canvas-agents.mdx",
+        "allternit/surfaces/docs/api/artifacts-v2.mdx"
+      ]
+    },
     {
       "id": "journey:live-data-card",
       "label": "Answer with a live data card",
