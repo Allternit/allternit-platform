@@ -8,7 +8,7 @@ When the assistant hands work to subagents, the agent run tree shows who did wha
 ## What each card shows
 
 - **Agent name**, for example `explore` or `review`.
-- **Model** the agent ran on, for example `anthropic/claude-sonnet`.
+- **Model** the agent ran on, as `provider/model`.
 - **Status**: Running, Done, Failed or Stopped.
 - **Task**: the short description the parent gave it.
 - **Cost**, or **tokens** in and out when the run has no dollar cost (see below).
@@ -31,7 +31,7 @@ A failed card shows the error and a Retry button. Retry asks the parent agent to
 
 ## Cost on subscription brains
 
-Brains that run on a subscription (for example a Claude or ChatGPT plan signed in through Connections) report $0 per run. Their cards show tokens in and out instead of a dollar amount, and the header total counts only metered cost.
+Brains that run on a subscription (a provider plan you signed in to through Connections) report $0 per run. Their cards show tokens in and out instead of a dollar amount, and the header total counts only metered cost.
 
 ## For developers
 
