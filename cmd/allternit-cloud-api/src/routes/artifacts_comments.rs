@@ -138,7 +138,7 @@ pub(crate) fn validate_anchor(anchor: &Value) -> Result<()> {
 // ---------------------------------------------------------------------------
 
 const COMMENT_COLUMNS: &str =
-    "id, artifact_id, version, anchor, parent_id, author_id, body, to_assistant, resolved_at, created_at";
+    "id, artifact_id, version, anchor, parent_id, author_id, body, to_assistant, resolved_at, created_at, agent_name";
 
 type CommentRow = (
     String,
@@ -151,15 +151,19 @@ type CommentRow = (
     bool,
     Option<DateTime<Utc>>,
     DateTime<Utc>,
+    Option<String>,
 );
 
 type Names = HashMap<String, (Option<String>, Option<String>)>;
 
 fn comment_json(row: &CommentRow, names: &Names) -> Value {
+    // An agent's comment is stored as 'assistant' plus its name; the name
+    // is what people see.
     let (name, image) = if row.5 == ASSISTANT_ID {
-        (Some("Gizzi".to_string()), None)
+        (Some(row.10.clone().unwrap_or_else(|| "Gizzi".to_string())), None)
     } else {
-        names.get(&row.5).cloned().unwrap_or((None, None))
+        let (n, i) = names.get(&row.5).cloned().unwrap_or((None, None));
+        (n.or_else(|| row.10.clone()), i)
     };
     json!({
         "id": row.0,
@@ -174,6 +178,7 @@ fn comment_json(row: &CommentRow, names: &Names) -> Value {
         "to_assistant": row.7,
         "resolved_at": row.8.map(ts),
         "created_at": ts(row.9),
+        "agent_name": row.10,
     })
 }
 
@@ -248,6 +253,9 @@ struct CreateComment {
     to_assistant: Option<bool>,
     /// The commenter's app will run an edit-capable reply in its open chat.
     assistant_by_client: Option<bool>,
+    /// Set when an agent posts the comment (e.g. asks the user a question):
+    /// stored as author 'assistant' under this name. Needs edit access.
+    agent_name: Option<String>,
 }
 
 async fn create_comment(
@@ -264,6 +272,13 @@ async fn create_comment(
     if let Some(anchor) = &input.anchor {
         validate_anchor(anchor)?;
     }
+    let agent_name = match input.agent_name.as_deref() {
+        Some(name) => {
+            require(access, Access::Edit, "Commenting as an agent")?;
+            Some(super::artifacts_suggestions::validate_agent_name(name)?)
+        }
+        None => None,
+    };
     if let Some(v) = input.version {
         if v < 1 {
             return Err(ArtifactError::bad_request("version must be a positive integer"));
@@ -305,20 +320,25 @@ async fn create_comment(
             version = parent.2;
         }
     }
-    let to_assistant = input.to_assistant.unwrap_or(false) || mentions_assistant(&text);
+    // An agent's own comment is a question for the person, never a prompt
+    // for the server-side assistant.
+    let to_assistant =
+        agent_name.is_none() && (input.to_assistant.unwrap_or(false) || mentions_assistant(&text));
+    let author_id = if agent_name.is_some() { ASSISTANT_ID } else { me.id.as_str() };
     let cid = ids::ulid();
     let inserted = sqlx::query_as::<_, CommentRow>(&format!(
-        "INSERT INTO artifact_comments (id, artifact_id, version, anchor, parent_id, author_id, body, to_assistant) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING {COMMENT_COLUMNS}"
+        "INSERT INTO artifact_comments (id, artifact_id, version, anchor, parent_id, author_id, body, to_assistant, agent_name) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING {COMMENT_COLUMNS}"
     ))
     .bind(&cid)
     .bind(&row.id)
     .bind(version)
     .bind(anchor.unwrap_or_else(|| json!({})))
     .bind(input.parent_id.as_deref())
-    .bind(&me.id)
+    .bind(author_id)
     .bind(&text)
     .bind(to_assistant)
+    .bind(agent_name.as_deref())
     .fetch_one(&state.db)
     .await?;
     let mut out = one_json(&state.db, &inserted, &me).await;
@@ -538,6 +558,81 @@ async fn assistant_reply(
 #[derive(Deserialize)]
 struct PresenceBody {
     state: String,
+    /// Set when an agent heartbeats on the caller's behalf.
+    agent: Option<AgentPresence>,
+}
+
+#[derive(Deserialize)]
+struct AgentPresence {
+    name: String,
+    session_id: Option<String>,
+    task: Option<String>,
+    anchor: Option<Value>,
+    cost_usd: Option<f64>,
+}
+
+const AGENT_TASK_MAX_CHARS: usize = 200;
+const AGENT_ANCHOR_MAX_BYTES: usize = 4 * 1024;
+const AGENT_SLUG_MAX_CHARS: usize = 64;
+
+/// Lower-case ASCII letters and digits, other runs become one '-'.
+pub(crate) fn agent_slug(name: &str) -> String {
+    let mut out = String::new();
+    for c in name.chars() {
+        if c.is_ascii_alphanumeric() {
+            out.push(c.to_ascii_lowercase());
+        } else if !out.is_empty() && !out.ends_with('-') {
+            out.push('-');
+        }
+    }
+    let out: String = out.trim_end_matches('-').chars().take(AGENT_SLUG_MAX_CHARS).collect();
+    let out = out.trim_end_matches('-').to_string();
+    if out.is_empty() {
+        "agent".to_string()
+    } else {
+        out
+    }
+}
+
+/// The presence row id for an agent: `agent:{session_id or 'none'}:{slug(name)}`.
+pub(crate) fn agent_presence_id(session_id: Option<&str>, name: &str) -> String {
+    format!("agent:{}:{}", session_id.unwrap_or("none"), agent_slug(name))
+}
+
+/// An agent cursor anchor: a JSON object of at most 4 KB.
+pub(crate) fn validate_agent_anchor(anchor: &Value) -> Result<()> {
+    if !anchor.is_object() {
+        return Err(ArtifactError::bad_request("agent.anchor must be a JSON object"));
+    }
+    if anchor.to_string().len() > AGENT_ANCHOR_MAX_BYTES {
+        return Err(ArtifactError::bad_request("agent.anchor is limited to 4 KB"));
+    }
+    Ok(())
+}
+
+/// A validated agent heartbeat: (row id, name, session_id, task, anchor, cost).
+type AgentRow = (String, String, Option<String>, Option<String>, Option<Value>, Option<f64>);
+
+fn validate_agent_presence(agent: &AgentPresence) -> Result<AgentRow> {
+    use super::artifacts_suggestions::{validate_agent_name, validate_cost, validate_session_id};
+    let name = validate_agent_name(&agent.name)?;
+    let session_id = validate_session_id(agent.session_id.as_deref())?;
+    let task = agent
+        .task
+        .as_deref()
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .map(|t| t.chars().take(AGENT_TASK_MAX_CHARS).collect::<String>());
+    let anchor = match &agent.anchor {
+        None | Some(Value::Null) => None,
+        Some(a) => {
+            validate_agent_anchor(a)?;
+            Some(a.clone())
+        }
+    };
+    let cost = validate_cost(agent.cost_usd)?;
+    let id = agent_presence_id(session_id.as_deref(), &name);
+    Ok((id, name, session_id, task, anchor, cost))
 }
 
 async fn presence_enabled(db: &PgPool, org_id: Option<&str>) -> Result<bool> {
@@ -570,12 +665,52 @@ async fn post_presence(
     raw: axum::body::Bytes,
 ) -> Result<StatusCode> {
     let me = caller(&state, &headers).await?;
-    let (row, _access) = load_with_access(&state.db, &id, &me).await?;
+    let (row, access) = load_with_access(&state.db, &id, &me).await?;
     let input: PresenceBody = parse_json(&raw)?;
     if !matches!(input.state.as_str(), "viewing" | "editing" | "left") {
         return Err(ArtifactError::bad_request("state must be viewing, editing or left"));
     }
+    let agent = match &input.agent {
+        Some(a) => {
+            require(access, Access::Edit, "Agent presence")?;
+            Some(validate_agent_presence(a)?)
+        }
+        None => None,
+    };
     if !presence_enabled(&state.db, row.org_id.as_deref()).await? {
+        return Ok(StatusCode::NO_CONTENT);
+    }
+    if let Some((agent_id, name, session_id, task, anchor, cost)) = agent {
+        if input.state == "left" {
+            sqlx::query("DELETE FROM artifact_presence WHERE artifact_id = $1 AND user_id = $2")
+                .bind(&row.id)
+                .bind(&agent_id)
+                .execute(&state.db)
+                .await?;
+        } else {
+            sqlx::query(
+                "INSERT INTO artifact_presence \
+                   (artifact_id, user_id, name, image_url, state, last_seen, kind, session_id, task, anchor, cost_usd) \
+                 VALUES ($1, $2, $3, NULL, $4, now(), 'agent', $5, $6, $7, ($8::float8)::numeric) \
+                 ON CONFLICT (artifact_id, user_id) DO UPDATE SET \
+                   name = EXCLUDED.name, image_url = NULL, state = EXCLUDED.state, last_seen = now(), \
+                   kind = 'agent', session_id = EXCLUDED.session_id, task = EXCLUDED.task, \
+                   anchor = EXCLUDED.anchor, cost_usd = EXCLUDED.cost_usd",
+            )
+            .bind(&row.id)
+            .bind(&agent_id)
+            .bind(&name)
+            .bind(&input.state)
+            .bind(session_id.as_deref())
+            .bind(task.as_deref())
+            .bind(anchor)
+            .bind(cost)
+            .execute(&state.db)
+            .await?;
+        }
+        if should_purge_presence() {
+            purge_stale_presence(&state.db).await;
+        }
         return Ok(StatusCode::NO_CONTENT);
     }
     let (mut name, mut image) = (me.name.clone(), me.image_url.clone());
@@ -593,11 +728,11 @@ async fn post_presence(
             .await?;
     } else {
         sqlx::query(
-            "INSERT INTO artifact_presence (artifact_id, user_id, name, image_url, state, last_seen) \
-             VALUES ($1, $2, $3, $4, $5, now()) \
+            "INSERT INTO artifact_presence (artifact_id, user_id, name, image_url, state, last_seen, kind) \
+             VALUES ($1, $2, $3, $4, $5, now(), 'user') \
              ON CONFLICT (artifact_id, user_id) DO UPDATE SET \
                name = EXCLUDED.name, image_url = EXCLUDED.image_url, \
-               state = EXCLUDED.state, last_seen = now()",
+               state = EXCLUDED.state, last_seen = now(), kind = 'user'",
         )
         .bind(&row.id)
         .bind(&me.id)
@@ -623,8 +758,20 @@ async fn get_presence(
     if !presence_enabled(&state.db, row.org_id.as_deref()).await? {
         return Ok(Json(json!({ "enabled": false, "users": [] })));
     }
-    let rows: Vec<(String, Option<String>, Option<String>, String)> = sqlx::query_as(
-        "SELECT user_id, name, image_url, state FROM artifact_presence \
+    #[allow(clippy::type_complexity)]
+    let rows: Vec<(
+        String,
+        Option<String>,
+        Option<String>,
+        String,
+        String,
+        Option<String>,
+        Option<Value>,
+        Option<f64>,
+        Option<String>,
+    )> = sqlx::query_as(
+        "SELECT user_id, name, image_url, state, kind, task, anchor, cost_usd::float8 AS cost_usd, session_id \
+         FROM artifact_presence \
          WHERE artifact_id = $1 AND user_id <> $2 \
            AND last_seen > now() - ($3 * interval '1 second') \
          ORDER BY user_id LIMIT $4",
@@ -637,8 +784,18 @@ async fn get_presence(
     .await?;
     let users: Vec<Value> = rows
         .into_iter()
-        .map(|(id, name, image_url, state)| {
-            json!({ "user_id": id, "name": name, "image_url": image_url, "state": state })
+        .map(|(id, name, image_url, state, kind, task, anchor, cost_usd, session_id)| {
+            json!({
+                "user_id": id,
+                "name": name,
+                "image_url": image_url,
+                "state": state,
+                "kind": kind,
+                "task": task,
+                "anchor": anchor,
+                "cost_usd": cost_usd,
+                "session_id": session_id,
+            })
         })
         .collect();
     Ok(Json(json!({ "enabled": true, "users": users })))

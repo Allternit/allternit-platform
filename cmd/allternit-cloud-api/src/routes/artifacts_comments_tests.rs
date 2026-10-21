@@ -46,6 +46,10 @@ async fn setup() -> (Router, PgPool) {
         .execute(&state.db)
         .await
         .expect("085 applies");
+    sqlx::raw_sql(include_str!("../../migrations_pg/096_artifact_agent_watch.sql"))
+        .execute(&state.db)
+        .await
+        .expect("096 applies");
     let db = state.db.clone();
     (
         super::super::artifacts_v2::routes().merge(routes()).with_state(state),

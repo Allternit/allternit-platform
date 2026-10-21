@@ -116,7 +116,7 @@ pub(crate) struct ArtifactRow {
     pub(crate) id: String,
     pub(crate) owner_id: String,
     pub(crate) org_id: Option<String>,
-    kind: String,
+    pub(crate) kind: String,
     runtime_version: i32,
     title: String,
     icon: Option<String>,
