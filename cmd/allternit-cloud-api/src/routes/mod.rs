@@ -18,6 +18,7 @@ pub mod billing_webhooks;
 pub mod beta;
 pub mod canvases;
 pub mod clerk_webhooks;
+pub mod cloud_phones;
 pub mod code_environments;
 pub mod contabo_hosted_runtimes;
 pub mod continuation;

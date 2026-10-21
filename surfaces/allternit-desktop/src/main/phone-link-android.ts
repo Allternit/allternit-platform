@@ -177,6 +177,24 @@ export interface AndroidDriverDeps {
 
 type Base = Omit<PhoneLinkStatus, 'platform' | 'state' | 'instruction'>;
 
+/**
+ * Run setup on one phone adb already reaches over TCP instead of waiting for
+ * a USB cable: a phone added by address (PhoneDeviceManager.addByAddress),
+ * such as an Allternit cloud phone. `linkHost` is where the Phone Link app's
+ * port is published (a cloud phone has no Wi-Fi; its host publishes 8200 on
+ * the mesh); without it setup reads the phone's wlan0 address as usual.
+ */
+export interface AndroidSetupTarget {
+  serial: string;
+  /** `host:port` of the Phone Link app; a mesh address (100.64.0.0/10) is reached through `deps.mesh.loopbackFor`. */
+  linkHost?: string;
+}
+
+function isMeshAddress(hostPort: string): boolean {
+  const match = /^100\.(\d{1,3})\.\d{1,3}\.\d{1,3}:\d{1,5}$/.exec(hostPort);
+  return !!match && Number(match[1]) >= 64 && Number(match[1]) <= 127;
+}
+
 class SetupStop extends Error {}
 
 export class AndroidDriver implements PhoneLinkDriver {
@@ -184,7 +202,10 @@ export class AndroidDriver implements PhoneLinkDriver {
   private forwardPort: string | null = null;
   private base: Base = {};
 
-  constructor(private readonly deps: AndroidDriverDeps) {}
+  constructor(
+    private readonly deps: AndroidDriverDeps,
+    private readonly target?: AndroidSetupTarget,
+  ) {}
 
   dispose(): void {
     void this.removeForward();
@@ -230,9 +251,25 @@ export class AndroidDriver implements PhoneLinkDriver {
     const adb = await this.deps.adb();
     this.adb = adb;
 
-    // 1. A USB-connected phone that allowed this computer.
+    // 1. A USB-connected phone that allowed this computer (or the
+    // address-added phone this run targets).
     let usb: AdbDeviceLine | undefined;
-    for (;;) {
+    const target = this.target;
+    for (let tries = 0; target; tries += 1) {
+      this.check(ctx);
+      const row = parseAdbDevices((await adb(['devices', '-l'])).stdout).find((d) => d.serial === target.serial);
+      if (row?.state === 'device') {
+        usb = row;
+        break;
+      }
+      if (tries === 0) await adb(['connect', target.serial], { timeoutMs: 15_000 }).catch(() => null);
+      if (tries >= 20) {
+        this.fail(ctx, 'phone_unreachable', `Couldn't reach the phone at ${target.serial}. Check it is running, then try again.`, `adb shows ${row?.state ?? 'no device'} for ${target.serial}`, true);
+      }
+      this.set(ctx, 'usb_debugging', 'Connecting to your phone…', { detail: target.serial });
+      await ctx.sleep(POLL_MS);
+    }
+    while (!usb) {
       this.check(ctx);
       const devices = parseAdbDevices((await adb(['devices', '-l'])).stdout).filter((d) => !d.serial.includes(':'));
       usb = devices.find((d) => d.state === 'device');
@@ -345,11 +382,23 @@ export class AndroidDriver implements PhoneLinkDriver {
 
       // 5. Prove the app answers over Wi-Fi before the cable can come out.
       this.set(ctx, 'pairing', 'Moving the connection to Wi-Fi…', { progress: 0.85 });
-      const ip = parseWlanIp((await adb(['shell', 'ip', '-f', 'inet', 'addr', 'show', 'wlan0'], { serial })).stdout);
-      if (!ip) {
+      // A mesh link address is dialled through a loopback proxy this session;
+      // the record keeps the mesh address as meshHost so later sessions
+      // reconnect through the mesh again (phone-link-backend meshProxy).
+      const meshLinkHost = target?.linkHost && isMeshAddress(target.linkHost) ? target.linkHost : undefined;
+      let linkHost = target?.linkHost;
+      if (meshLinkHost) {
+        linkHost = await this.deps.mesh?.loopbackFor?.(meshLinkHost).catch(() => undefined);
+        if (!linkHost) {
+          this.fail(ctx, 'mesh_unavailable', 'Sign in to Allternit on this computer to reach your cloud phone, then try again.', `no mesh proxy for ${meshLinkHost}`, true);
+        }
+      }
+      const ip = linkHost ? null : parseWlanIp((await adb(['shell', 'ip', '-f', 'inet', 'addr', 'show', 'wlan0'], { serial })).stdout);
+      if (!linkHost && !ip) {
         this.fail(ctx, 'no_wifi', 'Turn on Wi-Fi on your phone, then try again.', 'The phone has no Wi-Fi address.', true);
       }
-      const lan = cable.withHost(`${ip}:${ICTRL_PORT}`);
+      const lanHost = linkHost ?? `${ip}:${ICTRL_PORT}`;
+      const lan = cable.withHost(lanHost);
       let reachable = false;
       for (let i = 0; i < 10 && !reachable; i++) {
         this.check(ctx);
@@ -358,14 +407,21 @@ export class AndroidDriver implements PhoneLinkDriver {
         if (!reachable) await ctx.sleep(1000);
       }
       if (!reachable) {
-        this.fail(ctx, 'wifi_unreachable', 'Your phone and this computer need to be on the same Wi-Fi. Connect both, then try again.', `no answer from ${ip}:${ICTRL_PORT} with the paired key`, true);
+        this.fail(
+          ctx,
+          'wifi_unreachable',
+          linkHost ? "Couldn't reach Phone Link on that phone over the network. Try again." : 'Your phone and this computer need to be on the same Wi-Fi. Connect both, then try again.',
+          `no answer from ${lanHost} with the paired key`,
+          true,
+        );
       }
 
       // 5½. Away-from-home (development switch): hand the app its mesh
       // credentials and wait for the join. Never fails setup — a phone that
       // missed the mesh is still a working LAN phone.
-      const lanHost = `${ip}:${ICTRL_PORT}`;
-      const mesh = await this.tryMeshJoin(ctx, adb, serial, lanHost);
+      // A phone with a published link address is already on the mesh (cloud
+      // phones live on a mesh host), so it skips the join.
+      const mesh: { meshHost?: string; meshPending?: boolean } = linkHost ? (meshLinkHost ? { meshHost: meshLinkHost } : {}) : await this.tryMeshJoin(ctx, adb, serial, lanHost);
 
       // 6. Which AI apps are on the phone.
       const listed = await lan.call<{ apps?: { package?: string; bundle_id?: string }[] }>('list_apps', {}, 10_000).catch(() => null);
@@ -383,8 +439,8 @@ export class AndroidDriver implements PhoneLinkDriver {
         pairedAt: new Date(this.now()).toISOString(),
         helperVersion: helper.manifest?.version,
       });
-      this.set(ctx, 'ready_wifi', 'Connected. You can unplug the cable.', {
-        detail: mesh.meshPending ? MESH_PENDING_DETAIL : lanHost,
+      this.set(ctx, 'ready_wifi', target ? 'Connected.' : 'Connected. You can unplug the cable.', {
+        detail: mesh.meshPending ? MESH_PENDING_DETAIL : (meshLinkHost ?? lanHost),
         apps,
         progress: undefined,
       });

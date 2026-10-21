@@ -242,6 +242,17 @@ export function registerPhoneIpc(handle: Guarded): void {
     return manager.pairWithCode(String(hostPort ?? ''), String(code ?? ''));
   });
   handle('phone:pair-cancel', async () => (await phoneService.ensureReady()).cancelPairing());
+  handle('phone:add-by-address', async (_e, host: unknown, port: unknown, label: unknown) => {
+    const manager = await phoneService.ensureReady();
+    wire(manager);
+    const p = typeof port === 'number' && Number.isInteger(port) ? port : undefined;
+    return manager.addByAddress(String(host ?? ''), p, typeof label === 'string' ? label : undefined);
+  });
+  handle('phone:cloud-phones', async () => {
+    const snapshot = await phoneService.syncCloudPhones();
+    if (snapshot.available && snapshot.phones.some((p) => p.status === 'running')) wire(await phoneService.ensureReady());
+    return snapshot;
+  });
   handle('phone:forget', async (_e, id: unknown) => (await phoneService.ensureReady()).forget(String(id)));
   handle('phone:scrcpy-start', async (_e, serial: unknown) => (await phoneService.ensureReady()).startScrcpy(String(serial)));
   handle('phone:scrcpy-stop', async (_e, serial: unknown) => (await phoneService.ensureReady()).stopScrcpy(String(serial)));

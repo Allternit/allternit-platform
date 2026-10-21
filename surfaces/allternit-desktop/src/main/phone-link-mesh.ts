@@ -25,6 +25,12 @@ export const PHONE_LINK_MESH_ENABLED = process.env.ALLTERNIT_PHONE_LINK_MESH !==
 export interface PhoneLinkMeshDep {
   /** Mint a single-use mesh pre-auth key for this phone's owner. */
   enroll(): Promise<{ controlUrl: string; authKey: string }>;
+  /**
+   * A loopback `127.0.0.1:<port>` reaching a raw TCP mesh address
+   * (MeshManager.loopbackFor). Used to reach a cloud phone's published
+   * Phone Link port during setup. Rejects when the mesh is unavailable.
+   */
+  loopbackFor?(target: string): Promise<string>;
 }
 
 /** The one plain sentence setup shows when the mesh join didn't finish. */

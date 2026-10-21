@@ -59,6 +59,22 @@ export interface StoredPhone {
   host: string;
   port: number;
   pairedAt: number;
+  /**
+   * How the phone was added. Absent = Wireless debugging pairing (mDNS finds
+   * its current connect port). 'address' = added by a fixed `host:port` with
+   * no pairing (cloud phones, emulators); reconnects go straight to it.
+   */
+  via?: 'address';
+  /** 'cloud' = an Allternit cloud phone (redroid on a fleet host, over the mesh). */
+  kind?: 'cloud';
+  /** cloud_phones.id when kind is 'cloud'. */
+  cloudPhoneId?: string;
+  /**
+   * The phone's real adb address on the mesh (`100.x:port`). `host`/`port`
+   * are then a loopback proxy that changes each session, so reconnects ask
+   * `deps.resolveMeshTarget` for a fresh one.
+   */
+  meshTarget?: string;
   /** "Call audio" settings (phone-call-bridge.ts); absent = never set up. */
   callBridge?: CallBridgeConfig;
 }
@@ -88,7 +104,22 @@ export interface PhoneInfo {
   streaming: boolean;
   /** True while a bot/ARTEMIS session is operating the phone (takeover banner). */
   agentBusy: boolean;
+  /** 'cloud' for Allternit cloud phones; absent for the user's own phones. */
+  kind?: 'cloud';
+  via?: 'address';
 }
+
+export interface AddByAddressOptions {
+  kind?: 'cloud';
+  cloudPhoneId?: string;
+  /** Mesh address behind a loopback `host:port` (see StoredPhone.meshTarget). */
+  meshTarget?: string;
+}
+
+export type AddByAddressResult = { ok: true; phone: PhoneInfo } | { ok: false; error: string };
+
+/** adbd's TCP port when no other port is given (redroid, emulators, `adb tcpip`). */
+export const DEFAULT_ADB_TCP_PORT = 5555;
 
 export type PairingPhase = 'idle' | 'waiting_for_scan' | 'pairing' | 'connecting' | 'done' | 'failed';
 
@@ -105,6 +136,8 @@ export interface PhoneManagerDeps {
   store: PhoneStore;
   /** Spawns scrcpy as an owned sidecar; null when scrcpy isn't installed. */
   spawnScrcpy: ((serial: string, title: string) => ChildProcess) | null;
+  /** Loopback `host:port` for a mesh adb address (MeshManager.loopbackFor); null when the mesh is unavailable. */
+  resolveMeshTarget?: (meshTarget: string) => Promise<string | null>;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
 }
@@ -178,6 +211,8 @@ export class PhoneDeviceManager extends EventEmitter {
       port: r.stored.port,
       streaming: Boolean(r.scrcpy && r.scrcpy.exitCode === null),
       agentBusy: r.agentActivity > 0,
+      ...(r.stored.kind ? { kind: r.stored.kind } : {}),
+      ...(r.stored.via ? { via: r.stored.via } : {}),
     }));
   }
 
@@ -292,6 +327,98 @@ export class PhoneDeviceManager extends EventEmitter {
     this.emit('devices');
   }
 
+  // ── add by address (no pairing) ───────────────────────────────────────────
+
+  /**
+   * Add a phone that listens on a fixed adb TCP address with no pairing step:
+   * Allternit cloud phones (redroid over the mesh), emulators, `adb tcpip`
+   * phones. Connects, checks it answers `getprop ro.product.model`, saves it
+   * with `via: 'address'`, and keeps it reconnected on every poll. Adding the
+   * same address again updates the saved phone instead of duplicating it.
+   */
+  async addByAddress(host: string, port: number = DEFAULT_ADB_TCP_PORT, label?: string, options: AddByAddressOptions = {}): Promise<AddByAddressResult> {
+    const hp = parseHostPort(`${host.trim()}:${port}`);
+    if (!hp) return { ok: false, error: 'Enter the phone address as host and port, like 100.64.0.9:5555.' };
+    const target = `${hp.host}:${hp.port}`;
+    const connected = await this.connectDirect(target);
+    if (!connected) return { ok: false, error: `Could not connect to ${target}. Check the phone is running and this computer can reach it.` };
+    const row = await this.waitForOnline(target);
+    if (!row) {
+      void this.deps.adb(['disconnect', target]);
+      return { ok: false, error: `${target} answered, but adb did not accept this computer.` };
+    }
+    const model = await this.readProp(target, 'ro.product.model');
+    if (!model) {
+      void this.deps.adb(['disconnect', target]);
+      return { ok: false, error: `${target} is not an Android device adb can read.` };
+    }
+
+    const existing = [...this.phones.values()].find(
+      (r) => (options.cloudPhoneId && r.stored.cloudPhoneId === options.cloudPhoneId) || (r.stored.host === hp.host && r.stored.port === hp.port),
+    );
+    // Cloud phones share build serials, so the id comes from the cloud row or the address.
+    const id = existing?.stored.id ?? (options.cloudPhoneId ? `cloud-${options.cloudPhoneId}` : `addr-${target}`);
+    const trimmedLabel = label?.trim();
+    const stored: StoredPhone = {
+      id,
+      name: trimmedLabel || existing?.stored.name || model,
+      host: hp.host,
+      port: hp.port,
+      pairedAt: existing?.stored.pairedAt ?? this.now(),
+      via: 'address',
+      ...(options.kind ? { kind: options.kind } : {}),
+      ...(options.cloudPhoneId ? { cloudPhoneId: options.cloudPhoneId } : {}),
+      ...(options.meshTarget ? { meshTarget: options.meshTarget } : {}),
+      ...(existing?.stored.callBridge ? { callBridge: existing.stored.callBridge } : {}),
+    };
+    // A cloud phone's loopback proxy moves between sessions: drop the old transport.
+    if (existing && existing.adbSerial !== target) void this.deps.adb(['disconnect', existing.adbSerial]);
+    const rec = existing ?? this.makeRecord(stored, target, 'online');
+    rec.stored = stored;
+    rec.adbSerial = target;
+    rec.state = 'online';
+    rec.attempts = 0;
+    this.phones.set(id, rec);
+    this.persist();
+    await this.refreshInfo(rec);
+    this.emit('devices');
+    const phone = this.list().find((p) => p.id === id);
+    return phone ? { ok: true, phone } : { ok: false, error: 'The phone was added but could not be listed.' };
+  }
+
+  /** Saved phones added by address that came from the cloud (kind 'cloud'). */
+  cloudPhoneIds(): string[] {
+    return [...this.phones.values()].map((r) => r.stored.cloudPhoneId).filter((id): id is string => Boolean(id));
+  }
+
+  /** Forget a saved cloud phone by its cloud_phones.id (it was deleted in the cloud). */
+  forgetCloudPhone(cloudPhoneId: string): void {
+    const rec = [...this.phones.values()].find((r) => r.stored.cloudPhoneId === cloudPhoneId);
+    if (rec) this.forget(rec.stored.id);
+  }
+
+  /** Reconnect an address-added phone, refreshing its loopback proxy first when it sits on the mesh. */
+  private async reconnectByAddress(rec: Record_): Promise<string | null> {
+    const { meshTarget } = rec.stored;
+    if (meshTarget && this.deps.resolveMeshTarget) {
+      const loopback = await this.deps.resolveMeshTarget(meshTarget).catch(() => null);
+      const hp = loopback ? parseHostPort(loopback) : null;
+      if (!hp) return null;
+      if (hp.host !== rec.stored.host || hp.port !== rec.stored.port) {
+        void this.deps.adb(['disconnect', `${rec.stored.host}:${rec.stored.port}`]);
+        rec.stored = { ...rec.stored, host: hp.host, port: hp.port };
+        this.persist();
+      }
+    }
+    return this.connectDirect(`${rec.stored.host}:${rec.stored.port}`);
+  }
+
+  /** `adb connect host:port` with no mDNS lookup. Returns the serial or null. */
+  private async connectDirect(target: string): Promise<string | null> {
+    const res = await this.deps.adb(['connect', target], { timeoutMs: 15_000 });
+    return connectSucceeded(res.stdout + res.stderr) ? target : null;
+  }
+
   /** `adb connect` to the phone's connect port (found over mDNS; falls back to a stored port). Returns the adb serial. */
   private async connectHost(host: string, fallbackPort: number | null, deviceId?: string): Promise<string | null> {
     const mdns = await this.deps.adb(['mdns', 'services']);
@@ -323,7 +450,10 @@ export class PhoneDeviceManager extends EventEmitter {
     try {
       const rows = parseAdbDevices((await this.deps.adb(['devices', '-l'])).stdout).filter((r) => r.wireless);
       for (const rec of this.phones.values()) {
-        const row = rows.find((r) => r.serial === rec.adbSerial) ?? rows.find((r) => r.serial.startsWith(`${rec.stored.host}:`));
+        // Address-added phones keep a fixed port (and may share 127.0.0.1 with
+        // other loopback proxies), so only their exact serial counts.
+        const row = rows.find((r) => r.serial === rec.adbSerial)
+          ?? (rec.stored.via === 'address' ? undefined : rows.find((r) => r.serial.startsWith(`${rec.stored.host}:`)));
         if (row) {
           rec.adbSerial = row.serial;
           this.adoptPort(rec, row.serial);
@@ -347,7 +477,9 @@ export class PhoneDeviceManager extends EventEmitter {
     if (this.now() < rec.nextAttemptAt) return;
     rec.state = nextPhoneState(rec.state, { type: 'reconnect_started' });
     this.emit('devices');
-    const serial = await this.connectHost(rec.stored.host, rec.stored.port, rec.stored.id);
+    const serial = rec.stored.via === 'address'
+      ? await this.reconnectByAddress(rec)
+      : await this.connectHost(rec.stored.host, rec.stored.port, rec.stored.id);
     if (serial) {
       rec.adbSerial = serial;
       this.adoptPort(rec, serial);

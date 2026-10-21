@@ -1525,6 +1525,33 @@
       ]
     },
     {
+      "id": "feature:cloud-phones",
+      "label": "Cloud phones in Phone Link",
+      "product": "product:computer-use",
+      "status": "building",
+      "description": "Android phones (redroid) on phone-enabled fleet hosts that Desktop adds to Phone Link by adb address over the mesh. Off by default: CLOUD_PHONES_ENABLED and provisioned_hosts.phones_enabled.",
+      "touches": [
+        "allternit/cmd/allternit-cloud-api/src/services/cloud_phones.rs",
+        "allternit/cmd/allternit-cloud-api/src/routes/cloud_phones.rs",
+        "allternit/cmd/allternit-cloud-api/migrations_pg/096_cloud_phones.sql",
+        "allternit/infrastructure/cloud-phone",
+        "allternit/surfaces/allternit-desktop/src/main/cloud-phones.ts",
+        "allternit/surfaces/allternit-desktop/src/main/phone-device-manager.ts",
+        "allternit/surfaces/allternit-desktop/src/main/phone-link-android.ts"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-20",
+          "note": "Code only, off by default (Eoj). Redroid needs binder + a privileged container, so phones run on the host's Docker, not in unprivileged Incus containers; adb and the Phone Link port bind to the host's mesh IP only. Create is admin-only; no Stripe product until Eoj approves pricing."
+        }
+      ],
+      "evidence": [
+        "allternit/infrastructure/cloud-phone/README.md",
+        "allternit/surfaces/docs/guides/cloud-phones.mdx",
+        "allternit/cmd/allternit-cloud-api/src/routes/cloud_phones.rs"
+      ]
+    },
+    {
       "id": "feature:phone-stream-relay",
       "label": "Phone stream relay (Phones 2.0)",
       "product": "product:computer-use",

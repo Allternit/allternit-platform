@@ -10,11 +10,11 @@
 import { EventEmitter } from 'node:events';
 import type { PhoneLinkPlatform, PhoneLinkStatus } from './phone-link-types.js';
 import { IosDriver, type IosDriverDeps } from './phone-link-ios.js';
-import { AndroidDriver, type AndroidDriverDeps } from './phone-link-android.js';
+import { AndroidDriver, type AndroidDriverDeps, type AndroidSetupTarget } from './phone-link-android.js';
 
 // Android pieces live in phone-link-android.ts (re-exported for importers).
 export { ANDROID_VENDOR_PACKAGES, installedVendorApps, parseAdbDevices, parseWlanIp } from './phone-link-android.js';
-export type { AdbDeviceLine, AndroidDriverDeps } from './phone-link-android.js';
+export type { AdbDeviceLine, AndroidDriverDeps, AndroidSetupTarget } from './phone-link-android.js';
 
 export interface PhoneLinkDriver {
   run(ctx: DriverContext): Promise<void>;
@@ -49,6 +49,7 @@ export class PhoneLinkManager extends EventEmitter {
   private current: PhoneLinkStatus = IDLE;
   private driver: PhoneLinkDriver | null = null;
   private lastPlatform: PhoneLinkPlatform | null = null;
+  private lastTarget: AndroidSetupTarget | undefined;
   private cancelRun: (() => void) | null = null;
   private runId = 0;
 
@@ -60,9 +61,14 @@ export class PhoneLinkManager extends EventEmitter {
     return this.current;
   }
 
-  start(platform: PhoneLinkPlatform): PhoneLinkStatus {
+  /**
+   * `target` (Android only) runs setup on a phone adb already reaches by
+   * address, such as a cloud phone, instead of waiting for a USB cable.
+   */
+  start(platform: PhoneLinkPlatform, target?: AndroidSetupTarget): PhoneLinkStatus {
     this.stop();
     this.lastPlatform = platform;
+    this.lastTarget = platform === 'android' ? target : undefined;
     const runId = ++this.runId;
     const host = this.deps.platform ?? process.platform;
     if (platform === 'ios' && host !== 'darwin') {
@@ -71,7 +77,7 @@ export class PhoneLinkManager extends EventEmitter {
         instruction: 'iPhone setup needs Allternit Desktop on a Mac.',
       });
     }
-    const driver = platform === 'android' ? new LazyAndroidDriver(this.deps.android) : new LazyIosDriver(this.deps.ios);
+    const driver = platform === 'android' ? new LazyAndroidDriver(this.deps.android, this.lastTarget) : new LazyIosDriver(this.deps.ios);
     this.driver = driver;
     let cancel!: () => void;
     const cancelled = new Promise<void>((resolve) => (cancel = resolve));
@@ -108,7 +114,7 @@ export class PhoneLinkManager extends EventEmitter {
   }
 
   retry(): PhoneLinkStatus {
-    return this.lastPlatform ? this.start(this.lastPlatform) : this.current;
+    return this.lastPlatform ? this.start(this.lastPlatform, this.lastTarget) : this.current;
   }
 
   continue(): PhoneLinkStatus {
@@ -149,7 +155,10 @@ class LazyAndroidDriver implements PhoneLinkDriver {
   private inner: AndroidDriver | null = null;
   private disposed = false;
 
-  constructor(private readonly load?: () => Promise<AndroidDriverDeps>) {}
+  constructor(
+    private readonly load?: () => Promise<AndroidDriverDeps>,
+    private readonly target?: AndroidSetupTarget,
+  ) {}
 
   async run(ctx: DriverContext): Promise<void> {
     if (!this.load) {
@@ -174,7 +183,7 @@ class LazyAndroidDriver implements PhoneLinkDriver {
       return;
     }
     if (ctx.isCancelled() || this.disposed) return;
-    this.inner = new AndroidDriver(deps);
+    this.inner = new AndroidDriver(deps, this.target);
     await this.inner.run(ctx);
   }
 

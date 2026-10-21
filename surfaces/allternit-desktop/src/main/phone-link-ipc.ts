@@ -32,6 +32,7 @@ const meshDep = {
     if (!enrollment) throw new Error('Desktop is not signed in to an Allternit account.');
     return enrollment;
   },
+  loopbackFor: (target: string) => meshManager.loopbackFor(target),
 };
 
 /** GET /schema on an iCTRL runner; null when it doesn't answer or has none. */
@@ -118,10 +119,14 @@ export function registerPhoneLinkIpc(handleGuarded: Guarded): PhoneLinkManager {
     if (typeof opts?.deviceId !== 'string' || typeof opts?.computerId !== 'string') throw new Error('deviceId and computerId are required');
     return phoneService.handover({ deviceId: opts.deviceId, computerId: opts.computerId });
   });
-  handleGuarded('phone-link:start', (_event, opts?: { platform?: PhoneLinkPlatform }) => {
+  handleGuarded('phone-link:start', (_event, opts?: { platform?: PhoneLinkPlatform; serial?: unknown; linkHost?: unknown }) => {
     const platform = opts?.platform;
     if (platform !== 'ios' && platform !== 'android') throw new Error('platform must be ios or android');
-    return manager.start(platform);
+    // Android only: set up a phone adb reaches by address (cloud phone) instead of over USB.
+    const serial = typeof opts?.serial === 'string' ? opts.serial.trim() : '';
+    if (serial && !/^[A-Za-z0-9.\-[\]:%]+:\d{1,5}$/.test(serial)) throw new Error('serial must be host:port');
+    const linkHost = typeof opts?.linkHost === 'string' && /^[A-Za-z0-9.\-[\]:%]+:\d{1,5}$/.test(opts.linkHost.trim()) ? opts.linkHost.trim() : undefined;
+    return manager.start(platform, platform === 'android' && serial ? { serial, ...(linkHost ? { linkHost } : {}) } : undefined);
   });
   handleGuarded('phone-link:cancel', () => manager.cancel());
   handleGuarded('phone-link:continue', () => manager.continue());
