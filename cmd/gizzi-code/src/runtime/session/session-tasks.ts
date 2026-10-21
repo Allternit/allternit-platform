@@ -34,7 +34,9 @@ export namespace SessionTasks {
     children: Item[]
   }
 
-  export const Item: z.ZodType<Item> = z
+  // Cast: zod can't infer a recursive object through the `children` getter,
+  // so the explicit interface above is the type.
+  export const Item = z
     .object({
       id: z.string(),
       kind: z.string(),
@@ -53,7 +55,7 @@ export namespace SessionTasks {
         return z.array(Item)
       },
     })
-    .meta({ ref: "SessionTaskItem" })
+    .meta({ ref: "SessionTaskItem" }) as unknown as z.ZodType<Item>
 
   const SUBAGENT_TITLE = /^(.*) \(@([^)\s]+) subagent\)$/
 
@@ -130,12 +132,20 @@ export namespace SessionTasks {
     const items: Item[] = await Promise.all(
       tasks.map(async (task) => {
         const { lastError: _ignored, ...extra } = await detail(task.childSessionID, depth)
-        return {
-          ...task,
+        const item: Item = {
+          id: task.id,
+          kind: task.kind,
+          status: task.status,
           background: true,
+          description: task.description,
           agent: task.childSessionID ? parseChildTitle(byChild.get(task.childSessionID)?.title ?? "").agent : null,
+          childSessionID: task.childSessionID ?? null,
+          output: task.output ?? null,
+          error: task.error ?? null,
+          time: { created: task.time.created, updated: task.time.updated, finished: task.time.finished ?? null },
           ...extra,
         }
+        return item
       }),
     )
     const owned = new Set(tasks.map((task) => task.childSessionID).filter(Boolean))
