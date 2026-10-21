@@ -1,0 +1,61 @@
+---
+title: 'UI components (Arc)'
+description: 'How the web app, phone layout and PWA use Arc components: where they live, how they read our theme, the React 18 shims, the preview gallery and the rules for adding one.'
+---
+
+The workspace UI (`allternit-ai`) uses a set of animated controls from [Arc](https://uiarc.dev) for buttons, form fields, tabs, sheets, toasts, progress and similar parts. Desktop, the ai.allternit.com phone layout and the m.allternit.com PWA build from the same source, so a component swapped in once shows on all three.
+
+## Where the code lives
+
+| Path | What it holds |
+|---|---|
+| `src/components/arc/<name>/` | One Arc component: `<name>.tsx` plus `<name>.module.css`. |
+| `src/components/arc/arc-theme.css` | Arc's foundation tokens, renamed to `--arc-*` and mapped to our theme. |
+| `src/components/arc/lib/` | Motion tokens, the provider for links and images, and the React 18 shims. |
+| `src/dev/uiarc/` | The preview gallery, its render checker and its single-file build. |
+
+`src/main.tsx` (web and Desktop) and `src/fabric-session/main.tsx` (PWA) import `arc-theme.css` right after `src/design/theme.css`.
+
+Arc's free components are MIT licensed. Keep the license header at the top of each vendored file. The Pro tier is not used.
+
+## Theme tokens
+
+Arc styles read only `--arc-*` variables. Arc's own names (`--background`, `--border`, `--space-2` and others) collide with ours, because we keep shadcn HSL triples under `--background` and `--border`. The vendoring step therefore renames every foundation token to `--arc-*`. The end of `arc-theme.css` maps them to our tokens:
+
+- Surfaces and text use the neutral polish set: `--polish-card`, `--polish-text`, `--polish-text-2`, `--polish-text-3` and `--polish-hairline`. New UI stays white plus `--neutral-fill`, never tan.
+- Selected switches, checks and slider fills use `--settings-switch-on`.
+- Success, warning and danger use `--status-success`, `--status-warning` and `--status-error`.
+- Fonts use `--font-sans`. Radii are 10 / 14 / 18 px, and control heights are 30 / 36 / 44 px.
+- Dark mode follows `[data-theme="dark"]`, the graphite palette.
+
+Arc's global focus rule is left out, so the app keeps its own focus styles.
+
+## React 18 shims
+
+Arc targets React 19, and the app runs React 18.3. `src/components/arc/lib/react18.ts` provides two shims:
+
+- `useEffectEvent`: a stable callback that always sees the latest props. It replaces the React 19.2 hook of the same name.
+- `arcInert(on)`: returns `{ inert: "" }` or nothing. React 18 drops a boolean `inert` prop, so vendored code spreads `{...arcInert(x)}` in place of `inert={x}`.
+
+## Preview gallery
+
+`preview-uiarc.html` shows every place an Arc component is used, as **Today** next to **With Arc**, on desktop and on phone, in light and dark. It is a dev page and not a rollup input of the app build.
+
+1. Run `npx vite --port 5431`.
+2. Open `http://localhost:5431/preview-uiarc.html`. Add `?area=<id>&side=arc&theme=dark` to see one area on its own.
+3. To check every area for console errors, render errors and phone overflow, run `node src/dev/uiarc/check.mjs [id-prefix ...]` while the dev server runs.
+4. To build the gallery as one shareable file, run `npx vite build -c src/dev/uiarc/vite.uiarc.config.ts`, then `node src/dev/uiarc/inline.mjs`. The result is `dist-uiarc/arc.html`.
+
+Each area is an `Area` record in `src/dev/uiarc/areas/`. It names the real file the change lands in, the surfaces that show it and what changes for the user.
+
+## Adding an Arc component
+
+1. Fetch the component from `https://uiarc.dev/r/<name>.json`, which is shadcn registry format.
+2. Write its files under `src/components/arc/`. Rename foundation tokens to `--arc-*`, and replace `useEffectEvent` and `inert` with the shims.
+3. Add one area per real placement to the gallery, then run the checker in light and dark.
+4. Swap the component into the real file and wire it to the state and handlers that already exist there.
+
+## Not adopted
+
+- **Calendar, Date picker, Date range picker:** the routines calendar we already have does more.
+- **Context menu:** a click on a row or card opens it directly. Actions do not hide behind right-click or hover. Secondary actions go in a visible button, or in swipe actions on the phone.

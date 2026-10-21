@@ -163,7 +163,8 @@
               "architecture/policy",
               "architecture/verification",
               "architecture/receipts",
-              "architecture/replay"
+              "architecture/replay",
+              "architecture/ui-components"
             ],
             "icon": "/icons/stack.svg"
           },

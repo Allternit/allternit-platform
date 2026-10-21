@@ -1890,6 +1890,27 @@
           "note": "Eoj: on every surface subagents show; Retry asks the parent agent to re-run (not the child in place)."
         }
       ]
+    },
+    {
+      "id": "feature:arc-ui-components",
+      "label": "Arc UI components",
+      "product": "product:ai-allternit",
+      "status": "live",
+      "description": "Animated controls from Arc (uiarc.dev, MIT) used across the workspace UI: buttons, form fields, tabs, sheets, toasts, progress, usage meters and more, themed through --arc-* tokens. Same source on Desktop, the phone layout and the PWA.",
+      "touches": [
+        "allternit-ai/src/components/ui"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-20",
+          "note": "Adopted every Arc component shown in the gallery except Calendar/date pickers (ours is better) and Context menu (a click opens the thing; no right-click/hover menus). Docs: architecture/ui-components."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/architecture/ui-components.mdx",
+        "allternit-ai/src/components/arc/arc-theme.css",
+        "allternit-ai/src/dev/uiarc/UiarcPreview.tsx"
+      ]
     }
   ],
   "journeys": [
