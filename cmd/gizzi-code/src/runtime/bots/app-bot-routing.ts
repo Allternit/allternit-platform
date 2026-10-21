@@ -35,7 +35,7 @@ export interface AppRoster {
 }
 
 export interface AppRouteResult {
-  status: "done" | "started" | "failed"
+  status: "done" | "started" | "failed" | "delivered" | "queued" | "held" | "refused"
   threadId: string
   sessionId?: string
   resumed?: boolean
@@ -47,6 +47,10 @@ export interface AppRouteResult {
   receipt?: HopReceipt
   /** True when a replayed idempotency key returned the earlier result. */
   replayed?: boolean
+  /** C1 delivery fields: set when the target was a live session or a terminal-bound bot. */
+  state?: string
+  tier?: string | null
+  hopId?: string
 }
 
 export interface HopReceipt {
