@@ -12,6 +12,11 @@
       ],
       "android": [
         "com.openai.chatgpt"
+      ],
+      "hints": [
+        "New chat: the compose (pencil) icon at the top right.",
+        "Type in the message box at the bottom; the arrow button sends.",
+        "Past chats and Settings: the menu at the top left; your name at the bottom of it opens Settings."
       ]
     },
     {
@@ -24,6 +29,11 @@
       ],
       "android": [
         "com.anthropic.claude"
+      ],
+      "hints": [
+        "New chat: the compose icon at the top right.",
+        "Type in the box at the bottom; the arrow button sends.",
+        "Chats, projects and Settings: the menu at the top left; your name or initials at its bottom open Settings."
       ]
     },
     {
@@ -108,6 +118,11 @@
       ],
       "android": [
         "com.discord"
+      ],
+      "hints": [
+        "Servers are in the left column; swipe right from a channel to show it.",
+        "Direct messages: the Messages tab at the bottom.",
+        "Your profile and Settings: your avatar at the bottom right."
       ]
     },
     {
@@ -132,6 +147,11 @@
       ],
       "android": [
         "com.whatsapp"
+      ],
+      "hints": [
+        "The Chats tab lists conversations; search is at the top.",
+        "New chat: the message button at the bottom right (Android) or the + icon at the top right (iPhone).",
+        "Settings: the three-dot menu at the top right (Android) or the You/Settings tab at the bottom (iPhone)."
       ]
     },
     {
@@ -285,6 +305,11 @@
       ],
       "android": [
         "com.google.android.gm"
+      ],
+      "hints": [
+        "Compose: the Compose button at the bottom right.",
+        "Search mail: the search bar at the top.",
+        "Folders and labels: the menu (three lines) at the top left."
       ]
     },
     {
@@ -1033,6 +1058,11 @@
       ],
       "android": [
         "com.google.android.apps.maps"
+      ],
+      "hints": [
+        "Search: the search bar at the top.",
+        "Directions: search a place, then tap Directions.",
+        "Saved places: the You (Saved) tab at the bottom."
       ]
     },
     {
@@ -1200,6 +1230,78 @@
         "com.oracle.netsuite.suitephone"
       ],
       "android": []
+    }
+  ],
+  "system": [
+    {
+      "id": "settings",
+      "name": "Settings",
+      "ios": [
+        "com.apple.Preferences"
+      ],
+      "android": [
+        "com.android.settings"
+      ],
+      "hints": [
+        "Use the search field at the top to jump to a setting.",
+        "On a Phone-Linked Android phone, taps inside Settings are refused (protected screen); read it, and ask the user to change the setting."
+      ]
+    },
+    {
+      "id": "chrome",
+      "name": "Chrome",
+      "ios": [
+        "com.google.chrome.ios"
+      ],
+      "android": [
+        "com.android.chrome"
+      ],
+      "hints": [
+        "The address bar is at the top; tap it to type a URL or search (phone.type, then phone.key enter).",
+        "Tabs: the square button with the tab count next to the address bar.",
+        "Menu (history, settings): the three dots."
+      ]
+    },
+    {
+      "id": "safari",
+      "name": "Safari",
+      "ios": [
+        "com.apple.mobilesafari"
+      ],
+      "android": [],
+      "hints": [
+        "The address bar is at the bottom by default; tap it to type a URL or search.",
+        "Tabs: the two-squares button at the bottom right."
+      ]
+    },
+    {
+      "id": "messages",
+      "name": "Messages",
+      "ios": [
+        "com.apple.MobileSMS"
+      ],
+      "android": [
+        "com.google.android.apps.messaging"
+      ],
+      "hints": [
+        "New conversation: Start chat at the bottom right (Android) or the compose icon at the top right (iPhone).",
+        "Type in the field at the bottom; the send arrow is at its right.",
+        "To text someone from an Android phone, prefer phone.sms.send: it asks the user to approve. phone.sms.read reads incoming codes."
+      ]
+    },
+    {
+      "id": "phone",
+      "name": "Phone",
+      "ios": [
+        "com.apple.mobilephone"
+      ],
+      "android": [
+        "com.google.android.dialer"
+      ],
+      "hints": [
+        "Keypad, Recents and Contacts are tabs at the bottom.",
+        "To call from an Android phone, prefer phone.call.dial: it asks the user to approve."
+      ]
     }
   ]
 }

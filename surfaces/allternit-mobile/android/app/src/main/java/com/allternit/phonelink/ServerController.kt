@@ -15,6 +15,7 @@ import com.allternit.phonelink.core.HttpServer
 import com.allternit.phonelink.core.MeshKeyBox
 import com.allternit.phonelink.core.PhoneServer
 import com.allternit.phonelink.core.RpcDispatcher
+import com.allternit.phonelink.core.RpcException
 import com.allternit.phonelink.core.ServerConfig
 import com.allternit.phonelink.core.ServerHooks
 import com.allternit.phonelink.core.StaticDeviceInfo
@@ -232,6 +233,18 @@ object ServerController {
         }
 
         override fun screenService() = shell.status()
+
+        override fun shell(command: String): String {
+            val launcher = this@ServerController.shell
+            if (!launcher.ensureRunningBlocking()) {
+                throw RpcException.typed("shell_unavailable", launcher.lastError ?: "The phone's shell service isn't running yet. Connect the phone to Allternit Desktop once (USB, or Wi-Fi at home).")
+            }
+            return try {
+                launcher.client.command(command)
+            } catch (e: java.io.IOException) {
+                throw RpcException.typed("shell_failed", e.message ?: "The shell service refused the command.")
+            }
+        }
 
         override fun requestMeshRestart(deferred: Boolean): Boolean {
             if (!initialized || !http.isRunning || settings.meshControlUrl == null) return false

@@ -29,9 +29,40 @@ export interface PhoneCatalogApp {
   channel?: string;
   ios: string[];
   android: string[];
+  /** Short factual navigation hints, returned by phone.open_app so a bot finds its way. */
+  hints?: string[];
+}
+
+/** A built-in phone app (Settings, Messages…): hints only, never listed as a Connections app. */
+export interface PhoneSystemApp {
+  id: string;
+  name: string;
+  ios: string[];
+  android: string[];
+  hints: string[];
 }
 
 export const PHONE_APP_CATALOG: readonly PhoneCatalogApp[] = (catalog as { apps: PhoneCatalogApp[] }).apps;
+export const PHONE_SYSTEM_APPS: readonly PhoneSystemApp[] = (catalog as { system?: PhoneSystemApp[] }).system ?? [];
+
+/**
+ * Navigation hints for an app, by what phone.open_app was given or opened:
+ * a catalog/system id or name, an Android package or an iPhone bundle id.
+ */
+export function appHints(...keys: Array<string | undefined | null>): string[] | undefined {
+  const all: Array<{ id: string; name: string; ios: string[]; android: string[]; hints?: string[] }> = [...PHONE_APP_CATALOG, ...PHONE_SYSTEM_APPS];
+  for (const raw of keys) {
+    if (typeof raw !== 'string' || !raw.trim()) continue;
+    const key = raw.trim().toLowerCase();
+    const hit = all.find(
+      (app) =>
+        app.hints?.length &&
+        (app.id === key || app.name.toLowerCase() === key || [...app.ios, ...app.android].some((id) => id.toLowerCase() === key)),
+    );
+    if (hit) return hit.hints;
+  }
+  return undefined;
+}
 
 const BY_ID = new Map(PHONE_APP_CATALOG.map((app) => [app.id, app]));
 

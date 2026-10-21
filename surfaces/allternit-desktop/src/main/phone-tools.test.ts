@@ -4,7 +4,9 @@ import {
   checkRate,
   DIAL_LIMITS,
   encodeInputText,
+  extractCodes,
   isEmergencyNumber,
+  parseSmsRows,
   normalizeNumber,
   PhoneToolRunner,
   resolveApp,
@@ -93,10 +95,10 @@ describe('argument validation', () => {
 
   it('opens apps by package, catalog id or alias only', async () => {
     const { r, calls } = runner();
-    expect(await r.call('phone.open_app', { app: 'Settings' })).toEqual({ ok: true, package: 'com.android.settings' });
+    expect(await r.call('phone.open_app', { app: 'Settings' })).toMatchObject({ ok: true, package: 'com.android.settings', hints: expect.arrayContaining([expect.stringContaining('search')]) });
     expect(calls.find((c) => c[1] === 'monkey')).toEqual(['shell', 'monkey', '-p', 'com.android.settings', '-c', 'android.intent.category.LAUNCHER', '1']);
     // A catalog id the bot phone's tiles pass ("whatsapp") resolves to its package.
-    expect(await r.call('phone.open_app', { app: 'whatsapp' })).toEqual({ ok: true, package: 'com.whatsapp' });
+    expect(await r.call('phone.open_app', { app: 'whatsapp' })).toMatchObject({ ok: true, package: 'com.whatsapp' });
     expect(await r.call('phone.open_app', { app: 'x; reboot' })).toMatchObject({ error: 'unknown_app' });
     expect(resolveApp('com.foo.bar')).toBe('com.foo.bar');
   });
@@ -449,5 +451,91 @@ describe('agent activity (takeover banner)', () => {
     expect(result.ok).toBe(false);
     expect(activity).toHaveBeenNthCalledWith(1, '192.168.1.20:41234', 1);
     expect(activity).toHaveBeenNthCalledWith(2, '192.168.1.20:41234', -1);
+  });
+
+  it('linked Android texts go through the same gate, limits and emergency block, then the helper', async () => {
+    const sent: unknown[] = [];
+    const asked: ApprovalRequest[] = [];
+    const backend = {
+      has: (serial: string) => serial === 'link:a',
+      serials: () => ['link:a'],
+      call: async () => ({ ok: true as const }),
+      linkedDevices: async () => [],
+      canText: () => true,
+      sendSms: async (...args: unknown[]) => (sent.push(args), { ok: true as const, status: 'submitted' }),
+      dial: async (...args: unknown[]) => (sent.push(args), { ok: true as const }),
+    };
+    const r = new PhoneToolRunner({
+      adb: makeAdb().adb,
+      gate: { request: async (req) => (asked.push(req), 'approved') },
+      rates: memoryRates(),
+      artemis: () => null,
+      onlineSerials: () => [],
+      links: () => backend,
+    });
+    expect(await r.call('phone.sms.send', { to: '911', text: 'x' })).toMatchObject({ error: 'blocked_number' });
+    expect(await r.call('phone.sms.send', { to: '+15550102030', text: 'hi' })).toMatchObject({ ok: true, status: 'submitted' });
+    expect(sent).toEqual([['link:a', '+15550102030', 'hi', null]]);
+    expect(asked).toHaveLength(1);
+    expect(await r.call('phone.sms.send', { to: '+15550102030', text: 'again' })).toMatchObject({ error: 'rate_limited' });
+    expect(await r.call('phone.call.dial', { number: '+15550102031' })).toMatchObject({ ok: true, status: 'dialing' });
+    expect(asked).toHaveLength(2);
+  });
+
+  it('linked iPhone texts are refused before anyone is asked', async () => {
+    const gate = vi.fn(async () => 'approved' as const);
+    const r = new PhoneToolRunner({
+      adb: makeAdb().adb,
+      gate: { request: gate },
+      rates: memoryRates(),
+      artemis: () => null,
+      onlineSerials: () => [],
+      links: () => ({ has: () => true, serials: () => ['link:i'], call: async () => ({ ok: true }), linkedDevices: async () => [], canText: () => false }),
+    });
+    expect(await r.call('phone.sms.send', { to: '+15550102030', text: 'hi' })).toMatchObject({ error: 'unsupported' });
+    expect(await r.call('phone.sms.read', {})).toMatchObject({ error: 'unsupported' });
+    expect(gate).not.toHaveBeenCalled();
+  });
+});
+
+describe('phone.sms.read', () => {
+  const raw = 'Row: 0 address=+15550001111, body=Your verification code is 482913, don\'t share it, date=2000\nRow: 1 address=Google, body=G-551234 is your Google code.\nThanks, date=1500\n';
+
+  it('parses content query rows with commas and newlines in the body', () => {
+    expect(parseSmsRows(raw)).toEqual([
+      { from: '+15550001111', body: "Your verification code is 482913, don't share it", date: 2000 },
+      { from: 'Google', body: 'G-551234 is your Google code.\nThanks', date: 1500 },
+    ]);
+    expect(parseSmsRows('No result found.\n')).toEqual([]);
+  });
+
+  it('extracts numeric and alphanumeric codes, keyword ones first', () => {
+    expect(extractCodes('Your OTP is AB12CD. Call 555-1234567 if this was not you')).toEqual(['AB12CD']);
+    expect(extractCodes('Code: 123-456')).toEqual(['123456']);
+    expect(extractCodes('G-551234 is your Google verification code.')).toEqual(['551234']);
+  });
+
+  it('reads over adb, filters by sender and returns codes', async () => {
+    const { r, calls } = runner({ handler: (a) => (a.includes('content') ? { stdout: raw } : {}), now: () => 10_000 });
+    const res = await r.call('phone.sms.read', { from: '555-000-1111', since_s: 5 });
+    expect(res).toMatchObject({ ok: true, codes: ['482913'], messages: [{ from: '+15550001111', codes: ['482913'] }] });
+    expect(calls.at(-1)).toEqual(['shell', 'content', 'query', '--uri', 'content://sms/inbox', '--projection', 'address:body:date', '--where', "'date>5000'", '--sort', "'date DESC'"]);
+    expect(await r.call('phone.sms.read', { wait_s: 121 })).toMatchObject({ error: 'invalid_args' });
+  });
+
+  it('polls until a text arrives or wait_s runs out', async () => {
+    let t = 0;
+    let reads = 0;
+    const { adb } = makeAdb((a) => (a.includes('content') ? { stdout: ++reads >= 3 ? raw : 'No result found.' } : {}));
+    const r = new PhoneToolRunner({
+      adb,
+      gate: { request: async () => 'denied' },
+      rates: memoryRates(),
+      artemis: () => null,
+      now: () => t,
+      sleep: async (ms) => void (t += ms),
+      onlineSerials: () => ['192.168.1.20:41234'],
+    });
+    expect(await r.call('phone.sms.read', { wait_s: 30 })).toMatchObject({ ok: true, waited_s: 6, codes: ['482913', '551234'] });
   });
 });
