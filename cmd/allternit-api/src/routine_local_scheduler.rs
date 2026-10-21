@@ -372,7 +372,8 @@ impl RoutineDriver for GizziDriver {
     async fn run_phone_skill(&self, r: &LocalRoutine, skill: &str, serial: Option<&str>, inputs: &[(String, String)]) -> Result<String, String> {
         // A moved step re-decides on the routine's bot's brain.
         let model = crate::phone_replay::brain(&self.state.db, r.agent_id.as_deref(), None);
-        let report = crate::phone_replay::run_skill(&self.state.data_dir, skill, serial, inputs, model, "routine").await?;
+        let report = crate::phone_replay::run_skill(&self.state.data_dir, skill, serial, inputs, model, "routine", None).await?;
+        crate::phone_runs::record_run_completed(&self.state.db, &report, "routine");
         if report.get("ok").and_then(Value::as_bool) == Some(true) {
             Ok(phone_skill_summary(skill, &report))
         } else {

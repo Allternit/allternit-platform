@@ -27,6 +27,8 @@ Scope `webhooks`. Endpoints are project-wide, so account-bound keys can't manage
 | `call.ended` | A call ended (`data.call`, with `status`, `duration_seconds`, `end_reason`). |
 | `call.transcript.ready` | A call's transcript is complete (`data.transcript`), sent right after `call.ended`. |
 | `usage.threshold` | The project's spend this month reached 50, 80 or 100% of its spend cap, once each per month (`data.meter` = `spend`, `data.percent`, `data.used` and `data.limit` in USD, `data.period` like `2026-10`). See [Billing and spend caps](/api/platform/billing). |
+| `phone.step` | A phone tool call on one of the project owner's linked phones finished (`data.step_id`, `data.run_id`, `data.serial`, `data.tool`, `data.label`, `data.ok`, `data.duration_ms`, `data.source`). No screenshots or typed text. See [Phones](/api/platform/phones). |
+| `phone.run.completed` | A phone task or skill run ended (`data.run_id`, `data.ok`, `data.status`, `data.steps`, `data.failed`). |
 
 ```json
 { "id": "evt_3b1…", "object": "event", "type": "message.received", "created": 1759601822,

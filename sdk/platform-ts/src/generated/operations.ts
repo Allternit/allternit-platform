@@ -1019,6 +1019,81 @@ export class ComputersResource {
   }
 }
 
+export class PhonesResource {
+  protected readonly _client: Transport;
+  constructor(client: Transport) {
+    this._client = client;
+  }
+
+  /**
+   * List the owner's phones
+   *
+   * The project owner's own phones, linked to their Allternit Desktop (Phone Link, adb or a USB Agent). Requires the `phones` scope and a key that is not bound to an account (403 `account_bound_key`).
+   * While the Desktop is offline the phones the cloud last saw are listed with `online: false` and `desktop_online: false`. Not paginated (a person links a handful).
+   *
+   * `GET /v1/phones`
+   */
+  list(options?: RequestOptions): Promise<T.ListPhonesResponse> {
+    return this._client.request<T.ListPhonesResponse>({ method: "GET", path: `/v1/phones`, options });
+  }
+
+  /**
+   * List saved phone skills
+   *
+   * Recorded phone runs that replay with no model. Each lists the `inputs` a run must pass (typed text is never stored). 503 `phone_desktop_offline` while the Desktop is offline.
+   *
+   * `GET /v1/phones/skills`
+   */
+  listSkills(options?: RequestOptions): Promise<T.ListPhoneSkillsResponse> {
+    return this._client.request<T.ListPhoneSkillsResponse>({ method: "GET", path: `/v1/phones/skills`, options });
+  }
+
+  /**
+   * Replay a phone skill
+   *
+   * Starts the replay in the background and answers 202 with its `run_id`. Each step is a `phone.step` webhook; the end is `phone.run.completed`. A step whose element moved re-decides once on `bot_id`'s brain (or `brain`). Skills never send texts or place calls.
+   *
+   * `POST /v1/phones/skills/{name}/run`
+   */
+  runSkill(name: string, body?: T.RunPhoneSkillRequest, options?: RequestOptions): Promise<T.RunPhoneSkillResponse> {
+    return this._client.request<T.RunPhoneSkillResponse>({ method: "POST", path: `/v1/phones/skills/${encodeURIComponent(name)}/run`, body: body, options });
+  }
+
+  /**
+   * A phone's run history
+   *
+   * Every phone tool call on this phone (500 steps / 30 days), newest run first. Typed text, numbers and message bodies are redacted on the Desktop; frames and screen text stay there.
+   *
+   * `GET /v1/phones/{serial}/history`
+   */
+  getHistory(serial: string, query?: T.GetPhoneHistoryQuery, options?: RequestOptions): Promise<T.GetPhoneHistoryResponse> {
+    return this._client.request<T.GetPhoneHistoryResponse>({ method: "GET", path: `/v1/phones/${encodeURIComponent(serial)}/history`, query: query, options });
+  }
+
+  /**
+   * Run one phone tool
+   *
+   * One phone tool through the Desktop phone gateway, exactly as a bot calls it: `phone.devices`, `phone.screenshot`, `phone.read_ui`, `phone.screen_text`, `phone.tap`, `phone.type`, `phone.find_and_tap`, `phone.swipe`, `phone.home`, `phone.back`, `phone.key`, `phone.open_app`, `phone.sms.read`, `phone.sms.send`, `phone.call.dial`.
+   * `phone.sms.send` and `phone.call.dial` wait for the person to approve on their Desktop (up to 80 s; then 503 `phone_timeout`); a refusal is a 200 result with `ok: false, error: approval_denied`. Tool failures are 200 with `ok: false`. 409 `phone_offline` when the phone isn't connected, 503 `phone_desktop_offline` / `phone_gateway_unavailable` when the Desktop or its phone gateway isn't running. The call is a `phone.step` webhook like any other.
+   *
+   * `POST /v1/phones/{serial}/tool`
+   */
+  callTool(serial: string, body: T.CallPhoneToolRequest, options?: RequestOptions): Promise<T.CallPhoneToolResponse> {
+    return this._client.request<T.CallPhoneToolResponse>({ method: "POST", path: `/v1/phones/${encodeURIComponent(serial)}/tool`, body: body, options });
+  }
+
+  /**
+   * Give a phone a goal
+   *
+   * The phone task loop on the Desktop (read the screen, one action, repeat) with `bot_id`'s brain, `brain`, or the default. Answers 202 with the `run_id`; each step is a `phone.step` webhook and the end is `phone.run.completed`. Tasks never send texts or place calls. At most 5 minutes.
+   *
+   * `POST /v1/phones/{serial}/task`
+   */
+  runTask(serial: string, body: T.RunPhoneTaskRequest, options?: RequestOptions): Promise<T.RunPhoneTaskResponse> {
+    return this._client.request<T.RunPhoneTaskResponse>({ method: "POST", path: `/v1/phones/${encodeURIComponent(serial)}/task`, body: body, options });
+  }
+}
+
 /** Every API area as a client property. `AllternitPlatform` extends this. */
 export class GeneratedResources {
   accounts: AccountsResource;
@@ -1033,6 +1108,7 @@ export class GeneratedResources {
   channels: ChannelsResource;
   twin: TwinResource;
   computers: ComputersResource;
+  phones: PhonesResource;
   constructor(client: Transport) {
     this.accounts = new AccountsResource(client);
     this.agents = new AgentsResource(client);
@@ -1046,5 +1122,6 @@ export class GeneratedResources {
     this.channels = new ChannelsResource(client);
     this.twin = new TwinResource(client);
     this.computers = new ComputersResource(client);
+    this.phones = new PhonesResource(client);
   }
 }

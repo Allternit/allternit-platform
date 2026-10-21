@@ -1,0 +1,144 @@
+---
+title: 'Phones'
+description: 'The /v1/phones routes: list the project owner''s linked phones, read their run history, run one phone tool, give a phone a goal, and replay saved phone skills.'
+---
+
+Scope `phones`. These routes drive the **project owner's own phones**: the Android phones and iPhones linked to their Allternit Desktop (Phone Link, adb or a USB Agent). Nothing about a phone is stored in the cloud. Each call is relayed, signed as the owner, to the Desktop that serves the phone, and runs through the same phone gateway a bot uses.
+
+- Use a key that is **not bound to an account**. Phones belong to the owner, not to one of your end customers, so an account-bound key gets `403 account_bound_key`.
+- Errors use the usual `{ "error": { "type", "code", "message", "param" } }` shape ([Errors](/api/platform/errors)). Every `POST` honors `Idempotency-Key`.
+- Serials look like `link:…`, `usb:…` or `host:port`, so URL-encode them in paths. Use `-` for the only connected phone.
+
+## Safety
+
+- **Texts and calls need a person.** `phone.sms.send` and `phone.call.dial` open the approval dialog on the owner's Desktop, the same as when a bot asks. The API can't skip it. A refusal comes back as a result with `ok: false` and `error: "approval_denied"`.
+- **Tasks and skills never text or call.** The phone task loop and skill replays only tap, type, swipe and read.
+- **Nothing personal leaves the Desktop.** History redacts typed text, numbers and message bodies. Frames and screen text stay on the Desktop. Webhooks carry no screenshots.
+
+## Errors when a phone isn't reachable
+
+| Status | Code | Meaning |
+|---|---|---|
+| `503` | `phone_desktop_offline` | The owner's Allternit Desktop is offline. Open it, signed in, and retry. |
+| `503` | `phone_gateway_unavailable` | The Desktop is online, but its phone gateway isn't running. |
+| `503` | `phone_timeout` | The phone didn't answer in time. A text or call may still be waiting for approval. |
+| `409` | `phone_offline` | That phone isn't connected to the Desktop right now. |
+| `409` | `phone_required` | More than one phone is connected. Name a serial instead of `-`. |
+| `404` | `no_desktop` | The owner has never paired an Allternit Desktop. |
+
+## The phone object
+
+```json
+{
+  "object": "phone",
+  "serial": "link:7f3a",
+  "name": "Joe's Pixel",
+  "model": "Pixel 8",
+  "online": true,
+  "desktop_online": true,
+  "last_seen_at": null,
+  "call_bridge": { "enabled": true, "botName": "Raven" }
+}
+```
+
+```http
+GET /v1/phones
+```
+
+Returns `{ data, has_more: false, next_cursor: null }`. While the Desktop is offline, this lists the phones the cloud last saw, with `online: false` and `desktop_online: false`.
+
+## Run one phone tool
+
+```http
+POST /v1/phones/{serial}/tool
+```
+
+| Field | Type | Notes |
+|---|---|---|
+| `name` | string | Required. One of `phone.devices`, `phone.screenshot`, `phone.read_ui`, `phone.screen_text`, `phone.tap`, `phone.type`, `phone.find_and_tap`, `phone.swipe`, `phone.home`, `phone.back`, `phone.key`, `phone.open_app`, `phone.sms.read`, `phone.sms.send` or `phone.call.dial`. The `phone.` prefix is optional. |
+| `arguments` | object | The tool's arguments, as the phone tools take them (for example `{ "x": 540, "y": 1200 }` for `phone.tap`). |
+| `run_id` | string | Optional. Groups several calls into one run in the history. By default each call starts a new `api-…` run. |
+
+A `200` is the tool's result, even when the tool failed:
+
+```json
+{ "object": "phone.tool_result", "ok": true, "run_id": "api-4be1…", "tool": "phone.tap" }
+```
+
+A failed tool answers `ok: false` with an `error` such as `approval_denied`, `approval_timeout`, `rate_limited`, `not_found` or `accessibility_off`, plus a `message`. A text or call waits up to 80 seconds for the owner's approval.
+
+## Give a phone a goal
+
+```http
+POST /v1/phones/{serial}/task
+```
+
+`{ "goal": "Open Settings and turn on Wi-Fi", "max_steps": 15, "bot_id": "…", "brain": "provider/model" }`. `goal` is required (up to 2000 characters). `max_steps` is 1 to 40 (default 15). The model is `bot_id`'s brain, else `brain`, else the default.
+
+The task runs on the Desktop: it reads the screen, takes one action, and repeats until the goal is met, it fails, it runs out of steps, or 5 minutes pass. The call answers `202` at once:
+
+```json
+{ "object": "phone.run", "run_id": "task-9c2e…", "serial": "link:7f3a", "skill": null, "status": "running" }
+```
+
+Follow it with the `phone.step` and `phone.run.completed` webhooks, or read its steps with `GET /v1/phones/{serial}/history?run_id=`.
+
+## Phone skills
+
+A skill is a phone run that was saved once and replays with no model. Typed text is never stored, so each run passes it as `inputs`. Skills are saved in Allternit Desktop.
+
+| Method and path | Body | Returns |
+|---|---|---|
+| `GET /v1/phones/skills` | | `{ data: [{ object: "phone.skill", name, inputs, … }] }` |
+| `POST /v1/phones/skills/{name}/run` | `{ serial?, inputs?, bot_id?, brain? }` | `202` `{ object: "phone.run", run_id, skill, status: "running" }` |
+
+A run needs a value for each of the skill's `inputs` (`400` otherwise). If a step's element has moved, that step gets one re-decision on `bot_id`'s brain (or `brain`).
+
+## History
+
+```http
+GET /v1/phones/{serial}/history?run_id=
+```
+
+Every phone tool call on this phone, from bots, skills, tasks, routines and this API. History keeps 500 steps or 30 days per phone.
+
+```json
+{
+  "object": "phone.history",
+  "serial": "link:7f3a",
+  "steps": [
+    {
+      "object": "phone.step",
+      "id": "0b6c…",
+      "run_id": "task-9c2e…",
+      "at": "2026-10-20T15:01:02Z",
+      "tool": "phone.type",
+      "label": "type",
+      "args": { "text": { "redacted": true, "len": 12 } },
+      "ok": true,
+      "error": null,
+      "duration_ms": 412,
+      "source": "task",
+      "snapshot": true
+    }
+  ],
+  "runs": [
+    { "object": "phone.run", "run_id": "task-9c2e…", "started_at": "…", "ended_at": "…", "steps": 7, "failed": 0, "source": "task" }
+  ],
+  "retention_days": 30,
+  "max_steps": 500
+}
+```
+
+`snapshot: true` means a frame was kept on the Desktop. Frames aren't served through the API.
+
+## Webhooks
+
+Subscribe an endpoint ([Webhooks](/api/platform/webhooks)) to these events. They're sent to every project the owner owns that has an endpoint subscribed. `account_id` is always `null`.
+
+| Event | When | `data` |
+|---|---|---|
+| `phone.step` | A phone tool call finished, from any source | `step_id`, `run_id`, `serial`, `tool`, `label`, `ok`, `error`, `duration_ms`, `source` (`bot`, `skill`, `task`, `routine` or `api`), `snapshot` |
+| `phone.run.completed` | A phone task or skill run ended | `run_id`, `serial`, `ok`, `status` (task: `done`, `failed`, `max_steps`, `timeout`; skill: `succeeded`, `diverged`, `failed`), `skill`, `source`, `steps`, `failed`, `model_calls`, `duration_ms` |
+
+Events come from the Desktop's event forwarder, so they arrive a few seconds after the step. If the Desktop was offline, they arrive when it reconnects.

@@ -249,10 +249,13 @@ pub async fn ingest(db: &PgPool, user_id: &str, runtime_id: &str, events: Vec<Va
 /// never from the runtime, and an event with no agent of this project is not
 /// sent to any webhook. Runs once per event (after the idempotent store).
 pub(crate) async fn platform_fan_out(db: &PgPool, user_id: &str, name: &str, data: &Value) -> Result<(), sqlx::Error> {
-    let Some(project) = user_id.strip_prefix("platform:") else { return Ok(()) };
     if !crate::routes::platform_v1::events::EVENT_TYPES.contains(&name) {
         return Ok(());
     }
+    if name.starts_with("phone.") {
+        return phone_fan_out(db, user_id, name, data).await;
+    }
+    let Some(project) = user_id.strip_prefix("platform:") else { return Ok(()) };
     let Some(agent) = data["bot_id"].as_str() else { return Ok(()) };
     let account: Option<String> = sqlx::query_scalar("SELECT account_id FROM platform_agents WHERE id = $1 AND project_id = $2")
         .bind(agent)
@@ -275,6 +278,40 @@ pub(crate) async fn platform_fan_out(db: &PgPool, user_id: &str, name: &str, dat
         _ => return Ok(()),
     };
     crate::routes::platform_v1::events::emit_event(db, project, Some(&account), name, payload).await?;
+    Ok(())
+}
+
+/// `phone.step` / `phone.run.completed` from a person's own Desktop: the
+/// phones are theirs, so every live Platform API project they own gets the
+/// event (project-wide, no account) when one of its endpoints subscribes to it. The payload is rebuilt from an allowlist; screen text, frames
+/// and typed values never reach the runtime's ledger row to begin with.
+async fn phone_fan_out(db: &PgPool, user_id: &str, name: &str, data: &Value) -> Result<(), sqlx::Error> {
+    if user_id.starts_with("platform:") || user_id.starts_with(crate::services::provisioning::HOSTED_DRIVER_OWNER_PREFIX) {
+        return Ok(());
+    }
+    let keys: &[&str] = match name {
+        "phone.step" => &["step_id", "run_id", "serial", "tool", "label", "ok", "error", "duration_ms", "source", "snapshot"],
+        "phone.run.completed" => &["run_id", "serial", "ok", "status", "skill", "source", "steps", "failed", "model_calls", "duration_ms"],
+        _ => return Ok(()),
+    };
+    // Only projects with an endpoint that wants it: a phone step is frequent,
+    // and an event nobody subscribed to would only be stored.
+    let projects: Vec<String> = sqlx::query_scalar(
+        "SELECT p.id FROM platform_projects p WHERE p.owner_user_id = $1 AND p.archived_at IS NULL \
+           AND EXISTS (SELECT 1 FROM platform_webhooks w WHERE w.project_id = p.id AND w.deleted_at IS NULL \
+                         AND ($2 = ANY(w.events) OR '*' = ANY(w.events)))",
+    )
+    .bind(user_id)
+    .bind(name)
+    .fetch_all(db)
+    .await?;
+    if projects.is_empty() {
+        return Ok(());
+    }
+    let payload = Value::Object(keys.iter().map(|k| ((*k).to_string(), data.get(*k).cloned().unwrap_or(Value::Null))).collect());
+    for project in projects {
+        crate::routes::platform_v1::events::emit_event(db, &project, None, name, payload.clone()).await?;
+    }
     Ok(())
 }
 

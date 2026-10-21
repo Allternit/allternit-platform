@@ -84,9 +84,12 @@ The API is served by the local allternit-api (`cmd/allternit-api/src/phone_runs.
 | `GET /phones/skills/:name` | none | `{skill}`, with its steps and locators |
 | `POST /phones/skills` | `{run_id, name, serial?, from_step?, to_step?, description?, input_names?}` | `{ok, skill, steps}` |
 | `DELETE /phones/skills/:name` | none | `{ok}` |
-| `POST /phones/skills/:name/run` | `{serial?, inputs?, bot_id?, brain?}` | `{ok, status, skill, serial, run_id, model_calls, healed, steps, error, duration_ms}` |
-| `POST /phones/:serial/task` | `{goal, max_steps?, bot_id?, brain?}` | `{ok, status, result, steps, model_calls, run_id, serial, duration_ms}` |
+| `POST /phones/skills/:name/run` | `{serial?, inputs?, bot_id?, brain?, background?}` | `{ok, status, skill, serial, run_id, model_calls, healed, steps, error, duration_ms}`, or `202 {ok, status: "running", run_id, skill, serial}` with `background: true` |
+| `POST /phones/:serial/task` | `{goal, max_steps?, bot_id?, brain?, background?}` | `{ok, status, result, steps, model_calls, run_id, serial, duration_ms}`, or `202 {ok, status: "running", run_id, serial}` with `background: true` |
+| `POST /phones/:serial/tool` | `{name, arguments?, run_id?}` | The phone tool's result plus `run_id` and `tool`. One gateway call, exactly as a bot makes it, so texts and calls still need approval on Desktop. Waits up to 80 s; `504` on timeout, `502` when the gateway can't be reached. |
 
 A step has `{id, run_id, serial, at, tool, label, args, ok, error?, duration_ms, ui?, target?, source?, thumbnail?, snapshot}`. `thumbnail` is a small PNG data URL. `source` is `bot`, `skill`, `task` or `routine`. A run summary is `{run_id, serial, started_at, ended_at, steps, failed, source, thumbnail}`, newest first. For `POST /phones/:serial/task`, use the serial `-` to let Desktop pick the only connected phone. The task route answers 503 when Desktop's phone gateway isn't running.
+
+Every recorded step also writes a `phone.step` row to the owner ledger, and every task or skill run that ends (from the route, a background run or a routine) writes `phone.run.completed`. The event forwarder (`runtime_events.rs`) sends them to the cloud, where they become [Platform API webhooks](/api/platform/phones#webhooks). They carry ids, the tool, the label, `ok`, the error and timings, never frames, screen text or typed values. An unpaired runtime writes nothing. Developers reach these routes from their own servers through [`/v1/phones`](/api/platform/phones), which relays to this Desktop.
 
 Desktop posts a history step after every phone tool call, without waiting for it (`surfaces/allternit-desktop/src/main/phone-runs.ts`). It strips typed text first, shrinks frames to 1280 px JPEG, and attaches the element a tap landed on from the bot's last full screen read. Replays and tasks tag their gateway calls with `_run_id` and `_source`. Desktop drops those keys before running the tool.
