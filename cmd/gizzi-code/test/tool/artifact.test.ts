@@ -1,10 +1,14 @@
 import { describe, expect, test, spyOn, afterEach, beforeEach } from "bun:test"
 import {
+  ArtifactCommentTool,
   ArtifactCreateTool,
   ArtifactReadTool,
+  ArtifactSuggestTool,
   ArtifactUpdateTool,
   MAX_MODEL_BODY,
+  heartbeat,
 } from "../../src/runtime/tools/builtins/artifact"
+import * as BotTurn from "../../src/runtime/bots/bot-turn"
 import { Artifacts } from "../../src/runtime/integrations/artifacts"
 import { Pairing } from "../../src/runtime/services/pairing/pairing"
 
@@ -43,7 +47,13 @@ function transcriptWith(artifact: Artifacts.Payload) {
 const json = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } })
 
-const ENV = ["ALLTERNIT_API_KEY", "ALLTERNIT_API_TOKEN", "ALLTERNIT_CLOUD_API_URL", "GIZZI_ARTIFACTS_OFFLINE"] as const
+const ENV = [
+  "ALLTERNIT_API_KEY",
+  "ALLTERNIT_API_TOKEN",
+  "ALLTERNIT_CLOUD_API_URL",
+  "GIZZI_ARTIFACTS_OFFLINE",
+  "GIZZI_ARTIFACT_PRESENCE",
+] as const
 const saved: Record<string, string | undefined> = {}
 
 describe("tool.artifact_*", () => {
@@ -56,6 +66,8 @@ describe("tool.artifact_*", () => {
       delete process.env[k]
     }
     process.env.ALLTERNIT_CLOUD_API_URL = "https://cloud.test"
+    // These tests count and inspect the store calls; the agent-watch block turns heartbeats back on.
+    process.env.GIZZI_ARTIFACT_PRESENCE = "0"
     pairingSpy = spyOn(Pairing, "load").mockResolvedValue(undefined as any)
   })
   afterEach(() => {
@@ -296,5 +308,159 @@ describe("Artifacts.validate for motion", () => {
     expect(Artifacts.validate("motion", fmt, '{"scenes":[]}')).toContain('"scenes"')
     expect(Artifacts.validate("motion", fmt, "null")).toContain('"scenes"')
     expect(Artifacts.validate("motion", fmt, "nope")).toContain("must be JSON")
+  })
+})
+
+describe("agent watch: artifact_suggest, presence heartbeats, agent comments", () => {
+  let fetchSpy: ReturnType<typeof spyOn> | undefined
+  let pairingSpy: ReturnType<typeof spyOn> | undefined
+  const calls: Array<{ url: string; method: string; body: any }> = []
+
+  beforeEach(() => {
+    for (const k of ENV) {
+      saved[k] = process.env[k]
+      delete process.env[k]
+    }
+    process.env.ALLTERNIT_CLOUD_API_URL = "https://cloud.test"
+    pairingSpy = spyOn(Pairing, "load").mockResolvedValue(undefined as any)
+    BotTurn.reset()
+    calls.length = 0
+  })
+  afterEach(() => {
+    fetchSpy?.mockRestore()
+    pairingSpy?.mockRestore()
+    fetchSpy = undefined
+    BotTurn.reset()
+    for (const k of ENV) {
+      if (saved[k] === undefined) delete process.env[k]
+      else process.env[k] = saved[k]
+    }
+  })
+
+  /** Records every call; presence answers 204, suggestions echo pending items. */
+  function mockCloud(overrides: Record<string, (body: any) => Response> = {}) {
+    fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async (url: string, init: RequestInit) => {
+      const body = init.body ? JSON.parse(String(init.body)) : undefined
+      calls.push({ url, method: String(init.method), body })
+      for (const [suffix, respond] of Object.entries(overrides)) if (url.endsWith(suffix)) return respond(body)
+      if (url.endsWith("/presence")) return new Response(null, { status: 204 })
+      if (url.endsWith("/suggestions")) {
+        return json(201, {
+          items: body.changes.map((c: any, i: number) => ({
+            id: `sug_${i + 1}`,
+            artifact_id: "art_S",
+            base_version: body.base_version,
+            agent_name: body.agent_name,
+            session_id: body.session_id ?? null,
+            change: c.change,
+            reason: c.reason ?? null,
+            cost_usd: body.cost_usd ?? null,
+            status: "pending",
+            created_at: "2026-10-20T00:00:00Z",
+            resolved_at: null,
+          })),
+        })
+      }
+      if (url.endsWith("/comments")) return json(201, { id: "cmt_1", author_id: "assistant", agent_name: body.agent_name })
+      return json(404, { error: "not_found" })
+    }) as any)
+  }
+  const settle = () => new Promise((r) => setTimeout(r, 20))
+
+  test("suggest: posts the change shapes under the bot's name and returns the ids", async () => {
+    process.env.ALLTERNIT_API_KEY = "alt_key"
+    BotTurn.mark("ses_test", { id: "agt_1", name: "Raven" })
+    mockCloud()
+    const tool = await ArtifactSuggestTool.init()
+    const result = await tool.execute(
+      {
+        id: "art_S",
+        base_version: 4,
+        task: "Fixing the dates",
+        changes: [
+          { kind: "text", block: 2, find: "about 40%", replace: "38%", reason: "Matches the report" },
+          { kind: "block", op: "delete", block: 7, markdown: "ignored" },
+          { kind: "cell", sheet: null, address: "b4", value: "=SUM(B1:B3)" },
+          { kind: "text", find: "Nov 1", replace: "Nov 10" },
+        ],
+      } as any,
+      ctxWith(),
+    )
+    await settle()
+    const post = calls.find((c) => c.url === "https://cloud.test/api/v2/artifacts/art_S/suggestions")!
+    expect(post.method).toBe("POST")
+    expect(post.body).toMatchObject({ base_version: 4, agent_name: "Raven", session_id: "ses_test" })
+    expect(post.body.changes).toEqual([
+      { change: { kind: "text", block: 2, find: "about 40%", replace: "38%" }, reason: "Matches the report" },
+      { change: { kind: "block", op: "delete", block: 7 } },
+      { change: { kind: "cell", sheet: null, address: "B4", value: "=SUM(B1:B3)" } },
+      { change: { kind: "text", block: null, find: "Nov 1", replace: "Nov 10" } },
+    ])
+    expect(JSON.parse(result.output.split("\n")[0]!).suggestion_ids).toEqual(["sug_1", "sug_2", "sug_3", "sug_4"])
+    expect(result.output).toContain("accepts or rejects")
+
+    const presence = calls.find((c) => c.url.endsWith("/art_S/presence"))!
+    expect(presence.body).toEqual({
+      state: "editing",
+      agent: { name: "Raven", session_id: "ses_test", task: "Fixing the dates", anchor: { kind: "block", block: 2 } },
+    })
+  })
+
+  test("suggest without a credential: a clear error that points at artifact_update", async () => {
+    fetchSpy = spyOn(globalThis, "fetch")
+    const tool = await ArtifactSuggestTool.init()
+    await expect(
+      tool.execute({ id: "art_S", base_version: 1, changes: [{ kind: "text", block: 0, find: "a", replace: "b" }] } as any, ctxWith()),
+    ).rejects.toThrow("artifact_update")
+    expect(fetchSpy).not.toHaveBeenCalled()
+  })
+
+  test("suggest on a cloud without the route falls back to artifact_update", async () => {
+    process.env.ALLTERNIT_API_KEY = "alt_key"
+    mockCloud({ "/suggestions": () => new Response("Not Found", { status: 404 }) })
+    const tool = await ArtifactSuggestTool.init()
+    await expect(
+      tool.execute({ id: "art_S", base_version: 1, changes: [{ kind: "cell", sheet: "Budget", address: "A1", value: "1" }] } as any, ctxWith()),
+    ).rejects.toThrow("artifact_update")
+  })
+
+  test("read sends a viewing heartbeat with the default task; a failing heartbeat never fails the tool", async () => {
+    process.env.ALLTERNIT_API_KEY = "alt_key"
+    mockCloud({
+      "/art_R": () =>
+        json(200, { id: "art_R", kind: "doc", title: "Brief", current_version: 2, version: { version: 2, body: "{}", body_format: "application/vnd.allternit.doc+json", meta: {} } }),
+      "/presence": () => {
+        throw new TypeError("fetch failed")
+      },
+    })
+    const tool = await ArtifactReadTool.init()
+    const result = await tool.execute({ id: "art_R" }, ctxWith())
+    await settle()
+    expect(result.metadata.artifact).toMatchObject({ id: "art_R", version: 2 })
+    const presence = calls.find((c) => c.url.endsWith("/art_R/presence"))!
+    expect(presence.body.state).toBe("viewing")
+    expect(presence.body.agent).toMatchObject({ name: "Gizzi", task: "Reading", session_id: "ses_test" })
+  })
+
+  test("heartbeat resolves false and never throws when presence is off or offline", async () => {
+    process.env.GIZZI_ARTIFACT_PRESENCE = "0"
+    fetchSpy = spyOn(globalThis, "fetch")
+    expect(await heartbeat(ctxWith(), "art_X", { state: "viewing", task: "Reading" })).toBe(false)
+    delete process.env.GIZZI_ARTIFACT_PRESENCE
+    expect(await heartbeat(ctxWith(), "art_X", { state: "viewing", task: "Reading" })).toBe(false)
+    expect(fetchSpy).not.toHaveBeenCalled()
+  })
+
+  test("comment posts under the agent's name", async () => {
+    process.env.ALLTERNIT_API_KEY = "alt_key"
+    BotTurn.mark("ses_test", { id: "agt_2", name: "Jev" })
+    mockCloud()
+    const tool = await ArtifactCommentTool.init()
+    await tool.execute({ id: "art_C", body: "Which date is right?" } as any, ctxWith())
+    await settle()
+    const post = calls.find((c) => c.url.endsWith("/art_C/comments"))!
+    expect(post.body).toMatchObject({ body: "Which date is right?", agent_name: "Jev" })
+    const presence = calls.find((c) => c.url.endsWith("/art_C/presence"))!
+    expect(presence.body.agent).toMatchObject({ name: "Jev", task: "Asking a question" })
   })
 })

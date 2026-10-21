@@ -304,12 +304,14 @@ Comments are threaded: a root comment plus replies one level deep. They are stor
 | Method and path | Needs | Body | Returns |
 |---|---|---|---|
 | `GET /api/v2/artifacts/:id/comments` | view | | `{ items }`, oldest first, at most 500 |
-| `POST /api/v2/artifacts/:id/comments` | comment | `{ body, anchor?, parent_id?, version? }` | the comment, `201` |
+| `POST /api/v2/artifacts/:id/comments` | comment | `{ body, anchor?, parent_id?, version?, agent_name? }` | the comment, `201` |
 | `PATCH /api/v2/artifacts/:id/comments/:cid` | edit, or the author | `{ resolved? , body? }` | the comment |
 | `DELETE /api/v2/artifacts/:id/comments/:cid` | the author or the owner | | `204`. Deleting a root deletes its replies. |
 | `POST /api/v2/artifacts/:id/comments/assistant-reply` | edit | `{ parent_id, body }` | the reply, `201`, with `author_id: "assistant"` |
 
-A comment has `id`, `artifact_id`, `version`, `anchor`, `parent_id`, `author_id`, `author_name`, `author_image_url`, `body`, `to_assistant`, `resolved_at` and `created_at`. `body` is 1 to 4000 characters. `anchor` is an opaque object up to 16 KB; the app writes `{ kind: "text" | "cell" | "slide" | "element", ... }`. A comment that mentions `@gizzi` or `@allternit` is stored with `to_assistant: true`. Docs have no Commenter level, so a viewer of a doc can't comment.
+A comment has `id`, `artifact_id`, `version`, `anchor`, `parent_id`, `author_id`, `author_name`, `author_image_url`, `agent_name`, `body`, `to_assistant`, `resolved_at` and `created_at`. `body` is 1 to 4000 characters. `anchor` is an opaque object up to 16 KB; the app writes `{ kind: "text" | "cell" | "slide" | "element", ... }`. A comment that mentions `@gizzi` or `@allternit` is stored with `to_assistant: true`. Docs have no Commenter level, so a viewer of a doc can't comment.
+
+An agent posts under its own name by sending `agent_name` (gizzi's `artifact_comment` does this). The comment is then stored with `author_id: "assistant"` and that `agent_name`, and `author_name` comes back as the agent name. On every read, `author_name` falls back to `agent_name` when the author has no profile name. `agent_name` is `null` for comments people write.
 
 ## Presence
 
@@ -317,10 +319,45 @@ Presence is shared by every Cloud API instance. Each heartbeat upserts one row p
 
 | Method and path | Needs | Body | Returns |
 |---|---|---|---|
-| `POST /api/v2/artifacts/:id/presence` | view | `{ state: "viewing" \| "editing" \| "left" }` | `204` |
-| `GET /api/v2/artifacts/:id/presence` | view | | `{ enabled, users: [{ user_id, name, image_url, state }] }`, without you |
+| `POST /api/v2/artifacts/:id/presence` | view (edit with `agent`) | `{ state: "viewing" \| "editing" \| "left", agent? }` | `204` |
+| `GET /api/v2/artifacts/:id/presence` | view | | `{ enabled, users: [{ user_id, name, image_url, state, kind, task, anchor, cost_usd, session_id }] }`, without you |
 
 Send a heartbeat about every 15 seconds. `GET` returns the entries seen in the last 45 seconds, up to 200, ordered by `user_id`. `left` deletes the caller's entry. Entries older than 10 minutes are deleted as a side effect of about one request in 50. When the owner's organization turned presence off, `GET` returns `{ enabled: false, users: [] }` and `POST` does nothing.
+
+### Agent presence
+
+An agent working on the artifact for the caller sends `agent: { name, session_id?, task?, anchor?, cost_usd? }` with the heartbeat. This needs edit access. The row is then the agent's own, not the caller's:
+
+- `user_id` is `agent:<session_id or none>:<slug of name>`, and `kind` is `"agent"` (people are `"user"`).
+- The row stores `name`, `task` (at most 200 characters), `anchor` (at most 4 KB of JSON), `cost_usd` and `session_id`.
+- `state` works as for people. `left` deletes that agent's row.
+
+`anchor` says where the agent is working, in the same location fields a suggestion uses: `{ "kind": "block", "block": 3 }` for a doc block (0-based) or `{ "kind": "cell", "sheet": null, "address": "B4" }` for a sheet cell. The app draws the agent's cursor there. `cost_usd` is the agent session's model cost so far, or absent when unknown. For people, `kind` is `"user"` and the agent fields are `null`.
+
+## Suggestions
+
+Agents propose edits to doc and sheet artifacts as pending suggestions instead of writing a new version. The user accepts or rejects each one. Suggestions are stored in `artifact_suggestions` (migration `096_artifact_agent_watch.sql`).
+
+| Method and path | Needs | Body | Returns |
+|---|---|---|---|
+| `POST /api/v2/artifacts/:id/suggestions` | edit | `{ base_version, agent_name, session_id?, cost_usd?, changes: [{ change, reason? }] }` | `{ items }` |
+| `GET /api/v2/artifacts/:id/suggestions?status=pending\|all` | view | | `{ items }`, oldest first. `status` defaults to `pending`. |
+| `PATCH /api/v2/artifacts/:id/suggestions/:sid` | edit | `{ status: "accepted" \| "rejected" \| "stale" }` | the suggestion. `409 already_resolved` unless it is pending. |
+| `POST /api/v2/artifacts/:id/suggestions/resolve` | edit | `{ ids: [...], status }` | `{ items }`, the ones it changed |
+
+A suggestion is `{ id, artifact_id, base_version, agent_name, session_id, change, reason, cost_usd, status, created_at, resolved_at }`. `id` starts with `sug_`. `cost_usd` is a number or `null`. `status` is `pending`, `accepted`, `rejected` or `stale`. Resolving one sets `resolved_by` and `resolved_at`.
+
+`change` is one of three shapes:
+
+| kind | Shape | Meaning |
+|---|---|---|
+| `text` | `{ "kind": "text", "block": 2, "find": "about 40%", "replace": "38%" }` | Replace the first occurrence of `find` in the plain text of block `block` (0-based index into `doc.blocks`). `block: null` searches the whole document, block by block. |
+| `block` | `{ "kind": "block", "op": "replace" \| "insert_after" \| "delete", "block": 4, "markdown": "..." }` | `markdown` becomes blocks the same way the editor converts markdown. `delete` ignores `markdown`. |
+| `cell` | `{ "kind": "cell", "sheet": null, "address": "B4", "value": "Nov 10" }` | Set one cell. `sheet` is a sheet name or id; `null` means the first sheet. A `value` starting with `=` is a formula. |
+
+Limits: at most 50 changes per `POST`; `find`, `replace`, `markdown` and `value` at most 20,000 characters each; `reason` at most 500. The artifact must be a `doc` or a `sheet`, otherwise `400 unsupported_kind`.
+
+**The client applies accepted changes, not the server.** To accept, the app applies the change to the current body, saves a new version (author the user, with `meta.note`), then sends `PATCH` with `accepted`. When a change no longer applies to the body (the text or cell moved on), the app marks it `stale`. **Accept all** applies the pending suggestions in order, saves one version, and resolves them with one `POST .../resolve`. The server never rewrites a body.
 
 ## Errors
 
@@ -328,7 +365,7 @@ Errors use the standard Cloud API shape `{ "error", "message", "code" }`. Artifa
 
 ## Storage
 
-The schema is `cmd/allternit-cloud-api/migrations_pg/085_artifacts_v2.sql`. It creates `artifacts`, `artifact_versions`, `artifact_shares` and `org_artifact_settings`, plus `artifact_storage` and `artifact_consents` (used by the [page runtime](/api/artifact-runtime)) and `artifact_comments` for comments. The migration is idempotent and is applied to production by hand.
+The schema is `cmd/allternit-cloud-api/migrations_pg/085_artifacts_v2.sql`. It creates `artifacts`, `artifact_versions`, `artifact_shares` and `org_artifact_settings`, plus `artifact_storage` and `artifact_consents` (used by the [page runtime](/api/artifact-runtime)) and `artifact_comments` for comments. `086_artifact_presence.sql` adds `artifact_presence`, and `096_artifact_agent_watch.sql` adds the agent presence columns, `artifact_comments.agent_name` and `artifact_suggestions`. The migration is idempotent and is applied to production by hand.
 
 ## Navigation presentation
 

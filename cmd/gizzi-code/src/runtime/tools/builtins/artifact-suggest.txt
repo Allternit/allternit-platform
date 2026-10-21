@@ -1,0 +1,20 @@
+Suggest edits to an existing doc or sheet artifact. The changes are not applied: each one shows up for the user as a pending suggestion at the spot it changes, under your name, with Accept and Reject (and Accept all). Prefer this over artifact_update when you change content the user already has, so they can review each change.
+
+- id: the artifact id (starts with "art_"). The artifact must be a doc or a sheet.
+- base_version: the version you read (from artifact_read, artifact_create or artifact_update).
+- changes: 1 to 50 changes, applied in order when accepted. Each has a kind, its location, and an optional reason (one line the user sees, at most 500 characters).
+- task: optional short line shown on your cursor while you work, e.g. "Fixing the dates".
+
+Change kinds:
+
+1. text: replace the first occurrence of `find` in one block's plain text. `block` is the 0-based index into the doc's blocks; null searches the whole document, block by block. Keep `find` short but unique.
+   {"kind":"text","block":2,"find":"about 40%","replace":"38%","reason":"Matches the Q3 report"}
+
+2. block: replace a block, insert new blocks after it, or delete it. `markdown` becomes blocks (it can hold several paragraphs, a list or a table); delete ignores it.
+   {"kind":"block","op":"insert_after","block":4,"markdown":"## Risks\n\n- Supplier delay","reason":"The brief asked for risks"}
+   {"kind":"block","op":"delete","block":7,"reason":"Duplicate of block 3"}
+
+3. cell: set one sheet cell. `sheet` is the sheet name or id; null means the first sheet. A value starting with "=" is a formula.
+   {"kind":"cell","sheet":"Budget","address":"B4","value":"=SUM(B1:B3)","reason":"Was a typed total"}
+
+Suggestions need the user's Allternit account. When none is signed in here this tool returns an error; then use artifact_update instead. Use artifact_update as well for new content, for other artifact kinds, or when the user asked you to apply the change directly. Don't repeat the changes in your reply; tell the user you left suggestions for them to review.

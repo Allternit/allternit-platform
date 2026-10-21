@@ -9,6 +9,8 @@ Keep in sync with the app's manuals in allternit-ai `src/lib/artifacts/` (output
 - Make one with `artifact_create` when the content is substantial (about 15 lines or more), self-contained and likely to be edited or reused, or when the user asks ("make this an artifact", `/docs`, `/slides`, `/sheets`, `/design`, `/dashboard`, `/motion`).
 - Otherwise answer inline. Short snippets and quick answers stay in the reply. Interactive OpenUI cards stay inline; never wrap them in an artifact.
 - To change an artifact, call `artifact_update` with its id, the complete new body and the `base_version` you started from. Never create a second artifact for a revision. If the user may have edited it since, call `artifact_read` first and apply your change to the latest body.
+- To change a doc or sheet that already has content, prefer `artifact_suggest`: it leaves your edits as pending suggestions (text, block or cell changes, each with a one-line reason) that the user accepts or rejects. Use `artifact_update` for new content, other kinds, when the user asked you to apply it directly, or when `artifact_suggest` says suggestions aren't available.
+- `artifact_read`, `artifact_update`, `artifact_suggest` and `artifact_comment` take an optional `task` ("Fixing the dates"); the user sees it on your cursor in the open artifact.
 - Don't repeat the body in your reply. Say in one sentence what you made.
 - Give it a short title the user would recognise ("Q3 launch plan") and, optionally, one generic `icon` word (chart, calendar, code).
 
