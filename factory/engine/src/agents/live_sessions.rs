@@ -106,10 +106,22 @@ fn hooks_file() -> PathBuf {
     std::env::var_os("ALLTERNIT_HOOKS_FILE").map_or_else(|| home().join(".allternit").join("live-sessions").join("hooks.json"), PathBuf::from)
 }
 
+#[cfg(unix)]
 fn pid_alive(pid: u32) -> bool {
     // SAFETY: signal 0 only probes for existence.
     let r = unsafe { libc::kill(pid as libc::pid_t, 0) };
     r == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+}
+
+// libc is a unix-only dependency; ask tasklist instead.
+#[cfg(windows)]
+fn pid_alive(pid: u32) -> bool {
+    std::process::Command::new("tasklist")
+        .args(["/FI", &format!("PID eq {pid}"), "/NH", "/FO", "CSV"])
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .is_some_and(|out| out.contains(&format!("\"{pid}\"")))
 }
 
 fn rfc3339_ms(ms: i64) -> String {
