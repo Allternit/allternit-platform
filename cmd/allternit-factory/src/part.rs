@@ -79,6 +79,7 @@ pub fn send(
         dag_id: dag,
         idempotency_key: key,
         dry_run,
+        ..Default::default()
     };
     if dry_run {
         return match rt.block_on(send_mod::plan(&sctx, &req)) {
@@ -587,7 +588,7 @@ pub fn handoff(ctx: &Ctx, args: &[String]) -> u8 {
         note_path.display()
     );
     let sctx = SendCtx { root: root.clone(), registry: Registry::open_default(), api: ApiLink::from_env(), sender: cli_sender() };
-    let req = SendRequest { to: address.to_string(), text, queue: false, thread_id: None, node_id: None, dag_id: None, idempotency_key: None, dry_run: false };
+    let req = SendRequest { to: address.to_string(), text, queue: false, thread_id: None, node_id: None, dag_id: None, idempotency_key: None, dry_run: false, ..Default::default() };
     let mut delivery = rt.block_on(send_mod::send(&sctx, &req)).map(|d| json!(d)).unwrap_or_else(|e| json!({ "state": "failed", "detail": e.fact }));
     // A fresh pane is often still starting, so the paste lands in its
     // mailbox. Drain it (no duplicate sends) until it's delivered.
@@ -618,7 +619,7 @@ pub fn handoff(ctx: &Ctx, args: &[String]) -> u8 {
 pub(crate) fn send_quiet(ctx: &Ctx, to: &str, text: String, node: Option<String>, dag: Option<String>) -> Option<serde_json::Value> {
     let rt = runtime(ctx).ok()?;
     let sctx = SendCtx { root: ctx.root_dir(), registry: Registry::open_default(), api: ApiLink::from_env(), sender: cli_sender() };
-    let req = SendRequest { to: to.to_string(), text, queue: false, thread_id: None, node_id: node, dag_id: dag, idempotency_key: None, dry_run: false };
+    let req = SendRequest { to: to.to_string(), text, queue: false, thread_id: None, node_id: node, dag_id: dag, idempotency_key: None, dry_run: false, ..Default::default() };
     rt.block_on(send_mod::send(&sctx, &req)).ok().map(|d| json!(d))
 }
 

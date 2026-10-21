@@ -1,0 +1,28 @@
+Suggest edits to an existing doc, sheet or design canvas artifact. The changes are not applied: each one shows up for the user as a pending suggestion at the spot it changes, under your name, with Accept and Reject (and Accept all). Prefer this over artifact_update when you change content the user already has, so they can review each change.
+
+- id: the artifact id (starts with "art_"). The artifact must be a doc, a sheet, or a design canvas (application/vnd.allternit.design+json).
+- base_version: the version you read (from artifact_read, artifact_create or artifact_update).
+- changes: 1 to 50 changes, applied in order when accepted. Each has a kind, its location, and an optional reason (one line the user sees, at most 500 characters).
+- task: optional short line shown on your cursor while you work, e.g. "Fixing the dates".
+
+Change kinds:
+
+1. text: replace the first occurrence of `find` in one block's plain text. `block` is the 0-based index into the doc's blocks; null searches the whole document, block by block. Keep `find` short but unique.
+   {"kind":"text","block":2,"find":"about 40%","replace":"38%","reason":"Matches the Q3 report"}
+
+2. block: replace a block, insert new blocks after it, or delete it. `markdown` becomes blocks (it can hold several paragraphs, a list or a table); delete ignores it.
+   {"kind":"block","op":"insert_after","block":4,"markdown":"## Risks\n\n- Supplier delay","reason":"The brief asked for risks"}
+   {"kind":"block","op":"delete","block":7,"reason":"Duplicate of block 3"}
+
+3. cell: set one sheet cell. `sheet` is the sheet name or id; null means the first sheet. A value starting with "=" is a formula.
+   {"kind":"cell","sheet":"Budget","address":"B4","value":"=SUM(B1:B3)","reason":"Was a typed total"}
+
+4. artboard (design canvases only): one frame's new look. `layers` is the artboard's FULL new layer list in stacking order (bottom first), not a diff: every layer the frame keeps, changed or not, plus new ones. Keep the ids of layers you keep; give new layers new ids that no other artboard uses. Each layer is a canvas layer as in the design body ({id, type, name, x, y, w, h, props}); its `artboard` is filled in. `frame` optionally patches the artboard itself (fill, w, h, props). The tool reads the canvas and records what the frame looked like, so the user can undo it.
+   {"kind":"artboard","artboard":"shape:hero","frame":{"fill":"#0b0b0f"},"layers":[{"id":"shape:title","type":"text","name":"Title","x":96,"y":120,"w":800,"h":80,"props":{"text":"Plan your week in minutes","size":"xl","color":"white","w":800}}],"reason":"Made the eyebrow and heading dark"}
+
+   `controls` (optional, at most 12): sliders the user moves on the frame card before keeping the change. When the user is tuning something (spacing, radius, colour, density), offer 2 to 5 controls instead of guessing one value. Each control is {id, label, type, layer, prop, value}: `layer` is a layer id in this change (null = the artboard), `prop` is a key in that layer's props or x, y, w, h, and a `frame.` prefix targets the artboard's props (layer null). Types: range ({min, max, step?, value} with min < max), color ({value} like "#6366f1"), select ({options, value} with value among them). `value` is what your layers use now. Leave `layers` out for a controls-only change: the frame's current layers are used.
+   {"kind":"artboard","artboard":"shape:pricing","controls":[{"id":"radius","label":"Corner radius","type":"range","layer":"shape:card","prop":"radius","min":0,"max":32,"step":1,"value":12},{"id":"accent","label":"Accent","type":"color","layer":"shape:cta","prop":"fill","value":"#6366f1"},{"id":"density","label":"Density","type":"select","layer":null,"prop":"frame.padding","options":["compact","cozy"],"value":"cozy"}],"reason":"Pick the radius and accent you like"}
+
+   Send one artboard change per frame per turn. Claim the frame first with artifact_claim and release it with artifact_release afterwards; if another agent holds the frame this tool fails with "<frame> is being worked on by <agent>". The change shows on the canvas at once, marked "In review", and the user keeps or undoes it. If the frame changed since base_version you get an error: read the design again and rebuild that frame. Docs and sheets take only text, block and cell changes; designs take only artboard changes.
+
+Suggestions need the user's Allternit account. When none is signed in here this tool returns an error; then use artifact_update instead. Use artifact_update as well for new content, for other artifact kinds, or when the user asked you to apply the change directly. Don't repeat the changes in your reply; tell the user you left suggestions for them to review.

@@ -1,0 +1,71 @@
+---
+title: "Message a running CLI session"
+description: "How a message reaches a live Claude Code, Codex, Gemini, Cursor or Copilot session, and how every send reports whether it landed."
+---
+
+Your bots and your teammates' agents can message a CLI session that is already running. Gizzi picks the best way in that session allows and tells the sender which one it used. Nothing starts a new session, and nothing is forwarded without a receipt.
+
+## Addresses
+
+- `person/session` reaches a live CLI session, for example `eoj/allternit-claude`. `session` is `<repo-or-folder>-<harness>`, with `-2`, `-3` added when the name is taken.
+- `person/bot-handle` reaches a bot.
+- A bot whose execution binding is a Terminal is delivered into its running terminal, not into a task thread.
+
+## The three tiers
+
+Every send returns `{hopId, state, tier, note}`.
+
+| Tier | When | What the session sees |
+|---|---|---|
+| **push** | Claude Code with a messaging socket, Codex (`codex queue`), or a Factory pane that took the paste | The message arrives in the running turn |
+| **turn** | The harness has Gizzi hooks installed | The next hook (session start, prompt, after a tool call, stop) prints the message |
+| **pull** | No hooks, or the session is offline | The message waits until the session calls `check_inbox` |
+
+`state` is `delivered`, `queued`, `held`, `refused` or `failed`. `note` is one sentence, for example "pushed into the running Claude Code turn" or "queued, lands at its next tool call".
+
+Delivery tries the paths in this order: offline sessions queue; a session already waiting in `check_inbox` gets it at once; Claude Code pushes to its socket (5 s timeout); Codex pushes with `codex queue` (30 s timeout, falling back on failure); a Factory pane takes the paste when it can; a harness with hooks gets it at its next hook; everything else waits for `check_inbox`.
+
+## What the receiver reads
+
+```
+<allternit-message from="eoj/allternit-claude" agent="claude" id="hop_…" reply_to="hop_…">
+…message…
+</allternit-message>
+From Eoj's agent. Reply with send_message to "eoj/allternit-claude" if useful.
+```
+
+Text from anyone outside your own account is fenced as untrusted data before it goes in. Tags that look like `<allternit-…>` inside a body are defanged, so a message cannot fake or close its own frame.
+
+## Limits and safety
+
+- A message is at most 64 KiB.
+- A runtime sends at most 60 messages a minute. More are queued and marked "deferred", not dropped.
+- Two agents can exchange at most 12 messages in 10 minutes. The next one is held, because it is probably a loop.
+- Your peer-agent autonomy policy is checked first. A held or refused send says so in its `state`.
+
+## Turn-tier hooks
+
+When Allternit writes a pane's harness files it also installs hooks that run `gizzi hook <harness> <event>` for Codex, Gemini, Cursor and Copilot, and small plugin shims for opencode and pi. The hook prints pending mail in the JSON each harness expects and marks the messages read only after they were printed. A failed hook prints nothing and never blocks the harness.
+
+## MCP tools
+
+`gizzi team-mcp` is a stdio MCP server any client can use:
+
+- `list_team` shows live sessions (`filter`, `all` to include offline ones).
+- `send_message` takes `to`, `message` and an optional `reply_to`, and returns the receipt.
+- `check_inbox` waits up to 600 seconds for mail. It is hidden from sessions that get push.
+
+When mail is waiting, `list_team` and `send_message` results end with `[Allternit] N unread from a, b. Call check_inbox.`
+
+Add it to a client with `gizzi team-mcp` as the command.
+
+## From a bot
+
+The `message_agent` tool accepts a `person/session` address and returns the same receipt. It no longer says a message is "never forwarded into a running turn".
+
+## Where it lives
+
+- Delivery order and envelope: `factory/engine/src/agents/live_delivery.rs`
+- Hook installation: `factory/engine/src/agents/delivery.rs`
+- Hop receipts and the peer-agent check: `cmd/allternit-api/src/bot_routing.rs`
+- `gizzi hook` and `gizzi team-mcp`: `cmd/gizzi-code/src/cli/commands/hook.ts`, `team-mcp.ts`

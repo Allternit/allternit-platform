@@ -1,0 +1,13 @@
+Claim one artboard (frame) of a design canvas before you change it, so other agents working on the same canvas don't step on it. While you hold it, the user sees your name tag, cost and task on that frame, outlined in your colour.
+
+- artifact_id: the design artifact id (starts with "art_"). It must be a canvas design (application/vnd.allternit.design+json).
+- artboard: the artboard id from the design you read, e.g. "shape:hero". The tool tells you the artboard ids if it isn't one.
+- task: optional short line on your tag, e.g. "Dark restyle".
+
+You hold one frame per artifact at a time; claiming another frame releases the first. The claim stays while you keep working (your artifact tool calls and a background heartbeat keep it alive); it is let go about three minutes after your last artifact tool call on the design, and the user sees it end within a minute of that. If another agent holds the frame you get an error such as "Hero is being worked on by Oki; pick another frame or wait." Then work on another frame, or wait and try again later; don't change that frame some other way.
+
+The flow for a design canvas:
+1. artifact_read the design.
+2. artifact_claim the frame.
+3. artifact_suggest one artboard change for that frame, with a reason.
+4. artifact_release it.

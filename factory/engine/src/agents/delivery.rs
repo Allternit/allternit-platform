@@ -548,6 +548,113 @@ fn exclude_from_git(workdir: &Path, written: &[PathBuf], notes: &mut Vec<String>
 
 /// Deliver the bot into its pane. Never fails part-way silently: a field that
 /// could not be delivered is labeled and explained in `notes`.
+/// Turn-tier hooks (agent network C2 step 6): the harness runs
+/// `gizzi hook <harness> <event>` at session start, prompt submit, after a
+/// tool call and at stop, and the next hook prints the pending mail.
+/// Returns the project-relative file and its merged JSON, or `None` for a
+/// harness with no hook file (Claude rides on push and the spawn's settings).
+pub fn turn_hook_file(harness: &str, existing: Value) -> Option<(&'static str, Value)> {
+    let h = harness.trim().to_ascii_lowercase();
+    let cmd = |event: &str| format!("gizzi hook {h} {event}");
+    let ours = |c: &str| c.starts_with(&format!("gizzi hook {h} "));
+    // Claude-style groups `{matcher?, hooks: [{type, command, timeout}]}`.
+    let group_file = |path: &'static str, events: [(&str, &str, bool); 4], timeout: u64| {
+        let mut v = if existing.is_object() { existing.clone() } else { json!({}) };
+        let hooks = v.as_object_mut()?.entry("hooks").or_insert_with(|| json!({}));
+        let map = hooks.as_object_mut()?;
+        for (name, event, matcher) in events {
+            let list = map.entry(name.to_string()).or_insert_with(|| json!([]));
+            let arr = list.as_array_mut()?;
+            arr.retain(|g| !g["hooks"].as_array().is_some_and(|hs| hs.iter().any(|x| x["command"].as_str().is_some_and(&ours))));
+            let mut g = json!({ "hooks": [{ "type": "command", "command": cmd(event), "timeout": timeout }] });
+            if matcher {
+                g["matcher"] = json!("*");
+            }
+            arr.push(g);
+        }
+        Some((path, v))
+    };
+    match h.as_str() {
+        "codex" => group_file(
+            ".codex/hooks.json",
+            [("SessionStart", "session-start", true), ("UserPromptSubmit", "user-prompt-submit", false), ("PostToolUse", "post-tool-use", true), ("Stop", "stop", false)],
+            10,
+        ),
+        "gemini" => group_file(
+            ".gemini/settings.json",
+            [("SessionStart", "session-start", true), ("BeforeAgent", "user-prompt-submit", true), ("AfterTool", "post-tool-use", true), ("AfterAgent", "stop", true)],
+            10000,
+        ),
+        "cursor" => {
+            let mut v = if existing.is_object() { existing } else { json!({}) };
+            v.as_object_mut()?.entry("version").or_insert(json!(1));
+            let map = v.as_object_mut()?.entry("hooks").or_insert_with(|| json!({})).as_object_mut()?;
+            for (name, event) in [("sessionStart", "session-start"), ("beforeSubmitPrompt", "user-prompt-submit"), ("postToolUse", "post-tool-use"), ("stop", "stop")] {
+                let arr = map.entry(name.to_string()).or_insert_with(|| json!([])).as_array_mut()?;
+                arr.retain(|x| !x["command"].as_str().is_some_and(&ours));
+                arr.push(json!({ "command": cmd(event), "timeout": 10 }));
+            }
+            Some((".cursor/hooks.json", v))
+        }
+        "copilot" => {
+            let entry = |event: &str| json!([{ "type": "command", "bash": cmd(event), "timeoutSec": 10 }]);
+            Some((
+                ".github/hooks/allternit-mail.json",
+                json!({ "version": 1, "hooks": {
+                    "sessionStart": entry("session-start"),
+                    "userPromptSubmitted": entry("user-prompt-submit"),
+                    "postToolUse": entry("post-tool-use"),
+                    "agentStop": entry("stop"),
+                }}),
+            ))
+        }
+        _ => None,
+    }
+}
+
+/// opencode and pi have plugin systems, not hook files: a small shim that
+/// polls `gizzi hook <harness> poll` after each turn.
+fn turn_shim(harness: &str) -> Option<(&'static str, String)> {
+    let (path, api) = match harness.trim().to_ascii_lowercase().as_str() {
+        "opencode" => (".opencode/plugin/allternit-mail.ts", "opencode"),
+        "pi" => (".pi/extensions/allternit-mail.ts", "pi"),
+        _ => return None,
+    };
+    let text = r#"// Allternit live-session mail (managed): prints pending messages after each turn.
+import { execFileSync } from "node:child_process"
+export const poll = () => {
+  try {
+    return execFileSync("gizzi", ["hook", "__HARNESS__", "poll"], { encoding: "utf8", timeout: 10000 })
+  } catch {
+    return ""
+  }
+}
+export default { name: "allternit-mail", poll }
+"#
+    .replace("__HARNESS__", api);
+    Some((path, text))
+}
+
+fn install_turn_hooks(harness: &str, workdir: &Path, w: &mut Writer<'_>) {
+    if let Some((rel, content)) = turn_shim(harness) {
+        if let Err(e) = w.write(&workdir.join(rel), content.as_bytes()) {
+            w.notes.push(format!("turn hooks: {e:#}"));
+        }
+        return;
+    }
+    let probe = |rel: &str| read_json(&workdir.join(rel)).unwrap_or_else(|_| json!({}));
+    let Some(path) = turn_hook_path(harness) else { return };
+    let Some((rel, merged)) = turn_hook_file(harness, probe(path)) else { return };
+    match serde_json::to_string_pretty(&merged).map_err(anyhow::Error::from).and_then(|t| w.write(&workdir.join(rel), format!("{t}\n").as_bytes())) {
+        Ok(_) => w.notes.push(format!("mail: turn-tier hooks written to {rel}")),
+        Err(e) => w.notes.push(format!("turn hooks: {e:#}")),
+    }
+}
+
+fn turn_hook_path(harness: &str) -> Option<&'static str> {
+    turn_hook_file(harness, json!({})).map(|(p, _)| p)
+}
+
 pub fn deliver(req: &DeliveryRequest<'_>) -> Result<DeliveryReport> {
     let p = req.profile;
     if !super::team::valid_slug(&p.slug) {
@@ -555,15 +662,16 @@ pub fn deliver(req: &DeliveryRequest<'_>) -> Result<DeliveryReport> {
     }
     let mut fields: BTreeMap<Field, Label> = FIELDS.iter().map(|f| (*f, Label::Unavailable)).collect();
     let Some(kind) = kind_of(req.harness) else {
-        let report = DeliveryReport {
-            fields,
-            files_written: vec![],
-            argv: vec![],
-            notes: vec![format!("harness {:?} is not one Allternit can deliver into", req.harness)],
-        };
-        return Ok(report);
+        // Not a harness delivery configures, but gemini/cursor/copilot/opencode/pi
+        // still get their turn-tier mail hooks.
+        let mut w = Writer::new(p);
+        install_turn_hooks(req.harness, req.workdir, &mut w);
+        let mut notes = vec![format!("harness {:?} is not one Allternit can deliver into", req.harness)];
+        notes.append(&mut w.notes);
+        return Ok(DeliveryReport { fields, files_written: w.written, argv: vec![], notes });
     };
     let mut w = Writer::new(p);
+    install_turn_hooks(req.harness, req.workdir, &mut w);
     let mut argv = vec![];
     let dir = bot_dir(req.workdir, &p.slug);
 

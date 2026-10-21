@@ -50,6 +50,27 @@ pub struct Delivery {
     pub dag_id: Option<String>,
     pub at: String,
     pub detail: Option<String>,
+    /// C1 delivery tier: `push` | `turn` | `pull` (terminal and live sends).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tier: Option<String>,
+    /// C1: one human sentence about how it landed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+    /// The `agent_hops` row recorded for this send.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hop_id: Option<String>,
+}
+
+impl Delivery {
+    /// C1: `{hopId, state, tier, note}`. `state` is `delivered | queued | held | refused | failed`.
+    pub fn c1(&self) -> Value {
+        let state = match self.state.as_str() {
+            "verified" | "best_effort" => "delivered",
+            "read_only" => "refused",
+            s => s,
+        };
+        json!({ "hopId": self.hop_id.clone().unwrap_or_else(|| self.id.clone()), "state": state, "tier": self.tier, "note": self.note })
+    }
 }
 
 /// The `factory.delivery` event payload: the Delivery plus its send key.
@@ -84,6 +105,22 @@ pub struct SendRequest {
     pub idempotency_key: Option<String>,
     #[serde(default)]
     pub dry_run: bool,
+    /// The hop allternit-api already recorded for this send; none means
+    /// `send` records one itself through allternit-api.
+    #[serde(default)]
+    pub hop_id: Option<String>,
+    /// The hop this answers (envelope `reply_to`).
+    #[serde(default)]
+    pub reply_to: Option<String>,
+    /// Sender address shown in the envelope (`person/session`); default is the sender id.
+    #[serde(default)]
+    pub from_address: Option<String>,
+    /// Person the sender acts for ("From <person>'s agent").
+    #[serde(default)]
+    pub from_person: Option<String>,
+    /// The text is already fenced (`provenance::fence`) by the caller.
+    #[serde(default)]
+    pub fenced: bool,
 }
 
 /// A send that could not even be attempted. `code` is an API.md error code.
@@ -179,6 +216,8 @@ enum Target {
     /// A vendor bot (its execution binding says `vendor`).
     Vendor(String),
     Channel(String),
+    /// A live CLI session addressed as `person/session` (C5).
+    Live(crate::agents::live_delivery::LiveSession),
 }
 
 fn ledger(root: &Path) -> Arc<Ledger> {
@@ -230,6 +269,11 @@ async fn resolve(ctx: &SendCtx, req: &SendRequest) -> std::result::Result<Target
         }
         return Ok(Target::Channel(thread.to_string()));
     }
+    if req.to.contains('/') {
+        if let Some(session) = crate::agents::live_delivery::lookup().and_then(|l| l.find(&req.to)) {
+            return Ok(Target::Live(session));
+        }
+    }
     let agents = local_agents(&ctx.root, &ctx.registry)
         .await
         .map_err(|e| SendError::new("transport", format!("reading the agent registry: {e:#}"), "Retry; check ~/.allternit/factory."))?;
@@ -258,6 +302,7 @@ pub async fn plan(ctx: &SendCtx, req: &SendRequest) -> std::result::Result<SendP
         Target::Hosted(bot) => (bot.clone(), "session".to_string()),
         Target::Vendor(bot) => (bot.clone(), "vendor_ticket".to_string()),
         Target::Channel(thread) => (format!("channel:{thread}"), "channel".to_string()),
+        Target::Live(s) => (s.address.clone(), "live".to_string()),
     };
     let base = |extra: Option<&str>| -> Vec<String> {
         let mut r = vec!["MessageSent".to_string()];
@@ -280,6 +325,9 @@ fn validate(req: &SendRequest) -> std::result::Result<(), SendError> {
     if req.text.trim().is_empty() {
         return Err(SendError::new("usage", "send needs text", "Pass the message text."));
     }
+    if req.text.len() > crate::agents::live_delivery::MAX_BODY {
+        return Err(SendError::new("usage", "the message is over 64 KiB", "Send a shorter message, or put the detail in a file and send its path."));
+    }
     Ok(())
 }
 
@@ -298,6 +346,7 @@ pub async fn send(ctx: &SendCtx, req: &SendRequest) -> std::result::Result<Deliv
         Target::Terminal(agent) => agent.id.clone(),
         Target::Hosted(bot) | Target::Vendor(bot) => bot.clone(),
         Target::Channel(thread) => format!("channel:{thread}"),
+        Target::Live(s) => s.address.clone(),
     };
     let thread_id = thread_for(req, &to);
     let mail = mail(&ctx.root, &ctx.sender);
@@ -318,8 +367,23 @@ pub async fn send(ctx: &SendCtx, req: &SendRequest) -> std::result::Result<Deliv
         .await
         .map_err(record_err)?;
 
+    // Terminal and live sends are agent-network hops: record one through
+    // allternit-api first (its loop guard may hold it), finish it after.
+    let tracked = matches!(target, Target::Terminal(_) | Target::Live(_));
+    let mut hop_id = req.hop_id.clone();
+    let mut held: Option<String> = None;
+    if tracked && hop_id.is_none() {
+        match admit_hop(&ctx.api, &to, req).await {
+            HopAdmit::Go(id) => hop_id = Some(id),
+            HopAdmit::Held(why) => held = Some(why),
+            HopAdmit::Unrecorded => {}
+        }
+    }
+    let local_hop = hop_id.clone().unwrap_or_else(|| format!("hop_{}", uuid::Uuid::new_v4().simple()));
     let (via, state, ticket, detail) = match &target {
+        _ if held.is_some() => ("pane".into(), "held".into(), None, held.clone()),
         Target::Terminal(agent) => deliver_terminal(ctx, agent, req).await,
+        Target::Live(session) => deliver_live(ctx, session, req, &local_hop).await,
         Target::Hosted(bot) => deliver_hosted(&ctx.api, bot, req).await,
         Target::Vendor(bot) => deliver_vendor(&ctx.api, bot, req).await,
         Target::Channel(thread) => deliver_channel(&ctx.api, thread, req, &message_id).await,
@@ -336,7 +400,17 @@ pub async fn send(ctx: &SendCtx, req: &SendRequest) -> std::result::Result<Deliv
         dag_id: req.dag_id.clone(),
         at: chrono::Utc::now().to_rfc3339(),
         detail,
+        tier: None,
+        note: None,
+        hop_id: hop_id.clone(),
     };
+    let mut delivery = delivery;
+    if tracked {
+        describe(&mut delivery);
+        if let (Some(id), None) = (&hop_id, &req.hop_id) {
+            finish_hop(&ctx.api, id, &delivery).await;
+        }
+    }
     let record = DeliveryRecord {
         delivery: delivery.clone(),
         idempotency_key: req.idempotency_key.clone(),
@@ -394,6 +468,104 @@ async fn deliver_terminal(ctx: &SendCtx, agent: &Agent, req: &SendRequest) -> Ou
         ),
         Err(e) => ("pane".into(), "failed".into(), None, Some(format!("{e:#}"))),
     }
+}
+
+/// What allternit-api said about a new hop.
+enum HopAdmit {
+    Go(String),
+    Held(String),
+    /// No allternit-api link (or it failed): the send still goes, unrecorded.
+    Unrecorded,
+}
+
+/// Record the first receipt (`stored`) for a send, through allternit-api.
+async fn admit_hop(api: &ApiLink, to: &str, req: &SendRequest) -> HopAdmit {
+    let body = json!({ "to": to, "text": req.text, "idempotencyKey": req.idempotency_key, "from": req.from_address });
+    match api_call(api, reqwest::Method::POST, "/api/v1/bot-routing/hop", Some(body)).await {
+        Ok((200, v)) => match (v["hopId"].as_str(), v["held"].as_str()) {
+            (_, Some(why)) => HopAdmit::Held(why.to_string()),
+            (Some(id), _) => HopAdmit::Go(id.to_string()),
+            _ => HopAdmit::Unrecorded,
+        },
+        _ => HopAdmit::Unrecorded,
+    }
+}
+
+/// Set the hop's state and tier once the delivery is known (best effort).
+async fn finish_hop(api: &ApiLink, hop_id: &str, d: &Delivery) {
+    let state = match d.state.as_str() {
+        "verified" | "best_effort" => "delivered",
+        "queued" => "stored",
+        "read_only" => "refused",
+        s => s,
+    };
+    let body = json!({ "hopId": hop_id, "state": state, "tier": d.tier, "reason": d.note });
+    let _ = api_call(api, reqwest::Method::POST, "/api/v1/bot-routing/hop/advance", Some(body)).await;
+}
+
+/// Fill the C1 `tier` and `note` of a terminal or live Delivery.
+fn describe(d: &mut Delivery) {
+    let detail = d.detail.clone();
+    let (tier, note) = match (d.via.as_str(), d.state.as_str()) {
+        ("live_push", _) => ("push", detail.unwrap_or_else(|| "pushed into the running session".into())),
+        ("live_hook", _) => ("turn", detail.unwrap_or_else(|| "queued, lands at its next tool call".into())),
+        ("live_inbox", _) => ("pull", detail.unwrap_or_else(|| "queued, lands when it calls check_inbox".into())),
+        ("pane", "verified") => ("push", "pasted into the running pane".to_string()),
+        ("pane", "held") => ("pull", detail.unwrap_or_else(|| "held by the loop guard".into())),
+        ("pane", "failed") => ("push", detail.unwrap_or_else(|| "the pane did not take it".into())),
+        ("pane_queue", _) => ("turn", format!("queued in its mailbox, lands when the pane is free{}", detail.map(|x| format!(" ({x})")).unwrap_or_default())),
+        _ => return,
+    };
+    d.tier = Some(tier.to_string());
+    d.note = Some(note);
+}
+
+/// Deliver to a live CLI session (C2/C3/C4).
+async fn deliver_live(ctx: &SendCtx, session: &crate::agents::live_delivery::LiveSession, req: &SendRequest, hop_id: &str) -> Outcome {
+    use crate::agents::live_delivery as live;
+    let from = req.from_address.clone().unwrap_or_else(|| ctx.sender.clone());
+    let person = req.from_person.clone().unwrap_or_else(|| from.split('/').next().unwrap_or(&from).to_string());
+    let body = if req.fenced { req.text.clone() } else { req.text.trim().to_string() };
+    let envelope = live::envelope(&live::EnvelopeIn {
+        from: &from,
+        agent: &session.harness,
+        hop_id,
+        reply_to: req.reply_to.as_deref(),
+        person: &person,
+        body: &body,
+    });
+    let deferred = !live::take_rate_slot();
+    let outcome = match live::deliver(session, hop_id, &from, &envelope, deferred).await {
+        live::Attempt::Done(o) => o,
+        live::Attempt::Pane { push_failed } => {
+            // A Factory pane with no push path: the pane path, push when verified, turn when queued.
+            let agents = local_agents(&ctx.root, &ctx.registry).await.unwrap_or_default();
+            let pane_agent = agents.iter().find(|a| session.pane_id.as_deref().is_some_and(|p| a.pane.as_ref().is_some_and(|r| r.id == p)) || a.slug == session.name);
+            let Some(agent) = pane_agent else {
+                return ("live_inbox".into(), "failed".into(), None, Some(format!("no pane for {}", session.address)));
+            };
+            let paste = SendRequest { text: envelope.clone(), ..req.clone() };
+            let (_, state, _, detail) = deliver_terminal(ctx, agent, &paste).await;
+            let lead = if push_failed { "push_failed; " } else { "" };
+            return match state.as_str() {
+                "verified" => ("live_push".into(), "verified".into(), None, Some(format!("{lead}pasted into {}'s pane", session.name))),
+                "queued" => ("live_hook".into(), "queued".into(), None, Some(format!("{lead}queued in {}'s pane mailbox, lands when the pane is free", session.name))),
+                _ => ("live_push".into(), "failed".into(), None, detail),
+            };
+        }
+    };
+    let via = match outcome.tier {
+        "push" => "live_push",
+        "turn" => "live_hook",
+        _ => "live_inbox",
+    };
+    let state = match outcome.state {
+        "delivered" if outcome.tier == "push" => "verified",
+        "delivered" => "verified",
+        "queued" => "queued",
+        _ => "failed",
+    };
+    (via.into(), state.into(), None, Some(outcome.note))
 }
 
 fn client() -> reqwest::Client {

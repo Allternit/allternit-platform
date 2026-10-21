@@ -1163,7 +1163,7 @@
       "label": "Artifact tools for every model (Artifacts v2)",
       "product": "product:gizzi-code",
       "status": "building",
-      "description": "artifact_create / artifact_update / artifact_read built into gizzi-code for every model, and for CLI agents over the session MCP bridge. They save to cloud-api /api/v2/artifacts with the session's credential; without one, the result carries the full payload with persisted:false and the app saves it under the same id.",
+      "description": "artifact_create / artifact_update / artifact_read (plus artifact_suggest, list, comment, share, delete, storage) built into gizzi-code for every model, and for CLI agents over the session MCP bridge. They save to cloud-api /api/v2/artifacts with the session's credential; without one, the result carries the full payload with persisted:false and the app saves it under the same id.",
       "touches": [
         "allternit/cmd/gizzi-code/src/runtime/tools",
         "allternit/cmd/gizzi-code/src/runtime/integrations",
@@ -1178,6 +1178,70 @@
       "evidence": [
         "allternit/docs/design/artifacts-v2.md",
         "allternit/surfaces/docs/tools/artifact-tools.mdx"
+      ]
+    },
+    {
+      "id": "feature:artifact-agent-watch",
+      "label": "Watch your agents work (agent presence, cursors, suggestions)",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "Doc and sheet artifacts show the agents working in them on Desktop, the ai.allternit.com phone layout and the m.allternit.com PWA: agent avatars in the header presence stack with an \"N here\" count and the agents' running cost, a labelled cursor on the block or cell an agent works on (name, cost, task), agent edits as pending suggestions with Accept / Reject and \"N suggestions · $X · Accept all\", agent comments under the agent's name, and live reload when an agent saves. gizzi's artifact_suggest posts the suggestions (text, block and cell change shapes) and artifact_read / artifact_update / artifact_suggest / artifact_comment send best-effort agent presence heartbeats with the bot or agent name, a task line, the anchor and the session cost. cloud-api stores agent presence rows, comment agent_name and artifact_suggestions (migration 096); the app applies accepted changes and saves the version, the server never rewrites bodies. In the Cowork Docs pane agent edits become tracked changes under the agent's name.",
+      "touches": [
+        "allternit/cmd/gizzi-code/src/runtime/tools",
+        "allternit/cmd/gizzi-code/src/runtime/integrations",
+        "allternit/cmd/allternit-cloud-api/src/routes/artifacts_*",
+        "allternit-ai/src/lib/artifacts",
+        "allternit-ai/src/components/artifacts",
+        "allternit-ai/src/views/cowork"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-20",
+          "note": "Eoj: reuse what exists and add it in the right parts (idea from the affectUI demo). Agent edits to existing doc/sheet content are suggestions, not direct writes; artifact_update stays for new content, other kinds, or when the user asked to apply directly. Accepting is the client's job (apply, save a version, PATCH accepted; a change that no longer applies is marked stale). Agent presence needs edit access and uses user_id agent:<session>:<slug>. Heartbeats are fire and forget with a 2.5 s timeout and never fail the tool; agent name = the bot the turn runs as, else the gizzi bot whose canonical chat it is, else Gizzi; cost = SessionUsage session total, left out when nothing was metered."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/artifact-collaboration.mdx",
+        "allternit/surfaces/docs/tools/artifact-tools.mdx",
+        "allternit/surfaces/docs/api/artifacts-v2.mdx",
+        "allternit/cmd/gizzi-code/src/runtime/tools/builtins/artifact.ts",
+        "allternit/cmd/gizzi-code/src/runtime/integrations/artifacts/index.ts"
+      ]
+    },
+    {
+      "id": "feature:agents-on-one-canvas",
+      "label": "Agents on one canvas (frame claims, Keep / Undo per frame, activity rail, Split to bots, comment pins, controls, Build this)",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "Several agents (Gizzi or any of the user's bots) restyle frames of one Design canvas at the same time, on Desktop, the ai.allternit.com phone layout and the m.allternit.com PWA. Each agent claims an artboard before it edits (a claim is an agent presence heartbeat whose anchor is {artboard}; another live agent session gets 409 artboard_claimed naming the holder) and shows as a name tag with cost and task on that frame. Each agent turn on a frame lands as one pending artboard suggestion (the frame's full new layer list plus before); the canvas shows the after state In review, Keep saves a version and Undo restores before, with a 24 h Undo on Done rows. An activity rail (In review / Doing / Done) and a frame card (Before/After wipe, Keep, Undo, follow-up to the agent) sit on the canvas; Split to bots turns selected frames into Delegate tasks. Phones view and review only. gizzi: artifact_claim / artifact_release, artifact_suggest takes an artboard change and fills before from the canvas, heartbeats carry the held frame, artifact_update refuses a design with other sessions' pending frame changes. cloud-api: suggestions accept design canvases with the artboard kind (2 MB / 2000 layer caps, unknown_artboard, layer_id_in_use), no new table. Claims hold when an org turns presence off (agent claim rows are still written and checked; GET /presence hides them). Phase 2 (Claude Design parity): numbered comment pins on frames and layers (element anchors {kind:element, shapeId, artboard, label}, a Comment tool, agents pin questions with artifact_comment artboard/anchor, agent anchors capped at 4 KB); generated sliders on artboard changes (controls: range/color/select, at most 12 and 64 KB, 400 bad_controls; the frame card applies them live and Keep records the final values in the version meta); Build this turns one frame into a Code mode session (prompt, layer JSON, PNG, design system) through the existing Code mode session path.",
+      "touches": [
+        "allternit/cmd/allternit-cloud-api/src/routes/artifacts_*",
+        "allternit/cmd/gizzi-code/src/runtime/tools",
+        "allternit/cmd/gizzi-code/src/runtime/integrations",
+        "allternit/cmd/gizzi-code/src/runtime/skills",
+        "allternit-ai/src/lib/artifacts",
+        "allternit-ai/src/components/artifacts",
+        "allternit-ai/src/components/design",
+        "allternit-ai/src/lib/agents",
+        "allternit-ai/src/views/code"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-20",
+          "note": "Eoj said go to the Agents on one canvas page (idea from Kaptea). It lives in the existing Design canvas (DesignTldrawCanvas); the agents are any of the user's bots, picked per frame through Delegate; it builds on agent-watch (presence, cost, suggestions, agent identity), no parallel system and no new table. Claims ride on agent presence (45 s TTL, one frame per agent session); artboard changes carry the full layer list plus before and are applied client side; ids use tldraw's shape: prefix and the server compares them without it. Order: agent-watch merges first, then Phase 1, then Phase 2. Split is desktop only in Phase 1."
+        },
+        {
+          "on": "2026-10-20",
+          "note": "Phase 2 (SPEC-agent-canvas-phase2-2026-10-20): comment pins reuse the existing comments route and its opaque anchor (16 KB for people, 4 KB for an agent's anchored comment; element anchors check shapeId/artboard/label are short strings); controls ride on the artboard change JSON (no new column) and the server only validates them; Build this uses the existing Code mode session start path, not a second one. Also fixed a Phase 1 gap: with presence turned off by the org, the presence POST was a no-op, so frame claims stopped working; claims are now enforced regardless and hidden from GET while presence is off."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/design-canvas-agents.mdx",
+        "allternit/surfaces/docs/api/artifacts-v2.mdx",
+        "allternit/surfaces/docs/tools/artifact-tools.mdx",
+        "allternit/cmd/allternit-cloud-api/src/routes/artifacts_suggestions.rs",
+        "allternit/cmd/allternit-cloud-api/src/routes/artifacts_comments.rs",
+        "allternit/cmd/gizzi-code/src/runtime/tools/builtins/artifact.ts"
       ]
     },
     {
@@ -1921,6 +1985,88 @@
       ]
     },
     {
+      "id": "feature:live-sessions",
+      "label": "Live agent sessions and inferred doing status",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "Discovers every live CLI agent session on a computer (Claude Code session files, the Codex thread index, Factory panes, Gizzi hook runs) and reads a no-token 'doing' line from each session's own transcript and task files. Sessions ride the runtime presence heartbeat; `GET /api/v1/live-sessions` and `gizzi agents sessions` list them.",
+      "touches": [
+        "allternit/factory/engine",
+        "allternit/cmd/allternit-api",
+        "allternit/cmd/gizzi-code/src/cli"
+      ],
+      "decisions": [],
+      "evidence": [
+        "allternit/factory/engine/src/agents/live_sessions.rs",
+        "allternit/cmd/allternit-api/src/netops/presence.rs",
+        "allternit/cmd/gizzi-code/src/cli/commands/factory/agents.ts"
+      ]
+    },
+    {
+      "id": "feature:live-session-delivery",
+      "label": "Messages into running CLI sessions (push/turn/pull)",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "Bot and teammate messages land in a running Claude Code session through its messaging socket, in Codex through `codex queue`, in Factory panes through the pane send path, at the next hook for Codex/Gemini/Cursor/Copilot (`gizzi hook`), or through the MCP `check_inbox` long-poll. Every send reports delivered/queued/held/refused plus its tier and is recorded as an agent hop. Ported in part from Reason Network (Apache-2.0).",
+      "touches": [
+        "allternit/factory/engine",
+        "allternit/cmd/allternit-api",
+        "allternit/cmd/gizzi-code/src/cli",
+        "allternit/cmd/gizzi-code/src/runtime/tools"
+      ],
+      "decisions": [],
+      "evidence": [
+        "allternit/factory/engine/src/agents/live_delivery.rs",
+        "allternit/factory/engine/src/agents/delivery.rs",
+        "allternit/factory/engine/src/orchestration/send.rs",
+        "allternit/cmd/allternit-api/src/bot_routing.rs",
+        "allternit/cmd/gizzi-code/src/cli/commands/hook.ts",
+        "allternit/cmd/gizzi-code/src/runtime/live",
+        "allternit/cmd/gizzi-code/src/runtime/tools/builtins/message-agent.ts"
+      ]
+    },
+    {
+      "id": "feature:team-roster",
+      "label": "Team roster of teammates' live sessions",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "People in the caller's Clerk organization, their computers and their live sessions and bots, with status, doing line, tier and unread/held counts, on Desktop, the ai.allternit.com phone layout and the m PWA (Bots launchpad), plus `gizzi team`. Sending relays signed through the cloud to the teammate's runtime.",
+      "touches": [
+        "allternit/cmd/allternit-cloud-api",
+        "allternit-ai/src/views/bots",
+        "allternit/cmd/gizzi-code/src/cli"
+      ],
+      "decisions": [],
+      "evidence": [
+        "allternit/cmd/allternit-cloud-api/src/routes/team.rs",
+        "allternit/cmd/allternit-cloud-api/src/routes/runtime_presence.rs",
+        "allternit-ai/src/views/team",
+        "allternit/cmd/gizzi-code/src/cli/commands/team.ts"
+      ]
+    },
+    {
+      "id": "feature:a2a-public-edge",
+      "label": "A2A v1.0 public edge, contacts and peer-agent policy",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "Bots can opt in to a signed A2A v1.0 Agent Card at the cloud edge. Outside agents call SendMessage/GetTask/CancelTask; teammates are accepted, contacts are held for approval in the needs-you inbox (peer_held), strangers are refused. Contacts are added by card URL and their card hash is pinned.",
+      "touches": [
+        "allternit/cmd/allternit-cloud-api",
+        "allternit/cmd/allternit-api",
+        "allternit-ai/src/components/inbox",
+        "allternit-ai/src/lib/inbox"
+      ],
+      "decisions": [],
+      "evidence": [
+        "allternit/cmd/allternit-cloud-api/src/routes/a2a_edge.rs",
+        "allternit/cmd/allternit-api/src/a2a_routes.rs",
+        "allternit/cmd/allternit-api/src/autonomy.rs",
+        "allternit/cmd/allternit-api/src/inbox_needs.rs",
+        "allternit-ai/src/components/bot-phone/A2aReach.tsx",
+        "allternit-ai/src/components/inbox/InboxPanel.tsx"
+      ]
+    },
+    {
       "id": "feature:agent-avatar-cursor",
       "label": "Bot avatar rides the agent cursor",
       "product": "product:computer-use",
@@ -1959,6 +2105,37 @@
     }
   ],
   "journeys": [
+    {
+      "id": "journey:agents-on-one-canvas",
+      "label": "Several agents restyle one design canvas",
+      "description": "From asking bots to restyle frames to keeping, tuning or undoing each frame's change.",
+      "steps": [
+        {
+          "at": "allternit-ai/src/components/design",
+          "says": "On the Design canvas you split frames to bots (or ask one agent); each agent's tag sits on its frame."
+        },
+        {
+          "at": "allternit/cmd/gizzi-code/src/runtime/tools",
+          "says": "Each agent reads the design, claims its frame with artifact_claim, and sends one artboard change (optionally with controls) with artifact_suggest, or pins a question with artifact_comment."
+        },
+        {
+          "at": "allternit/cmd/allternit-cloud-api/src/routes/artifacts_*",
+          "says": "The cloud refuses a frame another live agent holds (409 artboard_claimed), validates the change and its controls, and stores it pending."
+        },
+        {
+          "at": "allternit-ai/src/lib/artifacts",
+          "says": "The app shows the after state In review; you move the controls, then Keep saves a version or Undo restores the frame."
+        },
+        {
+          "at": "allternit-ai/src/views/code",
+          "says": "Build this on one frame starts a Code mode session with the frame's layers and a picture of it."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/design-canvas-agents.mdx",
+        "allternit/surfaces/docs/api/artifacts-v2.mdx"
+      ]
+    },
     {
       "id": "journey:live-data-card",
       "label": "Answer with a live data card",
@@ -2302,6 +2479,33 @@
       ],
       "evidence": [
         "allternit/surfaces/docs/surfaces/platform-console-onboarding.mdx"
+      ]
+    },
+    {
+      "id": "journey:agents-restyle-frames",
+      "label": "Several bots restyle frames of one design, the user keeps or undoes each",
+      "description": "From selecting frames on a Design canvas to keeping or undoing each bot's frame change.",
+      "steps": [
+        {
+          "at": "allternit-ai/src/components/design",
+          "says": "The user selects frames and picks Split to bots: one Delegate task per frame, assigned to a bot or Auto."
+        },
+        {
+          "at": "allternit/cmd/gizzi-code/src/runtime/tools",
+          "says": "Each bot reads the design, artifact_claim claims its frame through agent presence, artifact_suggest posts one artboard change with before filled from the canvas, then artifact_release."
+        },
+        {
+          "at": "allternit/cmd/allternit-cloud-api/src/routes/artifacts_*",
+          "says": "Presence and suggestions refuse a frame another live agent session holds (409 artboard_claimed) and store the pending artboard change."
+        },
+        {
+          "at": "allternit-ai/src/lib/artifacts",
+          "says": "The canvas shows each pending change In review with the agent's tag; Keep saves a version and marks it accepted, Undo restores before and marks it rejected."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/design-canvas-agents.mdx",
+        "allternit/surfaces/docs/tools/artifact-tools.mdx"
       ]
     }
   ]
