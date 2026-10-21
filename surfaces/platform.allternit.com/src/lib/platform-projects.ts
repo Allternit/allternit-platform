@@ -55,6 +55,7 @@ export const PROJECT_KEY_SCOPES: { value: string; label: string; hint: string }[
   { value: "usage", label: "Usage", hint: "Usage reports" },
   { value: "inference", label: "Inference", hint: "/v1/chat/completions" },
   { value: "computers", label: "Computers", hint: "Hosted computers and the computer/browser toolsets" },
+  { value: "phones", label: "Phones", hint: "Your linked phones: tools, tasks, skills and run history" },
 ];
 
 /** True when the deployment has the Platform API switched off. */
