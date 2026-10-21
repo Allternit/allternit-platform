@@ -1,4 +1,4 @@
--- 098_registered_phones_runtime.sql
+-- 100_registered_phones_runtime.sql
 --
 -- Platform API /v1/phones: which runtime device (the Desktop whose phone-link
 -- session serves the phone) a registered phone was last seen on, so a
