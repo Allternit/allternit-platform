@@ -30,6 +30,7 @@ export namespace Artifacts {
     slides: ["application/vnd.allternit.slides+json"],
     design: ["application/vnd.allternit.design+json", "text/html"],
     dashboard: ["application/vnd.allternit.dashboard+json", "application/vnd.allternit.openui"],
+    ops: ["application/vnd.allternit.ops+json"],
     motion: ["application/vnd.allternit.motion+json"],
     page: ["text/html", "text/markdown"],
     card: ["application/vnd.allternit.openui"],
@@ -137,6 +138,12 @@ export namespace Artifacts {
       const scenes = (JSON.parse(body) as { scenes?: unknown })?.scenes
       if (!Array.isArray(scenes) || scenes.length === 0) {
         return `A motion body needs a non-empty "scenes" array: {"scenes":[{"type","title","duration","props"}]}. Use the format described in the system prompt.`
+      }
+    }
+    if (kind === "ops") {
+      const tabs = (JSON.parse(body) as { tabs?: unknown })?.tabs
+      if (!Array.isArray(tabs) || tabs.length === 0) {
+        return `An ops sheet body needs a non-empty "tabs" array: {"header":{...},"actions":[...],"tabs":[{"id","label","panels":[...]}]}. Use the format described in the system prompt under "Ops sheets".`
       }
     }
     if (bodyFormat === "text/uri-list" && !/^\S+:\/\/\S+|^\//m.test(body.trim())) {

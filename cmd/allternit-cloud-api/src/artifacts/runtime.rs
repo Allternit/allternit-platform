@@ -185,9 +185,10 @@ pub fn allowed(subject: &RuntimeSubject<'_>, org: Option<&OrgSettings>) -> Allow
     // source documents in artifact storage; they don't run page apps, AI or
     // viewer connectors.
     let craft_store = matches!(subject.kind, "image" | "video");
-    // Dashboards run on the viewer's own connectors (and nothing else), so
-    // they share the connectors capability and its consent, not storage or AI.
-    let dashboard = subject.kind == "dashboard";
+    // Dashboards and ops sheets run on the viewer's own connectors (and
+    // nothing else), so they share the connectors capability and its
+    // consent, not storage or AI.
+    let dashboard = matches!(subject.kind, "dashboard" | "ops");
     let common: Result<(), Denied> = if subject.runtime_version < 2 {
         Err(Denied::LegacyArtifact)
     } else if org.is_some_and(|o| !o.enabled) {
@@ -345,11 +346,13 @@ mod tests {
     fn dashboards_use_connectors_only() {
         let caps = json!({"storage": true, "ai": true, "connectors": [{"connector": "stripe", "tools": ["list"]}]});
         let mut s = subject(&caps, "member", Some("org_a"));
-        s.kind = "dashboard";
-        let a = allowed(&s, Some(&OrgSettings::default()));
-        assert_eq!(a.storage, Err(Denied::NotStorageKind));
-        assert_eq!(a.ai, Err(Denied::NotAPage));
-        assert_eq!(a.connectors, Ok(()));
+        for kind in ["dashboard", "ops"] {
+            s.kind = kind;
+            let a = allowed(&s, Some(&OrgSettings::default()));
+            assert_eq!(a.storage, Err(Denied::NotStorageKind), "{kind}");
+            assert_eq!(a.ai, Err(Denied::NotAPage), "{kind}");
+            assert_eq!(a.connectors, Ok(()), "{kind}");
+        }
         let none = json!({});
         s.capabilities = &none;
         assert_eq!(allowed(&s, None).connectors, Err(Denied::NotDeclared));
