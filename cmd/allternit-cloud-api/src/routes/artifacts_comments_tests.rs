@@ -355,3 +355,96 @@ async fn artboard_claims_conflict_release_and_expire() {
     let (st, _) = call(&router, "POST", &path, &owner, Some(beat("ses_oki", "Oki", json!({"artboard": 7})))).await;
     assert_eq!(st, StatusCode::BAD_REQUEST);
 }
+
+#[tokio::test]
+async fn artboard_claims_hold_with_presence_off() {
+    let (router, db) = setup().await;
+    let owner = who("off_owner", Some("org_off"));
+    let teammate = who("off_mate", Some("org_off"));
+    let id = make(&router, &owner, "design").await;
+    call(&router, "PUT", &format!("/api/v2/artifacts/{id}/sharing"), &owner,
+        Some(json!({"visibility":"org","shares":[]}))).await;
+    sqlx::query("INSERT INTO org_artifact_settings (org_id, presence) VALUES ('org_off', false) \
+                 ON CONFLICT (org_id) DO UPDATE SET presence = false")
+        .execute(&db).await.unwrap();
+    let path = format!("/api/v2/artifacts/{id}/presence");
+    let beat = |session: &str, name: &str, anchor: Value| {
+        json!({"state":"editing","agent":{"name":name,"session_id":session,"task":"Dark restyle","anchor":anchor}})
+    };
+    let hero = json!({"kind":"artboard","artboard":"shape:hero"});
+    let rows = |db: PgPool| async move {
+        let r: Vec<(String,)> = sqlx::query_as("SELECT user_id FROM artifact_presence ORDER BY user_id")
+            .fetch_all(&db).await.unwrap();
+        r.into_iter().map(|(u,)| u).collect::<Vec<_>>()
+    };
+
+    // Oki's claim is recorded and enforced; a second session gets 409.
+    let (st, _) = call(&router, "POST", &path, &owner, Some(beat("ses_oki", "Oki", hero.clone()))).await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+    let (st, body) = call(&router, "POST", &path, &owner, Some(beat("ses_ash", "Ash", json!({"artboard":"hero"})))).await;
+    assert_eq!(st, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["holder"], json!({"name": "Oki", "session_id": "ses_oki"}));
+
+    // GET hides the claim row while presence is off.
+    let (st, seen) = call(&router, "GET", &path, &teammate, None).await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(seen, json!({"enabled": false, "users": []}));
+
+    // Only claim rows are kept: a person's heartbeat and an agent heartbeat
+    // that claims nothing record nothing.
+    call(&router, "POST", &path, &teammate, Some(json!({"state":"viewing"}))).await;
+    call(&router, "POST", &path, &owner, Some(beat("ses_bo", "Bo", json!({"kind":"block","block":1})))).await;
+    assert_eq!(rows(db.clone()).await, vec!["agent:ses_oki:oki".to_string()]);
+
+    // The suggestions route sees the claim too (it reads the same rows).
+    let holder = artboard_holder(&db, &id, "hero", Some("ses_ash"), "agent:ses_ash:ash").await.unwrap();
+    assert_eq!(holder, Some((Some("Oki".to_string()), Some("ses_oki".to_string()))));
+
+    // A heartbeat without the frame releases it, and Ash can take it.
+    let (st, _) = call(&router, "POST", &path, &owner, Some(beat("ses_oki", "Oki", Value::Null))).await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+    assert!(rows(db.clone()).await.is_empty());
+    let (st, _) = call(&router, "POST", &path, &owner, Some(beat("ses_ash", "Ash", hero))).await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+    // state: left releases too.
+    call(&router, "POST", &path, &owner, Some(json!({"state":"left","agent":{"name":"Ash","session_id":"ses_ash"}}))).await;
+    assert!(rows(db.clone()).await.is_empty());
+}
+
+#[test]
+fn design_pin_anchors() {
+    // A Design canvas pin keeps every field as sent.
+    let pin = json!({"kind":"element","shapeId":"shape:hero","artboard":"shape:hero","label":"Hero","extra":{"zoom":1}});
+    assert!(validate_anchor(&pin).is_ok());
+    assert!(validate_agent_comment_anchor(&pin).is_ok());
+    assert!(validate_anchor(&json!({"kind":"element","shapeId":7})).is_err());
+    assert!(validate_anchor(&json!({"kind":"element","shapeId":"x".repeat(201)})).is_err());
+    assert!(validate_anchor(&json!({"kind":"element","artboard":["hero"]})).is_err());
+    // People's anchors go to 16 KB; an agent's to 4 KB.
+    let big = json!({"kind":"element","shapeId":"shape:hero","text":"x".repeat(5000)});
+    assert!(validate_anchor(&big).is_ok());
+    assert!(validate_agent_comment_anchor(&big).is_err());
+}
+
+#[tokio::test]
+async fn agent_pins_a_question_to_a_frame() {
+    let (router, _db) = setup().await;
+    let owner = who("pin_owner", None);
+    let id = make(&router, &owner, "design").await;
+    let base = format!("/api/v2/artifacts/{id}/comments");
+    let anchor = json!({"kind":"element","shapeId":"shape:hero","artboard":"shape:hero","label":"Hero","note":{"any":"json"}});
+    let (st, c) = call(&router, "POST", &base, &owner,
+        Some(json!({"body":"Dark or light for the hero?","agent_name":"Oki","anchor":anchor}))).await;
+    assert_eq!(st, StatusCode::CREATED, "{c}");
+    assert_eq!(c["author_name"], "Oki");
+    assert_eq!(c["anchor"], anchor, "the anchor is stored as sent");
+    // A reply inherits the pin.
+    let (_, reply) = call(&router, "POST", &base, &owner, Some(json!({"body":"Dark","parent_id":c["id"]}))).await;
+    assert_eq!(reply["anchor"]["shapeId"], "shape:hero");
+    // An agent's anchor over 4 KB is refused; a person's is not.
+    let big = json!({"kind":"element","shapeId":"shape:hero","text":"x".repeat(5000)});
+    let (st, _) = call(&router, "POST", &base, &owner, Some(json!({"body":"q","agent_name":"Oki","anchor":big}))).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+    let (st, _) = call(&router, "POST", &base, &owner, Some(json!({"body":"q","anchor":big}))).await;
+    assert_eq!(st, StatusCode::CREATED);
+}

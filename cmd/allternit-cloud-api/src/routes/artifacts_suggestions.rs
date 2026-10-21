@@ -14,13 +14,18 @@
 //! * `{"kind":"block","op":"replace"|"insert_after"|"delete","block":<int>,"markdown":".."}`
 //! * `{"kind":"cell","sheet":<string|null>,"address":"B4","value":".."}`
 //! * `{"kind":"artboard","artboard":"<id>","name":"Hero","frame":{fill,props,w,h}?,
-//!    "layers":[CanvasLayer..],"before":{"frame":{..}?,"layers":[CanvasLayer..]}}`:
+//!    "layers":[CanvasLayer..],"before":{"frame":{..}?,"layers":[CanvasLayer..]},
+//!    "controls":[Control..]?}`:
 //!   one agent turn on one artboard of a design canvas
 //!   (`application/vnd.allternit.design+json`). `layers` is the artboard's full
 //!   new layer list and `before` what it replaces; the client shows the after
 //!   state "In review" and Keep / Undo resolves it. Refused with 409
 //!   `artboard_claimed` while another live agent session holds the artboard
-//!   (see the presence claims in artifacts_comments.rs).
+//!   (see the presence claims in artifacts_comments.rs). An artboard change
+//!   may also carry `controls` (Phase 2, SPEC-agent-canvas-phase2-2026-10-20):
+//!   up to 12 generated sliders (range, color, select) that each point at one
+//!   layer prop or artboard prop, so the user tunes the value instead of the
+//!   agent guessing it (`validate_controls`, 400 `bad_controls`).
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -54,6 +59,11 @@ pub(crate) const MAX_ID_CHARS: usize = 200;
 pub(crate) const MAX_ARTBOARD_JSON_BYTES: usize = 2 * 1024 * 1024;
 pub(crate) const MAX_ARTBOARD_LAYERS: usize = 2000;
 const MAX_FRAME_SIDE: f64 = 100_000.0;
+/// Generated sliders on one artboard change (`controls`).
+pub(crate) const MAX_CONTROLS: usize = 12;
+pub(crate) const MAX_CONTROLS_JSON_BYTES: usize = 64 * 1024;
+const MAX_CONTROL_ID_CHARS: usize = 64;
+const MAX_CONTROL_OPTIONS: usize = 50;
 const DESIGN_FORMAT: &str = "application/vnd.allternit.design+json";
 const MAX_RESOLVE_IDS: usize = 500;
 const LIST_CAP: i64 = 500;
@@ -215,6 +225,145 @@ fn validate_layers(value: Option<&Value>, artboard: &str, what: &str) -> Result<
     Ok(layers.clone())
 }
 
+fn bad_controls(message: impl Into<String>) -> ArtifactError {
+    ArtifactError::coded(StatusCode::BAD_REQUEST, "bad_controls", message)
+}
+
+fn finite(value: Option<&Value>) -> Option<f64> {
+    value.and_then(Value::as_f64).filter(|n| n.is_finite())
+}
+
+/// Generated sliders on an artboard change (SPEC-agent-canvas-phase2 §2): at
+/// most 12 controls and 64 KB of JSON. Each is
+/// `{id, label, type: range|color|select, layer: <layer id>|null, prop, value, ..}`:
+/// * `layer` names a layer in the change's `layers`, or null for the artboard;
+/// * `prop` is a key in that layer's `props`, or `x`/`y`/`w`/`h`; a `frame.`
+///   prefix targets the artboard's props (and needs `layer: null`);
+/// * a range has finite `min < max`, `step > 0` and a `value` in range; a
+///   colour has a string `value`; a select has 1–50 string `options` and a
+///   `value` among them.
+///
+/// Returned normalised (unknown fields dropped); any problem is 400 `bad_controls`.
+pub(crate) fn validate_controls(value: &Value, layers: &[Value]) -> Result<Value> {
+    let Value::Array(controls) = value else {
+        return Err(bad_controls("change.controls must be an array of controls"));
+    };
+    if controls.len() > MAX_CONTROLS {
+        return Err(bad_controls(format!("change.controls holds at most {MAX_CONTROLS} controls")));
+    }
+    if value.to_string().len() > MAX_CONTROLS_JSON_BYTES {
+        return Err(bad_controls("change.controls is limited to 64 KB of JSON"));
+    }
+    let layer_ids: HashSet<&str> = layers
+        .iter()
+        .filter_map(|l| l.get("id").and_then(Value::as_str).map(bare_id))
+        .collect();
+    let mut seen = HashSet::new();
+    let mut out = Vec::with_capacity(controls.len());
+    for (i, control) in controls.iter().enumerate() {
+        let what = format!("change.controls[{i}]");
+        let Some(map) = control.as_object() else {
+            return Err(bad_controls(format!("{what} must be an object")));
+        };
+        let text = |key: &str, max: usize| -> Result<String> {
+            match map.get(key).and_then(Value::as_str).map(str::trim) {
+                Some(s) if !s.is_empty() && s.chars().count() <= max => Ok(s.to_string()),
+                _ => Err(bad_controls(format!("{what}.{key} must be a non-empty string of at most {max} characters"))),
+            }
+        };
+        let id = text("id", MAX_CONTROL_ID_CHARS)?;
+        if !seen.insert(id.clone()) {
+            return Err(bad_controls(format!("change.controls uses the id {id} twice")));
+        }
+        let label = text("label", MAX_ID_CHARS)?;
+        let prop = text("prop", MAX_ID_CHARS)?;
+        let layer = match map.get("layer") {
+            None | Some(Value::Null) => Value::Null,
+            Some(Value::String(l)) if layer_ids.contains(bare_id(l.trim())) => json!(l.trim()),
+            Some(_) => {
+                return Err(bad_controls(format!(
+                    "{what}.layer must be the id of a layer in change.layers, or null for the artboard"
+                )))
+            }
+        };
+        if let Some(frame_prop) = prop.strip_prefix("frame.") {
+            if frame_prop.is_empty() {
+                return Err(bad_controls(format!("{what}.prop needs a key after frame.")));
+            }
+            if !layer.is_null() {
+                return Err(bad_controls(format!("{what}: a frame. prop targets the artboard, so layer must be null")));
+            }
+        }
+        let mut c = Map::new();
+        c.insert("id".into(), json!(id));
+        c.insert("label".into(), json!(label));
+        c.insert("layer".into(), layer);
+        c.insert("prop".into(), json!(prop));
+        match map.get("type").and_then(Value::as_str).unwrap_or_default() {
+            "range" => {
+                let (Some(min), Some(max)) = (finite(map.get("min")), finite(map.get("max"))) else {
+                    return Err(bad_controls(format!("{what}: a range needs numbers min and max")));
+                };
+                if min >= max {
+                    return Err(bad_controls(format!("{what}: min must be less than max")));
+                }
+                let step = match map.get("step") {
+                    None | Some(Value::Null) => None,
+                    Some(s) => match finite(Some(s)) {
+                        Some(n) if n > 0.0 && n <= max - min => Some(n),
+                        _ => return Err(bad_controls(format!("{what}.step must be a positive number no larger than max - min"))),
+                    },
+                };
+                if !finite(map.get("value")).is_some_and(|v| v >= min && v <= max) {
+                    return Err(bad_controls(format!("{what}.value must be a number from min to max")));
+                }
+                // Numbers are kept as sent (an integer stays an integer).
+                c.insert("type".into(), json!("range"));
+                c.insert("min".into(), map["min"].clone());
+                c.insert("max".into(), map["max"].clone());
+                if step.is_some() {
+                    c.insert("step".into(), map["step"].clone());
+                }
+                c.insert("value".into(), map["value"].clone());
+            }
+            "color" => {
+                match map.get("value").and_then(Value::as_str) {
+                    Some(v) if !v.trim().is_empty() && v.chars().count() <= MAX_ID_CHARS => {
+                        c.insert("type".into(), json!("color"));
+                        c.insert("value".into(), json!(v.trim()));
+                    }
+                    _ => return Err(bad_controls(format!("{what}.value must be a colour string"))),
+                }
+            }
+            "select" => {
+                let Some(Value::Array(options)) = map.get("options") else {
+                    return Err(bad_controls(format!("{what}: a select needs options")));
+                };
+                if options.is_empty() || options.len() > MAX_CONTROL_OPTIONS {
+                    return Err(bad_controls(format!("{what}.options holds 1 to {MAX_CONTROL_OPTIONS} choices")));
+                }
+                let mut opts = Vec::with_capacity(options.len());
+                for o in options {
+                    match o.as_str() {
+                        Some(s) if !s.is_empty() && s.chars().count() <= MAX_ID_CHARS => opts.push(s.to_string()),
+                        _ => return Err(bad_controls(format!("{what}.options must be non-empty strings"))),
+                    }
+                }
+                let value = map.get("value").and_then(Value::as_str).unwrap_or_default();
+                if !opts.iter().any(|o| o == value) {
+                    return Err(bad_controls(format!("{what}.value must be one of its options")));
+                }
+                c.insert("type".into(), json!("select"));
+                c.insert("options".into(), json!(opts));
+                c.insert("value".into(), json!(value));
+            }
+            _ => return Err(bad_controls(format!("{what}.type must be range, color or select"))),
+        }
+        out.push(Value::Object(c));
+    }
+    Ok(Value::Array(out))
+}
+
 fn validate_artboard_change(map: &Map<String, Value>) -> Result<Value> {
     let artboard = id_string(map.get("artboard"), "change.artboard")?;
     let layers_json = map.get("layers").map(Value::to_string).unwrap_or_default();
@@ -257,6 +406,16 @@ fn validate_artboard_change(map: &Map<String, Value>) -> Result<Value> {
     }
     b.insert("layers".into(), Value::Array(before_layers));
     out.insert("before".into(), Value::Object(b));
+    match map.get("controls") {
+        None | Some(Value::Null) => {}
+        Some(controls) => {
+            let layers = out["layers"].as_array().cloned().unwrap_or_default();
+            let normalised = validate_controls(controls, &layers)?;
+            if normalised.as_array().is_some_and(|c| !c.is_empty()) {
+                out.insert("controls".into(), normalised);
+            }
+        }
+    }
     Ok(Value::Object(out))
 }
 

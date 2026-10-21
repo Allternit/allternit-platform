@@ -3,7 +3,10 @@
 //!
 //! Comments live in `artifact_comments` (migration 085). Threads are one level
 //! deep: a reply's parent must be a root, and the client rebuilds threads from
-//! `parent_id`. Anchors are stored opaquely (`{kind:'text'|'cell'|'slide'|'element', ..}`).
+//! `parent_id`. Anchors are stored opaquely (`{kind:'text'|'cell'|'slide'|'element', ..}`,
+//! up to 16 KB, every field kept as sent). A Design canvas pin is
+//! `{kind:'element', shapeId, artboard?, label?}`; an agent's anchored comment
+//! (its question pinned to a frame) is capped at 4 KB.
 //!
 //! Presence is durable and shared across cloud-api instances: clients
 //! heartbeat `POST /presence`, which upserts a row in `artifact_presence`
@@ -16,6 +19,11 @@
 //! of a design canvas for as long as the heartbeat stays live (the 45 s TTL).
 //! A second live agent session that claims it gets 409 `artboard_claimed`
 //! naming the holder; `anchor: null` or `state: left` releases it.
+//!
+//! Claims hold even when an org turns presence off: agent claim rows are
+//! still written and checked (a heartbeat that claims nothing deletes the
+//! agent's row), but `GET /presence` shows nothing while presence is off.
+//! People's heartbeats are not recorded then.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -135,6 +143,32 @@ pub(crate) fn validate_anchor(anchor: &Value) -> Result<()> {
                 ))
             }
         }
+    }
+    // A Design canvas pin (`{kind:'element', shapeId, artboard?, label?}`):
+    // the ids the client places the pin from must be short strings.
+    if map.get("kind").and_then(Value::as_str) == Some("element") {
+        for key in ["shapeId", "artboard", "label"] {
+            match map.get(key) {
+                None | Some(Value::Null) => {}
+                Some(Value::String(s)) if s.chars().count() <= super::artifacts_suggestions::MAX_ID_CHARS => {}
+                Some(_) => {
+                    return Err(ArtifactError::bad_request(format!(
+                        "anchor.{key} must be a string of at most {} characters",
+                        super::artifacts_suggestions::MAX_ID_CHARS
+                    )))
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// An agent's comment anchor (an agent pinning a question to a frame): the
+/// same shape as a person's, at most 4 KB.
+pub(crate) fn validate_agent_comment_anchor(anchor: &Value) -> Result<()> {
+    validate_anchor(anchor)?;
+    if anchor.to_string().len() > AGENT_ANCHOR_MAX_BYTES {
+        return Err(ArtifactError::bad_request("an agent's comment anchor is limited to 4 KB"));
     }
     Ok(())
 }
@@ -275,9 +309,6 @@ async fn create_comment(
     require(access, Access::Comment, "Commenting")?;
     let input: CreateComment = parse_json(&body)?;
     let text = validate_body(&input.body)?;
-    if let Some(anchor) = &input.anchor {
-        validate_anchor(anchor)?;
-    }
     let agent_name = match input.agent_name.as_deref() {
         Some(name) => {
             require(access, Access::Edit, "Commenting as an agent")?;
@@ -285,6 +316,13 @@ async fn create_comment(
         }
         None => None,
     };
+    if let Some(anchor) = &input.anchor {
+        if agent_name.is_some() {
+            validate_agent_comment_anchor(anchor)?;
+        } else {
+            validate_anchor(anchor)?;
+        }
+    }
     if let Some(v) = input.version {
         if v < 1 {
             return Err(ArtifactError::bad_request("version must be a positive integer"));
@@ -736,11 +774,12 @@ async fn post_presence(
         }
         None => None,
     };
-    if !presence_enabled(&state.db, row.org_id.as_deref()).await? {
-        return Ok(StatusCode::NO_CONTENT);
-    }
+    let enabled = presence_enabled(&state.db, row.org_id.as_deref()).await?;
     if let Some((agent_id, name, session_id, task, anchor, cost)) = agent {
-        if input.state == "left" {
+        let claim = claimed_artboard(anchor.as_ref())?;
+        if input.state == "left" || (!enabled && claim.is_none()) {
+            // With presence off only frame claims are kept (and GET hides
+            // them): a heartbeat that claims nothing releases the agent's row.
             sqlx::query("DELETE FROM artifact_presence WHERE artifact_id = $1 AND user_id = $2")
                 .bind(&row.id)
                 .bind(&agent_id)
@@ -749,7 +788,6 @@ async fn post_presence(
         } else {
             // Claim check and upsert under one per-artboard lock, so two agents
             // claiming the same frame at once can't both win.
-            let claim = claimed_artboard(anchor.as_ref())?;
             let mut tx = state.db.begin().await?;
             if let Some(artboard) = claim.as_deref() {
                 sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1))")
@@ -786,6 +824,9 @@ async fn post_presence(
         if should_purge_presence() {
             purge_stale_presence(&state.db).await;
         }
+        return Ok(StatusCode::NO_CONTENT);
+    }
+    if !enabled {
         return Ok(StatusCode::NO_CONTENT);
     }
     let (mut name, mut image) = (me.name.clone(), me.image_url.clone());

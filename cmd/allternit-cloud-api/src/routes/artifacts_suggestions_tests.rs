@@ -529,3 +529,110 @@ async fn design_suggestions_respect_artboard_claims() {
     let (st, _) = call(&router, "POST", &base, &owner, Some(design_post("ses_ash", "Ash", hero))).await;
     assert_eq!(st, StatusCode::CREATED);
 }
+
+// ----- Phase 2: generated sliders ("controls") on artboard changes -----
+
+fn with_controls(controls: Value) -> Value {
+    let mut c = artboard_change("hero", vec![layer("shape:card", "hero")], vec![layer("shape:card", "hero")]);
+    c["controls"] = controls;
+    c
+}
+
+#[test]
+fn artboard_controls_validation() {
+    let ok = validate_change(
+        "design",
+        &with_controls(json!([
+            {"id":"radius","label":"Corner radius","type":"range","layer":"card","prop":"radius","min":0,"max":32,"step":1,"value":12,"junk":1},
+            {"id":"accent","label":"Accent","type":"color","layer":"shape:card","prop":"fill","value":" #6366f1 "},
+            {"id":"density","label":"Density","type":"select","layer":null,"prop":"frame.padding","options":["compact","cozy"],"value":"cozy"},
+            {"id":"width","label":"Width","type":"range","prop":"w","min":200,"max":800,"value":400},
+        ])),
+    )
+    .unwrap();
+    let controls = ok["controls"].as_array().unwrap();
+    assert_eq!(controls.len(), 4);
+    assert_eq!(controls[0], json!({"id":"radius","label":"Corner radius","type":"range","layer":"card","prop":"radius","min":0,"max":32,"step":1,"value":12}));
+    assert_eq!(controls[1]["value"], "#6366f1");
+    assert_eq!(controls[2]["options"], json!(["compact","cozy"]));
+    assert!(controls[3]["layer"].is_null(), "a missing layer targets the artboard");
+    assert!(controls[3].get("step").is_none());
+    // A controls-only change: the same layers as now, plus sliders.
+    let same = validate_change("design", &with_controls(json!([{"id":"r","label":"R","type":"range","layer":"card","prop":"radius","min":0,"max":8,"value":4}])));
+    assert!(same.is_ok());
+    // No controls, or an empty list, stores none.
+    assert!(validate_change("design", &with_controls(Value::Null)).unwrap().get("controls").is_none());
+    assert!(validate_change("design", &with_controls(json!([]))).unwrap().get("controls").is_none());
+
+    let code = |controls: Value| match validate_change("design", &with_controls(controls)) {
+        Err(ArtifactError::Coded { code, .. }) => code,
+        other => panic!("expected a coded error, got {other:?}"),
+    };
+    let range = |extra: Value| {
+        let mut c = json!({"id":"r","label":"R","type":"range","layer":"card","prop":"radius","min":0,"max":32,"value":12});
+        for (k, v) in extra.as_object().unwrap() {
+            c[k] = v.clone();
+        }
+        json!([c])
+    };
+    assert_eq!(code(json!({"id":"r"})), "bad_controls", "not an array");
+    assert_eq!(code(json!(["x"])), "bad_controls");
+    assert_eq!(code(range(json!({"type":"knob"}))), "bad_controls");
+    assert_eq!(code(range(json!({"id":""}))), "bad_controls");
+    assert_eq!(code(range(json!({"label":3}))), "bad_controls");
+    assert_eq!(code(range(json!({"prop":""}))), "bad_controls");
+    assert_eq!(code(range(json!({"layer":"missing"}))), "bad_controls", "layer must be in the change");
+    assert_eq!(code(range(json!({"layer":7}))), "bad_controls");
+    assert_eq!(code(range(json!({"prop":"frame.padding"}))), "bad_controls", "frame. needs layer null");
+    assert_eq!(code(range(json!({"layer":null,"prop":"frame."}))), "bad_controls");
+    assert_eq!(code(range(json!({"min":32,"max":0}))), "bad_controls");
+    assert_eq!(code(range(json!({"max":"32"}))), "bad_controls");
+    assert_eq!(code(range(json!({"step":0}))), "bad_controls");
+    assert_eq!(code(range(json!({"step":64}))), "bad_controls");
+    assert_eq!(code(range(json!({"value":40}))), "bad_controls");
+    assert_eq!(code(range(json!({"value":"12"}))), "bad_controls");
+    assert_eq!(code(json!([{"id":"c","label":"C","type":"color","layer":"card","prop":"fill","value":""}])), "bad_controls");
+    assert_eq!(code(json!([{"id":"s","label":"S","type":"select","layer":null,"prop":"frame.d","options":[],"value":"a"}])), "bad_controls");
+    assert_eq!(code(json!([{"id":"s","label":"S","type":"select","layer":null,"prop":"frame.d","options":["a",3],"value":"a"}])), "bad_controls");
+    assert_eq!(code(json!([{"id":"s","label":"S","type":"select","layer":null,"prop":"frame.d","options":["a","b"],"value":"c"}])), "bad_controls");
+    let dup = json!([
+        {"id":"r","label":"R","type":"range","layer":"card","prop":"radius","min":0,"max":32,"value":12},
+        {"id":"r","label":"R2","type":"color","layer":"card","prop":"fill","value":"#000"},
+    ]);
+    assert_eq!(code(dup), "bad_controls", "ids are unique");
+    // At most 12 controls and 64 KB of JSON.
+    let twelve: Vec<Value> = (0..12)
+        .map(|i| json!({"id":format!("c{i}"),"label":"C","type":"color","layer":"card","prop":"fill","value":"#000"}))
+        .collect();
+    assert!(validate_change("design", &with_controls(json!(twelve))).is_ok());
+    let thirteen: Vec<Value> = (0..13)
+        .map(|i| json!({"id":format!("c{i}"),"label":"C","type":"color","layer":"card","prop":"fill","value":"#000"}))
+        .collect();
+    assert_eq!(code(json!(thirteen)), "bad_controls");
+    let long = vec![json!({"id":"s","label":"S","type":"select","layer":null,"prop":"frame.d",
+        "options":["a"], "value":"a", "pad":"y".repeat(70 * 1024)})];
+    assert_eq!(code(json!(long)), "bad_controls");
+}
+
+#[tokio::test]
+async fn design_suggestions_store_controls_and_refuse_bad_ones() {
+    let (router, _db) = setup().await;
+    let owner = who("ctl_owner");
+    let canvas = make_design(&router, &owner, &canvas_body(), "application/vnd.allternit.design+json").await;
+    let base = format!("/api/v2/artifacts/{canvas}/suggestions");
+    let mut change = artboard_change("hero", vec![layer("h1", "hero")], vec![layer("h1", "hero")]);
+    change["controls"] = json!([
+        {"id":"radius","label":"Corner radius","type":"range","layer":"h1","prop":"radius","min":0,"max":32,"step":1,"value":12},
+        {"id":"density","label":"Density","type":"select","layer":null,"prop":"frame.padding","options":["compact","cozy"],"value":"cozy"},
+    ]);
+    let (st, created) = call(&router, "POST", &base, &owner, Some(design_post("ses_c", "Oki", change.clone()))).await;
+    assert_eq!(st, StatusCode::CREATED, "{created}");
+    assert_eq!(created["items"][0]["change"]["controls"][0]["id"], "radius");
+    let (_, listed) = call(&router, "GET", &base, &owner, None).await;
+    assert_eq!(listed["items"][0]["change"]["controls"][1]["value"], "cozy");
+
+    change["controls"][0]["value"] = json!(99);
+    let (st, body) = call(&router, "POST", &base, &owner, Some(design_post("ses_c", "Oki", change))).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+    assert_eq!(body["code"], "bad_controls");
+}
