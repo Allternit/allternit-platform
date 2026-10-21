@@ -81,7 +81,10 @@ async fn heartbeat(State(state): State<Arc<ApiState>>, headers: HeaderMap, body:
         record_heartbeat(&state.db, &runtime_id, clean_due(&parsed)).await?;
         set_failover_runtime(&state.db, &runtime_id, failover).await?;
         set_bot_failovers(&state.db, &runtime_id, &per_bot).await?;
-        super::team::store_sessions(&state.db, &_user, &runtime_id, &parsed).await?;
+        // The roster is best effort: a failed write never fails the heartbeat.
+        if let Err(e) = super::team::store_sessions(&state.db, &_user, &runtime_id, &parsed).await {
+            tracing::warn!("team roster: storing sessions failed: {e}");
+        }
         take_finished_failovers(&state.db, &runtime_id).await
     }
     .await;
@@ -384,7 +387,9 @@ async fn resolve_all(db: &PgPool, runtime_id: &str) -> Result<(), sqlx::Error> {
 /// One sweep. `connected` = runtimes with a live relay connection. Pure of
 /// the clock and the relay hub so tests drive it.
 pub async fn sweep(db: &PgPool, connected: &HashSet<String>, now: DateTime<Utc>) -> Result<(), sqlx::Error> {
-    super::team::prune(db).await?;
+    if let Err(e) = super::team::prune(db).await {
+        tracing::warn!("team roster: prune failed: {e}");
+    }
     let rows: Vec<(String, String, Option<DateTime<Utc>>, Option<DateTime<Utc>>, Value)> = sqlx::query_as(
         "SELECT id, user_id, last_heartbeat_at, relay_disconnected_at, next_due FROM runtime_devices \
          WHERE revoked_at IS NULL AND user_id IS NOT NULL AND last_heartbeat_at IS NOT NULL",

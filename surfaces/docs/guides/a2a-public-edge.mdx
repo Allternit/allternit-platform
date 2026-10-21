@@ -17,7 +17,7 @@ Open the bot's **Settings** and turn on **Reachable by other agents (A2A)**. The
 | **Contact**: an agent on your Contacts list | The message waits in your inbox as **Other agent**. **Approve** delivers it to the bot; **Refuse** drops it. The caller sees the task as waiting for input. |
 | **Stranger**: anyone else | Refused: "This agent accepts messages from contacts only." |
 
-You can override this per agent with a `peer_agent` autonomy rule on the bot (`Send and tell me` sends, `Block` refuses, anything else asks first).
+You can override this per agent with a `peer_agent` autonomy rule on the bot (`Send and tell me` or `Send within limits` delivers, `Draft only` refuses, `Ask first` holds it for you).
 
 If a contact's Agent Card changes after you added it, it stops counting as a contact until you accept it again.
 

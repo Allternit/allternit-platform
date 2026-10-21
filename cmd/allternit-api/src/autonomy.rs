@@ -131,8 +131,10 @@ pub enum PeerVerdict {
 pub fn peer_verdict(db: &DbHandle, owner: &str, bot_id: &str, class: &str, peers: &[String]) -> PeerVerdict {
     match find_policy(db, owner, bot_id, "peer_agent", peers) {
         Some(p) => match p.level.as_str() {
+            // Levels are draft/ask/tell/limits (table CHECK). For a peer agent: tell/limits deliver,
+            // ask holds for the owner, draft refuses (nothing from that peer reaches the bot).
             "tell" | "limits" => PeerVerdict::Send,
-            "block" => PeerVerdict::Block,
+            "draft" => PeerVerdict::Block,
             _ => PeerVerdict::Hold,
         },
         None => match class {
@@ -793,7 +795,7 @@ mod tests {
         assert_eq!(v("contact", "https://a.example/card"), PeerVerdict::Hold);
         assert_eq!(v("stranger", "https://b.example/card"), PeerVerdict::Block);
         set(&st, "bot-1", "peer_agent", "https://a.example/card", "tell", json!({}));
-        set(&st, "bot-1", "peer_agent", "user_x", "block", json!({}));
+        set(&st, "bot-1", "peer_agent", "user_x", "draft", json!({}));
         assert_eq!(v("contact", "https://a.example/card"), PeerVerdict::Send, "explicit policy overrides the class");
         assert_eq!(v("team", "user_x"), PeerVerdict::Block);
     }
