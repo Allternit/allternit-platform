@@ -6,7 +6,7 @@
 //! and who may see it:
 //!
 //! * **Platform API webhooks** (`platform`): what a project endpoint may
-//!   subscribe to. [`PLATFORM_EVENTS`] is the 051 list plus the P3 `call.*` events and `usage.threshold`.
+//!   subscribe to. [`PLATFORM_EVENTS`] is the 051 list plus the P3 `call.*` events, `usage.threshold` and `phone.*`.
 //! * **MCP agents server** (`agents`, scope `agents:read`, `/mcp`): agent,
 //!   approval, thread, inbox, message, call, subscription and usage events.
 //! * **MCP vendor-bot connector** (`bot`, scope `bots:act`, `/mcp/bots/:id`):
@@ -288,12 +288,35 @@ pub static REGISTRY: &[EventType] = &[
         payload: &[("meter", "Meter name (`cloud_spend` = the monthly cloud budget, `spend` = a Platform API project's spend against its cap; both in USD)."), ("percent", "Threshold crossed (number)."), ("used", "Amount used (number)."), ("limit", "Plan amount or spend cap (number)."), ("period", "Billing period, e.g. 2026-10.")],
         runtime_aliases: &["usage.threshold"],
     },
+    EventType {
+        name: "phone.step",
+        title: "Phone steps",
+        description: "One phone tool call on one of your linked phones finished (a tap, a read, a sent text...), from a bot, a phone skill, a phone task or the Platform API (/v1/phones). Never carries screenshots, screen text or what was typed.",
+        platform: true,
+        agents: false,
+        bot: false,
+        filters: &[],
+        payload: &[("step_id", "Step id."), ("run_id", "The run the step belongs to (task-, skill- or api- prefix)."), ("serial", "Phone serial."), ("tool", "Phone tool, e.g. phone.tap."), ("label", "Short label, e.g. \"tap Sign in\"."), ("ok", "Whether it worked (boolean)."), ("error", "Why it failed, when it failed."), ("duration_ms", "Milliseconds (number)."), ("source", "bot, skill, task, routine or api."), ("snapshot", "Whether Desktop kept a frame for it (boolean).")],
+        runtime_aliases: &["phone.step"],
+    },
+    EventType {
+        name: "phone.run.completed",
+        title: "Phone runs finished",
+        description: "A phone task or a phone skill replay ended, successfully or not. Its steps are in GET /v1/phones/{serial}/history?run_id=.",
+        platform: true,
+        agents: false,
+        bot: false,
+        filters: &[],
+        payload: &[("run_id", "Run id."), ("serial", "Phone serial, when one was named."), ("ok", "Whether it reached its goal (boolean)."), ("status", "Task: done, failed, max_steps or timeout. Skill: succeeded, diverged or failed."), ("skill", "Skill name, for a skill run."), ("source", "task, skill or routine."), ("steps", "Steps run (number)."), ("failed", "Steps that failed (number)."), ("model_calls", "Model calls made (number)."), ("duration_ms", "Milliseconds (number).")],
+        runtime_aliases: &["phone.run.completed"],
+    },
 ];
 
 /// Event types a Platform API webhook can subscribe to: the 051 list, the P3
 /// `call.*` events, `usage.threshold` (P5 spend caps), and P4's `approval.requested`
-/// and `inbox.item.created` (from the project's hosted runtime, per account).
-pub const PLATFORM_EVENTS: [&str; 9] = ["approval.requested", "message.received", "message.status", "registration.updated", "call.started", "call.ended", "call.transcript.ready", "inbox.item.created", "usage.threshold"];
+/// and `inbox.item.created` (from the project's hosted runtime, per account),
+/// and `phone.*` (the project owner's own phones, from their Desktop).
+pub const PLATFORM_EVENTS: [&str; 11] = ["approval.requested", "message.received", "message.status", "registration.updated", "call.started", "call.ended", "call.transcript.ready", "inbox.item.created", "usage.threshold", "phone.step", "phone.run.completed"];
 
 pub fn find(name: &str) -> Option<&'static EventType> {
     REGISTRY.iter().find(|e| e.name == name)
@@ -320,6 +343,9 @@ pub fn mcp_list(audience: Audience) -> Vec<mcp_protocol::events::EventDef> {
 
 /// The registry name a runtime ledger type is forwarded as, or `None` when
 /// it isn't an event any sink carries (it is then ignored, not an error).
+/// Platform-only events with a runtime alias (`phone.*`) are forwarded too:
+/// [`crate::routes::runtime_events::platform_fan_out`] sends them to the
+/// owner's projects.
 /// Our own echoes (`channel.message.received` with `own: true`) are dropped.
 pub fn from_runtime(ledger_type: &str, data: &Value) -> Option<&'static str> {
     if ledger_type == "channel.message.received" && data["own"].as_bool() == Some(true) {
@@ -327,7 +353,7 @@ pub fn from_runtime(ledger_type: &str, data: &Value) -> Option<&'static str> {
     }
     REGISTRY
         .iter()
-        .find(|e| (e.agents || e.bot) && e.runtime_aliases.contains(&ledger_type))
+        .find(|e| (e.agents || e.bot || e.platform) && e.runtime_aliases.contains(&ledger_type))
         .map(|e| e.name)
 }
 
@@ -454,6 +480,8 @@ mod tests {
         assert_eq!(from_runtime("agent.approval.requested", &json!({})), Some("approval.requested"));
         assert_eq!(from_runtime("run.completed", &json!({})), Some("agent.run.completed"));
         assert_eq!(from_runtime("call.ended", &json!({})), Some("call.ended"));
+        assert_eq!(from_runtime("phone.step", &json!({})), Some("phone.step"));
+        assert_eq!(from_runtime("phone.run.completed", &json!({})), Some("phone.run.completed"));
         assert_eq!(from_runtime("inbox.changed", &json!({})), None);
         // Platform-only events can't be injected by a runtime.
         assert_eq!(from_runtime("message.status", &json!({})), None);

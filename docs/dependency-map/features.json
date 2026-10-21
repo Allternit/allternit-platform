@@ -805,10 +805,15 @@
         {
           "on": "2026-10-08",
           "note": "Launch: card required for every project (402 payment_method_required), console Billing page with Stripe Checkout (Pay as you go / Growth), webhook sets the project's customer and plan, Growth $300 credit grant per invoice, developer terms and AUP published and accepted at key creation, SDK publish workflow."
+        },
+        {
+          "on": "2026-10-20",
+          "note": "/v1/phones (scope phones, unbound keys only): list, history, one tool, task and skill run (202, background) relayed signed as the project owner to the Desktop serving the phone (registered_phones.runtime_id, pg 096). Texts and calls still wait for the Desktop approval dialog. phone.step and phone.run.completed webhooks come from the Desktop owner ledger via /api/v1/runtime/events and fan out to the owner's projects with a subscribed endpoint."
         }
       ],
       "evidence": [
-        "allternit/surfaces/docs/api/platform/billing.mdx"
+        "allternit/surfaces/docs/api/platform/billing.mdx",
+        "allternit/surfaces/docs/api/platform/phones.mdx"
       ]
     },
     {
@@ -1409,7 +1414,8 @@
         "allternit-ai/src/components/onboarding",
         "allternit-ai/src/views/settings",
         "allternit-ai/src/lib",
-        "allternit/cmd/allternit-sideload"
+        "allternit/cmd/allternit-sideload",
+        "allternit/cmd/allternit-cloud-api/src/routes/platform_v1/phones.rs"
       ],
       "decisions": [
         {
@@ -1499,6 +1505,10 @@
         {
           "on": "2026-10-20",
           "note": "Phone runs + skills: every phone tool call posts a redacted step (typed text/SMS/numbers stripped, 1280px frame, tapped element from the last read) to allternit-api phone_runs (500 steps/30 days/100 MB per phone); a run saved by name is a phone skill (phone_replay: class/label/resource-id/relative box/8x8 hash locators, checks, {{input}} text) replayed through the Desktop phone gateway with no model and one gizzi re-decision per moved step; phone.task runs on the bot brain for every lane (phone_task, ARTEMIS only as fallback); routines run skills via config.replay {kind: phone}."
+        },
+        {
+          "on": "2026-10-20",
+          "note": "Phones on the Platform API: allternit-api adds POST /api/v1/phones/:serial/tool (one gateway call, approval kept) and background task/skill runs; every recorded step and run end writes phone.step / phone.run.completed to the owner ledger for the cloud forwarder (no frames, screen text or typed values)."
         }
       ],
       "evidence": [

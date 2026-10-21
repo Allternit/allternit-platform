@@ -1,7 +1,7 @@
 //! Allternit Platform API (`/v1`): the developer-facing surface.
 //!
 //! One module per area (`accounts`, `agents`, `conversations`, `numbers`, `messages`, `calls` (voice and realtime), `webhooks`,
-//! `channels`, `twin`, `usage`). Also `billing` (spend caps) and `stripe_plan` (Stripe meters, dry run by default).
+//! `channels`, `twin`, `computers`, `phones` (the owner's own phones, relayed to their Desktop), `usage`). Also `billing` (spend caps) and `stripe_plan` (Stripe meters, dry run by default).
 //! Hosted agents run on a per-project runtime (`hosting`).
 //! Each area exposes `register(RouteTable) -> RouteTable`; `build_table` below
 //! is the single list. The route table records every `(method, path)` it
@@ -43,6 +43,7 @@ pub mod messages;
 pub mod model_keys;
 pub mod numbers;
 pub mod page;
+pub mod phones;
 pub mod project_billing;
 pub mod projects;
 pub mod slots;
@@ -218,6 +219,7 @@ fn build_table() -> RouteTable {
     let table = channels::register(table);
     let table = twin::register(table);
     let table = computers::register(table);
+    let table = phones::register(table);
     usage::register(table)
 }
 

@@ -47,6 +47,11 @@ pub struct TaskIn {
     pub bot_id: Option<String>,
     #[serde(default)]
     pub brain: Option<String>,
+    /// Answer 202 `{run_id, status: "running"}` at once and run in the
+    /// background; the end is the `phone.run.completed` event (the Platform
+    /// API uses this: a relayed request can't wait five minutes).
+    #[serde(default)]
+    pub background: bool,
 }
 
 fn schema() -> Value {
@@ -143,7 +148,16 @@ fn to_tool(pick: &Value, els: &[UiEl]) -> Result<(&'static str, Map<String, Valu
 /// Run a phone task. The report: `{ok, status: done|failed|max_steps|timeout,
 /// result, steps: [{action, ok, error?}], model_calls, run_id}`.
 pub async fn run_task(serial: Option<&str>, goal: &str, max_steps: u32, model: Option<(String, String)>) -> Value {
-    let run_id = format!("task-{}", uuid::Uuid::new_v4().simple());
+    run_task_as(new_run_id(), serial, goal, max_steps, model).await
+}
+
+/// A fresh task run id (`task-<hex>`).
+pub fn new_run_id() -> String {
+    format!("task-{}", uuid::Uuid::new_v4().simple())
+}
+
+/// [`run_task`] under a run id the caller chose (a background run answers it first).
+pub async fn run_task_as(run_id: String, serial: Option<&str>, goal: &str, max_steps: u32, model: Option<(String, String)>) -> Value {
     let started = Instant::now();
     let max = max_steps.clamp(1, MAX_MAX_STEPS);
     let mut history: Vec<String> = Vec::new();
@@ -240,7 +254,19 @@ async fn post_task(
     let model = brain(&state.db, body.bot_id.as_deref(), body.brain.as_deref());
     // "-" (or "default") lets Desktop pick the only connected phone.
     let serial = Some(serial).filter(|s| s != "-" && s != "default");
-    Json(run_task(serial.as_deref(), goal, body.max_steps.unwrap_or(DEFAULT_MAX_STEPS), model).await).into_response()
+    let max_steps = body.max_steps.unwrap_or(DEFAULT_MAX_STEPS);
+    if body.background {
+        let run_id = new_run_id();
+        let (db, id, goal, task_serial) = (state.db.clone(), run_id.clone(), goal.to_string(), serial.clone());
+        tokio::spawn(async move {
+            let report = run_task_as(id, task_serial.as_deref(), &goal, max_steps, model).await;
+            crate::phone_runs::record_run_completed(&db, &report, "task");
+        });
+        return (StatusCode::ACCEPTED, Json(json!({ "ok": true, "status": "running", "run_id": run_id, "serial": serial }))).into_response();
+    }
+    let report = run_task(serial.as_deref(), goal, max_steps, model).await;
+    crate::phone_runs::record_run_completed(&state.db, &report, "task");
+    Json(report).into_response()
 }
 
 pub fn router() -> Router<Arc<AppState>> {

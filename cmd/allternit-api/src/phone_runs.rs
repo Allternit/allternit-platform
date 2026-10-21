@@ -383,6 +383,66 @@ async fn redact_frame(image_base64: Option<String>, data_dir: &FsPath) -> Option
     crate::computer_safety::black_out(&png, &boxes).ok().map(|out| B64.encode(out))
 }
 
+// ─── Events (phone.step, phone.run.completed) ─────────────────────────────
+
+/// The owner ledger row of a recorded step: what `phone.step` webhooks carry.
+/// Never the screen, the frame or redacted values (`args` stays local).
+pub fn step_event(step: &Step) -> Value {
+    json!({
+        "step_id": step.id,
+        "run_id": step.run_id,
+        "serial": step.serial,
+        "tool": step.tool,
+        "label": step.label,
+        "ok": step.ok,
+        "error": step.error,
+        "duration_ms": step.duration_ms,
+        "source": step.source,
+        "snapshot": step.snapshot,
+    })
+}
+
+/// The owner ledger row of a finished task / skill run, from its report.
+pub fn run_event(report: &Value, source: &str) -> Value {
+    let steps = report.get("steps").and_then(Value::as_array);
+    json!({
+        "run_id": report.get("run_id"),
+        "serial": report.get("serial"),
+        "ok": report.get("ok").and_then(Value::as_bool).unwrap_or(false),
+        "status": report.get("status"),
+        "skill": report.get("skill"),
+        "source": source,
+        "steps": steps.map(|s| s.len()).unwrap_or(0),
+        "failed": steps.map(|s| s.iter().filter(|x| x.get("ok").and_then(Value::as_bool) == Some(false)).count()).unwrap_or(0),
+        "model_calls": report.get("model_calls"),
+        "duration_ms": report.get("duration_ms"),
+    })
+}
+
+/// Write a phone event to the owner ledger, which `runtime_events` forwards
+/// to the cloud (Platform API webhooks, MCP Events). Best effort and a no-op
+/// on an unpaired runtime: phone runs never wait on, or fail for, the cloud.
+pub fn record_event(db: &crate::db::DbHandle, event_type: &str, payload: Value, key: String) {
+    let Some(owner) = crate::relay_auth::process_secret().paired_owner() else { return };
+    let db = db.clone();
+    let event_type = event_type.to_string();
+    tokio::task::spawn_blocking(move || {
+        let result = db
+            .connect()
+            .and_then(|conn| crate::runtime_events::record_user_event(&conn, &owner, &event_type, None, &payload, Some(&key)));
+        if let Err(e) = result {
+            tracing::debug!("{event_type} not recorded: {e}");
+        }
+    });
+}
+
+/// `phone.run.completed` for a task or skill report (one per run id).
+/// `source`: `task` | `skill` | `routine`.
+pub fn record_run_completed(db: &crate::db::DbHandle, report: &Value, source: &str) {
+    let Some(run) = report.get("run_id").and_then(Value::as_str).filter(|r| !r.is_empty()) else { return };
+    record_event(db, "phone.run.completed", run_event(report, source), format!("phone-run:{run}:completed"));
+}
+
 // ─── Routes ────────────────────────────────────────────────────────────────
 
 #[derive(Deserialize)]
@@ -403,7 +463,10 @@ async fn post_history(
     let dir = state.data_dir.clone();
     body.image_base64 = redact_frame(body.image_base64.take(), &dir).await;
     match tokio::task::spawn_blocking(move || ingest(&dir, &serial, body)).await {
-        Ok(Ok(step)) => Json(json!({ "ok": true, "id": step.id, "run_id": step.run_id, "snapshot": step.snapshot })).into_response(),
+        Ok(Ok(step)) => {
+            record_event(&state.db, "phone.step", step_event(&step), format!("phone-step:{}", step.id));
+            Json(json!({ "ok": true, "id": step.id, "run_id": step.run_id, "snapshot": step.snapshot })).into_response()
+        }
         Ok(Err(e)) => bad(StatusCode::BAD_REQUEST, e),
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }

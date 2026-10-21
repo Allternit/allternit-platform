@@ -76,6 +76,11 @@ pub fn gateway_available() -> bool {
 
 /// One phone tool call through Desktop: `{name, arguments}` → the tool result.
 pub async fn call_tool(name: &str, args: Value) -> Result<Value, String> {
+    call_tool_within(name, args, GATEWAY_TIMEOUT).await
+}
+
+/// [`call_tool`] with its own time limit (a text or call waits on approval).
+pub async fn call_tool_within(name: &str, args: Value, timeout: Duration) -> Result<Value, String> {
     let file = gateway_file().ok_or("no home directory")?;
     let raw = tokio::fs::read(&file)
         .await
@@ -89,10 +94,10 @@ pub async fn call_tool(name: &str, args: Value) -> Result<Value, String> {
         .post(format!("{}/phone/call", url.trim_end_matches('/')))
         .header("x-allternit-phone-token", token)
         .json(&json!({ "name": name, "arguments": args }))
-        .timeout(GATEWAY_TIMEOUT)
+        .timeout(timeout)
         .send()
         .await
-        .map_err(|e| format!("phone gateway unreachable: {e}"))?;
+        .map_err(|e| if e.is_timeout() { "phone gateway timed out".to_string() } else { format!("phone gateway unreachable: {e}") })?;
     res.json::<Value>().await.map_err(|e| format!("phone gateway answered badly: {e}"))
 }
 
@@ -671,6 +676,11 @@ pub struct RunIn {
     /// Or a brain as `provider/model`.
     #[serde(default)]
     pub brain: Option<String>,
+    /// Answer 202 `{run_id, status: "running"}` at once and replay in the
+    /// background; the end is the `phone.run.completed` event (the Platform
+    /// API uses this: a relayed request can't wait for a whole replay).
+    #[serde(default)]
+    pub background: bool,
 }
 
 pub fn inputs_of(map: &Map<String, Value>) -> Vec<(String, String)> {
@@ -700,6 +710,11 @@ pub fn brain(db: &crate::db::DbHandle, bot_id: Option<&str>, brain: Option<&str>
     }
 }
 
+/// A fresh skill run id (`skill-<hex>`).
+pub fn new_skill_run_id() -> String {
+    format!("skill-{}", uuid::Uuid::new_v4().simple())
+}
+
 /// Replay a saved skill on a phone. `Ok` carries the per-step report (also
 /// when the replay diverged); `Err` is a skill that couldn't start.
 pub async fn run_skill(
@@ -709,13 +724,14 @@ pub async fn run_skill(
     inputs: &[(String, String)],
     model: Option<(String, String)>,
     source: &str,
+    run_id: Option<String>,
 ) -> Result<Value, String> {
     let mut skill = load(data_dir, name).ok_or_else(|| format!("no phone skill named \"{}\"", name.trim()))?;
     let missing: Vec<&String> = skill.inputs.iter().filter(|n| !inputs.iter().any(|(k, _)| k == *n)).collect();
     if !missing.is_empty() {
         return Err(format!("this skill needs inputs: {}", missing.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")));
     }
-    let run_id = format!("skill-{}", uuid::Uuid::new_v4().simple());
+    let run_id = run_id.unwrap_or_else(new_skill_run_id);
     let started = Instant::now();
     let mut report = Vec::new();
     let mut model_calls = 0u32;
@@ -939,16 +955,102 @@ async fn run_route(
 ) -> Response {
     let model = brain(&state.db, body.bot_id.as_deref(), body.brain.as_deref());
     let inputs = inputs_of(&body.inputs);
-    match run_skill(&state.data_dir, &name, body.serial.as_deref(), &inputs, model, "skill").await {
-        Ok(report) => Json(report).into_response(),
+    if body.background {
+        let Some(skill) = load(&state.data_dir, &name) else {
+            return bad(StatusCode::NOT_FOUND, format!("no phone skill named \"{}\"", name.trim()));
+        };
+        let missing: Vec<&String> = skill.inputs.iter().filter(|n| !inputs.iter().any(|(k, _)| k == *n)).collect();
+        if !missing.is_empty() {
+            return bad(StatusCode::BAD_REQUEST, format!("this skill needs inputs: {}", missing.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")));
+        }
+        if !gateway_available() {
+            return bad(StatusCode::SERVICE_UNAVAILABLE, "Allternit Desktop's phone gateway isn't running on this computer");
+        }
+        let run_id = new_skill_run_id();
+        let (st, id, serial) = (state.clone(), run_id.clone(), body.serial.clone());
+        tokio::spawn(async move {
+            let report = match run_skill(&st.data_dir, &name, serial.as_deref(), &inputs, model, "skill", Some(id.clone())).await {
+                Ok(report) => report,
+                Err(e) => json!({ "ok": false, "status": "failed", "skill": name, "serial": serial, "run_id": id, "error": e, "steps": [] }),
+            };
+            phone_runs::record_run_completed(&st.db, &report, "skill");
+        });
+        return (StatusCode::ACCEPTED, Json(json!({ "ok": true, "status": "running", "run_id": run_id, "skill": skill.name, "serial": body.serial }))).into_response();
+    }
+    match run_skill(&state.data_dir, &name, body.serial.as_deref(), &inputs, model, "skill", None).await {
+        Ok(report) => {
+            phone_runs::record_run_completed(&state.db, &report, "skill");
+            Json(report).into_response()
+        }
         Err(e) if e.starts_with("no phone skill") => bad(StatusCode::NOT_FOUND, e),
         Err(e) => bad(StatusCode::BAD_REQUEST, e),
+    }
+}
+
+/// A sent text or a placed call waits on the person's approval on Desktop; the
+/// Platform API relay gives up at 90 s, so the gateway call stops just before.
+const TOOL_TIMEOUT: Duration = Duration::from_secs(80);
+
+#[derive(Debug, Deserialize)]
+pub struct ToolIn {
+    pub name: String,
+    #[serde(default)]
+    pub arguments: Map<String, Value>,
+    /// Groups the call into a run in the history (default: a new `api-…` run).
+    #[serde(default)]
+    pub run_id: Option<String>,
+}
+
+/// `POST /api/v1/phones/:serial/tool {name, arguments, run_id?}`: one phone
+/// tool through the Desktop phone gateway, exactly as a bot calls it, so a
+/// text or a call still waits for the person's approval on Desktop (the
+/// gateway's gate; nothing here bypasses it). The step lands in the run
+/// history (and `phone.step`) like any other. `serial` `-` = the one phone.
+async fn tool_route(
+    Extension(_user): Extension<AuthUser>,
+    Path(serial): Path<String>,
+    Json(body): Json<ToolIn>,
+) -> Response {
+    let raw = body.name.trim();
+    let name = if raw.starts_with("phone.") { raw.to_string() } else { format!("phone.{raw}") };
+    let known = ["devices", "screenshot", "tap", "type", "read_ui", "screen_text", "find_and_tap", "swipe", "home", "back", "key", "open_app", "sms.send", "sms.read", "call.dial"];
+    if !known.iter().any(|k| name == format!("phone.{k}")) {
+        return bad(StatusCode::BAD_REQUEST, format!("unknown phone tool \"{raw}\" (use the task or skills routes for phone.task and phone.run_skill)"));
+    }
+    if !gateway_available() {
+        return bad(StatusCode::SERVICE_UNAVAILABLE, "Allternit Desktop's phone gateway isn't running on this computer");
+    }
+    let mut args = body.arguments;
+    args.retain(|k, _| !k.starts_with('_'));
+    if serial != "-" && serial != "default" {
+        args.insert("serial".into(), json!(serial));
+    }
+    let run_id = body
+        .run_id
+        .map(|r| r.trim().chars().take(120).collect::<String>())
+        .filter(|r| !r.is_empty())
+        .unwrap_or_else(|| format!("api-{}", uuid::Uuid::new_v4().simple()));
+    args.insert("_run_id".into(), json!(run_id));
+    args.insert("_source".into(), json!("api"));
+    match call_tool_within(&name, Value::Object(args), TOOL_TIMEOUT).await {
+        Ok(mut result) => {
+            if let Some(obj) = result.as_object_mut() {
+                obj.insert("run_id".into(), json!(run_id));
+                obj.insert("tool".into(), json!(name));
+            }
+            Json(result).into_response()
+        }
+        Err(e) if e.contains("timed out") => {
+            bad(StatusCode::GATEWAY_TIMEOUT, "the phone didn't answer in time (a text or call may still be waiting for approval on Desktop)")
+        }
+        Err(e) => bad(StatusCode::BAD_GATEWAY, e),
     }
 }
 
 /// Merged under `/api/v1`.
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
+        .route("/phones/:serial/tool", post(tool_route))
         .route("/phones/skills", get(list_skills).post(save_skill))
         .route("/phones/skills/:name", get(get_skill).delete(delete_skill))
         .route("/phones/skills/:name/run", post(run_route))
