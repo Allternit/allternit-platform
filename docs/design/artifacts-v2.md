@@ -21,7 +21,8 @@ Every record has a `kind` and a `runtime_version`:
 | `sheet` | `application/vnd.allternit.sheet+json` | Sheets editor | 1 shell, 4 |
 | `slides` | `application/vnd.allternit.slides+json` | Slides editor | 1 shell, 4 |
 | `design` | `application/vnd.allternit.design+json` or `text/html` | Design canvas | 1 shell, 4 |
-| `dashboard` | `application/vnd.allternit.openui` (OpenUI Lang, dashboard library) | Dashboard | 2 |
+| `dashboard` | `application/vnd.allternit.dashboard+json` (tiles; `application/vnd.allternit.openui` for Phase 1 records) | Dashboard | 2 |
+| `ops` | `application/vnd.allternit.ops+json` (header, actions, tabs of panels) | Ops sheet (dashboard runtime) | added 2026-10-20 |
 | `motion` | `application/vnd.allternit.motion+json` (scenes + props) | Motion editor | 3 |
 | `page` | `text/html` or `text/markdown` | Page viewer (sandboxed) | 1 view, 4 runtime |
 | `card` | `application/vnd.allternit.openui` (answers library) | Interactive card | 1 |
