@@ -52,9 +52,9 @@ describe('ensureAndroidHelper', () => {
     await expect(ensureAndroidHelper(scratch(), { version: '0.0.0-unpinned' })).rejects.toMatchObject({ code: 'helper_unavailable' });
   });
 
-  it('pins the published 0.3.3 helper', () => {
-    expect(ANDROID_HELPER_VERSION).toBe('0.3.3');
-    expect(PINNED_ANDROID_MANIFESTS['0.3.3']).toBe('c09074d62645e32f1ff10600847b2e9bb14bf5aca91412abb4aae45c67456e62');
+  it('pins the published 0.3.4 helper', () => {
+    expect(ANDROID_HELPER_VERSION).toBe('0.3.4');
+    expect(PINNED_ANDROID_MANIFESTS['0.3.4']).toBe('926a3c04993660ad7e739c0f37cb4e326eaff9cc9285bbb8d924650fad42dc7b');
     expect(PINNED_ANDROID_MANIFESTS['0.3.1']).toBe('32db339799c16054015831cf307ee205ce5195aba28b09c165eb7b4f4443014c');
   });
 

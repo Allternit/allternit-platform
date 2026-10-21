@@ -33,8 +33,11 @@ export const PINNED_ANDROID_MANIFESTS: Record<string, string> = {
   '0.3.2': 'f60ed9326b9b806362778c2338bf6dad5928c0302739a2106fcc1cd90d24ff45',
   // 0.3.3: mesh_restart RPC + :mesh watchdog (tsnet Health()) — self-heals a stuck mesh node.
   '0.3.3': 'c09074d62645e32f1ff10600847b2e9bb14bf5aca91412abb4aae45c67456e62',
+  // 0.3.4: shell-server KEY/SMS/DIAL/SMSREAD/A11YON — keys, texts, calls and
+  // text reads on linked phones, accessibility re-enabled over Wi-Fi.
+  '0.3.4': '926a3c04993660ad7e739c0f37cb4e326eaff9cc9285bbb8d924650fad42dc7b',
 };
-export const ANDROID_HELPER_VERSION: string | null = '0.3.3';
+export const ANDROID_HELPER_VERSION: string | null = '0.3.4';
 
 export interface AndroidHelperManifest {
   version: string;
