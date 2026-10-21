@@ -1,0 +1,137 @@
+---
+title: "Editing PDFs"
+description: "Change the text in a PDF in its own font, move and resize what is on the page, sign, fill forms and rearrange pages, in Desktop, on the web and on your phone."
+---
+
+A PDF artifact opens in the PDF editor when you have edit access. You edit the
+PDF itself, the way you would in Acrobat: the file you download afterwards is
+an ordinary PDF that opens anywhere. Every change saves as a new version of the
+artifact, so you can always go back.
+
+To get a PDF in, open **Artifacts** and press **Upload PDF** (up to 15 MB).
+The PDF opens in the editor. Without edit access, a PDF opens read-only.
+
+## Change existing text
+
+1. Click a line of text to select it.
+2. Click it again, double-click it, or press **Enter** to type.
+3. Press **Enter** or click outside the line to apply the change. **Esc** cancels.
+
+The edit keeps the PDF's own font and size, and only the words you change are
+rewritten. Text before and after your edit stays exactly where it was, and
+anything later on the same line moves over by the width your edit added or
+removed, so nothing overlaps.
+
+PDFs often include only the letters a document used from each font. When you
+type a letter the PDF's copy of the font does not have, the editor looks for
+the same font in this order:
+
+1. Another copy of the same font inside the PDF that has the letter.
+2. The same family and weight from the open Google Fonts library.
+3. A font drawn to the same letter widths, for common system fonts (Arimo for
+   Arial and Helvetica, Tinos for Times, Cousine for Courier, Carlito for
+   Calibri, Caladea for Cambria, Gelasio for Georgia, Inter for Apple's system
+   font). A message names the stand-in, with **Undo**.
+4. If none of those is available, the closest standard font. A message says so,
+   with **Undo**. The editor never swaps a font without telling you.
+
+While a line is selected, the bar above the page changes its size, colour,
+bold, italic or font. Choosing **Helvetica**, **Times** or **Courier** there
+sets the line in that font on purpose.
+
+## Move, resize and delete
+
+Click any text line, image or shape to select it. Then:
+
+- **Drag** it to move it.
+- **Drag a corner** to resize it. Text and images keep their proportions.
+- **Arrow keys** nudge it 1 point; hold **Shift** for 10 points.
+- **Delete** or the trash button removes it.
+
+## Add to the page
+
+| Tool | What it does |
+|---|---|
+| Text | Click empty space and type. **Shift+Enter** starts a new line. |
+| Image | Choose a picture, then click where it goes. |
+| Sign | Draw, type or upload a signature, then click where it goes. |
+| Draw | Draw freehand. Pick a colour and line width in the bar. |
+| Shape | Drag a rectangle, ellipse or line. |
+| Highlight | Drag across text. |
+| Comment | Click to pin a comment. Click a comment to edit or delete it. |
+| Whiteout | Drag to cover an area with white. |
+| Redact | Drag over content to delete the text and images under the box from the file, then paint the box black. |
+
+A signature placed with **Sign** is a picture of your signature on the page.
+It is not a certified digital signature.
+
+## Fill forms
+
+Fields in a fillable PDF become inputs on the page: type in text fields, tick
+checkboxes and pick from lists. The values are saved in the PDF's form, so
+other PDF apps show them too.
+
+## Pages
+
+**Pages** opens the page panel. Drag thumbnails to reorder them. Click a page
+to select it; **Cmd**-click or **Shift**-click selects more than one. The
+buttons work on the selected pages, or on the page in view when none are selected:
+
+- **Rotate** turns pages 90°.
+- **Duplicate** copies them.
+- **Blank** inserts an empty page after them.
+- **Insert PDF** adds the pages of another PDF after them.
+- **Extract** downloads them as a new PDF.
+- **Delete** removes them. A PDF keeps at least one page.
+
+## Find, undo and download
+
+- **Cmd+F** finds text. **Enter** goes to the next match and **Shift+Enter** to the previous one.
+- **Cmd+Z** undoes and **Cmd+Shift+Z** redoes, across every kind of change, including page changes.
+- The download button saves the current PDF, edits included.
+
+## Keyboard shortcuts
+
+| Key | Tool |
+|---|---|
+| V | Edit (select) |
+| T | Text |
+| D | Draw |
+| S | Shape |
+| H | Highlight |
+| C | Comment |
+
+## On a phone
+
+On ai.allternit.com on a phone and in the Allternit app (m.allternit.com) the
+tools sit in a bar at the bottom of the screen and **Pages** opens full screen.
+Tap text to select it and tap again to type. Drag with one finger to move or
+resize what is selected.
+
+## Advanced tools
+
+The toolbox button opens the PDF in advanced tools for the PDF security
+settings, the accessibility checker and the rest of an Acrobat-style
+workbench. Save there to keep what you change; **Back to editor** reopens this
+editor on the saved PDF.
+
+## How it works
+
+The editor runs [PDFium](https://pdfium.googlesource.com/pdfium/), the PDF
+engine in Chrome, compiled to WebAssembly (the `@embedpdf/pdfium` build), in a
+web worker on your device. Your PDF is not sent anywhere to be edited. The
+editor only goes online to download a font from the open font library
+(cdn.jsdelivr.net) when the PDF's own font is missing a letter you typed.
+
+| Part | Source |
+|---|---|
+| Engine (open, edit, render, save, undo) | `allternit-ai/src/lib/pdf/editor/engine.ts` |
+| Worker and its client | `src/lib/pdf/editor/worker.ts`, `client.ts` |
+| Font lookup (font library, metric twins, WOFF → TTF) | `src/lib/pdf/editor/fonts.ts`, `woff.ts` |
+| Editor UI | `src/components/pdf-editor/` |
+| Registered as the `pdf` kind's editor | `src/lib/artifacts/kinds.ts` |
+| Dev preview | `preview-pdf-editor.html` in a `vite` dev server |
+
+Text edits change the page's text objects and then rewrite the page content.
+Undo restores a saved copy of the document from before each change. Desktop's
+content security policy includes `'wasm-unsafe-eval'` so the engine can compile.

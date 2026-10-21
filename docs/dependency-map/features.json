@@ -1296,6 +1296,30 @@
       ]
     },
     {
+      "id": "feature:pdf-editor",
+      "label": "PDF editor (edit in place on PDFium, keeps fonts and layout)",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "The pdf kind's editor: PDFium (WASM, @embedpdf/pdfium) in a web worker edits the PDF itself. Text edits rewrite only the touched text objects in the PDF's own font (embedded subset, else another subset of the same font in the document, else the same family from the open font library via Fontsource on jsDelivr, else a metric-compatible twin, else a standard font only after telling the user, with Undo); the rest of the line slides by the width delta so layout holds. Also: move/resize/delete objects, new text/image/signature/ink/shapes, highlights and comments as real annotations, whiteout, true redaction, AcroForm fill, page reorder/rotate/duplicate/delete/insert blank/insert PDF/extract, find, snapshot undo/redo, autosave to artifact versions. Same component on Desktop, the ai.allternit.com phone layout (bottom tool tray) and the m.allternit.com PWA. PdfCraft (feature:craft-editors) stays reachable as Advanced tools.",
+      "touches": [
+        "allternit-ai/src/lib/pdf",
+        "allternit-ai/src/components/pdf-editor",
+        "allternit-ai/src/lib/artifacts",
+        "allternit/surfaces/allternit-desktop"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-21",
+          "note": "Eoj: PDFs must be editable like Acrobat/Canva, in Desktop, and edits must not change the font or layout — 'as natural as the original pdf'. Built on PDFium (MIT/Apache via EmbedPDF's build) rather than PdfCraft (no existing-text editing) or mupdf.js (AGPL). Desktop CSP gains 'wasm-unsafe-eval' (worker compiles WASM). Electron 41 has no named local-fonts permission, so system-font lookup only runs in browsers that allow it; Desktop uses the font library and metric twins."
+        }
+      ],
+      "evidence": [
+        "allternit-ai/src/lib/pdf/editor/engine.ts",
+        "allternit-ai/src/components/pdf-editor/PdfEditor.tsx",
+        "allternit/surfaces/docs/guides/pdf-editor.mdx"
+      ]
+    },
+    {
       "id": "feature:agency-kernel-settings",
       "label": "Agency Kernel configuration",
       "product": "product:ai-allternit",

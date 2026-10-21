@@ -240,7 +240,9 @@ function buildContentSecurityPolicy(): string {
   const dev = config?.isDev ?? false;
   const directives: Record<string, string[]> = {
     'default-src': ["'self'"],
-    'script-src': ["'self'", "'unsafe-inline'", ...(dev ? ["'unsafe-eval'"] : [])],
+    // wasm-unsafe-eval: compiling WebAssembly (the PDF editor's PDFium engine
+    // runs in a worker). It allows WASM compilation only, not JS eval.
+    'script-src': ["'self'", "'unsafe-inline'", "'wasm-unsafe-eval'", ...(dev ? ["'unsafe-eval'"] : [])],
     'style-src': ["'self'", "'unsafe-inline'"],
     'img-src': ["'self'", 'data:', 'blob:', 'https:'],
     'font-src': ["'self'", 'data:'],

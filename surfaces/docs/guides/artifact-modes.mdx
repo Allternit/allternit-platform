@@ -29,7 +29,7 @@ A missing tool, provider, or editor capability can block a mode. Choose an avail
 
 Docs, Sheets, Slides and PDFs work through artifact sessions with an editor pane. Subsequent turns edit the document already open in that pane. These sessions differ from a one-shot generation that emits a new artifact each time.
 
-PDFs open in the embedded PDF craft editor: the document saves back as a new version of the same artifact, and a read-only preview is available where the editor is not. Uploading a `.pdf` file to the workspace library also creates a PDF artifact.
+PDFs open in the [PDF editor](/guides/pdf-editor): you change text in the PDF's own font, move and add content, sign, fill forms and rearrange pages, and each change saves back as a new version of the same artifact. A read-only preview opens when you don't have edit access. Uploading a `.pdf` file to the workspace library also creates a PDF artifact.
 
 Images open in the embedded PhotoCraft editor: the layered source (`.pcraft`/PSD) is kept in the artifact's runtime storage so edits keep their layers across sessions, and every save also writes a flattened image as a new artifact version — that flat image is what previews, shares and downloads show by default. "Download PSD" exports the layered source for use in other tools. Uploading an image file (PNG, JPEG, WebP, PSD, …) to the workspace library creates an editable image artifact.
 
