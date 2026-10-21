@@ -512,17 +512,18 @@ fn check_body_format(format: &str) -> Result<()> {
 }
 
 /// Capabilities shape + the org's connector kill switch.
-/// For a dashboard, set `capabilities.connectors` from the tiles in its body
-/// (see `kinds::dashboard_connectors`). Other kinds pass through unchanged.
+/// For a dashboard or an ops sheet, set `capabilities.connectors` from the
+/// tools its body calls (see `kinds::body_connectors`). Other kinds pass
+/// through unchanged.
 fn with_dashboard_connectors(mut capabilities: Value, kind: &str, body: &str) -> Value {
-    if kind != "dashboard" {
+    let Some(declared) = kinds::body_connectors(kind, body) else {
         return capabilities;
-    }
+    };
     if !capabilities.is_object() {
         capabilities = json!({});
     }
     let map = capabilities.as_object_mut().expect("object");
-    match kinds::dashboard_connectors(body) {
+    match declared {
         Some(connectors) => {
             map.insert("connectors".to_string(), connectors);
         }

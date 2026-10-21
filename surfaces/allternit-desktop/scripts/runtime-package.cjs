@@ -122,6 +122,8 @@ function stamp() {
   const info = {
     version, build, shellApi: shellApi(),
     platformSha: git(REPO_ROOT, 'rev-parse', 'HEAD') || null,
+    // Uncommitted platform changes would ship without being on main; publish refuses them.
+    platformDirty: git(REPO_ROOT, 'status', '--porcelain', '--untracked-files=no').split('\n').filter(Boolean).length,
     aiSha: aiDir ? git(aiDir, 'rev-parse', aiRef || 'HEAD') || null : null,
     ...(files ? { files } : {}),
   };
@@ -156,7 +158,7 @@ function pack() {
   }
   const manifest = Buffer.from(JSON.stringify({
     version: info.version, build: info.build, platform: PLATFORM, shellApi: info.shellApi,
-    platformSha: info.platformSha, aiSha: info.aiSha, files,
+    platformSha: info.platformSha, platformDirty: info.platformDirty, aiSha: info.aiSha, files,
   }, null, 2));
   const manifestRel = `manifests/${info.version}.json`;
   fs.writeFileSync(path.join(platformDir, manifestRel), manifest);
@@ -249,6 +251,46 @@ async function remoteObjects() {
   }
 }
 
+/**
+ * A published runtime must be built from merged, current code: the platform commit and the
+ * workspace UI commit in the manifest must each be the tip of their origin/main. A package
+ * from a stale or branch checkout silently ships without merged work (2026-10-21, Eoj: make
+ * sure no agent deploys that way). In CI, being behind only means main moved during the run,
+ * so it is a warning there; a commit that is not on main at all always fails.
+ * ALLTERNIT_ALLOW_UNMERGED_RELEASE=1 overrides (Eoj's call only).
+ */
+function requireMergedSources(manifest) {
+  if (process.env.ALLTERNIT_ALLOW_UNMERGED_RELEASE === '1') {
+    console.warn('! ALLTERNIT_ALLOW_UNMERGED_RELEASE=1: skipping the merged-main check');
+    return;
+  }
+  const inCi = process.env.GITHUB_ACTIONS === 'true' || process.env.CI === 'true';
+  const problems = [];
+  const check = (repo, sha) => {
+    if (!sha) return problems.push(`${repo}: the manifest has no commit; re-stamp and re-pack`);
+    let cmp;
+    try {
+      cmp = JSON.parse(execFileSync('gh', ['api', `repos/${repo}/compare/${sha}...main`, '--jq', '{status, ahead_by, behind_by}'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 }));
+    } catch (e) {
+      return problems.push(`${repo}: could not compare ${sha.slice(0, 9)} with main (${String(e.message).split('\n')[0]})`);
+    }
+    if (cmp.status !== 'identical' && cmp.status !== 'ahead') {
+      problems.push(`${repo}: ${sha.slice(0, 9)} is not on main (${cmp.status}, ${cmp.behind_by} commit(s) only on the build)`);
+    } else if (cmp.ahead_by > 0) {
+      const msg = `${repo}: ${sha.slice(0, 9)} is ${cmp.ahead_by} commit(s) behind main`;
+      if (inCi) console.warn(`note (CI): ${msg}; main moved during this run`);
+      else problems.push(msg);
+    }
+  };
+  if (manifest.platformDirty) problems.push(`Allternit/allternit-platform: built with ${manifest.platformDirty} uncommitted change(s)`);
+  if (manifest.platformDirty === undefined) problems.push('the manifest predates the dirty-tree check; re-stamp and re-pack');
+  check('Allternit/allternit-platform', manifest.platformSha);
+  check('Allternit/allternit-ai', manifest.aiSha);
+  if (problems.length) {
+    die(`refusing to publish a runtime that is not built from current main:\n  ${problems.join('\n  ')}\n  Build from clean worktrees on origin/main (platform and ALLTERNIT_AI_PATH), then stamp, pack and publish again.`);
+  }
+}
+
 async function publish(confirm) {
   const platformDir = path.join(FEED, 'stable', PLATFORM);
   const latestPath = path.join(platformDir, 'latest.json');
@@ -262,6 +304,7 @@ async function publish(confirm) {
   if (live && Number(live.build) >= Number(latest.build) && !process.env.ALLTERNIT_RUNTIME_ALLOW_OLDER) {
     die(`live package ${live.version} (build ${live.build}) is not older than ${latest.version} (build ${latest.build}); clients would ignore this publish. Re-stamp from newer commits, or set ALLTERNIT_RUNTIME_ALLOW_OLDER=1 to roll the pointer back on purpose.`);
   }
+  requireMergedSources(manifest);
   auth.token = cloudflareToken();
   const have = await remoteObjects();
   const needed = [...new Set(Object.values(manifest.files).map((f) => `objects/${f.sha256}.gz`))].filter((k) => !have.has(k));
