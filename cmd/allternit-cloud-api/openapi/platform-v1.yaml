@@ -2139,6 +2139,13 @@ components:
             screen_h: { type: [integer, "null"] }
             run_id: { type: [string, "null"] }
             ok: { type: boolean }
+            actor:
+              type: [object, "null"]
+              description: Who is driving. agent_id is the request's agent, else the computer's bot. Null when neither is known.
+              properties:
+                agent_id: { type: [string, "null"] }
+                name: { type: [string, "null"] }
+            step: { type: [string, "null"], description: "The step text the call sent (masked), or null." }
     ComputerEventList:
       type: object
       properties:
@@ -2174,6 +2181,9 @@ components:
           type: array
           items: { type: string }
           description: Off-by-default members (file_upload, read_console, read_network, javascript_exec) to allow for this call.
+        agent_id: { type: string, description: "The bot or agent driving the call, shown on the agent cursor. Display only. When left out, the computer's own bot is used." }
+        agent_name: { type: string, maxLength: 60, description: "Its display name for the cursor badge. Trimmed and cut to 60 characters." }
+        step: { type: string, maxLength: 120, description: "A few words saying what this action does, shown to people watching. Trimmed, cut to 120 characters, and masked like other logged text." }
     ToolsetResult:
       type: object
       required: [is_error, content]

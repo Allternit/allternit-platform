@@ -30,6 +30,7 @@ export namespace Artifacts {
     slides: ["application/vnd.allternit.slides+json"],
     design: ["application/vnd.allternit.design+json", "text/html"],
     dashboard: ["application/vnd.allternit.dashboard+json", "application/vnd.allternit.openui"],
+    ops: ["application/vnd.allternit.ops+json"],
     motion: ["application/vnd.allternit.motion+json"],
     page: ["text/html", "text/markdown"],
     card: ["application/vnd.allternit.openui"],
@@ -139,6 +140,12 @@ export namespace Artifacts {
         return `A motion body needs a non-empty "scenes" array: {"scenes":[{"type","title","duration","props"}]}. Use the format described in the system prompt.`
       }
     }
+    if (kind === "ops") {
+      const tabs = (JSON.parse(body) as { tabs?: unknown })?.tabs
+      if (!Array.isArray(tabs) || tabs.length === 0) {
+        return `An ops sheet body needs a non-empty "tabs" array: {"header":{...},"actions":[...],"tabs":[{"id","label","panels":[...]}]}. Use the format described in the system prompt under "Ops sheets".`
+      }
+    }
     if (bodyFormat === "text/uri-list" && !/^\S+:\/\/\S+|^\//m.test(body.trim())) {
       return `An image artifact's body is the image URL (text/uri-list), not the image data.`
     }
@@ -169,10 +176,11 @@ export namespace Artifacts {
     path: string,
     body: unknown,
     abort?: AbortSignal,
+    timeoutMs: number = TIMEOUT_MS,
   ): Promise<{ status: number; json: any } | undefined> {
     const list = await tokens()
     if (list.length === 0) return undefined
-    const signal = abort ? AbortSignal.any([abort, AbortSignal.timeout(TIMEOUT_MS)]) : AbortSignal.timeout(TIMEOUT_MS)
+    const signal = abort ? AbortSignal.any([abort, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs)
     for (const token of list) {
       let response: Response
       try {
@@ -428,10 +436,258 @@ export namespace Artifacts {
 
   export async function comment(
     id: string,
-    input: { body: string; parent_id?: string; anchor?: unknown },
+    input: { body: string; parent_id?: string; anchor?: CommentAnchor; agent_name?: string },
     abort?: AbortSignal,
   ): Promise<any> {
     return must("POST", `/api/v2/artifacts/${enc(id)}/comments`, input, "post the comment", abort)
+  }
+
+  // ----------------------------------------------------------- agent watch (presence + suggestions)
+
+  /**
+   * Where an agent is working: a doc block (0-based index), a sheet cell, or
+   * an artboard of a design canvas. An artboard anchor is also the agent's
+   * claim on that frame (SPEC-agent-canvas-2026-10-20).
+   */
+  export type Anchor =
+    | { kind: "block"; block: number }
+    | { kind: "cell"; sheet: string | null; address: string }
+    | { kind: "artboard"; artboard: string }
+
+  /** A design canvas layer (allternit-ai design-canvas.ts CanvasLayer), sent verbatim. */
+  export interface CanvasLayer {
+    id: string
+    type: string
+    name?: string
+    artboard: string | null
+    x?: number
+    y?: number
+    w?: number
+    h?: number
+    rotation?: number
+    props?: Record<string, unknown>
+    asset?: Record<string, unknown>
+    [key: string]: unknown
+  }
+
+  /** The artboard fields an artboard change may patch. */
+  export interface FramePatch {
+    fill?: string
+    w?: number
+    h?: number
+    props?: Record<string, unknown>
+  }
+
+  /**
+   * A generated slider on an artboard change (SPEC-agent-canvas-phase2 §2):
+   * the user tunes one value instead of the agent guessing it. `layer` is a
+   * layer id in the change (null = the artboard); `prop` is a key in that
+   * layer's props, or x/y/w/h; a `frame.` prefix targets the artboard's props.
+   */
+  export type Control =
+    | { id: string; label: string; type: "range"; layer: string | null; prop: string; min: number; max: number; step?: number; value: number }
+    | { id: string; label: string; type: "color"; layer: string | null; prop: string; value: string }
+    | { id: string; label: string; type: "select"; layer: string | null; prop: string; options: string[]; value: string }
+
+  /**
+   * A comment anchor (allternit-ai ask.ts EditorAnchor). On a Design canvas a
+   * pin is `{kind:"element", shapeId, artboard?, label?}`; `shapeId ===
+   * artboard` pins the frame itself.
+   */
+  export type CommentAnchor = { kind: "text" | "cell" | "slide" | "element"; [key: string]: unknown }
+
+  /**
+   * One suggested change (SPEC-agent-watch §Change shapes). `text` replaces the
+   * first `find` in block `block` (null = the whole doc, block by block);
+   * `block` replaces / inserts after / deletes a block from markdown; `cell`
+   * sets one sheet cell (a value starting with "=" is a formula).
+   */
+  export type Change =
+    | { kind: "text"; block: number | null; find: string; replace: string }
+    | { kind: "block"; op: "replace" | "insert_after" | "delete"; block: number; markdown?: string }
+    | { kind: "cell"; sheet: string | null; address: string; value: string }
+    | {
+        kind: "artboard"
+        artboard: string
+        name?: string
+        frame?: FramePatch
+        /** The artboard's full new layer list, stacking order. */
+        layers: CanvasLayer[]
+        /** What it replaces, as the agent read it. */
+        before: { frame?: FramePatch; layers: CanvasLayer[] }
+        /** Up to 12 sliders the user can move before keeping the change. */
+        controls?: Control[]
+      }
+
+  export interface Suggestion {
+    id: string
+    artifact_id: string
+    base_version: number
+    agent_name: string
+    session_id: string | null
+    change: Change
+    reason: string | null
+    cost_usd: number | null
+    status: "pending" | "accepted" | "rejected" | "stale"
+    created_at: string
+    resolved_at: string | null
+  }
+
+  /** The location a change points at, used as the agent cursor's anchor. */
+  export function anchorOf(change: Change | undefined): Anchor | undefined {
+    if (!change) return undefined
+    if (change.kind === "cell") return { kind: "cell", sheet: change.sheet ?? null, address: change.address }
+    if (change.kind === "artboard") return { kind: "artboard", artboard: change.artboard }
+    if (typeof change.block === "number") return { kind: "block", block: change.block }
+    return undefined
+  }
+
+  export interface AgentPresence {
+    name: string
+    session_id?: string
+    task?: string
+    anchor?: Anchor
+    cost_usd?: number
+  }
+
+  /** Heartbeats are best effort: a short timeout, and the caller never awaits them. */
+  export const PRESENCE_TIMEOUT_MS = 2_500
+
+  /**
+   * Show the agent in the artifact's presence stack (and its cursor at
+   * `anchor`). Never throws and never rejects; resolves false when nothing was
+   * recorded. GIZZI_ARTIFACT_PRESENCE=0 turns heartbeats off.
+   */
+  export async function presence(
+    id: string,
+    state: "viewing" | "editing" | "left",
+    agent: AgentPresence,
+  ): Promise<boolean> {
+    try {
+      if (["0", "false", "off"].includes((process.env.GIZZI_ARTIFACT_PRESENCE ?? "").toLowerCase())) return false
+      const body = {
+        state,
+        agent: {
+          name: agent.name.slice(0, 100),
+          ...(agent.session_id ? { session_id: agent.session_id } : {}),
+          ...(agent.task ? { task: agent.task.slice(0, 200) } : {}),
+          ...(agent.anchor ? { anchor: agent.anchor } : {}),
+          ...(typeof agent.cost_usd === "number" && Number.isFinite(agent.cost_usd) ? { cost_usd: agent.cost_usd } : {}),
+        },
+      }
+      const res = await cloud("POST", `/api/v2/artifacts/${enc(id)}/presence`, body, undefined, PRESENCE_TIMEOUT_MS)
+      return !!res && res.status < 300
+    } catch (error) {
+      log.debug("artifact presence heartbeat failed", { id, error: String(error) })
+      return false
+    }
+  }
+
+  /** Another live agent session holds the artboard (409 `artboard_claimed`). */
+  export class ClaimedError extends Error {
+    constructor(
+      readonly frame: string,
+      readonly holder: { name: string; session_id: string | null },
+    ) {
+      super(`${frame} is being worked on by ${holder.name}; pick another frame or wait.`)
+      this.name = "ClaimedError"
+    }
+  }
+
+  function claimedError(json: any, frame: string): ClaimedError | undefined {
+    if (json?.error !== "artboard_claimed" && json?.code !== "artboard_claimed") return undefined
+    const name = typeof json.holder?.name === "string" && json.holder.name ? json.holder.name : "another agent"
+    return new ClaimedError(frame, { name, session_id: json.holder?.session_id ?? null })
+  }
+
+  /**
+   * Claim an artboard of a design canvas: an agent heartbeat whose anchor is
+   * the artboard. The claim lasts while heartbeats keep coming (45 s TTL).
+   * Throws ClaimedError when another agent session holds it, and an error
+   * when there is no cloud account (claims need the store).
+   */
+  export async function claim(
+    id: string,
+    agent: AgentPresence & { anchor: { kind: "artboard"; artboard: string } },
+    frame: string,
+    abort?: AbortSignal,
+  ): Promise<void> {
+    const body = {
+      state: "editing",
+      agent: {
+        name: agent.name.slice(0, 100),
+        ...(agent.session_id ? { session_id: agent.session_id } : {}),
+        ...(agent.task ? { task: agent.task.slice(0, 200) } : {}),
+        anchor: agent.anchor,
+        ...(typeof agent.cost_usd === "number" && Number.isFinite(agent.cost_usd) ? { cost_usd: agent.cost_usd } : {}),
+      },
+    }
+    const res = await cloud("POST", `/api/v2/artifacts/${enc(id)}/presence`, body, abort, PRESENCE_TIMEOUT_MS * 2)
+    if (!res) {
+      throw new Error(
+        `Can't claim ${frame}: claims need the user's Allternit account, and none is signed in here or the cloud isn't reachable. ` +
+          `Without a claim, artifact_suggest still works; the cloud refuses it if another agent holds the frame.`,
+      )
+    }
+    if (res.status === 409) throw claimedError(res.json, frame) ?? new RejectedError(409, `Can't claim ${frame}: ${errorMessage(res.json, 409)}`)
+    if (res.status === 404) throw new NotFoundError(id)
+    if (res.status >= 400) throw new RejectedError(res.status, `Can't claim ${frame}: ${errorMessage(res.json, res.status)}`)
+  }
+
+  /** Pending suggestions on an artifact; undefined when the store can't say (offline, older cloud). Never throws. */
+  export async function pendingSuggestions(id: string, abort?: AbortSignal): Promise<Suggestion[] | undefined> {
+    try {
+      const res = await cloud("GET", `/api/v2/artifacts/${enc(id)}/suggestions?status=pending`, undefined, abort, PRESENCE_TIMEOUT_MS)
+      if (!res || res.status !== 200 || !Array.isArray(res.json?.items)) return undefined
+      return res.json.items
+    } catch (error) {
+      if (abort?.aborted) throw error
+      return undefined
+    }
+  }
+
+  export class SuggestUnavailableError extends Error {
+    constructor(why: string) {
+      super(
+        `Can't suggest edits: ${why}. Suggestions need the user's Allternit account. ` +
+          `Use artifact_update to save the change directly instead.`,
+      )
+      this.name = "SuggestUnavailableError"
+    }
+  }
+
+  export interface SuggestInput {
+    base_version: number
+    agent_name: string
+    session_id?: string
+    cost_usd?: number
+    changes: Array<{ change: Change; reason?: string }>
+  }
+
+  /** POST pending suggestions for the user to review. Needs the cloud store (no offline fallback). */
+  export async function suggest(id: string, input: SuggestInput, abort?: AbortSignal): Promise<Suggestion[]> {
+    const res = await cloud("POST", `/api/v2/artifacts/${enc(id)}/suggestions`, input, abort)
+    if (!res) throw new SuggestUnavailableError("no Allternit account is signed in here (sign in or pair this device)")
+    if (res.status === 405) throw new SuggestUnavailableError("this Allternit cloud doesn't support suggestions yet")
+    if (res.status === 404) {
+      // Our route's JSON 404 means the artifact; anything else means the route isn't there.
+      // (A plain-text 404 parses to `{message}`, so look for the store's `code`/`error`.)
+      if (res.json && typeof res.json === "object" && (res.json.code || res.json.error)) {
+        throw new NotFoundError(id)
+      }
+      throw new SuggestUnavailableError("this Allternit cloud doesn't support suggestions yet")
+    }
+    if (res.status === 409) {
+      const frame = input.changes.find((c) => c.change.kind === "artboard")?.change as { name?: string; artboard: string } | undefined
+      const claimed = claimedError(res.json, frame?.name || frame?.artboard || "That frame")
+      if (claimed) throw claimed
+      const current = typeof res.json?.current_version === "number" ? res.json.current_version : undefined
+      throw new StaleVersionError(id, input.base_version, current)
+    }
+    if (res.status >= 400) {
+      throw new RejectedError(res.status, `The artifact store refused the suggestions: ${errorMessage(res.json, res.status)}`)
+    }
+    return Array.isArray(res.json?.items) ? res.json.items : []
   }
 
   export async function storageList(id: string, scope: "personal" | "shared", prefix: string | undefined, abort?: AbortSignal): Promise<any> {

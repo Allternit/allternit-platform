@@ -1,4 +1,4 @@
-Create an artifact: a standalone piece of work the user can open beside the chat, edit, version, share and reuse (a document, deck, sheet, design, dashboard, page, card, diagram, image or code file). It is saved to the user's Artifacts and shows in the chat as a card.
+Create an artifact: a standalone piece of work the user can open beside the chat, edit, version, share and reuse (a document, deck, sheet, design, dashboard, ops sheet, page, card, diagram, image or code file). It is saved to the user's Artifacts and shows in the chat as a card.
 
 When to create one:
 - The content is substantial (about 15+ lines), self-contained, and likely to be edited or reused; or
@@ -11,6 +11,7 @@ Kinds and body formats (body_format is optional; it is inferred from the kind an
 - slides: application/vnd.allternit.slides+json (format in the system prompt, or load the `artifacts` skill)
 - design: application/vnd.allternit.design+json, a canvas document (artboards + layers; format in the system prompt under "Design artifacts", or the `artifacts` skill). Do not send text/html for a new design: an HTML design opens read-only until the user converts it.
 - dashboard: application/vnd.allternit.dashboard+json (tiles, each with its own connector query; use the format described in the system prompt)
+- ops: application/vnd.allternit.ops+json (a live status sheet for one running thing: a deploy, site, MCP app, server or computer; header, actions and tabs of panels; use the format described in the system prompt under "Ops sheets")
 - motion: application/vnd.allternit.motion+json (scenes + props; use the format described in the system prompt)
 - page: text/html (a complete, self-contained page) or text/markdown
 - card: application/vnd.allternit.openui (OpenUI Lang; use the format described in the system prompt)

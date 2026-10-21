@@ -271,3 +271,11 @@ Voice models download on first use and are not part of the installer:
 Silero VAD (MIT), Moonshine (MIT), Smart Turn v3.2 (BSD-2-Clause),
 Kokoro-82M (Apache-2.0) and, optionally, Parakeet TDT 0.6B v3 by NVIDIA
 (CC-BY-4.0). Full list: `services/voice/THIRD_PARTY_NOTICES.md`.
+
+**Reason Network** (reason-machines/reason-network, MIT OR Apache-2.0,
+used here under Apache-2.0, Copyright 2026 Reason Machines, Inc.): the
+live-session delivery order, the Claude Code messaging-socket write, the
+per-harness hook output table and the unread-mail notice in
+`factory/engine/src/agents/live_delivery.rs`, `factory/engine/src/agents/delivery.rs`,
+`cmd/gizzi-code/src/cli/commands/hook.ts` and `cmd/gizzi-code/src/runtime/live/`
+are adapted from it. Each adapted file carries that attribution in its header.

@@ -29,19 +29,34 @@ When an agent moves or clicks on a computer you're watching, a cursor glides to 
 - **Screen readers:** the drawing is hidden from assistive tech. A polite status line says what the agent did, for example "Agent clicked at 512, 300", at most every few seconds.
 - The cursor hides after a few quiet seconds and comes back with the agent's next action. Typing and key presses have no point on the screen, so they don't move it.
 
+### The bot rides the cursor
+
+The bot that is driving rides along with the cursor, so you can always tell which bot is moving the pointer and what it's doing.
+
+- **While it moves:** only the bot's avatar shows, just below and to the right of the cursor tip. It never covers the spot being clicked, and near the edge of the screen it moves to the other side.
+- **When it stops or acts:** the badge opens to the bot's name and the step, for example "Raven · Clicking Send". The step is the bot's own few words about the action, or a plain description of it when the bot didn't give one.
+- **Click the badge** for a card with the bot, its task, the current step, how long it has been running, and Pause and Take control. Click anywhere else to close it. On your phone the badge is smaller, shows the name only, and a tap opens the card as a sheet at the bottom of the screen.
+- **On this Mac:** when a bot drives this computer itself, the badge appears next to the real mouse pointer, in a see-through layer over the whole screen. That layer can't take clicks (they'd go to the app the bot is using instead), so it shows the avatar and the name and step only. Open the run in the Allternit app for the card. The layer is left out of the bot's own screenshots and goes away a few seconds after the bot's last action.
+- **When you take control,** the badge greys out and reads "You have control". It comes back when you hand control back.
+- **Turn it off:** Settings → Computers → **Agent cursor** → **Show the bot on the cursor**. It's on by default. The cursor itself keeps the style you picked.
+
 ### For developers: the event it plays
 
 The overlay plays `computer.action` events from the computer's events channel in allternit-api. The computer toolset executor (`POST /computers/:id/toolset`) emits one per pointer action:
 
 ```json
 { "type": "computer.action", "ts": 1760000000,
-  "data": { "member": "left_click", "x": 812, "y": 404, "screen_w": 1920, "screen_h": 1080, "run_id": "run_…" } }
+  "data": { "member": "left_click", "x": 812, "y": 404, "screen_w": 1920, "screen_h": 1080, "run_id": "run_…",
+            "actor": { "agent_id": "bot_123", "name": "Raven" }, "step": "Clicking Send" } }
 ```
+
+- `actor` and `step` label the bot badge. The caller sends `agent_id`, `agent_name` and `step` on the toolset request; without `agent_id` the computer's own bot is used, and without either `actor` is `null` and the viewer falls back to the run's bot, then your own bot, then a plain cursor. Details: [Computer toolset events](/tools/computer-toolset#events).
 
 - `x` and `y` are real screen pixels (after the executor's model-frame scaling); `screen_w` and `screen_h` are that screen's size. The viewer maps them onto the displayed picture, accounting for letterboxing and the viewer's fit or actual-size mode.
 - Click members (`left_click`, `right_click`, `middle_click`, `double_click`, `triple_click`, `left_mouse_down`) show the click ring. `mouse_move`, `left_click_drag`, `scroll` and other members with a point glide only. Members without a point are ignored.
 - Live stream: mint a token with `POST /api/v1/computers/:id/ws-token` `{"purpose":"events"}`, then open `/ws/computers/:id/events?token=…`. It replays recent history on connect; the viewer skips events older than the moment it connected. If the stream can't open, the viewer polls `GET /api/v1/computers/:id/events?limit=10` while the page is visible and stops quietly after repeated errors.
-- On this Mac, the ACI engine's own `cursor.moved` run-stream events (model frame, with `coordinate.contract`) drive the same overlay without a round trip.
+- On this Mac, the ACI engine's own `cursor.moved` run-stream events (model frame, with `coordinate.contract`) drive the same overlay without a round trip. They carry `actor` (the bot the run was started for, or `null`) and `step_text` (the planned action's reason); their `step` field stays the step number.
+- The badge next to the real pointer on this Mac is a Desktop window (`surfaces/allternit-desktop/src/main/agent-cursor-window.ts`) that loads `companion.html?surface=agent-cursor`. Its page uses the `window.allternitAgentCursor` bridge: `show()`, `hide()`, `getDisplay()` (width, height and scale factor of the primary display) and `onDisplay(callback)`.
 - Motion comes from Cua's MIT `@trycua/cursor-motion` player, vendored in allternit-ai at `src/vendor/cua-cursor-motion/` with the upstream commit in its README.
 
 ## Which computer your phone and the web use

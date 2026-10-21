@@ -2,15 +2,20 @@
 //! (`POST /api/v1/runtime-presence/heartbeat`, relay-signed like
 //! `runtime_events`) carrying the routines due in the next 24 h, so the cloud
 //! (which is awake when this computer is not) can tell the owner when a
-//! scheduled run is missed because this computer is asleep.
+//! scheduled run is missed because this computer is asleep. It also carries the
+//! live agent sessions on this computer (`sessions`, contract C6/C7).
 
 use std::sync::Arc;
 use std::time::Duration;
 
-use axum::Router;
+use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
+use axum::routing::get;
+use axum::{Extension, Json, Router};
 use chrono::{DateTime, NaiveDateTime, Utc};
 use serde_json::{json, Value};
 
+use crate::auth::AuthUser;
 use crate::runtime_events::EventSink;
 use crate::AppState;
 
@@ -18,6 +23,7 @@ pub const HEARTBEAT_PATH: &str = "/api/v1/runtime-presence/heartbeat";
 const EVERY: Duration = Duration::from_secs(60);
 const HORIZON_HOURS: i64 = 24;
 const MAX_DUE: usize = 50;
+const MAX_SESSIONS: usize = 100;
 
 /// `routines.next_run_at` is free text: RFC 3339 or SQLite `YYYY-MM-DD HH:MM:SS` (UTC).
 fn parse_at(s: &str) -> Option<DateTime<Utc>> {
@@ -53,8 +59,39 @@ pub fn heartbeat_payload_at(conn: &rusqlite::Connection, owner: &str, now: DateT
     due.truncate(MAX_DUE);
     json!({
         "failovers": bot_failovers(conn, owner),
+        // Filled in by the async beat (`live_sessions`); the table-only payload carries none.
+        "sessions": [],
         "nextDue": due.into_iter().map(|(t, id, title)| json!({ "routineId": id, "title": title, "at": t.to_rfc3339() })).collect::<Vec<_>>(),
     })
+}
+
+/// The live sessions (C6) for the heartbeat: the Factory engine knows the panes, so ask it; if it is down,
+/// fall back to what the session files alone show. Never fails the heartbeat.
+pub async fn live_sessions(runtime_id: &str) -> Value {
+    let person = allternit_factory_engine::agents::live_sessions::default_person();
+    let url = format!("{}/api/factory/sessions?person={}", crate::factory_proxy::engine_url(), urlencoding::encode(&person));
+    let fetched = async {
+        let res = reqwest::Client::new().get(url).timeout(Duration::from_secs(3)).send().await.ok()?;
+        res.status().is_success().then_some(())?;
+        res.json::<Vec<Value>>().await.ok()
+    }
+    .await;
+    let mut list = match fetched {
+        Some(l) => l,
+        None => tokio::task::spawn_blocking(move || {
+            allternit_factory_engine::agents::live_sessions::discover(&person, None)
+                .into_iter()
+                .filter_map(|s| serde_json::to_value(s).ok())
+                .collect()
+        })
+        .await
+        .unwrap_or_default(),
+    };
+    for s in &mut list {
+        s["machine"] = json!(runtime_id);
+    }
+    list.truncate(MAX_SESSIONS);
+    Value::Array(list)
 }
 
 /// One `{botId, failoverRuntimeId}` per always-on bot that has a failover computer.
@@ -151,9 +188,31 @@ pub fn record_failovers(db: &crate::db::DbHandle, owner: &str, reply: &Value) ->
     n
 }
 
-/// Runtime side serves no routes; the heartbeat goes out, not in.
+/// `GET /live-sessions` (under `/api/v1`): this computer's live agent sessions, proxied from the
+/// Factory engine (`GET /api/factory/sessions`). The address prefix is the caller's username
+/// (email local-part). Engine down → 502 with the usual transport error, never an empty list.
+async fn live_sessions_route(Extension(user): Extension<AuthUser>) -> Response {
+    let person = user
+        .email
+        .as_deref()
+        .and_then(|e| e.split('@').next())
+        .filter(|p| !p.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(allternit_factory_engine::agents::live_sessions::default_person);
+    let url = format!("{}/api/factory/sessions?person={}", crate::factory_proxy::engine_url(), urlencoding::encode(&person));
+    match reqwest::Client::new().get(url).timeout(Duration::from_secs(10)).send().await {
+        Ok(r) if r.status().is_success() => match r.json::<Value>().await {
+            Ok(v) => Json(v).into_response(),
+            Err(e) => (StatusCode::BAD_GATEWAY, Json(json!({ "error": { "code": "transport", "fact": format!("the Factory engine's reply was not JSON: {e}"), "action": "Update Allternit and retry." } }))).into_response(),
+        },
+        Ok(r) => (StatusCode::BAD_GATEWAY, Json(json!({ "error": { "code": "transport", "fact": format!("the Factory engine answered {}", r.status()), "action": "Retry; if it persists run `gizzi agents doctor`." } }))).into_response(),
+        Err(e) => (StatusCode::BAD_GATEWAY, Json(json!({ "error": { "code": "transport", "fact": format!("the Factory engine is not reachable: {e}"), "action": "Start the Factory engine (allternit-factory serve; Allternit Desktop starts it) and retry." } }))).into_response(),
+    }
+}
+
+/// The heartbeat goes out, not in; the only route is the local session list.
 pub fn router() -> Router<Arc<AppState>> {
-    Router::new()
+    Router::new().route("/live-sessions", get(live_sessions_route))
 }
 
 /// Send one heartbeat. `Ok(false)` = not paired (nothing to do).
@@ -168,6 +227,7 @@ pub async fn beat_once(state: &AppState, sink: &dyn EventSink, cloud: &str) -> R
         .await
         .map_err(|e| e.to_string())?
         .map_err(|e| e.to_string())?;
+    body["sessions"] = live_sessions(&runtime_id).await;
     body["runtimeId"] = json!(runtime_id);
     let bytes = serde_json::to_vec(&body).map_err(|e| e.to_string())?;
     let headers = sign(&token, &owner, &runtime_id, &bytes);
@@ -202,6 +262,7 @@ async fn beat_and_reconcile(state: &AppState, cloud: &str) -> Result<bool, Strin
         .await
         .map_err(|e| e.to_string())?
         .map_err(|e| e.to_string())?;
+    body["sessions"] = live_sessions(&runtime_id).await;
     body["runtimeId"] = json!(runtime_id);
     let bytes = serde_json::to_vec(&body).map_err(|e| e.to_string())?;
     let mut req = reqwest::Client::new().post(format!("{cloud}{HEARTBEAT_PATH}")).timeout(Duration::from_secs(20)).header("content-type", "application/json");

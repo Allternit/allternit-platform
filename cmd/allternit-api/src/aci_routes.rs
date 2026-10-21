@@ -624,6 +624,9 @@ async fn aci_run(
             // The run's owner: the engine calls the computer toolset executor
             // (/computers/:id/toolset) on this user's behalf.
             "userId": user.user_id,
+            // The bot it runs for, so the engine's toolset calls (and its
+            // cursor.moved events) name who is driving the agent cursor.
+            "botId": body.bot_id,
         },
     });
 

@@ -1,6 +1,6 @@
 ---
 title: 'Artifacts v2 API'
-description: 'One account-level store of typed artifacts (docs, sheets, slides, designs, dashboards, motion, pages, cards, diagrams, images, PDFs, videos, code) with versions and sharing, served by the hosted Cloud API.'
+description: 'One account-level store of typed artifacts (docs, sheets, slides, designs, dashboards, ops sheets, motion, pages, cards, diagrams, images, PDFs, videos, code) with versions and sharing, served by the hosted Cloud API.'
 ---
 
 ## Overview
@@ -36,6 +36,7 @@ See [Authentication](/api/authentication).
 | `slides` | `application/vnd.allternit.slides+json` | |
 | `design` | `application/vnd.allternit.design+json` | `text/html` |
 | `dashboard` | `application/vnd.allternit.dashboard+json` | `application/vnd.allternit.openui` (dashboards saved before the tile format) |
+| `ops` | `application/vnd.allternit.ops+json` | |
 | `motion` | `application/vnd.allternit.motion+json` | |
 | `page` | `text/html` | `text/markdown` |
 | `card` | `application/vnd.allternit.openui` | |
@@ -197,6 +198,49 @@ A tool result is read as a table: an array of objects, `{ "columns": [], "rows":
 
 Dashboards run as the viewer: each call goes through the viewer's own connectors, and a tool that is not read-only is refused (a SQL tool is allowed for a single read-only statement). The owner's client sets `capabilities.connectors` to the connectors and tools the tiles call, so `visibility: "link"` is refused for a dashboard (see [Sharing](#sharing)). Dashboards saved before this format, with `application/vnd.allternit.openui`, still open as cards.
 
+Tiles may also use the built-in read tools `allternit__computers_list`, `allternit__computer_get` and `allternit__computer_history`. They read the viewer's own computers and need no connector.
+
+## Ops sheet body
+
+An `ops` artifact's body is JSON with `body_format` `application/vnd.allternit.ops+json`. It watches one running thing. The apps parse it the same forgiving way as a dashboard: a part that fails validation is skipped, and the rest still draws.
+
+```json
+{
+  "version": 1,
+  "refreshSeconds": 30,
+  "filters": [],
+  "header": {
+    "title": "fraud-scorer",
+    "query": { "tool": "deploys__get_deployment", "args": {} },
+    "fields": { "status": "status", "version": "version", "environment": "environment", "target": "cluster", "startedAt": "started_at" },
+    "stepsFrom": "pipeline"
+  },
+  "actions": [
+    { "id": "pause", "label": "Pause", "icon": "pause", "tool": "deploys__pause_rollout", "args": {}, "confirm": "Pause the rollout?", "when": ["running"] }
+  ],
+  "tabs": [
+    { "id": "pipeline", "label": "Pipeline", "panels": [
+      { "id": "pipeline", "type": "steps", "query": { "tool": "deploys__list_steps", "args": {} } }
+    ] }
+  ]
+}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `version` | Always `1`. |
+| `refreshSeconds` | Re-read while the sheet is open. `0` or missing: only on open. At least 10 when set. |
+| `filters[]` | Same as dashboard filters, up to 4. One `select` filter is drawn as a "1 of N" switcher. `{{filters.<id>}}` works in panel and action args. |
+| `header.query` | Returns one row: the thing being watched. |
+| `header.fields` | Which columns to use for `title`, `id`, `version`, `status`, `environment`, `target`, `progress` (0 to 1 or 0 to 100), `progressLabel` and `startedAt`. Missing names are found by their usual column names. The one exception is `startedAt`, which is read only when named. |
+| `header.stepsFrom` | The id of a `steps` panel. The progress bar then has one segment per step. |
+| `actions[]` | Up to 4. `label`, `icon` (`pause`, `play`, `rollback`, `restart`, `stop`, `retry`, `promote`, `run`), `tool`, `args`, `confirm` (shown when the viewer approves), `when` (header statuses that show the button), `danger`. `rollback` and `stop` are always drawn as dangerous. |
+| `tabs[]` | Up to 8: `id`, `label`, `panels`, optional `countFrom` (a panel id whose row count shows on the tab). |
+| `panels[].type` | `steps` (name, status, duration, detail, progress), `logs` (time, level, source, message), `stats` (one row, `fields` with `label`, `format`, `baseline`, `limit`), `fields` (one row, `fields` with `label` and `mono`), `line`, `area`, `bar` (`encoding.x`, `encoding.y`, optional `limit` and `limitLabel`), `table` (`encoding.columns`). Up to 24 panels in all. Ids are unique across the sheet. |
+| `panels[].query` | Same as a dashboard tile's query. |
+
+Reads run like dashboard tiles: as the viewer, through the viewer's connectors, and read-only tools only. Action tools run only from their button, and the viewer approves every call. On save the server sets `capabilities.connectors` to every tool the body reads or acts with, so `visibility: "link"` is refused.
+
 ## Versions
 
 ```http
@@ -304,12 +348,25 @@ Comments are threaded: a root comment plus replies one level deep. They are stor
 | Method and path | Needs | Body | Returns |
 |---|---|---|---|
 | `GET /api/v2/artifacts/:id/comments` | view | | `{ items }`, oldest first, at most 500 |
-| `POST /api/v2/artifacts/:id/comments` | comment | `{ body, anchor?, parent_id?, version? }` | the comment, `201` |
+| `POST /api/v2/artifacts/:id/comments` | comment | `{ body, anchor?, parent_id?, version?, agent_name? }` | the comment, `201` |
 | `PATCH /api/v2/artifacts/:id/comments/:cid` | edit, or the author | `{ resolved? , body? }` | the comment |
 | `DELETE /api/v2/artifacts/:id/comments/:cid` | the author or the owner | | `204`. Deleting a root deletes its replies. |
 | `POST /api/v2/artifacts/:id/comments/assistant-reply` | edit | `{ parent_id, body }` | the reply, `201`, with `author_id: "assistant"` |
 
-A comment has `id`, `artifact_id`, `version`, `anchor`, `parent_id`, `author_id`, `author_name`, `author_image_url`, `body`, `to_assistant`, `resolved_at` and `created_at`. `body` is 1 to 4000 characters. `anchor` is an opaque object up to 16 KB; the app writes `{ kind: "text" | "cell" | "slide" | "element", ... }`. A comment that mentions `@gizzi` or `@allternit` is stored with `to_assistant: true`. Docs have no Commenter level, so a viewer of a doc can't comment.
+A comment has `id`, `artifact_id`, `version`, `anchor`, `parent_id`, `author_id`, `author_name`, `author_image_url`, `agent_name`, `body`, `to_assistant`, `resolved_at` and `created_at`. `body` is 1 to 4000 characters. `anchor` is an opaque object up to 16 KB; the app writes `{ kind: "text" | "cell" | "slide" | "element", ... }`. A comment that mentions `@gizzi` or `@allternit` is stored with `to_assistant: true`.
+
+**Comment anchors.** The server stores `anchor` exactly as sent, every field kept, so the app can add fields without a server change. It checks only that it is an object up to 16 KB whose `kind`, when present, is `text`, `cell`, `slide` or `element`. On a Design canvas a comment pinned to a frame or layer uses the `element` kind:
+
+```json
+{ "kind": "element", "shapeId": "shape:title", "artboard": "shape:hero", "label": "Title" }
+```
+
+- `shapeId` is the layer's shape id, or the artboard's own id when the comment is about the whole frame (`shapeId` equals `artboard`).
+- `artboard` is the artboard's shape id and `label` the name shown in the thread. When present, `shapeId`, `artboard` and `label` must be strings of at most 200 characters, otherwise `400`.
+- The app draws a numbered pin for each open thread anchored on the canvas, at the layer's top-right corner (or the frame's, for a frame anchor). Resolved threads hide their pin. A reply inherits its root's anchor.
+- A comment posted with `agent_name` (an agent's question pinned to a frame) has a smaller limit: its `anchor` is at most 4 KB. Docs have no Commenter level, so a viewer of a doc can't comment.
+
+An agent posts under its own name by sending `agent_name` (gizzi's `artifact_comment` does this). The comment is then stored with `author_id: "assistant"` and that `agent_name`, and `author_name` comes back as the agent name. On every read, `author_name` falls back to `agent_name` when the author has no profile name. `agent_name` is `null` for comments people write.
 
 ## Presence
 
@@ -317,10 +374,127 @@ Presence is shared by every Cloud API instance. Each heartbeat upserts one row p
 
 | Method and path | Needs | Body | Returns |
 |---|---|---|---|
-| `POST /api/v2/artifacts/:id/presence` | view | `{ state: "viewing" \| "editing" \| "left" }` | `204` |
-| `GET /api/v2/artifacts/:id/presence` | view | | `{ enabled, users: [{ user_id, name, image_url, state }] }`, without you |
+| `POST /api/v2/artifacts/:id/presence` | view (edit with `agent`) | `{ state: "viewing" \| "editing" \| "left", agent? }` | `204` |
+| `GET /api/v2/artifacts/:id/presence` | view | | `{ enabled, users: [{ user_id, name, image_url, state, kind, task, anchor, cost_usd, session_id }] }`, without you |
 
-Send a heartbeat about every 15 seconds. `GET` returns the entries seen in the last 45 seconds, up to 200, ordered by `user_id`. `left` deletes the caller's entry. Entries older than 10 minutes are deleted as a side effect of about one request in 50. When the owner's organization turned presence off, `GET` returns `{ enabled: false, users: [] }` and `POST` does nothing.
+Send a heartbeat about every 15 seconds. `GET` returns the entries seen in the last 45 seconds, up to 200, ordered by `user_id`. `left` deletes the caller's entry. Entries older than 10 minutes are deleted as a side effect of about one request in 50. When the owner's organization turned presence off, `GET` returns `{ enabled: false, users: [] }` and a person's `POST` does nothing. Agent frame claims still work then (see [frame claims](#frame-claims)).
+
+### Agent presence
+
+An agent working on the artifact for the caller sends `agent: { name, session_id?, task?, anchor?, cost_usd? }` with the heartbeat. This needs edit access. The row is then the agent's own, not the caller's:
+
+- `user_id` is `agent:<session_id or none>:<slug of name>`, and `kind` is `"agent"` (people are `"user"`).
+- The row stores `name`, `task` (at most 200 characters), `anchor` (at most 4 KB of JSON), `cost_usd` and `session_id`.
+- `state` works as for people. `left` deletes that agent's row.
+
+`anchor` says where the agent is working, in the same location fields a suggestion uses: `{ "kind": "block", "block": 3 }` for a doc block (0-based), `{ "kind": "cell", "sheet": null, "address": "B4" }` for a sheet cell, or `{ "kind": "artboard", "artboard": "shape:hero" }` for a frame of a design canvas. The app draws the agent's cursor or frame tag there. `cost_usd` is the agent session's model cost so far, or absent when unknown. For people, `kind` is `"user"` and the agent fields are `null`.
+
+### Frame claims
+
+On a design canvas, an agent claims an artboard before it changes it, so two agents never change the same frame. A claim is an agent presence heartbeat whose `anchor` has an `artboard` id. There is no separate claims table.
+
+- **Claim.** `POST /presence` with `agent.anchor.artboard` set. If another live agent session holds that artboard, the reply is `409`, and nothing is written:
+
+  ```json
+  { "error": "artboard_claimed", "code": "artboard_claimed", "message": "Oki is working on that artboard; pick another one or wait",
+    "holder": { "name": "Oki", "session_id": "ses_..." } }
+  ```
+
+  "Another live agent session" means an agent row other than the caller's own, seen in the last 45 seconds, whose `session_id` differs (or any other agent row when the caller sends no `session_id`). It can belong to another person's agent on a shared design. Otherwise the heartbeat upserts as usual. The check and the write run under one lock per artboard, so two agents claiming at once can't both win.
+- **Keep it.** Each heartbeat from the holder keeps the claim. It lasts as long as the heartbeats do (the 45-second TTL).
+- **Release.** A heartbeat with `anchor: null` (or without an artboard), or `state: "left"`, releases it. A claim whose heartbeats stop lapses after 45 seconds.
+- An agent row holds one frame at a time: claiming another frame moves the claim.
+- **Presence turned off.** Claims hold even when the owner's organization turned presence off, so agents still never change the same frame. The server writes and checks agent claim rows as usual, and a heartbeat that claims nothing deletes the agent's row instead of storing it. `GET /presence` still returns `{ enabled: false, users: [] }`, so nobody sees the claims, but a second agent's claim or artboard suggestion still gets `409 artboard_claimed`.
+- Artboard ids compare without tldraw's `shape:` prefix, so `hero` and `shape:hero` are the same frame. `anchor.artboard` must be a string of 1 to 200 characters, otherwise `400`.
+
+## Suggestions
+
+Agents propose edits to doc and sheet artifacts, and frame changes to design canvases, as pending suggestions instead of writing a new version. The user accepts or rejects each one. Suggestions are stored in `artifact_suggestions` (migration `098_artifact_agent_watch.sql`).
+
+| Method and path | Needs | Body | Returns |
+|---|---|---|---|
+| `POST /api/v2/artifacts/:id/suggestions` | edit | `{ base_version, agent_name, session_id?, cost_usd?, changes: [{ change, reason? }] }` | `{ items }` |
+| `GET /api/v2/artifacts/:id/suggestions?status=pending\|all` | view | | `{ items }`, oldest first. `status` defaults to `pending`. |
+| `PATCH /api/v2/artifacts/:id/suggestions/:sid` | edit | `{ status: "accepted" \| "rejected" \| "stale" }` | the suggestion. `409 already_resolved` unless it is pending. |
+| `POST /api/v2/artifacts/:id/suggestions/resolve` | edit | `{ ids: [...], status }` | `{ items }`, the ones it changed |
+
+A suggestion is `{ id, artifact_id, base_version, agent_name, session_id, change, reason, cost_usd, status, created_at, resolved_at }`. `id` starts with `sug_`. `cost_usd` is a number or `null`. `status` is `pending`, `accepted`, `rejected` or `stale`. Resolving one sets `resolved_by` and `resolved_at`.
+
+`change` is one of four shapes:
+
+| kind | Shape | Meaning |
+|---|---|---|
+| `text` | `{ "kind": "text", "block": 2, "find": "about 40%", "replace": "38%" }` | Replace the first occurrence of `find` in the plain text of block `block` (0-based index into `doc.blocks`). `block: null` searches the whole document, block by block. |
+| `block` | `{ "kind": "block", "op": "replace" \| "insert_after" \| "delete", "block": 4, "markdown": "..." }` | `markdown` becomes blocks the same way the editor converts markdown. `delete` ignores `markdown`. |
+| `cell` | `{ "kind": "cell", "sheet": null, "address": "B4", "value": "Nov 10" }` | Set one cell. `sheet` is a sheet name or id; `null` means the first sheet. A `value` starting with `=` is a formula. |
+| `artboard` | see below | One agent turn on one frame of a design canvas: the frame's full new layer list, plus what it replaces. |
+
+Which artifact takes which kind:
+
+| Artifact | Change kinds |
+|---|---|
+| `doc` | `text`, `block` |
+| `sheet` | `cell` |
+| `design` whose current body format is `application/vnd.allternit.design+json` | `artboard` |
+
+Any other pair, including an HTML design (`text/html`), is `400 unsupported_kind`.
+
+### Artboard changes
+
+```json
+{
+  "kind": "artboard",
+  "artboard": "shape:hero",
+  "name": "Hero",
+  "frame": { "fill": "#0b0b0f" },
+  "layers": [ { "id": "shape:title", "type": "text", "name": "Title", "artboard": "shape:hero",
+                "x": 96, "y": 120, "w": 800, "h": 80, "props": { "text": "Plan your week", "color": "white" } } ],
+  "before": { "frame": { "fill": "#ffffff" }, "layers": [ { "id": "shape:title", "...": "..." } ] }
+}
+```
+
+- `artboard` is the artboard's id, and `name` its name (optional, for display).
+- `layers` is the artboard's **full** new layer list in stacking order (first at the bottom), as `CanvasLayer` objects from the design body format. Every layer's `artboard` must equal `artboard`, layer ids are unique in the list, and they must not be used by layers on other artboards (`422 layer_id_in_use`). Layers are stored as sent.
+- `frame` optionally patches the artboard: `fill` (string), `w` and `h` (1 to 100,000) and `props` (object). Other fields are dropped. Left out, the artboard is unchanged.
+- `before` is `{ frame?, layers }`: the artboard as the agent read it. gizzi fills it from the body.
+- The artboard must exist in the current body (`422 unknown_artboard`). A body that isn't a v2 canvas yet isn't checked.
+- Limits: `layers` and `before` at most 2 MB of JSON each, and at most 2000 layers each, otherwise `400 change_too_large`. A request is at most 16 MB.
+- While another live agent session holds the artboard (see [frame claims](#frame-claims)), the `POST` is refused with `409 artboard_claimed` and the same `holder`. The holder's own session, and anyone when no one holds the frame, can suggest.
+- `controls` (optional) adds generated sliders to the change; see [controls](#controls).
+
+### Controls
+
+An artboard change can carry `controls`: sliders, colour pickers and selects the user moves on the frame card before keeping the change. An agent sends them when the user is tuning something (spacing, radius, colour, density) instead of guessing one value.
+
+```json
+"controls": [
+  { "id": "radius", "label": "Corner radius", "type": "range", "layer": "shape:card", "prop": "radius", "min": 0, "max": 32, "step": 1, "value": 12 },
+  { "id": "accent", "label": "Accent", "type": "color", "layer": "shape:cta", "prop": "fill", "value": "#6366f1" },
+  { "id": "density", "label": "Density", "type": "select", "layer": null, "prop": "frame.padding", "options": ["compact", "cozy"], "value": "cozy" }
+]
+```
+
+| Field | Rule |
+|---|---|
+| `id` | 1 to 64 characters, unique in the change |
+| `label` | 1 to 200 characters, shown on the card |
+| `type` | `range`, `color` or `select` |
+| `layer` | the id of a layer in the change's `layers` (with or without `shape:`), or `null` (or left out) for the artboard itself |
+| `prop` | a key in the layer's `props`, or `x`, `y`, `w`, `h`. A `frame.` prefix (`frame.padding`) targets the artboard's props and needs `layer: null` |
+| `range` | finite numbers `min` less than `max`, optional `step` greater than 0 and at most `max - min`, and a numeric `value` from `min` to `max` |
+| `color` | a non-empty colour string `value` (at most 200 characters) |
+| `select` | 1 to 50 non-empty string `options`, and a `value` that is one of them |
+
+- At most 12 controls and 64 KB of JSON per change. An empty list stores no controls.
+- Any problem is `400` with code `bad_controls` and a message naming the control. Unknown fields are dropped.
+- A controls-only change is fine: `layers` equal to `before.layers`, plus `controls`.
+- **The client applies controls.** Moving one rewrites the previewed after state live (`applyControl(change, controlId, value)` in the app). **Keep** saves the tweaked state as the new version and records the final values in that version's `meta`. The stored suggestion keeps the values the agent sent.
+
+**Applying is pure and client side.** Remove every layer whose `artboard` is the change's artboard, insert `layers` where the first removed one sat (or at the end when there were none), and patch the artboard with `frame`. The change is **stale** when the artboard no longer exists. While a change is pending the canvas shows the after state, marked "In review". **Keep** saves a version with it and marks it `accepted`; **Undo** restores `before` and marks it `rejected`. A kept change can still be undone for 24 hours if the artboard still matches its `layers`.
+
+Limits: at most 50 changes per `POST`; `find`, `replace`, `markdown` and `value` at most 20,000 characters each; `reason` at most 500. The artifact must be a `doc`, a `sheet` or a design canvas, otherwise `400 unsupported_kind`.
+
+**The client applies accepted changes, not the server.** To accept, the app applies the change to the current body, saves a new version (author the user, with `meta.note`), then sends `PATCH` with `accepted`. When a change no longer applies to the body (the text or cell moved on), the app marks it `stale`. **Accept all** applies the pending suggestions in order, saves one version, and resolves them with one `POST .../resolve`. The server never rewrites a body.
 
 ## Errors
 
@@ -328,7 +502,7 @@ Errors use the standard Cloud API shape `{ "error", "message", "code" }`. Artifa
 
 ## Storage
 
-The schema is `cmd/allternit-cloud-api/migrations_pg/085_artifacts_v2.sql`. It creates `artifacts`, `artifact_versions`, `artifact_shares` and `org_artifact_settings`, plus `artifact_storage` and `artifact_consents` (used by the [page runtime](/api/artifact-runtime)) and `artifact_comments` for comments. The migration is idempotent and is applied to production by hand.
+The schema is `cmd/allternit-cloud-api/migrations_pg/085_artifacts_v2.sql`. It creates `artifacts`, `artifact_versions`, `artifact_shares` and `org_artifact_settings`, plus `artifact_storage` and `artifact_consents` (used by the [page runtime](/api/artifact-runtime)) and `artifact_comments` for comments. `086_artifact_presence.sql` adds `artifact_presence`, and `098_artifact_agent_watch.sql` adds the agent presence columns, `artifact_comments.agent_name` and `artifact_suggestions`. The migration is idempotent and is applied to production by hand.
 
 ## Navigation presentation
 

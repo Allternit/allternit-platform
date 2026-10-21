@@ -104,6 +104,7 @@ pub fn class_of(channel: &str) -> &'static str {
         "email" => "email",
         "sms" | "phone_text" => "sms",
         "call" | "phone" | "phone_call" | "voice" => "call",
+        "peer_agent" | "a2a" => "peer_agent",
         _ => "chat",
     }
 }
@@ -112,7 +113,35 @@ fn default_level(channel: &str) -> &'static str {
     match class_of(channel) {
         "email" => "ask",
         "sms" | "call" => "tell",
+        "peer_agent" => "ask",
         _ => "limits",
+    }
+}
+
+/// What an outside agent's message gets (C8). Team sends, a contact is held for the owner, a
+/// stranger is refused; an explicit `peer_agent` policy (level `tell` sends, `block` refuses,
+/// anything else holds) overrides that. `peers` holds the peer principal or card URL.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PeerVerdict {
+    Send,
+    Hold,
+    Block,
+}
+
+pub fn peer_verdict(db: &DbHandle, owner: &str, bot_id: &str, class: &str, peers: &[String]) -> PeerVerdict {
+    match find_policy(db, owner, bot_id, "peer_agent", peers) {
+        Some(p) => match p.level.as_str() {
+            // Levels are draft/ask/tell/limits (table CHECK). For a peer agent: tell/limits deliver,
+            // ask holds for the owner, draft refuses (nothing from that peer reaches the bot).
+            "tell" | "limits" => PeerVerdict::Send,
+            "draft" => PeerVerdict::Block,
+            _ => PeerVerdict::Hold,
+        },
+        None => match class {
+            "team" => PeerVerdict::Send,
+            "contact" => PeerVerdict::Hold,
+            _ => PeerVerdict::Block,
+        },
     }
 }
 
@@ -601,7 +630,7 @@ async fn list_h(State(st): State<Arc<AppState>>, Extension(user): Extension<Auth
             Ok(v)
         })
         .unwrap_or_default();
-    let defaults: Vec<Value> = ["email", "sms", "call", "chat"].iter().map(|c| json!({ "channel": c, "level": default_level(c), "limits": default_limits(c).to_json() })).collect();
+    let defaults: Vec<Value> = ["email", "sms", "call", "chat", "peer_agent"].iter().map(|c| json!({ "channel": c, "level": default_level(c), "limits": default_limits(c).to_json() })).collect();
     Json(json!({ "policies": rows, "defaults": defaults, "levels": LEVELS })).into_response()
 }
 
@@ -620,8 +649,9 @@ struct PutBody {
 }
 
 async fn put_h(State(st): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Json(b): Json<PutBody>) -> Response {
-    if !LEVELS.contains(&b.level.as_str()) {
-        return bad("level must be draft, ask, tell or limits");
+    let peer = class_of(&norm(&b.channel)) == "peer_agent";
+    if !LEVELS.contains(&b.level.as_str()) && !(peer && b.level == "block") {
+        return bad("level must be draft, ask, tell or limits (block for peer_agent)");
     }
     if !owns_bot(&st.db, &user.user_id, &b.bot_id) {
         return (StatusCode::NOT_FOUND, Json(json!({ "error": "bot not found" }))).into_response();
@@ -755,6 +785,19 @@ mod tests {
         assert_eq!(v("call"), Verdict::Send { tell: true });
         assert_eq!(v("telegram"), Verdict::Send { tell: false });
         assert!(evaluate(&st.db, &act("email", &[], "message"), true).is_none(), "email keeps its own gate when no policy is set");
+    }
+
+    #[tokio::test]
+    async fn peer_agent_defaults_are_team_send_contact_hold_stranger_block() {
+        let st = setup("peer").await;
+        let v = |class: &str, who: &str| peer_verdict(&st.db, "user-a", "bot-1", class, &[who.to_string()]);
+        assert_eq!(v("team", "user_x"), PeerVerdict::Send);
+        assert_eq!(v("contact", "https://a.example/card"), PeerVerdict::Hold);
+        assert_eq!(v("stranger", "https://b.example/card"), PeerVerdict::Block);
+        set(&st, "bot-1", "peer_agent", "https://a.example/card", "tell", json!({}));
+        set(&st, "bot-1", "peer_agent", "user_x", "draft", json!({}));
+        assert_eq!(v("contact", "https://a.example/card"), PeerVerdict::Send, "explicit policy overrides the class");
+        assert_eq!(v("team", "user_x"), PeerVerdict::Block);
     }
 
     #[tokio::test]

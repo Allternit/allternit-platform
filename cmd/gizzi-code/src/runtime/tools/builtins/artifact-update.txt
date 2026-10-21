@@ -4,5 +4,10 @@ Save a new version of an existing artifact (one made with artifact_create, or an
 - body: the complete new content, in the artifact's existing body format.
 - base_version: the version your change is based on (the version artifact_create, artifact_update or artifact_read last returned). If the artifact has changed since then (the user or someone else edited it), nothing is saved and you get an error: call artifact_read for the latest version, apply your change to it, and retry with the new base_version.
 - note: optional one-line summary of what changed.
+- task: optional short line shown on your cursor while you save, e.g. "Saving the new outline".
+
+For doc and sheet artifacts that already have content, prefer artifact_suggest: the user then reviews each change and accepts or rejects it. Use artifact_update for new content, for other artifact kinds, when artifact_suggest says suggestions aren't available, or when the user asked you to apply the change directly.
+
+For a design canvas that already exists, artifact_update is the wrong tool for changing frames: it replaces the whole canvas, including frames other agents are changing. Use artifact_claim, then artifact_suggest with one artboard change per frame, then artifact_release. artifact_update refuses a design that has pending frame changes from other agents.
 
 Use this for revisions instead of creating a new artifact. Don't repeat the body in your reply.

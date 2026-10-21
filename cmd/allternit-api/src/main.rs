@@ -1383,6 +1383,7 @@ async fn main() {
         // Public MCP edge: cloud-api verifies the OAuth token, then relays the
         // JSON-RPC call here signed with the device token (RelayedAuth verifies).
         .merge(allternit_api::mcp_edge_relay::mcp_edge_router())
+        .merge(allternit_api::a2a_routes::a2a_edge_router())
         // Relayed phone calls: cloud-api signs each request with the runtime's
         // device token; `RelayedVoiceAuth` verifies it per handler (no Clerk session).
         .merge(allternit_api::voice_calls::voice_calls_router())

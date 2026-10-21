@@ -1,0 +1,51 @@
+---
+title: "Live agent sessions"
+description: "See every Claude Code, Codex and Factory pane session running on your computer, what each is doing, and how a message can reach it."
+---
+
+A live session is an agent running in a terminal on your computer: Claude Code, Codex, Gemini, Cursor, Copilot, OpenCode, Pi, or a Factory pane. Allternit lists them with a one-line status that costs no tokens, so you can tell what each one is working on without opening it.
+
+## List your sessions
+
+```bash
+gizzi agents sessions
+```
+
+Each row shows the address, `busy` or `idle`, the delivery tier, the repo and branch, and what the session is doing. Add `--json` for the full record.
+
+```
+eoj/allternit-claude   busy    push  Allternit/allternit-platform@main  · Auth refresh rework · Running tests
+```
+
+If nothing is running, the command says so. It never invents a session.
+
+## What each field means
+
+| Field | Meaning |
+|---|---|
+| `address` | `person/session`. `person` is your username. `session` is the folder name plus the harness (`allternit-claude`); a second session in the same folder gets `-2`. |
+| `status` | `busy`, `idle` or `offline`. Claude Code's own status comes first, then the Factory pane's, then the harness hooks. |
+| `doing` | `title · task`, at most 120 characters. |
+| `tier` | How a message reaches it: `push` (into the running turn), `turn` (at its next hook) or `pull` (when it checks its inbox). |
+| `repo`, `branch` | Read from git in the session's folder. |
+| `cwd` | The folder name only. |
+
+## How `doing` is worked out
+
+Allternit reads what the agent already records, and never asks the agent to report:
+
+- **Claude Code:** the latest session title, then the in-progress item with the highest id in `~/.claude/tasks/<session>/`, then the in-progress item on its latest todo list.
+- **Codex:** the thread name from `session_index.jsonl`, then the in-progress step of its latest plan.
+- **Other harnesses:** the in-progress item on the latest todo list in the transcript their hooks report.
+
+Transcripts are read from the end: up to 2 MiB the first time, then only what was appended.
+
+## Privacy
+
+Only the folder name leaves your computer, not the full path. To share full paths, set `ALLTERNIT_SHARE_PATHS=1` before starting Allternit.
+
+## For developers
+
+- Engine: `GET /api/factory/sessions` returns the array of sessions. allternit-api serves the same list at `GET /api/v1/live-sessions` behind your sign-in. If the Factory engine is not running it answers `502` with a `transport` error.
+- Heartbeat: the 60-second runtime presence heartbeat carries `sessions` (up to 100), so the cloud can show your sessions to your team.
+- Hooks: sessions that only report through Gizzi hooks are read from `~/.allternit/live-sessions/hooks.json` and listed while their last hook is under 10 minutes old.

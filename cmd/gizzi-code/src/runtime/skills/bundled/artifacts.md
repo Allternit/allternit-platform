@@ -9,6 +9,11 @@ Keep in sync with the app's manuals in allternit-ai `src/lib/artifacts/` (output
 - Make one with `artifact_create` when the content is substantial (about 15 lines or more), self-contained and likely to be edited or reused, or when the user asks ("make this an artifact", `/docs`, `/slides`, `/sheets`, `/design`, `/dashboard`, `/motion`).
 - Otherwise answer inline. Short snippets and quick answers stay in the reply. Interactive OpenUI cards stay inline; never wrap them in an artifact.
 - To change an artifact, call `artifact_update` with its id, the complete new body and the `base_version` you started from. Never create a second artifact for a revision. If the user may have edited it since, call `artifact_read` first and apply your change to the latest body.
+- To change a doc or sheet that already has content, prefer `artifact_suggest`: it leaves your edits as pending suggestions (text, block or cell changes, each with a one-line reason) that the user accepts or rejects. Use `artifact_update` for new content, other kinds, when the user asked you to apply it directly, or when `artifact_suggest` says suggestions aren't available.
+- To change frames of a design canvas that already exists, don't use `artifact_update` (it replaces the whole canvas and would overwrite frames other agents are working on; it refuses when other agents have pending frame changes). Per frame: (1) `artifact_read` the design, (2) `artifact_claim` the artboard, (3) `artifact_suggest` one `artboard` change for it (the frame's full new layer list, an optional `frame` patch, and a one-line reason), (4) `artifact_release`. If a frame is held by another agent ("Hero is being worked on by Oki"), pick another frame or wait. The user sees your change on the canvas "In review" and keeps or undoes it.
+- When the user is tuning something on a frame (spacing, corner radius, colour, density, size), don't guess one value: give the `artboard` change 2–5 `controls` (sliders, colour pickers or selects, each pointing at one layer prop, `x`/`y`/`w`/`h`, or a `frame.<key>` artboard prop with `layer: null`). Set each control's `value` to what your layers use now. The user moves them on the frame card and keeps the result. A controls-only change is fine: leave `layers` out and the frame's current layers are used.
+- To ask the user something about one frame, `artifact_comment` with `artboard` (and `anchor: {kind:"element", shapeId:<layer id>}` for a layer in it). It shows as a numbered pin on that frame under your name; read the reply with `artifact_comment` later.
+- `artifact_read`, `artifact_update`, `artifact_suggest` and `artifact_comment` take an optional `task` ("Fixing the dates"); the user sees it on your cursor in the open artifact.
 - Don't repeat the body in your reply. Say in one sentence what you made.
 - Give it a short title the user would recognise ("Q3 launch plan") and, optionally, one generic `icon` word (chart, calendar, code).
 
@@ -17,7 +22,8 @@ Keep in sync with the app's manuals in allternit-ai `src/lib/artifacts/` (output
 - `artifact_list` finds artifacts by title words, kind or scope (mine / shared with me). Use it when the user names one ("update the launch brief").
 - `artifact_share` with only an id shows who can open it; with visibility (private, people, org, link) and people it changes sharing. Only when asked; the user approves.
 - `artifact_delete` deletes permanently (no trash). Only when the user asked to delete that artifact; the user approves.
-- `artifact_comment` reads threads, or posts a comment or reply (parent_id). Answer comments that mention you there.
+- `artifact_claim` / `artifact_release` hold one frame of a design canvas while you change it (one frame per artifact at a time).
+- `artifact_comment` reads threads, or posts a comment or reply (parent_id). Answer comments that mention you there. On a design, `artboard` (plus an optional element `anchor`) pins the comment to a frame.
 - `artifact_storage` reads or writes a page artifact's saved data (personal or shared scope).
 
 ## Kinds and bodies
@@ -66,7 +72,27 @@ Live: every tile runs its own query against the viewer's connectors when opened 
 - `query.tool` is exactly the name of a connector tool you have (`<connector>__<tool>`), with `query.args`. For a warehouse SQL tool put the statement in `query.sql` and the tool's argument name in `query.sqlArg` (default "query"); only one read-only SELECT, WITH, SHOW or DESCRIBE runs. Rows come back as an array of objects or `{columns, rows}`; set `query.rowsPath` (like "data.rows") if they sit elsewhere. Name result columns to match encoding.
 - Filters: select, text or number. Use `{{filters.<id>}}` in `query.args` or `query.sql` (in SQL it becomes a quoted literal: `WHERE region = {{filters.region}}`). `format.style`: number, compact, currency, percent, text or date (optional decimals, prefix, suffix).
 - On changes ("add a region filter", "switch to weekly") keep tile ids stable so cached values and layout survive.
-- Dashboards are on paid plans (Team on by default, Enterprise when an admin turns them on).
+- Dashboards are on every plan, including Free; an org admin can turn them off.
+- Built-in `allternit__*` read tools (your computers: `allternit__computers_list`, `allternit__computer_get`, `allternit__computer_history`) work in tiles without a connector.
+
+### ops — `application/vnd.allternit.ops+json`
+A live status sheet for one running thing: a deploy, a site, an MCP app, a server or computer, a workflow run, a bot routine. A status header with a progress bar, up to 4 action buttons (Pause, Roll back, Restart…) that ask the viewer before every run, and tabs of panels. Everything reads the viewer's connectors; never put made-up values in one.
+
+```json
+{"version":1,"refreshSeconds":30,"filters":[],
+ "header":{"title":"fraud-scorer","query":{"tool":"<connector>__<tool>","args":{}},
+           "fields":{"status":"status","version":"version","environment":"environment","target":"cluster","startedAt":"started_at"},"stepsFrom":"pipeline"},
+ "actions":[{"id":"pause","label":"Pause","icon":"pause","tool":"<connector>__<tool>","args":{},"confirm":"Pause the rollout?","when":["running"]}],
+ "tabs":[{"id":"pipeline","label":"Pipeline","panels":[{"id":"pipeline","type":"steps","query":{"tool":"<connector>__<tool>","args":{}}}]},
+         {"id":"logs","label":"Logs","panels":[{"id":"log","type":"logs","query":{"tool":"<connector>__<tool>","args":{}}}]}]}
+```
+
+- Panel types: steps, logs, stats (`fields` with `baseline` and `limit`), fields (label/value lines), line, area, bar (optional `limit` line), table. Panel ids are unique across the sheet; a tab's `countFrom` shows a panel's row count.
+- Header columns are found by usual names (status, name, version…) when `header.fields` leaves them out; `startedAt` is only read when named.
+- Actions: icon is pause, play, rollback, restart, stop, retry, promote or run; `when` lists header statuses that show the button.
+- One select filter becomes a "1 of N" switcher; `{{filters.<id>}}` works in panel and action args.
+- Built-in tools need no connector: `allternit__computers_list`, `allternit__computer_get`, `allternit__computer_history` (reads) and `allternit__computer_start` / `_stop` / `_restart` (actions).
+- Ops sheets are on every plan, including Free; an org admin can turn them off.
 
 ### motion — `application/vnd.allternit.motion+json`
 A short animated explainer, data story or title card. The body is JSON, never code: every word, number, colour and duration is data.
@@ -81,7 +107,7 @@ A short animated explainer, data story or title card. The body is JSON, never co
 - Colours are #rrggbb; font is sans, serif or mono. Scenes last 0.5–60 s; at most 40 scenes and 180 s in all, 24 chart points, 12 list items. The first scene's transition is "cut"; later ones fade, wipe, slide or cut.
 - Keep text short (a headline is about 8 words). Use real figures from the conversation or the source artifact; never invent numbers. No generated footage or people.
 - Edits change only what was asked: "slow scene 2" raises that scene's duration; everything else stays.
-- Motion is on Super, Ultra and Team plans.
+- Motion is on every plan, including Free; an org admin can turn it off.
 
 ### page — `text/html` or `text/markdown`
 A complete, self-contained page: inline CSS and JS, works offline, readable on a phone (no fixed widths, 16px side padding), light and dark.

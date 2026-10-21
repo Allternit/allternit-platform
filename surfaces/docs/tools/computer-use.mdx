@@ -163,7 +163,7 @@ The executor is the only place that:
 - scales coordinates between the model's screenshot frame and the screen. Screenshots are downscaled to a long edge of 1568 px or less and 1.15 MP or less.
 - checks the control lease (`423`) and asks for approval (`409 approval_required`, with a single-use grant tied to the action's hash).
 - writes the audit row before the action runs.
-- emits `computer.action` events, which the agent-cursor overlay draws.
+- emits `computer.action` events, which the agent-cursor overlay draws. Each event names the driving bot (`actor`) and the step text (`step`) when the call sent them; see [Events](/tools/computer-toolset#events).
 
 ### The SDK `computer` tool
 

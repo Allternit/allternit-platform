@@ -1,0 +1,127 @@
+---
+title: Ops sheets
+description: A live status sheet for one running thing, such as a deploy, a site, an MCP app, a server or a computer. It shows status, progress, steps, logs, health charts and buttons like Pause, Roll back and Restart.
+---
+
+## What an ops sheet is
+
+An ops sheet is an [artifact](/guides/artifacts) that watches one running
+thing. That can be a deploy, a website, an MCP app, a server or computer, a
+workflow run or a bot routine. It has three parts:
+
+- **A status header.** It shows the name, version, a status badge, where the
+  thing runs (environment, cluster or region), a progress bar and the time so far.
+- **Buttons.** These are actions such as **Pause**, **Roll back**, **Restart**,
+  **Stop** or **Start**. Each one asks you before it runs.
+- **Tabs of panels.** These are steps, logs, health numbers, details, charts with a
+  limit line, and tables.
+
+Like a [dashboard](/guides/dashboards), every part reads live data from your
+connected apps when you open it and again on a timer. Use a dashboard for
+charts across many things. Use an ops sheet when you are watching or acting on one thing.
+
+Ops sheets are on every plan, including Free. Organization admins can turn
+them off for their org.
+
+## Make one
+
+- Choose **Ops sheets** under **Make something new** on the Artifacts page (or
+  the rail's **+** menu). A new chat opens with the Output set to Ops sheets.
+- Pick **Ops sheets** in the Output menu under the message box, or type `/ops`
+  followed by what to watch: `/ops my last Cloudflare deploy of the docs site`.
+- Or ask in any chat: "show my VPS status with a restart button".
+
+Allternit picks the tools from the apps you have connected and writes the
+sheet. Change it by chatting, for example "add a logs tab" or "add a roll back
+button". Each change is a new version.
+
+If no connected app can show what you asked for, Allternit says so. It never
+makes up values.
+
+## Your computers, built in
+
+An ops sheet can show your own Allternit computers without connecting any app:
+cloud computers, your servers (VPS) and paired machines.
+
+| Tool | What it shows or does |
+| --- | --- |
+| `allternit__computers_list` | Every computer: name, type, status, system, region, CPU, memory, disk, last activity. |
+| `allternit__computer_get` | One computer, for the header and the details panels. |
+| `allternit__computer_history` | What agents did on the computer, as log lines. Failed steps show as errors. |
+| `allternit__computer_start`, `_stop`, `_restart` | Buttons. Each one asks you first. They don't work on a paired machine or on the computer you are using. Power those on the machine itself. |
+
+Dashboards can use the three read tools too.
+
+## Read one
+
+- **The progress bar** has one segment per step when the sheet follows a
+  pipeline. The running step fills as it goes. A failed step is red.
+- **Status colors.** Blue means in progress, green means healthy or done, amber
+  means paused or waiting, and red means failed or down. A server that is simply
+  up shows green, not a spinner.
+- **Switch between items.** When a sheet covers several services or computers,
+  the header has a picker and **‹ 1 of N ›** arrows.
+- **Logs** follow the newest line while you stay at the bottom. Filter by text,
+  or show only warnings or errors.
+- **Health numbers** can show a baseline ("Baseline 0.04%") and a limit. A
+  number over its limit turns red, and the panel shows **Within limits** or
+  **Over limit**.
+- **The code button** on each panel shows the query behind it.
+- **Refresh** re-reads everything now. The last values you saw stay on screen
+  while new ones load.
+
+## Buttons ask every time
+
+Reading runs on its own after you allow it once. A button changes something,
+so it never runs without you:
+
+1. Press the button. A card shows what it will do ("Roll back fraud-scorer to
+   v3.8.2?"), the tool and the exact arguments.
+2. Choose the button's name to run it, or **Cancel**.
+3. The result shows under the buttons, and the sheet refreshes.
+
+Buttons can be set to show only in some states. For example, **Pause** shows only
+while running, and **Start** only while stopped.
+
+## It runs as you
+
+An ops sheet uses **your** connected apps and **your** permissions, never its
+author's. The first time you open it, it lists the apps and tools it reads and
+asks you to allow them. Your choice is saved to your account, so it applies on
+your other devices too. Signed-out visitors see no live data. A shared ops sheet
+can't use **Anyone with the link**.
+
+## Phone and the m.allternit.com app
+
+On a phone the sheet opens full screen in one column. Tabs scroll sideways.
+Buttons and controls are full touch size. Logs drop the line numbers and
+level column to fit the screen, and warnings and errors stay highlighted.
+
+---
+
+## For developers
+
+- The body is JSON, `application/vnd.allternit.ops+json`. The schema is in
+  [Ops sheet body](/api/artifacts-v2#ops-sheet-body).
+- Client code is in `allternit-ai/src/lib/artifacts/ops/`: the schema and parser,
+  status and column helpers, and the model manual. The view, panels and actions
+  are in `src/components/artifacts/ops/`.
+- The sheet runs on the dashboard runtime. `opsAsDashboard` turns the header and
+  panels into tiles, so approval, caching, refresh and per-panel errors are
+  shared. Actions use `createActionClient` in
+  `src/lib/artifacts/dashboard/runtime.ts`. Only the sheet's action tools may run
+  there, and the viewer approves each call.
+- The built-in sources are `src/lib/artifacts/sources/allternit.ts`. They wrap
+  `/api/v1/computers` and are routed before the connector bridge.
+- On every save the server sets `capabilities.connectors` from the tools the
+  body reads and acts with (`kinds::ops_connectors` in allternit-cloud-api). Ops
+  sheets get the `connectors` runtime capability like dashboards, and nothing
+  else.
+- gizzi-code accepts the kind in `artifact_create` (`Artifacts.FORMATS`).
+
+## Related
+
+- [Dashboards](/guides/dashboards)
+- [Artifacts](/guides/artifacts)
+- [Connectors](/guides/connectors)
+- [Computers and apps](/guides/computers-and-apps)

@@ -346,6 +346,28 @@ pub fn whoami_cmd(ctx: &Ctx) -> u8 {
     0
 }
 
+/// `agents sessions`: the live sessions on this computer (C6), with their inferred `doing` line.
+pub fn sessions_cmd(ctx: &Ctx) -> u8 {
+    use allternit_factory_engine::agents::live_sessions::{default_person, discover};
+    let list = discover(&default_person(), None);
+    if ctx.json {
+        return ok_json(serde_json::to_value(&list).unwrap_or_default());
+    }
+    if list.is_empty() {
+        println!("No live agent sessions on this computer.");
+        return 0;
+    }
+    for s in &list {
+        let place = match (&s.repo, &s.branch) {
+            (Some(r), Some(b)) => format!("{r}@{b}"),
+            (Some(r), None) => r.clone(),
+            _ => s.cwd.clone(),
+        };
+        println!("{:<28} {:<7} {:<5} {}{}", s.address, s.status, s.tier, place, s.doing.as_deref().map(|d| format!("  · {d}")).unwrap_or_default());
+    }
+    0
+}
+
 /// The node each live bot holds now (first open owned node that is in progress).
 fn fill_current_nodes(ctx: &Ctx, t: &LoadedTeam, live: &mut LiveState) {
     let Ok(events) = read_events(&ctx.root_dir()) else { return };

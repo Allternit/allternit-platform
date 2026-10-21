@@ -294,7 +294,7 @@ export const SessionRoutes = lazy(() =>
       describeRoute({
         summary: "List session tasks",
         description:
-          "Return everything the session delegated: durable background tasks (shells, background subagents) and foreground subagent child sessions.",
+          "Return everything the session delegated: durable background tasks (shells, background subagents) and foreground subagent child sessions. Items with a child session carry its model, summed cost and tokens, and nested child tasks (up to 3 levels).",
         operationId: "session.tasks.list",
         responses: { 200: { description: "Session tasks", content: { "application/json": { schema: resolver(SessionTasks.Item.array()) } } } },
       }),
