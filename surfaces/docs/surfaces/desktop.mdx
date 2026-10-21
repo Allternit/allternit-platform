@@ -35,6 +35,21 @@ Defaults from `src/main/config.ts`:
 
 The Quick Chat window loads the workspace UI with `/?mini=1`.
 
+## Workspace shortcuts
+
+These shortcuts work inside the workspace window. You can change them in **Settings → About → Keyboard shortcuts**.
+
+| Action | Default |
+|---|---|
+| Toggle Bot Activity | `Cmd/Ctrl+Shift+M` |
+| Find in page | `Cmd/Ctrl+F` |
+| Toggle HUD | `Cmd/Ctrl+Shift+H` |
+| Toggle Agent Runner | `Cmd/Ctrl+Shift+A` |
+
+To change a shortcut, click it, then press the new keys. Shortcuts need a modifier key such as Cmd, Ctrl or Alt. If the keys already belong to another action, that action loses them. The clear button turns a shortcut off, and the reset button puts the default back. Your changes are saved on this device only.
+
+Code: `allternit-ai/src/lib/shortcuts/shell-shortcuts.ts`.
+
 ## Local development
 
 ```bash
