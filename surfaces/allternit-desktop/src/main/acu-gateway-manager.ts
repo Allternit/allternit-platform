@@ -69,12 +69,25 @@ function walkForAcuVenv(start: string | undefined, platform: NodeJS.Platform): s
   return null;
 }
 
+function bundledAcuPython(resourcesPath: string | undefined, platform: NodeJS.Platform): string | null {
+  if (!resourcesPath) return null;
+  if (!fs.existsSync(path.join(resourcesPath, 'computer-use', 'acu', 'site-packages', 'uvicorn'))) return null;
+  const python = platform === 'win32'
+    ? path.join(resourcesPath, 'computer-use', 'driver', 'python', 'python.exe')
+    : path.join(resourcesPath, 'computer-use', 'driver', 'python', 'bin', 'python3');
+  return fs.existsSync(python) ? python : null;
+}
+
 export function resolveAcuPython(context: AcuGatewaySpawnContext): string {
   if (context.pythonPath) return context.pythonPath;
   if (process.env.ALLTERNIT_ACU_PYTHON && pythonHasUvicorn(process.env.ALLTERNIT_ACU_PYTHON)) {
     return process.env.ALLTERNIT_ACU_PYTHON;
   }
   const platform = context.platform ?? process.platform;
+  // Packaged: the bundled driver Python, with the gateway packages staged in
+  // computer-use/acu/site-packages (prepare-acu-gateway.cjs) on PYTHONPATH.
+  const bundled = bundledAcuPython(context.resourcesPath, platform);
+  if (bundled) return bundled;
   const venvBin = platform === 'win32' ? path.join('Scripts', 'python.exe') : path.join('bin', 'python');
   const venvCandidates = [
     path.join(context.resourcesPath ?? '', 'computer-use', 'acu', '.venv', venvBin),
@@ -111,7 +124,7 @@ export function resolveAcuGatewaySpawn(context: AcuGatewaySpawnContext): AcuGate
       args: [launch],
       cwd: root,
       extraEnv: {
-        PYTHONPATH: `${root}${path.delimiter}${path.join(root, 'gateway')}`,
+        PYTHONPATH: [root, path.join(root, 'gateway'), path.join(root, 'site-packages')].join(path.delimiter),
         ALLTERNIT_ACU_HOST: '127.0.0.1',
         ALLTERNIT_ACU_PORT: String(PORTS.ACU),
         ALLTERNIT_LOCAL_BRAIN_URL: process.env.ALLTERNIT_LOCAL_BRAIN_URL || URLS.GIZZI,

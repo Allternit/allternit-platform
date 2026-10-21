@@ -66,6 +66,17 @@ npm run build:electron:dmg   # same, DMG target
 
 `build:electron` runs `prepare:*` steps first (platform static, computer-use driver, ACU gateway, Lima, Lume, mux, mesh node, office engine, API binary, connector catalog and sidecar) and `verify:packaged-resources`.
 
+### macOS signing
+
+There is no Apple Developer ID yet, so Mac builds are ad-hoc signed (`mac.identity: "-"` in `package.json`) and not notarized. Don't set the identity back to `null`. A `null` identity skips signing, so only the main binary keeps the linker's signature and the bundle has no sealed resources. macOS then reports a downloaded copy as **damaged** and offers only Move to Trash, which is what 1.1.8 and earlier did. An ad-hoc build gets the normal "Apple could not verify" prompt with **Open Anyway** instead (see [Installing on a Mac](/quickstart#installing-allternit-desktop-on-a-mac)).
+
+Two rules keep the seal valid:
+
+- **No dangling symlinks in the bundle.** Signing fails on them. The ACU gateway therefore does not ship a venv, because a venv links to the build machine's Python. `prepare:acu-gateway` installs its packages per target into `resources/computer-use/acu-site/<os>-<arch>`, which is packaged as `computer-use/acu/site-packages`. The gateway runs on the bundled driver Python with that folder on `PYTHONPATH` (`bundledAcuPython` in `src/main/acu-gateway-manager.ts`).
+- **Nothing writes inside the installed app.** The packaged app sets `PYTHONPYCACHEPREFIX` to `<userData>/pycache` at startup, so the bundled Pythons don't write `__pycache__` into `Contents/Resources`.
+
+Check a build with `codesign --verify --deep --strict "Allternit Desktop.app"`. Proper notarization needs a Developer ID certificate and the `APPLE_ID`, `APPLE_ID_PASSWORD` and `APPLE_TEAM_ID` secrets (`scripts/notarize.cjs`).
+
 ## Layout
 
 ```

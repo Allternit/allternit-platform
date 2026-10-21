@@ -29,6 +29,7 @@ Thumbs.db
 resources/build-info.json
 /auth-manager.js
 resources/computer-use/acu/
+resources/computer-use/acu-site/
 resources/computer-use/darwin/
 resources/computer-use/linux/
 resources/computer-use/win32/
