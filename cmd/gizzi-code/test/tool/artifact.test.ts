@@ -464,3 +464,12 @@ describe("agent watch: artifact_suggest, presence heartbeats, agent comments", (
     expect(presence.body.agent).toMatchObject({ name: "Jev", task: "Asking a question" })
   })
 })
+
+describe("Artifacts.validate for ops", () => {
+  const fmt = "application/vnd.allternit.ops+json"
+  test("accepts a sheet with tabs and refuses one without", () => {
+    expect(Artifacts.validate("ops", fmt, JSON.stringify({ version: 1, tabs: [{ id: "logs", panels: [] }] }))).toBeUndefined()
+    expect(Artifacts.validate("ops", fmt, "{}")).toContain('"tabs"')
+    expect(Artifacts.validate("ops", "text/html", "<p>")).toContain("isn't valid")
+  })
+})

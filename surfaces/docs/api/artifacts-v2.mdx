@@ -1,6 +1,6 @@
 ---
 title: 'Artifacts v2 API'
-description: 'One account-level store of typed artifacts (docs, sheets, slides, designs, dashboards, motion, pages, cards, diagrams, images, PDFs, videos, code) with versions and sharing, served by the hosted Cloud API.'
+description: 'One account-level store of typed artifacts (docs, sheets, slides, designs, dashboards, ops sheets, motion, pages, cards, diagrams, images, PDFs, videos, code) with versions and sharing, served by the hosted Cloud API.'
 ---
 
 ## Overview
@@ -36,6 +36,7 @@ See [Authentication](/api/authentication).
 | `slides` | `application/vnd.allternit.slides+json` | |
 | `design` | `application/vnd.allternit.design+json` | `text/html` |
 | `dashboard` | `application/vnd.allternit.dashboard+json` | `application/vnd.allternit.openui` (dashboards saved before the tile format) |
+| `ops` | `application/vnd.allternit.ops+json` | |
 | `motion` | `application/vnd.allternit.motion+json` | |
 | `page` | `text/html` | `text/markdown` |
 | `card` | `application/vnd.allternit.openui` | |
@@ -196,6 +197,49 @@ A `dashboard` artifact's body is JSON with `body_format` `application/vnd.allter
 A tool result is read as a table: an array of objects, `{ "columns": [], "rows": [[]] }`, or JSON or CSV text.
 
 Dashboards run as the viewer: each call goes through the viewer's own connectors, and a tool that is not read-only is refused (a SQL tool is allowed for a single read-only statement). The owner's client sets `capabilities.connectors` to the connectors and tools the tiles call, so `visibility: "link"` is refused for a dashboard (see [Sharing](#sharing)). Dashboards saved before this format, with `application/vnd.allternit.openui`, still open as cards.
+
+Tiles may also use the built-in read tools `allternit__computers_list`, `allternit__computer_get` and `allternit__computer_history`. They read the viewer's own computers and need no connector.
+
+## Ops sheet body
+
+An `ops` artifact's body is JSON with `body_format` `application/vnd.allternit.ops+json`. It watches one running thing. The apps parse it the same forgiving way as a dashboard: a part that fails validation is skipped, and the rest still draws.
+
+```json
+{
+  "version": 1,
+  "refreshSeconds": 30,
+  "filters": [],
+  "header": {
+    "title": "fraud-scorer",
+    "query": { "tool": "deploys__get_deployment", "args": {} },
+    "fields": { "status": "status", "version": "version", "environment": "environment", "target": "cluster", "startedAt": "started_at" },
+    "stepsFrom": "pipeline"
+  },
+  "actions": [
+    { "id": "pause", "label": "Pause", "icon": "pause", "tool": "deploys__pause_rollout", "args": {}, "confirm": "Pause the rollout?", "when": ["running"] }
+  ],
+  "tabs": [
+    { "id": "pipeline", "label": "Pipeline", "panels": [
+      { "id": "pipeline", "type": "steps", "query": { "tool": "deploys__list_steps", "args": {} } }
+    ] }
+  ]
+}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `version` | Always `1`. |
+| `refreshSeconds` | Re-read while the sheet is open. `0` or missing: only on open. At least 10 when set. |
+| `filters[]` | Same as dashboard filters, up to 4. One `select` filter is drawn as a "1 of N" switcher. `{{filters.<id>}}` works in panel and action args. |
+| `header.query` | Returns one row: the thing being watched. |
+| `header.fields` | Which columns to use for `title`, `id`, `version`, `status`, `environment`, `target`, `progress` (0 to 1 or 0 to 100), `progressLabel` and `startedAt`. Missing names are found by their usual column names. The one exception is `startedAt`, which is read only when named. |
+| `header.stepsFrom` | The id of a `steps` panel. The progress bar then has one segment per step. |
+| `actions[]` | Up to 4. `label`, `icon` (`pause`, `play`, `rollback`, `restart`, `stop`, `retry`, `promote`, `run`), `tool`, `args`, `confirm` (shown when the viewer approves), `when` (header statuses that show the button), `danger`. `rollback` and `stop` are always drawn as dangerous. |
+| `tabs[]` | Up to 8: `id`, `label`, `panels`, optional `countFrom` (a panel id whose row count shows on the tab). |
+| `panels[].type` | `steps` (name, status, duration, detail, progress), `logs` (time, level, source, message), `stats` (one row, `fields` with `label`, `format`, `baseline`, `limit`), `fields` (one row, `fields` with `label` and `mono`), `line`, `area`, `bar` (`encoding.x`, `encoding.y`, optional `limit` and `limitLabel`), `table` (`encoding.columns`). Up to 24 panels in all. Ids are unique across the sheet. |
+| `panels[].query` | Same as a dashboard tile's query. |
+
+Reads run like dashboard tiles: as the viewer, through the viewer's connectors, and read-only tools only. Action tools run only from their button, and the viewer approves every call. On save the server sets `capabilities.connectors` to every tool the body reads or acts with, so `visibility: "link"` is refused.
 
 ## Versions
 

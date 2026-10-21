@@ -45,6 +45,11 @@ pub const KINDS: &[KindSpec] = &[
         body_formats: &["application/vnd.allternit.dashboard+json", "application/vnd.allternit.openui"],
     },
     KindSpec {
+        kind: "ops",
+        default_body_format: "application/vnd.allternit.ops+json",
+        body_formats: &["application/vnd.allternit.ops+json"],
+    },
+    KindSpec {
         kind: "motion",
         default_body_format: "application/vnd.allternit.motion+json",
         body_formats: &["application/vnd.allternit.motion+json"],
@@ -128,7 +133,7 @@ mod tests {
         assert_eq!(
             names,
             [
-                "doc", "sheet", "slides", "design", "dashboard", "motion", "page", "card",
+                "doc", "sheet", "slides", "design", "dashboard", "ops", "motion", "page", "card",
                 "diagram", "image", "code", "pdf", "video"
             ]
         );
@@ -168,12 +173,50 @@ mod tests {
 /// before the owner opens the dashboard. Returns None for a body that isn't
 /// dashboard JSON or calls no tools.
 pub fn dashboard_connectors(body: &str) -> Option<serde_json::Value> {
-    use std::collections::{BTreeMap, BTreeSet};
     let parsed: serde_json::Value = serde_json::from_str(body).ok()?;
     let tiles = parsed.get("tiles")?.as_array()?;
+    group_tools(tiles.iter().filter_map(|tile| tile.pointer("/query/tool").and_then(|t| t.as_str())))
+}
+
+/// The `capabilities.connectors` an ops sheet body declares: the tools its
+/// header and panels read plus the tools its action buttons call. Mirrors
+/// `opsConnectorCapabilities` in the app's ops schema.
+pub fn ops_connectors(body: &str) -> Option<serde_json::Value> {
+    let parsed: serde_json::Value = serde_json::from_str(body).ok()?;
+    let mut names: Vec<&str> = Vec::new();
+    if let Some(t) = parsed.pointer("/header/query/tool").and_then(|t| t.as_str()) {
+        names.push(t);
+    }
+    for tab in parsed.get("tabs").and_then(|t| t.as_array()).into_iter().flatten() {
+        for panel in tab.get("panels").and_then(|p| p.as_array()).into_iter().flatten() {
+            if let Some(t) = panel.pointer("/query/tool").and_then(|t| t.as_str()) {
+                names.push(t);
+            }
+        }
+    }
+    for action in parsed.get("actions").and_then(|a| a.as_array()).into_iter().flatten() {
+        if let Some(t) = action.get("tool").and_then(|t| t.as_str()) {
+            names.push(t);
+        }
+    }
+    group_tools(names.into_iter())
+}
+
+/// The connectors a kind's body declares, for the kinds that run on the
+/// viewer's connectors (dashboards and ops sheets). None for other kinds.
+pub fn body_connectors(kind: &str, body: &str) -> Option<Option<serde_json::Value>> {
+    match kind {
+        "dashboard" => Some(dashboard_connectors(body)),
+        "ops" => Some(ops_connectors(body)),
+        _ => None,
+    }
+}
+
+fn group_tools<'a>(names: impl Iterator<Item = &'a str>) -> Option<serde_json::Value> {
+    use std::collections::{BTreeMap, BTreeSet};
     let mut by_connector: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-    for tile in tiles {
-        let Some(name) = tile.pointer("/query/tool").and_then(|t| t.as_str()).map(str::trim) else { continue };
+    for name in names {
+        let name = name.trim();
         if name.is_empty() {
             continue;
         }
@@ -196,7 +239,7 @@ pub fn dashboard_connectors(body: &str) -> Option<serde_json::Value> {
 
 #[cfg(test)]
 mod dashboard_connector_tests {
-    use super::dashboard_connectors;
+    use super::{body_connectors, dashboard_connectors, ops_connectors};
 
     #[test]
     fn groups_tools_by_connector() {
@@ -219,5 +262,24 @@ mod dashboard_connector_tests {
     fn none_for_no_tools_or_bad_json() {
         assert!(dashboard_connectors(r#"{"version":1,"tiles":[]}"#).is_none());
         assert!(dashboard_connectors("not json").is_none());
+    }
+
+    #[test]
+    fn ops_sheets_declare_reads_and_actions() {
+        let body = r#"{"version":1,
+            "header":{"query":{"tool":"github__get_workflow_run"}},
+            "actions":[{"id":"cancel","tool":"github__cancel_workflow_run"}],
+            "tabs":[{"id":"steps","panels":[{"query":{"tool":"github__list_jobs"}}]},
+                    {"id":"health","panels":[{"query":{"tool":"grafana__query"}},{"query":{"tool":"github__list_jobs"}}]}]}"#;
+        assert_eq!(
+            ops_connectors(body).unwrap(),
+            serde_json::json!([
+                {"connector":"github","tools":["cancel_workflow_run","get_workflow_run","list_jobs"]},
+                {"connector":"grafana","tools":["query"]}
+            ])
+        );
+        assert!(ops_connectors(r#"{"version":1,"tabs":[]}"#).is_none());
+        assert_eq!(body_connectors("doc", "{}"), None);
+        assert_eq!(body_connectors("ops", "not json"), Some(None));
     }
 }
