@@ -76,17 +76,18 @@ try {
   shell = true;
 }
 
-let argv = [...args, ...extraArgs, ...process.argv.slice(2)];
-// Ad-hoc signing (mac.identity "-") opens every file in the bundle (~26k) in
-// parallel; the default 256-descriptor limit fails it with EMFILE.
-if (process.platform === 'darwin' && !shell) {
-  argv = ['-c', 'ulimit -n 65536 2>/dev/null || ulimit -n "$(sysctl -n kern.maxfilesperproc)" 2>/dev/null; exec "$0" "$@"', command, ...argv];
-  command = '/bin/sh';
+const argv = [...args, ...extraArgs, ...process.argv.slice(2)];
+const env = { ...process.env };
+// Ad-hoc signing (mac.identity "-") checks every bundle file in parallel and
+// hits EMFILE; see graceful-fs-preload.cjs.
+if (process.platform === 'darwin') {
+  const preload = `--require ${JSON.stringify(path.join(__dirname, 'graceful-fs-preload.cjs'))}`;
+  env.NODE_OPTIONS = [env.NODE_OPTIONS, preload].filter(Boolean).join(' ');
 }
 
 const result = spawnSync(command, argv, {
   stdio: 'inherit',
-  env: process.env,
+  env,
   shell,
 });
 process.exit(result.status == null ? 1 : result.status);
