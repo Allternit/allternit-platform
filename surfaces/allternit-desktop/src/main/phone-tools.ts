@@ -30,7 +30,7 @@ export interface AdbCall {
 }
 
 export interface ApprovalRequest {
-  kind: 'sms' | 'dial';
+  kind: 'sms' | 'dial' | 'sms_read';
   serial: string;
   /** Human-readable, shown verbatim to the user. */
   summary: string;
@@ -311,7 +311,7 @@ export const PHONE_TOOLS = [
   {
     name: 'phone.sms.read',
     description:
-      'Read recent texts in the phone\'s inbox, e.g. a sign-in code you just triggered. Android only (adb or Phone Link). Waits up to wait_s seconds for a text to arrive. Returns messages (newest first) and codes: 4–8 digit or letter-and-digit codes found in them.',
+      'Read recent texts in the phone\'s inbox, e.g. a sign-in code you just triggered. Android only (adb or Phone Link). The user approves this once for your bot on this phone (pass bot_id). Waits up to wait_s seconds for a text to arrive. Returns messages (newest first) and codes: 4–8 digit or letter-and-digit codes found in them.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -319,6 +319,7 @@ export const PHONE_TOOLS = [
         from: { type: 'string', description: 'Only texts from this number (digits, optional leading +).' },
         since_s: { type: 'integer', minimum: 1, maximum: 86400, description: 'How far back to look, in seconds (default 300).' },
         wait_s: { type: 'integer', minimum: 0, maximum: 120, description: 'Wait this long for a matching text to arrive (default 0).' },
+        bot_id: { type: 'string', maxLength: 200, description: 'Your bot id. The user approves reading texts once per bot and phone; without it they are asked every time.' },
       },
       additionalProperties: false,
     },
@@ -629,6 +630,8 @@ const digitsOf = (n: string) => n.replace(/\D/g, '');
 
 export class PhoneToolRunner {
   private readonly now: () => number;
+  /** Each call's `_source`, keyed by its args: "api" means a Platform API key, which always asks before reading texts. */
+  private readonly sources = new WeakMap<Record<string, unknown>, string>();
 
   constructor(private readonly deps: PhoneToolDeps) {
     this.now = deps.now ?? Date.now;
@@ -639,6 +642,7 @@ export class PhoneToolRunner {
     // `_run_id` / `_source` (set by allternit-api's replay and task loops) are for the run history only.
     const a = Object.fromEntries(Object.entries(raw).filter(([k]) => !k.startsWith('_')));
     const started = this.now();
+    if (typeof raw._source === 'string') this.sources.set(a, raw._source);
     const result = await this.dispatch(name, a);
     const recorder = this.deps.recorder;
     if (recorder && name !== 'phone.devices' && name !== 'phone.skills' && name !== 'phone.save_skill') {
@@ -1061,6 +1065,25 @@ export class PhoneToolRunner {
   }
 
   /**
+   * Reading texts is approved once per bot and phone (remembered in the rate
+   * store). A bot without an id, and any Platform API key, asks every time.
+   */
+  private async readApproval(serial: string, a: Record<string, unknown>): Promise<ToolResult | null> {
+    if (a.bot_id !== undefined && (typeof a.bot_id !== 'string' || a.bot_id.length > 200)) return fail('invalid_args', 'bot_id must be a string.');
+    const bot = typeof a.bot_id === 'string' && a.bot_id.trim() ? a.bot_id.trim() : null;
+    const source = this.sources.get(a) ?? null;
+    const remember = bot && source !== 'api' ? `sms_read_allowed:${serial}:${bot}` : null;
+    if (remember && this.deps.rates.load(remember).length > 0) return null;
+    const who = source === 'api' ? 'An API key' : bot ? `Bot ${bot}` : 'A bot';
+    const summary = `${who} wants to read texts received on ${serial}${a.from !== undefined ? ` from ${String(a.from)}` : ''} (last ${a.since_s ?? 300} s, at most 20).${remember ? ' You will not be asked again for this bot on this phone.' : ''}`;
+    const decision = await this.deps.gate.request({ kind: 'sms_read', serial, summary, actionHash: canonicalHash({ kind: 'sms_read', serial, bot, source }) });
+    if (decision === 'denied') return fail('approval_denied', 'The user declined.');
+    if (decision === 'timeout') return fail('approval_timeout', 'The user did not respond in time.');
+    if (remember) this.deps.rates.save(remember, [this.now()]);
+    return null;
+  }
+
+  /**
    * phone.sms.read on any Android lane: `readInbox` returns the raw inbox rows
    * since a time. Polls every 3 s until a matching text is there or wait_s
    * runs out.
@@ -1079,6 +1102,8 @@ export class PhoneToolRunner {
     if (!Number.isInteger(sinceS) || (sinceS as number) < 1 || (sinceS as number) > 86_400) return fail('invalid_args', 'since_s must be 1–86400.');
     const waitS = a.wait_s === undefined ? 0 : a.wait_s;
     if (!Number.isInteger(waitS) || (waitS as number) < 0 || (waitS as number) > 120) return fail('invalid_args', 'wait_s must be 0–120.');
+    const denied = await this.readApproval(serial, a);
+    if (denied) return denied;
     const sleep = this.deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
     const start = this.now();
     const sinceMs = start - (sinceS as number) * 1000;

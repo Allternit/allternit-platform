@@ -64,7 +64,7 @@ Paired phones are remembered and reconnect on their own when they come back on t
 | `phone.task` | Do a plain-English task on the bot's own brain. See [Phone runs and phone skills](/guides/phone-skills). |
 | `phone.skills`, `phone.save_skill`, `phone.run_skill` | Save a run that worked as a skill and replay it with no model. See [Phone runs and phone skills](/guides/phone-skills). |
 | `phone.sms.send` | Send one text from the phone's SIM. |
-| `phone.sms.read` | Read recent texts in the inbox, optionally from one sender, and wait up to two minutes for one to arrive. Returns the messages and any sign-in `codes` in them. |
+| `phone.sms.read` | Read recent texts in the inbox, optionally from one sender, and wait up to two minutes for one to arrive. Returns the messages and any sign-in `codes` in them. You approve this on your computer the first time each bot reads texts on a phone (the bot passes its `bot_id`); a bot that doesn't say who it is asks every time. |
 | `phone.call.dial` | Place a call from the phone's SIM. |
 
 Bots reach these tools through the `allternit-phone` MCP server that Desktop runs while a phone is paired. The same tools drive iPhones on an [Allternit USB Agent](/guides/usb-agent); `phone.devices` lists both. A phone linked with the [Phone Link](/guides/phone-link) app gets the same tools without Wireless debugging, texts, calls, keys and `phone.sms.read` included; only `phone.task` is adb-only for now.

@@ -112,10 +112,15 @@ export function dialogGate(): ApprovalGate {
     async request(req: ApprovalRequest) {
       const shown = dialog.showMessageBox({
         type: 'question',
-        title: req.kind === 'sms' ? 'Allow this text?' : 'Allow this call?',
-        message: req.kind === 'sms' ? 'Your bot wants to send a text from your phone' : 'Your bot wants to place a call from your phone',
+        title: req.kind === 'sms' ? 'Allow this text?' : req.kind === 'sms_read' ? 'Allow reading texts?' : 'Allow this call?',
+        message:
+          req.kind === 'sms'
+            ? 'Your bot wants to send a text from your phone'
+            : req.kind === 'sms_read'
+              ? 'Your bot wants to read recent texts on your phone'
+              : 'Your bot wants to place a call from your phone',
         detail: req.summary,
-        buttons: [req.kind === 'sms' ? 'Send' : 'Call', 'Deny'],
+        buttons: [req.kind === 'sms' ? 'Send' : req.kind === 'sms_read' ? 'Allow' : 'Call', 'Deny'],
         defaultId: 1,
         cancelId: 1,
         noLink: true,

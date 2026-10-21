@@ -546,7 +546,7 @@ describe('phone.sms.read', () => {
     const { adb } = makeAdb((a) => (a.includes('content') ? { stdout: ++reads >= 3 ? raw : 'No result found.' } : {}));
     const r = new PhoneToolRunner({
       adb,
-      gate: { request: async () => 'denied' },
+      gate: { request: async () => 'approved' },
       rates: memoryRates(),
       artemis: () => null,
       now: () => t,
@@ -554,5 +554,26 @@ describe('phone.sms.read', () => {
       onlineSerials: () => ['192.168.1.20:41234'],
     });
     expect(await r.call('phone.sms.read', { wait_s: 30 })).toMatchObject({ ok: true, waited_s: 6, codes: ['482913', '551234'] });
+  });
+
+  it('asks once per bot and phone, every time without a bot id, always for an API key', async () => {
+    const { r, asked } = runner({ handler: (a) => (a.includes('content') ? { stdout: raw } : {}), now: () => 10_000 });
+    await r.call('phone.sms.read', { bot_id: 'bot-1' });
+    await r.call('phone.sms.read', { bot_id: 'bot-1' });
+    expect(asked.filter((q) => q.kind === 'sms_read')).toHaveLength(1);
+    await r.call('phone.sms.read', { bot_id: 'bot-2' });
+    await r.call('phone.sms.read', {});
+    await r.call('phone.sms.read', {});
+    expect(asked.filter((q) => q.kind === 'sms_read')).toHaveLength(4);
+    await r.call('phone.sms.read', { bot_id: 'bot-1', _source: 'api' });
+    await r.call('phone.sms.read', { bot_id: 'bot-1', _source: 'api' });
+    expect(asked.filter((q) => q.kind === 'sms_read')).toHaveLength(6);
+    expect(asked.at(-1)?.summary).toMatch(/^An API key wants to read texts/);
+  });
+
+  it('returns approval_denied and reads nothing when the user declines', async () => {
+    const { r, calls } = runner({ decision: 'denied', handler: (a) => (a.includes('content') ? { stdout: raw } : {}) });
+    expect(await r.call('phone.sms.read', { bot_id: 'bot-1' })).toMatchObject({ error: 'approval_denied' });
+    expect(calls.some((c) => c.includes('content'))).toBe(false);
   });
 });

@@ -59,6 +59,8 @@ POST /v1/phones/{serial}/tool
 | `arguments` | object | The tool's arguments, as the phone tools take them (for example `{ "x": 540, "y": 1200 }` for `phone.tap`). |
 | `run_id` | string | Optional. Groups several calls into one run in the history. By default each call starts a new `api-…` run. |
 
+`phone.sms.send`, `phone.call.dial` and `phone.sms.read` wait for the phone owner to approve the call on their computer, every time, before the tool runs.
+
 A `200` is the tool's result, even when the tool failed:
 
 ```json
