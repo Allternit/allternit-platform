@@ -346,11 +346,12 @@ pub async fn handle_peer(state: &Arc<AppState>, owner: &str, bot_id: &str, peer:
                                 kind: "peer_held".into(),
                                 severity: "warn".into(),
                                 bot_id: Some(bot_id.to_string()),
+                                thread_id: None,
                                 source: "a2a".into(),
                                 source_id: held_id.clone(),
                                 summary: format!("{who} sent a message to your bot and is waiting for your OK."),
                                 detail: json!({ "peer": peer.id, "peerName": peer.name, "peerClass": peer.class, "text": text, "messageId": message_id, "contextId": m["contextId"] }),
-                                provenance: Some(json!({ "trust": "stranger", "sourceKind": "a2a", "sourceRef": peer.id, "excerpt": text.chars().take(200).collect::<String>() })),
+                                provenance: Some(json!({ "trust": if peer.class == "contact" { "contact" } else { "stranger" }, "sourceKind": "a2a", "sourceRef": peer.id, "excerpt": text.chars().take(200).collect::<String>() })),
                                 retry: None,
                             },
                         )

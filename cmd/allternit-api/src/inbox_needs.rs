@@ -312,7 +312,7 @@ pub fn collect(conn: &Connection, user_id: &str, unanswered_min: i64) -> rusqlit
         let mut it = item(format!("attention:{id}"), "attention", &kind, &bot, &bot_name, thread.as_deref(), None, summary, &at, if retryable { ("retry", if kind == "tool_changed" { "Approve tool" } else { "Retry" }) } else { ("open", "Open") }, false);
         if kind == "tool_changed" {
             // The tool and a one-line "what changed" (old vs new description, 200 chars each).
-            let d: Value = detail.and_then(|d| serde_json::from_str(&d).ok()).unwrap_or(Value::Null);
+            let d: Value = detail.as_deref().and_then(|d| serde_json::from_str(d).ok()).unwrap_or(Value::Null);
             it["tool"] = d["tool"].clone();
             it["serverId"] = d["serverId"].clone();
             let cut = |v: &Value| v.as_str().map(|s| s.chars().take(200).collect::<String>());
@@ -320,7 +320,7 @@ pub fn collect(conn: &Connection, user_id: &str, unanswered_min: i64) -> rusqlit
         }
         if kind == "peer_held" {
             // A message from an outside agent waiting for the owner: approve delivers it, dismiss refuses it.
-            let d: Value = detail.and_then(|d| serde_json::from_str(&d).ok()).unwrap_or(Value::Null);
+            let d: Value = detail.as_deref().and_then(|d| serde_json::from_str(d).ok()).unwrap_or(Value::Null);
             it["peer"] = json!({ "id": d["peer"], "name": d["peerName"], "class": d["peerClass"] });
             it["text"] = json!(snippet(d["text"].as_str().unwrap_or_default(), 600));
             it["primary"] = json!({ "action": "approve", "label": "Approve" });
