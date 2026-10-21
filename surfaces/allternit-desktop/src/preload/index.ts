@@ -698,7 +698,7 @@ const phoneLinkAPI = {
   checkApp: (opts: { deviceId: string; app: string }): Promise<unknown> => ipcRenderer.invoke('phone-link:check-app', opts),
   /** Read-only account read: { ok, account, plan, usage: { windows: [{ id, label, remaining_pct, resets_at }], observedAt } | null, error? }. */
   readAccount: (opts: { deviceId: string; app: string }): Promise<unknown> => ipcRenderer.invoke('phone-link:read-account', opts),
-  start: (opts: { platform: 'ios' | 'android' }): Promise<unknown> => ipcRenderer.invoke('phone-link:start', opts),
+  start: (opts: { platform: 'ios' | 'android'; serial?: string; linkHost?: string }): Promise<unknown> => ipcRenderer.invoke('phone-link:start', opts),
   cancel: (): Promise<unknown> => ipcRenderer.invoke('phone-link:cancel'),
   continue: (): Promise<unknown> => ipcRenderer.invoke('phone-link:continue'),
   retry: (): Promise<unknown> => ipcRenderer.invoke('phone-link:retry'),
@@ -715,6 +715,10 @@ const phonesAPI = {
   status: (): Promise<unknown> => ipcRenderer.invoke('phone:status'),
   startQrPairing: (): Promise<{ payload: string }> => ipcRenderer.invoke('phone:pair-qr-start'),
   pairWithCode: (hostPort: string, code: string): Promise<unknown> => ipcRenderer.invoke('phone:pair-code', hostPort, code),
+  /** Add a phone by adb address with no pairing (cloud phones, emulators). */
+  addByAddress: (host: string, port?: number, label?: string): Promise<unknown> => ipcRenderer.invoke('phone:add-by-address', host, port, label),
+  /** The signed-in account's cloud phones (GET /api/v1/cloud-phones), adding any running ones by address. */
+  cloudPhones: (): Promise<unknown> => ipcRenderer.invoke('phone:cloud-phones'),
   cancelPairing: (): Promise<void> => ipcRenderer.invoke('phone:pair-cancel'),
   forget: (id: string): Promise<void> => ipcRenderer.invoke('phone:forget', id),
   startScrcpy: (serial: string): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('phone:scrcpy-start', serial),

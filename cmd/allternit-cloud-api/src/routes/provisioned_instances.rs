@@ -54,7 +54,7 @@ use crate::{ApiError, ApiState};
 
 const ADMIN_USER_IDS_ENV: &str = "ALLTERNIT_ADMIN_USER_IDS";
 
-fn is_admin(user_id: &str) -> bool {
+pub(crate) fn is_admin(user_id: &str) -> bool {
     std::env::var(ADMIN_USER_IDS_ENV)
         .map(|value| {
             value

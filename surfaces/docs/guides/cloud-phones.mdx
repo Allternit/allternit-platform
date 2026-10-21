@@ -1,0 +1,43 @@
+---
+title: "Cloud phones (coming soon)"
+description: "Android phones that run in Allternit's cloud and show up in Phone Link like your own phone. Not available yet."
+---
+
+<Warning>
+**Coming soon. Cloud phones are not available yet.** The code is in place but switched off. The cloud phones API answers "Cloud phones are not available yet" until Allternit turns it on, and there is no plan or price for it yet.
+</Warning>
+
+A **cloud phone** is an Android phone that runs on an Allternit server instead of in your pocket. When you have one, Allternit Desktop adds it to Phone Link by itself, so your bots can use it the same way they use your own phone. You don't need a cable or Wireless debugging.
+
+## How it will work
+
+1. You get a cloud phone on your account.
+2. Allternit Desktop, signed in to that account, finds it within about 10 minutes and adds it under **Settings → Computers → Phones**, marked as a cloud phone.
+3. You run Phone Link setup on it once. This installs the Allternit Phone Link app, the same as on a phone you plug in.
+4. You sign in to the apps you want on the cloud phone, from its live screen.
+
+The cloud phone is only reachable over your private Allternit network. It is never open to the internet. Only your own devices can reach it.
+
+## For developers
+
+**Server.** The cloud-api routes live under `/api/v1/cloud-phones`:
+
+| Method | Path | What it does |
+| --- | --- | --- |
+| `GET` | `/api/v1/cloud-phones` | The caller's phones, as `phones`. A running phone has `adbAddress` and `linkAddress`, both in the form `meshIp:port`. |
+| `POST` | `/api/v1/cloud-phones` | Body: optional `label`. Creates a phone and returns it as `phone` with status 201. Admin only for now. |
+| `DELETE` | `/api/v1/cloud-phones/:id` | Removes the phone and its data. |
+
+These routes accept a Clerk session, a `compute` API token, or a Desktop device token. They return 503 unless `CLOUD_PHONES_ENABLED=1` is set. A phone also needs a fleet host marked `phones_enabled` (migration `099_cloud_phones.sql`). Each phone is a [redroid](https://github.com/remote-android/redroid-doc) container started by `infrastructure/cloud-phone/run-phone.sh`. Host setup is in `infrastructure/cloud-phone/README.md`.
+
+**Desktop bridge** (`window.allternit.phones` and `window.allternit.phoneLink`):
+
+- `phones.addByAddress(host, port?, label?)` adds any phone that adb can reach at `host:port` (default port 5555) with no pairing step. It is reconnected on every poll. The result is `{ ok: true, phone }` or `{ ok: false, error }`.
+- `phones.cloudPhones()` reads the account's cloud phones and adds the running ones. The result is `{ available: true, phones }`, or `{ available: false, reason }`, where `reason` is `signed_out`, `not_available` or `error`.
+- `phoneLink.start({ platform: 'android', serial, linkHost })` runs Phone Link setup on an added phone instead of waiting for a USB cable. `serial` is the phone's `serial` from the phones list. For a cloud phone, `linkHost` is its `linkAddress`.
+
+Phones added this way list with `via: 'address'`. Cloud phones also list with `kind: 'cloud'`.
+
+When Desktop adds a cloud phone that has no Phone Link yet, it starts Android setup on it by itself, with the same `serial` and `linkHost`. It never interrupts a setup that is already running. If setup doesn't finish, Desktop tries again on later checks, waiting 10 minutes at first and doubling up to 6 hours, at most five times per app run.
+
+**Mesh access.** The production Headscale policy only lets a device reach devices owned by the same customer, and a phone host is not owned by the customer. Each phone therefore needs one ACL rule: the owner's mesh user to the host's mesh IP on that phone's adb and Phone Link ports, nothing else. `GET /api/v1/cloud-phones/acl-fragment` (admin only) lists these rules for every live phone. An operator merges them into `infrastructure/mesh/headscale/policy.hujson` and redeploys Headscale. Until then the phone is created but Desktop can't reach it. The steps are in `infrastructure/cloud-phone/README.md`.

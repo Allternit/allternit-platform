@@ -582,7 +582,31 @@ export interface PhoneInfoData {
   port: number;
   streaming: boolean;
   agentBusy: boolean;
+  /** 'cloud' for an Allternit cloud phone. */
+  kind?: 'cloud';
+  /** 'address' = added by host:port with no pairing (addByAddress). */
+  via?: 'address';
 }
+
+export type PhoneAddByAddressResult = { ok: true; phone: PhoneInfoData } | { ok: false; error: string };
+
+export interface CloudPhoneData {
+  id: string;
+  label: string | null;
+  status: 'provisioning' | 'running' | 'stopped' | 'error' | 'deleted';
+  plan: string;
+  adbAddress: string | null;
+  linkAddress: string | null;
+  meshIp: string | null;
+  adbPort: number | null;
+  lastError: string | null;
+  createdAt: string;
+}
+
+/** `available: false` = signed out, cloud phones off on the server (503), or offline. */
+export type CloudPhonesSnapshot =
+  | { available: true; phones: CloudPhoneData[] }
+  | { available: false; reason: 'signed_out' | 'not_available' | 'error'; message?: string; phones: [] };
 
 export interface PhonePairingStatus {
   phase: 'idle' | 'waiting_for_scan' | 'pairing' | 'connecting' | 'done' | 'failed';
@@ -599,6 +623,10 @@ export interface PhonesAPI {
   status(): Promise<PhoneStatusSnapshot>;
   startQrPairing(): Promise<{ payload: string }>;
   pairWithCode(hostPort: string, code: string): Promise<PhonePairingStatus>;
+  /** Add a phone by adb `host:port` with no pairing (default port 5555); reconnected on every poll. */
+  addByAddress(host: string, port?: number, label?: string): Promise<PhoneAddByAddressResult>;
+  /** The signed-in account's cloud phones; running ones are added by address over the mesh. */
+  cloudPhones(): Promise<CloudPhonesSnapshot>;
   cancelPairing(): Promise<void>;
   forget(id: string): Promise<void>;
   startScrcpy(serial: string): Promise<{ ok: boolean; error?: string }>;
