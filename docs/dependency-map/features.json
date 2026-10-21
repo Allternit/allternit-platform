@@ -1495,6 +1495,10 @@
         {
           "on": "2026-10-19",
           "note": "Every app on a linked phone gets a check (signed in + account; plan and usage where the app shows them), not only AI chat. iPhone paths verified screen by screen with every Settings page scrolled: ChatGPT Settings > Usage and limits (Weekly), Gemini Settings > Usage limits (Current + Weekly), Claude, plus Discord, Telegram, Instagram, Facebook, TikTok, X, YouTube and GitHub accounts; per-app account rules so feed handles are never taken; drawer says Verified reader. A renewal-window iPhone whose signature hasn't lapsed now counts as working (it was treated as offline)."
+        },
+        {
+          "on": "2026-10-20",
+          "note": "Phone runs + skills: every phone tool call posts a redacted step (typed text/SMS/numbers stripped, 1280px frame, tapped element from the last read) to allternit-api phone_runs (500 steps/30 days/100 MB per phone); a run saved by name is a phone skill (phone_replay: class/label/resource-id/relative box/8x8 hash locators, checks, {{input}} text) replayed through the Desktop phone gateway with no model and one gizzi re-decision per moved step; phone.task runs on the bot brain for every lane (phone_task, ARTEMIS only as fallback); routines run skills via config.replay {kind: phone}."
         }
       ],
       "evidence": [
@@ -1512,7 +1516,12 @@
         "allternit/cmd/allternit-sideload/README.md",
         "allternit/surfaces/docs/guides/bot-voice-on-linked-phone.mdx",
         "allternit/surfaces/allternit-desktop/src/main/phone-account-reader.ts",
-        "allternit/surfaces/allternit-desktop/src/main/phone-account-specs.ts"
+        "allternit/surfaces/allternit-desktop/src/main/phone-account-specs.ts",
+        "allternit/surfaces/allternit-desktop/src/main/phone-runs.ts",
+        "allternit/cmd/allternit-api/src/phone_runs.rs",
+        "allternit/cmd/allternit-api/src/phone_replay.rs",
+        "allternit/cmd/allternit-api/src/phone_task.rs",
+        "allternit/surfaces/docs/guides/phone-skills.mdx"
       ]
     },
     {

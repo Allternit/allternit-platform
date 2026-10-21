@@ -12,7 +12,7 @@ Connecting a phone is **Desktop only**: adb runs in the Desktop app. On ai.allte
 - A spare Android phone on Android 11 or newer, on the **same Wi-Fi network** as your computer.
 - Allternit Desktop (macOS, Windows or Linux).
 - Optional: [scrcpy](https://github.com/Genymobile/scrcpy) if you also want the phone in a separate window on your computer. The in-app live view does not need it — Desktop runs its own pinned copy of the scrcpy server.
-- Optional, for plain-English tasks: Python 3.12+ tooling (`git` and `uv`) and a model key for Google ARTEMIS, which Allternit installs on request.
+- Optional, only as a fallback for plain-English tasks: Python 3.12+ tooling (`git` and `uv`) and a model key for Google ARTEMIS, which Allternit installs on request. Plain-English tasks normally run on the bot's own brain and need neither; see [Phone runs and phone skills](/guides/phone-skills).
 
 ## Watch and control the phone in the app
 
@@ -61,7 +61,8 @@ Paired phones are remembered and reconnect on their own when they come back on t
 | `phone.tap`, `phone.type`, `phone.swipe` | Operate it. `phone.type` accepts printable ASCII. |
 | `phone.home`, `phone.back`, `phone.key` | Home and Back buttons, and keys such as `enter`, `tab` and the arrow keys. |
 | `phone.open_app` | Open an app by package name or a common name such as `settings`. |
-| `phone.task` | Do a plain-English task through Google ARTEMIS. |
+| `phone.task` | Do a plain-English task on the bot's own brain. See [Phone runs and phone skills](/guides/phone-skills). |
+| `phone.skills`, `phone.save_skill`, `phone.run_skill` | Save a run that worked as a skill and replay it with no model. See [Phone runs and phone skills](/guides/phone-skills). |
 | `phone.sms.send` | Send one text from the phone's SIM. |
 | `phone.call.dial` | Place a call from the phone's SIM. |
 

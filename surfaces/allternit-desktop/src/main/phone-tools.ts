@@ -13,6 +13,7 @@
 import { createHash } from 'node:crypto';
 import type { PhoneLinkHealth } from './phone-link-health.js';
 import { catalogApp, catalogAppByName } from './phone-app-catalog.js';
+import { PhoneApiUnavailable, type PhoneApi, type PhoneRunRecorder } from './phone-runs.js';
 
 // ── Injected collaborators ──────────────────────────────────────────────────
 
@@ -99,6 +100,12 @@ export interface PhoneToolDeps {
    * Call audio set up, so the bot joins the call once it connects.
    */
   onDialPlaced?: (serial: string, number: string) => boolean;
+  /** Posts every call to the phone run history (phone-runs.ts). */
+  recorder?: PhoneRunRecorder;
+  /** The local allternit-api phone endpoints: phone.task on the bot's brain, phone skills. */
+  api?: () => PhoneApi | null;
+  /** Environment for the ARTEMIS fallback (GEMINI_API_KEY). Defaults to process.env. */
+  env?: () => Record<string, string | undefined>;
 }
 
 // ── Result shapes ───────────────────────────────────────────────────────────
@@ -256,10 +263,18 @@ export const PHONE_TOOLS = [
   },
   {
     name: 'phone.task',
-    description: 'Do a plain-English task on the phone through Google ARTEMIS (e.g. "open Settings and turn on dark mode").',
+    description:
+      'Do a plain-English task on the phone (e.g. "open Settings and turn on dark mode"). Runs on your own brain: each step reads the screen and picks one phone action, on every kind of phone. Pass bot_id (or brain as provider/model) so it uses your model. Every step lands in the phone run history; save a run that worked with phone.save_skill to replay it later with no model.',
     inputSchema: {
       type: 'object',
-      properties: { serial: serialProp, task: { type: 'string', maxLength: 2000 }, model: { enum: ['Flash', 'Pro'] } },
+      properties: {
+        serial: serialProp,
+        task: { type: 'string', maxLength: 2000 },
+        max_steps: { type: 'integer', minimum: 1, maximum: 40 },
+        bot_id: { type: 'string', maxLength: 200, description: 'Your bot id: the task runs on your brain.' },
+        brain: { type: 'string', maxLength: 200, description: 'A brain as provider/model, when bot_id is not known.' },
+        model: { enum: ['Flash', 'Pro'], description: 'Only for the ARTEMIS fallback (Android over adb with GEMINI_API_KEY).' },
+      },
       required: ['task'],
       additionalProperties: false,
     },
@@ -288,6 +303,47 @@ export const PHONE_TOOLS = [
       type: 'object',
       properties: { serial: serialProp, number: { type: 'string' }, subscription_id: { type: 'integer', minimum: 0 } },
       required: ['number'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'phone.skills',
+    description: 'List saved phone skills: recorded phone runs that replay with no model. Each lists its inputs (typed text is never stored, so each run passes it).',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+  },
+  {
+    name: 'phone.save_skill',
+    description:
+      'Save a phone run from the run history as a named skill (record once, replay with no model). run_id comes from phone.task or the run history; from_step/to_step (0-based indexes in that run) save a part of it. Typed text becomes inputs (input_names names them, in order).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        run_id: { type: 'string', maxLength: 120 },
+        name: { type: 'string', maxLength: 80 },
+        serial: serialProp,
+        from_step: { type: 'integer', minimum: 0 },
+        to_step: { type: 'integer', minimum: 0 },
+        description: { type: 'string', maxLength: 500 },
+        input_names: { type: 'array', items: { type: 'string', maxLength: 60 }, maxItems: 20 },
+      },
+      required: ['run_id', 'name'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'phone.run_skill',
+    description:
+      'Replay a saved phone skill with no model: each step finds its element again (id, label, resource id, then place and look) and checks what it changed. Only a step whose element moved asks your brain once. Returns per-step results and model_calls.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        serial: serialProp,
+        name: { type: 'string', maxLength: 80 },
+        inputs: { type: 'object', additionalProperties: { type: 'string', maxLength: 500 } },
+        bot_id: { type: 'string', maxLength: 200 },
+        brain: { type: 'string', maxLength: 200 },
+      },
+      required: ['name'],
       additionalProperties: false,
     },
   },
@@ -504,7 +560,26 @@ export class PhoneToolRunner {
   }
 
   async call(name: string, args: unknown): Promise<ToolResult> {
-    const a = (args && typeof args === 'object' ? args : {}) as Record<string, unknown>;
+    const raw = (args && typeof args === 'object' ? args : {}) as Record<string, unknown>;
+    // `_run_id` / `_source` (set by allternit-api's replay and task loops) are for the run history only.
+    const a = Object.fromEntries(Object.entries(raw).filter(([k]) => !k.startsWith('_')));
+    const started = this.now();
+    const result = await this.dispatch(name, a);
+    const recorder = this.deps.recorder;
+    if (recorder && name !== 'phone.devices' && name !== 'phone.skills' && name !== 'phone.save_skill') {
+      const serial = typeof a.serial === 'string' ? a.serial : this.onlyOnline();
+      if (serial) recorder.record({ serial, tool: name, args: raw, result: result as Record<string, unknown>, durationMs: this.now() - started });
+    }
+    return result;
+  }
+
+  /** The one connected phone, when there is exactly one. */
+  private onlyOnline(): string | null {
+    const online = [...this.deps.onlineSerials(), ...(this.deps.usb?.()?.serials() ?? []), ...(this.deps.links?.()?.serials() ?? [])];
+    return online.length === 1 ? online[0] : null;
+  }
+
+  private async dispatch(name: string, a: Record<string, unknown>): Promise<ToolResult> {
     const usb = this.deps.usb?.() ?? null;
     const links = this.deps.links?.() ?? null;
     if (name === 'phone.devices') {
@@ -521,8 +596,13 @@ export class PhoneToolRunner {
     const known = PHONE_TOOLS.some((t) => t.name === name);
     if (!known) return fail('unknown_tool', `No phone tool named ${name}.`);
 
+    if (name === 'phone.skills' || name === 'phone.save_skill') return this.skillCall(name, a);
+
     const serial = this.resolveSerial(a.serial, usb, links);
     if (typeof serial !== 'string') return serial;
+    // Every lane: phone.task runs on the bot's brain in allternit-api; skills replay there too.
+    if (name === 'phone.task') return this.task(serial, a, usb, links);
+    if (name === 'phone.run_skill') return this.skillCall(name, { ...a, serial });
     if (usb?.has(serial)) return usb.call(name, serial, a);
     if (links?.has(serial)) {
       // Linked phones: mark bot use so background account reads wait (phone-account-reader.ts).
@@ -557,8 +637,6 @@ export class PhoneToolRunner {
           return await this.key(serial, a);
         case 'phone.open_app':
           return await this.openApp(serial, a);
-        case 'phone.task':
-          return await this.task(serial, a);
         case 'phone.sms.send':
           return await this.smsSend(serial, a);
         case 'phone.call.dial':
@@ -719,18 +797,67 @@ export class PhoneToolRunner {
     return fail('unknown_app', `${entry?.name ?? candidates[0]} is not installed on the phone.`);
   }
 
-  private async task(serial: string, a: Record<string, unknown>): Promise<ToolResult> {
+  /**
+   * phone.task: the subtask loop in allternit-api (POST /phones/:serial/task)
+   * on the bot's brain, for every lane. ARTEMIS is only the fallback when that
+   * endpoint can't be reached, for an Android phone over adb with GEMINI_API_KEY set.
+   */
+  private async task(serial: string, a: Record<string, unknown>, usb: UsbPhoneBackend | null, links: PhoneLinkBackend | null): Promise<ToolResult> {
     if (typeof a.task !== 'string' || !a.task.trim() || a.task.length > 2000) {
       return fail('invalid_args', 'task must be 1–2000 characters.');
     }
     const model = a.model === undefined ? 'Flash' : a.model;
     if (model !== 'Flash' && model !== 'Pro') return fail('invalid_args', 'model must be Flash or Pro.');
-    const artemis = this.deps.artemis();
+    if (a.max_steps !== undefined && (!isInt(a.max_steps, 40) || a.max_steps === 0)) return fail('invalid_args', 'max_steps must be 1–40.');
+    const api = this.deps.api?.() ?? null;
+    let unavailable = 'allternit-api is not running';
+    if (api) {
+      try {
+        const out = await api.task(serial, {
+          goal: a.task.trim(),
+          max_steps: a.max_steps as number | undefined,
+          bot_id: typeof a.bot_id === 'string' ? a.bot_id : undefined,
+          brain: typeof a.brain === 'string' ? a.brain : undefined,
+        });
+        if (out.ok === false && typeof out.error === 'string' && typeof out.message === 'string' && !('status' in out)) {
+          return fail(out.error === 'not_found' ? 'not_found' : 'invalid_args', out.message);
+        }
+        return { ...out, ok: true, done: out.ok === true };
+      } catch (error) {
+        if (!(error instanceof PhoneApiUnavailable)) throw error;
+        unavailable = error.message;
+      }
+    }
+    const adbLane = !usb?.has(serial) && !links?.has(serial);
+    const env = this.deps.env?.() ?? process.env;
+    const artemis = adbLane && env.GEMINI_API_KEY ? this.deps.artemis() : null;
     if (!artemis) {
-      return fail('artemis_unavailable', 'Plain-English tasks need ARTEMIS. Enable it in Settings → Computers → Phones.');
+      return fail('artemis_unavailable', `Plain-English phone tasks run in Allternit Desktop's local API, which isn't reachable (${unavailable}). Restart Allternit Desktop and try again.`);
     }
     const result = await artemis.runTask(serial, a.task.trim(), model);
-    return { ok: true, result };
+    return { ok: true, result, via: 'artemis' };
+  }
+
+  /** phone.skills / phone.save_skill / phone.run_skill → allternit-api. */
+  private async skillCall(name: string, a: Record<string, unknown>): Promise<ToolResult> {
+    const api = this.deps.api?.() ?? null;
+    if (!api) return fail('unsupported', 'Phone skills live in Allternit Desktop\'s local API, which isn\'t running.');
+    try {
+      if (name === 'phone.skills') return { ...(await api.skills()), ok: true };
+      if (typeof a.name !== 'string' || !a.name.trim()) return fail('invalid_args', 'name is required.');
+      if (name === 'phone.save_skill') {
+        if (typeof a.run_id !== 'string' || !a.run_id.trim()) return fail('invalid_args', 'run_id is required.');
+        const out = await api.saveSkill(a);
+        return out.ok === false ? (out as ToolResult) : { ...out, ok: true };
+      }
+      if (a.inputs !== undefined && (typeof a.inputs !== 'object' || a.inputs === null)) return fail('invalid_args', 'inputs must be an object of name → text.');
+      const out = await api.runSkill(a.name.trim(), { serial: a.serial, inputs: a.inputs ?? {}, bot_id: a.bot_id, brain: a.brain });
+      if (out.ok === false && !('status' in out)) return out as ToolResult;
+      return { ...out, ok: true, succeeded: out.ok === true };
+    } catch (error) {
+      if (error instanceof PhoneApiUnavailable) return fail('unsupported', `Phone skills need Allternit Desktop's local API (${error.message}).`);
+      throw error;
+    }
   }
 
   private async gated(

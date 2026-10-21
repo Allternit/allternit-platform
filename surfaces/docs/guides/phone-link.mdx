@@ -83,7 +83,7 @@ Once a phone is linked, bots reach it with the same `phone.*` tools as any other
 - **Read the screen:** `phone.read_ui` (one line per element: class, label, id, bounds), `phone.screen_text` (just the text) and `phone.find_and_tap` (find an element and tap its centre) work on linked phones and on Android phones over adb. An iPhone on a USB Agent can't read the screen as text — there the bot works from `phone.screenshot`.
 - **Open apps:** `phone.open_app` takes a catalog id (`chatgpt`, `google_drive`), an app name (`Google Drive`) or a package/bundle id.
 - **iPhone has no Back button.** `phone.back` works on Android; on a linked iPhone the bot gets a plain "use the app's back control" instead.
-- **Texts and calls stay on the adb lane for now.** `phone.sms.send` and `phone.call.dial` need an Android phone over adb with its on-screen approval; they are not available on linked phones. The same goes for hardware keys (`phone.key`) and plain-English tasks (`phone.task`).
+- **Texts and calls stay on the adb lane for now.** `phone.sms.send` and `phone.call.dial` need an Android phone over adb with its on-screen approval; they are not available on linked phones. The same goes for hardware keys (`phone.key`). Plain-English tasks (`phone.task`) and phone skills work on linked phones too: they run on the bot's brain. See [Phone runs and phone skills](/guides/phone-skills).
 - **Bot voice on calls needs a call cable.** With a cable from a linked phone to the Mac running Desktop, the bot answers that phone's calls and talks on them (on iPhone, best effort). See [Let your bot talk on its own phone](/guides/bot-voice-on-linked-phone).
 
 ## Read messaging apps in Allternit

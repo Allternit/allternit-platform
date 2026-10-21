@@ -20,6 +20,7 @@ import { ArtemisManager } from './phone-artemis.js';
 import { PhoneDeviceManager, type StoredPhone } from './phone-device-manager.js';
 import { fileStore, readJson, writeJson } from './phone-store-file.js';
 import { newGatewayToken, startPhoneGateway, type PhoneGatewayHandover } from './phone-gateway.js';
+import { httpPhoneApi, PhoneRunRecorder } from './phone-runs.js';
 import { execFileSync } from 'node:child_process';
 import { handOver, handoverKey, handoverTargets, importHandover, openHandover, type HandoverClientDeps, type HandoverStores } from './phone-link-handover.js';
 import { findUxplay } from './phone-airplay.js';
@@ -625,6 +626,7 @@ class PhoneService {
       lazy.binary = async (args, opts) => (await this.ensureAdbCall()).binary(args, opts);
       this.artemis = this.artemis ?? new ArtemisManager(this.dir(), undefined, (serial, running) =>
         this.manager?.noteAgentActivity(serial, running ? 1 : -1));
+      const phoneApi = httpPhoneApi(() => URLS.API, () => backendManager.getLocalAuthHeaders());
       const runner = new PhoneToolRunner({
         adb: lazy,
         gate: dialogGate(),
@@ -636,6 +638,13 @@ class PhoneService {
         activity: (serial, delta) => this.manager?.noteAgentActivity(serial, delta),
         links: () => this.ensureLinkedBackend(),
         onDialPlaced: (serial, number) => this.callBridge?.noteOutboundDial(serial, number) ?? false,
+        // Run history (with frames) + phone.task on the bot's brain + phone skills, all in the local API.
+        recorder: new PhoneRunRecorder({
+          api: () => phoneApi,
+          shrink: async (dataBase64) => shrinkFrame(dataBase64),
+          onError: (error) => log.debug(`[Phone] run history step not recorded: ${error instanceof Error ? error.message : String(error)}`),
+        }),
+        api: () => phoneApi,
       });
       this.runner = runner;
       const token = newGatewayToken();
@@ -1562,6 +1571,14 @@ class PhoneService {
     this.gatewayClose?.();
     fs.rmSync(this.gatewayFile, { force: true });
   }
+}
+
+/** A run-history frame: at most 1280 px tall, JPEG, so a step post stays small. */
+function shrinkFrame(dataBase64: string): string | null {
+  const img = nativeImage.createFromBuffer(Buffer.from(dataBase64, 'base64'));
+  if (img.isEmpty()) return null;
+  const { height } = img.getSize();
+  return (height > 1280 ? img.resize({ height: 1280, quality: 'good' }) : img).toJPEG(72).toString('base64');
 }
 
 export const phoneService = new PhoneService();
