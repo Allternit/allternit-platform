@@ -226,8 +226,19 @@ async fn upsert_h(State(state): State<Arc<AppState>>, Path(agent_id): Path<Strin
         Ok(v) => v,
         Err(r) => return r,
     };
+    let created = !matches!(bot_owner(&state.db, &agent_id), Ok(Some(_)));
     match upsert_bot(&state.db, &auth.owner, &agent_id, &spec) {
-        Ok(()) => Json(json!({ "agentId": agent_id, "botId": agent_id })).into_response(),
+        Ok(()) => {
+            // A new hosted bot gets its own inbox in the background, like
+            // `POST /agents` bots (idempotent; a no-op where bot email is off).
+            if created {
+                let (app, owner, bot) = (state.clone(), auth.owner.clone(), agent_id.clone());
+                tokio::spawn(async move {
+                    crate::agent_email_routes::ensure_bot_mailbox(&app, &owner, &bot).await;
+                });
+            }
+            Json(json!({ "agentId": agent_id, "botId": agent_id })).into_response()
+        }
         Err(e) => fail(StatusCode::BAD_REQUEST, &e),
     }
 }

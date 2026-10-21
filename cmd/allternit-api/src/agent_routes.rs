@@ -1149,6 +1149,16 @@ async fn create_agent(
             .map(|v| v != 0)
             .unwrap_or(false);
 
+            // Every bot gets its own inbox on the default bot-mail domain, in
+            // the background (idempotent; a no-op where bot email is off).
+            if is_bot {
+                let app = state.clone();
+                let (owner, bot) = (user_id.clone(), id.clone());
+                tokio::spawn(async move {
+                    crate::agent_email_routes::ensure_bot_mailbox(&app, &owner, &bot).await;
+                });
+            }
+
             // Fire-and-forget webhook (never fails the request).
             crate::webhook_subscription_routes::deliver_registered_event(
                 state.clone(),
