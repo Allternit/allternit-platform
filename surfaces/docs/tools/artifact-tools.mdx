@@ -1,6 +1,6 @@
 ---
 title: 'Artifact Tools'
-description: 'The artifact_create, artifact_update, artifact_suggest, artifact_read and related tools gizzi gives every model for Artifacts v2'
+description: 'The artifact_create, artifact_update, artifact_suggest, artifact_claim, artifact_read and related tools gizzi gives every model for Artifacts v2'
 ---
 
 ## Overview
@@ -12,6 +12,8 @@ gizzi-code gives every model built-in tools for **Artifacts v2**: one account-le
 | `artifact_create` | `{kind, title, body, body_format?, icon?, meta?}` | `{id, version: 1}` |
 | `artifact_update` | `{id, body, base_version, note?, task?}` | `{id, version}` |
 | `artifact_suggest` | `{id, base_version, changes, task?}` | `{id, base_version, suggestion_ids}` |
+| `artifact_claim` | `{artifact_id, artboard, task?}` | `{artifact_id, artboard, name, version}` |
+| `artifact_release` | `{artifact_id, artboard?}` | confirmation |
 | `artifact_read` | `{id, version?, task?}` | the body, with kind, title, format and version |
 | `artifact_list` | `{q?, kind?, scope?, limit?, cursor?}` | one line per artifact, plus a cursor for more |
 | `artifact_comment` | `{id, body?, parent_id?, task?}` | the threads (no `body`), or the posted comment |
@@ -31,6 +33,7 @@ The tool descriptions carry the rule from the contract:
 - Otherwise answer inline. Short snippets and interactive cards stay in the chat.
 - Revise with `artifact_update` on the same id; don't create a second artifact for a revision.
 - For a doc or sheet that already has content, prefer `artifact_suggest`, so the user reviews each change. Use `artifact_update` for new content, other kinds, when the user asked to apply the change directly, or when `artifact_suggest` says suggestions aren't available.
+- For a design canvas that already exists, change frames with `artifact_claim`, `artifact_suggest` (one `artboard` change per frame) and `artifact_release`, never `artifact_update` (see [Design canvases](#design-canvases)).
 
 ## Suggesting edits
 
@@ -38,7 +41,7 @@ The tool descriptions carry the rule from the contract:
 
 | Field | Type | Notes |
 |-------|------|-------|
-| `id` | string | The artifact id. It must be a `doc` or a `sheet`. |
+| `id` | string | The artifact id. It must be a `doc`, a `sheet` or a design canvas. |
 | `base_version` | integer | The version the changes are based on. |
 | `changes` | array of 1 to 50 | Each is one of the change shapes below, plus an optional `reason` (at most 500 characters) the user sees. |
 | `task` | string, optional | At most 200 characters, shown on the agent's cursor. Defaults to "Suggesting edits". |
@@ -66,12 +69,61 @@ The result's first line is `{"id", "base_version", "suggestion_ids"}`, and the t
 
 Suggestions need the cloud store. Without a signed-in account, or on a cloud that doesn't have the route yet, `artifact_suggest` returns an error that tells the model to use `artifact_update` instead.
 
+## Design canvases
+
+Several agents can restyle frames of one design canvas (`application/vnd.allternit.design+json`) at the same time. Each works on one artboard at a time, and the user keeps or undoes each frame change. The flow the tool descriptions and the bundled `artifacts` skill teach:
+
+1. `artifact_read` the design.
+2. `artifact_claim` the frame.
+3. `artifact_suggest` one `artboard` change for that frame, with a reason.
+4. `artifact_release` it.
+
+### artifact_claim and artifact_release
+
+`artifact_claim {artifact_id, artboard, task?}` reads the design, checks that the artboard exists (an unknown id lists the design's artboards), and sends an agent presence heartbeat whose anchor is `{kind: "artboard", artboard}` (see [frame claims](/api/artifacts-v2#frame-claims)). `task` defaults to "Working on Hero". The result's first line is `{artifact_id, artboard, name, version}`.
+
+- When another agent session holds the frame, the cloud answers `409 artboard_claimed` and the tool fails with a plain message: "Hero is being worked on by Oki; pick another frame or wait."
+- A session holds one frame per artifact; claiming another frame releases the first.
+- While the session holds a frame, every artifact tool heartbeat on that design carries the frame as its anchor (a heartbeat without it would release the claim), and the frame's task becomes the default task line.
+- gizzi re-sends the claim every 20 seconds, so it outlives long model turns, and lets it go after 3 minutes with no artifact tool call on the design.
+- Claims need the cloud store. Without a signed-in account `artifact_claim` returns an error; `artifact_suggest` still works, and the cloud still refuses a frame another agent holds.
+
+`artifact_release {artifact_id, artboard?}` sends a heartbeat without an anchor, which clears the claim. With an `artboard` the session doesn't hold, it releases nothing and says which frame the session holds. Releasing doesn't touch a pending change.
+
+### The artboard change
+
+The model sends `{kind: "artboard", artboard, layers, frame?, reason?}`:
+
+```json
+{"kind": "artboard", "artboard": "shape:hero", "frame": {"fill": "#0b0b0f"},
+ "layers": [{"id": "shape:title", "type": "text", "name": "Title", "x": 96, "y": 120, "w": 800, "h": 80,
+             "props": {"text": "Plan your week in minutes", "size": "xl", "color": "white", "w": 800}}],
+ "reason": "Made the eyebrow and heading dark"}
+```
+
+- `layers` is the frame's **full** new layer list, bottom first: every layer it keeps plus new ones. Kept layers keep their ids; new layers get ids no other artboard uses.
+- `frame` optionally patches the artboard (`fill`, `w`, `h`, `props`).
+
+Before posting, gizzi:
+
+- reads the current canvas and fills `before` with the artboard's layers (and the patched frame fields) as they are now;
+- fills in each layer's `artboard`, refuses a layer on another artboard, a layer id used twice, or one used on another artboard, and refuses an artboard that doesn't exist;
+- writes ids in tldraw's form, `shape:<id>`, because the app adds that prefix to model-written ids when it loads a canvas;
+- when the design moved past `base_version`, reads that version: if this frame is unchanged, the change posts at the current version (other agents keeping their frames doesn't make it stale); if this frame changed, nothing is posted and the model is told to read the design again;
+- refuses artboard changes for an HTML design (it has no artboards until the user converts it) and for other kinds.
+
+The heartbeat's anchor is the held frame when the change is for it, otherwise the first change's artboard. A frame another agent holds comes back as the same plain error as `artifact_claim`. The result tells the model the canvas shows the change "In review" for the user to keep or undo.
+
+### artifact_update on a design
+
+`artifact_update` replaces the whole canvas, including frames other agents are changing. Its description says so, and it refuses a design that has pending `artboard` suggestions from other sessions, naming them ("Ash on Pricing") and pointing at claim, suggest and release. Pending changes from the same session don't block it.
+
 ## Agent presence and the task input
 
 `artifact_read`, `artifact_update`, `artifact_suggest` and `artifact_comment` each send a presence heartbeat for the agent (`POST /api/v2/artifacts/:id/presence` with `agent: {name, session_id, task, anchor, cost_usd}`), so the user sees the agent in the artifact header and its cursor at the spot it works on.
 
 - `task` is the tool's optional `task` input, or a default: "Reading", "Saving", "Suggesting edits", "Asking a question" ("Reading comments" when `artifact_comment` only reads).
-- `anchor` is the first change's location for `artifact_suggest` (`{kind: "block", block}` or `{kind: "cell", sheet, address}`). The other tools send none.
+- `anchor` is the first change's location for `artifact_suggest` (`{kind: "block", block}`, `{kind: "cell", sheet, address}` or `{kind: "artboard", artboard}`). The other tools send none, except the frame the session holds on a design (see [Design canvases](#design-canvases)).
 - `artifact_read` and `artifact_comment` send `state: "viewing"`; `artifact_update` and `artifact_suggest` send `editing`.
 
 Heartbeats are best effort. They run in the background with a 2.5 second timeout, and a failed heartbeat never fails or delays the tool. Set `GIZZI_ARTIFACT_PRESENCE=0` to turn them off.
@@ -148,9 +200,12 @@ The text the model sees starts with the same fields as a JSON line, without the 
 | Format doesn't fit the kind, or invalid JSON | The allowed formats for that kind, or the JSON parse error. |
 | The store refused the body (for example over 16 MiB) | The store's message. |
 | `artifact_suggest` with no account signed in, or a cloud without the route | Suggestions aren't available; use `artifact_update` instead. |
+| `artifact_claim` or an artboard `artifact_suggest` on a frame another agent holds (cloud `409 artboard_claimed`) | "Hero is being worked on by Oki; pick another frame or wait." |
+| An artboard change for a frame that changed since `base_version` | Nothing was suggested; read the design again and rebuild that frame. |
+| `artifact_update` on a design with other agents' pending frame changes | Who is changing which frame, and the claim, suggest and release flow to use instead. |
 
 ## Source
 
-- Tools: `cmd/gizzi-code/src/runtime/tools/builtins/artifact.ts` (descriptions in `artifact-create.txt`, `artifact-update.txt`, `artifact-suggest.txt`, `artifact-read.txt`)
+- Tools: `cmd/gizzi-code/src/runtime/tools/builtins/artifact.ts` (descriptions in `artifact-create.txt`, `artifact-update.txt`, `artifact-suggest.txt`, `artifact-claim.txt`, `artifact-release.txt`, `artifact-read.txt`)
 - Store client: `cmd/gizzi-code/src/runtime/integrations/artifacts/index.ts`
 - Tests: `cmd/gizzi-code/test/tool/artifact.test.ts`

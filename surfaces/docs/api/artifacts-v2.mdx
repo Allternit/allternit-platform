@@ -332,11 +332,28 @@ An agent working on the artifact for the caller sends `agent: { name, session_id
 - The row stores `name`, `task` (at most 200 characters), `anchor` (at most 4 KB of JSON), `cost_usd` and `session_id`.
 - `state` works as for people. `left` deletes that agent's row.
 
-`anchor` says where the agent is working, in the same location fields a suggestion uses: `{ "kind": "block", "block": 3 }` for a doc block (0-based) or `{ "kind": "cell", "sheet": null, "address": "B4" }` for a sheet cell. The app draws the agent's cursor there. `cost_usd` is the agent session's model cost so far, or absent when unknown. For people, `kind` is `"user"` and the agent fields are `null`.
+`anchor` says where the agent is working, in the same location fields a suggestion uses: `{ "kind": "block", "block": 3 }` for a doc block (0-based), `{ "kind": "cell", "sheet": null, "address": "B4" }` for a sheet cell, or `{ "kind": "artboard", "artboard": "shape:hero" }` for a frame of a design canvas. The app draws the agent's cursor or frame tag there. `cost_usd` is the agent session's model cost so far, or absent when unknown. For people, `kind` is `"user"` and the agent fields are `null`.
+
+### Frame claims
+
+On a design canvas, an agent claims an artboard before it changes it, so two agents never change the same frame. A claim is an agent presence heartbeat whose `anchor` has an `artboard` id. There is no separate claims table.
+
+- **Claim.** `POST /presence` with `agent.anchor.artboard` set. If another live agent session holds that artboard, the reply is `409`, and nothing is written:
+
+  ```json
+  { "error": "artboard_claimed", "code": "artboard_claimed", "message": "Oki is working on that artboard; pick another one or wait",
+    "holder": { "name": "Oki", "session_id": "ses_..." } }
+  ```
+
+  "Another live agent session" means an agent row other than the caller's own, seen in the last 45 seconds, whose `session_id` differs (or any other agent row when the caller sends no `session_id`). It can belong to another person's agent on a shared design. Otherwise the heartbeat upserts as usual. The check and the write run under one lock per artboard, so two agents claiming at once can't both win.
+- **Keep it.** Each heartbeat from the holder keeps the claim. It lasts as long as the heartbeats do (the 45-second TTL).
+- **Release.** A heartbeat with `anchor: null` (or without an artboard), or `state: "left"`, releases it. A claim whose heartbeats stop lapses after 45 seconds.
+- An agent row holds one frame at a time: claiming another frame moves the claim.
+- Artboard ids compare without tldraw's `shape:` prefix, so `hero` and `shape:hero` are the same frame. `anchor.artboard` must be a string of 1 to 200 characters, otherwise `400`.
 
 ## Suggestions
 
-Agents propose edits to doc and sheet artifacts as pending suggestions instead of writing a new version. The user accepts or rejects each one. Suggestions are stored in `artifact_suggestions` (migration `096_artifact_agent_watch.sql`).
+Agents propose edits to doc and sheet artifacts, and frame changes to design canvases, as pending suggestions instead of writing a new version. The user accepts or rejects each one. Suggestions are stored in `artifact_suggestions` (migration `096_artifact_agent_watch.sql`).
 
 | Method and path | Needs | Body | Returns |
 |---|---|---|---|
@@ -347,15 +364,50 @@ Agents propose edits to doc and sheet artifacts as pending suggestions instead o
 
 A suggestion is `{ id, artifact_id, base_version, agent_name, session_id, change, reason, cost_usd, status, created_at, resolved_at }`. `id` starts with `sug_`. `cost_usd` is a number or `null`. `status` is `pending`, `accepted`, `rejected` or `stale`. Resolving one sets `resolved_by` and `resolved_at`.
 
-`change` is one of three shapes:
+`change` is one of four shapes:
 
 | kind | Shape | Meaning |
 |---|---|---|
 | `text` | `{ "kind": "text", "block": 2, "find": "about 40%", "replace": "38%" }` | Replace the first occurrence of `find` in the plain text of block `block` (0-based index into `doc.blocks`). `block: null` searches the whole document, block by block. |
 | `block` | `{ "kind": "block", "op": "replace" \| "insert_after" \| "delete", "block": 4, "markdown": "..." }` | `markdown` becomes blocks the same way the editor converts markdown. `delete` ignores `markdown`. |
 | `cell` | `{ "kind": "cell", "sheet": null, "address": "B4", "value": "Nov 10" }` | Set one cell. `sheet` is a sheet name or id; `null` means the first sheet. A `value` starting with `=` is a formula. |
+| `artboard` | see below | One agent turn on one frame of a design canvas: the frame's full new layer list, plus what it replaces. |
 
-Limits: at most 50 changes per `POST`; `find`, `replace`, `markdown` and `value` at most 20,000 characters each; `reason` at most 500. The artifact must be a `doc` or a `sheet`, otherwise `400 unsupported_kind`.
+Which artifact takes which kind:
+
+| Artifact | Change kinds |
+|---|---|
+| `doc` | `text`, `block` |
+| `sheet` | `cell` |
+| `design` whose current body format is `application/vnd.allternit.design+json` | `artboard` |
+
+Any other pair, including an HTML design (`text/html`), is `400 unsupported_kind`.
+
+### Artboard changes
+
+```json
+{
+  "kind": "artboard",
+  "artboard": "shape:hero",
+  "name": "Hero",
+  "frame": { "fill": "#0b0b0f" },
+  "layers": [ { "id": "shape:title", "type": "text", "name": "Title", "artboard": "shape:hero",
+                "x": 96, "y": 120, "w": 800, "h": 80, "props": { "text": "Plan your week", "color": "white" } } ],
+  "before": { "frame": { "fill": "#ffffff" }, "layers": [ { "id": "shape:title", "...": "..." } ] }
+}
+```
+
+- `artboard` is the artboard's id, and `name` its name (optional, for display).
+- `layers` is the artboard's **full** new layer list in stacking order (first at the bottom), as `CanvasLayer` objects from the design body format. Every layer's `artboard` must equal `artboard`, layer ids are unique in the list, and they must not be used by layers on other artboards (`422 layer_id_in_use`). Layers are stored as sent.
+- `frame` optionally patches the artboard: `fill` (string), `w` and `h` (1 to 100,000) and `props` (object). Other fields are dropped. Left out, the artboard is unchanged.
+- `before` is `{ frame?, layers }`: the artboard as the agent read it. gizzi fills it from the body.
+- The artboard must exist in the current body (`422 unknown_artboard`). A body that isn't a v2 canvas yet isn't checked.
+- Limits: `layers` and `before` at most 2 MB of JSON each, and at most 2000 layers each, otherwise `400 change_too_large`. A request is at most 16 MB.
+- While another live agent session holds the artboard (see [frame claims](#frame-claims)), the `POST` is refused with `409 artboard_claimed` and the same `holder`. The holder's own session, and anyone when no one holds the frame, can suggest.
+
+**Applying is pure and client side.** Remove every layer whose `artboard` is the change's artboard, insert `layers` where the first removed one sat (or at the end when there were none), and patch the artboard with `frame`. The change is **stale** when the artboard no longer exists. While a change is pending the canvas shows the after state, marked "In review". **Keep** saves a version with it and marks it `accepted`; **Undo** restores `before` and marks it `rejected`. A kept change can still be undone for 24 hours if the artboard still matches its `layers`.
+
+Limits: at most 50 changes per `POST`; `find`, `replace`, `markdown` and `value` at most 20,000 characters each; `reason` at most 500. The artifact must be a `doc`, a `sheet` or a design canvas, otherwise `400 unsupported_kind`.
 
 **The client applies accepted changes, not the server.** To accept, the app applies the change to the current body, saves a new version (author the user, with `meta.note`), then sends `PATCH` with `accepted`. When a change no longer applies to the body (the text or cell moved on), the app marks it `stale`. **Accept all** applies the pending suggestions in order, saves one version, and resolves them with one `POST .../resolve`. The server never rewrites a body.
 

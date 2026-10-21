@@ -1201,6 +1201,35 @@
       ]
     },
     {
+      "id": "feature:agents-on-one-canvas",
+      "label": "Agents on one canvas (frame claims, Keep / Undo per frame, activity rail, Split to bots)",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "Several agents (Gizzi or any of the user's bots) restyle frames of one Design canvas at the same time, on Desktop, the ai.allternit.com phone layout and the m.allternit.com PWA. Each agent claims an artboard before it edits (a claim is an agent presence heartbeat whose anchor is {artboard}; another live agent session gets 409 artboard_claimed naming the holder) and shows as a name tag with cost and task on that frame. Each agent turn on a frame lands as one pending artboard suggestion (the frame's full new layer list plus before); the canvas shows the after state In review, Keep saves a version and Undo restores before, with a 24 h Undo on Done rows. An activity rail (In review / Doing / Done) and a frame card (Before/After wipe, Keep, Undo, follow-up to the agent) sit on the canvas; Split to bots turns selected frames into Delegate tasks. Phones view and review only. gizzi: artifact_claim / artifact_release, artifact_suggest takes an artboard change and fills before from the canvas, heartbeats carry the held frame, artifact_update refuses a design with other sessions' pending frame changes. cloud-api: suggestions accept design canvases with the artboard kind (2 MB / 2000 layer caps, unknown_artboard, layer_id_in_use), no new table.",
+      "touches": [
+        "allternit/cmd/allternit-cloud-api/src/routes/artifacts_*",
+        "allternit/cmd/gizzi-code/src/runtime/tools",
+        "allternit/cmd/gizzi-code/src/runtime/integrations",
+        "allternit/cmd/gizzi-code/src/runtime/skills",
+        "allternit-ai/src/lib/artifacts",
+        "allternit-ai/src/components/artifacts",
+        "allternit-ai/src/components/design"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-20",
+          "note": "Eoj said go to the Agents on one canvas page (idea from Kaptea). It lives in the existing Design canvas (DesignTldrawCanvas); the agents are any of the user's bots, picked per frame through Delegate; it builds on agent-watch (presence, cost, suggestions, agent identity), no parallel system and no new table. Claims ride on agent presence (45 s TTL, one frame per agent session); artboard changes carry the full layer list plus before and are applied client side; ids use tldraw's shape: prefix and the server compares them without it. Order: agent-watch merges first, then Phase 1, then Phase 2. Split is desktop only in Phase 1."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/design-canvas-agents.mdx",
+        "allternit/surfaces/docs/api/artifacts-v2.mdx",
+        "allternit/surfaces/docs/tools/artifact-tools.mdx",
+        "allternit/cmd/allternit-cloud-api/src/routes/artifacts_suggestions.rs",
+        "allternit/cmd/gizzi-code/src/runtime/tools/builtins/artifact.ts"
+      ]
+    },
+    {
       "id": "feature:craft-editors",
       "label": "Craft editors (embedded WASM editors over craft:1)",
       "product": "product:ai-allternit",
@@ -2238,6 +2267,33 @@
       ],
       "evidence": [
         "allternit/surfaces/docs/surfaces/platform-console-onboarding.mdx"
+      ]
+    },
+    {
+      "id": "journey:agents-restyle-frames",
+      "label": "Several bots restyle frames of one design, the user keeps or undoes each",
+      "description": "From selecting frames on a Design canvas to keeping or undoing each bot's frame change.",
+      "steps": [
+        {
+          "at": "allternit-ai/src/components/design",
+          "says": "The user selects frames and picks Split to bots: one Delegate task per frame, assigned to a bot or Auto."
+        },
+        {
+          "at": "allternit/cmd/gizzi-code/src/runtime/tools",
+          "says": "Each bot reads the design, artifact_claim claims its frame through agent presence, artifact_suggest posts one artboard change with before filled from the canvas, then artifact_release."
+        },
+        {
+          "at": "allternit/cmd/allternit-cloud-api/src/routes/artifacts_*",
+          "says": "Presence and suggestions refuse a frame another live agent session holds (409 artboard_claimed) and store the pending artboard change."
+        },
+        {
+          "at": "allternit-ai/src/lib/artifacts",
+          "says": "The canvas shows each pending change In review with the agent's tag; Keep saves a version and marks it accepted, Undo restores before and marks it rejected."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/design-canvas-agents.mdx",
+        "allternit/surfaces/docs/tools/artifact-tools.mdx"
       ]
     }
   ]
