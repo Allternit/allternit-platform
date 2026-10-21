@@ -1864,6 +1864,32 @@
         "allternit/surfaces/docs/architecture/meet-your-bots.mdx",
         "allternit/cmd/allternit-cloud-api/src/routes/me_flags.rs"
       ]
+    },
+    {
+      "id": "feature:agent-run-tree",
+      "label": "Agent run tree",
+      "product": "product:ai-allternit",
+      "status": "live",
+      "description": "When a reply or session hands work to subagents, a live tree shows the orchestrator and every agent under it: name, model, status (Running/Done/Failed/Stopped), task, cost (tokens for $0 subscription brains) and time, nested up to 3 levels, with header totals. A failed card opens its reason with Dismiss and Retry; Retry asks the parent agent to run the task again in the chat. In chat it is an 'Agents' row under replies that run 2+ agents (main chat, Cowork, Code, bot threads); Code's Tasks pane and the thread inspector's Subagents tab draw the same tree; narrow hosts and phones get an indented list. gizzi-code SessionTasks items carry model, cost, tokens, failed foreground children and nested children.",
+      "touches": [
+        "allternit-ai/src/components/agent-run-tree",
+        "allternit-ai/src/components/ai-elements",
+        "allternit-ai/src/components/bot-chat",
+        "allternit-ai/src/components/chat",
+        "allternit-ai/src/components/threads",
+        "allternit-ai/src/views/code",
+        "allternit/cmd/gizzi-code/src/runtime/session"
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/agent-run-tree.mdx",
+        "allternit/cmd/gizzi-code/src/runtime/session/session-tasks.ts"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-20",
+          "note": "Eoj: on every surface subagents show; Retry asks the parent agent to re-run (not the child in place)."
+        }
+      ]
     }
   ],
   "journeys": [
