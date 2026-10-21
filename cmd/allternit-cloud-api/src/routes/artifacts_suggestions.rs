@@ -3,7 +3,7 @@
 //!
 //! An agent proposes edits to existing content as pending suggestions instead
 //! of writing the body directly. Rows live in `artifact_suggestions`
-//! (migration 096). The server only validates, stores and resolves them:
+//! (migration 098). The server only validates, stores and resolves them:
 //! accepting is the client's job (it applies the change, appends a version,
 //! then PATCHes `accepted`), and a change that no longer applies is marked
 //! `stale` by the client. The server never rewrites bodies.

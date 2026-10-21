@@ -1,4 +1,4 @@
--- 096_artifact_agent_watch.sql
+-- 098_artifact_agent_watch.sql
 --
 -- Artifacts v2: "Watch your agents work" (SPEC-agent-watch-2026-10-20).
 --

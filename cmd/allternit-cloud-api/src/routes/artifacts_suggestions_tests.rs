@@ -61,7 +61,7 @@ async fn setup() -> (Router, PgPool) {
     for sql in [
         include_str!("../../migrations_pg/085_artifacts_v2.sql"),
         include_str!("../../migrations_pg/086_artifact_presence.sql"),
-        include_str!("../../migrations_pg/096_artifact_agent_watch.sql"),
+        include_str!("../../migrations_pg/098_artifact_agent_watch.sql"),
     ] {
         sqlx::raw_sql(sql).execute(&state.db).await.expect("migration applies");
     }
