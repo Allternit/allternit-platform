@@ -357,6 +357,32 @@ pub fn ingest(data_dir: &FsPath, serial: &str, body: StepIn) -> Result<Step, Str
     save(data_dir, step, image)
 }
 
+/// Black out personal data (emails, cards, phone numbers, SSNs, secrets) in a
+/// phone frame before it is kept, the same OCR pass computers use
+/// (`computer_safety::pii_boxes`). Phone frames are the person's own screen,
+/// so when OCR can't run the frame is dropped and only the step is kept.
+async fn redact_frame(image_base64: Option<String>, data_dir: &FsPath) -> Option<String> {
+    let b = image_base64?;
+    let raw = b.split_once("base64,").map(|(_, d)| d).unwrap_or(&b);
+    let png = B64.decode(raw.trim()).ok()?;
+    if std::env::var("ALLTERNIT_PHONE_HISTORY_REDACT").ok().as_deref() == Some("off") {
+        return Some(b);
+    }
+    let ocr = match crate::computer_ocr::ocr_png(&png, data_dir).await {
+        Ok(ocr) => ocr,
+        Err(e) => {
+            tracing::debug!("phone frame not kept: redaction OCR unavailable ({e})");
+            return None;
+        }
+    };
+    let kinds = ["email", "card", "phone", "ssn", "secret"];
+    let (boxes, _) = crate::computer_safety::pii_boxes(&ocr, &kinds, &[]);
+    if boxes.is_empty() {
+        return Some(b);
+    }
+    crate::computer_safety::black_out(&png, &boxes).ok().map(|out| B64.encode(out))
+}
+
 // ─── Routes ────────────────────────────────────────────────────────────────
 
 #[derive(Deserialize)]
@@ -372,9 +398,10 @@ async fn post_history(
     State(state): State<Arc<AppState>>,
     Extension(_user): Extension<AuthUser>,
     Path(serial): Path<String>,
-    Json(body): Json<StepIn>,
+    Json(mut body): Json<StepIn>,
 ) -> Response {
     let dir = state.data_dir.clone();
+    body.image_base64 = redact_frame(body.image_base64.take(), &dir).await;
     match tokio::task::spawn_blocking(move || ingest(&dir, &serial, body)).await {
         Ok(Ok(step)) => Json(json!({ "ok": true, "id": step.id, "run_id": step.run_id, "snapshot": step.snapshot })).into_response(),
         Ok(Err(e)) => bad(StatusCode::BAD_REQUEST, e),
