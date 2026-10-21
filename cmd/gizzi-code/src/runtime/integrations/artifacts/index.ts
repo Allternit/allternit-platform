@@ -429,7 +429,7 @@ export namespace Artifacts {
 
   export async function comment(
     id: string,
-    input: { body: string; parent_id?: string; anchor?: unknown; agent_name?: string },
+    input: { body: string; parent_id?: string; anchor?: CommentAnchor; agent_name?: string },
     abort?: AbortSignal,
   ): Promise<any> {
     return must("POST", `/api/v2/artifacts/${enc(id)}/comments`, input, "post the comment", abort)
@@ -472,6 +472,24 @@ export namespace Artifacts {
   }
 
   /**
+   * A generated slider on an artboard change (SPEC-agent-canvas-phase2 §2):
+   * the user tunes one value instead of the agent guessing it. `layer` is a
+   * layer id in the change (null = the artboard); `prop` is a key in that
+   * layer's props, or x/y/w/h; a `frame.` prefix targets the artboard's props.
+   */
+  export type Control =
+    | { id: string; label: string; type: "range"; layer: string | null; prop: string; min: number; max: number; step?: number; value: number }
+    | { id: string; label: string; type: "color"; layer: string | null; prop: string; value: string }
+    | { id: string; label: string; type: "select"; layer: string | null; prop: string; options: string[]; value: string }
+
+  /**
+   * A comment anchor (allternit-ai ask.ts EditorAnchor). On a Design canvas a
+   * pin is `{kind:"element", shapeId, artboard?, label?}`; `shapeId ===
+   * artboard` pins the frame itself.
+   */
+  export type CommentAnchor = { kind: "text" | "cell" | "slide" | "element"; [key: string]: unknown }
+
+  /**
    * One suggested change (SPEC-agent-watch §Change shapes). `text` replaces the
    * first `find` in block `block` (null = the whole doc, block by block);
    * `block` replaces / inserts after / deletes a block from markdown; `cell`
@@ -490,6 +508,8 @@ export namespace Artifacts {
         layers: CanvasLayer[]
         /** What it replaces, as the agent read it. */
         before: { frame?: FramePatch; layers: CanvasLayer[] }
+        /** Up to 12 sliders the user can move before keeping the change. */
+        controls?: Control[]
       }
 
   export interface Suggestion {

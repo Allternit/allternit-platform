@@ -277,6 +277,51 @@ export function sameArtboard(a: CanvasDoc, b: CanvasDoc, artboard: string): bool
 /** Cap on each of `layers` and `before` (JSON), as the cloud enforces. */
 export const MAX_ARTBOARD_JSON = 2 * 1024 * 1024
 export const MAX_ARTBOARD_LAYERS = 2000
+/** Generated sliders per artboard change, and their JSON, as the cloud enforces (400 bad_controls). */
+export const MAX_CONTROLS = 12
+export const MAX_CONTROLS_JSON = 64 * 1024
+
+/**
+ * Check the model's controls against the change's layers and give each layer
+ * reference its shape id. Throws a message the model can act on.
+ */
+export function buildControls(
+  controls: Array<Record<string, any>>,
+  layers: Artifacts.CanvasLayer[],
+  frame: string,
+): Artifacts.Control[] {
+  if (controls.length > MAX_CONTROLS) throw new Error(`Offer at most ${MAX_CONTROLS} controls per frame; 2 to 5 is usually right.`)
+  const ids = new Set(layers.map((l) => bareId(l.id)))
+  const seen = new Set<string>()
+  const out = controls.map((c) => {
+    const id = String(c.id ?? "").trim()
+    if (seen.has(id)) throw new Error(`Two controls on ${frame} use the id "${id}".`)
+    seen.add(id)
+    const prop = String(c.prop ?? "").trim()
+    const layer = c.layer == null || c.layer === "" ? null : String(c.layer)
+    if (layer !== null && !ids.has(bareId(layer))) {
+      throw new Error(`Control "${id}" points at layer ${layer}, which isn't in ${frame}'s layers. Use one of their ids, or null for the frame.`)
+    }
+    if (prop.startsWith("frame.") && layer !== null) {
+      throw new Error(`Control "${id}" uses ${prop}, which targets the frame, so its layer must be null.`)
+    }
+    const base = { id, label: String(c.label ?? id).trim(), layer: layer === null ? null : shapeId(layer), prop }
+    if (c.type === "range") {
+      const { min, max, value, step } = c
+      if (!(min < max)) throw new Error(`Control "${id}": min must be less than max.`)
+      if (!(value >= min && value <= max)) throw new Error(`Control "${id}": value ${value} is outside ${min} to ${max}.`)
+      return { ...base, type: "range" as const, min, max, ...(typeof step === "number" ? { step } : {}), value }
+    }
+    if (c.type === "select") {
+      const options = (c.options ?? []).map(String)
+      if (!options.includes(String(c.value))) throw new Error(`Control "${id}": value must be one of ${options.join(", ")}.`)
+      return { ...base, type: "select" as const, options, value: String(c.value) }
+    }
+    return { ...base, type: "color" as const, value: String(c.value).trim() }
+  })
+  if (JSON.stringify(out).length > MAX_CONTROLS_JSON) throw new Error(`${frame}'s controls are over 64 KB of JSON; offer fewer.`)
+  return out
+}
 
 /**
  * Turn the model's `{artboard, layers, frame?}` into the cloud's artboard
@@ -286,17 +331,28 @@ export const MAX_ARTBOARD_LAYERS = 2000
  */
 export function buildArtboardChange(
   doc: CanvasDoc,
-  input: { artboard: string; layers: Array<Record<string, any>>; frame?: Artifacts.FramePatch },
+  input: {
+    artboard: string
+    /** Left out = the frame's layers as they are now (a controls-only change). */
+    layers?: Array<Record<string, any>>
+    frame?: Artifacts.FramePatch
+    controls?: Array<Record<string, any>>
+  },
 ): Extract<Artifacts.Change, { kind: "artboard" }> {
   const board = findArtboard(doc, input.artboard)
   if (!board) throw new Error(`There's no artboard "${input.artboard}" in this design. ${artboardList(doc)}`)
   const artboard = shapeId(board.id)
   const name = frameName(board)
+  const hasFrame = !!input.frame && Object.keys(input.frame).length > 0
+  if (!input.layers && !hasFrame && !input.controls?.length) {
+    throw new Error(`The change on ${name} has no layers, frame patch or controls; send at least one.`)
+  }
   const elsewhere = new Set(
     doc.layers.filter((l) => !(typeof l.artboard === "string" && bareId(l.artboard) === bareId(artboard))).map((l) => bareId(l.id)),
   )
   const seen = new Set<string>()
-  const layers = input.layers.map((layer) => {
+  const source: Array<Record<string, any>> = input.layers ?? layersOn(doc, artboard)
+  const layers = source.map((layer) => {
     const id = String(layer.id ?? "")
     if (layer.artboard != null && bareId(String(layer.artboard)) !== bareId(artboard)) {
       throw new Error(
@@ -310,7 +366,8 @@ export function buildArtboardChange(
   })
   if (layers.length > MAX_ARTBOARD_LAYERS) throw new Error(`An artboard change holds at most ${MAX_ARTBOARD_LAYERS} layers.`)
   if (JSON.stringify(layers).length > MAX_ARTBOARD_JSON) throw new Error(`${name}'s layers are over 2 MB of JSON; simplify the frame.`)
-  const frame = input.frame && Object.keys(input.frame).length ? input.frame : undefined
+  const frame = hasFrame ? input.frame : undefined
+  const controls = input.controls?.length ? buildControls(input.controls, layers, name) : undefined
   return {
     kind: "artboard",
     artboard,
@@ -318,10 +375,43 @@ export function buildArtboardChange(
     ...(frame ? { frame } : {}),
     layers,
     before: { ...(frame ? { frame: framePart(board, Object.keys(frame)) } : {}), layers: layersOn(doc, artboard) },
+    ...(controls ? { controls } : {}),
   }
 }
 
 const TaskInput = z.string().max(200).optional()
+
+const ControlBase = {
+  id: z.string().min(1).max(64).describe("Short id, unique in this change, e.g. radius"),
+  label: z.string().min(1).max(200).describe("What the user sees, e.g. 'Corner radius'"),
+  layer: z
+    .string()
+    .max(200)
+    .nullable()
+    .describe("A layer id in this change's layers, or null for the artboard itself"),
+  prop: z
+    .string()
+    .min(1)
+    .max(200)
+    .describe("A key in the layer's props (radius, fill, ...), or x, y, w, h; frame.<key> targets the artboard's props (layer null)"),
+}
+const Control = z.discriminatedUnion("type", [
+  z.object({
+    ...ControlBase,
+    type: z.literal("range"),
+    min: z.number(),
+    max: z.number(),
+    step: z.number().positive().optional(),
+    value: z.number().describe("The value in your layers now, between min and max"),
+  }),
+  z.object({ ...ControlBase, type: z.literal("color"), value: z.string().min(1).max(200).describe("A colour, e.g. #6366f1") }),
+  z.object({
+    ...ControlBase,
+    type: z.literal("select"),
+    options: z.array(z.string().min(1).max(200)).min(1).max(50),
+    value: z.string().describe("One of options"),
+  }),
+])
 
 const ChangeInput = z.discriminatedUnion("kind", [
   z.object({
@@ -366,7 +456,11 @@ const ChangeInput = z.discriminatedUnion("kind", [
           .catchall(z.unknown()),
       )
       .max(2000)
-      .describe("The artboard's full new layer list, bottom first. Keep the ids of layers you keep; new layers get new ids."),
+      .optional()
+      .describe(
+        "The artboard's full new layer list, bottom first. Keep the ids of layers you keep; new layers get new ids. " +
+          "Left out = the frame's layers as they are now (send controls to let the user tune them).",
+      ),
     frame: z
       .object({
         fill: z.string().max(200).optional(),
@@ -376,6 +470,14 @@ const ChangeInput = z.discriminatedUnion("kind", [
       })
       .optional()
       .describe("Optional artboard patch (fill, size, props); left out = unchanged"),
+    controls: z
+      .array(Control)
+      .max(12)
+      .optional()
+      .describe(
+        "Sliders the user moves before keeping the change, when they are tuning something (spacing, radius, colour, density): " +
+          "offer 2-5 instead of guessing one value",
+      ),
     reason: z.string().max(500).optional().describe("One line the user sees, e.g. 'Made the eyebrow and heading dark'"),
   }),
 ])
@@ -567,14 +669,71 @@ export const ArtifactShareTool = Tool.define("artifact_share", {
   },
 })
 
+/** The cloud keeps an agent's comment anchor up to this size. */
+export const MAX_AGENT_ANCHOR_JSON = 4 * 1024
+
+/**
+ * The pin for an agent's comment on a Design canvas: the anchor the model
+ * gave (EditorAnchor JSON), with `artboard` and `shapeId` resolved to the
+ * frame's shape id. With only `artboard`, the pin is the frame itself
+ * (`shapeId === artboard`). Throws when the artboard or layer isn't there.
+ */
+export function pinAnchor(
+  doc: CanvasDoc,
+  input: { anchor?: Record<string, unknown>; artboard?: string },
+): Artifacts.CommentAnchor {
+  const given = input.anchor ?? {}
+  const boardRef = input.artboard ?? (typeof given.artboard === "string" ? given.artboard : undefined)
+  const shapeRef = typeof given.shapeId === "string" && given.shapeId.trim() ? given.shapeId : undefined
+  const layer = shapeRef ? doc.layers.find((l) => bareId(l.id) === bareId(shapeRef)) : undefined
+  const board = boardRef
+    ? findArtboard(doc, boardRef)
+    : layer && typeof layer.artboard === "string"
+      ? findArtboard(doc, layer.artboard)
+      : shapeRef
+        ? findArtboard(doc, shapeRef)
+        : undefined
+  if (boardRef && !board) throw new Error(`There's no artboard "${boardRef}" in this design. ${artboardList(doc)}`)
+  if (shapeRef && !layer && !(board && bareId(board.id) === bareId(shapeRef))) {
+    throw new Error(`There's no layer "${shapeRef}" in this design; pin the comment to a layer or artboard id from it.`)
+  }
+  if (!board) throw new Error(`Say which frame the comment is about: pass artboard (an artboard id). ${artboardList(doc)}`)
+  if (layer && typeof layer.artboard === "string" && bareId(layer.artboard) !== bareId(board.id)) {
+    throw new Error(`Layer ${shapeRef} is on artboard ${layer.artboard}, not ${frameName(board)} (${shapeId(board.id)}).`)
+  }
+  const label = typeof given.label === "string" && given.label.trim() ? given.label.trim() : layer?.name ?? frameName(board)
+  return {
+    ...given,
+    kind: "element",
+    shapeId: shapeId(layer ? layer.id : board.id),
+    artboard: shapeId(board.id),
+    label: String(label).slice(0, 200),
+  }
+}
+
 export const ArtifactCommentTool = Tool.define("artifact_comment", {
   description:
     "Read an artifact's comment threads, or post a comment or a reply (parent_id). Use it to answer a comment that mentions you, " +
-    "or to leave a note where the user asked. Leave body out to read.",
+    "to leave a note where the user asked, or to ask the user a question about one frame of a design: pass artboard (and anchor " +
+    "for a layer in it) and the question shows as a numbered pin on that frame, under your name. Leave body out to read.",
   parameters: z.object({
     id: z.string().min(1).describe("The artifact id (art_…)"),
     body: z.string().min(1).max(10_000).optional().describe("The comment text"),
     parent_id: z.string().optional().describe("Reply to this comment id"),
+    anchor: z
+      .object({ kind: z.enum(["text", "cell", "slide", "element"]) })
+      .catchall(z.unknown())
+      .optional()
+      .describe(
+        "Where the comment points. On a design: {kind:'element', shapeId:<layer id>, label?}; the frame comes from artboard. " +
+          "Other kinds: {kind:'text', text}, {kind:'cell', sheet?, from:{row,col}, to:{row,col}}, {kind:'slide', slide}",
+      ),
+    artboard: z
+      .string()
+      .min(1)
+      .max(200)
+      .optional()
+      .describe("Design canvases: the artboard id the question is about, e.g. shape:hero; pins the comment to that frame"),
     task: TaskInput.describe("Short line shown to the user while you work, e.g. 'Asking about the dates'"),
   }),
   async execute(params, ctx) {
@@ -583,14 +742,41 @@ export const ArtifactCommentTool = Tool.define("artifact_comment", {
       const items = await Artifacts.comments(params.id, ctx.abort)
       return { title: `${items.length} comments`, output: JSON.stringify(items, null, 2).slice(0, MAX_MODEL_BODY), metadata: { ok: true, items, comment: undefined as unknown, truncated: false } }
     }
+    let anchor: Artifacts.CommentAnchor | undefined = params.anchor as Artifacts.CommentAnchor | undefined
+    let frame: string | undefined
+    if (!params.parent_id && (params.artboard || anchor?.kind === "element")) {
+      // A pin on a Design canvas: resolve the frame (and layer) from the design.
+      const known = Artifacts.fromTranscript(await transcript(ctx), params.id)
+      const current = await Artifacts.read({ id: params.id, known }, ctx.abort)
+      const doc = parseCanvas(current.body, current.body_format)
+      if (doc) {
+        anchor = pinAnchor(doc, { anchor: params.anchor as Record<string, unknown> | undefined, artboard: params.artboard })
+        frame = String(findArtboard(doc, String(anchor.artboard))?.name ?? anchor.artboard)
+      } else if (params.artboard) {
+        throw new Error(
+          current.kind === "design"
+            ? `${params.id} is an HTML design, not a canvas, so it has no artboards to pin to. Leave artboard out.`
+            : `artboard is for design canvases; ${params.id} is a ${current.kind}. Leave it out.`,
+        )
+      }
+    }
+    if (anchor && JSON.stringify(anchor).length > MAX_AGENT_ANCHOR_JSON) {
+      throw new Error("The comment's anchor is over 4 KB of JSON; keep it to the ids and a short label.")
+    }
     const name = await agentName(ctx)
     void heartbeat(ctx, params.id, { state: "viewing", task: taskFor(ctx, params.id, params.task, "Asking a question"), name })
     const posted = await Artifacts.comment(
       params.id,
-      { body: params.body, parent_id: params.parent_id, agent_name: name },
+      { body: params.body, parent_id: params.parent_id, ...(anchor ? { anchor } : {}), agent_name: name },
       ctx.abort,
     )
-    return { title: "Comment posted", output: `Posted${params.parent_id ? " a reply" : " a comment"} on ${params.id}.`, metadata: { ok: true, items: [] as any[], comment: posted as unknown, truncated: false } }
+    return {
+      title: "Comment posted",
+      output:
+        `Posted${params.parent_id ? " a reply" : " a comment"} on ${params.id}` +
+        (frame ? `, pinned to ${frame}. The user sees a numbered pin on the frame and answers in the thread.` : "."),
+      metadata: { ok: true, items: [] as any[], comment: posted as unknown, truncated: false },
+    }
   },
 })
 

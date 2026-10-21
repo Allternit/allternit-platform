@@ -9,9 +9,11 @@ import {
   ArtifactUpdateTool,
   MAX_MODEL_BODY,
   buildArtboardChange,
+  buildControls,
   claimOf,
   heartbeat,
   parseCanvas,
+  pinAnchor,
   resetClaims,
   sameArtboard,
   shapeId,
@@ -731,5 +733,86 @@ describe("agents on one canvas: artboard changes, artifact_claim, artifact_relea
     })
     const written = await update.execute({ id: "art_D", body: canvas("New"), base_version: 3 }, ctxWith())
     expect(written.metadata.artifact).toMatchObject({ id: "art_D", version: 4 })
+  })
+  // ----- Phase 2: controls and pinned questions (SPEC-agent-canvas-phase2-2026-10-20) -----
+
+  const radius = { id: "radius", label: "Corner radius", type: "range", layer: "title", prop: "radius", min: 0, max: 32, step: 1, value: 12 }
+  const density = { id: "density", label: "Density", type: "select", layer: null, prop: "frame.padding", options: ["compact", "cozy"], value: "cozy" }
+
+  test("pure: controls get shape ids and are checked against the change's layers", () => {
+    const doc = parseCanvas(canvas(), DESIGN)!
+    const change = buildArtboardChange(doc, { artboard: "hero", controls: [radius, density] })
+    // A controls-only change keeps the frame's current layers.
+    expect(change.layers).toEqual(change.before.layers)
+    expect(change.controls).toEqual([
+      { ...radius, layer: "shape:title" },
+      { id: "density", label: "Density", type: "select", layer: null, prop: "frame.padding", options: ["compact", "cozy"], value: "cozy" },
+    ] as any)
+    const layers = change.layers
+    expect(() => buildControls([{ ...radius, layer: "plans" }], layers, "Hero")).toThrow("isn't in Hero's layers")
+    expect(() => buildControls([{ ...density, layer: "title" }], layers, "Hero")).toThrow("its layer must be null")
+    expect(() => buildControls([{ ...radius, value: 40 }], layers, "Hero")).toThrow("outside 0 to 32")
+    expect(() => buildControls([{ ...radius, min: 32, max: 0 }], layers, "Hero")).toThrow("min must be less than max")
+    expect(() => buildControls([{ ...density, value: "roomy" }], layers, "Hero")).toThrow("one of compact, cozy")
+    expect(() => buildControls([radius, radius], layers, "Hero")).toThrow("use the id")
+    expect(() => buildControls(Array.from({ length: 13 }, (_, i) => ({ ...radius, id: `r${i}` })), layers, "Hero")).toThrow("at most 12")
+    // Nothing to change at all is refused.
+    expect(() => buildArtboardChange(doc, { artboard: "hero" })).toThrow("no layers, frame patch or controls")
+  })
+
+  test("suggest: posts controls with the artboard change", async () => {
+    mockCloud()
+    const tool = await ArtifactSuggestTool.init()
+    await tool.execute(
+      { id: "art_D", base_version: 3, changes: [{ kind: "artboard", artboard: "hero", controls: [radius, density], reason: "Pick a radius" }] } as any,
+      ctxWith(),
+    )
+    const post = calls.find((c) => c.url.endsWith("/art_D/suggestions") && c.method === "POST")!
+    const change = post.body.changes[0].change
+    expect(change.controls.map((c: any) => [c.id, c.layer])).toEqual([
+      ["radius", "shape:title"],
+      ["density", null],
+    ])
+    expect(change.layers[0]).toMatchObject({ id: "shape:title", artboard: "shape:hero", props: { text: "Hi" } })
+  })
+
+  test("pure: a pin resolves the frame and layer to shape ids", () => {
+    const doc = parseCanvas(canvas(), DESIGN)!
+    expect(pinAnchor(doc, { artboard: "hero" })).toEqual({ kind: "element", shapeId: "shape:hero", artboard: "shape:hero", label: "Hero" })
+    expect(pinAnchor(doc, { anchor: { kind: "element", shapeId: "title", extra: 1 } })).toEqual({
+      kind: "element",
+      shapeId: "shape:title",
+      artboard: "shape:hero",
+      label: "title",
+      extra: 1,
+    })
+    expect(() => pinAnchor(doc, { artboard: "footer" })).toThrow("Its artboards: Hero")
+    expect(() => pinAnchor(doc, { anchor: { kind: "element", shapeId: "nope" }, artboard: "hero" })).toThrow('no layer "nope"')
+    expect(() => pinAnchor(doc, { anchor: { kind: "element", shapeId: "plans" }, artboard: "hero" })).toThrow("is on artboard pricing")
+    expect(() => pinAnchor(doc, {})).toThrow("pass artboard")
+  })
+
+  test("comment: an agent's question about a frame posts as a pin under its name", async () => {
+    mockCloud({ overrides: { "/art_D/comments": (body) => json(201, { id: "cmt_1", author_id: "assistant", agent_name: body.agent_name, anchor: body.anchor }) } })
+    const tool = await ArtifactCommentTool.init()
+    const result = await tool.execute({ id: "art_D", body: "Dark or light hero?", artboard: "hero" } as any, ctxWith())
+    const post = calls.find((c) => c.url.endsWith("/art_D/comments") && c.method === "POST")!
+    expect(post.body).toEqual({
+      body: "Dark or light hero?",
+      agent_name: "Oki",
+      anchor: { kind: "element", shapeId: "shape:hero", artboard: "shape:hero", label: "Hero" },
+    })
+    expect(result.output).toContain("pinned to Hero")
+    // artboard on something that isn't a canvas is a clear error.
+    fetchSpy?.mockRestore()
+    calls.length = 0
+    mockCloud({
+      overrides: {
+        "/art_D": () =>
+          json(200, { id: "art_D", kind: "doc", title: "Notes", current_version: 1, version: { version: 1, body: "# Hi", body_format: "text/markdown", meta: {} } }),
+      },
+    })
+    await expect(tool.execute({ id: "art_D", body: "q", artboard: "hero" } as any, ctxWith())).rejects.toThrow("artboard is for design canvases")
+    expect(calls.some((c) => c.url.endsWith("/comments"))).toBe(false)
   })
 })
