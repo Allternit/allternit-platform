@@ -1248,3 +1248,17 @@ contextBridge.exposeInMainWorld('allternitCompanion', {
   },
   toggleMain: () => ipcRenderer.invoke('companion:toggle-main'),
 });
+
+// The agent cursor overlay (companion.html?surface=agent-cursor): show/hide
+// its click-through window and read the display it covers. Main accepts these
+// only from that window's main frame.
+contextBridge.exposeInMainWorld('allternitAgentCursor', {
+  show: () => ipcRenderer.send('agent-cursor:show'),
+  hide: () => ipcRenderer.send('agent-cursor:hide'),
+  getDisplay: () => ipcRenderer.invoke('agent-cursor:display') as Promise<{ width: number; height: number; scaleFactor: number }>,
+  onDisplay: (callback: (display: { width: number; height: number; scaleFactor: number }) => void) => {
+    const listener = (_event: IpcRendererEvent, display: { width: number; height: number; scaleFactor: number }) => callback(display);
+    ipcRenderer.on('agent-cursor:display-changed', listener);
+    return () => ipcRenderer.removeListener('agent-cursor:display-changed', listener);
+  },
+});

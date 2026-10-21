@@ -272,6 +272,17 @@ export type ComputerEvent = {
     screen_h?: (number | null);
     run_id?: (string | null);
     ok?: boolean;
+    /**
+     * Who is driving. agent_id is the request's agent, else the computer's bot. Null when neither is known.
+     */
+    actor?: ({
+      agent_id?: (string | null);
+      name?: (string | null);
+    } | null);
+    /**
+     * The step text the call sent (masked), or null.
+     */
+    step?: (string | null);
   };
 };
 
@@ -309,6 +320,18 @@ export type ToolsetCall = {
    * Off-by-default members (file_upload, read_console, read_network, javascript_exec) to allow for this call.
    */
   enable?: Array<string>;
+  /**
+   * The bot or agent driving the call, shown on the agent cursor. Display only. When left out, the computer's own bot is used.
+   */
+  agent_id?: string;
+  /**
+   * Its display name for the cursor badge. Trimmed and cut to 60 characters.
+   */
+  agent_name?: string;
+  /**
+   * A few words saying what this action does, shown to people watching. Trimmed, cut to 120 characters, and masked like other logged text.
+   */
+  step?: string;
 };
 
 export type ToolsetResult = {

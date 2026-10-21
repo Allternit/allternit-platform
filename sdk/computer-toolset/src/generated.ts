@@ -3999,6 +3999,12 @@ export interface ToolsetRequest {
   coordinate_space?: "pixels" | "normalized_1000";
   approval_grant?: string;
   browser_session_id?: string;
+  /** The bot or agent driving the call, shown on the agent cursor (display only). */
+  agent_id?: string;
+  /** Its display name for the cursor badge (at most 60 chars). */
+  agent_name?: string;
+  /** A few words saying what this action does, shown to people watching (at most 120 chars). */
+  step?: string;
 }
 export const CONTRACTS: Record<ToolsetName, ToolsetContract> = {
   computer: COMPUTER_CONTRACT as unknown as ToolsetContract,

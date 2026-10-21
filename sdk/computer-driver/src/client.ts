@@ -56,6 +56,12 @@ export interface ToolsetCall {
   coordinate_space?: CoordinateSpace
   approval_grant?: string
   browser_session_id?: string
+  /** The bot or agent driving the call, shown on the agent cursor (display only). */
+  agent_id?: string
+  /** Its display name for the cursor badge (at most 60 chars). */
+  agent_name?: string
+  /** A few words saying what this action does, shown to people watching (at most 120 chars). */
+  step?: string
   /** Off-by-default members (file_upload, read_console, read_network, javascript_exec) to allow for this call. */
   enable?: string[]
 }

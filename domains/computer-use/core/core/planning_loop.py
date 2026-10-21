@@ -295,6 +295,16 @@ class PlanningLoop:
         # adapter after each step/batch; feeds the NEXT batch's descriptor.
         self._observed_url: Optional[str] = None
 
+    def _cursor_actor(self) -> Optional[Dict[str, Any]]:
+        """The bot driving this run, for the agent cursor badge: the toolset
+        client's agent when the run named one, else None (plain cursor)."""
+        client = self.toolset_client
+        agent_id = getattr(client, "agent_id", None)
+        name = getattr(client, "agent_name", None)
+        if not agent_id and not name:
+            return None
+        return {"agent_id": agent_id, "name": name}
+
     def cancel(self) -> None:
         """Cancel a running loop."""
         self._cancelled = True
@@ -674,7 +684,9 @@ class PlanningLoop:
                         effect = "ripple" if plan.immediate_action.type.endswith("_click") else \
                                  "glow" if plan.immediate_action.type in ("hover", "mouse_move") else "none"
                         self._emit({"type": "cursor.moved", "run_id": run_id, "step": step_num,
-                                   "x": cx, "y": cy, "agent_id": "primary", "effect": effect})
+                                   "x": cx, "y": cy, "agent_id": "primary", "effect": effect,
+                                   "actor": self._cursor_actor(),
+                                   "step_text": (plan.immediate_action.reason or "").strip()[:120] or None})
 
                     try:
                         result = await self._execute_action(plan.immediate_action, session_id, step)
@@ -1396,6 +1408,7 @@ class PlanningLoop:
 
             reply = await self.toolset_client.run_with_approval(
                 toolset, member, call_input, _confirm, run_id=run_id, turn_id=turn, call_index=0,
+                step=getattr(action, "reason", None) or None,
             )
             if not reply.ok:
                 raise RuntimeError(reply.text() or f"{member} failed")

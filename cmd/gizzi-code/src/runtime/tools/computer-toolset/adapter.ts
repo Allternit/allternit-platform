@@ -126,8 +126,14 @@ export function toolParameters(toolset: ToolsetName, members: readonly ToolsetMe
   return z.object({
     action: z.enum(names).describe(`Which ${toolset} action to run.`),
     ...fields,
+    // Not a member field: it rides on the request (ToolsetRequest.step) for
+    // the agent cursor badge and is never sent as member input.
+    step: z.string().optional().describe(STEP_DESCRIPTION),
   })
 }
+
+/** The optional `step` every toolset tool takes (contract: agent avatar cursor). */
+export const STEP_DESCRIPTION = "a few words saying what this action does, shown to people watching"
 
 export function enabledMembers(toolset: ToolsetName, enabled?: Set<string>): ToolsetMemberSpec[] {
   return CONTRACTS[toolset].members.filter((m) => (enabled ? enabled.has(m.name) : m.default_enabled))
