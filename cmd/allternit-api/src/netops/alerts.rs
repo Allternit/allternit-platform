@@ -47,7 +47,7 @@ const SWEEP_EVERY: std::time::Duration = std::time::Duration::from_secs(60);
 
 pub const KINDS: &[&str] = &[
     "routine_failed", "routine_missed", "routine_needs_bot", "dead_letter", "lane_down",
-    "runtime_asleep", "loop_guard", "egress_held", "injection_flagged", "tool_changed", "digest",
+    "runtime_asleep", "loop_guard", "egress_held", "injection_flagged", "tool_changed", "peer_held", "digest",
 ];
 
 /// What to open. `kind` + `source_id` make the id.

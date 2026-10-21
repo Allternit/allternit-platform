@@ -1,0 +1,34 @@
+---
+title: Let other agents reach your bots (A2A)
+description: Switch a bot on for outside agents over A2A v1.0, see who gets through, and manage your agent contacts.
+---
+
+Other people's agents can message your bots over the open [A2A](https://a2a-protocol.org) v1.0 protocol. It is off until you switch it on, one bot at a time. Everything an outside agent sends is treated as untrusted text and shown to the bot fenced, the same as any other message from someone you do not know.
+
+## Switch a bot on
+
+Open the bot's **Settings** and turn on **Reachable by other agents (A2A)**. The card address appears; copy it and give it to the other agent's owner. It looks like `https://mcp.allternit.com/a2a/<you>/<bot>/.well-known/agent-card.json`. Turn the switch off and the card disappears (a plain 404). The same setting is in the Desktop app, on ai.allternit.com (phone layout included) and in the m.allternit.com app.
+
+## Who gets through
+
+| Who is calling | What happens |
+|---|---|
+| **Team**: you, or someone in your Clerk organization | The message goes straight to the bot. |
+| **Contact**: an agent on your Contacts list | The message waits in your inbox as **Other agent**. **Approve** delivers it to the bot; **Refuse** drops it. The caller sees the task as waiting for input. |
+| **Stranger**: anyone else | Refused: "This agent accepts messages from contacts only." |
+
+You can override this per agent with a `peer_agent` autonomy rule on the bot (`Send and tell me` sends, `Block` refuses, anything else asks first).
+
+If a contact's Agent Card changes after you added it, it stops counting as a contact until you accept it again.
+
+## Contacts
+
+In **Settings › Contacts**, paste an agent's card address and tap **Add**. Allternit fetches the card, remembers its name and a fingerprint of it, and lists the agent. Use **Block** to refuse an agent outright, and **Remove** to forget it. Only public https addresses are accepted.
+
+## For developers
+
+- **Card**: `GET /a2a/<owner>/<bot>/.well-known/agent-card.json` returns an A2A v1.0 Agent Card with one JSON-RPC interface and a detached JWS (`signatures[0]`, EdDSA over the canonical card). The public key is at `/a2a/.well-known/jwks.json`. The edge signs with `A2A_CARD_SIGNING_KEY` (a base64 32-byte seed) and answers 503 `a2a_not_configured` until it is set; `A2A_PUBLIC_URL` sets the public base.
+- **Calls**: `POST /a2a/<owner>/<bot>/rpc` accepts `SendMessage`, `GetTask` and `CancelTask` (the 0.3 names `message/send`, `tasks/get`, `tasks/cancel` also work). Streaming is off and parts are text only. Messages over 64 KiB are refused. A caller can only read tasks it opened.
+- **Who is calling**: send a Clerk OAuth bearer, or set `X-A2A-Caller` to your public card URL and send a bearer JWT signed (EdDSA) by a key in `<card origin>/.well-known/jwks.json`, with `iss` set to the card URL, `aud` to the rpc URL and a short `exp`.
+- **Contacts API**: `GET`/`POST /api/v1/agent-contacts`, `DELETE /api/v1/agent-contacts/<id>` (Clerk session). `POST` takes `{cardUrl, status?}` with status `accepted` (default), `pending` or `blocked`.
+- **Runtime**: the edge relays signed calls to your runtime (`/webhooks/a2a-edge/*`); the policy above runs there, and a held message opens a `peer_held` item in the inbox.
