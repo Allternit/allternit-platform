@@ -156,6 +156,8 @@ def _toolset_client_for(body: Any) -> Any:
     return ToolsetExecutorClient(
         computer_id or "this-device",
         user_id=opts.get("userId") or ctx.get("userId"),
+        agent_id=opts.get("agentId") or ctx.get("agentId") or opts.get("botId") or ctx.get("botId"),
+        agent_name=opts.get("agentName") or ctx.get("agentName"),
         browser_session_id=getattr(body, "session_id", None),
         observe_toolset="browser" if getattr(body, "target_scope", "browser") == "browser" else "computer",
     )

@@ -115,11 +115,20 @@ POST /api/v1/computers/:id/toolset
   "model_frame": { "width": 1280, "height": 800 },
   "coordinate_space": "pixels",
   "approval_grant": null,
-  "browser_session_id": null
+  "browser_session_id": null,
+  "agent_id": "bot_123",
+  "agent_name": "Raven",
+  "step": "Clicking Send"
 }
 ```
 
 `model_frame` is the size of the last screenshot the model saw. Leave it out and the executor uses the default frame for the screen. `coordinate_space` is `pixels` (the default) or `normalized_1000`.
+
+`agent_id`, `agent_name` and `step` are optional and only label the [agent cursor](/guides/computers-and-apps#the-agent-cursor). They never grant anything.
+
+- `agent_id`: the bot or agent driving the call. gizzi sends `ALLTERNIT_AGENT_ID` (or `ALLTERNIT_BOT_ID`) when the bot runner set it. Leave it out and the event uses the computer's own bot.
+- `agent_name`: its display name. Trimmed and cut to 60 characters.
+- `step`: a few words saying what this action does, shown to people watching. Trimmed and cut to 120 characters. Vault secrets and key-shaped strings in it become `[secret redacted]`, and `key=value` credentials are masked, the same way logged goals are. gizzi's `computer`, `computer_v2` and `browser` tools take an optional `step` field and move it here; it is never sent as member input.
 
 The checks run in this order:
 
@@ -228,10 +237,12 @@ Every action that runs emits this event:
 ```json
 { "type": "computer.action", "ts": "2026-10-07T21:00:00Z",
   "data": { "toolset": "computer", "member": "left_click", "x": 1280, "y": 720,
-            "screen_w": 2560, "screen_h": 1440, "run_id": "ses_123", "ok": true } }
+            "screen_w": 2560, "screen_h": 1440, "run_id": "ses_123", "ok": true,
+            "actor": { "agent_id": "bot_123", "name": "Raven" },
+            "step": "Clicking Send" } }
 ```
 
-`x` and `y` are screen pixels. The event goes out on the computer's events websocket (`/computers/:id/events`) and on `GET /api/v1/computers/:id/toolset/events`, a server-sent event stream that works for every target, including this device. The agent-cursor overlay uses these events.
+`x` and `y` are screen pixels. `actor` says who is driving: `agent_id` is the request's `agent_id`, else the computer's bot, and `name` is the request's `agent_name` or `null`. `actor` is `null` when neither an id nor a name is known. `step` is the request's masked step text or `null`. The steps an approved `run_subtask` or `run_skill` runs, and the children of `run_parallel` and `best_of`, carry the actor their parent call named. The event goes out on the computer's events websocket (`/computers/:id/events`) and on `GET /api/v1/computers/:id/toolset/events`, a server-sent event stream that works for every target, including this device. The agent-cursor overlay uses these events.
 
 ## Adapters
 

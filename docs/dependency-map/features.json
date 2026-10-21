@@ -2065,6 +2065,43 @@
         "allternit-ai/src/components/bot-phone/A2aReach.tsx",
         "allternit-ai/src/components/inbox/InboxPanel.tsx"
       ]
+    },
+    {
+      "id": "feature:agent-avatar-cursor",
+      "label": "Bot avatar rides the agent cursor",
+      "product": "product:computer-use",
+      "status": "building",
+      "description": "The bot driving a computer rides its agent cursor: avatar while gliding, name and step when it settles or acts, a click-open card with task, step, elapsed time and Pause / Take control. computer.action events carry actor {agent_id, name} and a masked step; on this Mac a click-through, content-protected Desktop window draws the badge next to the real pointer. Settings, Computers, Agent cursor, Show the bot on the cursor (on by default).",
+      "touches": [
+        "allternit/cmd/allternit-api/src/computer_*",
+        "allternit/cmd/allternit-api/src/aci_*",
+        "allternit/cmd/gizzi-code/src/runtime/tools",
+        "allternit/domains/computer-use/core",
+        "allternit/sdk/computer-driver",
+        "allternit/mcp/computers-server",
+        "allternit/surfaces/allternit-desktop",
+        "allternit-ai/src/lib/agent-cursor",
+        "allternit-ai/src/components/computers",
+        "allternit-ai/src/views/bots",
+        "allternit-ai/src/views/settings"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-20",
+          "note": "Eoj: on this Mac a small dedicated badge window (the pet stays home); pill by progressive disclosure (avatar, then name + step, then click for the card); on by default for everyone with a switch in Settings, Computers, Agent cursor."
+        },
+        {
+          "on": "2026-10-20",
+          "note": "Contract: ToolsetRequest gains optional agent_id, agent_name (60 chars) and step (120 chars, masked like logged text); emit_action adds actor (request agent, else the computer's bot, else null) and step; subtask steps and fan-out children inherit their parent call's actor. ACI cursor.moved adds actor and step_text (its step field stays the step number)."
+        }
+      ],
+      "evidence": [
+        "allternit/cmd/allternit-api/src/computer_toolset.rs",
+        "allternit/cmd/gizzi-code/src/runtime/tools/computer-toolset/index.ts",
+        "allternit/surfaces/allternit-desktop/src/main/agent-cursor-window.ts",
+        "allternit/surfaces/docs/guides/computers-and-apps.mdx",
+        "allternit/surfaces/docs/tools/computer-toolset.mdx"
+      ]
     }
   ],
   "journeys": [

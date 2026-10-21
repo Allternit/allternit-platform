@@ -43,8 +43,8 @@ use serde_json::{json, Value};
 use crate::auth::AuthUser;
 use crate::computer_routes::ComputerResponse;
 use crate::computer_toolset::{
-    approval_gate, audit, build_target, emit_action, error_result, lease_check, needs_approval, policy_check, resolve_computer,
-    unsupported_reason, MemberSpec, Target, Toolset, ToolsetRequest,
+    approval_gate, audit, build_target, emit_action, error_result, lease_check, needs_approval, policy_check, remember_run_actor,
+    resolve_computer, run_actor, unsupported_reason, ActionActor, MemberSpec, Target, Toolset, ToolsetRequest,
 };
 use crate::AppState;
 
@@ -416,6 +416,9 @@ async fn run_one(state: &Arc<AppState>, user: &AuthUser, p: &Planned, left: Dura
         enable: vec![],
         within_subtask: Some(parent.to_string()),
         project_id: None,
+        agent_id: None,
+        agent_name: None,
+        step: None,
     };
     let spec = crate::computer_toolset::contract(Toolset::Computer).member("run_subtask").expect("run_subtask is in the contract");
     let (desc, verdict) = match policy_check(user, &p.computer, &req) {
@@ -427,7 +430,7 @@ async fn run_one(state: &Arc<AppState>, user: &AuthUser, p: &Planned, left: Dura
     }
     crate::computer_routes::touch_computer_activity(&state.db, &p.computer.id);
     let out = crate::computer_subtask::run_body(state, user, &p.computer, &p.target, &input, run_id).await;
-    emit_action(&p.computer.id, Toolset::Computer, "run_subtask", None, None, Some(run_id), out.is_ok());
+    emit_action(&p.computer, Toolset::Computer, "run_subtask", None, None, Some(run_id), &run_actor(run_id), out.is_ok());
     out.unwrap_or_else(|f| json!({ "status": "failed", "error": "action_failed", "reason": f.message }))
 }
 
@@ -503,6 +506,13 @@ pub async fn execute(state: &Arc<AppState>, user: &AuthUser, headers: &HeaderMap
     let parent = req.run_id.clone().unwrap_or_else(|| format!("toolset-{}", uuid::Uuid::new_v4().simple()));
     let started = Instant::now();
     let ids: Vec<String> = (0..planned.len()).map(|i| format!("{parent}:{}{}", if best_of { "r" } else { "s" }, i + 1)).collect();
+    // Each child run carries the agent the fan-out call named (no step text:
+    // the children's own steps describe themselves).
+    let actor = ActionActor::from_request(req, &[]);
+    remember_run_actor(&parent, &actor);
+    for id in &ids {
+        remember_run_actor(id, &actor);
+    }
     let (planned_ref, ids_ref, parent_ref) = (&planned, &ids, parent.as_str());
     let bodies = fan_out(planned.len(), &lim, |i, left| run_one(state, user, &planned_ref[i], left, &ids_ref[i], parent_ref)).await;
     let spent: f64 = bodies.iter().map(cost_of).sum();

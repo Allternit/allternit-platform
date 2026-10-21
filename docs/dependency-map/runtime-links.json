@@ -673,6 +673,15 @@
         "allternit-ai/src/lib/artifacts/editors/collab-api.ts",
         "allternit/surfaces/docs/api/artifacts-v2.mdx"
       ]
+    },
+    {
+      "source": "allternit/surfaces/allternit-desktop",
+      "target": "allternit-ai/src/lib/agent-cursor",
+      "kind": "BrowserWindow companion.html?surface=agent-cursor (real-screen agent cursor badge, allternitAgentCursor bridge)",
+      "evidence": [
+        "allternit/surfaces/allternit-desktop/src/main/agent-cursor-window.ts",
+        "allternit/surfaces/allternit-desktop/src/preload/index.ts"
+      ]
     }
   ]
 }

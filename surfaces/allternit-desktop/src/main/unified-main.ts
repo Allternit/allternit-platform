@@ -23,6 +23,7 @@ import log from 'electron-log';
 import { updateElectronApp } from 'update-electron-app';
 import fixPath from 'fix-path';
 import { installDesktopCompanion } from './desktop-companion.js';
+import { installAgentCursorWindow } from './agent-cursor-window.js';
 import { startPetHookServer, type PetHookServer } from './pet-hook-server.js';
 import { isPairingLink, pairingCodeFromUrl } from './pairing-link.js';
 import { approvePairing, describePairingRequest } from './pairing-approval.js';
@@ -798,6 +799,13 @@ const desktopCompanion = installDesktopCompanion({
   },
 });
 
+// The bot badge next to the real pointer while an agent drives this Mac
+// (created hidden; its page shows it on the first action).
+const agentCursorWindow = installAgentCursorWindow({
+  origin: () => activePlatformUrl,
+  preload: join(__dirname, '../preload/index.js'),
+});
+
 // Terminal agents (gizzi, Claude Code, Codex, scripts) drive the same pet through a loopback hook port.
 let petHookServer: PetHookServer | null = null;
 app.whenReady().then(async () => {
@@ -894,6 +902,7 @@ function createMainWindow(): BrowserWindow {
   window.webContents.on('did-finish-load', () => {
     flushPendingOfficeDeliveries();
     desktopCompanion.start();
+    agentCursorWindow.start();
   });
 
   // Route operator + cloud-api calls through the allternit-api custom protocol.

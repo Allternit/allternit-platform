@@ -429,6 +429,17 @@ pub struct ToolsetRequest {
     /// `javascript_exec`) the caller turns on for this call. Others are ignored.
     #[serde(default)]
     pub enable: Vec<String>,
+    /// The bot or agent driving this call (the bot id when a bot runs it),
+    /// shown on the agent cursor. Display only: never an authority.
+    #[serde(default)]
+    pub agent_id: Option<String>,
+    /// Its display name for the cursor badge (trimmed, at most 60 chars).
+    #[serde(default)]
+    pub agent_name: Option<String>,
+    /// The model's few words on what this step does ("Clicking Send"),
+    /// shown to people watching; masked like other logged text.
+    #[serde(default)]
+    pub step: Option<String>,
     /// Set (to the subtask's run id) on the steps an approved `run_subtask`
     /// runs; never read from the wire.
     #[serde(skip)]
@@ -588,7 +599,98 @@ fn remember_screen(key: &str, frame: Frame) {
 pub static ACTION_EVENTS: Lazy<tokio::sync::broadcast::Sender<(String, Value)>> =
     Lazy::new(|| tokio::sync::broadcast::channel(256).0);
 
-pub(crate) fn emit_action(computer_id: &str, toolset: Toolset, member: &str, point: Option<(i64, i64)>, map: Option<&Mapping>, run_id: Option<&str>, ok: bool) {
+/// Who drives a `computer.action` and what the step does, for the bot
+/// badge viewers draw on the agent cursor. Built by `from_request`, so the
+/// lengths are capped and `step` is already masked.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub(crate) struct ActionActor {
+    pub agent_id: Option<String>,
+    pub name: Option<String>,
+    pub step: Option<String>,
+}
+
+const ACTOR_ID_MAX: usize = 128;
+const ACTOR_NAME_MAX: usize = 60;
+const ACTOR_STEP_MAX: usize = 120;
+
+/// Trimmed and cut to `max` chars; blank is none.
+fn clip_text(text: Option<&str>, max: usize) -> Option<String> {
+    let t = text?.trim();
+    if t.is_empty() {
+        return None;
+    }
+    Some(t.chars().take(max).collect::<String>().trim_end().to_string())
+}
+
+/// Step text with vault secrets and key-shaped strings replaced, then the
+/// goal masking (`key=value` credentials) every logged goal gets.
+fn mask_step(text: &str, secrets: &[String]) -> String {
+    let mut spans = crate::computer_safety::find_pii(text, &["secret"], secrets);
+    spans.sort_by_key(|s| s.0);
+    let (mut out, mut at) = (String::with_capacity(text.len()), 0);
+    for (s, e, _) in spans {
+        let s = s.max(at);
+        if e <= s {
+            continue;
+        }
+        out.push_str(&text[at..s]);
+        out.push_str("[secret redacted]");
+        at = e;
+    }
+    out.push_str(&text[at..]);
+    crate::aci_safety::mask_sensitive_data(&out)
+}
+
+impl ActionActor {
+    pub(crate) fn from_request(req: &ToolsetRequest, secrets: &[String]) -> Self {
+        Self {
+            agent_id: clip_text(req.agent_id.as_deref(), ACTOR_ID_MAX),
+            name: clip_text(req.agent_name.as_deref(), ACTOR_NAME_MAX),
+            step: req.step.as_deref().and_then(|s| clip_text(Some(mask_step(s, secrets).as_str()), ACTOR_STEP_MAX)),
+        }
+    }
+
+    /// The event's `actor`: the request's agent, else the computer's bot;
+    /// null when neither an id nor a name is known.
+    fn to_json(&self, bot_id: Option<&str>) -> Value {
+        let agent_id = self.agent_id.as_deref().or(bot_id.map(str::trim).filter(|b| !b.is_empty()));
+        if agent_id.is_none() && self.name.is_none() {
+            return Value::Null;
+        }
+        json!({ "agent_id": agent_id, "name": self.name })
+    }
+}
+
+/// The driving agent per run id, so a subtask's own steps (and a fan-out's
+/// children) carry the actor their parent call named. Steps are per call
+/// and are not kept.
+static RUN_ACTORS: Lazy<Mutex<HashMap<String, (ActionActor, Instant)>>> = Lazy::new(|| Mutex::new(HashMap::new()));
+const RUN_ACTOR_TTL: Duration = Duration::from_secs(6 * 3600);
+
+pub(crate) fn remember_run_actor(run_id: &str, actor: &ActionActor) {
+    if actor.agent_id.is_none() && actor.name.is_none() {
+        return;
+    }
+    let mut map = RUN_ACTORS.lock().unwrap_or_else(|p| p.into_inner());
+    map.retain(|_, (_, at)| at.elapsed() < RUN_ACTOR_TTL);
+    map.insert(run_id.to_string(), (ActionActor { step: None, ..actor.clone() }, Instant::now()));
+}
+
+pub(crate) fn run_actor(run_id: &str) -> ActionActor {
+    RUN_ACTORS.lock().unwrap_or_else(|p| p.into_inner()).get(run_id).map(|(a, _)| a.clone()).unwrap_or_default()
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn emit_action(
+    computer: &ComputerResponse,
+    toolset: Toolset,
+    member: &str,
+    point: Option<(i64, i64)>,
+    map: Option<&Mapping>,
+    run_id: Option<&str>,
+    actor: &ActionActor,
+    ok: bool,
+) {
     let screen = map.map(|m| m.screen);
     let event = json!({
         "type": "computer.action",
@@ -602,9 +704,11 @@ pub(crate) fn emit_action(computer_id: &str, toolset: Toolset, member: &str, poi
             "screen_h": screen.map(|s| s.height),
             "run_id": run_id,
             "ok": ok,
+            "actor": actor.to_json(computer.bot_id.as_deref()),
+            "step": actor.step,
         }
     });
-    let _ = ACTION_EVENTS.send((computer_id.to_string(), event));
+    let _ = ACTION_EVENTS.send((computer.id.clone(), event));
 }
 
 // ---------------------------------------------------------------------------
@@ -1968,6 +2072,8 @@ pub async fn execute(state: &Arc<AppState>, user: &AuthUser, id: &str, headers: 
 
     // 5. Dispatch.
     let secrets: Vec<String> = crate::aci_credentials::CREDENTIALS.screening_secrets(&user.user_id).into_iter().map(|(_, v, _)| v).collect();
+    let actor = ActionActor::from_request(&req, &secrets);
+    remember_run_actor(&run_id, &actor);
     crate::computer_routes::touch_computer_activity(&state.db, &computer.id);
     if req.member == "run_subtask" || req.member == "run_skill" || v2 {
         // run_subtask / run_skill: the bounded decision loop (a skill is a
@@ -1994,7 +2100,7 @@ pub async fn execute(state: &Arc<AppState>, user: &AuthUser, id: &str, headers: 
             "run_skill" => crate::computer_subtask::run_skill(state, user, &computer, &target, &req.input, &run_id).await,
             _ => crate::computer_v2::execute_v2(state, user, &computer, &target, &req.member, &req.input, &run_id).await,
         };
-        emit_action(&computer.id, req.toolset, &req.member, None, None, req.run_id.as_deref(), outcome.is_ok());
+        emit_action(&computer, req.toolset, &req.member, None, None, req.run_id.as_deref(), &actor, outcome.is_ok());
         crate::computer_history::record(state, &target, &computer.id, &run_id, &req.member, outcome.is_ok(), &safety.settings, &secrets).await;
         crate::computer_safety::record_monitor_outcome(state, user, &safety, if outcome.is_ok() { "success" } else { "error" }, "step ran");
         return match outcome {
@@ -2017,7 +2123,7 @@ pub async fn execute(state: &Arc<AppState>, user: &AuthUser, id: &str, headers: 
     let redactor = Redactor { settings: &safety.settings, secrets: &secrets, data_dir: state.data_dir.clone() };
     crate::computer_history::start(&computer.id, &run_id, &req.member);
     let outcome = dispatch(&target, req.toolset, spec, &scaled, &map, &screen_key, &run_id, &redactor).await;
-    emit_action(&computer.id, req.toolset, &req.member, point, Some(&map), req.run_id.as_deref(), outcome.is_ok());
+    emit_action(&computer, req.toolset, &req.member, point, Some(&map), req.run_id.as_deref(), &actor, outcome.is_ok());
     crate::computer_history::record(state, &target, &computer.id, &run_id, &req.member, outcome.is_ok(), &safety.settings, &secrets).await;
     crate::computer_safety::record_monitor_outcome(state, user, &safety, if outcome.is_ok() { "success" } else { "error" }, "step ran");
     match outcome {
@@ -2206,6 +2312,9 @@ pub(crate) async fn execute_step(
         enable: vec![],
         within_subtask: Some(run_id.to_string()),
         project_id: None,
+        agent_id: None,
+        agent_name: None,
+        step: None,
     };
     lease_check(state, user, computer, target, Some(run_id)).await.map_err(|(_, _, m)| Fail::from(m))?;
     let (policy_desc, verdict) = policy_check(user, computer, &req).map_err(Fail::from)?;
@@ -2248,7 +2357,8 @@ pub(crate) async fn execute_step(
         }
         Target::Browser { .. } => Err(Fail::from(format!("{member} can't run inside a subtask on the browser toolset"))),
     };
-    emit_action(&computer.id, Toolset::Computer, member, None, None, Some(run_id), outcome.is_ok());
+    // The subtask's steps carry the agent its parent call named.
+    emit_action(computer, Toolset::Computer, member, None, None, Some(run_id), &run_actor(run_id), outcome.is_ok());
     let secrets: Vec<String> = crate::aci_credentials::CREDENTIALS.screening_secrets(&user.user_id).into_iter().map(|(_, v, _)| v).collect();
     crate::computer_history::record(state, target, &computer.id, run_id, member, outcome.is_ok(), &safety.settings, &secrets).await;
     crate::computer_safety::record_monitor_outcome(state, user, &safety, if outcome.is_ok() { "success" } else { "error" }, "step ran");
@@ -2569,6 +2679,9 @@ mod tests {
             enable: vec![],
             within_subtask: None,
             project_id: None,
+            agent_id: None,
+            agent_name: None,
+            step: None,
         };
         let spec = contract(Toolset::Computer).member("type").unwrap();
         assert!(needs_approval(spec, false), "type needs approval on this device");
@@ -2624,5 +2737,93 @@ mod tests {
         assert_eq!(win_chord("cmd+F5").unwrap(), vec![0x5B, 0x74]);
         assert!(windows_script("type", &json!({ "text": "a'b" })).unwrap().unwrap().contains(&B64.encode("a'b")));
         assert_eq!(cua_modifiers("ctrl+Option+cmd").unwrap(), vec!["ctrl", "option", "cmd"]);
+    }
+
+    fn action_computer(id: &str, bot_id: Option<&str>) -> ComputerResponse {
+        ComputerResponse {
+            id: id.into(),
+            kind: ComputerKind::CloudDesktop,
+            provider: "incus".into(),
+            status: crate::computer_routes::ComputerStatus::Running,
+            owner_type: "user".into(),
+            owner_id: "user-1".into(),
+            bot_id: bot_id.map(str::to_string),
+            session_id: None,
+            name: "Builder Box".into(),
+            os: None,
+            cpu_cores: None,
+            memory_mb: None,
+            disk_mb: None,
+            region: None,
+            host: None,
+            native_id: None,
+            template_id: None,
+            billing_source: "credits".into(),
+            created_at: "2026-10-20T00:00:00Z".into(),
+            updated_at: "2026-10-20T00:00:00Z".into(),
+            idle_timeout_secs: None,
+            last_activity_at: None,
+            group_id: None,
+            role: "user".into(),
+        }
+    }
+
+    /// Emit one action and read back this computer's event (the channel is
+    /// shared by every test, so others' events are skipped).
+    fn emitted(computer: &ComputerResponse, actor: &ActionActor) -> Value {
+        let mut rx = ACTION_EVENTS.subscribe();
+        emit_action(computer, Toolset::Computer, "left_click", Some((10, 20)), None, Some("run-1"), actor, true);
+        loop {
+            let (id, event) = rx.try_recv().expect("the action event");
+            if id == computer.id {
+                return event;
+            }
+        }
+    }
+
+    #[test]
+    fn action_event_carries_actor_and_step() {
+        let req: ToolsetRequest = serde_json::from_value(json!({
+            "toolset": "computer",
+            "member": "left_click",
+            "agent_id": " bot_123 ",
+            "agent_name": format!("  Raven{}", "x".repeat(80)),
+            "step": "Typing the key sk-abcdefghijklmnopqrstuvwxyz0123 into Settings",
+        }))
+        .unwrap();
+        let actor = ActionActor::from_request(&req, &[]);
+        assert_eq!(actor.name.as_deref().map(|n| n.chars().count()), Some(ACTOR_NAME_MAX));
+        let ev = emitted(&action_computer("actor-test-1", Some("bot_owner")), &actor);
+        assert_eq!(ev["type"], "computer.action");
+        let data = &ev["data"];
+        assert_eq!(data["member"], "left_click");
+        assert_eq!(data["x"], 10);
+        assert_eq!(data["run_id"], "run-1");
+        assert_eq!(data["actor"]["agent_id"], "bot_123", "the request's agent wins over the computer's bot");
+        assert!(data["actor"]["name"].as_str().unwrap().starts_with("Raven"));
+        let step = data["step"].as_str().unwrap();
+        assert!(step.contains("[secret redacted]") && !step.contains("sk-abcdef"), "step text is masked: {step}");
+        assert!(step.chars().count() <= ACTOR_STEP_MAX);
+    }
+
+    #[test]
+    fn action_event_actor_falls_back_to_bot_then_null() {
+        let none = ActionActor::default();
+        let ev = emitted(&action_computer("actor-test-2", Some("bot_9")), &none);
+        assert_eq!(ev["data"]["actor"], json!({ "agent_id": "bot_9", "name": null }));
+        assert!(ev["data"]["step"].is_null());
+        let ev = emitted(&action_computer("actor-test-3", None), &none);
+        assert!(ev["data"]["actor"].is_null(), "no agent and no bot: no actor");
+        assert!(ev["data"].get("ok").is_some(), "existing fields stay");
+    }
+
+    #[test]
+    fn subtask_steps_inherit_the_run_actor() {
+        let actor = ActionActor { agent_id: Some("bot_7".into()), name: Some("Jev".into()), step: Some("Opening Mail".into()) };
+        remember_run_actor("actor-run-1", &actor);
+        let kept = run_actor("actor-run-1");
+        assert_eq!(kept.agent_id.as_deref(), Some("bot_7"));
+        assert_eq!(kept.step, None, "steps are per call");
+        assert_eq!(run_actor("actor-run-unknown"), ActionActor::default());
     }
 }

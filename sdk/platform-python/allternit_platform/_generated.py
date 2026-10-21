@@ -45,7 +45,7 @@ ComputerList = TypedDict('ComputerList', {'data': List["Computer"], 'has_more': 
 ComputerEvent = TypedDict('ComputerEvent', {'id': str, 'type': Literal['computer.action'], 'ts': str, 'data': Dict[str, Any]}, total=False)
 ComputerEventList = TypedDict('ComputerEventList', {'data': List["ComputerEvent"], 'has_more': bool, 'next_cursor': Optional[str]}, total=False)
 ComputerSettings = TypedDict('ComputerSettings', {'hosted_driver_enabled': bool, 'approval_mode': Literal['owner', 'api_key'], 'per_key_concurrency': int, 'browser_toolset': bool}, total=False)
-ToolsetCall = TypedDict('ToolsetCall', {'toolset': Literal['computer', 'browser'], 'member': str, 'input': Dict[str, Any], 'run_id': str, 'turn_id': str, 'call_index': int, 'model_frame': Dict[str, Any], 'coordinate_space': Literal['pixels', 'normalized_1000'], 'approval_grant': str, 'browser_session_id': str, 'enable': List[str]}, total=False)
+ToolsetCall = TypedDict('ToolsetCall', {'toolset': Literal['computer', 'browser'], 'member': str, 'input': Dict[str, Any], 'run_id': str, 'turn_id': str, 'call_index': int, 'model_frame': Dict[str, Any], 'coordinate_space': Literal['pixels', 'normalized_1000'], 'approval_grant': str, 'browser_session_id': str, 'enable': List[str], 'agent_id': str, 'agent_name': str, 'step': str}, total=False)
 ToolsetResult = TypedDict('ToolsetResult', {'is_error': bool, 'content': List[Dict[str, Any]], 'browser_state': Dict[str, Any], 'screen': Dict[str, Any], 'error': str}, total=False)
 ToolsetApprovalRequired = TypedDict('ToolsetApprovalRequired', {'error': Dict[str, Any], 'approval': Dict[str, Any], 'result': "ToolsetResult"}, total=False)
 
@@ -1123,7 +1123,7 @@ class ComputersResource:
         """
         return self._client.request("POST", f"/v1/computers/{_q(id)}/stop", idempotency_key=idempotency_key, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
 
-    def call_toolset(self, id: str, *, toolset: Literal['computer', 'browser'], member: str, input: Dict[str, Any] = NOT_GIVEN, run_id: str = NOT_GIVEN, turn_id: str = NOT_GIVEN, call_index: int = NOT_GIVEN, model_frame: Dict[str, Any] = NOT_GIVEN, coordinate_space: Literal['pixels', 'normalized_1000'] = NOT_GIVEN, approval_grant: str = NOT_GIVEN, browser_session_id: str = NOT_GIVEN, enable: List[str] = NOT_GIVEN, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "ToolsetResult":
+    def call_toolset(self, id: str, *, toolset: Literal['computer', 'browser'], member: str, input: Dict[str, Any] = NOT_GIVEN, run_id: str = NOT_GIVEN, turn_id: str = NOT_GIVEN, call_index: int = NOT_GIVEN, model_frame: Dict[str, Any] = NOT_GIVEN, coordinate_space: Literal['pixels', 'normalized_1000'] = NOT_GIVEN, approval_grant: str = NOT_GIVEN, browser_session_id: str = NOT_GIVEN, enable: List[str] = NOT_GIVEN, agent_id: str = NOT_GIVEN, agent_name: str = NOT_GIVEN, step: str = NOT_GIVEN, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "ToolsetResult":
         """Run one toolset call
 
         One `allternit.computer.v1` / `allternit.browser.v1` call (member names and inputs match Anthropic's `computer_toolset_20260801` / `browser_toolset_20260801`). Runs through the computer's executor: contract validation, control lease, policy, approval, audit, then the action. Action failures are 200 with `is_error: true`.
@@ -1154,6 +1154,12 @@ class ComputersResource:
             _body['browser_session_id'] = browser_session_id
         if enable is not NOT_GIVEN:
             _body['enable'] = enable
+        if agent_id is not NOT_GIVEN:
+            _body['agent_id'] = agent_id
+        if agent_name is not NOT_GIVEN:
+            _body['agent_name'] = agent_name
+        if step is not NOT_GIVEN:
+            _body['step'] = step
         return self._client.request("POST", f"/v1/computers/{_q(id)}/toolset", body=_body, idempotency_key=idempotency_key, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
 
     def get_toolset_schema(self, id: str, *, toolset: Literal['computer', 'browser'] = NOT_GIVEN, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:

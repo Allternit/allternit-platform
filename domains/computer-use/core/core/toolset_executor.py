@@ -293,6 +293,8 @@ class ToolsetExecutorClient:
         computer_id: str = "this-device",
         *,
         user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        agent_name: Optional[str] = None,
         base_url: Optional[str] = None,
         browser_session_id: Optional[str] = None,
         observe_toolset: str = "computer",
@@ -303,6 +305,10 @@ class ToolsetExecutorClient:
         # gateway browser session, "computer" for a desktop.
         self.observe_toolset = observe_toolset if observe_toolset in TOOLSETS else "computer"
         self.user_id = user_id
+        # Who drives the run, for the bot badge on the agent cursor (display
+        # only; allternit-api caps the lengths and masks the step text).
+        self.agent_id = (agent_id or "").strip() or None
+        self.agent_name = (agent_name or "").strip()[:60] or None
         self.browser_session_id = browser_session_id
         self._base = (base_url or os.environ.get("ALLTERNIT_API_URL") or "http://127.0.0.1:8013").rstrip("/")
         self._timeout_s = timeout_s
@@ -330,8 +336,15 @@ class ToolsetExecutorClient:
         call_index: int = 0,
         model_frame: Optional[Dict[str, int]] = None,
         approval_grant: Optional[str] = None,
+        step: Optional[str] = None,
     ) -> ToolsetReply:
         body: Dict[str, Any] = {"toolset": toolset, "member": member, "input": input or {}, "call_index": call_index}
+        if self.agent_id:
+            body["agent_id"] = self.agent_id
+        if self.agent_name:
+            body["agent_name"] = self.agent_name
+        if step and step.strip():
+            body["step"] = step.strip()[:120]
         if run_id:
             body["run_id"] = run_id
         if turn_id:

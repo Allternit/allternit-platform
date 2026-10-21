@@ -69,6 +69,9 @@ export const PLATFORM_TOOL_SPECS: Array<Omit<McpToolSpec, 'name'> & { name: Plat
         run_id: { type: 'string' },
         turn_id: { type: 'string' },
         call_index: { type: 'integer' },
+        agent_id: { type: 'string', description: 'The bot or agent driving, shown on the agent cursor.' },
+        agent_name: { type: 'string', description: 'Its display name for the cursor badge.' },
+        step: { type: 'string', description: 'A few words saying what this action does, shown to people watching.' },
       },
       required: ['computer_id', 'toolset', 'member'],
     },
@@ -238,7 +241,7 @@ export async function executePlatformToolCall(
     if (name === 'computer_toolset') {
       const id = str(args, 'computer_id');
       const body: Record<string, unknown> = { toolset: str(args, 'toolset'), member: str(args, 'member') };
-      for (const key of ['input', 'approval_grant', 'run_id', 'turn_id', 'call_index']) {
+      for (const key of ['input', 'approval_grant', 'run_id', 'turn_id', 'call_index', 'agent_id', 'agent_name', 'step']) {
         if (args[key] !== undefined) body[key] = args[key];
       }
       try {

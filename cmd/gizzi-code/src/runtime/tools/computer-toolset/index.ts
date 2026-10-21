@@ -29,6 +29,17 @@ export function targetComputer(): string {
   return process.env.GIZZI_COMPUTER_ID?.trim() || "this-device"
 }
 
+/**
+ * The bot or platform agent this runtime runs as (the env the bot runner
+ * sets), for the agent cursor badge. Plain gizzi sessions send neither and
+ * the executor falls back to the computer's own bot.
+ */
+export function runningAgent(env: Record<string, string | undefined> = process.env): { agent_id?: string; agent_name?: string } {
+  const agent_id = (env.ALLTERNIT_AGENT_ID || env.ALLTERNIT_BOT_ID)?.trim() || undefined
+  const agent_name = (env.ALLTERNIT_AGENT_NAME || env.ALLTERNIT_BOT_NAME)?.trim().slice(0, 60) || undefined
+  return { agent_id, agent_name }
+}
+
 function nextCallIndex(turn: string): number {
   const i = callIndexes.get(turn) ?? 0
   callIndexes.set(turn, i + 1)
@@ -78,10 +89,12 @@ export async function runToolsetCall(
   ctx: Pick<Tool.Context, "sessionID" | "messageID" | "abort" | "ask">,
   deps: RunDeps,
 ): Promise<ToolsetOutput> {
-  const { action, ...input } = args
+  const { action, step, ...input } = args
   const member = String(action)
   for (const [k, v] of Object.entries(input)) if (v === undefined) delete input[k]
   const frameKey = `${ctx.sessionID}:${toolset}`
+  const actor = runningAgent()
+  const stepText = typeof step === "string" ? step.trim().slice(0, 120) : ""
   const req: ToolsetRequest = {
     toolset,
     member,
@@ -91,6 +104,9 @@ export async function runToolsetCall(
     call_index: nextCallIndex(`${ctx.messageID}:${toolset}`),
     model_frame: frames.get(frameKey),
     coordinate_space: deps.grid ? "normalized_1000" : "pixels",
+    ...(actor.agent_id ? { agent_id: actor.agent_id } : {}),
+    ...(actor.agent_name ? { agent_name: actor.agent_name } : {}),
+    ...(stepText ? { step: stepText } : {}),
   }
   let reply = await deps.executor.run(deps.computerId, req, ctx.abort)
   if (reply.status === 409 && reply.body.error === "approval_required" && reply.body.approval_id) {
