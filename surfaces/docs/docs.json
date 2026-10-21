@@ -534,6 +534,7 @@
               "guides/chat-composer",
               "guides/interactive-answers",
               "guides/agent-steps",
+              "guides/agent-run-tree",
               "guides/pdf-citations"
             ],
             "icon": "/icons/book.svg"

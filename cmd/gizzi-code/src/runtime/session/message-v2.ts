@@ -748,6 +748,22 @@ export namespace MessageV2 {
     }
   })
 
+  /**
+   * Message infos only (no part payloads), oldest first. For cheap rollups
+   * such as the session tasks list, which is polled while tasks run.
+   */
+  export function infos(sessionID: string): MessageV2.Info[] {
+    const rows = Database.use((db) =>
+      db
+        .select()
+        .from(MessageTable)
+        .where(eq(MessageTable.session_id, sessionID))
+        .orderBy(MessageTable.time_created, MessageTable.id)
+        .all(),
+    )
+    return rows.map((row) => ({ ...row.data, id: row.id, sessionID: row.session_id }) as MessageV2.Info)
+  }
+
   export const parts = fn(Identifier.schema("message"), async (message_id) => {
     const rows = Database.use((db) =>
       db.select().from(PartTable).where(eq(PartTable.message_id, message_id)).orderBy(PartTable.id).all(),
