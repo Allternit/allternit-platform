@@ -1,0 +1,50 @@
+---
+title: "See your team's live sessions"
+description: "The Team roster shows teammates' computers, live CLI sessions and bots, and lets you message one."
+---
+
+The Team roster lists the people in your organization, the computers each one has online, and the live sessions and bots running on them. It works the same on Desktop, ai.allternit.com and the m.allternit.com PWA.
+
+## Open it
+
+Open **Bots**. The **Team** section sits below your standing work. On a phone it is in the same place, adapted to the narrow layout.
+
+Each row shows:
+
+- **Person → computer → session or bot**, with an online dot for the computer.
+- The harness (Claude Code, Codex, Gizzi and so on), or "bot" for a bot.
+- Repo and branch, a busy or idle dot, and a one-line **doing** summary (title and task, up to 120 characters).
+- A **delivery chip**: *Live* (pushed into the running session), *Next turn* (lands at its next tool call) or *On check-in* (waits until the session reads its inbox).
+- **Unread** and **held** badges. Held means a message is waiting for approval.
+
+The list refreshes every 30 seconds. Sessions that have not reported for 24 hours drop off.
+
+## Message a session
+
+Choose **Message** on a row, write the message (up to 64 KiB) and send. The reply under the box says what happened in one sentence, for example "pushed into the running Claude Code turn" or "queued, lands at its next tool call". Messages from the roster arrive at the other side as coming from a teammate, are fenced as inbound text, and count toward the usual loop limit (12 per 10 minutes per pair).
+
+## States you may see
+
+| What you see | Why |
+| --- | --- |
+| Loading the team… | The roster is being fetched. |
+| Sign in to see your team's live sessions. | You are signed out. |
+| Invite teammates in your organization to see their sessions. | You have no organization or no teammate has reported yet. You still see your own computers. |
+| Retry | The roster could not be reached. Nothing was changed. |
+| No live sessions | A computer is listed but reports no CLI session or bot. |
+
+## From the terminal
+
+```bash
+gizzi team list                              # people → computers → sessions and bots
+gizzi team list --json                       # raw JSON
+gizzi team send eoj/allternit-claude "Can you review PR 12?"
+```
+
+`send` prints the delivery state, tier and the same one-sentence note.
+
+## For developers
+
+- `GET /api/v1/team/roster` returns `{org, people: [{userId, display, me, unread, held, machines: [{runtimeId, name, online, sessions, bots, unread, held}]}]}`, scoped to the caller's Clerk organization. With no organization it returns the caller's own computers.
+- `POST /api/v1/team/send {to, message, replyTo?}` resolves `person/session` to the owner's runtime, relays it signed to the runtime's `POST /bot-routing/message` with `from_kind: "team"` (trust: Team), and returns `{hopId, state, tier, note}`.
+- Runtimes report sessions in the presence heartbeat (`sessions: LiveSession[]`). The cloud stores them in `team_sessions` and the members it has seen in `team_members_seen` (migration 096).

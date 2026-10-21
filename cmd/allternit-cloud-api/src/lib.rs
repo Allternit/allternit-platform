@@ -350,6 +350,8 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         // Public MCP edge (Clerk OAuth checked in the handler, then relayed to the
         // owner's runtime). Inert (503) until MCP_PUBLIC_URL is set.
         .merge(routes::mcp_edge::routes())
+        // Public A2A v1.0 edge + agent contacts (inert until A2A_CARD_SIGNING_KEY is set).
+        .merge(routes::a2a_edge::routes())
         // Keys for the allternit-bot CLI (issue/list/revoke by the owner; instructions by key). Part of the MCP edge: 503 until MCP_PUBLIC_URL is set.
         .merge(routes::vendor_bot_keys::routes())
         .merge(routes::mcp_oauth_approvals::routes())
@@ -359,6 +361,8 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         .merge(routes::runtime_events::routes())
         // Runtime heartbeats (relay-signed) and the owner's presence list (agent network WP4).
         .merge(routes::runtime_presence::routes())
+        // Team roster + send (agent network phase 2, WP13).
+        .merge(routes::team::routes())
         // MCP Events client (P6): public Standard Webhooks receiver for events from a user's
         // connected MCP servers + the runtime's signed subscription registration.
         .merge(routes::mcp_event_callbacks::routes())

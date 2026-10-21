@@ -128,6 +128,8 @@ pub enum AgentsCmd {
     },
     /// Who am I, as an agent (inside a factory pane).
     Whoami,
+    /// Live agent sessions on this computer: address, status, what each is doing.
+    Sessions,
     /// Reconcile the registry with live sessions; respawn dead-but-unfinished
     /// runners with --apply (the default is a dry run).
     Recover {
@@ -677,6 +679,7 @@ fn agents(ctx: &Ctx, cmd: AgentsCmd) -> u8 {
     match cmd {
         AgentsCmd::Up(args) => crate::bots::up(ctx, args),
         AgentsCmd::Whoami => crate::bots::whoami_cmd(ctx),
+        AgentsCmd::Sessions => crate::bots::sessions_cmd(ctx),
         AgentsCmd::Snapshot(args) => crate::bots::snapshot_cmd(ctx, args),
         AgentsCmd::Restore(args) => crate::bots::restore(ctx, args),
         AgentsCmd::Pack(args) => crate::bots::pack(ctx, args),

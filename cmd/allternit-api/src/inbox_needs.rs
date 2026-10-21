@@ -312,16 +312,23 @@ pub fn collect(conn: &Connection, user_id: &str, unanswered_min: i64) -> rusqlit
         let mut it = item(format!("attention:{id}"), "attention", &kind, &bot, &bot_name, thread.as_deref(), None, summary, &at, if retryable { ("retry", if kind == "tool_changed" { "Approve tool" } else { "Retry" }) } else { ("open", "Open") }, false);
         if kind == "tool_changed" {
             // The tool and a one-line "what changed" (old vs new description, 200 chars each).
-            let d: Value = detail.and_then(|d| serde_json::from_str(&d).ok()).unwrap_or(Value::Null);
+            let d: Value = detail.as_deref().and_then(|d| serde_json::from_str(d).ok()).unwrap_or(Value::Null);
             it["tool"] = d["tool"].clone();
             it["serverId"] = d["serverId"].clone();
             let cut = |v: &Value| v.as_str().map(|s| s.chars().take(200).collect::<String>());
             it["change"] = json!({ "reason": d["reason"], "old": cut(&d["oldDescription"]), "new": cut(&d["newDescription"]) });
         }
+        if kind == "peer_held" {
+            // A message from an outside agent waiting for the owner: approve delivers it, dismiss refuses it.
+            let d: Value = detail.as_deref().and_then(|d| serde_json::from_str(d).ok()).unwrap_or(Value::Null);
+            it["peer"] = json!({ "id": d["peer"], "name": d["peerName"], "class": d["peerClass"] });
+            it["text"] = json!(snippet(d["text"].as_str().unwrap_or_default(), 600));
+            it["primary"] = json!({ "action": "approve", "label": "Approve" });
+        }
         it["severity"] = json!(severity);
         it["attentionKind"] = json!(kind);
         it["attempts"] = json!(attempts);
-        it["actions"] = if retryable { json!(["retry", "dismiss"]) } else { json!(["dismiss"]) };
+        it["actions"] = if kind == "peer_held" { json!(["approve", "dismiss"]) } else if retryable { json!(["retry", "dismiss"]) } else { json!(["dismiss"]) };
         if let Some(p) = prov.and_then(|p| serde_json::from_str::<Value>(&p).ok()) {
             it["provenance"] = p;
         }
@@ -441,6 +448,12 @@ async fn approve(State(state): State<Arc<AppState>>, Extension(user): Extension<
                 Ok(v) => Ok(v),
             }
         }
+        "attention" if id.starts_with("attention:peer_held:") => {
+            if !approve {
+                return err(StatusCode::BAD_REQUEST, "BAD_DECISION", "dismiss the item to refuse the message");
+            }
+            deliver_peer_held(&state, &user.user_id, &id).await
+        }
         "factory_approval" => {
             let aid = id.trim_start_matches("factory:");
             match crate::factory_approvals::resolve(&state, aid, approve, &user.user_id, crate::factory_approvals::Provenance::app(), None).await {
@@ -456,6 +469,45 @@ async fn approve(State(state): State<Arc<AppState>>, Extension(user): Extension<
             Json(json!({ "id": id, "result": v })).into_response()
         }
         Err(r) => r,
+    }
+}
+
+/// Approve a `peer_held` item: the held A2A message goes to the bot as a stranger-trust turn
+/// (fenced like any outside text), then the item is resolved.
+async fn deliver_peer_held(state: &Arc<AppState>, owner: &str, inbox_id: &str) -> Result<Value, Response> {
+    let aid = inbox_id.trim_start_matches("attention:");
+    let row: Option<(Option<String>, String)> = state.db.connect().ok().and_then(|c| {
+        c.query_row("SELECT bot_id, detail_json FROM attention_items WHERE id = ?1 AND owner = ?2 AND resolved_at IS NULL", params![aid, owner], |r| Ok((r.get(0)?, r.get(1)?))).optional().ok().flatten()
+    });
+    let Some((Some(bot), detail)) = row else { return Err(err(StatusCode::NOT_FOUND, "NOT_FOUND", "this message is already handled")) };
+    let d: Value = serde_json::from_str(&detail).unwrap_or(Value::Null);
+    let (peer, text, mid) = (d["peer"].as_str().unwrap_or("a2a-peer").to_string(), d["text"].as_str().unwrap_or_default().to_string(), d["messageId"].as_str().unwrap_or_default().to_string());
+    let r = crate::aai_facade::send(
+        state,
+        owner,
+        crate::aai_facade::SendIn {
+            bot_id: &bot,
+            thread_id: None,
+            text: &text,
+            correlation_id: None,
+            consequential: false,
+            allternit_approval_id: None,
+            via: "a2a",
+            traceparent: None,
+            idempotency_key: Some(crate::netops::hops::derive_key(&["a2a", &bot, &peer, &mid])),
+            from_kind: "stranger",
+            from_id: &peer,
+        },
+    )
+    .await;
+    match r {
+        Ok(v) => {
+            if let Ok(c) = state.db.connect() {
+                crate::netops::alerts::resolve(&c, owner, aid, "approved");
+            }
+            Ok(json!({ "state": "delivered", "threadId": v["threadId"] }))
+        }
+        Err(e) => Err(err(StatusCode::BAD_GATEWAY, &e.code, &e.message)),
     }
 }
 

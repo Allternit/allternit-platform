@@ -43,6 +43,7 @@ export const AgentsCommand = cmd({
           options: { "rm-worktree": { type: "boolean", describe: "also remove the worktree it was started in" } },
         }),
       )
+      .command(engineVerb(P, { command: "sessions", describe: "live agent sessions on this computer: address, status, what each is doing" }))
       .command(engineVerb(P, { command: "whoami", describe: "which bot and team this terminal is" }))
       .command(
         engineVerb(P, {
