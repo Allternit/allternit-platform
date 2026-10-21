@@ -10,6 +10,12 @@
 //! (migration 086), and poll `GET /presence`, which returns the rows seen in
 //! the last 45 seconds. Rows older than 10 minutes are deleted
 //! opportunistically on about one request in 50.
+//!
+//! Frame claims (SPEC-agent-canvas-2026-10-20) ride on agent presence: an agent
+//! heartbeat whose anchor carries `{"artboard": "<id>"}` claims that artboard
+//! of a design canvas for as long as the heartbeat stays live (the 45 s TTL).
+//! A second live agent session that claims it gets 409 `artboard_claimed`
+//! naming the holder; `anchor: null` or `state: left` releases it.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -610,6 +616,59 @@ pub(crate) fn validate_agent_anchor(anchor: &Value) -> Result<()> {
     Ok(())
 }
 
+/// The artboard an agent anchor claims (`anchor.artboard`), without tldraw's
+/// `shape:` prefix. None when the anchor claims nothing.
+pub(crate) fn claimed_artboard(anchor: Option<&Value>) -> Result<Option<String>> {
+    match anchor.and_then(|a| a.get("artboard")) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(id)) => {
+            let bare = super::artifacts_suggestions::bare_id(id.trim());
+            if bare.is_empty() || bare.chars().count() > super::artifacts_suggestions::MAX_ID_CHARS {
+                return Err(ArtifactError::bad_request("agent.anchor.artboard must be an artboard id"));
+            }
+            Ok(Some(bare.to_string()))
+        }
+        Some(_) => Err(ArtifactError::bad_request("agent.anchor.artboard must be an artboard id")),
+    }
+}
+
+/// The live agent, other than the caller's own agent row and session, whose
+/// anchor holds `artboard` (bare id): `(name, session_id)`.
+pub(crate) async fn artboard_holder<'e>(
+    db: impl sqlx::PgExecutor<'e>,
+    artifact_id: &str,
+    artboard: &str,
+    session_id: Option<&str>,
+    own_row: &str,
+) -> Result<Option<(Option<String>, Option<String>)>> {
+    Ok(sqlx::query_as(
+        "SELECT name, session_id FROM artifact_presence \
+         WHERE artifact_id = $1 AND kind = 'agent' AND user_id <> $4 \
+           AND last_seen > now() - ($5 * interval '1 second') \
+           AND regexp_replace(anchor->>'artboard', '^shape:', '') = $2 \
+           AND ($3::text IS NULL OR session_id IS DISTINCT FROM $3::text) \
+         ORDER BY last_seen DESC LIMIT 1",
+    )
+    .bind(artifact_id)
+    .bind(artboard)
+    .bind(session_id)
+    .bind(own_row)
+    .bind(PRESENCE_TTL_SECS)
+    .fetch_optional(db)
+    .await?)
+}
+
+/// 409 `artboard_claimed` with `holder: {name, session_id}`.
+pub(crate) fn artboard_claimed(holder: (Option<String>, Option<String>)) -> ArtifactError {
+    let name = holder.0.filter(|n| !n.trim().is_empty()).unwrap_or_else(|| "Another agent".to_string());
+    ArtifactError::coded(
+        StatusCode::CONFLICT,
+        "artboard_claimed",
+        format!("{name} is working on that artboard; pick another one or wait"),
+    )
+    .with("holder", json!({ "name": name, "session_id": holder.1 }))
+}
+
 /// A validated agent heartbeat: (row id, name, session_id, task, anchor, cost).
 type AgentRow = (String, String, Option<String>, Option<String>, Option<Value>, Option<f64>);
 
@@ -688,6 +747,21 @@ async fn post_presence(
                 .execute(&state.db)
                 .await?;
         } else {
+            // Claim check and upsert under one per-artboard lock, so two agents
+            // claiming the same frame at once can't both win.
+            let claim = claimed_artboard(anchor.as_ref())?;
+            let mut tx = state.db.begin().await?;
+            if let Some(artboard) = claim.as_deref() {
+                sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1))")
+                    .bind(format!("artboard:{}:{artboard}", row.id))
+                    .execute(&mut *tx)
+                    .await?;
+                if let Some(holder) =
+                    artboard_holder(&mut *tx, &row.id, artboard, session_id.as_deref(), &agent_id).await?
+                {
+                    return Err(artboard_claimed(holder));
+                }
+            }
             sqlx::query(
                 "INSERT INTO artifact_presence \
                    (artifact_id, user_id, name, image_url, state, last_seen, kind, session_id, task, anchor, cost_usd) \
@@ -705,8 +779,9 @@ async fn post_presence(
             .bind(task.as_deref())
             .bind(anchor)
             .bind(cost)
-            .execute(&state.db)
+            .execute(&mut *tx)
             .await?;
+            tx.commit().await?;
         }
         if should_purge_presence() {
             purge_stale_presence(&state.db).await;

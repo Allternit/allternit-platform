@@ -318,3 +318,214 @@ async fn agent_comments_post_under_the_agent_name() {
     assert_eq!(items[0]["author_name"], "Research Bot");
     assert_eq!(items[0]["agent_name"], "Research Bot");
 }
+
+// ----- Agents on one canvas: artboard changes (SPEC-agent-canvas-2026-10-20) -----
+
+fn layer(id: &str, artboard: &str) -> Value {
+    json!({"id": id, "type": "text", "name": id, "artboard": artboard, "x": 0, "y": 0, "w": 10, "h": 10, "props": {"text": "Hi"}})
+}
+
+fn artboard_change(artboard: &str, layers: Vec<Value>, before: Vec<Value>) -> Value {
+    json!({"kind": "artboard", "artboard": artboard, "name": "Hero", "layers": layers, "before": {"layers": before}})
+}
+
+#[test]
+fn artboard_change_validation() {
+    let ok = validate_change(
+        "design",
+        &json!({
+            "kind": "artboard", "artboard": "shape:hero", "name": " Hero ", "extra": 1,
+            "frame": {"fill": "#0b0b0f", "w": 1440, "x": 9, "props": {"radius": 8}},
+            "layers": [layer("shape:t1", "shape:hero"), layer("t2", "hero")],
+            "before": {"frame": {"fill": "#ffffff"}, "layers": [layer("shape:t1", "shape:hero")], "junk": true},
+        }),
+    )
+    .unwrap();
+    assert_eq!(ok["kind"], "artboard");
+    assert_eq!(ok["artboard"], "shape:hero");
+    assert_eq!(ok["name"], "Hero");
+    assert!(ok.get("extra").is_none());
+    assert_eq!(ok["frame"], json!({"fill": "#0b0b0f", "w": 1440, "props": {"radius": 8}}), "unknown frame fields are dropped");
+    assert_eq!(ok["layers"].as_array().unwrap().len(), 2);
+    assert_eq!(ok["layers"][0]["props"]["text"], "Hi", "layers are kept verbatim");
+    assert_eq!(ok["before"], json!({"frame": {"fill": "#ffffff"}, "layers": [layer("shape:t1", "shape:hero")]}));
+    // frame is optional; an empty layer list clears the artboard.
+    let cleared = validate_change("design", &artboard_change("hero", vec![], vec![layer("a", "hero")])).unwrap();
+    assert!(cleared.get("frame").is_none());
+
+    // Shape errors.
+    let bad = |c: Value| validate_change("design", &c).is_err();
+    assert!(bad(json!({"kind":"artboard","artboard":"","layers":[],"before":{"layers":[]}})));
+    assert!(bad(json!({"kind":"artboard","artboard":"shape:","layers":[],"before":{"layers":[]}})));
+    assert!(bad(json!({"kind":"artboard","artboard":"hero","before":{"layers":[]}})), "layers is required");
+    assert!(bad(json!({"kind":"artboard","artboard":"hero","layers":[]})), "before is required");
+    assert!(bad(artboard_change("hero", vec![layer("a", "other")], vec![])), "a layer on another artboard");
+    assert!(bad(artboard_change("hero", vec![], vec![layer("a", "other")])), "before holds the same artboard");
+    assert!(bad(artboard_change("hero", vec![layer("a", "hero"), layer("shape:a", "hero")], vec![])), "duplicate ids");
+    assert!(bad(artboard_change("hero", vec![json!({"id":"a","artboard":"hero"})], vec![])), "a layer needs a type");
+    assert!(bad(artboard_change("hero", vec![json!("text")], vec![])));
+    assert!(bad(json!({"kind":"artboard","artboard":"hero","frame":{"w":0},"layers":[],"before":{"layers":[]}})));
+    assert!(bad(json!({"kind":"artboard","artboard":"hero","frame":{"fill":3},"layers":[],"before":{"layers":[]}})));
+    assert!(bad(json!({"kind":"artboard","artboard":"hero","frame":"dark","layers":[],"before":{"layers":[]}})));
+
+    // The kind matrix: artboard only on designs, and only artboard on designs.
+    let code = |kind: &str, c: Value| match validate_change(kind, &c) {
+        Err(ArtifactError::Coded { code, .. }) => code,
+        other => panic!("expected a coded error, got {other:?}"),
+    };
+    let ab = artboard_change("hero", vec![], vec![]);
+    assert_eq!(code("doc", ab.clone()), "unsupported_kind");
+    assert_eq!(code("sheet", ab.clone()), "unsupported_kind");
+    assert_eq!(code("page", ab), "unsupported_kind");
+    assert_eq!(code("design", json!({"kind":"text","find":"a","replace":"b"})), "unsupported_kind");
+    assert_eq!(code("design", json!({"kind":"cell","address":"B4","value":"x"})), "unsupported_kind");
+    assert_eq!(code("doc", json!({"kind":"nope"})), "unsupported_kind");
+
+    // Size limits: 2000 layers, 2 MB of JSON each for layers and before.
+    let many: Vec<Value> = (0..2001).map(|i| layer(&format!("l{i}"), "hero")).collect();
+    assert_eq!(code("design", artboard_change("hero", many.clone(), vec![])), "change_too_large");
+    assert_eq!(code("design", artboard_change("hero", vec![], many)), "change_too_large");
+    let most: Vec<Value> = (0..2000).map(|i| layer(&format!("l{i}"), "hero")).collect();
+    assert!(validate_change("design", &artboard_change("hero", most, vec![])).is_ok());
+    let mut huge = layer("big", "hero");
+    huge["props"]["html"] = json!("x".repeat(2 * 1024 * 1024));
+    assert_eq!(code("design", artboard_change("hero", vec![huge.clone()], vec![])), "change_too_large");
+    assert_eq!(code("design", artboard_change("hero", vec![], vec![huge])), "change_too_large");
+}
+
+fn canvas_body() -> String {
+    json!({
+        "v": 2, "kind": "canvas", "designSystem": null,
+        "artboards": [
+            {"id": "shape:hero", "name": "Hero", "x": 0, "y": 0, "w": 1440, "h": 900, "fill": "#ffffff"},
+            {"id": "pricing", "name": "Pricing", "x": 1600, "y": 0, "w": 1440, "h": 900, "fill": "#ffffff"},
+        ],
+        "layers": [layer("shape:h1", "shape:hero"), layer("p1", "pricing")],
+    })
+    .to_string()
+}
+
+#[test]
+fn artboard_body_checks() {
+    let body = canvas_body();
+    let check = |c: Value| check_artboard_against_body(&body, &validate_change("design", &c).unwrap());
+    // Ids match with or without tldraw's shape: prefix.
+    assert!(check(artboard_change("hero", vec![layer("h1", "hero"), layer("h2", "hero")], vec![layer("h1", "hero")])).is_ok());
+    assert!(check(artboard_change("shape:pricing", vec![layer("p1", "pricing")], vec![])).is_ok());
+    let code = |r: Result<()>| match r {
+        Err(ArtifactError::Coded { code, .. }) => code,
+        other => panic!("expected a coded error, got {other:?}"),
+    };
+    assert_eq!(code(check(artboard_change("footer", vec![], vec![]))), "unknown_artboard");
+    assert_eq!(code(check(artboard_change("hero", vec![layer("shape:p1", "hero")], vec![]))), "layer_id_in_use");
+    // A body that isn't a canvas yet isn't checked.
+    let c = validate_change("design", &artboard_change("hero", vec![], vec![])).unwrap();
+    assert!(check_artboard_against_body("", &c).is_ok());
+    assert!(check_artboard_against_body("<html></html>", &c).is_ok());
+    assert!(check_artboard_against_body(r#"{"html":"<p>hi</p>"}"#, &c).is_ok());
+}
+
+async fn make_design(router: &Router, owner: &Value, body: &str, format: &str) -> String {
+    let (st, created) = call(router, "POST", "/api/v2/artifacts", owner,
+        Some(json!({"kind": "design", "title": "Landing", "body": body, "body_format": format}))).await;
+    assert_eq!(st, StatusCode::CREATED, "{created}");
+    created["id"].as_str().unwrap().to_string()
+}
+
+fn design_post(session: &str, agent: &str, change: Value) -> Value {
+    json!({"base_version": 1, "agent_name": agent, "session_id": session, "cost_usd": 0.05,
+           "changes": [{"change": change, "reason": "Made the heading dark"}]})
+}
+
+#[tokio::test]
+async fn design_suggestions_kind_matrix_and_limits() {
+    let (router, _db) = setup().await;
+    let owner = who("ds_owner");
+    let canvas = make_design(&router, &owner, &canvas_body(), "application/vnd.allternit.design+json").await;
+    let base = format!("/api/v2/artifacts/{canvas}/suggestions");
+
+    // A design canvas takes an artboard change and stores it normalised.
+    let change = artboard_change("hero", vec![layer("h1", "hero")], vec![layer("h1", "hero")]);
+    let (st, created) = call(&router, "POST", &base, &owner, Some(design_post("ses_a", "Oki", change))).await;
+    assert_eq!(st, StatusCode::CREATED, "{created}");
+    let item = &created["items"][0];
+    assert_eq!(item["change"]["kind"], "artboard");
+    assert_eq!(item["change"]["artboard"], "hero");
+    assert_eq!(item["change"]["before"]["layers"][0]["id"], "h1");
+    assert_eq!(item["reason"], "Made the heading dark");
+    assert_eq!(item["status"], "pending");
+    let (_, listed) = call(&router, "GET", &base, &owner, None).await;
+    assert_eq!(listed["items"][0]["change"]["layers"][0]["props"]["text"], "Hi");
+
+    // Any other pair is unsupported_kind.
+    let (st, body) = call(&router, "POST", &base, &owner,
+        Some(design_post("ses_a", "Oki", json!({"kind":"text","find":"a","replace":"b"})))).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+    assert_eq!(body["code"], "unsupported_kind");
+    let doc = make(&router, &owner, "doc").await;
+    let (st, body) = call(&router, "POST", &format!("/api/v2/artifacts/{doc}/suggestions"), &owner,
+        Some(design_post("ses_a", "Oki", artboard_change("hero", vec![], vec![])))).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+    assert_eq!(body["code"], "unsupported_kind");
+    let html = make_design(&router, &owner, "<main>Hi</main>", "text/html").await;
+    let (st, body) = call(&router, "POST", &format!("/api/v2/artifacts/{html}/suggestions"), &owner,
+        Some(design_post("ses_a", "Oki", artboard_change("hero", vec![], vec![])))).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+    assert_eq!(body["code"], "unsupported_kind", "an HTML design isn't a canvas yet");
+
+    // Size limits.
+    let many: Vec<Value> = (0..2001).map(|i| layer(&format!("l{i}"), "hero")).collect();
+    let (st, body) = call(&router, "POST", &base, &owner,
+        Some(design_post("ses_a", "Oki", artboard_change("hero", many, vec![])))).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+    assert_eq!(body["code"], "change_too_large");
+    let mut huge = layer("big", "hero");
+    huge["props"]["html"] = json!("x".repeat(2 * 1024 * 1024 + 10));
+    let (st, body) = call(&router, "POST", &base, &owner,
+        Some(design_post("ses_a", "Oki", artboard_change("hero", vec![huge], vec![])))).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+    assert_eq!(body["code"], "change_too_large");
+
+    // Checked against the canvas: the artboard must exist, ids stay unique.
+    let (st, body) = call(&router, "POST", &base, &owner,
+        Some(design_post("ses_a", "Oki", artboard_change("footer", vec![], vec![])))).await;
+    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(body["code"], "unknown_artboard");
+    let (st, body) = call(&router, "POST", &base, &owner,
+        Some(design_post("ses_a", "Oki", artboard_change("hero", vec![layer("p1", "hero")], vec![])))).await;
+    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(body["code"], "layer_id_in_use");
+}
+
+#[tokio::test]
+async fn design_suggestions_respect_artboard_claims() {
+    let (router, db) = setup().await;
+    let owner = who("dc_owner");
+    let canvas = make_design(&router, &owner, &canvas_body(), "application/vnd.allternit.design+json").await;
+    let base = format!("/api/v2/artifacts/{canvas}/suggestions");
+    let presence = format!("/api/v2/artifacts/{canvas}/presence");
+    let claim = |session: &str, name: &str, artboard: Value| {
+        json!({"state":"editing","agent":{"name":name,"session_id":session,"task":"Dark restyle","anchor":{"kind":"artboard","artboard":artboard}}})
+    };
+    let (st, _) = call(&router, "POST", &presence, &owner, Some(claim("ses_oki", "Oki", json!("shape:hero")))).await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+
+    // Another session can't suggest on the held artboard; the holder can, and
+    // anyone can on a free one.
+    let hero = artboard_change("hero", vec![layer("h1", "hero")], vec![layer("h1", "hero")]);
+    let (st, body) = call(&router, "POST", &base, &owner, Some(design_post("ses_ash", "Ash", hero.clone()))).await;
+    assert_eq!(st, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["error"], "artboard_claimed");
+    assert_eq!(body["holder"], json!({"name": "Oki", "session_id": "ses_oki"}));
+    let (st, _) = call(&router, "POST", &base, &owner, Some(design_post("ses_oki", "Oki", hero.clone()))).await;
+    assert_eq!(st, StatusCode::CREATED);
+    let pricing = artboard_change("pricing", vec![], vec![layer("p1", "pricing")]);
+    let (st, _) = call(&router, "POST", &base, &owner, Some(design_post("ses_ash", "Ash", pricing))).await;
+    assert_eq!(st, StatusCode::CREATED);
+
+    // The claim lapses with the heartbeat's 45 s TTL.
+    sqlx::query("UPDATE artifact_presence SET last_seen = now() - interval '60 seconds'")
+        .execute(&db).await.unwrap();
+    let (st, _) = call(&router, "POST", &base, &owner, Some(design_post("ses_ash", "Ash", hero))).await;
+    assert_eq!(st, StatusCode::CREATED);
+}

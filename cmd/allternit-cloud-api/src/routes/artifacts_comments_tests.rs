@@ -272,3 +272,86 @@ async fn presence_expires_leaves_and_purges() {
         .fetch_all(&db).await.unwrap();
     assert_eq!(left, vec![("qb".to_string(),)]);
 }
+
+// ----- Frame claims on agent presence (SPEC-agent-canvas-2026-10-20) -----
+
+#[test]
+fn claimed_artboard_ids() {
+    assert_eq!(claimed_artboard(None).unwrap(), None);
+    assert_eq!(claimed_artboard(Some(&json!({"kind":"block","block":3}))).unwrap(), None);
+    assert_eq!(claimed_artboard(Some(&json!({"artboard":null}))).unwrap(), None);
+    assert_eq!(claimed_artboard(Some(&json!({"artboard":"shape:hero"}))).unwrap().as_deref(), Some("hero"));
+    assert_eq!(claimed_artboard(Some(&json!({"kind":"artboard","artboard":" hero "}))).unwrap().as_deref(), Some("hero"));
+    assert!(claimed_artboard(Some(&json!({"artboard":""}))).is_err());
+    assert!(claimed_artboard(Some(&json!({"artboard":"shape:"}))).is_err());
+    assert!(claimed_artboard(Some(&json!({"artboard":3}))).is_err());
+    assert!(claimed_artboard(Some(&json!({"artboard":"x".repeat(201)}))).is_err());
+}
+
+#[tokio::test]
+async fn artboard_claims_conflict_release_and_expire() {
+    let (router, db) = setup().await;
+    let owner = who("cl_owner", None);
+    let editor = who("cl_editor", None);
+    let id = make(&router, &owner, "design").await;
+    call(&router, "PUT", &format!("/api/v2/artifacts/{id}/sharing"), &owner,
+        Some(json!({"visibility":"people","shares":[{"principal_type":"user","principal_id":"cl_editor","level":"edit"}]}))).await;
+    let path = format!("/api/v2/artifacts/{id}/presence");
+    let beat = |session: &str, name: &str, anchor: Value| {
+        json!({"state":"editing","agent":{"name":name,"session_id":session,"task":"Dark restyle","anchor":anchor}})
+    };
+    let hero = json!({"kind":"artboard","artboard":"shape:hero"});
+
+    // Oki claims Hero; the claim shows as its anchor.
+    let (st, _) = call(&router, "POST", &path, &owner, Some(beat("ses_oki", "Oki", hero.clone()))).await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+    let (_, seen) = call(&router, "GET", &path, &editor, None).await;
+    let oki = seen["users"].as_array().unwrap().iter().find(|u| u["kind"] == "agent").unwrap().clone();
+    assert_eq!(oki["anchor"]["artboard"], "shape:hero");
+
+    // Another live agent session (even another person's agent) gets 409 naming
+    // the holder, with or without the shape: prefix. Its row is not written.
+    let (st, body) = call(&router, "POST", &path, &editor, Some(beat("ses_ash", "Ash", json!({"artboard":"hero"})))).await;
+    assert_eq!(st, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["error"], "artboard_claimed");
+    assert_eq!(body["code"], "artboard_claimed");
+    assert_eq!(body["holder"], json!({"name": "Oki", "session_id": "ses_oki"}));
+    assert!(body["message"].as_str().unwrap().contains("Oki"));
+    let (_, seen) = call(&router, "GET", &path, &owner, None).await;
+    assert!(seen["users"].as_array().unwrap().iter().all(|u| u["user_id"] != "agent:ses_ash:ash"));
+
+    // The holder's own heartbeats keep the claim, also under a new task line;
+    // another frame is free; a heartbeat without an artboard claims nothing.
+    let (st, _) = call(&router, "POST", &path, &owner, Some(beat("ses_oki", "Oki", hero.clone()))).await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+    let (st, _) = call(&router, "POST", &path, &editor, Some(beat("ses_ash", "Ash", json!({"artboard":"pricing"})))).await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+    let (st, _) = call(&router, "POST", &path, &editor, Some(beat("ses_bo", "Bo", json!({"kind":"block","block":1})))).await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+    // Ash moving onto Hero is refused, and Ash keeps Pricing.
+    let (st, _) = call(&router, "POST", &path, &editor, Some(beat("ses_ash", "Ash", hero.clone()))).await;
+    assert_eq!(st, StatusCode::CONFLICT);
+    let (st, _) = call(&router, "POST", &path, &owner, Some(beat("ses_cy", "Cy", json!({"artboard":"pricing"})))).await;
+    assert_eq!(st, StatusCode::CONFLICT);
+
+    // anchor: null releases Hero.
+    let (st, _) = call(&router, "POST", &path, &owner, Some(beat("ses_oki", "Oki", Value::Null))).await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+    let (st, _) = call(&router, "POST", &path, &editor, Some(beat("ses_cy", "Cy", hero.clone()))).await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+
+    // state: left releases too.
+    call(&router, "POST", &path, &editor, Some(json!({"state":"left","agent":{"name":"Cy","session_id":"ses_cy"}}))).await;
+    let (st, _) = call(&router, "POST", &path, &owner, Some(beat("ses_oki", "Oki", hero.clone()))).await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+
+    // A claim lapses when its heartbeat is older than the 45 s TTL.
+    sqlx::query("UPDATE artifact_presence SET last_seen = now() - interval '60 seconds' WHERE user_id = 'agent:ses_oki:oki'")
+        .execute(&db).await.unwrap();
+    let (st, _) = call(&router, "POST", &path, &editor, Some(beat("ses_ash", "Ash", hero))).await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+
+    // A bad artboard id is a 400.
+    let (st, _) = call(&router, "POST", &path, &owner, Some(beat("ses_oki", "Oki", json!({"artboard": 7})))).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+}

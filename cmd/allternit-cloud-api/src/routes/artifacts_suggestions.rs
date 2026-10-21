@@ -1,5 +1,6 @@
 //! Agent suggestions on doc and sheet artifacts ("Watch your agents work",
-//! SPEC-agent-watch-2026-10-20).
+//! SPEC-agent-watch-2026-10-20) and on design canvases ("Agents on one
+//! canvas", SPEC-agent-canvas-2026-10-20).
 //!
 //! An agent proposes edits to existing content as pending suggestions instead
 //! of writing the body directly. Rows live in `artifact_suggestions`
@@ -12,7 +13,16 @@
 //! * `{"kind":"text","block":<int|null>,"find":"..","replace":".."}`
 //! * `{"kind":"block","op":"replace"|"insert_after"|"delete","block":<int>,"markdown":".."}`
 //! * `{"kind":"cell","sheet":<string|null>,"address":"B4","value":".."}`
+//! * `{"kind":"artboard","artboard":"<id>","name":"Hero","frame":{fill,props,w,h}?,
+//!    "layers":[CanvasLayer..],"before":{"frame":{..}?,"layers":[CanvasLayer..]}}`:
+//!   one agent turn on one artboard of a design canvas
+//!   (`application/vnd.allternit.design+json`). `layers` is the artboard's full
+//!   new layer list and `before` what it replaces; the client shows the after
+//!   state "In review" and Keep / Undo resolves it. Refused with 409
+//!   `artboard_claimed` while another live agent session holds the artboard
+//!   (see the presence claims in artifacts_comments.rs).
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use axum::{
@@ -38,10 +48,18 @@ pub(crate) const MAX_REASON_CHARS: usize = 500;
 pub(crate) const MAX_AGENT_NAME_CHARS: usize = 100;
 pub(crate) const MAX_SESSION_ID_CHARS: usize = 200;
 const MAX_SHEET_CHARS: usize = 200;
+/// Artboard, layer and frame-name strings.
+pub(crate) const MAX_ID_CHARS: usize = 200;
+/// `layers` and `before` of one artboard change, as JSON.
+pub(crate) const MAX_ARTBOARD_JSON_BYTES: usize = 2 * 1024 * 1024;
+pub(crate) const MAX_ARTBOARD_LAYERS: usize = 2000;
+const MAX_FRAME_SIDE: f64 = 100_000.0;
+const DESIGN_FORMAT: &str = "application/vnd.allternit.design+json";
 const MAX_RESOLVE_IDS: usize = 500;
 const LIST_CAP: i64 = 500;
-/// 50 changes × 4 fields × 20 000 chars stays well under this.
-const REQUEST_LIMIT: usize = 8 * 1024 * 1024;
+/// 50 changes × 4 fields × 20 000 chars stays well under this, and so do a
+/// few artboard changes at their 2 MB + 2 MB cap.
+const REQUEST_LIMIT: usize = 16 * 1024 * 1024;
 const SUGGESTION_PREFIX: &str = "sug_";
 const STATUSES: [&str; 3] = ["accepted", "rejected", "stale"];
 
@@ -106,8 +124,185 @@ pub(crate) fn normalize_address(address: &str) -> Option<String> {
     Some(a)
 }
 
+fn unsupported_kind(message: impl Into<String>) -> ArtifactError {
+    ArtifactError::coded(StatusCode::BAD_REQUEST, "unsupported_kind", message)
+}
+
+fn too_large(message: impl Into<String>) -> ArtifactError {
+    ArtifactError::coded(StatusCode::BAD_REQUEST, "change_too_large", message)
+}
+
+/// Artboard and layer ids compare without tldraw's `shape:` prefix, which the
+/// app adds to model-written ids when it loads a canvas.
+pub(crate) fn bare_id(id: &str) -> &str {
+    id.strip_prefix("shape:").unwrap_or(id)
+}
+
+fn id_string(value: Option<&Value>, what: &str) -> Result<String> {
+    match value.and_then(Value::as_str).map(str::trim) {
+        Some(s) if !bare_id(s).is_empty() && s.chars().count() <= MAX_ID_CHARS => Ok(s.to_string()),
+        _ => Err(ArtifactError::bad_request(format!(
+            "{what} must be a non-empty string of at most {MAX_ID_CHARS} characters"
+        ))),
+    }
+}
+
+/// An artboard patch: `fill` (string), `props` (object), `w`/`h` (positive
+/// numbers). Other fields are dropped; numbers are kept as sent.
+fn validate_frame(value: Option<&Value>, what: &str) -> Result<Option<Value>> {
+    let map = match value {
+        None | Some(Value::Null) => return Ok(None),
+        Some(Value::Object(map)) => map,
+        Some(_) => return Err(ArtifactError::bad_request(format!("{what} must be an object"))),
+    };
+    let mut out = Map::new();
+    if let Some(fill) = map.get("fill") {
+        match fill.as_str() {
+            Some(f) if f.chars().count() <= MAX_ID_CHARS => out.insert("fill".into(), json!(f)),
+            _ => return Err(ArtifactError::bad_request(format!("{what}.fill must be a colour string"))),
+        };
+    }
+    for side in ["w", "h"] {
+        if let Some(n) = map.get(side) {
+            if !n.as_f64().is_some_and(|v| v.is_finite() && v >= 1.0 && v <= MAX_FRAME_SIDE) {
+                return Err(ArtifactError::bad_request(format!(
+                    "{what}.{side} must be a number from 1 to {MAX_FRAME_SIDE}"
+                )));
+            }
+            out.insert(side.into(), n.clone());
+        }
+    }
+    if let Some(props) = map.get("props") {
+        if !props.is_object() {
+            return Err(ArtifactError::bad_request(format!("{what}.props must be an object")));
+        }
+        out.insert("props".into(), props.clone());
+    }
+    Ok(Some(Value::Object(out)))
+}
+
+/// A layer list for one artboard: at most 2000 layers and 2 MB of JSON, each
+/// an object with an `id` (unique in the list), a `type` and `artboard` equal
+/// to the change's artboard. Layers are stored verbatim (CanvasLayer).
+fn validate_layers(value: Option<&Value>, artboard: &str, what: &str) -> Result<Vec<Value>> {
+    let Some(Value::Array(layers)) = value else {
+        return Err(ArtifactError::bad_request(format!("{what} must be an array of layers")));
+    };
+    if layers.len() > MAX_ARTBOARD_LAYERS {
+        return Err(too_large(format!("{what} is limited to {MAX_ARTBOARD_LAYERS} layers")));
+    }
+    let mut seen = HashSet::new();
+    for (i, layer) in layers.iter().enumerate() {
+        let Some(map) = layer.as_object() else {
+            return Err(ArtifactError::bad_request(format!("{what}[{i}] must be a layer object")));
+        };
+        let id = id_string(map.get("id"), &format!("{what}[{i}].id"))?;
+        if map.get("type").and_then(Value::as_str).map_or(true, |t| t.trim().is_empty()) {
+            return Err(ArtifactError::bad_request(format!("{what}[{i}].type must be a non-empty string")));
+        }
+        match map.get("artboard").and_then(Value::as_str) {
+            Some(a) if bare_id(a) == bare_id(artboard) => {}
+            _ => {
+                return Err(ArtifactError::bad_request(format!(
+                    "{what}[{i}].artboard must be \"{artboard}\": a change holds one artboard's layers"
+                )))
+            }
+        }
+        if !seen.insert(bare_id(&id).to_string()) {
+            return Err(ArtifactError::bad_request(format!("{what} uses the layer id {id} twice")));
+        }
+    }
+    Ok(layers.clone())
+}
+
+fn validate_artboard_change(map: &Map<String, Value>) -> Result<Value> {
+    let artboard = id_string(map.get("artboard"), "change.artboard")?;
+    let layers_json = map.get("layers").map(Value::to_string).unwrap_or_default();
+    if layers_json.len() > MAX_ARTBOARD_JSON_BYTES {
+        return Err(too_large("change.layers is limited to 2 MB of JSON"));
+    }
+    let layers = validate_layers(map.get("layers"), &artboard, "change.layers")?;
+    let frame = validate_frame(map.get("frame"), "change.frame")?;
+    let Some(Value::Object(before)) = map.get("before") else {
+        return Err(ArtifactError::bad_request(
+            "change.before must be {frame?, layers}: the artboard as you read it",
+        ));
+    };
+    if Value::Object(before.clone()).to_string().len() > MAX_ARTBOARD_JSON_BYTES {
+        return Err(too_large("change.before is limited to 2 MB of JSON"));
+    }
+    let before_layers = validate_layers(before.get("layers"), &artboard, "change.before.layers")?;
+    let before_frame = validate_frame(before.get("frame"), "change.before.frame")?;
+    let mut out = Map::new();
+    out.insert("kind".into(), json!("artboard"));
+    out.insert("artboard".into(), json!(artboard));
+    match map.get("name") {
+        None | Some(Value::Null) => {}
+        Some(Value::String(n)) if n.chars().count() <= MAX_ID_CHARS => {
+            out.insert("name".into(), json!(n.trim()));
+        }
+        Some(_) => {
+            return Err(ArtifactError::bad_request(format!(
+                "change.name must be a string of at most {MAX_ID_CHARS} characters"
+            )))
+        }
+    }
+    if let Some(frame) = frame {
+        out.insert("frame".into(), frame);
+    }
+    out.insert("layers".into(), Value::Array(layers));
+    let mut b = Map::new();
+    if let Some(frame) = before_frame {
+        b.insert("frame".into(), frame);
+    }
+    b.insert("layers".into(), Value::Array(before_layers));
+    out.insert("before".into(), Value::Object(b));
+    Ok(Value::Object(out))
+}
+
+/// Check an artboard change against the canvas it targets: the artboard must
+/// exist, and its new layers must not reuse ids of layers on other artboards.
+/// A body that isn't a v2 canvas yet (empty, or not JSON) is not checked; the
+/// client marks a change for a missing artboard stale.
+pub(crate) fn check_artboard_against_body(body: &str, change: &Value) -> Result<()> {
+    let Ok(doc) = serde_json::from_str::<Value>(body) else { return Ok(()) };
+    if doc.get("v").and_then(Value::as_i64) != Some(2) || doc.get("kind").and_then(Value::as_str) != Some("canvas") {
+        return Ok(());
+    }
+    let artboard = bare_id(change["artboard"].as_str().unwrap_or_default());
+    let exists = doc["artboards"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .any(|a| a.get("id").and_then(Value::as_str).map(bare_id) == Some(artboard));
+    if !exists {
+        return Err(ArtifactError::unprocessable(
+            "unknown_artboard",
+            format!("This design has no artboard {artboard}; read it again and use an artboard id from it"),
+        ));
+    }
+    let elsewhere: HashSet<&str> = doc["layers"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|l| l.get("artboard").and_then(Value::as_str).map(bare_id) != Some(artboard))
+        .filter_map(|l| l.get("id").and_then(Value::as_str).map(bare_id))
+        .collect();
+    for layer in change["layers"].as_array().into_iter().flatten() {
+        let id = bare_id(layer["id"].as_str().unwrap_or_default());
+        if elsewhere.contains(id) {
+            return Err(ArtifactError::unprocessable(
+                "layer_id_in_use",
+                format!("The layer id {id} is already used on another artboard; give the layer a new id"),
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Validate one change against the artifact kind and return its normalised
-/// JSON. Docs take `text` and `block` changes; sheets take `cell` changes.
+/// JSON. Docs take `text` and `block` changes, sheets take `cell` changes and
+/// design canvases take `artboard` changes; any other pair is `unsupported_kind`.
 pub(crate) fn validate_change(artifact_kind: &str, change: &Value) -> Result<Value> {
     let Some(map) = change.as_object() else {
         return Err(ArtifactError::bad_request("change must be a JSON object"));
@@ -116,17 +311,19 @@ pub(crate) fn validate_change(artifact_kind: &str, change: &Value) -> Result<Val
     let allowed = match artifact_kind {
         "doc" => matches!(kind, "text" | "block"),
         "sheet" => kind == "cell",
+        "design" => kind == "artboard",
         _ => false,
     };
-    if !matches!(kind, "text" | "block" | "cell") {
-        return Err(ArtifactError::bad_request("change.kind must be one of text, block, cell"));
+    if !matches!(kind, "text" | "block" | "cell" | "artboard") {
+        return Err(unsupported_kind("change.kind must be one of text, block, cell, artboard"));
     }
     if !allowed {
-        return Err(ArtifactError::bad_request(format!(
+        return Err(unsupported_kind(format!(
             "a {kind} change does not apply to a {artifact_kind} artifact"
         )));
     }
     match kind {
+        "artboard" => validate_artboard_change(map),
         "text" => Ok(json!({
             "kind": "text",
             "block": block_index(map, true)?,
@@ -208,16 +405,33 @@ pub(crate) fn validate_cost(cost: Option<f64>) -> Result<Option<f64>> {
     }
 }
 
-fn check_editable_kind(kind: &str) -> Result<()> {
-    if matches!(kind, "doc" | "sheet") {
+/// Docs, sheets, and design artifacts whose current body is a canvas
+/// (`application/vnd.allternit.design+json`; an older HTML design is not).
+fn check_editable_kind(kind: &str, body_format: &str) -> Result<()> {
+    let ok = match kind {
+        "doc" | "sheet" => true,
+        "design" => body_format == DESIGN_FORMAT,
+        _ => false,
+    };
+    if ok {
         Ok(())
     } else {
-        Err(ArtifactError::coded(
-            StatusCode::BAD_REQUEST,
-            "unsupported_kind",
-            "Suggestions work on doc and sheet artifacts only",
-        ))
+        Err(unsupported_kind("Suggestions work on doc and sheet artifacts and on design canvases only"))
     }
+}
+
+/// The current version's body format, and its body for a design (the
+/// artboard checks read it).
+async fn current_body(db: &PgPool, artifact_id: &str) -> Result<(String, Option<String>)> {
+    let row: Option<(String, Option<String>)> = sqlx::query_as(
+        "SELECT v.body_format, CASE WHEN a.kind = 'design' THEN v.body END \
+         FROM artifacts a JOIN artifact_versions v ON v.artifact_id = a.id AND v.version = a.current_version \
+         WHERE a.id = $1",
+    )
+    .bind(artifact_id)
+    .fetch_optional(db)
+    .await?;
+    row.ok_or_else(ArtifactError::not_found)
 }
 
 fn check_status(status: &str) -> Result<()> {
@@ -312,7 +526,8 @@ async fn create_suggestions(
     let me = caller(&state, &headers).await?;
     let (row, access) = load_with_access(&state.db, &id, &me).await?;
     require(access, Access::Edit, "Suggesting edits")?;
-    check_editable_kind(&row.kind)?;
+    let (body_format, design_body) = current_body(&state.db, &row.id).await?;
+    check_editable_kind(&row.kind, &body_format)?;
     let input: CreateSuggestions = parse_json(&raw)?;
     if input.base_version < 1 {
         return Err(ArtifactError::bad_request("base_version must be a positive integer"));
@@ -340,6 +555,33 @@ async fn create_suggestions(
             }
         }
         prepared.push((change, reason.map(str::to_string)));
+    }
+    // Artboard changes: the frame must exist, and no other live agent session
+    // may hold it.
+    let own_row = super::artifacts_comments::agent_presence_id(session_id.as_deref(), &agent_name);
+    let mut checked = HashSet::new();
+    for (change, _) in &prepared {
+        if change["kind"] != "artboard" {
+            continue;
+        }
+        if let Some(body) = design_body.as_deref() {
+            check_artboard_against_body(body, change)?;
+        }
+        let artboard = bare_id(change["artboard"].as_str().unwrap_or_default()).to_string();
+        if !checked.insert(artboard.clone()) {
+            continue;
+        }
+        if let Some(holder) = super::artifacts_comments::artboard_holder(
+            &state.db,
+            &row.id,
+            &artboard,
+            session_id.as_deref(),
+            &own_row,
+        )
+        .await?
+        {
+            return Err(super::artifacts_comments::artboard_claimed(holder));
+        }
     }
 
     let mut tx = state.db.begin().await?;
