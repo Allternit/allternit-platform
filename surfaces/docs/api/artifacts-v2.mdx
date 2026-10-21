@@ -409,7 +409,7 @@ On a design canvas, an agent claims an artboard before it changes it, so two age
 
 ## Suggestions
 
-Agents propose edits to doc and sheet artifacts, and frame changes to design canvases, as pending suggestions instead of writing a new version. The user accepts or rejects each one. Suggestions are stored in `artifact_suggestions` (migration `096_artifact_agent_watch.sql`).
+Agents propose edits to doc and sheet artifacts, and frame changes to design canvases, as pending suggestions instead of writing a new version. The user accepts or rejects each one. Suggestions are stored in `artifact_suggestions` (migration `098_artifact_agent_watch.sql`).
 
 | Method and path | Needs | Body | Returns |
 |---|---|---|---|
@@ -502,7 +502,7 @@ Errors use the standard Cloud API shape `{ "error", "message", "code" }`. Artifa
 
 ## Storage
 
-The schema is `cmd/allternit-cloud-api/migrations_pg/085_artifacts_v2.sql`. It creates `artifacts`, `artifact_versions`, `artifact_shares` and `org_artifact_settings`, plus `artifact_storage` and `artifact_consents` (used by the [page runtime](/api/artifact-runtime)) and `artifact_comments` for comments. `086_artifact_presence.sql` adds `artifact_presence`, and `096_artifact_agent_watch.sql` adds the agent presence columns, `artifact_comments.agent_name` and `artifact_suggestions`. The migration is idempotent and is applied to production by hand.
+The schema is `cmd/allternit-cloud-api/migrations_pg/085_artifacts_v2.sql`. It creates `artifacts`, `artifact_versions`, `artifact_shares` and `org_artifact_settings`, plus `artifact_storage` and `artifact_consents` (used by the [page runtime](/api/artifact-runtime)) and `artifact_comments` for comments. `086_artifact_presence.sql` adds `artifact_presence`, and `098_artifact_agent_watch.sql` adds the agent presence columns, `artifact_comments.agent_name` and `artifact_suggestions`. The migration is idempotent and is applied to production by hand.
 
 ## Navigation presentation
 
