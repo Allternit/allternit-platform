@@ -165,6 +165,10 @@
         {
           "on": "2026-10-22",
           "note": "Choosing a bot in the Bots rail (and finishing main bot setup) opens its main chat on the live stage instead of the bot screen; the bot screen is one click away (thread-top avatar, Back) (Eoj)."
+        },
+        {
+          "on": "2026-10-22",
+          "note": "No Bot / Chat switch: the bot stands big beside its conversation; sending, starting a task or scrolling flies it into the thread-top pill avatar (not a smaller copy below), and a tap on that avatar brings it back (Eoj)."
         }
       ],
       "evidence": [

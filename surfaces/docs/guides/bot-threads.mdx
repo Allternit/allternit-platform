@@ -7,33 +7,34 @@ A bot can have several threads. Each thread tracks an objective, success criteri
 
 ## Your bot's stage
 
-A bot's chat and its threads open on the bot itself, full screen, on a soft wash of the bot's own color. Choosing a bot in the Bots rail (or finishing main bot setup) lands here, on its main chat. The bot floats and leans toward your pointer. Around it is what you need to act on:
+A bot's chat and its threads open on the bot itself, big, on a soft wash of the bot's own color, with its conversation beside it. Choosing a bot in the Bots rail (or finishing main bot setup) lands here, on its main chat. The bot floats and leans toward your pointer. Under it:
 
-- **What it's saying.** Its latest reply, or the words as they stream in. When replies came in while you were away, the bubble says **New since you were last here**. A bot nobody has spoken to shows its greeting and starter suggestions.
-- **Needs you.** Approvals and the questions it asked, answered right on the stage.
-- **Plan and steps.** While the bot has an unfinished checklist, its steps show with the current one marked. While it works on its computer, that computer shows live behind the bot, with **Stop** and **Take over**.
 - **What it made.** A montage that plays through the files and results from this thread and the steps it finished, with the first lines of each document. Click a frame to open it in the thread pane.
 - **Up next.** The bot's next routine.
 
+Beside it is the conversation itself: its greeting and starter suggestions for a new chat, its replies, and approvals and questions to answer. While the bot has an unfinished checklist, its steps show above the conversation with the current one marked. While it works on its computer, that computer shows live in the bot's place, with **Stop** and **Take over**.
+
+**When you send a message, start a task or scroll the conversation, the bot flies up into the thread top** and becomes the avatar beside its name and the chat's name. The conversation then takes the screen. **Tap that avatar to bring the bot back out.** The bot screen is still one click away from the gear in the thread top, or **Back**.
+
 **Tap the bot to talk** (voice starts in this chat). **Drop a file or link on the bot** to hand it work, or use **choose a file** (on phones, **Hand it a file**). The bot asks how to start:
 
-- **Plan it first** sends the work in plan mode. The bot lays out the steps and waits for your go-ahead, which arrives as an approval on the stage.
+- **Plan it first** sends the work in plan mode. The bot lays out the steps and waits for your go-ahead, which arrives as an approval in the conversation.
 - **Just do it** sends it as normal work.
 - **Ask me questions** asks the bot to ask what it needs before it starts.
 
 You can add a note before you pick. Files travel the same way as [composer attachments](/guides/attachments): documents as text, images as images, and video, audio and other files as links to your Allternit Cloud storage.
 
-The written conversation is one click away: switch **Bot / Chat** in the thread top. The choice is remembered for that chat while the app is open. The composer is the same in both views. Channel threads, vendor look-pack threads and chats embedded in a project panel show the conversation only. On phones (the `ai.allternit.com` phone layout and the `m.allternit.com` PWA) and in narrow windows, the cards run under the bot. If your system is set to reduce motion, the bot and its cards stay still.
+Channel threads, vendor look-pack threads and chats embedded in a project panel show the conversation only. On phones (the `ai.allternit.com` phone layout and the `m.allternit.com` PWA) and in narrow windows, the conversation runs under the bot, and the bot docks the same way. If your system is set to reduce motion, the bot moves to the thread top without flying and its cards stay still.
 
 ### For developers
 
-- `src/components/bots/stage/live/BotLiveStage.tsx` renders the stage; `stage-model.ts` holds the pure parts. `stageSpeech` decides what the bubble says (voice, then streaming text, then the working line, then the last reply, folded history, the greeting, the objective). `pendingApprovals` reads pending approval rows. `visibleSteps` shows `thread.todo` while something is unfinished. `montageFrames` builds frames from `collectThreadArtifacts` plus finished steps.
-- `BotModeRail`'s `openBot` opens `bot-chat-session` with `pendingBotChatSessionId(botId)` at once (origin `bot-home`, so Back returns to the bot screen), then follows the id `openBotCanonicalChat` resolves or creates.
-- `BotChatSessionView` shows the stage when `useBotStageView(sessionId ?? botId)` (`stage-view.ts`) is `stage`. The default is the stage when there is a bot, the view isn't embedded, and the thread isn't a channel or vendor-pack thread. `StageViewSwitch` sits in the `ThreadHeader` children.
+- `src/components/bots/stage/live/BotLiveStage.tsx` renders the stage; `conversation` is the view's transcript, shown beside the bot. `stage-model.ts` holds the pure parts: `visibleSteps` shows `thread.todo` while something is unfinished, `montageFrames` builds frames from `collectThreadArtifacts` plus finished steps (with document excerpts via `plainSpeech`).
+- Docking: `BotChatSessionView` keeps `docked` / `docking` / `fromDock` per open chat. A send (`sendCount`), a hand-off or `onDockIntent` (a wheel or touch scroll on the conversation) sets `docking`; the stage flies the bot to `dockTarget()` (the `[data-thread-pill-avatar]` rect) with a FLIP (`animate` x/y/scale, 0.44 s) and calls `onDocked`. `ThreadHeader` hides that avatar while the bot is out (`avatarAway`) and calls `onAvatar` on tap, which mounts the stage with `fromDock` so the bot flies back out.
 - Hand-offs: `src/lib/attachments/handoff.ts`. `handoffFromDataTransfer` reads files, then `text/uri-list`, then http(s) links in plain text. `prepareHandoff(choice, items, note)` builds the message with `attachmentsAsText`, `fileLinksAsText` and `toOutgoingImages`. `handleSend(text, propagateError, { files, plan })` passes `files` to `sendMessageStream`. With `plan` it sets `metadata.codePermissionMode` to `plan` for that turn (the same permission mode Code and Cowork use), and the next ordinary send sets it back to `default`. The composer's **Attach** action opens the same hand-off.
-- The live computer behind the bot is `ComputerViewport` with pane key `bot-stage:BOT_ID`, shown only while the thread is busy, the bot's computer is running and the side pane is closed.
-- `stageStatus` and `startVoiceWith` moved to `src/components/bots/stage/stage-status.ts`; `BotStage` re-exports them.
-- Stories: `BotLiveStage.stories.tsx` (Briefing, Working, Done, Voice). Tests: `stage-model.test.ts`, `handoff.test.ts`, `BotChatSessionView.stage.test.tsx` (desktop, web phone and PWA).
+- `BotModeRail`'s `openBot` opens `bot-chat-session` with `pendingBotChatSessionId(botId)` at once (origin `bot-home`, so Back returns to the bot screen), then follows the id `openBotCanonicalChat` resolves or creates.
+- The live computer in the bot's place is `ComputerViewport` with pane key `bot-stage:BOT_ID`, shown only while the thread is busy, the bot's computer is running and the side pane is closed.
+- `stageStatus` and `startVoiceWith` live in `src/components/bots/stage/stage-status.ts`; `BotStage` re-exports them.
+- Stories: `BotLiveStage.stories.tsx` (Stage, Working, Voice). Tests: `stage-model.test.ts`, `handoff.test.ts`, `BotChatSessionView.stage.test.tsx` (desktop, web phone and PWA).
 
 ## Standing and task threads
 
