@@ -19,6 +19,16 @@ use serde_json::json;
 use std::{collections::HashMap, convert::Infallible, time::Duration};
 use tracing::{info, warn};
 
+/// Catalog defaults older builds wrote onto agent rows that the gizzi runtime
+/// no longer serves (ProviderModelNotFoundError). A row still carrying one is
+/// treated as "no model configured" so the turn takes the current default.
+/// Migrations V161/V271 repoint stored rows; this covers rows written back by
+/// stale clients.
+fn is_retired_default_model(provider: &str, model: &str) -> bool {
+    let model = model.strip_prefix(&format!("{provider}/")).unwrap_or(model);
+    provider == "openai" && model == "gpt-5-mini"
+}
+
 /// Parse a frontend model reference into a Gizzi `{ providerID, modelID }`
 /// object. Accepts `provider/model`, `provider::model`, or a bare model id.
 /// Falls back to the agent's configured provider/model when available.
@@ -40,7 +50,9 @@ fn parse_model_ref(
     }
 
     if let (Some(provider), Some(model)) = (agent_provider, agent_model) {
-        return json!({ "providerID": provider, "modelID": model });
+        if !is_retired_default_model(provider, model) {
+            return json!({ "providerID": provider, "modelID": model });
+        }
     }
 
     let (provider, model) = crate::default_model();
@@ -612,6 +624,18 @@ fn stream_error(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn retired_row_default_falls_back_to_platform_default() {
+        let (provider, model) = crate::default_model();
+        let expected = json!({ "providerID": provider, "modelID": model });
+        assert_eq!(parse_model_ref(None, Some("openai"), Some("openai/gpt-5-mini")), expected);
+        assert_eq!(parse_model_ref(None, Some("openai"), Some("gpt-5-mini")), expected);
+        assert_eq!(
+            parse_model_ref(None, Some("openai"), Some("gpt-4o")),
+            json!({ "providerID": "openai", "modelID": "gpt-4o" })
+        );
+    }
 
     #[test]
     fn empty_idle_turn_is_error_not_complete() {
