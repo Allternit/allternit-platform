@@ -11,6 +11,7 @@
 //! | `held_send`   | the same, when the approval holds a channel post (the     | approve = send         |
 //! |               | text is sent as soon as it is approved)                   |                        |
 //! | `thread`      | `bot_threads` in `needs_you` / `review` with no approval  | open                   |
+//! | `suggestion`  | `bot_threads` in `proposed` (a bot's suggested task)      | approve = go ahead / deny = not now |
 //! | `missed_call` | `call.ended` events that were missed                      | call back (client)     |
 //! | `unanswered`  | latest inbound channel message nobody answered in N min   | reply (client)         |
 //! | `failed_send` | `channel_message_log` outbound `failed` / `unconfirmed`   | open                   |
@@ -138,6 +139,24 @@ pub fn collect(conn: &Connection, user_id: &str, unanswered_min: i64) -> rusqlit
             with_provenance(&mut it, &detail);
             out.push(it);
         }
+    }
+
+    // Tasks a bot suggested, waiting for a go-ahead.
+    let mut st = conn.prepare(
+        "SELECT t.id, t.bot_id, t.title, t.status_line, t.created_at, COALESCE(json_extract(a.config, '$.botProfile.displayName'), a.name, '')
+         FROM bot_threads t LEFT JOIN agents a ON a.id = t.bot_id
+         WHERE t.user_id = ?1 AND t.status = 'proposed' AND t.incognito = 0
+         ORDER BY t.created_at DESC LIMIT ?2",
+    )?;
+    for r in st.query_map(params![user_id, PER_SOURCE], |r| {
+        Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, Option<String>>(3)?, r.get::<_, String>(4)?, r.get::<_, String>(5)?))
+    })? {
+        let (id, bot, title, why, at, bot_name) = r?;
+        let summary = match why.filter(|w| !w.is_empty()) {
+            Some(w) => format!("{bot_name} suggests: {title} ({})", snippet(&w, 100)),
+            None => format!("{bot_name} suggests: {title}"),
+        };
+        out.push(item(format!("suggestion:{id}"), "suggestion", "thread", &bot, &bot_name, Some(&id), None, summary, &at, ("approve", "Go ahead"), true));
     }
 
     // Threads waiting on the owner that have no approval card of their own.
@@ -453,6 +472,19 @@ async fn approve(State(state): State<Arc<AppState>>, Extension(user): Extension<
                 return err(StatusCode::BAD_REQUEST, "BAD_DECISION", "dismiss the item to refuse the message");
             }
             deliver_peer_held(&state, &user.user_id, &id).await
+        }
+        "suggestion" => {
+            let tid = id.trim_start_matches("suggestion:").to_string();
+            let done = if approve {
+                let rt = Arc::new(crate::bot_routing::GizziRouter { db: state.db.clone() });
+                crate::bot_suggestions::approve(&state.db, rt, &user.user_id, &tid).await
+            } else {
+                crate::bot_suggestions::decline(&state.db, &user.user_id, &tid)
+            };
+            match done {
+                Ok(t) => Ok(json!({ "state": if approve { "approved" } else { "declined" }, "thread": t })),
+                Err((status, e)) => Err(err(status, "SUGGESTION", &e)),
+            }
         }
         "factory_approval" => {
             let aid = id.trim_start_matches("factory:");

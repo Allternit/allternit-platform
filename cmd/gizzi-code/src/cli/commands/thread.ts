@@ -35,6 +35,8 @@ const GROUP: Record<string, string> = {
   idle: "idle",
   done: "resolved",
   failed: "resolved",
+  proposed: "waiting",
+  declined: "resolved",
 }
 
 export function formatThreadRows(threads: PlatformThread[]): string[] {

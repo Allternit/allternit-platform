@@ -23,6 +23,8 @@ export type ThreadStatus =
   | "failed"
   | "paused"
   | "idle"
+  | "proposed"
+  | "declined"
 
 export interface PlatformThread {
   id: string

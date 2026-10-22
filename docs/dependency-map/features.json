@@ -185,6 +185,14 @@
         {
           "on": "2026-10-22",
           "note": "Bot colour comes from the avatar art (bot-art-color.ts), so the stage, pill and bubbles match the bot. The thread-top pill shows a status word (live-status.ts); a running thread shows a task card (ThreadTaskCard); Tasks lists subtasks under the running step and an Up next list. Phone gets a Needs you sheet. Project home uses the shared launch layout (BaseProjectView launchLayout). Voice sessions show hand-off chips (ai #732)."
+        },
+        {
+          "on": "2026-10-22",
+          "note": "Bots can suggest tasks (gizzi suggest_task, app bot chats only): a task thread in status proposed (group waiting) that runs nothing until the user answers Go ahead (approve: the work starts, result posted back to the chat it came from) or Not now (declined, resolved). Shown on the bot stage, thread top, Threads and the Needs you inbox (kind suggestion); max 3 open per bot (bot_suggestions.rs) (Eoj)."
+        },
+        {
+          "on": "2026-10-22",
+          "note": "Opening a bot reuses only its main chat (pin or botCanonicalFor), never a thread, group chat or companion chat that carries its agentId; such stale pins are re-pointed when read. Fixes A:// opening the wrong chat from Bots home, the phone drawer, Home Screen icons and finished setup (Eoj)."
         }
       ],
       "evidence": [

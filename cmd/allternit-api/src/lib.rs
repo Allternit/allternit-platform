@@ -71,6 +71,7 @@ pub mod routine_local_scheduler;
 pub mod agent_gateway_routes;
 pub mod thread_routes;
 pub mod bot_routing;
+pub mod bot_suggestions;
 pub mod gateway_routing;
 pub mod gateway_connect;
 pub mod gateway_runner;

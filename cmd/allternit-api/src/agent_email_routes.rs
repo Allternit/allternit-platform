@@ -634,7 +634,7 @@ fn sender_has_thread(conn: &rusqlite::Connection, agent_id: &str, from_lower: &s
     let prefix = format!("email:{from_lower}:");
     conn.query_row(
         "SELECT count(*) FROM bot_threads
-         WHERE bot_id = ?1 AND status NOT IN ('done', 'failed')
+         WHERE bot_id = ?1 AND status NOT IN ('done', 'failed', 'declined')
            AND substr(json_extract(origin, '$.channelKey'), 1, length(?2)) = ?2",
         params![agent_id, prefix],
         |row| row.get::<_, i64>(0),
@@ -654,7 +654,7 @@ fn email_bot_thread(db: &crate::db::DbHandle, agent_id: &str, from: &str, subjec
     db.connect()
         .ok()?
         .query_row(
-            "SELECT id FROM bot_threads WHERE bot_id = ?1 AND json_extract(origin, '$.channelKey') = ?2 AND status NOT IN ('done', 'failed') ORDER BY updated_at DESC LIMIT 1",
+            "SELECT id FROM bot_threads WHERE bot_id = ?1 AND json_extract(origin, '$.channelKey') = ?2 AND status NOT IN ('done', 'failed', 'declined') ORDER BY updated_at DESC LIMIT 1",
             params![agent_id, key],
             |r| r.get(0),
         )

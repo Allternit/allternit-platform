@@ -103,13 +103,29 @@ Type to filter by title. Use the arrow keys and Enter, or click; **Esc** closes.
 
 | Server status | Panel group |
 | --- | --- |
-| `needs_you`, `blocked`, `review` | Waiting on you |
+| `needs_you`, `blocked`, `review`, `proposed` | Waiting on you |
 | `working`, `planning` | Working |
 | `queued` | Queued |
 | `idle`, `paused` | Idle |
-| `done`, `failed` | Resolved |
+| `done`, `failed`, `declined` | Resolved |
 
 Checklist progress is reported as completed steps out of total steps. Review means the result needs attention; it is not a claim that the task has been approved. Use Stop on an active turn to interrupt execution, including a turn started by the server. Stopping a turn and resolving a task are separate actions.
+
+## Tasks your bot suggests
+
+A bot can notice work worth doing that you didn't ask for (a follow-up, a fix, something coming up) and suggest it instead of doing it. Nothing runs until you answer.
+
+- **Where you see it.** The bot's [stage](#your-bots-stage) shows a **Duet suggests** card with the task, the reason, and **Go ahead** / **Not now**. The suggestion is also a thread: it shows in the bot's **Threads** as **Suggested**, its thread top has the same two buttons, and your [Needs you inbox](/guides/needs-you-inbox) lists it with **Go ahead** and **Not now**. The same controls are on Desktop, the `ai.allternit.com` phone layout and the `m.allternit.com` PWA.
+- **Go ahead.** The work starts in that thread. When it finishes, the thread moves to **Ready for review** with the result as its summary, and the result is posted back into the chat the suggestion came from.
+- **Not now.** The suggestion closes as **Not now** (`declined`) and moves to Resolved.
+- **Limits.** A bot can have three suggestions waiting at once. Suggesting the same title again returns the open one.
+
+### For developers (suggestions)
+
+- Bots suggest with the gizzi tool `suggest_task` (`{title, objective, why?}`), offered only in an app bot's own chat (`cmd/gizzi-code/src/runtime/tools/builtins/suggest-task.ts`).
+- Server: `cmd/allternit-api/src/bot_suggestions.rs`. A suggestion is a task thread in status `proposed` (group `waiting`) with `createdBy: "bot"` and `origin.channel: "suggestion"`; its session holds the suggestion as a seeded note. The reason is the thread's `statusLine`. Events: `thread.proposed`, then `thread.started` or `thread.declined`.
+- Inbox items have kind `suggestion` (`inbox_needs.rs`); approve runs Go ahead, `decision: "deny"` runs Not now.
+- Client: `threadApi.approve` / `threadApi.decline` (`src/lib/bots/threads.ts`), the stage card (`suggestions` on `BotLiveStage`, `suggestedThreads` in `stage-model.ts`), and the thread top buttons (`ThreadHeader`).
 
 ## Bots handing work to other bots
 
@@ -163,6 +179,9 @@ These authenticated routes belong to the private Allternit API data plane, norma
 | GET | `/api/v1/threads/:id/events` | Read lifecycle events. |
 | POST | `/api/v1/bot-routing/roster` | `{sessionId}` → the bot behind a bot chat session and the account's other bots. 404 when the session is not a bot's chat. |
 | POST | `/api/v1/bot-routing/message` | `{sessionId, target, message, waitSeconds?, idempotencyKey?}` plus an optional `traceparent` header → start or continue the target bot's task thread; returns `status` (`done` with `reply`, `started`, or `failed`), `threadId`, `bot` and `receipt` (`{state, hopId, reason?}`). A replayed `idempotencyKey` returns the earlier result with `replayed: true`. 429 when the loop guard holds the hand-off. |
+| POST | `/api/v1/bot-routing/suggest` | `{sessionId, title, objective, why?}` → open a suggestion for the bot behind the session: a task thread in status `proposed`. Returns `{status: "proposed", threadId, existing}`. 429 when the bot already has three suggestions waiting. |
+| POST | `/api/v1/threads/:id/approve` | Go ahead with a suggestion: the thread goes `working` and the work starts. 409 when it was already answered. |
+| POST | `/api/v1/threads/:id/decline` | Not now: the suggestion resolves as `declined`. |
 | GET | `/api/v1/threads/:id/timeline` | The thread's span tree: `{threadId, traceIds, spans: [{kind: hop \| event \| generation, state, latencyMs, model, tokensIn, tokensOut, children}]}`. |
 
 Continue with [project coordination](/guides/project-coordination) or [artifact modes](/guides/artifact-modes).
