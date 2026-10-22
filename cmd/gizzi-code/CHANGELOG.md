@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## 2.2.10 (2026-10-22)
+
+### Added
+- `suggest_task`: in an app bot's own chat, the bot can suggest a task to its
+  user. The task waits as a `proposed` thread until the user says Go ahead (the
+  work runs in that thread and the result comes back to the chat) or Not now.
+- `pane_artifact` has an `open` action, so agents open attached files themselves.
+- Thread statuses `proposed` and `declined` in the threads client and `gizzi thread`.
+
+### Changed
+- Typecheck and lint run on TypeScript 7 (native compiler).
+
 ## 2.2.9 (2026-10-21)
 
 ### Added
