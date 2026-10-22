@@ -10,7 +10,6 @@
         "forceConsistentCasingInFileNames": true,
         "noEmit": false,
         "allowImportingTsExtensions": false,
-        "baseUrl": ".",
         "outDir": "dist"
     },
     "include": ["**/*.ts", "**/*.tsx"],

@@ -22,7 +22,7 @@
     "@allternit/types": "workspace:*"
   },
   "devDependencies": {
-    "typescript": "^5.3.0",
+    "typescript": "^6.0.3",
     "tsx": "^4.0.0",
     "@types/node": "^20.0.0"
   }

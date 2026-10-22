@@ -23,7 +23,7 @@
     "@allternit/sdk": "file:../../../../sdk/allternit-sdk"
   },
   "devDependencies": {
-    "typescript": "*",
+    "typescript": "^6.0.3",
     "zod": "4.3.6"
   }
 }

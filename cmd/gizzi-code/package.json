@@ -87,7 +87,7 @@
     "drizzle-orm": "1.0.0-beta.12-a5629fb",
     "fflate": "^0.8.2",
     "supports-hyperlinks": "^4.4.0",
-    "typescript": "*",
+    "typescript": "^6.0.3",
     "vscode-languageserver-types": "3.17.5",
     "why-is-node-running": "3.2.2",
     "zod-to-json-schema": "3.24.5"
