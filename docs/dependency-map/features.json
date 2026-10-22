@@ -114,7 +114,8 @@
         "allternit/cmd/allternit-api/src/thread_*",
         "allternit/cmd/gizzi-code/src/runtime/bots",
         "allternit/cmd/allternit-api/src/computer_*",
-        "allternit-ai/src/components/computers"
+        "allternit-ai/src/components/computers",
+        "allternit-ai/src/lib/attachments"
       ],
       "decisions": [
         {
@@ -156,6 +157,10 @@
         {
           "on": "2026-10-20",
           "note": "Routines → Calendar is now the editable scheduler (RoutineScheduler/RoutineEditor): Day default, click a slot to add, click to edit, drag to move; saves the cron in place."
+        },
+        {
+          "on": "2026-10-21",
+          "note": "Bot chats and threads open on the live bot stage (BotLiveStage): the bot full screen on a wash of its color, with its latest words, approvals and questions answered in place, its steps and live computer while it works, a montage of what it made, and its next routine. Dropping a file or link on the bot (or Attach) hands it work: Plan it first (plan permission mode for that turn), Just do it, or Ask me questions. The written conversation is one click away (Bot / Chat in the thread top). Bot chats can now send files (Eoj)."
         }
       ],
       "evidence": [
@@ -869,6 +874,10 @@
         {
           "on": "2026-10-21",
           "note": "Living bot avatars: the bot's existing avatar (not a new orb look) is the presence on a dark stage with a bot-colour glow; a click starts voice (Eoj)."
+        },
+        {
+          "on": "2026-10-21",
+          "note": "In a bot's own chat the living avatar stands full screen on the live stage, on a wash of the bot's color instead of the dark tile; the dark tile stays on the main chat when a bot is picked (Eoj)."
         }
       ],
       "evidence": [
@@ -1523,7 +1532,7 @@
         "allternit-ai/src/views/settings",
         "allternit-ai/src/lib",
         "allternit/cmd/allternit-sideload",
-        "allternit/cmd/allternit-cloud-api/src/routes/platform_v1/phones.rs"
+        "allternit/cmd/allternit-cloud-api"
       ],
       "decisions": [
         {
@@ -1649,13 +1658,9 @@
       "status": "building",
       "description": "Android phones (redroid) on phone-enabled fleet hosts that Desktop adds to Phone Link by adb address over the mesh. Off by default: CLOUD_PHONES_ENABLED and provisioned_hosts.phones_enabled.",
       "touches": [
-        "allternit/cmd/allternit-cloud-api/src/services/cloud_phones.rs",
-        "allternit/cmd/allternit-cloud-api/src/routes/cloud_phones.rs",
-        "allternit/cmd/allternit-cloud-api/migrations_pg/101_cloud_phones.sql",
+        "allternit/cmd/allternit-cloud-api",
         "allternit/infrastructure/cloud-phone",
-        "allternit/surfaces/allternit-desktop/src/main/cloud-phones.ts",
-        "allternit/surfaces/allternit-desktop/src/main/phone-device-manager.ts",
-        "allternit/surfaces/allternit-desktop/src/main/phone-link-android.ts"
+        "allternit/surfaces/allternit-desktop"
       ],
       "decisions": [
         {
@@ -2205,6 +2210,9 @@
           "on": "2026-10-21",
           "note": "Eoj: an uploaded file sent with a message must mount in the editor pane it belongs to (docs, pdfs, mds, mp4, html), and the agent must know the file and do the work itself instead of asking the user to open it."
         }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/attachments.mdx"
       ]
     }
   ],
