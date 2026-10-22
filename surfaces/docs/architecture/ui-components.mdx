@@ -57,9 +57,11 @@ Each area is an `Area` record in `src/dev/uiarc/areas/`. It names the real file 
 
 ## Deleting from a rail menu
 
-Rows in the rail (recent chats, Cowork sessions, Code sessions, items inside a project) and the Code threads list delete from their **⋯** menu with `RailHoldDelete` (`src/shell/rail/RailHoldDelete.tsx`), the Arc hold-to-confirm button sized to the menu rows. Holding it is the confirmation, so these menus open no dialog. Deleting a whole project still opens a dialog, because it also unassigns the project's tasks and that needs to be read first.
+Conversations delete with `RailHoldDelete` (`src/shell/rail/RailHoldDelete.tsx`), the Arc hold-to-confirm button sized to menu rows. Holding it is the confirmation, so no dialog opens. It is in the **⋯** menus of rail rows (recent chats, Cowork sessions, Code sessions, items inside a project), the Code threads list, the Cowork and Code session headers, the floating Code session menu, the phone pane menu (`PhonePaneAction.hold`) and the phone Code sheet. Bot Hub cards use it for Delete bot, the same as the bot's own menu.
 
-In `code-session-actions.tsx`, an item with `hold` renders as the hold button. The Delete item gets `hold` only when the caller passes `onDeleteNow`; the D shortcut and callers without `onDeleteNow` keep asking through `onDelete`.
+In `code-session-actions.tsx`, the Delete item has `hold` and no `run`, so `onDelete` deletes right away. Its D shortcut opens the menu on the hold button; a key press never deletes. Small inline spots (the bot task picker, the Native agent session list) use Arc `ConfirmMorph`, which asks in place.
+
+Deleting a whole project still opens a dialog, because it also unassigns the project's tasks and that needs to be read first.
 
 The full-screen drop target (`GlobalDropzone`) uses Arc file-dropzone styling from `GlobalDropzone.module.css`, so it follows light and dark mode.
 
