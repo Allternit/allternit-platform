@@ -875,6 +875,7 @@
         "allternit-ai/src/components/Avatar",
         "allternit-ai/src/views/agent-character",
         "allternit-ai/src/views/bots",
+        "allternit-ai/src/components/brand",
         "allternit-ai/src/components/bots",
         "allternit-ai/src/lib/voice",
         "allternit-ai/src/components/gateway",
