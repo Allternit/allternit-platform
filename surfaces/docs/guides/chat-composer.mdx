@@ -42,6 +42,16 @@ The thread updates while that next turn runs. If the agent then needs your appro
 - A small rounded pill shows what the agent is doing now, such as "Creating report.csv".
 - While the agent writes a file, a grey placeholder in the file's shape holds its place: a table for CSV and spreadsheets, a page for documents, lines for code, a frame for web pages. After 3 seconds a soft light runs around its edge. With reduced motion turned on, nothing moves.
 
+## Sending while the agent is working
+
+You don't have to wait for a turn to end. While the agent is working, the text box says **Add to this turn…** and the **send** button comes back as soon as you type, attach a file or drop one in. With nothing typed, the button is **Stop**.
+
+- **Steer:** in Chat, Cowork and Code, a message you send during a turn goes into that turn. It shows in the thread at once, and the agent reads it at its next step, so it can change course without starting over.
+- **Queue:** if the message can't go into the turn (the chat has no saved session yet, the message has images, or the server turns it down), it waits above the text box as **Queued**, and everything queued is sent as one message when the turn ends. Press **✕** on the Queued strip to cancel it.
+- Files you attach while the agent is working open in their editor on send, just like at any other time. See [Files open in their editor](/guides/attachments#files-open-in-their-editor).
+
+Bot threads already worked this way. See [Bot threads](/guides/bot-threads).
+
 ## Interactive answers
 
 Some replies include a small interactive card: numbers that update as you move a slider, a table, a chart, or numbered options. Moving a slider or changing a number updates the card on your device without asking the agent again. Buttons and choices on the card send your pick as your next message. Cards can also show live data from your connected apps; one that would change something asks you first. Turn cards off in Settings → Response style → **Layout and visuals** → **Text only**. More: [Interactive answers](/guides/interactive-answers).
