@@ -15,7 +15,7 @@ import z from "zod/v4"
 export namespace PaneArtifact {
   const log = Log.create({ service: "pane-artifact" })
 
-  export const Action = z.enum(["describe", "read", "call"])
+  export const Action = z.enum(["describe", "read", "call", "open"])
   export type Action = z.infer<typeof Action>
 
   export const Request = z.object({
@@ -24,7 +24,7 @@ export namespace PaneArtifact {
     action: Action,
     /** The editor tool to run (call). */
     tool: z.string().optional(),
-    /** That tool's input (call). */
+    /** That tool's input (call); { artifact_id } for open (and describe/read of a named artifact). */
     input: z.record(z.string(), z.unknown()).optional(),
     /** When it was asked (ms). The app skips requests older than TIMEOUT_MS,
      * so a replayed event never repeats an edit. */
@@ -89,7 +89,7 @@ export namespace PaneArtifact {
         () =>
           finish({
             ok: false,
-            error: "The artifact editor didn't answer. No app is showing this session; ask the user to open it.",
+            error: "The app showing this chat didn't answer (it may be closed or on another device). Say what you were going to change and do the rest of the work in the chat.",
           }),
         options.timeoutMs ?? TIMEOUT_MS,
       )
