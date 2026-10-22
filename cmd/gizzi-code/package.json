@@ -24,7 +24,7 @@
     "gizzi-code"
   ],
   "scripts": {
-    "typecheck": "bash script/ensure-sdk-dist.sh && NODE_OPTIONS=--max-old-space-size=8192 tsc --noEmit",
+    "typecheck": "bash script/ensure-sdk-dist.sh && node node_modules/typescript-7/bin/tsc --noEmit",
     "test": "bash script/ci-smoke-test.sh",
     "test:full": "bun test --timeout 30000 --preload ./test/preload.ts test/",
     "build": "bun run script/build.ts",
@@ -33,7 +33,7 @@
     "fix:hang": "bash script/fix-hang.sh",
     "e2e:clerk-login": "bun run script/terminal-clerk-e2e.ts",
     "clean": "echo 'Cleaning up...' && rm -rf node_modules dist",
-    "lint": "bash script/ensure-sdk-dist.sh && NODE_OPTIONS=--max-old-space-size=8192 tsc --noEmit",
+    "lint": "bash script/ensure-sdk-dist.sh && node node_modules/typescript-7/bin/tsc --noEmit",
     "db": "bun drizzle-kit",
     "vm:download": "bun run src/runtime/vm/vm-image-download.ts",
     "release": "bash script/clean-bak.sh && bun run build --all",
@@ -88,6 +88,7 @@
     "fflate": "^0.8.2",
     "supports-hyperlinks": "^4.4.0",
     "typescript": "^6.0.3",
+    "typescript-7": "npm:typescript@7.0.2",
     "vscode-languageserver-types": "3.17.5",
     "why-is-node-running": "3.2.2",
     "zod-to-json-schema": "3.24.5"
