@@ -207,6 +207,8 @@ for (const mdxPath of collectMdxFiles(DOCS_DIR)) {
       // Connections lists the AI apps it reads on a linked phone, and the context window
       // page explains how each brain's own /context or session record is read.
       if (['guides/connections.mdx', 'api/connections.mdx', 'surfaces/context-window.mdx'].some((p) => mdxPath.endsWith(p))) continue;
+      // Live sessions, delivery and the team roster list the CLI sessions they reach by name and their session addresses.
+      if (['guides/live-sessions.mdx', 'guides/live-session-delivery.mdx', 'guides/team-roster.mdx'].some((p) => mdxPath.endsWith(p))) continue;
       fail(
         `competitor mention in ${path.relative(ROOT, mdxPath)}:${i + 1}: ${line.trim()}`
       );

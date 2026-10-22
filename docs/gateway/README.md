@@ -8,7 +8,7 @@ Intent lives in the spec (`Allternit Brain/Research/specs/agent-gateway.md` and 
 
 ## Overview
 
-A vendor's bot (an OpenAI dot, a Grok Bot, a Claude Managed Agent, an OpenClaw) can be added to Allternit as an ordinary Allternit Bot whose execution is bound to the vendor's runtime. The user works with it in a normal Allternit Thread. Every vendor is reached through one interface, AAI, so the rest of Allternit sees one contract instead of one per vendor.
+A vendor's bot (an OpenAI dot, a Grok Bot, Claude Duet, a Claude Managed Agent you built, an OpenClaw) can be added to Allternit as an ordinary Allternit Bot whose execution is bound to the vendor's runtime. The user works with it in a normal Allternit Thread. Every vendor is reached through one interface, AAI, so the rest of Allternit sees one contract instead of one per vendor.
 
 Two directions work today, both server-side:
 

@@ -669,6 +669,7 @@ pub(crate) fn adapter_for_auth(vendor: &str, auth_type: &str) -> Option<&'static
         ("kimi", "browser_session") => Some("kimi-subscription"),
         // Gemini Spark and Slashy are their own vendors (not google/Gemini chat), so their browser logins get their own adapters.
         ("gemini-spark", "browser_session") => Some("gemini-spark-subscription"),
+        ("claude-duet", "browser_session") => Some("claude-duet-subscription"),
         ("slashy", "browser_session") => Some("slashy-subscription"),
         ("abacusai", "browser_session") => Some("abacusai-bot-subscription"),
         // Google/Microsoft browser logins run on their web adapters (the
@@ -1947,6 +1948,7 @@ mod tests {
         assert_eq!(adapter_for_auth("anthropic", "browser_session"), Some("claude-subscription"));
         assert_eq!(adapter_for_auth("anthropic", "api_key"), Some("claude-managed-agents"));
         assert_eq!(adapter_for_auth("anthropic", "desktop_session"), None);
+        assert_eq!(adapter_for_auth("claude-duet", "browser_session"), Some("claude-duet-subscription"));
         assert_eq!(adapter_for_auth("openai", "browser_session"), Some("chatgpt-subscription"));
         assert_eq!(adapter_for_auth("openai", "desktop_session"), Some("chatgpt-dots"));
         assert_eq!(adapter_for_auth("kimi", "browser_session"), Some("kimi-subscription"));
