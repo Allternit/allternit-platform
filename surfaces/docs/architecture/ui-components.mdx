@@ -55,7 +55,16 @@ Each area is an `Area` record in `src/dev/uiarc/areas/`. It names the real file 
 3. Add one area per real placement to the gallery, then run the checker in light and dark.
 4. Swap the component into the real file and wire it to the state and handlers that already exist there.
 
+## Deleting from a rail menu
+
+Rows in the rail (recent chats, Cowork sessions, Code sessions, items inside a project) and the Code threads list delete from their **⋯** menu with `RailHoldDelete` (`src/shell/rail/RailHoldDelete.tsx`), the Arc hold-to-confirm button sized to the menu rows. Holding it is the confirmation, so these menus open no dialog. Deleting a whole project still opens a dialog, because it also unassigns the project's tasks and that needs to be read first.
+
+In `code-session-actions.tsx`, an item with `hold` renders as the hold button. The Delete item gets `hold` only when the caller passes `onDeleteNow`; the D shortcut and callers without `onDeleteNow` keep asking through `onDelete`.
+
+The full-screen drop target (`GlobalDropzone`) uses Arc file-dropzone styling from `GlobalDropzone.module.css`, so it follows light and dark mode.
+
 ## Not adopted
 
 - **Calendar, Date picker, Date range picker:** the routines calendar we already have does more.
+- **Onboarding checklist in the connect wizard:** each Arc checklist step has its own tick box. The wizard's steps follow the real connection state, so a step someone can tick by hand would show progress that never happened. The wizard keeps its read-only list.
 - **Context menu:** a click on a row or card opens it directly. Actions do not hide behind right-click or hover. Secondary actions go in a visible button, or in swipe actions on the phone.
