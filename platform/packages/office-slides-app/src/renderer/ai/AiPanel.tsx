@@ -1,5 +1,11 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react'
-import { useOfficeAi, type OfficeAgentLoop } from '@allternit/office-suite/bridge'
+import {
+  useOfficeAi,
+  useOfficeHost,
+  registerPaneAgent,
+  type OfficeAgentLoop,
+  type PaneAgentSkill,
+} from '@allternit/office-suite/bridge'
 import { type OfficeModelOption } from '@allternit/office-suite/ai'
 import {
   composeSkills,
@@ -11,6 +17,7 @@ import type { AiSettings, AttachmentAddResult, AttachmentMeta } from '../../shar
 import { ATTACHMENT_IMAGE_EXTS } from '../../shared/ipc'
 import {
   createSlidesSkill,
+  describeDeckAnchor,
   type DeckAccess,
   type ClarifyQuestion,
   type DeckProgressEvent,
@@ -246,6 +253,8 @@ export function AiPanel({
 }: AiPanelProps) {
   const { t } = useI18n()
   const ai = useOfficeAi()
+  // With a host chat the panel is mounted hidden only to own the skill.
+  const hostChat = useOfficeHost()?.hostChat
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
   const [chat, setChat] = useState<ChatEntry[]>([])
@@ -481,6 +490,7 @@ export function AiPanel({
   }
 
   const loopRef = useRef<OfficeAgentLoop | null>(null)
+  const paneSkillRef = useRef<PaneAgentSkill | null>(null)
   if (!loopRef.current) {
     // The three slides generation steps (style/planning/per-page HTML) force the high-quality model (only with the anthropic provider;
     // other providers keep the user setting, avoiding passing nonexistent model names). Chat/fine-tuning still uses the user's configured model.
@@ -926,17 +936,26 @@ export function AiPanel({
           .map((a) => a.name),
     }
     accessRef.current = access
+    const skill = composeSkills('slides+files', '', [
+      createSlidesSkill(access),
+      createFilesSkill(
+        () => attachmentsRef.current,
+        (path) => readAttachmentPathsRef.current.add(path),
+      ),
+    ])
+    // The host's agent gets the same tools, minus ask_clarification: its
+    // questions render in this panel, which is hidden beside a host chat
+    // (the host agent asks through its own chat instead).
+    paneSkillRef.current = {
+      ...skill,
+      tools: (skill.tools ?? []).filter((tool) => tool.name !== 'ask_clarification'),
+      anchor: () => describeDeckAnchor(access),
+    } as PaneAgentSkill
     loopRef.current = new ai.AgentLoop({
       modelId,
       transport: createElectronTransport(() => settingsRef.current),
       systemSuffix: aiLangDirective,
-      skill: composeSkills('slides+files', '', [
-        createSlidesSkill(access),
-        createFilesSkill(
-          () => attachmentsRef.current,
-          (path) => readAttachmentPathsRef.current.add(path),
-        ),
-      ]),
+      skill,
       // Page-by-page deck generation needs more tool rounds
       maxTurns: 24,
       events: {
@@ -1050,8 +1069,11 @@ export function AiPanel({
     })
   }
 
+  useEffect(() => (paneSkillRef.current ? registerPaneAgent('slides', paneSkillRef.current) : undefined), [])
+
   useEffect(() => {
-    if (!preset) return
+    // With a host chat the host runs presets (onAssistantPreset), never this hidden panel.
+    if (!preset || hostChat) return
     // Attachments from the start screen: merge into attachments first (ref updated synchronously so this runWith can read them),
     // then trigger the run. Deduplicated by path, safe under StrictMode double runs.
     if (preset.attachments && preset.attachments.length > 0) {

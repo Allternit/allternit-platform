@@ -136,6 +136,9 @@ interface RibbonProps {
   watermark: string | null
   onWatermark: (text: string | null) => void
   themeFonts: ThemeFonts | null
+  /** The session's design system as a theme: listed first under Design > Themes */
+  designSystemTheme?: { name: string; colors: ThemeColors; fonts: ThemeFonts | null } | null
+  onApplyDesignSystemTheme?: () => void
   onThemeFonts: (fonts: ThemeFonts) => void
   onThemeColors: (colors: ThemeColors) => void
   /** Draw → pen / highlighter / eraser */
@@ -510,6 +513,8 @@ function RibbonInner({
   watermark,
   onWatermark,
   themeFonts,
+  designSystemTheme,
+  onApplyDesignSystemTheme,
   onThemeFonts,
   onThemeColors,
   inkTool,
@@ -2478,6 +2483,8 @@ function RibbonInner({
             watermark={watermark}
             onWatermark={onWatermark}
             themeFonts={themeFonts}
+            designSystemTheme={designSystemTheme}
+            onApplyDesignSystemTheme={onApplyDesignSystemTheme}
             onThemeFonts={onThemeFonts}
             onThemeColors={onThemeColors}
           />

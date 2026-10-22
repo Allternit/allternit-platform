@@ -1,4 +1,5 @@
-:root {
+:where(:root),
+.app-shell {
   color-scheme: light;
   --excel-green: #217346;
   --excel-green-dark: #185c37;
@@ -35,7 +36,8 @@
 
 /* UI CJK fonts per language (documentElement.lang is set at bootstrap and on switch);
  * the zh expansion must keep the historical stack byte-identical */
-:root {
+:where(:root),
+.app-shell {
   --ui-cjk: 'PingFang SC', 'Microsoft YaHei';
 }
 
@@ -55,36 +57,39 @@
   box-sizing: border-box;
 }
 
-body {
+/* Embedded in the platform page: body rules would restyle the whole app, and
+   a 900px min-width breaks the artifact pane. Scoped to the Sheets root. */
+:where(body) {
   margin: 0;
-  min-width: 900px;
-  min-height: 100vh;
+}
+
+.app-shell {
   overflow: hidden;
   /* Grayscale antialiasing to match docs/slides: without it, same-weight text renders noticeably bolder on macOS */
   -webkit-font-smoothing: antialiased;
 }
 
-button,
-textarea {
+.app-shell button,
+.app-shell textarea {
   font: inherit;
 }
 
-button {
+.app-shell button {
   cursor: pointer;
 }
 
-button:focus-visible,
-textarea:focus-visible {
+.app-shell button:focus-visible,
+.app-shell textarea:focus-visible {
   outline: none;
   box-shadow: 0 0 0 3px var(--focus);
 }
 
-button:active:not(:disabled) {
+.app-shell button:active:not(:disabled) {
   filter: brightness(0.92);
 }
 
-button:disabled,
-textarea:disabled {
+.app-shell button:disabled,
+.app-shell textarea:disabled {
   cursor: not-allowed;
   opacity: 0.48;
 }
@@ -369,7 +374,10 @@ html[data-rail-collapsed='true'] .ribbon-tabs {
 
 /* Ribbon: compact single band, hairline separators between
    groups, no group captions. */
-.ribbon {
+/* Scoped to the Sheets app: the office suite loads every app's CSS into one
+   page, and a bare .ribbon / .ribbon-group here restyled the Docs ribbon
+   (tab row and tools squashed into one scrolling 80px row). */
+.app-shell .ribbon {
   display: flex;
   align-items: stretch;
   gap: 2px;
@@ -391,7 +399,7 @@ html[data-rail-collapsed='true'] .ribbon-tabs {
   display: none;
 }
 
-.ribbon-group {
+.app-shell .ribbon-group {
   position: relative;
   display: flex;
   align-items: center;
@@ -401,7 +409,7 @@ html[data-rail-collapsed='true'] .ribbon-tabs {
 
 /* group separator: a hairline inset from the band's top/bottom, like the slides
    ribbon's .ribbon-sep (a plain border-right would span the full 80px band) */
-.ribbon-group::after {
+.app-shell .ribbon-group::after {
   content: '';
   position: absolute;
   top: 8px;
@@ -677,13 +685,13 @@ html[data-rail-collapsed='true'] .ribbon-tabs {
     display: none;
   }
 
-  .ribbon {
+  .app-shell .ribbon {
     gap: 1px;
     /* keep the 6px 12px band padding: docs/slides never compact it, and a
        narrower inset shifts the shared Genspark entry 2px when switching apps */
   }
 
-  .ribbon-group {
+  .app-shell .ribbon-group {
     padding: 2px 6px;
   }
 
@@ -1238,10 +1246,12 @@ select.select-like {
   transition: grid-template-columns 180ms ease;
 }
 
-/* formula-bar row + spreadsheet */
+/* the spreadsheet fills the column (Univer's own formula bar sits inside it;
+ * the app's Name Box row is gone, so a second row here would squeeze the
+ * workbook into an `auto` row and collapse the grid to ~65px) */
 .sheet-main {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
 }
@@ -1328,7 +1338,8 @@ select.select-like {
 /* Design tokens — AI panel chrome only.
  * Canonical names/values from colors_and_type.css; the spreadsheet chrome
  * around the panel keeps its own variables. */
-:root {
+:where(:root),
+.app-shell {
   --gs-font-sans:
     'Arial', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue',
     sans-serif;
@@ -1609,7 +1620,9 @@ select.select-like {
   color: var(--text);
 }
 
-textarea {
+/* Scoped: a bare textarea rule here gave every textarea in the app (the
+   composer included) a 100px min-height, border and padding. */
+.app-shell textarea {
   min-height: 100px;
   resize: vertical;
   border: 1px solid var(--border-strong);
@@ -1620,7 +1633,7 @@ textarea {
   line-height: 1.4;
 }
 
-textarea:focus {
+.app-shell textarea:focus {
   border-color: var(--excel-green);
 }
 

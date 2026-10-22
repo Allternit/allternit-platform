@@ -1,3 +1,4 @@
+/// <reference path="../types/opentype.d.ts" />
 /**
  * System font metrics (main process) — parse real font files with opentype.js and inject them
  * into pptx-render's OpentypeMetrics, replacing heuristic estimation for accurate line
@@ -21,12 +22,14 @@ import * as opentype from 'opentype.js'
 import {
   OpentypeMetrics,
   HeuristicMetrics,
+  CanvasMetrics,
   type FontMetricsProvider,
   type OpentypeFontLike,
   type RunStyle,
 } from '@allternit/office-pptx-render'
 import { classifyCjkScript } from '../shared/cjk-script'
 import { initShapedMetrics, shapedMeasure, shapedFamily } from './shaped-metrics'
+import { displayFontFamily } from '../renderer/konva-adapter'
 
 function fontDirs(): string[] {
   switch (process.platform) {
@@ -547,6 +550,16 @@ function instantiateWeight(font: OpentypeFontLike, bold: boolean): OpentypeFontL
   }
 }
 
+let canvasMetrics: CanvasMetrics | null = null
+
+/**
+ * Web fonts measured while still loading (e.g. the bundled Carlito that stands in for
+ * Calibri): wait for them and report whether text must be laid out again.
+ */
+export function settleFontLoads(): Promise<boolean> {
+  return canvasMetrics?.settle() ?? Promise.resolve(false)
+}
+
 /** Create a metrics provider injected with system fonts (falls back to heuristics per run when no font is found). */
 export function createSystemFontMetrics(): FontMetricsProvider {
   initShapedMetrics()
@@ -566,7 +579,13 @@ export function createSystemFontMetrics(): FontMetricsProvider {
     cache.set(key, entry)
     return entry
   }
-  const inner = new OpentypeMetrics((style) => resolveEntry(style)?.font, new HeuristicMetrics())
+  // No font file for a run (always so in the browser build, which can't read system font
+  // folders): measure with the browser's canvas and the renderer's own font stack, so baked
+  // run positions match what gets drawn. Without a DOM, the heuristic estimate.
+  const hasCanvas = typeof OffscreenCanvas !== 'undefined' || typeof document !== 'undefined'
+  const fallback = hasCanvas ? new CanvasMetrics(displayFontFamily) : new HeuristicMetrics()
+  if (fallback instanceof CanvasMetrics) canvasMetrics = fallback
+  const inner = new OpentypeMetrics((style) => resolveEntry(style)?.font, fallback)
   return {
     metrics: (style) => inner.metrics(style),
     // Complex scripts (ligatures/contextual forms) prefer HarfBuzz shaped metrics — opentype's

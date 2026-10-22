@@ -35,6 +35,7 @@ export async function webSearch(..._args: any[]): Promise<any> {
   return { results: [] }
 }
 
+// Same shape as @genoffice/ai-search's imageSearch (callers read .images).
 export async function imageSearch(..._args: any[]): Promise<any> {
-  return { results: [] }
+  return { images: [], unavailable: true }
 }

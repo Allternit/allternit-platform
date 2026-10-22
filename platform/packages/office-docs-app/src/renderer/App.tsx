@@ -24,7 +24,14 @@ import {
 import type { AiSettings, OpenFileResult } from '../shared/ipc'
 import { AI_PROVIDERS } from '../shared/ipc'
 import { AiPanel } from './ai/AiPanel'
-import { OfficeAiSlot, reportActiveDocument, requestAssistantPreset } from '@allternit/office-suite/bridge'
+import {
+  OfficeAiSlot,
+  reportActiveDocument,
+  requestAssistantPreset,
+  registerPaneAgentPersist,
+  useOfficeHost,
+  designSystemTheme,
+} from '@allternit/office-suite/bridge'
 import { asianCharCount, countWords, nonAsianWordCount } from './word-count'
 import { toRoman } from './note-format'
 import { CommentsPanel } from './components/CommentsPanel'
@@ -459,6 +466,27 @@ export function App() {
   const [themeFontsDirty, setThemeFontsDirty] = useState(false)
   const [themeColors, setThemeColors] = useState<ThemeColors | null>(null)
   const [themeColorsDirty, setThemeColorsDirty] = useState(false)
+  // The host's design system as a document theme (heading/body fonts + colour scheme)
+  const officeHost = useOfficeHost()
+  const dsTheme = useMemo(() => {
+    const ds = officeHost?.designSystem
+    const theme = ds ? designSystemTheme(ds) : null
+    if (!theme) return null
+    return {
+      name: theme.name,
+      colors: { name: theme.name, ...theme.colors } as ThemeColors,
+      fonts: theme.majorFont ? ({ major: theme.majorFont, minor: theme.minorFont ?? theme.majorFont } as ThemeFonts) : null,
+    }
+  }, [officeHost?.designSystem])
+  const applyDsTheme = useCallback(() => {
+    if (!dsTheme) return
+    if (dsTheme.fonts) {
+      setThemeFonts(dsTheme.fonts)
+      setThemeFontsDirty(true)
+    }
+    setThemeColors(dsTheme.colors)
+    setThemeColorsDirty(true)
+  }, [dsTheme])
   const [commentComposing, setCommentComposing] = useState(false)
   const [trackChanges, setTrackChanges] = useState(false)
   const [revisionDisplay, setRevisionDisplay] = useState<RevisionDisplayMode>('all')
@@ -1974,6 +2002,17 @@ export function App() {
     }
   }, [tornDown, autoSave, doc, editor, save])
 
+  // A host agent's edits (artifact session, pane_artifact) are saved right
+  // after each change — autosave is opt-in, and the host keeps the record.
+  useEffect(
+    () =>
+      registerPaneAgentPersist('docs', async () => {
+        if (!fileCtxRef.current.doc || !(anyDirtyRef.current || dirtyRef.current)) return true
+        return save(false, true)
+      }),
+    [save],
+  )
+
   // After an AI run finishes on a never-saved document, silently save it once: the
   // first save derives the file name from the first heading (see deriveAutoFileName
   // in file-actions), which also renames the shell tab — mirrors slides, where AI
@@ -2426,6 +2465,19 @@ export function App() {
     [hasDoc, hasUnsavedChanges, autoSave, editor, save, lang],
   )
 
+  // A new, empty document in a session with a design system starts on that system's
+  // theme (once per document and system); a document with text keeps its own until
+  // the user picks it under Design > Themes.
+  const dsAppliedRef = useRef<{ doc: unknown; key: string } | null>(null)
+  const docIsEmpty = !!editor && editor.state.doc.textContent.trim().length === 0
+  useEffect(() => {
+    if (!dsTheme || !doc || !docIsEmpty) return
+    const key = `${dsTheme.name}|${JSON.stringify(dsTheme.colors)}`
+    if (dsAppliedRef.current?.doc === doc && dsAppliedRef.current.key === key) return
+    dsAppliedRef.current = { doc, key }
+    applyDsTheme()
+  }, [dsTheme, doc, docIsEmpty, applyDsTheme])
+
   if (!editor) return null
 
   const wordCount = wordCountOfDoc(editor.state.doc)
@@ -2488,6 +2540,8 @@ export function App() {
         pageColor={pageColor}
         watermark={watermark}
         themeFonts={themeFonts}
+        designSystemTheme={dsTheme}
+        onApplyDesignSystemTheme={applyDsTheme}
         inkTool={inkTool}
         inkPen={inkPen}
         inkHighlighter={inkHighlighter}

@@ -201,6 +201,8 @@ export interface Props {
   onBackground: (color: string, allSlides: boolean) => void
   /** Apply a built-in theme (colors + font scheme, applied to all pages) */
   onApplyTheme: (preset: SlideThemePreset) => void
+  /** The session's design system as a theme: listed first in the theme gallery */
+  designSystemTheme?: SlideThemePreset | null
   /** New blank slide (inherits the current page's layout background, empty content) */
   onAddSlide: () => void
   /** New slide with a given layout */

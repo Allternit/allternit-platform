@@ -211,6 +211,8 @@ interface DesignTabProps extends TabProps {
   watermark: string | null
   onWatermark: (text: string | null) => void
   themeFonts: ThemeFonts | null
+  designSystemTheme?: { name: string; colors: ThemeColors; fonts: ThemeFonts | null } | null
+  onApplyDesignSystemTheme?: () => void
   onThemeFonts: (fonts: ThemeFonts) => void
   onThemeColors: (colors: ThemeColors) => void
 }
@@ -226,6 +228,8 @@ export function DesignTab({
   watermark,
   onWatermark,
   themeFonts,
+  designSystemTheme,
+  onApplyDesignSystemTheme,
   onThemeFonts,
   onThemeColors,
 }: DesignTabProps) {
@@ -263,6 +267,25 @@ export function DesignTab({
             </button>
             {dropdown === 'theme' && (
               <div className="layout-menu">
+                {designSystemTheme && onApplyDesignSystemTheme && (
+                  <button
+                    onClick={() => {
+                      onApplyDesignSystemTheme()
+                      setDropdown(() => null)
+                    }}
+                  >
+                    <span className="theme-accent-row">
+                      {(['accent1', 'accent2', 'accent3', 'accent4'] as const).map((k) => (
+                        <span
+                          key={k}
+                          className="theme-accent-dot"
+                          style={{ background: `#${designSystemTheme.colors[k]}` }}
+                        />
+                      ))}
+                    </span>
+                    {designSystemTheme.name}
+                  </button>
+                )}
                 {THEME_PRESETS.map((p) => (
                   <button key={p.nameKey} onClick={() => applyTheme(p)}>
                     <span className="theme-accent-row">

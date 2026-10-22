@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 import { useOfficeHost } from '../bridge/OfficeHostContext';
 import type {
   OfficeAppKey,
@@ -52,6 +52,32 @@ export function OfficeAiSlot({
 }: OfficeAiSlotProps): ReactNode {
   const host = useOfficeHost();
   const extensions = host?.extensions ?? [];
+  const hostChat = host?.hostChat;
+
+  // The host's chat replaces the section: an app opening its AI section
+  // (ribbon button, preset) opens the host chat, and the section is shut
+  // again so the next click registers. A section restored open on mount
+  // (persisted preference) is only shut — that isn't a request for the chat.
+  const mounted = useRef(false);
+  useEffect(() => {
+    const first = !mounted.current;
+    mounted.current = true;
+    if (!hostChat || collapsed) return;
+    if (!first) hostChat.open(appKey);
+    close?.();
+  }, [hostChat, collapsed, appKey, close]);
+
+  if (hostChat) {
+    // The app's dock hides itself via :has() (OfficeAiSlot.css). The built-in
+    // panel stays mounted (hidden) because it owns the app's agent skill —
+    // the live document tools it registers for the host's agent
+    // (registerPaneAgent). It never runs a chat of its own here.
+    return (
+      <div className="office-ai-slot-host" hidden>
+        {fallback}
+      </div>
+    );
+  }
 
   // No extensions registered: preserve the pre-slot behavior exactly.
   if (extensions.length === 0) {

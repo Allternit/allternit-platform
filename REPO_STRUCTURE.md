@@ -45,7 +45,6 @@ allternit/
 │   ├── computer-embed/       # Embeddable computer-use surface
 │   ├── gizzi-github-action/  # GitHub Action surface
 │   ├── gizzi-vscode/         # VS Code extension surface
-│   ├── office.allternit.com/ # Office surface
 │   ├── phone-remote/         # Phone remote-control surface
 │   ├── platform.allternit.com/ # Cloud console
 │   └── docs/                 # Docs surface

@@ -19,7 +19,12 @@ import type { ChartSeriesVisualState } from '@allternit/office-suite/xlsx'
 import type { ChangePlan } from '@allternit/office-suite/xlsx'
 import type { AttachmentMeta } from '@allternit/office-suite/xlsx'
 import { AiChatPanel, type AiChatMessage } from './ai/AiChatPanel'
-import { OfficeAiSlot, AllternitBrandMark, requestAssistantPreset } from '@allternit/office-suite/bridge'
+import {
+  OfficeAiSlot,
+  AllternitBrandMark,
+  requestAssistantPreset,
+  useOfficeHost,
+} from '@allternit/office-suite/bridge'
 import {
   PivotDialog,
   type PivotEditSeed,
@@ -245,7 +250,6 @@ export function ExcelShell({
   onIsSelectionInPivot,
   onGetActiveCell,
   onGetAnchorValue,
-  activeCellA1,
   onGoToReference,
   onListDefinedNames,
   onApplyFormula,
@@ -271,6 +275,8 @@ export function ExcelShell({
   aiModelId,
   onAiModelChange,
 }: ExcelShellProps): React.JSX.Element {
+  // Beside a host chat (artifact session) the host runs AI requests.
+  const hostChat = useOfficeHost()?.hostChat
   const { t } = useI18n()
   const [activeTab, setActiveTab] = useState<RibbonTab>('Home')
   // The AI copilot is a stub in this build (no Genspark layer) — start
@@ -418,7 +424,8 @@ export function ExcelShell({
             // Hosted surfaces: route the run into the Allternit Office Agent
             // pane (the only chat surface when extensions are registered).
             requestAssistantPreset('sheets', nextPrompt)
-            onSend(nextPrompt)
+            // Beside a host chat the host runs it; Sheets' own loop must not run it too.
+            if (!hostChat) onSend(nextPrompt)
           }}
           aiOpen={isCopilotOpen}
           onAiToggle={() => setIsCopilotOpen((open) => !open)}
@@ -460,18 +467,9 @@ export function ExcelShell({
           }
         />
         <div className="sheet-main">
-          {/* Excel's formula-bar row, Name Box only for now (fx bar TBD). */}
-          <div className="name-box-bar">
-            <NameBox activeCellA1={activeCellA1} onGoTo={onGoToReference} />
-            <button
-              className="name-box-goto"
-              title={t('appGoToButtonTitle')}
-              aria-label="Go To"
-              onClick={() => setShowGoTo(true)}
-            >
-              ▾
-            </button>
-          </div>
+          {/* No app Name Box row: Univer's formula bar below already carries the
+              Name Box and fx input, and a second "A1" row stacked two name
+              boxes. Go To stays on Cmd/Ctrl+G and the ribbon. */}
           <section className="workbook-area">
             <div id="univer-container" className="spreadsheet" />
           </section>
@@ -616,58 +614,6 @@ export function ExcelShell({
         />
       )}
     </main>
-  )
-}
-
-/// Excel's Name Box: echoes the active cell while idle; focusing it starts a
-/// draft, Enter jumps to the typed address or defined name (an invalid one
-/// keeps the draft and flags the input), Esc or blur cancels back to the
-/// echo. The echo prop updates via the SelectionChanged refresh in App.
-function NameBox({
-  activeCellA1,
-  onGoTo,
-}: {
-  readonly activeCellA1: string
-  readonly onGoTo: (ref: string) => string | null
-}): React.JSX.Element {
-  const { t } = useI18n()
-  const [draft, setDraft] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  return (
-    <input
-      className={`name-box${error === null ? '' : ' invalid'}`}
-      aria-label="Name Box"
-      title={error ?? t('appNameBoxTitle')}
-      placeholder="A1"
-      spellCheck={false}
-      value={draft ?? activeCellA1}
-      onFocus={(event) => {
-        setDraft(activeCellA1)
-        event.target.select()
-      }}
-      onChange={(event) => {
-        setDraft(event.target.value)
-        setError(null)
-      }}
-      onBlur={() => {
-        setDraft(null)
-        setError(null)
-      }}
-      onKeyDown={(event) => {
-        if (event.key === 'Enter') {
-          const failure = onGoTo(draft ?? activeCellA1)
-          setError(failure)
-          if (failure === null) {
-            setDraft(null)
-            event.currentTarget.blur()
-          }
-        } else if (event.key === 'Escape') {
-          setDraft(null)
-          setError(null)
-          event.currentTarget.blur()
-        }
-      }}
-    />
   )
 }
 

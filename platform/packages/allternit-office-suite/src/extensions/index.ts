@@ -17,6 +17,19 @@ export {
 export type { ActiveDocumentInfo } from './activeDocument';
 export { createAllternitAssistantExtension } from './allternit-assistant';
 export { requestAssistantPreset, onAssistantPreset } from './assistantPreset';
+export {
+  registerPaneAgent,
+  getPaneAgent,
+  paneAgentTools,
+  paneAgentGuide,
+  readPaneAgentContext,
+  readPaneAgentAnchor,
+  runPaneAgentTool,
+  paneAgentAuthor,
+  registerPaneAgentPersist,
+  persistPaneAgent,
+} from './paneAgent';
+export type { PaneAgentSkill, PaneAgentToolDef } from './paneAgent';
 export type { AssistantPresetDetail } from './assistantPreset';
 export { AllternitBrandMark } from '../components/AllternitBrandMark';
 export type { AllternitBrandMarkProps } from '../components/AllternitBrandMark';

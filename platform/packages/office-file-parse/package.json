@@ -18,6 +18,11 @@
       "types": "./src/xlsx.ts",
       "import": "./src/xlsx.ts",
       "default": "./src/xlsx.ts"
+    },
+    "./pptx": {
+      "types": "./src/pptx.ts",
+      "import": "./src/pptx.ts",
+      "default": "./src/pptx.ts"
     }
   },
   "files": [

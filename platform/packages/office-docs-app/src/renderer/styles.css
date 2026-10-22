@@ -1,4 +1,5 @@
-:root {
+:where(:root),
+.app {
   /* Allternit dark-warm palette (see @allternit/office-docs-editor office-theme) */
   --word-blue: #d97757;
   --word-blue-dark: #b85f43;
@@ -26,7 +27,8 @@
 
 /* UI CJK fonts per language (documentElement.lang is set at bootstrap and on switch);
  * the zh expansion must keep the historical stack byte-identical */
-:root {
+:where(:root),
+.app {
   --ui-cjk: 'PingFang SC', 'Microsoft YaHei';
 }
 
@@ -46,8 +48,8 @@
    Map the docs chrome palette to the platform tokens so Docs matches
    Library/AutomationTasks/Settings exactly. Document pages keep --page-bg
    white. Falls back to the current warm palette in standalone desktop mode. */
-html[data-theme='light'],
-body[data-theme='light'] {
+:where(html[data-theme='light'], body[data-theme='light']),
+body[data-theme='light'] .app {
   --surface: var(--bg-elevated, #ffffff);
   --chrome-bg: var(--bg-primary, #fdf8f3);
   --border: var(--border-subtle, rgba(154, 118, 88, 0.12));
@@ -60,8 +62,8 @@ body[data-theme='light'] {
   --canvas: var(--shell-view-bg, var(--bg-primary, #fdf8f3));
 }
 
-html[data-theme='dark'],
-body[data-theme='dark'] {
+:where(html[data-theme='dark'], body[data-theme='dark']),
+body[data-theme='dark'] .app {
   --surface: var(--bg-elevated, #262625);
   --chrome-bg: var(--bg-primary, #1f1f1e);
   --border: var(--border-subtle, rgba(212, 176, 140, 0.12));
@@ -74,14 +76,13 @@ body[data-theme='dark'] {
   --canvas: var(--shell-view-bg, var(--bg-primary, #1f1f1e));
 }
 
-html,
-body,
-#root {
+/* Embedded in the platform page: never restyle the host document. */
+:where(html, body, #root) {
   height: 100%;
   margin: 0;
 }
 
-body {
+.app {
   font-family:
     'Segoe UI',
     -apple-system,
@@ -104,7 +105,7 @@ body {
   height: 100%;
 }
 
-button {
+.app button {
   font-family: inherit;
 }
 
@@ -3946,7 +3947,8 @@ body.docs-crop-active
 /* Design tokens — AI panel chrome only.
  * Canonical names/values from colors_and_type.css; the editor chrome
  * around the panel keeps its own editor theme variables. */
-:root {
+:where(:root),
+.app {
   --gs-font-sans:
     'Arial', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue',
     sans-serif;
@@ -3973,8 +3975,8 @@ body.docs-crop-active
   --text-caption: 12px;
 }
 
-html[data-theme='light'],
-body[data-theme='light'] {
+:where(html[data-theme='light'], body[data-theme='light']),
+body[data-theme='light'] .app {
   --color-text-primary: var(--text-primary, #2a1f16);
   --color-text-secondary: var(--text-secondary, #664e3a);
   --color-text-tertiary: color-mix(in srgb, var(--text-secondary, #664e3a) 72%, var(--text-primary, #2a1f16));
@@ -3984,8 +3986,8 @@ body[data-theme='light'] {
   --color-border-strong: rgba(154, 118, 88, 0.22);
 }
 
-html[data-theme='dark'],
-body[data-theme='dark'] {
+:where(html[data-theme='dark'], body[data-theme='dark']),
+body[data-theme='dark'] .app {
   --color-text-primary: var(--text-primary, #ececec);
   --color-text-secondary: var(--text-secondary, #9b9b9b);
   --color-text-tertiary: color-mix(in srgb, var(--text-secondary, #9b9b9b) 72%, var(--text-primary, #ececec));
@@ -6959,4 +6961,67 @@ tr > .page-gap-cut {
 
 .ai-login-btn:hover {
   opacity: 0.88;
+}
+
+/* ================= co-editing presence (editor/agent-presence.ts) ================= */
+
+.doc-page .co-unrevealed,
+.doc-page .co-unrevealed * {
+  color: transparent !important;
+  -webkit-text-fill-color: transparent !important;
+  text-decoration-color: transparent !important;
+  background: none !important;
+  border-color: transparent !important;
+}
+
+.doc-page .co-unrevealed-block {
+  opacity: 0;
+}
+
+.doc-page .co-caret {
+  position: relative;
+  display: inline-block;
+  width: 0;
+  height: 1.15em;
+  margin: 0 -1px;
+  vertical-align: text-bottom;
+  border-left: 2px solid var(--co-color);
+  pointer-events: none;
+  user-select: none;
+}
+
+.doc-page .co-caret-agent {
+  --co-color: #d97757;
+}
+
+.doc-page .co-caret-you {
+  --co-color: #2f6fed;
+}
+
+.doc-page .co-caret-label {
+  position: absolute;
+  bottom: 100%;
+  left: -2px;
+  padding: 1px 6px;
+  border-radius: 4px 4px 4px 0;
+  background: var(--co-color);
+  color: #fff;
+  font: 600 11px/16px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-style: normal;
+  letter-spacing: 0;
+  white-space: nowrap;
+  text-indent: 0;
+  -webkit-text-fill-color: #fff;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .doc-page .co-caret-agent {
+    animation: co-caret-in 160ms ease-out;
+  }
+}
+
+@keyframes co-caret-in {
+  from {
+    opacity: 0;
+  }
 }

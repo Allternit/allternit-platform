@@ -26,6 +26,8 @@ export type {
   XlsxSessionHandle,
   OfficeExtensionContext,
   OfficeExtensionDescriptor,
+  OfficeHostChat,
+  OfficeDesignSystem,
 } from './types';
 export {
   OfficeAiSlot,
@@ -36,11 +38,26 @@ export {
   useActiveDocument,
   createAllternitAssistantExtension,
   requestAssistantPreset,
+  onAssistantPreset,
   AllternitBrandMark,
+  registerPaneAgent,
+  getPaneAgent,
+  paneAgentTools,
+  paneAgentGuide,
+  readPaneAgentContext,
+  readPaneAgentAnchor,
+  runPaneAgentTool,
+  paneAgentAuthor,
+  registerPaneAgentPersist,
+  persistPaneAgent,
 } from '../extensions';
 export type {
   OfficeAiSlotProps,
   ActiveDocumentInfo,
   AssistantPresetDetail,
   AllternitBrandMarkProps,
+  PaneAgentSkill,
+  PaneAgentToolDef,
 } from '../extensions';
+export { designSystemTheme } from './design-system-theme';
+export type { DesignSystemTheme, ThemeSlot } from './design-system-theme';

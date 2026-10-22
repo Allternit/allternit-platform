@@ -152,6 +152,79 @@ export class HeuristicMetrics implements FontMetricsProvider {
   }
 }
 
+// ── Browser-measured metrics (canvas measureText) ──────────────────
+
+/**
+ * Measures with the browser's own text engine, drawing font stack included, so
+ * the positions baked into each run match what the canvas later draws. Used in
+ * the browser build, where system font files can't be read (the heuristic
+ * estimate drifts per font: spaces collapse in wide faces, gape in narrow ones).
+ */
+export class CanvasMetrics implements FontMetricsProvider {
+  private ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null = null
+  private cache = new Map<string, number>()
+  /** Fonts measured before their web font had loaded (their widths are the fallback's). */
+  private unloaded = new Set<string>()
+  constructor(
+    /** CSS font-family list the renderer draws `family` with. */
+    private stack: (family: string) => string = (f) => `'${f}', sans-serif`,
+    private fallback: FontMetricsProvider = new HeuristicMetrics(),
+  ) {}
+
+  private context() {
+    if (this.ctx) return this.ctx
+    if (typeof OffscreenCanvas !== 'undefined') this.ctx = new OffscreenCanvas(1, 1).getContext('2d')
+    else if (typeof document !== 'undefined') this.ctx = document.createElement('canvas').getContext('2d')
+    return this.ctx
+  }
+
+  private font(style: RunStyle): string {
+    return `${style.italic ? 'italic ' : ''}${style.bold ? 'bold ' : ''}${style.fontSizePx}px ${this.stack(style.fontFamily)}`
+  }
+
+  metrics(style: RunStyle): FontMetrics {
+    const ctx = this.context()
+    if (!ctx) return this.fallback.metrics(style)
+    ctx.font = this.font(style)
+    const m = ctx.measureText('Hg')
+    const ascent = m.fontBoundingBoxAscent
+    const descent = m.fontBoundingBoxDescent
+    if (!(ascent > 0) || !(descent >= 0)) return this.fallback.metrics(style)
+    return { ascent, descent, lineHeight: ascent + descent }
+  }
+
+  measure(text: string, style: RunStyle): number {
+    const ctx = this.context()
+    if (!ctx) return this.fallback.measure(text, style)
+    const font = this.font(style)
+    const key = `${font}|${text}`
+    const hit = this.cache.get(key)
+    if (hit !== undefined) return hit
+    ctx.font = font
+    if (typeof document !== 'undefined' && document.fonts && !document.fonts.check(font)) this.unloaded.add(font)
+    const w = ctx.measureText(text).width
+    if (this.cache.size > 20000) this.cache.clear()
+    this.cache.set(key, w)
+    return w
+  }
+
+  /**
+   * Wait for the web fonts measured while still loading, then drop their stale widths.
+   * True when any were waiting — the caller lays the text out again.
+   */
+  async settle(timeoutMs = 3000): Promise<boolean> {
+    if (!this.unloaded.size || typeof document === 'undefined' || !document.fonts) return false
+    const fonts = [...this.unloaded]
+    this.unloaded.clear()
+    await Promise.race([
+      Promise.all(fonts.map((f) => document.fonts.load(f).catch(() => []))),
+      new Promise((r) => setTimeout(r, timeoutMs)),
+    ])
+    for (const k of [...this.cache.keys()]) if (fonts.some((f) => k.startsWith(`${f}|`))) this.cache.delete(k)
+    return true
+  }
+}
+
 // ── Exact metrics via opentype.js ───────────────────────────────────
 
 /** Minimal interface of opentype.Font (avoids a hard type dependency; the frontend injects the real instance). */

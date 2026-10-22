@@ -1,6 +1,7 @@
 import { Editor, Extension, Node } from '@tiptap/core'
 import type { ChainedCommands, RawCommands } from '@tiptap/core'
 import { UndoRedo } from '@tiptap/extensions'
+import { AgentPresence } from './agent-presence'
 import { DOMSerializer } from '@tiptap/pm/model'
 import type { Node as PmNode } from '@tiptap/pm/model'
 import {
@@ -2214,6 +2215,7 @@ export interface SearchHighlight {
 }
 
 export const editorExtensions = [
+  AgentPresence,
   DocDocument,
   DocText,
   DocHardBreak,

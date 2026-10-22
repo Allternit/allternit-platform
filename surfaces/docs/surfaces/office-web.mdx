@@ -1,0 +1,83 @@
+---
+title: "Allternit Office (office.allternit.com)"
+description: "Free document, spreadsheet, slide, PDF, design, image, video and motion editors. No account; files stay in the browser."
+---
+
+## What it is
+
+[office.allternit.com](https://office.allternit.com) gives anyone the same editors the Allternit app uses for artifacts, free and without an account. Nothing is uploaded: files stay in the browser until the user exports them.
+
+| Start new | Opens from disk | Exports |
+|---|---|---|
+| Document | `.docx`, `.md` | Word, PDF (print), Markdown |
+| Spreadsheet | `.xlsx`, `.xls`, `.csv` | Excel, CSV |
+| Presentation | `.pptx` | PowerPoint, PDF (print) |
+| PDF (edit text in place, sign, OCR scans) | `.pdf` | PDF |
+| Design (canvas with layers and artboards) | none | HTML, PDF, PowerPoint, .zip, PNG |
+| Motion (animated scenes) | none | MP4, rendered in the browser |
+| Image (PhotoCraft) | `.png`, `.jpg`, `.webp`, `.gif`, `.psd` and other images | the image, PSD |
+| none | Video (FilmCraft): `.mp4`, `.mov`, `.m4v`, `.webm` | MP4 |
+| none | Viewers: `.html` pages, `.mmd` and `.svg` diagrams, code files | the source; PNG and SVG for diagrams |
+
+Dashboards and Ops sheets are not on the free site: they read live connectors and need an account.
+
+## No AI on the free site
+
+The free site has no AI (decision 2026-10-22). AI editing, cloud save, sharing and version history are in the Allternit app; the site links to [ai.allternit.com](https://ai.allternit.com). The site serves no API and has no Pages Functions. The old `/api/agent-chat` proxy went away with the old site.
+
+## Where files are kept
+
+- Every file the user starts or opens is kept in the browser's IndexedDB (database `allternit-office`) and listed under **Recent in this browser**. Clearing site data deletes them, which the page says.
+- Edits save as the user types. The Docs, Sheets and Slides editors commit a field when it loses focus, so the site commits after a short pause in typing and again when the tab is hidden.
+- Images and video footage are kept as blobs in the same database. Records hold `office-media:<id>` references, which become fresh `blob:` URLs when a file opens.
+- The image and video editors' source documents (`.pcraft`, `.fcproj`, PSD), which the app keeps in artifact runtime storage, are kept in IndexedDB too.
+- `?open=<id>` deep-links a file that is in this browser. An id that is not in this browser goes to the home screen.
+
+## How it is built (developers)
+
+The site is a second Vite build of `allternit-ai`, the same source as Desktop, ai.allternit.com and the phone PWA. The site has no copy of the editors: a new or changed editor in the app reaches office.allternit.com in the same change.
+
+| Piece | Path in `allternit-ai` |
+|---|---|
+| Build config | `vite.office.config.ts` (entry `office.html` → `src/office/main.tsx`) |
+| Home, editor frame, export menu | `src/office/OfficeApp.tsx` |
+| File import and blank files | `src/office/files.ts` |
+| IndexedDB store | `src/office/local-store.ts` |
+| Static files | `office-public/`: the craft editors under `craft/`, `_headers`, icons |
+| Release | `scripts/prepare-office-site.mjs` |
+
+Files open as **local artifact records** (`localIds` in the artifacts store). Every editor already has a signed-out path for these records, so there are no cloud saves, agent canvases or cloud renders. The build config replaces four app modules, matched by resolved file, so relative imports are replaced too:
+
+| App module | Office build |
+|---|---|
+| `src/lib/attachments/cloud-upload.ts` | keeps the bytes in IndexedDB and returns a `blob:` URL |
+| `src/lib/artifacts/runtime-storage.ts` | IndexedDB |
+| `src/components/artifacts/editors/AskBar.tsx` | renders nothing (no AI) |
+| `src/components/artifacts/FixWithGizzi.tsx` | renders nothing (no AI) |
+
+### Craft editor bundles
+
+PdfCraft, PhotoCraft and FilmCraft are served from `office.allternit.com/craft/<app>/`. The app loads them from that URL in every surface (`CRAFT_BASE` in `src/components/craft/bridge.ts`). Their source is in the platform repo under `vendor/craft`, and rebuilt bundles are copied to `allternit-ai/office-public/craft/<app>/` (see `vendor/craft/VENDOR.md`). Each deploy of the site ships the bundles, so a deploy that leaves them out breaks the image, PDF and video editors in the app as well.
+
+### Deploy
+
+The `allternit-office` Pages project is deployed by hand, like the phone PWA, from a clean checkout of `origin/main`. The prepare script refuses any other checkout.
+
+```bash
+pnpm install --frozen-lockfile
+pnpm build:office          # vite build -c vite.office.config.ts + prepare
+cd tmp/office-site
+npx wrangler pages deploy . --project-name allternit-office --branch main --commit-hash "$(node -p "require('./deploy-source.json').sha")"
+```
+
+After the deploy, check:
+
+- the home page loads;
+- `/craft/pdf/`, `/craft/image/` and `/craft/video/` return 200;
+- a PDF, an image and a video still open in the app's artifact window.
+
+## Related pages
+
+- [Office Suite](/surfaces/office-suite)
+- [Office add-in](/surfaces/office-addin)
+- [Artifacts API](/api/artifacts)

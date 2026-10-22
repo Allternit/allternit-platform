@@ -1394,6 +1394,24 @@ export function formatSlideDump(slide: RenderSlide): string {
   return `Canvas ${slide.widthPx}×${slide.heightPx}px\n${parts.join('\n---\n') || '(no elements on this page)'}${colorNote}`
 }
 
+/**
+ * What the user is pointing at, for anchoring a comment: the shown slide and
+ * its first line of text, plus the selected element's text when one is
+ * selected — `Slide 3 "Rain is a given."` / `Slide 2 "Rain…" · "come prepared"`.
+ */
+export function describeDeckAnchor(access: Pick<DeckAccess, 'getSlides' | 'getCurrent' | 'getSelectedIds'>): string | null {
+  const slides = access.getSlides()
+  const current = access.getCurrent()
+  const slide = slides[current]
+  if (!slide) return null
+  const infos = collectNodeInfos(slide.nodes)
+  const title = infos.map((n) => n.text.trim()).find(Boolean)
+  const head = title ? `Slide ${current + 1} "${preview(title, 40)}"` : `Slide ${current + 1}`
+  const selected = new Set(access.getSelectedIds())
+  const picked = infos.find((n) => selected.has(n.id) && n.text.trim())
+  return picked && picked.text.trim() !== title?.trim() ? `${head} · "${preview(picked.text.trim(), 40)}"` : head
+}
+
 export function createSlidesSkill(access: DeckAccess): AgentSkill {
   // The HTML pipeline was already used in this conversation → later calls without an explicit mode default to append.
   // Safety net for when the AI ignores the "pass all pages at once" constraint: separate calls no longer overwrite each other (P0-1).
@@ -1427,6 +1445,11 @@ interface SkillState {
   lastTopic?: string
 }
 
+async function cloudPageGenAvailable(access: DeckAccess): Promise<boolean> {
+  if (!access.generatePageCloud) return false
+  return !!(await access.isCloudPageGenEnabled?.().catch(() => false))
+}
+
 /**
  * [Hard constraint against "hand-building from scratch"] Sometimes the AI skips the HTML
  * pipeline and assembles a whole deck element by element with add_text_box/add_shape/add_smartart —
@@ -1436,12 +1459,17 @@ interface SkillState {
  * template). If so, reject and steer toward generate_deck. Adding a single element to an
  * existing rich deck / fine-tuning after the HTML pipeline are unaffected.
  */
-function blockScratchBuild(
+async function blockScratchBuild(
+  access: DeckAccess,
   toolName: string,
   slides: RenderSlide[],
   state?: SkillState,
-): { output: string; isError: true; mutated: false; summary: string } | null {
+): Promise<{ output: string; isError: true; mutated: false; summary: string } | null> {
   if (state?.htmlGenerated) return null // Went through the HTML pipeline; subsequent native edits are legitimate
+  // Only steer to generate_deck when it can actually run. Without cloud page
+  // generation (not ported in Allternit builds), native tools are the only
+  // way to build a deck, and blocking them left every blank deck empty.
+  if (!(await cloudPageGenAvailable(access))) return null
   let contentEls = 0
   for (const slide of slides) {
     for (const n of collectNodeInfos(slide.nodes)) {
@@ -1978,20 +2006,26 @@ async function executeTool(
       const query = String(call.input.query ?? '').trim()
       if (!query) return fail(t('aiFailImageSearch'), 'query must not be empty')
       const r = await window.slidesApi.imageSearch(query, Number(call.input.maxResults) || 8)
+      const images = Array.isArray(r?.images) ? r.images : []
+      if (!images.length && (r as { unavailable?: boolean } | undefined)?.unavailable)
+        return fail(
+          t('aiFailImageSearch'),
+          'Image search is not available in this editor. Use shapes, colour and type instead, or insert_web_image with an image URL you already have.',
+        )
       // output for the LLM: keep the existing format (the LLM needs to read URLs into image_queries; format unchanged)
-      const lines = r.images.map(
+      const lines = images.map(
         (im, i) =>
           `${i + 1}. ${im.title || '(untitled)'} [${im.width ?? '?'}x${im.height ?? '?'}]\n   ${im.imageUrl}`,
       )
       // display side channel: image list (for UI thumbnails, not in LLM context)
       const display: ToolDisplay = {
         kind: 'images',
-        items: r.images.map((im) => ({ url: im.imageUrl, title: im.title || undefined })),
+        items: images.map((im) => ({ url: im.imageUrl, title: im.title || undefined })),
       }
       return {
         output: lines.join('\n') || '(no images)',
         mutated: false,
-        summary: t('aiSumImageSearch', { query, count: r.images.length }),
+        summary: t('aiSumImageSearch', { query, count: images.length }),
         display,
       }
     }
@@ -2143,10 +2177,11 @@ async function executeTool(
       const idx = Number(call.input.slideIndex)
       if (!slides[idx])
         return fail(t('aiFailRegen'), `slideIndex out of range (0-${slides.length - 1})`)
-      if (!access.regenerateSlide || !access.generatePageCloud)
+      if (!access.regenerateSlide || !access.generatePageCloud || !(await cloudPageGenAvailable(access)))
         return fail(
           t('aiFailRegen'),
-          'The current environment does not support the page-redo pipeline',
+          'Cloud page generation is not available in this editor, so a page cannot be regenerated. ' +
+            'Edit it with the native tools instead (read_slide, then update/add/delete elements).',
         )
       const brief = String(call.input.brief ?? '').trim()
       if (!brief) return fail(t('aiFailRegen'), 'brief must not be empty')
@@ -2220,10 +2255,12 @@ async function executeTool(
       // ── Self-driven pipeline:
       //   1) Plan: use pages if passed; with topic, the tool plans the outline via LLM (batched recursion over threshold) — fixes missing pages at the input side.
       //   2) Generate: batched concurrent cloud page generation (gsk slide_generate, one retry per page), **each batch lands immediately → frontend shows pages one by one**.
-      if (!access.generatePageCloud || !(await access.isCloudPageGenEnabled?.().catch(() => false)))
+      if (!(await cloudPageGenAvailable(access)))
         return fail(
           t('aiFailGenDeck'),
-          'Cloud slide generation is unavailable — sign in to Allternit (gsk) first',
+          'Cloud slide generation is not available in this editor. Build the deck with the native tools instead: ' +
+            'add_slide for each page (sourceIndex = the current last page), then add_text_box / add_shape / insert_web_image to lay it out. ' +
+            'Signing in will not change this.',
         )
       if (!access.generateFromHtml)
         return fail(
@@ -2848,7 +2885,7 @@ async function executeTool(
       const idx = Number(call.input.slideIndex)
       if (!slides[idx])
         return fail(t('aiFailNewElement'), `slideIndex out of range (0-${slides.length - 1})`)
-      const scratchBlock = blockScratchBuild(call.name, slides, state)
+      const scratchBlock = await blockScratchBuild(access, call.name, slides, state)
       if (scratchBlock) return scratchBlock
       const isShape = call.name === 'add_shape'
       const paragraphs = toEditParagraphs(call.input.paragraphs)
@@ -2935,7 +2972,7 @@ async function executeTool(
     }
 
     case 'add_smartart': {
-      const scratchBlockSA = blockScratchBuild(call.name, slides, state)
+      const scratchBlockSA = await blockScratchBuild(access, call.name, slides, state)
       if (scratchBlockSA) return scratchBlockSA
       const idx = Number(call.input.slideIndex)
       const slide = slides[idx]

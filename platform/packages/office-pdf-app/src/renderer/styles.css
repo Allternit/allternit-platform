@@ -1,4 +1,5 @@
-:root {
+:where(:root),
+.app {
   --accent: #c43e1c;
   --accent-dark: #a33517;
   --accent-soft: #fbeae5;
@@ -20,7 +21,8 @@
 
 /* UI CJK fonts per language (documentElement.lang is set at bootstrap and on switch);
  * the zh expansion must keep the historical stack byte-identical */
-:root {
+:where(:root),
+.app {
   --ui-cjk: 'PingFang SC', 'Microsoft YaHei';
 }
 
@@ -36,14 +38,13 @@
   --ui-cjk: 'PingFang TC', 'Microsoft JhengHei';
 }
 
-html,
-body,
-#root {
+/* Embedded in the platform page: never restyle the host document. */
+:where(html, body, #root) {
   height: 100%;
   margin: 0;
 }
 
-body {
+.app {
   font-family:
     'Segoe UI',
     -apple-system,
@@ -57,7 +58,7 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-button {
+.app button {
   font-family: inherit;
 }
 
@@ -1677,7 +1678,8 @@ html[data-rail-collapsed='true'] .ribbon-tabs {
 
 /* Design tokens — AI panel chrome only (same values as docs/sheets/slides).
  * The viewer chrome around the panel keeps its own variables. */
-:root {
+:where(:root),
+.app {
   --gs-font-sans:
     'Arial', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue',
     sans-serif;

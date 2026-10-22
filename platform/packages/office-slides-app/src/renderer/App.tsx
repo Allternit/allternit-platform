@@ -54,7 +54,15 @@ import type { ChartPresetDef, IconDef, SmartArtDef, WordArtPreset } from './inse
 import { IconAiBeautify, IconAiFactCheck, IconAiImage } from './components/icons'
 import { t, useI18n } from './i18n/locale'
 import { AiPanel } from './ai/AiPanel'
-import { OfficeAiSlot, AllternitBrandMark, requestAssistantPreset } from '@allternit/office-suite/bridge'
+import {
+  OfficeAiSlot,
+  AllternitBrandMark,
+  requestAssistantPreset,
+  registerPaneAgentPersist,
+  useOfficeHost,
+  designSystemTheme,
+} from '@allternit/office-suite/bridge'
+import { FloatingTextToolbar, ViewPill } from './components/SessionChrome'
 import { ChartDataDialog } from './components/ChartDataDialog'
 import type { BrushFormat } from './format-brush'
 import { isTextUndoTarget, shouldRouteUndoToDeck } from './undo-routing'
@@ -231,6 +239,11 @@ export function App() {
     return () => window.clearTimeout(t)
   }, [status])
   const [showThumbs, setShowThumbs] = useState(true)
+  // Inside an artifact session (the host's chat sits beside the editor) the
+  // ribbon and status bar give way to floating controls (SessionChrome.tsx).
+  const officeHost = useOfficeHost()
+  const sessionChrome = !!officeHost?.hostChat
+  const [ribbonShown, setRibbonShown] = useState(false)
   // ── Thumbnail sidebar width (drag the divider to resize; persisted) ─────────
   const [thumbsW, setThumbsW] = useState(loadThumbsW)
   const thumbsListRef = useRef<HTMLDivElement | null>(null)
@@ -575,6 +588,17 @@ export function App() {
 
   const save = useCallback((): Promise<boolean> => fileActions.save(ctxRef.current), [])
 
+  // A host agent's edits (artifact session, pane_artifact) are saved right
+  // after each change — autosave is opt-in, and the host keeps the record.
+  useEffect(
+    () =>
+      registerPaneAgentPersist('slides', async () => {
+        if (!(await window.slidesApi.isDirty())) return true
+        return save()
+      }),
+    [save],
+  )
+
   // Close guard (closing tab/window) chose "Save": run the full save flow and report the result
   useEffect(() => {
     return window.slidesApi.onCloseSaveRequest?.(() => {
@@ -823,6 +847,25 @@ export function App() {
     (preset: SlideThemePreset) => styleActions.applyThemePreset(ctxRef.current, preset),
     [],
   )
+  // The host's design system as a deck theme (colour scheme + heading/body fonts)
+  const dsTheme = useMemo<SlideThemePreset | null>(() => {
+    const ds = officeHost?.designSystem
+    const theme = ds ? designSystemTheme(ds) : null
+    return theme
+      ? { id: 'design-system', name: theme.name, colors: theme.colors, majorFont: theme.majorFont, minorFont: theme.minorFont }
+      : null
+  }, [officeHost?.designSystem])
+
+  // A new, empty deck in a session with a design system starts on that system's theme
+  // (once per deck and system); an existing deck keeps its own until the user applies it.
+  const dsAppliedRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (!dsTheme || !hasDoc || !deckEmpty) return
+    const key = `${path ?? ''}|${dsTheme.name}|${JSON.stringify(dsTheme.colors)}`
+    if (dsAppliedRef.current === key) return
+    dsAppliedRef.current = key
+    void applyThemePreset(dsTheme)
+  }, [dsTheme, hasDoc, deckEmpty, path, applyThemePreset])
   const onStroke = useCallback(
     (sourceId: string, stroke: { color: string; widthPt: number } | null) =>
       styleActions.onStroke(ctxRef.current, sourceId, stroke),
@@ -2091,7 +2134,8 @@ export function App() {
   const _fileName = slide ? path?.split('/').pop() || t('appUntitledPresentation') : undefined
 
   return (
-    <div className="app">
+    <div className={`app${sessionChrome ? ' session-chrome' : ''}`}>
+      {(!sessionChrome || ribbonShown) && (
       <Ribbon
         hasDoc={!!slide}
         deckEmpty={deckEmpty}
@@ -2119,6 +2163,7 @@ export function App() {
         onInsertImage={() => void insertImage()}
         onBackground={(color, all) => void onBackground(color, all)}
         onApplyTheme={(preset) => void applyThemePreset(preset)}
+        designSystemTheme={dsTheme}
         onAddSlide={() => void addSlide()}
         onAddSection={() => void addSectionAt(current)}
         onAddSlideWithLayout={(lp) => void addSlideWithLayout(lp)}
@@ -2268,8 +2313,22 @@ export function App() {
         onFlip={(axis) => void flipSelected(axis)}
         canDistribute={selectedIds.length >= 3}
       />
+      )}
 
       <div className="workspace">
+        {sessionChrome && slide && viewMode !== 'reading' && (
+          <ViewPill
+            zoom={zoom}
+            showThumbs={showThumbs}
+            ribbonShown={ribbonShown}
+            onDownload={() => void saveAs()}
+            onPresent={() => startSlideShow(false)}
+            onToggleThumbs={() => setShowThumbs((v) => !v)}
+            onZoom={setZoom}
+            onFit={zoomToFit}
+            onToggleRibbon={() => setRibbonShown((v) => !v)}
+          />
+        )}
         {!slide ? (
           <div className="start-screen start-booting">{t('appStartOpening')}</div>
         ) : viewMode === 'reading' ? (
@@ -2733,6 +2792,26 @@ export function App() {
                             onFollowLink={followRunLink}
                           />
                         )}
+                        {sessionChrome && (editNode ?? (hasTextSelection ? selectedNode : null)) && (
+                          <FloatingTextToolbar
+                            key={(editNode ?? selectedNode)!.sourceId}
+                            box={(editNode ?? selectedNode)!.box}
+                            zoom={zoom}
+                            designSystem={officeHost?.designSystem}
+                            fontFamily={fontStatus?.family ?? null}
+                            fontSizePt={fontStatus?.sizePt ?? null}
+                            onFontFamily={onFontFamily}
+                            onFontSize={onFontSize}
+                            onColor={(hex) => (editing ? onTextColor(hex) : onElementTextColor(hex))}
+                            onToggle={onTextToggle}
+                            onLink={() => void openLinkDialog()}
+                            onBullets={() => onParagraphFormat({ bullet: 'char' })}
+                            onAlign={onAlign}
+                            onComment={officeHost?.hostChat?.openComments ?? (() => openComments(true))}
+                            onMore={() => setRibbonShown(true)}
+                            onApplyTheme={dsTheme ? () => void applyThemePreset(dsTheme) : undefined}
+                          />
+                        )}
                         {editingCell && cellEditNode && (
                           <TextEditOverlay
                             node={cellEditNode}
@@ -2924,6 +3003,7 @@ export function App() {
         )}
       </div>
 
+      {!sessionChrome && (
       <footer className="status-bar">
         <div className="status-left">
           {slide ? (
@@ -2963,6 +3043,7 @@ export function App() {
           <span className="zoom-value">{Math.round(zoom * 100)}%</span>
         </div>
       </footer>
+      )}
 
       {masterItems && (
         <MasterView

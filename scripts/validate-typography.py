@@ -74,7 +74,6 @@ EXEMPT_PATH_PREFIXES = [
     "surfaces/docs",
     "surfaces/allternit-mobile/docs",
     "surfaces/gizzi-vscode",
-    "surfaces/office.allternit.com",
 ]
 
 FORBIDDEN = [

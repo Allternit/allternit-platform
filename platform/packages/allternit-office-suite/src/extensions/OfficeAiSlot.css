@@ -1,6 +1,6 @@
 /* OfficeAiSlot — agent panes occupying an app's AI chat section (no tab
  * strip: a single agent pane's own header identifies it).
- * Tokens come from the suite theme (platform/packages/allternit-office-suite
+ * Tokens come from the suite theme (packages/@allternit/allternit-office-suite
  * theme/allternit-office-suite.css) and are overridden by the platform shell. */
 
 .office-ai-slot {
@@ -72,4 +72,15 @@
 
 .office-ext-rail:disabled {
   cursor: default;
+}
+
+/* Host chat mode (OfficeHost.hostChat): the app's AI dock takes no space. */
+.ai-dock:has(> .office-ai-slot-host) {
+  display: none !important;
+}
+
+/* Sheets puts the section in the first column of its .sheet-body grid; with
+ * the section gone the sheet takes the whole row. */
+.sheet-body:has(> .office-ai-slot-host) {
+  grid-template-columns: minmax(0, 1fr) !important;
 }

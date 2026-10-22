@@ -3,10 +3,13 @@
  * platform shell (e.g. in the standalone web app or an Electron wrapper).
  *
  * These values mirror the neutral, light-theme palette used by the embedded
- * office apps. The platform surface overrides them with its own CSS variables.
+ * office apps. On the page they have zero specificity (:where), so the
+ * platform's own tokens always win outside the office apps; the office roots
+ * (.app / .app-shell) keep these values so the editors look the same.
  */
 
-:root {
+:where(:root),
+.app, .app-shell {
   /* Typography */
   --gs-font-sans:
     'Arial', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue',
