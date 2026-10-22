@@ -18,6 +18,8 @@ on:
     branches: [main]
     paths:
       - 'cmd/allternit-cloud-api/**'
+      # gateway_catalog.rs compiles this file in with include_str!, so a catalog edit must redeploy.
+      - 'cmd/allternit-api/assets/gateway-catalog.json'
       - 'mcp/protocol/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
