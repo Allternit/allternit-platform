@@ -75,6 +75,10 @@ Two rules keep the seal valid:
 - **No dangling symlinks in the bundle.** Signing fails on them. The ACU gateway therefore does not ship a venv, because a venv links to the build machine's Python. `prepare:acu-gateway` installs its packages per target into `resources/computer-use/acu-site/<os>-<arch>`, which is packaged as `computer-use/acu/site-packages`. The gateway runs on the bundled driver Python with that folder on `PYTHONPATH` (`bundledAcuPython` in `src/main/acu-gateway-manager.ts`).
 - **Nothing writes inside the installed app.** The packaged app sets `PYTHONPYCACHEPREFIX` to `<userData>/pycache` at startup, so the bundled Pythons don't write `__pycache__` into `Contents/Resources`.
 
+**Keychain prompt after each update.** macOS ties a Keychain item's **Always Allow** to the app's exact code, and every ad-hoc build has new code. So after each app update, the first launch asks for the Mac password to use **Allternit Desktop Safe Storage**. `safeStorage` reads run on the main process and wait for that answer, so until the user answers, the app does not respond: startup stops after the backend comes up, and Quit times out. The prompt often opens behind other windows. If a Mac build hangs right after an install, check for it first (`pgrep SecurityAgent`, or `sample <main pid>` showing `SecItemCopyMatching` on the main thread). A stable signing identity would end this.
+
+**No in-app app updates.** `update-electron-app` (update.electronjs.org) cannot update these builds. On macOS, Squirrel.Mac needs the new app's signature to match the old one, which ad-hoc signing never does. On Windows, the service serves Squirrel.Windows packages, and Desktop ships an NSIS installer. New app versions come from Homebrew (`brew upgrade --cask allternit`) or a fresh download. Runtime packages (below) still update the parts inside the app.
+
 Check a build with `codesign --verify --deep --strict "Allternit Desktop.app"`. Proper notarization needs a Developer ID certificate and the `APPLE_ID`, `APPLE_ID_PASSWORD` and `APPLE_TEAM_ID` secrets (`scripts/notarize.cjs`).
 
 ## Layout
@@ -188,7 +192,7 @@ The views draw the same picture for the same input (no random layout), show "—
 
 ## Runtime updates
 
-The app itself updates through the normal installer. The parts inside it (the local API, Gizzi, the factory and the screens) update separately and more often, as a signed **runtime package** from runtime.allternit.com. Desktop checks a minute after it starts, then every 6 hours. **Check for updates** in the app menu also checks the runtime. A downloaded update is installed the next time Desktop starts.
+The app itself updates by installing a new version (Homebrew or a download, see [macOS signing](#macos-signing)). The parts inside it (the local API, Gizzi, the factory and the screens) update separately and more often, as a signed **runtime package** from runtime.allternit.com. Desktop checks a minute after it starts, then every 6 hours. **Check for updates** in the app menu also checks the runtime. A downloaded update is installed the next time Desktop starts.
 
 - Only files that changed are downloaded, and the rest are copied from what is already installed.
 - If a download stops partway (a slow connection, quitting the app), the next check carries on from where it stopped instead of starting over.
