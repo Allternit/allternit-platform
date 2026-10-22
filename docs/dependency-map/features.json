@@ -173,6 +173,10 @@
         {
           "on": "2026-10-22",
           "note": "Bot chat deck above the composer: [open thread] · Threads · Tasks · Bot (BotThreadTopDeck). Threads = separate chats with the bot; Tasks = the open thread's plan and hand-offs. Thread panel trimmed from 7 sections to Activity + About this thread. Bot Home tabs: Chat + threads, Artifacts, Routines, Memory, Settings (Computer and Usage fold into Settings). User bubbles wear the bot's colour. Project home uses the Bots home composer shape (To: row, team strip under it, Threads quick view)."
+        },
+        {
+          "on": "2026-10-22",
+          "note": "Group chats open on the group stage: bots orbit, linked to who they work with; the speaker takes the middle; hand-offs light the link; idle shows the room card. Sending or scrolling docks the group into the members pill. Bot stage gap fixes: needs-you card, briefing, montage of real artifact previews across threads, live steps, plan card (Eoj)."
         }
       ],
       "evidence": [
@@ -895,6 +899,10 @@
         {
           "on": "2026-10-21",
           "note": "In a bot's own chat the living avatar stands full screen on the live stage, on a wash of the bot's color instead of the dark tile; the dark tile stays on the main chat when a bot is picked (Eoj)."
+        },
+        {
+          "on": "2026-10-22",
+          "note": "2x avatar art (148 sheets + 199 portraits) lives on runtime.allternit.com (R2), not in git; listed in avatar-hires.json (Eoj: some avatars looked unpolished)."
         }
       ],
       "evidence": [

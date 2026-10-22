@@ -20,7 +20,7 @@ From top to bottom:
 | Promoted | Up to three promoted bots with unframed avatars. Use **⋯ → Unpromote** on an icon to remove it. |
 | Projects | Your bot projects. Threads are not listed here; open the project to see them. |
 | Bots | One row per bot: photo, status dot and the last line from its newest thread. Click to open its bot screen. |
-| Group chats | Pinned at the bottom, above your account row. |
+| Group chats | Pinned at the bottom, above your account row. A group chat opens on its [group stage](#group-stage). |
 
 Only one bot is the main bot at a time. Making a bot the main bot removes the flag from the previous one. On desktop, drag a bot from the Bots list (or a promoted icon) onto the main bot tile to make it the main bot, or onto the promoted row to promote it. On a phone, use the bot's **⋯** menu. Needs-you items appear on the bots home and the project page, not in the rail. The phone drawer (`ai.allternit.com` phone layout and the `m.allternit.com` PWA) shows the same rail.
 
@@ -187,3 +187,16 @@ In Create or Edit Bot, open **Look → Characters**. Gizzi Family keeps its clay
 Avatars share consistent visible sizing even when their source images have different padding. Codex Carry characters have transparent backgrounds. Character expressions follow activity where available, and hover or keyboard focus wakes the preview. Offscreen and hidden-window animations pause, and reduced-motion settings show still art.
 
 The category field in Create and Edit Bot shows your saved category. Open its glass dropdown and use arrow keys to move, Enter to choose, or Escape to close.
+
+## Group stage
+
+A group chat opens on its bots, with the conversation beside them. The bots slowly orbit the middle, linked to the bots they work with: those that @mention each other, or answer one after another in a round. Whoever is speaking glides into the middle, big, with their words beside them. When work passes from one bot to the next, the link between them lights up and a dot travels along it.
+
+With nothing running, a room card sits in the middle. It shows the room's bulletin, what happened since you were last here (or the last thing said), and suggestions you can tap to send. Bots that have been idle a while doze.
+
+Hover over a bot, or tap one, to see its last words and who it works with. The orbit holds still while you look. When the room is waiting on you, a "Needs you" note says why.
+
+When you send a message, or scroll back through the conversation, the group flies into the members pill in the header and the conversation takes the screen. Tap the pill to bring the bots back. On phones (the `ai.allternit.com` phone layout and the `m.allternit.com` app) the orbit sits above the conversation. With reduced motion, the orbit and the flight are still.
+
+For developers: `src/components/bots/stage/group/GroupStage.tsx` in allternit-ai. `group-stage-model.ts` holds `groupLinks`, `roomSince` and `lastBotLine`. `GroupChatView` wraps the member-turn adapter so each turn reports its speaker (`speaker`, `handoffFrom`, `speech`). It docks into `[data-group-pill-avatars]` on send or after 360 px of scrolling. Story: `GroupStage.stories.tsx`. Tests: `group-stage-model.test.ts` and the "GroupChatView group stage" tests in `group-chat-threads.test.tsx`.
+

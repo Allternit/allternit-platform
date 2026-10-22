@@ -86,6 +86,11 @@ export function verifySignature(data: Buffer, signatureB64: string, publicKey = 
 /** No bytes for this long aborts a download (then it is retried). */
 export const STALL_MS = 60_000;
 const DOWNLOAD_TRIES = 3;
+/** Slower than this (bytes/s) after MIN_SPEED_AFTER_MS aborts a download: a trickle never trips the stall timer. */
+const MIN_BYTES_PER_SEC = 16 * 1024;
+const MIN_SPEED_AFTER_MS = 20_000;
+/** Concurrent object downloads (a pool, so one slow object never holds the rest). */
+const DOWNLOAD_POOL = 8;
 
 /**
  * Fetch `url` into `dest` (gunzipped when `gunzip`). A transfer that sends no
@@ -93,7 +98,7 @@ const DOWNLOAD_TRIES = 3;
  * fetch without a timeout can hang forever on a dead connection and freeze the
  * whole update with no error. Resolves to the bytes received.
  */
-async function fetchToFile(fetchImpl: typeof fetch, url: string, dest: string, gunzip: boolean, stallMs: number): Promise<number> {
+async function fetchToFile(fetchImpl: typeof fetch, url: string, dest: string, gunzip: boolean, stallMs: number, log?: RuntimePackagesOptions['log']): Promise<number> {
   for (let attempt = 1; ; attempt++) {
     const ac = new AbortController();
     let timer: NodeJS.Timeout | undefined;
@@ -101,6 +106,16 @@ async function fetchToFile(fetchImpl: typeof fetch, url: string, dest: string, g
       clearTimeout(timer);
       timer = setTimeout(() => ac.abort(new Error(`download stalled for ${stallMs / 1000}s`)), stallMs);
     };
+    // A connection that trickles bytes keeps re-arming the stall timer forever:
+    // past MIN_SPEED_AFTER_MS, below MIN_BYTES_PER_SEC is a failure too.
+    const started = Date.now();
+    let received = 0;
+    const speed = setInterval(() => {
+      const ms = Date.now() - started;
+      if (ms > MIN_SPEED_AFTER_MS && (received * 1000) / ms < MIN_BYTES_PER_SEC) {
+        ac.abort(new Error(`download too slow (${Math.round((received * 1000) / ms / 1024)} KB/s)`));
+      }
+    }, 5_000);
     try {
       arm();
       const res = await fetchImpl(url, { signal: ac.signal });
@@ -109,6 +124,7 @@ async function fetchToFile(fetchImpl: typeof fetch, url: string, dest: string, g
       const watch = new Transform({
         transform(chunk: Buffer, _enc, cb) {
           bytes += chunk.length;
+          received = bytes;
           arm();
           cb(null, chunk);
         },
@@ -123,10 +139,21 @@ async function fetchToFile(fetchImpl: typeof fetch, url: string, dest: string, g
       if (attempt >= DOWNLOAD_TRIES || (status !== undefined && status < 500)) {
         throw new Error(`runtime download ${path.basename(dest)}: ${reason?.message ?? reason}`);
       }
+      log?.warn('[Runtime] retrying', path.basename(dest), `(${attempt}/${DOWNLOAD_TRIES}):`, reason?.message ?? reason);
       await new Promise((r) => setTimeout(r, 250 * attempt));
     } finally {
       clearTimeout(timer);
+      clearInterval(speed);
     }
+  }
+}
+
+/** A file a previous, interrupted check finished downloading (complete files are renamed into place). */
+function resumable(file: string, size: number): boolean {
+  try {
+    return fs.statSync(file).size === size;
+  } catch {
+    return false;
   }
 }
 
@@ -147,6 +174,8 @@ export interface RuntimePackagesOptions {
   platform?: string;
   /** Abort a download after this long with no bytes (default STALL_MS). */
   stallMs?: number;
+  /** Wait before reading latest.json and its .sig again after a mismatch (default 5 s). */
+  feedRetryMs?: number;
   log?: { info: (...a: unknown[]) => void; warn: (...a: unknown[]) => void };
 }
 
@@ -161,6 +190,7 @@ export class RuntimePackages {
       shellApi: SHELL_API,
       platform: platformId(),
       stallMs: STALL_MS,
+      feedRetryMs: 5_000,
       ...options,
     };
   }
@@ -298,7 +328,7 @@ export class RuntimePackages {
     let entries: string[] = [];
     try { entries = fs.readdirSync(this.versionsDir); } catch { return; }
     for (const name of entries) {
-      if (!keep.has(name)) fs.rmSync(path.join(this.versionsDir, name), { recursive: true, force: true });
+      if (!keep.has(name) && !name.endsWith('.partial')) fs.rmSync(path.join(this.versionsDir, name), { recursive: true, force: true });
     }
   }
 
@@ -322,13 +352,18 @@ export class RuntimePackages {
 
   private async runCheck(feedUrl: string, fetchImpl: typeof fetch): Promise<string | null> {
     const base = `${feedUrl.replace(/\/$/, '')}/stable/${this.opts.platform}`;
-    const res = await this.fetchSmall(fetchImpl, `${base}/latest.json`);
-    if (!res.ok) throw new Error(`runtime feed ${res.status}`);
-    const raw = Buffer.from(await res.arrayBuffer());
-    const sigRes = await this.fetchSmall(fetchImpl, `${base}/latest.json.sig`);
-    if (!sigRes.ok || !verifySignature(raw, await sigRes.text(), this.opts.publicKey)) {
-      throw new Error('runtime feed signature invalid');
+    // latest.json and its .sig are published one after the other: a check that
+    // lands between them sees a mismatched pair, so read the pair again once.
+    let raw: Buffer | null = null;
+    for (let attempt = 1; attempt <= 2 && !raw; attempt++) {
+      if (attempt > 1) await new Promise((r) => setTimeout(r, this.opts.feedRetryMs));
+      const res = await this.fetchSmall(fetchImpl, `${base}/latest.json`);
+      if (!res.ok) throw new Error(`runtime feed ${res.status}`);
+      const body = Buffer.from(await res.arrayBuffer());
+      const sigRes = await this.fetchSmall(fetchImpl, `${base}/latest.json.sig`);
+      if (sigRes.ok && verifySignature(body, await sigRes.text(), this.opts.publicKey)) raw = body;
     }
+    if (!raw) throw new Error('runtime feed signature invalid');
     const entry = JSON.parse(raw.toString('utf8')) as FeedEntry;
     const state = this.readState();
     const currentBuild = Math.max(
@@ -343,7 +378,12 @@ export class RuntimePackages {
     const archive = path.join(this.versionsDir, `${entry.version}.download.tar.gz`);
     const staging = path.join(this.versionsDir, `${entry.version}.partial`);
     const finalDir = path.join(this.versionsDir, entry.version);
-    fs.rmSync(staging, { recursive: true, force: true });
+    // Resume: a partial download of this same version keeps what it has; any
+    // other version's partial is stale.
+    for (const name of fs.readdirSync(this.versionsDir)) {
+      if (name.endsWith('.partial') && name !== path.basename(staging)) fs.rmSync(path.join(this.versionsDir, name), { recursive: true, force: true });
+    }
+    if (entry.format !== 2) fs.rmSync(staging, { recursive: true, force: true });
     try {
       fs.mkdirSync(staging, { recursive: true });
       if (entry.format === 2) {
@@ -352,7 +392,7 @@ export class RuntimePackages {
         this.opts.log?.info('[Runtime] update', entry.version, `reused ${stats.reused} files, downloaded ${stats.downloaded} (${(stats.downloadedBytes / 1e6).toFixed(1)} MB)`);
       } else {
         if (!entry.url || !entry.sha256) throw new Error('runtime feed entry has no package');
-        await fetchToFile(fetchImpl, new URL(entry.url, `${base}/`).toString(), archive, false, this.opts.stallMs);
+        await fetchToFile(fetchImpl, new URL(entry.url, `${base}/`).toString(), archive, false, this.opts.stallMs, this.opts.log);
         if ((await sha256File(archive)) !== entry.sha256) throw new Error('runtime archive checksum mismatch');
         await new Promise<void>((resolve, reject) => {
           const tar = spawn('tar', ['-xzf', archive, '-C', staging], { stdio: 'ignore' });
@@ -378,7 +418,8 @@ export class RuntimePackages {
       return entry.version;
     } finally {
       fs.rmSync(archive, { force: true });
-      fs.rmSync(staging, { recursive: true, force: true });
+      // A failed or interrupted delta keeps its staging dir for the next check to resume.
+      if (entry.format !== 2) fs.rmSync(staging, { recursive: true, force: true });
     }
   }
 
@@ -461,17 +502,35 @@ export class RuntimePackages {
       if (src) {
         fs.copyFileSync(src, dst, fs.constants.COPYFILE_FICLONE);
         stats.reused += 1;
+      } else if (resumable(dst, f.size)) {
+        // Downloaded by an earlier, interrupted check (the final verify still hashes it).
+        stats.reused += 1;
       } else {
         pending.push([rel, f]);
       }
     }
     const download = async ([rel, f]: [string, { sha256: string; size: number }]) => {
-      const bytes = await fetchToFile(fetchImpl, `${feedRoot}/objects/${f.sha256}.gz`, path.join(staging, rel), true, this.opts.stallMs);
+      const dst = path.join(staging, rel);
+      const part = `${dst}.download`;
+      const bytes = await fetchToFile(fetchImpl, `${feedRoot}/objects/${f.sha256}.gz`, part, true, this.opts.stallMs, this.opts.log);
+      fs.renameSync(part, dst);
       stats.downloaded += 1;
       stats.downloadedBytes += bytes;
     };
-    for (let i = 0; i < pending.length; i += 8) {
-      await Promise.all(pending.slice(i, i + 8).map(download));
+    // A pool of DOWNLOAD_POOL workers, with progress in the log every 10 s.
+    const total = pending.length;
+    const progress = setInterval(() => {
+      this.opts.log?.info('[Runtime] downloading', entry.version, `${stats.downloaded}/${total} files, ${(stats.downloadedBytes / 1e6).toFixed(1)} MB`);
+    }, 10_000);
+    try {
+      let next = 0;
+      await Promise.all(
+        Array.from({ length: Math.min(DOWNLOAD_POOL, total) }, async () => {
+          while (next < total) await download(pending[next++]);
+        }),
+      );
+    } finally {
+      clearInterval(progress);
     }
     return stats;
   }
