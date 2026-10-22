@@ -4444,7 +4444,7 @@ function transformMessagesForExternalTranscript(
   messages: Transcript,
   replIds: Set<string>,
 ): Transcript {
-  return messages.flatMap(m => {
+  return messages.flatMap((m): Transcript => {
     if (m.type === 'assistant' && Array.isArray(m.message.content)) {
       const content = m.message.content
       const hasRepl = content.some(
