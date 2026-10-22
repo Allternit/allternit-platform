@@ -161,6 +161,10 @@
         {
           "on": "2026-10-21",
           "note": "Bot chats and threads open on the live bot stage (BotLiveStage): the bot full screen on a wash of its color, with its latest words, approvals and questions answered in place, its steps and live computer while it works, a montage of what it made, and its next routine. Dropping a file or link on the bot (or Attach) hands it work: Plan it first (plan permission mode for that turn), Just do it, or Ask me questions. The written conversation is one click away (Bot / Chat in the thread top). Bot chats can now send files (Eoj)."
+        },
+        {
+          "on": "2026-10-22",
+          "note": "Choosing a bot in the Bots rail (and finishing main bot setup) opens its main chat on the live stage instead of the bot screen; the bot screen is one click away (thread-top avatar, Back) (Eoj)."
         }
       ],
       "evidence": [
