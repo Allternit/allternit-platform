@@ -751,6 +751,10 @@
         {
           "on": "2026-10-18",
           "note": "Phone UI gained iOS-style gesture physics on a shared pan/spring core: back-stack navigation with edge-swipe-back and screen push/pop, swipe actions on recents and messages (delete, reply), bottom-sheet detents with velocity fling, long-press peek, drag-to-reorder, pull-to-refresh, toast swipe-dismiss. Desktop behavior unchanged (phone-gated); reduced motion disables tracking."
+        },
+        {
+          "on": "2026-10-21",
+          "note": "Eoj chose the refined existing sidebar over rail-plus-context navigation. Shared section actions fold into one popover; desktop defaults to 286px without overwriting saved widths; phone and PWA recent titles wrap to two lines."
         }
       ],
       "evidence": [
