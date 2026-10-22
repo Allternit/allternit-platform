@@ -1344,6 +1344,10 @@
         {
           "on": "2026-10-22",
           "note": "Eoj: the editor should work like PdfCraft: every editable box shows on hover, select several (Shift-click, drag box, Cmd+A) and edit them together, duplicate elements (Cmd+D), undo everything, pinch/Cmd-scroll zoom to 400%. Also fixed pages after the first staying blank: layout reloaded the page text index per text object (~850 ms a page), blocking renders; renders that finished after scrolling away were thrown away."
+        },
+        {
+          "on": "2026-10-22",
+          "note": "Eoj: after a whiteout, text or images put on it must show in front and the whiteout stays; image files dragged onto the editor are placed on the page. Covers (images, filled shapes) hide earlier text from hit tests; moves/resizes/retyped pieces landing on a later cover are lifted to the front; GlobalDropzone gained position-routed drop areas (useDropArea) and routes composer drops by pointer position."
         }
       ],
       "evidence": [
