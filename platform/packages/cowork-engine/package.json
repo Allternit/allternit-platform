@@ -36,7 +36,7 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
-    "typescript": "^5.4.0"
+    "typescript": "^6.0.3"
   },
   "scripts": {
     "build": "tsc"

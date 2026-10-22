@@ -21,6 +21,9 @@
     "alwaysStrict": false,
     "noFallthroughCasesInSwitch": false,
     "moduleResolution": "node",
+    // Published CommonJS build: module=node16 changes the interop helpers it emits.
+    // Keep the emit byte-identical on TypeScript 6; migrate before TypeScript 7.
+    "ignoreDeprecations": "6.0",
     "resolveJsonModule": true
   },
   "include": ["src/**/*"],

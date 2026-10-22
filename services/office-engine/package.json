@@ -32,7 +32,7 @@
     "jszip": "^3.10.1",
     "pptxgenjs": "^4.0.1",
     "tsx": "^4.21.0",
-    "typescript": "^5.9.3",
+    "typescript": "^6.0.3",
     "vitest": "^1.6.1"
   }
 }

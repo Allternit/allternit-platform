@@ -26,7 +26,7 @@ import { subsCommand } from './commands/subs.js';
 import { capsCommand } from './commands/caps.js';
 import { taskCommand } from './commands/task.js';
 import { artifactsCommand } from './commands/artifacts.js';
-import { version } from '../package.json' assert { type: 'json' };
+import { version } from '../package.json' with { type: 'json' };
 
 const program = new Command();
 

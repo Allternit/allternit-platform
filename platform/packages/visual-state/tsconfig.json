@@ -18,7 +18,6 @@
     "noUnusedParameters": false,
     "noFallthroughCasesInSwitch": true,
     "composite": true,
-    "baseUrl": ".",
     "paths": {
       "@allternit/visual-state": ["./src/index.ts"],
       "@allternit/visual-state/*": ["./src/*"]

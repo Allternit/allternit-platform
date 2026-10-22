@@ -3,6 +3,9 @@
     "target": "ES2022",
     "module": "CommonJS",
     "moduleResolution": "node",
+    // Emitted by tsc as CommonJS for Electron's sandboxed preload (package is "type": "module",
+    // so module=node16 would emit ESM). Revisit with .cts sources before TypeScript 7.
+    "ignoreDeprecations": "6.0",
     "lib": ["ES2022", "DOM"],
     "outDir": "../../dist/preload",
     "rootDir": ".",

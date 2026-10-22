@@ -1,5 +1,6 @@
 {
   "compilerOptions": {
+    "types": ["node", "jest"],
     "target": "ES2022",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
@@ -21,10 +22,9 @@
     "allowSyntheticDefaultImports": true,
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true,
-    "baseUrl": ".",
     "paths": {
-      "@/*": ["src/*"],
-      "@runtime/*": ["src/runtime/*"]
+      "@/*": ["./src/*"],
+      "@runtime/*": ["./src/runtime/*"]
     }
   },
   "include": [

@@ -20,7 +20,7 @@
   },
   "devDependencies": {
     "tsx": "^4.0.0",
-    "typescript": "^5.5.0",
+    "typescript": "^6.0.3",
     "@modelcontextprotocol/client": "catalog:",
     "@types/node": "^24.10.1",
     "vitest": "^1.0.0"

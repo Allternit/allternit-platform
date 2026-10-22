@@ -94,7 +94,7 @@ async function sshSession(command: Command, id: string): Promise<void> {
 
   const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
   let raw = false;
-  const onStdin = (data: Buffer) => ws.send(data);
+  const onStdin = (data: Buffer<ArrayBuffer>) => ws.send(data);
   const onResize = () => {
     const { cols, rows } = terminalSize();
     ws.send(JSON.stringify({ cols, rows }));

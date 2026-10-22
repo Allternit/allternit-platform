@@ -1,7 +1,8 @@
 {
   "compilerOptions": {
+    "types": ["node"],
     "target": "ES2022",
-    "module": "commonjs",
+    "module": "node16",
     "lib": ["ES2022"],
     "declaration": true,
     "declarationMap": true,
@@ -24,7 +25,7 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
-    "moduleResolution": "node"
+    "moduleResolution": "node16"
   },
   "include": [
     "*.ts"
