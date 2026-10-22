@@ -62,6 +62,14 @@ A bot's main chat opens with a message from the bot, not from you: a short hello
 
 For developers: the greeting is `botGreetingFor()` in `src/lib/bots/bot-greeting.ts` (allternit-ai), rendered by `BotGreeting` in the bot chat view. `openBotCanonicalChat()` stores it when it creates a main chat by posting `role: "assistant"`, `noReply: true` and `metadata.source: "bot-greeting"` to [`POST /api/v1/agent-sessions/:id/messages`](/api/agent-sessions#send-a-message); the chat view hides that stored copy and draws the greeting from the profile, so it never shows twice. Template welcomes live in each template's `welcome` field (`{name}` becomes the bot's name).
 
+## Group chats
+
+**Group chats** (bottom of the Bots rail, **+** to make one) put several bots in one channel. A message without an @mention runs bounded rounds: each member replies or passes, and members can @mention each other into the next round. An @mention of a bot starts a thread for it instead, with a live card in the room.
+
+Each bot remembers its group chats. After a round, every member that took part saves one memory: the room, your message, what it said, and anything another member asked it. Its main chat and threads recall it, so a bot handed a task in a group chat knows about it when you open its own chat. The entries show in **Bot → Memory** and can be forgotten there.
+
+For developers: `src/lib/bots/group-chat-memory.ts` (`rememberGroupRound`, memory type and source `group-chat`), called from `GroupChatView` rounds and `runGroupChatTurn`; recall goes through `bot-memory-context.ts`.
+
 ## Bot, thread, and subagent
 
 | Object | Responsibility |
