@@ -231,6 +231,8 @@ installSocketQosGuard(net.Socket.prototype);
 log.transports.file.resolvePath = () => join(app.getPath('userData'), 'main.log');
 log.initialize();
 log.transports.file.level = 'info';
+// Kernel and gizzi output fill 1 MB in minutes; keep enough to see update errors.
+log.transports.file.maxSize = 10 * 1024 * 1024;
 // The bundled Pythons (driver, ACU gateway, decision runtime) inherit this:
 // bytecode written inside the .app breaks its code signature seal.
 if (app.isPackaged && !process.env.PYTHONPYCACHEPREFIX) {
@@ -246,8 +248,10 @@ if (!app.isPackaged) {
 // Electron allows it, and surface a fatal dialog only once the app is ready.
 process.on('uncaughtException', (error) => {
   log.error('[Main] Uncaught exception:', error);
+  // A non-blocking box: showErrorBox runs a modal loop that holds quit
+  // requests (AppleEvents) until someone dismisses it.
   if (app.isReady() && !(app as unknown as { isQuitting?: boolean }).isQuitting) {
-    dialog.showErrorBox('Allternit Desktop encountered an error', String(error?.stack ?? error));
+    void dialog.showMessageBox({ type: 'error', message: 'Allternit Desktop encountered an error', detail: String(error?.stack ?? error) }).catch(() => undefined);
   }
 });
 process.on('unhandledRejection', (reason) => {
@@ -312,20 +316,38 @@ let runtimeUpdateTimer: NodeJS.Timeout | null = null;
  * background from the signed runtime feed; a staged one applies on restart.
  * ALLTERNIT_RUNTIME_FEED overrides the feed; "off" disables it.
  */
-function scheduleRuntimeUpdates() {
+const RUNTIME_CHECK_EVERY_MS = 6 * 60 * 60 * 1000;
+/** After a failed check: retry in 1, 5, 15, then 60 minutes (a partial download resumes). */
+const RUNTIME_RETRY_MS = [60_000, 5 * 60_000, 15 * 60_000, 60 * 60_000];
+let runtimeFailures = 0;
+
+function runtimeFeed(): string | null {
   const feed = process.env.ALLTERNIT_RUNTIME_FEED?.trim() || DEFAULT_RUNTIME_FEED;
-  if (!app.isPackaged || feed === 'off' || runtimeUpdateTimer) return;
-  const check = async () => {
-    try {
-      const staged = await runtimePackages().checkForUpdate(feed);
-      if (staged) broadcastUpdateStatus({ state: 'downloaded', version: `runtime ${staged}` });
-    } catch (err) {
-      log.warn('[Runtime] update check failed:', (err as Error).message ?? err);
-    }
-  };
-  runtimeUpdateTimer = setTimeout(function tick() {
-    void check();
-    runtimeUpdateTimer = setTimeout(tick, 6 * 60 * 60 * 1000);
+  return !app.isPackaged || feed === 'off' ? null : feed;
+}
+
+/** One runtime check now; resolves to the staged version (or null), never throws. */
+async function checkRuntimeNow(): Promise<string | null> {
+  const feed = runtimeFeed();
+  if (!feed) return null;
+  try {
+    const staged = await runtimePackages().checkForUpdate(feed);
+    runtimeFailures = 0;
+    if (staged) broadcastUpdateStatus({ state: 'downloaded', version: `runtime ${staged}` });
+    return staged;
+  } catch (err) {
+    runtimeFailures += 1;
+    log.warn('[Runtime] update check failed:', (err as Error).message ?? err);
+    return null;
+  }
+}
+
+function scheduleRuntimeUpdates() {
+  if (!runtimeFeed() || runtimeUpdateTimer) return;
+  runtimeUpdateTimer = setTimeout(async function tick() {
+    await checkRuntimeNow();
+    const wait = runtimeFailures ? RUNTIME_RETRY_MS[Math.min(runtimeFailures, RUNTIME_RETRY_MS.length) - 1] : RUNTIME_CHECK_EVERY_MS;
+    runtimeUpdateTimer = setTimeout(tick, wait);
   }, 60 * 1000);
 }
 
@@ -1456,6 +1478,8 @@ async function initializeBundledMode(): Promise<void> {
       serviceState.api = { status: 'down', detail: message.slice(0, 120) };
       serviceState.gateway = { status: 'down', detail: message.slice(0, 120) };
       pushServiceState();
+      // A runtime update may be the fix for a backend that won't start.
+      scheduleRuntimeUpdates();
       throw apiErr;
     }
     serviceState.api = { status: 'up', detail: `Connected on ${URLS.API}` };
@@ -2081,7 +2105,10 @@ function createMiniWindow(): BrowserWindow {
     if (!win.webContents.isDevToolsFocused()) win.hide();
   });
 
+  // Hide instead of closing, except when the app quits: a cancelled close
+  // here used to swallow every quit once Quick Chat had been opened.
   win.on('close', (e) => {
+    if ((app as unknown as { isQuitting?: boolean }).isQuitting) return;
     e.preventDefault();
     win.hide();
   });
@@ -2731,7 +2758,11 @@ function runQuitCleanup(): Promise<void> {
 }
 
 app.on('before-quit', (event) => {
-  if (quitCleanupDone) return;
+  if (quitCleanupDone) {
+    // Cleanup already ran: nothing may hold this quit (a window's close handler, a dialog).
+    setImmediate(() => app.exit(0));
+    return;
+  }
   event.preventDefault();
   (app as unknown as { isQuitting?: boolean }).isQuitting = true;
   void runQuitCleanup().then(() => app.quit());
@@ -2926,6 +2957,8 @@ ipcMain.handle('app:check-for-updates', async () => {
   }
   try {
     autoUpdater.checkForUpdates();
+    // The runtime (API, gizzi, screens) updates separately: check it too.
+    void checkRuntimeNow();
     return { ok: true } as const;
   } catch (error) {
     log.error('[autoUpdater] Manual check failed:', error);

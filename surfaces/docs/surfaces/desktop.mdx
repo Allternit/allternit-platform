@@ -186,6 +186,25 @@ The views draw the same picture for the same input (no random layout), show "—
 
 ## How this relates to the Agency Kernel
 
+## Runtime updates
+
+The app itself updates through the normal installer. The parts inside it (the local API, Gizzi, the factory and the screens) update separately and more often, as a signed **runtime package** from runtime.allternit.com. Desktop checks a minute after it starts, then every 6 hours. **Check for updates** in the app menu also checks the runtime. A downloaded update is installed the next time Desktop starts.
+
+- Only files that changed are downloaded, and the rest are copied from what is already installed.
+- If a download stops partway (a slow connection, quitting the app), the next check carries on from where it stopped instead of starting over.
+- A failed check tries again after 1, 5, 15 and then 60 minutes.
+- It also checks when the local API fails to start, because an update may be the fix.
+
+For developers (`surfaces/allternit-desktop/src/main/runtime-package.ts`, scheduling in `unified-main.ts`):
+
+- `fetchToFile` aborts an object after `STALL_MS` (60 s) with no bytes, or when it runs below `MIN_BYTES_PER_SEC` (16 KB/s) after 20 s, and retries 3 times. Each retry is logged as `[Runtime] retrying`.
+- `stageDelta` downloads through a pool of 8, logs `[Runtime] downloading n/total` every 10 s, and writes each object to `*.download` before renaming it into place.
+- A `<version>.partial` folder survives a failure or quit, and `prune` keeps it. The next check for the same version counts complete files as done. The final deep verify still hashes every file.
+- `latest.json` and its `.sig` are published one after the other. A mismatched pair is read again once after `feedRetryMs` (5 s).
+- `checkRuntimeNow` backs both the schedule (`RUNTIME_RETRY_MS` backoff) and the manual check. `main.log` keeps 10 MB, so `[Runtime]` lines survive.
+
+**Quitting.** Quick Chat hides instead of closing, except while the app quits. Crash reports use a non-blocking dialog. Once quit cleanup has run, a second quit exits at once, so nothing can hold the app open.
+
 Desktop hosts the Allternit API and Gizzi runtime locally. It is not part of the [Agency Kernel](/architecture); the kernel's Agency API is a Cloud API surface. See [Architecture](/architecture).
 
 ## Prompt-cache countdown

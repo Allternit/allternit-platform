@@ -90,7 +90,7 @@ describe('RuntimePackages', () => {
 
   it('refuses a feed signed by another key', async () => {
     const other = crypto.generateKeyPairSync('ed25519').publicKey.export({ type: 'spki', format: 'pem' }).toString();
-    const s = new RuntimePackages({ root, resourcesPath: resources, publicKey: other, platform: 'test-x', shellApi: 1 });
+    const s = new RuntimePackages({ root, resourcesPath: resources, publicKey: other, platform: 'test-x', shellApi: 1, feedRetryMs: 0 });
     await expect(s.checkForUpdate('https://feed.test', feed('r2', 200, makePackage('r2', 200)))).rejects.toThrow(/signature/);
   });
 
@@ -230,6 +230,26 @@ describe('per-file delta updates (feed format 2)', () => {
     const quick = new RuntimePackages({ root, resourcesPath: resources, publicKey: PUB, platform: 'test-x', shellApi: 1, stallMs: 400 });
     await expect(quick.checkForUpdate('https://feed.test', stalling(fetchImpl, 99))).rejects.toThrow(/stalled/);
     expect(quick.readState().pending).toBeUndefined();
+  });
+
+  it('a failed download resumes: the next check fetches only what is missing', async () => {
+    bundle('api v1', '<html>v1</html>');
+    const { fetchImpl, fetched } = deltaFeed('r2', 200, 'api v2', '<html>v2</html>');
+    const html = sha('<html>v2</html>');
+    const stallHtml = (async (url: string | URL, init?: RequestInit) => {
+      if (String(url).includes(html)) {
+        const signal = init?.signal;
+        return new Response(new ReadableStream({ start(c) { signal?.addEventListener('abort', () => c.error(signal.reason)); } }));
+      }
+      return fetchImpl(url, init);
+    }) as typeof fetch;
+    const quick = new RuntimePackages({ root, resourcesPath: resources, publicKey: PUB, platform: 'test-x', shellApi: 1, stallMs: 300 });
+    await expect(quick.checkForUpdate('https://feed.test', stallHtml)).rejects.toThrow(/stalled/);
+    expect(fs.existsSync(path.join(root, 'versions', 'r2.partial'))).toBe(true);
+    fetched.length = 0;
+    expect(await quick.checkForUpdate('https://feed.test', fetchImpl)).toBe('r2');
+    expect(fetched).toEqual([html]);
+    expect(fs.existsSync(path.join(root, 'versions', 'r2.partial'))).toBe(false);
   });
 
   it('runs one check at a time', async () => {
