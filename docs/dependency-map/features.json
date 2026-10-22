@@ -169,6 +169,10 @@
         {
           "on": "2026-10-22",
           "note": "No Bot / Chat switch: the bot stands big beside its conversation; sending, starting a task or scrolling flies it into the thread-top pill avatar (not a smaller copy below), and a tap on that avatar brings it back (Eoj)."
+        },
+        {
+          "on": "2026-10-22",
+          "note": "Bot chat deck above the composer: [open thread] · Threads · Tasks · Bot (BotThreadTopDeck). Threads = separate chats with the bot; Tasks = the open thread's plan and hand-offs. Thread panel trimmed from 7 sections to Activity + About this thread. Bot Home tabs: Chat + threads, Artifacts, Routines, Memory, Settings (Computer and Usage fold into Settings). User bubbles wear the bot's colour. Project home uses the Bots home composer shape (To: row, team strip under it, Threads quick view)."
         }
       ],
       "evidence": [
