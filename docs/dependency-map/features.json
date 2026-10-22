@@ -177,6 +177,10 @@
         {
           "on": "2026-10-22",
           "note": "Group chats open on the group stage: bots orbit, linked to who they work with; the speaker takes the middle; hand-offs light the link; idle shows the room card. Sending or scrolling docks the group into the members pill. Bot stage gap fixes: needs-you card, briefing, montage of real artifact previews across threads, live steps, plan card (Eoj)."
+        },
+        {
+          "on": "2026-10-22",
+          "note": "Bot colour comes from the avatar art (bot-art-color.ts), so the stage, pill and bubbles match the bot. The thread-top pill shows a status word (live-status.ts); a running thread shows a task card (ThreadTaskCard); Tasks lists subtasks under the running step and an Up next list. Phone gets a Needs you sheet. Project home uses the shared launch layout (BaseProjectView launchLayout). Voice sessions show hand-off chips (ai #732)."
         }
       ],
       "evidence": [
