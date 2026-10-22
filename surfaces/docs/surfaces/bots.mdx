@@ -188,6 +188,30 @@ Avatars share consistent visible sizing even when their source images have diffe
 
 The category field in Create and Edit Bot shows your saved category. Open its glass dropdown and use arrow keys to move, Enter to choose, or Escape to close.
 
+## Stage backgrounds
+
+Bot chats, group chats and bot project homes sit on a slow moving background behind frosted glass. There are thirteen to choose from:
+
+| Background | What it does |
+|---|---|
+| Aurora (default) | Soft colour clouds drift |
+| Glass mesh | A slow gradient with fine grain |
+| Constellation | Points drift and link up, like the bot graph |
+| Spotlight | A soft light follows whoever is speaking |
+| Horizon | Slow waves along the bottom |
+| Silk | Wide ribbons of colour sway |
+| Bokeh | Soft lights float upward |
+| Grid glow | Light passes across a dot grid |
+| Lava | Blobs merge and split |
+| Prism | A colour wheel turns very slowly |
+| Fireflies | Small lights drift and blink |
+| Dusk | A sky gradient that shifts slowly |
+| Plain | A flat colour, no movement |
+
+Choose one in **Settings → Appearance → Background**, or with the brush button at the top right of a bot or group stage. The choice applies to every bot chat, group chat and bot project home. Colours come from the screen: the bot's own colour, the group members' colours, or the project's colour. With **Reduce motion** on, or while the tab is hidden, the background holds still. Phones and the `m.allternit.com` app get the same backgrounds, smaller and with fewer particles.
+
+For developers: `src/components/bots/stage/backdrop/` in allternit-ai (`StageBackdrop.tsx`, `stage-backdrop-model.ts`, `StageBackdropPicker.tsx`). The setting is `appearance.stageBackground`. Story: `StageBackdrop.stories.tsx`.
+
 ## Group stage
 
 A group chat opens on its bots, with the conversation beside them. The bots stand free, with no circle behind them, and the whole screen shares one background. The composer is the same one a bot's own chat uses; type **@** to pick a bot. The bots slowly orbit the middle, linked to the bots they work with: those that @mention each other, or answer one after another in a round. Whoever is speaking glides into the middle, big, with their words beside them. When work passes from one bot to the next, the link between them lights up and a dot travels along it.
