@@ -419,6 +419,10 @@ let pushServiceState = () => {
 let miniWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let activePlatformUrl: string = isDev ? URLS.DEV_UI : URLS.PRODUCTION_UI;
+// False until startup has picked the UI to load. Until then activePlatformUrl
+// is only its default (the hosted ai.allternit.com), which the desktop shell
+// must never load: its CSP blocks the local API and its chunks go stale on deploy.
+let platformUiResolved = false;
 
 // Central security policy for this process. App origins are the platform UI
 // (remote or local static export), the HUD/office/design/session windows that
@@ -861,6 +865,16 @@ function showOrReopenMainWindow(): void {
     if (mainWindow.isMinimized()) mainWindow.restore();
     mainWindow.show();
     mainWindow.focus();
+    return;
+  }
+  if (!platformUiResolved) {
+    // Dock / tray / second launch while still starting: show the startup
+    // window; startup opens the main window itself once the UI is chosen.
+    log.info('[Main] Still starting; showing the startup window instead of opening the main window early');
+    if (splashWindow && !splashWindow.isDestroyed()) {
+      splashWindow.show();
+      splashWindow.focus();
+    }
     return;
   }
   log.info('[Main] Main window was closed; reopening');
@@ -1593,6 +1607,7 @@ async function initializeBundledMode(): Promise<void> {
     }
 
     activePlatformUrl = process.env.ALLTERNIT_PLATFORM_URL || platformUrl;
+    platformUiResolved = true;
     log.info(`[Main] Platform URL: ${activePlatformUrl}`);
     // Clerk authenticates the human in the browser. The desktop waits for the
     // separately scoped runtime pairing that was started alongside boot.
@@ -1848,6 +1863,8 @@ async function initializeRemoteMode(remoteUrl: string): Promise<void> {
     
     // Track the resolved URL for SDK consumers
     activeBackendUrl = remoteUrl;
+    activePlatformUrl = `${remoteUrl}/platform`;
+    platformUiResolved = true;
 
     // Open main window
     mainWindow = createMainWindow();
@@ -1879,6 +1896,7 @@ async function initializeRemoteMode(remoteUrl: string): Promise<void> {
 async function initializeDevelopmentMode(): Promise<void> {
   const platformUrl = process.env.ALLTERNIT_PLATFORM_URL?.trim() || URLS.DEV_UI;
   activePlatformUrl = platformUrl;
+  platformUiResolved = true;
   log.info('[Main] Development mode', { platformUrl });
   activeBackendUrl = URLS.DEV_UI;
 
