@@ -1299,8 +1299,8 @@
       "id": "feature:pdf-editor",
       "label": "PDF editor (edit in place on PDFium, keeps fonts and layout)",
       "product": "product:ai-allternit",
-      "status": "building",
-      "description": "The pdf kind's editor: PDFium (WASM, @embedpdf/pdfium) in a web worker edits the PDF itself. Text edits rewrite only the touched text objects in the PDF's own font (embedded subset, else another subset of the same font in the document, else the same family from the open font library via Fontsource on jsDelivr, else a metric-compatible twin, else a standard font only after telling the user, with Undo); the rest of the line slides by the width delta so layout holds. Also: move/resize/delete objects, new text/image/signature/ink/shapes, highlights and comments as real annotations, whiteout, true redaction, AcroForm fill, page reorder/rotate/duplicate/delete/insert blank/insert PDF/extract, find, snapshot undo/redo, autosave to artifact versions. Same component on Desktop, the ai.allternit.com phone layout (bottom tool tray) and the m.allternit.com PWA. PdfCraft (feature:craft-editors) stays reachable as Advanced tools.",
+      "status": "live",
+      "description": "The pdf kind's editor: PDFium (WASM, @embedpdf/pdfium) in a web worker edits the PDF itself. Text edits rewrite only the touched text objects in the PDF's own font (embedded subset, else another subset of the same font in the document, else the same family from the open font library via Fontsource on jsDelivr, else a metric-compatible twin, else a standard font only after telling the user, with Undo); the rest of the line slides by the width delta so layout holds. Also: move/resize/delete objects, new text/image/signature/ink/shapes, highlights and comments as real annotations, whiteout, true redaction, AcroForm fill, page reorder/rotate/duplicate/delete/insert blank/insert PDF/extract, find, snapshot undo/redo, autosave to artifact versions. Same component on Desktop, the ai.allternit.com phone layout (bottom tool tray) and the m.allternit.com PWA. PdfCraft (feature:craft-editors) stays reachable as Advanced tools. Scanned PDFs become editable: on-device OCR (Tesseract.js, self-hosted under /ocr/ by vite-plugins/ocr-engine.ts) adds an invisible text layer; editing a scanned line matches its font from the pixels (36 open families, word-by-word overlap, weight, stem, word gap) and re-typesets only that line over a paper-colour cover. Agent tools via pane_artifact (read_page, replace_text, set_line, add_text, fill_field, highlight, delete/rotate pages).",
       "touches": [
         "allternit-ai/src/lib/pdf",
         "allternit-ai/src/components/pdf-editor",
@@ -1311,6 +1311,10 @@
         {
           "on": "2026-10-21",
           "note": "Eoj: PDFs must be editable like Acrobat/Canva, in Desktop, and edits must not change the font or layout — 'as natural as the original pdf'. Built on PDFium (MIT/Apache via EmbedPDF's build) rather than PdfCraft (no existing-text editing) or mupdf.js (AGPL). Desktop CSP gains 'wasm-unsafe-eval' (worker compiles WASM). Electron 41 has no named local-fonts permission, so system-font lookup only runs in browsers that allow it; Desktop uses the font library and metric twins."
+        },
+        {
+          "on": "2026-10-21",
+          "note": "Eoj: uneditable (scanned) PDFs must turn into editable PDFs with text and font kept consistent. OCR text layer + edit-time font match; untouched lines stay the original scan."
         }
       ],
       "evidence": [
@@ -2179,6 +2183,28 @@
         "allternit/surfaces/allternit-desktop/src/main/agent-cursor-window.ts",
         "allternit/surfaces/docs/guides/computers-and-apps.mdx",
         "allternit/surfaces/docs/tools/computer-toolset.mdx"
+      ]
+    },
+    {
+      "id": "feature:chat-attachments-open-in-pane",
+      "label": "Chat attachments open in their editor pane; the agent edits them",
+      "product": "product:ai-allternit",
+      "status": "live",
+      "description": "A file sent in chat with an editor here (PDF, .docx, .md, .html, video) becomes an artifact (src/lib/attachments/attachment-artifacts.ts, shared with the Artifacts view's uploads), opens in the pane, and the message carries an '[Opened in the editor pane: name → artifact id (kind)]' line; its chip reopens it. pane_artifact gains an 'open' action (artifact_id); in surfaces with no pane executor of their own the app's fallback executor (src/lib/agents/artifact-pane-agent.ts) opens the named, open or newest attached artifact and runs the request against its skill: the PDF editor's tools, or artifact-body-skill (read/replace_text/write) for docs, pages, code; video/image describe their media. The agent no longer asks the user to open files.",
+      "touches": [
+        "allternit-ai/src/lib/attachments",
+        "allternit-ai/src/lib/agents",
+        "allternit-ai/src/views/chat",
+        "allternit-ai/src/components/chat",
+        "allternit-ai/src/components/artifacts",
+        "allternit-ai/src/lib/chat",
+        "allternit/cmd/gizzi-code"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-21",
+          "note": "Eoj: an uploaded file sent with a message must mount in the editor pane it belongs to (docs, pdfs, mds, mp4, html), and the agent must know the file and do the work itself instead of asking the user to open it."
+        }
       ]
     }
   ],

@@ -67,18 +67,52 @@ It is not a certified digital signature.
 
 ## Scanned PDFs
 
-Some PDFs are pictures of paper: a scan, or a form saved as images. Their words
-are part of the picture, so they can't be selected or changed. When a page is
-like this, the hint bar says **This page is a scan**.
+Some PDFs are pictures of paper: a scan, or a form saved as images. The editor
+makes them editable:
 
-To fill in a scanned form:
+1. When you open one, the editor reads each scanned page on your device (text
+   recognition, nothing is uploaded). The hint bar shows **Reading scanned
+   page 2 so its text can be edited (2 of 10)…**. A page takes a few seconds,
+   and the page you're on is read first.
+2. The page looks exactly the same, but its lines can now be clicked, edited
+   and searched, like any other PDF. The text layer is saved in the file, so
+   the next time it opens straight away.
+3. Click a line, click again and type. The editor measures the type on that
+   line from the scan — font family and weight, size, width, baseline, word
+   spacing, stroke thickness and ink colour — and matches it to an open font.
+   The style bar shows the match (for example **Source Sans**). When you
+   press **Enter**, the old line is covered with the paper colour and your
+   text is set in the matched font in the same place.
 
-- Choose **Text**, click a blank line and type. Press **Enter** to place it.
-- Use **Whiteout** first to cover anything you need to replace.
-- Use **Sign** for signature lines, and **Draw** to tick a box.
+Only the lines you change are re-typeset; every other line stays the original
+scan. **Undo** puts the scanned line back. Scanned lines can't be dragged
+(they are part of the picture); **Delete** covers the line.
 
-Clicking the page in **Edit** mode doesn't select the scan itself, so a stray
-drag can't move the whole page.
+If no text can be read on a page (a photo, or handwriting), the hint bar says
+so. Use **Text** to type on it, **Whiteout** to cover something first, **Sign**
+for signature lines and **Draw** to tick a box. Clicking the page in **Edit**
+mode doesn't select the scan itself, so a stray drag can't move the whole page.
+
+### How it works (developers)
+
+- OCR: Tesseract.js 7 (Apache-2.0) with the English LSTM model, served from
+  `/ocr/` by `vite-plugins/ocr-engine.ts`; no CDN. Each recognised chunk
+  becomes an invisible text object stretched over its ink
+  (`PdfEngine.addScanText`).
+- Font match: `src/lib/pdf/editor/scan-font.ts` compares the line's pixels,
+  word by word, with the same text in 36 open families (Fontsource), then
+  nearby weights of the best one.
+- Edit: `PdfEngine.setScanRunText` covers the old ink and sets the text one
+  word per object at the scan's word gap, with extra stroke when the scan's
+  type is heavier.
+
+## Agent tools
+
+When a PDF is open beside a chat (for example one you attached), the agent
+edits it through the editor: `read_page`, `replace_text`, `set_line`,
+`add_text`, `fill_field`, `highlight`, `delete_pages` and `rotate_pages`.
+Its edits follow the same font rules as yours and show on the page as it
+makes them. See [Attachments](/guides/attachments).
 
 ## Fill forms
 

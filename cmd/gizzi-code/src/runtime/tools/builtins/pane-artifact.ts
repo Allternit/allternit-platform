@@ -9,7 +9,11 @@ const MAX_TEXT = 60_000
 export const PaneArtifactTool = Tool.define("pane_artifact", {
   description: DESCRIPTION,
   parameters: z.object({
-    action: PaneArtifact.Action.describe("describe, read or call"),
+    action: PaneArtifact.Action.describe("open, describe, read or call"),
+    artifact_id: z
+      .string()
+      .optional()
+      .describe("For open (and describe/read): the artifact to open in the pane, e.g. the id in an attachment's 'Opened in the editor pane' line"),
     tool: z.string().optional().describe("For call: the editor tool to run (a name from describe)"),
     input: z
       .record(z.string(), z.unknown())
@@ -26,7 +30,12 @@ export const PaneArtifactTool = Tool.define("pane_artifact", {
         sessionID: ctx.sessionID,
         action: params.action,
         tool: params.action === "call" ? params.tool : undefined,
-        input: params.action === "call" ? (params.input ?? {}) : undefined,
+        input:
+          params.action === "call"
+            ? (params.input ?? {})
+            : params.artifact_id
+              ? { artifact_id: params.artifact_id }
+              : undefined,
         toolCall: ctx.callID ? { messageID: ctx.messageID, callID: ctx.callID } : undefined,
       },
       { abort: ctx.abort },

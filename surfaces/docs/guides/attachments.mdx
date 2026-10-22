@@ -18,7 +18,7 @@ Any file: documents, images, video, audio, archives, code and files with any ext
 - **Desktop:** each file is a card under the text box with what's in it: page and line counts for PDFs, lines for text and code, rows and columns for CSV, files in a .zip or folder, a thumbnail for images, and a frame and length for videos. Other files show their size and extension. Cards wrap onto more rows, up to three, then scroll. Hover a card to remove it, including while it is still reading.
 - **Phone layout and the m.allternit.com app:** the same files show as small previews above the text box: the image or video frame, or the first lines of a document.
 - You can send attachments without typing anything.
-- In the sent message, attachments show as file chips, not their contents. A file sent as a link opens from its chip.
+- In the sent message, attachments show as file chips, not their contents. A file sent as a link opens from its chip, and a file that opened in its editor opens there again.
 
 ## How the agent gets them
 
@@ -26,6 +26,23 @@ Any file: documents, images, video, audio, archives, code and files with any ext
 - **Folders** are read the same way: each text file's contents are added under its path, and other files are listed by name. Hidden folders such as `.git`, and `node_modules`, `dist`, `build` and `target`, are skipped when you drag a folder in.
 - **Images** go to the model as images, so it can see them. Photos larger than 2048 px on the long side are scaled down first, and an animated GIF is sent as it is. Up to 10 images go with one message.
 - **Video, audio and other files** (and PDFs with no readable text) are uploaded to your Allternit Cloud storage, and the message carries a link with the file's name, type and size, so the agent can open it. This needs you to be signed in. If you aren't, the message isn't sent and a notice says why.
+
+## Files open in their editor
+
+When you send a file that has an editor in Allternit, it opens beside the chat (on a phone, as a full-screen sheet) and the agent works on it there:
+
+| File | Opens in |
+| --- | --- |
+| PDF (including scans) | the [PDF editor](/guides/pdf-editor) |
+| Word (.docx) and Markdown (.md) | Docs |
+| HTML | a Page |
+| Video (MP4, MOV, WebM) | the video editor |
+
+- The file becomes an artifact in **Artifacts**, so you can come back to it. Sending the same file again in the same app session reuses it.
+- The message tells the agent which artifact it is, and the agent edits it with its editor tools: changes show in the pane as it makes them and are saved as new versions. It doesn't ask you to open or paste the file.
+- The file's chip in the sent message opens it again.
+- Images aren't opened in an editor: they go to the model as pictures, as before.
+- A PDF or document still has its text added to your message, so the agent can answer questions about it straight away. A video or a PDF that opened in its editor isn't sent a second time as a link.
 
 ## Storage by plan
 
