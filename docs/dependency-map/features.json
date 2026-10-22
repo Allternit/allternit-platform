@@ -220,7 +220,7 @@
       "label": "Vendor subscriptions as bots",
       "product": "product:digital-twin",
       "status": "building",
-      "description": "Connect a subscription or vendor agent you already have (ChatGPT, Claude, Gemini, Copilot, Kimi, Grok Bot, ChatGPT dots, Claude Managed Agents, OpenClaw, Hermes, Meta Muse) in one step; each chat, GPT, Project, Gem or bot there becomes a ready Allternit bot run through the Agent Gateway (AAI).",
+      "description": "Connect a subscription or vendor agent you already have (ChatGPT, Claude, Gemini, Copilot, Kimi, Grok Bot, ChatGPT dots, Claude Duet, Gemini Spark, Claude Managed Agents (developer API), OpenClaw, Hermes, Meta Muse) in one step; each chat, GPT, Project, Gem or bot there becomes a ready Allternit bot run through the Agent Gateway (AAI).",
       "touches": [
         "allternit-ai/src/components/gateway",
         "allternit-ai/src/lib/gateway",

@@ -1,0 +1,47 @@
+# claude-duet-web — Claude Duet (Anthropic's proactive agent, research preview,
+# Claude Pro/Max in the US) inside claude.ai on the web (ui_bridge_web). Same
+# app, sign-in and selectors as claude-web; the only difference is the entry
+# point: Duet's one thread instead of a fresh chat. Duet runs on its own cloud
+# computer and asks before sending or paying, so approvals stay in Duet.
+# v1-unverified: the Duet entry, its thread shape and the reply shape were read
+# from the public product page (claude.com/product/claude-duet), NOT a
+# logged-in session. Probe the live UI after the owner's first login, then fix
+# selectors/v1.yaml and the fixtures together.
+adapter_id: claude-duet-web
+adapter_version: 0.1.0
+provider: claude-duet
+interface: ui_bridge_web
+origins:
+  - https://claude.ai # app surface (Duet opens here on a computer)
+  - https://assets.claude.ai # static assets
+auth:
+  login_url: https://claude.ai/login
+  logged_in_probe: logged_in_probe
+  # INFERRED (unverified), same account cookie as claude-web.
+  session_cookies: [sessionKey]
+plans:
+  - plan_id: pro
+    label: Pro
+  - plan_id: max
+    label: Max
+capabilities:
+  - id: chat.create
+    min_capability_version: 1
+    plans: [pro, max]
+    pool_id: claude-duet-web
+    detachable: false
+    export_formats: []
+    status: beta
+  - id: chat.continue
+    min_capability_version: 1
+    plans: [pro, max]
+    pool_id: claude-duet-web
+    detachable: false
+    export_formats: []
+    status: beta
+pacing: # Duet tasks are slow background runs and draw from the plan's shared limits
+  min_action_gap_ms: [1200, 3500]
+  min_task_gap_s: 8
+  max_tasks_per_hour: 30
+  max_tasks_per_day: 150
+selectors_version: v1

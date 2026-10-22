@@ -199,7 +199,7 @@
         "linked",
         "hosted"
       ],
-      "recommendedLane": "official",
+      "recommendedLane": "browser",
       "profiles": [
         {
           "id": "anthropic-browser",
@@ -239,7 +239,7 @@
         },
         {
           "id": "anthropic-key",
-          "label": "Use your own API key",
+          "label": "Build agents with the API (Managed Agents)",
           "authType": "api_key",
           "lane": "official",
           "adapterId": "claude-managed-agents",
@@ -248,7 +248,8 @@
             "inference"
           ],
           "permissionDescription": [
-            "Run Claude with your key"
+            "Run agents you built on the Claude API with your key",
+            "For developers: this is not Claude Duet"
           ]
         }
       ],
@@ -268,6 +269,58 @@
         ],
         "unavailable": [
           "account settings"
+        ]
+      }
+    },
+    {
+      "id": "claude-duet",
+      "displayName": "Claude Duet",
+      "agentNoun": "bot",
+      "legalName": "Anthropic PBC",
+      "logoAsset": "/assets/vendors/claude-duet.svg",
+      "monogram": "CD",
+      "modes": [
+        "linked"
+      ],
+      "recommendedLane": "browser",
+      "profiles": [
+        {
+          "id": "claude-duet-browser",
+          "label": "Sign in to Claude Duet",
+          "authType": "browser_session",
+          "lane": "browser",
+          "wireLane": "ui_bridge",
+          "adapterId": "claude-duet-subscription",
+          "guarantee": "best_effort",
+          "recommended": true,
+          "loginUrl": "https://claude.ai/",
+          "scopes": [
+            "session"
+          ],
+          "permissionDescription": [
+            "Message Claude Duet as you",
+            "Read its replies, briefs and finished work in its thread"
+          ],
+          "requiresUserOwnedSubscription": true
+        }
+      ],
+      "permissions": {
+        "read": [
+          "thread",
+          "morning brief"
+        ],
+        "send": [
+          "messages"
+        ],
+        "control": [],
+        "sync": [
+          "transcripts"
+        ],
+        "unavailable": [
+          "approvals (stay in Duet)",
+          "connectors",
+          "its cloud computer",
+          "memory editing"
         ]
       }
     },
@@ -2172,6 +2225,16 @@
       "logoAsset": "/assets/vendors/gemini-spark.png",
       "projectUrl": null,
       "monogram": "GS"
+    },
+    {
+      "id": "claude-duet",
+      "displayName": "Claude Duet",
+      "sourceHint": "claude.com",
+      "status": "planned",
+      "identity": "verified",
+      "logoAsset": "/assets/vendors/claude-duet.svg",
+      "projectUrl": "https://claude.com/product/claude-duet",
+      "monogram": "CD"
     },
     {
       "id": "vellum-assistant",
