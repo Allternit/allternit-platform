@@ -103,6 +103,12 @@
       "path": "allternit/domains/computer-use/core/sandbox"
     },
     {
+      "id": "allternit/infrastructure/cloud-phone",
+      "label": "Cloud phones host scripts (redroid containers on a fleet host)",
+      "kind": "module",
+      "path": "allternit/infrastructure/cloud-phone"
+    },
+    {
       "id": "allternit/infrastructure/tart-host",
       "label": "Tart host (macOS VM host infrastructure)",
       "kind": "module",
