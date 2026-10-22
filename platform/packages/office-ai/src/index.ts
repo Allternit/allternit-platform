@@ -1,4 +1,11 @@
-export { streamOfficeAi, type OfficeAiChunk, type OfficeAiMessage, type StreamOfficeAiOptions } from './stream'
+export {
+  setOfficeAiTokenProvider,
+  streamOfficeAi,
+  type OfficeAiChunk,
+  type OfficeAiMessage,
+  type OfficeAiTokenProvider,
+  type StreamOfficeAiOptions,
+} from './stream'
 export {
   OfficeAgentLoop,
   type OfficeAgentLoopEvents,
