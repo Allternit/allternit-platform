@@ -14,7 +14,7 @@ A bot's chat and its threads open on the bot itself, big, on a soft wash of the 
 
 Beside it is the conversation itself: its greeting and starter suggestions for a new chat, its replies, and approvals and questions to answer. While the bot has an unfinished checklist, its steps show above the conversation with the current one marked. While it works on its computer, that computer shows live in the bot's place, with **Stop** and **Take over**.
 
-**When you send a message, start a task or scroll the conversation, the bot flies up into the thread top** and becomes the avatar beside its name and the chat's name. The conversation then takes the screen. **Tap that avatar to bring the bot back out.** The bot screen is still one click away from the gear in the thread top, or **Back**.
+**When you send a message, start a task or scroll the conversation, the bot flies up into the thread top** and becomes the avatar beside its name and the chat's name. The conversation then takes the screen. **Tap that avatar to bring the bot back out.** The gear in the thread top opens the bot's **Settings** in the [Bot tab](#the-deck-above-the-composer); **Back** returns to the bot screen.
 
 **Tap the bot to talk** (voice starts in this chat). **Drop a file or link on the bot** to hand it work, or use **choose a file** (on phones, **Hand it a file**). The bot asks how to start:
 
@@ -26,7 +26,32 @@ You can add a note before you pick. Files travel the same way as [composer attac
 
 Channel threads, vendor look-pack threads and chats embedded in a project panel show the conversation only. On phones (the `ai.allternit.com` phone layout and the `m.allternit.com` PWA) and in narrow windows, the conversation runs under the bot, and the bot docks the same way. If your system is set to reduce motion, the bot moves to the thread top without flying and its cards stay still.
 
+## The deck above the composer
+
+A bot's chat has four tabs in the tray above the composer. The composer itself, its Agent mode and Plugins row, the model and voice stay the same on every tab.
+
+| Tab | What it shows |
+|---|---|
+| **The open thread** (its name, such as **Main chat**) | The chat: the bot beside its conversation, as described above. |
+| **Threads** | Every thread with this bot. **Main chat** is pinned on top; the rest are grouped Needs you, Working, Queued and Idle, with search, a project filter, **+ New thread** and **Incognito**. Each row shows how many of its tasks are done. Picking a thread opens it here, in place of the one you were in. |
+| **Tasks** | The work inside the open thread: the bot's plan with the current step marked, and anything it **handed off** to subagents. Main chat usually has no tasks of its own, so it lists the threads that do. |
+| **Bot** | The bot detail view: its header (photo, name, status, where it runs, **Open phone**, **Edit bot**) and **Artifacts**, **Routines**, **Memory** and **Settings**. |
+
+A thread is its own chat with the bot. Tasks are the steps the bot is doing inside one thread, with subtasks; they are not separate threads. Sending a message from any tab returns you to the open thread so you see the reply.
+
+The computer and the thread panel stay in the thread top's icons, not in the deck. In a bot's chats your own messages take the bot's color.
+
+On phones (the `ai.allternit.com` phone layout and the `m.allternit.com` PWA) the tabs drop their icons and a long thread name is shortened. Channel threads keep their own composer and have no deck.
+
 ### For developers
+
+- Deck: `src/views/bots/thread-deck/BotThreadTopDeck.tsx` (tabs `thread` · `threads` · `tasks` · `bot`), passed to `ThreadComposer` as `topDeck` (a tray tucked behind the card, like `CoworkTopDeck`). `BotChatSessionView` keeps `deckTab` per open chat and resets it when the session changes; the gear sets `deckTab="bot"` with Settings.
+- Threads and Bot tabs embed `BotHomeView` with `inThread="threads"` or `inThread="detail"`; `onOpenSession` opens a picked thread in the same view (`openBotChatView`, origin `bot-home`).
+- Tasks: `src/views/bots/thread-deck/ThreadTasksPanel.tsx`, built on `ProgressTab`, `SubagentsTab` and `useSubagentTree` exported from `ThreadInspector`.
+- User bubble color: the view sets `--chat-user-bubble-bg` to `color-mix(bot accent 30%, --bg-elevated)` and `--bot-accent` when the bot has an accent color.
+- Story: `src/views/bots/thread-deck/BotThreadDeck.stories.tsx`.
+
+### For developers (stage)
 
 - `src/components/bots/stage/live/BotLiveStage.tsx` renders the stage; `conversation` is the view's transcript, shown beside the bot. `stage-model.ts` holds the pure parts: `visibleSteps` shows `thread.todo` while something is unfinished, `montageFrames` builds frames from `collectThreadArtifacts` plus finished steps (with document excerpts via `plainSpeech`).
 - Docking: `BotChatSessionView` keeps `docked` / `docking` / `fromDock` per open chat. A send (`sendCount`), a hand-off or `onDockIntent` (a wheel or touch scroll on the conversation) sets `docking`; the stage flies the bot to `dockTarget()` (the `[data-thread-pill-avatar]` rect) with a FLIP (`animate` x/y/scale, 0.44 s) and calls `onDocked`. `ThreadHeader` hides that avatar while the bot is out (`avatarAway`) and calls `onAvatar` on tap, which mounts the stage with `fromDock` so the bot flies back out.
@@ -132,6 +157,6 @@ A ripped-page divider marks a new context generation. It shows what was carried 
 
 ## Thread, Browser, and Computer pane
 
-Open the thread pane from the pill or pane control, or open the computer from its control. The pane's title menu switches between **Thread**, **Browser**, and **Computer**. Thread contains activity, subagents, artifacts, memory, and details. Browser and Computer show this thread's browser and computer surfaces. On Desktop, the pane can dock, resize, and expand. While it is open, notifications and Edit bot fold into **⋯** beside Resolve; the pane supplies its own view menu and close control.
+Open the thread pane from the pill or pane control, or open the computer from its control. The pane's title menu switches between **Thread**, **Browser**, and **Computer**. Thread has two sections: **Activity** (with a **List** / **Timeline** switch) and **About this thread** (objective, where things stand, decisions, open items, kind, dependencies and context windows). The thread's plan and subagents are in the [Tasks tab](#the-deck-above-the-composer); its artifacts are in the chat and in **Bot → Artifacts**, and an artifact you open from the chat shows in the pane. Browser and Computer show this thread's browser and computer surfaces. On Desktop, the pane can dock, resize, and expand. While it is open, notifications and Edit bot fold into **⋯** beside Resolve; the pane supplies its own view menu and close control.
 
 On the phone, the avatar and provenance chip stay in the top row. Use the pill for Thread, or **⋯ → Computer** for the computer. The pane opens full screen. Its slim view bar switches Thread / Browser / Computer; **Back** returns to chat. The same controls are used by the `ai.allternit.com` phone layout and the `m.allternit.com` PWA. The computer status row wraps to fit the screen.
