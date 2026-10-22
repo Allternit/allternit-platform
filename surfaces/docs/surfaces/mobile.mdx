@@ -204,6 +204,14 @@ be hidden from its toolbar. Edit controls stay visible on touch screens.
 See [Code session panes](/surfaces/native-agent#code-session-panes) for the
 file workflow and unsaved-change handling.
 
+## Updates and recovery (m.allternit.com)
+
+The m.allternit.com app runs a service worker (`fabric-session-service-worker.js`). It loads the page from the network first, so a new deploy shows up the next time you open the app. Offline, it opens the last copy it saved. Build files (`/assets/...`) have the build hash in their names, so the worker keeps them and serves them from its cache.
+
+Cloudflare Pages answers a request for a missing file with the app page (`index.html`) and status 200. The worker never stores a response of type `text/html` under a build file's name. If it finds one already stored, it deletes it and downloads the file again. Before that rule (cache `allternit-fabric-session-v140` and earlier), one such response could leave the app blank on every launch.
+
+If a build file still fails to load before the app starts, a small script in the page deletes the app's caches and its service worker, then reloads once. The downloaded on-device voice models are kept. It runs at most once per session. ai.allternit.com does the same in `boot.js`, and its worker (`sw.js`) also never stores HTML under a build file's name.
+
 ## Related links
 
 - [Allternit Factory](/factory/overview)
