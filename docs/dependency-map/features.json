@@ -180,6 +180,10 @@
         },
         {
           "on": "2026-10-22",
+          "note": "Group stage: no circle behind the bots, one background for the whole group chat, the bot-chat composer (ThreadComposer with @mentions), and a grid of group chat cards with a list switch. Status word, task card, subtasks, phone Needs-you sheet and project home now show in the normal flow, not only in narrow states (Eoj)."
+        },
+        {
+          "on": "2026-10-22",
           "note": "Bot colour comes from the avatar art (bot-art-color.ts), so the stage, pill and bubbles match the bot. The thread-top pill shows a status word (live-status.ts); a running thread shows a task card (ThreadTaskCard); Tasks lists subtasks under the running step and an Up next list. Phone gets a Needs you sheet. Project home uses the shared launch layout (BaseProjectView launchLayout). Voice sessions show hand-off chips (ai #732)."
         }
       ],

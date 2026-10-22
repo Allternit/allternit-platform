@@ -64,7 +64,7 @@ For developers: the greeting is `botGreetingFor()` in `src/lib/bots/bot-greeting
 
 ## Group chats
 
-**Group chats** (bottom of the Bots rail, **+** to make one) put several bots in one channel. A message without an @mention runs bounded rounds: each member replies or passes, and members can @mention each other into the next round. An @mention of a bot starts a thread for it instead, with a live card in the room.
+**Group chats** (bottom of the Bots rail, **+** to make one) put several bots in one channel. The **Group chats** page shows them as a grid of cards (the room, its bots, the last message and when, unread and **Needs you**) or as a list; the switch at the top right remembers your choice. **Needs you** shows when the room's last message is a bot's question. A message without an @mention runs bounded rounds: each member replies or passes, and members can @mention each other into the next round. An @mention of a bot starts a thread for it instead, with a live card in the room.
 
 Each bot remembers its group chats. After a round, every member that took part saves one memory: the room, your message, what it said, and anything another member asked it. Its main chat and threads recall it, so a bot handed a task in a group chat knows about it when you open its own chat. The entries show in **Bot → Memory** and can be forgotten there.
 
@@ -190,7 +190,7 @@ The category field in Create and Edit Bot shows your saved category. Open its gl
 
 ## Group stage
 
-A group chat opens on its bots, with the conversation beside them. The bots slowly orbit the middle, linked to the bots they work with: those that @mention each other, or answer one after another in a round. Whoever is speaking glides into the middle, big, with their words beside them. When work passes from one bot to the next, the link between them lights up and a dot travels along it.
+A group chat opens on its bots, with the conversation beside them. The bots stand free, with no circle behind them, and the whole screen shares one background. The composer is the same one a bot's own chat uses; type **@** to pick a bot. The bots slowly orbit the middle, linked to the bots they work with: those that @mention each other, or answer one after another in a round. Whoever is speaking glides into the middle, big, with their words beside them. When work passes from one bot to the next, the link between them lights up and a dot travels along it.
 
 With nothing running, a room card sits in the middle. It shows the room's bulletin, what happened since you were last here (or the last thing said), and suggestions you can tap to send. Bots that have been idle a while doze.
 
@@ -198,5 +198,5 @@ Hover over a bot, or tap one, to see its last words and who it works with. The o
 
 When you send a message, or scroll back through the conversation, the group flies into the members pill in the header and the conversation takes the screen. Tap the pill to bring the bots back. On phones (the `ai.allternit.com` phone layout and the `m.allternit.com` app) the orbit sits above the conversation. With reduced motion, the orbit and the flight are still.
 
-For developers: `src/components/bots/stage/group/GroupStage.tsx` in allternit-ai. `group-stage-model.ts` holds `groupLinks`, `roomSince` and `lastBotLine`. `GroupChatView` wraps the member-turn adapter so each turn reports its speaker (`speaker`, `handoffFrom`, `speech`). It docks into `[data-group-pill-avatars]` on send or after 360 px of scrolling. Story: `GroupStage.stories.tsx`. Tests: `group-stage-model.test.ts` and the "GroupChatView group stage" tests in `group-chat-threads.test.tsx`.
+For developers: `src/components/bots/stage/group/GroupStage.tsx` in allternit-ai. `group-stage-model.ts` holds `groupLinks`, `roomSince` and `lastBotLine`. `GroupChatView` wraps the member-turn adapter so each turn reports its speaker (`speaker`, `handoffFrom`, `speech`). It docks into `[data-group-pill-avatars]` on send or after 360 px of scrolling. `GroupChatComposer` wraps `ThreadComposer` with its `mentions` option. The list page is `GroupsListView` (cards: `GroupChatCard.tsx`, toggle: `LayoutToggle` in `components/ui/polish`, stored as `allternit:group-chats:layout`). Stories: `GroupStage.stories.tsx`, `GroupsListView.stories.tsx`. Tests: `group-stage-model.test.ts` and the "GroupChatView group stage" tests in `group-chat-threads.test.tsx`.
 
