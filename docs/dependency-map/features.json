@@ -2230,6 +2230,31 @@
       "evidence": [
         "allternit/surfaces/docs/guides/attachments.mdx"
       ]
+    },
+    {
+      "id": "feature:composer-send-while-busy",
+      "label": "Send while the agent works (steer or queue) and drop files any time",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "While a turn runs, the shared ChatComposer (onSteer prop) keeps Send: Chat/Cowork (ChatView) and Code (CodeCanvas) post the message into the running turn with the mode session store's steerMessage (POST agent-sessions/:id/messages, source 'steer'; the loop reads it at its next step), or queue it (no ses_ session yet, images attached, or refused) behind a Queued strip (ComposerQueuedBar) and send everything queued as one message when the turn ends. GlobalDropzone keeps a stack of registrations per target and per drop context, so one composer unmounting (ACI panel, Code tile, empty-state composer) no longer deletes the live composer's drop handler; a drop goes to the composer it lands on, else the newest one on screen. Code and Cowork drops keep the File so PDFs/docs open in their editor pane on send.",
+      "touches": [
+        "allternit-ai/src/components",
+        "allternit-ai/src/views/chat",
+        "allternit-ai/src/views",
+        "allternit-ai/src/views/code",
+        "allternit-ai/src/views/cowork",
+        "allternit-ai/src/lib/agents"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-22",
+          "note": "Eoj: files must drop into the composer mid-session and while a question card shows, a dropped PDF must open its editor pane on send, and a message sent during a turn must queue or steer the agent instead of being blocked."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/chat-composer.mdx",
+        "allternit/surfaces/docs/guides/attachments.mdx"
+      ]
     }
   ],
   "journeys": [
