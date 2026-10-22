@@ -42,6 +42,19 @@ export interface StreamOfficeAiOptions {
 
 const AGENT_CHAT_URL = '/api/agent-chat'
 
+export type OfficeAiTokenProvider = () => Promise<string | null | undefined> | string | null | undefined
+
+let tokenProvider: OfficeAiTokenProvider | null = null
+
+/**
+ * Lets a host attach a bearer token (the standalone office site passes its Clerk
+ * session token) to agent-chat calls. Unset, requests carry no Authorization
+ * header, as before.
+ */
+export function setOfficeAiTokenProvider(provider: OfficeAiTokenProvider | null): void {
+  tokenProvider = provider
+}
+
 function flattenMessages(messages: OfficeAiMessage[]): string {
   // The agent-chat endpoint takes a single user message (system content rides
   // separately as `systemPrompt`, which the gateway appends to the runtime's
@@ -141,9 +154,13 @@ export async function streamOfficeAi(options: StreamOfficeAiOptions): Promise<vo
   const chatId = globalThis.crypto?.randomUUID?.() ?? `office-${Date.now()}`
   const systemPrompt = systemPromptOf(messages)
 
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  const token = tokenProvider ? await tokenProvider() : null
+  if (token) headers.Authorization = `Bearer ${token}`
+
   const response = await fetch(AGENT_CHAT_URL, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify({
       chatId,
       message: flattenMessages(messages),

@@ -1,4 +1,4 @@
-import { useMemo, useState, useCallback } from 'react'
+import { useEffect, useMemo, useState, useCallback } from 'react'
 import { ClerkProvider, SignInButton, useAuth } from '@clerk/clerk-react'
 import {
   OfficeHostProvider,
@@ -13,6 +13,7 @@ import {
   type OfficeHost,
   type OpenOptions,
 } from '@allternit/office-suite'
+import { setOfficeAiTokenProvider } from '@allternit/office-ai'
 import { createStandaloneAiClient } from './ai/createStandaloneAiClient'
 import { CLERK_PUBLISHABLE_KEY } from './clerkConfig'
 import { HomePage } from './HomePage'
@@ -157,10 +158,16 @@ function OfficeWorkspace({
   onBack: () => void
   initialTab?: AppTab
 }) {
-  const { isSignedIn } = useAuth()
+  const { isSignedIn, getToken } = useAuth()
   const [activeTab, setActiveTab] = useState<AppTab>(initialTab)
   const [documents, setDocuments] = useState<Partial<Record<AppTab, OpenedDoc>>>({})
   const [mountKey, setMountKey] = useState(0)
+
+  useEffect(() => {
+    // /api/agent-chat verifies this token; signed out, no token is sent.
+    setOfficeAiTokenProvider(() => (isSignedIn ? getToken() : null))
+    return () => setOfficeAiTokenProvider(null)
+  }, [isSignedIn, getToken])
 
   const host = useMemo<OfficeHost>(() => {
     const ai = createStandaloneAiClient({ getIsSignedIn: () => isSignedIn ?? false })

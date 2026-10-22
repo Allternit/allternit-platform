@@ -9,18 +9,85 @@
  *   MODEL_API_KEY  - Bearer token for the model API
  *   MODEL_API_BASE - Base URL for the provider, e.g. https://api.provider.com/v1
  *   MODEL_ID       - Model id, e.g. gpt-4o, claude-3-5-sonnet, etc.
+ *
+ * Every request must carry a valid Allternit Clerk session token
+ * (`Authorization: Bearer <jwt>`), verified here against Clerk's JWKS, and come
+ * from an Allternit origin. The model is always MODEL_ID; the browser cannot
+ * pick another one on this key.
  */
 
+// Clerk issuers Allternit uses (cmd/allternit-api/src/auth.rs).
+const CLERK_ISSUERS = ['https://clerk.allternit.com', 'https://allternit.com/__clerk']
+const ALLOWED_ORIGIN = /^https:\/\/(office\.allternit\.com|([a-z0-9-]+\.)?allternit-office\.pages\.dev)$|^http:\/\/localhost:\d+$/
+
 function corsHeaders(origin) {
-  return {
-    'Access-Control-Allow-Origin': origin ?? '*',
+  const headers = {
     'Access-Control-Allow-Methods': 'POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    Vary: 'Origin',
   }
+  if (origin && ALLOWED_ORIGIN.test(origin)) headers['Access-Control-Allow-Origin'] = origin
+  return headers
+}
+
+function jsonError(status, error, cors) {
+  return new Response(JSON.stringify({ error }), {
+    status,
+    headers: { ...cors, 'Content-Type': 'application/json' },
+  })
+}
+
+function b64urlToBytes(value) {
+  const b64 = value.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(value.length / 4) * 4, '=')
+  return Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))
+}
+
+function decodeJson(part) {
+  return JSON.parse(new TextDecoder().decode(b64urlToBytes(part)))
+}
+
+const jwksCache = new Map() // issuer -> { keys, fetchedAt }
+
+async function jwksFor(issuer) {
+  const cached = jwksCache.get(issuer)
+  if (cached && Date.now() - cached.fetchedAt < 10 * 60 * 1000) return cached.keys
+  const res = await fetch(`${issuer}/.well-known/jwks.json`, { cf: { cacheTtl: 600 } })
+  if (!res.ok) throw new Error(`jwks ${res.status}`)
+  const { keys } = await res.json()
+  jwksCache.set(issuer, { keys, fetchedAt: Date.now() })
+  return keys
+}
+
+/** Verifies a Clerk session JWT (RS256). Returns its claims, or null. */
+async function verifyClerkToken(token) {
+  const parts = token.split('.')
+  if (parts.length !== 3) return null
+  let header, claims
+  try {
+    header = decodeJson(parts[0])
+    claims = decodeJson(parts[1])
+  } catch {
+    return null
+  }
+  if (header.alg !== 'RS256' || !CLERK_ISSUERS.includes(claims.iss)) return null
+  const now = Math.floor(Date.now() / 1000)
+  if (typeof claims.exp !== 'number' || claims.exp < now - 5) return null
+  if (typeof claims.nbf === 'number' && claims.nbf > now + 5) return null
+  if (typeof claims.sub !== 'string' || !claims.sub) return null
+  const jwk = (await jwksFor(claims.iss)).find((k) => k.kid === header.kid)
+  if (!jwk) return null
+  const key = await crypto.subtle.importKey('jwk', jwk, { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, false, ['verify'])
+  const ok = await crypto.subtle.verify(
+    'RSASSA-PKCS1-v1_5',
+    key,
+    b64urlToBytes(parts[2]),
+    new TextEncoder().encode(`${parts[0]}.${parts[1]}`),
+  )
+  return ok ? claims : null
 }
 
 export async function onRequestOptions(context) {
-  const origin = context.request.headers.get('origin') ?? '*'
+  const origin = context.request.headers.get('origin')
   return new Response(null, {
     status: 204,
     headers: corsHeaders(origin),
@@ -28,8 +95,20 @@ export async function onRequestOptions(context) {
 }
 
 export async function onRequestPost(context) {
-  const origin = context.request.headers.get('origin') ?? '*'
+  const origin = context.request.headers.get('origin')
   const cors = corsHeaders(origin)
+
+  if (origin && !ALLOWED_ORIGIN.test(origin)) return jsonError(403, 'origin not allowed', cors)
+
+  const auth = context.request.headers.get('authorization') ?? ''
+  const token = auth.startsWith('Bearer ') ? auth.slice(7).trim() : ''
+  let claims = null
+  try {
+    claims = token ? await verifyClerkToken(token) : null
+  } catch {
+    return jsonError(503, 'could not check sign-in, try again', cors)
+  }
+  if (!claims) return jsonError(401, 'sign in to Allternit to use the AI assistant', cors)
 
   const env = context.env
   const apiKey = env.MODEL_API_KEY
@@ -59,7 +138,7 @@ export async function onRequestPost(context) {
     })
   }
 
-  const { message, systemPrompt, runtimeModelId } = body
+  const { message, systemPrompt } = body
   if (typeof message !== 'string' || !message.trim()) {
     return new Response(JSON.stringify({ error: 'missing message' }), {
       status: 400,
@@ -80,7 +159,7 @@ export async function onRequestPost(context) {
       Authorization: `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
-      model: runtimeModelId || model,
+      model,
       messages,
       stream: true,
       stream_options: { include_usage: false },
