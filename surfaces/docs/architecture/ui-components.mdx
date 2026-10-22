@@ -68,7 +68,9 @@ The shared parts in `src/components/ui/` render Arc, so every screen that uses t
 | `tabs.tsx` | Arc tabs (re-export) | Only the active panel renders. |
 | `native-select.tsx` | A native `<select>` with the Arc trigger look | Every `<select>` in the app uses it. Phones keep the system picker. Its style is `.arc-native-select` in `arc-theme.css`. |
 
-Arc controls set a minimum height. A caller that sets its own height (`h-8`, `h-[30px]`) gets that height: `arcHeightOverride()` in `src/lib/utils.ts` drops the minimum.
+Arc controls set a minimum height. A caller that sets its own height or size (`h-8`, `h-[30px]`, `size-7`) gets that size: `arcHeightOverride()` in `src/lib/utils.ts` drops the minimum.
+
+The production build loads Arc styles after Tailwind, so Arc's colours, borders and padding win over a screen's own classes for those properties. Layout classes (width, margin, flex) still apply. Native selects are 36 px tall by default.
 
 Arc's free set has no switch, checkbox, slider or tooltip, so `switch.tsx`, `checkbox.tsx`, `slider.tsx` and `tooltip.tsx` stay as they are.
 
