@@ -11,7 +11,8 @@
         "noEmit": false,
         "allowImportingTsExtensions": false,
         "baseUrl": ".",
-        "outDir": "dist"
+        "outDir": "dist",
+        "rootDir": "./src"
     },
     "include": ["**/*.ts"],
     "exclude": ["dist", "node_modules"]
