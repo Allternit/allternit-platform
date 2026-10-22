@@ -55,11 +55,28 @@ Each area is an `Area` record in `src/dev/uiarc/areas/`. It names the real file 
 3. Add one area per real placement to the gallery, then run the checker in light and dark.
 4. Swap the component into the real file and wire it to the state and handlers that already exist there.
 
+## Shared parts draw Arc
+
+The shared parts in `src/components/ui/` render Arc, so every screen that uses them gets Arc without its own change:
+
+| Shared part | Draws | Notes |
+|---|---|---|
+| `button.tsx` | Arc button | `default` → primary, `secondary` and `outline` → secondary, `ghost` → ghost, `destructive` → danger. `size="icon"` is square. `type` defaults to `button`. `buttonVariants()` returns the Arc classes for links and Radix `asChild`. |
+| `input.tsx`, `textarea.tsx` | Arc field styling on a bare control | Callers keep their own labels. A textarea keeps an 80 px floor, or none when it has `rows` or a height class. |
+| `badge.tsx` | Arc badge | `destructive` → danger; `success`, `warning` and `info` pass through. |
+| `select.tsx` | Radix Select with Arc select styling | Same parts as before, now with keyboard use and type-ahead. |
+| `tabs.tsx` | Arc tabs (re-export) | Only the active panel renders. |
+| `native-select.tsx` | A native `<select>` with the Arc trigger look | Every `<select>` in the app uses it. Phones keep the system picker. Its style is `.arc-native-select` in `arc-theme.css`. |
+
+Arc controls set a minimum height. A caller that sets its own height (`h-8`, `h-[30px]`) gets that height: `arcHeightOverride()` in `src/lib/utils.ts` drops the minimum.
+
+Arc's free set has no switch, checkbox, slider or tooltip, so `switch.tsx`, `checkbox.tsx`, `slider.tsx` and `tooltip.tsx` stay as they are.
+
 ## Deleting from a rail menu
 
 Conversations delete with `RailHoldDelete` (`src/shell/rail/RailHoldDelete.tsx`), the Arc hold-to-confirm button sized to menu rows. Holding it is the confirmation, so no dialog opens. It is in the **⋯** menus of rail rows (recent chats, Cowork sessions, Code sessions, items inside a project), the Code threads list, the Cowork and Code session headers, the floating Code session menu, the phone pane menu (`PhonePaneAction.hold`) and the phone Code sheet. Bot Hub cards use it for Delete bot, the same as the bot's own menu.
 
-In `code-session-actions.tsx`, the Delete item has `hold` and no `run`, so `onDelete` deletes right away. Its D shortcut opens the menu on the hold button; a key press never deletes. Small inline spots (the bot task picker, the Native agent session list) use Arc `ConfirmMorph`, which asks in place.
+In `code-session-actions.tsx`, the Delete item has `hold` and no `run`, so `onDelete` deletes right away. Its D shortcut opens the menu on the hold button; a key press never deletes. Other single-item destructive actions follow the same rule: in a menu, hold to confirm; on a row or card, Arc `ConfirmMorph`, which asks in place and shows Retry if the action fails. That covers the bot task picker, Native agent sessions, a bot's virtual computer, discarding code changes, model endpoints, scheduled jobs, swarm templates and tasks, nodes, runtimes, policies, checkpoints, assets, plugin uninstall, infrastructure (VPS connections, SSH keys, environments, instances), agents, automation tasks, terminal files and Customize items. No single-item delete uses `window.confirm` or a dialog.
 
 Deleting a whole project still opens a dialog, because it also unassigns the project's tasks and that needs to be read first.
 
