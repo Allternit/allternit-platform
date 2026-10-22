@@ -27,6 +27,8 @@ export type {
   XlsxSessionHandle,
   OfficeExtensionContext,
   OfficeExtensionDescriptor,
+  OfficeHostChat,
+  OfficeDesignSystem,
 } from './bridge/types';
 
 // Extension slot for the per-app AI chat section
@@ -39,6 +41,7 @@ export {
   useActiveDocument,
   createAllternitAssistantExtension,
   requestAssistantPreset,
+  onAssistantPreset,
 } from './extensions';
 export type { OfficeAiSlotProps, ActiveDocumentInfo } from './extensions';
 

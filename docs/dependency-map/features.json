@@ -605,6 +605,29 @@
       ]
     },
     {
+      "id": "feature:office-free-site",
+      "label": "Free office site (office.allternit.com)",
+      "product": "product:office",
+      "status": "building",
+      "description": "office.allternit.com is a second Vite build of allternit-ai (vite.office.config.ts, entry office.html -> src/office): the app's own artifact editors (Doc, Sheet, Slides, PDF, Design, Motion, Image, Video, plus the Page/Diagram/Code viewers) on local artifact records, free and signed out. Files and media live in the browser's IndexedDB (recents, office-media: refs); Export downloads real files. No AI and no API: the build swaps cloud-upload and runtime-storage for IndexedDB and the AskBar/FixWithGizzi for nothing. Dashboards and Ops are left out (connectors need an account). Deployed by hand to the allternit-office Pages project from clean origin/main (scripts/prepare-office-site.mjs); the old platform surface and its Actions deploy are retired.",
+      "touches": [
+        "allternit-ai/src/office",
+        "allternit-ai/src/lib/artifacts",
+        "allternit-ai/src/components/artifacts",
+        "allternit-ai/src/components/craft",
+        "allternit-ai/src/views/documents"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-22",
+          "note": "Eoj: build the free site from allternit-ai as a second build (one copy of every editor), include Doc/Sheet/Slides, PDF, Image/Video, Design/Motion and the Diagram/Code/Page viewers, and no AI on the free site (AI is gated to the app). The platform surfaces/office.allternit.com (old GenOffice tabs, open /api/agent-chat proxy closed in #1773) and deploy-office-cloudflare.yml are removed."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/surfaces/office-web.mdx"
+      ]
+    },
+    {
       "id": "feature:mcp-apps",
       "label": "MCP Apps and events",
       "product": "product:mcp-apps",
@@ -1316,7 +1339,7 @@
       "label": "Craft editors (embedded WASM editors over craft:1)",
       "product": "product:ai-allternit",
       "status": "building",
-      "description": "The vendored craft editors (PdfCraft, PhotoCraft, FilmCraft) run sandboxed in cross-origin iframes served from office.allternit.com/craft/<app>/ and speak the craft:1 postMessage protocol with the workspace host page: token-validated handshake, craft:open with transferable bytes, craft:save-request -> host persists -> craft:save-ack, and a craft:command channel so agents drive the same visible editor. Phase 1 (2026-10-10) wired the pdf kind end to end; Phase 2 (2026-10-10) wired the image kind: PhotoCraft opens the stored layered source (.pcraft/PSD in artifact runtime storage) when there is one, saves the source back to storage, flattens a PNG per save that becomes the new artifact version (R2 URL body), and gains a Download PSD export. Phase 3 (2026-10-10) is live: the video kind opens in the embedded FilmCraft editor (VideoCraftEditor over the same bridge; the video embed loads ?empty=1 so FilmCraft skips its demo project), the project source (.fcproj) round-trips through artifact runtime storage (craft/source.fcproj, personal scope), footage is a media-plane ref in meta.media (never bytes in the 20 MB text budget), the user's save requests an MP4 export (file.exportMedia) whose uploaded URL becomes the new text/uri-list version body, media_generate videos and uploaded video files land as video-kind artifacts, and the phone/PWA surfaces get view + an Edit entry to the full editor (trim-adapted phone UX is not claimed). The editor bundles serve cross-origin from office.allternit.com only — there is no allternit-ai public/craft mirror (the earlier note claiming one was wrong; image/pdf never had one either).",
+      "description": "The vendored craft editors (PdfCraft, PhotoCraft, FilmCraft) run sandboxed in cross-origin iframes served from office.allternit.com/craft/<app>/ and speak the craft:1 postMessage protocol with the workspace host page: token-validated handshake, craft:open with transferable bytes, craft:save-request -> host persists -> craft:save-ack, and a craft:command channel so agents drive the same visible editor. Phase 1 (2026-10-10) wired the pdf kind end to end; Phase 2 (2026-10-10) wired the image kind: PhotoCraft opens the stored layered source (.pcraft/PSD in artifact runtime storage) when there is one, saves the source back to storage, flattens a PNG per save that becomes the new artifact version (R2 URL body), and gains a Download PSD export. Phase 3 (2026-10-10) is live: the video kind opens in the embedded FilmCraft editor (VideoCraftEditor over the same bridge; the video embed loads ?empty=1 so FilmCraft skips its demo project), the project source (.fcproj) round-trips through artifact runtime storage (craft/source.fcproj, personal scope), footage is a media-plane ref in meta.media (never bytes in the 20 MB text budget), the user's save requests an MP4 export (file.exportMedia) whose uploaded URL becomes the new text/uri-list version body, media_generate videos and uploaded video files land as video-kind artifacts, and the phone/PWA surfaces get view + an Edit entry to the full editor (trim-adapted phone UX is not claimed). The editor bundles serve cross-origin from office.allternit.com only; since 2026-10-22 they live in allternit-ai office-public/craft and ship with the office.allternit.com build (feature:office-free-site), not in the app's public/.",
       "touches": [
         "allternit-ai/src/components/craft",
         "allternit-ai/src/lib/artifacts",
@@ -1340,6 +1363,10 @@
         {
           "on": "2026-10-10",
           "note": "Phase 3 host wiring: VideoCraftEditor (src/components/craft/CraftEditor.tsx) + video-io.ts. Open ladder: stored craft/source.fcproj wins, with the footage bytes re-imported under the same virtual path so a stored project's clip references resolve (the editor's file table is per-session; OPFS restore helps the same browser); first-time opens import the footage the meta.media ref points at and the host issues file.saveAs {path} so the app's own Save never prompts. Save routing by name extension (FilmCraft's adapter sends no format; meta.path is the virtual path): .fcproj -> runtime storage + a host-requested file.exportMedia {path} MP4 export; the export's save-request -> uploadAttachmentToCloud -> new text/uri-list version body with meta.media = {url, mime}; anything else (audio stems, caption sidecars) -> craft/export.<ext>. media_generate video outputs become video-kind drafts (project body + media-plane ref in meta) via from-transcript selectedToDraft; the library gains Upload video. Phone/PWA v1 is the playable view plus an Edit video entry that mounts the full FilmCraft (trim adaptation deferred, flagged). Bridge: video embeds load ?empty=1. Docs: guides/artifact-modes.mdx + docs/design/artifacts-v2.md app-contract bullet. Server untouched (the craft_store gate has admitted video since #1477). Office CSP fix (live bug the smoke caught): the #1475 _headers fix made script-src 'self' 'wasm-unsafe-eval' actually apply to /craft/* — and every vendored app's index.html boots from an INLINE script, so all three editors silently failed to boot (blank iframe, host handshake timeout; PDF/image/video alike, in-product verification had not caught it). Fixed by adding 'unsafe-inline' to the /craft/* script-src (surfaces/office.allternit.com/public/_headers): the office origin carries no credentials, apps run in opaque-origin sandboxed iframes, and connect-src 'none' + COOP/COEP remain. A live boot check (handshake -> craft:open -> command round-trip against the deployed bundle) is now documented in vendor/craft/VENDOR.md as required for the future CI job — strings|grep craft:1 does not catch a CSP-blocked boot. Live-boot fixes the smoke caught (nothing had ever booted the embed end-to-end; CSP only started applying with #1475's _headers-at-root fix): (1) office /craft/* CSP — script-src gains 'unsafe-inline' (vendored index.html files boot from inline scripts; a hash would churn per build), connect-src 'self' (the same-origin .wasm fetch), plus Access-Control-Allow-Origin:* and Cross-Origin-Resource-Policy: cross-origin (the sandboxed iframe's opaque origin module-loads its own glue/wasm). (2) bridge.ts speaks the crate's actual wire: bare kebab-case types (hello, open, save-request — no craft: prefix) and numeric command ids — the two sides were written against PROTOCOL.md independently and never integrated; PROTOCOL.md now documents the real wire. (3) Host→app posts must target '*' (explicit origins are never delivered to opaque-origin windows); app→host arrive with origin 'null' and the host pins event.source to its own iframe. (4) craft-host's wasm transport dropped EVERY [json, ArrayBuffer] message (the string-only parse returned early), so no craft:open bytes ever reached any app — fixed in the crate (Allternit-authored, not upstream) and the FilmCraft bundle rebuilt with CRAFT_FEATURES=embed. The image/pdf bundles embed the same latent transport bug and must be rebuilt the same way (same crate, no code change) before their editors can open documents — flagged follow-up, not done here to avoid redeploying live surfaces outside this slice. The future CI job must run a live boot check (handshake → open with bytes → one command), not just strings|grep craft:1."
+        },
+        {
+          "on": "2026-10-22",
+          "note": "The craft bundles moved from the retired platform surfaces/office.allternit.com to allternit-ai office-public/craft/<app>/; URLs (office.allternit.com/craft/<app>/) and CRAFT_BASE are unchanged. Local blob: footage now opens and downloads without the signed-in media API (video-io openFootageBytes, export.ts)."
         }
       ],
       "evidence": [

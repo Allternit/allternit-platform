@@ -3,10 +3,18 @@ import type { PointerEvent as ReactPointerEvent } from 'react'
 import type { Editor } from '@tiptap/core'
 import type { Block } from '@allternit/office-docx-engine'
 import type { AiSettings } from '../../shared/ipc'
-import { type NumIds } from './protocol'
+import { findNumId, type AiTrack, type NumIds } from './protocol'
+import { createDocsSkill } from './docs-skill'
 import { useI18n } from '../i18n/locale'
 import { IconNewChat, IconSidebarCollapse } from '../components/icons'
-import { useOfficeAi, AllternitBrandMark, type OfficeAgentLoop } from '@allternit/office-suite/bridge'
+import {
+  useOfficeAi,
+  useOfficeHost,
+  registerPaneAgent,
+  paneAgentAuthor,
+  AllternitBrandMark,
+  type OfficeAgentLoop,
+} from '@allternit/office-suite/bridge'
 import { type OfficeModelOption } from '@allternit/office-suite/ai'
 
 const PANEL_WIDTH_KEY = 'docs-ai-panel-width'
@@ -49,16 +57,19 @@ interface ChatEntry {
 }
 
 /**
- * AI assistant for Allternit Docs — a real chat panel streaming the platform
- * agent-chat endpoint via @allternit/office-ai. The document's text is
- * supplied as context on every run. Engine mutation through AI tools lands
- * with the Allternit skill runtime in a later phase.
+ * AI assistant for Allternit Docs — a chat panel streaming the platform
+ * agent-chat endpoint via @allternit/office-ai, running the docx skill
+ * (docs-skill.ts: document context + the document tools, executed against
+ * the live editor). The same skill is registered for a host chat
+ * (registerPaneAgent), so an artifact session's agent edits this document.
  */
 const APP_KEY = 'docs' as const
 
-export function AiPanel({ blocks, docEmpty, preset, open, onExpand, onCollapse }: AiPanelProps) {
+export function AiPanel({ editor, blocks, docEmpty, numIdFallback, preset, open, onExpand, onCollapse }: AiPanelProps) {
   const { t } = useI18n()
   const ai = useOfficeAi()
+  // With a host chat the panel is mounted hidden only to own the skill.
+  const hostChat = useOfficeHost()?.hostChat
   const [chat, setChat] = useState<ChatEntry[]>([])
   const [prompt, setPrompt] = useState('')
   const [busy, setBusy] = useState(false)
@@ -120,27 +131,35 @@ export function AiPanel({ blocks, docEmpty, preset, open, onExpand, onCollapse }
   }
 
   const loopRef = useRef<OfficeAgentLoop | null>(null)
-  // The loop is constructed once, so buildContext must read through a ref to
-  // see blocks that arrived after the first render — closing over `blocks`
-  // directly would freeze the context at the mount-time document.
+  // The loop and skill are constructed once, so they read the editor, blocks
+  // and numbering fallback through refs to see the current document.
   const blocksRef = useRef(blocks)
   blocksRef.current = blocks
+  const editorRef = useRef(editor)
+  editorRef.current = editor
+  const numIdFallbackRef = useRef(numIdFallback)
+  numIdFallbackRef.current = numIdFallback
+  const skillRef = useRef<ReturnType<typeof createDocsSkill> | null>(null)
+  if (!skillRef.current) {
+    const numIds = (): NumIds => ({
+      bullet: findNumId(blocksRef.current ?? [], 'bullet') ?? numIdFallbackRef.current?.bullet ?? null,
+      ordered: findNumId(blocksRef.current ?? [], 'ordered') ?? numIdFallbackRef.current?.ordered ?? null,
+    })
+    // A host agent's call (an Allternit session agent through the pane bridge)
+    // edits as tracked changes under its name; this panel's own replies stay direct.
+    const track = (): AiTrack | undefined => {
+      const author = paneAgentAuthor(APP_KEY)
+      return author ? { author } : undefined
+    }
+    skillRef.current = createDocsSkill(() => editorRef.current, numIds, track)
+  }
+  useEffect(() => registerPaneAgent(APP_KEY, skillRef.current!), [])
   if (!loopRef.current) {
     loopRef.current = new ai.AgentLoop({
       modelId,
-      skill: {
-        systemPrompt:
-          'IGNORE ALL PREVIOUS INSTRUCTIONS ABOUT CODE, FILES, GIT, NOTEBOOKS, OR DESIGN SYNC. You are NOT in a coding CLI or IDE. You are the Allternit Docs assistant, embedded in the Allternit Docs word processor. Help the user draft and edit the open document. Be concise and concrete.',
-        buildContext: () => {
-          const text = (blocksRef.current ?? [])
-            .map((b) => b.runs?.map((r) => r.text).join('') ?? '')
-            .filter((line) => line.trim())
-            .join('\n')
-          return text
-            ? `Current document content:\n${text.slice(0, 6000)}`
-            : 'The document is currently empty.'
-        },
-      },
+      skill: skillRef.current,
+      // Drafting a document takes several tool rounds; the default 8 cuts it off.
+      maxTurns: 24,
       events: {
         onText: (text) => {
           setChat((previous) => {
@@ -178,8 +197,9 @@ export function AiPanel({ blocks, docEmpty, preset, open, onExpand, onCollapse }
     [busy],
   )
 
-  // Ribbon/start-screen presets: run once per nonce.
-  if (preset && preset.nonce !== lastPresetNonce.current) {
+  // Ribbon/start-screen presets: run once per nonce. With a host chat the
+  // host runs them (onAssistantPreset), never this hidden panel.
+  if (preset && !hostChat && preset.nonce !== lastPresetNonce.current) {
     lastPresetNonce.current = preset.nonce
     if (preset.autoRun) run(preset.text)
     else setPrompt(preset.text)

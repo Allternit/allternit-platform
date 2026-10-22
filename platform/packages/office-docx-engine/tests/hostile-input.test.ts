@@ -37,7 +37,9 @@ describe('zip bomb protection', () => {
     for (let i = 0; i < 10010; i++) zip.file(`junk/${i}.bin`, 'x')
     const bytes = await zip.generateAsync({ type: 'uint8array' })
     await expect(parseDocx(bytes)).rejects.toThrow(/parts exceeds/)
-  })
+    // Building a 10k-entry zip is CPU-bound; under a full parallel suite it
+    // can outlast the 5s default even though it takes well under 1s alone.
+  }, 30_000)
 
   it('still opens a normal document', async () => {
     const doc = await parseDocx(await buildDocx({ bodyXml: PLAIN_PARA }))

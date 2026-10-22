@@ -21,7 +21,8 @@ import type { WebContents } from '../shims/electron'
 import { execFile } from '../shims/node-child_process'
 import { readFile, writeFile, rm, stat, mkdir, open } from '../shims/node-fs'
 import { createHash, randomUUID } from '../shims/node-crypto'
-import { existsSync, mkdirSync } from '../shims/node-fs'
+import { existsSync, mkdirSync, writeFileSync } from '../shims/node-fs'
+import { ProxyAgent, setGlobalDispatcher } from '../shims/undici'
 import { userInfo } from '../shims/node-os'
 import { dirname, join } from '../shims/node-path'
 import { gskApiKey, gskSlideGenerate } from '../stubs/ai-search'
@@ -143,6 +144,7 @@ import {
 } from '@allternit/office-pptx-engine'
 import { buildRenderSlide, EMU_PER_PX_96, type RenderSlide } from '@allternit/office-pptx-render'
 import { refineComplexWidths, shapedMetricsReady } from './shaped-metrics'
+import { settleFontLoads } from './fonts'
 import { applyEditParagraphs, collectParagraphFormatPatches, levelsChanged } from './edit-text'
 import { cfbKind, isCfbHeader } from './cfb-sniff'
 import { unplayableAudioCodec } from './mp4-audio-sniff'
@@ -683,6 +685,8 @@ async function openAndBuild(
   let slides = buildAllRenderSlides(opened, fitWidthPx)
   // If the first layout pass had complex-script misses (Arabic/Thai etc.), re-lay out once with renderer-measured widths
   if (await refineComplexWidths(wc)) slides = buildAllRenderSlides(opened, fitWidthPx)
+  // Text measured while a web font (e.g. Carlito for Calibri) was still loading: lay out again
+  if (await settleFontLoads()) slides = buildAllRenderSlides(opened, fitWidthPx)
   return {
     path,
     slides,
@@ -3055,7 +3059,9 @@ export function registerSlidesIpc(): void {
     // Reopening cleared element-level dirty; the session-level flag preserves the "unsaved" state (reset on save)
     session.metaDirty = true
     session.fitWidthPx = op.fitWidthPx
-    return buildAllRenderSlides(session.opened, op.fitWidthPx)
+    const slides = buildAllRenderSlides(session.opened, op.fitWidthPx)
+    // The theme's fonts may be web fonts still loading: lay out again once they're in
+    return (await settleFontLoads()) ? buildAllRenderSlides(session.opened, op.fitWidthPx) : slides
   })
 
   ipcMain.handle('slides:set-transition', (e, op: SetTransitionOp) => {
@@ -3880,7 +3886,6 @@ export function installSlidesMenu(): void {
 async function applyMainProcessProxy(): Promise<void> {
   const setDispatcher = async (proxyUrl: string) => {
     try {
-      const { ProxyAgent, setGlobalDispatcher } = await import('undici')
       setGlobalDispatcher(new ProxyAgent(proxyUrl))
       // strip user:pass credentials before logging
       console.log('[proxy] main-process fetch via', proxyUrl.replace(/\/\/[^@/]*@/, '//***@'))
@@ -3983,7 +3988,6 @@ export function startSlidesStandalone(): void {
 
           console.log('SMOKE_INFO=' + JSON.stringify(info))
           const png = await win.webContents.capturePage()
-          const { writeFileSync } = await import('node:fs')
           writeFileSync(process.env.SLIDES_SMOKE_SHOT!, png.toPNG())
 
           console.log('SMOKE_SHOT_OK')

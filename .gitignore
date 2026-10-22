@@ -14,7 +14,6 @@ target/
 *.log
 *.png
 !surfaces/platform.allternit.com/public/favicon.png
-!surfaces/office.allternit.com/public/favicon.png
 !services/remote-control-push/favicon.png
 !surfaces/platform.allternit.com/public/billing/*.png
 *.mov

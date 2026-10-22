@@ -9,7 +9,7 @@ Browser extensions, Office add-ins, and the native Office Suite integration that
 The Allternit Office Suite (`@allternit/office-suite`) has a first-class extension slot: a host registers `extensions` on the `OfficeHost` contract, and the registered extension **occupies the existing AI chat section** inside each office app (Docs, Sheets, Slides, PDF). When no extensions are registered, the app's built-in AI panel renders unchanged.
 
 - **Allternit Assistant** (`platform/packages/allternit-office-suite/src/extensions/`) — chat/agent panel on the suite's `useOfficeAi()` contract: per-app model picker, streaming agent loop, active-document awareness.
-- **Mounted in** `surfaces/office.allternit.com` (all five tabs, including a side panel next to Sign) and `surfaces/ai.allternit.com` platform views (`src/views/{docs,sheets,slides,pdf}`) — which is what the desktop app's Office windows load.
+- **Mounted in** `surfaces/ai.allternit.com` platform views (`src/views/{docs,sheets,slides,pdf}`) — which is what the desktop app's Office windows load.
 
 ### `allternit-extension` — Chrome Extension
 

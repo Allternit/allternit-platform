@@ -52,14 +52,14 @@ fair-source license forbidding use in competing products. Not vendored, never wi
 
 ## Embedding
 
-The WASM frontends (`apps/*-web`) are built in CI and published as static bundles to
-`surfaces/office.allternit.com/public/craft/<app>/` (served at
-`office.allternit.com/craft/<app>/`). There is deliberately **no mirror into
-`allternit-ai/public/craft/`** (one never existed; the workspace app loads the bundles
-cross-origin from office.allternit.com). The app embeds them sandboxed cross-origin.
+The WASM frontends (`apps/*-web`) are built here and copied as static bundles to
+`allternit-ai/office-public/craft/<app>/` (served at `office.allternit.com/craft/<app>/`
+by the office.allternit.com build of allternit-ai since 2026-10-22; before that they
+lived in this repo's retired `surfaces/office.allternit.com`). The app's own `public/`
+has no copy: every surface loads the bundles cross-origin from office.allternit.com. The app embeds them sandboxed cross-origin.
 The host-page bridge lives in `craft-host/` (shared crate).
 
-The serving origin's CSP (`surfaces/office.allternit.com/public/_headers`, `/craft/*`)
+The serving origin's CSP (`allternit-ai/office-public/_headers`, `/craft/*`)
 must keep **`script-src 'unsafe-inline'`**: every vendored app's `index.html` boots from
 an inline `<script>` (upstream ships it that way and the per-build hash is baked into
 the module script, so a CSP hash would churn on every rebuild). Without it all three
@@ -104,9 +104,10 @@ export CARGO_TARGET_DIR="$HOME/Desktop/allternit-workspace/.shared-target"
 (cd vendor/craft/image/apps/photocraft-web && trunk build --release --features embed)  # → vendor/craft/image/dist/web/
 (cd vendor/craft/pdf/apps/pdfcraft-web    && trunk build --release --features embed)  # → vendor/craft/pdf/dist/web/
 (cd vendor/craft/video && cargo xtask web)  # CRAFT_FEATURES=embed → target/web/dist
-cp -R vendor/craft/image/dist/web/. surfaces/office.allternit.com/public/craft/image/
-cp -R vendor/craft/pdf/dist/web/.    surfaces/office.allternit.com/public/craft/pdf/
-cp -R vendor/craft/video/target/web/dist/. surfaces/office.allternit.com/public/craft/video/
+AI=../allternit-ai   # a clean allternit-ai worktree on a branch; the bundles ship with its office.allternit.com deploy
+cp -R vendor/craft/image/dist/web/. $AI/office-public/craft/image/
+cp -R vendor/craft/pdf/dist/web/.    $AI/office-public/craft/pdf/
+cp -R vendor/craft/video/target/web/dist/. $AI/office-public/craft/video/
 ```
 
 Constraints: every file < 25 MiB (Pages per-file limit); video's xtask runs wasm-opt.

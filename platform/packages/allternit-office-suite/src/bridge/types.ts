@@ -217,4 +217,33 @@ export interface OfficeHost {
   /** Optional: extensions that occupy the per-app AI chat section. When absent
    * or empty, every app renders its built-in AI panel exactly as before. */
   extensions?: OfficeExtensionDescriptor[];
+
+  /**
+   * Optional: the host's own chat beside the editor (e.g. an Allternit
+   * artifact session). When set, no app renders an AI chat section at all;
+   * "open AI" actions call `open`, and ribbon/context-menu AI presets reach
+   * the host through the assistant preset event (`onAssistantPreset`).
+   */
+  hostChat?: OfficeHostChat;
+
+  /**
+   * Optional: the design system the document is made with. Editors offer its
+   * palette (the colour popover's Theme tab) and fonts first.
+   */
+  designSystem?: OfficeDesignSystem;
+}
+
+export interface OfficeDesignSystem {
+  name: string;
+  /** Named colours, e.g. { name: 'talv-ember', value: '#E86A2B' }. */
+  colors: Array<{ name: string; value: string }>;
+  /** Font families, most important first. */
+  fonts: string[];
+}
+
+export interface OfficeHostChat {
+  /** An app asked to show its AI chat — show/focus the host's chat instead. */
+  open: (appKey: OfficeAppKey) => void;
+  /** Open the host's comment box, anchored to what's selected in the editor. */
+  openComments?: () => void;
 }

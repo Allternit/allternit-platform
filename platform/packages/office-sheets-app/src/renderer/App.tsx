@@ -98,7 +98,13 @@ import '@univerjs/preset-sheets-table/lib/index.css'
 import { greenTheme } from '@univerjs/themes'
 import { createUniver } from './create-univer'
 
-import { useOfficeAi, type OfficeAgentLoop } from '@allternit/office-suite/bridge'
+import {
+  useOfficeAi,
+  registerPaneAgent,
+  registerPaneAgentPersist,
+  type OfficeAgentLoop,
+  type PaneAgentSkill,
+} from '@allternit/office-suite/bridge'
 import { composeSkills, type AgentImage } from './ai/agent-stub'
 import type { AiSettings } from './ai/ai-stubs'
 import { type WorkbookOperation } from '@allternit/office-suite/xlsx'
@@ -756,16 +762,19 @@ export function App(): React.JSX.Element {
   const runMutatedRef = useRef(false)
 
   const agentLoopRef = useRef<OfficeAgentLoop | null>(null)
+  const paneSkillRef = useRef<PaneAgentSkill | null>(null)
   if (!agentLoopRef.current) {
+    const skill = composeSkills('sheets+files', '', [
+      createWorkbookSkill(sheetsSkillDeps()),
+      createFilesSkill(() => attachmentsRef.current),
+      createSearchSkill(),
+    ])
+    paneSkillRef.current = skill as PaneAgentSkill
     agentLoopRef.current = new ai.AgentLoop({
       modelId: aiModelId,
       transport: createElectronTransport(() => aiSettingsRef.current!),
       systemSuffix: aiLangDirective,
-      skill: composeSkills('sheets+files', '', [
-        createWorkbookSkill(sheetsSkillDeps()),
-        createFilesSkill(() => attachmentsRef.current),
-        createSearchSkill(),
-      ]),
+      skill,
       // guide loading adds a tool round; the default 8 cuts off multi-step work
       maxTurns: 24,
       events: {
@@ -2057,6 +2066,25 @@ export function App(): React.JSX.Element {
   /** Waits for every plan submitted during one AI run, then persists all
    * successful writes in one save. A canceled/failed Save As leaves both the
    * journal and inline undo available. */
+  // The host's agent (artifact session) edits this workbook through the same tools.
+  useEffect(() => registerPaneAgent('sheets', paneSkillRef.current!), [])
+  // Its edits are applied asynchronously after propose_operations returns;
+  // wait for them, then save — autosave is opt-in, and the host keeps the record.
+  useEffect(
+    () =>
+      registerPaneAgentPersist('sheets', async () => {
+        const applies = aiApplyPromisesRef.current
+        aiApplyPromisesRef.current = []
+        await Promise.all(applies)
+        const state = lazyWorkbookRef.current
+        if (!state || journalSize(state.editJournal) === 0) return true
+        await handleSaveRef.current('save')
+        const after = lazyWorkbookRef.current
+        return !after || journalSize(after.editJournal) === 0
+      }),
+    [],
+  )
+
   async function autoSaveCompletedAiRun(): Promise<void> {
     const applies = aiApplyPromisesRef.current
     aiApplyPromisesRef.current = []

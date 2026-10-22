@@ -28,6 +28,9 @@ export interface BrowserHostOptions {
   ai?: OfficeAiClient;
   /** Extensions that occupy the per-app AI chat section (e.g. the Allternit Office Agent). */
   extensions?: OfficeExtensionDescriptor[];
+  /** The host's chat beside the editor; replaces every app's AI section. */
+  hostChat?: OfficeHost['hostChat'];
+  designSystem?: OfficeHost['designSystem'];
 }
 
 function buildAcceptString(accept?: Record<string, string[]>): string {
@@ -107,5 +110,7 @@ export function createBrowserHost(options: BrowserHostOptions = {}): OfficeHost 
     getRecentFiles: options.getRecentFiles ?? (async () => []),
     ai: options.ai ?? createBrowserAi(),
     ...(options.extensions ? { extensions: options.extensions } : {}),
+    ...(options.hostChat ? { hostChat: options.hostChat } : {}),
+    ...(options.designSystem ? { designSystem: options.designSystem } : {}),
   };
 }

@@ -728,6 +728,7 @@ export function Ribbon({
   onInsertImage,
   onBackground,
   onApplyTheme,
+  designSystemTheme,
   onAddSlide,
   onAddSlideWithLayout,
   onAddSection,
@@ -1537,7 +1538,7 @@ export function Ribbon({
           <>
             <Group label={t('ribbonGroupThemes')}>
               <div className="theme-gallery">
-                {THEME_PRESETS.map((tp) => (
+                {[...(designSystemTheme ? [designSystemTheme] : []), ...THEME_PRESETS].map((tp) => (
                   <button
                     key={tp.id}
                     className="theme-card"
