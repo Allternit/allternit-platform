@@ -74,6 +74,8 @@ import { composeTurnSystem } from "@/runtime/session/system-header"
 import * as BotInbox from "@/runtime/bots/bot-inbox"
 import { isRoutineTurnText } from "@/runtime/bots/bot-routines"
 import { isMessageAgentSession, MessageAgentTool } from "@/runtime/tools/builtins/message-agent"
+import { SuggestTaskTool } from "@/runtime/tools/builtins/suggest-task"
+import { isAppBotSession } from "@/runtime/bots/app-bot-routing"
 import { SessionHandoff } from "@/runtime/session/handoff"
 import { SessionPause } from "@/runtime/session/pause"
 import { SessionLimit } from "@/runtime/session/limit"
@@ -1777,6 +1779,12 @@ const message = await createUserMessage(input)
         return false
       })
       if (!allowed) delete tools[MessageAgentTool.id]
+    }
+
+    // suggest_task: only an app bot's own chat can suggest work to its user.
+    if (SuggestTaskTool.id in tools) {
+      const allowed = await isAppBotSession(input.session.id).catch(() => false)
+      if (!allowed) delete tools[SuggestTaskTool.id]
     }
 
     return tools

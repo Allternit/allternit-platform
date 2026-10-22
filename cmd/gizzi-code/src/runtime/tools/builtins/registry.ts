@@ -66,6 +66,7 @@ import {
 } from "@/runtime/tools/builtins/scratchpad"
 import { GetAgentEmailStatusTool, SendAgentEmailTool } from "@/runtime/tools/builtins/agent-email"
 import { MessageAgentTool } from "@/runtime/tools/builtins/message-agent"
+import { SuggestTaskTool } from "@/runtime/tools/builtins/suggest-task"
 import { MdxGraphTool } from "@/runtime/tools/builtins/mdx-graph"
 import { subscriptionCapabilityTools } from "@/runtime/tools/builtins/subscription"
 
@@ -198,6 +199,7 @@ export namespace ToolRegistry {
       // context. SessionPrompt.resolveTools deletes it from the per-session
       // tool record unless the session is a canonical bot chat.
       MessageAgentTool,
+      SuggestTaskTool,
       ...(Flag.GIZZI_ENABLE_LSP_TOOL ? [LspTool] : []),
       ...(config.experimental?.batch_tool === true ? [BatchTool] : []),
       ...(Flag.GIZZI_CLIENT === "cli" ? [PlanExitTool, PlanEnterTool] : []),

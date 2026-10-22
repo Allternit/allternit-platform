@@ -130,6 +130,21 @@ export async function routeToAppBot(
   )
 }
 
+export interface AppSuggestResult {
+  status: "proposed"
+  threadId: string
+  /** True when an open suggestion with the same title already existed. */
+  existing: boolean
+}
+
+/** Suggest a task to the user; it waits in status `proposed` until they say go ahead. */
+export async function suggestAppTask(
+  sessionID: string,
+  input: { title: string; objective: string; why?: string },
+): Promise<AppSuggestResult> {
+  return post<AppSuggestResult>("/bot-routing/suggest", { sessionId: sessionID, ...input }, 15_000)
+}
+
 /** Gating cache: tool assembly runs every turn; the answer rarely changes. */
 const TTL_MS = 60_000
 const cache = new Map<string, { at: number; ok: boolean }>()

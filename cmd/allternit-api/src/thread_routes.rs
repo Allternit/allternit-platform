@@ -15,7 +15,9 @@
 //!   routine's home) and never resolve; `task` threads have an objective and
 //!   resolve done/failed.
 //! * **Status** uses the spec grammar (queued · planning · working · blocked ·
-//!   needs_you · review · done · failed · paused · idle); the server derives
+//!   needs_you · review · done · failed · paused · idle), plus `proposed` (a
+//!   task the bot suggested, waiting for the user's go-ahead) and `declined`
+//!   (a suggestion the user turned down; see `bot_suggestions`); the server derives
 //!   the panel `group` (waiting / working / queued / idle / resolved), so no
 //!   surface infers state from transcript text.
 //! * **Sync.** Existing bot chats (gizzi sessions tagged `botThreadOf` /
@@ -46,16 +48,16 @@ use crate::AppState;
 pub const HANDOFF_FRACTION: f64 = 0.70;
 
 pub const STATUSES: &[&str] = &[
-    "queued", "planning", "working", "blocked", "needs_you", "review", "done", "failed", "paused", "idle",
+    "queued", "planning", "working", "blocked", "needs_you", "review", "done", "failed", "paused", "idle", "proposed", "declined",
 ];
 
 /// Panel group for a status (Threads panel sections).
 pub fn group_of(status: &str) -> &'static str {
     match status {
-        "needs_you" | "blocked" | "review" => "waiting",
+        "needs_you" | "blocked" | "review" | "proposed" => "waiting",
         "working" | "planning" => "working",
         "queued" => "queued",
-        "done" | "failed" => "resolved",
+        "done" | "failed" | "declined" => "resolved",
         _ => "idle",
     }
 }
@@ -69,6 +71,8 @@ fn event_for_status(status: &str) -> &'static str {
         "failed" => "thread.failed",
         "paused" => "thread.paused",
         "queued" => "thread.queued",
+        "proposed" => "thread.proposed",
+        "declined" => "thread.declined",
         _ => "thread.idle",
     }
 }
@@ -363,7 +367,7 @@ fn generations(db: &DbHandle, id: &str) -> rusqlite::Result<Vec<GenerationView>>
 }
 
 /// Record a lifecycle event on the bot ledger, tagged with the thread.
-fn ledger(db: &DbHandle, bot_id: &str, thread_id: &str, event_type: &str, actor: (&str, &str), payload: Value, session_id: Option<&str>) {
+pub(crate) fn ledger(db: &DbHandle, bot_id: &str, thread_id: &str, event_type: &str, actor: (&str, &str), payload: Value, session_id: Option<&str>) {
     let key = format!("{thread_id}:{event_type}:{}", uuid::Uuid::new_v4());
     let body = AppendEventBody {
         event_type: event_type.to_string(),
@@ -441,7 +445,7 @@ fn list(db: &DbHandle, user_id: &str, q: &ListQuery) -> rusqlite::Result<Vec<Thr
         sql.push_str(&format!(" AND t.bot_id = ?{}", args.len()));
     }
     if !q.include_resolved {
-        sql.push_str(" AND t.status NOT IN ('done', 'failed')");
+        sql.push_str(" AND t.status NOT IN ('done', 'failed', 'declined')");
     }
     if !q.include_incognito {
         sql.push_str(" AND t.incognito = 0");
@@ -839,7 +843,7 @@ pub async fn channel_thread_under<R: ThreadRuntime>(
             .query_row(
                 "SELECT id, current_session_id FROM bot_threads
                  WHERE bot_id = ?1 AND json_extract(origin, '$.channelKey') = ?2
-                   AND status NOT IN ('done', 'failed')
+                   AND status NOT IN ('done', 'failed', 'declined')
                  ORDER BY updated_at DESC LIMIT 1",
                 params![bot_id, key],
                 |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?)),
@@ -1196,7 +1200,7 @@ async fn patch_thread(
                  status_line = COALESCE(?6, status_line), todo = COALESCE(?7, todo),
                  summary = COALESCE(?8, summary), project_id = COALESCE(?9, project_id),
                  started_at = CASE WHEN ?5 IN ('working', 'planning') AND started_at IS NULL THEN ?10 ELSE started_at END,
-                 resolved_at = CASE WHEN ?5 IN ('done', 'failed') THEN ?10
+                 resolved_at = CASE WHEN ?5 IN ('done', 'failed', 'declined') THEN ?10
                                     WHEN ?5 IS NOT NULL THEN NULL ELSE resolved_at END,
                  last_activity_at = ?10, updated_at = ?10
              WHERE id = ?1",

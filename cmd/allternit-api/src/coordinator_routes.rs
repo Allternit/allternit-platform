@@ -443,7 +443,7 @@ fn open_threads(db: &DbHandle, project_id: &str) -> rusqlite::Result<Vec<OpenThr
     let mut stmt = conn.prepare(
         "SELECT t.id, t.title, t.status, COALESCE(json_extract(a.config, '$.botProfile.displayName'), a.name)
          FROM bot_threads t JOIN agents a ON a.id = t.bot_id
-         WHERE t.project_id = ?1 AND t.incognito = 0 AND t.status NOT IN ('done', 'failed')
+         WHERE t.project_id = ?1 AND t.incognito = 0 AND t.status NOT IN ('done', 'failed', 'declined')
          ORDER BY t.last_activity_at DESC LIMIT 20",
     )?;
     let rows = stmt.query_map(params![project_id], |r| Ok(OpenThread { id: r.get(0)?, title: r.get(1)?, status: r.get(2)?, bot_name: r.get(3)? }))?;
