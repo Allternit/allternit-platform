@@ -1,0 +1,29 @@
+---
+title: Sidebar layout
+description: Shared desktop sidebar controls and phone drawer readability.
+---
+
+## Source ownership
+
+All paths below are relative to the allternit-ai repository.
+
+- `src/shell/rail-layout.ts` owns the shared desktop minimum and default widths.
+- `src/hooks/usePanelLayout.ts` persists user widths; the default is 286 pixels and existing saved values remain intact.
+- `src/shell/ShellFrame.tsx` uses the same fallback width and bounds its legacy phone drawer to 320 pixels or 86vw.
+- `src/shell/RecentsPanel.tsx` owns the named expand button, visible New action and secondary-actions popover. Home, Browser, Code and pinned sections share it.
+- `src/shell/ShellRail.tsx` keeps existing navigation and session actions, renders two-line conversation titles, and separates account name from plan.
+- `src/fabric-session/phone/phone.css` defines the two-line `phone-recent-title` class used by `PhoneDrawer.tsx` and `src/shell/rail/CodeSessionPhoneList.tsx`.
+
+## Interaction contracts
+
+The section heading exposes `aria-expanded` and references its visible contents. Secondary actions close their popover before navigation. Filter controls keep their own nested popovers. No session store, route or account action changes.
+
+Phone row heights remain measured by the existing reorder gesture; no fixed-height assumption is added. Status icons and unread dots stay outside the title clamp. The web phone layout and PWA share these styles.
+
+## Verification and shipping
+
+`RecentsPanel.test.tsx` covers action reachability, callbacks, popover dismissal and the collapse control. Existing phone drawer tests cover mode navigation. Check the desktop sidebar at narrow and wide saved widths, and phone drawers with long titles in Home, Code and ACI.
+
+These source changes require a Desktop package update and web deployment to appear for users. The PWA requires its separate deployment. Deployment remains a separate approved action.
+
+See the [user guide](/guides/sidebar-navigation).
