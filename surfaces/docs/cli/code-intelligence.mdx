@@ -37,9 +37,22 @@ The `symbol_edit` tool replaces a whole function, class, method (`Class.method`)
 
 The agent is told to use `rename` for renames, `symbol_edit` for replacing a whole declaration, and `edit` for small changes inside one.
 
+## Review with a verdict
+
+`/review` with local changes (and no PR number) asks a fresh reviewer to check them. It starts with a clean context, reads the changed files, their callers and any deleted files' callers (up to 30 files), and returns **PASS**, **FAIL** (with file and line for each problem) or **PARTIAL** (what it couldn't check). A re-review treats the previous verdict as a claim to verify, not as fact. The last 8 verdicts per session are kept.
+
+- `/review pass [rounds]` sends each non-PASS verdict to the coder as a turn and reviews again, until PASS or the limit (default 5, max 12). Stopping the session stops the loop.
+- `/review local` followed by what to check gives the reviewer something to check first.
+- `/review <pr>` still reviews a GitHub pull request.
+- In CI: `gizzi run --review` (exit codes 0, 3, 4). See [Review in CI](/cli/headless-execution#review-in-ci).
+
+The reviewer can read files, search, use the language server and run read-only commands (`git diff`, `git log`, `rg` and similar); it can't edit. Its model is the `review` [job model](/cli/configuration#models-for-each-job).
+
 ## For developers
 
 - Repo map: `cmd/gizzi-code/src/codemap/repo-map.ts` (`RepoMap.prompt`, `slice`, `update`, `queue`). It is added in `session/prompt.ts` through `composeTurnSystem({ repoMap })` (`session/system-header.ts`), after the workspace identity. Session edits arrive on `File.Event.Edited` (now carrying `sessionID`) and file-watcher events in `context/project/bootstrap.ts`, debounced 500 ms. Context breakdown category `repo_map`.
 - Rename: `LSP.rename` (`runtime/integrations/lsp/index.ts`, `prepareRename` when supported); the client now declares rename, hierarchical symbols and `documentChanges` support. `WorkspaceEdit.apply` (`runtime/tools/builtins/workspace-edit.ts`) is shared by `rename` and `symbol_edit`.
 - `symbol_edit`: `runtime/tools/builtins/symbol-edit.ts`; it counts as an edit tool for permissions, plan mode and subagent results.
 - Tests: `test/codemap/repo-map.test.ts`, `test/tool/{lsp-rename,symbol-edit,workspace-edit}.test.ts`.
+- Reviewer: `cmd/gizzi-code/src/runtime/review/` (`Reviewer.runReview`, `ReviewChanges.collect`, `ReviewVerdict`, `ReviewStore`, `ReviewLoop.reviewUntilPass`, `GoalRoundChecks.run`); hidden `review` agent in `runtime/loop/agent.ts`. Routes: `GET`/`PUT /config/model-jobs`, `POST`/`DELETE /session/:sessionID/review`, `GET /session/:sessionID/reviews`, `POST /review`. Bus events `review.started`, `review.finished`, `review.fixing`, `review.loop.finished`.
+

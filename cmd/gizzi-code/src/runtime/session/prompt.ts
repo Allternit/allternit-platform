@@ -1364,13 +1364,23 @@ const message = await createUserMessage(input)
             GoalEngine.pauseGoal(nextGoal.id, "Paused after reaching the agent step ceiling.")
             break
           }
+          // Round boundary: project checks + independent review feed the next
+          // round; two rounds with the same failures escalate the model
+          // (models.jobs.goalEscalate). Budgets were enforced above.
+          const roundChecks = await import("@/runtime/review/goal-checks")
+            .then(({ GoalRoundChecks }) => GoalRoundChecks.run({ sessionID, cwd: Instance.directory, abort }))
+            .catch((error) => {
+              log.warn("goal round checks failed", { sessionID, error })
+              return undefined
+            })
+          if (abort.aborted) break
           const continuationUser: MessageV2.User = {
             id: Identifier.ascending("message"),
             sessionID,
             role: "user",
             time: { created: Date.now() },
             agent: lastUser.agent,
-            model: lastUser.model,
+            model: roundChecks?.escalate ?? lastUser.model,
           }
           await Session.updateMessage(continuationUser)
           await Session.updatePart({
@@ -1378,7 +1388,10 @@ const message = await createUserMessage(input)
             messageID: continuationUser.id,
             sessionID,
             type: "text",
-            text: "Continue the active durable goal. Choose the next bounded useful slice, preserve evidence, and use update_goal only for progress accounting or an audited terminal outcome.",
+            text: [
+              "Continue the active durable goal. Choose the next bounded useful slice, preserve evidence, and use update_goal only for progress accounting or an audited terminal outcome.",
+              roundChecks?.feedback,
+            ].filter(Boolean).join("\n\n"),
             synthetic: true,
           } satisfies MessageV2.TextPart)
           // New goal slice: fresh guardrail counters and wall clock.
