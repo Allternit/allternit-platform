@@ -46,7 +46,21 @@ export function prependHarnessBin(env: NodeJS.ProcessEnv = process.env): void {
   env.PATH = [bin, ...parts].join(path.delimiter)
 }
 
+/** An Allternit cloud computer is a per-user container whose desktop runs as
+ *  root, and Claude Code refuses `--dangerously-skip-permissions` as root
+ *  unless `IS_SANDBOX=1`. Mark it so spawned CLIs inherit it. Only on cloud
+ *  computers (the image sets ALLTERNIT_PROVISIONED=1), never a user's own
+ *  machine, and an explicit IS_SANDBOX wins. */
+export function markCloudComputerSandbox(
+  env: NodeJS.ProcessEnv = process.env,
+  uid: number | undefined = process.getuid?.(),
+): void {
+  if (env.ALLTERNIT_PROVISIONED !== "1" || uid !== 0 || env.IS_SANDBOX !== undefined) return
+  env.IS_SANDBOX = "1"
+}
+
 prependHarnessBin()
+markCloudComputerSandbox()
 
 export function parseCodexModels(stdout: string): DiscoveredModel[] {
   const catalog = JSON.parse(stdout) as { models?: Array<{ slug?: string; display_name?: string; context_window?: number }> }

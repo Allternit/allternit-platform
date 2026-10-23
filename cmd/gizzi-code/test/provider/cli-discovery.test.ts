@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import { currentCliPath, customCliFile, customSubprocessSpecs, harnessBinDir, headlessArgv, knownInstallPaths, prependHarnessBin, PROVIDER_ENV_KEYS, SUBPROCESS_PROVIDERS } from "../../src/runtime/providers/discovery/subprocess"
+import { currentCliPath, customCliFile, customSubprocessSpecs, harnessBinDir, headlessArgv, knownInstallPaths, markCloudComputerSandbox, prependHarnessBin, PROVIDER_ENV_KEYS, SUBPROCESS_PROVIDERS } from "../../src/runtime/providers/discovery/subprocess"
 import type { Provider } from "../../src/runtime/providers/provider"
 import { cliModel, stripProviderPrefix } from "../../src/runtime/providers/cli-model"
 
@@ -168,5 +168,25 @@ describe("the shared CLI catalog and the user's own CLIs", () => {
     expect(spec.custom).toBe(true)
     expect(headlessArgv(spec, spec.bin, "a $(b) c", "m1")).toEqual(["/opt/My Tools/agent", "--model=m1", "run", "a $(b) c"])
     expect(customSubprocessSpecs(path.join(home, "missing.json"))).toEqual([])
+  })
+})
+
+describe("markCloudComputerSandbox", () => {
+  test("marks only a cloud computer running as root, and keeps an explicit value", () => {
+    const cloud: NodeJS.ProcessEnv = { ALLTERNIT_PROVISIONED: "1" }
+    markCloudComputerSandbox(cloud, 0)
+    expect(cloud.IS_SANDBOX).toBe("1")
+
+    const own: NodeJS.ProcessEnv = {}
+    markCloudComputerSandbox(own, 0)
+    expect(own.IS_SANDBOX).toBeUndefined()
+
+    const nonRoot: NodeJS.ProcessEnv = { ALLTERNIT_PROVISIONED: "1" }
+    markCloudComputerSandbox(nonRoot, 1000)
+    expect(nonRoot.IS_SANDBOX).toBeUndefined()
+
+    const explicit: NodeJS.ProcessEnv = { ALLTERNIT_PROVISIONED: "1", IS_SANDBOX: "0" }
+    markCloudComputerSandbox(explicit, 0)
+    expect(explicit.IS_SANDBOX).toBe("0")
   })
 })
