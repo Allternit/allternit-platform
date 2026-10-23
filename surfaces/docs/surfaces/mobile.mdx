@@ -258,6 +258,18 @@ Jump into a bot's chat without opening the menu.
 - **Desktop:** collapse the rail, then hover over (or tab to) the widget at the top left. Your bots appear in a column under it, each with a green dot while it works and an amber dot when it needs you. Click one to open its main chat. The column hides a moment after the pointer leaves, and **Escape** closes it.
 - **Phone:** press and hold **☰**. Tap a bot to open its main chat. A normal tap on **☰** still opens the menu.
 
+## Sheets on the phone
+
+On the phone, everything you open from a chat, from the icons at the top right, or from the composer rises from the bottom of the screen as a sheet. There are three sizes:
+
+- **Menu sheet**, as tall as its contents: the **⋯** menus, the panes menu, **Agent mode**, **Plugins**, **Artifacts**, the design system menu and the **+** menu in a bot thread. A submenu opens in the same sheet with a **Back** row at the top.
+- **List sheet**, up to most of the screen: the model picker and **Switch thread**.
+- **Full screen**: an open artifact or file, the thread panel, **Computer**, the sessions overview, search and mini-apps. They slide up over the screen and back down when you leave.
+
+To close a sheet, drag it down by its handle or flick it, tap the dimmed area, or pick an item. Full-screen views close with **Back**. With Reduce Motion turned on, sheets fade in and out instead of sliding. The menu (**☰**) still slides in from the left, Settings pages still push in from the right, and photos still zoom from their thumbnail.
+
+Developer notes: the phone sheet lives in `src/components/ui/phone-sheet.tsx` and `phone-sheet.css`. `QuietMenu`, `DropdownMenu` and `Popover` switch to it when `usePhoneSurface()` is true, so call sites need no changes. `CascadeMenu`, `ModelPickerPopover` and `ThreadSwitcher` use it directly. Full-screen covers (`.phone-desktop-overlay`, `.phone-cover`) are wrapped in `SheetPresence`, which keeps them mounted while they slide out. Motion: in 340 ms with `cubic-bezier(.16,1,.3,1)`, out 220 ms with `cubic-bezier(.4,0,1,1)`. A drag that passes a quarter of the sheet's height, or moves faster than 320 px/s, closes the sheet.
+
 ## Composer on the phone
 
 The phone composer is the Desktop composer: the top deck, the message box and the bottom deck (**Agent mode**, **Plugins**, **Artifacts**) read as one unit, and on Home and the launch screens it rests at the bottom of the screen. Its controls always fit on one row, down to a 375 px wide phone. The model name shortens first. **Incognito ask** in a bot thread shows as an eye icon. The Chat | Cowork switch shows icons only, and **Output** moves into the **+** sheet. In Code, the computer, folder and worktree chips above the box wrap to a second line instead of running off the screen.
