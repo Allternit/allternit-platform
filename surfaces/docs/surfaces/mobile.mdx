@@ -214,14 +214,14 @@ If a build file still fails to load before the app starts, a small script in the
 
 ## Error reports from phones
 
-The m.allternit.com app sends errors to `/api/v1/client-errors` on its own host. A Cloudflare Pages Function there writes them to the Function log and stores nothing. The report carries:
+The m.allternit.com app sends errors to `/client-errors` on its own host. A Cloudflare Pages Function there writes them to the Function log and stores nothing. The path is outside `/api/` because a zone route sends all of m.allternit.com `/api/*` to cloud-api. The report carries:
 
 - uncaught errors and rejected promises
 - errors the app's error screen catches
 - build files that fail to load before the app starts
 - a snapshot (what is on screen, viewport, Home Screen or Safari) when the screen is still nearly empty 20 seconds after launch
 
-Read them live with `wrangler pages deployment tail --project-name allternit-remote-control`.
+Read them live with `wrangler pages deployment tail <deployment-id> --project-name allternit-remote-control` (the full deployment id from `wrangler pages deployment list`).
 
 ## Artifact import on phones
 
