@@ -602,6 +602,22 @@ struct CreateTerminalRequest {
 fn default_shell() -> String {
     "/bin/zsh".to_string()
 }
+/// The shell to spawn: the one asked for when this computer has it, else
+/// `$SHELL`, else bash or sh. The web UI asks for `/bin/zsh`, which a Linux
+/// cloud computer usually doesn't have (ENOENT).
+fn resolve_shell(requested: &str) -> String {
+    let requested = requested.trim();
+    let exists = |path: &str| std::path::Path::new(path).exists();
+    if !requested.is_empty() && (!requested.starts_with('/') || exists(requested)) {
+        return requested.to_string();
+    }
+    std::env::var("SHELL")
+        .ok()
+        .filter(|shell| !shell.is_empty() && exists(shell))
+        .or_else(|| ["/bin/bash", "/bin/sh"].into_iter().find(|shell| exists(shell)).map(str::to_string))
+        .unwrap_or_else(|| "/bin/sh".to_string())
+}
+
 fn default_cols() -> u16 {
     80
 }
@@ -616,7 +632,8 @@ fn terminal_create(state: &Arc<DaemonState>, body: &[u8]) -> HandlerResponse {
         cols: default_cols(),
         rows: default_rows(),
     });
-    match state.terminals.create(&request.shell, request.cwd.as_deref(), request.cols, request.rows) {
+    let shell = resolve_shell(&request.shell);
+    match state.terminals.create(&shell, request.cwd.as_deref(), request.cols, request.rows) {
         Ok(created) => HandlerResponse::json(
             200,
             terminal_envelope(true, "Terminal session created", Some(json!({ "session_id": created.session_id }))),

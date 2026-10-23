@@ -151,6 +151,7 @@
             "group": "Code mode",
             "pages": [
               "code/session-panel",
+              "code/on-a-phone",
               "code/cloud-environments",
               "code/cloud-environment-runtime"
             ]

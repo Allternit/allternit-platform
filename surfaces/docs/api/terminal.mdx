@@ -53,6 +53,8 @@ All fields are optional. Defaults:
 | `cols` | `80` |
 | `rows` | `24` |
 
+If `shell` is empty, or is an absolute path that doesn't exist on that computer (zsh on a Linux cloud computer, for example), the terminal runs that computer's `$SHELL`, else bash, else its default shell, instead of failing with `ENOENT`. On Windows an empty `shell` or any Unix path runs PowerShell. The app asks for `/bin/zsh` and, if an older server still answers `ENOENT`, asks again with an empty `shell`.
+
 Response:
 
 ```json
