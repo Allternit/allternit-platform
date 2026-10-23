@@ -1228,7 +1228,7 @@ pub(crate) async fn relay_request_to_runtime_with(
     let message = CloudMessage::Request {
         request_id: request_id.clone(),
         method: request.method.to_ascii_uppercase(),
-        path: request.path,
+        path: desktop_relay_compat_path(request.path),
         headers: {
             let extra: HashMap<String, String> = request
                 .headers
@@ -1524,6 +1524,22 @@ fn required_capability(path: &str, method: &str) -> &'static str {
     "runtime:execute"
 }
 
+/// Allternit Desktop builds up to 1.1.11 forward every relayed
+/// `/api/v1/agents…` path to gizzi's `/v1/agent/list` (auth-manager.ts
+/// relayLocalUrl), so the phone and the web got gizzi's built-in agents
+/// (build, plan, …) instead of the user's bots, and bot edits and runs went
+/// nowhere. A `/./` segment skips that prefix check, and the Desktop's fetch
+/// normalises it away before allternit-api sees the path. Remove once those
+/// Desktop builds are gone (the Desktop fix ships in the same change).
+fn desktop_relay_compat_path(path: String) -> String {
+    match path.strip_prefix("/api/v1/agents") {
+        Some(rest) if rest.is_empty() || rest.starts_with('/') || rest.starts_with('?') => {
+            format!("/api/v1/./agents{rest}")
+        }
+        _ => path,
+    }
+}
+
 fn filtered_headers(headers: HashMap<String, String>) -> HashMap<String, String> {
     headers
         .into_iter()
@@ -1578,6 +1594,16 @@ pub(crate) fn relay_headers_from_http(headers: &HeaderMap) -> HashMap<String, St
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn agents_paths_skip_the_old_desktop_gizzi_mapping() {
+        use super::desktop_relay_compat_path as p;
+        assert_eq!(p("/api/v1/agents".into()), "/api/v1/./agents");
+        assert_eq!(p("/api/v1/agents?limit=5".into()), "/api/v1/./agents?limit=5");
+        assert_eq!(p("/api/v1/agents/a1/runs".into()), "/api/v1/./agents/a1/runs");
+        assert_eq!(p("/api/v1/agents-catalog".into()), "/api/v1/agents-catalog");
+        assert_eq!(p("/api/v1/sessions".into()), "/api/v1/sessions");
+    }
+
     use super::*;
 
     /// joe-9e's known-answer vector from allternit-api `relay_auth.rs`: the
