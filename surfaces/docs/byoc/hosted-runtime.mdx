@@ -102,6 +102,8 @@ curl -X POST https://api.allternit.com/api/v1/hosted-runtimes \
 
 The machine starts, the agent-daemon auto-pairs, and `runtimeDeviceId` is populated once pairing completes.
 
+A hosted runtime or a provisioned cloud computer does not count against the plan's active-machine limit. The plan entitles it, so it pairs even when your own computers already use every machine slot.
+
 ## Lifecycle operations
 
 | Operation | Endpoint |

@@ -598,11 +598,16 @@ async fn exchange_pairing(
     // pairing count is recorded *inside* the transaction, after the device
     // row exists: incrementing first meant a failed insert (or a desktop
     // poll retry) burned a slot even though the handshake never completed.
+    // A cloud computer (provisioned or hosted) is entitled by its plan, not by
+    // the machine cap: Plus/Super/Ultra allow one machine, so a customer whose
+    // Mac is already paired could never pair the computer they paid for.
     let quota = state.quota_service.ensure_quota(&user_id).await?;
-    state
-        .quota_service
-        .check_active_device_cap(&user_id, &quota, pairing.hostname.as_deref(), pairing.platform.as_deref())
-        .await?;
+    if pairing.provisioned_instance_id.is_none() && pairing.hosted_instance_id.is_none() {
+        state
+            .quota_service
+            .check_active_device_cap(&user_id, &quota, pairing.hostname.as_deref(), pairing.platform.as_deref())
+            .await?;
+    }
     let count_daily_pairing = pairing.hosted_instance_id.is_none()
         && pairing.byo_bootstrap_token_id.is_none()
         && pairing.provisioned_instance_id.is_none();
