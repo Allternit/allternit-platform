@@ -46,6 +46,23 @@ Every result card and tile tag is computed from what happened:
 
 `MAIN_BOT_STEP_ENABLED` is on: the order is where → style → ai → mainbot → connected (30 progress blocks: 6 · 12 · 18 · 24 · 30). The `mainbot` step renders `MeetYourBotsCard` with `entry="setup"` (see [Meet your bots](/architecture/meet-your-bots)), on desktop, the ai.allternit.com phone layout and `PhoneOnboardingFlow`. Its main-bot page drives the shared picker hook `useBotSetup({ context: 'onboarding' })` (see [Bot setup picker](/architecture/bot-setup-picker)). The card creates nothing until **Start the job**; the step stays optional (Skip and Next both move on). Its done button continues to the connected view.
 
+## Hand-off (Open Allternit)
+
+`ConnectedView`'s **Open Allternit** calls `handleOpen`, which reads the viewport centres of the connected `.as-g-node` elements and calls `startSetupHandoff()` from `setup/SetupHandoff.tsx`. The film is a port of the brand intro (`Brand/Allternit/motion/lib/allternit-motion.js`). It is driven by `requestAnimationFrame` in its own React root on `document.body`, so it survives setup unmounting. Its beats:
+
+1. 0–1.0 s: the nodes collapse into blocks that build the A:// mark.
+2. The coral core pops and lands.
+3. 1.1 s: shockwave rings and a coral flash. 1.45–2.05 s: a light sweep.
+4. 1.5–2.05 s: `WELCOME, <first name>` types out (from `usePlatformUser().user.firstName`, else the session name, else just `WELCOME`). 2.55 s: the core heartbeats.
+5. 2.95–3.3 s: the `://` dissolves. 3.3–4.3 s: the A flies to the first visible `[data-handoff-orb]`.
+
+The setup's `onOpen` runs once, at 3.3 s, so Home mounts under the overlay. The flight target is the launch screen's pixel-A logo in `views/chat/main/LaunchHeader.tsx` (`data-handoff-orb="matrix"`), which serves Desktop, the phone layout and the PWA. With no target by 3.65 s, the A fades out at the top centre.
+
+- **Skip:** a tap, click or Escape finishes at once.
+- **Reduced motion:** a 0.8 s still mark.
+- **Failure:** a hidden tab, a mount failure or a render error finishes immediately. Backup timers finish at 4.0 s and remove the overlay at 6.0 s.
+- **Tests:** in `MODE === 'test'` the hand-off is skipped.
+
 ## Tests
 
 `setup/setupModel.test.ts`, `setup/connectedInventory.test.ts`, `setup/FirstRunSetup.test.tsx` and `fabric-session/phone/PhoneFirstRun.test.tsx` cover the step machine, result cards, the haptic rule, subscription honesty, connected-view mapping, the phone gate and completion.

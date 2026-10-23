@@ -197,12 +197,18 @@
         {
           "on": "2026-10-22",
           "note": "Opening a bot reuses only its main chat (pin or botCanonicalFor), never a thread, group chat or companion chat that carries its agentId; such stale pins are re-pointed when read. Fixes A:// opening the wrong chat from Bots home, the phone drawer, Home Screen icons and finished setup (Eoj)."
+        },
+        {
+          "on": "2026-10-22",
+          "note": "Eoj made the Bot-mode composer one standard: the same bottom deck (Agent mode | Plugins | Artifacts) on Bot Home, bot chats/threads, group chats and Project home; the top deck (Main chat · Threads · Tasks · Bot) wherever a bot is in focus, including Bot Home once To: has a bot."
         }
       ],
       "evidence": [
         "allternit/surfaces/docs/guides/bot-threads.mdx",
         "allternit/surfaces/docs/guides/bot-templates.mdx",
-        "allternit/surfaces/docs/guides/bot-setup-picker.mdx"
+        "allternit/surfaces/docs/guides/bot-setup-picker.mdx",
+        "allternit-ai/src/views/bots/thread-deck/useBotComposerDeck.tsx",
+        "allternit-ai/src/views/bots/thread-deck/deck-tab-request.ts"
       ]
     },
     {
@@ -1108,12 +1114,18 @@
         {
           "on": "2026-10-11",
           "note": "Unified Appearance/Configuration project dialog across modes, explicit compact geometry and scrolling, adaptive symbol cells. Bot phone Workspace & Config uses panel container sizing, horizontal file tabs and stacked cards."
+        },
+        {
+          "on": "2026-10-22",
+          "note": "Eoj approved a lighter Duet-style editor: preview, Symbols/Brands/Text/Image, one 20-colour row (folder + banner), the rest under More options; New project is one sheet (icon, colour, Name, Purpose = description bots read) at every create entry point incl. Bot mode; phone = full-height sheet."
         }
       ],
       "evidence": [
         "allternit/surfaces/docs/guides/project-appearance.mdx",
         "allternit/surfaces/docs/architecture/project-appearance.mdx",
-        "allternit-ai/src/views/BaseProjectView.tsx"
+        "allternit-ai/src/views/BaseProjectView.tsx",
+        "allternit-ai/src/components/appearance/AppearanceQuickPicker.tsx",
+        "allternit-ai/src/views/bots/NewBotProjectSheet.tsx"
       ]
     },
     {
@@ -2010,6 +2022,10 @@
         {
           "on": "2026-10-16",
           "note": "Eoj approved the MainBot.dc.html prototype (\"I approve them all\"): MAIN_BOT_STEP_ENABLED on; step 4 is the shared bot setup picker (giant character stage, look tiles, existing disclosure, Set up <Name> via setUpPrimaryBot with the look saved as the avatar), also connecting vendor bots, creating and importing bots."
+        },
+        {
+          "on": "2026-10-22",
+          "note": "Eoj approved a branded hand-off on Open Allternit (Duet-style transition, Allternit brand motion, no check mark): connected nodes become blocks that build A://, core lands, shockwave + sweep, WELCOME <name>, :// dissolves, A flies into Home's logo (~4.5 s; skip, reduced motion and failure paths finish at once)."
         }
       ],
       "evidence": [
@@ -2017,7 +2033,9 @@
         "allternit/surfaces/docs/architecture/first-run-setup.mdx",
         "allternit/surfaces/docs/api/onboarding.mdx",
         "allternit/surfaces/docs/guides/bot-setup-picker.mdx",
-        "allternit/surfaces/docs/architecture/bot-setup-picker.mdx"
+        "allternit/surfaces/docs/architecture/bot-setup-picker.mdx",
+        "allternit-ai/src/components/onboarding/setup/SetupHandoff.tsx",
+        "allternit-ai/src/views/chat/main/LaunchHeader.tsx"
       ]
     },
     {
@@ -2344,6 +2362,32 @@
         "allternit/surfaces/docs/guides/session-overview.mdx",
         "allternit/surfaces/docs/guides/bot-threads.mdx",
         "allternit-ai/src/components/session-overview/SessionOverview.stories.tsx"
+      ]
+    },
+    {
+      "id": "feature:deck-pinned-artifacts",
+      "label": "Pinned artifacts in the composer deck",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "Artifacts ▾ in every composer's bottom deck (after Agent mode ▾ | Plugins ▾): Pinned (up to 8), Recent (3), All artifacts…; Pin to deck / Unpin from deck in the artifact window and library cards. Pins are per user on the connected runtime (GET/PUT /api/v1/deck-pins), localStorage when signed out or on an older runtime. Desktop, ai.allternit.com (desktop + phone) and the m.allternit.com PWA.",
+      "touches": [
+        "allternit-ai/src/components/composer-deck",
+        "allternit-ai/src/lib/artifacts",
+        "allternit-ai/src/components/artifacts",
+        "allternit-ai/src/views/library",
+        "allternit/cmd/allternit-api/src/runtime_*"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-22",
+          "note": "Eoj chose the composer's bottom deck (not a tab bar) as the home for pinned artifacts, after a gap analysis of Claude Duet's Add to tab bar."
+        }
+      ],
+      "evidence": [
+        "allternit-ai/src/components/composer-deck/DeckArtifactsMenu.tsx",
+        "allternit-ai/src/lib/artifacts/deck-pins.ts",
+        "allternit/cmd/allternit-api/src/runtime_settings_routes.rs",
+        "allternit/surfaces/docs/guides/pinned-artifacts.mdx"
       ]
     }
   ],

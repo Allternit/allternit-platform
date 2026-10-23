@@ -34,6 +34,7 @@ pub fn runtime_settings_router() -> Router<Arc<AppState>> {
             get(get_settings).put(update_settings),
         )
         .route("/appearance/:key", get(get_appearance).put(put_appearance))
+        .route("/deck-pins", get(get_deck_pins).put(put_deck_pins))
         .route("/runtime/settings/reset", post(reset_settings))
         .route("/runtime/drivers", get(list_drivers))
         .route("/runtime/drivers/:type/status", get(driver_status))
@@ -100,6 +101,47 @@ async fn put_appearance(State(state): State<Arc<AppState>>, Extension(user): Ext
     }).await {
         Ok(Ok(())) => (StatusCode::OK, Json(json!({ "appearance": result }))),
         _ => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": "could not save appearance" }))),
+    }
+}
+
+// ─── Deck pins ────────────────────────────────────────────────────────────────
+// Artifacts the user pinned to the composer's bottom deck (Artifacts ▾). A user
+// preference like appearance: same table, its own key, never touched by reset.
+const DECK_PINS_KEY: &str = "deck_pins";
+const DECK_PINS_MAX: usize = 8;
+
+fn validate_deck_pins(pins: &Value) -> bool {
+    let Some(list) = pins.as_array() else { return false; };
+    list.len() <= DECK_PINS_MAX && list.iter().all(|p| {
+        let text = |k: &str, max: usize| p[k].as_str().is_some_and(|s| !s.is_empty() && s.chars().count() <= max);
+        p.is_object() && text("id", 200) && text("kind", 40) && text("title", 300)
+    })
+}
+
+async fn get_deck_pins(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>) -> impl IntoResponse {
+    let db = state.db.clone();
+    match tokio::task::spawn_blocking(move || -> rusqlite::Result<Option<String>> {
+        db.connect()?.query_row("SELECT value FROM runtime_settings WHERE user_id = ?1 AND key = ?2", params![user.user_id, DECK_PINS_KEY], |r| r.get(0)).optional()
+    }).await {
+        Ok(Ok(value)) => {
+            let pins = value.and_then(|s| serde_json::from_str::<Value>(&s).ok()).filter(validate_deck_pins).unwrap_or_else(|| json!([]));
+            (StatusCode::OK, Json(json!({ "pins": pins })))
+        }
+        _ => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": "could not load deck pins" }))),
+    }
+}
+
+async fn put_deck_pins(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Json(body): Json<Value>) -> impl IntoResponse {
+    let pins = body.get("pins").cloned().unwrap_or(Value::Null);
+    if !validate_deck_pins(&pins) { return (StatusCode::BAD_REQUEST, Json(json!({ "error": "pins must be a list of up to 8 { id, kind, title }" }))); }
+    let stored = pins.clone();
+    let db = state.db.clone();
+    match tokio::task::spawn_blocking(move || -> rusqlite::Result<()> {
+        db.connect()?.execute("INSERT INTO runtime_settings (user_id, key, value, updated_at) VALUES (?1, ?2, ?3, CURRENT_TIMESTAMP) ON CONFLICT(user_id, key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP", params![user.user_id, DECK_PINS_KEY, stored.to_string()])?;
+        Ok(())
+    }).await {
+        Ok(Ok(())) => (StatusCode::OK, Json(json!({ "pins": pins }))),
+        _ => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": "could not save deck pins" }))),
     }
 }
 
@@ -646,6 +688,16 @@ fn panic_error(e: tokio::task::JoinError) -> axum::response::Response {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn deck_pins_validation() {
+        assert!(super::validate_deck_pins(&serde_json::json!([])));
+        assert!(super::validate_deck_pins(&serde_json::json!([{ "id": "a1", "kind": "dashboard", "title": "AI2SQL funnel" }])));
+        assert!(!super::validate_deck_pins(&serde_json::json!({ "id": "a1" })));
+        assert!(!super::validate_deck_pins(&serde_json::json!([{ "id": "", "kind": "doc", "title": "x" }])));
+        let nine: Vec<_> = (0..9).map(|i| serde_json::json!({ "id": format!("a{i}"), "kind": "doc", "title": "t" })).collect();
+        assert!(!super::validate_deck_pins(&serde_json::Value::Array(nine)));
+    }
+
     use super::*;
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
