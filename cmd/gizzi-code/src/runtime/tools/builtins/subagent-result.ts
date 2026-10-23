@@ -48,7 +48,7 @@ export function writtenFiles(messages: MessageV2.WithParts[]): string[] {
   for (const m of messages) {
     for (const p of m.parts) {
       if (p.type !== "tool" || p.state.status !== "completed") continue
-      if (!["write", "edit", "apply_patch", "multiedit"].includes(p.tool)) continue
+      if (!["write", "edit", "apply_patch", "multiedit", "symbol_edit"].includes(p.tool)) continue
       const file = (p.state.input as Record<string, unknown>)?.filePath ?? (p.state.input as Record<string, unknown>)?.path
       if (typeof file === "string") out.add(file)
     }

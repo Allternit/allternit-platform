@@ -224,6 +224,7 @@ export const ApplyPatchTool = Tool.define("apply_patch", {
       if (edited) {
         await Bus.publish(File.Event.Edited, {
           file: edited,
+          sessionID: ctx.sessionID,
         })
       }
     }

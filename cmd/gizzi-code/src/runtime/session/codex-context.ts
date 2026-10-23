@@ -78,6 +78,7 @@ export namespace CodexContext {
       system_prompt: 0,
       mcp_tools: 0,
       mcp_instructions: 0,
+      repo_map: 0,
     }
     const seen = new Set<string>()
     let skills: Array<{ name: string; tokens: number }> = []

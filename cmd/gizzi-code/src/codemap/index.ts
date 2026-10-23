@@ -31,7 +31,7 @@ const TS_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx"])
 const EXCLUDED_DIRS = ["node_modules", "dist", "build", "out", "target", ".git", ".next", ".turbo", "coverage"]
 const SCAN_CONCURRENCY = 16
 
-async function mapWithConcurrency<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+export async function mapWithConcurrency<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
   const results: R[] = new Array(items.length)
   let cursor = 0
   async function worker() {

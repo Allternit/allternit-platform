@@ -7,6 +7,7 @@ import { createInterface } from "readline"
 import { Tool } from "@/runtime/tools/builtins/tool"
 import { LSP } from "@/runtime/integrations/lsp"
 import { FileTime } from "@/shared/file/time"
+import { CodeMapActivity } from "@/codemap/activity"
 import DESCRIPTION from "@/runtime/tools/builtins/read.txt"
 import { Instance } from "@/runtime/context/project/instance"
 import { assertExternalDirectory } from "@/runtime/tools/builtins/external-directory"
@@ -234,6 +235,7 @@ export const ReadTool = Tool.define("read", {
     // just warms the lsp client
     LSP.touchFile(filepath, false)
     FileTime.read(ctx.sessionID, filepath)
+    CodeMapActivity.publish(ctx.sessionID, filepath, "read")
 
     if (instructions.length > 0) {
       output += `\n\n<system-reminder>\n${instructions.map((i) => i.content).join("\n\n")}\n</system-reminder>`

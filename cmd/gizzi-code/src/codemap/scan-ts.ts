@@ -29,7 +29,11 @@ const tsconfigCache = new Map<string, TsConfigPaths | null>()
 async function findTsConfigPaths(root: string, fromDir: string): Promise<TsConfigPaths | null> {
   let current = fromDir
   while (true) {
-    if (tsconfigCache.has(current)) return tsconfigCache.get(current)!
+    // Keyed by absolute dir: one process can scan several roots (the live
+    // repo map serves every project a server has open), and a bare relative
+    // key would hand one repo's tsconfig paths to another.
+    const key = path.join(root, current)
+    if (tsconfigCache.has(key)) return tsconfigCache.get(key)!
     const candidate = path.join(root, current, "tsconfig.json")
     if (await Filesystem.exists(candidate)) {
       try {
@@ -43,15 +47,15 @@ async function findTsConfigPaths(root: string, fromDir: string): Promise<TsConfi
           baseUrl: parsed.compilerOptions?.baseUrl ?? ".",
           paths: parsed.compilerOptions?.paths ?? {},
         }
-        tsconfigCache.set(current, result)
+        tsconfigCache.set(key, result)
         return result
       } catch {
-        tsconfigCache.set(current, null)
+        tsconfigCache.set(key, null)
         return null
       }
     }
     if (current === "" || current === ".") {
-      tsconfigCache.set(current, null)
+      tsconfigCache.set(key, null)
       return null
     }
     current = path.dirname(current)
@@ -154,20 +158,76 @@ function collectSpecifiers(sourceFile: ts.SourceFile): Array<{ specifier: string
   return results
 }
 
+function hasExportModifier(node: ts.Node): boolean {
+  const modifiers = ts.canHaveModifiers(node) ? ts.getModifiers(node) : undefined
+  return modifiers?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword) ?? false
+}
+
+/**
+ * Top-level exported names, in source order, read from the AST (never
+ * guessed): `export function/class/const/let/interface/type/enum/namespace`,
+ * `export { a, b as c }` (the exported name), and `export default` (as
+ * "default", or the declaration's own name when it has one).
+ */
+export function collectExports(sourceFile: ts.SourceFile): string[] {
+  const names: string[] = []
+  const add = (name: string | undefined) => {
+    if (name && !names.includes(name)) names.push(name)
+  }
+  for (const statement of sourceFile.statements) {
+    if (ts.isExportDeclaration(statement)) {
+      if (statement.exportClause && ts.isNamedExports(statement.exportClause)) {
+        for (const element of statement.exportClause.elements) add(element.name.text)
+      }
+      continue
+    }
+    if (ts.isExportAssignment(statement)) {
+      add("default")
+      continue
+    }
+    if (!hasExportModifier(statement)) continue
+    if (ts.isVariableStatement(statement)) {
+      for (const decl of statement.declarationList.declarations) {
+        if (ts.isIdentifier(decl.name)) add(decl.name.text)
+      }
+    } else if (
+      ts.isFunctionDeclaration(statement) ||
+      ts.isClassDeclaration(statement) ||
+      ts.isInterfaceDeclaration(statement) ||
+      ts.isTypeAliasDeclaration(statement) ||
+      ts.isEnumDeclaration(statement) ||
+      ts.isModuleDeclaration(statement)
+    ) {
+      const name = statement.name && ts.isIdentifier(statement.name) ? statement.name.text : undefined
+      add(name ?? "default")
+    }
+  }
+  return names
+}
+
 export async function scanTypeScriptFile(
   root: string,
   relFile: string,
   internalPackages: Map<string, string>,
 ): Promise<FileEdge[]> {
+  return (await scanTypeScriptFileDetailed(root, relFile, internalPackages)).edges
+}
+
+/** One parse, both outputs: the file's import edges and its exported names (repo-map.ts). */
+export async function scanTypeScriptFileDetailed(
+  root: string,
+  relFile: string,
+  internalPackages: Map<string, string>,
+): Promise<{ edges: FileEdge[]; exports: string[] }> {
   const abs = path.join(root, relFile)
   const size = await Filesystem.size(abs)
-  if (size > 500_000) return [] // skip very large generated/bundled files
+  if (size > 500_000) return { edges: [], exports: [] } // skip very large generated/bundled files
 
   let content: string
   try {
     content = await Filesystem.readText(abs)
   } catch {
-    return []
+    return { edges: [], exports: [] }
   }
 
   const sourceFile = ts.createSourceFile(relFile, content, ts.ScriptTarget.Latest, true)
@@ -184,5 +244,5 @@ export async function scanTypeScriptFile(
       evidence: { file: relFile, line, symbol: specifier, confidence: "verified" },
     })
   }
-  return edges
+  return { edges, exports: collectExports(sourceFile) }
 }

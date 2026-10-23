@@ -68,3 +68,24 @@ gizzi exec "Draft release notes from CHANGELOG.md" \
 | `0` | Success |
 | `1` | Agent returned an error or was interrupted |
 | `2` | Configuration or authentication failure |
+| `3` | `--review`: the reviewer returned **FAIL** |
+| `4` | `--review`: the reviewer returned **PARTIAL** (something could not be checked) |
+
+## Review in CI
+
+`gizzi run --review` asks a fresh reviewer to check the uncommitted changes (after the run, or on its own when you give no prompt). The reviewer starts with no knowledge of how the code was written, reads the changed files and their callers, and returns a verdict:
+
+- **PASS** (exit `0`): what it verified.
+- **FAIL** (exit `3`): each problem with its file and line.
+- **PARTIAL** (exit `4`): what it could not verify and why.
+
+With no changes there is nothing to review: no model is called, the exit code is `0`, and `--format json` reports `"verdict": null`, so a pipeline never mistakes "nothing reviewed" for "checked and passed".
+
+```bash
+gizzi run "Fix the flaky pagination test" --review
+gizzi run --review --format json        # review only, JSON line {type:"review", verdict, review}
+gizzi run --review-until-pass 5          # fix and re-review up to 5 rounds
+```
+
+`--review-until-pass [rounds]` sends each non-PASS verdict back to the coder as a turn, then reviews again, until PASS or the round limit (default 5, max 12). The reviewer uses the `review` job model when one is set (see [Configuration](/cli/configuration#models-for-each-job)), else the session's model.
+

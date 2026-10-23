@@ -11,7 +11,7 @@ describe("FabricContext.snapshot", () => {
       report: {
         vendor: "claude",
         model: "claude-opus-5-5",
-        rows: { messages: 9_000, system_tools: 0, memory_files: 1_200, skills: 300, system_prompt: 0, mcp_tools: 0, mcp_instructions: 0 },
+        rows: { messages: 9_000, system_tools: 0, memory_files: 1_200, skills: 300, system_prompt: 0, mcp_tools: 0, mcp_instructions: 0, repo_map: 0 },
         memory_files: [{ path: "Claude memory", tokens: 1_200 }],
         mcp_tools: [{ name: "mcp__drive__search", server: "drive", tokens: 0 }],
         system_tools: [{ name: "web search", tokens: 0 }],
@@ -30,7 +30,7 @@ describe("FabricContext.snapshot", () => {
   })
 
   test("ChatGPT: thinking vs instant tables, connectors as MCP tools", () => {
-    const base = { rows: { messages: 100, system_tools: 0, memory_files: 0, skills: 0, system_prompt: 0, mcp_tools: 0, mcp_instructions: 0 }, memory_files: [], mcp_tools: [], system_tools: [], skills: [], hidden: ["system_prompt", "system_tools", "mcp_tools"] }
+    const base = { rows: { messages: 100, system_tools: 0, memory_files: 0, skills: 0, system_prompt: 0, mcp_tools: 0, mcp_instructions: 0, repo_map: 0 }, memory_files: [], mcp_tools: [], system_tools: [], skills: [], hidden: ["system_prompt", "system_tools", "mcp_tools"] }
     const thinking = FabricContext.estimateHidden({ ...base, vendor: "chatgpt", model: "gpt-6-thinking" })
     expect(thinking.report.rows.system_prompt).toBe(2_570)
     expect(thinking.report.system_tools.find((t) => t.name === "web")?.tokens).toBe(9_785)
@@ -42,7 +42,7 @@ describe("FabricContext.snapshot", () => {
   })
 
   test("Gemini and Kimi web: core prompt and tools from their leaked prompts", () => {
-    const base = { rows: { messages: 100, system_tools: 0, memory_files: 0, skills: 0, system_prompt: 0, mcp_tools: 0, mcp_instructions: 0 }, memory_files: [], mcp_tools: [], system_tools: [], skills: [], hidden: ["system_prompt", "system_tools", "mcp_tools"] }
+    const base = { rows: { messages: 100, system_tools: 0, memory_files: 0, skills: 0, system_prompt: 0, mcp_tools: 0, mcp_instructions: 0, repo_map: 0 }, memory_files: [], mcp_tools: [], system_tools: [], skills: [], hidden: ["system_prompt", "system_tools", "mcp_tools"] }
     const gemini = FabricContext.estimateHidden({ ...base, vendor: "google" })
     expect(gemini.report.rows.system_prompt).toBe(8_333)
     expect(gemini.report.rows.system_tools).toBe(6_081)
