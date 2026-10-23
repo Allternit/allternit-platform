@@ -33,7 +33,7 @@ PDFs open in the [PDF editor](/guides/pdf-editor): you change text in the PDF's 
 
 Images open in the embedded PhotoCraft editor: the layered source (`.pcraft`/PSD) is kept in the artifact's runtime storage so edits keep their layers across sessions, and every save also writes a flattened image as a new artifact version — that flat image is what previews, shares and downloads show by default. "Download PSD" exports the layered source for use in other tools. Uploading an image file (PNG, JPEG, WebP, PSD, …) to the workspace library creates an editable image artifact.
 
-Videos open in the embedded FilmCraft editor: the footage is referenced from Allternit's media storage (never copied into the artifact), the project source (`.fcproj`) is kept in the artifact's runtime storage so edits keep their timeline across sessions, and every save also exports an MP4 that becomes the new artifact version — the export is what previews, shares and downloads play. Generated videos (`media_generate`) and uploaded video files (MP4, MOV, WebM) both land as editable video artifacts. On phones and the m.allternit.com PWA, a video artifact opens as the playable view first, with **Edit video** mounting the full editor for trimming and exports.
+Videos open in the embedded FilmCraft editor: the footage is referenced from Allternit's media storage (never copied into the artifact), the project source (`.fcproj`) is kept in the artifact's runtime storage so edits keep their timeline across sessions, and every save also exports an MP4 that becomes the new artifact version — the export is what previews, shares and downloads play. Generated videos (`media_generate`) and uploaded video files (MP4, MOV, WebM) both land as editable video artifacts. On phones and the m.allternit.com PWA, a video artifact opens as the playable view first, with **Edit video** mounting the full editor for trimming and exports. Image artifacts work the same way: the picture shows first, and **Edit image** opens the image editor.
 
 ## Studio panes
 
@@ -47,7 +47,7 @@ A Dashboard, Motion or Page session is bound to the artifact its agent makes, so
 
 When an image or video is generated in any chat (`media_generate`), the same rendering card appears inline in the conversation until the file is ready.
 
-On phones (ai.allternit.com and the m.allternit.com app), the chat stays in front. **Open** on the artifact card under the chat opens the pane full screen, and the header's pane menu lists it alongside Browser and the session's outputs.
+On phones (ai.allternit.com and the m.allternit.com app), Docs, Sheets, Slides and Design open their editor full screen when you start or open one; go back to reach the chat. Studio panes keep the chat in front, since you start them with a prompt. **Open** on the artifact card under the chat opens the pane full screen, and the header's pane menu lists it alongside Browser and the session's outputs.
 
 Bot threads do not offer these three editor-pane modes. Use the workspace artifact session for the editable Office flow. A bot can still produce file deliverables through tools available to its thread; that is a different path from editing an open pane.
 
