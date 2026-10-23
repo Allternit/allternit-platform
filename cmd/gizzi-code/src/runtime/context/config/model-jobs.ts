@@ -64,7 +64,7 @@ export namespace ModelJobs {
       Object.entries(Jobs.parse(jobs)).filter(([, value]) => typeof value === "string" && value.trim()),
     ) as Jobs
     const filepath = path.join(Instance.directory, "config.json")
-    const existing = (await Filesystem.readJson<Record<string, any>>(filepath).catch(() => ({}))) ?? {}
+    const existing: Record<string, any> = (await Filesystem.readJson<Record<string, any>>(filepath).catch(() => ({}) as Record<string, any>)) ?? {}
     const models = existing.models && typeof existing.models === "object" ? existing.models : {}
     existing.models = { ...models, jobs: cleaned }
     await Filesystem.writeJson(filepath, existing)

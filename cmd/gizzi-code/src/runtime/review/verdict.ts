@@ -77,6 +77,8 @@ export namespace ReviewVerdict {
   }
 
   export type ParseResult = { ok: true; value: Shape } | { ok: false; error: string }
+  /** The error of a failed parse (this package compiles without strictNullChecks, so `ok` doesn't narrow). */
+  const errorOf = (result: ParseResult): string => ("error" in result ? result.error : "")
 
   export function parse(raw: unknown): ParseResult {
     if (raw === undefined || raw === null) return { ok: false, error: "The reviewer returned no structured output" }
@@ -108,16 +110,16 @@ export namespace ReviewVerdict {
     if (first.ok) return { value: first.value, repaired: false, failed: false }
     let second: ParseResult
     try {
-      second = parse(await repair(first.error))
+      second = parse(await repair(errorOf(first)))
     } catch (error) {
       second = { ok: false, error: error instanceof Error ? error.message : String(error) }
     }
     if (second.ok) return { value: second.value, repaired: true, failed: false }
-    return { value: partialFromFailure(second.error), repaired: true, failed: true }
+    return { value: partialFromFailure(errorOf(second)), repaired: true, failed: true }
   }
 
   /** A stored verdict: the model's answer plus what the runtime knows. */
-  export const Record = Shape.extend({
+  export const Stored = Shape.extend({
     id: z.string(),
     sessionID: z.string().optional(),
     reviewerSessionID: z.string().optional(),
@@ -130,7 +132,7 @@ export namespace ReviewVerdict {
     cost: z.number().optional(),
     tokens: z.object({ input: z.number(), output: z.number(), reasoning: z.number().optional() }).optional(),
   })
-  export type Record = z.infer<typeof Record>
+  export type Stored = z.infer<typeof Stored>
 
   /** `gizzi run --review` exit codes: 0 PASS / nothing to review, 3 FAIL, 4 PARTIAL. */
   export function exitCode(verdict: Kind | null | undefined): number {
@@ -144,7 +146,7 @@ export namespace ReviewVerdict {
   }
 
   /** Human-readable rendering for the CLI and the TUI. */
-  export function format(record: Pick<Record, "verdict" | "summary" | "verified" | "findings" | "unverified"> & { model?: string; files?: Record["files"] }): string {
+  export function format(record: Pick<Stored, "verdict" | "summary" | "verified" | "findings" | "unverified"> & { model?: string; files?: Stored["files"] }): string {
     const lines = [`Review: ${record.verdict}${record.model ? ` (${record.model})` : ""}`]
     if (record.summary) lines.push(record.summary)
     if (record.files?.length) lines.push(`Files: ${record.files.length}`)

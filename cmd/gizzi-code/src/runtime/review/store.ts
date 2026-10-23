@@ -11,18 +11,18 @@ export namespace ReviewStore {
     return ["review_verdict", sessionID ?? NO_SESSION]
   }
 
-  export async function list(sessionID?: string): Promise<ReviewVerdict.Record[]> {
-    return Storage.read<ReviewVerdict.Record[]>(key(sessionID)).catch(() => [])
+  export async function list(sessionID?: string): Promise<ReviewVerdict.Stored[]> {
+    return Storage.read<ReviewVerdict.Stored[]>(key(sessionID)).catch(() => [])
   }
 
-  export async function add(record: ReviewVerdict.Record): Promise<ReviewVerdict.Record[]> {
+  export async function add(record: ReviewVerdict.Stored): Promise<ReviewVerdict.Stored[]> {
     const prior = await list(record.sessionID)
     const next = [record, ...prior.filter((r) => r.id !== record.id)].slice(0, KEEP)
     await Storage.write(key(record.sessionID), next)
     return next
   }
 
-  export async function latest(sessionID?: string): Promise<ReviewVerdict.Record | undefined> {
+  export async function latest(sessionID?: string): Promise<ReviewVerdict.Stored | undefined> {
     return (await list(sessionID))[0]
   }
 }

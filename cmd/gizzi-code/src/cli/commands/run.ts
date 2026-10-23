@@ -879,7 +879,7 @@ export const RunCommand = cmd({
           ),
         })
         if (!response.ok) throw new Error(`review failed (${response.status}): ${await response.text()}`)
-        const body = (await response.json()) as { verdict: ReviewVerdict.Record | null; rounds?: number; stopped?: string }
+        const body = (await response.json()) as { verdict: ReviewVerdict.Stored | null; rounds?: number; stopped?: string }
         const verdict = body.verdict
         if (jsonMode || streamJsonMode) {
           process.stdout.write(

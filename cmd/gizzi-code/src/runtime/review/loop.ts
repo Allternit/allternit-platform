@@ -17,13 +17,13 @@ export namespace ReviewLoop {
   export interface Result {
     rounds: number
     stopped: Stopped
-    verdict: ReviewVerdict.Record | null
-    history: ReviewVerdict.Record[]
+    verdict: ReviewVerdict.Stored | null
+    history: ReviewVerdict.Stored[]
     error?: string
   }
 
   export interface Deps {
-    review: (input: Reviewer.RunInput) => Promise<ReviewVerdict.Record | null>
+    review: (input: Reviewer.RunInput) => Promise<ReviewVerdict.Stored | null>
     /** Send a user turn to the coder's session and resolve when that turn is done.
      * Returns "aborted" when the turn was cancelled. */
     sendFix: (sessionID: string, text: string, signal: AbortSignal) => Promise<"done" | "aborted">
@@ -98,8 +98,8 @@ export namespace ReviewLoop {
     active.get(input.sessionID)?.abort()
     active.set(input.sessionID, controller)
 
-    const history: ReviewVerdict.Record[] = []
-    let verdict: ReviewVerdict.Record | null = null
+    const history: ReviewVerdict.Stored[] = []
+    let verdict: ReviewVerdict.Stored | null = null
     let rounds = 0
     let stopped: Stopped = "limit"
     let error: string | undefined

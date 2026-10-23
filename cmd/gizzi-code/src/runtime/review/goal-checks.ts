@@ -25,7 +25,7 @@ export namespace GoalRoundChecks {
 
   export interface RoundResult {
     checks: CheckResult[]
-    review: ReviewVerdict.Record | null
+    review: ReviewVerdict.Stored | null
     /** Text appended to the next continuation; undefined when everything passed. */
     feedback?: string
     /** Model to switch the session to (models.jobs.goalEscalate). */
@@ -37,7 +37,7 @@ export namespace GoalRoundChecks {
     fingerprint?: string
     repeats: number
     escalated: boolean
-    lastReview?: ReviewVerdict.Record
+    lastReview?: ReviewVerdict.Stored
   }
   const state = new Map<string, State>()
 
@@ -104,7 +104,7 @@ export namespace GoalRoundChecks {
   }
 
   export interface Deps {
-    review: (input: Reviewer.RunInput) => Promise<ReviewVerdict.Record | null>
+    review: (input: Reviewer.RunInput) => Promise<ReviewVerdict.Stored | null>
     runCheck: typeof runCheck
     goalConfig: () => Promise<{ checks?: string[]; review?: boolean } | undefined>
     escalationModel: () => Promise<ModelJobs.ModelRef | undefined>
@@ -131,7 +131,7 @@ export namespace GoalRoundChecks {
       if (input.abort?.aborted) break
       checks.push(await d.runCheck(command, input.cwd, input.abort))
     }
-    let review: ReviewVerdict.Record | null = null
+    let review: ReviewVerdict.Stored | null = null
     if (cfg?.review !== false && !input.abort?.aborted) {
       const previous = state.get(input.sessionID)?.lastReview
       review = await d

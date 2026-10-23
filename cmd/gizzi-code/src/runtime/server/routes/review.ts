@@ -29,7 +29,7 @@ function modelRef(model?: string) {
 const verdictResponse = {
   200: {
     description: "Review verdict (null when there was nothing to review)",
-    content: { "application/json": { schema: resolver(z.object({ verdict: ReviewVerdict.Record.nullable() })) } },
+    content: { "application/json": { schema: resolver(z.object({ verdict: ReviewVerdict.Stored.nullable() })) } },
   },
 }
 
@@ -162,7 +162,7 @@ export const ReviewRoutes = lazy(() =>
         responses: {
           200: {
             description: "Verdicts",
-            content: { "application/json": { schema: resolver(z.array(ReviewVerdict.Record)) } },
+            content: { "application/json": { schema: resolver(z.array(ReviewVerdict.Stored)) } },
           },
         },
       }),

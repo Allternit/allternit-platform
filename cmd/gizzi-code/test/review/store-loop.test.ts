@@ -6,7 +6,7 @@ import { ReviewLoop } from "../../src/runtime/review/loop"
 import { GoalRoundChecks } from "../../src/runtime/review/goal-checks"
 import type { ReviewVerdict } from "../../src/runtime/review/verdict"
 
-function record(over: Partial<ReviewVerdict.Record> = {}): ReviewVerdict.Record {
+function record(over: Partial<ReviewVerdict.Stored> = {}): ReviewVerdict.Stored {
   return {
     id: `rev_${Math.random().toString(36).slice(2)}`,
     sessionID: "ses_test",
@@ -74,7 +74,7 @@ describe("reviewUntilPass", () => {
     expect(fixes[0]).toContain("Fix these review findings:")
     expect(fixes[0]).toContain("a.ts:3")
     expect(seen[0]).toBeUndefined()
-    expect((seen[1] as ReviewVerdict.Record).verdict).toBe("FAIL")
+    expect((seen[1] as ReviewVerdict.Stored).verdict).toBe("FAIL")
   })
 
   test("stops at the round limit and caps rounds at 12", async () => {

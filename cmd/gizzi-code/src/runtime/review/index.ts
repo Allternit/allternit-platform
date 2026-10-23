@@ -26,7 +26,7 @@ export namespace Reviewer {
     sessionID?: string
     cwd: string
     instruction?: string
-    previous?: ReviewVerdict.Record | ReviewVerdict.Shape
+    previous?: ReviewVerdict.Stored | ReviewVerdict.Shape
     model?: ModelRef
     round?: number
     maxRounds?: number
@@ -133,7 +133,7 @@ export namespace Reviewer {
   }
 
   /** Run one review. Returns null when there is nothing to review (no model call). */
-  export async function runReview(input: RunInput): Promise<ReviewVerdict.Record | null> {
+  export async function runReview(input: RunInput): Promise<ReviewVerdict.Stored | null> {
     const changes = await collectChanges({ sessionID: input.sessionID, cwd: input.cwd })
     if (!changes) return null
 
@@ -201,7 +201,7 @@ export namespace Reviewer {
       input.abort?.removeEventListener("abort", cancel)
     }
 
-    const record: ReviewVerdict.Record = {
+    const record: ReviewVerdict.Stored = {
       ...parsed.value,
       id: Identifier.ascending("message").replace(/^msg_/, "rev_"),
       sessionID: input.sessionID,
