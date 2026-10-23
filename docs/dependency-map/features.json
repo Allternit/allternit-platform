@@ -201,6 +201,10 @@
         {
           "on": "2026-10-22",
           "note": "Eoj made the Bot-mode composer one standard: the same bottom deck (Agent mode | Plugins | Artifacts) on Bot Home, bot chats/threads, group chats and Project home; the top deck (Main chat · Threads · Tasks · Bot) wherever a bot is in focus, including Bot Home once To: has a bot."
+        },
+        {
+          "on": "2026-10-22",
+          "note": "Eoj: the group center becomes a live room brief with Now, a controlled montage of real recent contributions, and opt-in shared image/video previews. Sending or scrolling docks it into the members pill so chat takes the screen; tapping the pill restores the live brief. Phone/PWA put the cast above the brief. Implemented in RoomBrief and room-brief-model; no synthetic task status."
         }
       ],
       "evidence": [
