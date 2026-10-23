@@ -12,6 +12,8 @@ A bot's chat and its threads open on the bot itself, big, on a soft wash of the 
 - **What it made.** A montage that plays through the files and results from this thread and the steps it finished, with the first lines of each document. Click a frame to open it in the thread pane.
 - **Up next.** The bot's next routine.
 
+Bots that work through another app (for example Kimi, connected through the Kimi app) open the same way: the bot on its stage, its app conversation beside it, and the same composer as every bot. Their messages still go through that app, with its own approvals. Incognito asks and steering a turn mid-way are not available for them.
+
 Beside it is the conversation itself: its greeting and starter suggestions for a new chat, its replies, and approvals and questions to answer. The newest messages always show, however old.
 
 - **Needs you** lists the bot's other threads that are waiting on you. Tap one to open it.
@@ -20,7 +22,7 @@ Beside it is the conversation itself: its greeting and starter suggestions for a
 - **Plan**: after **Plan it first**, the plan the bot wrote waits in a card. **Approve plan** tells it to go ahead and leaves plan mode. **Change it** lets you reply instead.
 - While it works with no checklist, its live steps show (searching, reading, writing). While the bot has an unfinished checklist, its steps show above the conversation with the current one marked. While it works on its computer, that computer shows live in the bot's place, with **Stop** and **Take over**.
 
-**When you send a message, start a task or scroll back through the conversation, the bot flies up into the thread top** and becomes the avatar beside its name and the chat's name. The conversation then takes the screen. **Tap that avatar to bring the bot back out.** The gear in the thread top opens the bot's **Settings** in the [Bot tab](#the-deck-above-the-composer); **Back** returns to the bot screen.
+**When you send a message, start a task or scroll back through the conversation, the bot flies up into the thread top** and becomes the avatar beside its name and the chat's name. The conversation then takes the screen. **Tap that avatar to bring the bot back out.** The gear in the thread top opens the bot's **Settings** in the [Bot tab](#the-deck-above-the-composer). To go back, use the back arrow at the top of the sidebar; on phones, **Back** sits in the thread top.
 
 **Tap the bot to talk** (voice starts in this chat). **Drop a file or link on the bot** to hand it work, or use **choose a file** (on phones, **Hand it a file**). The bot asks how to start:
 
@@ -55,11 +57,13 @@ The computer and the thread panel stay in the thread top's icons, not in the dec
 
 **Needs you on phones.** On the `ai.allternit.com` phone layout and the `m.allternit.com` PWA, a **Needs you** pill above the composer opens a sheet with the bot's pending approvals and the threads waiting on you, so you can answer without scrolling back.
 
-On phones (the `ai.allternit.com` phone layout and the `m.allternit.com` PWA) the tabs drop their icons and a long thread name is shortened. Channel threads keep their own composer and have no deck.
+On phones (the `ai.allternit.com` phone layout and the `m.allternit.com` PWA) the tabs drop their icons and a long thread name is shortened. Threads of bots that work through another app (channel and vendor-pack threads) use the same composer and deck as every bot.
 
 ### For developers
 
 - Deck: `src/views/bots/thread-deck/BotThreadTopDeck.tsx` (tabs `thread` · `threads` · `tasks` · `bot`), passed to `ThreadComposer` as `topDeck` (a tray tucked behind the card, like `CoworkTopDeck`). `BotChatSessionView` keeps `deckTab` per open chat and resets it when the session changes; the gear sets `deckTab="bot"` with Settings.
+- Channel and vendor-pack threads open on `BotLiveStage` too: the conversation slot gets `ChannelThreadPane` with `hideComposer`, or `GatewayPackThread` with a `renderComposer` that only captures the pack's `send` (`packSendRef`). The shared `ThreadComposer` sends through it, so the vendor approve-and-retry still runs; incognito and `onSteer` are off for packed bots. While a vendor-backed bot's view is unknown (`useBotGateway` / `useThreadChannelState` loading, both cached and read on first render), the chat area waits instead of painting the wrong view.
+- The Bot tab's panel skips `topPad`; `BotHomeHero` pads its content by `--view-header-top` (56px in the thread) so its banner runs under the floating thread top. `ThreadHeader` gets `onBack` only on phones (the shell rail has Back elsewhere).
 - Threads and Bot tabs embed `BotHomeView` with `inThread="threads"` or `inThread="detail"`; `onOpenSession` opens a picked thread in the same view (`openBotChatView`, origin `bot-home`).
 - Tasks: `src/views/bots/thread-deck/ThreadTasksPanel.tsx`, built on `ProgressTab`, `SubagentsTab` and `useSubagentTree` exported from `ThreadInspector`.
 - User bubble color: the view sets `--chat-user-bubble-bg` to `color-mix(bot accent 30%, --bg-elevated)` and `--bot-accent` when the bot has an accent color.
