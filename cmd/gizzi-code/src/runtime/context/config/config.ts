@@ -1298,6 +1298,12 @@ export namespace Config {
         .optional(),
       plugin: z.string().array().optional(),
       snapshot: z.boolean().optional(),
+      repoMap: z
+        .boolean()
+        .optional()
+        .describe(
+          "Put a ranked map of the project's files and exported symbols into every Code turn's system prompt (default true; GIZZI_NO_REPO_MAP=1 also turns it off)",
+        ),
       share: z
         .enum(["manual", "auto", "disabled"])
         .optional()

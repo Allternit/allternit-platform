@@ -71,6 +71,7 @@ import * as BotChat from "@/runtime/bots/canonical-chat"
 import * as BotTurn from "@/runtime/bots/bot-turn"
 import { BotTurnInfo } from "@/runtime/bots/bot-turn"
 import { composeTurnSystem } from "@/runtime/session/system-header"
+import { RepoMap } from "@/codemap/repo-map"
 import * as BotInbox from "@/runtime/bots/bot-inbox"
 import { isRoutineTurnText } from "@/runtime/bots/bot-routines"
 import { isMessageAgentSession, MessageAgentTool } from "@/runtime/tools/builtins/message-agent"
@@ -1156,6 +1157,22 @@ const message = await createUserMessage(input)
         workspace: async () => {
           const workspaceSystemPrompt = await WorkspaceContext.getWorkspaceSystemPrompt(session.directory)
           return workspaceSystemPrompt ? [workspaceSystemPrompt] : []
+        },
+        // Ranked file/symbol map of the session's project (codemap/repo-map.ts).
+        // Rebuilt once per user turn so the cached system prefix holds across
+        // steps; empty for folders that are not a project, or when turned off
+        // (config `repoMap: false`, GIZZI_NO_REPO_MAP=1). Never throws.
+        repoMap: async () => {
+          const config = await Config.get().catch(() => undefined)
+          const touched = Object.keys(FileTime.state().read[sessionID] ?? {})
+          const block = await RepoMap.prompt({
+            root: workdir(sessionID) ?? session.directory,
+            sessionID,
+            turn: lastUser.id,
+            boost: touched,
+            enabled: config?.repoMap !== false,
+          })
+          return block ? [block] : []
         },
         // Configured servers only: the per-user connectors proxy is opened per turn in resolveTools.
         mcpInstructions: async () => {
