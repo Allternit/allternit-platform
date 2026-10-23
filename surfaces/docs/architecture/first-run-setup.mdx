@@ -53,7 +53,7 @@ Every result card and tile tag is computed from what happened:
 1. 0–1.0 s: the nodes collapse into blocks that build the A:// mark.
 2. The coral core pops and lands.
 3. 1.1 s: shockwave rings and a coral flash. 1.45–2.05 s: a light sweep.
-4. 1.5–2.05 s: `WELCOME, <first name>` types out (from `usePlatformUser().user.firstName`, else the session name, else just `WELCOME`). 2.55 s: the core heartbeats.
+4. 1.5–2.05 s: `WELCOME, <name>` types out with the name as the user gave it, unchanged apart from trimming and a 24-character cap (`handoffNameFrom`). The name is the profile `preferred_name` from `agentPreferencesApi.get()`, else the first word of the profile `full_name`, else `usePlatformUser().user.firstName`, else the Desktop session name. With none, it shows just `WELCOME`. 2.55 s: the core heartbeats.
 5. 2.95–3.3 s: the `://` dissolves. 3.3–4.3 s: the A flies to the first visible `[data-handoff-orb]`.
 
 The setup's `onOpen` runs once, at 3.3 s, so Home mounts under the overlay. The flight target is the launch screen's pixel-A logo in `views/chat/main/LaunchHeader.tsx` (`data-handoff-orb="matrix"`), which serves Desktop, the phone layout and the PWA. With no target by 3.65 s, the A fades out at the top centre.

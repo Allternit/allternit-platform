@@ -14,11 +14,13 @@ You can pin up to 8. The newest pin is at the top; pinning a ninth drops the old
 
 ## The Artifacts menu
 
-Select **Artifacts ▾** to see:
+Select **Artifacts ▾** to open a panel of the same preview cards as the Artifacts tab:
 
-- **Pinned**: your pins, each with its kind and when it was last updated. Select one to open it.
-- **Recent**: your three most recently updated artifacts.
-- **All artifacts…**: opens the Artifacts library.
+- **Pinned**: a card for each pin, with a live preview, its kind and when it was last updated. Select a card to open it, or the pin on the card to unpin it.
+- **Recent**: cards for your three most recently updated artifacts.
+- **All artifacts**: opens the Artifacts library.
+
+The cards sit two across on a phone and three across on a wider screen.
 
 A pinned artifact that has been deleted is removed from the list the next time you open the menu. On phones the Plugins logos are hidden so the three menus fit on one line.
 
@@ -32,6 +34,6 @@ Pins are saved to your account on your connected runtime, like project icons, so
 - **Runtime API:** `GET /api/v1/deck-pins` returns `{ "pins": [...] }`. `PUT` takes and returns `{ "pins": [...] }`, validated to at most 8 entries with non-empty `id`, `kind` and `title`. It is stored in `runtime_settings` under `deck_pins` (allternit-api `runtime_settings_routes.rs`) and isn't cleared by a runtime settings reset.
 - **Fallback:** a 404, 401, 403 or network error switches the store to `localStorage['allternit:deck-pins']`.
 - **UI:**
-  - `src/components/composer-deck/DeckArtifactsMenu.tsx` is the third trigger in `DeckSelectors`. It opens artifacts with `useArtifacts.getState().open(id)`.
+  - `src/components/composer-deck/DeckArtifactsMenu.tsx` is the third trigger in `DeckSelectors`. It opens a popover of `ArtifactPreviewCard`s, the card shared with the Artifacts tab (`views/library/ArtifactPreviewCard.tsx`). It opens artifacts with `useArtifacts.getState().open(id)`.
   - The pin button is in `components/artifacts/ArtifactWindow.tsx`, which also covers panes and phones.
   - The library card menu is in `views/library/ArtifactsView.tsx`.
