@@ -43,6 +43,12 @@ export const RESIGN_WINDOW_MS = 48 * 3600_000;
 
 /** How often the scheduler watches usbmuxd and the renewal window (default 60 s). */
 export const IOS_RECOVERY_INTERVAL_MS = 60_000;
+/**
+ * Missed answer checks in a row before a remount. Relaunching the helper
+ * always drops the phone to the Home Screen, and a helper busy with a long
+ * call can miss one 5 s check, so a single miss never relaunches it.
+ */
+export const IOS_REMOUNT_AFTER_MISSES = 2;
 
 /**
  * Minimum gap between renewal attempts for one phone. Signing talks to
@@ -171,6 +177,8 @@ export interface IosRecoverySchedulerOpts {
    */
   deps: () => Promise<IosRecoveryDeps | null>;
   intervalMs?: number;
+  /** Missed checks in a row before a remount (default IOS_REMOUNT_AFTER_MISSES). */
+  remountAfterMisses?: number;
   logger?: (message: string) => void;
 }
 
@@ -184,6 +192,8 @@ export class IosRecoveryScheduler {
   private readonly inFlight = new Set<string>();
   /** udid → when renewal was last attempted (success or not). */
   private readonly lastRenewal = new Map<string, number>();
+  /** udid → missed answer checks in a row while on the cable. */
+  private readonly misses = new Map<string, number>();
   private chain: Promise<void> = Promise.resolve();
 
   constructor(private readonly opts: IosRecoverySchedulerOpts) {}
@@ -232,8 +242,17 @@ export class IosRecoveryScheduler {
           // Only a pass that could actually try (phone on the cable) counts as an attempt.
           if (connected.includes(record.udid)) this.lastRenewal.set(record.udid, now);
           await renewIosSignature(deps, record, connected);
-        } else if (!(await helperAnswers(deps, record))) {
-          await remountIosHelper(deps, record);
+        } else if (await helperAnswers(deps, record)) {
+          this.misses.delete(record.udid);
+        } else {
+          const misses = (this.misses.get(record.udid) ?? 0) + 1;
+          if (misses < (this.opts.remountAfterMisses ?? IOS_REMOUNT_AFTER_MISSES)) {
+            this.misses.set(record.udid, misses);
+            log(`${record.deviceName ?? record.udid}'s helper didn't answer this check; relaunching only if it misses the next one too`);
+          } else {
+            this.misses.delete(record.udid);
+            await remountIosHelper(deps, record);
+          }
         }
       } catch (error) {
         // One phone must never take down the whole pass.

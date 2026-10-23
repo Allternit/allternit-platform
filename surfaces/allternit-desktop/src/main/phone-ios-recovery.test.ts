@@ -333,7 +333,7 @@ describe('IosRecoveryScheduler — remount on the cable', () => {
     const recovered: [string, string][] = [];
     d.onRecovered = (udid, kind) => recovered.push([udid, kind]);
 
-    const scheduler = new IosRecoveryScheduler({ deps: async () => d });
+    const scheduler = new IosRecoveryScheduler({ deps: async () => d, remountAfterMisses: 1 });
     const first = scheduler.tick();
     const second = scheduler.tick();
     await gateEntered;
@@ -370,7 +370,7 @@ describe('IosRecoveryScheduler — remount on the cable', () => {
     // The same wiring phone-service.ts uses: recovery success re-probes the phone.
     const reProbes: Promise<unknown>[] = [];
     d.onRecovered = (udid) => reProbes.push(monitor.check(d.store.load(udid)?.deviceId ?? udid));
-    await new IosRecoveryScheduler({ deps: async () => d }).tick();
+    await new IosRecoveryScheduler({ deps: async () => d, remountAfterMisses: 1 }).tick();
     await Promise.all(reProbes);
 
     expect(w.launches).toEqual([ARTIFACTS.manifest.runner.bundleId]);
@@ -384,7 +384,7 @@ describe('IosRecoveryScheduler — remount on the cable', () => {
     const recovered: [string, string][] = [];
     d.onRecovered = (udid, kind) => recovered.push([udid, kind]);
 
-    await new IosRecoveryScheduler({ deps: async () => d }).tick();
+    await new IosRecoveryScheduler({ deps: async () => d, remountAfterMisses: 1 }).tick();
 
     expect(w.launches).toHaveLength(0);
     expect(w.tunnels).toHaveLength(0);
@@ -392,12 +392,26 @@ describe('IosRecoveryScheduler — remount on the cable', () => {
     expect(recovered).toHaveLength(0);
   });
 
+  it('one missed check does not relaunch the helper; two in a row do', async () => {
+    const w = world({ runnerStandalone: false });
+    const d = deps(w, renewSigner(w), { discover: async () => null });
+    d.store.save(record({ expiresAt: FRESH }));
+    const scheduler = new IosRecoveryScheduler({ deps: async () => d });
+
+    await scheduler.tick();
+    expect(w.launches).toHaveLength(0);
+    expect(w.imageAutos).toBe(0);
+
+    await scheduler.tick();
+    expect(w.launches).toEqual([ARTIFACTS.manifest.runner.bundleId]);
+  });
+
   it('a phone off the cable with a live helper is left alone', async () => {
     const w = world({ connected: false, runnerStandalone: true });
     const d = deps(w, renewSigner(w));
     d.store.save(record({ expiresAt: FRESH }));
 
-    await new IosRecoveryScheduler({ deps: async () => d }).tick();
+    await new IosRecoveryScheduler({ deps: async () => d, remountAfterMisses: 1 }).tick();
 
     expect(w.launches).toHaveLength(0);
     expect(w.signRequests).toHaveLength(0);

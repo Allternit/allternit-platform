@@ -5,6 +5,10 @@ description: 'Changelog for the Allternit platform, SDKs, and Gizzi Code CLI'
 
 # Release Notes
 
+## 2026-10-23 — Phone Link stops jumping to the Home Screen
+
+- **Phone Link (iPhone):** Desktop no longer restarts the iPhone helper after one slow answer. A restart sends the iPhone to its Home Screen, so a bot working on the phone lost its place. Desktop now restarts the helper only after it misses two checks in a row. See [Phone Link](/guides/phone-link).
+
 ## 2026-10-23 — Claude Code runs on cloud computers
 
 - **Cloud computers:** Claude Code now answers on your Allternit cloud computer. Before, every turn failed with "--dangerously-skip-permissions cannot be used with root/sudo privileges", because the cloud computer runs its desktop as root. The fix applies only on cloud computers, not on your own machine.
