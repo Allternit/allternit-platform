@@ -9,6 +9,7 @@ import { Log } from "@/shared/util/log"
 import { Glob } from "@/shared/util/glob"
 import type { MessageV2 } from "@/runtime/session/message-v2"
 import { parseFrontmatter } from "@/runtime/memory/memory-service"
+import { ProjectPanels } from "@/runtime/project/panels"
 import { ANTI_PATTERNS_FILENAME, LOCAL_INSTRUCTION_FILENAMES, pickWinner, ROOT_INSTRUCTION_FILENAMES } from "@/shared/utils/agentFileResolver"
 
 const log = Log.create({ service: "instruction" })
@@ -278,7 +279,10 @@ export namespace InstructionPrompt {
         .then((x) => (x ? "Instructions from: " + url + "\n" + x : "")),
     )
 
-    return Promise.all([...files, ...fetches]).then((result) => result.filter(Boolean))
+    // Approved project panel rules (.allternit/panels/*.json, agent.instructions).
+    const panels = ProjectPanels.instructions()
+
+    return Promise.all([...files, ...fetches]).then(async (result) => [...result.filter(Boolean), ...(await panels)])
   }
 
   export function loaded(messages: MessageV2.WithParts[]) {

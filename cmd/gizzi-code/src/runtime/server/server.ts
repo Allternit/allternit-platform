@@ -35,6 +35,7 @@ import { ConfigRoutes } from "@/runtime/server/routes/config"
 import { ReviewRoutes } from "@/runtime/server/routes/review"
 import { CodeMapRoutes } from "@/runtime/server/routes/codemap"
 import { FileEditorsRoutes } from "@/runtime/server/routes/file-editors"
+import { ProjectPanelsRoutes } from "@/runtime/server/routes/project-panels"
 import { ExperimentalRoutes } from "@/runtime/server/routes/experimental"
 import { ProviderRoutes } from "@/runtime/server/routes/provider"
 import { ModelPoolRoutes } from "@/runtime/server/routes/model-pool"
@@ -393,6 +394,7 @@ export namespace Server {
         .route("/", ReviewRoutes())
         .route("/", CodeMapRoutes())
         .route("/", FileEditorsRoutes())
+        .route("/", ProjectPanelsRoutes())
         .route("/config", ConfigRoutes())
         .route("/experimental", ExperimentalRoutes())
         .route("/session", SessionRoutes())
@@ -497,6 +499,7 @@ export namespace Server {
             .route("/", ReviewRoutes())
             .route("/", CodeMapRoutes())
             .route("/", FileEditorsRoutes())
+            .route("/", ProjectPanelsRoutes())
             .route("/session", SessionRoutes())
             .route("/native-session", NativeSessionRoutes())
             .route("/automations", AutomationsRoutes())
