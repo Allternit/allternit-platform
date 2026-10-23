@@ -2464,8 +2464,8 @@
       "id": "feature:decision-trees",
       "label": "Decision trees (branching agent questions + Tasks Decisions deck)",
       "product": "product:ai-allternit",
-      "status": "building",
-      "description": "gizzi's question tool takes optional risk/context and per-option recommended/caution/then (one follow-up level); such questions draw as a branching graph (DecisionTree): ask card left, measured SVG lines to options and on to follow-ups/outcomes, other branches fade, Other… takes text, the answer is a path ('Branch → Follow-up'). The docked question card shows it compact in every thread host; Tasks (desktop TasksView + phone TasksBoardScreen) shows 'Decisions · N waiting for you' from GET /api/v1/questions across sessions. Stacks under 640px for phones/PWA.",
+      "status": "live",
+      "description": "gizzi's question tool takes optional risk/context and per-option recommended/caution/then (one follow-up level); such questions draw as a branching graph (DecisionTree): ask card left, measured SVG lines to options and on to follow-ups/outcomes, other branches fade, Other… takes text, the answer is a path ('Branch → Follow-up'). The docked question card shows it compact in every thread host; Tasks (desktop TasksView + phone TasksBoardScreen) shows 'Decisions · N waiting for you' from GET /api/v1/questions across sessions. Stacks under 640px for phones/PWA. The gizzi terminal's AskUserQuestion takes the same fields: risk/context line, 'Agent's pick' and caution marks, and a picked option's follow-up as a 'Then' step; the answer is the same path.",
       "touches": [
         "allternit-ai/src/components",
         "allternit-ai/src/lib/agents",
@@ -2489,7 +2489,7 @@
       "id": "feature:glance-lines",
       "label": "Glance lines (agent's one-line status on session rows)",
       "product": "product:ai-allternit",
-      "status": "building",
+      "status": "live",
       "description": "gizzi glance tool (also on the CLI bridge) stores session.glance {text, artifactId?, at} (migration 20261023120000_session_glance); allternit-api passes it as metadata.glance in session lists and session.updated events; rows show it instead of the last-message preview: desktop rail recents/pinned + code rows + bot rows, phone drawer, bot thread bylines, session overview cards.",
       "touches": [
         "allternit-ai/src/shell",
