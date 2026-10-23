@@ -56,11 +56,20 @@ On a phone the graph is shown as stacked cards (trigger, then result). The calen
 
 The same **List / Graph / Calendar** switch is on every other screen that lists routines, and they share one remembered choice:
 
-- **Automation Tasks** (the rail, the **Routines** page and the phone's Automation Tasks screen), on the **All** and **Routines** tabs. These screens show every bot's routines. Goals, loops and heartbeats stay in **List**, because they have no run times to put on a calendar. The search box also filters the graph and the calendar.
+- **Automation Tasks** (the rail, the **Routines** page and the phone's Automation Tasks screen), on every tab: **All**, **Goals**, **Routines**, **Loops** and **Agent Heartbeats**. The search box also filters the graph and the calendar. See [Goals, loops and heartbeats](#goals-loops-and-heartbeats).
 - **Cowork → Routines**, with every bot's routines.
 - A bot chat's **Routines** panel, which starts on that bot's routines and offers **This bot / All bots**.
 
 Selecting a run on any of these screens opens the same details panel. The thread links in its run history open that bot's thread. The calendar is editable on all of them, the same way as on a bot's Routines tab. On screens that show every bot's routines, a new routine starts with your first bot selected; pick another under **Who runs it**.
+
+### Goals, loops and heartbeats
+
+On Automation Tasks, the **Goals**, **Loops** and **Agent Heartbeats** tabs have the same **List / Graph / Calendar** switch as Routines. **All** shows every kind together.
+
+- **Calendar:** loops and heartbeats sit at their run times, and a loop that runs every few minutes or hours is one striped band. Goals sit in an **All day** row on their target date. **Coming up** lists the next runs and due dates. Click an empty time to add a task of that tab's kind at that time (on **Goals**, a goal due that day; on **All**, a routine). Click an entry to open it. Drag a loop or heartbeat to move it; the new time saves at once. Goals can't be dragged; change the target date in the goal. Tasks with no time (manual, or a schedule the calendar can't draw) and goals with no target date are listed under the calendar.
+- **Graph:** each task runs from its trigger (kind, next run, **Run now**) to the bot that runs it to the goal it serves, with the goal's progress. On **Goals**, each goal shows the routines, loops and heartbeats that serve it, even though they are on other tabs.
+
+On a bot's own page, the Automation Tasks list under its Routines keeps its routines in **List**, because the bot's Routines tab above already has the switch. Its other tabs have the switch.
 
 ## When a routine fails
 

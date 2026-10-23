@@ -159,6 +159,10 @@
           "note": "Routines → Calendar is now the editable scheduler (RoutineScheduler/RoutineEditor): Day default, click a slot to add, click to edit, drag to move; saves the cron in place."
         },
         {
+          "on": "2026-10-23",
+          "note": "Eoj asked for the routines Graph / Calendar on every Automation Tasks tab. Goals, Loops, Agent Heartbeats and All now use AutomationSchedule (cowork/AutomationSchedule.tsx): the same RoutineScheduler calendar (goals as all-day items on their target date, loops/heartbeats at run times, drag to move) and a trigger → bot → goal graph. Routines keeps RoutinesSchedule."
+        },
+        {
           "on": "2026-10-21",
           "note": "Bot chats and threads open on the live bot stage (BotLiveStage): the bot full screen on a wash of its color, with its latest words, approvals and questions answered in place, its steps and live computer while it works, a montage of what it made, and its next routine. Dropping a file or link on the bot (or Attach) hands it work: Plan it first (plan permission mode for that turn), Just do it, or Ask me questions. The written conversation is one click away (Bot / Chat in the thread top). Bot chats can now send files (Eoj)."
         },
