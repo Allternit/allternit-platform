@@ -20,6 +20,7 @@ Supported operations:
 - prepareCallHierarchy: Get call hierarchy item at a position (functions/methods)
 - incomingCalls: Find all functions/methods that call the function at a position
 - outgoingCalls: Find all functions/methods called by the function at a position
+- rename: Rename the symbol at a position everywhere the language server knows it is used (every file in the project), then apply the edits. Requires newName.
 
 All operations require:
 - filePath: The file to operate on
@@ -29,4 +30,14 @@ All operations require:
 workspaceSymbol also accepts:
 - query: The symbol name (or substring) to search for across the workspace
 
-Note: LSP servers must be configured for the file type. If no server is available, an error will be returned.
+rename also requires:
+- newName: The new name for the symbol at line/character (point at the symbol's name, e.g. its declaration or any use)
+
+About rename:
+- Prefer rename over edit/multiedit/grep-and-replace whenever you rename a function, class, method, variable, type or parameter that is used anywhere else. It follows imports and skips unrelated text that happens to match the name.
+- The edits are applied for you (the user is asked to approve the edit of every file listed). The result lists each changed file with its number of edits, plus any new errors.
+- File moves or renames the server proposes are not applied; they are listed so you can do them by hand.
+- If no language server handles the file, rename returns a message instead; then use the edit tool for each occurrence.
+- To replace a whole function or class body, use symbol_edit; for small changes inside a function, use edit.
+
+Note: LSP servers must be configured for the file type. If no server is available, an error is returned (rename returns a message suggesting the edit tool instead).

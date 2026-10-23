@@ -122,7 +122,7 @@ export namespace KernelTurn {
   }
 
   const READ_TOOLS = new Set(["read", "glob", "grep", "list", "ls", "lsp", "codesearch"])
-  const WRITE_TOOLS = new Set(["edit", "write", "patch", "multiedit", "apply_patch"])
+  const WRITE_TOOLS = new Set(["edit", "write", "patch", "multiedit", "apply_patch", "symbol_edit"])
   const NET_TOOLS = new Set(["webfetch", "websearch"])
   export function effectClassFor(tool: string): EffectClass {
     const t = tool.toLowerCase()

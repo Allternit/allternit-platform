@@ -167,6 +167,7 @@ export const NotebookEditTool = Tool.define("notebook_edit", {
     await Filesystem.write(filePath, newContent)
     await Bus.publish(File.Event.Edited, {
       file: filePath,
+      sessionID: ctx.sessionID,
     })
     await Bus.publish(FileWatcher.Event.Updated, {
       file: filePath,

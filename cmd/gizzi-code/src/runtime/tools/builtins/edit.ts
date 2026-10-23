@@ -65,6 +65,7 @@ export const EditTool = Tool.define("edit", {
         await Filesystem.write(filePath, params.newString)
         await Bus.publish(File.Event.Edited, {
           file: filePath,
+          sessionID: ctx.sessionID,
         })
         await Bus.publish(FileWatcher.Event.Updated, {
           file: filePath,
@@ -97,6 +98,7 @@ export const EditTool = Tool.define("edit", {
       await Filesystem.write(filePath, contentNew)
       await Bus.publish(File.Event.Edited, {
         file: filePath,
+        sessionID: ctx.sessionID,
       })
       await Bus.publish(FileWatcher.Event.Updated, {
         file: filePath,

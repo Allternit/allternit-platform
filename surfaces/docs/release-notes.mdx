@@ -5,6 +5,13 @@ description: 'Changelog for the Allternit platform, SDKs, and Gizzi Code CLI'
 
 # Release Notes
 
+## 2026-10-23 — Gizzi Code knows your repo
+
+- **Repo map:** every Code turn now starts with a ranked map of your repo: files, what they export, and how many files import each. Files you just changed rank higher. It updates as files change. See [Code intelligence](/cli/code-intelligence).
+- **Rename across files:** the agent renames through your language server, so every caller changes together, with one permission prompt and normal undo.
+- **Edit by name:** a new `symbol_edit` tool replaces a whole function or class by name.
+- **Run line:** failed tool calls now show in the run line under the latest reply, and the line stays visible in Code and on touch screens.
+
 ## 2026-10-23 — Claude Code runs on cloud computers
 
 - **Cloud computers:** Claude Code now answers on your Allternit cloud computer. Before, every turn failed with "--dangerously-skip-permissions cannot be used with root/sudo privileges", because the cloud computer runs its desktop as root. The fix applies only on cloud computers, not on your own machine.

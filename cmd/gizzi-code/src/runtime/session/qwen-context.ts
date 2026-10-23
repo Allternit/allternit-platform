@@ -31,6 +31,7 @@ export namespace QwenContext {
       system_prompt: 0,
       mcp_tools: 0,
       mcp_instructions: 0,
+      repo_map: 0,
     }
     const deferred: ContextBreakdown.DeferredParts = {}
     let buffer = 0

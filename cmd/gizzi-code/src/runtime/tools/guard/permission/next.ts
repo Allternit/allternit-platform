@@ -550,7 +550,7 @@ export namespace PermissionNext {
     return match ?? { action: "ask", permission, pattern: "*" }
   }
 
-  const EDIT_TOOLS = ["edit", "write", "patch", "multiedit"]
+  const EDIT_TOOLS = ["edit", "write", "patch", "multiedit", "symbol_edit"]
 
   export function disabled(tools: string[], ruleset: Ruleset): Set<string> {
     const mode = Flag.GIZZI_PERMISSION_MODE

@@ -452,6 +452,73 @@ export namespace LSP {
     }).then((result) => result.flat().filter(Boolean))
   }
 
+  export type RenameResult = {
+    serverID: string
+    /** WorkspaceEdit (`changes` and/or `documentChanges` shape) when the server produced one. */
+    edit?: { changes?: Record<string, any[]>; documentChanges?: any[] }
+    /** Current name of the symbol when prepareRename reported it. */
+    placeholder?: string
+    /** Range of the symbol being renamed when prepareRename reported it. */
+    range?: Range
+    /** Why this server could not rename (prepareRename refused, request failed, no provider). */
+    error?: string
+  }
+
+  /**
+   * textDocument/rename at a position. Sends textDocument/prepareRename first
+   * when the server advertises `renameProvider.prepareProvider`; if prepare is
+   * not supported or fails, falls back to calling rename directly. Returns one
+   * result per language server that handles the file. Never throws.
+   */
+  export async function rename(input: {
+    file: string
+    line: number
+    character: number
+    newName: string
+  }): Promise<RenameResult[]> {
+    return run(input.file, async (client): Promise<RenameResult> => {
+      const textDocument = { uri: pathToFileURL(input.file).href }
+      const position = { line: input.line, character: input.character }
+      const provider = (client as { capabilities?: Record<string, any> }).capabilities?.renameProvider
+      if (provider === false) {
+        return { serverID: client.serverID, error: "This language server does not support rename." }
+      }
+
+      const result: RenameResult = { serverID: client.serverID }
+      if (provider && typeof provider === "object" && provider.prepareProvider) {
+        const prepared = (await client.connection
+          .sendRequest("textDocument/prepareRename", { textDocument, position })
+          .catch(() => undefined)) as any
+        if (prepared === null) {
+          return { serverID: client.serverID, error: "The element at this position cannot be renamed." }
+        }
+        if (prepared && typeof prepared === "object") {
+          if (typeof prepared.placeholder === "string") result.placeholder = prepared.placeholder
+          if (prepared.range) result.range = prepared.range
+          else if (prepared.start && prepared.end) result.range = prepared as Range
+        }
+      }
+
+      try {
+        const edit = (await client.connection.sendRequest("textDocument/rename", {
+          textDocument,
+          position,
+          newName: input.newName,
+        })) as RenameResult["edit"] | null
+        if (!edit || (!edit.changes && !edit.documentChanges)) {
+          return { ...result, error: "The language server returned no edits for this rename." }
+        }
+        return { ...result, edit }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err)
+        return { ...result, error: `Rename failed: ${message}` }
+      }
+    }).catch((err) => {
+      log.error("rename failed", { err, file: input.file })
+      return []
+    })
+  }
+
   async function runAll<T>(input: (client: LSPClient.Info) => Promise<T>): Promise<T[]> {
     const clients = await state().then((x) => x.clients)
     const tasks = clients.map((x) => input(x))

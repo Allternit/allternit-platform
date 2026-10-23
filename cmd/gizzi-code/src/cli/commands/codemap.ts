@@ -3,6 +3,9 @@
  *
  * Commands:
  * - gizzi codemap generate [--dir]   Generate docs/codemap/{codemap.json,codemap.html,codemap.lock}
+ * - gizzi codemap map [--dir] [--budget N] [--all]
+ *                                    Print the live repo map slice exactly as a Code turn's
+ *                                    system prompt gets it (scans or refreshes .gizzi/repo-map.json)
  *
  * `gizzi init` already runs this automatically as one of its setup steps
  * (see cli/commands/init.ts) — this standalone command exists to re-run it
@@ -17,7 +20,29 @@ export const CodemapCommand = cmd({
   command: "codemap",
   describe: "generate a deterministic architecture map of the current project",
   builder: (yargs) =>
-    yargs.command(
+    yargs
+      .command(
+        "map",
+        "print the live repo map slice that Code turns get in their system prompt",
+        (yargs) =>
+          yargs
+            .option("dir", { type: "string", describe: "project root (default: cwd)" })
+            .option("budget", { type: "number", default: 1500, describe: "token budget for the slice" })
+            .option("all", { type: "boolean", default: false, describe: "list every indexed file, ignoring the budget" }),
+        async (args) => {
+          const { RepoMap } = await import("@/codemap/repo-map")
+          const dir = path.resolve(args.dir ?? process.cwd())
+          const ok = await RepoMap.load(dir)
+          const text = ok ? RepoMap.slice({ root: dir, budgetTokens: args.budget, all: args.all }) : ""
+          if (!text) {
+            console.error(`No repo map for ${dir} (no indexable files, or the scan failed — see the gizzi log)`)
+            process.exit(1)
+          }
+          console.log(text)
+          process.exit(0)
+        },
+      )
+      .command(
       "generate",
       "generate docs/codemap/{codemap.json,codemap.html,codemap.lock}",
       (yargs) =>

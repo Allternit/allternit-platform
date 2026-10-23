@@ -32,6 +32,7 @@ import { CodeSearchTool } from "@/runtime/tools/builtins/codesearch"
 import { Flag } from "@/runtime/context/flag/flag"
 import { Log } from "@/shared/util/log"
 import { LspTool } from "@/runtime/tools/builtins/lsp"
+import { SymbolEditTool } from "@/runtime/tools/builtins/symbol-edit"
 import { BrowserToolsetTool, ComputerToolsetTool, ComputerV2ToolsetTool } from "@/runtime/tools/computer-toolset"
 import { ComputersTool } from "@/runtime/tools/builtins/computers"
 import { Truncate } from "@/runtime/tools/builtins/truncation"
@@ -161,6 +162,7 @@ export namespace ToolRegistry {
       ListTool,
       EditTool,
       MultiEditTool,
+      SymbolEditTool,
       WriteTool,
       TaskTool,
       AgentSwarmTool,

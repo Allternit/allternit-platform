@@ -79,7 +79,7 @@ export namespace LSPClient {
     connection.listen()
 
     l.info("sending initialize")
-    await withTimeout(
+    const initialized = await withTimeout(
       connection.sendRequest("initialize", {
         rootUri: pathToFileURL(input.root).href,
         processId: input.server.process.pid,
@@ -101,6 +101,12 @@ export namespace LSPClient {
             didChangeWatchedFiles: {
               dynamicRegistration: true,
             },
+            // The lsp tool's `rename` applies WorkspaceEdits itself. Text edits
+            // in both shapes are applied; file create/rename/delete are not.
+            workspaceEdit: {
+              documentChanges: true,
+              resourceOperations: [],
+            },
           },
           textDocument: {
             synchronization: {
@@ -109,6 +115,13 @@ export namespace LSPClient {
             },
             publishDiagnostics: {
               versionSupport: true,
+            },
+            rename: {
+              dynamicRegistration: false,
+              prepareSupport: true,
+            },
+            documentSymbol: {
+              hierarchicalDocumentSymbolSupport: true,
             },
           },
         },
@@ -136,10 +149,16 @@ export namespace LSPClient {
       [path: string]: number
     } = {}
 
+    const capabilities: Record<string, any> = (initialized as { capabilities?: Record<string, any> } | undefined)?.capabilities ?? {}
+
     const result = {
       root: input.root,
       get serverID() {
         return input.serverID
+      },
+      /** ServerCapabilities from the initialize response (empty when the server sent none). */
+      get capabilities() {
+        return capabilities
       },
       get connection() {
         return connection
