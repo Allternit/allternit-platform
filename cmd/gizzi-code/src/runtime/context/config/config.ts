@@ -1395,6 +1395,32 @@ export namespace Config {
       small_model: ModelId.describe(
         "Small model to use for tasks like title generation in the format of provider/model",
       ).optional(),
+      models: z
+        .object({
+          jobs: z
+            .object({
+              chat: ModelId.optional().describe("Model for ordinary chat turns"),
+              explorer: ModelId.optional().describe("Model for the explore subagent"),
+              coder: ModelId.optional().describe("Model for the general (coding) subagent"),
+              review: ModelId.optional().describe("Model for the independent reviewer (/review, gizzi run --review)"),
+              goalJudge: ModelId.optional().describe("Model that judges goal rounds"),
+              goalEscalate: ModelId.optional().describe("Model a goal switches to after two rounds with no progress"),
+              summarizer: ModelId.optional().describe("Model for compaction summaries"),
+              webResearch: ModelId.optional().describe("Model for web research"),
+            })
+            .optional()
+            .describe("Per-job models in provider/model form. An unset job uses the session model."),
+        })
+        .optional(),
+      goal: z
+        .object({
+          checks: z
+            .array(z.string())
+            .optional()
+            .describe("Shell commands run after each goal round (default: detected typecheck/test or cargo check)"),
+          review: z.boolean().optional().describe("Run the independent reviewer after each goal round (default: true)"),
+        })
+        .optional(),
       routing: z
         .object({
           tiers: z.object({

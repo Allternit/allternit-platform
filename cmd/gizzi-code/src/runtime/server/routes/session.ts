@@ -9,6 +9,7 @@ import z from "zod/v4"
 import { Session } from "@/runtime/session"
 import { MessageV2 } from "@/runtime/session/message-v2"
 import { SessionPrompt } from "@/runtime/session/prompt"
+import { ReviewLoop } from "@/runtime/review/loop"
 import { SessionCompaction } from "@/runtime/session/compaction"
 import { SessionRevert } from "@/runtime/session/revert"
 import { SessionStatus } from "@/runtime/session/status"
@@ -568,6 +569,8 @@ export const SessionRoutes = lazy(() =>
       async (c) => {
         const { sessionID } = c.req.valid("param") as any
         SessionPrompt.cancel(sessionID)
+        // A review → fix loop on this session stops with it.
+        ReviewLoop.cancel(sessionID)
         return c.json(true)
       },
     )

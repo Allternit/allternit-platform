@@ -29,6 +29,7 @@ type ToolPart = {
 }
 import { Server } from "@/runtime/server/server"
 import { Provider } from "@/runtime/providers/provider"
+import { ReviewVerdict } from "@/runtime/review/verdict"
 import { Agent } from "@/runtime/loop/agent"
 import { AgentManager } from "@/runtime/loop/manager"
 import { PermissionNext } from "@/runtime/tools/guard/permission/next"
@@ -394,6 +395,15 @@ export const RunCommand = cmd({
         type: "number",
         describe: "GitHub PR number to fetch context from",
       })
+      .option("review", {
+        type: "boolean",
+        describe:
+          "after the run (or alone when no message is given), review the changes with an independent reviewer; exit 0 PASS or nothing to review, 3 FAIL, 4 PARTIAL",
+      })
+      .option("review-until-pass", {
+        type: "string",
+        describe: "like --review, but loop review → fix → re-review until PASS (optional max rounds, default 5, cap 12)",
+      })
       .option("plugin-dir", {
         type: "string",
         describe: "directory to load additional plugins from (scoped to this session)",
@@ -479,7 +489,15 @@ export const RunCommand = cmd({
       }
     }
 
-    if (message.trim().length === 0 && !args.command) {
+    const reviewUntilPass = args.reviewUntilPass !== undefined
+    const reviewRounds = reviewUntilPass && /^\d+$/.test(String(args.reviewUntilPass)) ? Number(args.reviewUntilPass) : undefined
+    const reviewRequested = Boolean(args.review) || reviewUntilPass
+    const reviewOnly = reviewRequested && message.trim().length === 0 && !args.command
+
+    // Review routes are not in the generated SDK; call them on the same server.
+    let serverFetch: ((route: string, init: RequestInit) => Promise<Response>) | undefined
+
+    if (message.trim().length === 0 && !args.command && !reviewRequested) {
       UI.error("You must provide a message or a command")
       process.exit(1)
     }
@@ -846,6 +864,63 @@ export const RunCommand = cmd({
         return args.agent
       })()
 
+      /** Run the independent review and print the verdict; sets the exit code
+       * (0 PASS / nothing to review, 3 FAIL, 4 PARTIAL) unless an error code is already set. */
+      async function runReviewStep(reviewSessionID?: string) {
+        if (!serverFetch) throw new Error("review server unavailable")
+        const untilPass = reviewUntilPass && reviewSessionID
+        const response = await serverFetch(reviewSessionID ? `/session/${reviewSessionID}/review` : "/review", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(
+            reviewSessionID
+              ? { untilPass: Boolean(untilPass), wait: true, ...(reviewRounds ? { maxRounds: reviewRounds } : {}) }
+              : {},
+          ),
+        })
+        if (!response.ok) throw new Error(`review failed (${response.status}): ${await response.text()}`)
+        const body = (await response.json()) as { verdict: ReviewVerdict.Record | null; rounds?: number; stopped?: string }
+        const verdict = body.verdict
+        if (jsonMode || streamJsonMode) {
+          process.stdout.write(
+            JSON.stringify({
+              type: "review",
+              timestamp: Date.now(),
+              sessionID: reviewSessionID,
+              verdict: verdict?.verdict ?? null,
+              review: verdict
+                ? {
+                    verdict: verdict.verdict,
+                    summary: verdict.summary,
+                    findings: verdict.findings,
+                    unverified: verdict.unverified,
+                    verified: verdict.verified,
+                    files: verdict.files,
+                    model: verdict.model,
+                    cost: verdict.cost,
+                    tokens: verdict.tokens,
+                    ...(body.rounds !== undefined ? { rounds: body.rounds, stopped: body.stopped } : {}),
+                  }
+                : null,
+            }) + EOL,
+          )
+        } else if (verdict) {
+          UI.println(ReviewVerdict.format(verdict) + (body.rounds !== undefined ? `\nRounds: ${body.rounds} (${body.stopped})` : ""))
+        } else {
+          UI.println("Review: nothing to review (no changes)")
+        }
+        if (!process.exitCode) process.exitCode = ReviewVerdict.exitCode(verdict?.verdict ?? null)
+      }
+
+      if (reviewOnly && !reviewUntilPass) {
+        await runReviewStep().catch((e) => {
+          UI.error(e instanceof Error ? e.message : String(e))
+          process.exitCode = 1
+        })
+        setTimeout(() => process.exit(process.exitCode ?? 0), 100)
+        return
+      }
+
       const sessionID = await session(sdk)
       if (!sessionID) {
         UI.error("Session not found")
@@ -858,7 +933,9 @@ export const RunCommand = cmd({
         process.exit(1)
       })
 
-      if (args.command) {
+      if (reviewOnly) {
+        // --review-until-pass with no message: no prompt; the review loop sends the fix turns.
+      } else if (args.command) {
         await sdk.session.command({
           path: { sessionID },
           body: {
@@ -947,7 +1024,14 @@ export const RunCommand = cmd({
         })
       }
 
-      await loopDone
+      if (!reviewOnly) await loopDone
+
+      if (reviewRequested) {
+        await runReviewStep(sessionID).catch((e) => {
+          UI.error(e instanceof Error ? e.message : String(e))
+          process.exitCode = 1
+        })
+      }
 
       // run and exec are one-shot: once the run loop finishes, the process
       // MUST terminate. Background runtime handles — agent communication
@@ -960,6 +1044,12 @@ export const RunCommand = cmd({
 
     if (args.attach) {
       const sdk = createAllternitClient({ baseUrl: args.attach, directory })
+      const attachURL = args.attach
+      serverFetch = (route, init) =>
+        fetch(new URL(route, attachURL), {
+          ...init,
+          headers: { ...(init.headers as Record<string, string>), "x-gizzi-directory": directory ?? process.cwd() },
+        })
       return await execute(sdk)
     }
 
@@ -991,6 +1081,11 @@ export const RunCommand = cmd({
         return Server.App().fetch(request)
       }) as typeof globalThis.fetch
       const sdk = createAllternitClient({ baseUrl: "http://gizzi.internal", fetch: fetchFn })
+      serverFetch = (route, init) =>
+        fetchFn(new URL(route, "http://gizzi.internal"), {
+          ...init,
+          headers: { ...(init.headers as Record<string, string>), "x-gizzi-directory": process.cwd() },
+        })
       try {
         await execute(sdk)
       } finally {
