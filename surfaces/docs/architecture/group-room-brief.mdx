@@ -1,0 +1,22 @@
+---
+title: Group room brief
+description: State, media references, and motion for the group stage center.
+---
+
+The group stage uses `RoomBrief` in `allternit-ai/src/components/bots/stage/group/`. `GroupChatView` derives its content with `roomBriefContent()` and passes the current speaker, speech, handoff and error state. Desktop, web phone and the PWA share this component.
+
+## Content contract
+
+The model reads the last 100 room messages. Moments retains up to 12 nonempty bot replies, excluding thread announcements and passes. The current request is the latest nonempty user message. Quotes are unabridged inside a scrolling body; the focus excerpt is clamped. No model call or inferred task status is used.
+
+Shared references come from explicit Markdown HTTPS image and video links. The extractor accepts raster image and video file extensions, strips no query parameters, rejects credentials, and deduplicates URLs. It keeps at most eight references. Media is fetched only after Load; videos never autoplay. Failed previews retain a retry action and the original link. This does not resolve artifact IDs or fetch previews from a bot's other threads.
+
+## Interaction and motion
+
+Now updates with room props. Moments preserves a selected message ID as replies arrive; if the selected message leaves the bounded window it falls back to the newest. The optional montage advances every 6.5 seconds and pauses on hover, focus or a hidden document. Reduced motion removes playback and movement. View changes fade and travel six pixels over 180 milliseconds, with no travel under reduced motion.
+
+Sending starts the existing 440 ms dock flight into the members pill, giving the conversation the screen. Scrolling the conversation uses the same dock gesture. Tapping the members pill brings the stage and brief back. On phones, bots form a compact row above the brief; the brief and conversation have separate scrolling areas. Controls have visible focus styles and coarse-pointer touch targets.
+
+## Verification
+
+The focused tests cover content extraction, excluded announcements, URL filtering, new replies during browsing, speaker/handoff content, media loading and failure, requested playback, reading pauses and reduced motion. The motion review uses the implemented RoomBrief component with sample data in an artifact preview. Production build and deployed device verification are separate release steps.

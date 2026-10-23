@@ -159,6 +159,7 @@
               "architecture/dependency-map",
               "architecture/first-run-setup",
               "architecture/bot-setup-picker",
+              "architecture/group-room-brief",
               "architecture/meet-your-bots",
               "architecture/two-machines",
               "architecture/contracts-not-models",
