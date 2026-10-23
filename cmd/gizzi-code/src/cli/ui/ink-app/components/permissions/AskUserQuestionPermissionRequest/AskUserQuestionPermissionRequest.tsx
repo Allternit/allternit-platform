@@ -22,6 +22,7 @@ import type { PermissionRequestProps } from '../PermissionRequest';
 import { QuestionView } from './QuestionView';
 import { SubmitQuestionsView } from './SubmitQuestionsView';
 import { useMultipleChoiceState } from './use-multiple-choice-state';
+import { expandQuestions, hasFollowUp, mergeAnswers } from './decision-tree';
 const MIN_CONTENT_HEIGHT = 12;
 const MIN_CONTENT_WIDTH = 40;
 // Lines used by chrome around the content area (nav bar, title, footer, help text, etc.)
@@ -164,9 +165,11 @@ function AskUserQuestionPermissionRequestBody(t0) {
     setAnswer,
     setTextInputMode
   } = state;
-  const currentQuestion = currentQuestionIndex < (questions?.length || 0) ? questions?.[currentQuestionIndex] : null;
-  const isInSubmitView = currentQuestionIndex === (questions?.length || 0);
-  const t11 = questions?.every(q_0 => q_0?.question && !!answers[q_0.question]) ?? false;
+  // Decision trees: a picked branch with `then` adds its follow-up right after it.
+  const shownQuestions = expandQuestions(questions, answers).display;
+  const currentQuestion = currentQuestionIndex < shownQuestions.length ? shownQuestions[currentQuestionIndex] : null;
+  const isInSubmitView = currentQuestionIndex === shownQuestions.length;
+  const t11 = shownQuestions.every(q_0 => q_0?.question && !!answers[q_0.question]);
 
   const allQuestionsAnswered = t11;
   const hideSubmitTab = questions.length === 1 && !questions[0]?.multiSelect;
@@ -186,8 +189,9 @@ function AskUserQuestionPermissionRequestBody(t0) {
 
   const handleCancel = t12;
   const t13 = async () => {
+      const mergedAnswers = mergeAnswers(questions, answers);
       const questionsWithAnswers = questions.map(q_1 => {
-        const answer = answers[q_1.question];
+        const answer = mergedAnswers[q_1.question];
         if (answer) {
           return `- "${q_1.question}"\n  Answer: ${answer}`;
         }
@@ -214,8 +218,9 @@ function AskUserQuestionPermissionRequestBody(t0) {
 
   const handleRespondToClaude = t13;
   const t14 = async () => {
+      const mergedAnswers_0 = mergeAnswers(questions, answers);
       const questionsWithAnswers_0 = questions.map(q_2 => {
-        const answer_0 = answers[q_2.question];
+        const answer_0 = mergedAnswers_0[q_2.question];
         if (answer_0) {
           return `- "${q_2.question}"\n  Answer: ${answer_0}`;
         }
@@ -239,7 +244,8 @@ Questions asked and answers provided:\n${questionsWithAnswers_0}`;
     };
 
   const handleFinishPlanInterview = t14;
-  const t15 = async answersToSubmit => {
+  const t15 = async shownAnswers => {
+      const answersToSubmit = mergeAnswers(questions, shownAnswers);
       if (metadataSource) {
         logEvent("tengu_ask_user_question_accepted", {
           source: metadataSource as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
@@ -299,6 +305,12 @@ Questions asked and answers provided:\n${questionsWithAnswers_0}`;
         }
       }
       const isSingleQuestion = questions.length === 1;
+      const answeredRoot = questions.find(q_4 => q_4.question === questionText_1);
+      if (!isMultiSelect && shouldAdvance && answeredRoot && hasFollowUp(answeredRoot, answer_2)) {
+        // Show the branch's follow-up question next instead of submitting.
+        setAnswer(questionText_1, answer_2, true);
+        return;
+      }
       if (!isMultiSelect && isSingleQuestion && shouldAdvance) {
         const updatedAnswers = {
           ...answers,
@@ -322,7 +334,7 @@ Questions asked and answers provided:\n${questionsWithAnswers_0}`;
     };
 
   const handleFinalResponse = t17;
-  const maxIndex = hideSubmitTab ? (questions?.length || 1) - 1 : questions?.length || 0;
+  const maxIndex = hideSubmitTab ? shownQuestions.length - 1 : shownQuestions.length;
   const t18 = () => {
       if (currentQuestionIndex > 0) {
         prevQuestion();
@@ -356,12 +368,12 @@ Questions asked and answers provided:\n${questionsWithAnswers_0}`;
 
     const t25 = id_0 => onRemoveImage(currentQuestion.question, id_0);
 
-    const t26 = <><QuestionView question={currentQuestion} questions={questions} currentQuestionIndex={currentQuestionIndex} answers={answers} questionStates={questionStates} hideSubmitTab={hideSubmitTab} minContentHeight={globalContentHeight} minContentWidth={globalContentWidth} planFilePath={planFilePath} onUpdateQuestionState={updateQuestionState} onAnswer={handleQuestionAnswer} onTextInputFocus={setTextInputMode} onCancel={handleCancel} onSubmit={nextQuestion} onTabPrev={handleTabPrev} onTabNext={handleTabNext} onRespondToClaude={handleRespondToClaude} onFinishPlanInterview={handleFinishPlanInterview} onImagePaste={t23} pastedContents={t24} onRemoveImage={t25} /></>;
+    const t26 = <><QuestionView question={currentQuestion} questions={shownQuestions} currentQuestionIndex={currentQuestionIndex} answers={answers} questionStates={questionStates} hideSubmitTab={hideSubmitTab} minContentHeight={globalContentHeight} minContentWidth={globalContentWidth} planFilePath={planFilePath} onUpdateQuestionState={updateQuestionState} onAnswer={handleQuestionAnswer} onTextInputFocus={setTextInputMode} onCancel={handleCancel} onSubmit={nextQuestion} onTabPrev={handleTabPrev} onTabNext={handleTabNext} onRespondToClaude={handleRespondToClaude} onFinishPlanInterview={handleFinishPlanInterview} onImagePaste={t23} pastedContents={t24} onRemoveImage={t25} /></>;
 
     return t26;
   }
   if (isInSubmitView) {
-    const t23 = <><SubmitQuestionsView questions={questions} currentQuestionIndex={currentQuestionIndex} answers={answers} allQuestionsAnswered={allQuestionsAnswered} permissionResult={toolUseConfirm.permissionResult} minContentHeight={globalContentHeight} onFinalResponse={handleFinalResponse} /></>;
+    const t23 = <><SubmitQuestionsView questions={shownQuestions} currentQuestionIndex={currentQuestionIndex} answers={answers} allQuestionsAnswered={allQuestionsAnswered} permissionResult={toolUseConfirm.permissionResult} minContentHeight={globalContentHeight} onFinalResponse={handleFinalResponse} /></>;
 
     return t23;
   }

@@ -40,5 +40,11 @@ Usage notes:
 - Use multiSelect: true to allow multiple answers to be selected for a question
 - If you recommend a specific option, make that the first option in the list and add "(Recommended)" at the end of the label
 
+Decision trees (for a consequential decision with follow-ups, such as an incident, a deploy or a migration):
+- Set \`risk\` (low, medium or high) and \`context\` (one or two lines of facts) on the question.
+- Set \`recommended: true\` on your pick and \`caution\` on an option with a real cost (e.g. "Skips 1,284 tests").
+- Give an option \`then: { question, options }\` when picking it needs a second choice. The user sees the follow-up only after picking that option, and the answer comes back as "Option → Follow-up choice".
+- Keep it to one level of follow-ups, and use it only on single-select questions.
+
 Plan mode note: In plan mode, use this tool to clarify requirements or choose between approaches BEFORE finalizing your plan. Do NOT use this tool to ask "Is my plan ready?" or "Should I proceed?" - use ${EXIT_PLAN_MODE_TOOL_NAME} for plan approval. IMPORTANT: Do not reference "the plan" in your questions (e.g., "Do you have feedback about the plan?", "Does the plan look good?") because the user cannot see the plan in the UI until you call ${EXIT_PLAN_MODE_TOOL_NAME}. If you need plan approval, use ${EXIT_PLAN_MODE_TOOL_NAME} instead.
 `

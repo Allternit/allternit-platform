@@ -32,6 +32,17 @@ The other branches fade back as you choose. When the answer is sent, a **Sent** 
 
 On a phone, or in a narrow window, the tree stacks into an indented list with the same lines, numbers and keys.
 
+## In the gizzi terminal
+
+The gizzi terminal asks the same decision one step at a time:
+
+- The question shows its risk in colour (**HIGH RISK**, **MEDIUM RISK** or **LOW RISK**) with the facts beside it.
+- The agent's pick reads "· Agent's pick". A cost shows after the option's description with a ⚠ sign. An option with a follow-up shows "then:" and the follow-up question.
+- Pick an option with a follow-up, and the follow-up opens next as a **Then** tab. Its title says which option led to it.
+- **←** and **→** (or Tab) move between the steps. If you go back and pick a different option, its own follow-up replaces the old one.
+
+The agent gets the same path as in the app, for example "Roll back to #481 → No notice". In the terminal, the agent asks with the `AskUserQuestion` tool, which takes the same fields as the table below.
+
 ## For agents
 
 Decision trees use the `question` tool's optional fields:

@@ -216,6 +216,89 @@ function internalMessagesToOpenAI(messages: Message[]): Array<{
     out.push({ role: role === 'system' ? 'system' : 'user', content: text })
   }
 
+  return groupToolResults(out)
+}
+
+type OpenAIMessage = {
+  role: string
+  content?: string | null
+  tool_call_id?: string
+  tool_calls?: unknown[]
+}
+
+// OpenAI-compatible servers (Allternit Cloud, Kimi, DeepSeek, vLLM) reject a
+// request unless every tool call is answered by `tool` messages right after
+// its assistant message. The transcript splits one assistant turn into a
+// message per block and can put user text or attachments between a call and
+// its result, so merge the turn, move its results up, and answer any call
+// that has no result.
+// Bun reuses keep-alive sockets; a request after an idle gap (the user was
+// answering a question) can land on one the server already closed and fail
+// with "The socket connection was closed unexpectedly" before any byte. Nothing
+// was sent to the model, so retry once on a fresh connection.
+export async function fetchRetryingStaleSocket(url: string, init: RequestInit): Promise<Response> {
+  try {
+    return await fetch(url, init)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    const stale = /socket connection was closed unexpectedly|ECONNRESET|socket hang up/i.test(message)
+    if (!stale || init.signal?.aborted) throw error
+    return await fetch(url, { ...init, keepalive: false, headers: { ...(init.headers as Record<string, string>), Connection: 'close' } })
+  }
+}
+
+// True for a server on this machine (localhost, 127.x, ::1, 0.0.0.0).
+export function isLoopbackURL(url: string): boolean {
+  try {
+    const host = new URL(url).hostname.replace(/^\[|\]$/g, '')
+    return host === 'localhost' || host === '::1' || host === '0.0.0.0' || host.startsWith('127.')
+  } catch {
+    return false
+  }
+}
+
+export function groupToolResults(messages: OpenAIMessage[]): OpenAIMessage[] {
+  const merged: OpenAIMessage[] = []
+  for (const msg of messages) {
+    const prev = merged[merged.length - 1]
+    if (msg.role === 'assistant' && prev?.role === 'assistant' && !prev.tool_calls?.length) {
+      const content = [prev.content, msg.content].filter(Boolean).join('\n')
+      merged[merged.length - 1] = { ...msg, content }
+      continue
+    }
+    if (msg.role === 'assistant' && prev?.role === 'assistant' && msg.tool_calls?.length && !msg.content) {
+      prev.tool_calls = [...(prev.tool_calls ?? []), ...msg.tool_calls]
+      continue
+    }
+    merged.push(msg)
+  }
+
+  const out: OpenAIMessage[] = []
+  const used = new Set<number>()
+  for (let i = 0; i < merged.length; i++) {
+    if (used.has(i)) continue
+    const msg = merged[i]!
+    if (msg.role === 'tool') continue
+    out.push(msg)
+    const ids = (msg.tool_calls ?? []).map(call => String((call as { id?: unknown }).id ?? ''))
+    if (msg.role !== 'assistant' || ids.length === 0) continue
+    for (const id of ids) {
+      let found = -1
+      for (let j = i + 1; j < merged.length; j++) {
+        if (merged[j]!.role === 'assistant') break
+        if (!used.has(j) && merged[j]!.role === 'tool' && merged[j]!.tool_call_id === id) {
+          found = j
+          break
+        }
+      }
+      if (found >= 0) {
+        used.add(found)
+        out.push(merged[found]!)
+      } else {
+        out.push({ role: 'tool', tool_call_id: id, content: 'No result: the tool call was interrupted.' })
+      }
+    }
+  }
   return out
 }
 
@@ -339,12 +422,16 @@ export async function* queryLocalModelWithStreaming({
 
   const resolvedModelId = await resolveServedModelId(baseURL, config.apiKey, modelId, signal)
 
-  // Normalize to strict user/assistant alternation: local templates like
-  // Gemma3 reject system/tool roles ("Conversation roles must alternate...").
-  const openaiMessages = normalizeRoleAlternation([
+  // Servers on this machine (mlx_lm, llama.cpp, Ollama) get strict
+  // user/assistant alternation: templates like Gemma3 reject system/tool roles
+  // ("Conversation roles must alternate..."). Remote OpenAI-compatible servers
+  // get native system and tool messages; strict ones (Allternit Cloud, Kimi,
+  // DeepSeek) reject tool calls whose results were folded into user text.
+  const chatMessages = [
     { role: 'system', content: asSystemPrompt(systemPrompt).join('\n\n') },
     ...internalMessagesToOpenAI(messages),
-  ])
+  ]
+  const openaiMessages = isLoopbackURL(baseURL) ? normalizeRoleAlternation(chatMessages) : chatMessages
 
   const body: Record<string, unknown> = {
     model: resolvedModelId,
@@ -372,7 +459,7 @@ export async function* queryLocalModelWithStreaming({
       headers.Authorization = `Bearer ${config.apiKey}`
     }
 
-    const response = await fetch(`${baseURL}/chat/completions`, {
+    const response = await fetchRetryingStaleSocket(`${baseURL}/chat/completions`, {
       method: 'POST',
       headers,
       body: JSON.stringify(body),
@@ -650,10 +737,11 @@ export async function sideQueryLocalModel(opts: {
   const servedModelId = await resolveServedModelId(config.baseURL, config.apiKey, modelId, opts.signal)
 
   const system = opts.system.map(b => b.text).filter(Boolean).join('\n\n')
-  const messages = normalizeRoleAlternation([
+  const sideMessages = [
     ...(system ? [{ role: 'system', content: system }] : []),
     ...opts.messages.map(m => ({ role: m.role, content: flattenContentToText(m.content as Parameters<typeof flattenContentToText>[0]) })),
-  ])
+  ]
+  const messages = isLoopbackURL(config.baseURL) ? normalizeRoleAlternation(sideMessages) : sideMessages
   const tools = (opts.tools ?? [])
     .filter(t => typeof t.name === 'string')
     .map(t => ({
@@ -698,7 +786,7 @@ export async function sideQueryLocalModel(opts: {
     usage?: { prompt_tokens?: number; completion_tokens?: number }
   }
   const complete = async (): Promise<Completion> => {
-    const response = await fetch(`${config.baseURL}/chat/completions`, {
+    const response = await fetchRetryingStaleSocket(`${config.baseURL}/chat/completions`, {
       method: 'POST',
       headers,
       body: JSON.stringify(body),

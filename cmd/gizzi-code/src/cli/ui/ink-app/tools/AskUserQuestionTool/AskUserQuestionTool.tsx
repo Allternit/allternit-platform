@@ -10,16 +10,31 @@ import type { Tool } from '../../Tool';
 import { buildTool, type ToolDef } from '../../Tool';
 import { lazySchema } from '../../utils/lazySchema';
 import { ASK_USER_QUESTION_TOOL_CHIP_WIDTH, ASK_USER_QUESTION_TOOL_NAME, ASK_USER_QUESTION_TOOL_PROMPT, DESCRIPTION, PREVIEW_FEATURE_PROMPT } from './prompt';
+const questionLeafSchema = lazySchema(() => z.object({
+  label: z.string().describe('The display text for this follow-up choice (1-5 words).'),
+  description: z.string().describe('What happens if the user picks this choice.'),
+  recommended: z.boolean().optional().describe('Marks this choice as your pick.'),
+  caution: z.string().optional().describe('A short cost or risk of this choice.')
+}));
+const questionFollowUpSchema = lazySchema(() => z.object({
+  question: z.string().describe('The follow-up question, ending with a question mark.'),
+  options: z.array(questionLeafSchema()).min(2).max(4).describe('2-4 choices for the follow-up. "Other" is added automatically.')
+}));
 const questionOptionSchema = lazySchema(() => z.object({
   label: z.string().describe('The display text for this option that the user will see and select. Should be concise (1-5 words) and clearly describe the choice.'),
   description: z.string().describe('Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.'),
-  preview: z.string().optional().describe('Optional preview content rendered when this option is focused. Use for mockups, code snippets, or visual comparisons that help users compare options. See the tool description for the expected content format.')
+  preview: z.string().optional().describe('Optional preview content rendered when this option is focused. Use for mockups, code snippets, or visual comparisons that help users compare options. See the tool description for the expected content format.'),
+  recommended: z.boolean().optional().describe("Decision trees: marks this option as your pick. Mark at most one option per question."),
+  caution: z.string().optional().describe('Decision trees: a short cost or risk of this option, e.g. "Skips 1,284 tests".'),
+  then: questionFollowUpSchema().optional().describe('Decision trees: a follow-up question asked only when the user picks this option. The answer comes back as "Option → Follow-up choice". Single-select questions only.')
 }));
 const questionSchema = lazySchema(() => z.object({
   question: z.string().describe('The complete question to ask the user. Should be clear, specific, and end with a question mark. Example: "Which library should we use for date formatting?" If multiSelect is true, phrase it accordingly, e.g. "Which features do you want to enable?"'),
   header: z.string().describe(`Very short label displayed as a chip/tag (max ${ASK_USER_QUESTION_TOOL_CHIP_WIDTH} chars). Examples: "Auth method", "Library", "Approach".`),
   options: z.array(questionOptionSchema()).min(2).max(4).describe(`The available choices for this question. Must have 2-4 options. Each option should be a distinct, mutually exclusive choice (unless multiSelect is enabled). There should be no 'Other' option, that will be provided automatically.`),
-  multiSelect: z.boolean().default(false).describe('Set to true to allow the user to select multiple options instead of just one. Use when choices are not mutually exclusive.')
+  multiSelect: z.boolean().default(false).describe('Set to true to allow the user to select multiple options instead of just one. Use when choices are not mutually exclusive.'),
+  risk: z.enum(['low', 'medium', 'high']).optional().describe('Decision trees: how much is at stake in this decision.'),
+  context: z.string().optional().describe('Decision trees: one or two lines of facts the user needs to decide (what happened, what it affects).')
 }));
 const annotationsSchema = lazySchema(() => {
   const annotationSchema = z.object({
@@ -145,6 +160,15 @@ export const AskUserQuestionTool: Tool<InputSchema, Output> = buildTool({
   async validateInput({
     questions
   }) {
+    for (const q of questions) {
+      if (q.multiSelect && q.options.some(opt => opt.then)) {
+        return {
+          result: false,
+          message: `Question "${q.question}": follow-up questions ("then") need a single-select question. Set multiSelect to false or remove "then".`,
+          errorCode: 1
+        };
+      }
+    }
     if (getQuestionPreviewFormat() !== 'html') {
       return {
         result: true

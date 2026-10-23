@@ -14,6 +14,8 @@ import { Divider } from '../../design-system/Divider';
 import { FilePathLink } from '../../FilePathLink';
 import { PermissionRequestTitle } from '../PermissionRequestTitle';
 import { PreviewQuestionView } from './PreviewQuestionView';
+import { DecisionContext } from './DecisionContext';
+import { optionDescription, optionLabel } from './decision-tree';
 import { QuestionNavigationBar } from './QuestionNavigationBar';
 import type { QuestionState } from './use-multiple-choice-state';
 type Props = {
@@ -171,7 +173,7 @@ export function QuestionView({
 
   const t10_2 = <QuestionNavigationBar questions={questions} currentQuestionIndex={currentQuestionIndex} answers={answers} hideSubmitTab={hideSubmitTab} />;
 
-  const t11_2 = <PermissionRequestTitle title={question.question} color="text" />;
+  const t11_2 = <><PermissionRequestTitle title={question.question} color="text" /><DecisionContext question={question} /></>;
 
   const t12_2 = <Box marginTop={1}>{question.multiSelect ? <SelectMulti key={question.question} options={options} defaultValue={questionStates[question.question]?.selectedValue as string[] | undefined} onChange={values => {
         onUpdateQuestionState(questionText, {
@@ -226,8 +228,8 @@ function _temp2(opt) {
   return {
     type: "text" as const,
     value: opt.label,
-    label: opt.label,
-    description: opt.description
+    label: optionLabel(opt),
+    description: optionDescription(opt)
   };
 }
 function _temp(s) {

@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Added
+- Decision trees in the terminal: `AskUserQuestion` takes `risk`, `context`, and per-option
+  `recommended`, `caution` and `then`. A picked option with a follow-up opens it as a "Then"
+  step, and the answer comes back as "Option → Follow-up choice".
+
+### Fixed
+- Every tool call on a remote OpenAI-compatible model (Allternit Cloud Kimi K3, DeepSeek V4)
+  failed on the next turn with "incomplete parallel tool calls". Tool results were sent as user
+  text while the call stayed open. Remote servers now get native system and tool messages, with
+  each call's results right after it. Servers on this machine (mlx, llama.cpp, Ollama) keep strict
+  user/assistant turns.
+- The first request after an idle gap could fail with "The socket connection was closed
+  unexpectedly". It now retries once on a fresh connection.
+
 ## 2.2.12 (2026-10-23)
 
 ### Added

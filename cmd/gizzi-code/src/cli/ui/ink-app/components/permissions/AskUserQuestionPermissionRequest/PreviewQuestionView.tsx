@@ -13,6 +13,8 @@ import { editPromptInEditor } from '../../../utils/promptEditor';
 import { Divider } from '../../design-system/Divider';
 import TextInput from '../../TextInput';
 import { PermissionRequestTitle } from '../PermissionRequestTitle';
+import { DecisionContext } from './DecisionContext';
+import { optionLabel } from './decision-tree';
 import { PreviewBox } from './PreviewBox';
 import { QuestionNavigationBar } from './QuestionNavigationBar';
 import type { QuestionState } from './use-multiple-choice-state';
@@ -260,6 +262,7 @@ export function PreviewQuestionView({
       <Box flexDirection="column" paddingTop={0}>
         <QuestionNavigationBar questions={questions} currentQuestionIndex={currentQuestionIndex} answers={answers} hideSubmitTab={hideSubmitTab} />
         <PermissionRequestTitle title={question.question} color={'text'} />
+        <DecisionContext question={question} />
 
         <Box flexDirection="column" minHeight={minContentHeight}>
           {/* Side-by-side layout: options on left, preview on right */}
@@ -274,7 +277,7 @@ export function PreviewQuestionView({
                     <Text dimColor> {index_0 + 1}.</Text>
                     <Text color={isSelected ? 'success' : isFocused ? 'suggestion' : undefined} bold={isFocused}>
                       {' '}
-                      {option_0.label}
+                      {optionLabel(option_0)}
                     </Text>
                     {isSelected && <Text color="success"> {figures.tick}</Text>}
                   </Box>;
