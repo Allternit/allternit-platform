@@ -27,13 +27,17 @@ The switch at the top right picks the layout:
 - **Grid:** two columns on phones and as many as fit on Desktop. Cards sit under their project's name.
 - **Deck:** one tall card per session, side by side. Swipe or scroll sideways. A deck card also shows your last message.
 
-Each overview remembers the layout you last used.
+Each overview remembers the layout you last used. On Desktop the cards are larger, with bigger text, than on a phone.
+
+**Read a card.** A card shows the last few messages of the conversation; a bot thread shows what it set out to do, its summary and its latest status. The name stays at the top. On Desktop, point at a card (or focus it with the keyboard) and scroll to read the rest; at rest it fades out at the bottom. On a phone, swipe up and down inside the card.
 
 **Filter by project.** Under the title, **All projects** opens a list of projects (repos in Code) with their counts. A dot marks a project with a session working. The line also counts how many sessions are open, working and waiting on you.
 
 ## Open, close and start
 
 - **Open:** click or tap a card. With the keyboard, focus a card and press Enter.
+- **Rename:** the **⋯** on a card has **Rename**, then type the new name and press Enter (Escape cancels). With the keyboard, focus a card and press F2. Agent runs and a bot's Main chat have no Rename.
+- **⋯ menu:** **Open**, **Rename** and **Archive** (**Mark done** for a bot's threads).
 - **Close:** the **×** on a card archives the session. On phones you can also swipe a card up. Archived sessions are kept: they leave Recents and the overview, and show under the **Archived** filter in the Recents filters on Desktop. Agent runs can't be closed from here.
 - **Start:** **New chat** (or **New thread** in Code) at the bottom starts one.
 
@@ -53,6 +57,8 @@ Each overview remembers the layout you last used.
 - Data: `useModeOverview(mode)` in `useModeOverview.ts` builds the cards from the chat, Cowork and code session stores (`streamingBySession`, `unreadCounts`, last messages) and the browser agent's runs. `archiveOverviewItem` sets `metadata.archived` (code threads use `setCodeSessionArchived`).
 - Desktop: `DesktopSessionOverview` wraps `RecentsView` (Home) and `ThreadsView` (Code). The cards/list choice is kept in `allternit.session-overview.desktop-view.<scope>`.
 - Phone: `PhoneOverviewOverlay` (opened with `usePhoneNav().openOverview(true)`), `PhoneOverviewButton` in the Chats and Code headers, and **See all** in `PhoneDrawer`.
-- Bots: `src/views/bots/home/BotThreadsOverview.tsx` in the deck's Threads tab.
+- Bots: `src/views/bots/home/BotThreadsOverview.tsx` in the deck's Threads tab. Main chat is an `OverviewItem` with `lead: true` (first, outside project groups, same card size), filled from the main session's thread.
+- Cards: `OverviewItem.transcript` (last messages, oldest first; `recentTranscript` takes the last 8, each up to 1,200 characters) fills a `so-body` that is still at rest and scrolls on `:hover` / `:focus-within` (always on touch). A press that moves more than 6 px is a scroll, not a tap. Sizes live in `SIZE` (phone vs Desktop).
+- Rename: `onRename(item, title)`. `renameOverviewItem` calls each store's `updateSession(id, { name })`; bot threads use `threadApi.patch(id, { title })`. `noRename` hides it. The rename field opens after the ⋯ menu has closed (`onCloseAutoFocus`), so the menu's focus return doesn't blur it.
 - Archived chats now show as archived in the Desktop rail's Recents and stay out of the phone drawer's Recents, like Cowork and Code sessions.
 - Story: `src/components/session-overview/SessionOverview.stories.tsx`.
