@@ -238,19 +238,42 @@ Artifacts made before Artifacts v2 are copied into the cloud once per device. De
 
 ## Phone drawer and modes
 
-On ai.allternit.com on a phone and in the m.allternit.com app, the menu (tap **☰** or swipe from the left edge) is the desktop rail, organized the same way as on Desktop.
+On ai.allternit.com on a phone and in the m.allternit.com app, the menu (tap **☰** or swipe from the left edge) is the desktop rail for the mode you are in, laid out like the Claude iOS drawer. It covers 92% of the screen (at most 440 px on a tablet). Tap the strip of chat on the right, or swipe the menu left, to close it.
 
-- **Mode wheel.** The button at the top left shows the mode you're in. Tap it to see the other modes and pick one: **Home**, **Bots**, **Code** or **ACI**, the same four modes as the desktop mode wheel. Switching modes keeps the menu open on that mode's rail. Bots shows the same unread count as on Desktop.
+- **Top line.** The mode button, the wordmark, **Inbox** and **Search**. Tap the mode button to pick **Home**, **Bots**, **Code** or **ACI**, the same four modes as the desktop mode wheel. Switching modes keeps the menu open on that mode's rail. Bots shows the same unread count as on Desktop. **Search** opens a full-screen search of chats, code threads, agent runs, projects and bots.
 - **Wordmark.** Home shows the A://TERNIT wordmark. Bots shows A://TERNIT BOTS and ACI shows A://TERNIT ACI, set a little smaller so they fit beside the mode icon. Code shows the gizzi code wordmark.
 - **One mode's rail at a time:**
-  - **Home:** New chat, Projects, Artifacts and Automation Tasks, then your recent chats and Cowork tasks (marked with a cloud). Cowork is the Chat/Cowork switch in the composer, as on Desktop.
-  - **Code:** New Thread, Projects, Artifacts and Automation Tasks, then your recent code threads.
-  - **ACI:** New Session, MCP Apps, ACI Extensions, Computers and Teach, then your recent agent runs.
-  - **Bots:** the desktop Bots rail, with Home, projects, bots, threads and group chats.
-- **Inbox** is the tray icon at the top right of the menu. **Phones** is the icon beside your name at the bottom.
-- **Settings** opens from your name at the bottom. **Customize** (skills, connectors, plugins) is the first row in Settings.
+  - **Home:** Projects, Artifacts, Automation Tasks, Customize and **More** (choose which tabs show; the choice is shared with Desktop). Then **Teammates** (your bots, with how many need you), **Pinned**, and **Recents** with a filter, a preview line, the time and a working marker.
+  - **Code:** Projects, Artifacts, Automation Tasks and More, then your recent code threads grouped by repository.
+  - **ACI:** MCP Apps, ACI Extensions, Computers, Teach and More, then your pinned apps and recent agent runs.
+  - **Bots:** your main bot on top (tap it for its main chat), then your bot chats and threads grouped under each project, **No project** last, then your bots with what each is doing (amber means it needs you) and your group chats. **Home** at the top opens the Bots home.
+- **Bottom of the menu.** Your avatar with a ring that shows your cloud usage (tap it for Settings), **Phones**, and a floating **New** button: New chat in Home, New thread in Code and Bots, New session in ACI. Press and hold **New** for the other ways to start and **Quick task**.
 
-Developer notes: the mode list is shared with Desktop through `src/shell/mode-buttons.ts`. The phone keeps the active mode in `usePhoneNav().mode`. Opening a mode's own section (Chats, Bots, Code or ACI) sets the mode. Shared sections (Projects, Artifacts, Automation Tasks, Settings) keep the current mode. `setMode` switches modes from the wheel.
+Developer notes: the mode list is shared with Desktop through `src/shell/mode-buttons.ts`. The phone keeps the active mode in `usePhoneNav().mode`. Opening a mode's own section (Chats, Bots, Code or ACI) sets the mode. Shared sections (Projects, Artifacts, Automation Tasks, Settings) keep the current mode. `setMode` switches modes from the wheel. The drawer has no visible title bar; its title stays for screen readers. The Bots rail is `PhoneBotsRail.tsx`; rail data and the open-bot path are shared with Desktop (`src/shell/rail/*`, `src/lib/bots/open-bot-main-chat.ts`).
+
+## Quick bot strip
+
+Jump into a bot's chat without opening the menu.
+
+- **Desktop:** collapse the rail, then hover over (or tab to) the widget at the top left. Your bots appear in a column under it, each with a green dot while it works and an amber dot when it needs you. Click one to open its main chat. The column hides a moment after the pointer leaves, and **Escape** closes it.
+- **Phone:** press and hold **☰**. Tap a bot to open its main chat. A normal tap on **☰** still opens the menu.
+
+## Composer on the phone
+
+The phone composer is the Desktop composer: the top deck, the message box and the bottom deck (**Agent mode**, **Plugins**, **Artifacts**) read as one unit, and on Home and the launch screens it rests at the bottom of the screen. Its controls always fit on one row, down to a 375 px wide phone. The model name shortens first. **Incognito ask** in a bot thread shows as an eye icon. The Chat | Cowork switch shows icons only, and **Output** moves into the **+** sheet. In Code, the computer, folder and worktree chips above the box wrap to a second line instead of running off the screen.
+
+## Bots on the phone
+
+- **Bot chat.** The top line is **Back**, the bot (name and what it is doing) and **⋯**. Back leaves the thread for the Bots home. Your messages wear the bot's own colour. Tap the bot for its page.
+- **Bot page.** The bot's avatar, role and **Edit**, then its Threads, Tasks, Routines, Artifacts, Memory, Computer and Channels, each with a live count, and each opening that part.
+- **Create bot.** A short sheet: pick an avatar pack and look, a colour, and a name, then **Create**. Role, instructions, brain and computer are under **More options**.
+- **Connections.** The apps button at the top of the Bots home opens the apps your bots can use: what is connected (with **Sign in** where a sign-in expired), apps by category with **Add**, and your subscriptions.
+- A bot's main chat is found again on every phone instead of being made again, so a bot has one **Main chat**.
+
+## Section screens and Settings
+
+- **Projects, Artifacts, Automation Tasks** and the sessions overview have **☰**, the title and a filter button at the top, and a floating search box and **New** button at the bottom. Artifacts show as thumbnail cards.
+- **Settings** is a full sheet: your account card (plan and how much is left), then **Account**, **Assistant**, **Appearance** (Light, Dark, System), **Bots & agents**, **Computers** and **Advanced**, with simple on/off settings as switches. Pages open full width with a back button. **Log out** is at the bottom. Every settings page has a place on the phone: `settings.config.ts` gives each page a `phone: { group, order }`, and a test checks that every page is reachable.
 
 ## Navigation appearance
 
