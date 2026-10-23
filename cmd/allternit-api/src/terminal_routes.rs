@@ -275,14 +275,25 @@ fn default_shell() -> String {
 
 /// The argv for a new terminal. Empty runs the pane engine's default shell.
 /// On Windows a Unix shell path (the web UI defaults to `/bin/zsh`) can't
-/// run, so it also means the default shell (PowerShell).
+/// run, so it also means the default shell (PowerShell). Elsewhere an empty
+/// shell, or an absolute path that isn't on this computer (zsh on a Linux
+/// cloud computer), runs `$SHELL` or bash when there is one, instead of a
+/// spawn that fails with ENOENT.
 fn shell_command(shell: &str) -> Vec<String> {
     let shell = shell.trim();
-    if shell.is_empty() || (cfg!(windows) && shell.starts_with('/')) {
-        Vec::new()
-    } else {
-        vec![shell.to_string()]
+    if cfg!(windows) && (shell.is_empty() || shell.starts_with('/')) {
+        return Vec::new();
     }
+    let exists = |path: &str| std::path::Path::new(path).exists();
+    if !shell.is_empty() && (!shell.starts_with('/') || exists(shell)) {
+        return vec![shell.to_string()];
+    }
+    std::env::var("SHELL")
+        .ok()
+        .filter(|path| path.starts_with('/') && exists(path))
+        .or_else(|| exists("/bin/bash").then(|| "/bin/bash".to_string()))
+        .map(|path| vec![path])
+        .unwrap_or_default()
 }
 
 fn default_cols() -> u16 {
@@ -600,13 +611,16 @@ mod transport_tests {
 
     #[test]
     fn shell_command_runs_the_default_shell_when_empty() {
-        assert!(shell_command("").is_empty());
-        assert!(shell_command("  ").is_empty());
         if cfg!(windows) {
+            assert!(shell_command("").is_empty());
+            assert!(shell_command("  ").is_empty());
             assert!(shell_command("/bin/zsh").is_empty());
             assert_eq!(shell_command("pwsh.exe"), vec!["pwsh.exe".to_string()]);
         } else {
-            assert_eq!(shell_command("/bin/zsh"), vec!["/bin/zsh".to_string()]);
+            assert_eq!(shell_command("/bin/sh"), vec!["/bin/sh".to_string()]);
+            // Missing or empty: $SHELL or bash when this computer has one, else the engine's default.
+            assert_eq!(shell_command("/no/such/shell"), shell_command(""));
+            assert!(shell_command("").iter().all(|path| std::path::Path::new(path).exists()));
         }
     }
 }

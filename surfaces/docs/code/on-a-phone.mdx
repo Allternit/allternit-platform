@@ -1,0 +1,41 @@
+---
+title: 'Code on a phone'
+description: 'How Code looks and works at phone sizes on ai.allternit.com and in the m.allternit.com app: the header, the session row, the prompt and the terminal.'
+---
+
+Code on a phone is the same Code as on Desktop, sized for one hand. It runs on your cloud computer (or the computer you picked), so the header says **Runs in the cloud**.
+
+## Header
+
+From left to right: **☰** (the menu), the title, and up to three buttons:
+
+- **Panes** (in a session): the session's panes and actions, each opening full screen.
+- **Count**: how many code threads are open. Tap it for all of them as cards, with **New thread** at the bottom.
+- **Pencil** (before a session starts): a new thread. Inside a session, start one from the count button or the menu.
+- **Terminal** (`>_`): opens the terminal. **×** closes it.
+
+## Session row
+
+Under the header, one row shows the session's name (tap it for the session menu: rename, schedule, copy the ID, delete…) and one chip with the folder and branch, such as `allternit · main`.
+
+## Prompt
+
+The prompt looks like a small terminal: a `❯` line to type in, then one row with **+** (attach), the permission mode (**Manual**, **Auto**…), voice, the model, how much of the context is used, and send. It sits on the bottom edge of the screen.
+
+Before a session starts, the row above the prompt holds the computer, the folder and **Worktree**. If they don't fit, swipe the row sideways.
+
+Swipe a reply to the right to quote it in your next message.
+
+## Terminal
+
+The terminal fills the screen in one dark surface. The strip at the top switches between **Shell** and any Terminal bots. The keys under the terminal send **Esc**, **Tab**, **Ctrl** and the arrows.
+
+The terminal starts your computer's usual shell. If a computer doesn't have zsh (most Linux cloud computers), it starts that computer's default shell (bash or sh) instead.
+
+## For developers
+
+- Header: `src/fabric-session/phone/screens/LazyScreen.tsx` (the pencil hides while `usePhonePanes` has panes, so the header keeps three buttons).
+- Session row: `CodeSessionHeader` with `usePhoneSurface()` drops the Gizzi Code lockup and the Cloud badge and shows one folder · branch chip.
+- Prompt: `ChatComposer` puts `bottomDockContent` in the control row (`composer-terminal-dock`) when it is the Code terminal prompt on the phone surface.
+- Swipe rows: `.phone-swipe-row` and `.phone-swipe-row__underlay` in `phone.css` hold the action under the row (`useSwipeActions`' CSS contract).
+- Terminal shell: see [Terminal API](/api/terminal#create-terminal).
