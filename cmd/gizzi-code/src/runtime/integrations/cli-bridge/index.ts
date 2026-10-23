@@ -9,6 +9,7 @@ import { MediaGenerateTool } from "@/runtime/tools/builtins/media-generate"
 import { ARTIFACT_TOOLS } from "@/runtime/tools/builtins/artifact"
 import { QuestionTool } from "@/runtime/tools/builtins/question"
 import { TodoWriteTool } from "@/runtime/tools/builtins/todo"
+import { GlanceTool } from "@/runtime/tools/builtins/glance"
 import { Log } from "@/shared/util/log"
 import { Bus } from "@/shared/bus"
 import { CLI_PERMISSION_TOOL } from "@/runtime/drivers/cli-session-flags"
@@ -30,7 +31,7 @@ export namespace CliBridge {
   /** The tools a CLI gets: the ones only gizzi can do for this session. */
   // todowrite: CLI brains (Claude Code -p has no todo tool) keep the task list
   // that Cowork's Progress panel reads.
-  export const TOOLS: Tool.Info[] = [PaneArtifactTool, PaneBrowserTool, MediaGenerateTool, TodoWriteTool, ...ARTIFACT_TOOLS]
+  export const TOOLS: Tool.Info[] = [PaneArtifactTool, PaneBrowserTool, MediaGenerateTool, TodoWriteTool, GlanceTool, ...ARTIFACT_TOOLS]
 
   const token = randomBytes(32).toString("hex")
 
@@ -202,7 +203,7 @@ export namespace CliBridge {
         return
       }
       const text = questions
-        .map((q, i) => `${q.question}\n→ ${answers[i]?.length ? answers[i].join(", ") : "(skipped)"}`)
+        .map((q, i) => `${q.question}\n→ ${Question.formatAnswer(q, answers[i]) || "(skipped)"}`)
         .join("\n\n")
       const { SessionPrompt } = await import("@/runtime/session/prompt")
       await SessionPrompt.prompt({ sessionID, parts: [{ type: "text", text }] }).catch((error) =>
@@ -315,7 +316,7 @@ export namespace CliBridge {
           capabilities: { tools: { listChanged: false } },
           serverInfo: { name: SERVER_NAME, version: "1.0.0" },
           instructions:
-            "Allternit session tools: the document open beside the chat (pane_artifact), the pane's browser (pane_browser), image/video generation rendered in the user's app (media_generate), the user's Artifacts (artifact_create, artifact_update, artifact_read, artifact_suggest; artifact_claim and artifact_release for one frame of a design canvas), the task list shown as the session's Progress (todowrite), and multiple-choice questions to the user (question). To ask the user anything, use question: the CLI's own ask-the-user tools (AskUserQuestion, request_user_input) never reach them.",
+            "Allternit session tools: the document open beside the chat (pane_artifact), the pane's browser (pane_browser), image/video generation rendered in the user's app (media_generate), the user's Artifacts (artifact_create, artifact_update, artifact_read, artifact_suggest; artifact_claim and artifact_release for one frame of a design canvas), the task list shown as the session's Progress (todowrite), the one-line status on the session's sidebar row (glance), and multiple-choice questions to the user (question). To ask the user anything, use question: the CLI's own ask-the-user tools (AskUserQuestion, request_user_input) never reach them.",
         })
       case "ping":
         return ok(req.id, {})

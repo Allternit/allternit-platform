@@ -1,0 +1,27 @@
+---
+title: "Glance lines"
+description: "One line an agent writes about what it is tracking, shown on the session's sidebar row so you can follow long work without opening it."
+---
+
+An agent that tracks something over time (pull requests, a deploy, a spend, a queue) can write a **glance line**: one line with the numbers that matter, such as "32 green CI · 32 review threads · 4 to close". The line takes the place of the last-message preview on the session's row, with a small pulse mark in front of it.
+
+## Where it shows
+
+- The Desktop sidebar: Home and Code recents, and pinned rows.
+- A bot's row in the sidebar, unless the bot needs your attention.
+- Bot thread rows, on Desktop and in the phone Bots list.
+- The phone drawer's recents.
+- Session overview cards, under the title. See [All chats at a glance](/guides/session-overview).
+
+The agent updates the line as the numbers change, and the rows update with it. When the work is done the agent clears the line, and the row shows the last message again.
+
+## For agents
+
+Call the `glance` tool:
+
+| Field | Meaning |
+|---|---|
+| `text` | One line, 80 characters or fewer. An empty text clears it. |
+| `artifact_id` | Optional. The artifact the line summarizes. |
+
+The line is stored on the session (`metadata.glance` with `text`, `artifactId` and `at`), so it stays after a reload and shows on every device. Agents on CLI brains get the tool through the session's tool bridge.

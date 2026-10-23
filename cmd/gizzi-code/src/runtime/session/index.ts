@@ -72,6 +72,7 @@ export namespace Session {
       paused: row.paused ?? undefined,
       limit: row.limit_state ?? undefined,
       environment: row.environment ?? undefined,
+      glance: row.glance ?? undefined,
       title: row.title,
       version: row.version,
       summary,
@@ -121,6 +122,7 @@ export namespace Session {
       paused: info.paused ?? null,
       limit_state: info.limit ?? null,
       environment: info.environment ?? null,
+      glance: info.glance ?? null,
       slug: info.slug,
       directory: info.directory,
       title: info.title,
@@ -224,6 +226,18 @@ export namespace Session {
           error: z.string().optional(),
           repos: z.array(z.object({ url: z.string(), branch: z.string().optional() })).optional(),
           dirs: z.array(z.string()).optional(),
+          at: z.number(),
+        })
+        .optional(),
+      /**
+       * Glance line: one line the agent writes about what it is tracking
+       * ("32 green CI · 32 review threads"), shown on the session's sidebar
+       * row in place of the last-message preview. Absent once cleared.
+       */
+      glance: z
+        .object({
+          text: z.string(),
+          artifactId: z.string().optional(),
           at: z.number(),
         })
         .optional(),
@@ -718,6 +732,22 @@ export namespace Session {
       const row = db
         .update(SessionTable)
         .set({ paused: input.paused ?? null, time_updated: Date.now() })
+        .where(eq(SessionTable.id, input.sessionID))
+        .returning()
+        .get()
+      if (!row) throw new NotFoundError({ message: `Session not found: ${input.sessionID}` })
+      const info = fromRow(row)
+      Database.effect(() => Bus.publish(Event.Updated, { info }))
+      return info
+    })
+  }
+
+  /** Set or clear a session's glance line (the `glance` tool). */
+  export function setGlance(input: { sessionID: string; glance: Info["glance"] | null }) {
+    return Database.use((db) => {
+      const row = db
+        .update(SessionTable)
+        .set({ glance: input.glance ?? null, time_updated: Date.now() })
         .where(eq(SessionTable.id, input.sessionID))
         .returning()
         .get()

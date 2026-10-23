@@ -317,6 +317,10 @@ struct GizziSessionInfo {
     /// Passed through unchanged; absent for sessions without one.
     #[serde(default)]
     environment: Option<serde_json::Value>,
+    /// The agent's one-line status for the session's sidebar row (`glance`
+    /// tool): `{ text, artifactId?, at }`; absent once cleared.
+    #[serde(default)]
+    glance: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -479,6 +483,7 @@ fn transform_session(info: GizziSessionInfo, db: &DbHandle) -> serde_json::Value
     metadata.insert("paused".to_string(), json!(info.paused));
     metadata.insert("limit".to_string(), json!(info.limit));
     metadata.insert("environment".to_string(), json!(info.environment));
+    metadata.insert("glance".to_string(), json!(info.glance));
     for (key, value) in stored_metadata {
         metadata.insert(key, value);
     }
@@ -2035,6 +2040,7 @@ async fn transform_bus_event(
                         "paused": info.paused,
                         "limit": info.limit,
                         "environment": info.environment,
+                        "glance": info.glance,
                     },
                     "environment": info.environment,
                 })

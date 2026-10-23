@@ -8,12 +8,23 @@ import z from "zod/v4"
 export namespace Question {
   const log = Log.create({ service: "question" })
 
-  export const Option = z
-    .object({
-      label: z.string().describe("Display text (1-5 words, concise)"),
-      description: z.string().describe("Explanation of choice"),
-    })
-    
+  const Leaf = z.object({
+    label: z.string().describe("Display text (1-5 words, concise)"),
+    description: z.string().describe("Explanation of choice, or what happens if picked"),
+    recommended: z.boolean().optional().describe("Your pick (at most one per list)"),
+    caution: z.string().optional().describe("A short cost or risk of this choice, shown highlighted (e.g. 'Skips 1,284 tests')"),
+  })
+
+  export const FollowUp = z.object({
+    question: z.string().describe("What to settle next if this option is picked"),
+    options: z.array(Leaf).describe("Choices for the follow-up"),
+  })
+  export type FollowUp = z.infer<typeof FollowUp>
+
+  export const Option = Leaf.extend({
+    then: FollowUp.optional().describe("Decision tree: a follow-up question shown when this option is picked"),
+  })
+
   export type Option = z.infer<typeof Option>
 
   export const Info = z
@@ -23,9 +34,22 @@ export namespace Question {
       options: z.array(Option).describe("Available choices"),
       multiple: z.boolean().optional().describe("Allow selecting multiple choices"),
       custom: z.boolean().optional().describe("Allow typing a custom answer (default: true)"),
+      risk: z.enum(["low", "medium", "high"]).optional().describe("Decision tree: how much is at stake"),
+      context: z.string().optional().describe("Decision tree: the facts behind the question, one or two short lines"),
     })
-    
+
   export type Info = z.infer<typeof Info>
+
+  /** A decision tree: any option has a follow-up, or the question carries risk/context. */
+  export function isTree(q: Info) {
+    return !q.multiple && (q.options.some((o) => o.then) || !!q.risk || !!q.context)
+  }
+
+  /** One answer as text: a tree answer is a path ("Roll back → Post on the status page"). */
+  export function formatAnswer(q: Info, answer: Answer | undefined) {
+    if (!answer?.length) return ""
+    return answer.join(isTree(q) ? " → " : ", ")
+  }
 
   export const Request = z
     .object({

@@ -8,3 +8,9 @@ Usage notes:
 - When `custom` is enabled (default), a "Type your own answer" option is added automatically; don't include "Other" or catch-all options
 - Answers are returned as arrays of labels; set `multiple: true` to allow selecting more than one
 - If you recommend a specific option, make that the first option in the list and add "(Recommended)" at the end of the label
+
+Decision trees (for a consequential call, e.g. an incident, a spend, a deal):
+- Give each option a `description` that says what happens, mark your choice with `recommended: true` (instead of "(Recommended)"), and put a real cost in `caution`.
+- An option can carry `then: { question, options }`: the follow-up the user settles if they pick it. One level deep.
+- Set `risk` (low, medium, high) and `context` (the facts: numbers, times, what is at stake).
+- The user sees a branching graph and answers with a path; you get it as "Option → Follow-up".
