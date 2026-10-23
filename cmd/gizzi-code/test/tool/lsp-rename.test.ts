@@ -53,7 +53,7 @@ const range = (line: number, start: number, end: number) => ({
 
 describe("tool.lsp rename", () => {
   test("returns a clear message (no throw) when no language server handles the file", async () => {
-    await using tmp = await tmpdir()
+    await using tmp = await tmpdir({ git: true })
     const file = path.join(tmp.path, "notes.xyz")
     await fs.writeFile(file, "foo\n")
     lspState.hasClients = false
@@ -75,7 +75,7 @@ describe("tool.lsp rename", () => {
   })
 
   test("applies a multi-file WorkspaceEdit through the edit permission and reports counts", async () => {
-    await using tmp = await tmpdir()
+    await using tmp = await tmpdir({ git: true })
     const a = path.join(tmp.path, "a.ts")
     const b = path.join(tmp.path, "b.ts")
     await fs.writeFile(a, "export function foo() {}\nfoo()\n")
@@ -123,7 +123,7 @@ describe("tool.lsp rename", () => {
   })
 
   test("applies documentChanges and lists skipped file operations", async () => {
-    await using tmp = await tmpdir()
+    await using tmp = await tmpdir({ git: true })
     const a = path.join(tmp.path, "a.ts")
     await fs.writeFile(a, "const foo = 1\nfoo\n")
     lspState.hasClients = true
@@ -164,7 +164,7 @@ describe("tool.lsp rename", () => {
 
 describe("tool.symbol_edit without a language server", () => {
   test("returns a clear message for non-TS files", async () => {
-    await using tmp = await tmpdir()
+    await using tmp = await tmpdir({ git: true })
     const file = path.join(tmp.path, "main.py")
     await fs.writeFile(file, "def foo():\n    return 1\n")
     lspState.hasClients = false

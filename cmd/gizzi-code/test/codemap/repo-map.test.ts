@@ -73,7 +73,9 @@ describe("RepoMap", () => {
     expect(lines.indexOf("src/leaf.ts +Leaf [NEW]")).toBeLessThan(lines.indexOf("src/b.ts +B"))
     expect(lineFor(text, "scripts/tool.py")).not.toContain("[NEW]") // read, not edited
     // Another session sees no [NEW] marks.
-    expect(RepoMap.slice({ root: dir, sessionID: "ses_2" })).not.toContain("[NEW]")
+    // (The legend line names the [NEW] mark; only file lines count.)
+    const other = RepoMap.slice({ root: dir, sessionID: "ses_2" }).split("\n").filter((l) => !l.includes(" = "))
+    expect(other.some((l) => l.includes("[NEW]"))).toBe(false)
   })
 
   test("co-change: files that changed with a boosted file rank higher", async () => {

@@ -166,7 +166,7 @@ export namespace RepoMap {
   async function isGitRepo(root: string): Promise<boolean> {
     try {
       const result = await Git.exec(["rev-parse", "--is-inside-work-tree"], { cwd: root })
-      return result.exitCode === 0 && result.text().trim() === "true"
+      return result.exitCode === 0 && (await result.text()).trim() === "true"
     } catch {
       return false
     }
@@ -177,7 +177,7 @@ export namespace RepoMap {
     let raw: string[] = []
     if (await isGitRepo(root)) {
       const result = await Git.exec(["ls-files", "-z", "--cached", "--others", "--exclude-standard"], { cwd: root })
-      if (result.exitCode === 0) raw = result.text().split("\0").filter(Boolean)
+      if (result.exitCode === 0) raw = (await result.text()).split("\0").filter(Boolean)
     }
     if (raw.length === 0) {
       for await (const file of Ripgrep.files({ cwd: root })) raw.push(file)
@@ -204,8 +204,7 @@ export namespace RepoMap {
         { cwd: root },
       )
       if (result.exitCode !== 0) return []
-      return result
-        .text()
+      return (await result.text())
         .split("\x1e")
         .map((chunk) =>
           chunk

@@ -6,6 +6,7 @@
 // (SessionProcessor tracks the worktree with Snapshot.track/patch around every
 // step), exactly as for edit/apply_patch, so `/rewind` restores these writes.
 
+import fs from "fs"
 import * as path from "path"
 import { fileURLToPath } from "url"
 import { createTwoFilesPatch, diffLines } from "diff"
@@ -22,6 +23,28 @@ import { assertExternalDirectory, assertSandboxWriteAllowed } from "@/runtime/to
 import { trimDiff } from "@/runtime/tools/builtins/edit"
 
 const MAX_DIAGNOSTICS_PER_FILE = 20
+
+
+/**
+ * Project-relative path for display and permission patterns. Language
+ * servers report real paths, so a project opened through a symlink (macOS
+ * /var → /private/var, a linked checkout) is compared against its real path too.
+ */
+function fromWorktree(file: string): string {
+  const root = Instance.worktree
+  if (file === root || file.startsWith(root + path.sep)) return path.relative(root, file)
+  const real = (p: string) => {
+    try {
+      return fs.realpathSync(p)
+    } catch {
+      return p
+    }
+  }
+  const realRoot = real(root)
+  const realFile = real(file)
+  if (realFile === realRoot || realFile.startsWith(realRoot + path.sep)) return path.relative(realRoot, realFile)
+  return path.relative(root, file)
+}
 
 export namespace WorkspaceEdit {
   export type Position = { line: number; character: number }
@@ -192,7 +215,7 @@ export namespace WorkspaceEdit {
       }
       files.push({
         filePath: change.filePath,
-        relativePath: path.relative(Instance.worktree, change.filePath),
+        relativePath: fromWorktree(change.filePath),
         type: "update",
         diff: fileDiff,
         before: change.before,
@@ -226,7 +249,7 @@ export namespace WorkspaceEdit {
           )
         }
         await Filesystem.write(change.filePath, change.after)
-        await Bus.publish(File.Event.Edited, { file: change.filePath })
+        await Bus.publish(File.Event.Edited, { file: change.filePath, sessionID: ctx.sessionID })
         await Bus.publish(FileWatcher.Event.Updated, { file: change.filePath, event: "change" })
         FileTime.read(ctx.sessionID, change.filePath)
       })
@@ -243,7 +266,7 @@ export namespace WorkspaceEdit {
       const limited = errors.slice(0, MAX_DIAGNOSTICS_PER_FILE)
       const suffix =
         errors.length > MAX_DIAGNOSTICS_PER_FILE ? `\n... and ${errors.length - MAX_DIAGNOSTICS_PER_FILE} more` : ""
-      diagnosticsOutput += `\n\nLSP errors detected in ${path.relative(Instance.worktree, change.filePath)}, please fix:\n<diagnostics file="${change.filePath}">\n${limited.map(LSP.Diagnostic.pretty).join("\n")}${suffix}\n</diagnostics>`
+      diagnosticsOutput += `\n\nLSP errors detected in ${fromWorktree(change.filePath)}, please fix:\n<diagnostics file="${change.filePath}">\n${limited.map(LSP.Diagnostic.pretty).join("\n")}${suffix}\n</diagnostics>`
     }
 
     return { diff, files, filediff, diagnostics, diagnosticsOutput }
