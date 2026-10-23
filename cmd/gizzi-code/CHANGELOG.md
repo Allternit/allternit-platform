@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+## 2.2.11 (2026-10-23)
+
+### Added
+- Repo map in every Code prompt: a ranked map of the project's files, exports and
+  importers (from the codemap scanners), boosted for files the session touched and
+  updated as files change. `gizzi codemap map` prints it; `repoMap: false` or
+  `GIZZI_NO_REPO_MAP=1` turns it off. A "Repo map" row in the context breakdown.
+- `lsp` tool `rename`: renames a symbol across files through the language server,
+  as one edit with one permission prompt and normal undo.
+- `symbol_edit` tool: replaces a whole function, class, method, interface, type or
+  variable by name.
+- Review verdicts: `/review` on local changes runs a fresh reviewer that answers
+  PASS, FAIL (with file and line) or PARTIAL. `/review pass` fixes and re-reviews
+  until it passes. `gizzi run --review` exits 0 / 3 / 4; `--review-until-pass`.
+- Goal rounds run the project's checks (typecheck, tests or `goal.checks`) and a
+  review between rounds, and move to `models.jobs.goalEscalate` when stuck.
+- `models.jobs`: a model per job (explorer, coder, review, goalEscalate,
+  summarizer).
+- Server routes for the app: `/config/model-jobs`, `/session/:id/review(s)`,
+  `/review`, `/codemap/graph`, `/file-editors`; events `review.*`,
+  `codemap.activity`, `file.contended`.
+
+### Fixed
+- Claude Code runs on cloud computers (root container).
+
 ## 2.2.10 (2026-10-22)
 
 ### Added
