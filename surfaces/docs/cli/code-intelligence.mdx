@@ -1,0 +1,45 @@
+---
+title: "Code intelligence"
+description: "How Gizzi Code knows your repo: the live repo map in every prompt, renames through the language server, and editing a function or class by name."
+---
+
+Gizzi Code reads your project's structure before it searches, and changes code by symbol instead of by matching text when it can.
+
+## Repo map in every prompt
+
+When a Code session has a project folder, Gizzi keeps a map of the repo: every file Git sees (minus build output, lockfiles, minified files, dot-folders and anything in `.gizziignore`), what each file exports, and which files import which. A short ranked slice of it goes at the top of every turn's system prompt:
+
+```text
+<repo_map files="1842" shown="120">
+src/lib/agents/mode-session-store.ts (→58) +useModeSessionStore +mapBackendMessage
+src/components/session-overview/SessionOverview.tsx (→14) +SessionOverview [NEW]
+</repo_map>
+```
+
+- `(→N)` is how many files import it. `+Name` is an exported symbol. `[NEW]` marks files this session changed.
+- Files many others import rank first. Files you or the agent edited, read or mentioned in this session get a boost, and files that usually change together in Git history are pulled up with them.
+- The map updates within about half a second of a file changing, from Gizzi's own edits or from your editor. It is cached in `.gizzi/repo-map.json`, so reopening a project only rescans changed files. It holds up to 10,000 files (the most recently changed when larger).
+- The slice is rebuilt once per message, so the prompt cache stays warm across the steps of one turn. Its size shows as **Repo map** in the [context breakdown](/cli/context#repo-map).
+- Turn it off with `"repoMap": false` in `gizzi.json`, or `GIZZI_NO_REPO_MAP=1`.
+- See the slice yourself: `gizzi codemap map` (`--budget <tokens>`, `--all`).
+
+It builds on the [codemap](/cli/context) that `gizzi init` writes: the same scanners (the TypeScript compiler for TS/JS, the Rust scanner, text matching for other languages), now per file and live.
+
+## Rename across files
+
+The `lsp` tool has a `rename` operation. The language server computes every place the symbol is used, and Gizzi applies all of them as one edit: one permission prompt that lists every file, the same undo as any edit (`/rewind`), and new type errors reported after. The result reads like "Renamed `useOverviewLayout` to `useCardLayout`: 9 edits in 6 files".
+
+A rename that would touch a file outside the project is refused as a whole, so code is never left half-renamed. Without a language server for that file, Gizzi says so and uses ordinary edits.
+
+## Edit a function or class by name
+
+The `symbol_edit` tool replaces a whole function, class, method (`Class.method`), interface, type, enum or variable by name with new source. For TypeScript and JavaScript it finds the declaration with the TypeScript compiler; for other languages it asks the language server for the file's symbols. A missing or ambiguous name returns the candidates with their line numbers instead of guessing. It goes through the same permission, undo and diagnostics path as `edit`, and requires the file to have been read first.
+
+The agent is told to use `rename` for renames, `symbol_edit` for replacing a whole declaration, and `edit` for small changes inside one.
+
+## For developers
+
+- Repo map: `cmd/gizzi-code/src/codemap/repo-map.ts` (`RepoMap.prompt`, `slice`, `update`, `queue`). It is added in `session/prompt.ts` through `composeTurnSystem({ repoMap })` (`session/system-header.ts`), after the workspace identity. Session edits arrive on `File.Event.Edited` (now carrying `sessionID`) and file-watcher events in `context/project/bootstrap.ts`, debounced 500 ms. Context breakdown category `repo_map`.
+- Rename: `LSP.rename` (`runtime/integrations/lsp/index.ts`, `prepareRename` when supported); the client now declares rename, hierarchical symbols and `documentChanges` support. `WorkspaceEdit.apply` (`runtime/tools/builtins/workspace-edit.ts`) is shared by `rename` and `symbol_edit`.
+- `symbol_edit`: `runtime/tools/builtins/symbol-edit.ts`; it counts as an edit tool for permissions, plan mode and subagent results.
+- Tests: `test/codemap/repo-map.test.ts`, `test/tool/{lsp-rename,symbol-edit,workspace-edit}.test.ts`.
