@@ -33,6 +33,8 @@ import { McpRoutes } from "@/runtime/server/routes/mcp"
 import { FileRoutes } from "@/runtime/server/routes/file"
 import { ConfigRoutes } from "@/runtime/server/routes/config"
 import { ReviewRoutes } from "@/runtime/server/routes/review"
+import { CodeMapRoutes } from "@/runtime/server/routes/codemap"
+import { FileEditorsRoutes } from "@/runtime/server/routes/file-editors"
 import { ExperimentalRoutes } from "@/runtime/server/routes/experimental"
 import { ProviderRoutes } from "@/runtime/server/routes/provider"
 import { ModelPoolRoutes } from "@/runtime/server/routes/model-pool"
@@ -389,6 +391,8 @@ export namespace Server {
         .route("/project", ProjectRoutes())
         .route("/pty", PtyRoutes())
         .route("/", ReviewRoutes())
+        .route("/", CodeMapRoutes())
+        .route("/", FileEditorsRoutes())
         .route("/config", ConfigRoutes())
         .route("/experimental", ExperimentalRoutes())
         .route("/session", SessionRoutes())
@@ -491,6 +495,8 @@ export namespace Server {
           new Hono()
             .get("/asyncapi", (c) => c.json(asyncapi()))
             .route("/", ReviewRoutes())
+            .route("/", CodeMapRoutes())
+            .route("/", FileEditorsRoutes())
             .route("/session", SessionRoutes())
             .route("/native-session", NativeSessionRoutes())
             .route("/automations", AutomationsRoutes())

@@ -127,6 +127,10 @@ export namespace RepoMap {
     ready?: Promise<boolean>
     pending: Set<string>
     timer?: ReturnType<typeof setTimeout>
+    /** When the in-memory map last changed (scan, cache load or update), epoch ms. */
+    updatedAt?: number
+    /** The last budgeted slice sent in a prompt for this root: files listed, when. */
+    lastSlice?: { shown: number; at: number }
   }
 
   const roots = new Map<string, RootState>()
@@ -409,11 +413,13 @@ export namespace RepoMap {
         state.history = cache.history ?? []
         state.recency = recencyOf(state.history)
       }
+      if (state.files.size > 0) state.updatedAt ??= Date.now()
       return state.files.size > 0
     }
     state.files = next
     state.history = history
     state.recency = recency
+    state.updatedAt = Date.now()
     if (rescanned > 0 || !cache || cache.files === undefined || Object.keys(cache.files).length !== next.size) {
       await writeCache(state)
     }
@@ -480,6 +486,7 @@ export namespace RepoMap {
           if (!changed) return
           if (!passesDropGuard(state.root, state.files.size, next.size)) return
           state.files = next
+          state.updatedAt = Date.now()
           // A file this session wrote is the newest change there is.
           for (const rel of rels) state.recency.set(rel, -1)
           await writeCache(state)
@@ -617,6 +624,7 @@ export namespace RepoMap {
         lines.push(text)
       }
       if (lines.length === 0) return ""
+      if (!input.all) state.lastSlice = { shown: lines.length, at: Date.now() }
       return render(lines)
     } catch (error) {
       log.warn("repo map slice failed", { root: input.root, error: String(error) })
@@ -693,6 +701,101 @@ export namespace RepoMap {
       log.warn("repo map prompt failed", { sessionID: input.sessionID, error: String(error) })
       return ""
     }
+  }
+
+  // ---------------------------------------------------------------- graph (live code map)
+
+  export interface GraphFile {
+    path: string
+    score: number
+    /** Files in the map that import this one. */
+    importers: number
+    /** Files in the map this one imports. */
+    imports: number
+    exports: string[]
+  }
+
+  export interface Graph {
+    root: string
+    files: GraphFile[]
+    /** Import edges among the files shown: `from` imports `to`. */
+    edges: { from: string; to: string }[]
+    /** Files indexed in the map. */
+    total: number
+    /** Files in this response. */
+    shown: number
+    /** Files the last prompt slice for this root listed (0 before the first prompt). */
+    promptShown: number
+    /** Files this session edited, which the prompt boosts (0 without a session). */
+    editedBoosted: number
+    /** When the map last changed, ISO; null before the first scan. */
+    updatedAt: string | null
+  }
+
+  export const GRAPH_DEFAULT_LIMIT = 400
+  export const GRAPH_MAX_LIMIT = 2_000
+
+  /** How many files the last prompt slice for `root` listed (0 if none yet). Ranking is untouched. */
+  export function promptShown(root: string): number {
+    return roots.get(path.resolve(root))?.lastSlice?.shown ?? 0
+  }
+
+  /**
+   * The top `limit` files by score plus the import edges among them — the
+   * data behind the app's live code map. Ranks exactly like the prompt does
+   * (same session boost), so the map shows what the model is shown first.
+   * Empty when the map for `root` is not loaded.
+   */
+  export function graph(input: { root: string; limit?: number; sessionID?: string }): Graph {
+    const root = path.resolve(input.root)
+    const state = roots.get(root)
+    const limit = Math.max(1, Math.min(GRAPH_MAX_LIMIT, Math.floor(input.limit ?? GRAPH_DEFAULT_LIMIT)))
+    const empty: Graph = {
+      root,
+      files: [],
+      edges: [],
+      total: 0,
+      shown: 0,
+      promptShown: 0,
+      editedBoosted: 0,
+      updatedAt: null,
+    }
+    if (!state || state.files.size === 0) return empty
+    const all = rank({ root, sessionID: input.sessionID })
+    const ranked = all.slice(0, limit)
+    const shownSet = new Set(ranked.map((file) => file.path))
+    const edges: { from: string; to: string }[] = []
+    const outDegree = new Map<string, number>()
+    for (const [file, entry] of state.files) {
+      let count = 0
+      for (const target of entry.imports) {
+        if (target === file || !state.files.has(target)) continue
+        count++
+        if (shownSet.has(file) && shownSet.has(target)) edges.push({ from: file, to: target })
+      }
+      outDegree.set(file, count)
+    }
+    return {
+      root,
+      files: ranked.map((file) => ({
+        path: file.path,
+        score: file.score,
+        importers: file.inDegree,
+        imports: outDegree.get(file.path) ?? 0,
+        exports: file.symbols.slice(0, MAX_SYMBOLS_SHOWN),
+      })),
+      edges,
+      total: state.files.size,
+      shown: ranked.length,
+      promptShown: state.lastSlice?.shown ?? 0,
+      editedBoosted: all.filter((file) => file.edited).length,
+      updatedAt: state.updatedAt ? new Date(state.updatedAt).toISOString() : null,
+    }
+  }
+
+  /** Project-relative path of `file` under `root`, or undefined when outside it. */
+  export function relativePath(root: string, file: string): string | undefined {
+    return relTo(path.resolve(root), file)
   }
 
   /** Test hook: forget every root, session and cached prompt. */
