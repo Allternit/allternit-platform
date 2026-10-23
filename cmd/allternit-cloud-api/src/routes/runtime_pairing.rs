@@ -743,13 +743,20 @@ async fn exchange_pairing(
         // metering interval (services::provisioning).
         crate::services::activate_registered_device(&state.db, provisioned_instance_id).await?;
         // The always-on computer becomes the default node unless the user
-        // already pinned one, so phone and web stop flipping between it and
-        // a laptop by heartbeat timing. Best-effort: pairing must not fail on it.
+        // already pinned a live one, so phone and web stop flipping between it
+        // and a laptop by heartbeat timing. A pin left on a revoked device (the
+        // computer re-pairing after a sign-out) moves to the new identity.
+        // Best-effort: pairing must not fail on it.
         if let Err(error) = sqlx::query(
             r#"
             INSERT INTO user_node_preferences (user_id, surface, node_id)
             VALUES ($1, '*', $2)
-            ON CONFLICT (user_id, surface) DO NOTHING
+            ON CONFLICT (user_id, surface) DO UPDATE
+            SET node_id = excluded.node_id, updated_at = CURRENT_TIMESTAMP
+            WHERE NOT EXISTS (
+                SELECT 1 FROM runtime_devices d
+                WHERE d.id = user_node_preferences.node_id AND d.revoked_at IS NULL
+            )
             "#,
         )
         .bind(&user_id)
