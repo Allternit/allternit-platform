@@ -69,7 +69,7 @@ The agent is told to use `rename` for renames, `symbol_edit` for replacing a who
 - `/review <pr>` still reviews a GitHub pull request.
 - In CI: `gizzi run --review` (exit codes 0, 3, 4). See [Review in CI](/cli/headless-execution#review-in-ci).
 
-**In the Allternit app**, the latest reply in a Code session has a **Review** button next to Copy and Fork. It shows the verdict as a card under the reply: the PASS, FAIL or PARTIAL badge, what was checked, and each problem as a `file:line` chip. **Send to the coder** posts the findings to the session as your message. **Review until pass** runs the loop and shows "Review · round 2" with a **Stop** button. When nothing changed it says "Nothing changed to review." Reopening the session shows the last verdict until the next reply.
+**In the Allternit app**, the latest reply in a Code session has a **Review** button next to Copy and Fork when that turn edited a file. Replies that only answer or read files don't show it. It shows the verdict as a card under the reply: the PASS, FAIL or PARTIAL badge, what was checked, and each problem as a `file:line` chip. **Send to the coder** posts the findings to the session as your message. **Review until pass** runs the loop and shows "Review · round 2" with a **Stop** button. When nothing changed it says "Nothing changed to review." Reopening the session shows the last verdict until the next reply.
 
 The reviewer can read files, search, use the language server and run read-only commands (`git diff`, `git log`, `rg` and similar); it can't edit. Its model is the `review` [job model](/cli/configuration#models-for-each-job).
 
