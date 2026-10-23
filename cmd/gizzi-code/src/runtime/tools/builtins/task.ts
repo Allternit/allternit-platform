@@ -12,6 +12,7 @@ import { SessionPrompt } from "@/runtime/session/prompt"
 import { iife } from "@/shared/util/iife"
 import { defer } from "@/shared/util/defer"
 import { Config } from "@/runtime/context/config/config"
+import { ModelJobs } from "@/runtime/context/config/model-jobs"
 import { PermissionNext } from "@/runtime/tools/guard/permission/next"
 import { Log } from "@/shared/util/log"
 import {
@@ -144,7 +145,9 @@ export const TaskTool = Tool.define<typeof parameters, TaskMetadata>("task", asy
       if (msg.info.role !== "assistant") throw new Error("Not an assistant message")
       const info = msg.info
 
-      const model = agent.model ?? {
+      // Model: the agent's own → models.jobs (explore → explorer, general → coder) → the caller's.
+      const jobName = ModelJobs.jobForAgent(agent.name)
+      const model = agent.model ?? (jobName ? await ModelJobs.jobModel(jobName) : undefined) ?? {
         modelID: msg.info.modelID,
         providerID: msg.info.providerID,
       }

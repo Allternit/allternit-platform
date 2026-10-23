@@ -1,0 +1,15 @@
+Replace one whole declaration (function, class, method, interface, type alias, enum, const/let/var, namespace) by name, without copying its old text.
+
+Usage:
+- Give `filePath`, the `symbol` name and `newCode`: the complete new source for that symbol, signature included. The old declaration's exact range is replaced, so you don't need to reproduce the old code the way the edit tool's oldString requires.
+- Qualify members with dots: `Session.start` is method `start` of class `Session`; `Config.load` is `load` inside namespace `Config`. A plain name also matches a member (`start` → `Session.start`) when only one declaration has that name.
+- If the name is ambiguous or missing, the tool fails and lists the candidates with line numbers. Retry with a qualified name or the `kind` filter (function, class, method, property, constructor, interface, type, enum, variable, namespace).
+- The replacement starts at the declaration itself (`export`, decorators, `async`, the keyword). The existing doc comment stays unless `newCode` starts with a comment, in which case the attached doc comment is replaced too.
+- Put the first line of `newCode` without indentation; indent the following lines as they should appear in the file (for a method inside a class, keep the class body's indentation).
+- You must read the file with the Read tool before editing it, like the edit tool.
+- TypeScript/JavaScript files work without a language server. Other languages need one (the tool says so if none is available).
+
+When to use which tool:
+- Replacing or rewriting a whole function, method or class: use symbol_edit.
+- Renaming a symbol everywhere it's used, across files: use the lsp tool's `rename` operation, not symbol_edit or edit.
+- Small changes inside a function (a line or two, one condition, one argument): use the edit tool.

@@ -1,0 +1,80 @@
+---
+title: "Code intelligence"
+description: "How Gizzi Code knows your repo: the live repo map in every prompt, renames through the language server, and editing a function or class by name."
+---
+
+Gizzi Code reads your project's structure before it searches, and changes code by symbol instead of by matching text when it can.
+
+## Repo map in every prompt
+
+When a Code session has a project folder, Gizzi keeps a map of the repo: every file Git sees (minus build output, lockfiles, minified files, dot-folders and anything in `.gizziignore`), what each file exports, and which files import which. A short ranked slice of it goes at the top of every turn's system prompt:
+
+```text
+<repo_map files="1842" shown="120">
+src/lib/agents/mode-session-store.ts (→58) +useModeSessionStore +mapBackendMessage
+src/components/session-overview/SessionOverview.tsx (→14) +SessionOverview [NEW]
+</repo_map>
+```
+
+- `(→N)` is how many files import it. `+Name` is an exported symbol. `[NEW]` marks files this session changed.
+- Files many others import rank first. Files you or the agent edited, read or mentioned in this session get a boost, and files that usually change together in Git history are pulled up with them.
+- The map updates within about half a second of a file changing, from Gizzi's own edits or from your editor. It is cached in `.gizzi/repo-map.json`, so reopening a project only rescans changed files. It holds up to 10,000 files (the most recently changed when larger).
+- The slice is rebuilt once per message, so the prompt cache stays warm across the steps of one turn. Its size shows as **Repo map** in the [context breakdown](/cli/context#repo-map).
+- Turn it off with `"repoMap": false` in `gizzi.json`, or `GIZZI_NO_REPO_MAP=1`.
+- See the slice yourself: `gizzi codemap map` (`--budget <tokens>`, `--all`).
+
+It builds on the [codemap](/cli/context) that `gizzi init` writes: the same scanners (the TypeScript compiler for TS/JS, the Rust scanner, text matching for other languages), now per file and live.
+
+## Live code map
+
+In Allternit Desktop, Code mode can draw the same repo map as a picture. Open **Panes → Code map** (or **Open beside** to keep it docked next to the chat).
+
+- Each file is a rounded square. Bigger squares are imported by more files. Files are placed by who imports whom, in one column per top folder, with thin lines for imports.
+- While the agent works, a file turns blue when it reads it and coral when it edits it. A ring follows the file it touched last. The legend counts them: "read 4 · edited 2 · 400 of 1,842 files · by import graph".
+- Hover a file to see its path and "N files import it · M imports". Click it to open it in the Files pane. Scroll to zoom and drag to move around.
+- The map reads the Gizzi Code running on your computer, so it is offered in Allternit Desktop only. On ai.allternit.com and phones, where Code runs on a cloud runtime, the pane isn't listed.
+- Under the chat, a muted line shows what the last prompt carried: "Repo map in this prompt: 1,842 files indexed · top 120 sent · 4 recently edited boosted · updated 3s ago". It refreshes after each turn.
+- With no project folder the map says "Open a project folder to see its map." With a Gizzi Code too old for the map it says "Update Gizzi Code to see the map."
+
+The map shows the top 400 files by the same score the prompt uses, so the biggest, most central files are always on it.
+
+## Rename across files
+
+The `lsp` tool has a `rename` operation. The language server computes every place the symbol is used, and Gizzi applies all of them as one edit: one permission prompt that lists every file, the same undo as any edit (`/rewind`), and new type errors reported after. The result reads like "Renamed `useOverviewLayout` to `useCardLayout`: 9 edits in 6 files".
+
+A rename that would touch a file outside the project is refused as a whole, so code is never left half-renamed. Without a language server for that file, Gizzi says so and uses ordinary edits.
+
+## Edit a function or class by name
+
+The `symbol_edit` tool replaces a whole function, class, method (`Class.method`), interface, type, enum or variable by name with new source. For TypeScript and JavaScript it finds the declaration with the TypeScript compiler; for other languages it asks the language server for the file's symbols. A missing or ambiguous name returns the candidates with their line numbers instead of guessing. It goes through the same permission, undo and diagnostics path as `edit`, and requires the file to have been read first.
+
+The agent is told to use `rename` for renames, `symbol_edit` for replacing a whole declaration, and `edit` for small changes inside one.
+
+## Review with a verdict
+
+`/review` with local changes (and no PR number) asks a fresh reviewer to check them. It starts with a clean context, reads the changed files, their callers and any deleted files' callers (up to 30 files), and returns **PASS**, **FAIL** (with file and line for each problem) or **PARTIAL** (what it couldn't check). A re-review treats the previous verdict as a claim to verify, not as fact. The last 8 verdicts per session are kept.
+
+- `/review pass [rounds]` sends each non-PASS verdict to the coder as a turn and reviews again, until PASS or the limit (default 5, max 12). Stopping the session stops the loop.
+- `/review local` followed by what to check gives the reviewer something to check first.
+- `/review <pr>` still reviews a GitHub pull request.
+- In CI: `gizzi run --review` (exit codes 0, 3, 4). See [Review in CI](/cli/headless-execution#review-in-ci).
+
+**In the Allternit app**, the latest reply in a Code session has a **Review** button next to Copy and Fork. It shows the verdict as a card under the reply: the PASS, FAIL or PARTIAL badge, what was checked, and each problem as a `file:line` chip. **Send to the coder** posts the findings to the session as your message. **Review until pass** runs the loop and shows "Review · round 2" with a **Stop** button. When nothing changed it says "Nothing changed to review." Reopening the session shows the last verdict until the next reply.
+
+The reviewer can read files, search, use the language server and run read-only commands (`git diff`, `git log`, `rg` and similar); it can't edit. Its model is the `review` [job model](/cli/configuration#models-for-each-job).
+
+## Two sessions, one file
+
+You can run several Code sessions on one project at once. When two of them edit the same file, Gizzi lets one write at a time: the second edit waits until the first has finished writing, so neither session overwrites the other's change mid-write.
+
+The Allternit app shows when this happens. Each Code session in the sidebar (and in the phone's session list) has a line with its model, how many files it edited and what it cost so far (the cost is left out until the model reports one). When the agent in your tab edits a file that another open session edited in the last 10 minutes, a strip above the composer says so: "**Other tab** is also editing `src/app.ts`." **Open that tab** switches to it. **OK** hides the strip for that file until the overlap happens again.
+
+## For developers
+
+- Repo map: `cmd/gizzi-code/src/codemap/repo-map.ts` (`RepoMap.prompt`, `slice`, `update`, `queue`). It is added in `session/prompt.ts` through `composeTurnSystem({ repoMap })` (`session/system-header.ts`), after the workspace identity. Session edits arrive on `File.Event.Edited` (now carrying `sessionID`) and file-watcher events in `context/project/bootstrap.ts`, debounced 500 ms. Context breakdown category `repo_map`.
+- Rename: `LSP.rename` (`runtime/integrations/lsp/index.ts`, `prepareRename` when supported); the client now declares rename, hierarchical symbols and `documentChanges` support. `WorkspaceEdit.apply` (`runtime/tools/builtins/workspace-edit.ts`) is shared by `rename` and `symbol_edit`.
+- `symbol_edit`: `runtime/tools/builtins/symbol-edit.ts`; it counts as an edit tool for permissions, plan mode and subagent results.
+- Live code map: `GET /codemap/graph` (also `/v1/codemap/graph`; `routes/codemap.ts`, `buildCodeMapGraph`) for the request's directory (`directory` query or `x-gizzi-directory` header). Query `limit` (default 400, max 2000) and optional `sessionID` (that session's edits get the prompt's boost). Returns `{ root, project, files: [{ path, score, importers, imports, exports }], edges: [{ from, to }], total, shown, promptShown, editedBoosted, updatedAt }` from `RepoMap.graph`; `promptShown` is how many files the last prompt slice listed (`RepoMap.promptShown`). Loads the map on first call (waits up to 8 s, then answers empty while the scan finishes). Bus event `codemap.activity` `{ sessionID, path, kind: "read" | "edit" }` (`codemap/activity.ts`) with project-relative paths: reads from the `read` tool, edits from `File.Event.Edited` (subscribed in `context/project/bootstrap.ts`). The app's panel is `allternit-ai/src/components/code-map/`.
+- Tests: `test/codemap/repo-map.test.ts`, `test/codemap/graph-route.test.ts`, `test/tool/{lsp-rename,symbol-edit,workspace-edit}.test.ts`.
+- Reviewer: `cmd/gizzi-code/src/runtime/review/` (`Reviewer.runReview`, `ReviewChanges.collect`, `ReviewVerdict`, `ReviewStore`, `ReviewLoop.reviewUntilPass`, `GoalRoundChecks.run`); hidden `review` agent in `runtime/loop/agent.ts`. Routes: `GET`/`PUT /config/model-jobs`, `POST`/`DELETE /session/:sessionID/review`, `GET /session/:sessionID/reviews`, `POST /review`. Bus events `review.started`, `review.finished`, `review.fixing`, `review.loop.finished`.
+- Two sessions, one file: `cmd/gizzi-code/src/runtime/session/file-editors.ts` (`FileEditors.record`, `forSession`; started in `context/project/bootstrap.ts`) keeps, in memory, which session edited which file in the last 30 minutes. Route `GET /file-editors?sessionID=` (also under `/v1`) returns `{ files: [{ path, otherSessions: [{ sessionID, title, lastEditAt }] }], edited }`, where `otherSessions` are sessions that edited the file in the last 10 minutes. Bus event `file.contended` `{ file, sessionID, otherSessionIDs }` fires when an edit lands on a file another session edited in the last 10 minutes. Writes are serialized by `FileTime.withLock`. Tests: `test/session/file-editors.test.ts`.

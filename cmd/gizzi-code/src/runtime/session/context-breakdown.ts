@@ -25,6 +25,7 @@ export namespace ContextBreakdown {
     "memory_files",
     "skills",
     "system_prompt",
+    "repo_map",
     "mcp_tools",
     "mcp_instructions",
     "autocompact_buffer",
@@ -99,6 +100,7 @@ export namespace ContextBreakdown {
     memory_files: "Memory files",
     skills: "Skills",
     system_prompt: "System prompt",
+    repo_map: "Repo map",
     mcp_tools: "MCP tools",
     mcp_instructions: "MCP server instructions",
     autocompact_buffer: "Autocompact buffer",
@@ -113,6 +115,8 @@ export namespace ContextBreakdown {
   const MCP_INSTRUCTIONS_HEADING = "# MCP Server Instructions"
   const MCP_PREFIX = "mcp__"
   const SKILL_TOOL = "skill"
+  /** The live repo map block (codemap/repo-map.ts RepoMap.slice), carved out of the system prompt row. */
+  const REPO_MAP_BLOCK = /<repo_map\b[\s\S]*?<\/repo_map>/g
 
   /** One `<skill>` entry of the skill tool's `<available_skills>` list (tools/builtins/skill.ts). */
   const SKILL_ENTRY = /<skill>\s*<name>([^<]+)<\/name>[\s\S]*?<\/skill>/g
@@ -165,6 +169,10 @@ export namespace ContextBreakdown {
       .filter((block) => block.startsWith(MCP_INSTRUCTIONS_HEADING))
       .reduce((sum, block) => sum + estimate(block), 0)
     const systemTokens = input.system.reduce((sum, block) => sum + estimate(block), 0)
+    const repoMapTokens = input.system.reduce(
+      (sum, block) => sum + [...block.matchAll(REPO_MAP_BLOCK)].reduce((acc, match) => acc + estimate(match[0]), 0),
+      0,
+    )
 
     const mcpTools: Snapshot["mcpTools"] = []
     const systemTools: Snapshot["systemTools"] = []
@@ -202,7 +210,8 @@ export namespace ContextBreakdown {
         system_tools: systemTools.reduce((sum, item) => sum + item.tokens, 0),
         memory_files: memoryTokens,
         skills: skillTokens,
-        system_prompt: Math.max(0, systemTokens - memoryTokens - mcpInstructionTokens),
+        system_prompt: Math.max(0, systemTokens - memoryTokens - mcpInstructionTokens - repoMapTokens),
+        repo_map: repoMapTokens,
         mcp_tools: mcpTools.reduce((sum, item) => sum + item.tokens, 0),
         mcp_instructions: mcpInstructionTokens,
       },
@@ -229,6 +238,7 @@ export namespace ContextBreakdown {
       "memory_files",
       "skills",
       "system_prompt",
+      "repo_map",
       "mcp_tools",
       "mcp_instructions",
     ]
@@ -254,6 +264,7 @@ export namespace ContextBreakdown {
       system_prompt: 0,
       mcp_tools: 0,
       mcp_instructions: 0,
+      repo_map: 0,
     }
     for (const category of snapshot.categories) {
       if (category.id in parts) parts[category.id as Measured] = category.tokens
@@ -337,6 +348,7 @@ export namespace ContextBreakdown {
         system_prompt: 0,
         mcp_tools: 0,
         mcp_instructions: 0,
+        repo_map: 0,
       },
     })
   }
@@ -452,6 +464,7 @@ export namespace ContextBreakdown {
       system_prompt: 0,
       mcp_tools: 0,
       mcp_instructions: 0,
+      repo_map: 0,
     }
     const deferred: Partial<Record<Deferred, number>> = {}
     let buffer = 0

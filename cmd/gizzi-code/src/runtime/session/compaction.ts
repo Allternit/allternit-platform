@@ -3,6 +3,7 @@ import { Bus } from "@/shared/bus"
 import { Session } from "@/runtime/session"
 import { Identifier } from "@/shared/id/id"
 import { Instance } from "@/runtime/context/project/instance"
+import { ModelJobs } from "@/runtime/context/config/model-jobs"
 import { Provider } from "@/runtime/providers/provider"
 import { MessageV2 } from "@/runtime/session/message-v2"
 import z from "zod/v4"
@@ -137,9 +138,15 @@ export namespace SessionCompaction {
       data: { parentID: input.parentID, auto: input.auto, messageCount: input.messages.length },
     })
     const agent = await Agent.get("compaction")
+    // Model: the compaction agent's own → models.jobs.summarizer → the session's.
+    const summarizer = agent.model ? undefined : await ModelJobs.jobModel("summarizer")
     const model = agent.model
       ? await Provider.getModel(agent.model.providerID, agent.model.modelID)
-      : await Provider.getModel(userMessage.model.providerID, userMessage.model.modelID)
+      : summarizer
+        ? await Provider.getModel(summarizer.providerID, summarizer.modelID).catch(() =>
+            Provider.getModel(userMessage.model.providerID, userMessage.model.modelID),
+          )
+        : await Provider.getModel(userMessage.model.providerID, userMessage.model.modelID)
     const msg = (await Session.updateMessage({
       id: Identifier.ascending("message"),
       role: "assistant",

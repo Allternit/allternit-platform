@@ -68,12 +68,19 @@ This tells you that earlier conversation spans were summarized and replaced with
 |----------|--------|------------|
 | Conversation | 8,200 | 4.1% |
 | System prompt | 3,100 | 1.6% |
+| Repo map | 1,400 | 0.7% |
 | Tool definitions | 4,500 | 2.3% |
 | Skills | 1,800 | 0.9% |
 | Memory files | 600 | 0.3% |
 | Free space | 181,800 | 90.9% |
 
 Categories include conversation history, system prompt, built-in and MCP tool definitions, custom agents, memory files, skills, and any autocompact or manual compact buffer.
+
+### Repo map
+
+In a project folder, every Code turn's system prompt carries a ranked map of the project's files: each line is a path, how many files import it (`(→N)`), up to six exported symbols (`+Name`), and `[NEW]` for files this session changed. Files this session edited or read rank higher, and so do files that change in the same commits as them. The map stays within about 1,500 tokens and is rebuilt once per message you send.
+
+The map is built without a model. Symbols come from the TypeScript parser for TS/JS files and from a top-level declaration scan for Rust, Python, Go and other languages. It is cached in `.gizzi/repo-map.json` and updated as files change. To preview it, run `gizzi codemap map` (add `--budget <tokens>` or `--all`). To leave files out, list them in a `.gizziignore` file (gitignore syntax). To turn the map off, set `"repoMap": false` in your gizzi config or `GIZZI_NO_REPO_MAP=1`.
 
 ### MCP tools
 

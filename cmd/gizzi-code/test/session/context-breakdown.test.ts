@@ -62,6 +62,7 @@ describe("context breakdown", () => {
       "memory_files",
       "skills",
       "system_prompt",
+      "repo_map",
       "mcp_tools",
       "mcp_instructions",
       "autocompact_buffer",

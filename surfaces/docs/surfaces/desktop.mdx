@@ -116,7 +116,7 @@ Cloud calls carry only the Clerk bearer (and `X-Allternit-Tenant-Id`). `buildAut
 ## Code mode panes
 
 The **Panes** menu at the top right of a Code session lists Terminal, Changes,
-Browser, Computer, Files, Artifacts, Transcript and Tasks. A new session opens
+Browser, Computer, Files, Artifacts, Transcript, Tasks and Code map. A new session opens
 with Terminal.
 
 - **Pick a pane** to show it in place of the one you're using. Picking a pane
@@ -138,6 +138,11 @@ with Terminal.
     with `patch` it reverses one hunk after `git apply -R --check`; without it
     runs `git checkout -- file`, or deletes an untracked file only when
     `untracked: true`.
+
+- **Code map** draws the project's files by import graph and lights the ones
+  the agent reads (blue) and edits (coral) as it works; click a file to open
+  it in Files. A line under the chat shows how much of the repo map the last
+  prompt carried. See [Live code map](/cli/code-intelligence#live-code-map).
 
 On a phone, each pane opens full screen from the header's pane menu.
 
@@ -210,6 +215,14 @@ For developers (`surfaces/allternit-desktop/src/main/runtime-package.ts`, schedu
 **Quitting.** Quick Chat hides instead of closing, except while the app quits. Crash reports use a non-blocking dialog. Once quit cleanup has run, a second quit exits at once, so nothing can hold the app open.
 
 Desktop hosts the Allternit API and Gizzi runtime locally. It is not part of the [Agency Kernel](/architecture); the kernel's Agency API is a Cloud API surface. See [Architecture](/architecture).
+
+## Run line
+
+Under the latest reply, the run line shows what the run took: the model, time, tokens in and out, tool calls, **failed** tool calls (in red, when any failed), cost, context used and the cache state. Click it for the full breakdown.
+
+In Code it stays in view, because it is part of reading the run. In Chat, Cowork and bot chats it appears when you hover or focus the reply's footer. On touch screens (the phone layout and the m.allternit.com app) it is always shown, since there is no hover.
+
+For developers: `RunTelemetry` (`src/components/chat/RunTelemetry.tsx`) renders the line from the message's `metadata.telemetry` (`toolCalls`, `toolFailures`, `usage`). `StreamingChatComposer` takes `runLine: 'hover' | 'always'`; `CodeCanvas` and `CodeCanvasTileSession` pass `'always'`. The hover wrappers (also in `RunFooter`) add `[@media(hover:none)]:opacity-100`.
 
 ## Prompt-cache countdown
 

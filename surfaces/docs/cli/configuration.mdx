@@ -58,6 +58,37 @@ gizzi config profile set-active strict
 gizzi config profile remove strict
 ```
 
+## Models for each job
+
+Pick a model per job in `models.jobs` (project `config.json`), or in the Allternit app: open the model pill in a Code session and choose **Models for each job…** (also in **Settings → Gizzi Code**). The sheet lists Explorers, Coders, Reviewer, Goal escalation and Summarizer, each with **Same as chat** to follow the session's model; **Done** saves for the active project. A job left out follows the session's model. Values are `provider/model` ids, the same as the top-level `model` setting.
+
+```json
+{
+  "models": {
+    "jobs": {
+      "explorer": "<provider>/<fast-model>",
+      "coder": "<provider>/<balanced-model>",
+      "review": "<provider>/<strongest-model>",
+      "goalEscalate": "<provider>/<strongest-model>",
+      "summarizer": "<provider>/<fast-model>"
+    }
+  }
+}
+```
+
+| Job | Used for |
+|---|---|
+| `explorer` | `explore` subagents (reading and searching) |
+| `coder` | `general` subagents (making edits) |
+| `review` | The reviewer (`/review`, `gizzi run --review`, goal rounds) |
+| `goalEscalate` | The model a goal switches to after two rounds with the same failures |
+| `summarizer` | Compacting long sessions |
+| `chat`, `goalJudge`, `webResearch` | Accepted and stored; not used yet |
+
+## Goal rounds
+
+While a `/goal` runs, each round ends with the project's checks and a review: `goal.checks` when set (a list of commands), else the `typecheck` and `test` scripts in `package.json`, else `cargo check` for Rust. Failures and the reviewer's findings go into the next round. Turn off the review with `"goal": { "review": false }`, or the checks with `"goal": { "checks": [] }`. Reviewer tokens are not counted against the goal's token budget.
+
 ## Environment variables
 
 | Variable | Purpose |

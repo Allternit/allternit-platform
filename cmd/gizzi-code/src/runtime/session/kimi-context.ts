@@ -99,6 +99,7 @@ export namespace KimiContext {
       system_prompt: 0,
       mcp_tools: 0,
       mcp_instructions: 0,
+      repo_map: 0,
     }
     // Memory files: the AGENTS.md text Kimi folded into its prompt.
     let rest = prompt

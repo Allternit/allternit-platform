@@ -71,6 +71,7 @@ import * as BotChat from "@/runtime/bots/canonical-chat"
 import * as BotTurn from "@/runtime/bots/bot-turn"
 import { BotTurnInfo } from "@/runtime/bots/bot-turn"
 import { composeTurnSystem } from "@/runtime/session/system-header"
+import { RepoMap } from "@/codemap/repo-map"
 import * as BotInbox from "@/runtime/bots/bot-inbox"
 import { isRoutineTurnText } from "@/runtime/bots/bot-routines"
 import { isMessageAgentSession, MessageAgentTool } from "@/runtime/tools/builtins/message-agent"
@@ -1157,6 +1158,22 @@ const message = await createUserMessage(input)
           const workspaceSystemPrompt = await WorkspaceContext.getWorkspaceSystemPrompt(session.directory)
           return workspaceSystemPrompt ? [workspaceSystemPrompt] : []
         },
+        // Ranked file/symbol map of the session's project (codemap/repo-map.ts).
+        // Rebuilt once per user turn so the cached system prefix holds across
+        // steps; empty for folders that are not a project, or when turned off
+        // (config `repoMap: false`, GIZZI_NO_REPO_MAP=1). Never throws.
+        repoMap: async () => {
+          const config = await Config.get().catch(() => undefined)
+          const touched = Object.keys(FileTime.state().read[sessionID] ?? {})
+          const block = await RepoMap.prompt({
+            root: workdir(sessionID) ?? session.directory,
+            sessionID,
+            turn: lastUser.id,
+            boost: touched,
+            enabled: config?.repoMap !== false,
+          })
+          return block ? [block] : []
+        },
         // Configured servers only: the per-user connectors proxy is opened per turn in resolveTools.
         mcpInstructions: async () => {
           const block = MCP.instructionsPrompt(
@@ -1347,13 +1364,23 @@ const message = await createUserMessage(input)
             GoalEngine.pauseGoal(nextGoal.id, "Paused after reaching the agent step ceiling.")
             break
           }
+          // Round boundary: project checks + independent review feed the next
+          // round; two rounds with the same failures escalate the model
+          // (models.jobs.goalEscalate). Budgets were enforced above.
+          const roundChecks = await import("@/runtime/review/goal-checks")
+            .then(({ GoalRoundChecks }) => GoalRoundChecks.run({ sessionID, cwd: Instance.directory, abort }))
+            .catch((error) => {
+              log.warn("goal round checks failed", { sessionID, error })
+              return undefined
+            })
+          if (abort.aborted) break
           const continuationUser: MessageV2.User = {
             id: Identifier.ascending("message"),
             sessionID,
             role: "user",
             time: { created: Date.now() },
             agent: lastUser.agent,
-            model: lastUser.model,
+            model: roundChecks?.escalate ?? lastUser.model,
           }
           await Session.updateMessage(continuationUser)
           await Session.updatePart({
@@ -1361,7 +1388,10 @@ const message = await createUserMessage(input)
             messageID: continuationUser.id,
             sessionID,
             type: "text",
-            text: "Continue the active durable goal. Choose the next bounded useful slice, preserve evidence, and use update_goal only for progress accounting or an audited terminal outcome.",
+            text: [
+              "Continue the active durable goal. Choose the next bounded useful slice, preserve evidence, and use update_goal only for progress accounting or an audited terminal outcome.",
+              roundChecks?.feedback,
+            ].filter(Boolean).join("\n\n"),
             synthetic: true,
           } satisfies MessageV2.TextPart)
           // New goal slice: fresh guardrail counters and wall clock.

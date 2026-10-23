@@ -321,6 +321,8 @@ export namespace File {
       "file.edited",
       z.object({
         file: z.string(),
+        /** The session whose tool wrote the file, when a tool did (feeds the repo map's [NEW] marks). */
+        sessionID: z.string().optional(),
       }),
     ),
   }

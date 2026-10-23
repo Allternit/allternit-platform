@@ -374,6 +374,7 @@
               "cli/tasks",
               "cli/doctor",
               "cli/context",
+              "cli/code-intelligence",
               "cli/usage",
               "cli/plan",
               "cli/ci-mode",
