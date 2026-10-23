@@ -83,20 +83,25 @@ if (!fs.existsSync(path.join(dest, 'launch.py'))) {
 }
 log(`staged ${dest}`);
 
+// Returns [command, ...prefixArgs] for a Python with pip, or null. Windows
+// runners name it `python` / `py -3`; `python3` there can be the Store stub
+// or a copy without pip (windows-2025 image 20261021 broke 1.1.11's build).
 function resolvePython() {
   const candidates = [
-    process.env.ALLTERNIT_ACU_PYTHON,
-    '/opt/homebrew/bin/python3.12',
-    '/opt/homebrew/bin/python3.11',
-    '/usr/local/bin/python3.12',
-    '/usr/local/bin/python3.11',
-    'python3.11',
-    'python3',
+    process.env.ALLTERNIT_ACU_PYTHON && [process.env.ALLTERNIT_ACU_PYTHON],
+    ['/opt/homebrew/bin/python3.12'],
+    ['/opt/homebrew/bin/python3.11'],
+    ['/usr/local/bin/python3.12'],
+    ['/usr/local/bin/python3.11'],
+    ['python3.11'],
+    ['python3'],
+    ['python'],
+    ['py', '-3'],
   ].filter(Boolean);
-  for (const candidate of candidates) {
+  for (const [cmd, ...prefix] of candidates) {
     try {
-      execFileSync(candidate, ['-m', 'pip', '--version'], { stdio: 'ignore', timeout: 5000 });
-      return candidate;
+      execFileSync(cmd, [...prefix, '-m', 'pip', '--version'], { stdio: 'ignore', timeout: 20000 });
+      return [cmd, ...prefix];
     } catch {
       /* try next */
     }
@@ -129,9 +134,10 @@ function installGatewayPackages(key) {
   }
   const site = path.join(siteRoot, key);
   fs.rmSync(site, { recursive: true, force: true });
-  log(`installing gateway packages for ${key} with ${python}`);
-  execFileSync(python, [
-    '-m', 'pip', 'install', '--quiet', '--disable-pip-version-check', '--no-compile',
+  const [pythonCmd, ...pythonPrefix] = python;
+  log(`installing gateway packages for ${key} with ${python.join(' ')}`);
+  execFileSync(pythonCmd, [
+    ...pythonPrefix, '-m', 'pip', 'install', '--quiet', '--disable-pip-version-check', '--no-compile',
     '--only-binary=:all:', '--python-version', '3.12', '--implementation', 'cp',
     ...PLATFORMS[key].flatMap((tag) => ['--platform', tag]),
     '--target', site, ...PACKAGES,
