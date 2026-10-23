@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+## 2.2.12 (2026-10-23)
+
+### Added
+- Decision trees in the `question` tool: optional `risk`, `context`, and per-option
+  `recommended`, `caution` and `then` (a follow-up question). The answer comes back
+  as the chosen path, e.g. "Ship a hotfix → After the tests". The app draws it as a
+  branching graph in the question card and the Tasks "Decisions" deck.
+- `glance` tool: the agent writes a one-line status (80 characters) that the app
+  shows on the session's sidebar row. Empty text clears it. Also in the CLI bridge.
+- Project panels from `.allternit/panels` files.
+
+### Fixed
+- Questions asked through the phone and remote paths showed up nowhere, and their
+  answers never reached the agent: a second copy of the question store kept its
+  own pending list. There is one store now.
+
 ## 2.2.11 (2026-10-23)
 
 ### Added
