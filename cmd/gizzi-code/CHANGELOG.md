@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 2.2.13 (2026-10-23)
+
 ### Added
 - Decision trees in the terminal: `AskUserQuestion` takes `risk`, `context`, and per-option
   `recommended`, `caution` and `then`. A picked option with a follow-up opens it as a "Then"
