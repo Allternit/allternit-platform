@@ -2319,6 +2319,32 @@
         "allternit/surfaces/docs/guides/chat-composer.mdx",
         "allternit/surfaces/docs/guides/attachments.mdx"
       ]
+    },
+    {
+      "id": "feature:session-overview",
+      "label": "All chats at a glance (session overview: grid + deck)",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "Every open session of the current mode as live cards (latest reply, working / needs you / new reply, last activity) in a two-column grid or a sideways deck, with a project dropdown filter and no visible scrollbars. Home = chats + Cowork, Code = code threads by repo, ACI = agent runs; a bot's deck Threads tab uses the same component for its threads (Take it / Not now on suggestions, x marks done) and its Tasks tab became nested dropdowns (thread > step > subagent). Closing a card archives (metadata.archived / setCodeSessionArchived). Desktop: Open all recents / Open all code recents open on the cards with a List switch back to RecentsView / ThreadsView. Phone (ai.allternit.com phone layout + m.allternit.com): count button in the Chats and Code headers and See all over drawer Recents open PhoneOverviewOverlay.",
+      "touches": [
+        "allternit-ai/src/components",
+        "allternit-ai/src/views",
+        "allternit-ai/src/views/code",
+        "allternit-ai/src/views/bots",
+        "allternit-ai/src/fabric-session",
+        "allternit-ai/src/shell"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-22",
+          "note": "Eoj picked options A + C together (grid and deck, switched in the header) after reviewing Empryo's phone app; no chip row and no visible scrollbars; one overview scoped to the mode you are in (Home, Code, ACI, each bot's Threads tab), never one cross-mode view (that would be the rejected Inbox); bot Tasks shown as dropdowns because tasks hold subagents."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/session-overview.mdx",
+        "allternit/surfaces/docs/guides/bot-threads.mdx",
+        "allternit-ai/src/components/session-overview/SessionOverview.stories.tsx"
+      ]
     }
   ],
   "journeys": [

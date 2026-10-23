@@ -66,6 +66,7 @@
             "pages": [
               "guides/first-run-setup",
               "guides/sidebar-navigation",
+              "guides/session-overview",
               "architecture/sidebar-layout",
               "guides/meet-your-bots",
               "guides/bot-setup-picker",
