@@ -139,9 +139,10 @@ with Terminal.
     runs `git checkout -- file`, or deletes an untracked file only when
     `untracked: true`.
 
-- **Code map** draws the project's files by import graph and lights the ones
-  the agent reads (blue) and edits (coral) as it works; click a file to open
-  it in Files. A line under the chat shows how much of the repo map the last
+- **Code map** opens on the file the agent is working on, with what it
+  uses, what uses it and what a change could break, like the dependency map;
+  **Whole repo** draws every file by import graph. Files the agent reads show
+  blue and edits show coral; click a file to centre on it or open it in Files. A line under the chat shows how much of the repo map the last
   prompt carried. See [Live code map](/cli/code-intelligence#live-code-map).
 
 On a phone, each pane opens full screen from the header's pane menu.
