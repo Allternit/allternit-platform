@@ -776,6 +776,22 @@ async fn exchange_pairing(
         .await?
         .flatten()
         .unwrap_or_default();
+    // Clerk users are stored with a `<id>@users.allternit.local` placeholder.
+    // A Desktop sign-in learns the real address from Clerk itself, but a cloud
+    // computer pairs with its bootstrap token and would show the placeholder
+    // as the account, so ask Clerk for the real one.
+    let user_email = if (user_email.is_empty() || user_email.ends_with("@users.allternit.local"))
+        && user_id.starts_with("user_")
+    {
+        crate::services::user_trust::clerk_primary_email(
+            &crate::services::user_trust::TrustConfig::from_env(),
+            &user_id,
+        )
+        .await
+        .unwrap_or(user_email)
+    } else {
+        user_email
+    };
     let capabilities = serde_json::from_str(&pairing.capabilities).unwrap_or_default();
     Ok(Json(RuntimeSessionResponse {
         runtime_id,

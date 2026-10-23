@@ -211,6 +211,36 @@ async fn fetch_verified_from_clerk(
         .unwrap_or(false))
 }
 
+/// The user's primary email address from Clerk (else their first one).
+/// `None` on any Clerk problem: callers fall back to what they had.
+pub async fn clerk_primary_email(config: &TrustConfig, clerk_user_id: &str) -> Option<String> {
+    let secret = config.clerk_secret_key.as_deref().filter(|s| !s.is_empty())?;
+    let client = reqwest::Client::builder().timeout(CLERK_REQUEST_TIMEOUT).build().ok()?;
+    let url = format!("{}/v1/users/{}", config.clerk_api_base.trim_end_matches('/'), clerk_user_id);
+    let response = match client.get(&url).bearer_auth(secret).send().await {
+        Ok(response) if response.status().is_success() => response,
+        Ok(response) => {
+            tracing::warn!(user_id = %clerk_user_id, status = %response.status(), "Clerk email lookup answered non-success");
+            return None;
+        }
+        Err(error) => {
+            tracing::warn!(user_id = %clerk_user_id, "Clerk email lookup failed: {error}");
+            return None;
+        }
+    };
+    let body: serde_json::Value = response.json().await.ok()?;
+    let addresses = body.get("email_addresses")?.as_array()?;
+    let primary = body.get("primary_email_address_id").and_then(|id| id.as_str());
+    addresses
+        .iter()
+        .find(|address| primary.is_some() && address.get("id").and_then(|id| id.as_str()) == primary)
+        .or_else(|| addresses.first())
+        .and_then(|address| address.get("email_address"))
+        .and_then(|email| email.as_str())
+        .filter(|email| !email.is_empty())
+        .map(str::to_string)
+}
+
 /// One Clerk organization membership: the org id and the member's role as
 /// Clerk names it (`org:admin`, `org:member`, or a custom `org:*` role).
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
@@ -587,5 +617,36 @@ mod tests {
             "https://api.clerk.com",
             "default Clerk backend API base"
         );
+    }
+
+    #[tokio::test]
+    async fn primary_email_prefers_the_primary_address_and_fails_soft() {
+        use axum::{response::IntoResponse, routing::get, Router};
+        let app = Router::new()
+            .route(
+                "/v1/users/user_two",
+                get(|| async {
+                    axum::Json(serde_json::json!({
+                        "primary_email_address_id": "ema_2",
+                        "email_addresses": [
+                            { "id": "ema_1", "email_address": "old@example.com" },
+                            { "id": "ema_2", "email_address": "me@example.com" }
+                        ]
+                    }))
+                }),
+            )
+            .route(
+                "/v1/users/user_broken",
+                get(|| async { (axum::http::StatusCode::INTERNAL_SERVER_ERROR, "boom").into_response() }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let config = config(&format!("http://{addr}"));
+
+        assert_eq!(clerk_primary_email(&config, "user_two").await.as_deref(), Some("me@example.com"));
+        assert_eq!(clerk_primary_email(&config, "user_broken").await, None);
+        let no_key = TrustConfig { clerk_secret_key: None, ..config };
+        assert_eq!(clerk_primary_email(&no_key, "user_two").await, None);
     }
 }
