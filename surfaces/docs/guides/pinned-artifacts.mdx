@@ -1,0 +1,37 @@
+---
+title: Pinned artifacts
+description: Keep the dashboards, decks and docs you use most one tap away in the composer's Artifacts menu.
+---
+
+Pin an artifact and it stays in the composer's **Artifacts ▾** menu, next to **Agent mode ▾** and **Plugins ▾** under the message box. This works the same in Chat, Cowork and every Bot-mode composer, on Desktop, on ai.allternit.com on a phone, and in the m.allternit.com app.
+
+## Pin and unpin
+
+- In an open artifact, select the pin button next to **Share**: **Pin to deck**. Select it again to **Unpin from deck**.
+- In the Artifacts library, open a card's **⋯** menu and choose **Pin to deck** or **Unpin from deck**.
+
+You can pin up to 8. The newest pin is at the top; pinning a ninth drops the oldest. Deleting an artifact also unpins it.
+
+## The Artifacts menu
+
+Select **Artifacts ▾** to see:
+
+- **Pinned**: your pins, each with its kind and when it was last updated. Select one to open it.
+- **Recent**: your three most recently updated artifacts.
+- **All artifacts…**: opens the Artifacts library.
+
+A pinned artifact that has been deleted is removed from the list the next time you open the menu. On phones the Plugins logos are hidden so the three menus fit on one line.
+
+## Where pins are kept
+
+Pins are saved to your account on your connected runtime, like project icons, so your other devices on the same runtime and account see the same pins. They update when the app comes back into focus. When you're signed out, or your runtime is too old to keep pins, they're saved in this browser only.
+
+## For developers
+
+- **Store:** `src/lib/artifacts/deck-pins.ts` (`useDeckPins`, `pinToDeck`, `unpinFromDeck`, `pruneDeckPins`). It keeps an ordered list `{ id, kind, title }`, capped at 8, and broadcasts `allternit:deck-pins-changed`.
+- **Runtime API:** `GET /api/v1/deck-pins` returns `{ "pins": [...] }`. `PUT` takes and returns `{ "pins": [...] }`, validated to at most 8 entries with non-empty `id`, `kind` and `title`. It is stored in `runtime_settings` under `deck_pins` (allternit-api `runtime_settings_routes.rs`) and isn't cleared by a runtime settings reset.
+- **Fallback:** a 404, 401, 403 or network error switches the store to `localStorage['allternit:deck-pins']`.
+- **UI:**
+  - `src/components/composer-deck/DeckArtifactsMenu.tsx` is the third trigger in `DeckSelectors`. It opens artifacts with `useArtifacts.getState().open(id)`.
+  - The pin button is in `components/artifacts/ArtifactWindow.tsx`, which also covers panes and phones.
+  - The library card menu is in `views/library/ArtifactsView.tsx`.

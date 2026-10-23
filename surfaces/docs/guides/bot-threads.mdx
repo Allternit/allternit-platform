@@ -36,7 +36,11 @@ Channel threads, vendor look-pack threads and chats embedded in a project panel 
 
 ## The deck above the composer
 
-A bot's chat has four tabs in the tray above the composer. The composer itself, its Agent mode and Plugins row, the model and voice stay the same on every tab.
+A bot's chat has four tabs in the tray above the composer. The composer itself, the model and voice stay the same on every tab.
+
+Every composer in Bot mode is the same: Bot Home, a bot's chat and threads, group chats and Project home. Each has the same deck under the card: **Agent mode ▾ | Plugins ▾ | Artifacts ▾** ([pinned artifacts](/guides/pinned-artifacts)). The tabs above the card appear whenever a bot is in focus. On **Bot Home** they appear once you pick a bot in **To:**; tapping a tab opens that bot's chat on that tab. With **A:// · new project** in To: there are no tabs.
+
+A mode you pick in the deck applies to your next messages. A plugin you pick shows as a chip on the card and is used for the next message only.
 
 | Tab | What it shows |
 |---|---|
@@ -61,6 +65,11 @@ On phones (the `ai.allternit.com` phone layout and the `m.allternit.com` PWA) th
 
 ### For developers
 
+- Bottom deck: `ThreadComposer`'s `bottomDeck` slot takes `<ComposerDeck surface="bot" variant="compact">`, and voice mode hides it.
+  - In `BotChatSessionView` a mode pick sets the thread's `deckMode` and `setSelectedMode('bot', …)`. The send adds `[Execute in X mode]` (`decorateThreadMessage`).
+  - A plugin pick becomes `DeckPluginChip`, and the next send adds `[Use name]`. **More plugins…** opens the plugin @ list (`onPickMention`).
+  - Group chats and Project home use `views/bots/thread-deck/useBotComposerDeck.tsx`.
+- Bot Home top deck: `BotLaunchpadView` passes `BotThreadTopDeck` (Main chat · Threads · Tasks · Bot) as `ChatComposer`'s `topDeckContent` when To: has a bot. `ChatComposer` draws it as the same tray as `ThreadComposer`'s. A tab tap records `useDeckTabRequest` (valid 10 s) and opens the bot's chat. `BotChatSessionView` picks up the requested tab.
 - Deck: `src/views/bots/thread-deck/BotThreadTopDeck.tsx` (tabs `thread` · `threads` · `tasks` · `bot`), passed to `ThreadComposer` as `topDeck` (a tray tucked behind the card, like `CoworkTopDeck`). `BotChatSessionView` keeps `deckTab` per open chat and resets it when the session changes; the gear sets `deckTab="bot"` with Settings.
 - Channel and vendor-pack threads open on `BotLiveStage` too: the conversation slot gets `ChannelThreadPane` with `hideComposer`, or `GatewayPackThread` with a `renderComposer` that only captures the pack's `send` (`packSendRef`). The shared `ThreadComposer` sends through it, so the vendor approve-and-retry still runs; incognito and `onSteer` are off for packed bots. While a vendor-backed bot's view is unknown (`useBotGateway` / `useThreadChannelState` loading, both cached and read on first render), the chat area waits instead of painting the wrong view.
 - The Bot tab's panel skips `topPad`; `BotHomeHero` pads its content by `--view-header-top` (56px in the thread) so its banner runs under the floating thread top. `ThreadHeader` gets `onBack` only on phones (the shell rail has Back elsewhere).

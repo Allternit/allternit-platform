@@ -70,3 +70,20 @@ Project settings pass mode-specific configuration into the shared AppearanceEdit
 The pack manifest remains the catalog source of truth. Office Professionals uses Allternit Series expression PNGs; old portraits and sheets are retained for saved configs. Gizzi YouTube combines prepared expression PNGs with transparent SVG exports of the existing show rigs. The source and reproducible exporter are in `scripts/avatar-cast/`; asset provenance is recorded in its README. The pocket companion cutouts retain their established WebP URLs.
 
 `BotCategorySelect.tsx` is shared across create/edit and harness forms. Its portalled popover stays outside modal clipping, uses themed glass, and supports selection labels, keyboard navigation, focus return and dismissal.
+
+## Quick picker and create sheet
+
+`src/components/appearance/AppearanceQuickPicker.tsx` holds the shared simple layout:
+
+- the preview, the Symbols/Brands/Text/Image tabs and the grid
+- the single `BANNER_SWATCHES` row, where a pick sets `color` and `bannerColor` together
+- `MoreOptions`, the phone `SheetHeader`, and `PHONE_SHEET_CLASS` with `PHONE_SHEET_STYLE`
+
+The sheet's geometry is inline style on purpose, because `cn` only joins classes and can't override `DialogContent`'s centring.
+
+`AppearanceEditor` and `CreateProjectDialog` (`components/projects/ProjectDialogs.tsx`) both use it. They render as a sheet when `useIsPhoneViewport()` is true.
+
+`saveAppearance(key, value)` in `lib/appearance/useAppearance.ts` saves the icon for a project that was just created.
+
+Bot-mode create paths (`BotProjectsRail`, `BotProjectsListView`, `ProjectView` bot category) use `views/bots/NewBotProjectSheet.tsx`. Purpose goes into `createBotProject(name, [], purpose)`, which is the project `description` that `primeBotProjectContext` gives bots.
+

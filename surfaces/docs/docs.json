@@ -96,6 +96,7 @@
               "guides/always-on-bots",
               "plugins/guides/vendor-packs",
               "guides/artifacts",
+              "guides/pinned-artifacts",
               "guides/artifact-apps",
               "guides/artifact-editors",
               "guides/pdf-editor",
