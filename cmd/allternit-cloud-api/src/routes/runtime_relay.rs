@@ -1209,6 +1209,8 @@ pub(crate) async fn relay_request_to_runtime_with(
         }
     };
     let request_id = Uuid::new_v4().to_string();
+    // The path without its query (queries can carry tokens), for the timeout log.
+    let logged_path = request.path.split('?').next().unwrap_or_default().to_string();
     let response_timeout = if request.path.starts_with("/api/v1/providers/video/generate") {
         Duration::from_secs(340)
     } else {
@@ -1272,6 +1274,7 @@ pub(crate) async fn relay_request_to_runtime_with(
         }
         _ => {
             connection.pending.lock().await.remove(&request_id);
+            tracing::warn!(runtime_id = %runtime_id, path = %logged_path, "relay: runtime sent no response head before the timeout");
             Ok((
                 StatusCode::GATEWAY_TIMEOUT,
                 Json(serde_json::json!({ "error": "runtime_timeout" })),
