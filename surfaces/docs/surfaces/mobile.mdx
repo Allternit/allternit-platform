@@ -275,6 +275,14 @@ The phone composer is the Desktop composer: the top deck, the message box and th
 - **Projects, Artifacts, Automation Tasks** and the sessions overview have **☰**, the title and a filter button at the top, and a floating search box and **New** button at the bottom. Artifacts show as thumbnail cards.
 - **Settings** is a full sheet: your account card (plan and how much is left), then **Account**, **Assistant**, **Appearance** (Light, Dark, System), **Bots & agents**, **Computers** and **Advanced**, with simple on/off settings as switches. Pages open full width with a back button. **Log out** is at the bottom. Every settings page has a place on the phone: `settings.config.ts` gives each page a `phone: { group, order }`, and a test checks that every page is reachable.
 
+## The ACI screen
+
+ACI has no title bar on the phone. Its four views, **Agent**, **Apps** (MCP Apps), **Computers** and **Extensions**, sit in the top bar beside **☰**. The menu's mode button already shows that you are in ACI.
+
+Apps and Extensions each have one row under the top bar instead of a title, a search box and a row of filters. The row holds the view's own tabs or categories (Installed, Discover and Build in Apps; All, Productivity and the other categories in Extensions), a search button that opens into a search box, and icon buttons: **+** for Add by URL in Apps, and Marketplace and Upload in Extensions. The Agent view adds one row with the computer picker only when you have paired computers.
+
+Desktop keeps the full headers. Developer notes: the phone screen is `src/fabric-session/phone/screens/AciScreen.tsx`. It passes `compact` to `McpAppsView` and `BrowserExtensionsView`, which then render the shared `CompactViewBar` (`src/components/ui/polish/CompactViewBar.tsx`).
+
 ## Navigation appearance
 
 Mode controls and shell rail tabs share the desktop glass selection style. The Chat/Cowork control uses the same glass highlight on ai.allternit.com and the installed PWA. Touch targets keep their phone sizing, and motion and transparency follow system accessibility preferences.
