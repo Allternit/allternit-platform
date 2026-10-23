@@ -1,0 +1,58 @@
+---
+title: "All chats at a glance"
+description: "See every open chat, Cowork task, code thread or agent run as live cards, in a grid or a deck, on Desktop and on phones."
+---
+
+The overview shows the sessions of the mode you are in as live cards. Each card shows the latest reply, whether the session is working, needs you or has a new reply, and how long ago it last moved. Use it when several sessions run at once and you want to see them all without opening each one.
+
+## What it shows
+
+Each mode shows its own sessions:
+
+| Mode | Cards | Grouped by |
+|---|---|---|
+| **Home** | Chats and Cowork tasks | Project (Cowork tasks without a project sit under **Cowork**) |
+| **Code** | Code threads | Repo, as in the Code sidebar |
+| **ACI** | Agent runs | One group |
+| **Bots** | A bot's threads, in its **Threads** tab | The bot's projects. See [The deck above the composer](/guides/bot-threads#the-deck-above-the-composer) |
+
+Bot sessions stay out of the Home and Code overviews. Each bot's threads have their own overview inside the bot.
+
+Working sessions come first, then the most recent. A working card has a coral outline (a bot's own colour in Bot Mode). A card that needs you has an amber outline.
+
+## Grid or deck
+
+The switch at the top right picks the layout:
+
+- **Grid:** two columns on phones and as many as fit on Desktop. Cards sit under their project's name.
+- **Deck:** one tall card per session, side by side. Swipe or scroll sideways. A deck card also shows your last message.
+
+Each overview remembers the layout you last used.
+
+**Filter by project.** Under the title, **All projects** opens a list of projects (repos in Code) with their counts. A dot marks a project with a session working. The line also counts how many sessions are open, working and waiting on you.
+
+## Open, close and start
+
+- **Open:** click or tap a card. With the keyboard, focus a card and press Enter.
+- **Close:** the **×** on a card archives the session. On phones you can also swipe a card up. Archived sessions are kept: they leave Recents and the overview, and show under the **Archived** filter in the Recents filters on Desktop. Agent runs can't be closed from here.
+- **Start:** **New chat** (or **New thread** in Code) at the bottom starts one.
+
+## Where to find it
+
+**Desktop and ai.allternit.com:** open **Recents actions** (the three-dot button beside Recents) and pick **Open all recents**. In Code mode it is **Open all code recents**. The page opens on the cards. **List** switches to the previous list page with its search and filters, and **Cards** switches back.
+
+**Phones** (the `ai.allternit.com` phone layout and the `m.allternit.com` app):
+
+- The **count button** in the chat header, and in the Code header, shows how many sessions are open. A coral dot means one is working. Tap it to open the overview.
+- **See all** beside **Recents** in the menu drawer opens the overview for the mode you are in, including ACI.
+- **Back** at the top returns to where you were.
+
+## For developers
+
+- Component: `src/components/session-overview/SessionOverview.tsx` (grid + deck, project dropdown via `QuietMenu`, swipe-up close on phones, layout kept per `layoutScope` in localStorage `allternit.session-overview.layout.<scope>`). Styles in `session-overview.css`: `so-seam` hides scrollbars, `so-fade-x` / `so-fade-y` fade the edges.
+- Data: `useModeOverview(mode)` in `useModeOverview.ts` builds the cards from the chat, Cowork and code session stores (`streamingBySession`, `unreadCounts`, last messages) and the browser agent's runs. `archiveOverviewItem` sets `metadata.archived` (code threads use `setCodeSessionArchived`).
+- Desktop: `DesktopSessionOverview` wraps `RecentsView` (Home) and `ThreadsView` (Code). The cards/list choice is kept in `allternit.session-overview.desktop-view.<scope>`.
+- Phone: `PhoneOverviewOverlay` (opened with `usePhoneNav().openOverview(true)`), `PhoneOverviewButton` in the Chats and Code headers, and **See all** in `PhoneDrawer`.
+- Bots: `src/views/bots/home/BotThreadsOverview.tsx` in the deck's Threads tab.
+- Archived chats now show as archived in the Desktop rail's Recents and stay out of the phone drawer's Recents, like Cowork and Code sessions.
+- Story: `src/components/session-overview/SessionOverview.stories.tsx`.
