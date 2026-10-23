@@ -16,6 +16,7 @@ import { Catastrophic } from "@/runtime/tools/guard/permission/catastrophic"
 
 import { KernelTurn } from "@/runtime/kernel/compilers/turn-hook"
 import { PermissionS1 } from "@/runtime/tools/guard/permission/s1-shadow"
+import { ProjectPanels } from "@/runtime/project/panels"
 export namespace PermissionNext {
   const log = Log.create({ service: "permission" })
 
@@ -199,11 +200,20 @@ export namespace PermissionNext {
       const { ruleset, mode: modeOverride, ...request } = input
       for (const pattern of request.patterns ?? []) {
         const mode = modeOverride ?? (await getMode(request.sessionID))
-        const rule = evaluatePolicy(request.permission, pattern, {
+        let rule = evaluatePolicy(request.permission, pattern, {
           configured: ruleset,
           approvals: s.approved,
           mode,
         })
+        // An approved project panel guard (.allternit/panels, agent.guards)
+        // turns an allow into an ask, in every mode; with nobody there to
+        // ask (dontAsk) it refuses. It never loosens a deny or an ask.
+        if (rule.action === "allow") {
+          const guarded = await ProjectPanels.guardFor(request.permission, pattern)
+          if (guarded) {
+            rule = { action: mode === "dontAsk" ? "deny" : "ask", permission: request.permission, pattern, source: "project" }
+          }
+        }
         log.info("evaluated", { permission: request.permission, pattern, action: rule })
         const callID = request.tool?.callID
         // Q27 shadow S1 GATE: logged after the floor/policy decided; never awaited, never changes `rule`.

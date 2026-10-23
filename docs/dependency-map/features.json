@@ -1236,6 +1236,35 @@
       ]
     },
     {
+      "id": "feature:project-panels",
+      "label": "Project panels (.allternit/panels files as ops sheets and MCP Apps)",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "A project carries panels as JSON files in .allternit/panels/: an ops sheet (kind ops: live sources from a URL signed with the user's own connection, a built-in allternit source or a connector tool; templated status line; prompt buttons that send to the session's agent) or an MCP App (kind app: opens the user's connector's ui:// resource). Listed under Panes → Panels in Code mode and opened as a pane (pane id panel:<file>) or a strip above the composer; the user switches placement per file on the device. Optional agent rules (instructions added to the system context, guards that turn a matching allowed tool call into an ask) apply only after the user approves the file in the panel; approvals are stored by gizzi per project root + file + sha256, so an edited file needs approval again. Needs a reachable local gizzi (Desktop, or a web/phone build pointed at one); elsewhere Panels are hidden.",
+      "touches": [
+        "allternit/cmd/gizzi-code/src/runtime/project",
+        "allternit/cmd/gizzi-code/src/runtime/server",
+        "allternit/cmd/gizzi-code/src/runtime/session",
+        "allternit/cmd/gizzi-code/src/runtime/tools",
+        "allternit-ai/src/lib/project-panels",
+        "allternit-ai/src/components/project-panels",
+        "allternit-ai/src/components/artifacts",
+        "allternit-ai/src/lib/artifacts",
+        "allternit-ai/src/views/code"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-23",
+          "note": "Eoj approved gap 10: project panels from .allternit/panels files, as ops sheets and MCP Apps, agent rules after approval. No new panel engine: ops panels run on the ops sheet runtime (OpsView runtimeOptions: localOnly device approvals + extra panel__<source>/panel__header tools), app panels use McpAppResourceFrame. gizzi-code routes GET /project-panels, POST /project-panels/approve|revoke, GET /project-panels/source (mounted at / and /v1); URL feeds go through the egress guard and a connection: feed is only signed (MCP auth token of that name) after approval of the current sha256. Approved instructions append in InstructionPrompt.system; approved guards are checked in PermissionNext.ask (allow → ask, dontAsk → deny)."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/project-panels.mdx",
+        "allternit/cmd/gizzi-code/src/runtime/project/panels.ts",
+        "allternit/cmd/gizzi-code/test/project/panels.test.ts"
+      ]
+    },
+    {
       "id": "feature:artifacts-motion",
       "label": "Motion artifacts (animated explainers, MP4 export)",
       "product": "product:ai-allternit",

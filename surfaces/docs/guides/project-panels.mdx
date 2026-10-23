@@ -1,0 +1,200 @@
+---
+title: Project panels
+description: "Keep live panels with a project: JSON files in .allternit/panels that open as ops sheets or MCP Apps beside the Code chat, with optional agent rules that apply only after you approve them."
+---
+
+## What a project panel is
+
+A project can carry its own panels. Each one is a JSON file in the project's
+`.allternit/panels/` folder, so it is versioned with the code and everyone who
+opens the project in Code mode gets the same panels.
+
+A panel file is one of two things:
+
+- **An ops sheet** (`"kind": "ops"`). Live feeds, a status line, tabs of tables
+  and buttons, drawn by the same runtime as [ops sheets](/guides/ops-sheets).
+- **An MCP App** (`"kind": "app"`). It opens one of your connected MCP Apps as
+  the panel.
+
+Each panel shows in one of two places, and you can switch it:
+
+- **A pane** beside the chat, like Terminal or Code map.
+- **A strip**, one slim line above the message box with the status and the
+  panel's buttons.
+
+A panel file can also ask for **rules for the agent**: extra instructions, and
+guards that make the agent ask you before certain commands. These rules do
+nothing until you approve them.
+
+## Open a panel
+
+1. Open the project folder in a Code session.
+2. Open the **Panes** menu at the top right. Under **Panels**, each file in
+   `.allternit/panels/` is listed by its title.
+3. Choose one to open it as a pane. Choose it again to close it.
+
+At the bottom of a pane, **Show as a strip** moves it above the message box.
+On a strip, the expand button opens it as a pane again. Allternit remembers
+your choice for that file on this device; until you choose, the file's
+`place` decides.
+
+Buttons on a panel send their prompt to the session's agent, as if you typed
+it. They wait while the agent is still answering.
+
+## Approve agent rules
+
+When a panel file has `agent` rules, or a feed that signs in with one of your
+connections, a banner shows above the message box:
+
+> **Release train** adds 1 instruction and 1 guard for the agent (asks before
+> `wrangler pages deploy`).
+
+- **View** lists every instruction, guard and signed feed in the file.
+- **Approve** turns them on for this project.
+- **Turn off** (on the line that says the rules are on) turns them off again.
+
+An approval covers that exact file content. Gizzi Code stores the file's
+SHA-256 hash with the approval, so if anyone edits the file, the rules stop and
+the banner asks again. Approvals are kept in your own Gizzi data folder, never
+in the project, so a cloned repository can't approve itself.
+
+Once approved:
+
+- **Instructions** are added to the agent's context for every session in the
+  project, after the project's GIZZI.md (or AGENTS.md) instructions.
+- **Guards** make the agent ask before a matching tool call, even when the
+  session would normally allow it. In a session with nobody to ask, the call is
+  refused. A guard never loosens a rule; it can only add an ask.
+
+## Write a panel file
+
+```json .allternit/panels/release.json
+{
+  "kind": "ops",
+  "title": "Release train",
+  "place": "pane",
+  "refresh": 30,
+  "sources": {
+    "ci": {
+      "url": "https://api.github.com/repos/<owner>/<repo>/actions/runs?per_page=5",
+      "auth": "connection:github",
+      "rowsPath": "workflow_runs"
+    },
+    "computers": { "allternit": "computers_list" },
+    "tickets": { "tool": "<connector>__search", "args": { "sprint": "current" } }
+  },
+  "header": { "status": "{{ci.0.conclusion}}", "progress": "{{tickets.doneRatio}}" },
+  "actions": [{ "label": "Plan my day", "prompt": "Propose an order for today's tickets." }],
+  "agent": {
+    "instructions": ["Run the release checklist in docs/release.md before any deploy."],
+    "guards": [{ "tool": "bash", "match": "wrangler pages deploy", "ask": true }]
+  }
+}
+```
+
+| Field | What it does |
+| --- | --- |
+| `kind` | `"ops"` for an ops sheet, `"app"` for an MCP App. Required. |
+| `title` | The name in the Panes menu, the pane and the strip. Required. |
+| `place` | `"pane"` (default) or `"strip"`. You can switch it in the app. |
+| `refresh` | Seconds between re-reads while the panel is open (10 or more). Leave it out to read only when the panel opens. |
+| `sources` | Live feeds, by name. See below. Up to 12. |
+| `header` | The status line. Each field (`status`, `progress`, `version`, `environment`, `title`) is a template such as `{{ci.0.conclusion}}`: a source name, then a path into its data. |
+| `tabs` | Optional. Your own ops sheet tabs and panels. A panel's `query` can be `{ "source": "ci" }`. Without `tabs`, each source gets a tab with a table. |
+| `actions` | Buttons. `{ "label", "prompt" }` sends the prompt to the agent. `{ "label", "tool", "args" }` runs a connector tool like an ops sheet button, and asks you every time. Up to 4. |
+| `agent.instructions` | Lines added to the agent's context once you approve the file. Up to 20. |
+| `agent.guards` | `{ "tool", "match", "ask": true }`. The agent asks before a `tool` call whose input contains `match`. Both can use `*` wildcards. Up to 20. |
+
+### Sources
+
+A source is one of:
+
+- **A URL.** `{ "url": "https://…" }`. Gizzi Code reads it and expects JSON.
+  Add `"auth": "connection:<name>"` to sign the request with your own
+  connection named `<name>` (an MCP connection you signed in to in Gizzi Code).
+  Never put a token in the file; Allternit rejects a source whose `auth` isn't
+  a `connection:` name. A signed feed only runs after you approve the file.
+- **A built-in Allternit source.** `{ "allternit": "computers_list" }`. The same
+  sources as [ops sheets](/guides/ops-sheets#your-computers-built-in).
+- **A connector tool.** `{ "tool": "<connector>__<tool>", "args": {} }`, read
+  as you, like a dashboard tile.
+
+`rowsPath` (any source) names where the rows are in the answer, for example
+`workflow_runs`.
+
+The first time a panel reads your connected apps, it lists them and asks you
+to allow them, as an ops sheet does. That choice is kept on this device.
+
+### An MCP App panel
+
+```json .allternit/panels/board.json
+{
+  "kind": "app",
+  "title": "Sprint board",
+  "place": "pane",
+  "app": { "connector": "<connector>", "resource": "ui://board", "input": { "team": "web" } }
+}
+```
+
+`connector` is the id or name of one of your connected MCP Apps, and
+`resource` is the `ui://` resource it serves the view from. If you don't have
+that connector, the panel says which one to connect.
+
+## When something is wrong
+
+- A file that isn't valid JSON, or is missing a required field, still shows in
+  the Panes menu. Its pane shows the file path and the problem.
+- Parts that can't be used (an unknown source in a tab, a source with a token
+  in it) are skipped, and the pane lists them under **Some parts were skipped**.
+- A feed that fails shows its error in its own tab; the rest of the panel keeps
+  working.
+- Files over 256 KB and folders with more than 50 files are cut off.
+
+## Where panels are available
+
+Panels read the project's files through Gizzi Code on your computer:
+
+- **Allternit Desktop:** the full Panes menu, panes and strips.
+- **ai.allternit.com and the m.allternit.com app on a phone** connected to a
+  computer running Gizzi Code: panels open full screen from the header's pane
+  menu, and strips show above the message box.
+- **ai.allternit.com without a local Gizzi Code:** there is no Panels group and
+  nothing shows above the message box. Opening a panel link there says that
+  project panels open in Allternit Desktop.
+
+---
+
+## For developers
+
+- Gizzi Code: `cmd/gizzi-code/src/runtime/project/panels.ts` (`ProjectPanels`:
+  zod schema, listing, sha256 approvals in `project-panels-approvals.json` in
+  the data folder, guard matching, URL feeds through the egress guard) and
+  `routes/project-panels.ts`, mounted at `/` and `/v1`:
+  - `GET /project-panels` for the request's directory (`directory` query or
+    `x-gizzi-directory` header). The project root is the nearest folder with
+    `.allternit/panels` between the directory and the worktree. Returns
+    `{ root, dir, panels: [{ file, path, sha256, content, error, title, kind, place, agent, approved }] }`.
+  - `POST /project-panels/approve` `{ file, sha256 }`. 409 when the file
+    changed since it was listed.
+  - `POST /project-panels/revoke` `{ file }`.
+  - `GET /project-panels/source?file=&source=` reads one URL feed. The URL
+    always comes from the file. A `connection:` feed needs the file approved
+    and uses that MCP connection's token.
+- Approved instructions are appended in `InstructionPrompt.system()`
+  (`session/instruction.ts`). Approved guards are checked in
+  `PermissionNext.ask` (`tools/guard/permission/next.ts`): a matching call that
+  would be allowed becomes an ask with `source: "project"` (a refusal in
+  `dontAsk` mode).
+- The app: `allternit-ai/src/lib/project-panels/` (parser, API, feeds, store)
+  and `src/components/project-panels/`. An ops panel becomes an ops sheet body
+  (`opsText`) and runs in `OpsView` with `runtimeOptions`: `localOnly`
+  (approvals on this device, no artifact runtime call) and `extra` tools
+  (`panel__<source>` for URL feeds, `panel__header` for the templated status
+  line). Pane ids are `panel:<file>` in the Code pane manager.
+
+## Related
+
+- [Ops sheets](/guides/ops-sheets)
+- [Dashboards](/guides/dashboards)
+- [Connectors](/guides/connectors)
+- [Code mode panes](/surfaces/desktop#code-mode-panes)
