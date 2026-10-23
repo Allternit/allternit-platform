@@ -12,6 +12,7 @@ import { BatchTool } from "@/runtime/tools/builtins/batch"
 import { ReadTool } from "@/runtime/tools/builtins/read"
 import { TaskTool } from "@/runtime/tools/builtins/task"
 import { TodoWriteTool } from "@/runtime/tools/builtins/todo"
+import { GlanceTool } from "@/runtime/tools/builtins/glance"
 import { WebFetchTool } from "@/runtime/tools/builtins/webfetch"
 import { WriteTool } from "@/runtime/tools/builtins/write"
 import { InvalidTool } from "@/runtime/tools/builtins/invalid"
@@ -174,6 +175,7 @@ export namespace ToolRegistry {
         : [ScratchpadListTool, ScratchpadReadTool, ScratchpadWriteTool, ScratchpadRemoveTool]),
       WebFetchTool,
       TodoWriteTool,
+      GlanceTool,
       CreateGoalTool,
       GetGoalTool,
       SetGoalBudgetTool,

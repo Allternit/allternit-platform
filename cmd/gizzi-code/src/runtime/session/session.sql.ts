@@ -98,6 +98,8 @@ export const SessionTable = sqliteTable(
       dirs?: string[]
       at: number
     }>(),
+    // Glance line (the `glance` tool): one line for the sidebar row.
+    glance: text({ mode: "json" }).$type<{ text: string; artifactId?: string; at: number }>(),
     ...Timestamps,
     time_compacting: integer(),
     time_archived: integer(),

@@ -1,0 +1,49 @@
+---
+title: "Decisions and decision trees"
+description: "Answer an agent's consequential questions as a branching graph, in the thread and in Tasks, on Desktop and on phones."
+---
+
+When an agent needs you to make a call with real consequences (an incident, a spend, a deal), it can ask the question as a **decision tree**. The ask sits on the left. Lines run out to each option, and each option branches again to its follow-up question or to what happens if you pick it. You see the whole decision before you choose.
+
+## Where decisions show up
+
+| Place | What you see |
+|---|---|
+| **The thread** (Chat, Cowork, Code, project and bot threads) | The question card above the text box draws the tree. Only the highlighted option's follow-up is shown, so the card stays short. |
+| **Tasks** (Desktop and the phone Tasks screen) | **Decisions · N waiting for you** above the board, one decision at a time with **1 of N** and arrows. Every option's follow-up is shown. Plain multiple-choice questions show here too, as a tree with one level. |
+
+Answering in either place answers the agent. The other place drops the question.
+
+## Reading a tree
+
+- **Risk** (High, Medium or Low) sits above the ask, with the agent's name and the facts behind the question.
+- **Agent's pick** marks the option the agent would choose.
+- A highlighted line under an option is a cost or a risk, for example "Skips 1,284 tests".
+- A grey box after an option says what happens if you pick it. An option with a follow-up question shows that question and its choices instead.
+
+## Answering
+
+- Click an option, or press its number (**1**–**9**). An option with a follow-up moves you to that follow-up: pick one of its choices the same way. **Esc** goes back.
+- You can also click a follow-up choice directly.
+- **Other…** takes your own words. Press **Enter** to send them.
+- The arrow keys move the highlight and **Enter** picks it.
+
+The other branches fade back as you choose. When the answer is sent, a **Sent** node closes the path and the agent's next turn starts. The agent receives the path you chose, for example "Roll back to #481 → Post on the status page", or what you typed.
+
+On a phone, or in a narrow window, the tree stacks into an indented list with the same lines, numbers and keys.
+
+## For agents
+
+Decision trees use the `question` tool's optional fields:
+
+| Field | On | Meaning |
+|---|---|---|
+| `risk` | question | `low`, `medium` or `high` |
+| `context` | question | The facts behind the question, one or two short lines |
+| `recommended` | option | The agent's pick, at most one per list |
+| `caution` | option | A short cost or risk, shown highlighted |
+| `then` | option | A follow-up `{ question, options }`, one level deep |
+
+A question with any of these draws as a tree. The answer comes back as one label per level, joined with " → ". Agents on CLI brains get the same fields through the session's tool bridge.
+
+Related: [Composer, replies and questions](/guides/chat-composer), [Glance lines](/guides/glance-lines).

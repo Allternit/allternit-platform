@@ -2430,6 +2430,57 @@
         "allternit/cmd/gizzi-code/test/codemap/repo-map.test.ts",
         "allternit/cmd/gizzi-code/test/codemap/graph-route.test.ts"
       ]
+    },
+    {
+      "id": "feature:decision-trees",
+      "label": "Decision trees (branching agent questions + Tasks Decisions deck)",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "gizzi's question tool takes optional risk/context and per-option recommended/caution/then (one follow-up level); such questions draw as a branching graph (DecisionTree): ask card left, measured SVG lines to options and on to follow-ups/outcomes, other branches fade, Other… takes text, the answer is a path ('Branch → Follow-up'). The docked question card shows it compact in every thread host; Tasks (desktop TasksView + phone TasksBoardScreen) shows 'Decisions · N waiting for you' from GET /api/v1/questions across sessions. Stacks under 640px for phones/PWA.",
+      "touches": [
+        "allternit-ai/src/components",
+        "allternit-ai/src/lib/agents",
+        "allternit-ai/src/views/cowork",
+        "allternit/cmd/gizzi-code/src/runtime/integrations",
+        "allternit/cmd/gizzi-code/src/runtime/tools"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-23",
+          "note": "Eoj asked for @flohoeller's decision tree component and let the agent pick placement: Tasks (Decisions deck) plus the thread's question card; 'build' after seeing mockups."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/decisions.mdx",
+        "allternit-ai/src/components/agent-elements/question/decision-tree.tsx",
+        "allternit-ai/src/components/decisions/DecisionsDeck.tsx"
+      ]
+    },
+    {
+      "id": "feature:glance-lines",
+      "label": "Glance lines (agent's one-line status on session rows)",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "gizzi glance tool (also on the CLI bridge) stores session.glance {text, artifactId?, at} (migration 20261023120000_session_glance); allternit-api passes it as metadata.glance in session lists and session.updated events; rows show it instead of the last-message preview: desktop rail recents/pinned + code rows + bot rows, phone drawer, bot thread bylines, session overview cards.",
+      "touches": [
+        "allternit-ai/src/shell",
+        "allternit-ai/src/fabric-session",
+        "allternit-ai/src/components",
+        "allternit-ai/src/lib/bots",
+        "allternit/cmd/gizzi-code/src/runtime/session",
+        "allternit/cmd/allternit-api/src/agent_session_routes.rs"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-23",
+          "note": "From @blixt's 'glance component' idea; Eoj asked for it alongside decision trees."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/glance-lines.mdx",
+        "allternit-ai/src/components/glance/GlanceLine.tsx",
+        "allternit/cmd/gizzi-code/src/runtime/tools/builtins/glance.ts"
+      ]
     }
   ],
   "journeys": [

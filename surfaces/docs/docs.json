@@ -67,6 +67,8 @@
               "guides/first-run-setup",
               "guides/sidebar-navigation",
               "guides/session-overview",
+              "guides/decisions",
+              "guides/glance-lines",
               "architecture/sidebar-layout",
               "guides/meet-your-bots",
               "guides/bot-setup-picker",
