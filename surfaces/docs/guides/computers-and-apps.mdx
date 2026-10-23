@@ -69,6 +69,16 @@ m.allternit.com, ai.allternit.com and other cloud surfaces send each request to 
 
 A computer counts as online if it checked in within the last 10 minutes and its credential hasn't expired. If your pinned computer is offline, requests go to the next one on the list rather than failing. The pin is stored per account in `user_node_preferences` (surface `*`). The resolver lives in `cmd/allternit-cloud-api/src/services/node_resolution.rs`.
 
+### Choose your default computer
+
+Your pinned computer is your **default computer**. It's the same on every device: your phone, the web app and your bots all use it.
+
+- To change it, open **Settings → Account → Runtimes** and tap **Make default** next to a computer. The default computer shows a **Default** tag. **Active** marks the computer this device is using right now.
+- Choosing where a Code session runs (**Runs on** in the Code environment menu), picking a computer during first-run setup, and scanning a computer's QR code also make that computer your default.
+- If your default computer stops answering, the app uses another online computer until the default is back. Then it moves back on its own. It doesn't change your default.
+
+For developers: `GET /api/v1/runtime-devices` marks the default with `"preferred": true`, and `PUT /api/v1/runtime-devices/{id}/default` sets it (Clerk session or the account's device token; the runtime must belong to the account and not be revoked). The app picks a runtime in `pickActiveRuntime` (`src/lib/runtime-target.ts` in allternit-ai).
+
 ## Coding tools on any computer
 
 Settings → Connections › Coding tools installs and signs in CLI brains on the computer it names: this Mac, or the computer your phone and the web are using, such as your always-on Allternit cloud computer. Anything set up on a cloud computer keeps working while your own computer is closed. Step-by-step instructions are in [Subscriptions](/guides/subscriptions#coding-tools-on-any-computer).

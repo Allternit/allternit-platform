@@ -8,7 +8,7 @@ use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
-    routing::{delete, get, post},
+    routing::{delete, get, post, put},
     Json, Router,
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
@@ -165,6 +165,8 @@ struct RuntimeDeviceView {
     last_seen_at: Option<DateTime<Utc>>,
     created_at: DateTime<Utc>,
     credential_expires_at: DateTime<Utc>,
+    /// The user's default computer (`user_node_preferences`, surface `'*'`).
+    preferred: bool,
 }
 
 #[derive(Debug, FromRow)]
@@ -229,6 +231,7 @@ pub fn routes() -> Router<Arc<ApiState>> {
             post(rotate_runtime_credential),
         )
         .route("/api/v1/runtime-devices/:id/revoke-self", post(revoke_self))
+        .route("/api/v1/runtime-devices/:id/default", put(set_default_runtime_device))
 }
 
 /// The cloud computer bootstrap token from the body field, else the header;
@@ -848,12 +851,14 @@ async fn list_runtime_devices(
     let user = approver_from_headers(&state, &headers).await?;
     let devices = sqlx::query_as::<_, RuntimeDeviceView>(
         r#"
-        SELECT id, name, runtime_type, hostname, platform, version, capabilities,
-               public_key_fingerprint, status, last_seen_at, created_at,
-               credential_expires_at
-        FROM runtime_devices
-        WHERE user_id = $1 AND revoked_at IS NULL
-        ORDER BY created_at DESC
+        SELECT d.id, d.name, d.runtime_type, d.hostname, d.platform, d.version, d.capabilities,
+               d.public_key_fingerprint, d.status, d.last_seen_at, d.created_at,
+               d.credential_expires_at, (p.node_id IS NOT NULL) AS preferred
+        FROM runtime_devices d
+        LEFT JOIN user_node_preferences p
+          ON p.user_id = d.user_id AND p.surface = '*' AND p.node_id = d.id
+        WHERE d.user_id = $1 AND d.revoked_at IS NULL
+        ORDER BY d.created_at DESC
         "#,
     )
     .bind(&user.id)
@@ -888,6 +893,7 @@ async fn list_runtime_devices(
             "lastSeenAt": device.last_seen_at,
             "createdAt": device.created_at,
             "credentialExpiresAt": device.credential_expires_at,
+            "preferred": device.preferred,
         });
         if !relay_connections.is_empty() {
             value["relayConnections"] = serde_json::Value::Array(relay_connections);
@@ -923,6 +929,39 @@ async fn revoke_runtime_device(
         return Err(ApiError::NotFound("Runtime not found".to_string()));
     }
     Ok(Json(serde_json::json!({ "id": id, "status": "revoked" })))
+}
+
+/// Make a runtime the user's default computer: every surface (phone, web,
+/// bots) routes to it while it answers. One pin per user (surface `'*'`).
+async fn set_default_runtime_device(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let user_id = approver_from_headers(&state, &headers).await?.id;
+    let owned: Option<String> = sqlx::query_scalar(
+        "SELECT id FROM runtime_devices WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL",
+    )
+    .bind(&id)
+    .bind(&user_id)
+    .fetch_optional(&state.db)
+    .await?;
+    if owned.is_none() {
+        return Err(ApiError::NotFound("Runtime not found".to_string()));
+    }
+    sqlx::query(
+        r#"
+        INSERT INTO user_node_preferences (user_id, surface, node_id)
+        VALUES ($1, '*', $2)
+        ON CONFLICT (user_id, surface) DO UPDATE
+        SET node_id = excluded.node_id, updated_at = CURRENT_TIMESTAMP
+        "#,
+    )
+    .bind(&user_id)
+    .bind(&id)
+    .execute(&state.db)
+    .await?;
+    Ok(Json(serde_json::json!({ "id": id, "preferred": true })))
 }
 
 async fn runtime_heartbeat(
