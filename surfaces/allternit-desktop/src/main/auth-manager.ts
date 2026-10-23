@@ -1610,7 +1610,6 @@ export class DesktopAuthManager {
     // are allternit-api's and have their own shapes (live: auth/status got
     // gizzi's registry and crashed the web chat view).
     if (isGizziProviderListPath(requestPath)) return `${URLS.GIZZI}/v1/provider`;
-    if (requestPath.startsWith('/api/v1/agents')) return `${URLS.GIZZI}/v1/agent/list`;
     if (
       requestPath.startsWith('/v1/provider')
       || requestPath.startsWith('/v1/agent')
