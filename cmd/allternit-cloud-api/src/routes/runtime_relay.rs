@@ -85,7 +85,7 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio::sync::{mpsc, oneshot, Mutex, RwLock};
-use tokio_stream::wrappers::ReceiverStream;
+use tokio_stream::wrappers::UnboundedReceiverStream;
 use uuid::Uuid;
 
 use sha2::{Digest, Sha256};
@@ -212,7 +212,14 @@ struct RelayHead {
 
 struct PendingRelay {
     head: Option<oneshot::Sender<RelayHead>>,
-    chunks: mpsc::Sender<Result<Bytes, Infallible>>,
+    /// Unbounded on purpose: the runtime's single read loop forwards every
+    /// response through here. A bounded send waited for the browser to read,
+    /// so one slow phone download (a multi-MB body on cellular) stalled every
+    /// other request and the keep-alive pings on that runtime, and the relay
+    /// dropped ("runtime offline" / timeouts for the whole app). A response is
+    /// finite and its bytes are already in memory here, so buffering them is
+    /// bounded by the response itself.
+    chunks: mpsc::UnboundedSender<Result<Bytes, Infallible>>,
 }
 
 pub(crate) struct RuntimeConnection {
@@ -673,7 +680,7 @@ pub(crate) async fn answer_test_request(
         if let Some(head) = waiter.head.take() {
             let _ = head.send(RelayHead { status, headers: HashMap::new() });
         }
-        let _ = waiter.chunks.send(Ok(decode_relay_body(body, "utf8"))).await;
+        let _ = waiter.chunks.send(Ok(decode_relay_body(body, "utf8")));
     }
 }
 
@@ -1000,7 +1007,7 @@ async fn runtime_socket(socket: WebSocket, state: Arc<ApiState>, expected_id: St
                                     .map(|pending| pending.chunks.clone());
                                 if let Some(chunks) = chunks {
                                     let bytes = decode_relay_body(&body, &body_encoding);
-                                    let _ = chunks.send(Ok(bytes)).await;
+                                    let _ = chunks.send(Ok(bytes));
                                 }
                             }
                             Ok(RuntimeMessage::ResponseEnd { request_id }) => {
@@ -1013,7 +1020,7 @@ async fn runtime_socket(socket: WebSocket, state: Arc<ApiState>, expected_id: St
                                     if let Some(waiter) = pending.head.take() {
                                         let _ = waiter.send(RelayHead { status, headers });
                                     }
-                                    let _ = pending.chunks.send(Ok(decode_relay_body(&body, &body_encoding))).await;
+                                    let _ = pending.chunks.send(Ok(decode_relay_body(&body, &body_encoding)));
                                 }
                             }
                             Ok(RuntimeMessage::SocketReady { socket_id }) => {
@@ -1208,7 +1215,7 @@ pub(crate) async fn relay_request_to_runtime_with(
         RELAY_TIMEOUT
     };
     let (head_sender, head_receiver) = oneshot::channel();
-    let (chunk_sender, chunk_receiver) = mpsc::channel(32);
+    let (chunk_sender, chunk_receiver) = mpsc::unbounded_channel();
     connection.pending.lock().await.insert(
         request_id.clone(),
         PendingRelay {
@@ -1258,7 +1265,7 @@ pub(crate) async fn relay_request_to_runtime_with(
                 }
             }
             Ok(response
-                .body(Body::from_stream(ReceiverStream::new(chunk_receiver)))
+                .body(Body::from_stream(UnboundedReceiverStream::new(chunk_receiver)))
                 .unwrap_or_else(|_| {
                     (StatusCode::BAD_GATEWAY, "Invalid runtime response").into_response()
                 }))
