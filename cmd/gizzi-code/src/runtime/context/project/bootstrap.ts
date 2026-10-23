@@ -43,6 +43,12 @@ export async function InstanceBootstrap() {
         if (sessionID) RepoMap.noteEdited(sessionID, file)
         RepoMap.queue([file])
       })
+      // The app's live code map lights edited files from this.
+      void import("@/codemap/activity").then(({ CodeMapActivity }) =>
+        Bus.subscribe(File.Event.Edited, (payload) =>
+          CodeMapActivity.publish(payload.properties.sessionID, payload.properties.file, "edit"),
+        ),
+      )
       // Deletes (apply_patch) and changes made outside gizzi's tools.
       Bus.subscribe(FileWatcher.Event.Updated, (payload) => RepoMap.queue([payload.properties.file]))
     })

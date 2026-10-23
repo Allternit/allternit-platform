@@ -116,7 +116,7 @@ Cloud calls carry only the Clerk bearer (and `X-Allternit-Tenant-Id`). `buildAut
 ## Code mode panes
 
 The **Panes** menu at the top right of a Code session lists Terminal, Changes,
-Browser, Computer, Files, Artifacts, Transcript and Tasks. A new session opens
+Browser, Computer, Files, Artifacts, Transcript, Tasks and Code map. A new session opens
 with Terminal.
 
 - **Pick a pane** to show it in place of the one you're using. Picking a pane
@@ -138,6 +138,11 @@ with Terminal.
     with `patch` it reverses one hunk after `git apply -R --check`; without it
     runs `git checkout -- file`, or deletes an untracked file only when
     `untracked: true`.
+
+- **Code map** draws the project's files by import graph and lights the ones
+  the agent reads (blue) and edits (coral) as it works; click a file to open
+  it in Files. A line under the chat shows how much of the repo map the last
+  prompt carried. See [Live code map](/cli/code-intelligence#live-code-map).
 
 On a phone, each pane opens full screen from the header's pane menu.
 

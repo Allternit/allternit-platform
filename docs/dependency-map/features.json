@@ -2399,12 +2399,14 @@
       "label": "Gizzi Code intelligence: live repo map, LSP rename, symbol edits, review verdicts",
       "product": "product:gizzi-code",
       "status": "building",
-      "description": "Empryo-gap program (Eoj 2026-10-23). Phase 1: a live per-file repo map built on the codemap scanners (exports, importer counts, git co-change, session boost) injected as a ranked slice into every Code turn's system prompt, with a Repo map context-breakdown row; LSP rename applied as one workspace edit through the edit permission/undo path; symbol_edit tool (TS compiler / LSP documentSymbol). Phase 2 adds a fresh-context reviewer with PASS/FAIL/PARTIAL verdicts, review-until-pass, goal round checks and per-job models.",
+      "description": "Empryo-gap program (Eoj 2026-10-23). Phase 1: a live per-file repo map built on the codemap scanners (exports, importer counts, git co-change, session boost) injected as a ranked slice into every Code turn's system prompt, with a Repo map context-breakdown row; LSP rename applied as one workspace edit through the edit permission/undo path; symbol_edit tool (TS compiler / LSP documentSymbol). Phase 2 adds a fresh-context reviewer with PASS/FAIL/PARTIAL verdicts, review-until-pass, goal round checks and per-job models. Gap 9: a live code map in Code mode (Panes → Code map; phone pane menu) drawn from GET /codemap/graph with read/edit lighting from codemap.activity events, plus a 'Repo map in this prompt' line under the chat.",
       "touches": [
         "allternit/cmd/gizzi-code/src/runtime/tools",
         "allternit/cmd/gizzi-code/src/runtime/integrations",
         "allternit/cmd/gizzi-code/src/runtime/session",
-        "allternit/cmd/gizzi-code/src/codemap"
+        "allternit/cmd/gizzi-code/src/codemap",
+        "allternit-ai/src/components/code-map",
+        "allternit-ai/src/views/code"
       ],
       "decisions": [
         {
@@ -2414,7 +2416,8 @@
       ],
       "evidence": [
         "allternit/surfaces/docs/cli/code-intelligence.mdx",
-        "allternit/cmd/gizzi-code/test/codemap/repo-map.test.ts"
+        "allternit/cmd/gizzi-code/test/codemap/repo-map.test.ts",
+        "allternit/cmd/gizzi-code/test/codemap/graph-route.test.ts"
       ]
     }
   ],
