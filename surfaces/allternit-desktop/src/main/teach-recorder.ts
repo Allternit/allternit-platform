@@ -100,7 +100,10 @@ function broadcastState(): void {
   if (w && !w.isDestroyed()) w.webContents.send('teach:state', getState());
 }
 
-function pushEvent(ev: Omit<TeachEvent, 't'> & { t?: number }): void {
+/** Omit that keeps each union member's own fields. */
+type EventInput = TeachEvent extends infer E ? (E extends unknown ? Omit<E, 't'> & { t?: number } : never) : never;
+
+function pushEvent(ev: EventInput): void {
   if (!active || active.stopping) return;
   active.events.push({ ...ev, t: ev.t ?? Date.now() - active.startedAt } as TeachEvent);
 }

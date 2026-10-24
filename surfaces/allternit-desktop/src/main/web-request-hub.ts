@@ -22,7 +22,9 @@ type BlockingEvent = 'onBeforeRequest' | 'onBeforeSendHeaders' | 'onHeadersRecei
 type PassiveEvent = 'onCompleted' | 'onErrorOccurred';
 export type WebRequestEvent = BlockingEvent | PassiveEvent;
 
-type Callback = (response: Record<string, unknown>) => void;
+// Electron's per-event response types (CallbackResponse, BeforeSendResponse,
+// HeadersReceivedResponse) differ; the hub only reads the shared fields.
+type Callback = (response: any) => void;
 type BlockingFn = (details: any, callback: Callback) => void;
 type PassiveFn = (details: any) => void;
 
