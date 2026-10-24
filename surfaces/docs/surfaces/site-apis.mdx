@@ -1,177 +1,180 @@
 ---
-title: Site APIs
-description: Capture, inspect, replay, and turn live web traffic into reusable agent tools
+title: Teach
+description: "Show Allternit a task once. It writes the steps, finds the inputs, and saves a skill you can replay or schedule."
 ---
 
 ## Overview
 
-**Site APIs** is the API capture surface in the Allternit platform. It ingests HTTP traffic — from a browser DevTools HAR export or from a live ACI browser capture — and turns that traffic into a typed, replayable API contract. You can inspect endpoints, edit parameters, replay requests live, generate client code in Python, TypeScript, or cURL, and publish the whole workflow as an agent skill in the Skills Registry.
+**Teach** turns one demonstration into a reusable skill. You do the task once while Allternit records. A model then writes a goal and an editable list of steps, marks the values that change between runs as inputs, and lets you save the result as a skill, run it on a schedule, or replay it now.
 
-The surface is designed for the "I use this web API every day, let me make it an agent tool" workflow: capture once, validate by replaying, then hand the generated client to an agent.
+Teach started as Site APIs (capture a HAR, get a typed API). That still works: when the recording contains API calls, the steps prefer calling those endpoints with your session over clicking through the page.
 
-## How to access it
-
-Site APIs runs inside the platform shell:
+Open it from the shell or the app launcher:
 
 ```text
 https://app.allternit.com/shell?view=site-apis
 ```
 
-Open programmatically from shell code:
+## Record
 
-```typescript
-open('site-apis');
-```
+### On Desktop
 
-You can also launch it from the browser surface (`operator-browser`) by starting an API capture session while you navigate a site.
+Press `Cmd+Shift+R` (macOS) or `Ctrl+Shift+R` (Windows and Linux) from anywhere, or press Record in Teach. A small always-on-top **record bar** shows a timer, a mic toggle and Stop. Press the shortcut again, or Stop, to finish. Allternit comes to the front on the Review step.
 
-## Workflow
+Desktop records an activity timeline next to the network traffic:
 
-The surface is organized around a four-step pipeline:
-
-1. **Upload HAR** — drop a `.har` JSON file exported from Chrome/Firefox DevTools, or start a live capture.
-2. **Extract contract** — Allternit parses the traffic and groups endpoints by domain into a `SiteApiContract`.
-3. **Replay** — pick an endpoint, edit path/query params, headers, and body, then send the request live.
-4. **Generate client** — export a Python, TypeScript, or cURL client, or publish the contract as an agent skill.
-
-## Features
-
-<CardGroup cols={2}>
-  <Card title="HAR ingestion" icon="/icons/download.svg">
-    Upload a DevTools HAR export or receive one from a live browser/ACI capture
-  </Card>
-  <Card title="Contract extraction" icon="/icons/link.svg">
-    Automatically derive typed endpoints, path/query params, headers, and body templates
-  </Card>
-  <Card title="Live replay" icon="/icons/play.svg">
-    Edit values and replay requests against the real host to verify behavior
-  </Card>
-  <Card title="Client generation" icon="/icons/code.svg">
-    Generate Python, TypeScript, or cURL clients from captured endpoints
-  </Card>
-  <Card title="Skill publishing" icon="/icons/gizzi.svg">
-    Publish a captured contract as a reusable API skill for agents
-  </Card>
-  <Card title="Domain organization" icon="/icons/globe.svg">
-    Contracts are grouped by domain with per-endpoint hit counts and timestamps
-  </Card>
-</CardGroup>
-
-## Key concepts
-
-### Capture session
-
-A capture session represents one recording of HTTP traffic. Sessions have a source (`browser`, `aci`, or `upload`) and a status (`capturing`, `completed`, or `failed`). Sessions are currently local-only; the derived contracts are persisted in `localStorage` so they survive reloads.
-
-### Site API contract
-
-A `SiteApiContract` groups all endpoints discovered for a single domain. Each contract contains:
-
-| Field | Description |
+| Recorded | How |
 |---|---|
-| `id` | Unique contract identifier |
-| `domain` | Host the endpoints belong to |
-| `derived_at` | ISO timestamp when the contract was created |
-| `endpoints` | Array of extracted `Endpoint` objects |
+| Page URLs and titles | Inside Allternit's browser |
+| Clicks and form fields | Inside Allternit's browser only. Field values are shortened and redacted; password fields are never recorded |
+| Which app is in front | App switches, by name and window title |
+| Screenshots | When the screen changes, or every 10 seconds |
+| Narration | Your voice, transcribed on your machine |
 
-### Endpoint
+What is **not** recorded: clicks and keystrokes inside other apps. Outside apps show up as app switches plus screenshots. Screenshots stay on your device. They appear on the timeline in the editor and are never sent to the model or to the server.
 
-An endpoint is a single HTTP request pattern extracted from traffic:
+### Narration
 
-| Field | Description |
-|---|---|
-| `method` | HTTP method (`GET`, `POST`, etc.) |
-| `path` / `path_template` | Resolved path, with templated path params in `{name}` form |
-| `query_params` | Query parameters found in the capture |
-| `path_params` | Path parameters inferred from the template |
-| `headers` | Captured request headers |
-| `body_template` | Sample request body, if any |
-| `body_params` | Inferred body fields |
-| `hit_count` | Number of times this pattern was seen in the capture |
+Turn the mic on in the record bar and say what you are doing and why ("this is the weekly report, I always pick last week"). Speech is transcribed locally. Say which values change; the model uses that to pick inputs.
 
-### Replay input
+### On the web, in the extension, and on the phone
 
-When you replay an endpoint, you supply:
+The web app does not bind `Cmd+Shift+R`, because browsers use it for a hard reload. Record with the button instead.
 
-```typescript
-interface ReplayInput {
-  path_params: Record<string, string>;
-  query_params: Record<string, string>;
-  headers: Array<{ name: string; value: string }>;
-  body: unknown;
-}
+- Record with the Allternit browser extension, or import a `.har` file exported from DevTools.
+- Phone: the Teach sheet uses the same view, with stacked panels and large tap targets.
+- Every surface has a **Note for the agent** field. Use it to say what the task is for or what to watch out for. It is sent with the recording.
+
+## Privacy check
+
+Before anything is analyzed, Teach scans the recording on your machine and shows **what will leave it**: the number of events, the number of endpoints, the characters of narration, and `0 screenshots - kept on this device`. Secrets found in narration, notes and events are listed. You can strike out any event before sending. Nothing leaves your device until you press **Analyze**: the endpoint count in Review is worked out locally, and the network recording is uploaded only then.
+
+The server redacts again before it calls the model, and the draft reports how many redactions were made.
+
+## Edit the draft
+
+After Analyze you get an editor:
+
+- **Title and goal.** One line each. The goal is what the skill is for.
+- **Steps.** Edit, reorder, delete or add steps. A step is one of `api` (call an endpoint), `ui` (click or type), `shell`, or `note`.
+- **Inputs.** Values that change between runs. Each has a name, a label and the example seen in the recording. Reference an input in step text with a double-brace placeholder such as `{{customer_name}}`.
+- **Timeline.** The recording strip, with local screenshots on Desktop.
+
+Edits are kept when you click **Save changes**. Run on a schedule saves pending edits first. Replay and Save skill use the edits on screen.
+
+## Save skill
+
+**Save skill** previews a `SKILL.md` and writes it to `~/.allternit/skills/<slug>/SKILL.md`, the same place Customize, then Skills uses. The preview is exactly the file:
+
+```text
+---
+name: weekly-report
+description: Send the weekly sales report to a customer
+---
+# Weekly report
+Send the weekly sales report to a customer.
+## Inputs
+- `customer_name` - Customer (e.g. Acme)
+## Steps
+1. POST api.example.com/reports
+2. Ask for approval, then send the email.
+## Notes
+Taught in Allternit Teach from one recording on 2026-10-24. Ask for approval before any step that submits, pays, sends or deletes.
 ```
 
-The replay engine substitutes path params, appends query params, merges headers, and sends the request directly from the browser.
+## Run on a schedule
 
-### API skill
+**Run on a schedule** creates a routine in Automation Tasks. You need a bot to run it: pick one, choose hourly, daily at 9:00, weekdays at 9:00 or a custom cron, and fill in the input values. Steps that submit, pay, send or delete still ask for approval.
 
-Publishing a contract creates an `ApiSkill` entry that agents can use:
+## Replay
 
-```typescript
-interface ApiSkill {
-  id: string;
-  name: string;
-  description: string;
-  domain: string;
-  mode: 'API';
-  origin: 'api-capture';
-  contractId: string;
-  endpoints: ApiSkillEndpointRef[];
-  status: 'active' | 'inactive';
-}
-```
+**Replay** asks for the input values, then starts a computer session that follows the rendered steps now.
 
-Published skills are stored in `localStorage` and broadcast via `allternit:api-skills-changed` so the Skills Registry can pick them up.
+## Site APIs underneath
 
-## Endpoints / commands
+A recording that includes network traffic is also turned into a contract. This part works as before.
+
+- **Capture session.** One recording of HTTP traffic from the browser, ACI, or an uploaded HAR.
+- **Contract.** All endpoints seen for one domain (`id`, `domain`, `derived_at`, `endpoints`).
+- **Endpoint.** One request pattern: `method`, `path_template` with `{name}` path params, `query_params`, `headers`, `body_template`, `body_params`, `hit_count`.
+- **Replay.** Edit path, query, headers and body for an endpoint and send it live.
+- **Clients.** Generate Python (`python`), TypeScript (`typescript`) or cURL (`curl`) code from endpoints.
+
+## API reference
+
+All routes are under `/api/har-derived-api` and need a bearer token.
 
 | Method | Path | Description |
 |---|---|---|
-| `POST` | `/api/har-derived-api/ingest` | Parse a HAR JSON payload and return derived endpoints + stats |
-| `POST` | `/api/har-derived-api/client` | Generate a client for the requested endpoints and language |
-| `GET` | `/api/har-derived-api/contracts` | List stored contracts |
-| `GET` | `/api/har-derived-api/contracts/:contract_id` | Get one contract |
-| `DELETE` | `/api/har-derived-api/contracts/:contract_id` | Delete a contract |
-| `POST` | `/api/har-derived-api/contracts/:contract_id/replay/:endpoint_id` | Replay one captured endpoint |
+| `POST` | `/ingest` | Parse a HAR payload and return derived endpoints and stats |
+| `GET` | `/contracts` | List stored contracts |
+| `GET` | `/contracts/:contract_id` | Get one contract with endpoints |
+| `DELETE` | `/contracts/:contract_id` | Delete a contract |
+| `POST` | `/contracts/:contract_id/replay/:endpoint_id` | Replay one captured endpoint |
+| `POST` | `/client` | Generate a client for endpoints in a language |
+| `POST` | `/teach/distill` | Turn a recording into a draft skill |
+| `GET` | `/teach/skills` | List your taught skills |
+| `PUT` | `/teach/skills/:id` | Create or update a taught skill |
+| `DELETE` | `/teach/skills/:id` | Delete a taught skill |
 
-## Client generation example
+### Timeline events
 
-### Request
+`t` is milliseconds since the recording started. Snapshot events carry only an id; the image stays on the device.
 
-```bash
-curl -X POST https://api.allternit.com/api/har-derived-api/client \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "endpoints": ["endpoint-id-1", "endpoint-id-2"],
-    "language": "typescript"
-  }'
+```typescript
+type TeachEvent =
+  | { t: number; kind: 'navigate'; url: string; title?: string }
+  | { t: number; kind: 'click'; url?: string; label: string; role?: string; selector?: string }
+  | { t: number; kind: 'input'; url?: string; label: string; field?: string; valuePreview?: string }
+  | { t: number; kind: 'app'; app: string; window?: string }
+  | { t: number; kind: 'snapshot'; id: string }
+  | { t: number; kind: 'narration'; text: string };
 ```
 
-### Response
+### Distill
+
+`POST /api/har-derived-api/teach/distill`
 
 ```json
 {
-  "language": "typescript",
-  "code": "async function getUser(userId: string) { ... }",
-  "notes": ["Authorization header was templated; pass it at runtime."]
+  "contract_id": "contract-123",
+  "events": [{ "t": 1200, "kind": "click", "label": "Export" }],
+  "narration": "I export last week's report.",
+  "note": "Do this every Monday."
 }
 ```
 
-## Supported client languages
+`contract_id`, `narration` and `note` are optional. At least one of events, narration, note or a contract is required. The server redacts text with its DLP patterns, loads the contract's endpoints when given, and asks a model for a draft. If no model answers, it returns a rule-based draft with `"source": "rules"`.
 
-| Language | Value | Notes |
-|---|---|---|
-| Python | `python` | `requests`-style client |
-| TypeScript | `typescript` | `fetch`-based client |
-| cURL | `curl` | Shell commands for each endpoint |
+```typescript
+interface TeachStep { id: string; kind: 'api' | 'ui' | 'shell' | 'note'; text: string; endpoint_id?: string; target?: string; input_refs?: string[] }
+interface TeachInput { name: string; label: string; example: string; description?: string }
+interface TeachDraft { title: string; intent: string; steps: TeachStep[]; inputs: TeachInput[]; source: 'model' | 'rules'; redactions: number }
+```
 
-## Limitations
+A draft has at most 40 steps and 12 inputs.
 
-- Contracts and published skills are currently stored in browser `localStorage`. Backend persistence is planned.
-- Replay sends requests directly from the browser, so CORS and network policies of the target host apply.
-- Live capture sessions (`browser` / `aci`) are visible in the UI but session persistence is not yet backed by the server.
+### Taught skills
+
+`GET /teach/skills` returns `{ "skills": TeachSkill[] }`. `PUT /teach/skills/:id` upserts the body and returns the stored skill; the id may use letters, digits, `-`, `_` and `.`. `DELETE` returns `204`, or `404` if the skill is not yours.
+
+```typescript
+interface TeachSkill extends TeachDraft {
+  id: string;
+  contract_id?: string;
+  domain?: string;
+  skill_path?: string;   // set after Save skill
+  routine_id?: string;   // set after Run on a schedule
+  created_at: string;
+  updated_at: string;
+}
+```
+
+## Limits
+
+- Replaying a recorded endpoint sends a live request, so the target host's own limits and CORS rules apply.
+- Desktop only: the global shortcut, the record bar, local narration, app switches and screenshots.
+- Clicks are recorded only inside Allternit's browser.
 
 ## Related links
 
