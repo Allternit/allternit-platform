@@ -52,6 +52,7 @@ use crate::config::AppConfig;
 pub const DEFAULT_ALLOWED_ORIGINS: &[&str] = &[
     "https://platform.allternit.com",
     "https://ai.allternit.com",
+    "https://bots.allternit.com",
     "https://allternit-office-addins.pages.dev",
     "https://office-addins.allternit.com",
     "http://localhost:5173",
@@ -467,7 +468,7 @@ mod tests {
         let effective = effective_allowed_origins(parse_allowed_origins(None), 8013, None);
         // 8013 is already a default, so nothing is appended.
         assert_eq!(strs(&effective), DEFAULT_ALLOWED_ORIGINS.to_vec());
-        assert_eq!(DEFAULT_ALLOWED_ORIGINS.len(), 16);
+        assert_eq!(DEFAULT_ALLOWED_ORIGINS.len(), 17);
     }
 
     #[test]

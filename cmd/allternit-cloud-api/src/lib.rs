@@ -47,6 +47,8 @@ pub const DEFAULT_CORS_ORIGINS: &[&str] = &[
     "http://127.0.0.1:8013",
     "https://platform.allternit.com",
     "https://ai.allternit.com",
+    // Allternit Bots: the bots-only app, same build as ai.allternit.com.
+    "https://bots.allternit.com",
     // Allternit Mobile (phone PWA), formerly fabrictransport.allternit.com.
     "https://m.allternit.com",
 ];
