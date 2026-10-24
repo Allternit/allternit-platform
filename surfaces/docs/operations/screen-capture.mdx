@@ -21,6 +21,8 @@ Until 2026-10-07 capture ran for the whole life of the process. On a Linux cloud
 | macOS | ScreenCaptureKit helper (`sc_capture`), falling back to a `screencapture` loop |
 | Linux | `ffmpeg` x11grab if installed (checked once), otherwise `scrot`, at up to 10 fps |
 
+On macOS the `sc_capture` helper is compiled with `swiftc` the first time capture runs, because the build does not ship it. Inside Allternit Desktop it is compiled into `~/Library/Caches/com.allternit.desktop/phone-remote/<source hash>/`, never into the app bundle: a file added to the bundle breaks the app's code signature (`codesign --verify` reports "a sealed resource is missing or invalid"). A changed helper source gets a new folder, so an app update rebuilds it. `ALLTERNIT_CAPTURE_CACHE` moves the folder. Outside the app (a dev checkout, a cloud computer image) it is still built next to its source.
+
 On macOS a watchdog requires a frame at least every 5 seconds while capture runs. If frames stop, the server restarts the helper once, then exits so the Desktop app restarts it. `/hello` reports `stale: true` with an `error` when capture is dead.
 
 ## Where the change ships

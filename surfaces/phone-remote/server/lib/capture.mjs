@@ -6,9 +6,10 @@
 // contract: start() → frames + info, stop().
 
 import { spawn, execFile } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { EventEmitter } from 'node:events';
-import { closeSync, existsSync, mkdtempSync, openSync, readFileSync, readSync, readdirSync, rmSync, statSync, unlinkSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readSync, readdirSync, rmSync, statSync, unlinkSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
@@ -16,10 +17,28 @@ import { FrameWatchdog } from './watchdog.mjs';
 
 const execFileP = promisify(execFile);
 const HERE = dirname(fileURLToPath(import.meta.url));
-const SWIFT_SRC = join(HERE, '..', 'capture', 'sc_capture.swift');
-const SWIFT_BIN = join(HERE, '..', 'capture', 'sc_capture');
-const RESIZE_SRC = join(HERE, '..', 'capture', 'resize_jpeg.swift');
-const RESIZE_BIN = join(HERE, '..', 'capture', 'resize_jpeg');
+const CAPTURE_DIR = join(HERE, '..', 'capture');
+// Inside Allternit Desktop this folder is part of the signed app bundle: a
+// helper compiled into it breaks the app's code signature ("a sealed resource
+// is missing or invalid"). A prebuilt helper shipped with the app is used as
+// is; otherwise the packaged app compiles into the user's cache folder.
+const PACKAGED = /\.app\/Contents\//.test(HERE);
+// Keyed by the helpers' source, so an app update that changes them rebuilds.
+const sourceKey = () => {
+  const hash = createHash('sha256');
+  for (const name of ['sc_capture.swift', 'resize_jpeg.swift']) {
+    try { hash.update(readFileSync(join(CAPTURE_DIR, name))); } catch { /* not shipped */ }
+  }
+  return hash.digest('hex').slice(0, 12);
+};
+const BUILD_DIR = PACKAGED
+  ? join(process.env.ALLTERNIT_CAPTURE_CACHE || join(homedir(), 'Library', 'Caches', 'com.allternit.desktop', 'phone-remote'), sourceKey())
+  : CAPTURE_DIR;
+const helperBin = (name) => (existsSync(join(CAPTURE_DIR, name)) ? join(CAPTURE_DIR, name) : join(BUILD_DIR, name));
+const SWIFT_SRC = join(CAPTURE_DIR, 'sc_capture.swift');
+const SWIFT_BIN = helperBin('sc_capture');
+const RESIZE_SRC = join(CAPTURE_DIR, 'resize_jpeg.swift');
+const RESIZE_BIN = helperBin('resize_jpeg');
 
 export async function checkScreenRecordingPermission() {
   if (!existsSync(SWIFT_BIN)) await buildSwiftHelper();
@@ -32,11 +51,13 @@ export async function checkScreenRecordingPermission() {
 }
 
 export async function buildSwiftHelper() {
+  mkdirSync(dirname(SWIFT_BIN), { recursive: true });
   await execFileP('swiftc', ['-O', '-o', SWIFT_BIN, SWIFT_SRC], { timeout: 180000 });
 }
 
 async function ensureResizer() {
   if (!existsSync(RESIZE_BIN)) {
+    mkdirSync(dirname(RESIZE_BIN), { recursive: true });
     await execFileP('swiftc', ['-O', '-o', RESIZE_BIN, RESIZE_SRC], { timeout: 180000 });
   }
 }
