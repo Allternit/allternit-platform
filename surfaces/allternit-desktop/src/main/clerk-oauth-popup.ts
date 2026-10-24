@@ -1,6 +1,7 @@
 import { BrowserWindow, session } from 'electron';
 import type { Cookie, Session } from 'electron';
 import log from 'electron-log';
+import { onWebRequest } from './web-request-hub.js';
 
 const OAUTH_POPUP_WIDTH = 480;
 const OAUTH_POPUP_HEIGHT = 640;
@@ -131,13 +132,11 @@ export function openClerkOAuthPopup(
     });
 
     let settled = false;
+    let removeExchangeWatch: (() => void) | null = null;
 
     const cleanup = async () => {
-      try {
-        popupSession.webRequest.onBeforeRequest(null);
-      } catch {
-        // Listener already removed.
-      }
+      removeExchangeWatch?.();
+      removeExchangeWatch = null;
       if (!popup.isDestroyed()) popup.destroy();
     };
 
@@ -188,15 +187,9 @@ export function openClerkOAuthPopup(
     // Detect finish states pre-dispatch: the success URL must never load in
     // the popup (only the protocol-intercepted auth partition can serve it —
     // the hosted portal answers 404 for this path).
-    popupSession.webRequest.onBeforeRequest(
-      {
-        urls: [
-          `${options.redirectOrigin}${options.redirectPathPrefix}*`,
-          '*://allternit.com/v1/oauth_callback*',
-          '*://clerk.allternit.com/v1/oauth_callback*',
-          '*://accounts.allternit.com/v1/oauth_callback*',
-        ],
-      },
+    removeExchangeWatch = onWebRequest(
+      popupSession,
+      'onBeforeRequest',
       (details, callback) => {
         if (details.url.includes('err_code=')) {
           callback({ cancel: true });
@@ -211,6 +204,14 @@ export function openClerkOAuthPopup(
         // Clerk's exchange endpoint itself (no err_code): let it load so it
         // can 302 onward to the success URL above.
         callback({ cancel: false });
+      },
+      {
+        urls: [
+          `${options.redirectOrigin}${options.redirectPathPrefix}*`,
+          '*://allternit.com/v1/oauth_callback*',
+          '*://clerk.allternit.com/v1/oauth_callback*',
+          '*://accounts.allternit.com/v1/oauth_callback*',
+        ],
       },
     );
 

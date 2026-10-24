@@ -1155,6 +1155,50 @@ const browserCaptureAPI = {
     ipcRenderer.invoke('browser-capture:stop', sessionId),
 };
 
+// ─── Teach (Teach v2) ────────────────────────────────────────────────────────
+// Records HAR + action timeline + local snapshots + narration. Also driven by
+// the global Cmd/Ctrl+Shift+R hotkey and the floating record bar.
+
+type TeachEvent =
+  | { t: number; kind: 'navigate'; url: string; title?: string }
+  | { t: number; kind: 'click'; url?: string; label: string; role?: string; selector?: string }
+  | { t: number; kind: 'input'; url?: string; label: string; field?: string; valuePreview?: string }
+  | { t: number; kind: 'app'; app: string; window?: string }
+  | { t: number; kind: 'snapshot'; id: string }
+  | { t: number; kind: 'narration'; text: string };
+interface TeachRecording { sessionId: string; startedAt: number; endedAt: number; har: string; events: TeachEvent[]; narration?: string; snapshotsSkipped?: boolean }
+interface TeachStateInfo { recording: boolean; sessionId?: string; startedAt?: number; narration: boolean }
+
+const teachDeliveredSessions = new Set<string>();
+const teachAPI = {
+  isAvailable: (): Promise<boolean> => ipcRenderer.invoke('teach:is-available'),
+  start: (opts?: { narration?: boolean; filterUrls?: string[] }): Promise<{ success: boolean; sessionId?: string; error?: string }> =>
+    ipcRenderer.invoke('teach:start', opts),
+  stop: (): Promise<{ success: boolean; recording?: TeachRecording; error?: string }> =>
+    ipcRenderer.invoke('teach:stop'),
+  setNarration: (on: boolean): Promise<void> => ipcRenderer.invoke('teach:set-narration', on),
+  getSnapshot: (id: string): Promise<string | null> => ipcRenderer.invoke('teach:get-snapshot', id),
+  onState: (cb: (s: TeachStateInfo) => void): (() => void) => {
+    const listener = (_event: IpcRendererEvent, s: TeachStateInfo) => cb(s);
+    ipcRenderer.on('teach:state', listener);
+    void ipcRenderer.invoke('teach:get-state').then((s: TeachStateInfo) => { if (s?.recording) cb(s); }).catch(() => {});
+    return () => ipcRenderer.removeListener('teach:state', listener);
+  },
+  // A recording stopped from the bar/hotkey can finish before the Teach view
+  // mounts, so a late subscriber also receives one undelivered recording.
+  onFinished: (cb: (r: TeachRecording) => void): (() => void) => {
+    const deliver = (r: TeachRecording | null) => {
+      if (!r || teachDeliveredSessions.has(r.sessionId)) return;
+      teachDeliveredSessions.add(r.sessionId);
+      try { cb(r); } finally { ipcRenderer.send('teach:ack', r.sessionId); }
+    };
+    const listener = (_event: IpcRendererEvent, r: TeachRecording) => deliver(r);
+    ipcRenderer.on('teach:finished', listener);
+    void ipcRenderer.invoke('teach:take-pending').then(deliver).catch(() => {});
+    return () => ipcRenderer.removeListener('teach:finished', listener);
+  },
+};
+
 // ─── Expose ───────────────────────────────────────────────────────────────────
 
 const allternitDesktopAPI = {
@@ -1194,6 +1238,7 @@ const allternitDesktopAPI = {
   miniApps: miniAppsAPI,
   hermesRouting: hermesRoutingAPI,
   browserCapture: browserCaptureAPI,
+  teach: teachAPI,
   artifactPreview: artifactPreviewAPI,
   voice: voiceAPI,
 };

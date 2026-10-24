@@ -27,6 +27,7 @@ import {
   type WebContents,
 } from 'electron';
 import log from 'electron-log';
+import { onWebRequest } from './web-request-hub.js';
 import { ESPRESSIF_VID, pickEspressifPort, usbId } from './phone-usb-agent-firmware.js';
 
 /** Schemes a renderer-initiated openExternal is allowed to use. */
@@ -155,7 +156,7 @@ export function installWindowOpenGuard(webContents: WebContents): void {
 export function installSessionSecurityHandlers(session: Session): void {
   const csp = buildContentSecurityPolicy();
 
-  session.webRequest.onHeadersReceived((details, callback) => {
+  onWebRequest(session, 'onHeadersReceived', (details, callback) => {
     if (!isTrustedAppUrl(details.url)) {
       callback({});
       return;
