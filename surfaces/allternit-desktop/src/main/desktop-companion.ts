@@ -21,13 +21,17 @@ export interface CompanionActivity {
   moving: 'left' | 'right' | null;
 }
 
-export function installDesktopCompanion(options: { origin: () => string; main: () => BrowserWindow | null; preload: string; showMain?: () => void; openHud?: (agentId: string | null) => void; closeHud?: () => void; moveHudWithPet?: (dx: number, dy: number) => boolean }) {
+export function installDesktopCompanion(options: { origin: () => string; main: () => BrowserWindow | null; preload: string; showMain?: () => void; openHud?: (agentId: string | null, anchor?: Electron.Rectangle) => void; closeHud?: () => void; moveHudWithPet?: (dx: number, dy: number) => boolean; onPetLanded?: (petBounds: Electron.Rectangle) => void }) {
   const settings = new Store<CompanionState>({ name: 'desktop-companion', defaults: { enabled: true, size: 80, agentId: null, panel: 'chat', roam: true } });
   let pet: BrowserWindow | null = null;
   let chat: BrowserWindow | null = null;
   const ready = new WeakSet<BrowserWindow>();
   let drag: { x: number; y: number; lastX: number; lastY: number; left: number; top: number } | null = null;
   let quitting = false;
+  // A bot carried out of the app: the pet follows the cursor until the drop.
+  let carry: { timer: ReturnType<typeof setInterval>; expires: ReturnType<typeof setTimeout> } | null = null;
+  // What the pet was before the first carry out; flicking the bot home puts it back.
+  let away: { agentId: string | null; enabled: boolean; position?: { x: number; y: number } } | null = null;
   let attachedHudBounds: Electron.Rectangle | null = null;
   const state = () => settings.store;
   const owned = (event: IpcMainEvent | IpcMainInvokeEvent) => [pet, chat, options.main()].some(win =>
@@ -131,7 +135,7 @@ export function installDesktopCompanion(options: { origin: () => string; main: (
   let roamTimer: ReturnType<typeof setTimeout> | undefined;
   let walkTimer: ReturnType<typeof setInterval> | undefined;
   const canRoam = () => state().enabled && state().roam !== false && reducedMotion === false && activity.state === 'idle'
-    && !!pet && !pet.isDestroyed() && pet.isVisible() && ready.has(pet) && !drag && !attachedHudBounds
+    && !!pet && !pet.isDestroyed() && pet.isVisible() && ready.has(pet) && !drag && !carry && !attachedHudBounds
     && !(chat && !chat.isDestroyed() && chat.isVisible());
   function stopRoam(save = false) {
     clearTimeout(roamTimer); roamTimer = undefined;
@@ -286,6 +290,7 @@ export function installDesktopCompanion(options: { origin: () => string; main: (
     if (panel === 'chat' && options.openHud) {
       chat?.hide();
       options.openHud(state().agentId);
+      if (away && pet && !pet.isDestroyed()) options.onPetLanded?.(pet.getBounds());
       broadcast();
       return;
     }
@@ -293,6 +298,63 @@ export function installDesktopCompanion(options: { origin: () => string; main: (
       chat = makeWindow('chat');
     } else if (ready.has(chat)) { placeChat(); chat.show(); chat.focus(); }
     broadcast();
+  }
+  // ─── Carry: drag a bot out of the app and it becomes the pet under the cursor ─
+  const insideMain = (point: Electron.Point) => {
+    const main = options.main();
+    if (!main || main.isDestroyed() || !main.isVisible() || main.isMinimized()) return false;
+    const b = main.getBounds();
+    return point.x >= b.x && point.x < b.x + b.width && point.y >= b.y && point.y < b.y + b.height;
+  };
+  function followCursor() {
+    if (!pet || pet.isDestroyed()) return;
+    const cursor = screen.getCursorScreenPoint();
+    const side = state().size + 16;
+    pet.setBounds({ width: side, height: side, x: Math.round(cursor.x - side / 2), y: Math.round(cursor.y - side / 2) });
+  }
+  function carryStart(agentId: string) {
+    if (carry) return;
+    away ??= { agentId: state().agentId, enabled: state().enabled, position: state().position };
+    options.closeHud?.(); chat?.hide();
+    hideBubble(); stopRoam();
+    if (state().agentId !== agentId) { settings.set('agentId', agentId); lastAgentId = agentId; }
+    settings.set('enabled', true);
+    const win = ensurePet();
+    // The pet sits under the cursor; the release must reach the app window, not the pet.
+    win.setIgnoreMouseEvents(true);
+    followCursor();
+    if (ready.has(win)) win.showInactive();
+    broadcast();
+    // The app window ends every carry; this only guards against a renderer that never does.
+    carry = { timer: setInterval(followCursor, 16), expires: setTimeout(() => carryEnd('cancel'), 120_000) };
+  }
+  function carryEnd(phase: 'drop' | 'back' | 'cancel') {
+    if (!carry) return;
+    clearInterval(carry.timer); clearTimeout(carry.expires); carry = null;
+    if (pet && !pet.isDestroyed()) pet.setIgnoreMouseEvents(false);
+    if (phase !== 'drop' || !pet || pet.isDestroyed() || insideMain(screen.getCursorScreenPoint())) { goHome(); return; }
+    const bounds = pet.getBounds();
+    settings.set('position', { x: bounds.x, y: bounds.y });
+    settings.set('panel', 'chat');
+    clearUnread();
+    if (options.openHud) options.openHud(state().agentId, bounds);
+    else showPanel('chat');
+    options.onPetLanded?.(bounds);
+    broadcast();
+  }
+  /** Flick it home: Quick Work closes and the pet is put back the way it was before the carry. */
+  function goHome() {
+    const back = away;
+    away = null;
+    options.closeHud?.(); chat?.hide();
+    if (back) {
+      settings.set('agentId', back.agentId); lastAgentId = back.agentId;
+      if (back.position) settings.set('position', back.position); else settings.delete('position');
+      settings.set('enabled', back.enabled);
+    }
+    if (state().enabled) pet?.setBounds(petBounds());
+    else { pet?.hide(); hideBubble(); }
+    placeBubble(); broadcast(); scheduleRoam();
   }
   function update(patch: Partial<CompanionState>) {
     const geometryChanged = typeof patch.enabled === 'boolean' || typeof patch.size === 'number' && Number.isFinite(patch.size);
@@ -350,12 +412,25 @@ export function installDesktopCompanion(options: { origin: () => string; main: (
     }
     if (phase === 'end') {
       drag = null;
+      // A bot that was carried out goes home when it is dropped back on the app.
+      if (away && insideMain(cursor)) { goHome(); return; }
       const b = pet.getBounds();
       settings.set('position', { x: b.x, y: b.y });
-      if (!options.moveHudWithPet?.(0, 0)) pet.setBounds(petBounds());
+      const hudOpen = options.moveHudWithPet?.(0, 0);
+      if (!hudOpen) pet.setBounds(petBounds());
       placeChat(); placeBubble();
+      // Moved onto another window: Quick Work's context follows the pet.
+      if (hudOpen) options.onPetLanded?.(pet.getBounds());
       scheduleRoam();
     }
+  });
+  // Only the app window starts and ends a carry (its bot rail owns the drag).
+  ipcMain.on('companion:carry', (event, value: unknown) => {
+    const main = options.main();
+    if (!main || main.isDestroyed() || event.sender !== main.webContents || !owned(event)) return;
+    const { phase, agentId } = (value && typeof value === 'object' ? value : {}) as { phase?: unknown; agentId?: unknown };
+    if (phase === 'start' && typeof agentId === 'string' && agentId.length > 0 && agentId.length <= 200) carryStart(agentId);
+    else if (phase === 'drop' || phase === 'back' || phase === 'cancel') carryEnd(phase);
   });
   ipcMain.on('companion:height', (event, height: number) => {
     if (chat && event.sender === chat.webContents && owned(event) && Number.isFinite(height)) placeChat(height);
@@ -367,7 +442,7 @@ export function installDesktopCompanion(options: { origin: () => string; main: (
   app.whenReady().then(() => {
     screen.on('display-removed', repair); screen.on('display-metrics-changed', repair);
   });
-  app.on('before-quit', () => { quitting = true; stopRoam(true); clearTimeout(expiryTimer); hideBubble(); });
+  app.on('before-quit', () => { quitting = true; if (carry) { clearInterval(carry.timer); clearTimeout(carry.expires); carry = null; } stopRoam(true); clearTimeout(expiryTimer); hideBubble(); });
   return { reportActivity, showBubble, activity: () => activity, start: () => { if (state().enabled) ensurePet(); }, show: () => update({ enabled: true }), settings: () => showPanel('settings'), reset, attachPetToHud, detachPetFromHud };
 }
 

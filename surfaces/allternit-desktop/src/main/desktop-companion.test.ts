@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
 
-const mocks = vi.hoisted(() => ({ appEvents: new Map<string, Function>(), handlers: new Map<string, Function>(), events: new Map<string, Function>(), windows: [] as any[], menu: [] as any[], stores: [] as any[], watchers: [] as Array<(event: string, file: string) => void> }));
+const mocks = vi.hoisted(() => ({ appEvents: new Map<string, Function>(), handlers: new Map<string, Function>(), events: new Map<string, Function>(), windows: [] as any[], menu: [] as any[], stores: [] as any[], watchers: [] as Array<(event: string, file: string) => void>, cursor: { x: 100, y: 100 } }));
 vi.mock('node:fs', async (importOriginal) => ({ ...(await importOriginal<typeof import('node:fs')>()), watch: (_dir: string, cb: any) => { mocks.watchers.push(cb); return { unref() {} }; } }));
 vi.mock('electron-store', () => ({ default: class {
   store: any;
@@ -12,7 +12,7 @@ vi.mock('electron-store', () => ({ default: class {
 } }));
 vi.mock('electron', () => ({
   app: { whenReady: () => Promise.resolve(), on: (name: string, fn: Function) => mocks.appEvents.set(name, fn) },
-  screen: { getPrimaryDisplay: () => ({ workArea: { x: 0, y: 0, width: 1280, height: 800 } }), getDisplayNearestPoint: () => ({ workArea: { x: 0, y: 0, width: 1280, height: 800 } }), getDisplayMatching: () => ({ workArea: { x: 0, y: 0, width: 1280, height: 800 } }), getCursorScreenPoint: () => ({ x: 100, y: 100 }), on: vi.fn() },
+  screen: { getPrimaryDisplay: () => ({ workArea: { x: 0, y: 0, width: 1280, height: 800 } }), getDisplayNearestPoint: () => ({ workArea: { x: 0, y: 0, width: 1280, height: 800 } }), getDisplayMatching: () => ({ workArea: { x: 0, y: 0, width: 1280, height: 800 } }), getCursorScreenPoint: () => mocks.cursor, on: vi.fn() },
   ipcMain: { handle: (name: string, fn: Function) => mocks.handlers.set(name, fn), on: (name: string, fn: Function) => mocks.events.set(name, fn) },
   Menu: { buildFromTemplate: (items: any[]) => { mocks.menu = items; return { popup: vi.fn() }; } },
   BrowserWindow: class extends EventEmitter {
@@ -21,7 +21,7 @@ vi.mock('electron', () => ({
     constructor(options: any) { super(); this.options = options; this.bounds = options; mocks.windows.push(this); }
     isDestroyed() { return false; }
     focused = false;
-    isVisible() { return this.visible; } isFocused() { return this.focused; }
+    isVisible() { return this.visible; } isFocused() { return this.focused; } isMinimized() { return false; }
     setAlwaysOnTop() {} setVisibleOnAllWorkspaces() {} setIgnoreMouseEvents() {}
     loadURL = vi.fn(async () => {});
     getBounds() { return this.bounds; }
@@ -33,7 +33,7 @@ vi.mock('electron', () => ({
 import { installDesktopCompanion } from './desktop-companion.js';
 
 function sender(win: any) { return { sender: win.webContents, senderFrame: win.webContents.mainFrame }; }
-beforeEach(() => { mocks.appEvents.clear(); mocks.windows.length = 0; mocks.handlers.clear(); mocks.events.clear(); mocks.stores.length = 0; mocks.watchers.length = 0; });
+beforeEach(() => { mocks.cursor = { x: 100, y: 100 }; mocks.appEvents.clear(); mocks.windows.length = 0; mocks.handlers.clear(); mocks.events.clear(); mocks.stores.length = 0; mocks.watchers.length = 0; });
 describe('desktop companion windows', () => {
   it('follows a bot picked by the gizzi terminal pet', async () => {
     vi.useFakeTimers();
@@ -253,6 +253,74 @@ describe('desktop pet activity', () => {
       const x = pet.getBounds().x;
       await vi.advanceTimersByTimeAsync(60_000);
       expect(pet.getBounds().x).toBe(x);
+    } finally { vi.useRealTimers(); }
+  });
+});
+
+describe('carrying a bot out of the app', () => {
+  async function setup() {
+    vi.useFakeTimers();
+    const main = new (await import('electron')).BrowserWindow({ x: 0, y: 0, width: 600, height: 500 }) as any;
+    main.visible = true;
+    const openHud = vi.fn(); const closeHud = vi.fn(); const onPetLanded = vi.fn();
+    const manager = installDesktopCompanion({ origin: () => 'http://localhost:8013', main: () => main, preload: '/preload.js', openHud, closeHud, onPetLanded });
+    const carry = (phase: string, agentId?: string) => mocks.events.get('companion:carry')!(sender(main), { phase, agentId });
+    return { main, manager, openHud, closeHud, onPetLanded, carry, store: mocks.stores[0] };
+  }
+
+  it('follows the cursor out of the window and opens Quick Work where it is dropped', async () => {
+    const { openHud, onPetLanded, carry, store } = await setup();
+    try {
+      store.store.enabled = false;
+      mocks.cursor = { x: 900, y: 300 };
+      carry('start', 'scout');
+      const pet = mocks.windows[1];
+      vi.advanceTimersByTime(20);
+      expect(store.store).toMatchObject({ agentId: 'scout', enabled: true });
+      expect(pet.getBounds()).toMatchObject({ x: 852, y: 252, width: 96 });
+      mocks.cursor = { x: 1000, y: 400 };
+      vi.advanceTimersByTime(20);
+      expect(pet.getBounds()).toMatchObject({ x: 952, y: 352 });
+      carry('drop');
+      expect(openHud).toHaveBeenCalledWith('scout', expect.objectContaining({ x: 952, y: 352 }));
+      expect(onPetLanded).toHaveBeenCalledWith(expect.objectContaining({ x: 952, y: 352 }));
+      // The pet stops following after the drop.
+      mocks.cursor = { x: 10, y: 10 };
+      vi.advanceTimersByTime(50);
+      expect(pet.getBounds()).toMatchObject({ x: 952, y: 352 });
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('goes home when dropped back on the app, restoring the pet it replaced', async () => {
+    const { openHud, closeHud, carry, store, main } = await setup();
+    try {
+      store.store.enabled = false; store.store.agentId = 'old-pet';
+      mocks.cursor = { x: 900, y: 300 };
+      carry('start', 'scout');
+      carry('drop');
+      const pet = mocks.windows[1];
+      // Later: the pet is dragged back onto the app window.
+      mocks.cursor = { x: 300, y: 200 };
+      mocks.events.get('companion:drag')!(sender(pet), 'end');
+      expect(closeHud).toHaveBeenCalled();
+      expect(store.store).toMatchObject({ agentId: 'old-pet', enabled: false });
+      expect(pet.visible).toBe(false);
+      // Released over the app itself: nothing opens.
+      openHud.mockClear();
+      carry('start', 'scout');
+      carry('drop');
+      expect(openHud).not.toHaveBeenCalled();
+      expect(main.visible).toBe(true);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('ignores carry messages from any window but the app', async () => {
+    const { openHud } = await setup();
+    try {
+      mocks.cursor = { x: 900, y: 300 };
+      mocks.events.get('companion:carry')!({ sender: {}, senderFrame: {} }, { phase: 'start', agentId: 'x' });
+      mocks.events.get('companion:carry')!({ sender: {}, senderFrame: {} }, { phase: 'drop' });
+      expect(openHud).not.toHaveBeenCalled();
     } finally { vi.useRealTimers(); }
   });
 });

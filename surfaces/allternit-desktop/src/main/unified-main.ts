@@ -23,6 +23,7 @@ import log from 'electron-log';
 import { updateElectronApp } from 'update-electron-app';
 import fixPath from 'fix-path';
 import { installDesktopCompanion } from './desktop-companion.js';
+import { readBotCarryContext, type BotCarryContext } from './bot-carry-context.js';
 import { installAgentCursorWindow } from './agent-cursor-window.js';
 import { startPetHookServer, type PetHookServer } from './pet-hook-server.js';
 import { isPairingLink, pairingCodeFromUrl } from './pairing-link.js';
@@ -821,7 +822,8 @@ const desktopCompanion = installDesktopCompanion({
   main: () => mainWindow,
   preload: join(__dirname, '../preload/index.js'),
   showMain: () => showOrReopenMainWindow(),
-  openHud: (agentId) => openHudForCompanion(agentId),
+  openHud: (agentId, anchor) => openHudForCompanion(agentId, anchor),
+  onPetLanded: (petBounds) => { void sendBotCarryContext(petBounds); },
   closeHud: () => hideHudWindow(),
   moveHudWithPet: (dx, dy) => {
     if (hudCompanionAgentId === undefined || !hudWindow || hudWindow.isDestroyed() || !hudWindow.isVisible()) return false;
@@ -3219,16 +3221,51 @@ function hudUrl(): string {
   return url.toString();
 }
 
-function openHudForCompanion(agentId: string | null): void {
-  if (hudCompanionAgentId === agentId && hudWindow && !hudWindow.isDestroyed() && hudWindow.isVisible()) {
+/**
+ * Open Quick Work for the pet's bot. `anchor` is where a bot carried out of
+ * the app was dropped: the HUD opens under it so the pet stays where it landed
+ * (attachPetToHud puts the pet at the HUD's top-right corner).
+ */
+function openHudForCompanion(agentId: string | null, anchor?: Electron.Rectangle): void {
+  if (!anchor && hudCompanionAgentId === agentId && hudWindow && !hudWindow.isDestroyed() && hudWindow.isVisible()) {
     hideHudWindow();
     return;
   }
   const changed = hudCompanionAgentId !== agentId;
   hudCompanionAgentId = agentId;
+  if (changed) botCarryContext = null;
   if (changed && hudWindow && !hudWindow.isDestroyed()) void hudWindow.loadURL(hudUrl());
+  if (anchor) placeHudUnderPet(anchor);
   openHudWindow();
 }
+
+function placeHudUnderPet(pet: Electron.Rectangle): void {
+  const size = hudWindow && !hudWindow.isDestroyed() ? hudWindow.getBounds() : computeHudBounds();
+  const area = screen.getDisplayMatching(pet).workArea;
+  const width = Math.min(size.width, area.width);
+  const height = Math.min(size.height, area.height);
+  const bounds = {
+    width, height,
+    x: Math.round(Math.max(area.x, Math.min(pet.x + pet.width + 24 - width, area.x + area.width - width))),
+    y: Math.round(Math.max(area.y, Math.min(pet.y + pet.height - 20, area.y + area.height - height))),
+  };
+  if (hudWindow && !hudWindow.isDestroyed()) hudWindow.setBounds(bounds);
+  else hudInitialBounds = bounds;
+}
+
+// What the pet is sitting on, for Quick Work (see bot-carry-context.ts). The
+// HUD asks for the latest on load and gets each new one pushed.
+let botCarryContext: BotCarryContext | null = null;
+async function sendBotCarryContext(petBounds: Electron.Rectangle): Promise<void> {
+  const context = await readBotCarryContext(petBounds).catch(() => null);
+  if (!context) return;
+  botCarryContext = context;
+  if (hudWindow && !hudWindow.isDestroyed()) hudWindow.webContents.send('shell:hud:carry-context', context);
+}
+ipcMain.handle('shell:hud:carry-context', (event) => {
+  if (!hudWindow || hudWindow.isDestroyed() || event.sender !== hudWindow.webContents) return null;
+  return botCarryContext;
+});
 
 function computeHudBounds() {
   const { width: screenW, height: screenH } = screen.getPrimaryDisplay().workAreaSize;
@@ -3248,9 +3285,12 @@ function pushHudState() {
   }
 }
 
+let hudInitialBounds: Electron.Rectangle | null = null;
 function createHudWindow(): BrowserWindow {
+  const initial = hudInitialBounds ?? computeHudBounds();
+  hudInitialBounds = null;
   const win = new BrowserWindow({
-    ...computeHudBounds(),
+    ...initial,
     minWidth: 380,
     minHeight: 160,
     maxWidth: 1600,
