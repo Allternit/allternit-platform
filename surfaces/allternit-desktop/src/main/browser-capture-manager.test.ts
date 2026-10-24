@@ -27,6 +27,8 @@ const mockDefaultSession = {
 };
 
 vi.mock('electron', () => ({
+  app: { on: vi.fn(), removeListener: vi.fn() },
+  webContents: { getAllWebContents: () => [] },
   session: {
     get defaultSession() {
       return mockDefaultSession;
@@ -45,9 +47,11 @@ import {
   listCaptureSessions,
   __resetForTests,
 } from './browser-capture-manager.js';
+import { __resetWebRequestHubForTests } from './web-request-hub.js';
 
 beforeEach(() => {
   __resetForTests();
+  __resetWebRequestHubForTests();
   webRequestHandlers.onBeforeRequest = null;
   webRequestHandlers.onBeforeSendHeaders = null;
   webRequestHandlers.onHeadersReceived = null;
@@ -144,14 +148,25 @@ describe('browser-capture-manager', () => {
     expect(entry.response.content.size).toBe(256);
   });
 
-  it('unregisters listeners when the last active session stops', () => {
+  it('never removes the session listeners the app relies on when a session stops', () => {
     const { sessionId } = createCaptureSession();
     stopCaptureSession(sessionId);
 
-    expect(mockWebRequest.onBeforeRequest).toHaveBeenLastCalledWith(null);
-    expect(mockWebRequest.onBeforeSendHeaders).toHaveBeenLastCalledWith(null);
-    expect(mockWebRequest.onHeadersReceived).toHaveBeenLastCalledWith(null);
-    expect(mockWebRequest.onCompleted).toHaveBeenLastCalledWith(null);
+    // Electron keeps one listener per event; nulling it would drop the app's
+    // own API routing/auth/CSP handlers registered through the same hub.
+    expect(mockWebRequest.onBeforeRequest).not.toHaveBeenCalledWith(null);
+    expect(mockWebRequest.onCompleted).not.toHaveBeenCalledWith(null);
+    const callback = vi.fn();
+    webRequestHandlers.onBeforeRequest!({ id: 7, url: 'https://api.example.com/x', method: 'GET', timestamp: Date.now() }, callback);
+    expect(callback).toHaveBeenCalledWith({});
+  });
+
+  it('skips the app\'s own local traffic', () => {
+    const { sessionId } = createCaptureSession();
+    webRequestHandlers.onBeforeRequest!({ id: 9, url: 'http://127.0.0.1:8013/api/v1/me', method: 'GET', timestamp: Date.now() }, () => {});
+    webRequestHandlers.onCompleted!({ id: 9, url: 'http://127.0.0.1:8013/api/v1/me', statusCode: 200 });
+    const har = JSON.parse(stopCaptureSession(sessionId)!.har);
+    expect(har.log.entries).toHaveLength(0);
   });
 
   it('filters requests by URL pattern', () => {

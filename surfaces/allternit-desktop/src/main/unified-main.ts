@@ -74,6 +74,7 @@ import { createStartupWindow } from './startup-window.js';
 import { notebookManager } from './notebook-manager.js';
 import { voiceManager } from './voice-manager.js';
 import { installTeachRecorder, registerTeachHotkey, abortTeach } from './teach-recorder.js';
+import { onWebRequest } from './web-request-hub.js';
 import { PLATFORM_MANIFEST, shouldUpdateBackend } from './manifest.js';
 import { runtimePackages, runtimeResource } from './runtime-home.js';
 import { DEFAULT_RUNTIME_FEED } from './runtime-package.js';
@@ -954,7 +955,7 @@ function createMainWindow(): BrowserWindow {
   // desktop device token is what produced the billing 401s.
   const platformOrigin = activePlatformUrl;
   const publicApiOrigin = URLS.CLOUD_API;
-  window.webContents.session.webRequest.onBeforeRequest((details, callback) => {
+  onWebRequest(window.webContents.session, 'onBeforeRequest', (details, callback) => {
     const cloudRedirect = rewriteCloudApiToProtocol(details.url, publicApiOrigin);
     if (cloudRedirect) {
       callback({ redirectURL: cloudRedirect });
@@ -969,7 +970,7 @@ function createMainWindow(): BrowserWindow {
     callback({});
   });
 
-  window.webContents.session.webRequest.onBeforeSendHeaders((details, callback) => {
+  onWebRequest(window.webContents.session, 'onBeforeSendHeaders', (details, callback) => {
     const session = authManager.getSessionSnapshot();
     const injectDesktop = shouldInjectDesktopIdentity(details.url, URLS.API, URLS.CLOUD_API);
     if (session && injectDesktop) {
