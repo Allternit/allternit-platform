@@ -9,6 +9,7 @@ description: 'Changelog for the Allternit platform, SDKs, and Gizzi Code CLI'
 
 - **Linux and cloud computers:** the `gizzi` command in a terminal now follows Desktop's runtime updates. Before, on Linux it stayed on the version bundled with the app, because Desktop didn't recognize the `/opt/Allternit Desktop/` install folder as its own.
 - **Cloud computers:** new cloud computers put `~/.local/bin` on the terminal's PATH, so `gizzi` is found. Before, a terminal on a cloud computer answered "command not found".
+- **Connections:** a CLI brain such as Grok or Kimi shows **Not signed in** until you actually sign in. Before, it showed signed in as soon as the CLI was installed, and its chats then failed. Kimi Code's sign-in in `~/.kimi-code/credentials/` (or `~/.kimi/credentials/`) is now recognized.
 
 ## 2026-10-24 — Watch and stop routine runs
 

@@ -664,7 +664,10 @@ fn subprocess_provider_rows(connected: &HashSet<String>) -> Vec<ProviderRow> {
                         || subscription_auth_check(id, binary)
                         || std::env::var("OPENAI_API_KEY").is_ok()
                 }
-                _ => connected.contains(id) || subscription_auth_check(id, binary),
+                // Gizzi lists any CLI it finds on PATH as connected, so a
+                // signed-out Grok or Kimi showed Ready. Ask the CLI's own
+                // sign-in check (it falls back to "runs" for CLIs without one).
+                _ => subscription_auth_check(id, binary),
             };
         rows.push(ProviderRow {
             id: id.to_string(),
@@ -1771,7 +1774,10 @@ fn subscription_auth_check(id: &str, binary: &str) -> bool {
         "kimi" | "kimi-cli" => {
             cli_alive(binary, &["--version"], Some("kimi"))
                 && (home_file(&[".kimi-code", "auth.json"]).exists()
-                    || home_file(&[".kimi-code", "config.json"]).exists())
+                    || home_file(&[".kimi-code", "config.json"]).exists()
+                    // Kimi Code 1.x keeps its OAuth token here.
+                    || home_file(&[".kimi-code", "credentials", "kimi-code.json"]).exists()
+                    || home_file(&[".kimi", "credentials", "kimi-code.json"]).exists())
         }
         "antigravity" | "agy" => {
             // agy (Antigravity CLI) stores its Google OAuth token at
