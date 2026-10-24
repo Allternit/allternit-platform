@@ -29,6 +29,8 @@ Inside a Gizzi Code session, type:
 
 The same operations are available in the **desktop and web app**: open the session picker (rail icon or Agent Hub), choose a native session, and it opens as a new chat with an origin badge showing where it came from.
 
+**On your phone** (m.allternit.com or ai.allternit.com on a phone): open the menu, then press and hold **New chat** (or **New thread** in Code) and tap **Continue CLI session**. The list shows the sessions stored on the computer your phone uses, usually your default computer. A session you started on another machine shows only after its file is copied to that computer's CLI folder (for Claude Code, `~/.claude/projects/`).
+
 ## How pickup works
 
 `NativeSource.pickup()` snapshots the native transcript at pickup time and creates a **new** Gizzi session carrying a first-class `source_ref` (harness id, origin session id, origin file path, content fingerprint). The new session starts as an ordinary Gizzi session — you can continue it, branch it, or export it.
