@@ -1783,8 +1783,9 @@ mod tests {
         assert_eq!(s, StatusCode::OK);
         let packs = v["packs"].as_array().expect("packs");
         let bots = v["botProjects"].as_array().expect("botProjects");
-        assert_eq!(packs.len(), 36);
-        assert_eq!(bots.len(), 33);
+        // Every pack and bot project in assets/gateway-catalog.json.
+        assert_eq!(packs.len(), 37);
+        assert_eq!(bots.len(), 34);
         assert_eq!(packs[0]["id"], "hermes");
         for p in packs {
             for k in ["id", "displayName", "agentNoun", "legalName", "monogram", "modes", "recommendedLane", "profiles", "permissions"] {
