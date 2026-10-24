@@ -5,6 +5,11 @@ description: 'Changelog for the Allternit platform, SDKs, and Gizzi Code CLI'
 
 # Release Notes
 
+## 2026-10-24 — gizzi stays current on Linux and cloud computers
+
+- **Linux and cloud computers:** the `gizzi` command in a terminal now follows Desktop's runtime updates. Before, on Linux it stayed on the version bundled with the app, because Desktop didn't recognize the `/opt/Allternit Desktop/` install folder as its own.
+- **Cloud computers:** new cloud computers put `~/.local/bin` on the terminal's PATH, so `gizzi` is found. Before, a terminal on a cloud computer answered "command not found".
+
 ## 2026-10-24 — Watch and stop routine runs
 
 The same change applies on Desktop, on ai.allternit.com (including the phone layout) and in the m.allternit.com app.

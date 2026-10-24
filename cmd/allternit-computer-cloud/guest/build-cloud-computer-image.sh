@@ -88,6 +88,10 @@ incus exec "${BUILD_CONTAINER}" -- sh -c '
     apt-get install -y -qq /root/allternit-desktop.deb
     rm -f /root/allternit-desktop.deb
     test -x /usr/bin/allternit
+    # The app links `gizzi` into ~/.local/bin; root'"'"'s shells do not put
+    # that on PATH, so terminals on the computer could not find gizzi.
+    printf "%s\n" "case \":\$PATH:\" in *\":\$HOME/.local/bin:\"*) ;; *) PATH=\"\$HOME/.local/bin:\$PATH\" ;; esac" \
+        > /etc/profile.d/allternit-local-bin.sh
 '
 
 # ---------------------------------------------------------------------------
