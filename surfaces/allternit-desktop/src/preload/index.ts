@@ -437,6 +437,13 @@ const shellAPI = {
       ipcRenderer.on('shell:hud:cursor', listener);
       return () => ipcRenderer.removeListener('shell:hud:cursor', listener);
     },
+    // The window a carried-out bot is sitting on (app, title, optional picture).
+    getCarryContext: (): Promise<unknown> => ipcRenderer.invoke('shell:hud:carry-context'),
+    onCarryContext: (callback: (context: unknown) => void): (() => void) => {
+      const listener = (_: IpcRendererEvent, context: unknown) => callback(context);
+      ipcRenderer.on('shell:hud:carry-context', listener);
+      return () => ipcRenderer.removeListener('shell:hud:carry-context', listener);
+    },
     onGameOverlay: (callback: (state: unknown) => void): (() => void) => {
       const listener = (_: IpcRendererEvent, state: unknown) => callback(state);
       ipcRenderer.on('shell:hud:game-overlay', listener);
@@ -1233,6 +1240,9 @@ contextBridge.exposeInMainWorld('allternitCompanion', {
   close: () => ipcRenderer.invoke('companion:close'),
   menu: () => ipcRenderer.invoke('companion:menu'),
   drag: (phase: 'start' | 'move' | 'end') => ipcRenderer.send('companion:drag', phase),
+  // A bot dragged out of the app window: the pet follows the cursor until the
+  // drop, then Quick Work opens there. 'back' = the cursor came back inside.
+  carry: (phase: 'start' | 'drop' | 'back' | 'cancel', agentId?: string) => ipcRenderer.send('companion:carry', { phase, agentId }),
   setHeight: (height: number) => ipcRenderer.send('companion:height', height),
   ignoreMouse: (ignore: boolean) => ipcRenderer.send('companion:ignore-mouse', ignore),
   onState: (callback: (state: unknown) => void) => {

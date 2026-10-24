@@ -1992,7 +1992,7 @@
       "label": "Desktop pets and animated avatars (Petdex standard)",
       "product": "product:ai-allternit",
       "status": "building",
-      "description": "Bot avatars play Petdex-standard sprite sheets (8 columns of 192x208, 11 rows: idle, running-right/left, waving, jumping, failed, waiting, running, review, sleep, special). Characters without real frames hop, rock, slump and spin in code (PortraitPetMotion). One pet-activity signal (lib/agents/pet-activity.ts) follows every session store and bot/vendor thread. In-app avatars (rail, headers, surface mascot, A:// orb) react to it. The Desktop pet window gets that state over IPC from the main window and plays it (walk rows while roaming), with a mail badge for replies that finished while you were away; click opens quick chat, double-click shows or hides the app. Terminal agents drive the same pet through a token-guarded loopback hook port (127.0.0.1:7787; gizzi built in, a hook script for Claude Code and Codex), and the pet shows speech bubbles in a click-through window above it. The free character builder renders Petdex v2 sheets with walk rows turned toward the direction of travel.",
+      "description": "Bot avatars play Petdex-standard sprite sheets (8 columns of 192x208, 11 rows: idle, running-right/left, waving, jumping, failed, waiting, running, review, sleep, special). Characters without real frames hop, rock, slump and spin in code (PortraitPetMotion). One pet-activity signal (lib/agents/pet-activity.ts) follows every session store and bot/vendor thread. In-app avatars (rail, headers, surface mascot, A:// orb) react to it. The Desktop pet window gets that state over IPC from the main window and plays it (walk rows while roaming), with a mail badge for replies that finished while you were away; click opens quick chat, double-click shows or hides the app. Terminal agents drive the same pet through a token-guarded loopback hook port (127.0.0.1:7787; gizzi built in, a hook script for Claude Code and Codex), and the pet shows speech bubbles in a click-through window above it. The free character builder renders Petdex v2 sheets with walk rows turned toward the direction of travel. Bot carry: drag a bot from the Bots rail out of the Desktop window and the pet follows the cursor; dropped on another app's window, quick work opens there with that window (app, title, and a picture when Screen Recording is already granted) as a removable attachment; dropped back on the app it goes home. Inside the app on every surface (long-press on the phone), dropping a bot on the open view opens a quick chat with that view's text as context.",
       "touches": [
         "allternit-ai/src/lib/agents",
         "allternit-ai/src/views/bots",
@@ -2000,7 +2000,10 @@
         "allternit-ai/src/components/desktop-companion",
         "allternit/surfaces/allternit-desktop",
         "allternit/cmd/gizzi-code/src/cli/ui/ink-app/pet",
-        "allternit-ai/src/lib/bots"
+        "allternit-ai/src/lib/bots",
+        "allternit-ai/src/shell",
+        "allternit-ai/src/components/bots",
+        "allternit-ai/src/components/agents"
       ],
       "evidence": [
         "allternit-ai/src/views/bots/AnimatedBotSprite.tsx",
@@ -2015,7 +2018,10 @@
         "allternit-ai/src/lib/bots/character-builder/recipe.ts",
         "allternit-ai/src/views/bots/PortraitPetMotion.tsx",
         "allternit-ai/public/avatar-packs/gizzi-brawl",
-        "allternit-ai/public/avatar-packs/dot-friends"
+        "allternit-ai/public/avatar-packs/dot-friends",
+        "allternit-ai/src/lib/bots/bot-carry.ts",
+        "allternit-ai/src/components/bots/BotCarryLayer.tsx",
+        "allternit/surfaces/allternit-desktop/src/main/bot-carry-context.ts"
       ],
       "decisions": [
         {
