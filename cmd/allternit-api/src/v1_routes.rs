@@ -768,13 +768,31 @@ fn read_instruction_files(dir: &std::path::Path) -> Option<String> {
     }
 }
 
+/// The user-owned layers that sit after custom instructions: the "About the
+/// user" profile, then "Writing as the user" (Write in my style). Blank
+/// layers are skipped; None when both are empty.
+fn user_layers(profile: Option<&str>, writing_style: Option<&str>) -> Option<String> {
+    let parts: Vec<&str> = [profile, writing_style]
+        .into_iter()
+        .flatten()
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .collect();
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join("\n\n"))
+    }
+}
+
 /// Compose the final system-instructions block for an agent-chat request.
 /// Layer order: SOUL.md → STYLE.md (only when no prefs row exists — it is
 /// generated from that row, so including both would state the style
 /// twice) → canonical instruction files (AGENTS.md → GIZZI.md →
 /// .claude/CLAUDE.md → SYSTEM_LAW.md, mirroring pack.ts) → agent
 /// system_prompt → response-style directive → custom
-/// instructions → "About the user" profile → client-sent systemPrompt. Blank layers
+/// instructions → "About the user" profile → "Writing as the user" (via
+/// `user_layers`) → client-sent systemPrompt. Blank layers
 /// are skipped and layers are joined with "\n\n"; returns None when every
 /// layer is empty so the caller preserves the old no-block behavior exactly.
 fn compose_system_instructions(
@@ -1348,6 +1366,7 @@ async fn agent_chat_bridge(
         let (response_style, custom_instructions, profile) = prefs_row
             .clone()
             .unwrap_or(("balanced".to_string(), String::new(), UserProfile::default()));
+        let writing = crate::agent_preferences_routes::load_writing_style(&conn, &user_id)?;
 
         let agent = match agent_id_for_task {
             Some(ref agent_id) => {
@@ -1389,11 +1408,11 @@ async fn agent_chat_bridge(
             None => None,
         };
 
-        Ok::<_, rusqlite::Error>((response_style, custom_instructions, profile, agent))
+        Ok::<_, rusqlite::Error>((response_style, custom_instructions, profile, writing, agent))
     })
     .await;
 
-    let (response_style, custom_instructions, profile, agent) = match gathered {
+    let (response_style, custom_instructions, profile, writing, agent) = match gathered {
         Ok(Ok(v)) => v,
         Ok(Err(e)) => {
             warn!("DB error composing agent-chat context: {}", e);
@@ -1446,8 +1465,8 @@ async fn agent_chat_bridge(
 
     // Composition order: SOUL.md → STYLE.md → canonical instruction files
     // (AGENTS.md → GIZZI.md → .claude/CLAUDE.md → SYSTEM_LAW.md) → agent
-    // system_prompt → style directive → custom instructions → client-sent
-    // systemPrompt.
+    // system_prompt → style directive → custom instructions → About the
+    // user → Writing as the user → client-sent systemPrompt.
     let system_prompt = compose_system_instructions(
         agent.soul_md.as_deref(),
         agent.style_md.as_deref(),
@@ -1455,7 +1474,11 @@ async fn agent_chat_bridge(
         agent.system_prompt.as_deref(),
         &response_style,
         &custom_instructions,
-        user_profile_block(&profile).as_deref(),
+        user_layers(
+            user_profile_block(&profile).as_deref(),
+            crate::agent_preferences_routes::writing_style_block(&writing).as_deref(),
+        )
+        .as_deref(),
         client_system_prompt.as_deref(),
     )
     .unwrap_or_default();
@@ -2809,6 +2832,36 @@ mod tests {
             compose_system_instructions(None, None, None, None, "custom", "", None, None),
             None
         );
+    }
+
+    #[test]
+    fn compose_includes_writing_style_layer_after_profile() {
+        use crate::agent_preferences_routes::{writing_style_block, WritingStyle};
+        let on = WritingStyle { enabled: true, profile: "- Sentences: short.".into(), learned_at: None };
+        let layer = writing_style_block(&on).unwrap();
+        assert_eq!(
+            layer,
+            "Writing as the user: when you write something the user will send as themselves (emails, messages, posts, replies, drafts), write it the way they write. Their style:\n- Sentences: short.\nDon't use this style for your own replies to them."
+        );
+        let users = user_layers(Some("About the user:\nCall them: Eoj"), Some(&layer));
+        let out = compose_system_instructions(
+            None, None, None, None, "balanced", "", users.as_deref(), Some("client"),
+        )
+        .unwrap();
+        let profile_at = out.find("About the user:").unwrap();
+        let writing_at = out.find("Writing as the user:").unwrap();
+        let client_at = out.find("client").unwrap();
+        assert!(profile_at < writing_at && writing_at < client_at);
+    }
+
+    #[test]
+    fn compose_omits_writing_style_layer_when_off_or_empty() {
+        use crate::agent_preferences_routes::{writing_style_block, WritingStyle};
+        let off = WritingStyle { enabled: false, profile: "- Sentences: short.".into(), learned_at: None };
+        assert_eq!(writing_style_block(&off), None);
+        assert_eq!(writing_style_block(&WritingStyle::default()), None);
+        assert_eq!(user_layers(None, None), None);
+        assert_eq!(user_layers(Some("About the user:\nName: A"), None).as_deref(), Some("About the user:\nName: A"));
     }
 
     #[test]

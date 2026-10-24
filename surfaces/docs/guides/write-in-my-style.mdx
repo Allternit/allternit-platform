@@ -1,0 +1,42 @@
+---
+title: 'Write in my style'
+description: 'Drafts you send as yourself, such as emails, messages and posts, are written the way you write.'
+---
+
+When you ask an agent to write something you will send as yourself (an email, a message, a post, a reply or a draft), it writes it the way you write: your greetings and sign-offs, how long your sentences are, how you use capitals, punctuation and emoji. The agent's own replies to you are not affected.
+
+This works the same in Allternit Desktop, on ai.allternit.com (including its phone layout) and in the m.allternit.com app, and for every brain, including CLI brains that read the workspace `STYLE.md`.
+
+## Turn it on or off
+
+**Write in my style** is in Settings → Response style. It is on by default. Turning it off keeps your saved style, so you can turn it back on later without learning it again.
+
+## Learn your style
+
+Choose **Learn from my messages**. Allternit builds a short description of how you write from:
+
+- Text you paste in (up to 10 pieces, such as a few emails you have sent), and
+- Your own recent messages in Allternit (about the last 300 you wrote).
+
+No model is used for this step. Short messages, code, links on their own and pasted logs are skipped. The result lists your habits in plain words and a few short examples of your writing. Email addresses, phone numbers and anything that looks like a password or key are removed from the examples.
+
+If there is not enough of your own writing yet, Allternit says so. Paste a few emails or messages you have written and try again.
+
+You can read and edit the description afterwards. Clearing it removes the style until you learn it again.
+
+## What the agent is told
+
+When the setting is on and you have a style saved, each chat includes this after your profile:
+
+```text
+Writing as the user: when you write something the user will send as themselves (emails, messages, posts, replies, drafts), write it the way they write. Their style:
+(your saved style)
+Don't use this style for your own replies to them.
+```
+
+Always read a draft before you send it. The agent copies your style, but the facts in a draft are still yours to check.
+
+## Related
+
+- [Agent Preferences API](/api/agent-preferences)
+- [Composer, replies and questions](/guides/chat-composer)
