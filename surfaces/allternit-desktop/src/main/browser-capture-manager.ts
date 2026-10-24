@@ -229,8 +229,10 @@ function registerGlobalListeners(): void {
   const sess = getDefaultSession();
 
   globalOnBeforeRequest = (details, callback) => {
-    const origin = details.webContents && !details.webContents.isDestroyed() ? details.webContents.getURL() : undefined;
-    if (isAppTraffic(details.url, origin)) {
+    // No webContents = the main process's own requests (auth forwards, cloud
+    // calls); a walkthrough is only what a page did.
+    const wc = details.webContents;
+    if (!wc || wc.isDestroyed() || isAppTraffic(details.url, wc.getURL())) {
       callback({});
       return;
     }
