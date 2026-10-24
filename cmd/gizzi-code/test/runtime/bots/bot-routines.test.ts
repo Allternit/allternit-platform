@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { afterAll, beforeAll, describe, expect, mock, test } from "bun:test"
+import { afterAll, beforeAll, describe, expect, mock, spyOn, test } from "bun:test"
 import { rmSync } from "node:fs"
 import { join } from "node:path"
 import { tmpdir } from "../../fixture/fixture"
@@ -163,6 +163,37 @@ describe("executor dispatch (D3)", () => {
     // the ephemeral-session machinery stayed untouched
     expect(sessionCalls.createNext).toBe(0)
     expect(sessionCalls.remove).toBe(0)
+  })
+
+  test("a Stop cancels the bot's turn in its canonical session", async () => {
+    await createBot({ name: "stopbot", title: "Stop Bot" })
+    const { SessionPrompt } = await import("../../../src/runtime/session/prompt")
+    const cancel = spyOn(SessionPrompt, "cancel").mockImplementation(() => {})
+    const controller = new AbortController()
+    let finishTurn = () => {}
+    const { deps } = fakeDelivery({
+      async runTurn() {
+        // The turn is in flight when the user presses Stop.
+        const done = new Promise<void>((resolve) => (finishTurn = resolve))
+        controller.abort(new Error("Stopped by user"))
+        await done
+      },
+    })
+    const original = cancel.getMockImplementation()
+    cancel.mockImplementation((id: string) => {
+      original?.(id)
+      finishTurn()
+    })
+    const run = fakeRun()
+    await new AgentExecutor({ defaultCwd: "/cwd", botRoutineDeps: deps }).execute(
+      botJob("[bot:stopbot] long job", { prompt: "go", bot: "stopbot" }),
+      run,
+      controller.signal,
+    )
+    expect(cancel).toHaveBeenCalledWith("ses_canonical_pin")
+    // The partial answer is still the run's output.
+    expect(run.output).toBe("routine done")
+    cancel.mockRestore()
   })
 
   test("never-pinned bot opens the canonical chat in the executor cwd", async () => {

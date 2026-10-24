@@ -13,14 +13,28 @@ If you have no bots yet, the forms tell you to create one first. The API refuses
 
 ## The Routines tab
 
-Open a bot and choose **Routines**. Each routine shows:
+Open a bot and choose **Routines**. Each routine is one row:
 
-- **Schedule in plain words**, for example "Every day at 8:00 AM", "Weekdays at 9:00 AM" or "Every 6 hours".
-- **Next run**, or **Paused** if it is not scheduled.
-- **Last run result**: when it last ran, and whether it worked.
-- **Run now** starts a run at once. The result appears in the bot's chat and in the history a few seconds later.
-- **Pause / Resume** switches the schedule off and on.
-- **Run history**: select a routine to see its last 10 runs. Each run shows its time, whether you started it, and any error. **Open thread** opens the chat that run wrote to.
+- **Schedule in plain words**, for example "Every day at 8:00 AM", "Weekdays at 9:00 AM" or "Every 6 hours", then **Next run in 2 h 14 min** (it counts down), **Paused**, or **Running** with the step the bot is on.
+- **Apps and brain**: the apps the last run read from, an arrow, and the apps it wrote to (for example Linear and Sentry → Slack), then the model that ran it. They come from the tools the run actually used, so a routine that has not run yet shows none.
+- **Last run**: when it last ran and whether it worked.
+- **Run strip**: the last 14 runs as small bars, oldest on the left. Green worked, red failed, grey was stopped or had nothing new, and a pulsing bar is running now.
+- **Run now** starts a run at once. On a computer it appears when you point at the row; on a phone it is always there. While a run is going it becomes **Stop**.
+- **The switch** turns the schedule off and on. Turning it on also clears a pause after failures.
+
+Select a routine's name to open it:
+
+- **Latest run**: while it runs, its steps with a tick on each one done and **Step 2 of 4**; afterwards, what it wrote, with the time, how long it took and the model. **Open thread** opens the chat that run wrote to.
+- **Instructions**: what the bot is asked to do on each run.
+- **Schedule**: **Hourly**, **Daily**, **Weekdays** or **Weekly** (with a day), at a time. It saves at once and shows the cron it saved. A schedule these can't show (for example every 2 hours, or a cron with specific months) is listed as it is; pick one of the four to replace it, or use **New routine** for every option.
+- **Earlier runs**: the 9 runs before that, each with its time, whether you started it, and any error.
+- **Hold to delete** removes the routine.
+
+### Stop a run
+
+**Stop** ends a run while it is going. The bot's turn is cancelled, the run is recorded as **Stopped**, and whatever it wrote so far is kept as its output. A stopped run is not a failure: it does not count toward the automatic pause and does not send a "Something needs fixing" message. Stop works for routines on your computer and on Allternit cloud.
+
+If Allternit quits during a run, that run is marked failed with the reason "Allternit restarted mid-run" the next time it starts.
 
 Choose **New routine** to open the same scheduled-task form used by Automation Tasks, with this bot already selected. Saving refreshes the bot's routine list. Automation Tasks and the bot's Routines tab manage the same routines; the form includes advanced options such as cron expressions and goals.
 
@@ -61,13 +75,13 @@ Changes save to the routine itself. The scheduler recalculates its next run from
 
 On a phone the graph is shown as stacked cards (trigger, then result). The calendar uses single-letter weekdays, and the routine editor opens as a sheet from the bottom of the screen.
 
-The same **List / Graph / Calendar** switch is on every other screen that lists routines, and they share one remembered choice:
+The same rows, and the same **List / Graph / Calendar** switch, are on every other screen that lists routines, and they share one remembered choice:
 
 - **Automation Tasks** (the rail, the **Routines** page and the phone's Automation Tasks screen), on every tab: **All**, **Goals**, **Routines**, **Loops** and **Agent Heartbeats**. The search box also filters the graph and the calendar. See [Goals, loops and heartbeats](#goals-loops-and-heartbeats).
 - **Cowork → Routines**, with every bot's routines.
 - A bot chat's **Routines** panel, which starts on that bot's routines and offers **This bot / All bots**.
 
-Selecting a run on any of these screens opens the same details panel. The thread links in its run history open that bot's thread. The calendar is editable on all of them, the same way as on a bot's Routines tab. On screens that show every bot's routines, a new routine starts with your first bot selected; pick another under **Who runs it**.
+In **List**, each routine is the same row as on a bot's Routines tab, with live steps, **Stop** and the run strip. Automation Tasks and a bot chat's **Routines** panel add **Edit** in the open row, for the full form. Routines with no bot keep their card until you assign one. Selecting a run in **Graph** or **Calendar** opens the same details panel. The thread links in its run history open that bot's thread. The calendar is editable on all of them, the same way as on a bot's Routines tab. On screens that show every bot's routines, a new routine starts with your first bot selected; pick another under **Who runs it**.
 
 ### Goals, loops and heartbeats
 

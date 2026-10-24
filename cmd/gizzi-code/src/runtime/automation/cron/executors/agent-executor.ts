@@ -53,7 +53,13 @@ export class AgentExecutor {
     const sessionKey = `${job.id}-${run.id}`;
     this.activeSessions.set(sessionKey, { sessionId: "", abortController });
 
-    signal.addEventListener("abort", () => abortController.abort());
+    // A user Stop (CronService.abort) cancels the turn in flight; the turn
+    // then returns with what it had, which becomes the run's output.
+    let liveSession = "";
+    signal.addEventListener("abort", () => {
+      abortController.abort();
+      if (liveSession) SessionPrompt.cancel(liveSession);
+    });
 
     let model: { providerID: string; modelID: string } | undefined;
     if (jobConfig.model) {
@@ -83,6 +89,9 @@ export class AgentExecutor {
           agentId: jobConfig.agentId,
           projectPath: this.config.defaultCwd,
           deps: this.config.botRoutineDeps,
+          onSession: (id) => {
+            liveSession = id;
+          },
         });
         run.response = delivery.response;
         run.output = delivery.response;
@@ -128,6 +137,7 @@ export class AgentExecutor {
       const session = await Session.createNext({ directory: this.config.defaultCwd });
       const sessionId = session.id;
       this.activeSessions.set(sessionKey, { sessionId, abortController });
+      liveSession = sessionId;
 
       log.info("Agent session created", { sessionId, jobId: job.id });
 

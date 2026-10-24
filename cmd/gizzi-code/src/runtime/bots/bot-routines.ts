@@ -274,6 +274,8 @@ export interface DeliverBotRoutineInput {
   /** Fallback project for a never-pinned bot. */
   projectPath: string
   deps?: BotRoutineDeliveryDeps
+  /** Called with the session the turn runs in, before it starts (so a Stop can cancel it). */
+  onSession?: (sessionId: string) => void
 }
 
 export interface BotRoutineDelivery {
@@ -313,6 +315,7 @@ export async function deliverBotRoutine(
     bot,
     bot.canonicalSession?.projectPath ?? input.projectPath,
   )
+  input.onSession?.(opened.sessionId)
   const body = input.context ? `${input.context}\n\n${input.prompt}` : input.prompt
   const marked = `${ROUTINE_MARKER_PREFIX}${input.label}] ${body}`
   const turn = () =>

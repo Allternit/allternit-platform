@@ -28,7 +28,15 @@
 //!   model turn; only a step whose element moved re-decides, on the
 //!   routine's bot's brain. The step report is the run output.
 //! * **Record.** Every run is a `routine_runs` row (the Automation Tasks run
-//!   history) and, for bots, a `routine.*` event on the bot ledger.
+//!   history) and, for bots, a `routine.*` event on the bot ledger. The row
+//!   is written `running` when the run starts and completed when it ends;
+//!   its `metadata` keeps `sessionId`, `model` (the brain that ran it),
+//!   `apps` (tools the turn called) and `steps` (its last todo list).
+//! * **Live + Stop.** While a run is going, [`live_run`] names it and
+//!   `GET /automation/routines/:id/live` reads its steps from the session.
+//!   [`request_stop`] (`POST …/runs/:run_id/cancel`) aborts the turn; the run
+//!   ends `cancelled` with its output so far and does not count as a failure.
+//!   Rows left `running` by a runtime that quit are failed at the next boot.
 //! * **Needs a bot.** A local routine with no `agent_id` is never claimed
 //!   (it used to fail every run with "local routines need an agent"). The
 //!   tick flags it `metadata.needsAgent = true` so the UI can list it under
@@ -41,11 +49,12 @@
 use chrono::{DateTime, Offset, Utc};
 use rusqlite::{params, OptionalExtension};
 use serde_json::{json, Value};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::sync::{Arc, Mutex, OnceLock};
 use tracing::{info, warn};
 
+use crate::agent_session_routes::TurnDigest;
 use crate::bot_event_routes::{append_event, ActorBody, AppendEventBody};
 use crate::db::DbHandle;
 use crate::AppState;
@@ -342,6 +351,16 @@ pub trait RoutineDriver: Send + Sync {
         let _ = (r, skill, serial, inputs);
         std::future::ready(Err("phone skills can't run on this driver".to_string()))
     }
+    /// What the session's newest turn did so far (text, tools, todo steps, brain).
+    fn turn_digest(&self, session_id: &str) -> impl Future<Output = Option<TurnDigest>> + Send {
+        let _ = session_id;
+        std::future::ready(None)
+    }
+    /// Stop the turn running in `session_id` (a user Stop).
+    fn abort_session(&self, session_id: &str) -> impl Future<Output = Result<(), String>> + Send {
+        let _ = session_id;
+        std::future::ready(Ok(()))
+    }
 }
 
 pub struct GizziDriver {
@@ -379,6 +398,14 @@ impl RoutineDriver for GizziDriver {
         } else {
             Err(report.get("error").and_then(Value::as_str).unwrap_or("the phone skill didn't finish").to_string())
         }
+    }
+
+    async fn turn_digest(&self, session_id: &str) -> Option<TurnDigest> {
+        crate::agent_session_routes::latest_turn_digest(&self.state.db, session_id).await
+    }
+
+    async fn abort_session(&self, session_id: &str) -> Result<(), String> {
+        crate::agent_session_routes::abort_automation_session(&self.state.db, session_id).await
     }
 
     async fn run_monitor(&self, user_id: &str, command: &str) -> Result<String, String> {
@@ -607,6 +634,10 @@ pub fn auto_pause_reason() -> String {
 /// Update the failure streak after a run; pauses the routine at
 /// [`AUTO_PAUSE_AFTER`]. Returns true when this run paused it.
 fn record_streak(conn: &rusqlite::Connection, id: &str, status: &str, error: Option<&str>, at: &str) -> bool {
+    // A stopped run says nothing about whether the routine works.
+    if status == "cancelled" {
+        return false;
+    }
     if status != "failed" {
         let _ = conn.execute(
             &format!(
@@ -669,6 +700,9 @@ fn dead_letter(db: &DbHandle, r: &LocalRoutine, outcome: &RunOutcome, run_id: &s
 /// `routine_missed` when it started on time.
 fn alert_for_outcome(conn: &rusqlite::Connection, r: &LocalRoutine, outcome: &RunOutcome, run_id: &str, trigger: &Trigger) {
     use crate::netops::alerts;
+    if outcome.status == "cancelled" {
+        return;
+    }
     if outcome.status != "failed" {
         alerts::resolve_source(conn, &r.user_id, "routine_failed", &r.id, "fixed");
         if r.late_by_ms.is_none() {
@@ -698,13 +732,103 @@ fn alert_for_outcome(conn: &rusqlite::Connection, r: &LocalRoutine, outcome: &Ru
     let _ = conn.execute("UPDATE routine_runs SET alerted_at = ?2 WHERE id = ?1", params![run_id, Utc::now().to_rfc3339()]);
 }
 
+// ─── Live runs ──────────────────────────────────────────────────────────────
+
+/// A run in progress: its `routine_runs` row, the session it runs in once
+/// known, and the signal a user Stop sends.
+struct LiveRun {
+    run_id: String,
+    session_id: Option<String>,
+    stop: Arc<tokio::sync::Notify>,
+}
+
+fn live_runs() -> &'static Mutex<HashMap<String, LiveRun>> {
+    static MAP: OnceLock<Mutex<HashMap<String, LiveRun>>> = OnceLock::new();
+    MAP.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn with_live<T>(f: impl FnOnce(&mut HashMap<String, LiveRun>) -> T) -> T {
+    f(&mut live_runs().lock().unwrap_or_else(|e| e.into_inner()))
+}
+
+/// The run in progress for a routine: `(run_id, session_id)`.
+pub fn live_run(routine_id: &str) -> Option<(String, Option<String>)> {
+    with_live(|m| m.get(routine_id).map(|l| (l.run_id.clone(), l.session_id.clone())))
+}
+
+/// Ask the routine's run in progress to stop. False when `run_id` is not
+/// running here. The run ends `cancelled` and keeps its output so far.
+pub fn request_stop(routine_id: &str, run_id: &str) -> bool {
+    with_live(|m| match m.get(routine_id) {
+        Some(l) if l.run_id == run_id => {
+            l.stop.notify_one();
+            true
+        }
+        _ => false,
+    })
+}
+
+/// Unregisters the live run when `execute` returns (or is dropped).
+struct LiveGuard(String);
+
+impl Drop for LiveGuard {
+    fn drop(&mut self) {
+        with_live(|m| m.remove(&self.0));
+    }
+}
+
+/// Error text a stopped run's work ends with.
+const STOPPED: &str = "stopped by user";
+
+/// Runs left `running` by a runtime that stopped mid-run (crash, quit) can
+/// never finish: mark them failed. Cloud runs (`gizzi_run_id`) are the
+/// daemon's to settle.
+pub fn settle_orphaned_runs(db: &DbHandle) -> rusqlite::Result<usize> {
+    let now = Utc::now().to_rfc3339();
+    db.connect()?.execute(
+        "UPDATE routine_runs SET status = 'failed', finished_at = ?1, outcome_reason = 'runtime_restart',
+             error = 'The runtime stopped while this run was going.'
+         WHERE status = 'running' AND gizzi_run_id IS NULL",
+        params![now],
+    )
+}
+
 /// Run one routine end to end and record it. Never panics on a bad run —
-/// the failure is the recorded result.
+/// the failure is the recorded result. The `routine_runs` row is written
+/// `running` when the run starts (so the UI can show it live and stop it)
+/// and completed when it ends.
 pub async fn execute<D: RoutineDriver>(db: &DbHandle, driver: &D, r: &LocalRoutine, trigger: Trigger) -> RunOutcome {
     let started = Utc::now();
     let mut monitor_hash: Option<String> = None;
-    let mut session_used: Option<String> = None;
     let bot = r.agent_id.as_deref().and_then(|id| bot_info(db, id));
+
+    let run_id = uuid::Uuid::new_v4().to_string();
+    let opened = db
+        .connect()
+        .and_then(|conn| {
+            conn.execute(
+                "INSERT INTO routine_runs (id, routine_id, status, scheduled_at, started_at, triggered_by, metadata, late_by_ms)
+                 VALUES (?1, ?2, 'running', ?3, ?3, ?4, '{}', ?5)",
+                params![run_id, r.id, started.to_rfc3339(), trigger.as_str(), r.late_by_ms],
+            )
+        })
+        .is_ok();
+    let stop = Arc::new(tokio::sync::Notify::new());
+    with_live(|m| m.insert(r.id.clone(), LiveRun { run_id: run_id.clone(), session_id: None, stop: stop.clone() }));
+    let _live = LiveGuard(r.id.clone());
+    let note_session = |session: &str| {
+        with_live(|m| {
+            if let Some(l) = m.get_mut(&r.id) {
+                l.session_id = Some(session.to_string());
+            }
+        });
+        if let Ok(conn) = db.connect() {
+            let _ = conn.execute(
+                "UPDATE routine_runs SET metadata = json_set(COALESCE(metadata, '{}'), '$.sessionId', ?2) WHERE id = ?1",
+                params![run_id, session],
+            );
+        }
+    };
 
     let timeout_secs = r.timeout_seconds.filter(|t| *t > 0).unwrap_or(DEFAULT_TIMEOUT_SECS);
     let work = async {
@@ -734,18 +858,36 @@ pub async fn execute<D: RoutineDriver>(db: &DbHandle, driver: &D, r: &LocalRouti
             Some(result) => result?,
             None => resolve_thread(db, driver, agent_id, bot).await?,
         };
-        session_used = Some(session.clone());
+        note_session(&session);
         let reply = driver.send_turn(&session, agent_id, &text).await?;
         Ok((reply, "succeeded"))
     };
-    let result: Result<(String, &'static str), String> =
+    let timed = async {
         match tokio::time::timeout(std::time::Duration::from_secs(timeout_secs as u64), work).await {
             Ok(res) => res,
             Err(_) => Err(format!(
                 "timed out after {} (this routine's limit)",
                 if timeout_secs % 60 == 0 { format!("{} min", timeout_secs / 60) } else { format!("{timeout_secs} s") }
             )),
-        };
+        }
+    };
+    let result: Result<(String, &'static str), String> = tokio::select! {
+        res = timed => res,
+        _ = stop.notified() => Err(STOPPED.to_string()),
+    };
+    let session_used = live_run(&r.id).and_then(|(_, s)| s);
+    let stopped = result.as_ref().err().is_some_and(|e| e == STOPPED);
+    if stopped {
+        if let Some(session) = session_used.as_deref() {
+            if let Err(e) = driver.abort_session(session).await {
+                warn!(routine = %r.id, error = %e, "could not stop the routine's turn");
+            }
+        }
+    }
+    let digest = match session_used.as_deref() {
+        Some(session) => driver.turn_digest(session).await,
+        None => None,
+    };
 
     let outcome = match result {
         Ok((out, status)) => RunOutcome {
@@ -755,6 +897,14 @@ pub async fn execute<D: RoutineDriver>(db: &DbHandle, driver: &D, r: &LocalRouti
             session_id: session_used,
             auto_paused: false,
             reason: None,
+        },
+        Err(_) if stopped => RunOutcome {
+            status: "cancelled",
+            output: digest.as_ref().map(|d| d.text.clone()).filter(|t| !t.is_empty()).map(|t| truncate(&t, RUN_OUTPUT_CAP)),
+            error: None,
+            session_id: session_used,
+            auto_paused: false,
+            reason: Some("stopped"),
         },
         Err(e) => RunOutcome {
             status: "failed",
@@ -767,29 +917,60 @@ pub async fn execute<D: RoutineDriver>(db: &DbHandle, driver: &D, r: &LocalRouti
     };
     let mut outcome = outcome;
     let finished = Utc::now();
+    let run_meta = {
+        let mut m = json!({ "sessionId": outcome.session_id });
+        if let Some(d) = &digest {
+            m["apps"] = json!(d.tools);
+            if !d.steps.is_empty() {
+                m["steps"] = json!(d.steps);
+            }
+            if let Some(model) = &d.model {
+                m["model"] = json!(model);
+            }
+        }
+        m
+    };
 
-    let run_id = uuid::Uuid::new_v4().to_string();
     if let Ok(conn) = db.connect() {
-        let inserted = conn.execute(
-            "INSERT INTO routine_runs (id, routine_id, status, scheduled_at, started_at, finished_at, duration_ms,
-                 output, error, triggered_by, metadata, outcome_reason, late_by_ms)
-             VALUES (?1, ?2, ?3, ?4, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
-            params![
-                run_id,
-                r.id,
-                outcome.status,
-                started.to_rfc3339(),
-                finished.to_rfc3339(),
-                (finished - started).num_milliseconds(),
-                outcome.output,
-                outcome.error,
-                trigger.as_str(),
-                json!({ "sessionId": outcome.session_id }).to_string(),
-                outcome.reason,
-                r.late_by_ms,
-            ],
-        );
-        if let Err(e) = inserted {
+        let stored = if opened {
+            conn.execute(
+                "UPDATE routine_runs SET status = ?2, finished_at = ?3, duration_ms = ?4, output = ?5, error = ?6,
+                     metadata = ?7, outcome_reason = ?8
+                 WHERE id = ?1",
+                params![
+                    run_id,
+                    outcome.status,
+                    finished.to_rfc3339(),
+                    (finished - started).num_milliseconds(),
+                    outcome.output,
+                    outcome.error,
+                    run_meta.to_string(),
+                    outcome.reason,
+                ],
+            )
+            .and_then(|n| if n == 1 { Ok(n) } else { Err(rusqlite::Error::QueryReturnedNoRows) })
+        } else {
+            conn.execute(
+                "INSERT INTO routine_runs (id, routine_id, status, scheduled_at, started_at, finished_at, duration_ms,
+                     output, error, triggered_by, metadata, outcome_reason, late_by_ms)
+                 VALUES (?1, ?2, ?3, ?4, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                params![
+                    run_id,
+                    r.id,
+                    outcome.status,
+                    started.to_rfc3339(),
+                    finished.to_rfc3339(),
+                    (finished - started).num_milliseconds(),
+                    outcome.output,
+                    outcome.error,
+                    trigger.as_str(),
+                    run_meta.to_string(),
+                    outcome.reason,
+                    r.late_by_ms,
+                ],
+            )
+        };
+        if let Err(e) = stored {
             dead_letter(db, r, &outcome, &run_id, e.to_string());
         }
         let _ = conn.execute(
@@ -935,6 +1116,11 @@ pub async fn run_startup<D: RoutineDriver>(db: &DbHandle, driver: &D) -> usize {
 pub fn spawn(state: Arc<AppState>) {
     tokio::spawn(async move {
         let driver = GizziDriver { state: state.clone() };
+        match settle_orphaned_runs(&state.db) {
+            Ok(n) if n > 0 => info!(settled = n, "routine runs left running by the last runtime marked failed"),
+            Err(e) => warn!(error = %e, "could not settle orphaned routine runs"),
+            _ => {}
+        }
         let fired = run_startup(&state.db, &driver).await;
         if fired > 0 {
             info!(fired, "local startup routines ran");
@@ -967,6 +1153,8 @@ mod tests {
         /// Milliseconds `send_turn` takes (the timeout test).
         delay_ms: u64,
         creates: AtomicUsize,
+        /// Sessions a Stop aborted.
+        aborts: Mutex<Vec<String>>,
     }
 
     impl RoutineDriver for Fake {
@@ -993,6 +1181,18 @@ mod tests {
         }
         async fn routine_session(&self, _r: &LocalRoutine, _a: &str, _i: &str) -> Option<Result<String, String>> {
             None
+        }
+        async fn turn_digest(&self, _s: &str) -> Option<TurnDigest> {
+            Some(TurnDigest {
+                text: "Read 3 issues so far".into(),
+                tools: vec!["linear_list_issues".into(), "slack_post".into()],
+                steps: vec![json!({ "content": "Read issues", "status": "completed" })],
+                model: Some("anthropic/claude-sonnet-5-5".into()),
+            })
+        }
+        async fn abort_session(&self, s: &str) -> Result<(), String> {
+            self.aborts.lock().unwrap().push(s.to_string());
+            Ok(())
         }
     }
 
@@ -1250,6 +1450,80 @@ mod tests {
         let reason: String = state.db.connect().unwrap().query_row("SELECT outcome_reason FROM routine_runs WHERE routine_id = 'rt'", [], |r| r.get(0)).unwrap();
         assert_eq!(reason, "timeout");
         assert_eq!(attention(&state, "routine_failed:rt").map(|a| a.0), Some("warn".into()));
+    }
+
+    fn run_row(state: &AppState, id: &str) -> (String, Option<String>, Option<String>, Value) {
+        state.db.connect().unwrap().query_row(
+            "SELECT status, output, outcome_reason, metadata FROM routine_runs WHERE routine_id = ?1 ORDER BY started_at DESC LIMIT 1",
+            params![id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, serde_json::from_str(&r.get::<_, String>(3)?).unwrap_or(Value::Null))),
+        ).unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_run_is_running_while_it_goes_and_stop_keeps_its_partial_output() {
+        let state = setup("stop").await;
+        insert(&state, "rs", "interval", "1h", json!({}), Some("bot-1"));
+        let r = get_routine(&state.db, "rs").unwrap().unwrap();
+        let d = Arc::new(Fake { delay_ms: 5000, ..Default::default() });
+        let task = {
+            let (db, d, r) = (state.db.clone(), d.clone(), r.clone());
+            tokio::spawn(async move { execute(&db, &*d, &r, Trigger::Schedule).await })
+        };
+        let (run_id, session) = loop {
+            if let Some((run, Some(session))) = live_run("rs") {
+                break (run, session);
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        };
+        assert_eq!(run_row(&state, "rs").0, "running");
+        assert_eq!(run_row(&state, "rs").3["sessionId"], json!(session));
+        assert!(!request_stop("rs", "some-other-run"));
+        assert!(request_stop("rs", &run_id));
+        let out = task.await.unwrap();
+        assert_eq!((out.status, out.reason), ("cancelled", Some("stopped")));
+        assert_eq!(*d.aborts.lock().unwrap(), vec![session]);
+        let (status, output, reason, meta) = run_row(&state, "rs");
+        assert_eq!((status.as_str(), output.as_deref(), reason.as_deref()), ("cancelled", Some("Read 3 issues so far"), Some("stopped")));
+        assert_eq!(meta["apps"], json!(["linear_list_issues", "slack_post"]));
+        assert_eq!(meta["model"], json!("anthropic/claude-sonnet-5-5"));
+        assert!(live_run("rs").is_none());
+        // A stop is not a failure: no streak, no alert.
+        assert_eq!(meta_i(&state, "rs"), None);
+        assert!(attention(&state, "routine_failed:rs").is_none());
+        assert!(events(&state).contains(&"routine.cancelled".to_string()));
+    }
+
+    fn meta_i(state: &AppState, id: &str) -> Option<i64> {
+        meta(state, id, "$.consecutiveFailures")
+    }
+
+    #[tokio::test]
+    async fn a_finished_run_records_its_brain_apps_and_steps() {
+        let state = setup("digest").await;
+        insert(&state, "rg", "interval", "1h", json!({}), Some("bot-1"));
+        let r = get_routine(&state.db, "rg").unwrap().unwrap();
+        let out = execute(&state.db, &Fake::default(), &r, Trigger::Schedule).await;
+        assert_eq!(out.status, "succeeded");
+        let (status, _, _, meta) = run_row(&state, "rg");
+        assert_eq!(status, "succeeded");
+        assert_eq!(meta["steps"][0]["content"], json!("Read issues"));
+        assert_eq!(meta["apps"][1], json!("slack_post"));
+        let n: i64 = state.db.connect().unwrap().query_row("SELECT COUNT(*) FROM routine_runs WHERE routine_id = 'rg'", [], |r| r.get(0)).unwrap();
+        assert_eq!(n, 1, "the running row is completed in place, not duplicated");
+    }
+
+    #[tokio::test]
+    async fn runs_left_running_by_a_dead_runtime_fail_at_boot() {
+        let state = setup("orphan").await;
+        insert(&state, "ro", "interval", "1h", json!({}), Some("bot-1"));
+        let c = state.db.connect().unwrap();
+        c.execute("INSERT INTO routine_runs (id, routine_id, status, scheduled_at, started_at) VALUES ('x', 'ro', 'running', '2026-10-24T09:00:00Z', '2026-10-24T09:00:00Z')", []).unwrap();
+        c.execute("INSERT INTO routine_runs (id, routine_id, gizzi_run_id, status, scheduled_at) VALUES ('y', 'ro', 'g1', 'running', '2026-10-24T09:00:00Z')", []).unwrap();
+        assert_eq!(settle_orphaned_runs(&state.db).unwrap(), 1);
+        let st: String = c.query_row("SELECT status FROM routine_runs WHERE id = 'x'", [], |r| r.get(0)).unwrap();
+        let cloud: String = c.query_row("SELECT status FROM routine_runs WHERE id = 'y'", [], |r| r.get(0)).unwrap();
+        assert_eq!((st.as_str(), cloud.as_str()), ("failed", "running"));
     }
 
     #[tokio::test]

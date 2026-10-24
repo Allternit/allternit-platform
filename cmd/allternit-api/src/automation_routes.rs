@@ -5,7 +5,7 @@
 //! (persistent scheduled jobs) and loops (session-scoped recurring jobs).
 
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
     routing::{get, post},
     Json, Router,
@@ -492,10 +492,11 @@ fn upsert_routine_runs(
         }
         // Gizzi RunStatus (pending|running|completed|failed|aborted) maps
         // directly onto the local status column.
-        let status = run
-            .get("status")
-            .and_then(|v| v.as_str())
-            .unwrap_or("pending");
+        let status = normalize_run_status(
+            run.get("status")
+                .and_then(|v| v.as_str())
+                .unwrap_or("pending"),
+        );
         let started_at = run.get("startedAt").and_then(|v| v.as_str());
         let finished_at = run.get("finishedAt").and_then(|v| v.as_str());
         let duration_ms = run.get("durationMs").and_then(|v| v.as_i64());
@@ -1018,10 +1019,70 @@ fn row_to_routine(row: &rusqlite::Row) -> Result<Routine, rusqlite::Error> {
     })
 }
 
+#[derive(Debug, Deserialize, Default)]
+struct ListRoutinesQuery {
+    /// Attach each routine's newest N runs as `recentRuns` (status and times
+    /// only, newest first; at most 30) for the run-history strip.
+    recent_runs: Option<usize>,
+}
+
+/// Most `recentRuns` a list may ask for.
+const RECENT_RUNS_CAP: usize = 30;
+
+/// Each routine's newest `n` runs: `{id, status, startedAt, finishedAt, durationMs, reason, apps, model}`, newest first.
+fn recent_runs_by_routine(
+    conn: &rusqlite::Connection,
+    user_id: &str,
+    n: usize,
+) -> rusqlite::Result<std::collections::HashMap<String, Vec<serde_json::Value>>> {
+    let mut stmt = conn.prepare(
+        "SELECT routine_id, id, status, started_at, finished_at, duration_ms, outcome_reason,
+                CASE WHEN json_valid(metadata) THEN json_extract(metadata, '$.apps') END,
+                CASE WHEN json_valid(metadata) THEN json_extract(metadata, '$.model') END
+         FROM (
+             SELECT rr.*, ROW_NUMBER() OVER (PARTITION BY rr.routine_id ORDER BY rr.scheduled_at DESC) AS rn
+             FROM routine_runs rr JOIN routines r ON r.id = rr.routine_id
+             WHERE r.user_id = ?1
+         ) WHERE rn <= ?2 ORDER BY routine_id, scheduled_at DESC",
+    )?;
+    let rows = stmt.query_map(params![user_id, n as i64], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            json!({
+                "id": row.get::<_, String>(1)?,
+                "status": normalize_run_status(&row.get::<_, String>(2)?),
+                "startedAt": row.get::<_, Option<String>>(3)?,
+                "finishedAt": row.get::<_, Option<String>>(4)?,
+                "durationMs": row.get::<_, Option<i64>>(5)?,
+                "reason": row.get::<_, Option<String>>(6)?,
+                "apps": row
+                    .get::<_, Option<String>>(7)?
+                    .and_then(|a| serde_json::from_str::<serde_json::Value>(&a).ok())
+                    .unwrap_or_else(|| json!([])),
+                "model": row.get::<_, Option<String>>(8)?,
+            }),
+        ))
+    })?;
+    let mut out: std::collections::HashMap<String, Vec<serde_json::Value>> = Default::default();
+    for (routine_id, run) in rows.filter_map(Result::ok) {
+        out.entry(routine_id).or_default().push(run);
+    }
+    Ok(out)
+}
+
+/// One word for a stopped run: the cron daemon says `aborted`, the local scheduler `cancelled`.
+fn normalize_run_status(status: &str) -> &str {
+    match status {
+        "aborted" => "cancelled",
+        s => s,
+    }
+}
+
 async fn list_routines(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-) -> Result<Json<Vec<Routine>>, StatusCode> {
+    Query(query): Query<ListRoutinesQuery>,
+) -> Result<Json<Vec<serde_json::Value>>, StatusCode> {
     let user = get_user(&headers).ok_or(StatusCode::UNAUTHORIZED)?;
     let conn = state.db.connect().map_err(|e| {
         warn!("db error: {}", e);
@@ -1041,7 +1102,31 @@ async fn list_routines(
         .collect::<Result<Vec<_>, _>>()
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    Ok(Json(routines))
+    let mut recent = match query.recent_runs.map(|n| n.min(RECENT_RUNS_CAP)).filter(|n| *n > 0) {
+        Some(n) => Some(recent_runs_by_routine(&conn, &user.user_id, n).map_err(|e| {
+            warn!("recent routine runs query failed: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?),
+        None => None,
+    };
+    let out = routines
+        .into_iter()
+        .map(|routine| {
+            let mut value = serde_json::to_value(&routine).unwrap_or_default();
+            if let Some(map) = recent.as_mut() {
+                let mut runs = map.remove(&routine.id).unwrap_or_default();
+                // A local run in progress shows as running even before its row is read.
+                if let Some((run_id, _)) = crate::routine_local_scheduler::live_run(&routine.id) {
+                    if !runs.iter().any(|r| r["id"] == run_id.as_str()) {
+                        runs.insert(0, json!({ "id": run_id, "status": "running" }));
+                    }
+                }
+                value["recentRuns"] = json!(runs);
+            }
+            value
+        })
+        .collect();
+    Ok(Json(out))
 }
 
 async fn create_routine(
@@ -1540,6 +1625,113 @@ async fn list_routine_runs(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     Ok(Json(json!({"runs": runs, "sync": sync})))
+}
+
+async fn cron_daemon_abort_job(client: &reqwest::Client, daemon_job_id: &str) -> Result<bool, String> {
+    let url = format!("{}/jobs/{}/abort", cron_daemon_base(), daemon_job_id);
+    let res = client
+        .post(&url)
+        .timeout(std::time::Duration::from_secs(10))
+        .send()
+        .await
+        .map_err(|e| format!("cron daemon abort failed: {}", e))?;
+    if res.status() == reqwest::StatusCode::NOT_FOUND {
+        return Err("This runtime can't stop cloud runs yet; update it to stop them.".into());
+    }
+    if !res.status().is_success() {
+        let text = res.text().await.unwrap_or_default();
+        return Err(format!("cron daemon abort error: {}", text));
+    }
+    let body = res.json::<serde_json::Value>().await.unwrap_or_default();
+    Ok(body.get("stopped").and_then(|v| v.as_bool()).unwrap_or(false))
+}
+
+/// Stop a run in progress. It ends `cancelled` and keeps its output so far.
+async fn cancel_routine_run(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path((id, run_id)): Path<(String, String)>,
+) -> Result<Json<serde_json::Value>, RoutineApiError> {
+    let user = get_user(&headers).ok_or(StatusCode::UNAUTHORIZED)?;
+    let (gizzi_job_id, execution_domain): (Option<String>, String) = {
+        let conn = state.db.connect().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        conn.query_row(
+            "SELECT gizzi_job_id, execution_domain FROM routines WHERE id = ?1 AND user_id = ?2",
+            [&id, &user.user_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .map_err(|_| StatusCode::NOT_FOUND)?
+    };
+    if !uses_cloud_scheduler(&execution_domain) {
+        if crate::routine_local_scheduler::request_stop(&id, &run_id) {
+            return Ok(Json(json!({ "status": "stopping", "runId": run_id })));
+        }
+        return Err(RoutineApiError::new(StatusCode::CONFLICT, "not_running", "That run already finished."));
+    }
+    let job_id = gizzi_job_id.ok_or_else(|| RoutineApiError::new(StatusCode::CONFLICT, "not_running", "That run already finished."))?;
+    match cron_daemon_abort_job(&reqwest::Client::new(), &job_id).await {
+        Ok(true) => Ok(Json(json!({ "status": "stopping", "runId": run_id }))),
+        Ok(false) => Err(RoutineApiError::new(StatusCode::CONFLICT, "not_running", "That run already finished.")),
+        Err(e) => {
+            warn!("routine stop failed: {}", e);
+            Err(RoutineApiError::new(StatusCode::BAD_GATEWAY, "stop_failed", &e))
+        }
+    }
+}
+
+/// The routine's run in progress: its steps (the turn's todo list), the
+/// apps it has used and its latest text. `{running: false}` when idle.
+async fn live_routine_run(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let user = get_user(&headers).ok_or(StatusCode::UNAUTHORIZED)?;
+    let started_at = |run_id: &str| -> Option<String> {
+        state.db.connect().ok()?.query_row(
+            "SELECT started_at FROM routine_runs WHERE id = ?1",
+            [run_id],
+            |row| row.get(0),
+        ).ok()
+    };
+    {
+        let conn = state.db.connect().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        conn.query_row("SELECT 1 FROM routines WHERE id = ?1 AND user_id = ?2", [&id, &user.user_id], |_| Ok(()))
+            .map_err(|_| StatusCode::NOT_FOUND)?;
+    }
+    if let Some((run_id, session_id)) = crate::routine_local_scheduler::live_run(&id) {
+        let digest = match session_id.as_deref() {
+            Some(session) => crate::agent_session_routes::latest_turn_digest(&state.db, session).await,
+            None => None,
+        }
+        .unwrap_or_default();
+        let text: String = digest.text.chars().rev().take(600).collect::<Vec<_>>().into_iter().rev().collect();
+        return Ok(Json(json!({
+            "running": true,
+            "runId": run_id,
+            "startedAt": started_at(&run_id),
+            "sessionId": session_id,
+            "steps": digest.steps,
+            "apps": digest.tools,
+            "model": digest.model,
+            "text": text,
+            "canStop": true,
+        })));
+    }
+    // A cloud run in progress, as last synced from the cron daemon.
+    let cloud: Option<(String, Option<String>)> = state.db.connect().ok().and_then(|conn| {
+        conn.query_row(
+            "SELECT id, started_at FROM routine_runs WHERE routine_id = ?1 AND status = 'running' AND gizzi_run_id IS NOT NULL
+             ORDER BY scheduled_at DESC LIMIT 1",
+            [&id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .ok()
+    });
+    Ok(Json(match cloud {
+        Some((run_id, started)) => json!({ "running": true, "runId": run_id, "startedAt": started, "steps": [], "apps": [], "canStop": true }),
+        None => json!({ "running": false }),
+    }))
 }
 
 async fn get_routine_metrics(
@@ -2076,6 +2268,8 @@ pub fn automation_router() -> Router<Arc<AppState>> {
         )
         .route("/automation/routines/:id/run", post(run_routine))
         .route("/automation/routines/:id/runs", get(list_routine_runs))
+        .route("/automation/routines/:id/runs/:run_id/cancel", post(cancel_routine_run))
+        .route("/automation/routines/:id/live", get(live_routine_run))
         .route("/automation/routines/:id/metrics", get(get_routine_metrics))
         // Loops
         .route("/automation/loops", get(list_loops).post(create_loop))

@@ -261,6 +261,7 @@ export type CronEventType =
   | "job:run:failed"
   | "job:run:timeout"
   | "job:run:retry"
+  | "job:run:cancelled"
   | "daemon:started"
   | "daemon:stopped";
 
