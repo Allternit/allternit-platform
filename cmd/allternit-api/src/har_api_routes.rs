@@ -26,6 +26,7 @@ pub fn har_api_router() -> Router<Arc<AppState>> {
         .route("/har-derived-api/contracts/:contract_id", delete(delete_contract))
         .route("/har-derived-api/contracts/:contract_id/replay/:endpoint_id", post(replay_endpoint))
         .route("/har-derived-api/client", post(generate_client))
+        .merge(crate::teach_routes::teach_router())
 }
 
 fn unauthorized() -> Response {
