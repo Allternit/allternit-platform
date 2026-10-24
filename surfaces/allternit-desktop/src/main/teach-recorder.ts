@@ -118,7 +118,20 @@ const PAGE_SCRIPT = `(() => {
   const send = (o) => { try { console.debug(P + JSON.stringify(o)); } catch (e) {} };
   const clip = (s, n) => String(s == null ? '' : s).replace(/\\s+/g, ' ').trim().slice(0, n);
   const interactive = 'a,button,input,select,textarea,summary,label,[role],[onclick],[tabindex]';
-  const label = (el) => clip(el.getAttribute('aria-label') || (el.innerText || el.textContent || '') || el.getAttribute('placeholder') || el.getAttribute('name') || el.getAttribute('title') || el.getAttribute('alt') || '', 80) || el.tagName.toLowerCase();
+  const cssEsc = (v) => (window.CSS && CSS.escape ? CSS.escape(v) : v);
+  // What a person sees next to a field: its <label>, else aria/placeholder/name.
+  const fieldLabel = (el) => {
+    let text = el.getAttribute('aria-label') || '';
+    if (!text && el.id) { const l = document.querySelector('label[for="' + cssEsc(el.id) + '"]'); if (l) text = l.innerText || l.textContent || ''; }
+    if (!text) { const l = el.closest('label'); if (l) text = l.innerText || l.textContent || ''; }
+    return clip(text || el.getAttribute('placeholder') || el.getAttribute('name') || el.getAttribute('value') || el.tagName.toLowerCase(), 80);
+  };
+  const groupLabel = (el) => {
+    const fs = el.closest('fieldset');
+    const legend = fs && fs.querySelector('legend');
+    return clip((legend && (legend.innerText || legend.textContent)) || el.getAttribute('name') || '', 80);
+  };
+  const label = (el) => /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) ? fieldLabel(el) : clip(el.getAttribute('aria-label') || (el.innerText || el.textContent || '') || el.getAttribute('placeholder') || el.getAttribute('name') || el.getAttribute('title') || el.getAttribute('alt') || '', 80) || el.tagName.toLowerCase();
   const selector = (el) => {
     const parts = [];
     let cur = el;
@@ -153,9 +166,15 @@ const PAGE_SCRIPT = `(() => {
     const type = (t.getAttribute('type') || '').toLowerCase();
     if (type === 'file' || type === 'hidden') return;
     const field = clip(t.getAttribute('name') || t.id || '', 40);
-    const lbl = clip(t.getAttribute('aria-label') || t.getAttribute('placeholder') || field || t.tagName.toLowerCase(), 80);
+    const choice = type === 'checkbox' || type === 'radio';
+    // A radio/checkbox is named by its group ("Pizza Size"); the value is the option picked ("Medium").
+    const lbl = choice ? (groupLabel(t) || fieldLabel(t)) : fieldLabel(t);
     const o = { k: 'input', label: lbl, field: field || undefined };
-    if (!isSensitive(t) && type !== 'checkbox' && type !== 'radio') o.valuePreview = clip(t.value, 40);
+    if (!isSensitive(t)) {
+      if (choice) o.valuePreview = clip((type === 'checkbox' && !t.checked ? 'unchecked: ' : '') + fieldLabel(t), 40);
+      else if (t.tagName === 'SELECT') o.valuePreview = clip(t.selectedOptions && t.selectedOptions[0] ? t.selectedOptions[0].text : t.value, 40);
+      else o.valuePreview = clip(t.value, 40);
+    }
     send(o);
   }, true);
 })();`;

@@ -49,6 +49,9 @@ import {
 } from './browser-capture-manager.js';
 import { __resetWebRequestHubForTests } from './web-request-hub.js';
 
+// Requests a page made (a webview); main-process requests have no webContents and are skipped.
+const fromPage = { webContents: { isDestroyed: () => false, getURL: () => 'https://example.com/' } };
+
 beforeEach(() => {
   __resetForTests();
   __resetWebRequestHubForTests();
@@ -88,6 +91,7 @@ describe('browser-capture-manager', () => {
     // Simulate request lifecycle
     webRequestHandlers.onBeforeRequest!(
       {
+        ...fromPage,
         id: requestId,
         url: 'https://api.example.com/v1/items?limit=10',
         method: 'GET',
@@ -157,13 +161,23 @@ describe('browser-capture-manager', () => {
     expect(mockWebRequest.onBeforeRequest).not.toHaveBeenCalledWith(null);
     expect(mockWebRequest.onCompleted).not.toHaveBeenCalledWith(null);
     const callback = vi.fn();
-    webRequestHandlers.onBeforeRequest!({ id: 7, url: 'https://api.example.com/x', method: 'GET', timestamp: Date.now() }, callback);
+    webRequestHandlers.onBeforeRequest!({
+        ...fromPage, id: 7, url: 'https://api.example.com/x', method: 'GET', timestamp: Date.now() }, callback);
     expect(callback).toHaveBeenCalledWith({});
+  });
+
+  it('skips requests the main process makes itself', () => {
+    const { sessionId } = createCaptureSession();
+    webRequestHandlers.onBeforeRequest!({ id: 11, url: 'https://allternit.com/__clerk/x', method: 'GET', timestamp: Date.now() }, () => {});
+    webRequestHandlers.onCompleted!({ id: 11, url: 'https://allternit.com/__clerk/x', statusCode: 200 });
+    const har = JSON.parse(stopCaptureSession(sessionId)!.har);
+    expect(har.log.entries).toHaveLength(0);
   });
 
   it('skips the app\'s own local traffic', () => {
     const { sessionId } = createCaptureSession();
-    webRequestHandlers.onBeforeRequest!({ id: 9, url: 'http://127.0.0.1:8013/api/v1/me', method: 'GET', timestamp: Date.now() }, () => {});
+    webRequestHandlers.onBeforeRequest!({
+        ...fromPage, id: 9, url: 'http://127.0.0.1:8013/api/v1/me', method: 'GET', timestamp: Date.now() }, () => {});
     webRequestHandlers.onCompleted!({ id: 9, url: 'http://127.0.0.1:8013/api/v1/me', statusCode: 200 });
     const har = JSON.parse(stopCaptureSession(sessionId)!.har);
     expect(har.log.entries).toHaveLength(0);
@@ -176,11 +190,13 @@ describe('browser-capture-manager', () => {
     const unmatchedId = 2;
 
     webRequestHandlers.onBeforeRequest!(
-      { id: matchedId, url: 'https://api.example.com/v1/items', method: 'GET', timestamp: Date.now() },
+      {
+        ...fromPage, id: matchedId, url: 'https://api.example.com/v1/items', method: 'GET', timestamp: Date.now() },
       () => {},
     );
     webRequestHandlers.onBeforeRequest!(
-      { id: unmatchedId, url: 'https://cdn.example.com/style.css', method: 'GET', timestamp: Date.now() },
+      {
+        ...fromPage, id: unmatchedId, url: 'https://cdn.example.com/style.css', method: 'GET', timestamp: Date.now() },
       () => {},
     );
 
@@ -197,6 +213,7 @@ describe('browser-capture-manager', () => {
 
     webRequestHandlers.onBeforeRequest!(
       {
+        ...fromPage,
         id: requestId,
         url: 'https://api.example.com/v1/items',
         method: 'POST',
