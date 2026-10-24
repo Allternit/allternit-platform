@@ -73,6 +73,7 @@ import { startMeshBridgeServer } from './mesh-bridge-server.js';
 import { createStartupWindow } from './startup-window.js';
 import { notebookManager } from './notebook-manager.js';
 import { voiceManager } from './voice-manager.js';
+import { installTeachRecorder, registerTeachHotkey, abortTeach } from './teach-recorder.js';
 import { PLATFORM_MANIFEST, shouldUpdateBackend } from './manifest.js';
 import { runtimePackages, runtimeResource } from './runtime-home.js';
 import { DEFAULT_RUNTIME_FEED } from './runtime-package.js';
@@ -1021,6 +1022,7 @@ function createMainWindow(): BrowserWindow {
   window.on('leave-full-screen', () => emitWindowEvent('leave-full-screen', { fullscreen: false }));
   window.on('closed', () => {
     emitWindowEvent('closed', {});
+    abortTeach();
     mainWindow = null;
   });
   
@@ -2647,6 +2649,9 @@ app.whenReady().then(async () => {
   } else {
     log.warn(`[Main] Failed to register global hotkey: ${HUD_HOTKEY}. On macOS this usually means Allternit needs Accessibility permission in System Settings > Privacy & Security > Accessibility.`);
   }
+
+  // Global hotkey: ⌘/Ctrl+Shift+R → toggle Teach recording (+ floating record bar)
+  registerTeachHotkey();
 
   // Fallback global hotkey for users who expect the earlier Alt+Shift+H binding.
   const hudHotkeyFallbackRegistered = globalShortcut.register(HUD_HOTKEY_FALLBACK, toggleHudWindow);
@@ -4762,6 +4767,20 @@ handleGuarded('artifact-preview:capture', (_event, req: PreviewCaptureRequest) =
 // ─── Browser API Capture (HAR-derived API client) ───────────────────────────
 // Records network traffic from the default Electron session and returns a HAR
 // archive that the platform ingests to derive reusable API contracts.
+
+// Teach v2: HAR + action timeline + snapshots + narration (see teach-recorder.ts).
+installTeachRecorder({
+  getMainWindow: () => mainWindow,
+  isInternalWebContents: (wc) => {
+    try {
+      const u = wc.getURL();
+      if (!u || u.startsWith('file:') || u.startsWith('devtools:')) return true;
+      return new URL(u).origin === new URL(activePlatformUrl).origin;
+    } catch {
+      return true;
+    }
+  },
+});
 
 ipcMain.handle('browser-capture:is-available', () => isCaptureAvailable());
 handleGuarded('browser-capture:start', (_event, options?: { filterUrls?: string[] }) => {
