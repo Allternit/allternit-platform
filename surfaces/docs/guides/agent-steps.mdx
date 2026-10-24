@@ -1,6 +1,6 @@
 ---
 title: 'Agent steps in replies'
-description: 'The working line above a reply, its summary, steps that reach your connected apps, their previews, and source chips in the answer.'
+description: 'The working line above a reply, its summary, the task list checklist, web search sources, steps that reach your connected apps, their previews, and source chips in the answer.'
 ---
 
 While the assistant works, one line above the reply shows what it is doing now, for example "Searching Slack for messages since yesterday", with a timer. When it stops, the line becomes a summary of the work, for example "Ran 2 searches, read 3 sources". Click the line to see each step in order. Click a step to see its input and result.
@@ -16,6 +16,23 @@ A step that reaches one of your connected apps (Settings → Connectors), such a
 - **Full results.** When the reply is done, the full result appears as a table or card under the steps, as before. Click a closed step to see what it found along with its raw input and result.
 - A step whose result is plain text, or not a list of things, shows no preview. Click it to see the result.
 
+## The task list as a checklist
+
+When the assistant keeps a task list, the reply shows it as one checklist card instead of an "Updated tasks" step per change. The card header reads "3 steps left" while it works and "All 4 steps done" when finished. Each step shows its state:
+
+- An empty ring: to do.
+- A spinning ring: in progress. The step's text shimmers and reads as what is happening now, for example "Researching feature flags".
+- A filled tick and struck-through text: done.
+- A red cross: failed.
+
+Click the header to fold the list away. A reply that keeps working on the same list in a later group of steps updates the same tasks. It works with Claude Code's task tools (TaskCreate, TaskUpdate), TodoWrite and gizzi's todowrite. The Cowork session panel's Progress shows the same list.
+
+## Web searches and their sources
+
+A web search step shows the icons of the sites it found and the number of results, for example "Searched the web feature flags rollout · 7 results". Click it to see the pages: each row shows the site's icon, the page title and the site. Click a row to open the page. The first six show, with "+N more" for the rest. On a phone the site name is hidden to leave room for the title.
+
+A search whose result has no links still opens to its raw result.
+
 ## Source chips in the answer
 
 When the answer links to something in one of your apps, such as a Slack message, a GitHub commit, a Linear issue, a Gmail thread, a Notion page or a Google Drive file, the link shows as a small chip with the app's logo. You can see at a glance where each point came from. Clicking a chip asks before it opens the link, the same as any other link in a reply.
@@ -29,7 +46,10 @@ Source: `allternit-ai/src/components/ai-elements/`:
 | `process/ProcessBlock.tsx` | The working line, summary and step list (`line` style), and Cowork's step card (`steps` style). App logos, preview cards and the logos on the summary. |
 | `process/describe-tool.ts` | Turns a tool call into plain words. `toolApp()` finds the app behind `mcp__<server>__<tool>` and `mcp__allternit-connectors__<app>__<tool>`. Connector tools become `app-search` ("Searched Slack for …") or `app-read` ("Read GitHub pull requests") steps, summed as "Ran N searches, read N sources". |
 | `process/app-preview.ts` | `appPreview(output)`: the first three rows of a connector result (title or sender, who or where, one line of text, short time, https link, unread). It reads `structuredContent`, JSON text content or plain JSON, and returns `null` for anything that is not a list of things. Results are cached so streaming re-renders parse each one once. |
+| `process/checklist.ts` | `foldChecklist(calls, seed)`: the task list folded from todo tool calls. Snapshot tools (TodoWrite, todowrite, `{todos}` results) replace the list; TaskCreate appends (id from "Task #N" in its result) and TaskUpdate patches by `taskId`, `deleted` removes. Shared with the Cowork session panel (`session-data.ts`). |
+| `process/web-results.ts` | `webResults(output)`: the pages a web search returned: Claude Code's `Links: [...]` text, result arrays, `{results}`, `{web:{results}}`, `{organic}`, content blocks. Deduped by URL. |
+| `process/StepCards.tsx` | `ChecklistCard` (the task list card), `SearchSources` (the opened search's page list) and `SourceStack` (site icons and count in the step row). |
 | `app-source-links.ts` | A rehype step that runs after Streamdown's own steps. It gives links to known app hosts the `app-source-link` class and a logo, so Streamdown's link check still applies. |
-| `UnifiedMessageRenderer.tsx` | Groups tool parts into process blocks. Connector result views (`view-kit/ConnectorToolView`) show once the block is no longer streaming. |
+| `UnifiedMessageRenderer.tsx` | Groups tool parts into process blocks, and passes each block the task list as the blocks above it left it (`checklistSeed`). Connector result views (`view-kit/ConnectorToolView`) show once the block is no longer streaming. |
 
 Logos come from `ConnectorLogo` (bundled `public/app-icons`, then the logos catalog, then the site's favicon). Tool output is untrusted: preview rows hold plain strings, and only https links are kept.
