@@ -1,6 +1,6 @@
 ---
 title: Notification preferences
-description: Per-event-type push preferences, and the one push sink that turns event backbone events into Web Push notifications.
+description: Per-event-type push preferences, quiet hours, and the one push sink that turns event backbone events into Web Push notifications.
 ---
 
 Every user event on the event backbone (the events runtimes forward through [Runtime events](/api/runtime-events), and the ones cloud-api raises itself, such as `usage.threshold`) can become a [Web Push](/api/web-push) notification. One sink in cloud-api reads the backbone and decides per person and event type. Preferences are stored per person, not per device.
@@ -36,6 +36,22 @@ One row per event type a person can be notified about, in [event registry](/guid
 
 `true` / `false` sets a type; `null` puts it back to its default. The change is all or nothing. Answers the same body as `GET`. Errors: `400 {"error":"unknown_event"}` for a name that isn't a notifiable event type (platform-only types such as `message.status` included), `400 {"error":"bad_value"}` for an empty map or a value that isn't `true`, `false` or `null`.
 
+### `GET /api/v1/notifications/quiet-hours`
+
+```json
+{ "enabled": false, "start": "22:00", "end": "07:00", "timeZone": "UTC", "allowCalls": true }
+```
+
+The person's quiet hours. A person who never set them gets this default. `start` and `end` are 24-hour `HH:MM` in `timeZone` (an IANA zone such as `America/New_York`), so the window follows daylight saving time. `start` later than `end` wraps midnight; `start` equal to `end` means no quiet hours.
+
+### `PUT /api/v1/notifications/quiet-hours`
+
+```json
+{ "enabled": true, "start": "23:00", "timeZone": "Europe/London" }
+```
+
+Any subset of the `GET` keys; the rest keep their stored (or default) values. Answers the same body as `GET`. Errors: `400 {"error":"bad_value"}` for an empty body, an unknown key, a time that isn't `HH:MM` (00:00 to 23:59), an unknown time zone or a value of the wrong type.
+
 ## Defaults
 
 | On | Off |
@@ -53,7 +69,8 @@ One row per event type a person can be notified about, in [event registry](/guid
 3. checks the owner's preference;
 4. builds the notification ([copy and links](#copy-and-links));
 5. for `message.received`, applies the message limits (one per conversation per 20 seconds, 40 an hour) and skips it when a direct channel push went to the same person in the last 2 minutes (see below);
-6. sends it to every device the owner registered, and records `sent`, `off`, `unreachable` (no device took it) or `skipped`.
+6. holds it when the owner is in [quiet hours](#quiet-hours);
+7. sends it to every device the owner registered, and records `sent`, `off`, `unreachable` (no device took it), `skipped` or `held`.
 
 Migration `060_notification_preferences.sql` adds `notification_preferences`, `notification_push_log` and an index on `platform_events (created_at) WHERE subject = 'user'`. It is applied by hand to production, after 057.
 
@@ -86,11 +103,24 @@ These don't go through the sink, because the backbone carries no event for them:
 
 | Push | Why it stays direct | Preference it follows |
 |---|---|---|
-| In-app call ring (`inapp_calls`) | A ring lives 45 seconds and must leave at once with `Urgency: high`; in-app calls are cloud-only, with no runtime ledger row | none: rings always ring a device with notifications on |
+| In-app call ring (`inapp_calls`) | A ring lives 45 seconds and must leave at once with `Urgency: high`; in-app calls are cloud-only, with no runtime ledger row | none: rings ring a device with notifications on, except in quiet hours with `allowCalls` off |
 | In-app missed call | Replaces the ring's notification (same tag), cloud-only | `call.ended` |
 | In-app thread message | Messages between invite-linked people are cloud-only | `message.received` |
 
 A message relayed to a runtime through a channel address (`channel_inbound`) used to be pushed directly. The runtime records the same message and forwards it as `message.received`, so now the direct push only goes out for a runtime that has never forwarded an event (an older build), and follows the `message.received` preference. Once a runtime forwards, the sink sends it, with the sender and text. While the sink isn't working (VAPID unset, or migration 060 not applied yet) every relayed message keeps its direct push. For the one message where both could fire (the first event a runtime ever forwards), the sink sees the direct push in `push_log` and skips its own.
+
+## Quiet hours
+
+While a person is in quiet hours (their `notification_quiet_hours` row is on and the current time in their zone is inside the window), nothing is pushed to them:
+
+- the sink records the event as `held` in `notification_push_log` and adds a row to `notification_held` (`event_id` unique, so a restart or second replica never holds it twice). Preferences, staleness and the direct-push dedupe are checked first, so only pushes that would have gone out are held. Message limits aren't spent on held messages;
+- the direct pushes (in-app thread messages, in-app missed calls, relayed channel messages) add a `notification_held` row (`source = 'direct'`) instead of sending;
+- in-app call rings still ring when `allowCalls` is true. When it is false the ring sends nothing, and the missed call that follows is held;
+- `attention.opened` with `severity: "critical"` is held too, and named first in the summary.
+
+About once a minute the sink loop runs the summary pass. For each person with open `notification_held` rows who is no longer in quiet hours, it claims all of them in one `UPDATE … SET summarized_at = now() … RETURNING`, so restarts and replicas never send it twice, and sends one push: title `While you were away`, body counting by kind (for example `3 messages, 1 approval and 2 threads need you`; order: urgent problems, messages, missed calls, approvals, threads, problems, other updates), `url` `/`, `tag` `quiet-summary`, `type: "event"`, `data.event` `quiet.summary`. Messages and missed calls count every push; the other kinds count each `tag` once, so a re-sent approval or problem counts once. Nothing held is re-sent on its own, so held pushes older than 12 hours are counted like the rest. Held rows are pruned after 7 days.
+
+Migration `102_notification_quiet_hours.sql` adds `notification_quiet_hours` and `notification_held`. Before it is applied, quiet hours read as off and every push goes out as before.
 
 ## Usage alerts
 

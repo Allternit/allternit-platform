@@ -385,11 +385,14 @@ pub fn spawn_notify(db: PgPool, user: String, msg: PushMessage, rate_limited: bo
 }
 
 /// Like [`spawn_notify`], but only when `user` wants pushes for the registry event type `event`
-/// (`routes::notifications` preferences).
+/// (`routes::notifications` preferences), and held instead of sent while they're in quiet hours.
 pub fn spawn_notify_pref(db: PgPool, user: String, event: &'static str, msg: PushMessage, rate_limited: bool) {
     let Some(vapid) = Vapid::from_env() else { return };
     tokio::spawn(async move {
         if !super::notifications::enabled(&db, &user, event).await {
+            return;
+        }
+        if super::notifications::hold_if_quiet(&db, &user, event, &msg, None, None).await {
             return;
         }
         if rate_limited && !allow_message_push(&db, &user, &msg.tag).await {
@@ -416,12 +419,18 @@ pub fn provider_label(provider: &str) -> &'static str {
 
 /// Whether the direct push for a relayed channel message may go out, recording it when it may: only for a
 /// runtime that doesn't forward its events to the backbone (otherwise the push sink sends it from the
-/// forwarded `message.received`), only when `user` wants message pushes, and one per address per 20 s.
+/// forwarded `message.received`), only when `user` wants message pushes, not in their quiet hours (then
+/// it's recorded as held for the summary), and one per address per 20 s.
 pub async fn channel_push_allowed(db: &PgPool, user: &str, route_id: &str, runtime_id: &str) -> bool {
     if super::notifications::runtime_forwards_events(db, runtime_id).await {
         return false;
     }
     if !super::notifications::enabled(db, user, "message.received").await {
+        return false;
+    }
+    let tag = format!("channel-{route_id}");
+    let probe = PushMessage { kind: "channel_message", title: String::new(), body: String::new(), url: String::new(), tag, data: Value::Null, ttl_secs: 0, high_urgency: false };
+    if super::notifications::hold_if_quiet(db, user, "message.received", &probe, None, None).await {
         return false;
     }
     allow_message_push(db, user, &format!("channel-{route_id}")).await
