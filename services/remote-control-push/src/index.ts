@@ -48,6 +48,8 @@ const DASHBOARD_ORIGINS = [
   // Allternit Mobile (phone PWA); fabrictransport.allternit.com was its old name.
   "https://m.allternit.com",
   "https://ai.allternit.com",
+  // Allternit Bots, the bots-only app (same build as ai.allternit.com).
+  "https://bots.allternit.com",
   "https://platform.allternit.com",
 ];
 

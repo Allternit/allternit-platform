@@ -89,7 +89,7 @@ pub struct ReturnTo {
 
 /// Hosts a client may name in `return_url`. `ALLTERNIT_BILLING_RETURN_HOSTS`
 /// (comma-separated) replaces the list.
-const DEFAULT_RETURN_HOSTS: &[&str] = &["platform.allternit.com", "ai.allternit.com", "m.allternit.com"];
+const DEFAULT_RETURN_HOSTS: &[&str] = &["platform.allternit.com", "ai.allternit.com", "bots.allternit.com", "m.allternit.com"];
 
 /// Validate a client-supplied return page: https, an allowed host, no query
 /// or fragment (the server adds `?checkout=`). `Ok(None)` when absent.
