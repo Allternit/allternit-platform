@@ -3900,6 +3900,65 @@ mod session_status_tests {
     }
 }
 
+/// What a session's newest turn did so far — a routine run's partial output
+/// when stopped, the apps it used, its steps and the brain that ran it.
+#[derive(Debug, Default, Clone, PartialEq)]
+pub(crate) struct TurnDigest {
+    /// The turn's answer text so far (all text parts of its assistant messages).
+    pub text: String,
+    /// Tools the turn called, first use first, each once.
+    pub tools: Vec<String>,
+    /// The turn's latest todo list (`todowrite` input): `{content, status}` items.
+    pub steps: Vec<serde_json::Value>,
+    /// `provider/model` of the turn's last assistant message.
+    pub model: Option<String>,
+}
+
+/// [`TurnDigest`] of a session's newest turn: the assistant messages after
+/// its last user message. `None` when the session is not on this runtime's
+/// gizzi (placed and vendor sessions) or has no turn yet.
+pub(crate) async fn latest_turn_digest(db: &DbHandle, session_id: &str) -> Option<TurnDigest> {
+    if crate::placement::session_target(db, session_id).is_some() {
+        return None;
+    }
+    let client = gizzi_client(&HeaderMap::new());
+    let path = format!("/v1/session/{}/messages?limit=40", urlencoding::encode(session_id));
+    let messages = gizzi_json::<Vec<GizziMessage>>(&client, reqwest::Method::GET, &path, None).await.ok()?;
+    Some(digest_turn(&messages)).filter(|d| d != &TurnDigest::default())
+}
+
+fn digest_turn(messages: &[GizziMessage]) -> TurnDigest {
+    let start = messages.iter().rposition(|m| m.info.role == "user").map_or(0, |i| i + 1);
+    let mut digest = TurnDigest::default();
+    let mut texts = Vec::new();
+    for message in messages[start..].iter().filter(|m| m.info.role == "assistant") {
+        if let (Some(p), Some(m)) = (message.info.provider_id.as_deref(), message.info.model_id.as_deref()) {
+            digest.model = Some(format!("{p}/{m}"));
+        }
+        for part in &message.parts {
+            match part.part_type.as_str() {
+                "text" => texts.extend(part.text.as_deref().map(str::trim).filter(|t| !t.is_empty()).map(str::to_string)),
+                "tool" => {
+                    let Some(tool) = part.tool.as_deref() else { continue };
+                    if tool == "todowrite" {
+                        if let Some(todos) = part.state.as_ref().and_then(|s| s.pointer("/input/todos")).and_then(|t| t.as_array()) {
+                            digest.steps = todos
+                                .iter()
+                                .map(|t| json!({ "content": t.get("content"), "status": t.get("status") }))
+                                .collect();
+                        }
+                    } else if !digest.tools.iter().any(|t| t == tool) {
+                        digest.tools.push(tool.to_string());
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    digest.text = texts.join("\n\n");
+    digest
+}
+
 /// Stop a server-created automation session through the same runtime that owns it.
 pub(crate) async fn abort_automation_session(db:&DbHandle,session_id:&str)->Result<(),String>{
     if let Some(confirmed)=crate::gateway_runner::intercept_abort(session_id).await {

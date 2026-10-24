@@ -38,6 +38,9 @@ import { randomUUID } from "crypto";
 
 const log = Log.create({ service: "cron-service" });
 
+/** The abort reason a user Stop gives a run (vs. a timeout). */
+const STOPPED_BY_USER = "Stopped by user";
+
 // Singleton vault sync executor reused across job runs
 let vaultSyncExecutor: VaultSyncExecutor | null = null;
 function getVaultSyncExecutor(): VaultSyncExecutor {
@@ -387,6 +390,17 @@ export const CronService = {
   },
 
   /**
+   * Stop a job's current run. The run ends "cancelled" with whatever output
+   * it had, and is not retried. False when the job is not running.
+   */
+  abort(id: string): boolean {
+    const controller = state.runningJobs.get(id);
+    if (!controller) return false;
+    controller.abort(new Error(STOPPED_BY_USER));
+    return true;
+  },
+
+  /**
    * Run a job manually
    */
   async run(id: string, triggeredByUser?: string): Promise<CronRun> {
@@ -592,6 +606,9 @@ export const CronService = {
           break;
       }
 
+      // A Stop can let the turn return normally with partial output.
+      if (controller.signal.aborted) throw controller.signal.reason;
+
       // Success
       run.status = "success";
       run.finishedAt = new Date().toISOString();
@@ -609,6 +626,18 @@ export const CronService = {
       await state.config.onJobComplete(job, run);
 
     } catch (error) {
+      if (controller.signal.aborted && (controller.signal.reason as Error | undefined)?.message === STOPPED_BY_USER) {
+        run.status = "cancelled";
+        run.error = STOPPED_BY_USER;
+        run.finishedAt = new Date().toISOString();
+        run.durationMs = Date.now() - startTime;
+        emitEvent({
+          type: "job:run:cancelled",
+          timestamp: run.finishedAt,
+          data: { jobId: job.id, runId },
+        });
+        return run;
+      }
       // Failure
       run.status = "failed";
       run.error = error instanceof Error ? error.message : String(error);

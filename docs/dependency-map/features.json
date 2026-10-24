@@ -115,7 +115,11 @@
         "allternit/cmd/gizzi-code/src/runtime/bots",
         "allternit/cmd/allternit-api/src/computer_*",
         "allternit-ai/src/components/computers",
-        "allternit-ai/src/lib/attachments"
+        "allternit-ai/src/lib/attachments",
+        "allternit-ai/src/views/automation",
+        "allternit-ai/src/views/cowork",
+        "allternit/cmd/allternit-api",
+        "allternit/cmd/gizzi-code"
       ],
       "decisions": [
         {
@@ -209,6 +213,10 @@
         {
           "on": "2026-10-22",
           "note": "Eoj: the group center becomes a live room brief with Now, a controlled montage of real recent contributions, and opt-in shared image/video previews. Sending or scrolling docks it into the members pill so chat takes the screen; tapping the pill restores the live brief. Phone/PWA put the cast above the brief. Implemented in RoomBrief and room-brief-model; no synthetic task status."
+        },
+        {
+          "on": "2026-10-24",
+          "note": "Routine run rows (Eoj, from an agent-schedule clip): every routines list (bot Routines tab, Automation Tasks → Routines, bot chat Routines panel, Cowork → Routines) uses RoutineRunRow: countdown, apps read → written and brain from the last run, 14-run strip, Run now / Stop, on/off switch; open = latest output or live steps (Step n of m), instructions, Hourly/Daily/Weekdays/Weekly + time editor with cron, earlier runs, hold to delete. Server: routine_runs row written 'running' at start, GET …/live, POST …/runs/:run_id/cancel (cancelled keeps partial output, no streak/alert), ?recent_runs=N on the list, metadata model/apps/steps, orphaned running rows failed at boot; gizzi cron POST /jobs/:id/abort. Stop source → destination icons come from apps the last run used (Eoj's pick), Stop keeps partial output (Eoj's pick)."
         }
       ],
       "evidence": [
@@ -216,7 +224,8 @@
         "allternit/surfaces/docs/guides/bot-templates.mdx",
         "allternit/surfaces/docs/guides/bot-setup-picker.mdx",
         "allternit-ai/src/views/bots/thread-deck/useBotComposerDeck.tsx",
-        "allternit-ai/src/views/bots/thread-deck/deck-tab-request.ts"
+        "allternit-ai/src/views/bots/thread-deck/deck-tab-request.ts",
+        "allternit/surfaces/docs/guides/bot-routines.mdx"
       ]
     },
     {

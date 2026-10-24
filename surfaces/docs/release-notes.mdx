@@ -5,6 +5,14 @@ description: 'Changelog for the Allternit platform, SDKs, and Gizzi Code CLI'
 
 # Release Notes
 
+## 2026-10-24 — Watch and stop routine runs
+
+The same change applies on Desktop, on ai.allternit.com (including the phone layout) and in the m.allternit.com app.
+
+- **Routines:** every routines list now shows each routine as one row: a countdown to the next run, the apps its last run read from and wrote to, the model that ran it, and its last 14 runs as a strip. While a run is going the row says which step the bot is on, and opening it shows each step with a tick as it finishes. **Stop** ends a run and keeps what it wrote so far; a stopped run doesn't count as a failure. Open a routine to read its latest output and change its schedule to **Hourly**, **Daily**, **Weekdays** or **Weekly** at a time, with the cron it saves. See [Bot routines](/guides/bot-routines#the-routines-tab).
+- **API:** run rows are written when a run starts, `GET /automation/routines/:id/live` shows a run in progress, `POST …/runs/:run_id/cancel` stops it, and `?recent_runs=N` adds recent runs to the routine list. See [Automation API](/api/automation#stop-a-run).
+- **Gizzi Code:** the cron daemon can stop a job's run (`POST /jobs/:id/abort`), and a stopped bot routine cancels the bot's turn.
+
 ## 2026-10-24 — BoardUI look pass
 
 The same changes apply on Desktop, on ai.allternit.com (including the phone layout) and in the m.allternit.com app.

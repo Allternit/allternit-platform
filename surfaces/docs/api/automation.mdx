@@ -113,13 +113,15 @@ The local scheduler keeps these keys in `metadata`:
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/api/v1/automation/routines` | List routines. |
+| `GET` | `/api/v1/automation/routines` | List routines. `?recent_runs=N` (up to 30) adds each routine's newest runs as `recentRuns`. |
 | `POST` | `/api/v1/automation/routines` | Create a routine. |
 | `GET` | `/api/v1/automation/routines/:id` | Get a routine. |
 | `PUT` | `/api/v1/automation/routines/:id` | Update a routine. |
 | `DELETE` | `/api/v1/automation/routines/:id` | Delete a routine. |
 | `POST` | `/api/v1/automation/routines/:id/run` | Trigger a cloud routine immediately. |
 | `GET` | `/api/v1/automation/routines/:id/runs` | List routine runs. |
+| `GET` | `/api/v1/automation/routines/:id/live` | The run in progress: steps, apps used, text so far. |
+| `POST` | `/api/v1/automation/routines/:id/runs/:run_id/cancel` | Stop a run in progress. |
 | `GET` | `/api/v1/automation/routines/:id/metrics` | Get routine metrics. |
 
 ### Loops
@@ -286,7 +288,18 @@ Local routines run at once on this API and answer `{"status": "running", "routin
 GET /api/v1/automation/routines/:id/runs
 ```
 
-Returns stored runs for the routine, newest first, and for cloud routines attempts to sync the latest history from the Gizzi cron daemon. Local runs carry the thread they wrote to in `metadata.sessionId`.
+Returns stored runs for the routine, newest first, and for cloud routines attempts to sync the latest history from the Gizzi cron daemon.
+
+A local run's row is written with `status: "running"` when it starts and completed in place when it ends. Its `metadata` holds:
+
+| Field | Meaning |
+|-------|---------|
+| `sessionId` | The thread the run wrote to. Set as soon as the run has one. |
+| `model` | `provider/model` that ran the turn. |
+| `apps` | Tools the turn called, first use first, each once. Connector tools (`mcp__<app>__<tool>`) name the app. |
+| `steps` | The turn's last todo list: `{content, status}` items. |
+
+`status` is one of `running`, `succeeded`, `failed`, `skipped` or `cancelled` (stopped; a cloud run the daemon reports as `aborted` is stored as `cancelled`). A run left `running` when the API stopped is marked `failed` with `outcome_reason: "runtime_restart"` at the next start.
 
 ### Example response
 
@@ -311,6 +324,37 @@ Returns stored runs for the routine, newest first, and for cloud routines attemp
   "sync": { "attempted": true, "synced": 1, "error": null }
 }
 ```
+
+## Recent runs in the routine list
+
+```http
+GET /api/v1/automation/routines?recent_runs=14
+```
+
+Each routine gains `recentRuns`, newest first, for a run-history strip without one request per routine. A local run in progress is listed first with `status: "running"` even before its row is read.
+
+```json
+"recentRuns": [
+  { "id": "run_9c1", "status": "running" },
+  { "id": "run_9b7", "status": "succeeded", "startedAt": "2026-10-23T09:00:01Z", "finishedAt": "2026-10-23T09:00:42Z", "durationMs": 41000, "reason": null, "apps": ["mcp__linear__list_issues", "mcp__slack__post_message"], "model": "provider/model-name" }
+]
+```
+
+## Watch a run in progress
+
+```http
+GET /api/v1/automation/routines/:id/live
+```
+
+While a local run is going this reads its thread and answers `{"running": true, "runId", "startedAt", "sessionId", "steps", "apps", "model", "text", "canStop": true}`. `steps` is the turn's todo list so far and `text` is the last 600 characters it has written. For a cloud run it answers `running` with empty `steps` and `apps` (the daemon does not report them). When nothing is running it answers `{"running": false}`. Poll it every few seconds while a run is going.
+
+## Stop a run
+
+```http
+POST /api/v1/automation/routines/:id/runs/:run_id/cancel
+```
+
+Cancels the run's turn. The run ends with `status: "cancelled"`, `outcome_reason: "stopped"` and the text it had written as `output`. A stopped run does not count toward the automatic pause and opens no "Something needs fixing" item. Answers `{"status": "stopping", "runId"}`. A run that already finished returns `409` `not_running`. For a cloud routine the API asks the Gizzi cron daemon to stop the job's run (`POST /jobs/:id/abort`); a daemon too old to stop runs returns `502` `stop_failed`.
 
 ## Create a loop
 
@@ -346,7 +390,8 @@ Returns all routines and loops whose `execution_domain` is `local`.
 | `204 No Content` | Resource deleted. |
 | `400 Bad Request` | `agent_required` (local routine without a bot) or `agent_not_found`. |
 | `401 Unauthorized` | Missing or invalid bearer token. |
-| `409 Conflict` | Run now on a routine with no bot (`agent_required`) or one already running (`already_running`). |
+| `409 Conflict` | Run now on a routine with no bot (`agent_required`) or one already running (`already_running`); Stop on a run that already finished (`not_running`). |
+| `502 Bad Gateway` | Stop on a cloud routine when the cron daemon can't stop runs (`stop_failed`). |
 | `404 Not Found` | Goal, routine, or loop not found. |
 | `500 Internal Server Error` | Database or daemon error. |
 

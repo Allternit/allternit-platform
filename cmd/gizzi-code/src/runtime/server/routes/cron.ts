@@ -237,6 +237,35 @@ export const CronRoutes = lazy(() =>
       },
     )
     .post(
+      "/jobs/:id/abort",
+      describeRoute({
+        summary: "Stop cron job run",
+        description: "Stop the job's current run. It ends cancelled with the output it had and is not retried.",
+        operationId: "cron.abort",
+        responses: {
+          200: {
+            description: "Whether a run was stopped",
+            content: {
+              "application/json": {
+                schema: resolver(z.object({ stopped: z.boolean() })),
+              },
+            },
+          },
+          ...errors(404),
+        },
+      }),
+      validator(
+        "param",
+        z.object({
+          id: z.string(),
+        }),
+      ),
+      async (c) => {
+        const { id } = c.req.valid("param")
+        return c.json({ stopped: CronService.abort(id) })
+      },
+    )
+    .post(
       "/jobs/:id/run",
       describeRoute({
         summary: "Trigger cron job",
