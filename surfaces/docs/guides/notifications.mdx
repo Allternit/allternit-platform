@@ -35,11 +35,28 @@ These are off until you turn them on:
 
 **Daily summary.** Each day from 9:00 in your computer's time zone, one **Last 24 hours** item in the Inbox lists every routine that failed or was missed and every connection that went down in the last 24 hours. It does not send a push. On a day with nothing to list there is no summary, and the previous day's summary closes when the new one opens.
 
-Incoming calls always ring a device that has notifications on. To stop rings on a device, turn notifications off on it.
+Incoming calls ring a device that has notifications on, also during [quiet hours](#quiet-hours) unless you turn **Let calls ring** off. To stop rings on a device, turn notifications off on it.
 
 You get at most one message notification per conversation every 20 seconds, and at most 40 an hour, so a busy thread doesn't flood you. Something that happened more than 12 hours ago (for example on a computer that was offline overnight) doesn't notify you when it finally arrives. It's still in Allternit.
 
 Permission asks from a coding session on a paired computer notify you through that session's own remote-control notifications on m.allternit.com, not through this list.
+
+## Quiet hours
+
+Quiet hours stop notifications at night (or whenever you choose) without turning anything off. Open **Settings**, then **Notifications**, and find **Quiet hours**:
+
+| Setting | What it does |
+|---|---|
+| **Quiet hours** | On or off. Off until you turn it on |
+| **From** | The start and end times, 22:00 to 07:00 unless you change them. A window can run past midnight (the row says "Runs past midnight"). If both times are the same, there are no quiet hours |
+| **Time zone** | The zone the times are in. It starts as UTC; pick your own (the row tells you when this device is on a different one). Daylight saving time is followed, so 22:00 stays 22:00 on your clock |
+| **Let calls ring** | On unless you turn it off. Incoming calls still ring during quiet hours. Turn it off and a call doesn't ring; you get it as a missed call in the morning summary |
+
+During quiet hours nothing notifies you: new messages, approvals, threads that need you, missed calls and problems, even ones that need fixing now. They are all still in Allternit when you open it. When quiet hours end you get one notification instead, **While you were away**, that counts what came in, for example "3 messages, 1 approval and 2 threads need you". Problems that need fixing now are listed first. An approval or a problem that was sent again counts once. Tapping it opens Allternit.
+
+Quiet hours are for your whole account, like the switches below, so they apply to every device, Allternit Desktop, ai.allternit.com, the m.allternit.com phone app and [Allternit Bots](/guides/allternit-bots-app). The switches still decide what you get at all: a kind you turned off isn't counted in the summary.
+
+For developers: [Quiet hours API](/api/notifications#quiet-hours).
 
 ## Change what notifies you
 

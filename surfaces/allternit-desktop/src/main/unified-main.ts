@@ -377,6 +377,7 @@ const isMac = process.platform === 'darwin';
 let mainWindow: BrowserWindow | null = null;
 let designWindow: BrowserWindow | null = null;
 let officeWindow: BrowserWindow | null = null;
+let botsWindow: BrowserWindow | null = null;
 let hudWindow: BrowserWindow | null = null;
 let annotationWindow: BrowserWindow | null = null;
 let remoteControlWindow: BrowserWindow | null = null;
@@ -3133,6 +3134,60 @@ ipcMain.handle('shell:open-office-window', () => {
   officeWindow.once('ready-to-show', () => officeWindow?.show());
   officeWindow.on('closed', () => { officeWindow = null; });
   void officeWindow.loadURL(new URL('/office', activePlatformUrl).toString());
+});
+
+// Allternit Bots — the bots-only app (/bots) in its own window, so it sits
+// beside the full app like Duet beside Claude. Same profile as Office.
+ipcMain.handle('shell:open-bots-window', () => {
+  const url = new URL('/bots', activePlatformUrl).toString();
+  if (botsWindow && !botsWindow.isDestroyed()) {
+    botsWindow.show();
+    botsWindow.focus();
+    return;
+  }
+
+  botsWindow = new BrowserWindow({
+    width: 1180,
+    height: 860,
+    minWidth: 760,
+    minHeight: 560,
+    title: 'Allternit Bots',
+    titleBarStyle: isMac ? 'hiddenInset' : 'default',
+    trafficLightPosition: { x: 16, y: 16 },
+    show: false,
+    backgroundColor: '#FFFFFF',
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      // Bots keep talking while this window is in the background.
+      backgroundThrottling: false,
+    },
+  });
+
+  installWillNavigateGuard(botsWindow.webContents);
+
+  botsWindow.webContents.setWindowOpenHandler(({ url: next }) => {
+    void openExternalAllowlisted(next);
+    return { action: 'deny' };
+  });
+  botsWindow.once('ready-to-show', () => botsWindow?.show());
+  botsWindow.on('closed', () => { botsWindow = null; });
+  void botsWindow.loadURL(url);
+});
+
+// "Open full Allternit" from the Bots window: bring the main window forward
+// (reopen it on the platform URL if it was closed) instead of turning the
+// Bots window into a second full app.
+ipcMain.handle('shell:open-main-window', () => {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    mainWindow = createMainWindow();
+    void mainWindow.loadURL(activePlatformUrl);
+  }
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
 });
 
 // HUD mode defaults — a chrome-free floating panel anchored near the bottom

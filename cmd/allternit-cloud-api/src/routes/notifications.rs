@@ -50,6 +50,27 @@
 //! before the sink: messages and calls on, plus approvals, threads that need
 //! you, sign-in needed and usage alerts; finished runs and other informational
 //! events off ([`DEFAULTS`]).
+//!
+//! ## Quiet hours
+//!
+//! Migration `102_notification_quiet_hours.sql`.
+//!
+//! - `GET /api/v1/notifications/quiet-hours` → `{enabled, start: "HH:MM", end: "HH:MM", timeZone, allowCalls}`
+//! - `PUT /api/v1/notifications/quiet-hours` with any subset of those keys → the same shape. 400 `bad_value`
+//!   (bad time, unknown zone, wrong type, unknown key, empty body).
+//!
+//! No row = off, 22:00 to 07:00 UTC, calls ring. The window is in the person's own zone (so it follows
+//! daylight saving time), may wrap midnight, and `start == end` means no quiet hours.
+//!
+//! While a person is in quiet hours the sink and the direct pushes (in-app messages, relayed channel
+//! messages, missed calls) don't send: [`hold_if_quiet`] records the push in `notification_held` (the sink
+//! also marks the event `held` in `notification_push_log`). In-app call rings still ring when `allowCalls`
+//! is on; when it's off the ring is silent and the missed call that follows is held. Critical problems are
+//! held too. About once a minute the sink loop runs [`summarize_once`]: for every person with held pushes
+//! who is no longer in quiet hours it claims them all in one `UPDATE … RETURNING` (so a restart or a second
+//! replica never sends the summary twice) and sends one push, "While you were away" with counts by kind
+//! ([`summary_body`]), opening `/`, tag `quiet-summary`. Nothing is re-sent one by one, so held pushes older
+//! than [`STALE_AFTER_HOURS`] are counted like the rest.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -99,7 +120,9 @@ const POLL: Duration = Duration::from_secs(3);
 const BATCH: i64 = 200;
 
 pub fn routes() -> Router<Arc<ApiState>> {
-    Router::new().route("/api/v1/notifications/preferences", get(get_route).put(put_route))
+    Router::new()
+        .route("/api/v1/notifications/preferences", get(get_route).put(put_route))
+        .route("/api/v1/notifications/quiet-hours", get(get_quiet_route).put(put_quiet_route))
 }
 
 /// Event types a person can get pushed: every user-subject event in the registry.
@@ -211,6 +234,286 @@ async fn put_route(State(state): State<Arc<ApiState>>, headers: HeaderMap, body:
 fn internal(error: &str) -> Response {
     tracing::error!("notifications: {error}");
     (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": "internal" }))).into_response()
+}
+
+// ---------------------------------------------------------------------------
+// Quiet hours
+// ---------------------------------------------------------------------------
+
+/// One person's quiet hours (`notification_quiet_hours`). Minutes after local midnight in `time_zone`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QuietHours {
+    pub enabled: bool,
+    pub start_min: i32,
+    pub end_min: i32,
+    pub time_zone: String,
+    pub allow_calls: bool,
+}
+
+impl Default for QuietHours {
+    fn default() -> Self {
+        Self { enabled: false, start_min: 22 * 60, end_min: 7 * 60, time_zone: "UTC".into(), allow_calls: true }
+    }
+}
+
+/// Whether `minute` (after local midnight) falls in `[start, end)`. Wraps midnight when `start > end`;
+/// `start == end` is no window at all.
+pub fn in_window(start_min: i32, end_min: i32, minute: i32) -> bool {
+    if start_min == end_min {
+        false
+    } else if start_min < end_min {
+        (start_min..end_min).contains(&minute)
+    } else {
+        minute >= start_min || minute < end_min
+    }
+}
+
+impl QuietHours {
+    /// In quiet hours at `now`: local wall-clock time in the person's zone, so daylight saving time moves
+    /// the window with the clock. An unknown zone (never stored; validated on PUT) reads as UTC.
+    pub fn active_at(&self, now: DateTime<Utc>) -> bool {
+        use chrono::Timelike;
+        if !self.enabled {
+            return false;
+        }
+        let tz: chrono_tz::Tz = self.time_zone.parse().unwrap_or(chrono_tz::UTC);
+        let local = now.with_timezone(&tz);
+        in_window(self.start_min, self.end_min, (local.hour() * 60 + local.minute()) as i32)
+    }
+
+    pub fn json(&self) -> Value {
+        json!({ "enabled": self.enabled, "start": hhmm(self.start_min), "end": hhmm(self.end_min), "timeZone": self.time_zone, "allowCalls": self.allow_calls })
+    }
+
+    /// Apply a PUT body (any subset of the response keys). `Err("bad_value")` on anything invalid.
+    pub fn apply(&mut self, changes: &Map<String, Value>) -> Result<(), &'static str> {
+        if changes.is_empty() {
+            return Err("bad_value");
+        }
+        for (key, value) in changes {
+            match key.as_str() {
+                "enabled" => self.enabled = value.as_bool().ok_or("bad_value")?,
+                "allowCalls" => self.allow_calls = value.as_bool().ok_or("bad_value")?,
+                "start" => self.start_min = value.as_str().and_then(parse_hhmm).ok_or("bad_value")?,
+                "end" => self.end_min = value.as_str().and_then(parse_hhmm).ok_or("bad_value")?,
+                "timeZone" => {
+                    let zone = value.as_str().map(str::trim).ok_or("bad_value")?;
+                    let tz: chrono_tz::Tz = zone.parse().map_err(|_| "bad_value")?;
+                    self.time_zone = tz.name().to_string();
+                }
+                _ => return Err("bad_value"),
+            }
+        }
+        Ok(())
+    }
+}
+
+fn hhmm(minutes: i32) -> String {
+    format!("{:02}:{:02}", minutes / 60, minutes % 60)
+}
+
+/// `"HH:MM"` (24-hour, two digits each) → minutes after midnight.
+pub fn parse_hhmm(text: &str) -> Option<i32> {
+    let (h, m) = text.trim().split_once(':')?;
+    if h.len() != 2 || m.len() != 2 || !h.bytes().chain(m.bytes()).all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let (h, m): (i32, i32) = (h.parse().ok()?, m.parse().ok()?);
+    (h < 24 && m < 60).then_some(h * 60 + m)
+}
+
+/// `user`'s quiet hours, or the defaults when they never set them.
+pub async fn quiet_hours(db: &PgPool, user: &str) -> Result<QuietHours, sqlx::Error> {
+    let row: Option<(bool, i32, i32, String, bool)> = sqlx::query_as("SELECT enabled, start_min, end_min, time_zone, allow_calls FROM notification_quiet_hours WHERE user_id = $1").bind(user).fetch_optional(db).await?;
+    Ok(row.map(|(enabled, start_min, end_min, time_zone, allow_calls)| QuietHours { enabled, start_min, end_min, time_zone, allow_calls }).unwrap_or_default())
+}
+
+pub async fn set_quiet_hours(db: &PgPool, user: &str, q: &QuietHours) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO notification_quiet_hours (user_id, enabled, start_min, end_min, time_zone, allow_calls, updated_at) VALUES ($1, $2, $3, $4, $5, $6, now()) \
+         ON CONFLICT (user_id) DO UPDATE SET enabled = EXCLUDED.enabled, start_min = EXCLUDED.start_min, end_min = EXCLUDED.end_min, \
+         time_zone = EXCLUDED.time_zone, allow_calls = EXCLUDED.allow_calls, updated_at = now()",
+    )
+    .bind(user)
+    .bind(q.enabled)
+    .bind(q.start_min)
+    .bind(q.end_min)
+    .bind(&q.time_zone)
+    .bind(q.allow_calls)
+    .execute(db)
+    .await
+    .map(|_| ())
+}
+
+/// Whether `user` is in quiet hours now. A read error (for example before migration 102) is "not quiet",
+/// so pushes keep working.
+pub async fn is_quiet(db: &PgPool, user: &str) -> bool {
+    match quiet_hours(db, user).await {
+        Ok(q) => q.active_at(Utc::now()),
+        Err(error) => {
+            tracing::debug!("notifications: reading quiet hours failed: {error}");
+            false
+        }
+    }
+}
+
+/// True when an in-app call ring for `user` should stay silent now (quiet hours with calls off).
+pub async fn ring_held(db: &PgPool, user: &str) -> bool {
+    match quiet_hours(db, user).await {
+        Ok(q) => !q.allow_calls && q.active_at(Utc::now()),
+        Err(_) => false,
+    }
+}
+
+/// When `user` is in quiet hours, record `msg` as held instead of sending it and return true.
+/// `event_id` is the backbone event for the sink (held once, however often it's looked at); `None` for a
+/// direct push. The caller then doesn't send.
+pub async fn hold_if_quiet(db: &PgPool, user: &str, event: &str, msg: &PushMessage, severity: Option<&str>, event_id: Option<&str>) -> bool {
+    if !is_quiet(db, user).await {
+        return false;
+    }
+    let held = sqlx::query("INSERT INTO notification_held (user_id, event_type, tag, severity, source, event_id) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (event_id) DO NOTHING")
+        .bind(user)
+        .bind(event)
+        .bind(&msg.tag)
+        .bind(severity)
+        .bind(if event_id.is_some() { "sink" } else { "direct" })
+        .bind(event_id)
+        .execute(db)
+        .await;
+    match held {
+        Ok(_) => true,
+        Err(error) => {
+            // Better a push in quiet hours than a lost one.
+            tracing::warn!("notifications: holding a push failed, sending it: {error}");
+            false
+        }
+    }
+}
+
+/// One held push, as the summary counts it: (event type, tag, severity).
+pub type HeldItem = (String, String, Option<String>);
+
+fn plural(n: usize, one: &str, many: &str) -> String {
+    format!("{n} {}", if n == 1 { one } else { many })
+}
+
+/// The summary line for a person's held pushes, or `None` when there is nothing to tell. Messages and
+/// missed calls count every push; approvals, threads and problems count each one once however often it
+/// was re-sent (same tag). Critical problems come first.
+pub fn summary_body(items: &[HeldItem]) -> Option<String> {
+    use std::collections::BTreeSet;
+    fn critical(i: &HeldItem) -> bool {
+        i.0 == "attention.opened" && i.2.as_deref() == Some("critical")
+    }
+    fn bucket(i: &HeldItem) -> usize {
+        match i.0.as_str() {
+            _ if critical(i) => 0,
+            "message.received" => 1,
+            "call.ended" => 2,
+            "approval.requested" => 3,
+            "thread.needs_user" => 4,
+            "attention.opened" => 5,
+            // Anything else (usage alerts, sign-in needed, finished runs, ...).
+            _ => 6,
+        }
+    }
+    // Messages and missed calls count every push; the rest count each tag once.
+    let size = |b: usize| {
+        let mine = items.iter().filter(|i| bucket(i) == b);
+        if b == 1 || b == 2 {
+            mine.count()
+        } else {
+            mine.map(|i| i.1.as_str()).collect::<BTreeSet<&str>>().len()
+        }
+    };
+    let parts: Vec<String> = [
+        (size(0), "urgent problem", "urgent problems"),
+        (size(1), "message", "messages"),
+        (size(2), "missed call", "missed calls"),
+        (size(3), "approval", "approvals"),
+        (size(4), "thread", "threads"),
+        (size(5), "problem", "problems"),
+        (size(6), "update", "updates"),
+    ]
+    .into_iter()
+    .filter(|(n, _, _)| *n > 0)
+    .map(|(n, one, many)| plural(n, one, many))
+    .collect();
+    let single = parts.len() == 1 && parts[0].starts_with("1 ");
+    let list = match parts.as_slice() {
+        [] => return None,
+        [one] => one.clone(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+    };
+    Some(format!("{list} {}", if single { "needs you" } else { "need you" }))
+}
+
+pub fn summary_message(body: String) -> PushMessage {
+    PushMessage {
+        kind: "event",
+        title: "While you were away".into(),
+        body,
+        url: "/".into(),
+        tag: "quiet-summary".into(),
+        data: json!({ "event": "quiet.summary" }),
+        ttl_secs: 24 * 3600,
+        high_urgency: false,
+    }
+}
+
+/// Send the "While you were away" summary to everyone whose quiet hours are over and who has held pushes.
+/// Each person's held rows are claimed in one statement, so restarts and replicas never send it twice.
+/// Returns how many summaries were sent.
+pub async fn summarize_once(db: &PgPool, transport: &dyn PushTransport, vapid: &Vapid) -> Result<usize, sqlx::Error> {
+    summarize_at(db, transport, vapid, Utc::now()).await
+}
+
+async fn summarize_at(db: &PgPool, transport: &dyn PushTransport, vapid: &Vapid, now: DateTime<Utc>) -> Result<usize, sqlx::Error> {
+    let users: Vec<String> = sqlx::query_scalar("SELECT DISTINCT user_id FROM notification_held WHERE summarized_at IS NULL LIMIT 500").fetch_all(db).await?;
+    let mut sent = 0;
+    for user in users {
+        if quiet_hours(db, &user).await?.active_at(now) {
+            continue;
+        }
+        let items: Vec<HeldItem> = sqlx::query_as("UPDATE notification_held SET summarized_at = now() WHERE user_id = $1 AND summarized_at IS NULL RETURNING event_type, tag, severity").bind(&user).fetch_all(db).await?;
+        let Some(body) = summary_body(&items) else { continue };
+        if web_push::send_to_user(db, transport, vapid, &user, &summary_message(body)).await > 0 {
+            sent += 1;
+        }
+    }
+    Ok(sent)
+}
+
+async fn get_quiet_route(State(state): State<Arc<ApiState>>, headers: HeaderMap) -> Response {
+    let user = match crate::auth::resolve_user_scoped(&state.db, &headers, "compute").await {
+        Ok(u) => u.id,
+        Err(e) => return e.into_response(),
+    };
+    match quiet_hours(&state.db, &user).await {
+        Ok(q) => Json(q.json()).into_response(),
+        Err(e) => internal(&e.to_string()),
+    }
+}
+
+async fn put_quiet_route(State(state): State<Arc<ApiState>>, headers: HeaderMap, body: Option<Json<Value>>) -> Response {
+    let user = match crate::auth::resolve_user_scoped(&state.db, &headers, "compute").await {
+        Ok(u) => u.id,
+        Err(e) => return e.into_response(),
+    };
+    let bad = || (StatusCode::BAD_REQUEST, Json(json!({ "error": "bad_value" }))).into_response();
+    let Some(changes) = body.as_ref().and_then(|b| b.0.as_object()) else { return bad() };
+    let mut q = match quiet_hours(&state.db, &user).await {
+        Ok(q) => q,
+        Err(e) => return internal(&e.to_string()),
+    };
+    if q.apply(changes).is_err() {
+        return bad();
+    }
+    match set_quiet_hours(&state.db, &user, &q).await {
+        Ok(()) => Json(q.json()).into_response(),
+        Err(e) => internal(&e.to_string()),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -475,6 +778,8 @@ pub enum Outcome {
     Off,
     Unreachable,
     Skipped,
+    /// Quiet hours: recorded in `notification_held` for the summary.
+    Held,
 }
 
 impl Outcome {
@@ -484,6 +789,7 @@ impl Outcome {
             Outcome::Off => "off",
             Outcome::Unreachable => "unreachable",
             Outcome::Skipped => "skipped",
+            Outcome::Held => "held",
         }
     }
 }
@@ -491,7 +797,7 @@ impl Outcome {
 type EventRow = (String, String, String, Value, Option<DateTime<Utc>>);
 
 async fn decide_and_send(db: &PgPool, transport: &dyn PushTransport, vapid: &Vapid, row: &EventRow) -> Outcome {
-    let (_, user, event, data, occurred_at) = row;
+    let (event_id, user, event, data, occurred_at) = row;
     if occurred_at.is_some_and(|t| Utc::now() - t > chrono::Duration::hours(STALE_AFTER_HOURS)) {
         return Outcome::Skipped;
     }
@@ -507,9 +813,16 @@ async fn decide_and_send(db: &PgPool, transport: &dyn PushTransport, vapid: &Vap
             .fetch_one(db)
             .await
             .unwrap_or(false);
-        if direct || !web_push::allow_message_push(db, user, &msg.tag).await {
+        if direct {
             return Outcome::Skipped;
         }
+    }
+    let severity = (event == "attention.opened").then(|| s(data, &["severity"])).flatten();
+    if hold_if_quiet(db, user, event, &msg, severity, Some(event_id.as_str())).await {
+        return Outcome::Held;
+    }
+    if event == "message.received" && !web_push::allow_message_push(db, user, &msg.tag).await {
+        return Outcome::Skipped;
     }
     if web_push::send_to_user(db, transport, vapid, user, &msg).await > 0 {
         Outcome::Sent
@@ -569,8 +882,15 @@ pub fn spawn_push_sink(db: PgPool) {
                 tracing::warn!("notifications: push sink pass failed: {error}");
             }
             passes += 1;
+            // About once a minute: send "While you were away" to people whose quiet hours just ended.
+            if passes % 20 == 0 {
+                if let Err(error) = summarize_once(&db, &transport, &vapid).await {
+                    tracing::warn!("notifications: quiet-hours summary pass failed: {error}");
+                }
+            }
             if passes % 1200 == 0 {
                 let _ = sqlx::query("DELETE FROM notification_push_log WHERE created_at < now() - interval '2 days'").execute(&db).await;
+                let _ = sqlx::query("DELETE FROM notification_held WHERE held_at < now() - interval '7 days'").execute(&db).await;
             }
             tokio::time::sleep(POLL).await;
         }
@@ -586,7 +906,7 @@ mod tests {
 
     pub(crate) async fn schema(db: &PgPool) {
         events_backbone_schema(db).await;
-        for sql in [include_str!("../../migrations_pg/039_push_subscriptions.sql"), include_str!("../../migrations_pg/060_notification_preferences.sql")] {
+        for sql in [include_str!("../../migrations_pg/039_push_subscriptions.sql"), include_str!("../../migrations_pg/060_notification_preferences.sql"), include_str!("../../migrations_pg/102_notification_quiet_hours.sql")] {
             sqlx::raw_sql(&sql.replace("public.", "")).execute(db).await.expect("migration applies");
         }
     }
@@ -684,6 +1004,124 @@ mod tests {
         // Long text is cut.
         let m = message_for("message.received", &json!({ "text": "x".repeat(1000) })).unwrap();
         assert!(m.body.chars().count() <= 241);
+    }
+
+    fn utc(s: &str) -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339(s).unwrap().with_timezone(&Utc)
+    }
+
+    #[test]
+    fn quiet_window_wraps_midnight_and_follows_the_zone() {
+        // Same-day window [09:00, 17:00).
+        assert!(in_window(540, 1020, 540) && in_window(540, 1020, 1019));
+        assert!(!in_window(540, 1020, 1020) && !in_window(540, 1020, 539));
+        // Wrapping window [22:00, 07:00).
+        for m in [1320, 1439, 0, 419] {
+            assert!(in_window(1320, 420, m), "{m}");
+        }
+        for m in [420, 600, 1319] {
+            assert!(!in_window(1320, 420, m), "{m}");
+        }
+        // start == end: no quiet hours at all.
+        assert!(!(0..1440).any(|m| in_window(600, 600, m)));
+
+        assert_eq!((parse_hhmm("00:00"), parse_hhmm("07:05"), parse_hhmm("23:59")), (Some(0), Some(425), Some(1439)));
+        for bad in ["24:00", "7:00", "07:60", "0700", "ab:cd", "", "07:00:00", "-1:00"] {
+            assert_eq!(parse_hhmm(bad), None, "{bad}");
+        }
+
+        // 22:00–07:00 New York: the same UTC instant is in or out depending on daylight saving time.
+        let ny = QuietHours { enabled: true, time_zone: "America/New_York".into(), ..QuietHours::default() };
+        assert!(ny.active_at(utc("2026-01-15T03:30:00Z")), "22:30 EST");
+        assert!(!ny.active_at(utc("2026-01-15T02:30:00Z")), "21:30 EST");
+        assert!(ny.active_at(utc("2026-07-15T02:30:00Z")), "22:30 EDT");
+        assert!(ny.active_at(utc("2026-07-15T10:59:00Z")), "06:59 EDT");
+        assert!(!ny.active_at(utc("2026-07-15T11:00:00Z")), "07:00 EDT ends it");
+        assert!(ny.active_at(utc("2026-01-15T11:30:00Z")), "06:30 EST");
+        // The night the clocks go forward (2026-03-08, 02:00 → 03:00): still quiet through the jump, out at 07:00 EDT.
+        assert!(ny.active_at(utc("2026-03-08T07:30:00Z")), "03:30 EDT");
+        assert!(!ny.active_at(utc("2026-03-08T11:00:00Z")), "07:00 EDT");
+        // Off, or start == end: never quiet.
+        assert!(!QuietHours { enabled: false, ..ny.clone() }.active_at(utc("2026-01-15T03:30:00Z")));
+        assert!(!QuietHours { start_min: 600, end_min: 600, ..ny.clone() }.active_at(utc("2026-01-15T15:00:00Z")));
+        // Default: off, 22:00–07:00 UTC, calls ring.
+        assert_eq!(QuietHours::default().json(), json!({ "enabled": false, "start": "22:00", "end": "07:00", "timeZone": "UTC", "allowCalls": true }));
+    }
+
+    #[test]
+    fn quiet_hours_put_validation() {
+        let mut q = QuietHours::default();
+        q.apply(json!({ "enabled": true, "start": "23:15", "timeZone": "Europe/London" }).as_object().unwrap()).unwrap();
+        assert_eq!(q.json(), json!({ "enabled": true, "start": "23:15", "end": "07:00", "timeZone": "Europe/London", "allowCalls": true }));
+        q.apply(json!({ "allowCalls": false }).as_object().unwrap()).unwrap();
+        assert!(!q.allow_calls && q.enabled, "a subset leaves the rest alone");
+        for bad in [json!({}), json!({ "start": "25:00" }), json!({ "timeZone": "Mars/Base" }), json!({ "enabled": "yes" }), json!({ "end": 420 }), json!({ "quiet": true })] {
+            let before = q.clone();
+            assert_eq!(q.clone().apply(bad.as_object().unwrap()), Err("bad_value"), "{bad}");
+            assert_eq!(q, before);
+        }
+    }
+
+    #[test]
+    fn summary_copy_counts_by_kind() {
+        let item = |e: &str, tag: &str, sev: Option<&str>| (e.to_string(), tag.to_string(), sev.map(str::to_string));
+        let items = vec![
+            item("message.received", "msg-t1", None),
+            item("message.received", "msg-t1", None),
+            item("message.received", "dm-2", None),
+            item("approval.requested", "approval-a1", None),
+            item("thread.needs_user", "needs-t1", None),
+            item("thread.needs_user", "needs-t2", None),
+            item("thread.needs_user", "needs-t2", None),
+        ];
+        assert_eq!(summary_body(&items).unwrap(), "3 messages, 1 approval and 2 threads need you");
+        // Critical problems first; a re-sent problem counts once.
+        let mut more = items.clone();
+        more.push(item("attention.opened", "attention-x", Some("critical")));
+        more.push(item("attention.opened", "attention-x", Some("critical")));
+        more.push(item("attention.opened", "attention-y", Some("warn")));
+        more.push(item("call.ended", "call-r1", None));
+        more.push(item("usage.threshold", "usage-plan-2026-10", None));
+        assert_eq!(summary_body(&more).unwrap(), "1 urgent problem, 3 messages, 1 missed call, 1 approval, 2 threads, 1 problem and 1 update need you");
+        assert_eq!(summary_body(&[item("message.received", "dm-1", None)]).unwrap(), "1 message needs you");
+        assert_eq!(summary_body(&[item("call.ended", "call-1", None), item("call.ended", "call-2", None)]).unwrap(), "2 missed calls need you");
+        assert_eq!(summary_body(&[]), None);
+        let m = summary_message("1 message needs you".into());
+        assert_eq!((m.title.as_str(), m.url.as_str(), m.tag.as_str()), ("While you were away", "/", "quiet-summary"));
+    }
+
+    #[tokio::test]
+    async fn quiet_hours_hold_then_one_summary() {
+        let db = test_pool().await;
+        schema(&db).await;
+        let vapid = vapid();
+        let (key, public, auth) = device(&db, "u1").await;
+        let rec = Recorder::default();
+        // Quiet all day except 23:59 UTC: a window that is on now in any test run but one minute.
+        let mut q = QuietHours { enabled: true, start_min: 0, end_min: 1439, ..QuietHours::default() };
+        set_quiet_hours(&db, "u1", &q).await.unwrap();
+        if !q.active_at(Utc::now()) {
+            return;
+        }
+        let a = emit(&db, "u1", "approval.requested", json!({ "approval_id": "ap1" })).await;
+        let m1 = emit(&db, "u1", "message.received", json!({ "thread_id": "t1", "bot_id": "b1", "text": "hi" })).await;
+        let m2 = emit(&db, "u1", "message.received", json!({ "thread_id": "t1", "bot_id": "b1", "text": "again" })).await;
+        sink_once(&db, &rec, &vapid).await.unwrap();
+        for e in [&a, &m1, &m2] {
+            assert_eq!(outcome(&db, e).await, "held");
+        }
+        assert_eq!(rec.sent.lock().unwrap().len(), 0, "nothing sent in quiet hours");
+        // Still quiet: no summary.
+        assert_eq!(summarize_once(&db, &rec, &vapid).await.unwrap(), 0);
+        // Quiet hours over: one summary, then nothing more.
+        q.enabled = false;
+        set_quiet_hours(&db, "u1", &q).await.unwrap();
+        assert_eq!(summarize_once(&db, &rec, &vapid).await.unwrap(), 1);
+        assert_eq!(summarize_once(&db, &rec, &vapid).await.unwrap(), 0, "claimed once");
+        let sent = rec.sent.lock().unwrap();
+        assert_eq!(sent.len(), 1);
+        let payload: Value = serde_json::from_slice(&decrypt(&sent[0].2, &key, &public, &auth)).unwrap();
+        assert_eq!((payload["title"].as_str(), payload["body"].as_str(), payload["tag"].as_str(), payload["url"].as_str()), (Some("While you were away"), Some("2 messages and 1 approval need you"), Some("quiet-summary"), Some("/")));
     }
 
     #[tokio::test]

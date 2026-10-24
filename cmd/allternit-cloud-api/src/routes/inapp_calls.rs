@@ -268,6 +268,10 @@ async fn notify_message(db: &PgPool, me: &str, thread_id: &str, text: &str) {
 
 /// The "Incoming call" push for a ring, the same tag as its later "Missed call" so one replaces the other.
 async fn notify_ring(db: &PgPool, call: &CallRow) {
+    // Quiet hours with calls off: the ring stays silent; the missed call after it is held for the summary.
+    if super::notifications::ring_held(db, &call.callee_user_id).await {
+        return;
+    }
     let label = caller_label(db, call).await;
     web_push::spawn_notify(
         db.clone(),

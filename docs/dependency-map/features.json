@@ -888,6 +888,59 @@
       ]
     },
     {
+      "id": "feature:allternit-bots-app",
+      "label": "Allternit Bots (bots-only app)",
+      "product": "product:allternit-mobile-pwa",
+      "status": "building",
+      "description": "The bots-only build of the workspace: bots.allternit.com, /bots on ai.allternit.com and Desktop, m.allternit.com/bots on the phone. Opens straight into Bot Mode with no mode wheel, its own Settings list (Profile, Account, Notifications, Memory, Response style, Voice, Connections, Connectors, Agent rules, Usage, Billing, Privacy, General, About), installs as \"Allternit Bots\" via its own manifest, and an Open full Allternit row goes back.",
+      "touches": [
+        "allternit-ai/src/lib",
+        "allternit-ai/src/providers",
+        "allternit-ai/src/shell",
+        "allternit-ai/src/fabric-session",
+        "allternit-ai/src/views",
+        "surface:pwa",
+        "surface:ai",
+        "surface:desktop"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-24",
+          "note": "Same build and account as full Allternit, not a second app: the bots app is decided once per page load from the host or /bots path, so deep links inside it never drop the person into the full app."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/allternit-bots-app.mdx"
+      ]
+    },
+    {
+      "id": "feature:notification-quiet-hours",
+      "label": "Notification quiet hours",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "Per-account quiet hours for push (GET/PUT /api/v1/notifications/quiet-hours: enabled, start/end HH:MM, IANA time zone, allowCalls). In the window the push sink and the direct pushes (in-app messages, channel relays, missed calls) hold pushes in notification_held; rings still ring when allowCalls is on. When the window ends the sink sends one \"While you were away\" summary counted by kind. Settings, Notifications, Quiet hours on every surface.",
+      "touches": [
+        "allternit/cmd/allternit-cloud-api",
+        "allternit-ai/src/views",
+        "allternit-ai/src/lib",
+        "surface:ai",
+        "surface:pwa",
+        "surface:desktop"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-24",
+          "note": "Quiet hours are server-side and per account, not per device: the push sink holds and summarizes, so every device and both apps follow one setting. Critical problems are held too and named first in the summary; calls ring unless the person turns Let calls ring off."
+        }
+      ],
+      "evidence": [
+        "allternit/cmd/allternit-cloud-api/src/routes/notifications.rs",
+        "allternit/cmd/allternit-cloud-api/migrations_pg/102_notification_quiet_hours.sql",
+        "allternit/surfaces/docs/guides/notifications.mdx",
+        "allternit/surfaces/docs/api/notifications.mdx"
+      ]
+    },
+    {
       "id": "feature:platform-api",
       "label": "Platform API v1",
       "product": "product:platform-api",
