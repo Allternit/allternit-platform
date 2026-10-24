@@ -183,7 +183,8 @@ export const nodeLinkFs: LinkFs = {
  * staging dir, or a runtime package (<userData>/runtime/versions/<v>/bin).
  */
 function isDesktopBundled(target: string): boolean {
-  return /Allternit Desktop\.app\/|allternit-desktop\/resources\/bin\/|@allternit\/desktop\/runtime\/versions\/[^/]+\/bin\//.test(target);
+  // Linux packages install to /opt/Allternit Desktop/ (older ones to allternit-desktop/).
+  return /Allternit Desktop\.app\/|(?:Allternit Desktop|allternit-desktop)\/resources\/bin\/|@allternit\/desktop\/runtime\/versions\/[^/]+\/bin\//.test(target);
 }
 
 export type GizziLinkResult =

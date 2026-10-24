@@ -136,6 +136,16 @@ describe('gizzi on PATH', () => {
     expect(readlinkSync(join(brewBin, 'gizzi'))).toBe('/opt/homebrew/bin/gizzi');
   });
 
+  it('refreshes a link into the Linux package (/opt/Allternit Desktop) to the runtime copy', () => {
+    const home = tmp('allternit-home-');
+    const bin = join(home, '.local', 'bin');
+    mkdirSync(bin, { recursive: true });
+    symlinkSync('/opt/Allternit Desktop/resources/bin/gizzi-code', join(bin, 'gizzi'));
+    const runtime = join(home, '.config', '@allternit', 'desktop', 'runtime', 'versions', 'r1', 'bin', 'gizzi-code');
+    expect(installGizziLink(runtime, home).action).toBe('relinked');
+    expect(readlinkSync(join(bin, 'gizzi'))).toBe(runtime);
+  });
+
   it('follows a runtime package update from the bundle to the runtime copy and back', () => {
     const home = tmp('allternit-home-');
     const bundled = '/Applications/Allternit Desktop.app/Contents/Resources/bin/gizzi-code';
