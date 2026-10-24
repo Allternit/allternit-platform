@@ -2186,6 +2186,27 @@
       ]
     },
     {
+      "id": "feature:agent-steps",
+      "label": "Agent steps in replies",
+      "product": "product:ai-allternit",
+      "status": "live",
+      "description": "The working line above a reply (what the agent is doing now, with a timer), its summary when done, and the steps in order (line style in Chat, Code and bot threads; a step card in Cowork). Steps that reach a connected app show its logo and first finds. The agent's task list (TaskCreate/TaskUpdate, TodoWrite, gizzi todowrite) shows as one checklist card ('3 steps left', ticks, a spinning ring and shimmer on the running step) folded across the message's step groups and shared with the Cowork session panel's Progress. A web search step shows its sites' icons and result count, and opens to titled page links instead of raw output. Same on Desktop, the ai.allternit.com phone layout and the m.allternit.com PWA.",
+      "touches": [
+        "allternit-ai/src/components/ai-elements",
+        "allternit-ai/src/views/cowork",
+        "allternit-ai/src/components/bot-chat"
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/agent-steps.mdx"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-24",
+          "note": "Eoj: take BoardUI's Agent Progress / Task List / Web Search look, rebuilt in our tokens (no Pro purchase, no copied code)."
+        }
+      ]
+    },
+    {
       "id": "feature:arc-ui-components",
       "label": "Arc UI components",
       "product": "product:ai-allternit",
