@@ -1,0 +1,143 @@
+---
+title: 'Charts in MDX artifacts'
+description: 'The chart components an agent can put in an .mdx artifact: tables, bars, timelines, and the Sankey, Radar and Combo charts.'
+---
+
+When an agent writes a Markdown file that holds data, it can save it as `.mdx` and draw charts inside it. The charts follow your light or graphite dark theme and work on Desktop, ai.allternit.com (including the phone layout) and the m.allternit.com app.
+
+Every chart also carries a hidden table of its numbers for screen readers, and turns off its draw-in animation when your system asks for reduced motion.
+
+## How agents add a chart
+
+- Charts work only in `.mdx` files. A file that uses one must be saved as `.mdx`, not `.md`.
+- Components need no import. The agent writes the tag with its props.
+- Gizzi Code gives every model an `mdx_graph` tool. The model passes a chart type and data, and the tool checks the data shape and returns the snippet to paste into the file. It covers `bars`, `rank`, `meter`, `table`, `timeline`, `spark`, `sankey`, `radar` and `combo`. Other components are written by hand from the list below.
+- Every chart takes a `title`. Most also take `palette` (`mono`, `duo` or `multi`; `mono` by default) and `corner`, a short label on the frame.
+
+## All charts
+
+| Component | What it shows |
+| --- | --- |
+| `GraphTable` | A framed data table with an optional totals row. |
+| `GraphFlow` | A process: steps on a dashed arrow. |
+| `GraphBars` | Two bar groups side by side, for a before and after. |
+| `GraphRank` | A labelled list with a bar and a number per item. |
+| `GraphCells` | A grid of filled and empty cells. |
+| `GraphMeter` | One progress bar. |
+| `GraphSpark` | A small sparkline. |
+| `GraphTree` | A nested tree with branch lines. |
+| `GraphTimeline` | Dates in a vertical list, each done, now or next. |
+| `GraphStack` | One stacked bar for parts of a whole. |
+| `GraphFunnel` | Steps that narrow as values drop, with each step's share of the first. |
+| `GraphGantt` | A schedule of tasks over time. |
+| `GraphPlot` | A line or area chart (`variant="line"` or `variant="area"`). |
+| `GraphWaffle` | A 100-cell grid for a percentage. |
+| `GraphDiff` | Added, removed and unchanged items. |
+| `GraphInvoice` | An invoice or quote table. |
+| `GraphCompare` | A feature matrix. |
+| `GraphStat` | A row of large numbers with labels. |
+| `GraphKpi` | One large number with a sparkline. |
+| `GraphSpec` | Aligned label and value rows. |
+| `GraphActivity` | A day grid like a GitHub contributions chart. |
+| `GraphHeatmap` | A labelled 2D intensity grid. |
+| `GraphCalendar` | A one-month calendar grid. |
+| `GraphWaterfall` | Floating bars for a running total. |
+| `GraphUptime` | One mark per day for uptime. |
+| `GraphSlope` | Two figures with an arrow between them. |
+| `GraphBullet` | Actual against target on a shared track. |
+| `GraphTimer` | An elapsed time. |
+| `GraphCountdown` | A countdown to a date. |
+| `GraphSankey` | Flows between groups; each ribbon is as wide as its amount. See below. |
+| `GraphRadar` | Series across three or more measures on a web. See below. |
+| `GraphCombo` | Bars and a line over the same periods, each on its own axis. See below. |
+
+## Flow (Sankey)
+
+Shows how amounts split and move between groups, such as where tracked hours went. Each ribbon is as wide as the amount it carries. Point at, tap, or tab to a group or ribbon to show only its flows; tap again or press Escape to show everything. On a phone the names and amounts move to a list under the chart, and tapping a row does the same.
+
+| Prop | Meaning |
+| --- | --- |
+| `links` | Required. A list of `{ source, target, value }`. |
+| `nodes` | Optional. A list of `{ id, label?, display? }` to rename a group or show a formatted total. |
+| `unit` | Optional. Added after values, for example `h`. |
+| `focus` | Optional. A group id shown on its own when the chart opens. |
+| `fromLabel`, `toLabel` | Optional. Captions under the left and right sides. |
+| `height` | Optional. Height in pixels. |
+
+Links that would loop back are dropped, and zero or invalid values are skipped.
+
+```mdx
+<GraphSankey
+  title="Tracked time"
+  unit="h"
+  links={[
+    { source: "Focus", target: "Writing", value: 14 },
+    { source: "Focus", target: "Browsing", value: 10 },
+    { source: "Meetings", target: "Video calls", value: 12 },
+    { source: "Admin", target: "Email", value: 7 },
+  ]}
+/>
+```
+
+## Radar
+
+Compares a few series across three or more measures, such as visitors per month or a skill profile. Point at or tab to a series name in the key to bring that series forward.
+
+| Prop | Meaning |
+| --- | --- |
+| `axes` | Required. Three or more measure names. |
+| `series` | Required. A list of `{ label, values }`, one value per axis in axis order. |
+| `max` | Optional. Scale maximum. Defaults to the largest value. |
+| `rings` | Optional. Number of web rings. Defaults to 4. |
+| `unit` | Optional. Added after values. |
+
+```mdx
+<GraphRadar
+  title="Visitors by month"
+  axes={["Jan", "Feb", "Mar", "Apr", "May", "Jun"]}
+  series={[{ label: "Visitors", values: [186, 305, 237, 273, 209, 214] }]}
+/>
+```
+
+## Bars and a line (Combo)
+
+Puts a count (bars, left axis) and a rate (line, right axis) over the same periods, such as sessions and conversion. Point at or tab to a period to read both numbers in the key below.
+
+| Prop | Meaning |
+| --- | --- |
+| `labels` | Required. The periods along the bottom. |
+| `bars` | Required. `{ label, values, unit? }` on the left axis. |
+| `line` | Required. `{ label, values, unit? }` on the right axis. |
+| `height` | Optional. Height in pixels. Defaults to 200. |
+
+```mdx
+<GraphCombo
+  title="Sessions and conversion"
+  labels={["Jan", "Feb", "Mar", "Apr", "May", "Jun"]}
+  bars={{ label: "Sessions", values: [4100, 4400, 5200, 5000, 6100, 6800] }}
+  line={{ label: "Conversion", values: [2.4, 2.6, 3.1, 2.9, 3.4, 3.8], unit: "%" }}
+/>
+```
+
+## For developers
+
+Source: `allternit-ai/src/`.
+
+| File | Role |
+| --- | --- |
+| `components/graph-*.tsx` | One file per chart. |
+| `components/mdx/MdxRenderer.tsx` | Registers every chart for `.mdx` artifacts. |
+| `components/graph-sankey.tsx` | Sankey: measured-width SVG, pill nodes, gradient ribbons, isolation (hover, then focus, then pinned, then the `focus` prop), phone list, screen-reader table. |
+| `lib/graph-sankey-layout.ts` | Pure layout: cycle guard (`acyclicLinks`), columns by longest path with end groups on the right (`assignColumns`), one value-to-pixel scale for all columns, barycentre ordering, ribbon offsets and curves. Tests in `graph-sankey-layout.test.ts`. |
+| `components/graph-radar.tsx` | Radar: dotted web in `--graph-frame`, series shapes, key buttons that isolate a series, screen-reader table. |
+| `components/graph-combo.tsx` | Combo: rounded dual axes, bars that grow from the baseline, a line that draws in, focusable periods, screen-reader table. |
+| `lib/use-graph-width.ts` | `useGraphWidth`: a ResizeObserver width so SVG charts lay out in real pixels and text stays readable on phones. |
+| `lib/graph-motion.ts` | `seriesColor(palette, index)`: a CSS variable colour for SVG fills and strokes, on the same ladder as `seriesClass`. |
+| `public/demos/mdx-graphs-example.mdx` | Examples, including the three charts above. |
+
+The agent side lives in the platform repo: `cmd/gizzi-code/src/runtime/session/prompt/mdx-graphs.txt` (the component list in the system prompt) and `cmd/gizzi-code/src/runtime/tools/builtins/mdx-graph.ts` (the `mdx_graph` tool).
+
+## Related
+
+- [Artifact tools](/tools/artifact-tools)
+- [Artifacts](/guides/artifacts)

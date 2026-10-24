@@ -43,6 +43,9 @@ Import is automatic — just use the JSX tag in the `.mdx` file.
 - `<GraphBullet />` — actual vs target on a shared track.
 - `<GraphTimer />` — elapsed time display.
 - `<GraphCountdown />` — countdown to a date.
+- `<GraphSankey />` — flows between groups; ribbon width = value (links: source, target, value; optional unit, nodes, focus, fromLabel, toLabel).
+- `<GraphRadar />` — one or more series across 3+ axes on a spider web (axes, series: label + values; optional max, rings, unit).
+- `<GraphCombo />` — bars and a line over the same periods, each on its own axis (labels, bars, line; each series can carry a unit).
 
 ## Example
 

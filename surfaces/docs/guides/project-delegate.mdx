@@ -1,6 +1,6 @@
 ---
 title: Delegate tasks to a project's bots
-description: Keep a project's to-do list, hand each task to a bot by dragging or with Assign to, or let Auto give tasks to whoever is free first.
+description: Keep a project's to-do list, see it as a board of To do, Working, Needs you and Done, hand tasks to bots by dragging or with Assign to, or let Auto give tasks to whoever is free first.
 ---
 
 **Delegate** is a project's to-do list that you hand to its bots. Tasks wait unassigned until you give one to a bot. That task then becomes a [project thread](/guides/bot-threads) for that bot and runs like any other project thread: it starts, reports back, and moves to review.
@@ -11,7 +11,26 @@ Delegate is in every project: the bot project page and Projects-tab workspaces (
 
 - **Bot project page:** choose **Delegate** in the pane's view menu, or **Open** on the Delegate card.
 - **Projects tab:** choose **Delegate** in the header, or in the pane's view menu.
-- **Phone (ai.allternit.com and the PWA):** the same menu opens Delegate full screen. The view shows one column, and you assign with **Assign to…** instead of dragging.
+- **Phone (ai.allternit.com and the PWA):** the same menu opens Delegate full screen. A switch at the top picks one column at a time (To do, Working, Needs you, Done), and you assign with **Assign to…** instead of dragging.
+
+## The board
+
+Delegate shows your project's bot work in four columns. Each column header shows how many cards it holds.
+
+- **To do:** tasks no bot has yet, and tasks a bot has but hasn't started (marked **Next in line**). **Add a task** and the estimate sit at the top.
+- **Working:** the bot is on it.
+- **Needs you:** the bot stopped for you. The thread is blocked, needs you, is paused, or is ready for review.
+- **Done:** the latest 20 finished or failed task threads. Older ones stay in Threads.
+
+Each card shows the task, a small status mark, your time estimate when you gave one, and the avatar of the bot that has it. In a narrow pane the columns scroll sideways. An empty column says **Nothing here**. When every task is handed out, To do says **Everything is handed out**.
+
+Your bots are listed under the board, with each bot's cost per task and whether it is free or busy. Drag a To do task onto a bot to hand it out, or use **Assign to…**.
+
+To finish a task that is ready for review, drag its card onto **Done**, or open it and choose **Mark done**. This is the same as **Resolve** on the thread. Other cards can't be dragged between columns: a bot moves them as it works.
+
+### Card details
+
+Click a card to see its details in the pane: the description, status, the bot that has it and its cost per task, your estimate, and the thread's latest line and summary when it has them. **Open thread** opens the thread it runs in. For a task no bot has yet, assign or remove it here. **Board** (or Esc) goes back.
 
 ## Add and hand out tasks
 
@@ -21,13 +40,13 @@ Delegate is in every project: the bot project page and Projects-tab workspaces (
    - Anywhere, choose **Assign to…** on the card and pick a bot. This works with the keyboard and screen readers too.
 3. While you drag over a bot, its row shows what the task adds. This is the bot's cost per task, the extra time and the finish time, when Allternit knows them.
 
-Remove a task you no longer need with the trash button. Once a task is handed out it is a thread: open it from the bot's lane, and resolve or reopen it from Threads.
+Remove a task you no longer need with the trash button. Once a task is handed out it is a thread: click its card and choose **Open thread**, and resolve or reopen it from Threads.
 
 ## How a bot works through its tasks
 
-Each bot works its delegated tasks **one at a time**. A task given to a bot that has nothing running in the project starts at once. Otherwise the task waits in the bot's lane and starts when the bot's running thread stops. A thread stops when it moves to review, is done, is blocked, needs you, or is paused. A blocked thread doesn't hold up the bot's next task, and it doesn't count toward the bot's busy time. It stays in the bot's lane in a warning colour until you answer it.
+Each bot works its delegated tasks **one at a time**. A task given to a bot that has nothing running in the project starts at once. Otherwise the task waits in **To do** (marked **Next in line**) and starts when the bot's running thread stops. A thread stops when it moves to review, is done, is blocked, needs you, or is paused. A blocked thread doesn't hold up the bot's next task, and it doesn't count toward the bot's busy time. It stays in **Needs you** until you answer it.
 
-A bot's lane shows what it runs now (with a pulsing dot) and what waits behind it. Tap any item to open its thread.
+What a bot runs now is in **Working**; what waits behind it is in **To do**, marked **Next in line**. A blocked thread sits in **Needs you** until you answer it.
 
 The coordinator's own plans are separate. Threads that Al plans with dependencies still wait for those dependencies. Delegate only orders the tasks you handed out.
 
@@ -39,7 +58,7 @@ Turn on **Auto** to hand every unassigned task out at once, and every new task a
 
 - **Time** comes from your own estimate on each task. "Busy until" appears only when every item in a bot's lane has an estimate. For a running item, it counts the time already spent. Otherwise the bot shows **Busy** and how many tasks are in line.
 - **Cost per task** is the average real cost of the bot's last 20 finished task threads, from the usage ledger. A bot with no finished tasks shows **No cost history yet**. A bot that runs on your own vendor subscription averages $0.00, because Allternit meters nothing for it.
-- **In lanes** at the top adds each bot's cost per task over the tasks in its lane.
+- **In lanes** at the top of To do adds each bot's cost per task over its open tasks.
 
 None of these numbers is a quote or a promise. Check the thread's own usage for what a task actually cost.
 
@@ -49,7 +68,7 @@ These are authenticated private data-plane routes. They are not a promise of pub
 
 | Method | Runtime path | Purpose |
 | --- | --- | --- |
-| GET | `/api/v1/projects/:project_id/delegate` | The board: `auto`, unassigned `tasks`, each bot's lane, cost and busy minutes. |
+| GET | `/api/v1/projects/:project_id/delegate` | The board: `auto`, unassigned `tasks`, each bot's lane (open task threads only: planning, working, queued, blocked, needs you, paused), cost and busy minutes. |
 | POST | `/api/v1/projects/:project_id/delegate/tasks` | Add a task: `title`, optional `notes` and `estimateMin` (1–1440). With Auto on, it is handed out at once. |
 | DELETE | `/api/v1/projects/:project_id/delegate/tasks/:task_id` | Remove an unassigned task. |
 | POST | `/api/v1/projects/:project_id/delegate/tasks/:task_id/assign` | Hand a task to a bot on the project's team: `botId`. Returns the new `thread`. |
@@ -58,5 +77,15 @@ These are authenticated private data-plane routes. They are not a promise of pub
 Errors come back as `{ "error": "…" }` written for people. They cover a task that is already handed out (409), a bot not on the team (400), a project with no bots (409) and a thread that could not start (502).
 
 When the API restarts, any bot that was freed by the restart starts its next waiting task.
+
+## Code
+
+| File | Role |
+| --- | --- |
+| `allternit-ai/src/components/threads/ProjectDelegate.tsx` | The Delegate pane: board columns (`boardCards`), cards, card details, Bots list, drag to a bot (assign) and Ready for review to Done (`threadApi.resolve`), phone column switch. |
+| `allternit-ai/src/lib/bots/delegate.ts` | Delegate API client, labels, and `delegateColumn` / `DELEGATE_COLUMNS` (thread status to board column). |
+| `allternit-ai/src/lib/bots/threads.ts` | Thread store; the Needs you (review) and Done columns read the project's threads loaded with `includeResolved`. |
+| `allternit-ai/src/components/threads/__tests__/project-delegate.test.tsx` | Column mapping, card building, details, Mark done, phone column switch. |
+| `cmd/allternit-api/src/delegate_routes.rs` | Board API; lanes return open task threads only. |
 
 See [Projects and launch coordination](/guides/project-coordination) and [threads](/guides/bot-threads).

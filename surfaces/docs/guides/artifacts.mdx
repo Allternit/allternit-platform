@@ -65,6 +65,10 @@ the artifact pane as soon as the reply writes it. Click the card to open it
 again, or the arrow on its right to open the link in a new tab. Older replies
 don't open the pane on their own. On a phone the page opens as a sheet.
 
+### The chat's Artifacts pane
+
+The **Artifacts** pane beside a chat lists the session's artifacts, newest first. When a chat has generated images or videos, the pane shows them at the top as a two-column **Gallery**. Click one to open it. Other files are listed below the gallery. Generated pictures also show in the chat itself, with **Download**, **Open** and **Copy prompt**; see [Agent steps in replies](/guides/agent-steps#when-the-agent-makes-an-image-or-a-video).
+
 ## The artifact window
 
 An artifact opens in its own window beside the chat. On a phone it opens
@@ -315,6 +319,7 @@ say. See [Pages that act like apps](/guides/artifact-apps).
   plus one line for the picked Output. The model creates
   artifacts with `artifact_create` / `artifact_update`; the transcript renders
   each call as a card and saves `persisted:false` results under the same id.
+- The chat's Artifacts pane and its Gallery: `src/views/chat/ChatArtifactsPane.tsx` (a CSS-columns masonry of media tiles above the Files list, tiles drawn with `MediaPreview` from `GeneratedMediaCard.tsx`).
 - API, schema and sharing rules: `allternit/docs/design/artifacts-v2.md`.
 
 ## Related
