@@ -1,6 +1,6 @@
 ---
 title: 'Agent steps in replies'
-description: 'The working line above a reply, its summary, the task list checklist, web search sources, steps that reach your connected apps, their previews, and source chips in the answer.'
+description: 'The working line above a reply, its summary, the task list checklist, web search sources, generated images and videos, steps that reach your connected apps, their previews, and source chips in the answer.'
 ---
 
 While the assistant works, one line above the reply shows what it is doing now, for example "Searching Slack for messages since yesterday", with a timer. When it stops, the line becomes a summary of the work, for example "Ran 2 searches, read 3 sources". Click the line to see each step in order. Click a step to see its input and result.
@@ -37,6 +37,20 @@ A search whose result has no links still opens to its raw result.
 
 When the answer links to something in one of your apps, such as a Slack message, a GitHub commit, a Linear issue, a Gmail thread, a Notion page or a Google Drive file, the link shows as a small chip with the app's logo. You can see at a glance where each point came from. Clicking a chip asks before it opens the link, the same as any other link in a reply.
 
+## When the agent makes an image or a video
+
+While the agent is making an image or a video, the chat shows a frame the same shape as the picture you asked for. If you asked for a size, the frame matches it. If you didn't, it's square for an image and 16:9 for a video. Small squares pulse out from the middle of the frame. The foot of the frame says **Generating image** or **Rendering video**, with a timer showing how long it has been working. Under the frame you can see what the agent is doing right now.
+
+When the image or video is ready, it appears in the chat itself and comes into focus. It no longer shows as a file row. Under it are three buttons:
+
+- **Download** saves the image or video.
+- **Open** shows it in the artifact panel.
+- **Copy prompt** copies what you asked for, so you can reuse or change it. It only shows when the request had a prompt.
+
+You can also click an image to open it. A video plays in place with its own controls. The chat's **Artifacts** pane lists every generated picture in a gallery; see [The chat's Artifacts pane](/guides/artifacts#the-chats-artifacts-pane).
+
+If your device is set to reduce motion, the frame shows still squares and the image appears without the fade.
+
 ## For developers
 
 Source: `allternit-ai/src/components/ai-elements/`:
@@ -50,6 +64,12 @@ Source: `allternit-ai/src/components/ai-elements/`:
 | `process/web-results.ts` | `webResults(output)`: the pages a web search returned: Claude Code's `Links: [...]` text, result arrays, `{results}`, `{web:{results}}`, `{organic}`, content blocks. Deduped by URL. |
 | `process/StepCards.tsx` | `ChecklistCard` (the task list card), `SearchSources` (the opened search's page list) and `SourceStack` (site icons and count in the step row). |
 | `app-source-links.ts` | A rehype step that runs after Streamdown's own steps. It gives links to known app hosts the `app-source-link` class and a logo, so Streamdown's link check still applies. |
-| `UnifiedMessageRenderer.tsx` | Groups tool parts into process blocks, and passes each block the task list as the blocks above it left it (`checklistSeed`). Connector result views (`view-kit/ConnectorToolView`) show once the block is no longer streaming. |
+| `process/RenderingCard.tsx` | `RenderingFrame` image and video shapes: the frame with `BlockPulse` and a "Generating image · Ns" foot. `mediaAspect()` reads `width`/`height` or `aspect`/`aspect_ratio`. |
+| `GeneratedMediaCard.tsx` | The finished `media_generate` result in the transcript: the picture with a soft reveal and the Download, Open and Copy prompt buttons. It also exports `MediaPreview` (SVG as an image, HTML/canvas in a scaled `allow-scripts` sandbox, video from an authed blob shared per URL), `isMediaArtifact` and `mediaRatio`. |
+| `generated-media.css` | `.generated-media-reveal`: 320 ms fade plus blur-to-sharp. Off under `prefers-reduced-motion`. |
+| `artifact-from-part.ts`, `artifact.types.ts` | `media_generate` artifacts carry `media: { prompt, width, height }`. Video defaults to 1920×1080 and canvas images to 1024×1024. |
+| `UnifiedMessageRenderer.tsx` | Generated media renders as `GeneratedMediaCard`; other outputs keep `ArtifactCard`. Groups tool parts into process blocks, and passes each block the task list as the blocks above it left it (`checklistSeed`). Connector result views (`view-kit/ConnectorToolView`) show once the block is no longer streaming. |
+
+The block-square pulse is `src/components/brand/BlockPulse.tsx`. `drawBlockPulse` is the only drawing code (`TeamNetwork` uses it too). `BlockPulse` is a looping canvas that fills its container. Its colours come from `--ui-text-primary` and `--block-pulse-tint` (default `#26A0BE`). Reduced motion draws one still frame, and nothing animates while it is off-screen. The studio pane's rendering frame (`src/views/cowork/artifact-session/ArtifactStudioPane.tsx`) takes its aspect from `mediaAspect`, and the Create bot photo sprite (`PhotoSpritePanel.tsx`) uses the same pulse.
 
 Logos come from `ConnectorLogo` (bundled `public/app-icons`, then the logos catalog, then the site's favicon). Tool output is untrusted: preview rows hold plain strings, and only https links are kept.

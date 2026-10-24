@@ -74,9 +74,19 @@ To make the pet say something from a script, run `desktop-pet-hook.sh bubble "Te
 Terminal states fade on their own: running and thinking last two minutes unless the agent reports again, so a closed terminal never leaves the pet stuck. A terminal agent's reply doesn't add the mail badge, because there's nothing waiting in Allternit.
 </Note>
 
+## Create bot at a glance
+
+**Create bot** opens on the look. At the top you see your bot's avatar, live: it changes as soon as you pick a colour, a character or a photo. The colours sit right under it, and under those the four ways to make a look: **Build**, **Characters**, **Photo** and **Initials**. Click one to open it in place, or click **Edit look**. Click **Done** to fold it away.
+
+Next to the avatar (under it on a narrow window or a phone) are the fields: **Name — Role** (the only one you must fill in) and **What it does** (pick a role, or describe the job and click **Draft instructions from this**). **More options** still holds Instructions, Tools, Runs on and Model.
+
+At the very top, switch between **Build a new bot** and **Bring a vendor's bot**.
+
+On a phone the Create sheet is unchanged: avatar first, name, characters, colours, then More options.
+
 ## Avatar packs
 
-In **Create bot** or **Edit bot → Look**, choose a pack and a character. Some characters have animated sheets (idle, walk, run, jump, sad, sleep, action, and a signature move); the rest are still portraits.
+In **Create bot** (under **Characters**) or **Edit bot → Look**, choose a pack and a character. Some characters have animated sheets (idle, walk, run, jump, sad, sleep, action, and a signature move); the rest are still portraits.
 
 Vendor bots use their vendor's own mark or the avatar the vendor supplies. See [Vendor bots](/guides/vendor-bots).
 
@@ -93,7 +103,7 @@ Make an original 3D character for your bot in a few seconds, with no account,
 key, upload or AI. It's drawn by your browser on your device and is free.
 
 1. Open **Create bot** (or **Edit bot**) and go to **Look**.
-2. Choose **Build a character**. Drag the preview (or focus it and use the arrow
+2. Choose **Build a character** (**Build** in Create bot). Drag the preview (or focus it and use the arrow
    keys) to turn it.
 3. Work through **Shape → Color → Finish → Accessory**:
    - **Shape:** Round, Bean, Cloud, Star, Heart, Droplet, Cube bot, Cat, Bear,
@@ -123,7 +133,7 @@ and offers the sprite packs, which work everywhere.
 
 ## Make an avatar from a photo
 
-Open the bot's **Config → Edit bot → Look → From photo** (or choose **From photo** while creating a bot).
+Open the bot's **Config → Edit bot → Look → Your photo** (or choose **Photo** while creating a bot).
 
 1. Upload a PNG, JPEG, or WebP (up to 15 MB). On a phone you can pick from your camera roll.
 2. Choose a style: **Pixel sprite**, **Chibi**, or **Mascot**.
@@ -133,7 +143,7 @@ Open the bot's **Config → Edit bot → Look → From photo** (or choose **From
    - **ChatGPT subscription:** needs a running Sessions computer, accepted ChatGPT terms in **Settings → Connections**, and a ready ChatGPT account. If ChatGPT shows a security check, open ChatGPT on your Sessions computer, finish the check, then press **Check ChatGPT again**.
    - **OpenAI key:** uses your connected key and shows the estimated cost per try. Each approved try can be billed.
 5. Press **Make sprite**. This prepares an approval card and sends nothing yet. Only **Approve and make avatar** sends the photo. **Cancel** sends nothing.
-6. Keep the editor open while it runs, review the square portrait, then save the bot.
+6. Keep the editor open while it runs. Small squares pulse in the preview while your sprite is made, then the portrait fades in. Review it, then save the bot.
 
 The photo itself is not saved on the bot. The bot keeps the generated image, the style, and the time you confirmed permission. **Make another** needs a fresh approval. If a try fails, the editor shows what to do. It never switches to a different (paid) lane on its own.
 
@@ -163,6 +173,8 @@ Photo avatars are still portraits; animated sheets aren't made from photos.
 - **Speech bubbles:** `showBubble(text, ttlMs)` in `desktop-companion.ts` uses a separate click-through window (240×64, `focusable: false`, JavaScript off). It loads a `data:` page with escaped text and a `default-src 'none'` CSP, sits above the pet and follows it through drags, walks and resizes. It never shows while the pet is hidden or quick chat is open. The app's own transitions also produce bubbles: `waiting` with the main window away says "Needs your answer", and a finished reply that sets the badge says "Reply ready". Only the `app` source sets `unread`.
 - **gizzi:** `cmd/gizzi-code/src/cli/ui/ink-app/pet/desktopPetHook.ts`. `useDesktopPetHook` in `REPL.tsx` maps loading, running tools and pending approvals to signals. When a turn ends it sends `turn-done`, it refreshes ongoing states every minute, and it sends `idle` on exit. It reads the hook file beside `desktopPetSettingsPath()` and only ever posts to loopback.
 - **Packs:** the manifest is `src/views/agent-view/components/create-bot/avatar-packs.ts`; files live in `public/avatar-packs/<pack>/<sprite>.webp` (512×512 portrait) and `<sprite>-sheet.webp`: either a Petdex v2 sheet (1536×2288, 8 × 11) or a legacy sheet (1536×1872, 8 × 9), both of 192×208 frames, rows in the orders listed above, base anchored bottom-center. Petdex v2 sheets for the Gizzi YouTube cast are drawn in code by `scripts/avatar-cast/pet-sheet-*.cjs` and packed by `pet-sheet-pack.py`; see `scripts/avatar-cast/README.md`. The Gizzi Brawl sheets and the four new Dot Friends (2026-10-16) were generated as one image per state row through the ChatGPT image lane and packed into the same 8 × 11 layout; the walk and run rows are drawn side-on, and three fight rows per fighter (attack, guard, KO) feed the Gizzi Brawl game only, not the avatar sheet. The asset spec is `AVATAR_PACKS.md` beside the manifest.
+- **Create bot layout:** `src/views/agent-view/components/create-bot/steps/QuickCreateStep.tsx` is the one-screen Create bot: live `BotAvatar` preview, colour radiogroup, the Look sources inline, and **Edit look** expanding `AvatarEditor` in place; a grouped Name — Role / What it does card; it renders the wizard's More options. Two columns at 768 px and up with a fine pointer, one column otherwise and while the builder is open. `steps/look-tabs.ts` holds `LOOK_TABS`, `lookTabForMode`, `AvatarMode` and `LookTab` (moved out of `AvatarEditor`, still re-exported there). `AvatarEditor` takes `embedded`: the owner draws the preview and source tabs, and the editor shows only the open panel. `CreateBotWizard.tsx` draws the start switch as a segmented control (`radiogroup` "Start"), passes `avatar`, `lookBusy` and `moreOptions` to `QuickCreateStep`, and widens the card to `max-w-4xl`.
+- **Photo sprite progress:** `PhotoSpritePreview` (`steps/PhotoSpritePanel.tsx`) shows `BlockPulse` (`src/components/brand/BlockPulse.tsx`) while the sprite is made, then reveals it. It replaced the img-fx mosaic.
 - **Photo pipeline:** **Make sprite** only prepares the card. Approval is the only call site of `generatePhotoSprite` (`src/lib/bots/photo-sprite.ts`). The ChatGPT lane mints a single-use person proof for `avatar.photo_sprite` and submits an `image.generate` task with an image input. The OpenAI lane uses `generateImagesMediaPlane` with `referenceImage`. Output is center-cropped to a PNG of at most 256 px, keeping hard edges for pixel style. `buildAvatarConfigFromEditor` writes `{ type: "image", uri, likeness: { source: "photo", style, consentAttestedAt } }`.
 - **Included lane (cloud API):** `GET /api/v1/avatars/photo/allowance` returns `{ available, reason, plan, limit, used, remaining, resetsAt }`, where `reason` is `not_configured`, `no_subscription`, `paused` or `allowance_exhausted`. `POST /api/v1/avatars/photo` takes `{ photo, style, consentAttestedAt }` and returns `{ image, remaining, limit, resetsAt }` (`image` is a base64 PNG). Errors: 400 bad input or no consent, 402 `no_subscription`, 429 `allowance_exhausted`, 503 `not_configured` or `paused`, 422 `provider_rejected`, 502 `provider_error`. Both take a Clerk session or an API token with the `compute` scope. The code is `cmd/allternit-cloud-api/src/routes/photo_avatars.rs`. Monthly limits are `photo_avatars_per_month` on the plan list in `billing_subscriptions.rs`. The server builds the prompt from the style, downscales the photo to 1024 px or less in memory, and calls OpenAI images edit (`gpt-image-1`, 1024×1024, medium). The source photo is never stored or logged. Each use is reserved in `photo_avatar_usage` (migration `044`) under a lane-wide advisory lock. It's marked `used` only when an image comes back and `released` otherwise. A reservation that's never settled stops counting after 10 minutes.
 - **Included lane spend guard:** every reservation also checks the lane's total for the month across all users. Each image is counted at $0.042, against `ALLTERNIT_AVATAR_MONTHLY_BUDGET_USD` (default `4.00`). At the cap the lane reports `paused` instead of making a paid call. An OpenAI `insufficient_quota` or billing error releases the reservation and pauses the lane for 30 minutes. The key is `OPENAI_API_KEY` from the service's EnvironmentFile; `ALLTERNIT_AVATAR_OPENAI_API_KEY` overrides it. With no key, the allowance reports `not_configured` and the app hides the lane.

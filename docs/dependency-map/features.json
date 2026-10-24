@@ -744,7 +744,7 @@
       "label": "Project Delegate board",
       "product": "product:ai-allternit",
       "status": "live",
-      "description": "A project's to-do list handed to its bots: drag or Assign to, one task at a time per bot, Auto gives tasks to whoever is free first, cost and time shown as estimates.",
+      "description": "A project's to-do list handed to its bots, shown as a board of To do, Working, Needs you and Done (latest 20) with card details: drag a task onto a bot or use Assign to, drag Ready for review onto Done to resolve, one task at a time per bot, Auto gives tasks to whoever is free first, cost and time shown as estimates. On phones a switch shows one column at a time.",
       "touches": [
         "allternit-ai/src/components/threads",
         "allternit-ai/src/lib/bots",
@@ -756,10 +756,37 @@
         {
           "on": "2026-10-18",
           "note": "Delegate ships in Projects first (bot project page + Projects tab); Factory team tab and Bot Mode lanes come after. Each bot runs delegated tasks one at a time; cost is the real ledger average per finished task, never a quote."
+        },
+        {
+          "on": "2026-10-24",
+          "note": "Eoj: BoardUI look pass — the per-bot lanes became a light four-column board (To do, Working, Needs you, Done) built from thread status (delegateColumn), with a Bots list under it, card details in the pane, and Ready for review → Done as the only column drag (threadApi.resolve). Board API lanes return open task threads only (ai #807)."
         }
       ],
       "evidence": [
         "allternit/surfaces/docs/guides/project-delegate.mdx"
+      ]
+    },
+    {
+      "id": "feature:automation-tasks",
+      "label": "Automation Tasks and bot routines (List, Graph, Calendar)",
+      "product": "product:ai-allternit",
+      "status": "live",
+      "description": "Routines, goals, loops and agent heartbeats a bot runs on a schedule, managed from Automation Tasks, Cowork → Routines, a bot's Routines tab and a bot chat's Routines panel, each with a List / Graph / Calendar switch. The calendar is editable (click to add, drag to move); Month shows named, time-stamped chips tinted by type with +N more, and on Automation Tasks a click opens an anchored details card (schedule in words, next run, bot, last run, Open / Run now / Edit / Pause). Phones show dots and a day list. Failed runs alert and pause after 3 in a row.",
+      "touches": [
+        "allternit-ai/src/components/bots",
+        "allternit-ai/src/views/cowork",
+        "allternit-ai/src/views/bots",
+        "allternit/cmd/allternit-api/src/routine_*",
+        "allternit/cmd/allternit-api/src/automation_*"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-24",
+          "note": "Eoj: BoardUI look pass — calendar month chips with time and type tint (goals blue, routines green, loops purple, heartbeats amber), +N more day list, block names and times in Week/Day, and an anchored TaskDetailsCard on Automation Tasks with Run now / Edit / Pause; phones keep dots plus a day list and the same card as a sheet (ai #806)."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/bot-routines.mdx"
       ]
     },
     {
@@ -942,7 +969,8 @@
         "allternit-ai/src/components/gateway",
         "allternit/cmd/allternit-cloud-api/src/routes/photo_*",
         "allternit/sdk/look-packs",
-        "allternit/platform/packages/avatar-adapters"
+        "allternit/platform/packages/avatar-adapters",
+        "allternit-ai/src/views/agent-view"
       ],
       "decisions": [
         {
@@ -960,6 +988,10 @@
         {
           "on": "2026-10-22",
           "note": "2x avatar art (148 sheets + 199 portraits) lives on runtime.allternit.com (R2), not in git; listed in avatar-hires.json (Eoj: some avatars looked unpolished)."
+        },
+        {
+          "on": "2026-10-24",
+          "note": "Eoj: BoardUI look pass — Create bot is one screen: live avatar preview, colours and the four Look sources (Build, Characters, Photo, Initials) inline with Edit look expanding the editor in place, Name — Role / What it does beside it, a segmented Build a new bot / Bring a vendor's bot switch; phone sheet unchanged. The photo sprite shows BlockPulse while it is made instead of the img-fx mosaic (ai #808, #805)."
         }
       ],
       "evidence": [
@@ -1151,7 +1183,8 @@
         "allternit-ai/src/views/library",
         "allternit-ai/src/views/design",
         "allternit-ai/src/views/cowork",
-        "allternit-ai/src/components/artifact-share"
+        "allternit-ai/src/components/artifact-share",
+        "allternit-ai/src/views/chat"
       ],
       "decisions": [
         {
@@ -1193,6 +1226,10 @@
         {
           "on": "2026-10-10",
           "note": "Craft editors Phase 1: `pdf` joins the kind contract (default body format application/pdf) on both sides — cloud-api KINDS allow-list and the app registry. PDFs open in the workspace through the embedded PdfCraft WASM editor over the craft:1 postMessage bridge served from office.allternit.com/craft/pdf/ (see feature:craft-editors). .pdf uploads become pdf-kind records."
+        },
+        {
+          "on": "2026-10-24",
+          "note": "Eoj: BoardUI look pass — the chat's Artifacts pane shows generated images and videos at the top as a two-column Gallery (MediaPreview tiles) above the Files list (ai #805)."
         }
       ],
       "evidence": [
@@ -1317,6 +1354,30 @@
       "evidence": [
         "allternit/docs/design/artifacts-v2.md",
         "allternit/surfaces/docs/tools/artifact-tools.mdx"
+      ]
+    },
+    {
+      "id": "feature:mdx-charts",
+      "label": "Charts in MDX artifacts (graph-* family)",
+      "product": "product:ai-allternit",
+      "status": "live",
+      "description": "Markdown artifacts saved as .mdx can hold charts from the graph-* component family (tables, bars, rank, meter, timeline, plot, heatmap, funnel and more, plus Sankey, Radar and Combo), registered in MdxRenderer with no import. Charts follow the light and graphite themes, carry a screen-reader table and respect reduced motion. Agents learn the list from gizzi-code's mdx-graphs prompt and build snippets with the mdx_graph tool.",
+      "touches": [
+        "allternit-ai/src/components",
+        "allternit-ai/src/components/mdx",
+        "allternit-ai/src/lib",
+        "allternit/cmd/gizzi-code/src/runtime/tools",
+        "allternit/cmd/gizzi-code/src/runtime/session"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-24",
+          "note": "Eoj: BoardUI look pass — added GraphSankey (value-width ribbons, hover/focus/tap isolation, phone list), GraphRadar and GraphCombo (bars left axis, line right axis); Scatter left out for now. mdx_graph gained sankey, radar and combo cases and the agent prompt lists all three (ai #809)."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/tools/mdx-graphs.mdx",
+        "allternit/cmd/gizzi-code/src/runtime/tools/builtins/mdx-graph.ts"
       ]
     },
     {
@@ -2190,11 +2251,12 @@
       "label": "Agent steps in replies",
       "product": "product:ai-allternit",
       "status": "live",
-      "description": "The working line above a reply (what the agent is doing now, with a timer), its summary when done, and the steps in order (line style in Chat, Code and bot threads; a step card in Cowork). Steps that reach a connected app show its logo and first finds. The agent's task list (TaskCreate/TaskUpdate, TodoWrite, gizzi todowrite) shows as one checklist card ('3 steps left', ticks, a spinning ring and shimmer on the running step) folded across the message's step groups and shared with the Cowork session panel's Progress. A web search step shows its sites' icons and result count, and opens to titled page links instead of raw output. Same on Desktop, the ai.allternit.com phone layout and the m.allternit.com PWA.",
+      "description": "The working line above a reply (what the agent is doing now, with a timer), its summary when done, and the steps in order (line style in Chat, Code and bot threads; a step card in Cowork). Steps that reach a connected app show its logo and first finds. The agent's task list (TaskCreate/TaskUpdate, TodoWrite, gizzi todowrite) shows as one checklist card ('3 steps left', ticks, a spinning ring and shimmer on the running step) folded across the message's step groups and shared with the Cowork session panel's Progress. A web search step shows its sites' icons and result count, and opens to titled page links instead of raw output. Same on Desktop, the ai.allternit.com phone layout and the m.allternit.com PWA. While media_generate runs, the reply shows a frame shaped like the requested image or video (square or 16:9 by default) with the BlockPulse block-square pulse and a 'Generating image · Ns' foot; the finished picture shows in the chat itself (soft reveal, Download / Open / Copy prompt) instead of a file row.",
       "touches": [
         "allternit-ai/src/components/ai-elements",
         "allternit-ai/src/views/cowork",
-        "allternit-ai/src/components/bot-chat"
+        "allternit-ai/src/components/bot-chat",
+        "allternit-ai/src/components/brand"
       ],
       "evidence": [
         "allternit/surfaces/docs/guides/agent-steps.mdx"
@@ -2203,6 +2265,10 @@
         {
           "on": "2026-10-24",
           "note": "Eoj: take BoardUI's Agent Progress / Task List / Web Search look, rebuilt in our tokens (no Pro purchase, no copied code)."
+        },
+        {
+          "on": "2026-10-24",
+          "note": "Eoj: BoardUI look pass — generated images and videos: a result-shaped frame with the shared BlockPulse (one drawBlockPulse, also used by TeamNetwork and the photo sprite preview) replaces the pixel mosaic; finished media renders inline as GeneratedMediaCard with Download, Open and Copy prompt; reduced motion draws still squares and no fade (ai #805)."
         }
       ]
     },

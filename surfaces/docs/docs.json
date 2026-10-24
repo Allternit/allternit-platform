@@ -394,6 +394,7 @@
               "tools/overview",
               "tools/tool-belt",
               "tools/artifact-tools",
+              "tools/mdx-graphs",
               "tools/mcp",
               "tools/computer-use",
               "tools/computer-toolset",

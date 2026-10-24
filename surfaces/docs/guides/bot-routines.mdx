@@ -36,6 +36,13 @@ The switch at the top of the tab shows the same routines three ways. The tab rem
 
 **This bot / All bots** widens Graph and Calendar to every bot's routines. Each calendar entry then shows the bot's avatar, so you can read the whole team's schedule. Selecting a routine in the graph or in **Upcoming runs** opens its details: status, schedule, what it does, which bot runs it, a **Next 7 days** strip with the first run time of each day, and run history with each run's duration. **Run now** and **Pause / Resume** work there too.
 
+### Reading the calendar
+
+- **Month** shows up to three named entries per day, each with its time (for example "Morning briefing 9:00a"). Entries are tinted by type: goals blue, routines green, loops purple, heartbeats amber. When a day has more, click **+N more** to see the whole day as a list. Click the date number, or an empty part of the day, to open that day.
+- **Week** and **Day** show each task's name and time on its block. Long names are shortened to fit.
+- On **Automation Tasks**, clicking a task on the calendar, or in **Coming up**, opens a small card next to it with its type, the date and time of that run, its schedule in words (for example "Weekdays · 9:00 AM"), when it runs next, which bot runs it, and its last run (marked when the last run failed). Goals show their due date and progress. From the card you can **Open** the full details, **Run now**, **Edit**, or **Pause / Resume**. Press Esc or click outside to close it.
+- **On a phone** the month shows coloured dots and a count instead of names. Tap a day to list its tasks, then tap a task to see the same card.
+
 ### Edit routines on the calendar
 
 Day and Week are hour grids from 6 AM to 10 PM. The grid opens at 7 AM and shows a line at the current time.
@@ -48,7 +55,7 @@ Day and Week are hour grids from 6 AM to 10 PM. The grid opens at 7 AM and shows
   The editor shows the schedule in plain words and the cron it saves. **On / Paused** switches the routine off without deleting it. **Remove** deletes it.
 - **Move a routine:** drag it up or down. It moves in 15-minute steps and saves when you let go.
 
-A routine that runs every few hours is drawn as one striped band from its first to its last run, not as a separate entry per run, so a busy day stays readable. **Month** shows a dot per routine on each day it runs. Click a day to open it in Day view.
+A routine that runs every few hours is drawn as one striped band from its first to its last run, not as a separate entry per run, so a busy day stays readable. **Month** shows each day's routines by name and time, up to three per day, with **+N more** for the rest (see [Reading the calendar](#reading-the-calendar)). Click the date number to open that day in Day view.
 
 Changes save to the routine itself. The scheduler recalculates its next run from the new schedule at once. Routines the calendar can't place (at launch, once, manual, or a cron with specific months or uneven times) are listed under the calendar. Click one to open its details. The **New routine** form still offers every option, including raw cron expressions and goals.
 
@@ -66,10 +73,20 @@ Selecting a run on any of these screens opens the same details panel. The thread
 
 On Automation Tasks, the **Goals**, **Loops** and **Agent Heartbeats** tabs have the same **List / Graph / Calendar** switch as Routines. **All** shows every kind together.
 
-- **Calendar:** loops and heartbeats sit at their run times, and a loop that runs every few minutes or hours is one striped band. Goals sit in an **All day** row on their target date. **Coming up** lists the next runs and due dates. Click an empty time to add a task of that tab's kind at that time (on **Goals**, a goal due that day; on **All**, a routine). Click an entry to open it. Drag a loop or heartbeat to move it; the new time saves at once. Goals can't be dragged; change the target date in the goal. Tasks with no time (manual, or a schedule the calendar can't draw) and goals with no target date are listed under the calendar.
+- **Calendar:** loops and heartbeats sit at their run times, and a loop that runs every few minutes or hours is one striped band. Goals sit in an **All day** row on their target date. **Coming up** lists the next runs and due dates. Click an empty time to add a task of that tab's kind at that time (on **Goals**, a goal due that day; on **All**, a routine). Click an entry to open its card (see [Reading the calendar](#reading-the-calendar)). Drag a loop or heartbeat to move it; the new time saves at once. Goals can't be dragged; change the target date in the goal. Tasks with no time (manual, or a schedule the calendar can't draw) and goals with no target date are listed under the calendar.
 - **Graph:** each task runs from its trigger (kind, next run, **Run now**) to the bot that runs it to the goal it serves, with the goal's progress. On **Goals**, each goal shows the routines, loops and heartbeats that serve it, even though they are on other tabs.
 
 On a bot's own page, the Automation Tasks list under its Routines keeps its routines in **List**, because the bot's Routines tab above already has the switch. Its other tabs have the switch.
+
+### Code
+
+| File | Role |
+| --- | --- |
+| `allternit-ai/src/components/bots/schedule/RoutineScheduler.tsx` | Shared calendar. Month chips (`monthDayItems`, `splitMonthChips`, `MONTH_CHIPS`), the **+N more** day list (`DayList`, `DayPopover`), soft tints (`tintBg`, `tintText`, `itemColor` prop), anchored details via `renderDetails` (Radix Popover, phone sheet), dots and a day list when `compact` or below `sm`. |
+| `allternit-ai/src/components/bots/schedule/routine-rule.ts` | `fmtClock` ("9:00a") for chip and block times. |
+| `allternit-ai/src/views/cowork/AutomationSchedule.tsx` | Automation Tasks calendar: `TYPE_COLOR` tints by type, `TaskDetailsCard` (type, run time, `scheduleWords`, bot, last run, Open, Run now, Edit, Pause). **Coming up** and the rows under the calendar open the same card. |
+| `allternit-ai/src/views/cowork/AutomationTasksView.tsx` | Passes `onEdit`, `onToggleActive` and `runningId` to the calendar. |
+| `allternit-ai/src/components/bots/schedule/RoutineScheduler.test.ts`, `allternit-ai/src/views/cowork/AutomationSchedule.test.ts` | Unit tests for month chip order and split, time labels, `fmtClock`, `scheduleWords`. |
 
 ## When a routine fails
 

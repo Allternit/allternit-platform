@@ -3,7 +3,7 @@ import { Tool } from "@/runtime/tools/builtins/tool"
 
 const DESCRIPTION = `Generate an mdx-graphs JSX snippet for an .mdx file.
 
-Use this tool whenever you want to include a text/ASCII chart (bars, rank, meter, table, timeline, sparkline, etc.) in a Markdown file. The tool validates the data shape and returns a correctly-formatted JSX component that the Allternit platform can render.
+Use this tool whenever you want to include a text/ASCII chart (bars, rank, meter, table, timeline, sparkline, sankey flow, radar, bars + line combo, etc.) in a Markdown file. The tool validates the data shape and returns a correctly-formatted JSX component that the Allternit platform can render.
 
 After receiving the snippet, embed it in the .mdx file with the surrounding Markdown you need. Do NOT use mdx-graphs components in plain .md files — only .mdx.`
 
@@ -76,6 +76,57 @@ const sparkSchema = baseSchema.merge(z.object({
   caption: z.string().optional().describe("Optional caption shown below the sparkline."),
 }))
 
+const sankeyLinkSchema = z.object({
+  source: z.string().describe("Group the amount comes from."),
+  target: z.string().describe("Group the amount goes to."),
+  value: z.number().describe("Amount carried; sets the ribbon width."),
+})
+
+const sankeyNodeSchema = z.object({
+  id: z.string().describe("Group name as used in links."),
+  label: z.string().optional().describe("Optional display name; defaults to id."),
+  display: z.string().optional().describe("Optional formatted total to show (e.g. '24h')."),
+})
+
+const sankeySchema = baseSchema.merge(z.object({
+  graphType: z.literal("sankey"),
+  links: z.array(sankeyLinkSchema).describe("Flows between groups. Ribbon width = value."),
+  nodes: z.array(sankeyNodeSchema).optional().describe("Optional labels or display values for groups."),
+  unit: z.string().optional().describe("Optional unit appended to values (e.g. 'h', '$')."),
+  focus: z.string().optional().describe("Optional group id to isolate on first render."),
+  height: z.number().optional().describe("Optional chart height in pixels."),
+  fromLabel: z.string().optional().describe("Optional caption under the left side."),
+  toLabel: z.string().optional().describe("Optional caption under the right side."),
+}))
+
+const radarSeriesSchema = z.object({
+  label: z.string(),
+  values: z.array(z.number()).describe("One value per axis, in axis order."),
+})
+
+const radarSchema = baseSchema.merge(z.object({
+  graphType: z.literal("radar"),
+  axes: z.array(z.string()).min(3).describe("Three or more measures around the web."),
+  series: z.array(radarSeriesSchema).describe("One or more series to compare."),
+  max: z.number().optional().describe("Optional scale maximum; defaults to the largest value."),
+  rings: z.number().int().min(1).optional().describe("Number of web rings; defaults to 4."),
+  unit: z.string().optional().describe("Optional unit appended to values."),
+}))
+
+const comboSeriesSchema = z.object({
+  label: z.string(),
+  values: z.array(z.number()).describe("One value per period, in label order."),
+  unit: z.string().optional().describe("Optional unit for this series (e.g. '%')."),
+})
+
+const comboSchema = baseSchema.merge(z.object({
+  graphType: z.literal("combo"),
+  labels: z.array(z.string()).describe("Periods along the bottom axis."),
+  bars: comboSeriesSchema.describe("Bar series on the left axis (e.g. a count)."),
+  line: comboSeriesSchema.describe("Line series on the right axis (e.g. a rate)."),
+  height: z.number().optional().describe("Optional chart height in pixels; defaults to 200."),
+}))
+
 const parameters = z.discriminatedUnion("graphType", [
   barsSchema,
   rankSchema,
@@ -83,6 +134,9 @@ const parameters = z.discriminatedUnion("graphType", [
   tableSchema,
   timelineSchema,
   sparkSchema,
+  sankeySchema,
+  radarSchema,
+  comboSchema,
 ])
 
 function jsxString(value: string): string {
@@ -178,6 +232,52 @@ export const MdxGraphTool = Tool.define("mdx_graph", {
     title: params.title,
     data: params.data,
     caption: params.caption,
+    palette: params.palette,
+    corner: params.corner,
+  })}
+/>`
+        break
+      }
+      case "sankey": {
+        component = `<GraphSankey
+  ${props({
+    title: params.title,
+    links: params.links,
+    nodes: params.nodes,
+    unit: params.unit,
+    focus: params.focus,
+    height: params.height,
+    fromLabel: params.fromLabel,
+    toLabel: params.toLabel,
+    palette: params.palette,
+    corner: params.corner,
+  })}
+/>`
+        break
+      }
+      case "radar": {
+        component = `<GraphRadar
+  ${props({
+    title: params.title,
+    axes: params.axes,
+    series: params.series,
+    max: params.max,
+    rings: params.rings,
+    unit: params.unit,
+    palette: params.palette,
+    corner: params.corner,
+  })}
+/>`
+        break
+      }
+      case "combo": {
+        component = `<GraphCombo
+  ${props({
+    title: params.title,
+    labels: params.labels,
+    bars: params.bars,
+    line: params.line,
+    height: params.height,
     palette: params.palette,
     corner: params.corner,
   })}
