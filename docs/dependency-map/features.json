@@ -98,6 +98,29 @@
       ]
     },
     {
+      "id": "feature:write-in-my-style",
+      "label": "Write in my style",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "Drafts the user sends as themselves (emails, messages, posts, replies) are written in the user's own style. On by default per user (user_agent_preferences.write_in_my_style, V273). POST /agent-preferences/writing-style/learn builds a short plain-words profile without a model from pasted samples plus the user's last ~300 own messages (conversation_messages, project_messages, cowork_al_messages; code, links, logs and short turns skipped; excerpts redacted of emails, phone numbers and keys). allternit-api composes a 'Writing as the user' layer after 'About the user' in agent-chat system instructions and writes the same text into the managed STYLE.md for CLI brains. Claude Duet parity.",
+      "touches": [
+        "allternit/cmd/allternit-api/src/agent_*",
+        "allternit/cmd/allternit-api/src/v1_*",
+        "allternit-ai/src/views/settings"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-24",
+          "note": "Profile is built by heuristics, not a model call, so learning is free and runs on the data-plane node. Stored on the existing preferences row so the chat bridge reads it in the same query; PUT omitting the new fields keeps them, so the iOS client is unaffected. Settings UI ships in allternit-ai on all three surfaces."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/write-in-my-style.mdx",
+        "allternit/surfaces/docs/api/agent-preferences.mdx",
+        "allternit/cmd/allternit-api/migrations/V273__write_in_my_style.sql"
+      ]
+    },
+    {
       "id": "feature:bot-threads",
       "label": "Bot Mode threads and templates",
       "product": "product:digital-twin",

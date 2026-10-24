@@ -1,6 +1,6 @@
 ---
 title: 'Agent Preferences API'
-description: 'Manage per-user response-style preferences that propagate into agent workspaces.'
+description: 'Manage per-user response style, profile and Write in my style preferences that propagate into agent workspaces.'
 ---
 
 ## Overview
@@ -34,7 +34,16 @@ All requests must include a valid bearer token in the `Authorization` header.
 |-------|------|-------------|
 | `response_style` | string | One of `concise`, `balanced`, `detailed`, `custom`. |
 | `custom_instructions` | string | Free-form instructions appended to `STYLE.md`. |
+| `full_name` | string | Settings → Profile name (max 120 characters). |
+| `preferred_name` | string | What agents call the user (max 120 characters). |
+| `occupation` | string | The user's work (max 120 characters). |
+| `personal_preferences` | string | Free-form preferences (max 4000 characters). |
+| `write_in_my_style` | boolean | Write in my style. `true` by default, including when no row exists. |
+| `writing_style` | string | The user's writing-style profile (markdown, max 4000 characters). Empty until learned or written. |
+| `writing_style_learned_at` | string or null | RFC 3339 time the profile was last learned, or `null`. |
 | `updated_at` | string | ISO 8601 timestamp of the last update. |
+
+The profile fields are composed into agent chats as an "About the user" layer. When `write_in_my_style` is `true` and `writing_style` is not empty, a "Writing as the user" layer follows it. See [Write in my style](#write-in-my-style).
 
 ## Endpoints
 
@@ -44,7 +53,7 @@ All requests must include a valid bearer token in the `Authorization` header.
 GET /api/agent-preferences
 ```
 
-Returns the caller's preferences. If no row exists, returns the default style `balanced` with empty custom instructions.
+Returns the caller's preferences. If no row exists, returns the default style `balanced` with empty custom instructions, empty profile fields, `write_in_my_style` set to `true` and an empty `writing_style`.
 
 #### Example request
 
@@ -59,6 +68,13 @@ curl -H "Authorization: Bearer $TOKEN" \
 {
   "response_style": "detailed",
   "custom_instructions": "Always include concrete code examples when explaining a concept.",
+  "full_name": "",
+  "preferred_name": "",
+  "occupation": "",
+  "personal_preferences": "",
+  "write_in_my_style": true,
+  "writing_style": "",
+  "writing_style_learned_at": null,
   "updated_at": "2026-08-13T14:22:00Z"
 }
 ```
@@ -77,6 +93,12 @@ Updates the caller's preferences. Omitted fields are merged with existing values
 |-------|------|----------|-------------|
 | `response_style` | string | No | Must be one of the supported styles. |
 | `custom_instructions` | string | No | Free-form custom instructions. |
+| `full_name`, `preferred_name`, `occupation` | string | No | Profile fields, trimmed, max 120 characters each. |
+| `personal_preferences` | string | No | Max 4000 characters. |
+| `write_in_my_style` | boolean | No | Turn Write in my style on or off. Omitted keeps the stored value. |
+| `writing_style` | string | No | Hand-edited writing-style profile, trimmed, max 4000 characters. Omitted keeps the stored value. An empty string clears the profile and `writing_style_learned_at`. |
+
+Clients that do not send the newer fields keep working; nothing they omit is reset.
 
 #### Example request
 
@@ -96,9 +118,62 @@ curl -X PUT http://127.0.0.1:8013/api/agent-preferences \
 {
   "response_style": "detailed",
   "custom_instructions": "Always include concrete code examples when explaining a concept.",
+  "full_name": "",
+  "preferred_name": "",
+  "occupation": "",
+  "personal_preferences": "",
+  "write_in_my_style": true,
+  "writing_style": "",
+  "writing_style_learned_at": null,
   "updated_at": "2026-08-13T14:22:00Z"
 }
 ```
+
+### Learn writing style
+
+```http
+POST /api/agent-preferences/writing-style/learn
+```
+
+Builds a writing-style profile for Write in my style and saves it to `writing_style` and `writing_style_learned_at`. No model is called. The profile is built from:
+
+- `samples` in the request body (optional), and
+- The caller's own most recent messages (up to 300): web and Desktop conversations, project chat with Al and Cowork Al transcripts, user role only.
+
+Messages under 40 characters, mostly code, links only, or pasted logs are skipped. The profile is short markdown (at most 2500 characters) in plain words: greeting and sign-off habits, typical sentence length, capitalization, punctuation (exclamation marks, dashes, ellipses), emoji use and contractions, plus up to five verbatim excerpts (max 280 characters each, pasted samples first) under "Examples of how they write". Email addresses, phone numbers and anything that looks like a key or password are removed from the excerpts.
+
+#### Request body
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `samples` | string[] | No | Up to 10 pieces of the user's own writing, max 8000 characters each. |
+
+The body may be omitted to learn from past messages only.
+
+#### Example request
+
+```bash
+curl -X POST http://127.0.0.1:8013/api/agent-preferences/writing-style/learn \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{ "samples": ["hey sam, quick one: can you send the deck before friday? thanks"] }'
+```
+
+#### Response
+
+`200` with the same object as Get preferences, including the new `writing_style`. The managed `STYLE.md` is regenerated. `422` with `{ "error": "not_enough_text" }` when there is not enough usable writing. `400` with `too_many_samples` or `field_too_long` when the limits above are exceeded.
+
+## Write in my style
+
+When `write_in_my_style` is `true` and `writing_style` is not empty, agent-chat system instructions get this layer after "About the user":
+
+```text
+Writing as the user: when you write something the user will send as themselves (emails, messages, posts, replies, drafts), write it the way they write. Their style:
+<writing_style>
+Don't use this style for your own replies to them.
+```
+
+`STYLE.md` gets the same text under a `## Writing as the User` heading so CLI brains reading the workspace follow it. When the setting is off or the profile is empty, neither is added. User guide: [Write in my style](/guides/write-in-my-style).
 
 ## STYLE.md format
 
@@ -127,7 +202,8 @@ Always include concrete code examples when explaining a concept.
 | Status | Meaning |
 |--------|---------|
 | `200` | Success. |
-| `400` | Invalid `response_style`. |
+| `400` | Invalid `response_style`, a field over its limit (`field_too_long`), or too many samples. |
+| `422` | Learn writing style found no usable text (`not_enough_text`). |
 | `401` | Unauthorized. |
 | `500` | Internal server error. |
 
@@ -136,3 +212,4 @@ Always include concrete code examples when explaining a concept.
 - [Agents API](/api/agents)
 - [Agent Workspaces](/api/agent-workspaces)
 - [Agent Sessions](/api/agent-sessions)
+- [Write in my style](/guides/write-in-my-style)
