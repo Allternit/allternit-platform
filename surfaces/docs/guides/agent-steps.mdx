@@ -25,7 +25,7 @@ When the assistant keeps a task list, the reply shows it as one checklist card i
 - A filled tick and struck-through text: done.
 - A red cross: failed.
 
-Click the header to fold the list away. A reply that keeps working on the same list in a later group of steps updates the same tasks. It works with Claude Code's task tools (TaskCreate, TaskUpdate), TodoWrite and gizzi's todowrite. The Cowork session panel's Progress shows the same list.
+Click the header to fold the list away. A reply that keeps working on the same list in a later group of steps updates the same tasks. It works with terminal agents' task tools (TaskCreate, TaskUpdate, TodoWrite) and gizzi's todowrite. The Cowork session panel's Progress shows the same list.
 
 ## Web searches and their sources
 
@@ -61,7 +61,7 @@ Source: `allternit-ai/src/components/ai-elements/`:
 | `process/describe-tool.ts` | Turns a tool call into plain words. `toolApp()` finds the app behind `mcp__<server>__<tool>` and `mcp__allternit-connectors__<app>__<tool>`. Connector tools become `app-search` ("Searched Slack for …") or `app-read` ("Read GitHub pull requests") steps, summed as "Ran N searches, read N sources". |
 | `process/app-preview.ts` | `appPreview(output)`: the first three rows of a connector result (title or sender, who or where, one line of text, short time, https link, unread). It reads `structuredContent`, JSON text content or plain JSON, and returns `null` for anything that is not a list of things. Results are cached so streaming re-renders parse each one once. |
 | `process/checklist.ts` | `foldChecklist(calls, seed)`: the task list folded from todo tool calls. Snapshot tools (TodoWrite, todowrite, `{todos}` results) replace the list; TaskCreate appends (id from "Task #N" in its result) and TaskUpdate patches by `taskId`, `deleted` removes. Shared with the Cowork session panel (`session-data.ts`). |
-| `process/web-results.ts` | `webResults(output)`: the pages a web search returned: Claude Code's `Links: [...]` text, result arrays, `{results}`, `{web:{results}}`, `{organic}`, content blocks. Deduped by URL. |
+| `process/web-results.ts` | `webResults(output)`: the pages a web search returned: a terminal agent's `Links: [...]` text, result arrays, `{results}`, `{web:{results}}`, `{organic}`, content blocks. Deduped by URL. |
 | `process/StepCards.tsx` | `ChecklistCard` (the task list card), `SearchSources` (the opened search's page list) and `SourceStack` (site icons and count in the step row). |
 | `app-source-links.ts` | A rehype step that runs after Streamdown's own steps. It gives links to known app hosts the `app-source-link` class and a logo, so Streamdown's link check still applies. |
 | `process/RenderingCard.tsx` | `RenderingFrame` image and video shapes: the frame with `BlockPulse` and a "Generating image · Ns" foot. `mediaAspect()` reads `width`/`height` or `aspect`/`aspect_ratio`. |
