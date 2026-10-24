@@ -47,7 +47,7 @@ The web app does not bind `Cmd+Shift+R`, because browsers use it for a hard relo
 
 ## Privacy check
 
-Before anything is analyzed, Teach scans the recording on your machine and shows **what will leave it**: the number of events, the number of endpoints, the characters of narration, and `0 screenshots - kept on this device`. Secrets found in narration, notes and events are listed. You can strike out any event before sending.
+Before anything is analyzed, Teach scans the recording on your machine and shows **what will leave it**: the number of events, the number of endpoints, the characters of narration, and `0 screenshots - kept on this device`. Secrets found in narration, notes and events are listed. You can strike out any event before sending. Nothing leaves your device until you press **Analyze**: the endpoint count in Review is worked out locally, and the network recording is uploaded only then.
 
 The server redacts again before it calls the model, and the draft reports how many redactions were made.
 
@@ -59,6 +59,8 @@ After Analyze you get an editor:
 - **Steps.** Edit, reorder, delete or add steps. A step is one of `api` (call an endpoint), `ui` (click or type), `shell`, or `note`.
 - **Inputs.** Values that change between runs. Each has a name, a label and the example seen in the recording. Reference an input in step text with a double-brace placeholder such as `{{customer_name}}`.
 - **Timeline.** The recording strip, with local screenshots on Desktop.
+
+Edits are kept when you click **Save changes**. Run on a schedule saves pending edits first. Replay and Save skill use the edits on screen.
 
 ## Save skill
 
