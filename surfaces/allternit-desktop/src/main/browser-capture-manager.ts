@@ -1,16 +1,16 @@
 /**
  * Browser API Capture Manager
  *
- * Records network traffic from the default Electron session and produces a
+ * Records network traffic from the default Electron session (and every
+ * webview session in use, e.g. ACI browser panes) and produces a
  * HAR-style archive that can be ingested by the platform's HAR-derived API
  * service. This lets users capture API calls made by a website in the ACI
  * browser and turn them into reusable contracts.
  *
  * Implementation notes:
  * - Electron's webRequest module only allows one listener per event type on a
- *   given session. We therefore keep a single set of global listeners that
- *   dispatch to the active capture session, and register/unregister them when
- *   transitioning between zero and one active sessions.
+ *   given session, so capture registers through `web-request-hub.ts` as an
+ *   observer and never replaces the app's own routing/auth/CSP listeners.
  * - Only one capture session can be active at a time. This avoids listener
  *   collisions and keeps the UX simple.
  * - Response bodies are not captured by webRequest. We capture response
@@ -19,13 +19,18 @@
  */
 
 import {
+  app,
   session,
+  webContents,
+  type Session,
+  type WebContents,
   type OnBeforeRequestListenerDetails,
   type OnBeforeSendHeadersListenerDetails,
   type OnHeadersReceivedListenerDetails,
   type OnCompletedListenerDetails,
 } from 'electron';
 import log from 'electron-log';
+import { onWebRequest } from './web-request-hub.js';
 
 interface HarHeader {
   name: string;
@@ -130,6 +135,23 @@ function parseContentSize(value: string | undefined): number | undefined {
   return parsed;
 }
 
+const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
+
+/** The app's own traffic (renderer → local API, custom protocols) is never part of a walkthrough. */
+function isAppTraffic(url: string, origin?: string): boolean {
+  for (const raw of [url, origin]) {
+    if (!raw) continue;
+    try {
+      const parsed = new URL(raw);
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return true;
+      if (LOCAL_HOSTS.has(parsed.hostname)) return true;
+    } catch {
+      return true;
+    }
+  }
+  return false;
+}
+
 function matchesFilter(url: string, filterUrls?: string[]): boolean {
   if (!filterUrls || filterUrls.length === 0) return true;
   return filterUrls.some((pattern) => {
@@ -182,12 +204,36 @@ function dispatchToSessions<T>(handler: (session: CaptureSession, details: T) =>
   }
 }
 
+const attachedSessions = new Set<Session>();
+const detachers: Array<() => void> = [];
+
+function attachSession(sess: Session): void {
+  if (attachedSessions.has(sess) || !globalOnBeforeRequest) return;
+  attachedSessions.add(sess);
+  detachers.push(
+    onWebRequest(sess, 'onBeforeRequest', globalOnBeforeRequest),
+    onWebRequest(sess, 'onBeforeSendHeaders', globalOnBeforeSendHeaders!),
+    onWebRequest(sess, 'onHeadersReceived', globalOnHeadersReceived!),
+    onWebRequest(sess, 'onCompleted', globalOnCompleted!),
+  );
+}
+
+// Webviews opened mid-recording (a new ACI pane) bring their own session.
+function onWebContentsCreated(_event: unknown, wc: WebContents): void {
+  attachSession(wc.session);
+}
+
 function registerGlobalListeners(): void {
   if (globalOnBeforeRequest) return;
 
   const sess = getDefaultSession();
 
   globalOnBeforeRequest = (details, callback) => {
+    const origin = details.webContents && !details.webContents.isDestroyed() ? details.webContents.getURL() : undefined;
+    if (isAppTraffic(details.url, origin)) {
+      callback({});
+      return;
+    }
     dispatchToSessions((sessionData) => {
       if (!matchesFilter(details.url, sessionData.filterUrls)) return;
 
@@ -284,10 +330,9 @@ function registerGlobalListeners(): void {
     }, details);
   };
 
-  sess.webRequest.onBeforeRequest(globalOnBeforeRequest);
-  sess.webRequest.onBeforeSendHeaders(globalOnBeforeSendHeaders);
-  sess.webRequest.onHeadersReceived(globalOnHeadersReceived);
-  sess.webRequest.onCompleted(globalOnCompleted);
+  attachSession(sess);
+  for (const wc of webContents.getAllWebContents()) attachSession(wc.session);
+  app.on('web-contents-created', onWebContentsCreated);
 
   log.info('[BrowserCapture] Global listeners registered');
 }
@@ -295,13 +340,9 @@ function registerGlobalListeners(): void {
 function unregisterGlobalListeners(): void {
   if (!globalOnBeforeRequest) return;
 
-  const sess = session.defaultSession;
-  if (sess) {
-    sess.webRequest.onBeforeRequest(null);
-    sess.webRequest.onBeforeSendHeaders(null);
-    sess.webRequest.onHeadersReceived(null);
-    sess.webRequest.onCompleted(null);
-  }
+  app.removeListener('web-contents-created', onWebContentsCreated);
+  for (const remove of detachers.splice(0)) remove();
+  attachedSessions.clear();
 
   globalOnBeforeRequest = null;
   globalOnBeforeSendHeaders = null;
