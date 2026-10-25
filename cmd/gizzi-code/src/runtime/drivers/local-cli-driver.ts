@@ -2719,6 +2719,8 @@ interface StreamJsonEvent {
   is_error?: boolean
   request_id?: string
   request?: { subtype?: string; tool_name?: string; input?: Record<string, unknown> | string }
+  /** `user` tool results: Claude Code's structured result beside the content (WebSearch carries its pages). */
+  tool_use_result?: unknown
 }
 
 interface OpenclawEvent {
