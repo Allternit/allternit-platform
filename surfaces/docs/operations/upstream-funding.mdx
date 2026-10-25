@@ -130,3 +130,4 @@ Do this once per provider. It moves money, so nothing here is automated.
 **Every provider, after setup**
 - Re-enter the balance on the Funding page whenever a manual provider's dashboard and the page disagree by more than a few dollars (our metered spend is an estimate).
 - Keep the business card limit above the sum of all auto-recharge amounts that could fire in one billing cycle.
+- Check the provider's data settings and turn off any training on or retention of API data the dashboard allows. OpenRouter needs no setting: the Cloud API sends no-retention routing on every request (see [Data retention](/api/data-retention)). Record for each direct provider whether its terms say API data is not retained.

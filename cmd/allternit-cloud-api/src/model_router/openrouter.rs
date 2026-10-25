@@ -342,8 +342,11 @@ impl UpstreamProvider for OpenRouterProvider {
 
     async fn chat_completions(
         &self,
-        request: ChatCompletionRequest,
+        mut request: ChatCompletionRequest,
     ) -> Result<Response<Body>, ModelRouterError> {
+        if no_retention_enabled() {
+            enforce_no_retention(&mut request);
+        }
         if request.is_streaming() {
             self.chat_completions_streaming(request).await
         } else {
@@ -357,4 +360,78 @@ fn _assert_bytes_stream<T>(_: T)
 where
     T: futures_util::Stream<Item = std::result::Result<Bytes, reqwest::Error>>,
 {
+}
+
+/// No-retention routing is on unless `OPENROUTER_NO_RETENTION` is `off`
+/// (emergency escape only; the privacy promise depends on it being on).
+fn no_retention_enabled() -> bool {
+    !matches!(
+        std::env::var("OPENROUTER_NO_RETENTION").ok().as_deref().map(str::trim),
+        Some("off") | Some("0") | Some("false")
+    )
+}
+
+/// Route only to OpenRouter endpoints with a Zero Data Retention policy that
+/// also do not collect data (`provider.zdr = true`,
+/// `provider.data_collection = "deny"`). Other `provider` keys the caller sent
+/// (order, sort, only, ...) are kept; these two are always overwritten, so a
+/// request can never weaken them. When no endpoint qualifies, OpenRouter
+/// returns an error instead of falling back to a retaining provider.
+pub(crate) fn enforce_no_retention(request: &mut ChatCompletionRequest) {
+    let provider = request
+        .extra
+        .entry("provider".to_string())
+        .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
+    if !provider.is_object() {
+        *provider = serde_json::Value::Object(serde_json::Map::new());
+    }
+    let map = provider.as_object_mut().expect("provider is an object");
+    map.insert("zdr".to_string(), serde_json::Value::Bool(true));
+    map.insert(
+        "data_collection".to_string(),
+        serde_json::Value::String("deny".to_string()),
+    );
+}
+
+#[cfg(test)]
+mod no_retention_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn request(extra: serde_json::Value) -> ChatCompletionRequest {
+        let mut body = json!({"model": "deepseek/deepseek-v4.1-flash", "messages": []});
+        body.as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        serde_json::from_value(body).unwrap()
+    }
+
+    #[test]
+    fn adds_zdr_and_deny_when_absent() {
+        let mut req = request(json!({}));
+        enforce_no_retention(&mut req);
+        let wire = serde_json::to_value(&req).unwrap();
+        assert_eq!(wire["provider"], json!({"zdr": true, "data_collection": "deny"}));
+    }
+
+    #[test]
+    fn keeps_other_provider_keys_and_overrides_weaker_values() {
+        let mut req = request(json!({
+            "provider": {"order": ["fireworks"], "zdr": false, "data_collection": "allow"}
+        }));
+        enforce_no_retention(&mut req);
+        let wire = serde_json::to_value(&req).unwrap();
+        assert_eq!(
+            wire["provider"],
+            json!({"order": ["fireworks"], "zdr": true, "data_collection": "deny"})
+        );
+    }
+
+    #[test]
+    fn replaces_a_non_object_provider() {
+        let mut req = request(json!({"provider": "anything"}));
+        enforce_no_retention(&mut req);
+        let wire = serde_json::to_value(&req).unwrap();
+        assert_eq!(wire["provider"], json!({"zdr": true, "data_collection": "deny"}));
+    }
 }

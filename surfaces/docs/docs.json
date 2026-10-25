@@ -752,6 +752,7 @@
               "api/providers",
               "api/chat-completions",
               "api/open-lane",
+              "api/data-retention",
               "api/embeddings",
               "api/images",
               "api/realtime-audio",
