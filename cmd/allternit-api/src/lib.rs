@@ -29,6 +29,7 @@ pub mod agent_email_routes;
 pub mod email_otp;
 pub mod phone_seen_routes;
 pub mod agent_preferences_routes;
+pub mod answer_shapes;
 pub mod agent_cloud_routes;
 pub mod agent_routes;
 pub mod agent_runtime_routes;

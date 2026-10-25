@@ -24,7 +24,7 @@ import type {
   TaskHandle,
 } from "@/runtime/runtime-driver"
 import { claudeToolDecision, deniedMessage } from "@/runtime/bots/bot-turn"
-import { codexDeveloperInstructions, acpCanLoadSession, acpMcpServers, claudePermissionFlags, claudeSessionFlags, codexPlanParams, codexThreadRequest, opencodeResumeFlags, qwenResumeFlags, vendorSessionIdFromEvent, codexMcpConfig, withInstructions, claudeContextArgv } from "@/runtime/drivers/cli-session-flags"
+import { codexDeveloperInstructions, cliTurnMessage, acpCanLoadSession, acpMcpServers, claudePermissionFlags, claudeSessionFlags, codexPlanParams, codexThreadRequest, opencodeResumeFlags, qwenResumeFlags, vendorSessionIdFromEvent, codexMcpConfig, withInstructions, claudeContextArgv } from "@/runtime/drivers/cli-session-flags"
 import { ContextBreakdown } from "@/runtime/session/context-breakdown"
 import { ContextBreakdownStore } from "@/runtime/session/context-breakdown-store"
 import { CodexContext } from "@/runtime/session/codex-context"
@@ -146,7 +146,7 @@ export class LocalCliDriver implements RuntimeDriver {
     }
 
     const task = this.tasks.get(handle.taskId)
-    const message = task?.prompt ?? ""
+    const prompt = task?.prompt ?? ""
 
     yield { type: "status", status: "running" }
     await this.logEvent(handle.taskId, { type: "status", status: "running" })
@@ -160,6 +160,8 @@ export class LocalCliDriver implements RuntimeDriver {
     // The path is one argv element (it may contain spaces, e.g. a custom tool).
     const baseCmd = [cliPath, ...parseCmd(this.specArgs())]
     const adapter = resolveAdapter(this.cliName)
+    // CLIs without a system-prompt channel get the session's instructions in the message.
+    const message = cliTurnMessage(prompt, task?.systemPrompt, this.cliName, adapter.mode)
 
     if (task?.attachments && task.attachments.length > 0 && !adapter.supportsAttachments) {
       throw new Error(
