@@ -194,6 +194,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ("FIREWORKS", Some("https://api.fireworks.ai/inference/v1")),
         ("DEEPINFRA", Some("https://api.deepinfra.com/v1/openai")),
         ("GROQ", Some("https://api.groq.com/openai/v1")),
+        // Open lane (`-open` models): no default host — enabled only when
+        // OPEN_LANE_BASE_URL and OPEN_LANE_API_KEY are both set.
+        ("OPEN_LANE", None),
     ];
 
     for (prefix, default_base) in generic_providers {

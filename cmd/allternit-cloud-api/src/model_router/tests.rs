@@ -10,7 +10,15 @@ fn starter_catalog_resolves_known_aliases() {
     assert!(catalog.resolve("llama-3.1-8b").is_some());
     assert!(catalog.resolve("llama3.1-8b").is_some()); // alternate alias
     assert!(catalog.resolve("gpt-4o").is_some());
-    assert!(catalog.resolve("claude-sonnet-4").is_some());
+    assert!(catalog.resolve("claude-sonnet-4.6").is_some());
+    // Retired upstream id: the old alias resolves to the current Sonnet.
+    assert_eq!(
+        catalog.resolve("claude-sonnet-4").map(|e| e.upstream_id.as_str()),
+        Some("anthropic/claude-sonnet-4.6")
+    );
+    assert!(catalog.resolve("deepseek-v4.1-flash").is_some());
+    assert!(catalog.resolve("glm-5.3-flash").is_some());
+    assert!(catalog.resolve("deepseek-v4-flash-fireworks").is_none());
     assert!(catalog.resolve("qwen-2.5-72b").is_some());
     assert!(catalog.resolve("mistral-large").is_some());
     assert!(catalog.resolve("qwen3.6-27b-groq").is_some());
@@ -27,8 +35,16 @@ fn unknown_model_returns_none() {
 fn catalog_entries_are_primary_aliases_only() {
     let catalog = starter_catalog();
     // Primary models only (one per model, not per alias):
-    // 6 OpenRouter + 6 Together AI + 5 Fireworks + 3 DeepInfra + 4 Groq = 24.
-    assert_eq!(catalog.entries().len(), 24);
+    // 8 OpenRouter + 6 Together AI + 4 Fireworks + 3 DeepInfra + 4 Groq
+    // + 2 open lane = 27.
+    assert_eq!(catalog.entries().len(), 27);
+    let open: Vec<_> = catalog
+        .entries()
+        .iter()
+        .filter(|e| super::catalog::is_open_lane(e))
+        .map(|e| e.alias.as_str())
+        .collect();
+    assert_eq!(open, vec!["deepseek-v4.1-flash-open", "glm-5.3-flash-open"]);
 }
 
 #[test]
@@ -65,14 +81,18 @@ fn disabled_router_reports_not_enabled() {
 async fn disabled_router_list_models_returns_static_catalog() {
     let router = ModelRouter::disabled(starter_catalog());
     let models = router.list_models().await;
-    assert_eq!(models.len(), 24);
+    // 27 catalog entries minus the 2 open-lane models, hidden while the
+    // open-lane provider is unset.
+    assert_eq!(models.len(), 25);
     assert!(models.iter().any(|m| m.id == "llama-3.1-8b"));
+    assert!(!models.iter().any(|m| m.id.ends_with("-open")));
 
     let llama = models.iter().find(|m| m.id == "llama-3.1-8b").unwrap();
     assert_eq!(llama.extra.get("name").and_then(|v| v.as_str()), Some("Llama 3.1 8B Instruct"));
     assert!(llama.extra.get("prompt_price").and_then(|v| v.as_f64()).is_some());
     assert!(llama.extra.get("completion_price").and_then(|v| v.as_f64()).is_some());
     assert_eq!(llama.extra.get("context_length").and_then(|v| v.as_u64()), Some(128_000));
+    assert_eq!(llama.extra.get("lane").and_then(|v| v.as_str()), Some("standard"));
 }
 
 #[tokio::test]

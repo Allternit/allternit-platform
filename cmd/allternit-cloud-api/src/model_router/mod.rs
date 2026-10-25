@@ -257,6 +257,10 @@ impl ModelRouter {
         let mut models = Vec::new();
 
         for entry in self.alias_map.entries() {
+            // Open-lane models are listed only while their upstream is set.
+            if catalog::is_open_lane(entry) && !self.providers.contains_key(&entry.provider) {
+                continue;
+            }
             let mut info = ModelInfo {
                 id: entry.alias.clone(),
                 object: "model".to_string(),
@@ -289,6 +293,12 @@ impl ModelRouter {
             info.extra.insert(
                 "context_length".to_string(),
                 serde_json::Value::Number(entry.context_length.into()),
+            );
+            info.extra.insert(
+                "lane".to_string(),
+                serde_json::Value::String(
+                    if catalog::is_open_lane(entry) { "open" } else { "standard" }.to_string(),
+                ),
             );
 
             // If we have a live provider, enrich with upstream metadata.
@@ -325,6 +335,33 @@ impl ModelRouter {
     /// The provider id a model alias routes to, without dispatching.
     pub fn provider_for_alias(&self, alias: &str) -> Option<&str> {
         self.alias_map.resolve(alias).map(|entry| entry.provider.as_str())
+    }
+
+    /// Whether a model alias is an open-lane model (`lane: "open"`).
+    pub fn is_open_lane_alias(&self, alias: &str) -> bool {
+        self.alias_map.resolve(alias).is_some_and(catalog::is_open_lane)
+    }
+
+    /// Whether an upstream provider id is configured.
+    pub fn has_provider(&self, provider_id: &str) -> bool {
+        self.providers.contains_key(provider_id)
+    }
+
+    /// Dispatch a request to a named provider with `request.model` already
+    /// set to that provider's upstream id (no alias lookup). Used for
+    /// internal calls such as the open-lane moderation model.
+    pub async fn chat_completions_on(
+        &self,
+        provider_id: &str,
+        request: ChatCompletionRequest,
+    ) -> Result<Response<Body>, ModelRouterError> {
+        let provider = self
+            .providers
+            .get(provider_id)
+            .ok_or_else(|| ModelRouterError::ProviderNotConfigured {
+                provider: provider_id.to_string(),
+            })?;
+        provider.chat_completions(request).await
     }
 
     /// The upstream model id a model alias routes to, without dispatching.
