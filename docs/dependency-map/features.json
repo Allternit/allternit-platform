@@ -751,7 +751,10 @@
         "allternit/cmd/allternit-api/src/usage_*",
         "allternit/cmd/allternit-api/src/spend_*",
         "allternit/cmd/allternit-api/src/credits_*",
-        "allternit/cmd/gizzi-code/src/runtime/session"
+        "allternit/cmd/gizzi-code/src/runtime/session",
+        "allternit-ai/src/components/settings",
+        "allternit/cmd/allternit-cloud-api/src/routes/billing_*",
+        "allternit/cmd/allternit-cloud-api/src/services"
       ],
       "decisions": [
         {
@@ -765,11 +768,17 @@
         {
           "on": "2026-10-19",
           "note": "Settings → Usage adds per-brain split, daily cost/tokens chart, bot filter and Brain/Bot/Day breakdowns. /usage/summary group_by takes bot (session_metadata agentId) and day (tz_offset_minutes); older servers fall back to the four base dimensions."
+        },
+        {
+          "on": "2026-10-25",
+          "note": "Auto top-up (W1 of SPEC-cloud-credits-open-lane): saved card from packs/setup Checkout, off-session PaymentIntent after wallet debits when balance < threshold, one pending attempt, monthly cap, failure turns it off and notifies; migration 103, /api/v1/billing/auto-topup routes, payment_intent.* webhook events, Settings → Billing card on all surfaces."
         }
       ],
       "evidence": [
         "allternit/surfaces/docs/api/usage.mdx",
-        "allternit/surfaces/docs/admin/spend-limits.mdx"
+        "allternit/surfaces/docs/admin/spend-limits.mdx",
+        "allternit/surfaces/docs/guides/credits-and-auto-top-up.mdx",
+        "allternit/surfaces/docs/api/cloud-billing.mdx"
       ]
     },
     {
