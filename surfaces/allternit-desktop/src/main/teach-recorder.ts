@@ -117,6 +117,8 @@ const PAGE_SCRIPT = `(() => {
   const SENSITIVE = /pass|secret|token|card|cvv|ssn/i;
   const send = (o) => { try { console.debug(P + JSON.stringify(o)); } catch (e) {} };
   const clip = (s, n) => String(s == null ? '' : s).replace(/\\s+/g, ' ').trim().slice(0, n);
+  // "Customer name:" → "Customer name" (the UI adds its own colon).
+  const noColon = (s) => s.replace(/\\s*:\\s*$/, '');
   const interactive = 'a,button,input,select,textarea,summary,label,[role],[onclick],[tabindex]';
   const cssEsc = (v) => (window.CSS && CSS.escape ? CSS.escape(v) : v);
   // What a person sees next to a field: its <label>, else aria/placeholder/name.
@@ -124,12 +126,12 @@ const PAGE_SCRIPT = `(() => {
     let text = el.getAttribute('aria-label') || '';
     if (!text && el.id) { const l = document.querySelector('label[for="' + cssEsc(el.id) + '"]'); if (l) text = l.innerText || l.textContent || ''; }
     if (!text) { const l = el.closest('label'); if (l) text = l.innerText || l.textContent || ''; }
-    return clip(text || el.getAttribute('placeholder') || el.getAttribute('name') || el.getAttribute('value') || el.tagName.toLowerCase(), 80);
+    return noColon(clip(text || el.getAttribute('placeholder') || el.getAttribute('name') || el.getAttribute('value') || el.tagName.toLowerCase(), 80));
   };
   const groupLabel = (el) => {
     const fs = el.closest('fieldset');
     const legend = fs && fs.querySelector('legend');
-    return clip((legend && (legend.innerText || legend.textContent)) || el.getAttribute('name') || '', 80);
+    return noColon(clip((legend && (legend.innerText || legend.textContent)) || el.getAttribute('name') || '', 80));
   };
   const label = (el) => /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) ? fieldLabel(el) : clip(el.getAttribute('aria-label') || (el.innerText || el.textContent || '') || el.getAttribute('placeholder') || el.getAttribute('name') || el.getAttribute('title') || el.getAttribute('alt') || '', 80) || el.tagName.toLowerCase();
   const selector = (el) => {
