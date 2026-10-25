@@ -280,6 +280,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     services::start_provisioning_reconcile_task(state.clone());
     services::start_waiting_computer_task(state.clone());
     routes::admin_customers::start_daily_customer_summary_task(state.clone());
+    // Upstream funding: poll provider balances every 10 min, alert when short,
+    // and tell the model router which providers are under their floor.
+    services::upstream_funding::start_upstream_funding_task(state.db.clone());
     // Cancel lifecycle: delete suspended computers 30 days after cancel,
     // expire their snapshot images after 6 months.
     services::start_provisioning_lifecycle_task(state.clone());
