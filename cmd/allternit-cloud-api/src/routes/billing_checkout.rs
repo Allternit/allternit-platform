@@ -208,6 +208,24 @@ async fn create_checkout(
         Err(error) => return error.into_response(),
     };
     let checkout = ReqwestStripeCheckout::new();
+    // One Stripe customer per person, so the pack saves its card for auto
+    // top-up (setup_future_usage). A failure here must not stop the sale:
+    // the pack then sells without a customer, as before.
+    let customer_id = match crate::services::auto_topup::ensure_customer(
+        &state.db,
+        &checkout,
+        &secret_key,
+        &user_id,
+        user.email.as_deref(),
+    )
+    .await
+    {
+        Ok(customer_id) => Some(customer_id),
+        Err(error) => {
+            tracing::warn!(%user_id, %error, "credit pack checkout without a Stripe customer");
+            None
+        }
+    };
 
     match create_checkout_url(
         &checkout,
@@ -215,6 +233,7 @@ async fn create_checkout(
         pack,
         &user_id,
         organization_id.as_deref(),
+        customer_id.as_deref(),
         &success_url,
         &cancel_url,
     )
@@ -260,6 +279,11 @@ pub(crate) fn billing_upstream_error_response(error: &ApiError) -> Response {
         })),
     )
         .into_response()
+}
+
+/// The pack sizes in USD; auto top-up amounts must be one of them.
+pub(crate) fn pack_sizes_usd() -> Vec<f64> {
+    CREDIT_PACKS.iter().map(|pack| pack.credits_usd).collect()
 }
 
 /// Look up a pack in the static catalog. Unknown ids are a 400: the client asked for a pack the
@@ -332,10 +356,11 @@ async fn create_checkout_url(
     pack: &CreditPack,
     clerk_user_id: &str,
     organization_id: Option<&str>,
+    customer_id: Option<&str>,
     success_url: &str,
     cancel_url: &str,
 ) -> Result<String, ApiError> {
-    let form = checkout_form_params(pack, clerk_user_id, organization_id, success_url, cancel_url);
+    let form = checkout_form_params(pack, clerk_user_id, organization_id, customer_id, success_url, cancel_url);
     checkout.create_checkout_session(secret_key, &form).await
 }
 
@@ -344,10 +369,15 @@ async fn create_checkout_url(
 /// clerk_user_id, allternit_credits_usd, and allternit_org_id out of
 /// event.data.object.metadata for completed payment-mode sessions, so those
 /// names must stay stable.
+///
+/// With the person's Stripe customer, the session also saves the card for
+/// off-session use (`payment_intent_data[setup_future_usage]=off_session`),
+/// which auto top-up charges later (`services::auto_topup`).
 fn checkout_form_params(
     pack: &CreditPack,
     clerk_user_id: &str,
     organization_id: Option<&str>,
+    customer_id: Option<&str>,
     success_url: &str,
     cancel_url: &str,
 ) -> Vec<(String, String)> {
@@ -388,6 +418,13 @@ fn checkout_form_params(
         form.push((
             "metadata[allternit_org_id]".to_string(),
             organization_id.to_string(),
+        ));
+    }
+    if let Some(customer_id) = customer_id {
+        form.push(("customer".to_string(), customer_id.to_string()));
+        form.push((
+            "payment_intent_data[setup_future_usage]".to_string(),
+            "off_session".to_string(),
         ));
     }
     form
@@ -591,7 +628,7 @@ mod tests {
     #[test]
     fn checkout_form_metadata_carries_the_credit_contract() {
         let pack = find_pack("credits_25").unwrap();
-        let form = checkout_form_params(pack, "user_123", Some("org_9"), "https://s.example", "https://c.example");
+        let form = checkout_form_params(pack, "user_123", Some("org_9"), None, "https://s.example", "https://c.example");
         let field = |key: &str| -> String {
             form.iter()
                 .find(|(k, _)| k == key)
@@ -611,9 +648,27 @@ mod tests {
     }
 
     #[test]
+    fn checkout_form_saves_the_card_when_the_person_has_a_customer() {
+        let pack = find_pack("credits_25").unwrap();
+        let form = checkout_form_params(pack, "user_1", None, Some("cus_9"), "s", "c");
+        assert!(form.contains(&("customer".to_string(), "cus_9".to_string())));
+        assert!(form.contains(&(
+            "payment_intent_data[setup_future_usage]".to_string(),
+            "off_session".to_string()
+        )));
+        let without = checkout_form_params(pack, "user_1", None, None, "s", "c");
+        assert!(without.iter().all(|(key, _)| key != "customer" && !key.starts_with("payment_intent_data")));
+    }
+
+    #[test]
+    fn pack_sizes_are_the_auto_topup_amounts() {
+        assert_eq!(pack_sizes_usd(), vec![10.0, 25.0, 50.0, 100.0]);
+    }
+
+    #[test]
     fn checkout_form_omits_org_metadata_without_an_organization() {
         let pack = find_pack("credits_10").unwrap();
-        let form = checkout_form_params(pack, "user_123", None, "s", "c");
+        let form = checkout_form_params(pack, "user_123", None, None, "s", "c");
         assert!(
             form.iter().all(|(key, _)| key != "metadata[allternit_org_id]"),
             "no org metadata field may be sent when the session has no active org"
@@ -632,7 +687,7 @@ mod tests {
             ("credits_100", "100.00"),
         ] {
             let pack = find_pack(id).unwrap();
-            let form = checkout_form_params(pack, "user_1", None, "s", "c");
+            let form = checkout_form_params(pack, "user_1", None, None, "s", "c");
             let credits = form
                 .iter()
                 .find(|(k, _)| k == "metadata[allternit_credits_usd]")
@@ -675,7 +730,7 @@ mod tests {
             last_secret: std::sync::Mutex::new(None),
         };
         let pack = find_pack("credits_50").unwrap();
-        let url = create_checkout_url(&checkout, "sk_test_1", pack, "user_9", Some("org_9"), "https://s", "https://c")
+        let url = create_checkout_url(&checkout, "sk_test_1", pack, "user_9", Some("org_9"), None, "https://s", "https://c")
             .await
             .unwrap();
         assert_eq!(url, "https://checkout.stripe.com/c/pay/test_session");
@@ -713,7 +768,7 @@ mod tests {
     #[tokio::test]
     async fn checkout_creation_propagates_stripe_errors() {
         let pack = find_pack("credits_10").unwrap();
-        let error = create_checkout_url(&FailingCheckout, "sk_test_1", pack, "user_9", None, "s", "c")
+        let error = create_checkout_url(&FailingCheckout, "sk_test_1", pack, "user_9", None, None, "s", "c")
             .await
             .unwrap_err();
         assert!(error.to_string().contains("stripe declined"));

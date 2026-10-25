@@ -10,6 +10,7 @@ pub mod gateway_catalog;
 pub mod approvals;
 pub mod auth;
 pub mod billing_credits;
+pub mod billing_auto_topup;
 pub mod billing_checkout;
 pub mod admin_customers;
 pub mod admin_voice_billing;

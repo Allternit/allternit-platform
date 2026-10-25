@@ -451,6 +451,10 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         // session per-request and answers 503 billing_not_configured when
         // STRIPE_SECRET_KEY is unset.
         .merge(routes::billing_checkout::routes())
+        // Auto top-up settings and card setup verify the Clerk session
+        // per-request; the off-session charge itself runs from wallet debits
+        // (services::auto_topup).
+        .merge(routes::billing_auto_topup::routes())
         // The plan catalog is public; subscribe/portal verify the Clerk session
         // per-request and answer 503 billing_not_configured when STRIPE_SECRET_KEY
         // or the plan's STRIPE_PRICE_* id is unset.
