@@ -9,6 +9,10 @@ description: 'Changelog for the Allternit platform, SDKs, and Gizzi Code CLI'
 
 - **Cloud computers:** the Allternit Desktop app on your cloud computer now updates to each new release. When the computer is idle, the update takes a restore point, installs the new version and restarts the app, which takes about a minute. If the app doesn't come back healthy, the computer goes back to the restore point. Before, a cloud computer kept the app version it was set up with.
 
+## 2026-10-25 — Cloud computers apply updates by themselves
+
+- **Cloud computers:** a new runtime (Gizzi, the API and the app's screens) now takes effect on its own. Your cloud computer waits until no chat or bot task is running, then restarts the app, which takes a few seconds. Before, it downloaded the update but kept running the old version until someone restarted it, and nobody restarts a cloud computer.
+
 ## 2026-10-24 — gizzi stays current on Linux and cloud computers
 
 - **Linux and cloud computers:** the `gizzi` command in a terminal now follows Desktop's runtime updates. Before, on Linux it stayed on the version bundled with the app, because Desktop didn't recognize the `/opt/Allternit Desktop/` install folder as its own.

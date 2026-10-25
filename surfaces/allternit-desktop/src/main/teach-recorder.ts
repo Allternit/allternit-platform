@@ -135,7 +135,24 @@ const PAGE_SCRIPT = `(() => {
     const legend = fs && fs.querySelector('legend');
     return noColon(clip((legend && (legend.innerText || legend.textContent)) || el.getAttribute('name') || '', 80));
   };
-  const label = (el) => /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) ? fieldLabel(el) : clip(el.getAttribute('aria-label') || (el.innerText || el.textContent || '') || el.getAttribute('placeholder') || el.getAttribute('name') || el.getAttribute('title') || el.getAttribute('alt') || '', 80) || el.tagName.toLowerCase();
+  // Icon-only buttons: aria-labelledby, title, an <svg><title>, or what a submit button does.
+  const iconLabel = (el) => {
+    const by = el.getAttribute('aria-labelledby');
+    const byEl = by ? document.getElementById(by.split(' ')[0]) : null;
+    const svgTitle = el.querySelector && el.querySelector('svg title');
+    const text = (byEl && (byEl.innerText || byEl.textContent)) || el.getAttribute('title') || (svgTitle && svgTitle.textContent) || '';
+    if (text) return clip(text, 80);
+    const form = el.closest && el.closest('form');
+    if (form && (el.getAttribute('type') || 'submit') === 'submit') {
+      return form.querySelector('input[type=search], [role=searchbox]') ? 'Search' : 'Submit';
+    }
+    return '';
+  };
+  const textLabel = (el) => clip(el.getAttribute('aria-label') || el.innerText || el.textContent || el.getAttribute('placeholder') || el.getAttribute('name') || el.getAttribute('title') || el.getAttribute('alt') || '', 80);
+  const label = (el) => {
+    if (/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)) return fieldLabel(el);
+    return textLabel(el) || iconLabel(el) || el.tagName.toLowerCase();
+  };
   const selector = (el) => {
     const parts = [];
     let cur = el;
@@ -192,8 +209,13 @@ function attachGuest(wc: WebContents): void {
   if (type === 'window' && internal) return;
   s.guests.add(wc);
 
+  // Pages rewrite their own address (history.replaceState, hash updates);
+  // only a change of URL is a step.
+  let lastUrl = safeUrl(wc);
   const nav = (_e: unknown, url: string) => {
     if (!/^https?:/i.test(url)) return;
+    if (url === lastUrl) return;
+    lastUrl = url;
     s.unseenStart.delete(wc);
     const last = [...s.events].reverse().find((e) => e.kind === 'navigate') as Extract<TeachEvent, { kind: 'navigate' }> | undefined;
     if (last && last.url === url && Date.now() - s.startedAt - last.t < 800) return;

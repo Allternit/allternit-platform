@@ -118,6 +118,7 @@ import {
 import { resolveDevUserDataPath } from './desktop-data-dir.js';
 import { coworkDeviceHeaders, coworkDeviceInfo, isInAppBrowsableUrl } from './cowork-device.js';
 import { isProvisionedMode } from './provisioned-bootstrap.js';
+import { startIdleApply } from './provisioned-runtime-apply.js';
 
 // Fix PATH for macOS
 fixPath();
@@ -345,7 +346,30 @@ async function checkRuntimeNow(): Promise<string | null> {
   }
 }
 
+let provisionedApplyStarted = false;
+
+/** Cloud computer: nobody restarts the app, so apply a staged runtime once Gizzi is idle. */
+function startProvisionedRuntimeApply() {
+  if (provisionedApplyStarted || !isProvisionedMode()) return;
+  provisionedApplyStarted = true;
+  startIdleApply({
+    hasPending: () => !appUpdateDownloaded && runtimePackages().hasPendingUpdate(),
+    fetchStatuses: async () => {
+      const res = await fetch(`${gizziManager.getUrl()}/v1/session/status`, { signal: AbortSignal.timeout(5000) });
+      if (!res.ok) throw new Error(`session status ${res.status}`);
+      return res.json();
+    },
+    apply: async () => {
+      log.info('[Runtime] cloud computer idle: restarting to apply the staged runtime');
+      await runQuitCleanup();
+      app.relaunch();
+      app.exit(0);
+    },
+  });
+}
+
 function scheduleRuntimeUpdates() {
+  startProvisionedRuntimeApply();
   if (!runtimeFeed() || runtimeUpdateTimer) return;
   runtimeUpdateTimer = setTimeout(async function tick() {
     await checkRuntimeNow();
