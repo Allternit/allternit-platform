@@ -81,6 +81,8 @@ interface ActiveSession {
   timers: NodeJS.Timeout[];
   child: ChildProcess | null;
   guests: Set<WebContents>;
+  /** Tabs already open when recording began, whose page is logged only once you act in them. */
+  unseenStart: Set<WebContents>;
   onCreated: (e: unknown, wc: WebContents) => void;
   snapshotBusy: boolean;
   stopping: boolean;
@@ -192,6 +194,7 @@ function attachGuest(wc: WebContents): void {
 
   const nav = (_e: unknown, url: string) => {
     if (!/^https?:/i.test(url)) return;
+    s.unseenStart.delete(wc);
     const last = [...s.events].reverse().find((e) => e.kind === 'navigate') as Extract<TeachEvent, { kind: 'navigate' }> | undefined;
     if (last && last.url === url && Date.now() - s.startedAt - last.t < 800) return;
     pushEvent({ kind: 'navigate', url, title: safeTitle(wc) });
@@ -213,10 +216,12 @@ function attachGuest(wc: WebContents): void {
     if (typeof message !== 'string' || !message.startsWith(MSG_PREFIX)) return;
     handlePageMessage(wc, message.slice(MSG_PREFIX.length));
   });
-  wc.once('destroyed', () => s.guests.delete(wc));
+  wc.once('destroyed', () => { s.guests.delete(wc); s.unseenStart.delete(wc); });
 
-  const u = safeUrl(wc);
-  if (type === 'webview' && u) nav(null, u);
+  // Every open tab is attached, but only the ones you use belong in the
+  // walkthrough: a tab's starting page is logged when you first click or type
+  // there (handlePageMessage), not for each background tab at Start.
+  if (type === 'webview' && safeUrl(wc)) s.unseenStart.add(wc);
 }
 
 function safeTitle(wc: WebContents): string | undefined {
@@ -231,6 +236,9 @@ function handlePageMessage(wc: WebContents, raw: string): void {
   try { m = JSON.parse(raw); } catch { return; }
   const url = safeUrl(wc);
   const label = String(m.label ?? '').slice(0, 80);
+  if ((m.k === 'click' || m.k === 'input') && active?.unseenStart.delete(wc) && url) {
+    pushEvent({ kind: 'navigate', url, title: safeTitle(wc) });
+  }
   if (m.k === 'click') {
     pushEvent({ kind: 'click', url, label, role: m.role, selector: m.selector });
   } else if (m.k === 'input') {
@@ -604,6 +612,7 @@ export async function startTeach(opts?: { narration?: boolean; filterUrls?: stri
     timers: [],
     child: null,
     guests: new Set(),
+    unseenStart: new Set(),
     snapshotBusy: false,
     stopping: false,
     onCreated: (_e, wc) => {
