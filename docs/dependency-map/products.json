@@ -487,7 +487,8 @@
         "allternit/cmd/allternit-api/src/agents_*",
         "allternit/cmd/allternit-api/src/agent_*",
         "allternit/cmd/allternit-api/src/agent_execution",
-        "allternit/cmd/allternit-api/src/v1_*"
+        "allternit/cmd/allternit-api/src/v1_*",
+        "allternit/cmd/allternit-api/src/client_*"
       ],
       "uses": [
         "product:allternit-api",

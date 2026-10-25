@@ -170,11 +170,12 @@ export function installSessionSecurityHandlers(session: Session): void {
   });
 
   // Default-deny permission requests. First-party origins may use the
-  // microphone (voice/dictation) and capture the screen (this Mac's live
-  // screen in the Computer view, composer screen share).
+  // microphone (voice/dictation), capture the screen (this Mac's live
+  // screen in the Computer view, composer screen share) and read a rough
+  // location when the user turned on Settings → Privacy → Location.
   session.setPermissionRequestHandler((_webContents, permission, callback, details) => {
     const requestingUrl = details.requestingUrl ?? '';
-    const granted = (permission === 'media' || permission === 'display-capture') && isTrustedAppUrl(requestingUrl);
+    const granted = (permission === 'media' || permission === 'display-capture' || permission === 'geolocation') && isTrustedAppUrl(requestingUrl);
     if (!granted) {
       log.warn(`[Security] Denied permission "${permission}" for ${requestingUrl || '(unknown origin)'}`);
     }
@@ -183,7 +184,7 @@ export function installSessionSecurityHandlers(session: Session): void {
 
   session.setPermissionCheckHandler((_webContents, permission, requestingOrigin) => {
     // serial: the Connect an iPhone setup flashes an Allternit USB Agent board.
-    return (permission === 'media' || permission === 'serial') && isTrustedAppUrl(requestingOrigin);
+    return (permission === 'media' || permission === 'serial' || permission === 'geolocation') && isTrustedAppUrl(requestingOrigin);
   });
 
   // Web Serial for first-party pages, Espressif boards only (USB Agent

@@ -785,6 +785,16 @@ fn user_layers(profile: Option<&str>, writing_style: Option<&str>) -> Option<Str
     }
 }
 
+/// The `metadata` sent to gizzi for a turn, which gizzi stores on the user
+/// message: only the composer's `metadata.tools`, never anything else from
+/// the send body (in particular never `client_location`).
+fn stored_turn_metadata(body: &serde_json::Value) -> Option<serde_json::Value> {
+    body.get("metadata")
+        .and_then(|m| m.get("tools"))
+        .filter(|t| t.is_object())
+        .map(|tools| json!({ "tools": tools.clone() }))
+}
+
 /// Compose the final system-instructions block for an agent-chat request.
 /// Layer order: SOUL.md → STYLE.md (only when no prefs row exists — it is
 /// generated from that row, so including both would state the style
@@ -792,7 +802,11 @@ fn user_layers(profile: Option<&str>, writing_style: Option<&str>) -> Option<Str
 /// .claude/CLAUDE.md → SYSTEM_LAW.md, mirroring pack.ts) → agent
 /// system_prompt → response-style directive → custom
 /// instructions → "About the user" profile → "Writing as the user" (via
-/// `user_layers`) → client-sent systemPrompt. Blank layers
+/// `user_layers`) → client-sent systemPrompt. The opt-in location layer
+/// (`client_location`) is deliberately NOT composed here: this block is
+/// stored on the gizzi user message, so the location rides the turn-only
+/// `turnSystem` field instead and gizzi appends it after this block for
+/// that turn (crate::client_location). Blank layers
 /// are skipped and layers are joined with "\n\n"; returns None when every
 /// layer is empty so the caller preserves the old no-block behavior exactly.
 fn compose_system_instructions(
@@ -1341,6 +1355,13 @@ async fn agent_chat_bridge(
         .filter(|v| v.is_object())
         .cloned();
 
+    // Opt-in location (Settings → Privacy → "Share my location with bots",
+    // off by default): checked and rounded here, then sent to gizzi as the
+    // turn-only `turnSystem` layer — never in `system` (gizzi stores that on
+    // the user message), never stored, never logged. Invalid → ignored.
+    let location_layer = crate::client_location::from_body(&body_json, chrono::Utc::now())
+        .map(|loc| crate::client_location::location_layer(&loc));
+
     // A resume re-attaches to a turn already running on this chat (the
     // client's stream dropped mid-reply): nothing new is sent to the model.
     let resume = parse_resume(&body_json);
@@ -1773,17 +1794,20 @@ async fn agent_chat_bridge(
         if let Some(bot) = &bot_marker {
             gizzi_payload["bot"] = bot.clone();
         }
+        // The shared location: the last user layer, for this turn only.
+        // Top-level and separate from `system`/`metadata` (both are stored on
+        // the gizzi user message); gizzi holds it in memory for the turn.
+        if let Some(layer) = &location_layer {
+            tracing::debug!(session_id = %session_id, "agent-chat: location layer added");
+            gizzi_payload["turnSystem"] = json!(layer);
+        }
 
         // Composer tool options (the + menu / mobile "+" sheet):
         // `metadata.tools` carries {webSearch, research, toolAccess:
         // "auto"|"on_demand"|"always", disabledConnectors: [app ids]}. gizzi
         // applies them to this turn only (SessionPrompt.resolveTools).
-        if let Some(tools) = body_json
-            .get("metadata")
-            .and_then(|m| m.get("tools"))
-            .filter(|t| t.is_object())
-        {
-            gizzi_payload["metadata"] = json!({ "tools": tools.clone() });
+        if let Some(metadata) = stored_turn_metadata(&body_json) {
+            gizzi_payload["metadata"] = metadata;
         }
         if let Some(action_id) = &subscription_action {
             if !gizzi_payload["metadata"].is_object() {
@@ -2648,6 +2672,36 @@ mod tests {
         assert_eq!(super::delta_route("step-start"), super::DeltaRoute::Drop);
     }
     use super::*;
+
+    #[test]
+    fn location_never_reaches_stored_message_fields() {
+        let body = json!({
+            "chatId": "c1",
+            "message": "weather?",
+            "systemPrompt": "client",
+            "metadata": { "tools": { "webSearch": true }, "client_location": { "lat": 40.71 } },
+            "client_location": {
+                "lat": 40.71, "lon": -74.01, "accuracy_m": 30.0,
+                "time_zone": "America/New_York", "at": chrono::Utc::now().to_rfc3339()
+            }
+        });
+        // gizzi stores `metadata` and `system` on the user message: neither
+        // may carry the location.
+        let metadata = stored_turn_metadata(&body).unwrap();
+        assert_eq!(metadata, json!({ "tools": { "webSearch": true } }));
+        assert!(!metadata.to_string().contains("40.71"));
+        let system = compose_system_instructions(
+            None, None, None, None, "balanced", "", None,
+            body.get("systemPrompt").and_then(|v| v.as_str()),
+        )
+        .unwrap();
+        assert!(!system.contains("40.71") && !system.contains("Where the user is"));
+        // The location rides the turn-only layer instead.
+        let layer = crate::client_location::from_body(&body, chrono::Utc::now())
+            .map(|loc| crate::client_location::location_layer(&loc))
+            .unwrap();
+        assert!(layer.starts_with("Where the user is (shared from their device just now, approximate): about 40.71, -74.01"));
+    }
 
     /// D16: a send to a `subs-*` model mints `chat.send` only for a person's
     /// session. The runtime-device token Desktop's UI and gizzi share, and

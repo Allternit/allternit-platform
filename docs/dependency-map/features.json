@@ -121,6 +121,30 @@
       ]
     },
     {
+      "id": "feature:opt-in-location",
+      "label": "Share my location with bots",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "Opt-in location for bot chats, off by default (Claude Duet shares by default). When Settings → Privacy → 'Share my location with bots' is on, the client adds client_location {lat, lon (rounded to 2 decimals), accuracy_m, time_zone, at} to each chat send. allternit-api (client_location.rs) re-rounds, clamps the stated radius to at least 1 km, drops anything out of range, older than 30 minutes or with an unknown IANA zone, and sends one 'Where the user is' layer to gizzi as the turn-only turnSystem field, held in memory for the turn and appended last among the user layers. Never stored on messages, sessions or memory, never logged; invalid locations are ignored and never fail a send.",
+      "touches": [
+        "allternit/cmd/allternit-api/src/client_*",
+        "allternit/cmd/allternit-api/src/v1_*",
+        "allternit/cmd/gizzi-code/src/runtime/session",
+        "allternit-ai/src/views/settings"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-24",
+          "note": "The location layer is not part of the composed system block, because gizzi stores that block on the user message; it rides a separate turn-only turnSystem field instead, the same in-memory pattern as mcpProxy. Settings toggle ships in allternit-ai on all three surfaces."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/share-location.mdx",
+        "allternit/surfaces/docs/api/agent-chat.mdx",
+        "allternit/cmd/allternit-api/src/client_location.rs"
+      ]
+    },
+    {
       "id": "feature:bot-threads",
       "label": "Bot Mode threads and templates",
       "product": "product:digital-twin",

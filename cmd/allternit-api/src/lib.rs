@@ -88,6 +88,7 @@ pub mod channel_discord_app;
 pub mod channel_gateway;
 pub mod openui_text;
 pub mod card_meta;
+pub mod client_location;
 pub mod channel_phone;
 pub mod phone_outbound;
 pub mod phone_sync;
