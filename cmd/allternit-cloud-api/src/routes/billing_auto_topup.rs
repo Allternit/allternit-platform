@@ -12,6 +12,8 @@
 //!   Threshold at least $5, amount one of the pack sizes, cap at least the
 //!   amount and at most $5000. Turning it on needs a saved card (409
 //!   `auto_topup_no_card`) and passes the same new-buyer limit as packs.
+//!   While a chargeback is open or after one was lost it answers 409
+//!   `auto_topup_dispute` (`services::billing_disputes`).
 //! - `POST /api/v1/billing/auto-topup/setup` — a setup-mode Stripe Checkout
 //!   to save a card; returns `{ checkout_url }`. The
 //!   `checkout.session.completed` webhook stores the card.
@@ -157,6 +159,22 @@ async fn put_auto_topup(
         let has_card = row.as_ref().map_or(false, |row| {
             row.stripe_payment_method_id.is_some() && row.stripe_customer_id.is_some()
         });
+        // A chargeback on this person's card keeps auto top-up off while it
+        // is open and after it was lost (services::billing_disputes).
+        match crate::services::billing_disputes::blocks_auto_topup(&state.db, &user.id).await {
+            Ok(true) => {
+                return (
+                    StatusCode::CONFLICT,
+                    Json(json!({
+                        "error": "auto_topup_dispute",
+                        "message": "Auto top-up is off because a payment was disputed. Contact support to turn it back on.",
+                    })),
+                )
+                    .into_response();
+            }
+            Ok(false) => {}
+            Err(error) => return error.into_response(),
+        }
         if !has_card {
             return (
                 StatusCode::CONFLICT,

@@ -3,6 +3,7 @@
 pub mod api_keys;
 pub mod audit;
 pub mod auto_topup;
+pub mod billing_disputes;
 pub mod cloud_phones;
 pub mod contabo_runtime_service;
 pub mod cost_service;

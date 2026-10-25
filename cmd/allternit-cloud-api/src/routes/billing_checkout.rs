@@ -411,12 +411,32 @@ fn checkout_form_params(
             format!("{:.2}", pack.credits_usd),
         ),
     ];
+    // The same contract on the PaymentIntent behind the session, so a
+    // chargeback (`charge.dispute.created`, which names the intent, not the
+    // session) can be traced back to the person. `kind` tells packs apart
+    // from auto top-ups (`kind=auto_topup`, which grant from the intent).
+    form.push((
+        "payment_intent_data[metadata][clerk_user_id]".to_string(),
+        clerk_user_id.to_string(),
+    ));
+    form.push((
+        "payment_intent_data[metadata][allternit_credits_usd]".to_string(),
+        format!("{:.2}", pack.credits_usd),
+    ));
+    form.push((
+        "payment_intent_data[metadata][kind]".to_string(),
+        "credit_pack".to_string(),
+    ));
     // Org routing for the webhook grant. Only written when the session has an
     // active Clerk org — absent means the bridge was off at purchase time and
     // the grant falls back to the cloud wallet.
     if let Some(organization_id) = organization_id {
         form.push((
             "metadata[allternit_org_id]".to_string(),
+            organization_id.to_string(),
+        ));
+        form.push((
+            "payment_intent_data[metadata][allternit_org_id]".to_string(),
             organization_id.to_string(),
         ));
     }
@@ -645,6 +665,11 @@ mod tests {
         assert_eq!(field("payment_method_types[1]"), "link");
         assert_eq!(field("success_url"), "https://s.example");
         assert_eq!(field("cancel_url"), "https://c.example");
+        // The PaymentIntent carries the same contract so a dispute names the person.
+        assert_eq!(field("payment_intent_data[metadata][clerk_user_id]"), "user_123");
+        assert_eq!(field("payment_intent_data[metadata][allternit_credits_usd]"), "25.00");
+        assert_eq!(field("payment_intent_data[metadata][allternit_org_id]"), "org_9");
+        assert_eq!(field("payment_intent_data[metadata][kind]"), "credit_pack");
     }
 
     #[test]
@@ -657,7 +682,9 @@ mod tests {
             "off_session".to_string()
         )));
         let without = checkout_form_params(pack, "user_1", None, None, "s", "c");
-        assert!(without.iter().all(|(key, _)| key != "customer" && !key.starts_with("payment_intent_data")));
+        assert!(without
+            .iter()
+            .all(|(key, _)| key != "customer" && key != "payment_intent_data[setup_future_usage]"));
     }
 
     #[test]
@@ -670,9 +697,15 @@ mod tests {
         let pack = find_pack("credits_10").unwrap();
         let form = checkout_form_params(pack, "user_123", None, None, "s", "c");
         assert!(
-            form.iter().all(|(key, _)| key != "metadata[allternit_org_id]"),
+            form.iter().all(|(key, _)| key != "metadata[allternit_org_id]"
+                && key != "payment_intent_data[metadata][allternit_org_id]"),
             "no org metadata field may be sent when the session has no active org"
         );
+        assert!(form.contains(&(
+            "payment_intent_data[metadata][clerk_user_id]".to_string(),
+            "user_123".to_string()
+        )));
+        assert!(form.contains(&("payment_intent_data[metadata][kind]".to_string(), "credit_pack".to_string())));
         // The rest of the contract is unaffected.
         assert!(form.contains(&("metadata[clerk_user_id]".to_string(), "user_123".to_string())));
         assert!(form.contains(&("metadata[allternit_credits_usd]".to_string(), "10.00".to_string())));

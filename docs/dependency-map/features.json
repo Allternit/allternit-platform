@@ -776,6 +776,10 @@
         {
           "on": "2026-10-25",
           "note": "Upstream funding coverage: cloud-api polls provider balances every 10 min (OpenRouter /credits; others manual entry minus metered spend), compares with wallet liability, alerts when days left < reserve or balance < floor, and routes around a provider under its floor when another serves the same model. Admin: GET/PUT /api/v1/admin/funding, platform /admin/funding. Providers refill from the business card via their own auto-recharge (set by hand)."
+        },
+        {
+          "on": "2026-10-25",
+          "note": "Chargebacks: charge.dispute.created holds the disputed amount in the cloud wallet (dispute_hold, balance may go negative, usage clamp no longer resets a negative balance), turns auto top-up off (blocked while open or lost) and sends an ops alert; charge.dispute.closed won/warning_closed gives it back, lost keeps it. Pack PaymentIntents now carry clerk_user_id/kind=credit_pack metadata. Migration 106 billing_disputes. Live webhook endpoint must add both dispute events."
         }
       ],
       "evidence": [
