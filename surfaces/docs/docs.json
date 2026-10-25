@@ -317,6 +317,7 @@
               "operations/owned-downloads",
               "operations/screen-capture",
               "operations/hosted-driver",
+              "operations/upstream-funding",
               "internal/channel-apps-owner-setup"
             ],
             "icon": "/icons/screen.svg"
