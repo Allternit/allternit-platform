@@ -752,6 +752,46 @@ export async function setNarration(on: boolean): Promise<void> {
 
 // ─── Start / stop ──────────────────────────────────────────────────────────
 
+/** `*.csv` / `invoices*.pdf` → a case-insensitive match on the file name. */
+function globToRegExp(pattern: string): RegExp {
+  const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.');
+  return new RegExp(`^${escaped}$`, 'i');
+}
+
+/**
+ * A Teach run's `expect_download` step: wait for the next finished download
+ * whose file name matches `pattern` in any session a page uses (the default
+ * session and every webview's). Resolves with where it was saved.
+ */
+export function waitForDownload(pattern: string, timeoutMs: number): Promise<{ ok: boolean; fileName?: string; savePath?: string; error?: string }> {
+  const re = globToRegExp(pattern || '*');
+  const sessions = new Set<Electron.Session>([session.defaultSession]);
+  for (const wc of webContents.getAllWebContents()) {
+    try { if (!wc.isDestroyed()) sessions.add(wc.session); } catch { /* ignore */ }
+  }
+  return new Promise((resolve) => {
+    const listeners: Array<[Electron.Session, (e: unknown, item: Electron.DownloadItem) => void]> = [];
+    const finish = (result: { ok: boolean; fileName?: string; savePath?: string; error?: string }) => {
+      clearTimeout(timer);
+      for (const [ses, fn] of listeners) { try { ses.removeListener('will-download', fn as never); } catch { /* ignore */ } }
+      resolve(result);
+    };
+    const timer = setTimeout(() => finish({ ok: false, error: `No download matching ${pattern} within ${Math.round(timeoutMs / 1000)}s.` }), timeoutMs);
+    for (const ses of sessions) {
+      const fn = (_e: unknown, item: Electron.DownloadItem) => {
+        const fileName = item.getFilename();
+        if (!re.test(fileName)) return;
+        item.once('done', (_ev, state) => {
+          if (state === 'completed') finish({ ok: true, fileName, savePath: item.getSavePath() });
+          else finish({ ok: false, fileName, error: `The download of ${fileName} ${state}.` });
+        });
+      };
+      ses.on('will-download', fn as never);
+      listeners.push([ses, fn]);
+    }
+  });
+}
+
 export function isTeachAvailable(): boolean {
   return true;
 }
@@ -925,6 +965,7 @@ export function installTeachRecorder(d: TeachDeps): void {
   });
   ipcMain.handle('teach:get-state', () => getState());
   ipcMain.handle('teach:take-pending', () => pendingFinished);
+  ipcMain.handle('teach:wait-download', (_e, pattern: string, timeoutMs?: number) => waitForDownload(String(pattern ?? ''), Number(timeoutMs) || 60_000));
   ipcMain.on('teach:ack', (_e, sessionId: string) => {
     if (pendingFinished?.sessionId === sessionId) pendingFinished = null;
   });

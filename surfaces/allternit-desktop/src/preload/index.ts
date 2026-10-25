@@ -1186,6 +1186,9 @@ const teachAPI = {
     ipcRenderer.invoke('teach:stop'),
   setNarration: (on: boolean): Promise<void> => ipcRenderer.invoke('teach:set-narration', on),
   getSnapshot: (id: string): Promise<string | null> => ipcRenderer.invoke('teach:get-snapshot', id),
+  /** Wait for the next finished download whose name matches a glob (a Teach run's expect_download step). */
+  waitForDownload: (pattern: string, timeoutMs?: number): Promise<{ ok: boolean; fileName?: string; savePath?: string; error?: string }> =>
+    ipcRenderer.invoke('teach:wait-download', pattern, timeoutMs),
   onState: (cb: (s: TeachStateInfo) => void): (() => void) => {
     const listener = (_event: IpcRendererEvent, s: TeachStateInfo) => cb(s);
     ipcRenderer.on('teach:state', listener);
