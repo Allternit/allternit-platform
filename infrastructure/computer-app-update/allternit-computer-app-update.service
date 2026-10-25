@@ -1,0 +1,9 @@
+[Unit]
+Description=Update the Allternit Desktop app on cloud computers
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/allternit-computer-app-update.sh
+Nice=10

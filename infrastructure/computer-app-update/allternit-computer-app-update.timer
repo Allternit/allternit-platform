@@ -1,0 +1,10 @@
+[Unit]
+Description=Run the Allternit cloud-computer app update hourly
+
+[Timer]
+OnCalendar=hourly
+RandomizedDelaySec=15m
+Persistent=true
+
+[Install]
+WantedBy=timers.target
