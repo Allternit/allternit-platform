@@ -524,6 +524,7 @@ fn parse_model_reply(reply: &str, endpoints: &[EndpointLite], redactions: usize)
             }).filter(|c| !c.is_empty()),
             root: None,
             secret_ref: None,
+            needs_review: None,
             name,
         });
     }
