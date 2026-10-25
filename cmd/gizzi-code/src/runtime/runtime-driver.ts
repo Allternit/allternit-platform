@@ -1,3 +1,4 @@
+import type { ResponseSource } from "@/runtime/session/response-parts"
 import type { BotTurnInfo } from "@/runtime/bots/bot-turn"
 import type { LanguageModelV2StreamPart } from "@ai-sdk/provider"
 
@@ -71,7 +72,10 @@ export type AgentEvent =
   /** The agent's own context report (ACP usage_update): tokens in context / window size. */
   | { type: "context"; used: number; size: number }
   | { type: "tool_call"; id: string; name: string; arguments: unknown }
-  | { type: "tool_result"; id: string; content: string; isError?: boolean }
+  /** `sources`: structured results the CLI returned (Claude Code WebSearch), see session/response-parts.ts. */
+  | { type: "tool_result"; id: string; content: string; isError?: boolean; sources?: ResponseSource[] }
+  /** The CLI's own whole plan (Codex turn/plan/updated, ACP plan update): `[{content, status}]`. */
+  | { type: "plan"; entries: Array<{ content: string; status: string }>; explanation?: string }
   /** The vendor CLI's session id for this turn; persisted so the next turn can resume it. */
   | { type: "vendor_session"; id: string }
   | { type: "error"; error: unknown }
