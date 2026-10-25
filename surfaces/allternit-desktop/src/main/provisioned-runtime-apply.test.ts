@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { gizziSessionsIdle, startIdleApply } from './provisioned-runtime-apply';
+import { gizziSessionsIdle, startIdleApply } from './provisioned-runtime-apply.js';
 
 describe('gizziSessionsIdle', () => {
   it('idle when no session is listed or every listed one is idle', () => {
@@ -28,7 +28,7 @@ describe('startIdleApply', () => {
       apply: () => {
         applied += 1;
       },
-      setTimer: (fn) => {
+      setTimer: (fn: () => void) => {
         timers.push(fn);
         return {};
       },
