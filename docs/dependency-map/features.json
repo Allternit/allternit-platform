@@ -2732,6 +2732,33 @@
       "evidence": [
         "allternit/surfaces/docs/surfaces/bots.mdx"
       ]
+    },
+    {
+      "id": "feature:teach",
+      "label": "Teach from a recording",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "Show Allternit a task once: Desktop records clicks, typing and network calls, the server drafts a skill with typed inputs, and the skill is saved, scheduled, replayed by an agent or run step by step without a model. Values vary only through placeholders, checked by the same rules in the editor and on save.",
+      "touches": [
+        "allternit-ai/src/views/api-capture",
+        "allternit-ai/src/lib/api-capture",
+        "allternit/cmd/allternit-api/src/teach_routes.rs",
+        "allternit/cmd/allternit-api/src/har_api_routes.rs",
+        "allternit/surfaces/allternit-desktop/src/main/teach-recorder.ts",
+        "allternit/surfaces/allternit-desktop/src/main/browser-capture-manager.ts",
+        "allternit/surfaces/allternit-desktop/src/main/web-request-hub.ts"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-25",
+          "note": "Phase 1: typed inputs, a per-user business profile and placeholder validation that blocks saving (422 invalid_skill); Run (model-free, Desktop) next to Replay (agent); a failed step hands over to the agent. Repairs and versioned fixes come later."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/surfaces/site-apis.mdx",
+        "allternit/cmd/allternit-api/src/teach_routes.rs",
+        "allternit/surfaces/allternit-desktop/src/main/teach-recorder.ts"
+      ]
     }
   ],
   "journeys": [
@@ -3136,6 +3163,42 @@
       "evidence": [
         "allternit/surfaces/docs/guides/design-canvas-agents.mdx",
         "allternit/surfaces/docs/tools/artifact-tools.mdx"
+      ]
+    },
+    {
+      "id": "journey:teach-record-to-run",
+      "label": "Record a task once, then run it again",
+      "description": "From recording a demonstration to saving, scheduling, replaying or running the skill.",
+      "steps": [
+        {
+          "at": "allternit/surfaces/allternit-desktop/src/main/teach-recorder.ts",
+          "says": "Desktop records clicks, typing, key presses, choices, uploads and downloads in the browser pane, and the network capture collects the API calls."
+        },
+        {
+          "at": "allternit-ai/src/views/api-capture",
+          "says": "Review shows what will leave the device; Analyze sends events and the recording."
+        },
+        {
+          "at": "allternit/cmd/allternit-api/src/teach_routes.rs",
+          "says": "distill redacts the events, asks a model for steps and typed inputs (dates, numbers, files) and falls back to rules."
+        },
+        {
+          "at": "allternit-ai/src/lib/api-capture",
+          "says": "The editor checks placeholders (undeclared, unused, var before extract); errors block saving."
+        },
+        {
+          "at": "allternit/cmd/allternit-api/src/teach_routes.rs",
+          "says": "PUT /teach/skills/:id validates again and answers 422 invalid_skill with the problems per step; the business profile is read and written at /teach/profile."
+        },
+        {
+          "at": "allternit-ai/src/views/api-capture",
+          "says": "Save, schedule, Replay (an agent follows the steps) or Run (the compiled workflow runs without a model); a failed step hands over to the agent."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/surfaces/site-apis.mdx",
+        "allternit/cmd/allternit-api/src/teach_routes.rs",
+        "allternit/surfaces/allternit-desktop/src/main/teach-recorder.ts"
       ]
     }
   ]
