@@ -752,7 +752,7 @@ export async function setNarration(on: boolean): Promise<void> {
 
 // ─── Start / stop ──────────────────────────────────────────────────────────
 
-/** `*.csv` / `invoices*.pdf` → a case-insensitive match on the file name. */
+/** `*.csv` / `invoices*.pdf` → a case-insensitive match on the whole file name. */
 function globToRegExp(pattern: string): RegExp {
   const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.');
   return new RegExp(`^${escaped}$`, 'i');
@@ -764,7 +764,14 @@ function globToRegExp(pattern: string): RegExp {
  * session and every webview's). Resolves with where it was saved.
  */
 export function waitForDownload(pattern: string, timeoutMs: number): Promise<{ ok: boolean; fileName?: string; savePath?: string; error?: string }> {
-  const re = globToRegExp(pattern || '*');
+  // Steps store a regex source (digit runs generalised); a plain glob like
+  // `*.csv` also works.
+  let re: RegExp;
+  try {
+    re = /[*?]/.test(pattern) && !/[\\^$]/.test(pattern) ? globToRegExp(pattern) : new RegExp(pattern || '.*', 'i');
+  } catch {
+    re = globToRegExp(pattern || '*');
+  }
   const sessions = new Set<Electron.Session>([session.defaultSession]);
   for (const wc of webContents.getAllWebContents()) {
     try { if (!wc.isDestroyed()) sessions.add(wc.session); } catch { /* ignore */ }
