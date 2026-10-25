@@ -73,7 +73,7 @@ update_one(){ # update_one <instance> <installed version>
 
   fetch_deb
   log "$name: $from -> $VERSION"
-  incus snapshot list "$name" -f csv -c n | grep '^app-update-' | while read -r old; do
+  incus snapshot list "$name" -f json | jq -r '.[].name | select(startswith("app-update-"))' | while read -r old; do
     incus snapshot delete "$name" "$old"
   done
   incus snapshot create "$name" "$snap"
