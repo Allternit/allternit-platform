@@ -163,7 +163,13 @@ pub fn should_retry(
     if !policy.enabled || attempt == 0 || attempt > policy.max_retries as u32 {
         return false;
     }
-    if !policy.retryable_statuses.contains(status) {
+    // The proxy records a refused completion with status "refused" (and
+    // error_type "refusal"), while retry policies name it "refusal". Accept
+    // either spelling so refusals actually fail over.
+    let status_matches = policy.retryable_statuses.contains(status)
+        || (status == "refused" && policy.retryable_statuses.contains("refusal"))
+        || (status == "refusal" && policy.retryable_statuses.contains("refused"));
+    if !status_matches {
         return false;
     }
     if policy.retryable_errors.contains("*") {
@@ -899,6 +905,13 @@ mod tests {
         let later = t0 + Duration::from_secs(6);
         let picked = select_fallback_healthy_at(2, &primary, &fallbacks, &policy, later, &tracker);
         assert_eq!(picked, Some(model("anthropic", "claude")));
+    }
+
+    #[test]
+    fn refused_status_retries_under_refusal_policy() {
+        let policy = RetryPolicy::default();
+        assert!(should_retry("refused", Some("refusal"), 1, &policy));
+        assert!(!should_retry("ok", None, 1, &policy));
     }
 
     #[test]
