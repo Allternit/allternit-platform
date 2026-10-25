@@ -246,6 +246,8 @@ export type UpdateStatus =
   | { state: 'error'; message: string };
 
 const appAPI = {
+  /** This build lets first-party pages read a rough location (Settings → Privacy → Location). */
+  geolocation: true,
   getInfo: (): Promise<{
     version: string;
     platform: string;

@@ -178,6 +178,12 @@ export namespace SessionPrompt {
       ),
     format: MessageV2.Format.optional(),
     system: z.string().optional(),
+    turnSystem: z
+      .string()
+      .optional()
+      .describe(
+        "A system layer for this turn only, sent by allternit-api (today: the user's opt-in shared location). Held in memory for the turn and appended after `system`; deliberately not stored on the user message, never logged, never carried to later turns.",
+      ),
     /**
      * Run this turn as one of the user's platform bots (sent by
      * allternit-api): the bot's identity leads, and the user's personal
@@ -337,14 +343,25 @@ const message = await createUserMessage(input)
 
     // The per-user connector proxy exists for this turn only.
     const releaseMcpProxy = McpUserProxy.register(input.sessionID, input.mcpProxy)
+    // So does the turn-only system layer (the opt-in shared location).
+    const turnLayer = input.turnSystem?.trim()
+    if (turnLayer) turnSystemLayers.set(input.sessionID, turnLayer)
     try {
       const result = await loop({ sessionID: input.sessionID, fallbackModels: input.fallbackModels, botPreamble })
       if (!afterTurnLimit(session, result)) afterTurnHandoff(input.sessionID, result)
       return result
     } finally {
       releaseMcpProxy()
+      if (turnLayer && turnSystemLayers.get(input.sessionID) === turnLayer) turnSystemLayers.delete(input.sessionID)
     }
   })
+
+  /**
+   * Turn-only system layers by session (`PromptInput.turnSystem`). In memory
+   * only: set for the length of one prompt() turn, removed when it ends, never
+   * written to the session, its messages or the logs.
+   */
+  const turnSystemLayers = new Map<string, string>()
 
   // Cancelling a session while its environment is being set up stops the setup.
   const setupAborts = new Map<string, AbortController>()
@@ -1187,6 +1204,9 @@ const message = await createUserMessage(input)
         botChat: botSystemPrompt,
         scratchpad: scratchpadSystemPrompt,
       })
+      // The turn-only layer (opt-in location) goes last among the user layers.
+      const turnLayer = turnSystemLayers.get(sessionID)
+      if (turnLayer) system.push(turnLayer)
       const format = lastUser.format ?? { type: "text" }
       if (format.type === "json_schema") {
         system.push(STRUCTURED_OUTPUT_SYSTEM_PROMPT)

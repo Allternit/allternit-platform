@@ -1,0 +1,37 @@
+---
+title: 'Share my location with bots'
+description: 'Let your bots know roughly where you are, for local time, nearby places, weather and directions. Off by default and never stored.'
+---
+
+Your bots and agents can know roughly where you are when it helps: what time it is where you are, what is nearby, the weather, or directions. This is **off by default**. Nothing about your location is sent until you turn it on.
+
+## Location
+
+**Share my location with bots** is in Settings → Privacy. It works the same on ai.allternit.com (including its phone layout), in the m.allternit.com app and in Allternit Desktop, and for every brain. An older Desktop build shows "Update Allternit Desktop to share your location" instead of the switch; on a Mac, the first time you turn it on, macOS asks whether Allternit may use your location.
+
+When it is on, each message you send carries:
+
+- **An approximate position.** Latitude and longitude rounded to two decimal places, which is about 1 km. Your device rounds it before it leaves, and the server rounds it again.
+- **How precise it is.** Never stated finer than about 1 km.
+- **Your time zone**, for example `Europe/London`.
+- **When it was read.** A position older than 30 minutes is ignored.
+
+The bot gets one short note for that message only: where you are, roughly, and your time zone. It is told to use it only when it helps, not to mention it otherwise, and not to save it to memory.
+
+## What is never kept
+
+- Your location is not stored with your messages, your chat history, your sessions or your bot's memory.
+- It is not written to logs.
+- It is not carried to later messages. Each message uses only the position sent with it.
+
+If your device sends a position that does not look right (out of range, too old, or an unknown time zone), it is dropped and your message is sent without it. A location problem never stops a message.
+
+## Turn it off
+
+Turn off **Share my location with bots** in Settings → Privacy. Your next message is sent without a location. Because nothing was stored, there is nothing to delete.
+
+Your browser or phone may also ask for permission to use your location the first time. Saying no there, or turning location off for Allternit in your device settings, also stops it.
+
+## For developers
+
+The client sends `client_location` on the chat send body (`POST /api/agent-chat`, and the Desktop bridge `POST /api/v1/ai/chat`). See [Agent Chat API](/api/agent-chat#request-body). The server checks and rounds it and passes it to the runtime as a turn-only layer that is held in memory for that turn, separate from the stored system prompt.

@@ -60,6 +60,7 @@ curl -N -X POST http://127.0.0.1:8013/api/agent-chat \
 | `runtimeEnv` | object | no | Map of string environment variables for the runtime. |
 | `systemPrompt` | string | no | System prompt override, read from the flattened request context. |
 | `attachments` | array | no | Images and files for this turn: `[{ "url"?: string, "dataBase64"?: string, "mediaType": string, "name"?: string }]`. `url` is a `data:` URL, an `https://` link (for example an Allternit Cloud file link) or an upload from [`POST /api/v1/uploads`](/api/uploads); a bare `dataBase64` is sent as a data URL. Each becomes a gizzi file part after the text, so image types reach the model as image input. At most 10 per message and 24 MB of inline data; other URL schemes are dropped. The request body may be up to 32 MB. The Desktop bridge `POST /api/v1/ai/chat` takes the same field. |
+| `client_location` | object | no | Opt-in location, sent only when the user turned on Settings → Privacy → Share my location with bots: `{ "lat": number, "lon": number, "accuracy_m": number, "time_zone": string, "at": string }`. `lat`/`lon` rounded by the client to 2 decimals (about 1 km) and rounded again by the server; `accuracy_m` is stated as no finer than 1000 m; `time_zone` must be a known IANA zone; `at` (RFC 3339) must be within the last 30 minutes. Anything invalid is ignored and the send goes on. Becomes a turn-only system layer, after the user layers, sent to gizzi as `turnSystem` (held in memory for the turn); never stored with the message, session or memory and never logged. Absent means off. See [Share my location with bots](/guides/share-location). The Desktop bridge `POST /api/v1/ai/chat` takes the same field. |
 | `resume` | object | no | `{ "cursor": <number>, "messageId"?: string }` — re-attach to the turn already running on `chatId` after a dropped stream. `cursor` is the last SSE `id` received. Nothing new is sent; the bridge replays what happened after the cursor, then continues live. Returns `409 {"error":"resume_unavailable"}` when the session is no longer known. |
 
 ### Response
@@ -115,3 +116,4 @@ curl -X POST http://127.0.0.1:8013/api/chat/action \
 - [Agent Sessions](/api/agent-sessions)
 - [Event Stream](/api/event-stream)
 - [Agents API](/api/agents)
+- [Share my location with bots](/guides/share-location)
