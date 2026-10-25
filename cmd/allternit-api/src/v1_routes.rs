@@ -1702,6 +1702,17 @@ async fn agent_chat_bridge(
         }
     };
 
+    // Card repair (card_repair.rs): a broken card's check from this chat's
+    // last turn rides along with this send, once; a new failure is queued
+    // for the next send unless this turn was already the retry.
+    let repair_user = user_id_for_record.clone();
+    let repair_chat = chat_id.clone();
+    let repair_note = if resume.is_none() && crate::card_repair::enabled() {
+        crate::card_repair::take(&repair_user, &repair_chat)
+    } else {
+        None
+    };
+
     let stream = async_stream::stream! {
         let msg_id = assistant_message_id.clone();
         let session_id = gizzi_session_id.clone();
@@ -1797,8 +1808,17 @@ async fn agent_chat_bridge(
         // The shared location: the last user layer, for this turn only.
         // Top-level and separate from `system`/`metadata` (both are stored on
         // the gizzi user message); gizzi holds it in memory for the turn.
-        if let Some(layer) = &location_layer {
+        if location_layer.is_some() {
             tracing::debug!(session_id = %session_id, "agent-chat: location layer added");
+        }
+        if repair_note.is_some() {
+            tracing::debug!(session_id = %session_id, "agent-chat: card repair note added");
+        }
+        // The card repair note is turn-only too: the same layer, after the location.
+        if let Some(layer) = crate::card_repair::join_turn_layers(&[
+            location_layer.as_deref(),
+            repair_note.as_deref(),
+        ]) {
             gizzi_payload["turnSystem"] = json!(layer);
         }
 
@@ -2480,6 +2500,16 @@ async fn agent_chat_bridge(
                 crate::card_meta::record_checks(&conn, &uid, &sid, &message_id, &checks)
             })
             .await;
+        }
+        // Card repair: failed cards go back to the model with the next send
+        // (bounded to one retry — a turn that carried a note never queues one).
+        if finish.status != "error" && crate::card_repair::enabled() {
+            let note = crate::card_repair::repair_note(card_texts.values().map(|(_, text)| text.as_str()));
+            if crate::card_repair::should_queue(repair_note.is_some(), &note) {
+                if let Some(note) = note {
+                    crate::card_repair::queue(&repair_user, &repair_chat, note);
+                }
+            }
         }
         yield Ok(sse_frame(trace_cursor).data(
             cowork_turn_finish_frame(&msg_id, &finish, last_usage.as_ref()).to_string(),
