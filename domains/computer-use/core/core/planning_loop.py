@@ -696,6 +696,13 @@ class PlanningLoop:
                         step.error = str(act_err)
                         step.action_succeeded = False
                         logger.warning(f"Action failed at step {step_num}: {act_err}")
+                        if type(act_err).__name__ == "ComputerControlRequired":
+                            # Nothing can run until a person takes control;
+                            # stop now with that reason instead of re-planning.
+                            stop_reason = StopReason.ERROR
+                            error_msg = str(act_err)
+                            steps.append(step)
+                            break
 
                 # OBSERVE phase — F1 (cu22 observation disconnect): after a
                 # batch, observe the SAME browser the batch executed in (the
@@ -1410,6 +1417,9 @@ class PlanningLoop:
                 toolset, member, call_input, _confirm, run_id=run_id, turn_id=turn, call_index=0,
                 step=getattr(action, "reason", None) or None,
             )
+            if reply.needs_control:
+                from .toolset_executor import ComputerControlRequired
+                raise ComputerControlRequired(reply.text() or "Take control of this computer first.")
             if not reply.ok:
                 raise RuntimeError(reply.text() or f"{member} failed")
             return {
