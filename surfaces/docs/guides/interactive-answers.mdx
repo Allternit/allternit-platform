@@ -1,6 +1,6 @@
 ---
 title: 'Interactive answers'
-description: 'Cards and inline apps in assistant replies: what they can do, the Layout and visuals setting, live data from your connectors, how they stream, and how the app tells the model about them.'
+description: 'How every reply is laid out (answer templates, length, where an answer goes), how long answers look, and the cards and inline apps in replies: the Layout and visuals setting, live data, card repair, and how the app tells the model about them.'
 ---
 
 An assistant reply can include an interactive card: metrics, tables, line, area, bar and pie charts, tabs, timelines, checklists, steps, comparisons, and inputs that recompute on the page. Cards can also show live data from your connected apps and, with your approval each time, make changes through them. The model doesn't write HTML or code for a card. It picks from a fixed set of 38 Allternit components, and the app builds the card piece by piece while the reply streams.
@@ -9,12 +9,39 @@ When the components can't do the job (sound, a drawing canvas, a game, a simulat
 
 Cards work the same in Chat, Cowork, Code, bot threads, the HUD and Design mode, on Desktop, ai.allternit.com (including the phone layout) and the m.allternit.com app.
 
+## How answers are laid out
+
+Every agent lays out answers the same way, whichever model answers (Claude Code, Codex, Gemini, Kimi, Allternit Cloud models and the others).
+
+- **The answer comes first**, in one line. The details come after it.
+- **A fixed layout for each kind of question.** Comparisons get criteria, a table, a recommendation and "what would change my choice". Decisions get the options in a table, a recommendation and the trade-offs. Plans get a goal, steps, risks and a first action. How-tos get steps and a check. Troubleshooting gets cause, fix and verify. Research gets findings with sources and open questions. Status updates get done, in progress, blocked and next. Quick questions get one line and up to 3 bullets.
+- **Sources are links** in the text. The agent doesn't describe its steps in the reply ("I searched…"), because the steps already show above it ([Agent steps in replies](/guides/agent-steps)).
+- **Settings → Response style sets the length.** Concise: the answer plus up to 3 bullets. Balanced: the answer plus short sections. Detailed: the full layout with reasoning and examples. Custom: your instructions set the length, and the layout stays the same.
+- **Each question gets one layout.** The app picks the layout from the words in your message before the agent starts ("vs" or "compare" gets Comparison, "should I" gets Decision, "how do I" gets How-to, "error" or "not working" gets Troubleshooting, and so on). The same question gets the same layout every time.
+- **Where an answer goes.** Answers stay in the reply, whatever their length. You get an interactive card when you need to pick, adjust or explore something. You get an artifact when the agent makes something you will keep, edit or share (a doc, deck, sheet, page or code file), or when you ask for one.
+- **Interactive cards** still show when you need to pick, adjust or explore something (Layout and visuals → Auto). Text only turns cards off. The layout above stays on either way.
+
+Drafts the agent writes for you to send (emails, posts), code, files and artifacts keep their own format. For developers: the templates, the picker and the shape lint are in [Response parts and answer shapes](/guides/response-parts#answer-shapes-and-templates).
+
+## How long answers are laid out
+
+Long replies read like a short page:
+
+- **Title and date.** A first-level heading is the answer's title, set in the same serif as page titles. A short line right under it (for example "Comparison as of October 25, 2026 · USD") shows small and grey.
+- **Bottom line first.** A paragraph that starts with "Bottom line:", "TL;DR:", "Recommendation:", "Verdict:" or "In short:" shows as a quiet callout with a rule on the left.
+- **Sections.** Section headings are clearly larger than sub-headings. When an answer has four or more sections, a **Contents** row at the top lists them; click one to jump to it. Click **Contents** to hide the list.
+- **Lists.** Items sit close together. An item that starts with a short label ("License: …") shows the label in bold.
+- **Tables show every row.** Wide tables scroll sideways. Click a table (or Tab to it) to show its copy, download and full-screen buttons; on a phone they are always shown.
+- **Sources.** Links the agent cites show as small pills with the site's icon and name, like "github". Several sources in a row become one pill, "github +2"; click **+2** to see them all. Opening a source asks first, as other links in answers do. Citation text without a link (such as "GitHub+3" pasted from another app) stays plain text.
+
+This styling applies only to the agent's replies (in Chat, Cowork, Code and bot threads). Files, Memory Drive notes and artifacts keep their Markdown as written. The same layout applies on Desktop, ai.allternit.com, the phone layout and the m.allternit.com app, in light and dark mode.
+
 ## Using cards
 
 - **Inputs update instantly.** Moving a slider or changing a number recomputes the card on your device. Nothing is sent to the model.
 - **Buttons and numbered choices** send their label to the assistant as your next message.
 - **What you set is remembered.** Reopen the chat and the card is as you left it, on any device you're signed in on: what you set is saved with the message. The device you used keeps a copy too, so it also works offline and on older servers.
-- **A card that can't be drawn still says what it meant.** If part of a card can't be shown, the rest still renders and a short note lists what was left out. If nothing can be drawn, the card's text appears instead (its title, numbers, rows and options), never a blank box or raw code.
+- **A card that can't be drawn still says what it meant.** If part of a card can't be shown, the rest still renders and a short note lists what was left out. If nothing can be drawn, the card's text appears instead (its title, numbers, rows and options), never a blank box or raw code. Allternit also tells the brain what went wrong, once, with your next message: if you're still on the same topic, the reply starts with the fixed card. It tries this one time only, and it never adds an extra message to your chat.
 - **Live data** comes from your connected apps (Settings → Connectors). A card that reads data loads it when it opens. A card that changes data only does so when you press its button, and shows an **Allow** bar with the exact tool and arguments first. Nothing changes until you approve. **Cancel** leaves everything as it was.
 - **Numbers say where they come from.** Every metric carries a note: your input, an estimate, or a named source.
 
@@ -24,8 +51,8 @@ Settings → **Response style** → **Layout and visuals**:
 
 | Option | What happens |
 | --- | --- |
-| **Auto** (default) | The assistant can answer with a card when it helps. Plain text stays the default. |
-| **Text only** | The assistant isn't told about cards, so replies stay plain text. Cards already in a chat still show. |
+| **Auto** (default) | The assistant can answer with a card when you need to pick, adjust or explore something. Plain text stays the default. |
+| **Text only** | The assistant isn't told about cards, so replies stay plain text. Cards already in a chat still show. The answer layout still applies. |
 
 The setting is saved on each device, like the Memory switches. On phones it's in the same Settings section.
 
@@ -47,10 +74,23 @@ Source: `allternit-ai/src/lib/openui/`:
 | `card-meta.tsx` | The server's checks and the state saved with each message, provided per message by the transcript. |
 | `catalog.json` | The catalog as the server sees it (names, parameter order, required parameters); a test keeps it in step with the library. |
 | `openui-fences.ts` | Splits reply text into markdown and card fences (also while streaming). |
-| `answer-instructions.ts` | Builds the manual sent with each chat turn; empty when Settings says Text only. |
+| `answer-instructions.ts` | Builds the manual sent with each chat turn (empty when Settings says Text only) and `answerShapesInstructions()`, the answer-shape block sent on every send path either way. |
+| `answer-shapes.md`, `answer-templates.json`, `answer-shapes.ts` | The answer-shape rules, the named templates and the deterministic template picker. See [Response parts and answer shapes](/guides/response-parts#answer-shapes-and-templates). |
 | `card-tools.ts` | The user's connector tools for `Query()`/`Mutation()` and the rules for running them. |
 | `card-state.ts` | Per-card saved state on the device. |
 | `answer-prefs.ts` | The Layout and visuals setting. |
+
+The long-answer layout lives in `allternit-ai/src/components/ai-elements/`:
+
+| File | Role |
+| --- | --- |
+| `markdown.tsx` | The renderer. The `answer` prop (set by assistant replies in chat and bot threads only) turns on the answer marks, source pills and Contents row; also the rehype order, `tableMaxHeight={0}` (Streamdown's 300 px table cap is gone), `cite` to source pills, and a `data-answer-root` wrapper (`display: contents`) for per-answer actions. |
+| `answer-structure.ts` | Rehype marks: `answer-short` (dateline), `answer-lead`, `answer-label`, focusable tables; `sectionTitles()` for Contents. |
+| `source-pills.ts`, `SourcePills.tsx` | Which links are citations, grouping runs into one `cite.source-pills`, favicon and short site name; the pill and its "+N" list (portalled, Escape or outside click closes, Streamdown's link check kept). |
+| `AnswerContents.tsx` | The Contents row for answers with 4 or more `##` sections. |
+| `app-source-links.ts` | App link chips; skips links already turned into source pills. |
+| `src/design/theme.css` (`.allternit-markdown`, `.source-pills*`, `.answer-contents*`) | Hierarchy, dateline, lead callout, list rhythm, pills, Contents, phone sizes. |
+| `preview-answer.html`, `src/dev/AnswerPreview.tsx` | Dev preview (`?theme=dark`, `?stream=1`, `?w=390`). |
 
 Inline apps: `allternit-ai/src/lib/apps/inline-app.ts` (document, theme variables, manual) and `src/components/ai-elements/InlineAppFrame.tsx` (the frame, previews and watchdog). Server side: allternit-api `openui_text.rs` (card text, `check_reply`/`check_card`), `card_meta.rs` (checks and card state per message, migration `V251__message_card_meta.sql`) and the `card_check` frame in the chat bridge (`v1_routes.rs`).
 
@@ -118,7 +158,7 @@ Cards follow common inline-card guidelines for chat apps, on Allternit's neutral
 
 ### Server check
 
-At the end of every chat turn, allternit-api checks each card the reply wrote against the catalog (`openui_catalog.json`, a copy of the app's `catalog.json`): unknown components, too many or too few values, names used but never defined, a missing `root`, lines that can't be read. It sends the result to the app as a `card_check` frame (per card: its key, the diagnostics and the card as text) and stores it with the message, so a reload shows the same.
+At the end of every chat turn, allternit-api checks each card the reply wrote against the catalog (`openui_catalog.json`, a copy of the app's `catalog.json`): unknown components, too many or too few values, names used but never defined, a missing `root`, lines that can't be read. It sends the result to the app as a `card_check` frame (per card: its key, the diagnostics and the card as text) and stores it with the message, so a reload shows the same. A failed card also queues a one-time repair note for the next turn: the [card repair loop](/guides/response-parts#card-repair-loop).
 
 What the user sets on a card is saved with the message through `PUT /api/v1/agent-sessions/:id/messages/:messageId/card-state` (merged per card, at most 32 cards and 16 KB per card), and comes back with the history from `GET /api/v1/agent-sessions/:id/card-meta`. Rows belong to the user who wrote them.
 
@@ -187,7 +227,7 @@ The app, not gizzi-code, sends the manual. On every chat turn it builds `interac
 
 - Each build only asks for the components it can render, and older Desktop builds never get instructions they can't show.
 - The terminal (`gizzi` TUI) and channels never get the manual.
-- **Text only** sends nothing (no card manual and no inline-apps manual).
+- **Text only** sends no card manual and no inline-apps manual. The answer-shape block (the rules, the length line and the placement rule) is sent either way, and allternit-api adds its own copy for callers that don't send one; see [Response parts and answer shapes](/guides/response-parts#answer-shapes-and-templates).
 - With the same tools, the text is byte-identical turn to turn, so it stays in the provider's prompt cache. A send waits at most 1.5 s for the connector tool list, then goes without tools.
 
 The manual is generated from the component schemas, so it can't drift from the renderer. The same manual and a live preview are in **UI Forge**, a playground for writing and checking cards.
