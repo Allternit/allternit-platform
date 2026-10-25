@@ -245,6 +245,11 @@ def legacy_request(toolset: str, member: str, input: Dict[str, Any]) -> Tuple[st
 # Executor client
 # ---------------------------------------------------------------------------
 
+class ComputerControlRequired(RuntimeError):
+    """423 from the executor: this computer's owner hasn't taken control, so
+    no action can run. Retrying can't help; the run stops and says so."""
+
+
 @dataclass
 class ToolsetReply:
     status: int
@@ -253,6 +258,10 @@ class ToolsetReply:
     @property
     def ok(self) -> bool:
         return self.status == 200 and not self.body.get("is_error")
+
+    @property
+    def needs_control(self) -> bool:
+        return self.status == 423
 
     @property
     def approval_id(self) -> Optional[str]:
