@@ -2712,6 +2712,26 @@
         "allternit-ai/src/components/glance/GlanceLine.tsx",
         "allternit/cmd/gizzi-code/src/runtime/tools/builtins/glance.ts"
       ]
+    },
+    {
+      "id": "feature:bot-mode-live-team",
+      "label": "Bot Mode live team and rail signals",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "Bots home opens with Your team above the composer: main bot first, then pinned, other bots and group chats, each with a live status word (Working, Needs you, Talking with a Join pill, Idle) and the overview List / Grid / Deck switch. With one bot in To:, the title, To: chip, composer border and a faint page wash take that bot's own colour. Bot rail rows show the last activity time, an unread dot, and Working / Needs you in place of the last line. One Bot Mode for every door (full app, phone, PWA, Allternit Bots).",
+      "touches": [
+        "allternit-ai/src/components/bots-launch",
+        "allternit-ai/src/views/bots"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-25",
+          "note": "Eoj picked these from mockups (Signals, live roster, group chats in roster, Join pill, composer takes the picked bot, colour wash, status word in rail, List/Grid/Deck). Rejected: pinned-first roster (the rail already pins), cross-bot needs-you strip, recent list, main-bot brief. Rule: no bots-app-only layouts; Bot Mode stays one experience."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/surfaces/bots.mdx"
+      ]
     }
   ],
   "journeys": [
