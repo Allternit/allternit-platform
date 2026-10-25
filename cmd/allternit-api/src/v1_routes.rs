@@ -1811,6 +1811,17 @@ async fn agent_chat_bridge(
         }
     };
 
+    // Card repair (card_repair.rs): a broken card's check from this chat's
+    // last turn rides along with this send, once; a new failure is queued
+    // for the next send unless this turn was already the retry.
+    let repair_user = user_id_for_record.clone();
+    let repair_chat = chat_id.clone();
+    let repair_note = if resume.is_none() && crate::card_repair::enabled() {
+        crate::card_repair::take(&repair_user, &repair_chat)
+    } else {
+        None
+    };
+
     let stream = async_stream::stream! {
         let msg_id = assistant_message_id.clone();
         let session_id = gizzi_session_id.clone();
@@ -1904,17 +1915,23 @@ async fn agent_chat_bridge(
             gizzi_payload["bot"] = bot.clone();
         }
         // Turn-only layers: this turn's answer template (the deterministic
-        // picker, crate::answer_shapes) and the shared location, the last
-        // user layer. Top-level and separate from `system`/`metadata` (both
-        // are stored on the gizzi user message); gizzi holds them in memory
-        // for the turn.
+        // picker, crate::answer_shapes), the shared location, then a card
+        // repair note when the last reply's cards failed the check
+        // (crate::card_repair). Top-level and separate from `system`/`metadata`
+        // (both are stored on the gizzi user message); gizzi holds them in
+        // memory for the turn.
         if location_layer.is_some() {
             tracing::debug!(session_id = %session_id, "agent-chat: location layer added");
         }
-        if let Some(layers) = turn_layers(
-            crate::answer_shapes::turn_template_line(&message, client_system_prompt.as_deref()).as_deref(),
-            location_layer.as_deref(),
-        ) {
+        if repair_note.is_some() {
+            tracing::debug!(session_id = %session_id, "agent-chat: card repair note added");
+        }
+        let template_line = crate::answer_shapes::turn_template_line(&message, client_system_prompt.as_deref());
+        if let Some(layers) = turn_layers(template_line.as_deref(), location_layer.as_deref())
+            .into_iter()
+            .chain(repair_note.clone())
+            .reduce(|a, b| format!("{a}\n\n{}", b.trim()))
+        {
             gizzi_payload["turnSystem"] = json!(layers);
         }
 
@@ -2613,6 +2630,16 @@ async fn agent_chat_bridge(
                 crate::card_meta::record_checks(&conn, &uid, &sid, &message_id, &checks)
             })
             .await;
+        }
+        // Card repair: failed cards go back to the model with the next send
+        // (bounded to one retry — a turn that carried a note never queues one).
+        if finish.status != "error" && crate::card_repair::enabled() {
+            let note = crate::card_repair::repair_note(card_texts.values().map(|(_, text)| text.as_str()));
+            if crate::card_repair::should_queue(repair_note.is_some(), &note) {
+                if let Some(note) = note {
+                    crate::card_repair::queue(&repair_user, &repair_chat, note);
+                }
+            }
         }
         yield Ok(sse_frame(trace_cursor).data(
             cowork_turn_finish_frame(&msg_id, &finish, last_usage.as_ref()).to_string(),
