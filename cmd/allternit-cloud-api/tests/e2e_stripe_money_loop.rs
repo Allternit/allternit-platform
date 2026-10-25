@@ -258,17 +258,23 @@ async fn real_stripe_test_mode_money_loop() {
         .await
         .expect("debit");
     assert!(close(after, 3.0));
-    let attempt = auto_topup::run_check(&db, &ReqwestStripeCheckout::new(), &key, &user_id, after)
+    // The debit itself spawns the trigger (production path): wait for its real PaymentIntent.
+    let mut intent_id = String::new();
+    for _ in 0..60 {
+        let row: Option<Option<String>> = sqlx::query_scalar(
+            "SELECT payment_intent_id FROM billing_auto_topup_attempts WHERE user_id = $1",
+        )
+        .bind(&user_id)
+        .fetch_optional(&db)
         .await
-        .expect("run_check")
-        .expect("a charge should start under the threshold");
-    let intent_id: String = sqlx::query_scalar(
-        "SELECT payment_intent_id FROM billing_auto_topup_attempts WHERE id = $1",
-    )
-    .bind(&attempt)
-    .fetch_one(&db)
-    .await
-    .expect("attempt row");
+        .expect("attempt row");
+        if let Some(Some(id)) = row {
+            intent_id = id;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    }
+    assert!(!intent_id.is_empty(), "the debit should start a charge under the threshold");
     let intent = stripe.get(&format!("/v1/payment_intents/{intent_id}")).await;
     assert_eq!(intent["status"], "succeeded", "off-session charge: {intent}");
     assert_eq!(intent["metadata"]["kind"], "auto_topup");

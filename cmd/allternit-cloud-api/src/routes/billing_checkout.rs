@@ -453,10 +453,10 @@ fn checkout_form_params(
 /// The production StripeCheckout: POSTs the form to the Stripe REST API with the secret key as the
 /// basic-auth username (empty password, per Stripe's auth convention) and returns the hosted session
 /// URL. The secret key never appears in error text.
-pub(crate) struct ReqwestStripeCheckout;
+pub struct ReqwestStripeCheckout;
 
 impl ReqwestStripeCheckout {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self
     }
 
