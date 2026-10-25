@@ -1188,6 +1188,7 @@ impl CostService for CostServiceImpl {
 
         let new_balance = self.get_credit_balance(user_id).await?;
         info!("Deducted ${:.2} credits from user {}; new balance ${:.2}", amount_usd, user_id, new_balance);
+        super::auto_topup::spawn_check(self.db.clone(), user_id.to_string(), new_balance);
         Ok(new_balance)
     }
 
@@ -1231,7 +1232,7 @@ impl CostService for CostServiceImpl {
 
         // Atomic clamp at zero: a balance never goes negative, and users
         // without a credits row (plan-cap enforcement) are a no-op success.
-        sqlx::query(
+        let debited = sqlx::query(
             "UPDATE user_credits SET balance_usd = GREATEST(0, balance_usd - $1) WHERE user_id = $2",
         )
         .bind(amount_usd)
@@ -1247,6 +1248,12 @@ impl CostService for CostServiceImpl {
             "Deducted ${:.4} credits from user {} for {} ({}); new balance ${:.4}",
             amount_usd, user_id, source, ref_id, new_balance
         );
+        // Auto top-up: inference and hosted-runtime debits both land here.
+        // Spawned, so the charge never blocks or fails this debit. Only a
+        // real wallet debit counts (plan-cap users have no credits row).
+        if debited.rows_affected() > 0 {
+            super::auto_topup::spawn_check(self.db.clone(), user_id.to_string(), new_balance);
+        }
         Ok(new_balance)
     }
 
