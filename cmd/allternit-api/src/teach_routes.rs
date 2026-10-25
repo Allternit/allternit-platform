@@ -66,6 +66,9 @@ pub struct TeachInput {
     pub root: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub secret_ref: Option<String>,
+    /// UI-only: created automatically and not yet reviewed by a person.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub needs_review: Option<bool>,
 }
 
 const INPUT_TYPES: &[&str] =
@@ -338,6 +341,7 @@ fn rules_inputs(events: &[CleanEvent]) -> Vec<TeachInput> {
             choices: None,
             root: None,
             secret_ref: None,
+            needs_review: None,
         });
     }
     out
@@ -1133,7 +1137,7 @@ mod tests {
                 .collect(),
             inputs: inputs
                 .iter()
-                .map(|n| TeachInput { name: (*n).into(), label: (*n).into(), example: "x".into(), description: None, input_type: None, required: None, format: None, choices: None, root: None, secret_ref: None })
+                .map(|n| TeachInput { name: (*n).into(), label: (*n).into(), example: "x".into(), description: None, input_type: None, required: None, format: None, choices: None, root: None, secret_ref: None, needs_review: None })
                 .collect(),
             source: "model".into(),
             redactions: 0,
