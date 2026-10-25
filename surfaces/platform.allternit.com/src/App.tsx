@@ -21,6 +21,7 @@ import { PortalLandingPage } from "@/pages/PortalLandingPage";
 import { ModelsPage } from "@/pages/ModelsPage";
 import { PlansPage } from "@/pages/PlansPage";
 import { AdminCustomersPage } from "@/pages/AdminCustomersPage";
+import { AdminFundingPage } from "@/pages/AdminFundingPage";
 import { PlaygroundPage } from "@/pages/console/PlaygroundPage";
 import { FilesPage } from "@/pages/console/FilesPage";
 import { BatchesPage } from "@/pages/console/BatchesPage";
@@ -171,6 +172,14 @@ export default function App() {
         element={
           <ConsoleRoute>
             <AdminCustomersPage />
+          </ConsoleRoute>
+        }
+      />
+      <Route
+        path="/admin/funding"
+        element={
+          <ConsoleRoute>
+            <AdminFundingPage />
           </ConsoleRoute>
         }
       />

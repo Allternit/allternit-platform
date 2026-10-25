@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { ArrowsClockwise } from "@phosphor-icons/react";
 import { usePlatformAuth } from "@/lib/platform-auth-client";
 import { formatApiError } from "@/lib/api-client";
@@ -100,7 +101,8 @@ export function AdminCustomersPage() {
         <div>
           <h1 className="text-[28px] font-bold leading-none tracking-tight text-[var(--text-primary)]">Customers</h1>
           <p className="mt-2 text-[13px] text-[var(--text-secondary)]">
-            Everyone who signed up, their plan and cloud computer, and the emails we sent them.
+            Everyone who signed up, their plan and cloud computer, and the emails we sent them.{" "}
+            <Link to="/admin/funding" className="underline underline-offset-2">Funding</Link>
           </p>
         </div>
         <button type="button" className={QUIET_BUTTON_CLASS} onClick={() => void load()} disabled={loading}>
