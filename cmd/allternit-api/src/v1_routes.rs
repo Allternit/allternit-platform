@@ -996,6 +996,100 @@ fn tool_frames_for_part(
 }
 
 
+/// Response-parts contract: `source` frames for the real citations / search
+/// results gizzi stored on a part — a text part's `metadata.sources`
+/// (provider citations) or a completed tool part's `state.metadata.sources`.
+/// Additive: older clients ignore the extra fields. `sent` dedupes by url per
+/// turn. Mirrors `sourceFramesForPart` in gizzi's session/response-parts.ts.
+fn source_frames_for_part(
+    part: &serde_json::Value,
+    msg_id: &str,
+    sent: &mut std::collections::HashSet<String>,
+) -> Vec<serde_json::Value> {
+    let part_type = part.get("type").and_then(|v| v.as_str()).unwrap_or("");
+    let list = match part_type {
+        "text" => part.pointer("/metadata/sources"),
+        "tool" if part.pointer("/state/status").and_then(|v| v.as_str()) == Some("completed") => {
+            part.pointer("/state/metadata/sources")
+        }
+        _ => None,
+    };
+    let Some(list) = list.and_then(|v| v.as_array()) else {
+        return Vec::new();
+    };
+    let mut frames = Vec::new();
+    for source in list {
+        let Some(url) = source
+            .get("url")
+            .and_then(|v| v.as_str())
+            .filter(|u| u.starts_with("http://") || u.starts_with("https://"))
+        else {
+            continue;
+        };
+        if !sent.insert(url.to_string()) {
+            continue;
+        }
+        let mut frame = json!({
+            "type": "source",
+            "messageId": msg_id,
+            "sourceId": source.get("id").and_then(|v| v.as_str()).unwrap_or(url),
+            "url": url,
+            "title": source.get("title").and_then(|v| v.as_str()).unwrap_or(url),
+            "origin": source.get("origin").and_then(|v| v.as_str()).unwrap_or("provider"),
+        });
+        for key in ["host", "snippet"] {
+            if let Some(value) = source.get(key).and_then(|v| v.as_str()) {
+                frame[key] = json!(value);
+            }
+        }
+        if part_type == "tool" {
+            if let Some(call_id) = part.get("callID").and_then(|v| v.as_str()) {
+                frame["toolCallId"] = json!(call_id);
+            }
+        }
+        frames.push(frame);
+    }
+    frames
+}
+
+/// Response-parts contract: gizzi's `todo.updated` (todowrite, Claude Code
+/// TodoWrite, Codex / ACP plans) as one normalized `plan` frame — `steps` for
+/// older clients, `items` for the contract. Mirrors `planFrameForTodos`.
+fn plan_frame_for_todos(todos: &[serde_json::Value], msg_id: &str) -> serde_json::Value {
+    let mut items = Vec::new();
+    let mut steps = Vec::new();
+    for (i, todo) in todos.iter().enumerate() {
+        let content = todo.get("content").and_then(|v| v.as_str()).unwrap_or("").trim();
+        if content.is_empty() {
+            continue;
+        }
+        let raw = todo
+            .get("status")
+            .and_then(|v| v.as_str())
+            .unwrap_or("pending")
+            .to_ascii_lowercase()
+            .replace('-', "_").replace(' ', "_");
+        let (status, legacy) = match raw.as_str() {
+            "completed" | "complete" | "done" => ("completed", "complete"),
+            "in_progress" | "inprogress" | "running" | "active" => ("in_progress", "in-progress"),
+            "cancelled" | "canceled" | "failed" | "error" => ("failed", "error"),
+            _ => ("pending", "pending"),
+        };
+        let id = format!("todo-{i}");
+        items.push(json!({ "id": id, "content": content, "status": status }));
+        steps.push(json!({ "id": id, "description": content, "status": legacy }));
+    }
+    json!({
+        "type": "plan",
+        "messageId": msg_id,
+        "planId": "todos",
+        "title": "Plan",
+        "origin": "todowrite",
+        "items": items,
+        "steps": steps,
+    })
+}
+
 /// A client re-attaching to a turn that is still running (its stream dropped
 /// during a long reply): `resume: {cursor, messageId?}` in the agent-chat
 /// body. `cursor` is the last SSE id the client received — gizzi's durable
@@ -1910,6 +2004,8 @@ async fn agent_chat_bridge(
         let mut card_texts = std::collections::BTreeMap::<String, (String, String)>::new();
         // File parts already framed (a replay and the live stream can overlap).
         let mut file_frames_sent = std::collections::HashSet::<String>::new();
+        // Response-parts contract: source urls already framed this turn.
+        let mut sources_sent = std::collections::HashSet::<String>::new();
         // Resume: deltas up to this trace sequence came from the replay; the
         // live stream's copies of them are skipped.
         let mut replayed_through: u64 = 0;
@@ -2136,6 +2232,15 @@ async fn agent_chat_bridge(
                                 }
                             }
                         }
+                        // Real citations / search results stored on the part
+                        // (after its tool_result) → additive `source` frames.
+                        if (part_type == "text" || part_type == "tool")
+                            && part.get("sessionID").and_then(|v| v.as_str()) == Some(session_id.as_str())
+                        {
+                            for frame in source_frames_for_part(part, &msg_id, &mut sources_sent) {
+                                yield Ok(sse_frame(trace_cursor).data(frame.to_string()));
+                            }
+                        }
                         if part_type == "tool" {
                             saw_tool = true;
                             if let (Some(tool), Some(call_id)) = (
@@ -2269,6 +2374,12 @@ async fn agent_chat_bridge(
                                 "context": context.clone(),
                             }).to_string()));
                             last_context = Some(context);
+                        }
+                    }
+                    "todo.updated" => {
+                        // The session's plan changed → one normalized `plan` frame.
+                        if let Some(todos) = props.get("todos").and_then(|v| v.as_array()) {
+                            yield Ok(sse_frame(trace_cursor).data(plan_frame_for_todos(todos, &msg_id).to_string()));
                         }
                     }
                     "session.compacted" => {
@@ -2776,6 +2887,47 @@ mod tests {
         assert_eq!(end[0]["type"], "tool_result");
         assert_eq!(end[0]["result"], "3 results");
         assert!(tool_frames_for_part(&done, "m1", &mut sent).is_empty());
+    }
+
+    #[test]
+    fn source_frames_from_text_citations_and_tool_results_dedupe_by_url() {
+        let mut sent = std::collections::HashSet::new();
+        let text = json!({"type": "text", "metadata": {"sources": [
+            {"id": "s1", "url": "https://www.example.com/a", "title": "A", "host": "example.com", "origin": "openai-url-citation"},
+            {"url": "ftp://nope"}
+        ]}});
+        let frames = source_frames_for_part(&text, "m1", &mut sent);
+        assert_eq!(frames.len(), 1);
+        assert_eq!(frames[0]["type"], "source");
+        assert_eq!(frames[0]["sourceId"], "s1");
+        assert_eq!(frames[0]["host"], "example.com");
+        assert_eq!(frames[0]["origin"], "openai-url-citation");
+
+        let running = json!({"type": "tool", "callID": "c1", "state": {"status": "running",
+            "metadata": {"sources": [{"url": "https://b.dev"}]}}});
+        assert!(source_frames_for_part(&running, "m1", &mut sent).is_empty());
+        let done = json!({"type": "tool", "callID": "c1", "state": {"status": "completed",
+            "metadata": {"sources": [{"url": "https://b.dev"}, {"url": "https://www.example.com/a"}]}}});
+        let frames = source_frames_for_part(&done, "m1", &mut sent);
+        assert_eq!(frames.len(), 1);
+        assert_eq!(frames[0]["toolCallId"], "c1");
+        assert_eq!(frames[0]["title"], "https://b.dev");
+    }
+
+    #[test]
+    fn plan_frame_normalizes_todo_statuses() {
+        let todos = vec![
+            json!({"content": "Read", "status": "completed"}),
+            json!({"content": "Write", "status": "in_progress"}),
+            json!({"content": "Drop", "status": "cancelled"}),
+            json!({"content": "", "status": "pending"}),
+        ];
+        let frame = plan_frame_for_todos(&todos, "m1");
+        assert_eq!(frame["type"], "plan");
+        assert_eq!(frame["items"].as_array().unwrap().len(), 3);
+        assert_eq!(frame["items"][1]["status"], "in_progress");
+        assert_eq!(frame["steps"][0]["status"], "complete");
+        assert_eq!(frame["steps"][2]["status"], "error");
     }
 
     #[test]

@@ -50,6 +50,7 @@ import { CliBackgroundTasks } from "@/runtime/session/cli-background-tasks"
 import { ProcessRegistry } from "@/runtime/process-registry"
 import { acpGateDecision } from "@/runtime/drivers/acp-gate"
 import { PermissionNext } from "@/runtime/tools/guard/permission/next"
+import { sourcesFromClaudeCodeToolResult, todosFromNativePlan } from "@/runtime/session/response-parts"
 
 const log = Log.create({ service: "local-cli-driver" })
 
@@ -740,11 +741,15 @@ export class LocalCliDriver implements RuntimeDriver {
             for (const [idx, part] of userContent.entries()) {
               if (!part || typeof part !== "object") continue
               if (part.type === "tool_result") {
+                // Claude Code puts the tool's structured result beside the
+                // content (`tool_use_result`); WebSearch's carries the pages.
+                const sources = userContent.length === 1 ? sourcesFromClaudeCodeToolResult(evt.tool_use_result) : []
                 const toolResultEv = {
                   type: "tool_result",
                   id: String(part.tool_use_id ?? `${handle.taskId}-tool-${idx}`),
                   content: extractTextContent(part.content),
                   isError: Boolean(part.is_error),
+                  ...(sources.length ? { sources } : {}),
                 } as AgentEvent
                 yield toolResultEv
                 await this.logEvent(handle.taskId, toolResultEv)
@@ -1077,6 +1082,12 @@ export class LocalCliDriver implements RuntimeDriver {
         if (!update || !update.sessionUpdate) return
 
         switch (update.sessionUpdate) {
+          case "plan": {
+            // ACP plan update: the agent's whole plan, every time.
+            const todos = todosFromNativePlan(update)
+            if (todos) pushEvent({ type: "plan", entries: todos })
+            break
+          }
           case "agent_message_chunk": {
             const text = extractTextContent(update.content)
             if (text) pushEvent({ type: "text_delta", delta: text })
@@ -1502,6 +1513,19 @@ export class LocalCliDriver implements RuntimeDriver {
               if (context) {
                 lastCodexContext = context
                 pushEvent({ type: "context", ...context })
+              }
+              continue
+            }
+
+            if (method === "turn/plan/updated") {
+              // Codex's own plan ({plan:[{step,status}], explanation}).
+              const todos = todosFromNativePlan(params)
+              if (todos) {
+                pushEvent({
+                  type: "plan",
+                  entries: todos,
+                  ...(typeof params.explanation === "string" ? { explanation: params.explanation } : {}),
+                })
               }
               continue
             }

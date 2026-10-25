@@ -23,6 +23,8 @@ import { consumeRetryHint } from "@/runtime/providers/retry-hint"
 import { SessionContext } from "./context-event"
 import { Guardrails } from "./guardrails"
 import { generatedFileMeta, generatedFilePart, type GeneratedFileMeta } from "./generated-file"
+import { mergeSources, sourceFromStreamPart, todosFromNativePlan, type ResponseSource } from "./response-parts"
+import { Todo } from "./todo"
 
 export namespace SessionProcessor {
   const DOOM_LOOP_THRESHOLD = 3
@@ -166,6 +168,10 @@ export namespace SessionProcessor {
             let reasoningMap: Record<string, MessageV2.ReasoningPart> = {}
             // Metadata a provider sent (raw `generated_file`) for the next `file` part.
             let pendingFileMeta: GeneratedFileMeta | undefined
+            // Provider citations (AI SDK `source` parts) that arrived before
+            // any text, and the last finished text part of this step.
+            let pendingSources: ResponseSource[] = []
+            let lastText: MessageV2.TextPart | undefined
             const cacheRequestAt = Date.now()
             const stream = await LLM.stream(streamInput)
 
@@ -692,8 +698,15 @@ export namespace SessionProcessor {
                       start: Date.now(),
                       end: Date.now(),
                     }
-                    if (value.providerMetadata) currentText.metadata = value.providerMetadata
+                    {
+                      // Citations ride on the text part (metadata.sources) beside the provider's metadata.
+                      const sources = mergeSources(pendingSources, currentText.metadata?.sources as ResponseSource[] | undefined)
+                      pendingSources = []
+                      if (value.providerMetadata) currentText.metadata = { ...value.providerMetadata }
+                      if (sources.length) currentText.metadata = { ...(currentText.metadata ?? {}), sources }
+                    }
                     await Session.updatePart(currentText)
+                    lastText = currentText
 
                     Bus.publish(MessageV2.Event.PartUpdated, {
                       part: currentText,
@@ -728,6 +741,27 @@ export namespace SessionProcessor {
 
                 case "finish":
                   break
+
+                case "source": {
+                  // A real citation (Anthropic citations / web search results,
+                  // OpenAI url_citation, Gemini grounding — the AI SDK maps all
+                  // of them to `source`). Stored on the text part it belongs
+                  // to as metadata.sources; the bridges send `source` frames.
+                  const source = sourceFromStreamPart(value, input.assistantMessage.providerID)
+                  if (!source) break
+                  const target = currentText ?? lastText
+                  if (!target) {
+                    pendingSources = mergeSources(pendingSources, [source])
+                    break
+                  }
+                  target.metadata = {
+                    ...(target.metadata ?? {}),
+                    sources: mergeSources(target.metadata?.sources as ResponseSource[] | undefined, [source]),
+                  }
+                  await Session.updatePart(target)
+                  Bus.publish(MessageV2.Event.PartUpdated, { part: target })
+                  break
+                }
 
                 case "raw": {
                   // Subprocess providers (kimi-cli ACP et al.) execute tools
@@ -767,7 +801,19 @@ export namespace SessionProcessor {
                     })
                     break
                   }
+                  if (observed.__gizzi === "observed_plan") {
+                    // The CLI's own plan (Codex turn/plan/updated, ACP plan) → the
+                    // session's todo list; the bridges send it as a `plan` frame.
+                    const todos = todosFromNativePlan(observed)
+                    if (todos) Todo.update({ sessionID: input.sessionID, todos })
+                    break
+                  }
                   if (observed.__gizzi === "observed_tool_call") {
+                    // Claude Code's TodoWrite carries the whole list: mirror it too.
+                    if (/^todowrite$/i.test(String(observed.name ?? ""))) {
+                      const todos = todosFromNativePlan(observed.arguments)
+                      if (todos) Todo.update({ sessionID: input.sessionID, todos })
+                    }
                     const id = String(observed.id ?? "")
                     if (!id || toolcalls[id]) break
                     const part = (await Session.updatePart({
@@ -816,7 +862,8 @@ export namespace SessionProcessor {
                             input: match.state.input,
                             output: String(observed.content ?? ""),
                             title: match.tool,
-                            metadata: {},
+                            // Structured results the CLI gave (Claude Code WebSearch), for source frames.
+                            metadata: Array.isArray(observed.sources) && observed.sources.length ? { sources: observed.sources } : {},
                             time: {
                               start: match.state.time.start,
                               end: Date.now(),
