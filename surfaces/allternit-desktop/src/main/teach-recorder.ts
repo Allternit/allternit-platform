@@ -18,8 +18,14 @@ export const TEACH_HOTKEY = 'CommandOrControl+Shift+R';
 
 export type TeachEvent =
   | { t: number; kind: 'navigate'; url: string; title?: string }
-  | { t: number; kind: 'click'; url?: string; label: string; role?: string; selector?: string }
-  | { t: number; kind: 'input'; url?: string; label: string; field?: string; valuePreview?: string }
+  | { t: number; kind: 'click'; url?: string; label: string; role?: string; selector?: string; id?: string; name?: string; frame?: string; tag?: string; type?: string }
+  | { t: number; kind: 'input'; url?: string; label: string; field?: string; valuePreview?: string; id?: string; name?: string; frame?: string; tag?: string; type?: string }
+  | { t: number; kind: 'key'; url?: string; key: string; label?: string; frame?: string }
+  | { t: number; kind: 'select'; url?: string; label: string; value: string; css?: string; frame?: string }
+  | { t: number; kind: 'upload'; url?: string; label: string; fileName: string; css?: string }
+  | { t: number; kind: 'download'; url?: string; fileName: string; fromUrl?: string }
+  | { t: number; kind: 'copy'; url?: string; textPreview: string }
+  | { t: number; kind: 'paste'; url?: string; label: string; css?: string }
   | { t: number; kind: 'app'; app: string; window?: string }
   | { t: number; kind: 'snapshot'; id: string }
   | { t: number; kind: 'narration'; text: string };
@@ -81,6 +87,8 @@ interface ActiveSession {
   timers: NodeJS.Timeout[];
   child: ChildProcess | null;
   guests: Set<WebContents>;
+  /** Sessions with a will-download listener while recording. */
+  downloadSessions: Map<Electron.Session, (e: unknown, item: Electron.DownloadItem, wc?: WebContents) => void>;
   /** Tabs already open when recording began, whose page is logged only once you act in them. */
   unseenStart: Set<WebContents>;
   onCreated: (e: unknown, wc: WebContents) => void;
@@ -117,7 +125,7 @@ const PAGE_SCRIPT = `(() => {
   window.__allternitTeach = true;
   const P = ${JSON.stringify(MSG_PREFIX)};
   const SENSITIVE = /pass|secret|token|card|cvv|ssn/i;
-  const send = (o) => { try { console.debug(P + JSON.stringify(o)); } catch (e) {} };
+  const send = (o) => { try { o.f = location.href; o.top = window.top === window; console.debug(P + JSON.stringify(o)); } catch (e) {} };
   const clip = (s, n) => String(s == null ? '' : s).replace(/\\s+/g, ' ').trim().slice(0, n);
   // "Customer name:" → "Customer name" (the UI adds its own colon).
   const noColon = (s) => s.replace(/\\s*:\\s*$/, '');
@@ -174,29 +182,124 @@ const PAGE_SCRIPT = `(() => {
     const name = (el.getAttribute('name') || '') + ' ' + (el.id || '') + ' ' + (el.getAttribute('aria-label') || '') + ' ' + (el.getAttribute('placeholder') || '');
     return type === 'password' || ac.indexOf('cc-') === 0 || ac === 'one-time-code' || SENSITIVE.test(name);
   };
+  const isField = (el) => /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName);
+  // A sensitive field is named by its name attribute only, never its visible text.
+  const safeLabel = (el) => (isField(el) && isSensitive(el)) ? (el.getAttribute('name') || el.tagName.toLowerCase()) : label(el);
+  const attrs = (o, el) => {
+    if (el.id) o.id = clip(el.id, 60);
+    const nm = el.getAttribute('name'); if (nm) o.name = clip(nm, 60);
+    o.tag = el.tagName.toLowerCase();
+    const ty = el.getAttribute('type'); if (ty) o.type = clip(ty, 20).toLowerCase();
+    return o;
+  };
+  // Rich editors (contenteditable): one input event per editor, sent when focus leaves it.
+  const dirty = new Set();
+  const editorRoot = (el) => (el && el.closest) ? el.closest('[contenteditable=""],[contenteditable="true"],[contenteditable="plaintext-only"]') : null;
+  const flushEditor = (ed) => {
+    if (!dirty.has(ed)) return;
+    dirty.delete(ed);
+    const sens = isSensitive(ed);
+    const o = attrs({ k: 'input', label: safeLabel(ed), field: clip(ed.getAttribute('name') || ed.id || '', 40) || undefined, css: selector(ed) }, ed);
+    o.tag = 'contenteditable';
+    if (!sens) o.valuePreview = clip(ed.innerText || ed.textContent, 40);
+    send(o);
+  };
+  const flushAll = () => { Array.from(dirty).forEach(flushEditor); };
+  document.addEventListener('input', (e) => {
+    const ed = editorRoot(e.target);
+    if (ed && !isField(e.target)) dirty.add(ed);
+  }, true);
+  document.addEventListener('focusout', (e) => {
+    const ed = editorRoot(e.target);
+    if (ed) flushEditor(ed);
+  }, true);
+  window.addEventListener('pagehide', flushAll, true);
+  // The control that opened a listbox, when the page links them with aria-controls.
+  const listboxLabel = (lb) => {
+    let text = lb.getAttribute('aria-label') || '';
+    const by = lb.getAttribute('aria-labelledby');
+    if (!text && by) { const be = document.getElementById(by.split(' ')[0]); if (be) text = be.innerText || be.textContent || ''; }
+    if (!text && lb.id) { const trig = document.querySelector('[aria-controls="' + cssEsc(lb.id) + '"]'); if (trig) text = isField(trig) ? fieldLabel(trig) : (trig.getAttribute('aria-label') || trig.getAttribute('title') || ''); }
+    return noColon(clip(text || 'option list', 80));
+  };
   document.addEventListener('click', (e) => {
-    const t = e.target && e.target.closest ? e.target.closest(interactive) || e.target : null;
+    flushAll();
+    const raw = e.target && e.target.closest ? e.target : null;
+    const opt = raw && raw.closest('[role=option]');
+    if (opt) {
+      const lb = opt.closest('[role=listbox],[role=combobox]');
+      if (lb || opt.getAttribute('aria-selected') != null || opt.id) {
+        send({ k: 'select', label: lb ? listboxLabel(lb) : 'option list', value: clip(opt.innerText || opt.textContent || opt.getAttribute('aria-label'), 80), css: selector(opt) });
+        return;
+      }
+    }
+    const t = raw ? raw.closest(interactive) || raw : null;
     if (!t || t.nodeType !== 1) return;
-    const isField = /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName);
-    const sens = isField && isSensitive(t);
-    send({ k: 'click', label: sens ? (t.getAttribute('name') || t.tagName.toLowerCase()) : label(t), role: t.getAttribute('role') || t.tagName.toLowerCase(), selector: selector(t) });
+    // A native <select> reports through its change event; its click is not a step.
+    if (t.tagName === 'SELECT') return;
+    send(attrs({ k: 'click', label: safeLabel(t), role: t.getAttribute('role') || t.tagName.toLowerCase(), selector: selector(t) }, t));
   }, true);
   document.addEventListener('change', (e) => {
     const t = e.target;
-    if (!t || !/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) return;
+    if (!t || !isField(t)) return;
     const type = (t.getAttribute('type') || '').toLowerCase();
-    if (type === 'file' || type === 'hidden') return;
+    if (type === 'hidden') return;
+    if (type === 'file') {
+      const names = Array.prototype.map.call(t.files || [], (f) => f.name).join(', ');
+      if (names) send({ k: 'upload', label: fieldLabel(t), fileName: clip(names, 120), css: selector(t) });
+      return;
+    }
+    if (t.tagName === 'SELECT') {
+      const sens = isSensitive(t);
+      send({ k: 'select', label: sens ? (t.getAttribute('name') || 'select') : fieldLabel(t), value: sens ? '' : clip(t.selectedOptions && t.selectedOptions[0] ? t.selectedOptions[0].text : t.value, 80), css: selector(t) });
+      return;
+    }
     const field = clip(t.getAttribute('name') || t.id || '', 40);
     const choice = type === 'checkbox' || type === 'radio';
     // A radio/checkbox is named by its group ("Pizza Size"); the value is the option picked ("Medium").
     const lbl = choice ? (groupLabel(t) || fieldLabel(t)) : fieldLabel(t);
-    const o = { k: 'input', label: lbl, field: field || undefined };
+    const o = attrs({ k: 'input', label: lbl, field: field || undefined }, t);
     if (!isSensitive(t)) {
       if (choice) o.valuePreview = clip((type === 'checkbox' && !t.checked ? 'unchecked: ' : '') + fieldLabel(t), 40);
-      else if (t.tagName === 'SELECT') o.valuePreview = clip(t.selectedOptions && t.selectedOptions[0] ? t.selectedOptions[0].text : t.value, 40);
       else o.valuePreview = clip(t.value, 40);
     }
     send(o);
+  }, true);
+  // Enter / Tab / Escape and modifier shortcuts only; never plain characters.
+  document.addEventListener('keydown', (e) => {
+    if (e.isComposing || !e.key) return;
+    let key = '';
+    if (e.key === 'Enter' || e.key === 'Tab' || e.key === 'Escape') key = e.key;
+    else if ((e.metaKey || e.ctrlKey) && e.key.length === 1 && !e.altKey) key = (e.metaKey ? 'Meta+' : 'Ctrl+') + (e.shiftKey ? 'Shift+' : '') + e.key.toLowerCase();
+    if (!key) return;
+    if (key === 'Enter' || key === 'Tab') flushAll();
+    const a = document.activeElement;
+    const o = { k: 'key', key: key };
+    if (a && a.nodeType === 1 && a !== document.body && a !== document.documentElement) o.label = safeLabel(a);
+    send(o);
+  }, true);
+  const fileNames = (dt) => Array.prototype.map.call((dt && dt.files) || [], (f) => f.name).join(', ');
+  document.addEventListener('drop', (e) => {
+    const names = fileNames(e.dataTransfer);
+    if (!names) return;
+    const t = e.target && e.target.closest ? e.target : null;
+    if (!t) return;
+    send({ k: 'upload', label: safeLabel(t), fileName: clip(names, 120), css: selector(t) });
+  }, true);
+  document.addEventListener('copy', () => {
+    const a = document.activeElement;
+    if (a && a.nodeType === 1 && (isSensitive(a) || ed_sensitive(a))) return;
+    let text = '';
+    if (a && /^(INPUT|TEXTAREA)$/.test(a.tagName)) { try { text = String(a.value || '').slice(a.selectionStart || 0, a.selectionEnd || 0); } catch (err) {} }
+    else { const sel = window.getSelection && window.getSelection(); text = sel ? sel.toString() : ''; }
+    text = clip(text, 40);
+    if (text) send({ k: 'copy', textPreview: text });
+  }, true);
+  const ed_sensitive = (el) => { const ed = editorRoot(el); return !!ed && isSensitive(ed); };
+  document.addEventListener('paste', (e) => {
+    const t = e.target && e.target.nodeType === 1 ? e.target : null;
+    if (!t) return;
+    send({ k: 'paste', label: safeLabel(t), css: selector(t) });
   }, true);
 })();`;
 
@@ -224,19 +327,43 @@ function attachGuest(wc: WebContents): void {
   wc.on('did-navigate', nav);
   wc.on('did-navigate-in-page', (e, url, isMain) => { if (isMain !== false) nav(e, url); });
 
+  // Every frame, sub-frames included; the page script is idempotent per frame.
   const inject = () => {
     if (!active || wc.isDestroyed()) return;
-    wc.executeJavaScript(PAGE_SCRIPT, true).catch(() => {});
+    try {
+      for (const frame of wc.mainFrame.framesInSubtree) {
+        if (!/^https?:/i.test(frame.url)) continue;
+        frame.executeJavaScript(PAGE_SCRIPT, true).catch(() => {});
+      }
+    } catch { /* frame went away */ }
   };
   wc.on('dom-ready', inject);
+  wc.on('did-frame-finish-load', inject);
   if (!wc.isLoading()) inject();
+
+  // Downloads belong to the session, once per session while recording.
+  const ses = wc.session;
+  if (ses && !s.downloadSessions.has(ses)) {
+    const onDownload = (_e: unknown, item: Electron.DownloadItem) => {
+      let fromUrl: string | undefined;
+      try {
+        const u = new URL(item.getURL());
+        if (/^https?:$/i.test(u.protocol)) fromUrl = (u.origin + u.pathname).slice(0, 300);
+      } catch { /* blob: / data: */ }
+      pushEvent({ kind: 'download', url: undefined, fileName: path.basename(item.getFilename() || '').slice(0, 120), fromUrl });
+    };
+    s.downloadSessions.set(ses, onDownload);
+    ses.on('will-download', onDownload as never);
+  }
 
   wc.on('console-message', (...args: unknown[]) => {
     // Electron <35: (event, level, message); newer: (event) with event.message.
-    const first = args[0] as { message?: string } | undefined;
+    const first = args[0] as { message?: string; frame?: { url?: string; parent?: unknown } } | undefined;
     const message = typeof args[2] === 'string' ? (args[2] as string) : first?.message;
     if (typeof message !== 'string' || !message.startsWith(MSG_PREFIX)) return;
-    handlePageMessage(wc, message.slice(MSG_PREFIX.length));
+    // Newer Electron reports the frame on the event; the page script also tags f/top as a fallback.
+    const evFrame = first?.frame && first.frame.parent ? first.frame.url : undefined;
+    handlePageMessage(wc, message.slice(MSG_PREFIX.length), evFrame);
   });
   wc.once('destroyed', () => { s.guests.delete(wc); s.unseenStart.delete(wc); });
 
@@ -253,21 +380,43 @@ function safeUrl(wc: WebContents): string | undefined {
   try { const u = wc.getURL(); return /^https?:/i.test(u) ? u : undefined; } catch { return undefined; }
 }
 
-function handlePageMessage(wc: WebContents, raw: string): void {
-  let m: { k?: string; label?: string; role?: string; selector?: string; field?: string; valuePreview?: string };
+function handlePageMessage(wc: WebContents, raw: string, evFrame?: string): void {
+  let m: {
+    k?: string; label?: string; role?: string; selector?: string; field?: string; valuePreview?: string;
+    id?: string; name?: string; tag?: string; type?: string; key?: string; value?: string; css?: string;
+    fileName?: string; textPreview?: string; f?: string; top?: boolean;
+  };
   try { m = JSON.parse(raw); } catch { return; }
   const url = safeUrl(wc);
+  const str = (v: unknown, n: number): string | undefined => (typeof v === 'string' && v ? v.slice(0, n) : undefined);
   const label = String(m.label ?? '').slice(0, 80);
-  if ((m.k === 'click' || m.k === 'input') && active?.unseenStart.delete(wc) && url) {
+  const frame = evFrame ?? (m.top === false ? str(m.f, 300) : undefined);
+  const kinds = ['click', 'input', 'key', 'select', 'upload', 'copy', 'paste'];
+  if (m.k && kinds.includes(m.k) && active?.unseenStart.delete(wc) && url) {
     pushEvent({ kind: 'navigate', url, title: safeTitle(wc) });
   }
+  const css = str(m.css, 160);
+  const isSensitive = (...names: Array<string | undefined>) => names.some((n) => !!n && SENSITIVE_NAME.test(n));
   if (m.k === 'click') {
-    pushEvent({ kind: 'click', url, label, role: m.role, selector: m.selector });
+    pushEvent({ kind: 'click', url, label, role: m.role, selector: m.selector, id: str(m.id, 60), name: str(m.name, 60), frame, tag: str(m.tag, 20), type: str(m.type, 20) });
   } else if (m.k === 'input') {
     const field = m.field ? String(m.field).slice(0, 40) : undefined;
-    const sensitive = (field && SENSITIVE_NAME.test(field)) || SENSITIVE_NAME.test(label);
+    const sensitive = isSensitive(field, label, m.name, m.id) || m.type === 'password';
     const valuePreview = !sensitive && typeof m.valuePreview === 'string' ? m.valuePreview.slice(0, 40) : undefined;
-    pushEvent({ kind: 'input', url, label, field, valuePreview });
+    pushEvent({ kind: 'input', url, label, field, valuePreview, id: str(m.id, 60), name: str(m.name, 60), frame, tag: str(m.tag, 20), type: str(m.type, 20) });
+  } else if (m.k === 'key') {
+    const key = str(m.key, 20);
+    if (key) pushEvent({ kind: 'key', url, key, label: label || undefined, frame });
+  } else if (m.k === 'select') {
+    pushEvent({ kind: 'select', url, label, value: isSensitive(label) ? '' : String(m.value ?? '').slice(0, 80), css, frame });
+  } else if (m.k === 'upload') {
+    const fileName = str(m.fileName, 120);
+    if (fileName) pushEvent({ kind: 'upload', url, label, fileName: fileName.split(/[\\/]/).pop() || fileName, css });
+  } else if (m.k === 'copy') {
+    const textPreview = str(m.textPreview, 40);
+    if (textPreview) pushEvent({ kind: 'copy', url, textPreview });
+  } else if (m.k === 'paste') {
+    pushEvent({ kind: 'paste', url, label, css });
   }
 }
 
@@ -603,6 +752,53 @@ export async function setNarration(on: boolean): Promise<void> {
 
 // ─── Start / stop ──────────────────────────────────────────────────────────
 
+/** `*.csv` / `invoices*.pdf` → a case-insensitive match on the whole file name. */
+function globToRegExp(pattern: string): RegExp {
+  const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.');
+  return new RegExp(`^${escaped}$`, 'i');
+}
+
+/**
+ * A Teach run's `expect_download` step: wait for the next finished download
+ * whose file name matches `pattern` in any session a page uses (the default
+ * session and every webview's). Resolves with where it was saved.
+ */
+export function waitForDownload(pattern: string, timeoutMs: number): Promise<{ ok: boolean; fileName?: string; savePath?: string; error?: string }> {
+  // Steps store a regex source (digit runs generalised); a plain glob like
+  // `*.csv` also works.
+  let re: RegExp;
+  try {
+    re = /[*?]/.test(pattern) && !/[\\^$]/.test(pattern) ? globToRegExp(pattern) : new RegExp(pattern || '.*', 'i');
+  } catch {
+    re = globToRegExp(pattern || '*');
+  }
+  const sessions = new Set<Electron.Session>([session.defaultSession]);
+  for (const wc of webContents.getAllWebContents()) {
+    try { if (!wc.isDestroyed()) sessions.add(wc.session); } catch { /* ignore */ }
+  }
+  return new Promise((resolve) => {
+    const listeners: Array<[Electron.Session, (e: unknown, item: Electron.DownloadItem) => void]> = [];
+    const finish = (result: { ok: boolean; fileName?: string; savePath?: string; error?: string }) => {
+      clearTimeout(timer);
+      for (const [ses, fn] of listeners) { try { ses.removeListener('will-download', fn as never); } catch { /* ignore */ } }
+      resolve(result);
+    };
+    const timer = setTimeout(() => finish({ ok: false, error: `No download matching ${pattern} within ${Math.round(timeoutMs / 1000)}s.` }), timeoutMs);
+    for (const ses of sessions) {
+      const fn = (_e: unknown, item: Electron.DownloadItem) => {
+        const fileName = item.getFilename();
+        if (!re.test(fileName)) return;
+        item.once('done', (_ev, state) => {
+          if (state === 'completed') finish({ ok: true, fileName, savePath: item.getSavePath() });
+          else finish({ ok: false, fileName, error: `The download of ${fileName} ${state}.` });
+        });
+      };
+      ses.on('will-download', fn as never);
+      listeners.push([ses, fn]);
+    }
+  });
+}
+
 export function isTeachAvailable(): boolean {
   return true;
 }
@@ -634,6 +830,7 @@ export async function startTeach(opts?: { narration?: boolean; filterUrls?: stri
     timers: [],
     child: null,
     guests: new Set(),
+    downloadSessions: new Map(),
     unseenStart: new Set(),
     snapshotBusy: false,
     stopping: false,
@@ -677,6 +874,8 @@ function teardown(s: ActiveSession): void {
   try { s.child?.kill(); } catch { /* ignore */ }
   s.child = null;
   s.guests.clear();
+  for (const [ses, fn] of s.downloadSessions) { try { ses.removeListener('will-download', fn as never); } catch { /* ignore */ } }
+  s.downloadSessions.clear();
 }
 
 export async function stopTeach(): Promise<{ success: boolean; recording?: TeachRecording; error?: string }> {
@@ -773,6 +972,7 @@ export function installTeachRecorder(d: TeachDeps): void {
   });
   ipcMain.handle('teach:get-state', () => getState());
   ipcMain.handle('teach:take-pending', () => pendingFinished);
+  ipcMain.handle('teach:wait-download', (_e, pattern: string, timeoutMs?: number) => waitForDownload(String(pattern ?? ''), Number(timeoutMs) || 60_000));
   ipcMain.on('teach:ack', (_e, sessionId: string) => {
     if (pendingFinished?.sessionId === sessionId) pendingFinished = null;
   });
