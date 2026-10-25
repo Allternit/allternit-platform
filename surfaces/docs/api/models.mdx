@@ -85,6 +85,10 @@ Policy aliases are not returned by `/v1/models`. Pass one as the `model` of a ch
 | `allternit-knowledge` | Knowledge and recall tasks. |
 | `allternit-instruct` | Instruction-following and chat quality. |
 
+## Open lane (Cloud API)
+
+On the hosted Cloud API, every model in `GET /v1/models` carries a `lane` field: `standard`, or `open` for open-weight models with far fewer refusals (`deepseek-v4.1-flash-open`, `glm-5.3-flash-open`). Open models need the acceptable use policy and an 18+ confirmation, and every request passes the hard-line filter. See [Open lane and refusal handoff](/api/open-lane).
+
 ## Retrieve a model
 
 ```bash
@@ -146,5 +150,6 @@ curl https://api.allternit.com/v1/pricing \
 ## Related pages
 
 - [Chat Completions](/api/chat-completions) — use models and aliases in completions
+- [Open lane and refusal handoff](/api/open-lane) — `lane: open` models and the hard-line filter
 - [Proxy](/api/proxy) — how the gateway routes model requests
 - [Translate](/api/translate) — wire-format translation details

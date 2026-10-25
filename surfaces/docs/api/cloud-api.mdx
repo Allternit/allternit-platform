@@ -653,6 +653,8 @@ X-RateLimit-Reset: 1723575600
 | `FLY_API_TOKEN` / `FLY_ORG_SLUG` | Hosted runtime provisioning. |
 | `HEADSCALE_API_KEY` | Mesh enrollment service. |
 | `STRIPE_WEBHOOK_SECRET` | Billing webhook verification. |
+| `OPEN_LANE_BASE_URL` / `OPEN_LANE_API_KEY` | Optional. OpenAI-compatible server for the open-lane `-open` models; unset hides them. See [Open lane](/api/open-lane). |
+| `OPEN_LANE_MODEL_MAP` / `OPEN_LANE_MODERATION_MODEL` | Optional. Open-lane upstream model names and the hard-line moderation model. |
 | `ALLTERNIT_VIEWER_WS_BASE` | Optional. Public ws base for the cloud computer viewer, e.g. `wss://api.allternit.com`. Default: the request's host. |
 
 ## Related pages
@@ -660,6 +662,7 @@ X-RateLimit-Reset: 1723575600
 - [API Overview](/api/overview)
 - [Allternit API](/api/allternit-api)
 - [Authentication](/api/authentication)
+- [Open lane and refusal handoff](/api/open-lane)
 - [Agent Sessions](/api/agent-sessions)
 - [BYOC Runtime](/byoc/overview)
 - [BYOC Deploy Wizard](/byoc/deploy-wizard)

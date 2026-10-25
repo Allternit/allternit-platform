@@ -89,16 +89,18 @@ pub fn starter_catalog() -> ModelAliasMap {
             completion_price: 0.40,
             context_length: 128_000,
         },
+        // `anthropic/claude-sonnet-4` was retired on OpenRouter (2026-10).
+        // Bots saved with `claude-sonnet-4` keep working through the alias.
         ModelAliasEntry {
-            alias: "claude-sonnet-4".to_string(),
+            alias: "claude-sonnet-4.6".to_string(),
             provider: "openrouter".to_string(),
-            upstream_id: "anthropic/claude-sonnet-4".to_string(),
-            aliases: Some(vec!["claude-sonnet".to_string()]),
-            created: 1746057600, // 2025-05-01
-            name: "Claude Sonnet 4".to_string(),
+            upstream_id: "anthropic/claude-sonnet-4.6".to_string(),
+            aliases: Some(vec!["claude-sonnet".to_string(), "claude-sonnet-4".to_string()]),
+            created: 1771286400, // 2026-02-17
+            name: "Claude Sonnet 4.6".to_string(),
             prompt_price: 3.00,
             completion_price: 15.00,
-            context_length: 200_000,
+            context_length: 1_000_000,
         },
         ModelAliasEntry {
             alias: "gpt-4o".to_string(),
@@ -132,6 +134,29 @@ pub fn starter_catalog() -> ModelAliasMap {
             prompt_price: 2.00,
             completion_price: 6.00,
             context_length: 128_000,
+        },
+        // Stock open-weight flash models (OpenRouter lists both, 2026-10-25).
+        ModelAliasEntry {
+            alias: "deepseek-v4.1-flash".to_string(),
+            provider: "openrouter".to_string(),
+            upstream_id: "deepseek/deepseek-v4.1-flash".to_string(),
+            aliases: None,
+            created: 1760659200, // 2026-10-17
+            name: "DeepSeek V4.1 Flash".to_string(),
+            prompt_price: 0.03,
+            completion_price: 1.50,
+            context_length: 1_048_576,
+        },
+        ModelAliasEntry {
+            alias: "glm-5.3-flash".to_string(),
+            provider: "openrouter".to_string(),
+            upstream_id: "z-ai/glm-5.3-flash".to_string(),
+            aliases: None,
+            created: 1753929600,
+            name: "GLM 5.3 Flash".to_string(),
+            prompt_price: 0.23,
+            completion_price: 0.75,
+            context_length: 1_048_576,
         },
         // Together AI — curated open-weight models (prices per 1M tokens, USD).
         ModelAliasEntry {
@@ -222,17 +247,6 @@ pub fn starter_catalog() -> ModelAliasMap {
             name: "DeepSeek V4 Pro (Fireworks)".to_string(),
             prompt_price: 1.32,
             completion_price: 3.96,
-            context_length: 1_048_576,
-        },
-        ModelAliasEntry {
-            alias: "deepseek-v4-flash-fireworks".to_string(),
-            provider: "fireworks".to_string(),
-            upstream_id: "accounts/fireworks/models/deepseek-v4-flash-0731".to_string(),
-            aliases: None,
-            created: 1753929600, // 2025-07-31
-            name: "DeepSeek V4 Flash (Fireworks)".to_string(),
-            prompt_price: 0.22,
-            completion_price: 0.66,
             context_length: 1_048_576,
         },
         ModelAliasEntry {
@@ -336,5 +350,62 @@ pub fn starter_catalog() -> ModelAliasMap {
             completion_price: 0.60,
             context_length: 131_072,
         },
+        // Open lane — open-weight models (stock or our own "-open" variants)
+        // that answer many requests frontier models refuse. Served by the
+        // `open_lane` provider (OPEN_LANE_BASE_URL / OPEN_LANE_API_KEY);
+        // hidden from /v1/models while that provider is unset. Every request
+        // passes the hard-line filter (services::hard_line) first.
+        open_lane_entry(
+            "deepseek-v4.1-flash-open",
+            "DeepSeek V4.1 Flash (Open)",
+            0.10,
+            2.00,
+            1_048_576,
+        ),
+        open_lane_entry("glm-5.3-flash-open", "GLM 5.3 Flash (Open)", 0.40, 1.20, 1_048_576),
     ])
+}
+
+/// Provider id of the open lane (the `OPEN_LANE_*` OpenAI-compatible upstream).
+pub const OPEN_LANE_PROVIDER: &str = "open_lane";
+
+/// Whether a catalog entry belongs to the open lane.
+pub fn is_open_lane(entry: &ModelAliasEntry) -> bool {
+    entry.provider == OPEN_LANE_PROVIDER
+}
+
+/// The upstream model id an open-lane alias is served as. Defaults to the
+/// alias itself (how our own servers name them, e.g. vLLM
+/// `--served-model-name`); `OPEN_LANE_MODEL_MAP` overrides per alias while a
+/// third-party host serves them: `alias=upstream,alias=upstream`.
+fn open_lane_upstream(alias: &str) -> String {
+    std::env::var("OPEN_LANE_MODEL_MAP")
+        .ok()
+        .and_then(|map| {
+            map.split(',').find_map(|pair| {
+                let (key, value) = pair.split_once('=')?;
+                (key.trim() == alias && !value.trim().is_empty()).then(|| value.trim().to_string())
+            })
+        })
+        .unwrap_or_else(|| alias.to_string())
+}
+
+fn open_lane_entry(
+    alias: &str,
+    name: &str,
+    prompt_price: f64,
+    completion_price: f64,
+    context_length: u64,
+) -> ModelAliasEntry {
+    ModelAliasEntry {
+        alias: alias.to_string(),
+        provider: OPEN_LANE_PROVIDER.to_string(),
+        upstream_id: open_lane_upstream(alias),
+        aliases: None,
+        created: 1761350400, // 2026-10-25
+        name: name.to_string(),
+        prompt_price,
+        completion_price,
+        context_length,
+    }
 }

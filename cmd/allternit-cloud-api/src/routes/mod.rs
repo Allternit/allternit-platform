@@ -89,3 +89,4 @@ pub mod voice_tickets;
 pub mod whatsapp_es;
 pub mod voice_calls_cloud;
 pub mod wizard;
+pub mod open_lane;

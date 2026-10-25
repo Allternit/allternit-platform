@@ -80,8 +80,11 @@ async fn platform_project_of_key(db: &sqlx::PgPool, key_id: &str) -> Option<Stri
 pub async fn chat_completions(
     State(state): State<Arc<ApiState>>,
     Extension(auth): Extension<AuthContext>,
-    Json(request): Json<ChatCompletionRequest>,
+    Json(mut request): Json<ChatCompletionRequest>,
 ) -> Result<Response, ApiError> {
+    // `allternit.*` request options (handoff model) never reach an upstream.
+    let open_lane_options = crate::services::open_lane::take_request_options(&mut request);
+
     // Legacy tokens carry `models:write`; scoped keys minted for inference
     // carry `inference`. `has_permission` honors the `"*"` wildcard, which is
     // the production default for pre-scoping tokens.
@@ -163,6 +166,23 @@ pub async fn chat_completions(
         }
     }
 
+    // Open lane: an `-open` model needs the terms, credits and a clean
+    // hard-line check; any other model may be handed off if it refuses.
+    let has_credits = balance.is_some();
+    if let Some(blocked) =
+        crate::routes::open_lane::guard_open_request(&state, &user_id, has_credits, &request).await?
+    {
+        return Ok(blocked);
+    }
+    let handoff = crate::routes::open_lane::plan_handoff(
+        &state,
+        &user_id,
+        &alias,
+        &open_lane_options,
+        has_credits,
+    )
+    .await?;
+
     let streaming = request.is_streaming();
     let prompt_chars: usize = request.messages.iter().map(|m| m.content_chars()).sum();
     let prices = state.model_router.retail_prices(&alias).await?;
@@ -183,6 +203,10 @@ pub async fn chat_completions(
         pool.as_ref(),
     )?;
     let pool_id = pool.map(|pool| pool.id);
+
+    if let Some(plan) = handoff {
+        return crate::routes::open_lane::chat_with_handoff(&state, user_id, plan, request, pool_id, prices).await;
+    }
 
     let response = state.model_router.chat_completions(request).await?;
 
