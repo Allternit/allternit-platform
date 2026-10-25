@@ -362,7 +362,11 @@ fn guess_type(v: &str) -> (String, Option<String>) {
         }
     }
     let digits = v.chars().filter(|c| c.is_ascii_digit()).count();
-    if digits > 0 && v.chars().all(|c| c.is_ascii_digit() || matches!(c, '.' | ',' | '-' | '+' | ' ')) && v.parse::<f64>().is_ok() {
+    if digits > 0 && v.chars().all(|c| c.is_ascii_digit() || matches!(c, '.' | ',' | '-' | '+' | ' ')) && {
+        // 1,234.50 (en) or 1.234,50 (de): either grouping style is a number.
+        let compact: String = v.chars().filter(|c| *c != ' ').collect();
+        compact.replace(',', "").parse::<f64>().is_ok() || compact.replace('.', "").replace(',', ".").parse::<f64>().is_ok()
+    } {
         return ("number".into(), None);
     }
     ("text".into(), None)
