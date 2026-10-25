@@ -129,6 +129,32 @@ enum MappedStripeEvent {
         invoice_id: String,
         subscription_id: String,
     },
+    /// Auto top-up charge settled (`payment_intent.succeeded` with
+    /// `metadata.kind = auto_topup`): grant into the cloud wallet and close
+    /// the attempt.
+    AutoTopupSucceeded {
+        event_id: String,
+        user_id: String,
+        payment_intent_id: String,
+        attempt_id: Option<String>,
+        amount_usd: f64,
+    },
+    /// Auto top-up charge failed or needs the person
+    /// (`payment_intent.payment_failed` / `payment_intent.requires_action`):
+    /// turn auto top-up off and tell them.
+    AutoTopupFailed {
+        user_id: String,
+        payment_intent_id: String,
+        attempt_id: Option<String>,
+        amount_usd: f64,
+        reason: String,
+    },
+    /// Setup-mode Checkout for auto top-up completed: store the saved card.
+    AutoTopupCardSaved {
+        user_id: String,
+        setup_intent_id: String,
+        customer_id: Option<String>,
+    },
     /// Any other event type (or a non-billable subscription status).
     Ignored(String),
 }
@@ -214,7 +240,7 @@ async fn stripe_webhook(
             organization_id,
         } => {
             let event_type = event["type"].as_str().unwrap_or_default().to_string();
-            grant_credits_and_respond(
+            let response = grant_credits_and_respond(
                 &state,
                 &event_type,
                 &event_id,
@@ -222,7 +248,94 @@ async fn stripe_webhook(
                 organization_id.as_deref(),
                 amount_usd,
             )
+            .await;
+            // A pack bought with setup_future_usage saved its card: keep it
+            // for auto top-up (best effort, in the background).
+            if response.status().is_success() && event_type.starts_with("checkout.session.") {
+                if let Some(payment_intent_id) = object_id(&event["data"]["object"]["payment_intent"]) {
+                    crate::services::auto_topup::spawn_capture_from_payment_intent(
+                        state.db.clone(),
+                        user_id.clone(),
+                        payment_intent_id,
+                    );
+                }
+            }
+            response
+        }
+        MappedStripeEvent::AutoTopupSucceeded {
+            event_id,
+            user_id,
+            payment_intent_id,
+            attempt_id,
+            amount_usd,
+        } => {
+            auto_topup_succeeded_and_respond(
+                &state,
+                &event_id,
+                &user_id,
+                &payment_intent_id,
+                attempt_id.as_deref(),
+                amount_usd,
+            )
             .await
+        }
+        MappedStripeEvent::AutoTopupFailed {
+            user_id,
+            payment_intent_id,
+            attempt_id,
+            amount_usd,
+            reason,
+        } => {
+            match crate::services::auto_topup::record_failure(
+                &state.db,
+                &user_id,
+                attempt_id.as_deref(),
+                Some(&payment_intent_id),
+                amount_usd,
+                &reason,
+            )
+            .await
+            {
+                Ok(()) => Json(json!({
+                    "received": true,
+                    "userId": user_id,
+                    "paymentIntentId": payment_intent_id,
+                    "autoTopup": "failed",
+                }))
+                .into_response(),
+                Err(error) => error.into_response(),
+            }
+        }
+        MappedStripeEvent::AutoTopupCardSaved {
+            user_id,
+            setup_intent_id,
+            customer_id,
+        } => {
+            let Ok(secret_key) = std::env::var("STRIPE_SECRET_KEY") else {
+                // Stripe retries; the operator sees the 503.
+                return super::billing_checkout::billing_not_configured_response();
+            };
+            let stripe = super::billing_checkout::ReqwestStripeCheckout::new();
+            match crate::services::auto_topup::store_setup_payment_method(
+                &state.db,
+                &stripe,
+                &secret_key,
+                &user_id,
+                &setup_intent_id,
+                customer_id.as_deref(),
+            )
+            .await
+            {
+                Ok(card) => Json(json!({
+                    "received": true,
+                    "userId": user_id,
+                    "autoTopup": "card_saved",
+                    "brand": card.brand,
+                    "last4": card.last4,
+                }))
+                .into_response(),
+                Err(error) => error.into_response(),
+            }
         }
         MappedStripeEvent::GrantSubscriptionCredits {
             event_id,
@@ -537,6 +650,138 @@ async fn grant_subscription_credits_and_respond(
         .into_response(),
         Err(error) => error.into_response(),
     }
+}
+
+/// Grant an auto top-up into the cloud wallet (same three-layer idempotency
+/// as packs: `webhook_events`, `stripe-{event_id}`, trust bookkeeping on a
+/// fresh grant), then close the attempt. Auto top-up refills the wallet the
+/// debits come from, so it never routes to the fabric ledger.
+async fn auto_topup_succeeded_and_respond(
+    state: &ApiState,
+    event_id: &str,
+    user_id: &str,
+    payment_intent_id: &str,
+    attempt_id: Option<&str>,
+    amount_usd: f64,
+) -> Response {
+    let outcome = match process_credit_purchase(
+        &state.db,
+        CreditGrantTarget::CloudWallet,
+        "payment_intent.succeeded",
+        event_id,
+        user_id,
+        amount_usd,
+    )
+    .await
+    {
+        Ok(outcome) => outcome,
+        Err(error) => return error.into_response(),
+    };
+    // Also on a replay: a crash between grant and bookkeeping heals here.
+    if let Err(error) =
+        crate::services::auto_topup::record_success(&state.db, user_id, attempt_id, payment_intent_id, amount_usd).await
+    {
+        return error.into_response();
+    }
+    if !outcome.idempotent_replay {
+        crate::services::audit::write_audit_log(
+            &state.db,
+            crate::services::audit::AuditEvent {
+                action: "billing.auto_topup.granted".to_string(),
+                resource_type: "credit_transaction".to_string(),
+                resource_id: Some(event_id.to_string()),
+                user_id: Some(user_id.to_string()),
+                user_email: None,
+                details: Some(json!({
+                    "creditsUsd": amount_usd,
+                    "balanceUsd": outcome.balance_usd,
+                    "paymentIntentId": payment_intent_id,
+                })),
+                success: true,
+            },
+        )
+        .await;
+        if let Err(error) = billing_subscriptions::record_paid_purchase(&state.db, user_id).await {
+            tracing::error!(
+                "REVENUE-CRITICAL: failed to record paid purchase for user {} (event {}): {}",
+                user_id,
+                event_id,
+                error
+            );
+        }
+    }
+    let mut response = json!({
+        "received": true,
+        "eventId": event_id,
+        "userId": user_id,
+        "creditsUsd": amount_usd,
+        "target": outcome.target,
+        "autoTopup": "succeeded",
+        "idempotentReplay": outcome.idempotent_replay,
+    });
+    if let Some(balance_usd) = outcome.balance_usd {
+        response["balanceUsd"] = json!(balance_usd);
+    }
+    Json(response).into_response()
+}
+
+/// A Stripe id whether the field is an id string or an expanded object.
+fn object_id(value: &Value) -> Option<String> {
+    value
+        .as_str()
+        .or_else(|| value["id"].as_str())
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .map(str::to_string)
+}
+
+/// Map a `payment_intent.*` event. Only auto top-up intents (metadata
+/// `kind = auto_topup`, written by `services::auto_topup`) are ours; pack
+/// purchases grant from their Checkout Session instead.
+fn map_payment_intent_event(event_type: &str, event_id: String, intent: &Value) -> Result<MappedStripeEvent, ApiError> {
+    let metadata = &intent["metadata"];
+    if metadata["kind"].as_str() != Some("auto_topup") {
+        return Ok(MappedStripeEvent::Ignored(event_type.to_string()));
+    }
+    let user_id = metadata["clerk_user_id"]
+        .as_str()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| ApiError::BadRequest("Auto top-up intent is missing clerk_user_id metadata.".to_string()))?
+        .to_string();
+    let payment_intent_id = object_id(&intent["id"])
+        .ok_or_else(|| ApiError::BadRequest("Payment intent is missing its id.".to_string()))?;
+    let credits_raw = metadata["allternit_credits_usd"].as_str().unwrap_or_default();
+    let amount_usd: f64 = credits_raw.trim().parse().map_err(|_| {
+        ApiError::BadRequest(format!("allternit_credits_usd metadata is not a number: {credits_raw:?}."))
+    })?;
+    if amount_usd <= 0.0 {
+        return Err(ApiError::BadRequest("allternit_credits_usd metadata must be positive.".to_string()));
+    }
+    let attempt_id = metadata["allternit_auto_topup_attempt"]
+        .as_str()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    if event_type == "payment_intent.succeeded" {
+        if event_id.is_empty() {
+            return Err(ApiError::BadRequest("Stripe event is missing its id.".to_string()));
+        }
+        return Ok(MappedStripeEvent::AutoTopupSucceeded {
+            event_id,
+            user_id,
+            payment_intent_id,
+            attempt_id,
+            amount_usd,
+        });
+    }
+    Ok(MappedStripeEvent::AutoTopupFailed {
+        user_id,
+        payment_intent_id,
+        attempt_id,
+        amount_usd,
+        reason: crate::services::auto_topup::failure_reason(intent, event_type),
+    })
 }
 
 /// The outcome of processing one credit-purchase Stripe event.
@@ -857,6 +1102,27 @@ fn map_stripe_event(event: &Value) -> Result<MappedStripeEvent, ApiError> {
             // invoices are handled below.
             let object = &event["data"]["object"];
             let is_checkout_event = event_type != "invoice.paid";
+            // Auto top-up card setup (routes::billing_auto_topup).
+            if event_type == "checkout.session.completed"
+                && object["mode"].as_str() == Some("setup")
+                && object["metadata"]["kind"].as_str() == Some("auto_topup_setup")
+            {
+                let user_id = object["metadata"]["clerk_user_id"]
+                    .as_str()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty());
+                let setup_intent_id = object_id(&object["setup_intent"]);
+                let (Some(user_id), Some(setup_intent_id)) = (user_id, setup_intent_id) else {
+                    return Err(ApiError::BadRequest(
+                        "Auto top-up setup session is missing clerk_user_id or setup_intent.".to_string(),
+                    ));
+                };
+                return Ok(MappedStripeEvent::AutoTopupCardSaved {
+                    user_id: user_id.to_string(),
+                    setup_intent_id,
+                    customer_id: object_id(&object["customer"]),
+                });
+            }
             if is_checkout_event && object["mode"].as_str().unwrap_or_default() != "payment" {
                 return Ok(MappedStripeEvent::Ignored(event_type.to_string()));
             }
@@ -936,6 +1202,9 @@ fn map_stripe_event(event: &Value) -> Result<MappedStripeEvent, ApiError> {
                     .filter(|value| !value.is_empty())
                     .map(str::to_string),
             })
+        }
+        "payment_intent.succeeded" | "payment_intent.payment_failed" | "payment_intent.requires_action" => {
+            map_payment_intent_event(event_type, event_id, &event["data"]["object"])
         }
         other => Ok(MappedStripeEvent::Ignored(other.to_string())),
     }
@@ -2225,5 +2494,106 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(count, 2);
+    }
+
+    fn auto_topup_intent_event(event_type: &str, metadata: Value) -> Value {
+        json!({
+            "id": "evt_at_1",
+            "type": event_type,
+            "data": { "object": {
+                "id": "pi_1",
+                "object": "payment_intent",
+                "status": "succeeded",
+                "metadata": metadata,
+                "last_payment_error": { "code": "card_declined", "message": "Your card was declined." },
+            } }
+        })
+    }
+
+    fn auto_topup_metadata() -> Value {
+        json!({
+            "kind": "auto_topup",
+            "clerk_user_id": "user_1",
+            "allternit_credits_usd": "25.00",
+            "allternit_auto_topup_attempt": "att_1",
+        })
+    }
+
+    #[test]
+    fn auto_topup_succeeded_maps_to_a_wallet_grant() {
+        let mapped = map_stripe_event(&auto_topup_intent_event("payment_intent.succeeded", auto_topup_metadata())).unwrap();
+        assert_eq!(
+            mapped,
+            MappedStripeEvent::AutoTopupSucceeded {
+                event_id: "evt_at_1".to_string(),
+                user_id: "user_1".to_string(),
+                payment_intent_id: "pi_1".to_string(),
+                attempt_id: Some("att_1".to_string()),
+                amount_usd: 25.0,
+            }
+        );
+    }
+
+    #[test]
+    fn auto_topup_failures_map_to_turning_it_off() {
+        for event_type in ["payment_intent.payment_failed", "payment_intent.requires_action"] {
+            let mapped = map_stripe_event(&auto_topup_intent_event(event_type, auto_topup_metadata())).unwrap();
+            let MappedStripeEvent::AutoTopupFailed { user_id, payment_intent_id, attempt_id, amount_usd, reason } = mapped else {
+                panic!("{event_type} must map to AutoTopupFailed");
+            };
+            assert_eq!(user_id, "user_1");
+            assert_eq!(payment_intent_id, "pi_1");
+            assert_eq!(attempt_id.as_deref(), Some("att_1"));
+            assert_eq!(amount_usd, 25.0);
+            assert!(!reason.is_empty());
+        }
+    }
+
+    #[test]
+    fn payment_intents_that_are_not_auto_topups_are_ignored() {
+        // Pack purchases grant from their Checkout Session; their intents carry no kind.
+        let pack = auto_topup_intent_event("payment_intent.succeeded", json!({ "clerk_user_id": "user_1" }));
+        assert_eq!(
+            map_stripe_event(&pack).unwrap(),
+            MappedStripeEvent::Ignored("payment_intent.succeeded".to_string())
+        );
+    }
+
+    #[test]
+    fn auto_topup_intent_without_a_user_is_a_bad_request() {
+        let event = auto_topup_intent_event(
+            "payment_intent.succeeded",
+            json!({ "kind": "auto_topup", "allternit_credits_usd": "25.00" }),
+        );
+        assert!(map_stripe_event(&event).is_err());
+    }
+
+    #[test]
+    fn setup_checkout_for_auto_topup_maps_to_card_saved() {
+        let event = json!({
+            "id": "evt_setup",
+            "type": "checkout.session.completed",
+            "data": { "object": {
+                "mode": "setup",
+                "setup_intent": "seti_1",
+                "customer": "cus_1",
+                "metadata": { "kind": "auto_topup_setup", "clerk_user_id": "user_1" },
+            } }
+        });
+        assert_eq!(
+            map_stripe_event(&event).unwrap(),
+            MappedStripeEvent::AutoTopupCardSaved {
+                user_id: "user_1".to_string(),
+                setup_intent_id: "seti_1".to_string(),
+                customer_id: Some("cus_1".to_string()),
+            }
+        );
+        // Other setup sessions are not ours.
+        let mut other = event.clone();
+        other["data"]["object"]["metadata"] = json!({});
+        assert_eq!(
+            map_stripe_event(&other).unwrap(),
+            MappedStripeEvent::Ignored("checkout.session.completed".to_string())
+        );
     }
 }
