@@ -772,13 +772,18 @@
         {
           "on": "2026-10-25",
           "note": "Auto top-up (W1 of SPEC-cloud-credits-open-lane): saved card from packs/setup Checkout, off-session PaymentIntent after wallet debits when balance < threshold, one pending attempt, monthly cap, failure turns it off and notifies; migration 103, /api/v1/billing/auto-topup routes, payment_intent.* webhook events, Settings → Billing card on all surfaces."
+        },
+        {
+          "on": "2026-10-25",
+          "note": "Upstream funding coverage: cloud-api polls provider balances every 10 min (OpenRouter /credits; others manual entry minus metered spend), compares with wallet liability, alerts when days left < reserve or balance < floor, and routes around a provider under its floor when another serves the same model. Admin: GET/PUT /api/v1/admin/funding, platform /admin/funding. Providers refill from the business card via their own auto-recharge (set by hand)."
         }
       ],
       "evidence": [
         "allternit/surfaces/docs/api/usage.mdx",
         "allternit/surfaces/docs/admin/spend-limits.mdx",
         "allternit/surfaces/docs/guides/credits-and-auto-top-up.mdx",
-        "allternit/surfaces/docs/api/cloud-billing.mdx"
+        "allternit/surfaces/docs/api/cloud-billing.mdx",
+        "allternit/surfaces/docs/operations/upstream-funding.mdx"
       ]
     },
     {

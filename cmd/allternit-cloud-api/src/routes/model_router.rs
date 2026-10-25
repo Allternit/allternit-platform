@@ -126,6 +126,16 @@ pub async fn chat_completions(
         }
     }
 
+    // Upstream funding: skip a provider under its funding floor when another
+    // provider serves the same model (prices, pool and usage follow the
+    // provider that actually runs it).
+    let mut request = request;
+    if let Some(funded) = state.model_router.funded_alternative(&alias) {
+        tracing::warn!(from = %alias, to = %funded, "provider below funding floor; routing to another provider");
+        request.model = funded;
+    }
+    let alias = request.model.clone();
+
     // Pre-check: a paying user with an exhausted balance is blocked before we
     // spend upstream money; free users (no credits row) are bounded by the
     // monthly free allowance and a tight per-user rate limit.
