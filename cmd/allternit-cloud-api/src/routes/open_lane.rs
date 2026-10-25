@@ -370,6 +370,10 @@ async fn hand_off(
     let bytes = axum::body::to_bytes(body, MAX_BUFFERED_JSON_BODY).await.ok()?;
     let mut value: Value = serde_json::from_slice(&bytes).ok()?;
     open_lane::annotate_handoff(&mut value, &plan.from, &plan.to);
+    // Name the open model by its alias (the upstream may call it otherwise).
+    if let Some(object) = value.as_object_mut() {
+        object.insert("model".to_string(), Value::String(plan.to.clone()));
+    }
     parts.headers.insert(open_lane::HANDOFF_HEADER, header_value);
     parts.headers.remove(header::CONTENT_LENGTH);
     tracing::info!(from = %plan.from, to = %plan.to, "open lane handoff");

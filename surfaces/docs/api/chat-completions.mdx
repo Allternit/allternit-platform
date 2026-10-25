@@ -337,6 +337,10 @@ curl https://api.allternit.com/v1/tokens \
 }
 ```
 
+## Refusal handoff (Cloud API)
+
+On the hosted Cloud API, a user who turned on handoff in Settings > Open models gets a refused completion re-run on an open-lane model, after the hard-line filter. The handed-off response carries the `x-allternit-handoff: from->to` header and an `allternit.handoff` object (in a stream, as a first chunk with no choices). Pass `allternit.handoff_model` to pick the open model, or `allternit.handoff: false` to skip handoff for one request. With handoff on, streams start after their first 400 characters. Full reference: [Open lane and refusal handoff](/api/open-lane).
+
 ## Error codes
 
 | HTTP status | Code | Meaning |

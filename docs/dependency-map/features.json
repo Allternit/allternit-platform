@@ -2712,6 +2712,30 @@
         "allternit-ai/src/components/glance/GlanceLine.tsx",
         "allternit/cmd/gizzi-code/src/runtime/tools/builtins/glance.ts"
       ]
+    },
+    {
+      "id": "feature:open-lane-handoff",
+      "label": "Open models (open lane) and refusal handoff",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "cloud-api -open models (lane: open, served by OPEN_LANE_BASE_URL) behind an AUP + 18+ gate and a hard-line filter (csam, mass-casualty weapons, real-person sexual content; keyword pre-check + moderation model, fail closed, category-only log, migration 105). Opt-in handoff re-runs a refused frontier completion on an open model (x-allternit-handoff, allternit.handoff; streams hold the first 400 chars). Settings > Open models, Open badge in the model picker, 'Answered by ... (handoff)' note on Desktop, phone layout and PWA.",
+      "touches": [
+                                                "allternit/cmd/allternit-cloud-api",
+        "allternit-ai/src/views/settings",
+        "allternit-ai/src/components/chat",
+        "allternit-ai/src/lib/agents"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-25",
+          "note": "Eoj approved SPEC-cloud-credits-open-lane W3: open-weight lane as a paid value-add; hard lines CSAM, mass-casualty weapon uplift, sexual content about real people; handoff opt-in and visible; copy says 'far fewer refusals'."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/open-models.mdx",
+        "allternit/surfaces/docs/api/open-lane.mdx",
+        "allternit-ai/src/views/settings/OpenModelsPanel.tsx"
+      ]
     }
   ],
   "journeys": [
