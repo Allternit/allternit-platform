@@ -1,0 +1,74 @@
+{
+  "_doc": "The named answer templates. Byte-identical copy in allternit-ai src/lib/openui/answer-templates.json (both repos pin its SHA-256 in a test). Display order = list order; the picker tries `priority` low to high and takes the first template with a trigger phrase in the user's message (whole words, case-insensitive), else quick-answer.",
+  "fallback": "quick-answer",
+  "templates": [
+    {
+      "id": "quick-answer",
+      "name": "Quick answer",
+      "when": "a fact, yes/no, a definition",
+      "priority": 99,
+      "triggers": [],
+      "sections": [],
+      "note": "the bottom line, then up to 3 bullets. No headings"
+    },
+    {
+      "id": "how-to",
+      "name": "How-to",
+      "when": "\"how do I…\"",
+      "priority": 3,
+      "triggers": ["how do i", "how to", "how can i", "how do you", "how would i", "walk me through", "guide me"],
+      "sections": ["Steps (numbered)", "Check it worked"]
+    },
+    {
+      "id": "troubleshooting",
+      "name": "Troubleshooting",
+      "when": "an error, something broken",
+      "priority": 4,
+      "triggers": ["why", "error", "errors", "broken", "not working", "doesn't work", "stopped working", "won't", "fails", "failing", "failed", "crash", "crashes", "crashing", "bug", "exception"],
+      "sections": ["Cause", "Fix", "Verify"]
+    },
+    {
+      "id": "comparison",
+      "name": "Comparison",
+      "when": "\"A vs B\", \"best X for…\"",
+      "priority": 1,
+      "triggers": ["compare", "comparison", "vs", "versus", "which is better", "which is best", "better than", "difference between", "differences between", "pros and cons", "alternatives to"],
+      "sections": ["Criteria", "Comparison (table, one row per option)", "Recommendation", "What would change my choice", "Next step"],
+      "card": "Compare"
+    },
+    {
+      "id": "decision",
+      "name": "Decision",
+      "when": "\"should I…\", \"which one\"",
+      "priority": 7,
+      "triggers": ["decide", "decision", "should i", "should we", "options", "which one", "worth it", "choose"],
+      "sections": ["Options (table)", "Recommendation", "Trade-offs", "Next step"],
+      "card": "Choice"
+    },
+    {
+      "id": "plan",
+      "name": "Plan",
+      "when": "a plan, rollout or roadmap",
+      "priority": 2,
+      "triggers": ["plan", "planning", "roadmap", "rollout", "milestones", "steps"],
+      "sections": ["Goal", "Steps (checklist)", "Risks", "First action"],
+      "card": "Checklist"
+    },
+    {
+      "id": "research-brief",
+      "name": "Research brief",
+      "when": "research, \"what's known about…\"",
+      "priority": 6,
+      "triggers": ["research", "find out", "look into", "what's known", "what is known", "investigate", "latest on", "studies"],
+      "sections": ["Findings (each with its source link)", "Open questions"]
+    },
+    {
+      "id": "status-report",
+      "name": "Status report",
+      "when": "status, progress, what changed",
+      "priority": 5,
+      "triggers": ["status", "progress", "update on", "what changed", "where are we", "recap", "standup", "report"],
+      "sections": ["Done", "In progress", "Blocked", "Next"]
+    }
+  ]
+}

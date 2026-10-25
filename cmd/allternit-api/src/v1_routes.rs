@@ -18,7 +18,8 @@ use std::{collections::HashMap, convert::Infallible, sync::Arc, sync::Mutex};
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use crate::agent_preferences_routes::{chat_style_directive, load_preferences_row, user_profile_block, UserProfile};
+use crate::agent_preferences_routes::{load_preferences_row, user_profile_block, UserProfile};
+use crate::answer_shapes::{answer_shapes_block, has_answer_shapes};
 use crate::agent_session_routes::gizzi_client;
 use crate::agent_workspace_paths::workspace_dir_for;
 use crate::auth::AuthUser;
@@ -800,15 +801,17 @@ fn stored_turn_metadata(body: &serde_json::Value) -> Option<serde_json::Value> {
 /// generated from that row, so including both would state the style
 /// twice) → canonical instruction files (AGENTS.md → GIZZI.md →
 /// .claude/CLAUDE.md → SYSTEM_LAW.md, mirroring pack.ts) → agent
-/// system_prompt → response-style directive → custom
+/// system_prompt → answer shapes (rules + named templates + the
+/// Response Style's length rule; skipped when the client prompt already
+/// carries them, crate::answer_shapes) → custom
 /// instructions → "About the user" profile → "Writing as the user" (via
 /// `user_layers`) → client-sent systemPrompt. The opt-in location layer
 /// (`client_location`) is deliberately NOT composed here: this block is
 /// stored on the gizzi user message, so the location rides the turn-only
 /// `turnSystem` field instead and gizzi appends it after this block for
 /// that turn (crate::client_location). Blank layers
-/// are skipped and layers are joined with "\n\n"; returns None when every
-/// layer is empty so the caller preserves the old no-block behavior exactly.
+/// are skipped and layers are joined with "\n\n". The answer-shape layer
+/// means there is always a block, so every brain gets the same shapes.
 fn compose_system_instructions(
     soul_md: Option<&str>,
     style_md: Option<&str>,
@@ -825,8 +828,8 @@ fn compose_system_instructions(
             parts.push(text.to_string());
         }
     }
-    if let Some(directive) = chat_style_directive(response_style) {
-        parts.push(directive.to_string());
+    if !has_answer_shapes(client_prompt) {
+        parts.push(answer_shapes_block(response_style));
     }
     if !custom_instructions.trim().is_empty() {
         parts.push(format!(
@@ -845,6 +848,18 @@ fn compose_system_instructions(
     } else {
         Some(parts.join("\n\n"))
     }
+}
+
+/// The turn-only `turnSystem` text: the answer-template line, then the
+/// shared location. None when both are absent.
+fn turn_layers(template_line: Option<&str>, location: Option<&str>) -> Option<String> {
+    let parts: Vec<&str> = [template_line, location]
+        .into_iter()
+        .flatten()
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .collect();
+    (!parts.is_empty()).then(|| parts.join("\n\n"))
 }
 
 /// Agent-runs row for a bridge chat carrying an agent_id. Settled exactly
@@ -1486,7 +1501,7 @@ async fn agent_chat_bridge(
 
     // Composition order: SOUL.md → STYLE.md → canonical instruction files
     // (AGENTS.md → GIZZI.md → .claude/CLAUDE.md → SYSTEM_LAW.md) → agent
-    // system_prompt → style directive → custom instructions → About the
+    // system_prompt → answer shapes → custom instructions → About the
     // user → Writing as the user → client-sent systemPrompt.
     let system_prompt = compose_system_instructions(
         agent.soul_md.as_deref(),
@@ -1794,12 +1809,19 @@ async fn agent_chat_bridge(
         if let Some(bot) = &bot_marker {
             gizzi_payload["bot"] = bot.clone();
         }
-        // The shared location: the last user layer, for this turn only.
-        // Top-level and separate from `system`/`metadata` (both are stored on
-        // the gizzi user message); gizzi holds it in memory for the turn.
-        if let Some(layer) = &location_layer {
+        // Turn-only layers: this turn's answer template (the deterministic
+        // picker, crate::answer_shapes) and the shared location, the last
+        // user layer. Top-level and separate from `system`/`metadata` (both
+        // are stored on the gizzi user message); gizzi holds them in memory
+        // for the turn.
+        if location_layer.is_some() {
             tracing::debug!(session_id = %session_id, "agent-chat: location layer added");
-            gizzi_payload["turnSystem"] = json!(layer);
+        }
+        if let Some(layers) = turn_layers(
+            crate::answer_shapes::turn_template_line(&message, client_system_prompt.as_deref()).as_deref(),
+            location_layer.as_deref(),
+        ) {
+            gizzi_payload["turnSystem"] = json!(layers);
         }
 
         // Composer tool options (the + menu / mobile "+" sheet):
@@ -2790,10 +2812,10 @@ mod tests {
     }
 
     #[test]
-    fn compose_empty_returns_none() {
+    fn compose_empty_is_just_the_answer_shapes() {
         assert_eq!(
             compose_system_instructions(None, None, None, None, "balanced", "", None, None),
-            None
+            Some(answer_shapes_block("balanced"))
         );
     }
 
@@ -2810,44 +2832,37 @@ mod tests {
                 None,
                 Some("\t")
             ),
-            None
+            Some(answer_shapes_block("balanced"))
         );
     }
 
     #[test]
     fn compose_each_layer_alone() {
+        let shapes = answer_shapes_block("balanced");
+        let with = |layer: &str| format!("{layer}\n\n{shapes}");
         assert_eq!(
-            compose_system_instructions(Some("soul"), None, None, None, "balanced", "", None, None)
-                .as_deref(),
-            Some("soul")
+            compose_system_instructions(Some("soul"), None, None, None, "balanced", "", None, None),
+            Some(with("soul"))
         );
         assert_eq!(
-            compose_system_instructions(None, Some("style md"), None, None, "balanced", "", None, None)
-                .as_deref(),
-            Some("style md")
+            compose_system_instructions(None, Some("style md"), None, None, "balanced", "", None, None),
+            Some(with("style md"))
         );
         assert_eq!(
-            compose_system_instructions(None, None, Some("--- AGENTS.md ---\nrules"), None, "balanced", "", None, None)
-                .as_deref(),
-            Some("--- AGENTS.md ---\nrules")
+            compose_system_instructions(None, None, Some("--- AGENTS.md ---\nrules"), None, "balanced", "", None, None),
+            Some(with("--- AGENTS.md ---\nrules"))
         );
         assert_eq!(
-            compose_system_instructions(None, None, None, Some("agent prompt"), "balanced", "", None, None)
-                .as_deref(),
-            Some("agent prompt")
+            compose_system_instructions(None, None, None, Some("agent prompt"), "balanced", "", None, None),
+            Some(with("agent prompt"))
         );
         assert_eq!(
-            compose_system_instructions(None, None, None, None, "concise", "", None, None).as_deref(),
-            Some(chat_style_directive("concise").unwrap())
+            compose_system_instructions(None, None, None, None, "balanced", "do x", None, None),
+            Some(format!("{shapes}\n\nCustom instructions from the user:\ndo x"))
         );
         assert_eq!(
-            compose_system_instructions(None, None, None, None, "balanced", "do x", None, None).as_deref(),
-            Some("Custom instructions from the user:\ndo x")
-        );
-        assert_eq!(
-            compose_system_instructions(None, None, None, None, "balanced", "", None, Some("client"))
-                .as_deref(),
-            Some("client")
+            compose_system_instructions(None, None, None, None, "balanced", "", None, Some("client")),
+            Some(format!("{shapes}\n\nclient"))
         );
     }
 
@@ -2868,7 +2883,7 @@ mod tests {
             "STYLE",
             "INSTRUCTIONS",
             "AGENT",
-            chat_style_directive("detailed").unwrap(),
+            &answer_shapes_block("detailed"),
             "Custom instructions from the user:\nCUSTOM",
             "CLIENT",
         ]
@@ -2877,15 +2892,36 @@ mod tests {
     }
 
     #[test]
-    fn compose_no_directive_for_balanced_or_custom() {
-        assert_eq!(
-            compose_system_instructions(None, None, None, None, "balanced", "", None, None),
-            None
-        );
-        assert_eq!(
-            compose_system_instructions(None, None, None, None, "custom", "", None, None),
-            None
-        );
+    fn compose_sends_the_shapes_with_each_response_style() {
+        for style in ["concise", "balanced", "detailed", "custom"] {
+            let out = compose_system_instructions(None, None, None, None, style, "", None, None).unwrap();
+            assert!(out.contains("## Answer shape\n"), "{style}");
+            assert!(out.contains("Open with the bottom line"), "{style}");
+            assert!(out.contains("- Comparison ("), "{style}");
+            assert!(out.contains(crate::answer_shapes::length_rule(style)), "{style}");
+        }
+    }
+
+    #[test]
+    fn compose_keeps_one_copy_when_the_client_sends_the_shapes() {
+        // allternit-ai sends the block itself: the bridge must not repeat it.
+        let client = format!("Mode contract\n\n{}", answer_shapes_block("concise"));
+        let out = compose_system_instructions(Some("SOUL"), None, None, None, "concise", "", None, Some(&client)).unwrap();
+        assert_eq!(out.matches("## Answer shape\n").count(), 1);
+        assert_eq!(out, format!("SOUL\n\n{client}"));
+    }
+
+    #[test]
+    fn turn_layers_carry_the_template_line_before_the_location() {
+        let line = crate::answer_shapes::turn_template_line("React vs Vue?", None).unwrap();
+        assert!(line.starts_with("Use answer template: Comparison ("));
+        assert_eq!(turn_layers(Some(&line), Some("Where the user is: x")), Some(format!("{line}\n\nWhere the user is: x")));
+        assert_eq!(turn_layers(Some(&line), None), Some(line.clone()));
+        assert_eq!(turn_layers(None, Some("loc")).as_deref(), Some("loc"));
+        assert_eq!(turn_layers(None, None), None);
+        // The template line never goes into the stored `system` block.
+        let system = compose_system_instructions(None, None, None, None, "balanced", "", None, None).unwrap();
+        assert!(!system.contains("Use answer template:"));
     }
 
     #[test]
@@ -2942,18 +2978,6 @@ mod tests {
         std::fs::write(dir.join("GIZZI.md"), "\n").unwrap();
         assert_eq!(read_instruction_files(&dir), None);
         std::fs::remove_dir_all(&dir).unwrap();
-    }
-
-    #[test]
-    fn compose_directive_strings_match_ios_client() {
-        assert_eq!(
-            chat_style_directive("concise"),
-            Some("Response style: keep responses brief and to the point — no preamble, no recap, no filler.")
-        );
-        assert_eq!(
-            chat_style_directive("detailed"),
-            Some("Response style: give thorough, detailed responses — full context, reasoning, and examples where they help.")
-        );
     }
 
     #[test]
