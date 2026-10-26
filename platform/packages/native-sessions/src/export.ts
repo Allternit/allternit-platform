@@ -191,7 +191,7 @@ function exportCline(input: ExportInput, sessionId: string): NativeExport {
       const role = event.role === "assistant" ? "assistant" : event.role === "system" ? "system" : "user"
       rows.push({ role, content: event.text })
     } else if (event.kind === "tool_call") {
-      rows.push({ role: "assistant", content: "", tool_calls: [{ id: event.toolId ?? randomUUID(), type: "function", function: { name: event.toolName ?? "call", arguments: "{}" } }] })
+      rows.push({ role: "assistant", content: "", tool_calls: [{ id: event.toolId ?? randomUUID(), type: "function", function: { name: event.toolName ?? "call", arguments: JSON.stringify(event.input ?? {}) } }] })
     } else if (event.kind === "tool_result") {
       rows.push({ role: "tool", tool_call_id: event.toolId ?? "", content: event.text ?? "" })
     }
@@ -211,7 +211,7 @@ function exportAmp(input: ExportInput, sessionId: string): NativeExport {
     if (event.kind === "message" && event.text) {
       messages.push({ role: event.role === "assistant" ? "assistant" : "user", content: [{ type: "text", text: event.text }] })
     } else if (event.kind === "tool_call") {
-      messages.push({ role: "assistant", content: [{ type: "tool_use", id: event.toolId ?? randomUUID(), name: event.toolName ?? "call", input: {} }] })
+      messages.push({ role: "assistant", content: [{ type: "tool_use", id: event.toolId ?? randomUUID(), name: event.toolName ?? "call", input: event.input ?? {} }] })
     } else if (event.kind === "tool_result") {
       messages.push({ role: "user", content: [{ type: "tool_result", tool_use_id: event.toolId ?? "", content: event.text ?? "" }] })
     }
