@@ -34,6 +34,8 @@ export interface TurnSystemInput {
   /** Local gizzi bot canonical-chat persona, if any. */
   botChat?: string
   scratchpad?: string
+  /** How long each layer took (ms), for the turn-prep log. */
+  onTiming?: (name: string, ms: number) => void
 }
 
 export async function composeTurnSystem(input: TurnSystemInput): Promise<string[]> {
@@ -47,16 +49,34 @@ export async function composeTurnSystem(input: TurnSystemInput): Promise<string[
       ...(input.scratchpad ? [input.scratchpad] : []),
     ].filter(Boolean)
   }
+  // The layers are independent: built at once (a turn waits for the slowest,
+  // not their sum), then placed in the fixed order.
+  const [environment, instructions, workspace, repoMap, mcpInstructions] = await Promise.all([
+    timed("environment", input.environment, input.onTiming),
+    timed("instructions", input.instructions, input.onTiming),
+    timed("workspace", input.workspace, input.onTiming),
+    input.repoMap ? timed("repoMap", input.repoMap, input.onTiming) : [],
+    input.mcpInstructions ? timed("mcpInstructions", input.mcpInstructions, input.onTiming) : [],
+  ])
   return [
-    ...(await input.environment()),
-    ...(await input.instructions()),
-    ...(await input.workspace()),
-    ...(input.repoMap ? await input.repoMap() : []),
-    ...(input.mcpInstructions ? await input.mcpInstructions() : []),
+    ...environment,
+    ...instructions,
+    ...workspace,
+    ...repoMap,
+    ...mcpInstructions,
     ...(input.botChat ? [input.botChat] : []),
     ...(input.scratchpad ? [input.scratchpad] : []),
     ...appended,
   ].filter(Boolean)
+}
+
+async function timed(name: string, layer: Lazy, onTiming?: (name: string, ms: number) => void): Promise<string[]> {
+  const started = Date.now()
+  try {
+    return await layer()
+  } finally {
+    onTiming?.(name, Date.now() - started)
+  }
 }
 
 export interface HeaderInput {
