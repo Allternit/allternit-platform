@@ -347,7 +347,10 @@ async fn send_email_inner(
         return Err(err(StatusCode::FORBIDDEN, "egress_blocked", reason));
     }
     let held = autonomy.as_ref().is_some_and(|e| e.held());
-    let extra = SendEmailExtra { skip_approval: extra.skip_approval && !held, ..extra };
+    // A one-task grant on this bot thread ("Allow for this task" / the owner's words) sends
+    // without the review step, the same way a Send-and-tell-me level does on the reply path.
+    let granted = autonomy.as_ref().is_some_and(|e| e.grant_id.is_some());
+    let extra = SendEmailExtra { skip_approval: (extra.skip_approval || granted) && !held, ..extra };
 
     if req.subject.trim().is_empty() {
         return Err(err(
@@ -554,7 +557,7 @@ async fn send_email_inner(
     .map_err(internal)?;
     {
         let act = crate::autonomy::Action { owner: user_id, bot_id: &req.agent_id, channel: "email", persons: vec![req.to.clone()], action: "message", amount_cents: 0 };
-        crate::autonomy::finish(&state.db, &act, autonomy.as_ref(), "sent", &outbound_id, &format!("{}\n{}", req.subject, snippet), "", None, json!({ "outboundId": outbound_id, "subject": req.subject }));
+        crate::autonomy::finish(&state.db, &act, autonomy.as_ref(), "sent", &outbound_id, &format!("{}\n{}", req.subject, snippet), "", extra.bot_thread, json!({ "outboundId": outbound_id, "subject": req.subject }));
     }
     Ok(json!({
         "status": "sent",
@@ -634,7 +637,7 @@ fn sender_has_thread(conn: &rusqlite::Connection, agent_id: &str, from_lower: &s
     let prefix = format!("email:{from_lower}:");
     conn.query_row(
         "SELECT count(*) FROM bot_threads
-         WHERE bot_id = ?1 AND status NOT IN ('done', 'failed', 'declined')
+         WHERE bot_id = ?1 AND status NOT IN ('done', 'failed', 'declined') AND archived_at IS NULL
            AND substr(json_extract(origin, '$.channelKey'), 1, length(?2)) = ?2",
         params![agent_id, prefix],
         |row| row.get::<_, i64>(0),
@@ -654,7 +657,7 @@ fn email_bot_thread(db: &crate::db::DbHandle, agent_id: &str, from: &str, subjec
     db.connect()
         .ok()?
         .query_row(
-            "SELECT id FROM bot_threads WHERE bot_id = ?1 AND json_extract(origin, '$.channelKey') = ?2 AND status NOT IN ('done', 'failed', 'declined') ORDER BY updated_at DESC LIMIT 1",
+            "SELECT id FROM bot_threads WHERE bot_id = ?1 AND json_extract(origin, '$.channelKey') = ?2 AND status NOT IN ('done', 'failed', 'declined') AND archived_at IS NULL ORDER BY updated_at DESC LIMIT 1",
             params![agent_id, key],
             |r| r.get(0),
         )

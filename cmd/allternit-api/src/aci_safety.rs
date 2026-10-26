@@ -82,6 +82,17 @@ impl SensitiveActionType {
         found
     }
 
+    /// The one-task grant action (`task_grants`) this class falls under, if any.
+    /// `payment` is listed so callers see it, but no grant ever covers it.
+    pub fn grant_action(&self) -> Option<&'static str> {
+        match self {
+            Self::FormSubmit => Some("submit"),
+            Self::FileUpload => Some("upload"),
+            Self::Payment => Some("payment"),
+            _ => None,
+        }
+    }
+
     pub fn label(&self) -> &'static str {
         match self {
             Self::FormSubmit => "form submission",

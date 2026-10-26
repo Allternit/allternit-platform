@@ -1358,26 +1358,55 @@ fn question_answers(body: &serde_json::Value) -> Vec<Vec<String>> {
     out
 }
 
+/// The plan-approval answer that also grants the plan's sends and uploads for
+/// this thread (gizzi `PlanExitTool`, `PLAN_GRANT_LABEL`).
+pub(crate) const PLAN_GRANT_LABEL: &str = "Approve plan and allow its sends and uploads";
+
 async fn reply_question(
+    State(state): State<Arc<AppState>>,
+    user: Option<axum::extract::Extension<crate::auth::AuthUser>>,
     headers: HeaderMap,
     Path(request_id): Path<String>,
     Json(body): Json<serde_json::Value>,
 ) -> impl IntoResponse {
     let client = gizzi_client(&headers);
+    let answers = question_answers(&body);
+    // "Approve plan and allow its sends and uploads": a person's answer grants
+    // `send` + `upload` on the plan's bot thread (task_grants, source card).
+    let plan_grant = answers.iter().flatten().any(|a| a == PLAN_GRANT_LABEL);
+    let session_id = if plan_grant {
+        gizzi_json::<Vec<serde_json::Value>>(&client, reqwest::Method::GET, "/v1/question", None)
+            .await
+            .ok()
+            .and_then(|all| all.into_iter().find(|q| q["id"].as_str() == Some(request_id.as_str())))
+            .and_then(|q| q["sessionID"].as_str().map(str::to_string))
+    } else {
+        None
+    };
     let path = format!("/v1/question/{}/reply", urlencoding::encode(&request_id));
-    let payload = json!({ "answers": question_answers(&body) });
+    let payload = json!({ "answers": answers });
     match gizzi_json::<serde_json::Value>(&client, reqwest::Method::POST, &path, Some(payload)).await {
-        Ok(value) => Json(value).into_response(),
+        Ok(value) => {
+            if let (Some(session), Some(axum::extract::Extension(user))) = (session_id, user) {
+                if crate::subscription_routes::person_acted(&state, &headers, &user.user_id).await.is_ok() {
+                    if let Some((thread, bot)) = crate::task_grants::thread_for_session(&state.db, &user.user_id, &session) {
+                        let _ = crate::task_grants::create(&state.db, &user.user_id, &bot, &thread, &["send".into(), "upload".into()], "card", &format!("plan:{request_id}"));
+                    }
+                }
+            }
+            Json(value).into_response()
+        }
         Err(response) => response,
     }
 }
 
-/// `{ reply: "once" | "always" | "reject", message? }`, the shape gizzi's
-/// `/v1/permission/:id/reply` takes. Anything else is refused here rather
-/// than forwarded.
+/// `{ reply: "once" | "always" | "task" | "reject", message? }`, the shape gizzi's
+/// `/v1/permission/:id/reply` takes (`task` = allow for the rest of this
+/// session's task; gizzi treats it as once for classes a grant never covers).
+/// Anything else is refused here rather than forwarded.
 fn permission_reply_payload(body: &serde_json::Value) -> Option<serde_json::Value> {
     let reply = body.get("reply").and_then(|v| v.as_str())?;
-    if !matches!(reply, "once" | "always" | "reject") {
+    if !matches!(reply, "once" | "always" | "task" | "reject") {
         return None;
     }
     let mut payload = json!({ "reply": reply });
@@ -1395,7 +1424,7 @@ async fn reply_permission(
     let Some(payload) = permission_reply_payload(&body) else {
         return (
             StatusCode::BAD_REQUEST,
-            Json(json!({ "error": "reply must be once, always or reject" })),
+            Json(json!({ "error": "reply must be once, always, task or reject" })),
         )
             .into_response();
     };

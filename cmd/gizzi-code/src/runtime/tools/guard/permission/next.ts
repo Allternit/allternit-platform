@@ -91,7 +91,14 @@ export namespace PermissionNext {
 
   export type Request = z.infer<typeof Request>
 
-  export const Reply = z.enum(["once", "always", "reject"])
+  /**
+   * `task` = allow this kind of request for the rest of this session only (the
+   * bot thread's task). Kept in memory per session, never persisted, cleared by
+   * clearTask() when the session ends or its thread resolves/archives. Never
+   * applies to ALWAYS_ASK classes or TASK_NEVER (payment, sign, delete): there
+   * it counts as "once".
+   */
+  export const Reply = z.enum(["once", "always", "task", "reject"])
   export type Reply = z.infer<typeof Reply>
 
   /**
@@ -108,6 +115,21 @@ export namespace PermissionNext {
    * is the user's own choice, so no session mode or earlier approval waives it.
    */
   export const ALWAYS_ASK = new Set(["subscription", "mcp_app"])
+
+  /**
+   * Classes a one-task grant ("Allow for this task") never covers: money,
+   * signatures and deletions are asked every time. Matches allternit-api
+   * task_grants::NEVER_GRANTED.
+   */
+  export const TASK_NEVER = new Set(["payment", "pay", "sign", "signature", "delete", "remove"])
+
+  /** Whether a "task" reply may be remembered for this permission class. */
+  export function taskGrantable(permission: string): boolean {
+    const p = permission.toLowerCase()
+    if (ALWAYS_ASK.has(p)) return false
+    for (const never of TASK_NEVER) if (p === never || p.startsWith(`${never}_`) || p.endsWith(`_${never}`)) return false
+    return true
+  }
 
   /**
    * What the person's reply carried beyond the decision. For `subscription`
@@ -159,6 +181,8 @@ export namespace PermissionNext {
     return {
       pending,
       approved: stored,
+      /** Session-scoped allows from a "task" reply; never written to disk. */
+      task: {} as Record<string, Ruleset>,
       modes: {} as Record<string, Mode>,
     }
   })
@@ -202,7 +226,7 @@ export namespace PermissionNext {
         const mode = modeOverride ?? (await getMode(request.sessionID))
         let rule = evaluatePolicy(request.permission, pattern, {
           configured: ruleset,
-          approvals: s.approved,
+          approvals: approvalsFor(s, request.sessionID),
           mode,
         })
         // An approved project panel guard (.allternit/panels, agent.guards)
@@ -277,6 +301,28 @@ export namespace PermissionNext {
     },
   )
 
+  function approvalsFor(s: { approved: Ruleset; task: Record<string, Ruleset> }, sessionID: string): Ruleset {
+    const task = s.task[sessionID]
+    return task?.length ? [...s.approved, ...task] : s.approved
+  }
+
+  /** The session's one-task allow rules (what "Allow for this task" added). */
+  export async function taskRules(sessionID: string): Promise<Ruleset> {
+    const s = await state()
+    return s.task[sessionID] ?? []
+  }
+
+  /**
+   * Drop the session's one-task allows. Called when the session ends and when
+   * allternit-api closes the thread (resolve / archive / pause revoke its grants).
+   */
+  export async function clearTask(sessionID: string): Promise<boolean> {
+    const s = await state()
+    const had = !!s.task[sessionID]?.length
+    delete s.task[sessionID]
+    return had
+  }
+
   /**
    * Take back one open ask without touching the session's other asks — for a
    * turn that stopped while its card was open. `reply(reject)` would reject
@@ -310,6 +356,10 @@ export namespace PermissionNext {
       PermissionS1.outcome(input.requestID, input.reply !== "reject")
       // An always-ask class is never remembered: "always" counts as "once".
       if (input.reply === "always" && ALWAYS_ASK.has(existing.info.permission)) {
+        input = { ...input, reply: "once" }
+      }
+      // A one-task grant never covers always-ask classes or payment/sign/delete.
+      if (input.reply === "task" && !taskGrantable(existing.info.permission)) {
         input = { ...input, reply: "once" }
       }
       // Only always-ask classes carry reply data (a human action, an answer)
@@ -354,6 +404,31 @@ export namespace PermissionNext {
       }
       if (input.reply === "once") {
         existing.resolve(data)
+        return
+      }
+      if (input.reply === "task") {
+        const sessionID = existing.info.sessionID
+        const rules = (s.task[sessionID] ??= [])
+        const patterns = existing.info.always.length ? existing.info.always : existing.info.patterns
+        for (const pattern of patterns) {
+          rules.push({ permission: existing.info.permission, pattern, action: "allow", source: "session" })
+        }
+        existing.resolve()
+        const mode = await getMode(sessionID)
+        for (const [id, pending] of Object.entries(s.pending)) {
+          if (pending.info.sessionID !== sessionID) continue
+          const ok = pending.info.patterns.every(
+            (pattern) => evaluatePolicy(pending.info.permission, pattern, {
+              configured: pending.ruleset,
+              approvals: approvalsFor(s, sessionID),
+              mode,
+            }).action === "allow",
+          )
+          if (!ok) continue
+          delete s.pending[id]
+          Bus.publish(Event.Replied, { sessionID, requestID: pending.info.id, reply: "task" })
+          pending.resolve()
+        }
         return
       }
       if (input.reply === "always") {

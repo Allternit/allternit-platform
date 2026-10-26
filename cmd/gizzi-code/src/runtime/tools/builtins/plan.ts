@@ -17,6 +17,13 @@ async function getLastModel(sessionID: string) {
   return Provider.defaultModel()
 }
 
+/**
+ * The plan-approval answer that also allows the plan's sends and uploads for
+ * this bot thread. allternit-api (`agent_session_routes::PLAN_GRANT_LABEL`)
+ * matches this exact label on the person's reply and records a one-task grant.
+ */
+export const PLAN_GRANT_LABEL = "Approve plan and allow its sends and uploads"
+
 export const PlanExitTool = Tool.define("plan_exit", {
   description: EXIT_DESCRIPTION,
   parameters: z.object({}),
@@ -32,6 +39,10 @@ export const PlanExitTool = Tool.define("plan_exit", {
           custom: false,
           options: [
             { label: "Yes", description: "Switch to build agent and start implementing the plan" },
+            {
+              label: PLAN_GRANT_LABEL,
+              description: "Start building, and let the plan's messages and file uploads go out without asking again for this task (payments, signatures and deletions still ask)",
+            },
             { label: "No", description: "Stay with plan agent to continue refining the plan" },
           ],
         },
@@ -60,7 +71,10 @@ export const PlanExitTool = Tool.define("plan_exit", {
       messageID: userMsg.id,
       sessionID: ctx.sessionID,
       type: "text",
-      text: `The plan at ${plan} has been approved, you can now edit files. Execute the plan`,
+      text:
+        answer === PLAN_GRANT_LABEL
+          ? `The plan at ${plan} has been approved, you can now edit files. Execute the plan. The user also allowed the plan's sends and uploads for this task, so those go out without a new approval (payments, signatures and deletions still ask).`
+          : `The plan at ${plan} has been approved, you can now edit files. Execute the plan`,
       synthetic: true,
     } satisfies MessageV2.TextPart)
 

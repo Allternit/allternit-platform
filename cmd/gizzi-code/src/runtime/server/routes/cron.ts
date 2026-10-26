@@ -406,6 +406,54 @@ export const CronRoutes = lazy(() =>
         return c.json(result)
       },
     )
+    .post(
+      "/thread/:threadId/close",
+      describeRoute({
+        summary: "Stop a closed thread's jobs",
+        description:
+          "Thread close-out (allternit-api thread_closeout.rs): delete (remove=true) or pause the thread sessions' loops and pause its tied persistent jobs.",
+        operationId: "cron.closeThread",
+        responses: {
+          200: {
+            description: "Thread jobs stopped",
+            content: { "application/json": { schema: resolver(z.object({ deleted: z.number(), paused: z.number() })) } },
+          },
+        },
+      }),
+      validator("param", z.object({ threadId: z.string() })),
+      validator(
+        "json",
+        z.object({
+          sessionIds: z.array(z.string()).optional(),
+          jobIds: z.array(z.string()).optional(),
+          remove: z.boolean().optional(),
+        }),
+      ),
+      async (c) => {
+        const { threadId } = c.req.valid("param")
+        return c.json(CronService.closeThreadJobs(threadId, c.req.valid("json")))
+      },
+    )
+    .post(
+      "/thread/:threadId/reopen",
+      describeRoute({
+        summary: "Restart a reopened thread's jobs",
+        description: "Re-enable the jobs a thread close-out paused.",
+        operationId: "cron.reopenThread",
+        responses: {
+          200: {
+            description: "Thread jobs resumed",
+            content: { "application/json": { schema: resolver(z.object({ resumed: z.number() })) } },
+          },
+        },
+      }),
+      validator("param", z.object({ threadId: z.string() })),
+      validator("json", z.object({ jobIds: z.array(z.string()).optional() })),
+      async (c) => {
+        const { threadId } = c.req.valid("param")
+        return c.json(CronService.reopenThreadJobs(threadId, c.req.valid("json")))
+      },
+    )
     .delete(
       "/session/:sessionId",
       describeRoute({

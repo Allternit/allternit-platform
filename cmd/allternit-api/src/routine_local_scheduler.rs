@@ -246,7 +246,9 @@ fn claim_due(db: &DbHandle, now: DateTime<Utc>) -> rusqlite::Result<Vec<LocalRou
             "SELECT {COLS} FROM routines
              WHERE execution_domain = 'local' AND status = 'active' AND {HAS_AGENT}
                AND next_run_at IS NOT NULL AND next_run_at <= ?1
-             ORDER BY next_run_at"
+               AND NOT {closed}
+             ORDER BY next_run_at",
+            closed = crate::thread_closeout::TIED_TO_CLOSED_THREAD
         ))?;
         let rows = stmt.query_map(params![now.to_rfc3339()], map_row)?;
         rows.filter_map(Result::ok).collect()
@@ -1261,6 +1263,34 @@ mod tests {
         assert_eq!(fnv1a_hex("a"), "e40c292c");
         assert_eq!(routine_turn("[bot:Ledger] Month close", "x"), "[routine: Month close] x");
         assert_eq!(routine_turn("Weekly report", "x"), "[routine: Weekly report] x");
+    }
+
+    #[tokio::test]
+    async fn a_routine_tied_to_a_closed_thread_is_never_claimed() {
+        let state = setup("closed-thread").await;
+        let ts = Utc::now().to_rfc3339();
+        state
+            .db
+            .connect()
+            .unwrap()
+            .execute(
+                "INSERT INTO bot_threads (id, user_id, bot_id, kind, title, status, last_activity_at, created_at, updated_at, archived_at)
+                 VALUES ('th-1', 'user-a', 'bot-1', 'task', 'Venue', 'working', ?1, ?1, ?1, ?1)",
+                params![ts],
+            )
+            .unwrap();
+        insert(&state, "r1", "interval", "1h", json!({}), Some("bot-1"));
+        state
+            .db
+            .connect()
+            .unwrap()
+            .execute("UPDATE routines SET metadata = '{\"sourceThreadId\":\"th-1\"}' WHERE id = 'r1'", [])
+            .unwrap();
+        let d = Fake::default();
+        run_due(&state.db, &d, Utc::now()).await;
+        force_due(&state, "r1");
+        assert_eq!(run_due(&state.db, &d, Utc::now()).await, 0, "archived thread: the reminder doesn't fire");
+        assert!(runs(&state, "r1").is_empty());
     }
 
     #[tokio::test]

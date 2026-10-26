@@ -29,6 +29,7 @@ A scanner also reads each message for known tricks (instruction overrides, fake 
 - **Write and send tools ask.** The bot's session is set so that writing files, running commands, emailing and messaging other bots each become an approval card. A hijacked bot can only *propose*.
 - **The card says why.** An approval that followed outside content reads *Proposed after reading a message from evil@example.com (flagged: tries to override instructions)*. The same line is on the Inbox card and on email drafts.
 - **Outside text is fenced.** The bot sees it inside a marked block that says it is data, not instructions.
+- **Grants don't override it.** An **Allow for this task** grant never lifts these holds, and on a marked thread a grant can't be given in chat words at all, only with the card button. See [Allow for this task](/guides/bot-autonomy#allow-for-this-task).
 
 ## What never leaves
 

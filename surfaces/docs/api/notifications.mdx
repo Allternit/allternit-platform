@@ -39,10 +39,10 @@ One row per event type a person can be notified about, in [event registry](/guid
 ### `GET /api/v1/notifications/quiet-hours`
 
 ```json
-{ "enabled": false, "start": "22:00", "end": "07:00", "timeZone": "UTC", "allowCalls": true }
+{ "enabled": false, "start": "22:00", "end": "07:00", "timeZone": "UTC", "allowCalls": true, "letThrough": "urgent" }
 ```
 
-The person's quiet hours. A person who never set them gets this default. `start` and `end` are 24-hour `HH:MM` in `timeZone` (an IANA zone such as `America/New_York`), so the window follows daylight saving time. `start` later than `end` wraps midnight; `start` equal to `end` means no quiet hours.
+The person's quiet hours. A person who never set them gets this default. `start` and `end` are 24-hour `HH:MM` in `timeZone` (an IANA zone such as `America/New_York`), so the window follows daylight saving time. `start` later than `end` wraps midnight; `start` equal to `end` means no quiet hours. `letThrough` is the lowest [level](#levels) that still goes out during quiet hours: `urgent` (the default), `needs_you` or `none`.
 
 ### `PUT /api/v1/notifications/quiet-hours`
 
@@ -50,7 +50,11 @@ The person's quiet hours. A person who never set them gets this default. `start`
 { "enabled": true, "start": "23:00", "timeZone": "Europe/London" }
 ```
 
-Any subset of the `GET` keys; the rest keep their stored (or default) values. Answers the same body as `GET`. Errors: `400 {"error":"bad_value"}` for an empty body, an unknown key, a time that isn't `HH:MM` (00:00 to 23:59), an unknown time zone or a value of the wrong type.
+Any subset of the `GET` keys; the rest keep their stored (or default) values. Answers the same body as `GET`. Errors: `400 {"error":"bad_value"}` for an empty body, an unknown key, a time that isn't `HH:MM` (00:00 to 23:59), an unknown time zone, a `letThrough` other than `urgent`, `needs_you` or `none`, or a value of the wrong type.
+
+### `POST /api/v1/notifications/ack?t=<token>`
+
+No auth: the token is the credential, and it was only sent to that person's devices. Marks an urgent push sent during quiet hours as opened, so it stops repeating ([paging](#paging)). The push worker (`public/allternit-push-sw.js`) calls it with `mode: "no-cors"` when the notification is clicked, or when the push arrives while the app is open in front. Always answers `204`, also for an unknown token.
 
 ## Defaults
 
@@ -111,16 +115,31 @@ A message relayed to a runtime through a channel address (`channel_inbound`) use
 
 ## Quiet hours
 
-While a person is in quiet hours (their `notification_quiet_hours` row is on and the current time in their zone is inside the window), nothing is pushed to them:
+### Levels
+
+Every push has a level (`notifications::level`):
+
+| Level | Events |
+|---|---|
+| Urgent | `attention.opened` with `severity: "critical"`, and any event whose data has `urgency: "urgent"` (a bot marked it; the runtime forwards the `urgency` key) |
+| Needs you | `approval.requested`, `thread.needs_user`, `subscription.login_needed` |
+| Normal | `message.received`, `call.ended`, `attention.opened` with `severity: "warn"`, and the direct pushes |
+| Low | everything else |
+
+While a person is in quiet hours (their `notification_quiet_hours` row is on and the current time in their zone is inside the window), a push below their `letThrough` level is not sent:
 
 - the sink records the event as `held` in `notification_push_log` and adds a row to `notification_held` (`event_id` unique, so a restart or second replica never holds it twice). Preferences, staleness and the direct-push dedupe are checked first, so only pushes that would have gone out are held. Message limits aren't spent on held messages;
 - the direct pushes (in-app thread messages, in-app missed calls, relayed channel messages) add a `notification_held` row (`source = 'direct'`) instead of sending;
 - in-app call rings still ring when `allowCalls` is true. When it is false the ring sends nothing, and the missed call that follows is held;
-- `attention.opened` with `severity: "critical"` is held too, and named first in the summary.
+- with `letThrough: "none"`, critical problems are held too, and named first in the summary.
+
+### Paging
+
+An urgent push that goes out during quiet hours pages. The sink records it in `notification_repeat` with a random `ack_token` and adds `data.ack`, the full URL of `POST /api/v1/notifications/ack`. About once a minute the sink loop claims due rows (`acked_at` empty, `next_at` passed, fewer than 3 resends) in one `UPDATE … FOR UPDATE SKIP LOCKED … RETURNING` and sends each one again with `Urgency: high` (the worker shows it with `renotify`, so it alerts again). Resends come every 5 minutes, at most 3 times. A page stops when it is acked, when a newer page with the same `tag` replaces it, or when `approval.resolved` or `attention.resolved` with the same tag arrives (whether or not that event is pushed). Rows are pruned after 2 days.
 
 About once a minute the sink loop runs the summary pass. For each person with open `notification_held` rows who is no longer in quiet hours, it claims all of them in one `UPDATE … SET summarized_at = now() … RETURNING`, so restarts and replicas never send it twice, and sends one push: title `While you were away`, body counting by kind (for example `3 messages, 1 approval and 2 threads need you`; order: urgent problems, messages, missed calls, approvals, threads, problems, other updates), `url` `/`, `tag` `quiet-summary`, `type: "event"`, `data.event` `quiet.summary`. Messages and missed calls count every push; the other kinds count each `tag` once, so a re-sent approval or problem counts once. Nothing held is re-sent on its own, so held pushes older than 12 hours are counted like the rest. Held rows are pruned after 7 days.
 
-Migration `102_notification_quiet_hours.sql` adds `notification_quiet_hours` and `notification_held`. Before it is applied, quiet hours read as off and every push goes out as before.
+Migration `102_notification_quiet_hours.sql` adds `notification_quiet_hours` and `notification_held`; `107_quiet_hours_levels.sql` adds `let_through` (default `urgent`) and `notification_repeat`. Before it is applied, quiet hours read as off and every push goes out as before.
 
 ## Usage alerts
 

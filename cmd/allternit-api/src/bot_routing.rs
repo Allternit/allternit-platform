@@ -454,7 +454,7 @@ pub async fn route_traced<R: RouteRuntime>(
         c.query_row(
             "SELECT id, status, current_session_id FROM bot_threads
              WHERE bot_id = ?1 AND user_id = ?2 AND json_extract(origin, '$.channelKey') = ?3
-               AND status NOT IN ('done', 'failed', 'declined')
+               AND status NOT IN ('done', 'failed', 'declined') AND archived_at IS NULL
              ORDER BY updated_at DESC LIMIT 1",
             params![bot.id, caller.user_id, key],
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),

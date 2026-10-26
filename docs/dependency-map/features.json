@@ -276,6 +276,10 @@
         {
           "on": "2026-10-24",
           "note": "Routine run rows (Eoj, from an agent-schedule clip): every routines list (bot Routines tab, Automation Tasks → Routines, bot chat Routines panel, Cowork → Routines) uses RoutineRunRow: countdown, apps read → written and brain from the last run, 14-run strip, Run now / Stop, on/off switch; open = latest output or live steps (Step n of m), instructions, Hourly/Daily/Weekdays/Weekly + time editor with cron, earlier runs, hold to delete. Server: routine_runs row written 'running' at start, GET …/live, POST …/runs/:run_id/cancel (cancelled keeps partial output, no streak/alert), ?recent_runs=N on the list, metadata model/apps/steps, orphaned running rows failed at boot; gizzi cron POST /jobs/:id/abort. Stop source → destination icons come from apps the last run used (Eoj's pick), Stop keeps partial output (Eoj's pick)."
+        },
+        {
+          "on": "2026-10-25",
+          "note": "Threads work as war rooms: archive is server state (bot_threads.archived_at, V277), bots rename, close and search threads (thread_update / thread_close / thread_search), and closing, archiving or pausing a thread pauses its routines and loops and revokes its one-task grants; reopening restores what the close-out stopped."
         }
       ],
       "evidence": [
@@ -284,7 +288,41 @@
         "allternit/surfaces/docs/guides/bot-setup-picker.mdx",
         "allternit-ai/src/views/bots/thread-deck/useBotComposerDeck.tsx",
         "allternit-ai/src/views/bots/thread-deck/deck-tab-request.ts",
-        "allternit/surfaces/docs/guides/bot-routines.mdx"
+        "allternit/surfaces/docs/guides/bot-routines.mdx",
+        "allternit/cmd/allternit-api/src/thread_closeout.rs",
+        "allternit/cmd/allternit-api/src/thread_bot_tools.rs",
+        "allternit/cmd/allternit-api/migrations/V277__bot_thread_archive.sql"
+      ]
+    },
+    {
+      "id": "feature:task-grants",
+      "label": "One-task grants (Allow for this task)",
+      "product": "product:digital-twin",
+      "status": "building",
+      "description": "The owner approves a bot thread's sends, uploads or submits once: from an approval card's Allow for this task, the plan card's Approve plan and allow its sends and uploads, or their own words in the thread (gizzi grant_task_permission, owner-authored and untainted only). While the grant is live, autonomy turns those holds into sends; payments, signatures and deletions always ask, and a tainted thread, secrets or PII still hold. Computer-use runs from the thread skip the submit/upload handoff. The thread header shows the grant with Revoke; closing the thread revokes it.",
+      "touches": [
+        "allternit/cmd/allternit-api",
+        "allternit/cmd/gizzi-code",
+        "allternit-ai/src/components/bot-chat",
+        "allternit-ai/src/lib/bots",
+        "allternit-ai/src/views/bots",
+        "surface:ai",
+        "surface:pwa",
+        "surface:desktop"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-25",
+          "note": "From a Claude Duet review: a grant is keyed by bot thread, given by card button or the owner's own words, expires after 7 days or when the thread closes; payment, sign and delete are never granted."
+        }
+      ],
+      "evidence": [
+        "allternit/cmd/allternit-api/src/task_grants.rs",
+        "allternit/cmd/allternit-api/migrations/V276__task_grants.sql",
+        "allternit/cmd/allternit-api/src/autonomy.rs",
+        "allternit/cmd/gizzi-code/src/runtime/tools/builtins/grant-task-permission.ts",
+        "allternit-ai/src/components/bot-chat/TaskGrantChip.tsx",
+        "allternit/surfaces/docs/guides/bot-autonomy.mdx"
       ]
     },
     {
@@ -1004,7 +1042,7 @@
       "label": "Notification quiet hours",
       "product": "product:ai-allternit",
       "status": "building",
-      "description": "Per-account quiet hours for push (GET/PUT /api/v1/notifications/quiet-hours: enabled, start/end HH:MM, IANA time zone, allowCalls). In the window the push sink and the direct pushes (in-app messages, channel relays, missed calls) hold pushes in notification_held; rings still ring when allowCalls is on. When the window ends the sink sends one \"While you were away\" summary counted by kind. Settings, Notifications, Quiet hours on every surface.",
+      "description": "Per-account quiet hours for push (GET/PUT /api/v1/notifications/quiet-hours: enabled, start/end HH:MM, IANA time zone, allowCalls, letThrough). Every push has a level (urgent, needs you, normal, low); in the window pushes below letThrough (default urgent) are held in notification_held, and urgent ones page: they repeat every 5 minutes, up to 3 times, until opened (POST /api/v1/notifications/ack from the push worker) or resolved. Bots mark urgency on needs-you (thread PATCH urgency, forwarded by the runtime). When the window ends the sink sends one \"While you were away\" summary counted by kind. Settings, Notifications, Quiet hours on every surface.",
       "touches": [
         "allternit/cmd/allternit-cloud-api",
         "allternit-ai/src/views",
@@ -1017,13 +1055,20 @@
         {
           "on": "2026-10-24",
           "note": "Quiet hours are server-side and per account, not per device: the push sink holds and summarizes, so every device and both apps follow one setting. Critical problems are held too and named first in the summary; calls ring unless the person turns Let calls ring off."
+        },
+        {
+          "on": "2026-10-25",
+          "note": "Quiet hours work like a pager (from a Claude Duet review): Let through picks urgent only (default), urgent and needs you, or nothing. Urgent alerts in quiet hours repeat every 5 minutes up to 3 times until opened; no phone-call escalation. Bots can mark their own needs-you urgent."
         }
       ],
       "evidence": [
         "allternit/cmd/allternit-cloud-api/src/routes/notifications.rs",
         "allternit/cmd/allternit-cloud-api/migrations_pg/102_notification_quiet_hours.sql",
         "allternit/surfaces/docs/guides/notifications.mdx",
-        "allternit/surfaces/docs/api/notifications.mdx"
+        "allternit/surfaces/docs/api/notifications.mdx",
+        "allternit/cmd/allternit-cloud-api/migrations_pg/107_quiet_hours_levels.sql",
+        "allternit-ai/public/allternit-push-sw.js",
+        "allternit-ai/src/views/settings/QuietHoursSection.tsx"
       ]
     },
     {
@@ -2891,9 +2936,7 @@
         "allternit-ai/src/lib/api-capture",
         "allternit/cmd/allternit-api/src/teach_routes.rs",
         "allternit/cmd/allternit-api/src/har_api_routes.rs",
-        "allternit/surfaces/allternit-desktop/src/main",
-        "allternit/surfaces/allternit-desktop/src/main/browser-capture-manager.ts",
-        "allternit/surfaces/allternit-desktop/src/main/web-request-hub.ts"
+        "allternit/surfaces/allternit-desktop"
       ],
       "decisions": [
         {
@@ -2904,7 +2947,9 @@
       "evidence": [
         "allternit/surfaces/docs/surfaces/site-apis.mdx",
         "allternit/cmd/allternit-api/src/teach_routes.rs",
-        "allternit/surfaces/allternit-desktop/src/main/teach-recorder.ts"
+        "allternit/surfaces/allternit-desktop/src/main/teach-recorder.ts",
+        "allternit/surfaces/allternit-desktop/src/main/browser-capture-manager.ts",
+        "allternit/surfaces/allternit-desktop/src/main/web-request-hub.ts"
       ]
     }
   ],
@@ -3318,7 +3363,7 @@
       "description": "From recording a demonstration to saving, scheduling, replaying or running the skill.",
       "steps": [
         {
-          "at": "allternit/surfaces/allternit-desktop/src/main/teach-recorder.ts",
+          "at": "allternit/surfaces/allternit-desktop",
           "says": "Desktop records clicks, typing, key presses, choices, uploads and downloads in the browser pane, and the network capture collects the API calls."
         },
         {

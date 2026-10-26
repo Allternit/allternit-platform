@@ -68,6 +68,25 @@ On the bot's page, **What this bot may do** sets an outer limit that your levels
 
 Built-in bots come with one that fits the job. Bots that contact clients start on **Ask first**. Payments and contracts always need your OK, whatever the envelope. See [Prompt injection defense](/guides/injection-defense) for what else holds a send.
 
+## Allow for this task
+
+Sometimes you want your bot to stop asking for one job. You can give it a **one-task grant**: for the rest of that thread, the kinds of actions you allow go out without a new approval card. You get a line in your Inbox for each one instead, like Send and tell me.
+
+There are three ways to give one:
+
+- **On an approval card**, press **Allow for this task** beside Approve. This approves the request in front of you and allows that kind of request for the rest of the task.
+- **On a plan card**, pick **Approve plan and allow its sends and uploads**. The bot starts the plan, and its messages and file uploads go out without asking again.
+- **In your own words.** Tell the bot in the thread, for example "you have my permission to send the reply and upload the file". The bot records exactly the actions you named: send, upload, submit, booking or call.
+
+While a grant is live, the thread header shows **Allowed for this task: send, upload · Revoke**. Press **Revoke** to end it right away. A grant also ends when the thread is resolved, archived or paused, and after 7 days at the latest.
+
+A grant never covers everything:
+
+- **Payments, signatures and deletions always ask**, grant or not.
+- **Outside content still asks.** If the conversation includes an email, web page or message from someone outside your team, every send needs your OK, and a grant can't be given in words in that thread. Use the card button instead.
+- **Secrets are still blocked** and personal data still asks, as described below.
+- A grant from your words only counts when the latest message in the thread is your own. Text the bot read in an email, a page or a tool result can't grant anything.
+
 ## Good to know
 
 - A call that needs your OK is not placed until you approve it. The bot is told to try again once you have.

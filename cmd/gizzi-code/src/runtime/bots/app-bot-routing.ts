@@ -145,6 +145,80 @@ export async function suggestAppTask(
   return post<AppSuggestResult>("/bot-routing/suggest", { sessionId: sessionID, ...input }, 15_000)
 }
 
+/* Thread tools (W3): the calling session's own thread. Server: allternit-api thread_bot_tools.rs. */
+
+export interface AppThreadSummary {
+  id: string
+  botId: string
+  botName?: string | null
+  title: string
+  goal?: string | null
+  status: string
+  closed: boolean
+  archived: boolean
+  summary?: string | null
+  statusLine?: string | null
+  currentSessionId?: string | null
+  lastActivityAt: string
+  kind: string
+}
+
+export async function updateAppThread(
+  sessionID: string,
+  input: { title?: string; goal?: string; needsYou?: { reason: string; urgency?: "urgent" | "normal" } },
+): Promise<{ thread: { id: string; title: string; status: string } }> {
+  return post("/bot-routing/thread/update", { sessionId: sessionID, ...input }, 15_000)
+}
+
+export async function closeAppThread(
+  sessionID: string,
+  input: { outcome: "done" | "dropped"; note?: string },
+): Promise<{ thread: { id: string; title: string; status: string; archived?: boolean } }> {
+  return post("/bot-routing/thread/close", { sessionId: sessionID, ...input }, 15_000)
+}
+
+export async function searchAppThreads(sessionID: string, query: string, limit = 10): Promise<AppThreadSummary[]> {
+  const r = await post<{ threads: AppThreadSummary[] }>("/bot-routing/thread/search", { sessionId: sessionID, query, limit }, 15_000)
+  return r.threads
+}
+
+export interface TaskGrantResult {
+  grant: { id: string; threadId: string; actions: string[]; expiresAt: string }
+}
+
+/**
+ * The owner's own words grant actions for this bot thread's task
+ * (allternit-api `POST /task-grants/words`). `quote` is the owner's latest
+ * message as stored in the session (never model text); the server refuses
+ * unless the thread is clean, its latest input is the owner's, and every
+ * action is named in the quote.
+ */
+export async function grantTaskPermission(
+  sessionID: string,
+  input: { actions: string[]; quote: string; messageId?: string },
+): Promise<TaskGrantResult> {
+  const h = await headers()
+  if (!h) throw new AppRoutingError(401, "This runtime isn't connected to your Allternit account.")
+  const response = await fetch(`${platformApiBase()}/api/v1/task-grants/words`, {
+    method: "POST",
+    headers: h,
+    body: JSON.stringify({ sessionId: sessionID, ...input }),
+    signal: AbortSignal.timeout(10_000),
+  })
+  const text = await response.text().catch(() => "")
+  if (!response.ok) {
+    let message = text
+    try {
+      const body = JSON.parse(text) as { error?: string; detail?: string }
+      message = body.detail ?? body.error ?? message
+    } catch {
+      // plain-text body
+    }
+    throw new AppRoutingError(response.status, message || `HTTP ${response.status}`)
+  }
+  return JSON.parse(text) as TaskGrantResult
+}
+
 /** Gating cache: tool assembly runs every turn; the answer rarely changes. */
 const TTL_MS = 60_000
 const cache = new Map<string, { at: number; ok: boolean }>()

@@ -40,6 +40,9 @@ export interface PlatformThread {
   contextUsed: number | null
   lastActivityAt: string
   createdAt: string
+  /** Set when archived (closed; still readable). */
+  archivedAt?: string | null
+  archived?: boolean
 }
 
 export interface CreateThreadInput {
@@ -123,6 +126,25 @@ export const threadApi = {
     platformRequest<{ thread: PlatformThread }>("POST", `/api/v1/threads/${enc(id)}/resolve`, { status }, options).then(
       (r) => r.thread,
     ),
+  /** Rename the thread or restate its goal (PATCH /threads/:id; `goal` is the server's `objective`). */
+  patch: (
+    id: string,
+    body: { title?: string; goal?: string; status?: ThreadStatus; statusLine?: string; urgency?: "urgent" | "normal" },
+    options = LOOKUP,
+  ) => {
+    const { goal, ...rest } = body
+    return platformRequest<{ thread: PlatformThread }>(
+      "PATCH",
+      `/api/v1/threads/${enc(id)}`,
+      { ...rest, ...(goal !== undefined ? { objective: goal } : {}) },
+      options,
+    ).then((r) => r.thread)
+  },
+  /** Archive: closes the thread (grants revoked, its reminders stop); the transcript stays. */
+  archive: (id: string, options = LOOKUP) =>
+    platformRequest<{ thread: PlatformThread }>("POST", `/api/v1/threads/${enc(id)}/archive`, {}, options).then((r) => r.thread),
+  unarchive: (id: string, options = LOOKUP) =>
+    platformRequest<{ thread: PlatformThread }>("POST", `/api/v1/threads/${enc(id)}/unarchive`, {}, options).then((r) => r.thread),
   usage: (id: string, body: { tokensUsed: number; contextWindow?: number; model?: string }, options = LOOKUP) =>
     platformRequest<{ contextUsed: number | null; shouldHandoff: boolean; reason: string | null; handedOff?: boolean }>(
       "POST",
