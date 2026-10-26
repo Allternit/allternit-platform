@@ -13,18 +13,17 @@ on:
   workflow_dispatch:
 
 jobs:
-  # Test gate: the full suite must pass before any deploy. The API is
-  # SQLite-based — its tests spin up throwaway sqlite databases (see
-  # DbHandle::new_memory in src/db.rs), so unlike the cloud-api workflow no
-  # postgres service container is required.
-  test:
-    # A newer commit supersedes an in-flight test run: cancel the older one.
+  # One job tests and deploys (2026-10-25). Two jobs on two fresh runners
+  # compiled the release dependencies twice (~50 min test + ~40 min build).
+  # Here the release build reuses what `cargo test --release` just compiled.
+  # The API is SQLite-based: tests use throwaway sqlite databases
+  # (DbHandle::new_memory in src/db.rs), so no postgres service is needed.
+  test-and-deploy:
+    # One deploy to Contabo at a time. Never cancel a run mid-test or mid-swap;
+    # GitHub keeps only the newest waiting run, so it carries every merge since
+    # and an older build can never land after a newer one.
     concurrency:
-      group: deploy-allternit-api-test-${{ github.ref }}
-      # Let the running test finish: it takes ~50 min and main merges more often
-      # than that, so cancelling meant no deploy ever reached the deploy job.
-      # GitHub keeps only the newest pending run, so the next one carries every
-      # merge since this one.
+      group: deploy-allternit-api-contabo
       cancel-in-progress: false
     runs-on: ubuntu-latest
     steps:
@@ -59,8 +58,12 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             target/
-          key: ${{ runner.os }}-cargo-api-contabo-${{ hashFiles('**/Cargo.lock') }}
+          # A key per commit: actions/cache never overwrites a key, so a
+          # lockfile-only key froze target/ at the last Cargo.lock change and
+          # every run recompiled everything since. Restore the newest run's.
+          key: ${{ runner.os }}-cargo-api-contabo-${{ hashFiles('**/Cargo.lock') }}-${{ github.sha }}
           restore-keys: |
+            ${{ runner.os }}-cargo-api-contabo-${{ hashFiles('**/Cargo.lock') }}-
             ${{ runner.os }}-cargo-api-contabo-
 
       # Full suite in release mode, mirroring the VPS deploy loop and the
@@ -69,52 +72,6 @@ jobs:
         env:
           CARGO_BUILD_JOBS: "2"
         run: cargo test --release --target x86_64-unknown-linux-gnu -p allternit-api --features test-helpers
-
-  deploy:
-    needs: test
-    # One deploy to Contabo at a time. Never cancel a deploy mid-swap; a newer
-    # run waits, and GitHub keeps only the newest waiting run (older pending
-    # ones are dropped), so an older build can never land after a newer one.
-    concurrency:
-      group: deploy-allternit-api-contabo
-      cancel-in-progress: false
-    if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      # allternit-api's release build (tests + binary) exceeds the runner's RAM
-      # and gets OOM-killed (exit 137/143, 2026-09-30). Add swap and cap
-      # parallel rustc jobs so the build finishes.
-      - name: Add swap
-        run: |
-          sudo fallocate -l 12G /swapfile2 && sudo chmod 600 /swapfile2
-          sudo mkswap /swapfile2 && sudo swapon /swapfile2
-          free -h
-
-      - name: Install protobuf compiler
-        # A stuck apt mirror hung this step for 5+ hours (2026-10-07), holding the deploy queue.
-        timeout-minutes: 10
-        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-unknown-linux-gnu
-
-      - name: Cache cargo
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: ${{ runner.os }}-cargo-api-contabo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-api-contabo-
 
       - name: Build release binary
         env:
@@ -146,6 +103,7 @@ jobs:
           echo "boot smoke OK in ${i}s"
 
       - name: Join Tailscale network
+        if: github.ref == 'refs/heads/main'
         continue-on-error: true
         uses: tailscale/github-action@v3
         with:
@@ -154,6 +112,7 @@ jobs:
           tags: tag:ci
 
       - name: Deploy to mail
+        if: github.ref == 'refs/heads/main'
         env:
           CONTABO_DEPLOY_HOST: 45.84.138.187
           CONTABO_DEPLOY_USER: root
