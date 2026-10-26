@@ -319,6 +319,7 @@
               "operations/screen-capture",
               "operations/hosted-driver",
               "operations/upstream-funding",
+              "operations/database-migrations",
               "internal/channel-apps-owner-setup"
             ],
             "icon": "/icons/screen.svg"

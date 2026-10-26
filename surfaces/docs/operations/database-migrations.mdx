@@ -1,0 +1,40 @@
+---
+title: "Cloud database migrations"
+description: "How Allternit Cloud API schema changes reach the production database"
+---
+
+**Status: AVAILABLE (internal).** See [status labels](/architecture#status-labels).
+
+The production Allternit Cloud API (api.allternit.com) runs with `ALLTERNIT_SKIP_MIGRATIONS=1`. The server does not apply `cmd/allternit-cloud-api/migrations_pg` when it starts, because the embedded sqlx history in the production database is out of date. The deploy applies them instead.
+
+## How a deploy applies them
+
+`cmd/allternit-cloud-api/deploy-contabo.sh` runs on every merge to main that touches the Cloud API. Before it swaps the binary, it:
+
+1. Copies `migrations_pg/` to the host.
+2. Reads `public.ops_applied_migrations`, which lists every file already applied.
+3. Runs each file that is not in the list, in name order, as the `postgres` user. Each file and its row in the list share one transaction.
+4. Stops the deploy if a file fails. The old binary keeps running, and the failed file stays unlisted, so the next deploy tries it again.
+
+New tables belong to `postgres`. The default privileges give the `allternit` app user read and write access to them.
+
+## Rules for a new migration
+
+- Add a new file with the next number. Do not change a file that has shipped: the list records file names, so an edited file never runs again.
+- Write it so that it is safe to run again (`IF NOT EXISTS`, guarded `DO` blocks).
+- Add columns with defaults. The migration runs before the new binary starts, while the old binary still serves requests.
+
+## A new host
+
+The deploy refuses to run on a host without `ops_applied_migrations`. On a new host, apply every file once as `postgres`, then create the table and add one row per file:
+
+```sql
+CREATE TABLE IF NOT EXISTS public.ops_applied_migrations (
+    filename text PRIMARY KEY,
+    applied_at timestamptz NOT NULL DEFAULT now()
+);
+```
+
+## History
+
+On 2026-10-26, migrations 098, 100, 101 and 103–106 were found missing in production: agent watch suggestions, the phone runtime id, cloud phones, auto top-up, upstream funding, the open lane and billing disputes. They were applied by hand after a `pg_dump` backup. The list was seeded with all 83 files present then, and the deploy step was added so this does not happen again.
