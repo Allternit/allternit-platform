@@ -37,7 +37,7 @@ Every new frame field is additive. Older apps ignore `source` and `plan` frames 
 | gizzi SDK, Gemini | Native: grounding chunks, `origin: gemini-grounding` | Native: todowrite |
 | gizzi `websearch` / `webfetch` tools | Native: tool `metadata.sources` | None |
 | Claude Code (claude-cli) | Native: WebSearch `tool_use_result`, `origin: claude-code-websearch` | Native: TodoWrite is mirrored to Todo; TaskCreate and TaskUpdate fall back to `foldChecklist` |
-| Codex (app-server) | Parsed fallback (Codex sends no result urls) | Native: `turn/plan/updated` |
+| Codex (app-server) | Native: `webSearch` item results (`item/completed`) | Native: `turn/plan/updated` |
 | ACP CLIs (Gemini CLI, Kimi, Qwen and others) | Parsed fallback | Native: ACP `plan` session update |
 | Other MCP or third-party search tools | Parsed fallback (`webResults`) | None |
 
@@ -53,7 +53,7 @@ Every new frame field is additive. Older apps ignore `source` and `plan` frames 
 | `allternit-ai/src/lib/ai/response-parts.replay.test.ts` | Replay fixtures for each native format and the bridge frames. |
 | `cmd/gizzi-code/src/runtime/session/response-parts.ts` | Runtime contract: source and plan normalizers, frame builders. |
 | `cmd/gizzi-code/src/runtime/session/processor.ts` | AI SDK `source` goes to text `metadata.sources`; observed plans and TodoWrite go to Todo. |
-| `cmd/gizzi-code/src/runtime/drivers/local-cli-driver.ts` | Claude Code WebSearch sources; Codex and ACP plan events. |
+| `cmd/gizzi-code/src/runtime/drivers/local-cli-driver.ts` | Claude Code WebSearch sources; Codex tool items (`codexToolCall` / `codexToolResult`: web search with its sources, page opens, commands, patches, MCP and dynamic tools) and commentary notes as steps; Codex and ACP plan events. |
 | `cmd/gizzi-code/src/runtime/server/routes/agent-compat.ts` | `source` and `plan` frames. |
 | `cmd/allternit-api/src/v1_routes.rs` | `source_frames_for_part`, `plan_frame_for_todos`. |
 
