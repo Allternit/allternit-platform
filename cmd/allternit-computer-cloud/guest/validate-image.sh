@@ -82,6 +82,17 @@ if not caps.get("pixel"):
 print(f"[validate-image] driver hello ok: engines={list(reply['result']['engines'].keys())}")
 PY
 
+echo "[validate-image] checking the session-bus file survives a driver restart"
+# /run/allternit is shared between the desktop session and the driver; a
+# driver restart must not delete the bus address the desktop wrote there.
+incus exec "${TEST_CONTAINER}" -- sh -c '
+    test -s /run/allternit/session-bus.env || { echo "session-bus.env missing before restart" >&2; exit 1; }
+    systemctl restart allternit-driver.service
+    test -s /run/allternit/session-bus.env || { echo "a driver restart deleted session-bus.env" >&2; exit 1; }
+    for i in $(seq 1 15); do test -S /run/allternit/driver.sock && exit 0; sleep 1; done
+    echo "driver socket did not come back after restart" >&2; exit 1
+'
+
 echo "[validate-image] checking read_ui on a real window"
 # Chrome exposes an AT-SPI tree once it detects an assistive client; the
 # driver is one. xdotool keeps this honest about the screen actually working.

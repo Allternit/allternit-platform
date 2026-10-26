@@ -5,6 +5,10 @@ description: 'Changelog for the Allternit platform, SDKs, and Gizzi Code CLI'
 
 # Release Notes
 
+## 2026-10-25 — Cloud computers keep reading the screen after a driver restart
+
+- **Computer use on cloud computers:** when the screen-reading driver restarted, it deleted the file that tells it where the desktop's accessibility service is. After that, agents fell back to screenshots only until the whole desktop restarted. The driver now leaves that file in place. Existing cloud computers were fixed in place.
+
 ## 2026-10-25 — Picked-up CLI sessions show their tool steps
 
 - **Continue CLI session:** a Claude Code, Codex, Cline or Amp session you pick up now shows each tool call as a step with its input and output, in the same place in the reply as in the original session. Before, each call showed only as an empty line such as "[native tool Bash]", and its output was missing. Sessions picked up before this change keep the old lines; pick the session up again to get the steps. See [Native sessions](/cli/native-sessions#how-pickup-works).

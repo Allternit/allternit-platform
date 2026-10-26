@@ -20,6 +20,10 @@ KillMode=mixed
 Restart=on-failure
 RestartSec=5
 RuntimeDirectory=allternit
+# /run/allternit is shared: the desktop's run.sh (or the session-bus unit)
+# writes session-bus.env there. Without this, stopping or restarting the
+# driver deletes the directory, and the driver loses the desktop's bus.
+RuntimeDirectoryPreserve=yes
 StateDirectory=allternit/driver
 
 [Install]
