@@ -6,7 +6,8 @@
 #        CONTABO_DEPLOY_USER (default root)
 #        CONTABO_SSH_KEY     (path to private key; empty = Tailscale SSH / ssh-agent)
 #
-# The Motion render bundle (render/motion) is shipped and installed first.
+# The Motion render bundle (render/motion) is shipped and installed first,
+# then new migrations_pg files are applied.
 #
 # Post-swap health check with automatic rollback: if the new binary does not
 # answer /api/v1/health, the previous binary is restored and the script exits
@@ -63,6 +64,43 @@ RENDER
 else
     echo "No Motion render bundle in this checkout; skipping."
 fi
+
+# Database migrations. Production runs with ALLTERNIT_SKIP_MIGRATIONS=1 (its
+# embedded sqlx history is stale), so the server never applies migrations_pg
+# itself. They are applied here instead, as postgres, before the binary swap:
+# ops_applied_migrations on the host lists every file already applied, and each
+# file not in it runs in its own transaction with its ledger row. A failure
+# stops the deploy with the old binary still running.
+MIG_SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/migrations_pg"
+MIG_TAR="$(mktemp -t migrations-pg.XXXXXX)"
+tar -C "$MIG_SRC" -czf "$MIG_TAR" .
+scp $SSH_OPTS "$MIG_TAR" "$USER@$HOST:/tmp/migrations-pg.tgz"
+rm -f "$MIG_TAR"
+ssh $SSH_OPTS "$USER@$HOST" bash -s <<'MIGRATE'
+set -euo pipefail
+DIR="$(mktemp -d)"
+trap 'rm -rf "$DIR"' EXIT
+tar -xzf /tmp/migrations-pg.tgz -C "$DIR"
+rm -f /tmp/migrations-pg.tgz
+chmod -R a+rX "$DIR"
+PSQL=(sudo -u postgres psql allternit -v ON_ERROR_STOP=1 -Atq)
+if [[ -z "$("${PSQL[@]}" -c "SELECT to_regclass('public.ops_applied_migrations')")" ]]; then
+    echo "ops_applied_migrations is missing on this host. Seed it first (docs: operations/database-migrations)." >&2
+    exit 1
+fi
+applied=0
+for path in $(ls "$DIR"/*.sql | sort); do
+    file="$(basename "$path")"
+    if [[ -n "$("${PSQL[@]}" -c "SELECT 1 FROM ops_applied_migrations WHERE filename = '$file'")" ]]; then
+        continue
+    fi
+    echo "Applying migration $file"
+    "${PSQL[@]}" --single-transaction -f "$path" \
+        -c "INSERT INTO ops_applied_migrations (filename) VALUES ('$file')"
+    applied=$((applied + 1))
+done
+echo "Migrations: $applied applied"
+MIGRATE
 
 # Copy binary to a temp location
 scp $SSH_OPTS "$BINARY_PATH" "$USER@$HOST:/tmp/allternit-cloud-api.new"
