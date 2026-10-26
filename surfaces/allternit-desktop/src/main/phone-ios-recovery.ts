@@ -82,7 +82,7 @@ export async function renewIosSignature(deps: IosRecoveryDeps, record: IosLinkRe
   const log = (message: string) => deps.logger?.(`[phone-link ios] ${message}`);
   const name = record.deviceName ?? record.udid;
   if (!connected.includes(record.udid)) {
-    log(`the helper's signature for ${name} is inside the renewal window, but the phone isn't on the cable; renewal needs it plugged in`);
+    log(`the helper's signature for ${name} is inside the renewal window, but the phone isn't on the cable as far as macOS's USB service (usbmuxd) can see; renewal needs it plugged in. If it is plugged in: unlock it and tap Trust, or re-plug it; if go-ios still lists no phone, restart usbmuxd (sudo killall usbmuxd)`);
     return 'manual';
   }
   if (deps.signer.needsAppleId && !record.appleId) {
