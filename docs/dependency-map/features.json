@@ -2756,17 +2756,24 @@
       "label": "Open models (open lane) and refusal handoff",
       "product": "product:ai-allternit",
       "status": "building",
-      "description": "cloud-api -open models (lane: open, served by OPEN_LANE_BASE_URL) behind an AUP + 18+ gate and a hard-line filter (csam, mass-casualty weapons, real-person sexual content; keyword pre-check + moderation model, fail closed, category-only log, migration 105). Opt-in handoff re-runs a refused frontier completion on an open model (x-allternit-handoff, allternit.handoff; streams hold the first 400 chars). Settings > Open models, Open badge in the model picker, 'Answered by ... (handoff)' note on Desktop, phone layout and PWA.",
+      "description": "cloud-api -open models (lane: open, served by OPEN_LANE_BASE_URL) behind an AUP + 18+ gate and a hard-line filter (csam, mass-casualty weapons, real-person sexual content; keyword pre-check + moderation model, fail closed, category-only log, migration 105). Opt-in handoff re-runs a refused frontier completion on an open model (x-allternit-handoff, allternit.handoff; streams hold the first 400 chars). In the chat app gizzi marks cloud handoffs on the assistant message and, for brains outside Allternit Cloud (CLI subscriptions, own keys), re-runs a refused turn once on the open model; allternit-api forwards a handoff frame and telemetry.handoff. Settings > Open models, Open badge in the model picker, 'Answered by ... (handoff)' note on Desktop, phone layout and PWA.",
       "touches": [
         "allternit/cmd/allternit-cloud-api",
         "allternit-ai/src/views/settings",
         "allternit-ai/src/components/chat",
-        "allternit-ai/src/lib/agents"
+        "allternit-ai/src/lib/agents",
+        "allternit/cmd/gizzi-code/src/runtime/providers",
+        "allternit/cmd/gizzi-code/src/runtime/session",
+        "allternit/cmd/allternit-api"
       ],
       "decisions": [
         {
           "on": "2026-10-25",
           "note": "Eoj approved SPEC-cloud-credits-open-lane W3: open-weight lane as a paid value-add; hard lines CSAM, mass-casualty weapon uplift, sexual content about real people; handoff opt-in and visible; copy says 'far fewer refusals'."
+        },
+        {
+          "on": "2026-10-25",
+          "note": "Eoj: start main-chat handoff now. Refusals from the person's own subscriptions/keys hand off too (gizzi prompt loop, once per turn, top-level sessions); the refusal stays visible because another vendor's stream cannot be held."
         }
       ],
       "evidence": [

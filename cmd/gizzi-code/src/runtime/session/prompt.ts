@@ -13,6 +13,7 @@ import { Session } from "@/runtime/session"
 import { Agent } from "@/runtime/loop/agent"
 
 import { Provider } from "@/runtime/providers/provider"
+import { CLOUD_PROVIDER_ID, consumeHandoff, handoffTarget, isRefusal } from "@/runtime/providers/handoff"
 import { type Tool as AITool, tool, jsonSchema, type ToolCallOptions, asSchema } from "ai"
 import { ToolDispatcher } from "@/runtime/tools/dispatch"
 import { ToolDedupe } from "@/runtime/tools/dedupe"
@@ -679,6 +680,11 @@ const message = await createUserMessage(input)
       }, g.remainingWallClockMs())
     }
     let turnModel: { providerID: string; modelID: string } | undefined
+    // Open-lane handoff (providers/handoff.ts): once a step is refused, the
+    // rest of the turn runs on the open model, without the refused message.
+    let refusalHandoff:
+      | { to: { providerID: string; modelID: string }; from: string; refusedID: string }
+      | undefined
     const session = await Session.get(sessionID)
     // Usage-limit wrap-up: set once a step crosses land_at mid-turn.
     let wrapUp:
@@ -689,6 +695,10 @@ const message = await createUserMessage(input)
       log.info("loop", { step, sessionID })
       if (abort.aborted) break
       let msgs = await MessageV2.filterCompacted(MessageV2.stream(sessionID))
+      if (refusalHandoff) {
+        const refusedID = refusalHandoff.refusedID
+        msgs = msgs.filter((m) => m.info.id !== refusedID)
+      }
 
       let lastUser: MessageV2.User | undefined
       let lastAssistant: MessageV2.Assistant | undefined
@@ -799,6 +809,7 @@ const message = await createUserMessage(input)
         turnModel = routed.model
       }
       if (lastUser.model.providerID === "auto" && turnModel) resolvedModelRef = turnModel
+      if (refusalHandoff) resolvedModelRef = refusalHandoff.to
 
       const plan = await Provider.prepareAuth(resolvedModelRef)
 
@@ -1085,6 +1096,9 @@ const message = await createUserMessage(input)
           time: {
             created: Date.now(),
           },
+          ...(refusalHandoff
+            ? { handoff: { from: refusalHandoff.from, to: `${model.providerID}/${model.id}` } }
+            : {}),
           sessionID,
         })) as MessageV2.Assistant,
         sessionID: sessionID,
@@ -1249,6 +1263,8 @@ const message = await createUserMessage(input)
             cancel(sessionID)
           }, deadlineMs)
 
+      // Drop a handoff marker left by an earlier request in this session.
+      consumeHandoff(sessionID)
       const result = await processor.process({
         user: lastUser,
         agent,
@@ -1292,8 +1308,51 @@ const message = await createUserMessage(input)
         break
       }
 
+      // Allternit Cloud handed this step to an open model itself: say so on the message.
+      const cloudHandoff = consumeHandoff(sessionID)
+      if (cloudHandoff && !processor.message.handoff) {
+        processor.message.handoff = cloudHandoff
+        await Session.updateMessage(processor.message)
+      }
+
       // Check if model finished (finish reason is not "tool-calls" or "unknown")
       const modelFinished = processor.message.finish && !["tool-calls", "unknown"].includes(processor.message.finish)
+
+      // Refusal handoff for any other brain (the person's own subscription or
+      // key): once per turn, top-level sessions only, when the person turned
+      // it on in Settings → Open models. Allternit Cloud models hand off
+      // server-side (above), so they are skipped here.
+      if (
+        modelFinished &&
+        !refusalHandoff &&
+        !processor.message.error &&
+        !abort.aborted &&
+        !session.parentID &&
+        model.providerID !== CLOUD_PROVIDER_ID
+      ) {
+        const parts = await MessageV2.parts(processor.message.id)
+        const text = parts
+          .filter((p): p is MessageV2.TextPart => p.type === "text" && !p.synthetic)
+          .map((p) => p.text)
+          .join("\n")
+        const calledTools = parts.some((p) => p.type === "tool")
+        if (!calledTools && isRefusal(text, processor.message.finish)) {
+          const target = await handoffTarget().catch(() => undefined)
+          if (target) {
+            refusalHandoff = {
+              to: target,
+              from: `${model.providerID}/${model.id}`,
+              refusedID: processor.message.id,
+            }
+            log.info("refused turn: handing off to the open lane", {
+              sessionID,
+              from: refusalHandoff.from,
+              to: `${target.providerID}/${target.modelID}`,
+            })
+            continue
+          }
+        }
+      }
 
       // Usage limits (wrap-up): a turn that crosses land_at mid-task gets a
       // few steps to finish what it is in the middle of, then lands instead

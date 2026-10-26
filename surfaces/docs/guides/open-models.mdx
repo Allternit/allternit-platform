@@ -56,6 +56,15 @@ With handoff on, when the model you picked refuses, Allternit sends the same req
 - When handoff is on, a streamed answer starts after its first 400 characters (or sooner if it ends), so a refusal can be swapped before you see it. With handoff off, answers stream as usual.
 - Handoff never triggers on answers that call tools, and never chains from one open model to another.
 
+### Your own subscriptions and keys
+
+Handoff also covers brains that do not run on Allternit Cloud, such as your own Claude, ChatGPT or Kimi subscription or your own API key. When one of them refuses in a chat, Allternit runs the turn once more on the open model through Allternit Cloud.
+
+- The refusal stays visible, and the open model's answer follows it with the **Answered by … (handoff)** note. Allternit cannot hold back another company's stream, so you see both.
+- The open model does not see the refusal, only your conversation.
+- The open model's answer uses your Allternit Cloud credits. Your own subscription is billed nothing extra.
+- This needs an Allternit Cloud sign-in. It happens at most once per turn, and it does not run in sub-agents.
+
 ## Related
 
 - [Open lane API](/api/open-lane): settings routes, handoff fields and error codes.

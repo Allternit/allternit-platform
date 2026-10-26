@@ -113,6 +113,14 @@ With handoff on, the gateway holds a stream until the answer has 400 characters,
 
 Each model is billed for its own tokens, as two `inference_usage` rows. The frontier row uses the provider's usage report when the refusal finished inside the hold; otherwise it is the marked estimate (prompt and streamed characters divided by 4). Moderation calls are not billed to the user.
 
+### Handoff in the chat app
+
+The chat app reaches models through gizzi (`cmd/gizzi-code`), and gizzi reaches Allternit Cloud models through this API.
+
+- **Allternit Cloud models.** gizzi strips the handoff chunk from the stream before the AI SDK sees it, or reads the `x-allternit-handoff` header on a non-streamed reply. It then sets `handoff: { from, to }` on the assistant message. The code is in `src/runtime/providers/handoff.ts` and `retry-hint.ts`.
+- **Other brains** (CLI subscriptions, your own API keys). When a finished step has no tool calls and reads as a refusal, gizzi re-runs the turn once on `allternit/<default_handoff_model>`. It uses the same rules as `services/refusal.rs`, and it checks `GET /api/v1/open-lane` first: `available`, `terms_accepted` and `handoff_enabled` must all be true. The refused message is left out of the open model's context. The new assistant message carries `handoff`. Sub-agent sessions are skipped. `GIZZI_DISABLE_OPEN_LANE_HANDOFF=1` turns this off on a runtime.
+- **The bridge** (allternit-api `v1_routes.rs`) sends `{ "type": "handoff", "messageId", "handoff": { from, to } }` once per handed-off message. History responses carry the same object as `metadata.telemetry.handoff`, so the note is still there after a reload.
+
 ## Tables
 
 Migration `105_open_lane.sql`:

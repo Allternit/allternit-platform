@@ -30,6 +30,18 @@ describe("transcript", () => {
       expect(result).toBe("## Assistant (Build · claude-sonnet-5 · 5.4s)\n\n")
     })
 
+    test("names an open-lane handoff", () => {
+      const msg = {
+        ...baseMsg,
+        providerID: "allternit",
+        modelID: "deepseek-v4.1-flash-open",
+        handoff: { from: "claude-cli/claude-sonnet", to: "allternit/deepseek-v4.1-flash-open" },
+      }
+      expect(formatAssistantHeader(msg as AssistantMessage, true)).toBe(
+        "## Assistant (Build · deepseek-v4.1-flash-open (handoff from claude-cli/claude-sonnet) · 5.4s)\n\n",
+      )
+    })
+
     test("excludes metadata when disabled", () => {
       const result = formatAssistantHeader(baseMsg, false)
       expect(result).toBe("## Assistant\n\n")
