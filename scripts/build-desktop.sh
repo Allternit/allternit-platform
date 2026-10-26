@@ -4,6 +4,12 @@
 #
 # Usage:
 #   ./scripts/build-desktop.sh [--skip-platform] [--skip-api] [--skip-electron]
+#
+# Runs through the machine-wide build queue (scripts/build-queue): it waits
+# for any other heavy build to finish and records the commits it built.
+# ALLTERNIT_BUILD_MAIN=1 moves clean, detached checkouts to the newest
+# origin/main when the build starts. Rust sidecars whose sources did not
+# change are reused (scripts/bin-cache); ALLTERNIT_NO_BIN_CACHE=1 rebuilds.
 # ─────────────────────────────────────────────────────────────────────────────
 
 set -e
@@ -37,6 +43,14 @@ for arg in "$@"; do
   esac
 done
 
+# One heavy build at a time, machine-wide. The queue re-runs this script once
+# the lane is free (BUILD_QUEUE_HELD=1 then skips this block).
+if [ -z "${BUILD_QUEUE_HELD:-}" ]; then
+  QUEUE_ARGS=(--repo "$WORKSPACE_ROOT" --repo "${ALLTERNIT_AI_PATH:-$WORKSPACE_ROOT/../allternit-ai-wt-desktop-build}")
+  [ "${ALLTERNIT_BUILD_MAIN:-}" = 1 ] && QUEUE_ARGS+=(--sync-main)
+  exec "$SCRIPT_DIR/build-queue" run desktop "${QUEUE_ARGS[@]}" -- "$SCRIPT_DIR/build-desktop.sh" "$@"
+fi
+
 cd "$WORKSPACE_ROOT"
 
 # Cargo output: the shared target dir (AGENTS.md: every session exports
@@ -44,6 +58,12 @@ cd "$WORKSPACE_ROOT"
 # every stage after a shared-cache compile fail with "binary not found".
 CARGO_OUT="${CARGO_TARGET_DIR:-$WORKSPACE_ROOT/target}"
 case "$CARGO_OUT" in /*) ;; *) CARGO_OUT="$WORKSPACE_ROOT/$CARGO_OUT" ;; esac
+
+# reuse <cache name> <dest>: copy the last build of a sidecar to <dest> when
+# none of its sources changed. remember <cache name> <cargo binary>: keep a
+# fresh build for next time (keyed by cargo's <binary>.d source list).
+reuse() { "$SCRIPT_DIR/bin-cache" fetch "$1" "$2" --root "$WORKSPACE_ROOT"; }
+remember() { "$SCRIPT_DIR/bin-cache" store "$1" "$2" "$2.d" --root "$WORKSPACE_ROOT" || warn "bin-cache: could not keep $1"; }
 
 # ── 1. Build Platform static export ──────────────────────────────────────────
 # The Electron app loads the hosted platform by default; the static export is
@@ -94,10 +114,13 @@ ok "gizzi-code → $RESOURCES_DIR/bin/gizzi-code"
 # ── 2a. Vendor allternit-factory (the Factory engine Desktop runs; its pane
 #        engine runs every terminal: allternit-api /terminal, gizzi /pty) ──
 step "Vendoring allternit-factory…"
-(cd "$WORKSPACE_ROOT" && cargo build --release -p allternit-factory)
-FACTORY_BIN="$CARGO_OUT/release/allternit-factory"
-[ -f "$FACTORY_BIN" ] || die "allternit-factory build failed — binary not found at $FACTORY_BIN"
-cp "$FACTORY_BIN" "$RESOURCES_DIR/bin/allternit-factory"
+if ! reuse allternit-factory "$RESOURCES_DIR/bin/allternit-factory"; then
+  (cd "$WORKSPACE_ROOT" && cargo build --release -p allternit-factory)
+  FACTORY_BIN="$CARGO_OUT/release/allternit-factory"
+  [ -f "$FACTORY_BIN" ] || die "allternit-factory build failed — binary not found at $FACTORY_BIN"
+  cp "$FACTORY_BIN" "$RESOURCES_DIR/bin/allternit-factory"
+  remember allternit-factory "$FACTORY_BIN"
+fi
 chmod +x "$RESOURCES_DIR/bin/allternit-factory"
 ok "allternit-factory → $RESOURCES_DIR/bin/allternit-factory"
 
@@ -117,20 +140,29 @@ ok "ripgrep → $RESOURCES_DIR/bin/vendor/ripgrep/$RG_LAYOUT/rg"
 step "Building bundled voice service (sherpa-onnx)…"
 export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-13.0}"
 cd "$WORKSPACE_ROOT"
-cargo build --release -p voice-service -p allternit-tts
-VOICE_BIN="$CARGO_OUT/release/voice-service"
-[ -f "$VOICE_BIN" ] || VOICE_BIN="$CARGO_OUT/release/allternit-voice-service"
-[ -f "$VOICE_BIN" ] || die "Voice service build failed — binary not found at $VOICE_BIN"
-cp "$VOICE_BIN" "$RESOURCES_DIR/bin/allternit-voice-service"
+if reuse voice-service "$RESOURCES_DIR/bin/allternit-voice-service" && reuse allternit-tts "$RESOURCES_DIR/bin/allternit-tts"; then
+  VOICE_REUSED=true
+else
+  VOICE_REUSED=false
+  cargo build --release -p voice-service -p allternit-tts
+  VOICE_BIN="$CARGO_OUT/release/voice-service"
+  [ -f "$VOICE_BIN" ] || VOICE_BIN="$CARGO_OUT/release/allternit-voice-service"
+  [ -f "$VOICE_BIN" ] || die "Voice service build failed — binary not found at $VOICE_BIN"
+  cp "$VOICE_BIN" "$RESOURCES_DIR/bin/allternit-voice-service"
+fi
 chmod +x "$RESOURCES_DIR/bin/allternit-voice-service"
 
 # The voice service must not contain espeak-ng (GPL-3.0): TTS runs in the
 # separate allternit-tts program (services/voice-tts, GPL-3.0-or-later),
 # which the voice service starts as a child from the same directory.
 bash "$WORKSPACE_ROOT/scripts/check-voice-no-gpl.sh" "$RESOURCES_DIR/bin/allternit-voice-service"
-TTS_BIN="$CARGO_OUT/release/allternit-tts"
-[ -f "$TTS_BIN" ] || die "allternit-tts build failed — binary not found at $TTS_BIN"
-cp "$TTS_BIN" "$RESOURCES_DIR/bin/allternit-tts"
+if [ "$VOICE_REUSED" = false ]; then
+  TTS_BIN="$CARGO_OUT/release/allternit-tts"
+  [ -f "$TTS_BIN" ] || die "allternit-tts build failed — binary not found at $TTS_BIN"
+  cp "$TTS_BIN" "$RESOURCES_DIR/bin/allternit-tts"
+  remember voice-service "$VOICE_BIN"
+  remember allternit-tts "$TTS_BIN"
+fi
 chmod +x "$RESOURCES_DIR/bin/allternit-tts"
 
 # sherpa-onnx/onnxruntime link statically into both binaries (crate default
@@ -142,34 +174,40 @@ ok "voice service → $RESOURCES_DIR/bin/allternit-voice-service + allternit-tts
 # ── 3. Build Rust API ────────────────────────────────────────────────────────
 if [ "$SKIP_API" = false ]; then
   step "Building allternit-api (Rust)…"
-  cd "$API_DIR"
-  cargo build --release
-  
-  # Map binary name (Cargo uses underscores, we prefer dashes for distribution)
-  # In workspace builds, binary is in the root target dir
-  API_BIN="$CARGO_OUT/release/allternit-api"
-  [ -f "$API_BIN" ] || API_BIN="$CARGO_OUT/release/allternit_api"
-  [ -f "$API_BIN" ] || API_BIN="$API_DIR/target/release/allternit-api"
-  [ -f "$API_BIN" ] || API_BIN="$API_DIR/target/release/allternit_api"
-  [ -f "$API_BIN" ] || die "API build failed — binary not found at $API_BIN"
-
   mkdir -p "$RESOURCES_DIR/bin"
-  cp "$API_BIN" "$RESOURCES_DIR/bin/allternit-api"
+  if ! reuse allternit-api "$RESOURCES_DIR/bin/allternit-api"; then
+    cd "$API_DIR"
+    cargo build --release
+
+    # Map binary name (Cargo uses underscores, we prefer dashes for distribution)
+    # In workspace builds, binary is in the root target dir
+    API_BIN="$CARGO_OUT/release/allternit-api"
+    [ -f "$API_BIN" ] || API_BIN="$CARGO_OUT/release/allternit_api"
+    [ -f "$API_BIN" ] || API_BIN="$API_DIR/target/release/allternit-api"
+    [ -f "$API_BIN" ] || API_BIN="$API_DIR/target/release/allternit_api"
+    [ -f "$API_BIN" ] || die "API build failed — binary not found at $API_BIN"
+
+    cp "$API_BIN" "$RESOURCES_DIR/bin/allternit-api"
+    remember allternit-api "$API_BIN"
+  fi
   chmod +x "$RESOURCES_DIR/bin/allternit-api"
   ok "allternit-api → $RESOURCES_DIR/bin/allternit-api"
 
   # 3a. Local model engine (services/local-engine) backing Model Lab telemetry.
   step "Building local-engine (Rust)…"
   LOCAL_ENGINE_DIR="$WORKSPACE_ROOT/services/local-engine"
-  (cd "$LOCAL_ENGINE_DIR" && cargo build --release)
+  if ! reuse local-engine "$RESOURCES_DIR/bin/allternit-local-engine"; then
+    (cd "$LOCAL_ENGINE_DIR" && cargo build --release)
 
-  # Cargo names the bin `local-engine` (see [[bin]] in its Cargo.toml); stage
-  # it as allternit-local-engine so resources/bin keeps one naming convention.
-  LOCAL_ENGINE_BIN="$CARGO_OUT/release/local-engine"
-  [ -f "$LOCAL_ENGINE_BIN" ] || LOCAL_ENGINE_BIN="$LOCAL_ENGINE_DIR/target/release/local-engine"
-  [ -f "$LOCAL_ENGINE_BIN" ] || die "local-engine build failed — binary not found at $LOCAL_ENGINE_BIN"
+    # Cargo names the bin `local-engine` (see [[bin]] in its Cargo.toml); stage
+    # it as allternit-local-engine so resources/bin keeps one naming convention.
+    LOCAL_ENGINE_BIN="$CARGO_OUT/release/local-engine"
+    [ -f "$LOCAL_ENGINE_BIN" ] || LOCAL_ENGINE_BIN="$LOCAL_ENGINE_DIR/target/release/local-engine"
+    [ -f "$LOCAL_ENGINE_BIN" ] || die "local-engine build failed — binary not found at $LOCAL_ENGINE_BIN"
 
-  cp "$LOCAL_ENGINE_BIN" "$RESOURCES_DIR/bin/allternit-local-engine"
+    cp "$LOCAL_ENGINE_BIN" "$RESOURCES_DIR/bin/allternit-local-engine"
+    remember local-engine "$LOCAL_ENGINE_BIN"
+  fi
   chmod +x "$RESOURCES_DIR/bin/allternit-local-engine"
   ok "local-engine → $RESOURCES_DIR/bin/allternit-local-engine"
 fi

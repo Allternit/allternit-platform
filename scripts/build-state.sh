@@ -5,6 +5,7 @@
 # Run this BEFORE building, releasing, or installing either product
 # (AGENTS.md "one current build" commandment). It answers:
 #   - is someone else building right now?            (ACTIVE BUILDS)
+#   - what is waiting, and what did it last build?    (BUILD QUEUE)
 #   - what did the last release/build come from?     (sha + date)
 #   - is the installed/running copy the newest one?  (RUNNING)
 #   - which old binaries are still on disk?          (STALE)
@@ -86,6 +87,13 @@ for pid, started, args in procs:
         active.append(f"pid {pid} since {started}: {args[:110]}  (cwd {cwd})")
 print("\n== ACTIVE BUILDS")
 print("\n".join("  " + a for a in active) if active else "  none")
+
+# The machine-wide build lane (scripts/build-queue): what runs, what waits,
+# and what each product last built from.
+queue = TOP / "scripts/build-queue"
+if queue.exists():
+    print("\n== BUILD QUEUE")
+    print("\n".join("  " + l.strip() for l in sh("python3", str(queue), "status").splitlines()) or "  (no queue state)")
 
 # ---------------------------------------------------------------- gizzi-code
 print("\n== gizzi-code")
