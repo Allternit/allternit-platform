@@ -38,7 +38,10 @@ Every new frame field is additive. Older apps ignore `source` and `plan` frames 
 | gizzi `websearch` / `webfetch` tools | Native: tool `metadata.sources` | None |
 | Claude Code (claude-cli) | Native: WebSearch `tool_use_result`, `origin: claude-code-websearch` | Native: TodoWrite is mirrored to Todo; TaskCreate and TaskUpdate fall back to `foldChecklist` |
 | Codex (app-server) | Native: `webSearch` item results (`item/completed`) | Native: `turn/plan/updated` |
-| ACP CLIs (Gemini CLI, Kimi, Qwen and others) | Parsed fallback | Native: ACP `plan` session update |
+| ACP CLIs (Gemini CLI, Kimi, Grok, Kiro, Qoder, Trae and others) | Parsed fallback; steps named by ACP `kind` (`acpToolStep`) | Native: ACP `plan` session update |
+| Qwen Code, CodeBuddy (Claude-style stream-json) | Parsed fallback | Native: TodoWrite |
+| OpenCode, DevEco (`run --format json`) | Parsed fallback; `tool_use`, `text`, `step_finish` mapped by `opencodeJsonEvents` | None |
+| One-shot CLIs (Pi, OMP, Antigravity) | None: they send only the final answer, so there are no live steps | None |
 | Other MCP or third-party search tools | Parsed fallback (`webResults`) | None |
 
 ### Files
