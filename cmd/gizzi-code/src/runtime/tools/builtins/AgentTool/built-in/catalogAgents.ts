@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { BUILTIN_CATALOG } from '@/runtime/agents/builtin-catalog'
 import type { BuiltInAgentDefinition } from '../loadAgentsDir.js'
 
