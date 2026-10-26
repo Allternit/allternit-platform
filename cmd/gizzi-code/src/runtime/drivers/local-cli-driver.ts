@@ -51,6 +51,7 @@ import { ProcessRegistry } from "@/runtime/process-registry"
 import { acpGateDecision } from "@/runtime/drivers/acp-gate"
 import { PermissionNext } from "@/runtime/tools/guard/permission/next"
 import { mergeSources, sourcesFromClaudeCodeToolResult, todosFromNativePlan, toSource, type ResponseSource } from "@/runtime/session/response-parts"
+import { claudeAgentsFlags, exportCodexAgents } from "@/runtime/agents/brain-export"
 
 const log = Log.create({ service: "local-cli-driver" })
 
@@ -1911,6 +1912,10 @@ const CLI_ADAPTERS: Record<string, CliAdapter> = {
         // An internal completion: answer from the text alone, no tools at all.
         ...(ctx.toolsOff ? ["--tools", ""] : []),
         ...claudeSessionFlags(ctx),
+        // The Allternit subagent catalog as Claude Code subagents, so its own
+        // delegation runs on haiku/sonnet/opus by class. Bots keep their own
+        // tool policy, and a tools-off completion has nothing to delegate.
+        ...(ctx.bot || ctx.toolsOff ? [] : claudeAgentsFlags()),
         // The picked model first; without one, the env override or Claude's default.
         ...modelFlag(
           sessionModel(ctx.model, "claude-cli") ??
@@ -2041,6 +2046,9 @@ const CLI_ADAPTERS: Record<string, CliAdapter> = {
   "codex-cli": {
     mode: "codex-app-server",
     buildArgv: ([command]) => {
+      // Codex reads subagents from ~/.codex/agents; refresh the catalog there
+      // (written only when changed, never blocks or fails the launch).
+      void exportCodexAgents()
       return [command, "app-server", "--listen", "stdio://"]
     },
   },

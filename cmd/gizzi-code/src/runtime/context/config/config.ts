@@ -847,6 +847,12 @@ export namespace Config {
         .string()
         .optional()
         .describe("Default model variant for this agent (applies only when using the agent's configured model)."),
+      model_class: z
+        .string()
+        .optional()
+        .describe("Model class: small | standard | deep | inherit. `model` also accepts these names."),
+      title: z.string().optional().describe("Display name for the subagent's card"),
+      face: z.string().optional().describe("Bot-avatar face slug drawn on the subagent's card"),
       temperature: z.number().optional(),
       top_p: z.number().optional(),
       prompt: z.string().optional(),
@@ -945,6 +951,9 @@ export namespace Config {
       const knownKeys = new Set([
         "name",
         "model",
+        "model_class",
+        "title",
+        "face",
         "variant",
         "prompt",
         "description",

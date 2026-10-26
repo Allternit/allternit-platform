@@ -45,11 +45,24 @@ export namespace ModelJobs {
     return resolved.providerID && resolved.modelID ? resolved : parse(ref)
   }
 
-  /** Subagent name → job. Only the two native subagents map; custom agents keep their own model. */
+  /** Subagent name → job. Native subagents (and their catalog types) map; custom agents keep their own model. */
   export function jobForAgent(agentName: string): Job | undefined {
-    if (agentName === "explore") return "explorer"
-    if (agentName === "general") return "coder"
-    return undefined
+    switch (agentName) {
+      case "explore":
+      case "explorer":
+        return "explorer"
+      case "general":
+      case "builder":
+        return "coder"
+      case "code-reviewer":
+        return "review"
+      case "scribe":
+        return "summarizer"
+      case "web-researcher":
+        return "webResearch"
+      default:
+        return undefined
+    }
   }
 
   export async function get(): Promise<Jobs> {

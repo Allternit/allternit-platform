@@ -20,6 +20,10 @@ export namespace SessionTasks {
     background: boolean
     description: string
     agent: string | null
+    /** Subagent card identity: display title, bot-avatar face, model class. */
+    title: string | null
+    face: string | null
+    modelClass: string | null
     childSessionID: string | null
     output: string | null
     error: string | null
@@ -44,6 +48,9 @@ export namespace SessionTasks {
       background: z.boolean(),
       description: z.string(),
       agent: z.string().nullable(),
+      title: z.string().nullable(),
+      face: z.string().nullable(),
+      modelClass: z.string().nullable(),
       childSessionID: z.string().nullable(),
       output: z.string().nullable(),
       error: z.string().nullable(),
@@ -62,6 +69,22 @@ export namespace SessionTasks {
   export function parseChildTitle(title: string): { description: string; agent: string | null } {
     const match = SUBAGENT_TITLE.exec(title)
     return match ? { description: match[1], agent: match[2] } : { description: title, agent: null }
+  }
+
+  type Identity = Pick<Item, "title" | "face" | "modelClass">
+  const NO_IDENTITY: Identity = { title: null, face: null, modelClass: null }
+
+  /** The subagent type's card identity (title, face, model class), if the agent is known. */
+  async function identity(agent: string | null): Promise<Identity> {
+    if (!agent) return NO_IDENTITY
+    try {
+      const { Agent } = await import("@/runtime/loop/agent")
+      const info = await Agent.get(agent)
+      if (!info) return NO_IDENTITY
+      return { title: info.title ?? null, face: info.face ?? null, modelClass: info.modelClass ?? null }
+    } catch {
+      return NO_IDENTITY
+    }
   }
 
   const ERROR_MAX = 240
@@ -132,13 +155,15 @@ export namespace SessionTasks {
     const items: Item[] = await Promise.all(
       tasks.map(async (task) => {
         const { lastError: _ignored, ...extra } = await detail(task.childSessionID, depth)
+        const agent = task.childSessionID ? parseChildTitle(byChild.get(task.childSessionID)?.title ?? "").agent : null
         const item: Item = {
           id: task.id,
           kind: task.kind,
           status: task.status,
           background: true,
           description: task.description,
-          agent: task.childSessionID ? parseChildTitle(byChild.get(task.childSessionID)?.title ?? "").agent : null,
+          agent,
+          ...(await identity(agent)),
           childSessionID: task.childSessionID ?? null,
           output: task.output ?? null,
           error: task.error ?? null,
@@ -169,6 +194,7 @@ export namespace SessionTasks {
         background: false,
         description,
         agent,
+        ...(await identity(agent)),
         childSessionID: child.id,
         output: null,
         error: busy ? null : errorText(lastError),

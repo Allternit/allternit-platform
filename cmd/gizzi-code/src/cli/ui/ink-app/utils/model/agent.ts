@@ -5,6 +5,7 @@ import { MODEL_ALIASES, type ModelAlias } from './aliases.js'
 import {
   getCanonicalName,
   getRuntimeMainLoopModel,
+  getSmallFastModel,
   parseUserSpecifiedModel,
 } from './model.js'
 export const AGENT_MODEL_OPTIONS = [...MODEL_ALIASES, 'inherit'] as const
@@ -45,7 +46,30 @@ export function getAgentModel(
     return parseUserSpecifiedModel(toolSpecifiedModel)
   }
 
-  const agentModelWithExp = agentModel ?? getDefaultSubagentModel()
+  let agentModelWithExp = agentModel ?? getDefaultSubagentModel()
+
+  // Allternit subagent model classes (runtime/agents/builtin-catalog.ts).
+  // small → the configured small/fast model (works for gizzi.json providers);
+  // deep → opus on Claude, else the parent; standard → the parent's model.
+  switch (agentModelWithExp.trim().toLowerCase()) {
+    case 'small': {
+      try {
+        const small = getSmallFastModel()
+        if (small) return small
+      } catch {
+        // fall through to the parent model
+      }
+      agentModelWithExp = 'inherit'
+      break
+    }
+    case 'deep':
+      if (!getCanonicalName(parentModel).includes('claude')) return parentModel
+      agentModelWithExp = 'opus'
+      break
+    case 'standard':
+      agentModelWithExp = 'inherit'
+      break
+  }
 
   if (agentModelWithExp === 'inherit') {
     // Apply runtime model resolution for inherit to get the effective model
