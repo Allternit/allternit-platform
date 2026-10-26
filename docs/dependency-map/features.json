@@ -763,7 +763,10 @@
         "allternit/cmd/allternit-api/src/usage_*",
         "allternit/cmd/allternit-api/src/spend_*",
         "allternit/cmd/allternit-api/src/credits_*",
-        "allternit/cmd/gizzi-code/src/runtime/session"
+        "allternit/cmd/gizzi-code/src/runtime/session",
+        "allternit-ai/src/components/settings",
+        "allternit/cmd/allternit-cloud-api/src/routes/billing_*",
+        "allternit/cmd/allternit-cloud-api/src/services"
       ],
       "decisions": [
         {
@@ -777,11 +780,26 @@
         {
           "on": "2026-10-19",
           "note": "Settings → Usage adds per-brain split, daily cost/tokens chart, bot filter and Brain/Bot/Day breakdowns. /usage/summary group_by takes bot (session_metadata agentId) and day (tz_offset_minutes); older servers fall back to the four base dimensions."
+        },
+        {
+          "on": "2026-10-25",
+          "note": "Auto top-up (W1 of SPEC-cloud-credits-open-lane): saved card from packs/setup Checkout, off-session PaymentIntent after wallet debits when balance < threshold, one pending attempt, monthly cap, failure turns it off and notifies; migration 103, /api/v1/billing/auto-topup routes, payment_intent.* webhook events, Settings → Billing card on all surfaces."
+        },
+        {
+          "on": "2026-10-25",
+          "note": "Upstream funding coverage: cloud-api polls provider balances every 10 min (OpenRouter /credits; others manual entry minus metered spend), compares with wallet liability, alerts when days left < reserve or balance < floor, and routes around a provider under its floor when another serves the same model. Admin: GET/PUT /api/v1/admin/funding, platform /admin/funding. Providers refill from the business card via their own auto-recharge (set by hand)."
+        },
+        {
+          "on": "2026-10-25",
+          "note": "Chargebacks: charge.dispute.created holds the disputed amount in the cloud wallet (dispute_hold, balance may go negative, usage clamp no longer resets a negative balance), turns auto top-up off (blocked while open or lost) and sends an ops alert; charge.dispute.closed won/warning_closed gives it back, lost keeps it. Pack PaymentIntents now carry clerk_user_id/kind=credit_pack metadata. Migration 106 billing_disputes. Live webhook endpoint must add both dispute events."
         }
       ],
       "evidence": [
         "allternit/surfaces/docs/api/usage.mdx",
-        "allternit/surfaces/docs/admin/spend-limits.mdx"
+        "allternit/surfaces/docs/admin/spend-limits.mdx",
+        "allternit/surfaces/docs/guides/credits-and-auto-top-up.mdx",
+        "allternit/surfaces/docs/api/cloud-billing.mdx",
+        "allternit/surfaces/docs/operations/upstream-funding.mdx"
       ]
     },
     {
@@ -2801,6 +2819,37 @@
       ],
       "evidence": [
         "allternit/surfaces/docs/surfaces/bots.mdx"
+      ]
+    },
+    {
+      "id": "feature:open-lane-handoff",
+      "label": "Open models (open lane) and refusal handoff",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "cloud-api -open models (lane: open, served by OPEN_LANE_BASE_URL) behind an AUP + 18+ gate and a hard-line filter (csam, mass-casualty weapons, real-person sexual content; keyword pre-check + moderation model, fail closed, category-only log, migration 105). Opt-in handoff re-runs a refused frontier completion on an open model (x-allternit-handoff, allternit.handoff; streams hold the first 400 chars). In the chat app gizzi marks cloud handoffs on the assistant message and, for brains outside Allternit Cloud (CLI subscriptions, own keys), re-runs a refused turn once on the open model; allternit-api forwards a handoff frame and telemetry.handoff. Settings > Open models, Open badge in the model picker, 'Answered by ... (handoff)' note on Desktop, phone layout and PWA.",
+      "touches": [
+        "allternit/cmd/allternit-cloud-api",
+        "allternit-ai/src/views/settings",
+        "allternit-ai/src/components/chat",
+        "allternit-ai/src/lib/agents",
+        "allternit/cmd/gizzi-code/src/runtime/providers",
+        "allternit/cmd/gizzi-code/src/runtime/session",
+        "allternit/cmd/allternit-api"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-25",
+          "note": "Eoj approved SPEC-cloud-credits-open-lane W3: open-weight lane as a paid value-add; hard lines CSAM, mass-casualty weapon uplift, sexual content about real people; handoff opt-in and visible; copy says 'far fewer refusals'."
+        },
+        {
+          "on": "2026-10-25",
+          "note": "Eoj: start main-chat handoff now. Refusals from the person's own subscriptions/keys hand off too (gizzi prompt loop, once per turn, top-level sessions); the refusal stays visible because another vendor's stream cannot be held."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/open-models.mdx",
+        "allternit/surfaces/docs/api/open-lane.mdx",
+        "allternit-ai/src/views/settings/OpenModelsPanel.tsx"
       ]
     },
     {

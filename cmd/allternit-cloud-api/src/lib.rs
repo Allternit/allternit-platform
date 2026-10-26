@@ -444,6 +444,9 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         // Clerk session or `account` API token per-request, 503 without
         // CLERK_SECRET_KEY. Desktop's way to share what web writes directly.
         .merge(routes::me_flags::routes())
+        // Open lane settings (acceptable use, 18+, refusal handoff); Clerk
+        // session or `account` API token per-request.
+        .merge(routes::open_lane::routes())
         // Photo avatars included with a plan (Allternit-paid, per-plan monthly
         // allowance); Clerk session or `compute` API token per-request.
         .merge(routes::photo_avatars::routes())
@@ -451,6 +454,10 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         // session per-request and answers 503 billing_not_configured when
         // STRIPE_SECRET_KEY is unset.
         .merge(routes::billing_checkout::routes())
+        // Auto top-up settings and card setup verify the Clerk session
+        // per-request; the off-session charge itself runs from wallet debits
+        // (services::auto_topup).
+        .merge(routes::billing_auto_topup::routes())
         // The plan catalog is public; subscribe/portal verify the Clerk session
         // per-request and answer 503 billing_not_configured when STRIPE_SECRET_KEY
         // or the plan's STRIPE_PRICE_* id is unset.
@@ -472,6 +479,8 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         .merge(routes::billing_webhooks::routes())
         .merge(routes::clerk_webhooks::routes())
         .merge(routes::admin_customers::routes())
+        // Upstream funding coverage (admin only): provider balances, burn, wallet liability.
+        .merge(routes::admin_funding::routes())
         .merge(routes::admin_voice_billing::routes())
         // Dispatch handoff verifies the Clerk session per-request, like the
         // pairing routes (the token only ever means "this user, that

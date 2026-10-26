@@ -1,0 +1,32 @@
+---
+title: 'Data retention on the Cloud API'
+description: 'What the Cloud API stores about a completion, and how requests to upstream providers are kept on no-retention endpoints.'
+---
+
+## What Allternit stores
+
+The Cloud API (`https://api.allternit.com`, `cmd/allternit-cloud-api`) does not store prompts or completions. For each request it records the model, the token counts and the cost in `inference_usage`, so credits can be billed. The open-lane hard-line filter records only the blocked category, never the prompt (see [Open lane and refusal handoff](/api/open-lane)).
+
+## No-retention routing to OpenRouter
+
+Every chat completion sent to OpenRouter carries:
+
+```json
+{ "provider": { "zdr": true, "data_collection": "deny" } }
+```
+
+- `zdr: true` routes only to endpoints with a Zero Data Retention policy.
+- `data_collection: "deny"` excludes providers that collect or train on request data.
+- Other `provider` keys a caller sends (for example `order` or `sort`) are kept. These two keys are always set by the Cloud API, so a request cannot turn them off.
+- When no endpoint qualifies for a model, OpenRouter returns an error. The Cloud API does not fall back to a provider that keeps data.
+- This covers moderation calls for the open lane too, because they go through the same adapter.
+
+The code is `enforce_no_retention` in `cmd/allternit-cloud-api/src/model_router/openrouter.rs`. Setting `OPENROUTER_NO_RETENTION=off` turns it off. Use it only in an emergency: the privacy promise depends on it being on.
+
+## Direct providers
+
+Together, Fireworks, Groq and DeepInfra are called directly with Allternit's keys. Their retention follows each account's settings and terms, not a per-request flag. Before a model from one of them is described as no-retention, check that account's data settings in the provider dashboard and record the result in [Upstream funding](/operations/upstream-funding).
+
+## Cached context
+
+The Cloud API keeps no prompt cache on disk. When Allternit serves models on its own GPUs, the default stays in-memory, per-customer and short-lived. A longer, encrypted disk cache will be opt-in per API key.

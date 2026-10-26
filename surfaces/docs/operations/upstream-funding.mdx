@@ -1,0 +1,138 @@
+---
+title: "Upstream funding"
+description: "How customer money and model provider balances line up, the funding admin routes, and the provider setup checklist"
+---
+
+**Status: AVAILABLE (internal, admin only).** cloud-api (`api.allternit.com`) watches the prepaid balance Allternit holds at each model provider, compares it with what customers hold in their wallets, alerts the team when a provider runs short, and routes around a provider that falls under its floor.
+
+Code: `cmd/allternit-cloud-api/src/services/upstream_funding.rs` (poller, math, router cache), `src/routes/admin_funding.rs` (admin routes), migration `migrations_pg/104_upstream_funding.sql`. Admin page: `platform.allternit.com/admin/funding`.
+
+## How the money flows
+
+1. **The customer pays Allternit through Stripe.** Credit packs and plans go through Stripe Checkout; the webhook grants credits to the customer's cloud wallet (`user_credits`). Each model call is charged to that wallet at retail price.
+2. **Allternit pays each model provider from a prepaid balance.** OpenRouter, Together, Fireworks, DeepInfra and Groq each hold a prepaid balance that our production keys spend.
+3. **Each provider refills itself.** None of them has an API to buy credits. Each one has an auto-recharge setting in its own dashboard: when the balance drops under a threshold, it charges Allternit's business card for a set amount. Eoj sets this up once per provider, by hand (checklist below).
+4. **Timing works in our favour.** The business card bill is due about 30 days after the charge. Stripe pays customer money out to the bank in about 2 days. Customer money is in the bank before the card bill is due, so Allternit never floats money it does not have.
+5. **cloud-api checks the numbers.** Every 10 minutes it refreshes each provider's balance and its last 24 hours of spend. When a provider has fewer days left than its reserve, or less money than its floor, the team gets an email (at most once per provider every 6 hours). A provider under its floor is skipped for any model another provider also serves.
+
+## What is measured
+
+| Field | Meaning |
+| --- | --- |
+| `balanceUsd` | Prepaid balance at the provider. OpenRouter: read from its API. Others: your last manual entry minus our metered spend there since that entry. Null until a first entry. |
+| `source` | `api` (read from the provider) or `manual` (entered by hand). |
+| `burn24hUsd` | Our spend at the provider over the last 24 hours, from `inference_usage` joined to `inference_pools`. Wholesale cost when known, otherwise the retail price (over-counts, the safe direction). BYOK calls are not counted. |
+| `daysLeft` | `balanceUsd / burn24hUsd`. Null when nothing was spent in 24 hours. |
+| `reserveDays` | Alert when `daysLeft` drops under this. Default 3. |
+| `floorUsd` | Alert, and route around this provider, when the balance drops under this. Default 0 (off). |
+| `belowFloor` | The balance is under the floor right now. |
+| `lastError` | The last refresh error (for example, OpenRouter did not answer). The last good balance is kept. |
+| `walletLiabilityUsd` | Sum of every positive customer wallet balance: what we owe customers in model use. |
+| `coverageRatio` | Money at all providers divided by `walletLiabilityUsd`. Under 1.0 means customers hold more credit than the providers hold for us; auto-recharge covers the gap only while the card has room. |
+
+## Routing around a short provider
+
+A catalog model is tied to one provider. When that provider's balance is under its floor, the router looks for another catalog entry of the same model on a different provider (same upstream model name, ignoring case, dashes and the vendor prefix) whose provider is configured and not under its floor. If it finds one, the request runs there, and the price, pool and usage row follow that provider. If no other provider serves the model, the request goes to the original provider anyway: funding never refuses a request by itself. BYOK requests are never rerouted.
+
+## Admin routes
+
+Both routes need a Clerk session for a user listed in `ALLTERNIT_ADMIN_USER_IDS`; everyone else gets 403.
+
+### Read funding
+
+```http
+GET /api/v1/admin/funding
+Authorization: Bearer YOUR_CLERK_SESSION_TOKEN
+```
+
+```json
+{
+  "providers": [
+    {
+      "provider": "openrouter",
+      "balanceUsd": 182.4,
+      "source": "api",
+      "reserveDays": 3,
+      "floorUsd": 25,
+      "manualBalanceUsd": null,
+      "manualSetAt": null,
+      "burn24hUsd": 31.2,
+      "lastError": null,
+      "refreshedAt": "2026-10-25T14:10:00Z",
+      "daysLeft": 5.85,
+      "belowFloor": false,
+      "short": false,
+      "configured": true
+    }
+  ],
+  "upstreamTotalUsd": 182.4,
+  "walletLiabilityUsd": 640.0,
+  "coverageRatio": 0.285,
+  "burn24hTotalUsd": 31.2
+}
+```
+
+### Set a balance, reserve or floor
+
+```http
+PUT /api/v1/admin/funding/together
+Authorization: Bearer YOUR_CLERK_SESSION_TOKEN
+Content-Type: application/json
+
+{ "balanceUsd": 150, "reserveDays": 3, "floorUsd": 20 }
+```
+
+Every field is optional. `balanceUsd` is the balance the provider's dashboard shows right now; from then on cloud-api subtracts our metered spend. `reserveDays` is 0 to 365, `floorUsd` is 0 or more. The provider is refreshed right away and its row returned. Known providers: `openrouter`, `together`, `fireworks`, `deepinfra`, `groq`; any other name gets 404.
+
+For OpenRouter, the balance comes from its API, so `balanceUsd` is only used when no OpenRouter key is set.
+
+## Environment
+
+| Variable | Use |
+| --- | --- |
+| `OPENROUTER_API_KEY` | Production OpenRouter key. Also used to read the balance (`GET https://openrouter.ai/api/v1/credits`, balance = `total_credits - total_usage`). |
+| `OPENROUTER_CREDITS_KEY` | Optional. A separate OpenRouter key to read the balance with, if the production key cannot read `/credits`. |
+| `OPENROUTER_BASE_URL` | Optional. Defaults to `https://openrouter.ai/api/v1`. |
+| `TOGETHER_API_KEY`, `FIREWORKS_API_KEY`, `DEEPINFRA_API_KEY`, `GROQ_API_KEY` | Production keys. A provider with a key set is refreshed every 10 minutes even before it has a manual entry. |
+| `ALLTERNIT_OPS_ALERT_URL`, `ALLTERNIT_OPS_ALERT_TOKEN` | Where alerts are sent (see `services/ops_alert.rs`). Unset means alerts are only logged. |
+| `ALLTERNIT_ADMIN_USER_IDS` | Who may use the admin routes. |
+
+## Stripe go-live (Eoj, by hand)
+
+1. Stripe dashboard, Developers, Webhooks, the `https://api.allternit.com/api/v1/webhooks/stripe` endpoint: add `payment_intent.succeeded`, `payment_intent.payment_failed`, `payment_intent.requires_action`, `charge.dispute.created` and `charge.dispute.closed`, keeping the events already there.
+2. Then set `AUTO_TOPUP_LIVE=1` on cloud-api. Until it is set, auto top-up charges no card (see [Cloud billing](/api/cloud-billing)).
+
+## Provider setup checklist (Eoj, by hand)
+
+Do this once per provider. It moves money, so nothing here is automated.
+
+**OpenRouter**
+1. openrouter.ai, Settings, Credits: add the Allternit business card.
+2. Turn on auto top-up. Suggested: when the balance drops below $50, add $100. Pick numbers that cover at least `reserveDays` of the 24-hour burn on the Funding page.
+3. Confirm the production key cloud-api uses belongs to this account. If `/credits` does not answer with that key, create a key for balance reads and set `OPENROUTER_CREDITS_KEY`.
+4. On the Funding page, set the floor (for example $25) and reserve days.
+
+**Together AI**
+1. api.together.ai, Settings, Billing: add the business card.
+2. Turn on auto-recharge with a threshold and amount.
+3. Enter today's balance on the Funding page (Edit, balance), plus floor and reserve days.
+
+**Fireworks**
+1. fireworks.ai, Account, Billing: add the business card.
+2. Turn on auto-recharge (or the prepaid top-up threshold) with a threshold and amount.
+3. Enter today's balance, floor and reserve days on the Funding page.
+
+**DeepInfra**
+1. deepinfra.com, Dashboard, Billing: add the business card.
+2. Turn on auto top-up with a threshold and amount.
+3. Enter today's balance, floor and reserve days on the Funding page.
+
+**Groq**
+1. console.groq.com, Settings, Billing: add the business card and choose the paid tier.
+2. If Groq bills after use instead of prepaid, enter a balance equal to the spend limit you set there, and re-enter it each billing cycle.
+3. Enter floor and reserve days on the Funding page.
+
+**Every provider, after setup**
+- Re-enter the balance on the Funding page whenever a manual provider's dashboard and the page disagree by more than a few dollars (our metered spend is an estimate).
+- Keep the business card limit above the sum of all auto-recharge amounts that could fire in one billing cycle.
+- Check the provider's data settings and turn off any training on or retention of API data the dashboard allows. OpenRouter needs no setting: the Cloud API sends no-retention routing on every request (see [Data retention](/api/data-retention)). Record for each direct provider whether its terms say API data is not retained.

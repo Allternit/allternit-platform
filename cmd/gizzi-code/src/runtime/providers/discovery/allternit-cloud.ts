@@ -34,13 +34,13 @@ export function isPaidAllternitPlan(plan: AllternitPlan | null | undefined): boo
   return true
 }
 
-function cloudOrigin(): string {
+export function cloudOrigin(): string {
   const explicit = (process.env.ALLTERNIT_API_URL || process.env.ALLTERNIT_API_BASE_URL || "").trim()
   if (explicit) return explicit.replace(/\/+$/, "")
   return CLOUD_URLS.api
 }
 
-function cloudAuthToken(): string | undefined {
+export function cloudAuthToken(): string | undefined {
   return (
     process.env.ALLTERNIT_API_KEY?.trim() ||
     process.env.ALLTERNIT_API_TOKEN?.trim() ||

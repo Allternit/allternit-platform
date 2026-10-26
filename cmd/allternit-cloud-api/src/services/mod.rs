@@ -2,6 +2,8 @@
 
 pub mod api_keys;
 pub mod audit;
+pub mod auto_topup;
+pub mod billing_disputes;
 pub mod cloud_phones;
 pub mod contabo_runtime_service;
 pub mod cost_service;
@@ -21,6 +23,10 @@ pub mod r2;
 pub mod run_service;
 pub mod scheduler_service;
 pub mod task_service;
+pub mod hard_line;
+pub mod open_lane;
+pub mod refusal;
+pub mod upstream_funding;
 pub mod user_files;
 pub mod user_trust;
 pub mod voice_billing;

@@ -1,0 +1,131 @@
+---
+title: "Cloud billing API"
+description: "Credit packs, plans, auto top-up, disputes and the Stripe webhook on api.allternit.com (allternit-cloud-api)."
+---
+
+These routes live in `allternit-cloud-api` (`cmd/allternit-cloud-api`) and are served at `https://api.allternit.com`. The web app's client is `src/lib/billing.ts` in `allternit-ai`. Every authenticated route takes a Clerk session or an `allternit_*` API token with the `billing` scope.
+
+Routes that call Stripe answer `503 {"error":"billing_not_configured"}` when `STRIPE_SECRET_KEY` is unset, and `502 {"error":"billing_upstream_error"}` when Stripe rejects the call.
+
+## Credit packs
+
+| Method | Path | Auth | Notes |
+| --- | --- | --- | --- |
+| GET | `/api/v1/billing/packs` | none | The four packs: `credits_10`, `credits_25`, `credits_50`, `credits_100`, priced 1:1. |
+| POST | `/api/v1/billing/checkout` | session | Body `{"pack_id":"credits_25"}`, optional `?return_url=`. Returns `{"checkout_url"}`. |
+
+The pack Checkout Session is created for the person's Stripe customer (created on first use with `Idempotency-Key: customer-{user_id}` and linked in `user_billing_accounts`) with `payment_intent_data[setup_future_usage]=off_session`, so the card is saved for auto top-up. If the customer can't be created the pack still sells, without saving the card.
+
+The PaymentIntent behind the session carries the same metadata as the session (`clerk_user_id`, `allternit_credits_usd`, `allternit_org_id` when present) plus `kind=credit_pack`, so a chargeback on the payment can be traced to the person. Pack grants still come from the Checkout Session.
+
+`return_url` must be an `https` page on an allowed Allternit host with no query or fragment. The server adds `?checkout=success` or `?checkout=cancelled`.
+
+## Auto top-up
+
+| Method | Path | Notes |
+| --- | --- | --- |
+| GET | `/api/v1/billing/auto-topup` | Settings, state and saved card. |
+| PUT | `/api/v1/billing/auto-topup` | Change settings; omitted fields keep their value. |
+| POST | `/api/v1/billing/auto-topup/setup` | Setup-mode Stripe Checkout to save a card. Optional `?return_url=`. Returns `{"checkout_url"}`. |
+
+GET response:
+
+```json
+{
+  "configured": true,
+  "enabled": true,
+  "status": "ok",
+  "threshold_usd": 5.0,
+  "amount_usd": 25.0,
+  "monthly_cap_usd": 200.0,
+  "month_spent_usd": 50.0,
+  "last_attempt_at": "2026-10-25T12:00:00Z",
+  "last_error": null,
+  "card": { "brand": "visa", "last4": "4242" },
+  "amounts_usd": [10.0, 25.0, 50.0, 100.0],
+  "min_threshold_usd": 5.0,
+  "max_monthly_cap_usd": 5000.0
+}
+```
+
+`status` is `ok`, `pending` (a charge is in flight), `failed` (the last charge failed and auto top-up was turned off; see `last_error`) or `disabled`. `card` is `null` when no card is saved. When no card is stored but the person has a Stripe customer, GET picks up the newest card on it.
+
+PUT body:
+
+```json
+{ "enabled": true, "threshold_usd": 10, "amount_usd": 25, "monthly_cap_usd": 200 }
+```
+
+Rules: `threshold_usd` at least 5, `amount_usd` one of the pack sizes, `monthly_cap_usd` at least the amount and at most 5000. Turning it on without a saved card answers `409 {"error":"auto_topup_no_card"}`. While a chargeback is open, or after one was lost, turning it on answers `409 {"error":"auto_topup_dispute"}`. New buyers get the same first-purchase limit as packs (`403`) until their first payment settles. The response is the GET shape. If the balance is already under the new threshold, a top-up starts right away.
+
+### Turning charges on
+
+Auto top-up charges nothing until `AUTO_TOPUP_LIVE=1` (or `true` / `on`) is set on cloud-api. Set it only after the live Stripe webhook endpoint sends the `payment_intent.*` events listed below; otherwise a successful charge would never grant its credits. While the switch is off, `GET /api/v1/billing/auto-topup` returns `configured: false` (the settings card shows auto top-up as unavailable), turning it on answers `503 billing_not_configured`, and debits start no check. Saving a card still works.
+
+### The trigger
+
+After every wallet debit (`CostService::deduct_credits_for_usage`, used by inference settlement and hosted-runtime session billing) cloud-api spawns a check, so the request path never waits on Stripe. A charge starts when all of these hold:
+
+- auto top-up is on and a card and customer are stored,
+- the balance after the debit is under the threshold,
+- no attempt is `pending` (a pending attempt older than 24 hours no longer counts),
+- this month's successful top-ups plus the amount are within the monthly cap.
+
+An attempt row is claimed first in `billing_auto_topup_attempts` (a partial unique index allows one pending attempt per person), then cloud-api creates a PaymentIntent with `off_session=true`, `confirm=true`, `Idempotency-Key: autotopup-{user_id}-{attempt_id}` and metadata `kind=auto_topup`, `clerk_user_id`, `allternit_credits_usd`, `allternit_auto_topup_attempt`.
+
+A decline, `authentication_required` or `requires_action` in the API answer marks the attempt `failed`, turns auto top-up off, stores the reason, and notifies the person (web push plus the `auto_topup_failed` customer email). A `requires_action` intent is canceled.
+
+## Webhook events
+
+Stripe posts to `POST /api/v1/webhooks/stripe` (signed with `STRIPE_WEBHOOK_SECRET`). Auto top-up adds these events to the ones plans and packs already use:
+
+| Event | When | Effect |
+| --- | --- | --- |
+| `payment_intent.succeeded` | `metadata.kind = auto_topup` | Grants `allternit_credits_usd` to the cloud wallet with key `stripe-{event_id}` and the `webhook_events` dedupe, marks the attempt `succeeded`, adds the amount to the month total, sets status `ok`. |
+| `payment_intent.payment_failed` | `metadata.kind = auto_topup` | Attempt `failed`, auto top-up off, `last_error` set, person notified once. |
+| `payment_intent.requires_action` | `metadata.kind = auto_topup` | Same as `payment_failed`. |
+| `checkout.session.completed` | `mode = setup`, `metadata.kind = auto_topup_setup` | Reads the SetupIntent's payment method and stores it as the auto top-up card. |
+| `checkout.session.completed` | pack purchase (`mode = payment`) | Grants the pack as before, then stores the card the pack saved (in the background). |
+
+Payment intents without `kind = auto_topup` are acknowledged and ignored; pack purchases grant from their Checkout Session. Add the three `payment_intent.*` events to the Stripe webhook endpoint's event list.
+
+## Disputes
+
+A chargeback takes the disputed credits back out of the cloud wallet until Stripe decides the case.
+
+| Event | What happens |
+| --- | --- |
+| `charge.dispute.created` | Finds the person: `clerk_user_id` on the disputed PaymentIntent (read from Stripe, since the dispute object has no metadata of ours), else the charge's customer through `billing_subscriptions`, `user_billing_accounts` or `billing_auto_topup`. Removes the disputed amount (`dispute.amount` in cents, never more than was charged) from the wallet as a `dispute_hold` ledger row keyed `stripe-{event_id}`. The balance may go negative, so the credits cannot be spent while the case is open. Auto top-up is turned off with `last_error` set to `dispute`, and the team gets an ops alert. |
+| `charge.dispute.closed`, status `won` | Gives the held amount back once, as a `dispute_release` ledger row keyed `stripe-{event_id}`. |
+| `charge.dispute.closed`, status `warning_closed` | An inquiry that never became a chargeback: the held amount comes back, as for `won`. |
+| `charge.dispute.closed`, status `lost` | The credits stay removed. Nothing else changes. |
+| `charge.dispute.closed`, any other status | Acknowledged and ignored. |
+
+A dispute that cannot be traced to a person is recorded with status `unmatched` and answered `200`, so Stripe does not retry it forever; the ops alert asks the team to look it up in Stripe. Both events also use the `webhook_events` dedupe, so a Stripe retry changes nothing.
+
+If the disputed pack named an organization and its credits went to that org's fabric ledger, the hold still lands on the person's cloud wallet; the ops alert says so, and the org ledger is corrected by hand.
+
+The live Stripe webhook endpoint must subscribe to `charge.dispute.created` and `charge.dispute.closed`. Without them, chargebacks leave the credits in place.
+
+## Tables
+
+Migration `103_auto_topup.sql`:
+
+- `billing_auto_topup`: one row per person (settings, `stripe_customer_id`, `stripe_payment_method_id`, `card_brand`, `card_last4`, `status`, `last_attempt_at`, `last_error`, `month_spent_usd`, `month_key`).
+- `billing_auto_topup_attempts`: one row per charge (`payment_intent_id` unique, `amount_usd`, `status` of `pending`, `succeeded` or `failed`).
+- `customer_emails.kind` gains `auto_topup_failed`.
+
+Migration `106_billing_disputes.sql`:
+
+- `billing_disputes`: one row per Stripe dispute (`stripe_dispute_id`, `user_id` or null when unmatched, charge, PaymentIntent and customer ids, `amount_cents`, `held_usd`, `hold_transaction_id`, `release_transaction_id`, `status` of `open`, `unmatched`, `won`, `lost` or `closed`).
+
+## Plans
+
+| Method | Path | Notes |
+| --- | --- | --- |
+| GET | `/api/v1/billing/plans` | Plus, Super, Ultra. |
+| GET | `/api/v1/billing/subscription` | The person's current subscription, if any. |
+| POST | `/api/v1/billing/subscribe` | Subscription Checkout; reuses the person's Stripe customer. |
+| POST | `/api/v1/billing/portal` | Stripe billing portal for invoices, cards and cancellation. |
+
+The user guide is [Credits and auto top-up](/guides/credits-and-auto-top-up).

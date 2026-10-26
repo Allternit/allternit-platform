@@ -13,6 +13,8 @@ interface AssistantMessage {
   providerID: string
   modelID: string
   agent?: string
+  /** Open-lane handoff: this answer came from an open model after a refusal. */
+  handoff?: { from: string; to: string }
   cost: number
   tokens: {
     input: number
@@ -92,7 +94,8 @@ export function formatAssistantHeader(msg: AssistantMessage, includeMetadata: bo
   const duration =
     msg.time?.completed && msg.time?.created ? ((msg.time.completed - msg.time.created) / 1000).toFixed(1) + "s" : ""
 
-  return `## Assistant (${Locale.titlecase(msg.agent ?? "Assistant")} · ${msg.modelID}${duration ? ` · ${duration}` : ""})\n\n`
+  const handoff = msg.handoff ? ` (handoff from ${msg.handoff.from})` : ""
+  return `## Assistant (${Locale.titlecase(msg.agent ?? "Assistant")} · ${msg.modelID}${handoff}${duration ? ` · ${duration}` : ""})\n\n`
 }
 
 export function formatPart(part: Part, options: TranscriptOptions): string {

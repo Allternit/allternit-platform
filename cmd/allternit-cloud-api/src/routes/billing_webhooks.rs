@@ -69,6 +69,20 @@
 //! the token is missing the deployment is misconfigured: the handler errors
 //! (Stripe retries, the operator sees the log) instead of silently crediting
 //! the wrong ledger.
+//!
+//! Chargebacks (`services::billing_disputes`, migration 106):
+//! `charge.dispute.created` resolves the person from the disputed
+//! PaymentIntent's metadata (`clerk_user_id`, written on pack and auto
+//! top-up intents; fetched from Stripe because a dispute object carries
+//! none), else from the charge's customer through `billing_subscriptions`,
+//! `user_billing_accounts` or `billing_auto_topup`. It holds the disputed
+//! amount (never more than was charged) as a `dispute_hold` ledger row keyed
+//! `stripe-{event_id}`, letting the balance go negative, turns auto top-up
+//! off (`last_error = "dispute"`) and alerts the team. A dispute with no
+//! matching person is recorded and acknowledged with 200.
+//! `charge.dispute.closed` with `won` (or `warning_closed` for an inquiry)
+//! gives the hold back once as `dispute_release`; `lost` keeps it; other
+//! statuses are ignored.
 
 use axum::{
     body::Bytes,
@@ -128,6 +142,55 @@ enum MappedStripeEvent {
         event_id: String,
         invoice_id: String,
         subscription_id: String,
+    },
+    /// Auto top-up charge settled (`payment_intent.succeeded` with
+    /// `metadata.kind = auto_topup`): grant into the cloud wallet and close
+    /// the attempt.
+    AutoTopupSucceeded {
+        event_id: String,
+        user_id: String,
+        payment_intent_id: String,
+        attempt_id: Option<String>,
+        amount_usd: f64,
+    },
+    /// Auto top-up charge failed or needs the person
+    /// (`payment_intent.payment_failed` / `payment_intent.requires_action`):
+    /// turn auto top-up off and tell them.
+    AutoTopupFailed {
+        user_id: String,
+        payment_intent_id: String,
+        attempt_id: Option<String>,
+        amount_usd: f64,
+        reason: String,
+    },
+    /// Setup-mode Checkout for auto top-up completed: store the saved card.
+    AutoTopupCardSaved {
+        user_id: String,
+        setup_intent_id: String,
+        customer_id: Option<String>,
+    },
+    /// A chargeback opened (`charge.dispute.created`): hold the disputed
+    /// amount in the cloud wallet and turn auto top-up off. The person is
+    /// resolved in the handler (PaymentIntent metadata, else the customer
+    /// mirror tables), because a dispute object carries no metadata of ours.
+    DisputeOpened {
+        event_id: String,
+        dispute_id: String,
+        charge_id: Option<String>,
+        payment_intent_id: Option<String>,
+        amount_cents: i64,
+        currency: Option<String>,
+        reason: Option<String>,
+        stripe_status: Option<String>,
+        /// The PaymentIntent or Charge when the event carries it expanded.
+        payment: Option<crate::services::billing_disputes::DisputedPayment>,
+    },
+    /// A chargeback closed (`charge.dispute.closed`) with a status we act on.
+    DisputeClosed {
+        event_id: String,
+        dispute_id: String,
+        stripe_status: String,
+        outcome: crate::services::billing_disputes::DisputeOutcome,
     },
     /// Any other event type (or a non-billable subscription status).
     Ignored(String),
@@ -214,7 +277,7 @@ async fn stripe_webhook(
             organization_id,
         } => {
             let event_type = event["type"].as_str().unwrap_or_default().to_string();
-            grant_credits_and_respond(
+            let response = grant_credits_and_respond(
                 &state,
                 &event_type,
                 &event_id,
@@ -222,7 +285,94 @@ async fn stripe_webhook(
                 organization_id.as_deref(),
                 amount_usd,
             )
+            .await;
+            // A pack bought with setup_future_usage saved its card: keep it
+            // for auto top-up (best effort, in the background).
+            if response.status().is_success() && event_type.starts_with("checkout.session.") {
+                if let Some(payment_intent_id) = object_id(&event["data"]["object"]["payment_intent"]) {
+                    crate::services::auto_topup::spawn_capture_from_payment_intent(
+                        state.db.clone(),
+                        user_id.clone(),
+                        payment_intent_id,
+                    );
+                }
+            }
+            response
+        }
+        MappedStripeEvent::AutoTopupSucceeded {
+            event_id,
+            user_id,
+            payment_intent_id,
+            attempt_id,
+            amount_usd,
+        } => {
+            auto_topup_succeeded_and_respond(
+                &state,
+                &event_id,
+                &user_id,
+                &payment_intent_id,
+                attempt_id.as_deref(),
+                amount_usd,
+            )
             .await
+        }
+        MappedStripeEvent::AutoTopupFailed {
+            user_id,
+            payment_intent_id,
+            attempt_id,
+            amount_usd,
+            reason,
+        } => {
+            match crate::services::auto_topup::record_failure(
+                &state.db,
+                &user_id,
+                attempt_id.as_deref(),
+                Some(&payment_intent_id),
+                amount_usd,
+                &reason,
+            )
+            .await
+            {
+                Ok(()) => Json(json!({
+                    "received": true,
+                    "userId": user_id,
+                    "paymentIntentId": payment_intent_id,
+                    "autoTopup": "failed",
+                }))
+                .into_response(),
+                Err(error) => error.into_response(),
+            }
+        }
+        MappedStripeEvent::AutoTopupCardSaved {
+            user_id,
+            setup_intent_id,
+            customer_id,
+        } => {
+            let Ok(secret_key) = std::env::var("STRIPE_SECRET_KEY") else {
+                // Stripe retries; the operator sees the 503.
+                return super::billing_checkout::billing_not_configured_response();
+            };
+            let stripe = super::billing_checkout::ReqwestStripeCheckout::new();
+            match crate::services::auto_topup::store_setup_payment_method(
+                &state.db,
+                &stripe,
+                &secret_key,
+                &user_id,
+                &setup_intent_id,
+                customer_id.as_deref(),
+            )
+            .await
+            {
+                Ok(card) => Json(json!({
+                    "received": true,
+                    "userId": user_id,
+                    "autoTopup": "card_saved",
+                    "brand": card.brand,
+                    "last4": card.last4,
+                }))
+                .into_response(),
+                Err(error) => error.into_response(),
+            }
         }
         MappedStripeEvent::GrantSubscriptionCredits {
             event_id,
@@ -232,7 +382,323 @@ async fn stripe_webhook(
             grant_subscription_credits_and_respond(&state, &event_id, &invoice_id, &subscription_id)
                 .await
         }
+        MappedStripeEvent::DisputeOpened {
+            event_id,
+            dispute_id,
+            charge_id,
+            payment_intent_id,
+            amount_cents,
+            currency,
+            reason,
+            stripe_status,
+            payment,
+        } => {
+            dispute_opened_and_respond(
+                &state,
+                DisputeOpenedEvent {
+                    event_id,
+                    dispute_id,
+                    charge_id,
+                    payment_intent_id,
+                    amount_cents,
+                    currency,
+                    reason,
+                    stripe_status,
+                    payment,
+                },
+            )
+            .await
+        }
+        MappedStripeEvent::DisputeClosed {
+            event_id,
+            dispute_id,
+            stripe_status,
+            outcome,
+        } => dispute_closed_and_respond(&state, &event_id, &dispute_id, &stripe_status, outcome).await,
     }
+}
+
+/// The fields of a `charge.dispute.created` event the handler needs.
+struct DisputeOpenedEvent {
+    event_id: String,
+    dispute_id: String,
+    charge_id: Option<String>,
+    payment_intent_id: Option<String>,
+    amount_cents: i64,
+    currency: Option<String>,
+    reason: Option<String>,
+    stripe_status: Option<String>,
+    payment: Option<crate::services::billing_disputes::DisputedPayment>,
+}
+
+/// Whether `webhook_events` already holds this event (a Stripe retry).
+async fn webhook_event_seen(db: &PgPool, event_id: &str) -> Result<Option<String>, ApiError> {
+    sqlx::query_scalar("SELECT target FROM webhook_events WHERE id = $1")
+        .bind(event_id)
+        .fetch_optional(db)
+        .await
+        .map_err(ApiError::DatabaseError)
+}
+
+async fn record_webhook_event(db: &PgPool, event_id: &str, event_type: &str, target: &str) -> Result<(), ApiError> {
+    sqlx::query("INSERT INTO webhook_events (id, event_type, target) VALUES ($1, $2, $3) ON CONFLICT (id) DO NOTHING")
+        .bind(event_id)
+        .bind(event_type)
+        .bind(target)
+        .execute(db)
+        .await
+        .map_err(ApiError::DatabaseError)?;
+    Ok(())
+}
+
+/// Read the disputed payment from Stripe: the PaymentIntent when the dispute
+/// names one (pack and auto top-up intents carry `clerk_user_id`), else the
+/// Charge.
+async fn fetch_disputed_payment(
+    payment_intent_id: Option<&str>,
+    charge_id: Option<&str>,
+) -> Result<Option<crate::services::billing_disputes::DisputedPayment>, ApiError> {
+    use super::billing_checkout::StripeCheckout;
+    let path = match (payment_intent_id, charge_id) {
+        (Some(intent), _) => format!("/v1/payment_intents/{intent}"),
+        (None, Some(charge)) => format!("/v1/charges/{charge}"),
+        (None, None) => return Ok(None),
+    };
+    let secret_key = std::env::var("STRIPE_SECRET_KEY").map_err(|_| {
+        ApiError::ServiceUnavailable("STRIPE_SECRET_KEY is not set; cannot read the disputed payment.".to_string())
+    })?;
+    let object = super::billing_checkout::ReqwestStripeCheckout::new()
+        .get_object(&secret_key, &path, &[])
+        .await?;
+    Ok(crate::services::billing_disputes::DisputedPayment::from_object(&object))
+}
+
+/// `charge.dispute.created`: find the person, hold the disputed amount (the
+/// wallet may go negative), turn auto top-up off and alert the team. A
+/// dispute that cannot be traced to a person is recorded and acknowledged
+/// with 200 so Stripe stops retrying. Stripe or database errors return a
+/// non-2xx so Stripe retries (the hold is idempotent per dispute and per
+/// `stripe-{event_id}`).
+async fn dispute_opened_and_respond(state: &ApiState, dispute: DisputeOpenedEvent) -> Response {
+    use crate::services::billing_disputes;
+    const EVENT_TYPE: &str = "charge.dispute.created";
+    match webhook_event_seen(&state.db, &dispute.event_id).await {
+        Ok(Some(target)) => {
+            return Json(json!({
+                "received": true,
+                "eventId": dispute.event_id,
+                "disputeId": dispute.dispute_id,
+                "target": target,
+                "idempotentReplay": true,
+            }))
+            .into_response()
+        }
+        Ok(None) => {}
+        Err(error) => return error.into_response(),
+    }
+
+    // The dispute object never carries our metadata: read the payment unless
+    // the event already expanded it with a user on it.
+    let mut payment = dispute.payment.clone();
+    if payment.as_ref().and_then(|payment| payment.user_id.as_ref()).is_none() {
+        match fetch_disputed_payment(dispute.payment_intent_id.as_deref(), dispute.charge_id.as_deref()).await {
+            Ok(Some(fetched)) => payment = Some(fetched),
+            Ok(None) => {}
+            Err(error) => {
+                tracing::error!(
+                    "REVENUE-CRITICAL: could not read disputed payment for dispute {} (event {}): {}",
+                    dispute.dispute_id,
+                    dispute.event_id,
+                    error
+                );
+                return error.into_response();
+            }
+        }
+    }
+    let payment = payment.unwrap_or_default();
+    let mut user_id = payment.user_id.clone();
+    if user_id.is_none() {
+        if let Some(customer_id) = payment.customer_id.as_deref() {
+            match billing_disputes::user_for_customer(&state.db, customer_id).await {
+                Ok(found) => user_id = found,
+                Err(error) => return error.into_response(),
+            }
+        }
+    }
+
+    let hold_usd = billing_disputes::hold_amount_usd(dispute.amount_cents, payment.charged_cents);
+    let opened = billing_disputes::OpenedDispute {
+        event_id: dispute.event_id.clone(),
+        dispute_id: dispute.dispute_id.clone(),
+        user_id: user_id.clone(),
+        charge_id: dispute.charge_id.clone(),
+        payment_intent_id: dispute.payment_intent_id.clone(),
+        customer_id: payment.customer_id.clone(),
+        amount_cents: dispute.amount_cents,
+        currency: dispute.currency.clone(),
+        reason: dispute.reason.clone(),
+        stripe_status: dispute.stripe_status.clone(),
+        hold_usd,
+    };
+    let outcome = match billing_disputes::open(&state.db, &opened).await {
+        Ok(outcome) => outcome,
+        Err(error) => return error.into_response(),
+    };
+    let target = if user_id.is_some() { "dispute_hold" } else { "dispute_unmatched" };
+    if let Err(error) = record_webhook_event(&state.db, &dispute.event_id, EVENT_TYPE, target).await {
+        return error.into_response();
+    }
+
+    if outcome.fresh {
+        let amount = format!(
+            "{:.2} {}",
+            dispute.amount_cents as f64 / 100.0,
+            dispute.currency.as_deref().unwrap_or("usd").to_uppercase()
+        );
+        let who = user_id.as_deref().unwrap_or("UNKNOWN (no matching user; look it up in Stripe)");
+        let mut body = format!(
+            "A charge was disputed in Stripe.\n\nDispute: {}\nCharge: {}\nPaymentIntent: {}\nCustomer: {}\nUser: {}\nAmount: {}\nReason: {}\nKind: {}\n\nCredits held: ${:.2}. Wallet balance now: {}.\nAuto top-up is off for this user.\nRespond in the Stripe dashboard before the evidence deadline.",
+            dispute.dispute_id,
+            dispute.charge_id.as_deref().unwrap_or("-"),
+            dispute.payment_intent_id.as_deref().unwrap_or("-"),
+            payment.customer_id.as_deref().unwrap_or("-"),
+            who,
+            amount,
+            dispute.reason.as_deref().unwrap_or("-"),
+            payment.kind.as_deref().unwrap_or("-"),
+            outcome.held_usd,
+            outcome
+                .balance_usd
+                .map(|balance| format!("${balance:.2}"))
+                .unwrap_or_else(|| "-".to_string()),
+        );
+        if let Some(org) = payment.organization_id.as_deref() {
+            body.push_str(&format!(
+                "\n\nThis pack named organization {org}: if its credits went to that org's fabric ledger, take them back there by hand (the hold above is on the user's cloud wallet)."
+            ));
+        }
+        crate::services::ops_alert::send_once(
+            &format!("dispute:{}", dispute.dispute_id),
+            format!("Chargeback opened: {amount} ({who})"),
+            body,
+        );
+        crate::services::audit::write_audit_log(
+            &state.db,
+            crate::services::audit::AuditEvent {
+                action: "billing.dispute.opened".to_string(),
+                resource_type: "billing_dispute".to_string(),
+                resource_id: Some(dispute.dispute_id.clone()),
+                user_id: user_id.clone(),
+                user_email: None,
+                details: Some(json!({
+                    "eventId": dispute.event_id,
+                    "chargeId": dispute.charge_id,
+                    "paymentIntentId": dispute.payment_intent_id,
+                    "amountCents": dispute.amount_cents,
+                    "heldUsd": outcome.held_usd,
+                    "balanceUsd": outcome.balance_usd,
+                    "matched": user_id.is_some(),
+                })),
+                success: true,
+            },
+        )
+        .await;
+    }
+
+    let mut response = json!({
+        "received": true,
+        "eventId": dispute.event_id,
+        "disputeId": dispute.dispute_id,
+        "target": target,
+        "heldUsd": outcome.held_usd,
+        "idempotentReplay": !outcome.fresh,
+    });
+    if let Some(user_id) = user_id {
+        response["userId"] = json!(user_id);
+    }
+    if let Some(balance_usd) = outcome.balance_usd {
+        response["balanceUsd"] = json!(balance_usd);
+    }
+    Json(response).into_response()
+}
+
+/// `charge.dispute.closed`: `won` (or an inquiry closed as `warning_closed`)
+/// gives the held amount back once; `lost` keeps it removed.
+async fn dispute_closed_and_respond(
+    state: &ApiState,
+    event_id: &str,
+    dispute_id: &str,
+    stripe_status: &str,
+    outcome: crate::services::billing_disputes::DisputeOutcome,
+) -> Response {
+    use crate::services::billing_disputes::{self, CloseOutcome};
+    const EVENT_TYPE: &str = "charge.dispute.closed";
+    match webhook_event_seen(&state.db, event_id).await {
+        Ok(Some(target)) => {
+            return Json(json!({
+                "received": true,
+                "eventId": event_id,
+                "disputeId": dispute_id,
+                "target": target,
+                "idempotentReplay": true,
+            }))
+            .into_response()
+        }
+        Ok(None) => {}
+        Err(error) => return error.into_response(),
+    }
+    let closed = match billing_disputes::close(&state.db, dispute_id, outcome, stripe_status, event_id).await {
+        Ok(closed) => closed,
+        Err(error) => return error.into_response(),
+    };
+    let target = match &closed {
+        CloseOutcome::Released { .. } => "dispute_release",
+        CloseOutcome::KeptRemoved { .. } => "dispute_lost",
+        CloseOutcome::NothingToDo { .. } => "dispute_closed",
+        CloseOutcome::Unknown => "dispute_unknown",
+    };
+    if let Err(error) = record_webhook_event(&state.db, event_id, EVENT_TYPE, target).await {
+        return error.into_response();
+    }
+    let user_id = match &closed {
+        CloseOutcome::Released { user_id, .. } => Some(user_id.clone()),
+        CloseOutcome::KeptRemoved { user_id, .. } | CloseOutcome::NothingToDo { user_id } => user_id.clone(),
+        CloseOutcome::Unknown => None,
+    };
+    crate::services::audit::write_audit_log(
+        &state.db,
+        crate::services::audit::AuditEvent {
+            action: format!("billing.dispute.{stripe_status}"),
+            resource_type: "billing_dispute".to_string(),
+            resource_id: Some(dispute_id.to_string()),
+            user_id: user_id.clone(),
+            user_email: None,
+            details: Some(json!({ "eventId": event_id, "target": target })),
+            success: true,
+        },
+    )
+    .await;
+    crate::services::ops_alert::send_once(
+        &format!("dispute-closed:{dispute_id}"),
+        format!("Chargeback closed: {stripe_status} ({})", user_id.as_deref().unwrap_or("unknown user")),
+        format!("Dispute {dispute_id} closed with status {stripe_status}. Result: {target}."),
+    );
+    let mut response = json!({
+        "received": true,
+        "eventId": event_id,
+        "disputeId": dispute_id,
+        "status": stripe_status,
+        "target": target,
+        "idempotentReplay": false,
+    });
+    if let Some(user_id) = user_id {
+        response["userId"] = json!(user_id);
+    }
+    if let CloseOutcome::Released { amount_usd, balance_usd, .. } = closed {
+        response["releasedUsd"] = json!(amount_usd);
+        response["balanceUsd"] = json!(balance_usd);
+    }
+    Json(response).into_response()
 }
 
 async fn apply_and_respond(
@@ -537,6 +1003,180 @@ async fn grant_subscription_credits_and_respond(
         .into_response(),
         Err(error) => error.into_response(),
     }
+}
+
+/// Grant an auto top-up into the cloud wallet (same three-layer idempotency
+/// as packs: `webhook_events`, `stripe-{event_id}`, trust bookkeeping on a
+/// fresh grant), then close the attempt. Auto top-up refills the wallet the
+/// debits come from, so it never routes to the fabric ledger.
+async fn auto_topup_succeeded_and_respond(
+    state: &ApiState,
+    event_id: &str,
+    user_id: &str,
+    payment_intent_id: &str,
+    attempt_id: Option<&str>,
+    amount_usd: f64,
+) -> Response {
+    let outcome = match process_credit_purchase(
+        &state.db,
+        CreditGrantTarget::CloudWallet,
+        "payment_intent.succeeded",
+        event_id,
+        user_id,
+        amount_usd,
+    )
+    .await
+    {
+        Ok(outcome) => outcome,
+        Err(error) => return error.into_response(),
+    };
+    // Also on a replay: a crash between grant and bookkeeping heals here.
+    if let Err(error) =
+        crate::services::auto_topup::record_success(&state.db, user_id, attempt_id, payment_intent_id, amount_usd).await
+    {
+        return error.into_response();
+    }
+    if !outcome.idempotent_replay {
+        crate::services::audit::write_audit_log(
+            &state.db,
+            crate::services::audit::AuditEvent {
+                action: "billing.auto_topup.granted".to_string(),
+                resource_type: "credit_transaction".to_string(),
+                resource_id: Some(event_id.to_string()),
+                user_id: Some(user_id.to_string()),
+                user_email: None,
+                details: Some(json!({
+                    "creditsUsd": amount_usd,
+                    "balanceUsd": outcome.balance_usd,
+                    "paymentIntentId": payment_intent_id,
+                })),
+                success: true,
+            },
+        )
+        .await;
+        if let Err(error) = billing_subscriptions::record_paid_purchase(&state.db, user_id).await {
+            tracing::error!(
+                "REVENUE-CRITICAL: failed to record paid purchase for user {} (event {}): {}",
+                user_id,
+                event_id,
+                error
+            );
+        }
+    }
+    let mut response = json!({
+        "received": true,
+        "eventId": event_id,
+        "userId": user_id,
+        "creditsUsd": amount_usd,
+        "target": outcome.target,
+        "autoTopup": "succeeded",
+        "idempotentReplay": outcome.idempotent_replay,
+    });
+    if let Some(balance_usd) = outcome.balance_usd {
+        response["balanceUsd"] = json!(balance_usd);
+    }
+    Json(response).into_response()
+}
+
+/// A Stripe id whether the field is an id string or an expanded object.
+fn object_id(value: &Value) -> Option<String> {
+    value
+        .as_str()
+        .or_else(|| value["id"].as_str())
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .map(str::to_string)
+}
+
+/// Map a `payment_intent.*` event. Only auto top-up intents (metadata
+/// `kind = auto_topup`, written by `services::auto_topup`) are ours; pack
+/// purchases grant from their Checkout Session instead.
+fn map_payment_intent_event(event_type: &str, event_id: String, intent: &Value) -> Result<MappedStripeEvent, ApiError> {
+    let metadata = &intent["metadata"];
+    if metadata["kind"].as_str() != Some("auto_topup") {
+        return Ok(MappedStripeEvent::Ignored(event_type.to_string()));
+    }
+    let user_id = metadata["clerk_user_id"]
+        .as_str()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| ApiError::BadRequest("Auto top-up intent is missing clerk_user_id metadata.".to_string()))?
+        .to_string();
+    let payment_intent_id = object_id(&intent["id"])
+        .ok_or_else(|| ApiError::BadRequest("Payment intent is missing its id.".to_string()))?;
+    let credits_raw = metadata["allternit_credits_usd"].as_str().unwrap_or_default();
+    let amount_usd: f64 = credits_raw.trim().parse().map_err(|_| {
+        ApiError::BadRequest(format!("allternit_credits_usd metadata is not a number: {credits_raw:?}."))
+    })?;
+    if amount_usd <= 0.0 {
+        return Err(ApiError::BadRequest("allternit_credits_usd metadata must be positive.".to_string()));
+    }
+    let attempt_id = metadata["allternit_auto_topup_attempt"]
+        .as_str()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    if event_type == "payment_intent.succeeded" {
+        if event_id.is_empty() {
+            return Err(ApiError::BadRequest("Stripe event is missing its id.".to_string()));
+        }
+        return Ok(MappedStripeEvent::AutoTopupSucceeded {
+            event_id,
+            user_id,
+            payment_intent_id,
+            attempt_id,
+            amount_usd,
+        });
+    }
+    Ok(MappedStripeEvent::AutoTopupFailed {
+        user_id,
+        payment_intent_id,
+        attempt_id,
+        amount_usd,
+        reason: crate::services::auto_topup::failure_reason(intent, event_type),
+    })
+}
+
+/// Map a `charge.dispute.*` event. The dispute object names the charge and
+/// (usually) the PaymentIntent; the person is resolved by the handler.
+fn map_dispute_event(event_type: &str, event_id: String, dispute: &Value) -> Result<MappedStripeEvent, ApiError> {
+    if event_id.is_empty() {
+        return Err(ApiError::BadRequest("Stripe event is missing its id.".to_string()));
+    }
+    let dispute_id = object_id(&dispute["id"])
+        .ok_or_else(|| ApiError::BadRequest("Dispute is missing its id.".to_string()))?;
+    let stripe_status = dispute["status"].as_str().map(str::trim).filter(|status| !status.is_empty());
+    if event_type == "charge.dispute.closed" {
+        let status = stripe_status.unwrap_or_default();
+        let Some(outcome) = crate::services::billing_disputes::DisputeOutcome::from_stripe_status(status) else {
+            return Ok(MappedStripeEvent::Ignored(event_type.to_string()));
+        };
+        return Ok(MappedStripeEvent::DisputeClosed {
+            event_id,
+            dispute_id,
+            stripe_status: status.to_string(),
+            outcome,
+        });
+    }
+    let amount_cents = dispute["amount"]
+        .as_i64()
+        .ok_or_else(|| ApiError::BadRequest("Dispute is missing its amount.".to_string()))?
+        .max(0);
+    // Expanded PaymentIntent first (it carries our metadata), else an
+    // expanded Charge.
+    let payment = crate::services::billing_disputes::DisputedPayment::from_object(&dispute["payment_intent"])
+        .or_else(|| crate::services::billing_disputes::DisputedPayment::from_object(&dispute["charge"]));
+    Ok(MappedStripeEvent::DisputeOpened {
+        event_id,
+        dispute_id,
+        charge_id: object_id(&dispute["charge"]),
+        payment_intent_id: object_id(&dispute["payment_intent"]),
+        amount_cents,
+        currency: dispute["currency"].as_str().map(str::to_string),
+        reason: dispute["reason"].as_str().map(str::to_string),
+        stripe_status: stripe_status.map(str::to_string),
+        payment,
+    })
 }
 
 /// The outcome of processing one credit-purchase Stripe event.
@@ -857,6 +1497,27 @@ fn map_stripe_event(event: &Value) -> Result<MappedStripeEvent, ApiError> {
             // invoices are handled below.
             let object = &event["data"]["object"];
             let is_checkout_event = event_type != "invoice.paid";
+            // Auto top-up card setup (routes::billing_auto_topup).
+            if event_type == "checkout.session.completed"
+                && object["mode"].as_str() == Some("setup")
+                && object["metadata"]["kind"].as_str() == Some("auto_topup_setup")
+            {
+                let user_id = object["metadata"]["clerk_user_id"]
+                    .as_str()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty());
+                let setup_intent_id = object_id(&object["setup_intent"]);
+                let (Some(user_id), Some(setup_intent_id)) = (user_id, setup_intent_id) else {
+                    return Err(ApiError::BadRequest(
+                        "Auto top-up setup session is missing clerk_user_id or setup_intent.".to_string(),
+                    ));
+                };
+                return Ok(MappedStripeEvent::AutoTopupCardSaved {
+                    user_id: user_id.to_string(),
+                    setup_intent_id,
+                    customer_id: object_id(&object["customer"]),
+                });
+            }
             if is_checkout_event && object["mode"].as_str().unwrap_or_default() != "payment" {
                 return Ok(MappedStripeEvent::Ignored(event_type.to_string()));
             }
@@ -936,6 +1597,12 @@ fn map_stripe_event(event: &Value) -> Result<MappedStripeEvent, ApiError> {
                     .filter(|value| !value.is_empty())
                     .map(str::to_string),
             })
+        }
+        "payment_intent.succeeded" | "payment_intent.payment_failed" | "payment_intent.requires_action" => {
+            map_payment_intent_event(event_type, event_id, &event["data"]["object"])
+        }
+        "charge.dispute.created" | "charge.dispute.closed" => {
+            map_dispute_event(event_type, event_id, &event["data"]["object"])
         }
         other => Ok(MappedStripeEvent::Ignored(other.to_string())),
     }
@@ -2225,5 +2892,231 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(count, 2);
+    }
+
+    fn auto_topup_intent_event(event_type: &str, metadata: Value) -> Value {
+        json!({
+            "id": "evt_at_1",
+            "type": event_type,
+            "data": { "object": {
+                "id": "pi_1",
+                "object": "payment_intent",
+                "status": "succeeded",
+                "metadata": metadata,
+                "last_payment_error": { "code": "card_declined", "message": "Your card was declined." },
+            } }
+        })
+    }
+
+    fn auto_topup_metadata() -> Value {
+        json!({
+            "kind": "auto_topup",
+            "clerk_user_id": "user_1",
+            "allternit_credits_usd": "25.00",
+            "allternit_auto_topup_attempt": "att_1",
+        })
+    }
+
+    #[test]
+    fn auto_topup_succeeded_maps_to_a_wallet_grant() {
+        let mapped = map_stripe_event(&auto_topup_intent_event("payment_intent.succeeded", auto_topup_metadata())).unwrap();
+        assert_eq!(
+            mapped,
+            MappedStripeEvent::AutoTopupSucceeded {
+                event_id: "evt_at_1".to_string(),
+                user_id: "user_1".to_string(),
+                payment_intent_id: "pi_1".to_string(),
+                attempt_id: Some("att_1".to_string()),
+                amount_usd: 25.0,
+            }
+        );
+    }
+
+    #[test]
+    fn auto_topup_failures_map_to_turning_it_off() {
+        for event_type in ["payment_intent.payment_failed", "payment_intent.requires_action"] {
+            let mapped = map_stripe_event(&auto_topup_intent_event(event_type, auto_topup_metadata())).unwrap();
+            let MappedStripeEvent::AutoTopupFailed { user_id, payment_intent_id, attempt_id, amount_usd, reason } = mapped else {
+                panic!("{event_type} must map to AutoTopupFailed");
+            };
+            assert_eq!(user_id, "user_1");
+            assert_eq!(payment_intent_id, "pi_1");
+            assert_eq!(attempt_id.as_deref(), Some("att_1"));
+            assert_eq!(amount_usd, 25.0);
+            assert!(!reason.is_empty());
+        }
+    }
+
+    #[test]
+    fn payment_intents_that_are_not_auto_topups_are_ignored() {
+        // Pack purchases grant from their Checkout Session; their intents carry no kind.
+        let pack = auto_topup_intent_event("payment_intent.succeeded", json!({ "clerk_user_id": "user_1" }));
+        assert_eq!(
+            map_stripe_event(&pack).unwrap(),
+            MappedStripeEvent::Ignored("payment_intent.succeeded".to_string())
+        );
+    }
+
+    #[test]
+    fn auto_topup_intent_without_a_user_is_a_bad_request() {
+        let event = auto_topup_intent_event(
+            "payment_intent.succeeded",
+            json!({ "kind": "auto_topup", "allternit_credits_usd": "25.00" }),
+        );
+        assert!(map_stripe_event(&event).is_err());
+    }
+
+    #[test]
+    fn setup_checkout_for_auto_topup_maps_to_card_saved() {
+        let event = json!({
+            "id": "evt_setup",
+            "type": "checkout.session.completed",
+            "data": { "object": {
+                "mode": "setup",
+                "setup_intent": "seti_1",
+                "customer": "cus_1",
+                "metadata": { "kind": "auto_topup_setup", "clerk_user_id": "user_1" },
+            } }
+        });
+        assert_eq!(
+            map_stripe_event(&event).unwrap(),
+            MappedStripeEvent::AutoTopupCardSaved {
+                user_id: "user_1".to_string(),
+                setup_intent_id: "seti_1".to_string(),
+                customer_id: Some("cus_1".to_string()),
+            }
+        );
+        // Other setup sessions are not ours.
+        let mut other = event.clone();
+        other["data"]["object"]["metadata"] = json!({});
+        assert_eq!(
+            map_stripe_event(&other).unwrap(),
+            MappedStripeEvent::Ignored("checkout.session.completed".to_string())
+        );
+    }
+
+    fn dispute_event(event_type: &str, object: Value) -> Value {
+        json!({ "id": "evt_dp_1", "type": event_type, "data": { "object": object } })
+    }
+
+    #[test]
+    fn dispute_created_maps_ids_amount_and_leaves_the_user_to_the_handler() {
+        let event = dispute_event(
+            "charge.dispute.created",
+            json!({
+                "id": "dp_1",
+                "object": "dispute",
+                "amount": 2500,
+                "currency": "usd",
+                "charge": "ch_1",
+                "payment_intent": "pi_1",
+                "reason": "fraudulent",
+                "status": "needs_response",
+                "metadata": {},
+            }),
+        );
+        assert_eq!(
+            map_stripe_event(&event).unwrap(),
+            MappedStripeEvent::DisputeOpened {
+                event_id: "evt_dp_1".to_string(),
+                dispute_id: "dp_1".to_string(),
+                charge_id: Some("ch_1".to_string()),
+                payment_intent_id: Some("pi_1".to_string()),
+                amount_cents: 2500,
+                currency: Some("usd".to_string()),
+                reason: Some("fraudulent".to_string()),
+                stripe_status: Some("needs_response".to_string()),
+                payment: None,
+            }
+        );
+    }
+
+    #[test]
+    fn dispute_created_reads_an_expanded_payment_intent() {
+        let event = dispute_event(
+            "charge.dispute.created",
+            json!({
+                "id": "dp_2",
+                "amount": 5000,
+                "charge": "ch_2",
+                "payment_intent": {
+                    "id": "pi_2",
+                    "amount_received": 2500,
+                    "customer": "cus_2",
+                    "metadata": { "clerk_user_id": "user_2", "kind": "credit_pack", "allternit_credits_usd": "25.00" },
+                },
+                "status": "needs_response",
+            }),
+        );
+        let MappedStripeEvent::DisputeOpened { payment_intent_id, payment, amount_cents, .. } =
+            map_stripe_event(&event).unwrap()
+        else {
+            panic!("charge.dispute.created must map to DisputeOpened");
+        };
+        assert_eq!(payment_intent_id.as_deref(), Some("pi_2"));
+        assert_eq!(amount_cents, 5000);
+        let payment = payment.expect("expanded intent is parsed");
+        assert_eq!(payment.user_id.as_deref(), Some("user_2"));
+        assert_eq!(payment.customer_id.as_deref(), Some("cus_2"));
+        assert_eq!(payment.charged_cents, Some(2500));
+        assert_eq!(
+            crate::services::billing_disputes::hold_amount_usd(amount_cents, payment.charged_cents),
+            25.0,
+            "never more than was charged"
+        );
+    }
+
+    #[test]
+    fn dispute_created_without_an_id_or_amount_is_a_bad_request() {
+        let no_id = dispute_event("charge.dispute.created", json!({ "amount": 100, "charge": "ch_1" }));
+        assert!(map_stripe_event(&no_id).is_err());
+        let no_amount = dispute_event("charge.dispute.created", json!({ "id": "dp_1", "charge": "ch_1" }));
+        assert!(map_stripe_event(&no_amount).is_err());
+        let mut no_event_id = dispute_event("charge.dispute.created", json!({ "id": "dp_1", "amount": 100 }));
+        no_event_id["id"] = json!("");
+        assert!(map_stripe_event(&no_event_id).is_err());
+    }
+
+    #[test]
+    fn dispute_closed_maps_won_lost_and_closed_inquiries() {
+        use crate::services::billing_disputes::DisputeOutcome;
+        for (status, outcome) in [
+            ("won", DisputeOutcome::Won),
+            ("lost", DisputeOutcome::Lost),
+            ("warning_closed", DisputeOutcome::InquiryClosed),
+        ] {
+            let event = dispute_event("charge.dispute.closed", json!({ "id": "dp_1", "amount": 2500, "status": status }));
+            assert_eq!(
+                map_stripe_event(&event).unwrap(),
+                MappedStripeEvent::DisputeClosed {
+                    event_id: "evt_dp_1".to_string(),
+                    dispute_id: "dp_1".to_string(),
+                    stripe_status: status.to_string(),
+                    outcome,
+                },
+                "closed/{status}"
+            );
+        }
+    }
+
+    #[test]
+    fn dispute_closed_with_other_statuses_is_ignored() {
+        for status in ["under_review", "needs_response", "charge_refunded", ""] {
+            let event = dispute_event("charge.dispute.closed", json!({ "id": "dp_1", "amount": 2500, "status": status }));
+            assert_eq!(
+                map_stripe_event(&event).unwrap(),
+                MappedStripeEvent::Ignored("charge.dispute.closed".to_string()),
+                "closed/{status:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn other_dispute_events_are_ignored() {
+        let event = dispute_event("charge.dispute.updated", json!({ "id": "dp_1", "amount": 2500 }));
+        assert_eq!(
+            map_stripe_event(&event).unwrap(),
+            MappedStripeEvent::Ignored("charge.dispute.updated".to_string())
+        );
     }
 }

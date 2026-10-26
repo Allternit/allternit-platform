@@ -257,6 +257,10 @@ impl ModelRouter {
         let mut models = Vec::new();
 
         for entry in self.alias_map.entries() {
+            // Open-lane models are listed only while their upstream is set.
+            if catalog::is_open_lane(entry) && !self.providers.contains_key(&entry.provider) {
+                continue;
+            }
             let mut info = ModelInfo {
                 id: entry.alias.clone(),
                 object: "model".to_string(),
@@ -289,6 +293,12 @@ impl ModelRouter {
             info.extra.insert(
                 "context_length".to_string(),
                 serde_json::Value::Number(entry.context_length.into()),
+            );
+            info.extra.insert(
+                "lane".to_string(),
+                serde_json::Value::String(
+                    if catalog::is_open_lane(entry) { "open" } else { "standard" }.to_string(),
+                ),
             );
 
             // If we have a live provider, enrich with upstream metadata.
@@ -327,9 +337,60 @@ impl ModelRouter {
         self.alias_map.resolve(alias).map(|entry| entry.provider.as_str())
     }
 
+    /// Whether a model alias is an open-lane model (`lane: "open"`).
+    pub fn is_open_lane_alias(&self, alias: &str) -> bool {
+        self.alias_map.resolve(alias).is_some_and(catalog::is_open_lane)
+    }
+
+    /// Whether an upstream provider id is configured.
+    pub fn has_provider(&self, provider_id: &str) -> bool {
+        self.providers.contains_key(provider_id)
+    }
+
+    /// Dispatch a request to a named provider with `request.model` already
+    /// set to that provider's upstream id (no alias lookup). Used for
+    /// internal calls such as the open-lane moderation model.
+    pub async fn chat_completions_on(
+        &self,
+        provider_id: &str,
+        request: ChatCompletionRequest,
+    ) -> Result<Response<Body>, ModelRouterError> {
+        let provider = self
+            .providers
+            .get(provider_id)
+            .ok_or_else(|| ModelRouterError::ProviderNotConfigured {
+                provider: provider_id.to_string(),
+            })?;
+        provider.chat_completions(request).await
+    }
+
     /// The upstream model id a model alias routes to, without dispatching.
     pub fn upstream_for_alias(&self, alias: &str) -> Option<&str> {
         self.alias_map.resolve(alias).map(|entry| entry.upstream_id.as_str())
+    }
+
+    /// Upstream funding: when the alias's provider is under its funding floor
+    /// (`services::upstream_funding::provider_below_floor`) and another
+    /// configured provider that is not under its floor serves the same model,
+    /// the alias to use instead. None means keep the requested alias (a
+    /// model only one provider serves is never refused for funding).
+    pub fn funded_alternative(&self, alias: &str) -> Option<String> {
+        use crate::services::upstream_funding::{provider_below_floor, same_model_key};
+        let entry = self.alias_map.resolve(alias)?;
+        if !provider_below_floor(&entry.provider) {
+            return None;
+        }
+        let key = same_model_key(&entry.upstream_id);
+        self.alias_map
+            .entries()
+            .iter()
+            .find(|other| {
+                other.provider != entry.provider
+                    && self.providers.contains_key(&other.provider)
+                    && !provider_below_floor(&other.provider)
+                    && same_model_key(&other.upstream_id) == key
+            })
+            .map(|other| other.alias.clone())
     }
 
     /// Dispatch a chat completion request to the provider responsible for the

@@ -1,0 +1,72 @@
+---
+title: 'Open models'
+description: 'Open-weight models with far fewer refusals, the hard lines that stay blocked, and handing refused requests to an open model.'
+---
+
+## What the open lane is
+
+Frontier models (Claude, GPT, Gemini and others) turn down many requests that are legal and reasonable: mature fiction, frank medical or drug questions, security research, dark humor, blunt critique. The open lane gives you open-weight models that answer far fewer of those with a refusal.
+
+Open models are listed in the model picker with an **Open** badge. Today there are two:
+
+| Model | Based on |
+|-------|----------|
+| `deepseek-v4.1-flash-open` | DeepSeek V4.1 Flash |
+| `glm-5.3-flash-open` | GLM 5.3 Flash |
+
+The stock versions, `deepseek-v4.1-flash` and `glm-5.3-flash`, are in the normal model list too and behave like any other model.
+
+Open models are a paid feature: they use your credits or plan, at the price shown in the model list. They appear only while Allternit has an open-model server running; when it is down they are hidden from the picker.
+
+<Note>
+Far fewer refusals is not the same as no limits. The open lane still refuses the hard lines below, and the models themselves can still decline a request.
+</Note>
+
+## What stays blocked
+
+Three kinds of request are blocked on every open-lane request and every handoff, whatever the wording, framing or role-play:
+
+- **Sexual content involving minors.** Anything sexual about anyone under 18, including fiction and "aged-up" framing.
+- **Mass-casualty weapons.** Real help making, getting, improving or spreading biological, chemical, nuclear or radiological weapons. History, news, policy and ordinary science are fine.
+- **Sexual content about real people.** Sexual or nude content of a real, identifiable person, including deepfakes. Fictional characters are fine.
+
+A blocked request gets the error `content_policy_hard_line` and nothing is generated. Allternit records only the category and the time, never your prompt. If the safety check itself cannot run, open models stop answering until it is back (they fail closed) and you see `open_lane_moderation_unavailable`.
+
+Everything else Allternit's terms allow stays open. You are responsible for how you use the answers.
+
+## Turn it on
+
+Open **Settings > Open models**:
+
+1. Read the acceptable use policy and tick **I accept the acceptable use policy**.
+2. Tick **I am 18 or older**.
+3. Optional: turn on **Hand off refused requests to an open model**.
+
+Until both boxes are ticked, open models answer with `open_lane_terms_required`. Unticking either box turns handoff off again.
+
+The same section is in Settings on Allternit Desktop, on ai.allternit.com (computer and phone layouts) and in the m.allternit.com app. Your choice follows your account.
+
+## Handoff
+
+With handoff on, when the model you picked refuses, Allternit sends the same request to an open model (DeepSeek V4.1 Flash Open by default) and shows its answer instead. It does not reword your request or try to trick the first model; it simply asks a different model.
+
+- Handoff happens only after the hard-line check passes. A request that hits a hard line keeps the first model's refusal.
+- The message shows **Answered by** the open model's name, marked **(handoff)**, so you always know which model wrote it.
+- Each model is billed for its own tokens: the refusal from the first model and the answer from the open model.
+- When handoff is on, a streamed answer starts after its first 400 characters (or sooner if it ends), so a refusal can be swapped before you see it. With handoff off, answers stream as usual.
+- Handoff never triggers on answers that call tools, and never chains from one open model to another.
+
+### Your own subscriptions and keys
+
+Handoff also covers brains that do not run on Allternit Cloud, such as your own Claude, ChatGPT or Kimi subscription or your own API key. When one of them refuses in a chat, Allternit runs the turn once more on the open model through Allternit Cloud.
+
+- The refusal stays visible, and the open model's answer follows it with the **Answered by … (handoff)** note. Allternit cannot hold back another company's stream, so you see both.
+- The open model does not see the refusal, only your conversation.
+- The open model's answer uses your Allternit Cloud credits. Your own subscription is billed nothing extra.
+- This needs an Allternit Cloud sign-in. It happens at most once per turn, and it does not run in sub-agents.
+
+## Related
+
+- [Open lane API](/api/open-lane): settings routes, handoff fields and error codes.
+- [Chat Completions](/api/chat-completions)
+- [Models](/api/models)

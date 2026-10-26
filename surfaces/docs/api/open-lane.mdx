@@ -1,0 +1,145 @@
+---
+title: 'Open lane and refusal handoff'
+description: 'Open-weight models, the hard-line filter, the open lane settings routes, and the handoff header and response fields on the Cloud API.'
+---
+
+## Overview
+
+The Cloud API (`https://api.allternit.com`, `cmd/allternit-cloud-api`) serves open-lane models next to the normal catalog. They answer far fewer requests with a refusal, and every request to them passes a hard-line filter first. Users can also opt in to **handoff**: a refused completion from any other model is re-run on an open model.
+
+User guide: [Open models](/guides/open-models).
+
+## Models
+
+Open-lane models carry `"lane": "open"` in `GET /v1/models` (every other model has `"lane": "standard"`):
+
+| Model id | Served by |
+|----------|-----------|
+| `deepseek-v4.1-flash-open` | the `open_lane` provider |
+| `glm-5.3-flash-open` | the `open_lane` provider |
+
+They are listed only while the `open_lane` provider is configured (see [Environment](#environment)).
+
+## Gate
+
+A chat completion whose `model` is an open-lane model is checked in this order:
+
+| Check | Failure |
+|-------|---------|
+| Acceptable use accepted and age (18+) confirmed | 403 `open_lane_terms_required` |
+| Caller has a credits row (paid use) | 402 `open_lane_requires_credits` |
+| Hard-line filter allows the request | 400 `content_policy_hard_line` with `error.category` |
+| The moderation model answered | 503 `open_lane_moderation_unavailable` (fail closed) |
+
+Errors use the OpenAI shape:
+
+```json
+{
+  "error": {
+    "message": "This request falls under a hard line no Allternit model serves.",
+    "type": "invalid_request_error",
+    "code": "content_policy_hard_line",
+    "category": "mass_casualty_weapons"
+  }
+}
+```
+
+### Hard-line filter
+
+Categories: `csam`, `mass_casualty_weapons`, `real_person_sexual`. The filter (`services/hard_line.rs`) runs a keyword pre-check for unmistakable phrasing, then a moderation model through an existing upstream (`OPEN_LANE_MODERATION_MODEL`). It reads the system and user messages (latest 8,000 characters). A block writes one `open_lane_blocks` row with the category only; prompt text is never stored.
+
+## Settings routes
+
+Clerk session or an API token with the `account` scope.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/v1/open-lane` | The caller's open-lane settings. |
+| PUT | `/api/v1/open-lane` | Accept or withdraw the AUP, confirm or withdraw age, turn handoff on or off. |
+
+PUT body (every field optional):
+
+```json
+{ "accept_aup": true, "confirm_age": true, "handoff_enabled": true }
+```
+
+Turning handoff on before both gates are passed is a 400. Withdrawing either gate turns handoff off.
+
+Response (both routes):
+
+```json
+{
+  "available": true,
+  "models": ["deepseek-v4.1-flash-open", "glm-5.3-flash-open"],
+  "aup_version": "2026-10-25",
+  "aup_accepted_at": "2026-10-25T18:02:11Z",
+  "age_confirmed_at": "2026-10-25T18:02:11Z",
+  "terms_accepted": true,
+  "handoff_enabled": true,
+  "default_handoff_model": "deepseek-v4.1-flash-open"
+}
+```
+
+## Handoff
+
+Handoff runs when all of these hold: the user turned it on (with both gates passed), the user has credits, the requested model is not an open-lane model, and the open-lane provider is configured.
+
+A completion counts as refused when the provider signals it (`finish_reason` `content_filter`, a non-empty `refusal` field, or a content-policy error instead of a completion) or when a refusal phrase opens a short answer (`services/refusal.rs`). Answers that call tools are never refused. The refused request then passes the hard-line filter and is sent unchanged to the open model. If the filter blocks it, the moderation model is down, or the open model fails, the original refusal is returned.
+
+### Request field
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `allternit.handoff_model` | string | Open-lane model to hand a refusal to. Default `deepseek-v4.1-flash-open`. Ignored if it is not an open-lane model. |
+| `allternit.handoff` | boolean | `false` turns handoff off for this request. |
+
+The `allternit` object is removed before the request reaches any upstream.
+
+### Response header and field
+
+| Where | Name | Value |
+|-------|------|-------|
+| Header | `x-allternit-handoff` | `from->to`, for example `gpt-4o->deepseek-v4.1-flash-open` |
+| Body (non-streaming) | `allternit.handoff` | `{ "from": "gpt-4o", "to": "deepseek-v4.1-flash-open", "reason": "refusal" }` |
+| Stream | first event | a `chat.completion.chunk` with `"choices": []` and the same `allternit.handoff` object |
+
+The rest of a handed-off response comes from the open model, so its `model` field names the open model.
+
+### Streaming
+
+With handoff on, the gateway holds a stream until the answer has 400 characters, calls a tool, finishes, or 20 seconds pass, and only then flushes. If the held part reads as a refusal, the frontier stream is dropped and the open model's stream is sent in its place. With handoff off, streams are not held.
+
+### Billing
+
+Each model is billed for its own tokens, as two `inference_usage` rows. The frontier row uses the provider's usage report when the refusal finished inside the hold; otherwise it is the marked estimate (prompt and streamed characters divided by 4). Moderation calls are not billed to the user.
+
+### Handoff in the chat app
+
+The chat app reaches models through gizzi (`cmd/gizzi-code`), and gizzi reaches Allternit Cloud models through this API.
+
+- **Allternit Cloud models.** gizzi strips the handoff chunk from the stream before the AI SDK sees it, or reads the `x-allternit-handoff` header on a non-streamed reply. It then sets `handoff: { from, to }` on the assistant message. The code is in `src/runtime/providers/handoff.ts` and `retry-hint.ts`.
+- **Other brains** (CLI subscriptions, your own API keys). When a finished step has no tool calls and reads as a refusal, gizzi re-runs the turn once on `allternit/<default_handoff_model>`. It uses the same rules as `services/refusal.rs`, and it checks `GET /api/v1/open-lane` first: `available`, `terms_accepted` and `handoff_enabled` must all be true. The refused message is left out of the open model's context. The new assistant message carries `handoff`. Sub-agent sessions are skipped. `GIZZI_DISABLE_OPEN_LANE_HANDOFF=1` turns this off on a runtime.
+- **The bridge** (allternit-api `v1_routes.rs`) sends `{ "type": "handoff", "messageId", "handoff": { from, to } }` once per handed-off message. History responses carry the same object as `metadata.telemetry.handoff`, so the note is still there after a reload.
+
+## Tables
+
+Migration `105_open_lane.sql`:
+
+- `user_open_lane`: `user_id` (key), `aup_accepted_at`, `age_confirmed_at`, `handoff_enabled` (default false), `updated_at`.
+- `open_lane_blocks`: `id`, `user_id`, `category`, `created_at`.
+
+## Environment
+
+| Variable | Purpose |
+|----------|---------|
+| `OPEN_LANE_BASE_URL` | OpenAI-compatible base URL serving the open-lane models (for example a vLLM server). Required with the key; unset hides the models. |
+| `OPEN_LANE_API_KEY` | Bearer key for that server. |
+| `OPEN_LANE_MODEL_MAP` | Optional `alias=upstream-id` pairs, comma separated, when the server names the models differently. Default: the alias itself. |
+| `OPEN_LANE_MODERATION_MODEL` | `provider:upstream-id` of the moderation model, through a configured provider. Default `openrouter:openai/gpt-oss-safeguard-20b`. Llama Guard style answers are understood too. |
+
+## Related pages
+
+- [Open models](/guides/open-models)
+- [Chat Completions](/api/chat-completions)
+- [Models](/api/models)
+- [Cloud API](/api/cloud-api)

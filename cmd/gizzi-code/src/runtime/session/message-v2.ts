@@ -408,6 +408,12 @@ export namespace MessageV2 {
     structured: z.any().optional(),
     variant: z.string().optional(),
     finish: z.string().optional(),
+    /**
+     * Open-lane handoff: a refused turn answered by an open model instead
+     * (`from`/`to` are `provider/model` ids). Set by Allternit Cloud's
+     * handoff marker or by the prompt loop's own refusal handoff.
+     */
+    handoff: z.object({ from: z.string(), to: z.string() }).optional(),
   })
   export type Assistant = z.infer<typeof Assistant>
 

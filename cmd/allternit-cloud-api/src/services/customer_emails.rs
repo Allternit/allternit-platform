@@ -307,6 +307,40 @@ pub fn computer_ready_email(recipient: &Recipient, cpu_cores: i64, memory_mb: i6
     Email { subject: "Your cloud computer is ready".to_string(), body, html }
 }
 
+/// Auto top-up could not charge the saved card; it is now off.
+pub fn auto_topup_failed_email(recipient: &Recipient, amount_usd: f64, reason: &str) -> Email {
+    let amount = format_usd(amount_usd);
+    let body = format!(
+        "{}\n\n\
+         We tried to add ${amount} in Allternit Cloud credits with auto top-up, and the payment did not go through.\n\n\
+         Reason: {reason}\n\n\
+         Auto top-up is now off, so we won't try again. Your card was not charged for this attempt. To turn it back on, check your card and open Settings → Billing → Auto top-up.\n\n\
+         — Allternit\n",
+        greeting(recipient),
+    );
+    let html = html::layout(
+        &format!("Auto top-up couldn't add ${amount} in credits and is now off."),
+        &[
+            html::heading("Auto top-up failed"),
+            html::paragraph(&greeting(recipient)),
+            html::paragraph(&format!(
+                "We tried to add ${amount} in Allternit Cloud credits with auto top-up, and the payment did not go through."
+            )),
+            html::facts_card(
+                "Auto top-up",
+                &[
+                    ("Amount", format!("${amount}")),
+                    ("Reason", reason.to_string()),
+                    ("Status", "Off".to_string()),
+                ],
+            ),
+            html::paragraph("Auto top-up is now off, so we won't try again. Your card was not charged for this attempt. To turn it back on, check your card and open Settings → Billing → Auto top-up."),
+            html::button("Open billing", "https://ai.allternit.com/settings/billing"),
+        ],
+    );
+    Email { subject: "Auto top-up failed and is now off".to_string(), body, html }
+}
+
 fn format_usd(value: f64) -> String {
     if (value - value.round()).abs() < 0.005 {
         format!("{}", value.round() as i64)

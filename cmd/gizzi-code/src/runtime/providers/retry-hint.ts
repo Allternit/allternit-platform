@@ -23,6 +23,7 @@
  */
 
 import { Log } from "@/shared/util/log"
+import { frameHandoff, headerHandoff, HANDOFF_HEADER, recordHandoff, type Handoff } from "./handoff"
 
 const log = Log.create({ service: "provider.retry-hint" })
 
@@ -99,10 +100,29 @@ function frameHint(frame: string): RetryHint | null {
  * terminators and CRLF style) are forwarded byte-identical, flushed as soon as
  * a frame boundary arrives so streaming latency is unaffected.
  */
-export function createRetryHintStream(onHint: (hint: RetryHint) => void): TransformStream<Uint8Array, Uint8Array> {
+export function createRetryHintStream(
+  onHint: (hint: RetryHint) => void,
+  // Allternit Cloud's open-lane handoff chunk (see handoff.ts) is stripped
+  // and reported the same way.
+  onHandoff?: (handoff: Handoff) => void,
+): TransformStream<Uint8Array, Uint8Array> {
   const decoder = new TextDecoder()
   const encoder = new TextEncoder()
   let pending = ""
+  // A hint or handoff frame is consumed; true when it was.
+  const consumed = (frame: string) => {
+    const hint = frameHint(frame)
+    if (hint) {
+      onHint(hint)
+      return true
+    }
+    const handoff = onHandoff ? frameHandoff(frame) : null
+    if (handoff) {
+      onHandoff!(handoff)
+      return true
+    }
+    return false
+  }
   const flushFrames = (controller: TransformStreamDefaultController<Uint8Array>, final: boolean) => {
     let boundary = pending.search(/\r?\n\r?\n/)
     while (boundary !== -1) {
@@ -110,18 +130,11 @@ export function createRetryHintStream(onHint: (hint: RetryHint) => void): Transf
       const rest = pending.slice(boundary)
       const terminator = rest.match(/^\r?\n\r?\n/)![0]
       pending = rest.slice(terminator.length)
-      const hint = frameHint(frame)
-      if (hint) {
-        onHint(hint)
-      } else {
-        controller.enqueue(encoder.encode(frame + terminator))
-      }
+      if (!consumed(frame)) controller.enqueue(encoder.encode(frame + terminator))
       boundary = pending.search(/\r?\n\r?\n/)
     }
     if (final && pending.length > 0) {
-      const hint = frameHint(pending)
-      if (hint) onHint(hint)
-      else controller.enqueue(encoder.encode(pending))
+      if (!consumed(pending)) controller.enqueue(encoder.encode(pending))
       pending = ""
     }
   }
@@ -159,14 +172,21 @@ export function tapRetryHint(args: RetryHintTapArgs): Response {
   if (!args.url.includes("/chat/completions")) return args.response
   if (!args.sessionID) return args.response
   if (!args.response.ok || !args.response.body) return args.response
+  const sessionID = args.sessionID
+  const onHandoff = (handoff: Handoff) => {
+    log.info("open-lane handoff", { sessionID, from: handoff.from, to: handoff.to })
+    recordHandoff(sessionID, handoff)
+  }
+  // A non-streamed reply names its handoff in a header.
+  const headed = headerHandoff(args.response.headers.get(HANDOFF_HEADER))
+  if (headed) onHandoff(headed)
   const contentType = args.response.headers.get("content-type") ?? ""
   if (!contentType.includes("text/event-stream")) return args.response
-  const sessionID = args.sessionID
   const tapped = args.response.body.pipeThrough(
     createRetryHintStream((hint) => {
       log.info("gateway retry hint", { sessionID, retryable: hint.retryable, reason: hint.reason })
       recordRetryHint(sessionID, hint)
-    }),
+    }, onHandoff),
   )
   return new Response(tapped, args.response)
 }

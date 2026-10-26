@@ -1,0 +1,63 @@
+---
+title: "Credits and auto top-up"
+description: "Buy Allternit Cloud credits, and let your balance refill itself from a saved card."
+---
+
+Allternit Cloud models and your cloud computer are paid from your **credit balance** (one credit = one US dollar). You add credits in **Settings → Billing** on Desktop, ai.allternit.com and the m.allternit.com app.
+
+## Ways to add credits
+
+- **Plans** (Plus, Super, Ultra) add a set amount of credits each month. Unused plan credits roll over up to the plan's limit.
+- **Credit packs** of $10, $25, $50 or $100 add credits once. Payment is by card or Link through Stripe Checkout.
+- **Auto top-up** buys a pack for you when your balance runs low.
+
+When you buy a credit pack, Stripe saves the card to your Allternit billing account so auto top-up can use it later. Auto top-up stays off until you turn it on.
+
+## Turn on auto top-up
+
+1. Open **Settings → Billing** and find the **Auto top-up** card under the credit packs.
+2. If the card says **Add a card**, select it. Stripe opens a page to save a card. No money is taken at this step. If you already bought a pack or have a plan, your saved card shows here instead (for example "Visa •• 4242").
+3. Choose:
+   - **When balance drops below**: the threshold, $5 or more.
+   - **Add**: the amount to buy each time, one of $10, $25, $50 or $100.
+   - **Monthly limit**: the most auto top-up can spend in one calendar month (UTC). The default is $200 and the most you can set is $5000.
+4. Switch **Auto top-up** on.
+
+New accounts can choose the larger amounts after their first payment has settled, the same rule that applies to the $50 and $100 packs.
+
+## How it works
+
+- After each charge to your balance (a model reply, cloud computer time), Allternit checks your balance. If it is under your threshold, it charges your saved card for your chosen amount.
+- The charge runs in the background. Your request is never slowed down or stopped by it.
+- Only one top-up runs at a time. The credits appear when Stripe confirms the payment, usually within seconds.
+- If a top-up would take you over your monthly limit, it does not run. The limit resets at the start of each month.
+- Each top-up shows on your Stripe receipts and in **Manage billing** like any other purchase.
+
+## When a top-up fails
+
+If your card is declined, has expired, or your bank asks you to confirm the payment (which can't happen while you are away), Allternit:
+
+- turns auto top-up **off**, so it does not try again,
+- shows the reason on the Auto top-up card,
+- sends you a notification and an email.
+
+Your card is not charged for a failed attempt. Fix the card (or add a new one with **Change card**), then switch auto top-up back on.
+
+## If a payment is disputed
+
+If a payment for credits is disputed with your bank (a chargeback), the credits from that payment are taken back out of your balance while the bank decides. Your balance can show below zero until then. Auto top-up is turned off and cannot be turned back on while the dispute is open, or after it is lost.
+
+- If the dispute is decided in Allternit's favor, the credits come back.
+- If the bank refunds the payment to you, the credits stay removed.
+
+Contact support if you think a payment was disputed by mistake.
+
+## Turn it off
+
+Switch **Auto top-up** off at any time. Your saved card stays on file for the next time you buy credits. To remove the card, use **Manage billing**.
+
+<Note>
+Auto top-up refills your personal Allternit Cloud balance. Credits moved to an organization ledger are not watched by auto top-up.
+</Note>
+
+For developers: the routes and webhook events are documented in [Cloud billing API](/api/cloud-billing).

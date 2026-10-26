@@ -301,7 +301,8 @@ pub trait CostService: Send + Sync {
 
     /// Deduct credits from a user's balance for an arbitrary billable usage
     /// reference. `transaction_id` = `ref_id`, so a replayed reference is a
-    /// no-op; the balance clamps at zero. Users without a `user_credits` row
+    /// no-op; the balance clamps at zero (a balance already below zero from a
+    /// chargeback hold is left as is). Users without a `user_credits` row
     /// (plan-cap enforcement) are a no-op success. Returns the balance.
     async fn deduct_credits_for_usage(
         &self,
@@ -1188,6 +1189,7 @@ impl CostService for CostServiceImpl {
 
         let new_balance = self.get_credit_balance(user_id).await?;
         info!("Deducted ${:.2} credits from user {}; new balance ${:.2}", amount_usd, user_id, new_balance);
+        super::auto_topup::spawn_check(self.db.clone(), user_id.to_string(), new_balance);
         Ok(new_balance)
     }
 
@@ -1229,10 +1231,13 @@ impl CostService for CostServiceImpl {
             return self.get_credit_balance(user_id).await;
         }
 
-        // Atomic clamp at zero: a balance never goes negative, and users
-        // without a credits row (plan-cap enforcement) are a no-op success.
-        sqlx::query(
-            "UPDATE user_credits SET balance_usd = GREATEST(0, balance_usd - $1) WHERE user_id = $2",
+        // Atomic clamp at zero: usage never drives a balance negative, and
+        // users without a credits row (plan-cap enforcement) are a no-op
+        // success. A balance that is already negative (a chargeback hold,
+        // services::billing_disputes) stays where it is: clamping it back
+        // to zero would cancel the hold.
+        let debited = sqlx::query(
+            "UPDATE user_credits SET balance_usd = GREATEST(LEAST(balance_usd, 0), balance_usd - $1) WHERE user_id = $2",
         )
         .bind(amount_usd)
         .bind(user_id)
@@ -1247,6 +1252,12 @@ impl CostService for CostServiceImpl {
             "Deducted ${:.4} credits from user {} for {} ({}); new balance ${:.4}",
             amount_usd, user_id, source, ref_id, new_balance
         );
+        // Auto top-up: inference and hosted-runtime debits both land here.
+        // Spawned, so the charge never blocks or fails this debit. Only a
+        // real wallet debit counts (plan-cap users have no credits row).
+        if debited.rows_affected() > 0 {
+            super::auto_topup::spawn_check(self.db.clone(), user_id.to_string(), new_balance);
+        }
         Ok(new_balance)
     }
 
