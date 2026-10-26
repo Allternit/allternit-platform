@@ -97,6 +97,11 @@ For OpenRouter, the balance comes from its API, so `balanceUsd` is only used whe
 | `ALLTERNIT_OPS_ALERT_URL`, `ALLTERNIT_OPS_ALERT_TOKEN` | Where alerts are sent (see `services/ops_alert.rs`). Unset means alerts are only logged. |
 | `ALLTERNIT_ADMIN_USER_IDS` | Who may use the admin routes. |
 
+## Stripe go-live (Eoj, by hand)
+
+1. Stripe dashboard, Developers, Webhooks, the `https://api.allternit.com/api/v1/webhooks/stripe` endpoint: add `payment_intent.succeeded`, `payment_intent.payment_failed`, `payment_intent.requires_action`, `charge.dispute.created` and `charge.dispute.closed`, keeping the events already there.
+2. Then set `AUTO_TOPUP_LIVE=1` on cloud-api. Until it is set, auto top-up charges no card (see [Cloud billing](/api/cloud-billing)).
+
 ## Provider setup checklist (Eoj, by hand)
 
 Do this once per provider. It moves money, so nothing here is automated.

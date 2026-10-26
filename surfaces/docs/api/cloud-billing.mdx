@@ -58,6 +58,10 @@ PUT body:
 
 Rules: `threshold_usd` at least 5, `amount_usd` one of the pack sizes, `monthly_cap_usd` at least the amount and at most 5000. Turning it on without a saved card answers `409 {"error":"auto_topup_no_card"}`. While a chargeback is open, or after one was lost, turning it on answers `409 {"error":"auto_topup_dispute"}`. New buyers get the same first-purchase limit as packs (`403`) until their first payment settles. The response is the GET shape. If the balance is already under the new threshold, a top-up starts right away.
 
+### Turning charges on
+
+Auto top-up charges nothing until `AUTO_TOPUP_LIVE=1` (or `true` / `on`) is set on cloud-api. Set it only after the live Stripe webhook endpoint sends the `payment_intent.*` events listed below; otherwise a successful charge would never grant its credits. While the switch is off, `GET /api/v1/billing/auto-topup` returns `configured: false` (the settings card shows auto top-up as unavailable), turning it on answers `503 billing_not_configured`, and debits start no check. Saving a card still works.
+
 ### The trigger
 
 After every wallet debit (`CostService::deduct_credits_for_usage`, used by inference settlement and hosted-runtime session billing) cloud-api spawns a check, so the request path never waits on Stripe. A charge starts when all of these hold:

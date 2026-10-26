@@ -181,6 +181,7 @@ async fn real_stripe_test_mode_money_loop() {
     let key = std::env::var("STRIPE_TEST_SECRET_KEY").expect("STRIPE_TEST_SECRET_KEY");
     assert!(key.starts_with("sk_test_"), "refusing to run with a non-test Stripe key");
     std::env::set_var("STRIPE_SECRET_KEY", &key);
+    std::env::set_var("AUTO_TOPUP_LIVE", "1");
     std::env::set_var("STRIPE_WEBHOOK_SECRET", WEBHOOK_SECRET);
     std::env::remove_var("ALLTERNIT_FABRIC_LEDGER_URL");
     std::env::remove_var("ALLTERNIT_INTERNAL_SERVICE_TOKEN");

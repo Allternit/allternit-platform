@@ -132,7 +132,7 @@ async fn get_auto_topup(State(state): State<Arc<ApiState>>, headers: HeaderMap) 
             }
         }
     }
-    Json(view(row.as_ref(), secret_key.is_some())).into_response()
+    Json(view(row.as_ref(), secret_key.is_some() && auto_topup::charges_live())).into_response()
 }
 
 async fn put_auto_topup(
@@ -153,7 +153,7 @@ async fn put_auto_topup(
         return error.into_response();
     }
     if settings.enabled {
-        if std::env::var("STRIPE_SECRET_KEY").is_err() {
+        if std::env::var("STRIPE_SECRET_KEY").is_err() || !auto_topup::charges_live() {
             return billing_not_configured_response();
         }
         let has_card = row.as_ref().map_or(false, |row| {

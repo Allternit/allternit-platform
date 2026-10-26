@@ -492,7 +492,21 @@ pub async fn store_setup_payment_method(
 
 /// After a wallet debit: start a top-up in the background when one is due.
 /// Never blocks the caller and never fails it.
+/// Whether auto top-up may charge cards. Off until `AUTO_TOPUP_LIVE` is set
+/// (1/true/on) on this deploy: the live Stripe webhook must send the
+/// `payment_intent.*` events first, or a successful charge would never grant
+/// its credits. While off, the settings card shows auto top-up as unavailable.
+pub fn charges_live() -> bool {
+    matches!(
+        std::env::var("AUTO_TOPUP_LIVE").map(|v| v.trim().to_ascii_lowercase()).as_deref(),
+        Ok("1" | "true" | "on")
+    )
+}
+
 pub fn spawn_check(db: PgPool, user_id: String, balance_usd: f64) {
+    if !charges_live() {
+        return;
+    }
     let Ok(secret_key) = std::env::var("STRIPE_SECRET_KEY") else { return };
     if tokio::runtime::Handle::try_current().is_err() {
         return;
