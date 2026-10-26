@@ -2381,14 +2381,13 @@
       "description": "15 built-in subagent types (Explorer, Planner, Builder, Code Reviewer, Verifier, Debugger, Web Researcher, Browser Operator, Computer Operator, Docs Writer, Data Analyst, UI Designer, Release Engineer, Security Reviewer, Scribe) with model classes small/standard/deep so delegated work runs cheap by default, a face per type from the Office Professionals pack on every subagent surface, Settings → Subagents to edit looks and add custom types (stored per user in subagent_types), synced into gizzi and exported to the Claude Code and Codex brains.",
       "touches": [
         "allternit/cmd/gizzi-code/src/runtime/agents",
-        "allternit/cmd/gizzi-code/src/runtime/loop/agent.ts",
-        "allternit/cmd/gizzi-code/src/runtime/tools/builtins/task.ts",
-        "allternit/cmd/allternit-api/src/subagent_type_routes.rs",
+        "allternit/cmd/gizzi-code/src/runtime/loop",
+        "allternit/cmd/gizzi-code/src/runtime/tools",
+        "allternit/cmd/allternit-api",
         "allternit-ai/src/lib/subagents",
         "allternit-ai/src/components/subagents",
         "allternit-ai/src/components/agent-run-tree",
-        "allternit-ai/src/views/settings/SubagentsPanel.tsx",
-        "allternit-ai/public/avatar-packs/office-professionals"
+        "allternit-ai/src/views/settings"
       ],
       "decisions": [
         {
@@ -2843,7 +2842,7 @@
         "allternit-ai/src/lib/api-capture",
         "allternit/cmd/allternit-api/src/teach_routes.rs",
         "allternit/cmd/allternit-api/src/har_api_routes.rs",
-        "allternit/surfaces/allternit-desktop/src/main/teach-recorder.ts",
+        "allternit/surfaces/allternit-desktop/src/main",
         "allternit/surfaces/allternit-desktop/src/main/browser-capture-manager.ts",
         "allternit/surfaces/allternit-desktop/src/main/web-request-hub.ts"
       ],
