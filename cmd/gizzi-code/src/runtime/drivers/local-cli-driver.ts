@@ -1421,6 +1421,9 @@ export class LocalCliDriver implements RuntimeDriver {
     // the answer) on item/started; deltas only carry the item id.
     const messagePhase = new Map<string, string>()
     const startedTools = new Set<string>()
+    // Reasoning summaries streamed live (item/reasoning/summaryTextDelta) are not repeated on item/completed.
+    const streamedReasoning = new Set<string>()
+    let lastReasoningPart = ""
     let lastTextItem = ""
     let lastNoteItem = ""
     let done = false
@@ -1542,6 +1545,20 @@ export class LocalCliDriver implements RuntimeDriver {
               continue
             }
 
+            // Codex's reasoning summary as it is written: the live thought line.
+            if (method === "item/reasoning/summaryTextDelta") {
+              const delta = params.delta
+              if (typeof delta === "string" && delta) {
+                const itemId = String(params.itemId ?? "")
+                const part = `${itemId}:${String(params.summaryIndex ?? 0)}`
+                const sep = lastReasoningPart && lastReasoningPart !== part ? "\n\n" : ""
+                lastReasoningPart = part
+                streamedReasoning.add(itemId)
+                pushEvent({ type: "reasoning_delta", delta: sep + delta })
+              }
+              continue
+            }
+
             if (method === "item/started") {
               const item = params.item as Record<string, unknown> | undefined
               if (item?.type === "agentMessage") {
@@ -1591,7 +1608,8 @@ export class LocalCliDriver implements RuntimeDriver {
             }
 
             if (method === "item/completed") {
-              const reasoning = codexReasoningText(params)
+              const done = params.item as Record<string, unknown> | undefined
+              const reasoning = done?.type === "reasoning" && streamedReasoning.has(String(done.id ?? "")) ? "" : codexReasoningText(params)
               if (reasoning) pushEvent({ type: "reasoning_delta", delta: reasoning })
               const item = params.item as Record<string, unknown> | undefined
               if (item?.type === "agentMessage") {
