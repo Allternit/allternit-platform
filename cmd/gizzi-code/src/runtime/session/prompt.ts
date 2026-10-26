@@ -1113,6 +1113,71 @@ const message = await createUserMessage(input)
       const lastUserMsg = msgs.findLast((m) => m.info.role === "user")
       const bypassAgentCheck = lastUserMsg?.parts.some((p) => p.type === "agent") ?? false
 
+      // The turn's instructions are built while its tools load: neither needs the other.
+      const turnSystemPromise = (async () => {
+        const prepStarted = Date.now()
+        const prepTimings: Record<string, number> = {}
+        const timedPrep = <T>(name: string, work: Promise<T>) => {
+          const started = Date.now()
+          return work.finally(() => (prepTimings[name] = Date.now() - started))
+        }
+        const [botSystemPrompt, scratchpadSystemPrompt] = await Promise.all([
+          timedPrep("botChat", BotChat.botChatSystemPrompt(sessionID, { preamble: input.botPreamble })).catch((error) => {
+            log.warn("failed to build bot persona prompt", { sessionID, error })
+            return undefined
+          }),
+          timedPrep("scratchpad", Scratchpad.instructions(sessionID)).catch((error) => {
+            log.warn("failed to initialize session scratchpad", { sessionID, error })
+            return undefined
+          }),
+        ])
+        // If user provided a full system prompt override, use only that; a "+"
+        // prefix (or --append-system-prompt) appends — or, on a bot turn, leads.
+        const system = await composeTurnSystem({
+          userSystem: lastUser.system,
+          bot: botTurn,
+          environment: () => SystemPrompt.environment(model),
+          instructions: () => InstructionPrompt.system(),
+          workspace: async () => {
+            const workspaceSystemPrompt = await WorkspaceContext.getWorkspaceSystemPrompt(session.directory)
+            return workspaceSystemPrompt ? [workspaceSystemPrompt] : []
+          },
+          // Ranked file/symbol map of the session's project (codemap/repo-map.ts).
+          // Rebuilt once per user turn so the cached system prefix holds across
+          // steps; empty for folders that are not a project, or when turned off
+          // (config `repoMap: false`, GIZZI_NO_REPO_MAP=1). Never throws.
+          repoMap: async () => {
+            const config = await Config.get().catch(() => undefined)
+            const touched = Object.keys(FileTime.state().read[sessionID] ?? {})
+            const block = await RepoMap.prompt({
+              root: workdir(sessionID) ?? session.directory,
+              sessionID,
+              turn: lastUser.id,
+              boost: touched,
+              enabled: config?.repoMap !== false,
+            })
+            return block ? [block] : []
+          },
+          // Configured servers only: the per-user connectors proxy is opened per turn in resolveTools.
+          mcpInstructions: async () => {
+            const block = MCP.instructionsPrompt(
+              await MCP.instructions().catch((error) => {
+                log.warn("failed to read MCP server instructions", { sessionID, error })
+                return []
+              }),
+            )
+            return block ? [block] : []
+          },
+          botChat: botSystemPrompt,
+          scratchpad: scratchpadSystemPrompt,
+          onTiming: (name, ms) => (prepTimings[name] = ms),
+        })
+        // Where the wait before the model starts goes (the user sees only "Thinking" meanwhile).
+        log.info("turn prep", { sessionID, totalMs: Date.now() - prepStarted, ...prepTimings })
+        return system
+      })()
+      turnSystemPromise.catch(() => {}) // awaited below; keeps an early failure from going unhandled
+
       const tools = await resolveTools({
         agent,
         session,
@@ -1168,56 +1233,7 @@ const message = await createUserMessage(input)
       // bot's identity + SOUL + memory as standing instructions. This builder
       // runs inside the runtime session pipeline, so both the TUI (worker /
       // server) and headless (`gizzi run --print`) paths get the injection.
-      const botSystemPrompt = await BotChat.botChatSystemPrompt(sessionID, {
-        preamble: input.botPreamble,
-      }).catch((error) => {
-        log.warn("failed to build bot persona prompt", { sessionID, error })
-        return undefined
-      })
-      const scratchpadSystemPrompt = await Scratchpad.instructions(sessionID).catch((error) => {
-        log.warn("failed to initialize session scratchpad", { sessionID, error })
-        return undefined
-      })
-      // If user provided a full system prompt override, use only that; a "+"
-      // prefix (or --append-system-prompt) appends — or, on a bot turn, leads.
-      const system = await composeTurnSystem({
-        userSystem: lastUser.system,
-        bot: botTurn,
-        environment: () => SystemPrompt.environment(model),
-        instructions: () => InstructionPrompt.system(),
-        workspace: async () => {
-          const workspaceSystemPrompt = await WorkspaceContext.getWorkspaceSystemPrompt(session.directory)
-          return workspaceSystemPrompt ? [workspaceSystemPrompt] : []
-        },
-        // Ranked file/symbol map of the session's project (codemap/repo-map.ts).
-        // Rebuilt once per user turn so the cached system prefix holds across
-        // steps; empty for folders that are not a project, or when turned off
-        // (config `repoMap: false`, GIZZI_NO_REPO_MAP=1). Never throws.
-        repoMap: async () => {
-          const config = await Config.get().catch(() => undefined)
-          const touched = Object.keys(FileTime.state().read[sessionID] ?? {})
-          const block = await RepoMap.prompt({
-            root: workdir(sessionID) ?? session.directory,
-            sessionID,
-            turn: lastUser.id,
-            boost: touched,
-            enabled: config?.repoMap !== false,
-          })
-          return block ? [block] : []
-        },
-        // Configured servers only: the per-user connectors proxy is opened per turn in resolveTools.
-        mcpInstructions: async () => {
-          const block = MCP.instructionsPrompt(
-            await MCP.instructions().catch((error) => {
-              log.warn("failed to read MCP server instructions", { sessionID, error })
-              return []
-            }),
-          )
-          return block ? [block] : []
-        },
-        botChat: botSystemPrompt,
-        scratchpad: scratchpadSystemPrompt,
-      })
+      const system = await turnSystemPromise
       // The turn-only layer (answer template, card-repair note, opt-in location) goes last among the user layers.
       const turnLayer = turnSystemLayers.get(sessionID)
       if (turnLayer) system.push(turnLayer)
