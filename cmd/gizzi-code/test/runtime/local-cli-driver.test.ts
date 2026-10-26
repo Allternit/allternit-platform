@@ -122,6 +122,31 @@ test("Codex app-server thread/start uses result.thread.id", async () => {
   expect(codexThreadId({ threadId: "old-shape" })).toBeUndefined()
 })
 
+describe("OpenCode json events", () => {
+  test("a real OpenCode turn becomes a step, the reply text and a finish", async () => {
+    const { opencodeJsonEvents } = await import("@/runtime/drivers/local-cli-driver")
+    const lines = [
+      { type: "step_start", part: { type: "step-start" } },
+      { type: "tool_use", part: { type: "tool", tool: "bash", callID: "call_1", state: { status: "completed", input: { command: "ls -la" }, output: "a.txt\nb.md" } } },
+      { type: "step_finish", part: { type: "step-finish", reason: "tool-calls", tokens: { input: 10, output: 2 } } },
+      { type: "text", part: { type: "text", text: "a.txt, b.md. Done." } },
+      { type: "step_finish", part: { type: "step-finish", reason: "stop", tokens: { input: 26, output: 9 } } },
+    ]
+    expect(lines.flatMap((l) => opencodeJsonEvents(l))).toEqual([
+      { type: "tool_call", id: "call_1", name: "bash", arguments: { command: "ls -la" } },
+      { type: "tool_result", id: "call_1", content: "a.txt\nb.md", isError: false },
+      { type: "text_delta", delta: "a.txt, b.md. Done." },
+      { type: "finish", finishReason: "stop", usage: { inputTokens: 26, outputTokens: 9, totalTokens: 35 } },
+    ])
+  })
+  test("an OpenCode error fails the turn with its message", async () => {
+    const { opencodeJsonEvents } = await import("@/runtime/drivers/local-cli-driver")
+    const out = opencodeJsonEvents({ type: "error", error: { name: "APIError", data: { message: "Key expired" } } }) as any[]
+    expect(out[0].error.message).toBe("Key expired")
+    expect(out[1]).toMatchObject({ type: "finish", finishReason: "error" })
+  })
+})
+
 describe("ACP tool calls are named by kind", () => {
   test("execute is bash with the agent's title as its description", async () => {
     const { acpToolStep } = await import("@/runtime/drivers/local-cli-driver")
