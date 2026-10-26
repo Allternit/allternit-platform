@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+## 2.2.14 (2026-10-26)
+
+### Added
+- Subagent catalog: 15 built-in types (explorer, planner, builder, code-reviewer, verifier,
+  debugger, web-researcher, browser-operator, computer-operator, docs-writer, data-analyst,
+  ui-designer, release-engineer, security-reviewer, scribe). Each has a model class
+  (`small`, `standard`, `deep` or `inherit`), tools and a step cap. A subagent with no model
+  now runs on the small class instead of the parent's model, so delegated work costs less.
+  `general`, `explore` and `plan` still work as aliases.
+- Task events carry the subagent's face, title and accent, so the app draws a face for it.
+- Your own subagent types from Settings → Subagents sync to `~/.gizzi/agents` at start, and
+  the catalog is exported to the Claude Code and Codex brains
+  (`GIZZI_SUBAGENT_SYNC_OFF`, `GIZZI_NO_BRAIN_AGENTS` turn these off).
+- Pager quiet hours, one-task grants, and threads as war rooms.
+
+### Changed
+- A turn no longer waits seconds for Memory Drive; instructions build while tools load.
+- Codex reasoning summaries stream live. Codex searches, commands, patches and MCP calls show
+  as steps, and web searches carry their query.
+- ACP tool calls are named by kind. OpenCode and DevEco JSON events are read.
+
+### Fixed
+- Picked-up CLI sessions show tool calls as steps.
+- An ACP tool reported finished in its first update now closes.
+
 ## 2.2.13 (2026-10-23)
 
 ### Added
