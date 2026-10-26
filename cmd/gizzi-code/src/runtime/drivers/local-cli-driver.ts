@@ -685,6 +685,18 @@ export class LocalCliDriver implements RuntimeDriver {
             await this.logEvent(handle.taskId, vEv)
           }
 
+          // OpenCode / DevEco `run --format json`: their own event shape.
+          if (this.cliName === "opencode" || this.cliName === "deveco") {
+            const mapped = opencodeJsonEvents(evt as unknown as Record<string, unknown>)
+            for (const ev of mapped) {
+              if (ev.type === "finish") finished = true
+              yield ev
+              await this.logEvent(handle.taskId, ev)
+            }
+            if (finished) break
+            continue
+          }
+
           if (evt.type === "system") {
             if (evt.status) {
               const statusEv = { type: "status", status: "running" } as AgentEvent
@@ -1537,7 +1549,10 @@ export class LocalCliDriver implements RuntimeDriver {
                 continue
               }
               const call = codexToolCall(item)
-              if (call) {
+              // A web search starts before Codex knows its query; send it when
+              // it finishes (with the query) rather than as "Searching the web" for "".
+              const blankSearch = call?.name === "web_search" && !(call.arguments as { query?: string }).query
+              if (call && !blankSearch) {
                 startedTools.add(call.id)
                 pushEvent(call)
               }
@@ -2837,6 +2852,53 @@ function codexWebSearchQuery(item: Record<string, unknown>): string {
  * {query}, web_fetch {url}, exec_command {command}, patch_apply {changes},
  * mcp__server__tool. Messages, reasoning and plans are not tools.
  */
+/**
+ * One OpenCode `run --format json` line as driver events: `text` and
+ * `reasoning` parts, `tool_use` (sent once the tool finishes: its call and
+ * result together), `step_finish` with reason "stop" ends the turn with its
+ * token counts, `error` fails it. step_start and other lines carry nothing to show.
+ */
+export function opencodeJsonEvents(evt: Record<string, unknown>): AgentEvent[] {
+  const part = (evt.part && typeof evt.part === "object" ? evt.part : {}) as Record<string, unknown>
+  switch (evt.type) {
+    case "text":
+      return typeof part.text === "string" && part.text ? [{ type: "text_delta", delta: part.text }] : []
+    case "reasoning":
+      return typeof part.text === "string" && part.text ? [{ type: "reasoning_delta", delta: part.text }] : []
+    case "tool_use": {
+      const state = (part.state && typeof part.state === "object" ? part.state : {}) as Record<string, unknown>
+      const id = String(part.callID ?? part.id ?? "")
+      if (!id) return []
+      const events: AgentEvent[] = [{ type: "tool_call", id, name: String(part.tool ?? "tool"), arguments: state.input ?? {} }]
+      if (state.status === "completed" || state.status === "error") {
+        const output = state.status === "error" ? state.error : state.output
+        events.push({
+          type: "tool_result",
+          id,
+          content: typeof output === "string" ? output : JSON.stringify(output ?? ""),
+          isError: state.status === "error",
+        })
+      }
+      return events
+    }
+    case "step_finish": {
+      if (part.reason !== "stop") return []
+      const tokens = (part.tokens && typeof part.tokens === "object" ? part.tokens : {}) as Record<string, unknown>
+      const input = typeof tokens.input === "number" ? tokens.input : 0
+      const output = typeof tokens.output === "number" ? tokens.output : 0
+      return [{ type: "finish", finishReason: "stop", usage: { inputTokens: input, outputTokens: output, totalTokens: input + output } }]
+    }
+    case "error": {
+      const err = (evt.error && typeof evt.error === "object" ? evt.error : {}) as Record<string, unknown>
+      const data = (err.data && typeof err.data === "object" ? err.data : {}) as Record<string, unknown>
+      const message = typeof data.message === "string" ? data.message : typeof err.name === "string" ? err.name : "OpenCode turn failed"
+      return [{ type: "error", error: new Error(message) }, { type: "finish", finishReason: "error", usage: zeroUsage() }]
+    }
+    default:
+      return []
+  }
+}
+
 /**
  * An ACP tool call named by its `kind` the way the steps UI reads tools
  * (execute → bash, fetch → web_fetch, a query-only search → web_search), with
