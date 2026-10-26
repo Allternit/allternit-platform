@@ -50,7 +50,7 @@ import { CliBackgroundTasks } from "@/runtime/session/cli-background-tasks"
 import { ProcessRegistry } from "@/runtime/process-registry"
 import { acpGateDecision } from "@/runtime/drivers/acp-gate"
 import { PermissionNext } from "@/runtime/tools/guard/permission/next"
-import { sourcesFromClaudeCodeToolResult, todosFromNativePlan } from "@/runtime/session/response-parts"
+import { mergeSources, sourcesFromClaudeCodeToolResult, todosFromNativePlan, toSource, type ResponseSource } from "@/runtime/session/response-parts"
 
 const log = Log.create({ service: "local-cli-driver" })
 
@@ -1405,6 +1405,12 @@ export class LocalCliDriver implements RuntimeDriver {
 
     const events: AgentEvent[] = []
     const streamedMessages = new Set<string>()
+    // Codex labels each agentMessage item ("commentary" notes between tools vs
+    // the answer) on item/started; deltas only carry the item id.
+    const messagePhase = new Map<string, string>()
+    const startedTools = new Set<string>()
+    let lastTextItem = ""
+    let lastNoteItem = ""
     let done = false
     let notifyYield = () => {}
     let finished = false
@@ -1500,11 +1506,40 @@ export class LocalCliDriver implements RuntimeDriver {
             const method = msg.method
             const params = (msg.params ?? {}) as Record<string, unknown>
 
+            // One agentMessage item's text: commentary notes go to the steps
+            // (reasoning), the answer to the reply; a new item starts a new paragraph.
+            const pushMessageText = (itemId: string, delta: string) => {
+              if (messagePhase.get(itemId) === "commentary") {
+                const sep = lastNoteItem && lastNoteItem !== itemId ? "\n\n" : ""
+                lastNoteItem = itemId
+                pushEvent({ type: "reasoning_delta", delta: sep + delta })
+                return
+              }
+              const sep = lastTextItem && lastTextItem !== itemId ? "\n\n" : ""
+              lastTextItem = itemId
+              pushEvent({ type: "text_delta", delta: sep + delta })
+            }
+
             if (method === "item/agentMessage/delta") {
               const delta = params.delta
               if (typeof delta === "string" && delta) {
-                streamedMessages.add(String(params.itemId ?? ""))
-                pushEvent({ type: "text_delta", delta })
+                const itemId = String(params.itemId ?? "")
+                streamedMessages.add(itemId)
+                pushMessageText(itemId, delta)
+              }
+              continue
+            }
+
+            if (method === "item/started") {
+              const item = params.item as Record<string, unknown> | undefined
+              if (item?.type === "agentMessage") {
+                if (typeof item.phase === "string") messagePhase.set(String(item.id ?? ""), item.phase)
+                continue
+              }
+              const call = codexToolCall(item)
+              if (call) {
+                startedTools.add(call.id)
+                pushEvent(call)
               }
               continue
             }
@@ -1544,50 +1579,21 @@ export class LocalCliDriver implements RuntimeDriver {
               const reasoning = codexReasoningText(params)
               if (reasoning) pushEvent({ type: "reasoning_delta", delta: reasoning })
               const item = params.item as Record<string, unknown> | undefined
-              if (item?.type === "agentMessage" && !streamedMessages.has(String(item.id ?? ""))) {
-                const text = extractCodexText(item)
-                if (text) pushEvent({ type: "text_delta", delta: text })
+              if (item?.type === "agentMessage") {
+                const itemId = String(item.id ?? "")
+                if (typeof item.phase === "string") messagePhase.set(itemId, item.phase)
+                if (!streamedMessages.has(itemId)) {
+                  const text = extractCodexText(item)
+                  if (text) pushMessageText(itemId, text)
+                }
+                continue
               }
-              continue
-            }
-
-            if (method === "item/commandExecution/started") {
-              pushEvent({
-                type: "tool_call",
-                id: String(params.id ?? `${handle.taskId}-command`),
-                name: "exec_command",
-                arguments: params,
-              })
-              continue
-            }
-
-            if (method === "item/commandExecution/completed") {
-              pushEvent({
-                type: "tool_result",
-                id: String(params.id ?? `${handle.taskId}-command`),
-                content: extractCodexText(params),
-                isError: Boolean(params.error),
-              })
-              continue
-            }
-
-            if (method === "item/fileChange/started") {
-              pushEvent({
-                type: "tool_call",
-                id: String(params.id ?? `${handle.taskId}-file-change`),
-                name: "patch_apply",
-                arguments: params,
-              })
-              continue
-            }
-
-            if (method === "item/fileChange/completed") {
-              pushEvent({
-                type: "tool_result",
-                id: String(params.id ?? `${handle.taskId}-file-change`),
-                content: extractCodexText(params),
-                isError: Boolean(params.error),
-              })
+              // Tools Codex runs itself (search, shell, patches, MCP): the call
+              // when it was not seen starting, then its result.
+              const call = codexToolCall(item)
+              if (call && !startedTools.has(call.id)) pushEvent(call)
+              const result = codexToolResult(item)
+              if (result) pushEvent(result)
               continue
             }
 
@@ -2817,6 +2823,82 @@ export function codexReasoningText(params: Record<string, unknown>): string {
     if (text) return text
   }
   return extractCodexText(source)
+}
+
+function codexWebSearchQuery(item: Record<string, unknown>): string {
+  const action = (item.action ?? {}) as Record<string, unknown>
+  const queries = Array.isArray(action.queries) ? action.queries.filter((q) => typeof q === "string") : []
+  return [item.query, action.query].find((q): q is string => typeof q === "string" && q.trim() !== "") ?? queries.join(" · ")
+}
+
+/**
+ * A Codex app-server tool item (`item/started` / `item/completed`, protocol v2)
+ * as an observed tool call, named the way the steps UI reads tools: web_search
+ * {query}, web_fetch {url}, exec_command {command}, patch_apply {changes},
+ * mcp__server__tool. Messages, reasoning and plans are not tools.
+ */
+export function codexToolCall(item: Record<string, unknown> | undefined): Extract<AgentEvent, { type: "tool_call" }> | undefined {
+  if (!item || typeof item.id !== "string") return undefined
+  const id = item.id
+  switch (item.type) {
+    case "webSearch": {
+      const action = (item.action ?? {}) as Record<string, unknown>
+      if ((action.type === "openPage" || action.type === "findInPage") && typeof action.url === "string") {
+        return { type: "tool_call", id, name: "web_fetch", arguments: { url: action.url, ...(typeof action.pattern === "string" ? { pattern: action.pattern } : {}) } }
+      }
+      return { type: "tool_call", id, name: "web_search", arguments: { query: codexWebSearchQuery(item) } }
+    }
+    case "commandExecution":
+      return { type: "tool_call", id, name: "exec_command", arguments: { command: item.command, cwd: item.cwd } }
+    case "fileChange":
+      return { type: "tool_call", id, name: "patch_apply", arguments: { changes: item.changes } }
+    case "mcpToolCall":
+      return { type: "tool_call", id, name: `mcp__${String(item.server ?? "mcp")}__${String(item.tool ?? "tool")}`, arguments: item.arguments ?? {} }
+    case "dynamicToolCall":
+      return { type: "tool_call", id, name: String(item.tool ?? "tool"), arguments: item.arguments ?? {} }
+    default:
+      return undefined
+  }
+}
+
+/** The finished tool item's result; web search results also become sources. */
+export function codexToolResult(item: Record<string, unknown> | undefined): Extract<AgentEvent, { type: "tool_result" }> | undefined {
+  if (!item || typeof item.id !== "string") return undefined
+  const id = item.id
+  const failed = item.status === "failed" || item.status === "declined"
+  switch (item.type) {
+    case "webSearch": {
+      const results = Array.isArray(item.results) ? item.results : []
+      const sources = mergeSources(results.map((r) => toSource(r, "tool")).filter((s): s is ResponseSource => Boolean(s)))
+      return {
+        type: "tool_result",
+        id,
+        content: JSON.stringify({ query: codexWebSearchQuery(item), results }),
+        isError: false,
+        ...(sources.length ? { sources } : {}),
+      }
+    }
+    case "commandExecution":
+      return {
+        type: "tool_result",
+        id,
+        content: typeof item.aggregatedOutput === "string" ? item.aggregatedOutput : "",
+        isError: failed || (typeof item.exitCode === "number" && item.exitCode !== 0),
+      }
+    case "fileChange":
+      return { type: "tool_result", id, content: failed ? "Patch not applied" : "Patch applied", isError: failed }
+    case "mcpToolCall": {
+      // The tool's own text (what Claude Code's tool_result carries), so
+      // artifact_create's JSON summary line reaches the artifact card.
+      const result = (item.result ?? {}) as Record<string, unknown>
+      const text = item.error ? JSON.stringify(item.error) : extractTextContent(result.content) || JSON.stringify(result.structuredContent ?? item.result ?? null)
+      return { type: "tool_result", id, content: text, isError: failed || Boolean(item.error) }
+    }
+    case "dynamicToolCall":
+      return { type: "tool_result", id, content: JSON.stringify(item.contentItems ?? null), isError: failed || item.success === false }
+    default:
+      return undefined
+  }
 }
 
 function extractCodexText(params: Record<string, unknown>): string {
