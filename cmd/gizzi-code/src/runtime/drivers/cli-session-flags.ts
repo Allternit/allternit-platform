@@ -111,6 +111,25 @@ export function withInstructions(prompt: string, systemPrompt?: string): string 
   return `<session_instructions>\n${systemPrompt.trim()}\n</session_instructions>\n\n${prompt}`
 }
 
+/**
+ * True for CLIs that take the session's instructions through their own
+ * channel: Claude Code's system-prompt flags, Codex's developer instructions,
+ * and ACP (runAcp leads each prompt with them).
+ */
+export function cliHasSystemChannel(cliName: string, mode: string): boolean {
+  return cliName === "claude-cli" || mode === "codex-app-server" || mode === "acp"
+}
+
+/**
+ * The message a CLI turn sends. A CLI with no system-prompt channel (Gemini,
+ * Antigravity, Qwen, Cursor, OpenCode, text CLIs…) gets the session's
+ * instructions leading it, the way ACP does, so every brain gets the same
+ * instructions (answer shapes, mode contract) instead of only the last message.
+ */
+export function cliTurnMessage(prompt: string, systemPrompt: string | undefined, cliName: string, mode: string): string {
+  return cliHasSystemChannel(cliName, mode) ? prompt : withInstructions(prompt, systemPrompt)
+}
+
 /** Claude stream-json events carry the vendor session id as `session_id` (system init and result). */
 export function claudeSessionIdFromEvent(evt: unknown): string | undefined {
   const e = evt as { type?: string; session_id?: unknown } | null

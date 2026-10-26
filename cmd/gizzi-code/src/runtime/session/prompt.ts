@@ -183,7 +183,7 @@ export namespace SessionPrompt {
       .string()
       .optional()
       .describe(
-        "A system layer for this turn only, sent by allternit-api (today: the user's opt-in shared location). Held in memory for the turn and appended after `system`; deliberately not stored on the user message, never logged, never carried to later turns.",
+        "A system layer for this turn only, sent by allternit-api or the app: this turn's answer-template line, the card-repair note, the user's opt-in shared location. Held in memory for the turn and appended after `system`; deliberately not stored on the user message, never logged, never carried to later turns.",
       ),
     /**
      * Run this turn as one of the user's platform bots (sent by
@@ -344,7 +344,7 @@ const message = await createUserMessage(input)
 
     // The per-user connector proxy exists for this turn only.
     const releaseMcpProxy = McpUserProxy.register(input.sessionID, input.mcpProxy)
-    // So does the turn-only system layer (the opt-in shared location).
+    // So does the turn-only system layer (answer template, card-repair note, opt-in location).
     const turnLayer = input.turnSystem?.trim()
     if (turnLayer) turnSystemLayers.set(input.sessionID, turnLayer)
     try {
@@ -1218,7 +1218,7 @@ const message = await createUserMessage(input)
         botChat: botSystemPrompt,
         scratchpad: scratchpadSystemPrompt,
       })
-      // The turn-only layer (opt-in location) goes last among the user layers.
+      // The turn-only layer (answer template, card-repair note, opt-in location) goes last among the user layers.
       const turnLayer = turnSystemLayers.get(sessionID)
       if (turnLayer) system.push(turnLayer)
       const format = lastUser.format ?? { type: "text" }

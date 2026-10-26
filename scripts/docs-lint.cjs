@@ -209,6 +209,8 @@ for (const mdxPath of collectMdxFiles(DOCS_DIR)) {
       if (['guides/connections.mdx', 'api/connections.mdx', 'surfaces/context-window.mdx'].some((p) => mdxPath.endsWith(p))) continue;
       // Agent steps reads each CLI brain's own task tools and web-search output, so it names them.
       if (mdxPath.endsWith('guides/agent-steps.mdx')) continue;
+      // Progress and response parts map each brain's own plan, citation and search events, so they name them.
+      if (['guides/progress-pane.mdx', 'guides/response-parts.mdx'].some((p) => mdxPath.endsWith(p))) continue;
       // Live sessions, delivery and the team roster list the CLI sessions they reach by name and their session addresses.
       if (['guides/live-sessions.mdx', 'guides/live-session-delivery.mdx', 'guides/team-roster.mdx'].some((p) => mdxPath.endsWith(p))) continue;
       fail(

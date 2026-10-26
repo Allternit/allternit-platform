@@ -3,19 +3,18 @@ title: 'Cowork session panel'
 description: 'The session button in the Cowork header, with the plan as it runs, what the session made, and what the agent used, each linked back to its step in the conversation.'
 ---
 
-Every Cowork session has a **session button** at the right of its header. While the agent works through a plan, the button reads **Step 2 of 4**. Otherwise it shows a file icon and how many outputs the session has made. Click it to open the session panel, a small card under the header. Click outside the card or press **Esc** to close it.
+Every Cowork session has a **session button** at the right of its header. While the agent works through a plan, it is the [progress chip](/guides/progress-pane): a ring that fills as steps finish and **Step 2 of 4**, then **All 4 done**. Otherwise it shows a file icon and how many outputs the session has made. On Desktop, click it to open the session panel in the session's right pane, and click it again (or the pane's close button) to hide it. On a phone it opens as a sheet.
 
 The panel has up to three sections. A section only appears once there is something in it.
 
 ## Progress
 
-Progress shows the agent's plan, not each tool it calls. A plan comes from the agent's task list, from a planned A:// run, or from a browser run going on in this session. A short task with no plan has no Progress section. Its steps are in the conversation instead.
+Progress shows the agent's plan as a checklist, not each tool it calls. A plan comes from the agent's task list, from a planned A:// run, or from a browser run going on in this session. A short task with no plan has no Progress section. Its steps are in the conversation instead.
 
-- The steps sit on a rail. A marker sits on the step in progress and moves down to the next one when that step is done.
-- Finished steps get a check, and a failed step gets an ×.
-- When every step is done, Progress folds to one **Progress ›** row with "4 of 4 done". Click the row to see the steps again.
+- Finished steps are ticked, the step in progress spins, and a failed step gets a red cross.
+- The checklist is saved with the session, so it is still there when you reopen it.
 
-Cowork asks the agent to keep a task list for any task of more than two steps, so most longer tasks have a Progress section. The same list shows in the conversation as a checklist card; see [Agent steps in replies](/guides/agent-steps#the-task-list-as-a-checklist).
+Cowork asks the agent to keep a task list for any task of more than two steps, so most longer tasks have a Progress section. The plan is no longer drawn in the conversation; it lives here. See [Progress](/guides/progress-pane).
 
 ## Outputs
 
@@ -47,8 +46,8 @@ Click a row to see its list. In **Web search**, the list has **Searches** and **
 
 ## In the conversation
 
-Cowork shows each stretch of work as a card of steps. The header sums it up, for example "Searched the web, loaded a skill, created a file". Each row shows what was done and what it was done to. The agent's notes between steps are shown in the card too. Click a step to see its input and result. Steps in your connected apps show the app's logo and what they found; see [Agent steps in replies](/guides/agent-steps#steps-in-your-connected-apps).
+Cowork shows the agent's work as the same stream as every other chat: the plan line, the last two steps and the live one, chips for sources, files and failures, and then one "Worked for 12s · 4 steps" line you can open into the full trail. The agent's notes between steps are part of the trail. Click a step to see its input and result. Steps in your connected apps show the app's logo and what they found; see [Agent steps in replies](/guides/agent-steps).
 
 ## On phones
 
-On ai.allternit.com's phone layout and in the m.allternit.com app, the panel is in the session header's pane menu as **Session**. It opens full screen. Rows in **Used in this session** open in place, and jumping to a step closes the pane and scrolls the conversation to it.
+On ai.allternit.com's phone layout and in the m.allternit.com app, tap the session button (or the progress chip) to open the panel as a sheet from the bottom; drag it down to close it. It is also in the session header's pane menu as **Session**, which opens it full screen. Rows in **Used in this session** open in place, and jumping to a step closes the pane and scrolls the conversation to it.

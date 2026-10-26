@@ -317,6 +317,35 @@ for name in running_apps:
 if not running_apps:
     print("  running          none")
 
+# ---------------------------------------------------------------- machine
+# 2026-10-25: fseventsd held 32 GB on a 32 GB Mac (35 GB swap); dev servers
+# left watching worktrees for days fed it, and every install/build crawled.
+print("\n== MACHINE")
+def to_mb(v):
+    m = re.match(r"([\d.]+)([KMGT])?", v or "")
+    return float(m.group(1)) * {"K": 1 / 1024, "M": 1, "G": 1024, "T": 1048576}.get(m.group(2) or "M", 1) if m else 0
+fsev = (sh("pgrep", "-x", "fseventsd") or "").split()
+if fsev:
+    top = (sh("top", "-l", "1", "-pid", fsev[0], "-stats", "mem", timeout=20) or "").split()
+    fsev_mb = to_mb(top[-1]) if top else 0
+    print(f"  fseventsd        {fsev_mb / 1024:.1f} GB")
+    if fsev_mb > 8 * 1024:
+        problems.append(f"fseventsd holds {fsev_mb / 1024:.0f} GB: builds will crawl. Ask Eoj to run `sudo killall fseventsd`, and stop old dev servers")
+swap = re.search(r"used = ([\d.]+)M", sh("sysctl", "vm.swapusage") or "")
+if swap:
+    print(f"  swap used        {float(swap.group(1)) / 1024:.1f} GB")
+def etime_s(v):
+    d, _, rest = v.rpartition("-")
+    parts = [int(x) for x in rest.split(":")]
+    while len(parts) < 3:
+        parts.insert(0, 0)
+    return int(d or 0) * 86400 + parts[0] * 3600 + parts[1] * 60 + parts[2]
+for line in (sh("ps", "-Ao", "pid=,etime=,command=") or "").splitlines():
+    f = line.split(None, 2)
+    if len(f) == 3 and re.search(r"vite(\.js)? (--port|dev)|next dev|wrangler(\.js)? pages deployment tail", f[2]) and etime_s(f[1]) > 86400:
+        print(f"  old dev server   pid {f[0]} up {f[1]}  {f[2][:90]}")
+        problems.append(f"dev server pid {f[0]} has run {f[1]}: stop it if its session is done (its file watcher feeds fseventsd)")
+
 # ---------------------------------------------------------------- verdict
 print("\n== VERDICT")
 for p in problems:

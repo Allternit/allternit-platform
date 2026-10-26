@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs"
 import { join } from "node:path"
 import { getNativeSession } from "./catalog.js"
-import { asString, contentText, readJsonlObjects } from "./jsonl.js"
+import { asString, contentText, readJsonlObjects, toolInput } from "./jsonl.js"
 import { projectViaSessionMigrate } from "./migrate-bridge.js"
 import type { CatalogOptions, HarnessId, NativeTranscript, PortableEvent, Role } from "./types.js"
 
@@ -36,17 +36,21 @@ function projectClaudeLike(path: string): { events: PortableEvent[]; warnings: N
       const text = contentText(message?.content ?? rec.content)
       const blocks = Array.isArray(message?.content) ? message.content : []
       for (const block of blocks) {
+        if (typeof block === "string") pushMessage(events, role, block, i, uuid)
         if (!block || typeof block !== "object") continue
         const b = block as Record<string, unknown>
-        if (b.type === "tool_use") {
-          events.push(inert({ kind: "tool_call", role: "assistant", toolName: asString(b.name), toolId: asString(b.id), recordIndex: i, sourceId: uuid }))
+        if (b.type === "text") {
+          pushMessage(events, role, asString(b.text) ?? "", i, uuid)
+        } else if (b.type === "tool_use") {
+          events.push(inert({ kind: "tool_call", role: "assistant", toolName: asString(b.name), toolId: asString(b.id), input: toolInput(b.input), recordIndex: i, sourceId: uuid }))
         } else if (b.type === "tool_result") {
           events.push(inert({ kind: "tool_result", role: "tool", toolId: asString(b.tool_use_id), text: contentText(b.content ?? b), recordIndex: i, sourceId: uuid }))
         } else if (b.type === "thinking") {
           events.push(inert({ kind: "thinking", role: "assistant", recordIndex: i, sourceId: uuid }))
         }
       }
-      pushMessage(events, role, text, i, uuid)
+      // Block content keeps its text in place between tool calls (above).
+      if (blocks.length === 0) pushMessage(events, role, text, i, uuid)
     } else if (type === "system" && rec.subtype === "compact_boundary") {
       events.push(inert({ kind: "compaction", recordIndex: i, sourceId: uuid }))
     }
@@ -75,7 +79,7 @@ function projectCodex(path: string): { events: PortableEvent[]; warnings: Native
         const text = contentText(payload.content)
         pushMessage(events, role === "system" ? "system" : role, text, i)
       } else if (itemType === "function_call") {
-        events.push(inert({ kind: "tool_call", role: "assistant", toolName: asString(payload.name), toolId: asString(payload.call_id), recordIndex: i }))
+        events.push(inert({ kind: "tool_call", role: "assistant", toolName: asString(payload.name), toolId: asString(payload.call_id), input: toolInput(payload.arguments), recordIndex: i }))
       } else if (itemType === "function_call_output") {
         events.push(inert({ kind: "tool_result", role: "tool", toolId: asString(payload.call_id), text: asString(payload.output), recordIndex: i }))
       } else if (itemType === "reasoning") {
@@ -239,7 +243,7 @@ function projectCline(dir: string): { events: PortableEvent[]; warnings: NativeT
       for (const call of rec.tool_calls) {
         const c = (call && typeof call === "object" ? call : {}) as Record<string, unknown>
         const fn = (c.function && typeof c.function === "object" ? c.function : {}) as Record<string, unknown>
-        events.push(inert({ kind: "tool_call", role: "assistant", toolName: asString(fn.name) ?? asString(c.name), toolId: asString(c.id), recordIndex: i }))
+        events.push(inert({ kind: "tool_call", role: "assistant", toolName: asString(fn.name) ?? asString(c.name), toolId: asString(c.id), input: toolInput(fn.arguments), recordIndex: i }))
       }
     }
     pushMessage(events, role, contentText(rec.content), i)
@@ -273,7 +277,7 @@ function projectAmp(path: string): { events: PortableEvent[]; warnings: NativeTr
       const block = (blockRaw && typeof blockRaw === "object" ? blockRaw : {}) as Record<string, unknown>
       const type = asString(block.type)
       if (type === "text") pushMessage(events, role, asString(block.text) ?? "", i)
-      else if (type === "tool_use") events.push(inert({ kind: "tool_call", role: "assistant", toolName: asString(block.name), toolId: asString(block.id), recordIndex: i }))
+      else if (type === "tool_use") events.push(inert({ kind: "tool_call", role: "assistant", toolName: asString(block.name), toolId: asString(block.id), input: toolInput(block.input), recordIndex: i }))
       else if (type === "tool_result")
         events.push(inert({ kind: "tool_result", role: "tool", toolId: asString(block.tool_use_id), text: contentText(block.content), recordIndex: i }))
       else if (type === "thinking") events.push(inert({ kind: "thinking", role: "assistant", recordIndex: i }))

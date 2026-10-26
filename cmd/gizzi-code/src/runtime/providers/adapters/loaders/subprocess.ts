@@ -391,7 +391,16 @@ export class SubprocessLanguageModel implements LanguageModelV2 {
                   id: event.id,
                   content: event.content,
                   isError: Boolean(event.isError),
+                  ...(event.sources?.length ? { sources: event.sources } : {}),
                 },
+              } as unknown as LanguageModelV2StreamPart)
+              continue
+            }
+
+            if (event.type === "plan") {
+              controller.enqueue({
+                type: "raw",
+                raw: { __gizzi: "observed_plan", entries: event.entries, explanation: event.explanation },
               } as unknown as LanguageModelV2StreamPart)
               continue
             }

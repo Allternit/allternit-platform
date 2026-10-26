@@ -562,6 +562,8 @@
               "guides/write-in-my-style",
               "guides/share-location",
               "guides/agent-steps",
+              "guides/progress-pane",
+              "guides/response-parts",
               "guides/agent-run-tree",
               "guides/pdf-citations"
             ],

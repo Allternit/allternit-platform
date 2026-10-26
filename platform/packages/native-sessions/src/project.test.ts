@@ -27,6 +27,25 @@ describe("native-sessions projectors", () => {
     expect(shown.events.some((e) => e.role === "assistant")).toBe(true)
   })
 
+  test("keeps a Claude tool call's input and its result", () => {
+    const home = join(tmpdir(), `claude-tools-${Date.now()}`)
+    const dir = join(home, ".claude", "projects", "-tmp")
+    mkdirSync(dir, { recursive: true })
+    const id = "aaaaaaaa-bbbb-cccc-dddd-ffffffffffff"
+    writeFileSync(
+      join(dir, `${id}.jsonl`),
+      [
+        JSON.stringify({ type: "user", uuid: "u1", sessionId: id, message: { role: "user", content: "what host?" } }),
+        JSON.stringify({ type: "assistant", uuid: "a1", sessionId: id, message: { role: "assistant", content: [{ type: "tool_use", id: "toolu_1", name: "Bash", input: { command: "hostname" } }] } }),
+        JSON.stringify({ type: "user", uuid: "u2", sessionId: id, message: { role: "user", content: [{ type: "tool_result", tool_use_id: "toolu_1", content: "box-1" }] } }),
+      ].join("\n") + "\n",
+    )
+    const shown = showNativeSession("claude", id, { home })
+    expect(shown.events.find((e) => e.kind === "tool_call")).toMatchObject({ toolName: "Bash", toolId: "toolu_1", input: { command: "hostname" } })
+    expect(shown.events.find((e) => e.kind === "tool_result")).toMatchObject({ toolId: "toolu_1", text: "box-1" })
+    expect(shown.events.filter((e) => e.kind === "message" && e.role === "user")).toHaveLength(1)
+  })
+
   test("eventsAfter returns only native turns past the snapshot leaf", () => {
     const home = join(tmpdir(), `after-${Date.now()}`)
     const dir = join(home, ".claude", "projects", "-tmp")
@@ -64,7 +83,7 @@ describe("native-sessions projectors", () => {
       join(task, "api_conversation_history.json"),
       JSON.stringify([
         { role: "user", content: "fix the flaky test" },
-        { role: "assistant", content: [{ type: "text", text: "checking the suite" }], tool_calls: [{ id: "call-1", type: "function", function: { name: "run_tests", arguments: "{}" } }] },
+        { role: "assistant", content: [{ type: "text", text: "checking the suite" }], tool_calls: [{ id: "call-1", type: "function", function: { name: "run_tests", arguments: "{\"suite\":\"unit\"}" } }] },
         { role: "tool", tool_call_id: "call-1", content: "2 failed" },
         { role: "assistant", content: "found the bug" },
       ]),
@@ -73,7 +92,7 @@ describe("native-sessions projectors", () => {
     expect(listed.some((s) => s.sessionId === "task-9")).toBe(true)
     const shown = showNativeSession("cline", "task-9", { home })
     expect(shown.events.some((e) => e.kind === "message" && e.role === "user" && e.text?.includes("flaky"))).toBe(true)
-    expect(shown.events.some((e) => e.kind === "tool_call" && e.toolName === "run_tests")).toBe(true)
+    expect(shown.events.find((e) => e.kind === "tool_call" && e.toolName === "run_tests")?.input).toEqual({ suite: "unit" })
     expect(shown.events.some((e) => e.kind === "tool_result" && e.text === "2 failed")).toBe(true)
     expect(shown.events.some((e) => e.kind === "message" && e.role === "assistant" && e.text?.includes("found the bug"))).toBe(true)
   })

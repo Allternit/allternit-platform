@@ -122,6 +122,101 @@ test("Codex app-server thread/start uses result.thread.id", async () => {
   expect(codexThreadId({ threadId: "old-shape" })).toBeUndefined()
 })
 
+describe("OpenCode json events", () => {
+  test("a real OpenCode turn becomes a step, the reply text and a finish", async () => {
+    const { opencodeJsonEvents } = await import("@/runtime/drivers/local-cli-driver")
+    const lines = [
+      { type: "step_start", part: { type: "step-start" } },
+      { type: "tool_use", part: { type: "tool", tool: "bash", callID: "call_1", state: { status: "completed", input: { command: "ls -la" }, output: "a.txt\nb.md" } } },
+      { type: "step_finish", part: { type: "step-finish", reason: "tool-calls", tokens: { input: 10, output: 2 } } },
+      { type: "text", part: { type: "text", text: "a.txt, b.md. Done." } },
+      { type: "step_finish", part: { type: "step-finish", reason: "stop", tokens: { input: 26, output: 9 } } },
+    ]
+    expect(lines.flatMap((l) => opencodeJsonEvents(l))).toEqual([
+      { type: "tool_call", id: "call_1", name: "bash", arguments: { command: "ls -la" } },
+      { type: "tool_result", id: "call_1", content: "a.txt\nb.md", isError: false },
+      { type: "text_delta", delta: "a.txt, b.md. Done." },
+      { type: "finish", finishReason: "stop", usage: { inputTokens: 26, outputTokens: 9, totalTokens: 35 } },
+    ])
+  })
+  test("an OpenCode error fails the turn with its message", async () => {
+    const { opencodeJsonEvents } = await import("@/runtime/drivers/local-cli-driver")
+    const out = opencodeJsonEvents({ type: "error", error: { name: "APIError", data: { message: "Key expired" } } }) as any[]
+    expect(out[0].error.message).toBe("Key expired")
+    expect(out[1]).toMatchObject({ type: "finish", finishReason: "error" })
+  })
+})
+
+describe("ACP tool calls are named by kind", () => {
+  test("execute is bash with the agent's title as its description", async () => {
+    const { acpToolStep } = await import("@/runtime/drivers/local-cli-driver")
+    expect(acpToolStep({ kind: "execute", title: "Run the tests", rawInput: { command: "bun test" } })).toEqual({
+      name: "bash",
+      arguments: { command: "bun test", description: "Run the tests" },
+    })
+  })
+  test("a query-only search or fetch is a web search; a url fetch reads the page", async () => {
+    const { acpToolStep } = await import("@/runtime/drivers/local-cli-driver")
+    expect(acpToolStep({ kind: "search", title: "Search the web", rawInput: { query: "linear pricing" } }).name).toBe("web_search")
+    expect(acpToolStep({ kind: "fetch", title: "Search", rawInput: { query: "jira pricing" } }).name).toBe("web_search")
+    expect(acpToolStep({ kind: "fetch", rawInput: { url: "https://asana.com/pricing" } }).name).toBe("web_fetch")
+    expect(acpToolStep({ kind: "search", rawInput: { pattern: "todo" }, locations: [{ path: "/w/src" }] }).name).toBe("grep")
+  })
+  test("unknown kinds keep the agent's title", async () => {
+    const { acpToolStep } = await import("@/runtime/drivers/local-cli-driver")
+    expect(acpToolStep({ kind: "other", title: "Thinking about it", rawInput: {} }).name).toBe("Thinking about it")
+  })
+})
+
+describe("Codex app-server tool items become steps", () => {
+  test("a web search is web_search {query} and its results are sources", async () => {
+    const { codexToolCall, codexToolResult } = await import("@/runtime/drivers/local-cli-driver")
+    const item = {
+      type: "webSearch",
+      id: "ws_1",
+      query: "linear pricing",
+      action: { type: "search", query: "linear pricing", queries: null },
+      results: [{ title: "Pricing – Linear", url: "https://linear.app/pricing" }],
+    }
+    expect(codexToolCall(item)).toEqual({ type: "tool_call", id: "ws_1", name: "web_search", arguments: { query: "linear pricing" } })
+    const result = codexToolResult(item) as any
+    expect(result.type).toBe("tool_result")
+    expect(JSON.parse(result.content).results[0].url).toBe("https://linear.app/pricing")
+    expect(result.sources[0]).toMatchObject({ url: "https://linear.app/pricing", host: "linear.app", origin: "tool" })
+  })
+
+  test("opening a page is web_fetch {url}", async () => {
+    const { codexToolCall } = await import("@/runtime/drivers/local-cli-driver")
+    const call = codexToolCall({ type: "webSearch", id: "ws_2", query: "", action: { type: "openPage", url: "https://jira.com/pricing" }, results: null })
+    expect(call).toEqual({ type: "tool_call", id: "ws_2", name: "web_fetch", arguments: { url: "https://jira.com/pricing" } })
+  })
+
+  test("a failed command is an error result with its output", async () => {
+    const { codexToolCall, codexToolResult } = await import("@/runtime/drivers/local-cli-driver")
+    const item = { type: "commandExecution", id: "c_1", command: "pnpm i --frozen-lockfile", cwd: "/w", status: "failed", aggregatedOutput: "ERR_PNPM", exitCode: 1 }
+    expect(codexToolCall(item)).toMatchObject({ name: "exec_command", arguments: { command: "pnpm i --frozen-lockfile" } })
+    expect(codexToolResult(item)).toMatchObject({ content: "ERR_PNPM", isError: true })
+  })
+
+  test("an MCP tool call keeps its server/tool name and passes the tool's text", async () => {
+    const { codexToolCall, codexToolResult } = await import("@/runtime/drivers/local-cli-driver")
+    const item = {
+      type: "mcpToolCall", id: "m_2", server: "allternit", tool: "artifact_create", status: "completed",
+      arguments: { kind: "doc", title: "Brief" },
+      result: { content: [{ type: "text", text: '{"id":"art_1","version":1,"kind":"doc","title":"Brief"}\nCreated.' }] },
+      error: null,
+    }
+    expect(codexToolCall(item)).toMatchObject({ name: "mcp__allternit__artifact_create", arguments: { title: "Brief" } })
+    expect(codexToolResult(item)).toMatchObject({ content: '{"id":"art_1","version":1,"kind":"doc","title":"Brief"}\nCreated.', isError: false })
+  })
+
+  test("messages and reasoning are not tools", async () => {
+    const { codexToolCall, codexToolResult } = await import("@/runtime/drivers/local-cli-driver")
+    expect(codexToolCall({ type: "agentMessage", id: "m_1", text: "hi", phase: "commentary" })).toBeUndefined()
+    expect(codexToolResult({ type: "reasoning", id: "r_1", summary: [] })).toBeUndefined()
+  })
+})
+
 test("Codex discovery uses the installed CLI model catalog", async () => {
   const { parseCodexModels } = await import("@/runtime/providers/discovery/subprocess")
   expect(parseCodexModels(JSON.stringify({ models: [

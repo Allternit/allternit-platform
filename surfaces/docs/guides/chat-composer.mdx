@@ -1,6 +1,6 @@
 ---
 title: 'Composer, replies and questions'
-description: 'The chat text box, replying to part of a reply, answering an agent question, and what you see while an answer is being made.'
+description: 'The chat text box, replying to part of a reply, the actions under a reply (Retry with versions, Retry with another model, feedback, follow-ups), answering an agent question, and what you see while an answer is being made.'
 ---
 
 These work the same in Allternit Desktop, on ai.allternit.com (including its phone layout) and in the m.allternit.com app.
@@ -19,6 +19,34 @@ The text box is a white card. When you reply to something, or attach files on De
 Choose **Reply** under any reply, or select some text in a reply and choose **Reply** in the bar that appears. A **Replying to** strip shows the quote above the text box. Press **✕** to cancel it.
 
 When you send, the quote goes at the top of your message as `Replying to:` and a quoted block, so the agent sees exactly what you mean. Your message in the conversation shows the quote above your words. The quote is part of the message text, so it stays after a reload and on your other devices. Quotes longer than 600 characters are shortened.
+
+## Actions under a reply
+
+Under every reply you can copy it, reply to it, have it read aloud, and rate it.
+
+- **Retry** (the circular arrow) asks again and replaces the latest reply where it is. The reply it replaced is kept: use the arrows **‹ 2/2 ›** to flip between versions. The next message you send continues from the newest version.
+- **Retry with…** (the small arrow next to Retry) opens the model picker. The retry goes to the model you pick, for that one retry only. Your chat's model doesn't change.
+- **Thumbs up / down** rate the reply. After a thumbs-down, pick what went wrong: Wrong, Too long, Wrong format or Other. Press the same thumb again to clear it.
+- **Follow-ups** appear under the latest reply when the answer suggests a next step (or the model sends suggestions). They're always shown; click one to send it. There are no canned suggestions.
+
+Older versions are kept while the app is open; they aren't saved to your account. A message that included images can't be retried; send it again instead. Retry works in Chat, Cowork, Code and bot threads, on Desktop, ai.allternit.com (including phones) and the m.allternit.com app. Bots that run in their own vendor app don't offer Retry.
+
+### For developers
+
+Source: `allternit-ai/src/`:
+
+| File | Role |
+| --- | --- |
+| `components/chat/MessageActions.tsx` | The shared action row (Phosphor icons): version arrows, copy, reply, speak, thumbs and the reason picker, Retry, Retry with… (`ModelPickerPopoverContainer`), always-visible follow-ups. |
+| `lib/chat/retry-turn.ts` | `prepareRetry` / `retryLastTurn`: reverts the last turn through `POST /agent-sessions/:id/revert` (gizzi `SessionRevert`), drops it locally and resends, with an optional `modelId`. |
+| `lib/chat/message-versions.ts` | Client-side reply versions per session and turn (`useTurnVersions`, `applyTurnVersions`), in memory for the app session. |
+| `lib/chat/message-feedback.ts` | Votes and reasons on message metadata (`feedback`, `feedbackReason`), with a device-local fallback for rows outside the store. |
+| `lib/chat/follow-ups.ts` | Follow-ups from `follow-ups` or `suggestions` parts, else the answer's closing "Next step:" line. |
+| `components/chat/StreamingChatComposer.tsx` | Uses `MessageActions`; Retry only on the latest reply. |
+| `views/cowork/CoworkTranscript.tsx` | Versions, the retry wrapper (snapshot and rollback) and feedback for Chat and Cowork. |
+| `views/ChatView.tsx`, `views/cowork/CoworkRoot.tsx`, `views/code/CodeCanvas.tsx` | `handleRegenerate(options)` calls `retryLastTurn` on each surface's store. |
+| `components/bot-chat/BotTranscript.tsx`, `SettledBubble.tsx`, `views/bots/BotChatSessionView.tsx` | Bot threads: the action row on the latest reply, versions over transcript rows, retry through `prepareRetry` and `handleSend` with a `modelId`. |
+| `preview-message-actions.html`, `dev/MessageActionsPreview.tsx` | Dev preview (`?theme=dark`, `?phone=1`). |
 
 ## Answering an agent question
 
@@ -51,6 +79,8 @@ Questions, approvals and suggestions don't block each other. Each card works on 
 
 ## While an answer is being made
 
+- The steps show above the reply as they run, then fold into one line such as "Worked for 12s · 4 steps". See [Agent steps in replies](/guides/agent-steps).
+- When the agent keeps a plan, a chip at the top right reads **Step 2 of 3** and opens [Progress](/guides/progress-pane) in the right pane.
 - A small rounded pill shows what the agent is doing now, such as "Creating report.csv".
 - While the agent writes a file, a grey placeholder in the file's shape holds its place: a table for CSV and spreadsheets, a page for documents, lines for code, a frame for web pages. After 3 seconds a soft light runs around its edge. With reduced motion turned on, nothing moves.
 
@@ -67,3 +97,5 @@ Bot threads already worked this way. See [Bot threads](/guides/bot-threads).
 ## Interactive answers
 
 Some replies include a small interactive card: numbers that update as you move a slider, a table, a chart, or numbered options. Moving a slider or changing a number updates the card on your device without asking the agent again. Buttons and choices on the card send your pick as your next message. Cards can also show live data from your connected apps; one that would change something asks you first. Turn cards off in Settings → Response style → **Layout and visuals** → **Text only**. More: [Interactive answers](/guides/interactive-answers).
+
+Every reply follows a fixed layout for its kind of question (answer first, then the details), and Settings → **Response style** sets how long it is. See [How answers are laid out](/guides/interactive-answers#how-answers-are-laid-out).

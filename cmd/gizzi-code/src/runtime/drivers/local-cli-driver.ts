@@ -24,7 +24,7 @@ import type {
   TaskHandle,
 } from "@/runtime/runtime-driver"
 import { claudeToolDecision, deniedMessage } from "@/runtime/bots/bot-turn"
-import { codexDeveloperInstructions, acpCanLoadSession, acpMcpServers, claudePermissionFlags, claudeSessionFlags, codexPlanParams, codexThreadRequest, opencodeResumeFlags, qwenResumeFlags, vendorSessionIdFromEvent, codexMcpConfig, withInstructions, claudeContextArgv } from "@/runtime/drivers/cli-session-flags"
+import { codexDeveloperInstructions, cliTurnMessage, acpCanLoadSession, acpMcpServers, claudePermissionFlags, claudeSessionFlags, codexPlanParams, codexThreadRequest, opencodeResumeFlags, qwenResumeFlags, vendorSessionIdFromEvent, codexMcpConfig, withInstructions, claudeContextArgv } from "@/runtime/drivers/cli-session-flags"
 import { ContextBreakdown } from "@/runtime/session/context-breakdown"
 import { ContextBreakdownStore } from "@/runtime/session/context-breakdown-store"
 import { CodexContext } from "@/runtime/session/codex-context"
@@ -50,6 +50,7 @@ import { CliBackgroundTasks } from "@/runtime/session/cli-background-tasks"
 import { ProcessRegistry } from "@/runtime/process-registry"
 import { acpGateDecision } from "@/runtime/drivers/acp-gate"
 import { PermissionNext } from "@/runtime/tools/guard/permission/next"
+import { mergeSources, sourcesFromClaudeCodeToolResult, todosFromNativePlan, toSource, type ResponseSource } from "@/runtime/session/response-parts"
 
 const log = Log.create({ service: "local-cli-driver" })
 
@@ -146,7 +147,7 @@ export class LocalCliDriver implements RuntimeDriver {
     }
 
     const task = this.tasks.get(handle.taskId)
-    const message = task?.prompt ?? ""
+    const prompt = task?.prompt ?? ""
 
     yield { type: "status", status: "running" }
     await this.logEvent(handle.taskId, { type: "status", status: "running" })
@@ -160,6 +161,8 @@ export class LocalCliDriver implements RuntimeDriver {
     // The path is one argv element (it may contain spaces, e.g. a custom tool).
     const baseCmd = [cliPath, ...parseCmd(this.specArgs())]
     const adapter = resolveAdapter(this.cliName)
+    // CLIs without a system-prompt channel get the session's instructions in the message.
+    const message = cliTurnMessage(prompt, task?.systemPrompt, this.cliName, adapter.mode)
 
     if (task?.attachments && task.attachments.length > 0 && !adapter.supportsAttachments) {
       throw new Error(
@@ -682,6 +685,18 @@ export class LocalCliDriver implements RuntimeDriver {
             await this.logEvent(handle.taskId, vEv)
           }
 
+          // OpenCode / DevEco `run --format json`: their own event shape.
+          if (this.cliName === "opencode" || this.cliName === "deveco") {
+            const mapped = opencodeJsonEvents(evt as unknown as Record<string, unknown>)
+            for (const ev of mapped) {
+              if (ev.type === "finish") finished = true
+              yield ev
+              await this.logEvent(handle.taskId, ev)
+            }
+            if (finished) break
+            continue
+          }
+
           if (evt.type === "system") {
             if (evt.status) {
               const statusEv = { type: "status", status: "running" } as AgentEvent
@@ -740,11 +755,15 @@ export class LocalCliDriver implements RuntimeDriver {
             for (const [idx, part] of userContent.entries()) {
               if (!part || typeof part !== "object") continue
               if (part.type === "tool_result") {
+                // Claude Code puts the tool's structured result beside the
+                // content (`tool_use_result`); WebSearch's carries the pages.
+                const sources = userContent.length === 1 ? sourcesFromClaudeCodeToolResult(evt.tool_use_result) : []
                 const toolResultEv = {
                   type: "tool_result",
                   id: String(part.tool_use_id ?? `${handle.taskId}-tool-${idx}`),
                   content: extractTextContent(part.content),
                   isError: Boolean(part.is_error),
+                  ...(sources.length ? { sources } : {}),
                 } as AgentEvent
                 yield toolResultEv
                 await this.logEvent(handle.taskId, toolResultEv)
@@ -1077,6 +1096,12 @@ export class LocalCliDriver implements RuntimeDriver {
         if (!update || !update.sessionUpdate) return
 
         switch (update.sessionUpdate) {
+          case "plan": {
+            // ACP plan update: the agent's whole plan, every time.
+            const todos = todosFromNativePlan(update)
+            if (todos) pushEvent({ type: "plan", entries: todos })
+            break
+          }
           case "agent_message_chunk": {
             const text = extractTextContent(update.content)
             if (text) pushEvent({ type: "text_delta", delta: text })
@@ -1090,12 +1115,12 @@ export class LocalCliDriver implements RuntimeDriver {
           case "tool_call": {
             const toolCallId = String(update.toolCallId ?? "")
             if (!toolCallId) break
-            pushEvent({
-              type: "tool_call",
-              id: toolCallId,
-              name: String(update.title ?? update.kind ?? "tool"),
-              arguments: update.rawInput ?? {},
-            })
+            pushEvent({ type: "tool_call", id: toolCallId, ...acpToolStep(update) })
+            // Some agents report a tool already finished in its first update.
+            const status = String(update.status ?? "")
+            if (status === "completed" || status === "failed") {
+              pushEvent({ type: "tool_result", id: toolCallId, content: extractTextContent(update.content), isError: status === "failed" })
+            }
             break
           }
           case "tool_call_update": {
@@ -1392,6 +1417,15 @@ export class LocalCliDriver implements RuntimeDriver {
 
     const events: AgentEvent[] = []
     const streamedMessages = new Set<string>()
+    // Codex labels each agentMessage item ("commentary" notes between tools vs
+    // the answer) on item/started; deltas only carry the item id.
+    const messagePhase = new Map<string, string>()
+    const startedTools = new Set<string>()
+    // Reasoning summaries streamed live (item/reasoning/summaryTextDelta) are not repeated on item/completed.
+    const streamedReasoning = new Set<string>()
+    let lastReasoningPart = ""
+    let lastTextItem = ""
+    let lastNoteItem = ""
     let done = false
     let notifyYield = () => {}
     let finished = false
@@ -1487,11 +1521,57 @@ export class LocalCliDriver implements RuntimeDriver {
             const method = msg.method
             const params = (msg.params ?? {}) as Record<string, unknown>
 
+            // One agentMessage item's text: commentary notes go to the steps
+            // (reasoning), the answer to the reply; a new item starts a new paragraph.
+            const pushMessageText = (itemId: string, delta: string) => {
+              if (messagePhase.get(itemId) === "commentary") {
+                const sep = lastNoteItem && lastNoteItem !== itemId ? "\n\n" : ""
+                lastNoteItem = itemId
+                pushEvent({ type: "reasoning_delta", delta: sep + delta })
+                return
+              }
+              const sep = lastTextItem && lastTextItem !== itemId ? "\n\n" : ""
+              lastTextItem = itemId
+              pushEvent({ type: "text_delta", delta: sep + delta })
+            }
+
             if (method === "item/agentMessage/delta") {
               const delta = params.delta
               if (typeof delta === "string" && delta) {
-                streamedMessages.add(String(params.itemId ?? ""))
-                pushEvent({ type: "text_delta", delta })
+                const itemId = String(params.itemId ?? "")
+                streamedMessages.add(itemId)
+                pushMessageText(itemId, delta)
+              }
+              continue
+            }
+
+            // Codex's reasoning summary as it is written: the live thought line.
+            if (method === "item/reasoning/summaryTextDelta") {
+              const delta = params.delta
+              if (typeof delta === "string" && delta) {
+                const itemId = String(params.itemId ?? "")
+                const part = `${itemId}:${String(params.summaryIndex ?? 0)}`
+                const sep = lastReasoningPart && lastReasoningPart !== part ? "\n\n" : ""
+                lastReasoningPart = part
+                streamedReasoning.add(itemId)
+                pushEvent({ type: "reasoning_delta", delta: sep + delta })
+              }
+              continue
+            }
+
+            if (method === "item/started") {
+              const item = params.item as Record<string, unknown> | undefined
+              if (item?.type === "agentMessage") {
+                if (typeof item.phase === "string") messagePhase.set(String(item.id ?? ""), item.phase)
+                continue
+              }
+              const call = codexToolCall(item)
+              // A web search starts before Codex knows its query; send it when
+              // it finishes (with the query) rather than as "Searching the web" for "".
+              const blankSearch = call?.name === "web_search" && !(call.arguments as { query?: string }).query
+              if (call && !blankSearch) {
+                startedTools.add(call.id)
+                pushEvent(call)
               }
               continue
             }
@@ -1506,6 +1586,19 @@ export class LocalCliDriver implements RuntimeDriver {
               continue
             }
 
+            if (method === "turn/plan/updated") {
+              // Codex's own plan ({plan:[{step,status}], explanation}).
+              const todos = todosFromNativePlan(params)
+              if (todos) {
+                pushEvent({
+                  type: "plan",
+                  entries: todos,
+                  ...(typeof params.explanation === "string" ? { explanation: params.explanation } : {}),
+                })
+              }
+              continue
+            }
+
             if (method === "turn/started" || method === "codex/event") {
               const event = params.event as Record<string, unknown> | undefined
               if (method === "turn/started" || event?.type === "task_started") {
@@ -1515,53 +1608,25 @@ export class LocalCliDriver implements RuntimeDriver {
             }
 
             if (method === "item/completed") {
-              const reasoning = codexReasoningText(params)
+              const done = params.item as Record<string, unknown> | undefined
+              const reasoning = done?.type === "reasoning" && streamedReasoning.has(String(done.id ?? "")) ? "" : codexReasoningText(params)
               if (reasoning) pushEvent({ type: "reasoning_delta", delta: reasoning })
               const item = params.item as Record<string, unknown> | undefined
-              if (item?.type === "agentMessage" && !streamedMessages.has(String(item.id ?? ""))) {
-                const text = extractCodexText(item)
-                if (text) pushEvent({ type: "text_delta", delta: text })
+              if (item?.type === "agentMessage") {
+                const itemId = String(item.id ?? "")
+                if (typeof item.phase === "string") messagePhase.set(itemId, item.phase)
+                if (!streamedMessages.has(itemId)) {
+                  const text = extractCodexText(item)
+                  if (text) pushMessageText(itemId, text)
+                }
+                continue
               }
-              continue
-            }
-
-            if (method === "item/commandExecution/started") {
-              pushEvent({
-                type: "tool_call",
-                id: String(params.id ?? `${handle.taskId}-command`),
-                name: "exec_command",
-                arguments: params,
-              })
-              continue
-            }
-
-            if (method === "item/commandExecution/completed") {
-              pushEvent({
-                type: "tool_result",
-                id: String(params.id ?? `${handle.taskId}-command`),
-                content: extractCodexText(params),
-                isError: Boolean(params.error),
-              })
-              continue
-            }
-
-            if (method === "item/fileChange/started") {
-              pushEvent({
-                type: "tool_call",
-                id: String(params.id ?? `${handle.taskId}-file-change`),
-                name: "patch_apply",
-                arguments: params,
-              })
-              continue
-            }
-
-            if (method === "item/fileChange/completed") {
-              pushEvent({
-                type: "tool_result",
-                id: String(params.id ?? `${handle.taskId}-file-change`),
-                content: extractCodexText(params),
-                isError: Boolean(params.error),
-              })
+              // Tools Codex runs itself (search, shell, patches, MCP): the call
+              // when it was not seen starting, then its result.
+              const call = codexToolCall(item)
+              if (call && !startedTools.has(call.id)) pushEvent(call)
+              const result = codexToolResult(item)
+              if (result) pushEvent(result)
               continue
             }
 
@@ -2693,6 +2758,8 @@ interface StreamJsonEvent {
   is_error?: boolean
   request_id?: string
   request?: { subtype?: string; tool_name?: string; input?: Record<string, unknown> | string }
+  /** `user` tool results: Claude Code's structured result beside the content (WebSearch carries its pages). */
+  tool_use_result?: unknown
 }
 
 interface OpenclawEvent {
@@ -2789,6 +2856,159 @@ export function codexReasoningText(params: Record<string, unknown>): string {
     if (text) return text
   }
   return extractCodexText(source)
+}
+
+function codexWebSearchQuery(item: Record<string, unknown>): string {
+  const action = (item.action ?? {}) as Record<string, unknown>
+  const queries = Array.isArray(action.queries) ? action.queries.filter((q) => typeof q === "string") : []
+  return [item.query, action.query].find((q): q is string => typeof q === "string" && q.trim() !== "") ?? queries.join(" · ")
+}
+
+/**
+ * A Codex app-server tool item (`item/started` / `item/completed`, protocol v2)
+ * as an observed tool call, named the way the steps UI reads tools: web_search
+ * {query}, web_fetch {url}, exec_command {command}, patch_apply {changes},
+ * mcp__server__tool. Messages, reasoning and plans are not tools.
+ */
+/**
+ * One OpenCode `run --format json` line as driver events: `text` and
+ * `reasoning` parts, `tool_use` (sent once the tool finishes: its call and
+ * result together), `step_finish` with reason "stop" ends the turn with its
+ * token counts, `error` fails it. step_start and other lines carry nothing to show.
+ */
+export function opencodeJsonEvents(evt: Record<string, unknown>): AgentEvent[] {
+  const part = (evt.part && typeof evt.part === "object" ? evt.part : {}) as Record<string, unknown>
+  switch (evt.type) {
+    case "text":
+      return typeof part.text === "string" && part.text ? [{ type: "text_delta", delta: part.text }] : []
+    case "reasoning":
+      return typeof part.text === "string" && part.text ? [{ type: "reasoning_delta", delta: part.text }] : []
+    case "tool_use": {
+      const state = (part.state && typeof part.state === "object" ? part.state : {}) as Record<string, unknown>
+      const id = String(part.callID ?? part.id ?? "")
+      if (!id) return []
+      const events: AgentEvent[] = [{ type: "tool_call", id, name: String(part.tool ?? "tool"), arguments: state.input ?? {} }]
+      if (state.status === "completed" || state.status === "error") {
+        const output = state.status === "error" ? state.error : state.output
+        events.push({
+          type: "tool_result",
+          id,
+          content: typeof output === "string" ? output : JSON.stringify(output ?? ""),
+          isError: state.status === "error",
+        })
+      }
+      return events
+    }
+    case "step_finish": {
+      if (part.reason !== "stop") return []
+      const tokens = (part.tokens && typeof part.tokens === "object" ? part.tokens : {}) as Record<string, unknown>
+      const input = typeof tokens.input === "number" ? tokens.input : 0
+      const output = typeof tokens.output === "number" ? tokens.output : 0
+      return [{ type: "finish", finishReason: "stop", usage: { inputTokens: input, outputTokens: output, totalTokens: input + output } }]
+    }
+    case "error": {
+      const err = (evt.error && typeof evt.error === "object" ? evt.error : {}) as Record<string, unknown>
+      const data = (err.data && typeof err.data === "object" ? err.data : {}) as Record<string, unknown>
+      const message = typeof data.message === "string" ? data.message : typeof err.name === "string" ? err.name : "OpenCode turn failed"
+      return [{ type: "error", error: new Error(message) }, { type: "finish", finishReason: "error", usage: zeroUsage() }]
+    }
+    default:
+      return []
+  }
+}
+
+/**
+ * An ACP tool call named by its `kind` the way the steps UI reads tools
+ * (execute → bash, fetch → web_fetch, a query-only search → web_search), with
+ * the agent's own title kept as the step's description.
+ */
+export function acpToolStep(update: Record<string, unknown>): { name: string; arguments: unknown } {
+  const raw = update.rawInput && typeof update.rawInput === "object" && !Array.isArray(update.rawInput) ? (update.rawInput as Record<string, unknown>) : {}
+  const title = typeof update.title === "string" ? update.title.trim() : ""
+  const kind = typeof update.kind === "string" ? update.kind : ""
+  const locations = Array.isArray(update.locations) ? (update.locations as Array<Record<string, unknown>>) : []
+  const path = [raw.path, raw.file_path, raw.filePath, locations[0]?.path].find((p): p is string => typeof p === "string" && p !== "")
+  const url = [raw.url, raw.uri].find((u): u is string => typeof u === "string" && /^https?:\/\//.test(u))
+  const query = [raw.query, raw.q].find((q): q is string => typeof q === "string" && q !== "")
+  const args = { ...raw, ...(path && !raw.path ? { path } : {}), ...(title ? { description: title } : {}) }
+  switch (kind) {
+    case "execute":
+      return { name: "bash", arguments: args }
+    case "read":
+      return { name: "read", arguments: args }
+    case "edit":
+      return { name: "edit", arguments: args }
+    case "fetch":
+      return url || !query ? { name: "web_fetch", arguments: args } : { name: "web_search", arguments: args }
+    case "search":
+      return query && !path ? { name: "web_search", arguments: args } : { name: "grep", arguments: args }
+    default:
+      return { name: title || kind || "tool", arguments: raw }
+  }
+}
+
+export function codexToolCall(item: Record<string, unknown> | undefined): Extract<AgentEvent, { type: "tool_call" }> | undefined {
+  if (!item || typeof item.id !== "string") return undefined
+  const id = item.id
+  switch (item.type) {
+    case "webSearch": {
+      const action = (item.action ?? {}) as Record<string, unknown>
+      if ((action.type === "openPage" || action.type === "findInPage") && typeof action.url === "string") {
+        return { type: "tool_call", id, name: "web_fetch", arguments: { url: action.url, ...(typeof action.pattern === "string" ? { pattern: action.pattern } : {}) } }
+      }
+      return { type: "tool_call", id, name: "web_search", arguments: { query: codexWebSearchQuery(item) } }
+    }
+    case "commandExecution":
+      return { type: "tool_call", id, name: "exec_command", arguments: { command: item.command, cwd: item.cwd } }
+    case "fileChange":
+      return { type: "tool_call", id, name: "patch_apply", arguments: { changes: item.changes } }
+    case "mcpToolCall":
+      return { type: "tool_call", id, name: `mcp__${String(item.server ?? "mcp")}__${String(item.tool ?? "tool")}`, arguments: item.arguments ?? {} }
+    case "dynamicToolCall":
+      return { type: "tool_call", id, name: String(item.tool ?? "tool"), arguments: item.arguments ?? {} }
+    default:
+      return undefined
+  }
+}
+
+/** The finished tool item's result; web search results also become sources. */
+export function codexToolResult(item: Record<string, unknown> | undefined): Extract<AgentEvent, { type: "tool_result" }> | undefined {
+  if (!item || typeof item.id !== "string") return undefined
+  const id = item.id
+  const failed = item.status === "failed" || item.status === "declined"
+  switch (item.type) {
+    case "webSearch": {
+      const results = Array.isArray(item.results) ? item.results : []
+      const sources = mergeSources(results.map((r) => toSource(r, "tool")).filter((s): s is ResponseSource => Boolean(s)))
+      return {
+        type: "tool_result",
+        id,
+        content: JSON.stringify({ query: codexWebSearchQuery(item), results }),
+        isError: false,
+        ...(sources.length ? { sources } : {}),
+      }
+    }
+    case "commandExecution":
+      return {
+        type: "tool_result",
+        id,
+        content: typeof item.aggregatedOutput === "string" ? item.aggregatedOutput : "",
+        isError: failed || (typeof item.exitCode === "number" && item.exitCode !== 0),
+      }
+    case "fileChange":
+      return { type: "tool_result", id, content: failed ? "Patch not applied" : "Patch applied", isError: failed }
+    case "mcpToolCall": {
+      // The tool's own text (what Claude Code's tool_result carries), so
+      // artifact_create's JSON summary line reaches the artifact card.
+      const result = (item.result ?? {}) as Record<string, unknown>
+      const text = item.error ? JSON.stringify(item.error) : extractTextContent(result.content) || JSON.stringify(result.structuredContent ?? item.result ?? null)
+      return { type: "tool_result", id, content: text, isError: failed || Boolean(item.error) }
+    }
+    case "dynamicToolCall":
+      return { type: "tool_result", id, content: JSON.stringify(item.contentItems ?? null), isError: failed || item.success === false }
+    default:
+      return undefined
+  }
 }
 
 function extractCodexText(params: Record<string, unknown>): string {

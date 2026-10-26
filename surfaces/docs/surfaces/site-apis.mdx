@@ -57,10 +57,49 @@ After Analyze you get an editor:
 
 - **Title and goal.** One line each. The goal is what the skill is for.
 - **Steps.** Edit, reorder, delete or add steps. A step is one of `api` (call an endpoint), `ui` (click or type), `shell`, or `note`.
-- **Inputs.** Values that change between runs. Each has a name, a label and the example seen in the recording. Reference an input in step text with a double-brace placeholder such as `{{customer_name}}`.
+- **Inputs.** Values that change between runs. Each has a name, a label, a type and the example seen in the recording. Reference an input in step text with a double-brace placeholder such as `{{customer_name}}`. See [Typed inputs](#typed-inputs).
 - **Timeline.** The recording strip, with local screenshots on Desktop.
 
 Edits are kept when you click **Save changes**. Run on a schedule saves pending edits first. Replay and Save skill use the edits on screen.
+
+## Typed inputs
+
+Every input has a **type**. Analyze guesses it from the example you typed during the recording. Values are entered in a neutral form (an ISO date, a plain number) and formatted for the target field when the skill runs.
+
+| Type | Use for | Extra settings |
+|---|---|---|
+| `text` | Names, search terms (the default) | |
+| `number` | Amounts and counts | `format`: a locale such as `de-DE` |
+| `date`, `datetime` | Dates and times | `format`: `YYYY-MM-DD`, `MM/DD/YYYY`, `DD/MM/YYYY`, `D MMM YYYY` |
+| `email`, `url` | Addresses and links | |
+| `choice` | One of a fixed list | `choices` |
+| `file`, `folder` | A file or folder on the computer | `root`: the folder it must be inside, which can be a profile value |
+| `list` | Several values, one per line or comma-separated, used by a loop | |
+| `secret` | Passwords and tokens | `secret_ref`: the credential in the vault |
+
+Inputs are required unless you turn `required` off; a step can be skipped when an optional input is empty. A `secret` input is never typed into a recording or stored in the skill. When a step needs it, the run pauses and asks you.
+
+## Business profile
+
+The **Business profile** holds values you set once and reuse in many skills, such as `erp_url` or `reports_root`. There is one profile per user. Reference a value as `{{profile.erp_url}}`. Secrets cannot be stored in it.
+
+## Placeholders and saving
+
+The only way a run varies is a placeholder. These are the forms:
+
+- `{{name}}`: a declared input.
+- `{{profile.key}}`: a value from the business profile.
+- `{{var.name}}`: a value read from the page by an earlier `extract` step.
+- `{{item}}` or `{{item.field}}`: the current element inside a loop (`for_each`), under the name the loop gives it.
+
+Saving a skill is **blocked** while any of these is true, and the editor lists each problem next to its step:
+
+- A placeholder does not match any of the forms above, for example `{{customer}}` with no input named `customer`. Nothing is ever filled in by guesswork at run time.
+- An input is declared but never used.
+- `{{var.name}}` is used before a step that extracts `name`.
+- A `{{profile.key}}` value is missing from the profile. This is only a **warning** when saving; the run is blocked until you set it.
+
+The same rules run in the editor and on the server, so a skill saved from another client is held to them too.
 
 ## Save skill
 
@@ -86,9 +125,18 @@ Taught in Allternit Teach from one recording on 2026-10-24. Ask for approval bef
 
 **Run on a schedule** creates a routine in Automation Tasks. You need a bot to run it: pick one, choose hourly, daily at 9:00, weekdays at 9:00 or a custom cron, and fill in the input values. Steps that submit, pay, send or delete still ask for approval.
 
-## Replay
+## Run and Replay
 
-**Replay** asks for the input values, then starts a computer session that follows the rendered steps now.
+A skill has two ways to run now.
+
+- **Run** needs no model. It is available on Desktop for skills that were compiled from the recording into exact steps (go to a page, click an element, fill a field, wait for text, read a value). Each step finds its element several ways (selector, id, name, label, then visible text), checks what should be true afterwards, and moves on without fixed waits. The editor shows each step's progress live and logs which way found the element.
+- **Replay** asks for the input values, then starts a computer session in which an agent follows the written steps. It works for every skill, including ones without compiled steps.
+
+Steps that submit, pay, send or delete are marked as unsafe to repeat. They are never retried automatically, and an attended Run asks once (Allow or Deny) before the first one. An unattended run pauses and notifies you unless the skill has been approved to run them.
+
+### When a step fails
+
+Run stops at the failed step and posts a message into the session: the skill, the step, what was tried and the page address. It then hands over to the agent, which finishes from there. Nothing is repeated that could have side effects.
 
 ## Site APIs underneath
 
@@ -116,6 +164,8 @@ All routes are under `/api/har-derived-api` and need a bearer token.
 | `GET` | `/teach/skills` | List your taught skills |
 | `PUT` | `/teach/skills/:id` | Create or update a taught skill |
 | `DELETE` | `/teach/skills/:id` | Delete a taught skill |
+| `GET` | `/teach/profile` | Get your business profile |
+| `PUT` | `/teach/profile` | Replace your business profile |
 
 ### Timeline events
 
@@ -128,7 +178,13 @@ type TeachEvent =
   | { t: number; kind: 'input'; url?: string; label: string; field?: string; valuePreview?: string }
   | { t: number; kind: 'app'; app: string; window?: string }
   | { t: number; kind: 'snapshot'; id: string }
-  | { t: number; kind: 'narration'; text: string };
+  | { t: number; kind: 'narration'; text: string }
+  | { t: number; kind: 'key'; url?: string; key: string; label?: string; frame?: string }
+  | { t: number; kind: 'select'; url?: string; label: string; value: string; css?: string; frame?: string }
+  | { t: number; kind: 'upload'; url?: string; label: string; fileName: string; css?: string }
+  | { t: number; kind: 'download'; url?: string; fileName: string; fromUrl?: string }
+  | { t: number; kind: 'copy'; url?: string; textPreview: string }
+  | { t: number; kind: 'paste'; url?: string; label: string; css?: string };
 ```
 
 ### Distill
@@ -148,11 +204,15 @@ type TeachEvent =
 
 ```typescript
 interface TeachStep { id: string; kind: 'api' | 'ui' | 'shell' | 'note'; text: string; endpoint_id?: string; target?: string; input_refs?: string[] }
-interface TeachInput { name: string; label: string; example: string; description?: string }
+interface TeachInput {
+  name: string; label: string; example: string; description?: string;
+  type?: 'text' | 'number' | 'date' | 'datetime' | 'email' | 'url' | 'choice' | 'file' | 'folder' | 'list' | 'secret';
+  required?: boolean; format?: string; choices?: string[]; root?: string; secret_ref?: string;
+}
 interface TeachDraft { title: string; intent: string; steps: TeachStep[]; inputs: TeachInput[]; source: 'model' | 'rules'; redactions: number }
 ```
 
-A draft has at most 40 steps and 12 inputs.
+The model is asked to type each input from its example (a date comes back as `date` with the format seen, amounts as `number`, uploads as `file`). The rule-based fallback does the same for dates, numbers, emails and links. Key presses, choices, uploads, downloads, copies and pastes are included in the timeline the model sees; copied text and file names are redacted like other text. A draft has at most 40 steps and 12 inputs.
 
 ### Taught skills
 
@@ -165,7 +225,37 @@ interface TeachSkill extends TeachDraft {
   domain?: string;
   skill_path?: string;   // set after Save skill
   routine_id?: string;   // set after Run on a schedule
+  workflow?: object;     // compiled steps for Run; stored and returned untouched
+  version?: number;      // raised on every save
+  auto_approve_unsafe?: boolean;
   created_at: string;
+  updated_at: string;
+}
+```
+
+Fields the server does not know, such as `workflow`, are kept and returned as sent.
+
+`PUT /teach/skills/:id` checks the placeholders in the goal, the step text and the compiled workflow steps (including steps inside loops). When the skill breaks a rule it answers `422` and stores nothing:
+
+```json
+{
+  "error": "invalid_skill",
+  "problems": [
+    { "step_id": "s2", "message": "`{{customer}}` is not a declared input, profile value, variable or loop item" },
+    { "message": "Input `region` is declared but never used" }
+  ]
+}
+```
+
+`step_id` is left out when a problem belongs to the skill as a whole. Missing profile values are not errors; the save succeeds and the response carries an `x-teach-warnings` header with the notes.
+
+### Business profile
+
+`GET /teach/profile` returns your profile, or an empty one. `PUT /teach/profile` replaces it and returns the stored copy with a new `updated_at`. Keys use letters, digits, `_` and `-` (at most 100 keys); a value of type `secret` is rejected with `400`.
+
+```typescript
+interface TeachProfile {
+  values: Record<string, { value: string; label?: string; type?: string }>;
   updated_at: string;
 }
 ```

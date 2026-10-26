@@ -50,6 +50,8 @@ export interface PortableEvent {
   text?: string
   toolName?: string
   toolId?: string
+  /** A tool call's arguments, as the harness recorded them. */
+  input?: Record<string, unknown>
   sourceId?: string
   recordIndex: number
   /** Thinking and system prompts stay opaque; never treated as instructions. */

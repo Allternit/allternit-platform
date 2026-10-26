@@ -203,6 +203,18 @@
       "label": "registered phones",
       "kind": "module",
       "path": "allternit/cmd/allternit-cloud-api/src/routes/registered_phones.rs"
+    },
+    {
+      "id": "allternit/cmd/allternit-api/src/teach_routes.rs",
+      "label": "Teach skills and profile routes",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-api/src/teach_routes.rs"
+    },
+    {
+      "id": "allternit/cmd/allternit-api/src/har_api_routes.rs",
+      "label": "HAR-derived API routes",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-api/src/har_api_routes.rs"
     }
   ],
   "edges": [
@@ -687,6 +699,34 @@
       "evidence": [
         "allternit/surfaces/allternit-desktop/src/main/agent-cursor-window.ts",
         "allternit/surfaces/allternit-desktop/src/preload/index.ts"
+      ]
+    },
+    {
+      "source": "allternit-ai/src/lib/api-capture",
+      "target": "allternit/cmd/allternit-api/src/teach_routes.rs",
+      "kind": "HTTP /api/har-derived-api/teach/distill, /teach/skills, /teach/profile (draft a skill, save it with placeholder validation, business profile)",
+      "evidence": [
+        "allternit-ai/src/lib/api-capture/api.ts",
+        "allternit/cmd/allternit-api/src/teach_routes.rs"
+      ]
+    },
+    {
+      "source": "allternit-ai/src/lib/api-capture",
+      "target": "allternit/cmd/allternit-api/src/har_api_routes.rs",
+      "kind": "HTTP /api/har-derived-api/* (analyze a recorded network capture into endpoints)",
+      "evidence": [
+        "allternit-ai/src/lib/api-capture/api.ts",
+        "allternit/cmd/allternit-api/src/har_api_routes.rs"
+      ]
+    },
+    {
+      "source": "allternit/surfaces/allternit-desktop",
+      "target": "allternit-ai/src/lib/api-capture",
+      "kind": "IPC teach recorder and network capture events from the browser pane webview (clicks, typing, requests)",
+      "evidence": [
+        "allternit/surfaces/allternit-desktop/src/main/teach-recorder.ts",
+        "allternit/surfaces/allternit-desktop/src/main/browser-capture-manager.ts",
+        "allternit/surfaces/allternit-desktop/src/main/web-request-hub.ts"
       ]
     }
   ]

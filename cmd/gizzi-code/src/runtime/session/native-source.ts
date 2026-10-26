@@ -31,22 +31,54 @@ function sourceFromInfo(info: Session.Info): SourceRef | undefined {
   }
 }
 
+/** Longest tool output kept per step; the full text stays in the native file. */
+const TOOL_OUTPUT_MAX = 20_000
+
+/** One-line label for a picked-up tool step, from the arguments most tools carry. */
+function toolTitle(name: string, input: Record<string, unknown>): string {
+  for (const key of ["description", "command", "file_path", "filePath", "path", "pattern", "url", "query", "prompt"]) {
+    const value = input[key]
+    if (typeof value === "string" && value.trim()) return value.trim().split("\n")[0]!.slice(0, 120)
+  }
+  return name
+}
+
+/**
+ * Writes a native transcript as Allternit messages: each user turn, then one
+ * assistant message per reply holding its text and its tool calls as real
+ * tool steps (input, and output from the matching result) in order.
+ */
 async function writeEvents(sessionID: string, events: PortableEvent[], directory: string) {
-  let lastUserId: string | undefined
-  const now = Date.now()
+  const results = new Map<string, string>()
   for (const event of events) {
-    const role = event.role === "assistant" || event.kind === "tool_call" ? "assistant" : event.role === "user" ? "user" : undefined
-    if (!role) continue
-    const text =
-      event.kind === "tool_call"
-        ? `[native tool ${event.toolName ?? "call"}] ${event.text ?? ""}`.trim()
-        : event.kind === "tool_result"
-          ? `[native tool result] ${event.text ?? ""}`.trim()
-          : event.text
-    if (event.kind !== "message" && event.kind !== "tool_call" && event.kind !== "tool_result") continue
-    if (!text) continue
-    const messageID = Identifier.ascending("message")
-    if (role === "user") {
+    if (event.kind === "tool_result" && event.toolId) results.set(event.toolId, event.text ?? "")
+  }
+  let lastUserId: string | undefined
+  let assistantId: string | undefined
+  const now = Date.now()
+  const startAssistant = async () => {
+    if (assistantId) return assistantId
+    assistantId = Identifier.ascending("message")
+    const info: MessageV2.Info = {
+      id: assistantId,
+      sessionID,
+      role: "assistant",
+      time: { created: now, completed: now },
+      parentID: lastUserId ?? assistantId,
+      modelID: "snapshot",
+      providerID: "native",
+      mode: "native-import",
+      agent: "native-import",
+      path: { cwd: directory, root: directory },
+      cost: 0,
+      tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+    }
+    await Session.updateMessage(info)
+    return assistantId
+  }
+  for (const event of events) {
+    if (event.kind === "message" && event.role === "user" && event.text) {
+      const messageID = Identifier.ascending("message")
       const info: MessageV2.Info = {
         id: messageID,
         sessionID,
@@ -62,32 +94,41 @@ async function writeEvents(sessionID: string, events: PortableEvent[], directory
         sessionID,
         messageID,
         type: "text",
-        text,
+        text: event.text,
         metadata: { origin: "native", inert: true },
       })
       lastUserId = messageID
-    } else {
-      const info: MessageV2.Info = {
-        id: messageID,
-        sessionID,
-        role: "assistant",
-        time: { created: now, completed: now },
-        parentID: lastUserId ?? messageID,
-        modelID: "snapshot",
-        providerID: "native",
-        mode: "native-import",
-        agent: "native-import",
-        path: { cwd: directory, root: directory },
-        cost: 0,
-        tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
-      }
-      await Session.updateMessage(info)
+      assistantId = undefined
+    } else if (event.kind === "message" && event.role === "assistant" && event.text) {
+      const messageID = await startAssistant()
       await Session.updatePart({
         id: Identifier.ascending("part"),
         sessionID,
         messageID,
         type: "text",
-        text,
+        text: event.text,
+        metadata: { origin: "native", inert: true },
+      })
+    } else if (event.kind === "tool_call") {
+      const messageID = await startAssistant()
+      const tool = event.toolName ?? "tool"
+      const input = event.input ?? {}
+      const output = event.toolId ? results.get(event.toolId) ?? "" : ""
+      await Session.updatePart({
+        id: Identifier.ascending("part"),
+        sessionID,
+        messageID,
+        type: "tool",
+        callID: event.toolId ?? Identifier.ascending("part"),
+        tool,
+        state: {
+          status: "completed",
+          input,
+          output: output.length > TOOL_OUTPUT_MAX ? `${output.slice(0, TOOL_OUTPUT_MAX)}\n… (cut; the full output is in the native session)` : output,
+          title: toolTitle(tool, input),
+          metadata: { origin: "native" },
+          time: { start: now, end: now },
+        },
         metadata: { origin: "native", inert: true },
       })
     }
