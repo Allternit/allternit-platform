@@ -1,0 +1,79 @@
+---
+title: 'Subagent Types API'
+description: 'Store per-user custom subagent types and overrides of the built-in subagent catalog.'
+---
+
+## Overview
+
+Allternit ships 15 built-in subagent types. Their defaults live in the client and in gizzi, not in this API. The Subagent Types API stores only the caller's own rows:
+
+- **Custom types** (`is_custom: true`) — new types with a slug that is not a built-in.
+- **Overrides** (`is_custom: false`) — changes to a built-in type, keyed by the built-in's slug. Fields left `null` keep the shipped default.
+
+Deleting a custom type removes it. Deleting an override resets that built-in to its defaults.
+
+Built-in slugs: `explorer`, `planner`, `builder`, `code-reviewer`, `verifier`, `debugger`, `web-researcher`, `browser-operator`, `computer-operator`, `docs-writer`, `data-analyst`, `ui-designer`, `release-engineer`, `security-reviewer`, `scribe`.
+
+<Note>
+This namespace is served by the Allternit API data-plane node (`http://127.0.0.1:8013` on the same machine, or your paired or provisioned node). The hosted Cloud API at `https://api.allternit.com` does not route it. See [Cloud API](/api/cloud-api).
+</Note>
+
+## Base URL
+
+```
+http://127.0.0.1:8013/api/v1
+```
+
+## Authentication
+
+All requests must include a valid bearer token in the `Authorization` header. Rows are scoped to the signed-in user.
+
+## Subagent type object
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `slug` | string | Matches `^[a-z0-9][a-z0-9-]{1,39}$`. Unique per user. |
+| `name` | string or null | Display name, max 60 characters. Required for custom types. |
+| `description` | string or null | Max 500 characters. |
+| `prompt` | string or null | System prompt, max 20,000 characters. |
+| `model_class` | string or null | One of `small`, `standard`, `deep`. |
+| `tools` | array of strings or null | Tool ids the subagent may use. |
+| `max_steps` | integer or null | Step limit, 1 to 1000. |
+| `look` | object or null | Avatar look: `pack` and `face` (each matching `^[a-z0-9-]{1,40}$`) and an optional `accent`. |
+| `is_custom` | boolean | `true` for a custom type, `false` for a built-in override. |
+
+## Endpoints
+
+### List subagent types
+
+```
+GET /subagent-types
+```
+
+Returns the caller's rows: `{ "types": [ ... ] }`.
+
+### Create a custom type
+
+```
+POST /subagent-types
+```
+
+Body: `slug`, `name`, and optionally `description`, `prompt`, `model_class`, `tools`, `max_steps`, `look`. Returns `201` with `{ "type": { ... } }`.
+
+Returns `409` when the slug is a built-in (PATCH it to override instead) or when the caller already has a row with that slug. Returns `400` on validation errors.
+
+### Update or override a type
+
+```
+PATCH /subagent-types/{slug}
+```
+
+Partial update: only fields present in the body change, and `null` clears a field. If the caller has no row for a built-in slug, an override row is created. An unknown slug with no row returns `404`. Returns `{ "type": { ... } }`.
+
+### Delete or reset a type
+
+```
+DELETE /subagent-types/{slug}
+```
+
+Deletes the caller's row and returns `204`. For a built-in, this resets it to the shipped defaults.

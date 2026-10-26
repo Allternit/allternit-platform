@@ -773,6 +773,7 @@
               "api/agent-runtimes",
               "api/agent-workspaces",
               "api/agent-preferences",
+              "api/subagent-types",
               "api/cowork-preferences",
               "api/agent-sessions",
               "api/sessions",
