@@ -565,6 +565,7 @@
               "guides/progress-pane",
               "guides/response-parts",
               "guides/agent-run-tree",
+              "guides/subagents",
               "guides/pdf-citations"
             ],
             "icon": "/icons/book.svg"
@@ -778,6 +779,7 @@
               "api/agent-runtimes",
               "api/agent-workspaces",
               "api/agent-preferences",
+              "api/subagent-types",
               "api/cowork-preferences",
               "api/agent-sessions",
               "api/sessions",

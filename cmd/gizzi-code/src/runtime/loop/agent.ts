@@ -19,6 +19,8 @@ import { Global } from "@/runtime/context/global"
 import path from "path"
 import { Plugin } from "@/runtime/integrations/plugin"
 import { Skill } from "@/runtime/skills/skill"
+import { BUILTIN_CATALOG, CATALOG_ALIASES, catalogAgent, isModelClass, MODEL_CLASSES } from "@/runtime/agents/builtin-catalog"
+import { CatalogSync } from "@/runtime/agents/catalog-sync"
 
 const HarnessConfigSchema = z.object({
   mode: z.enum(["byok", "cloud", "local", "subprocess"]),
@@ -79,6 +81,14 @@ export namespace Agent {
           providerID: z.string(),
         })
         .optional(),
+      /** Logical model class (small/standard/deep/inherit); used when `model` is unset. */
+      modelClass: z.enum(MODEL_CLASSES).optional(),
+      /** Display name for the subagent's card (e.g. "Code Reviewer"). */
+      title: z.string().optional(),
+      /** Bot-avatar face slug the app draws on the subagent's card. */
+      face: z.string().optional(),
+      /** Set on legacy names (general, explore) that stand for a catalog type. */
+      aliasOf: z.string().optional(),
       variant: z.string().optional(),
       prompt: z.string().optional(),
       options: z.record(z.string(), z.any()),
@@ -353,6 +363,53 @@ export namespace Agent {
       },
     }
 
+    // The 15-type subagent catalog (runtime/agents/builtin-catalog.ts).
+    // Scoped types ("*": deny) layer their rules after the user's so config
+    // can't widen them (e.g. hand a reviewer edit); builder lets the user's win.
+    for (const entry of BUILTIN_CATALOG) {
+      const own = PermissionNext.fromConfig({
+        ...entry.permission,
+        // After the type's "*" rule: outside the worktree asks, except skill
+        // dirs and truncated-output files.
+        external_directory: {
+          "*": "ask",
+          ...Object.fromEntries(whitelistedDirs.map((dir) => [dir, "allow"])),
+        },
+      } as Config.Permission)
+      const readOnly = entry.permission["*"] === "deny"
+      result[entry.name] = {
+        name: entry.name,
+        title: entry.title,
+        description: entry.description,
+        mode: entry.mode,
+        native: true,
+        modelClass: entry.modelClass,
+        face: entry.face,
+        steps: entry.steps,
+        prompt: entry.prompt,
+        permission: readOnly ? PermissionNext.merge(defaults, user, own) : PermissionNext.merge(defaults, own, user),
+        options: {},
+        summaryPolicy: {
+          minChars: 200,
+          retries: 1,
+          continuationPrompt:
+            "Expand your handoff for the parent. Include concrete findings or changes, relevant file paths, evidence or verification performed, and any remaining risks or follow-up work.",
+        },
+      }
+    }
+    // Legacy subagent names stay callable (configs, @mentions, models.jobs)
+    // but now carry their catalog type's identity and model class. Hidden
+    // from the task tool listing so the model sees each type once.
+    for (const [legacy, target] of Object.entries(CATALOG_ALIASES)) {
+      const item = result[legacy]
+      const entry = catalogAgent(target)
+      if (!item || !entry || item.mode !== "subagent") continue
+      item.title = entry.title
+      item.face = entry.face
+      item.modelClass = entry.modelClass
+      item.aliasOf = target
+    }
+
     for (const [key, value] of Object.entries(cfg.agent ?? {})) {
       if (value.disable) {
         delete result[key]
@@ -367,7 +424,16 @@ export namespace Agent {
           options: {},
           native: false,
         }
-      if (value.model) item.model = Provider.parseModel(value.model)
+      // `model: small|standard|deep|inherit` (config or markdown frontmatter)
+      // is a model class; anything else is a concrete provider/model.
+      if (value.model && isModelClass(value.model)) {
+        item.modelClass = value.model.trim().toLowerCase() as Info["modelClass"]
+        item.model = undefined
+      } else if (value.model) item.model = Provider.parseModel(value.model)
+      if (value.model_class && isModelClass(value.model_class))
+        item.modelClass = value.model_class.trim().toLowerCase() as Info["modelClass"]
+      if (value.title?.trim()) item.title = value.title.trim()
+      if (value.face?.trim()) item.face = value.face.trim()
       item.variant = value.variant ?? item.variant
       item.prompt = value.prompt ?? item.prompt
       item.description = value.description ?? item.description
@@ -411,8 +477,35 @@ export namespace Agent {
     return result
   })
 
+  /** Account-level overrides (Allternit catalog sync) on a built-in catalog type. */
+  function withOverride(agent: Info | undefined): Info | undefined {
+    if (!agent) return agent
+    const key = agent.aliasOf ?? agent.name
+    if (!agent.native || !catalogAgent(key)) return agent
+    const o = CatalogSync.override(key)
+    if (!o) return agent
+    return {
+      ...agent,
+      title: o.title ?? agent.title,
+      face: o.face ?? agent.face,
+      description: o.description ?? agent.description,
+      modelClass: agent.model ? agent.modelClass : (o.modelClass ?? agent.modelClass),
+    }
+  }
+
   export async function get(agent: string) {
-    return state().then((x) => x[agent])
+    return state().then((x) => withOverride(x[agent]))
+  }
+
+  /** Resolve a `subagent_type`, following legacy aliases (plan → planner) when
+   * the name is unknown or names a primary agent. */
+  export async function getSubagent(name: string) {
+    const agents = await state()
+    const direct = agents[name]
+    if (direct && direct.mode !== "primary") return withOverride(direct)
+    const target = CATALOG_ALIASES[name]
+    if (target && agents[target]) return withOverride(agents[target])
+    return withOverride(direct)
   }
 
   export async function list() {
@@ -420,6 +513,7 @@ export namespace Agent {
     return pipe(
       await state(),
       values(),
+      (items) => items.map((x) => withOverride(x)!),
       sortBy([(x) => (cfg.default_agent ? x.name === cfg.default_agent : x.name === "build"), "desc"]),
     )
   }

@@ -78,12 +78,38 @@ Pick a model per job in `models.jobs` (project `config.json`), or in the Alltern
 
 | Job | Used for |
 |---|---|
-| `explorer` | `explore` subagents (reading and searching) |
-| `coder` | `general` subagents (making edits) |
-| `review` | The reviewer (`/review`, `gizzi run --review`, goal rounds) |
+| `explorer` | Explorer subagents (`explorer`, and the older `explore`) |
+| `coder` | Builder subagents (`builder`, and the older `general`) |
+| `review` | The reviewer (`/review`, `gizzi run --review`, goal rounds) and Code Reviewer subagents |
 | `goalEscalate` | The model a goal switches to after two rounds with the same failures |
-| `summarizer` | Compacting long sessions |
-| `chat`, `goalJudge`, `webResearch` | Accepted and stored; not used yet |
+| `summarizer` | Compacting long sessions, and Scribe subagents |
+| `webResearch` | Web Researcher subagents |
+| `chat`, `goalJudge` | Accepted and stored; not used yet |
+
+## Subagents
+
+gizzi ships 15 built-in subagent types. The full list is in [Subagents](/guides/subagents). Each type has a model class:
+
+| `model` value | Model used |
+|---|---|
+| `small` | `small_model` when set, else the cheapest model on the session's provider (on `auto`, the simple tier) |
+| `standard` | The parent agent's model |
+| `deep` | The strongest model on the session's provider (on `auto`, the reasoning tier) |
+| `inherit` | The parent agent's model |
+
+A subagent's model comes from, in order: its own `model`, the matching `models.jobs` entry, then its class. A type with no class uses `small`. If the class has no model on the provider, the parent's model is used.
+
+Agent files (`.gizzi/agents/*.md`) accept `model: small`, `model: standard`, `model: deep` and `model: inherit`, plus `title` and `face` (a character in the Office Professionals avatar pack).
+
+Your custom subagents from Settings → Subagents are written to `~/.gizzi/agents/allternit/` when gizzi starts, and every ten minutes after. They load at the next config reload. A file whose subagent you deleted is removed.
+
+| Variable | Effect |
+|---|---|
+| `GIZZI_SUBAGENT_SYNC_OFF` | Do not fetch your custom subagents from Allternit |
+| `GIZZI_NO_BRAIN_AGENTS` | Do not pass the subagents to the Claude Code and Codex brains |
+| `GIZZI_CODEX_SMALL_MODEL` | Model written for Small subagents in `~/.codex/agents/allternit-*.toml` |
+
+The Claude Code brain gets the subagents with `--agents` (Small runs on Haiku, Standard on Sonnet, Deep on Opus). The Codex brain gets them as `~/.codex/agents/allternit-<id>.toml` files.
 
 ## Goal rounds
 

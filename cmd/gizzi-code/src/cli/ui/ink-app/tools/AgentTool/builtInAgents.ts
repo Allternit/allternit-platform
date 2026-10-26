@@ -8,6 +8,7 @@ import { EXPLORE_AGENT } from './built-in/exploreAgent.js'
 import { GENERAL_PURPOSE_AGENT } from './built-in/generalPurposeAgent.js'
 import { PLAN_AGENT } from './built-in/planAgent.js'
 import { STATUSLINE_SETUP_AGENT } from './built-in/statuslineSetup.js'
+import { getCatalogAgents } from './built-in/catalogAgents.js'
 import { VERIFICATION_AGENT } from './built-in/verificationAgent.js'
 import type { AgentDefinition } from './loadAgentsDir.js'
 
@@ -57,6 +58,10 @@ export function getBuiltInAgents(): AgentDefinition[] {
   if (areExplorePlanAgentsEnabled()) {
     agents.push(EXPLORE_AGENT, PLAN_AGENT)
   }
+
+  // The Allternit subagent catalog (explorer, verifier, scribe, ...): cheap
+  // model classes by default, one face per type.
+  agents.push(...getCatalogAgents())
 
   // Include Code Guide agent for non-SDK entrypoints
   const isNonSdkEntrypoint =

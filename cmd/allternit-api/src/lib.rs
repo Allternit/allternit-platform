@@ -237,6 +237,7 @@ pub mod gizzi_provider_auth;
 pub mod h5i_routes;
 pub mod har_api_routes;
 pub mod teach_routes;
+pub mod subagent_type_routes;
 pub mod har_api_service;
 pub mod inference_router_routes;
 pub mod inference_router_executor;

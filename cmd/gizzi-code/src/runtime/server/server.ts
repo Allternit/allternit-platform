@@ -737,6 +737,12 @@ export namespace Server {
       log.error("failed to initialize cron service", { error: err })
     }
 
+    // Sync the user's subagent catalog (custom types + overrides) from the
+    // Allternit API now and every 10 min; no-op when signed out or offline.
+    void import("@/runtime/agents/catalog-sync")
+      .then(({ CatalogSync }) => CatalogSync.start())
+      .catch((err) => log.warn("subagent catalog sync not started", { error: String(err) }))
+
     // Start runtime heartbeat to keep local/remote runtime status fresh.
     try {
       RuntimeHeartbeat.start()

@@ -1,0 +1,79 @@
+---
+title: 'Subagents'
+description: 'The 15 built-in subagents your agents hand work to, what each one costs, how to give one a face and a name, and how to add your own.'
+---
+
+Your agents hand pieces of a task to subagents. A subagent works on its own, then returns a short result to the agent that started it. Small subagents run on a cheaper model, so searching, running tests, reading logs, writing docs and writing summaries cost less than doing the same work in the main conversation.
+
+Every subagent type has a face, a name and a model class. The same type looks the same in every chat, on every device.
+
+## The built-in subagents
+
+| Subagent | Model class | What it does |
+|---|---|---|
+| Explorer | Small | Searches code and files. Read-only. |
+| Planner | Deep | Researches the codebase and writes the plan. Read-only. |
+| Builder | Standard | Makes one scoped change in its own worktree. |
+| Code Reviewer | Standard | Finds bugs in a diff. Read-only. |
+| Verifier | Small | Runs typecheck, tests and lint, and reports the failures. |
+| Debugger | Small | Reads logs and traces, and finds the cause. |
+| Web Researcher | Standard | Searches the web and writes a cited summary. |
+| Browser Operator | Standard | Uses websites. Stops and asks before it pays, posts, sends or deletes. |
+| Computer Operator | Standard | Uses desktop apps on a computer. Same stop-and-ask rule. |
+| Docs Writer | Small | Writes user and developer docs. |
+| Data Analyst | Standard | Reads data and makes charts and tables. |
+| UI Designer | Standard | Makes mockups from the project's real CSS. |
+| Release Engineer | Standard | Builds, writes release notes and opens PRs. Never deploys without your go. |
+| Security Reviewer | Deep | Checks for leaked secrets, auth holes and injection. Read-only. |
+| Scribe | Small | Writes summaries, handoffs and transcripts. |
+
+The older names still work: `general` runs Builder, `explore` runs Explorer and `subagent_type: plan` runs Planner.
+
+## Model classes
+
+- **Small**: the cheapest model your provider offers. Subagents with no class set use Small.
+- **Standard**: the same model as the agent that started the subagent.
+- **Deep**: the strongest model your provider offers.
+
+If a class has no model on your provider, the subagent uses the parent's model. A spawn never fails because of the class.
+
+## See subagents at work
+
+- **Chat and bot threads.** The [agent run tree](/guides/agent-run-tree) shows each subagent's face, name, status, model, cost and time. The face blinks while the subagent runs.
+- **Steps.** A step that starts a subagent shows its face and name.
+- **Sidebar.** A working bot or code session shows the faces of its running subagents under its row, up to four, then "+N".
+- **Cowork session panel.** The Agents group lists every subagent the session used, with its face.
+
+Click a face to open that subagent's look.
+
+## Change a subagent's look
+
+1. Open **Settings → Subagents**, or click any subagent's face.
+2. Click the subagent.
+3. Change its name, or pick a face in **Look**.
+4. Click **Save**.
+
+The new name and face show for every run of that type, on Desktop, ai.allternit.com and the phone app. To go back to the default, click **Reset to default**.
+
+You must be signed in to change a subagent. Signed out, the built-in subagents still work and you can view them.
+
+## Add your own subagent
+
+1. Open **Settings → Subagents** and click **New subagent**.
+2. Give it a name. Its ID (what agents call it) is made from the name.
+3. Write **When to use**: one or two sentences that tell agents when to hand work to it.
+4. Pick a model class and a step cap.
+5. Pick its tools. With no tools picked, it can only read.
+6. Write its instructions.
+7. Pick a face, then click **Save**.
+
+Your subagents reach gizzi within ten minutes, and agents can start them by their ID. The Claude Code and Codex brains get the same list.
+
+## On the phone
+
+On the ai.allternit.com phone layout and the m.allternit.com app, Settings → Subagents shows one column of cards. The editor opens as a bottom sheet: drag it down or tap outside it to close.
+
+## For developers
+
+- Custom subagents and look changes are stored per user through the [subagent types API](/api/subagent-types).
+- gizzi config options for subagents: [CLI configuration](/cli/configuration#subagents).
