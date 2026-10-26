@@ -458,12 +458,18 @@ export namespace MemoryDrive {
    */
   export async function sessionContext(options: { waitMs?: number; writeTool?: string; saveInstructions?: string; omitPersonalEntrypoint?: boolean } = {}): Promise<string> {
     if (!enabled()) return ""
-    await Promise.race([prepare(), new Promise((r) => setTimeout(r, options.waitMs ?? 4_000))])
-    // System prompts are rebuilt every turn; reuse the snapshot briefly.
+    // The sync is a network pull; a turn waits for it only briefly (the
+    // person sees "Thinking" meanwhile) and it carries on in the background.
+    await Promise.race([prepare(), new Promise((r) => setTimeout(r, options.waitMs ?? 1_000))])
+    // System prompts are rebuilt every turn: serve the last snapshot at once
+    // and refresh it in the background when it's stale (git status + mounts
+    // cost seconds under load); only the first build is waited for.
     const key = driveAccountSync().key
     let blocks: DriveContextBlock[]
-    if (contextCache && contextCache.key === key && Date.now() - contextCache.at < CONTEXT_TTL_MS) blocks = contextCache.blocks
-    else {
+    if (contextCache && contextCache.key === key) {
+      blocks = contextCache.blocks
+      if (Date.now() - contextCache.at >= CONTEXT_TTL_MS) refreshContext(key)
+    } else {
       blocks = await contextBlocks().catch(() => [] as DriveContextBlock[])
       contextCache = { key, at: Date.now(), blocks }
     }
@@ -477,6 +483,19 @@ export namespace MemoryDrive {
 
   const CONTEXT_TTL_MS = 15_000
   let contextCache: { key: string; at: number; blocks: DriveContextBlock[] } | undefined
+  let refreshing: Promise<void> | undefined
+
+  function refreshContext(key: string): void {
+    if (refreshing) return
+    // A write clears the cache meanwhile: then this older read is dropped.
+    const base = contextCache
+    refreshing = contextBlocks()
+      .then((blocks) => {
+        if (contextCache === base && driveAccountSync().key === key) contextCache = { key, at: Date.now(), blocks }
+      })
+      .catch(() => {})
+      .finally(() => (refreshing = undefined))
+  }
 
   export function toolSaveInstructions(writeTool: string): string {
     return `Save, update or delete memories with the \`${writeTool}\` tool. It adds the source, date and id, regenerates the index and syncs; do not edit MEMORY.md's index by hand. Never store credentials, transcripts or raw logs.`
