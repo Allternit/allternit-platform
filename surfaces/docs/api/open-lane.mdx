@@ -31,7 +31,7 @@ A chat completion whose `model` is an open-lane model is checked in this order:
 | Hard-line filter allows the request | 400 `content_policy_hard_line` with `error.category` |
 | The moderation model answered | 503 `open_lane_moderation_unavailable` (fail closed) |
 
-Errors use the OpenAI shape:
+Errors use the standard Chat Completions error shape:
 
 ```json
 {
@@ -99,8 +99,8 @@ The `allternit` object is removed before the request reaches any upstream.
 
 | Where | Name | Value |
 |-------|------|-------|
-| Header | `x-allternit-handoff` | `from->to`, for example `gpt-4o->deepseek-v4.1-flash-open` |
-| Body (non-streaming) | `allternit.handoff` | `{ "from": "gpt-4o", "to": "deepseek-v4.1-flash-open", "reason": "refusal" }` |
+| Header | `x-allternit-handoff` | `from->to`, for example `frontier-model->deepseek-v4.1-flash-open` |
+| Body (non-streaming) | `allternit.handoff` | `{ "from": "frontier-model", "to": "deepseek-v4.1-flash-open", "reason": "refusal" }` |
 | Stream | first event | a `chat.completion.chunk` with `"choices": []` and the same `allternit.handoff` object |
 
 The rest of a handed-off response comes from the open model, so its `model` field names the open model.
@@ -132,10 +132,10 @@ Migration `105_open_lane.sql`:
 
 | Variable | Purpose |
 |----------|---------|
-| `OPEN_LANE_BASE_URL` | OpenAI-compatible base URL serving the open-lane models (for example a vLLM server). Required with the key; unset hides the models. |
+| `OPEN_LANE_BASE_URL` | Chat Completions-compatible base URL serving the open-lane models (for example a vLLM server). Required with the key; unset hides the models. |
 | `OPEN_LANE_API_KEY` | Bearer key for that server. |
 | `OPEN_LANE_MODEL_MAP` | Optional `alias=upstream-id` pairs, comma separated, when the server names the models differently. Default: the alias itself. |
-| `OPEN_LANE_MODERATION_MODEL` | `provider:upstream-id` of the moderation model, through a configured provider. Default `openrouter:openai/gpt-oss-safeguard-20b`. Llama Guard style answers are understood too. |
+| `OPEN_LANE_MODERATION_MODEL` | `provider:upstream-id` of the moderation model, through a configured provider. Default: the gpt-oss-safeguard 20B model through OpenRouter (`DEFAULT_MODERATION_MODEL` in `services/hard_line.rs`). Llama Guard style answers are understood too. |
 
 ## Related pages
 
