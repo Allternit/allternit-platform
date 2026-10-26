@@ -252,6 +252,10 @@ pub(crate) fn gizzi_permission_approval_content(props: &serde_json::Value) -> se
         "requestId": request_id,
         "always": always,
         "messageId": message_id,
+        // One-task grant: the card offers "Allow for this task" when this class may be
+        // granted (never subscription / mcp_app / payment / sign / delete).
+        "grantKey": crate::task_grants::approval_grant_key(permission),
+        "scopes": if crate::task_grants::approval_grant_key(permission).is_some() { json!(["once", "task"]) } else { json!(["once"]) },
     })
 }
 
@@ -2525,6 +2529,10 @@ async fn agent_chat_bridge(
                                         .cloned()
                                         .unwrap_or_else(|| json!([])),
                                     "requestId": request_id,
+                                    "grantKey": props
+                                        .get("permission")
+                                        .and_then(|v| v.as_str())
+                                        .and_then(crate::task_grants::approval_grant_key),
                                     // D16 cards (send / provider question) render from this.
                                     "subscription": props
                                         .pointer("/metadata/subscription")

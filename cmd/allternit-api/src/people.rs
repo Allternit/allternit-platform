@@ -277,7 +277,7 @@ pub async fn person_thread<R: ThreadRuntime>(db: &DbHandle, rt: &R, owner: &str,
         let open: Option<(String, String)> = conn
             .query_row(
                 "SELECT id, current_session_id FROM bot_threads WHERE bot_id = ?1 AND user_id = ?2 AND json_extract(origin, '$.channelKey') = ?3
-                   AND status NOT IN ('done', 'failed', 'declined') AND current_session_id IS NOT NULL
+                   AND status NOT IN ('done', 'failed', 'declined') AND archived_at IS NULL AND current_session_id IS NOT NULL
                    AND id NOT IN (SELECT thread_id FROM person_threads) ORDER BY updated_at DESC LIMIT 1",
                 params![bot_id, owner, conversation],
                 |r| Ok((r.get(0)?, r.get(1)?)),

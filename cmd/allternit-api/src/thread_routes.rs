@@ -83,6 +83,8 @@ pub fn thread_router() -> Router<Arc<AppState>> {
         .route("/threads/by-session/:session_id", get(thread_by_session))
         .route("/threads/:id", get(get_thread).patch(patch_thread))
         .route("/threads/:id/resolve", post(resolve_thread))
+        .route("/threads/:id/archive", post(archive_thread))
+        .route("/threads/:id/unarchive", post(unarchive_thread))
         .route("/threads/:id/usage", post(report_usage))
         .route("/threads/:id/handoff", post(handoff))
         .route("/threads/:id/deps", put(set_deps))
@@ -142,6 +144,10 @@ pub struct ThreadView {
     pub created_by: String,
     pub last_activity_at: String,
     pub resolved_at: Option<String>,
+    /// Set when the thread was archived (V277). An archived thread is closed:
+    /// its panel `group` reads `resolved` and it drops out of open-thread lists.
+    pub archived_at: Option<String>,
+    pub archived: bool,
     pub created_at: String,
 }
 
@@ -184,6 +190,9 @@ pub struct PatchThreadBody {
     pub todo: Option<Vec<TodoItem>>,
     pub summary: Option<String>,
     pub project_id: Option<String>,
+    /// `urgent` | `normal`: carried on the `thread.needs_user` ledger event so
+    /// the quiet-hours pager can let an urgent ask through.
+    pub urgency: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -250,6 +259,9 @@ pub struct ListQuery {
     pub include_resolved: bool,
     #[serde(default)]
     pub include_incognito: bool,
+    /// Archived threads come back with `includeResolved` or `includeArchived`.
+    #[serde(default)]
+    pub include_archived: bool,
 }
 
 // ─── Persistence ────────────────────────────────────────────────────────────
@@ -260,7 +272,7 @@ fn now() -> String {
 
 const COLS: &str = "t.id, t.bot_id, t.project_id, t.parent_thread_id, t.kind, t.incognito, t.title, t.objective, \
      t.success_criteria, t.status, t.status_line, t.todo, t.summary, t.checkpoint, t.current_session_id, \
-     t.created_by, t.last_activity_at, t.resolved_at, t.created_at, t.user_id";
+     t.created_by, t.last_activity_at, t.resolved_at, t.created_at, t.user_id, t.archived_at";
 
 struct Stored {
     view: ThreadView,
@@ -274,6 +286,7 @@ fn map_row(row: &Row<'_>) -> rusqlite::Result<Stored> {
         .unwrap_or_default();
     let done = todo.iter().filter(|t| t.state == "done").count();
     let status: String = row.get(9)?;
+    let archived_at: Option<String> = row.get(20)?;
     Ok(Stored {
         view: ThreadView {
             id: row.get(0)?,
@@ -285,7 +298,7 @@ fn map_row(row: &Row<'_>) -> rusqlite::Result<Stored> {
             title: row.get(6)?,
             objective: row.get(7)?,
             success_criteria: row.get(8)?,
-            group: group_of(&status),
+            group: if archived_at.is_some() { "resolved" } else { group_of(&status) },
             status,
             status_line: row.get(10)?,
             progress: [done, todo.len()],
@@ -299,6 +312,8 @@ fn map_row(row: &Row<'_>) -> rusqlite::Result<Stored> {
             created_by: row.get(15)?,
             last_activity_at: row.get(16)?,
             resolved_at: row.get(17)?,
+            archived: archived_at.is_some(),
+            archived_at,
             created_at: row.get(18)?,
         },
         user_id: row.get(19)?,
@@ -446,6 +461,9 @@ fn list(db: &DbHandle, user_id: &str, q: &ListQuery) -> rusqlite::Result<Vec<Thr
     }
     if !q.include_resolved {
         sql.push_str(" AND t.status NOT IN ('done', 'failed', 'declined')");
+        if !q.include_archived {
+            sql.push_str(" AND t.archived_at IS NULL");
+        }
     }
     if !q.include_incognito {
         sql.push_str(" AND t.incognito = 0");
@@ -843,7 +861,7 @@ pub async fn channel_thread_under<R: ThreadRuntime>(
             .query_row(
                 "SELECT id, current_session_id FROM bot_threads
                  WHERE bot_id = ?1 AND json_extract(origin, '$.channelKey') = ?2
-                   AND status NOT IN ('done', 'failed', 'declined')
+                   AND status NOT IN ('done', 'failed', 'declined') AND archived_at IS NULL
                  ORDER BY updated_at DESC LIMIT 1",
                 params![bot_id, key],
                 |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?)),
@@ -985,7 +1003,7 @@ pub async fn sync_lineage<R: ThreadRuntime>(db: &DbHandle, rt: &R, id: &str) -> 
     Ok(!successors.is_empty())
 }
 
-fn is_canonical(db: &DbHandle, t: &ThreadView) -> bool {
+pub(crate) fn is_canonical(db: &DbHandle, t: &ThreadView) -> bool {
     db.connect()
         .ok()
         .and_then(|c| {
@@ -1172,7 +1190,7 @@ async fn thread_by_session(
     }
 }
 
-async fn patch_thread(
+pub(crate) async fn patch_thread(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
     Path(id): Path<String>,
@@ -1187,6 +1205,12 @@ async fn patch_thread(
             return err(StatusCode::BAD_REQUEST, format!("unknown status `{s}`"));
         }
     }
+    if let Some(u) = body.urgency.as_deref() {
+        if u != "urgent" && u != "normal" {
+            return err(StatusCode::BAD_REQUEST, "urgency must be urgent or normal");
+        }
+    }
+    let urgency = body.urgency.clone();
     let db = state.db.clone();
     let tid = id.clone();
     let status_changed = body.status.as_deref().filter(|s| *s != before.status).map(str::to_string);
@@ -1222,6 +1246,27 @@ async fn patch_thread(
     .await;
     match res {
         Ok(Some(s)) => {
+            // Close-out (W3): resolving or pausing a thread ends its task
+            // grants and stops the reminders/routines tied to it; coming back
+            // from either turns the routines back on.
+            if let Some(to) = status_changed.as_deref() {
+                let db = state.db.clone();
+                let tid = s.view.id.clone();
+                let closing = matches!(to, "done" | "failed" | "declined");
+                let pausing = to == "paused";
+                let reopening = (before.group == "resolved" || before.status == "paused") && !closing && !pausing && !s.view.archived;
+                if closing || pausing || reopening {
+                    tokio::spawn(async move {
+                        if closing {
+                            crate::thread_closeout::thread_closed(&db, &tid).await;
+                        } else if pausing {
+                            crate::thread_closeout::thread_paused(&db, &tid).await;
+                        } else {
+                            crate::thread_closeout::thread_reopened(&db, &tid).await;
+                        }
+                    });
+                }
+            }
             // A running thread that stops frees its bot for the next delegated task.
             if matches!(before.status.as_str(), "working" | "planning") && !matches!(s.view.status.as_str(), "working" | "planning") {
                 if let Some(project_id) = s.view.project_id.clone() {
@@ -1252,13 +1297,17 @@ async fn patch_thread(
             }
             if let (Some(status), false) = (status_changed, s.view.incognito) {
                 let event = if before.group == "resolved" && s.view.group != "resolved" { "thread.resumed" } else { event_for_status(&status) };
+                let mut payload = json!({ "from": before.status, "to": status, "statusLine": s.view.status_line });
+                if event == "thread.needs_user" {
+                    payload["urgency"] = json!(urgency.as_deref().unwrap_or("normal"));
+                }
                 ledger(
                     &state.db,
                     &s.view.bot_id,
                     &s.view.id,
                     event,
                     ("user", &user.user_id),
-                    json!({ "from": before.status, "to": status, "statusLine": s.view.status_line }),
+                    payload,
                     s.view.current_session_id.as_deref(),
                 );
             }
@@ -1269,7 +1318,7 @@ async fn patch_thread(
     }
 }
 
-async fn resolve_thread(
+pub(crate) async fn resolve_thread(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
     Path(id): Path<String>,
@@ -1292,6 +1341,75 @@ async fn resolve_thread(
         Json(PatchThreadBody { status: Some(body.status), summary: body.summary, ..Default::default() }),
     )
     .await
+}
+
+/// Archive or unarchive a thread (V277). Archiving closes it (close-out
+/// hook: grants revoked, tied reminders/routines stopped); its transcript stays
+/// readable. Unarchiving reopens it unless its status is already resolved.
+pub async fn set_archived(db: &DbHandle, id: &str, archived: bool, actor: (&str, &str)) -> Result<ThreadView, String> {
+    let before = load(db, id).map_err(|e| e.to_string())?.ok_or("thread not found")?.view;
+    if before.archived == archived {
+        return Ok(before);
+    }
+    {
+        let conn = db.connect().map_err(|e| e.to_string())?;
+        let ts = now();
+        conn.execute(
+            "UPDATE bot_threads SET archived_at = CASE WHEN ?2 THEN ?3 ELSE NULL END, updated_at = ?3 WHERE id = ?1",
+            params![id, archived, ts],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    let after = load(db, id).map_err(|e| e.to_string())?.ok_or("thread not found")?.view;
+    if !after.incognito {
+        ledger(
+            db,
+            &after.bot_id,
+            &after.id,
+            if archived { "thread.archived" } else { "thread.unarchived" },
+            actor,
+            json!({ "status": after.status }),
+            after.current_session_id.as_deref(),
+        );
+    }
+    if archived {
+        crate::thread_closeout::thread_closed(db, id).await;
+    } else if group_of(&after.status) != "resolved" && after.status != "paused" {
+        crate::thread_closeout::thread_reopened(db, id).await;
+    }
+    Ok(after)
+}
+
+async fn archive_thread(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Path(id): Path<String>,
+) -> Response {
+    let t = match owned(&state, &user, &id).await {
+        Ok(t) => t,
+        Err(r) => return r,
+    };
+    if t.kind == "standing" && is_canonical(&state.db, &t) {
+        return err(StatusCode::CONFLICT, "a bot's main chat can't be archived");
+    }
+    match set_archived(&state.db, &id, true, ("user", &user.user_id)).await {
+        Ok(t) => Json(json!({ "thread": t })).into_response(),
+        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, e),
+    }
+}
+
+async fn unarchive_thread(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Path(id): Path<String>,
+) -> Response {
+    if let Err(r) = owned(&state, &user, &id).await {
+        return r;
+    }
+    match set_archived(&state.db, &id, false, ("user", &user.user_id)).await {
+        Ok(t) => Json(json!({ "thread": t })).into_response(),
+        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, e),
+    }
 }
 
 async fn report_usage(
@@ -1713,6 +1831,23 @@ mod tests {
         assert_eq!(s, StatusCode::OK);
         let types: Vec<&str> = ev["events"].as_array().unwrap().iter().map(|e| e["type"].as_str().unwrap()).collect();
         assert_eq!(types, vec!["thread.needs_user", "thread.created"]);
+        let urgency = |c: &rusqlite::Connection| -> Vec<String> {
+            c.prepare("SELECT json_extract(payload, '$.urgency') FROM bot_events WHERE thread_id = ?1 AND event_type = 'thread.needs_user' ORDER BY seq")
+                .unwrap()
+                .query_map(params![t.id], |r| r.get::<_, Option<String>>(0))
+                .unwrap()
+                .map(|r| r.unwrap().unwrap_or_default())
+                .collect()
+        };
+        assert_eq!(urgency(&conn), vec!["normal"], "unmarked needs-you is normal");
+
+        // A bot marks it urgent: the ledger carries it, so it reaches the owner in quiet hours.
+        call(&state, "PATCH", &format!("/threads/{}", t.id), "user-a", Some(json!({"status": "working"}))).await;
+        let (s, _) = call(&state, "PATCH", &format!("/threads/{}", t.id), "user-a", Some(json!({"status": "needs_you", "statusLine": "Site is down", "urgency": "urgent"}))).await;
+        assert_eq!(s, StatusCode::OK);
+        assert_eq!(urgency(&conn), vec!["normal", "urgent"]);
+        let (s, _) = call(&state, "PATCH", &format!("/threads/{}", t.id), "user-a", Some(json!({"urgency": "panic"}))).await;
+        assert_eq!(s, StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]

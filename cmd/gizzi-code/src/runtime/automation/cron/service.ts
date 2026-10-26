@@ -170,6 +170,56 @@ export const CronService = {
   },
 
   /**
+   * Thread close-out (allternit-api thread_closeout.rs): a bot thread was
+   * resolved, archived or paused. Session loops of the thread's sessions are
+   * deleted (`remove`, a close) or paused (a pause); persistent jobs named in
+   * `jobIds` or tagged `metadata.sourceThreadId === threadId` are paused.
+   * Everything paused here is marked `metadata.closedWithThread` so
+   * reopenThreadJobs turns back on exactly that.
+   */
+  closeThreadJobs(threadId: string, input: { sessionIds?: string[]; jobIds?: string[]; remove?: boolean }): { deleted: number; paused: number } {
+    if (!state.db) return { deleted: 0, paused: 0 };
+    const sessions = new Set(input.sessionIds ?? []);
+    const named = new Set(input.jobIds ?? []);
+    let deleted = 0;
+    if (input.remove) {
+      for (const sessionId of sessions) deleted += this.cleanupSessionJobs(sessionId);
+    }
+    let paused = 0;
+    for (const job of state.db.getAllJobs()) {
+      if (job.status !== "active") continue;
+      const meta = (job.metadata ?? {}) as Record<string, unknown>;
+      const sessionLoop = (job as any).scope === "session" && sessions.has((job as any).sessionId);
+      const tied = named.has(job.id) || meta.sourceThreadId === threadId || sessionLoop;
+      if (!tied) continue;
+      job.status = "paused";
+      job.metadata = { ...meta, closedWithThread: threadId };
+      job.updatedAt = new Date().toISOString();
+      state.db.saveJob(job);
+      paused++;
+    }
+    if (deleted || paused) log.info("thread jobs stopped", { threadId, deleted, paused });
+    return { deleted, paused };
+  },
+
+  /** Reopen / unarchive / resume: re-enable the jobs closeThreadJobs paused for this thread. */
+  reopenThreadJobs(threadId: string, input: { jobIds?: string[] } = {}): { resumed: number } {
+    if (!state.db) return { resumed: 0 };
+    const named = new Set(input.jobIds ?? []);
+    let resumed = 0;
+    for (const job of state.db.getAllJobs()) {
+      const meta = (job.metadata ?? {}) as Record<string, unknown>;
+      if (meta.closedWithThread !== threadId && !(named.has(job.id) && job.status === "paused")) continue;
+      const { closedWithThread: _closed, ...rest } = meta;
+      job.metadata = rest;
+      state.db.saveJob(job);
+      this.resume(job.id);
+      resumed++;
+    }
+    return { resumed };
+  },
+
+  /**
    * Stop the scheduler
    */
   stop(): void {

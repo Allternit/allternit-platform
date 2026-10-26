@@ -235,7 +235,8 @@ pub async fn call<R: ThreadRuntime>(db: &DbHandle, rt: &R, http: Arc<dyn HttpSen
     let (thread_id, _) = resolve_thread_async(db, rt, &n.number_id, to).await.map_err(OutError::Failed)?;
     // Autonomy: Ask first / Draft only / limits hold the call until the owner approves it.
     let act = crate::autonomy::Action { owner: &n.owner, bot_id: &n.bot_id, channel: "call", persons: vec![to.to_string()], action: "call", amount_cents: 0 };
-    let aut = crate::autonomy::evaluate(db, &act, false);
+    // The call's thread: its one-task grant (`call`) and trust floor apply, as for texts.
+    let aut = crate::autonomy::evaluate_ctx(db, &act, false, &crate::autonomy::Ctx { thread_id: Some(&thread_id), text: purpose, destination: "" });
     let corr = format!("call:{to}");
     if let Some(crate::autonomy::Eval { verdict: crate::autonomy::Verdict::Block { reason }, .. }) = &aut {
         crate::autonomy::record(db, &act, aut.as_ref().map(|e| e.level.as_str()).unwrap_or("default"), "blocked", reason);

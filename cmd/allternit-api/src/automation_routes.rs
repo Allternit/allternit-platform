@@ -1132,9 +1132,11 @@ async fn list_routines(
 async fn create_routine(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-    Json(req): Json<CreateRoutineRequest>,
+    Json(mut req): Json<CreateRoutineRequest>,
 ) -> Result<Json<Routine>, RoutineApiError> {
     let user = get_user(&headers).ok_or(StatusCode::UNAUTHORIZED)?;
+    // Made from inside a bot thread → tied to it; closing the thread stops it (thread_closeout).
+    crate::thread_closeout::stamp_source_thread(&state.db, &mut req.metadata, None);
     let id = Uuid::new_v4().to_string();
     let now = chrono::Utc::now().to_rfc3339();
 
@@ -1855,9 +1857,11 @@ async fn list_loops(
 async fn create_loop(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-    Json(req): Json<CreateLoopRequest>,
+    Json(mut req): Json<CreateLoopRequest>,
 ) -> Result<Json<Loop>, StatusCode> {
     let user = get_user(&headers).ok_or(StatusCode::UNAUTHORIZED)?;
+    let loop_session = req.session_id.clone();
+    crate::thread_closeout::stamp_source_thread(&state.db, &mut req.metadata, loop_session.as_deref());
     let id = Uuid::new_v4().to_string();
     let now = chrono::Utc::now().to_rfc3339();
 

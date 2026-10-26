@@ -300,6 +300,36 @@ async fn drain_acu_events(run_id: String, resp: reqwest::Response) {
     buffer_mark_done(&run_id);
 }
 
+/// True when the owner gave a live one-task grant on this bot thread covering
+/// every sensitive action in the goal. Payment, captcha, identity checks and
+/// downloads have no grant action, so any of them keeps the handoff; so does a
+/// thread with outside content in it (trust floor).
+pub(crate) fn task_grant_covers(
+    db: &crate::db::DbHandle,
+    owner: &str,
+    bot_id: Option<&str>,
+    thread_id: Option<&str>,
+    actions: &[crate::aci_safety::SensitiveActionType],
+) -> bool {
+    let (Some(bot), Some(thread)) = (bot_id.map(str::trim).filter(|b| !b.is_empty()), thread_id.map(str::trim).filter(|t| !t.is_empty())) else {
+        return false;
+    };
+    if actions.is_empty() {
+        return false;
+    }
+    if let Ok(conn) = db.connect() {
+        if crate::netops::provenance::trust_floor(&conn, thread).is_some_and(|f| f.tainted()) {
+            return false;
+        }
+    } else {
+        return false;
+    }
+    actions.iter().all(|a| match a.grant_action() {
+        Some(action) if !crate::task_grants::never_granted(action) => crate::task_grants::live_grant_for(db, owner, bot, thread, action).is_some(),
+        _ => false,
+    })
+}
+
 // ─── POST /api/aci/run ────────────────────────────────────────────────────────
 
 #[derive(Deserialize, Clone)]
@@ -311,6 +341,10 @@ struct AciRunBody {
     /// Threaded into the declarative policy seat descriptor (botId rule
     /// field) and the policy audit rows so per-bot filtering works.
     bot_id: Option<String>,
+    /// The bot thread the run belongs to. With `bot_id`, a live one-task grant
+    /// on it (`task_grants`) covering every sensitive action (form submission
+    /// → `submit`, file upload → `upload`) lifts the human handoff.
+    thread_id: Option<String>,
     allowed_sites: Option<serde_json::Value>,
     open_links_in_browser: Option<bool>,
     auto_verify: Option<bool>,
@@ -511,6 +545,13 @@ async fn aci_run(
                         )
                             .into_response();
                     }
+                }
+            }
+
+            if !granted {
+                granted = task_grant_covers(&state.db, &user.user_id, body.bot_id.as_deref(), body.thread_id.as_deref(), &decision.sensitive_actions);
+                if granted {
+                    tracing::info!(user_id = %user.user_id, thread = ?body.thread_id, "aci.run: sensitive actions covered by a one-task grant");
                 }
             }
 
@@ -1270,6 +1311,7 @@ mod tests {
             goal: "buy tickets example.com".to_string(),
             model: Some("claude-sonnet-4-6".to_string()),
             bot_id: None,
+            thread_id: None,
             allowed_sites: Some(json!(["example.com"])),
             open_links_in_browser: Some(true),
             auto_verify: Some(false),
@@ -1289,6 +1331,7 @@ mod tests {
             auto_verify: Some(false),
             session_persistence: Some(json!("dont-keep")),
             bot_id: None,
+            thread_id: None,
             approval_id: None,
             credential_names: None,
         };
@@ -1312,6 +1355,7 @@ mod tests {
             goal: "checkout with credit card on example.com".to_string(),
             model: None,
             bot_id: None,
+            thread_id: None,
             allowed_sites: None,
             open_links_in_browser: None,
             auto_verify: None,

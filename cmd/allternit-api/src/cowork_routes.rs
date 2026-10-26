@@ -2162,6 +2162,12 @@ struct ApprovalDecisionBody {
     /// The person's answer to a provider question on a D16 subscription
     /// card (relayed to the paused fabric task).
     answer: Option<String>,
+    /// `"always"`: relay gizzi's project-scoped "always" (cards with `always` patterns).
+    /// `"task"`: "Allow for this task" — relay a session-scoped `task` reply
+    /// and record a one-task grant for the bot thread (`task_grants`). Only
+    /// honoured when the card carries a `grantKey`; otherwise it is "once".
+    #[serde(default)]
+    scope: Option<String>,
 }
 
 enum ApprovalOutcome {
@@ -2414,12 +2420,17 @@ async fn decide_approval(
     let id_for_response = approval_id.clone();
     let label_for_response = decision_label.to_string();
     let answer = body.answer.clone();
+    let want_task = matches!(outcome, ApprovalOutcome::Approved) && body.scope.as_deref() == Some("task");
+    let want_always = matches!(outcome, ApprovalOutcome::Approved) && body.scope.as_deref() == Some("always");
     // D16: the agent runtime authenticates as the owning user (in Desktop
     // its device token is the same one the person's UI sends), so the user
     // id alone can't tell a person from the agent. A subscription card is
     // decided only with a person's session proof; anything else is refused
     // before anything is minted or relayed.
     let not_person = crate::subscription_routes::person_acted(&state, &headers, &user_id).await.err();
+    // A one-task grant reaches past this one ask, so only a person may give it:
+    // without a person's session proof "Allow for this task" counts as once.
+    let want_task = want_task && not_person.is_none();
 
     let result = tokio::task::spawn_blocking(move || {
         let conn = db.connect()?;
@@ -2482,6 +2493,20 @@ async fn decide_approval(
         }
         // What to relay to the runtime: an approved subscription card mints
         // its human action here, where the person approved it (D16).
+        // "Allow for this task" only where the card offered it (a grantable class).
+        let gizzi_reply = match gizzi_reply {
+            Some("once") if want_task && parsed.get("grantKey").and_then(|v| v.as_str()).is_some() => Some("task"),
+            // "Always allow" on a card that offers remembered patterns (gizzi keeps
+            // never-remembered classes as once itself).
+            Some("once")
+                if want_always
+                    && !crate::subscription_routes::is_subscription_card(&parsed)
+                    && parsed.get("always").and_then(|v| v.as_array()).is_some_and(|a| !a.is_empty()) =>
+            {
+                Some("always")
+            }
+            other => other,
+        };
         let relay = match (gizzi_reply, request_id) {
             (Some(reply), Some(request_id)) => {
                 match crate::subscription_routes::permission_reply_body(&db, &user_id, &parsed, reply, answer.as_deref()) {
@@ -2539,6 +2564,7 @@ async fn decide_approval(
             // (unknown/expired request id) — surface that to the caller; a
             // transient transport failure only warns so a briefly unreachable
             // runtime never blocks the local decision.
+            let task_reply = relay.as_ref().is_some_and(|(_, b)| b.get("reply").and_then(|v| v.as_str()) == Some("task"));
             if let Some((request_id, reply_body)) = relay {
                 let gizzi = gizzi_base();
                 let client = gizzi_client(&headers);
@@ -2581,6 +2607,31 @@ async fn decide_approval(
                 "id": id_for_response,
                 "decision": label_for_response,
             });
+            // One-task grant: the bot thread this ask came from now allows this class.
+            if task_reply {
+                let db = state.db.clone();
+                let owner = auth_user.user_id.clone();
+                let approval = id_for_response.clone();
+                let grant = tokio::task::spawn_blocking(move || {
+                    let conn = db.connect().ok()?;
+                    let content: String = conn
+                        .query_row("SELECT content FROM cowork_approvals WHERE id = ?1", params![approval], |r| r.get(0))
+                        .ok()?;
+                    drop(conn);
+                    let parsed: serde_json::Value = serde_json::from_str(&content).ok()?;
+                    let key = parsed.get("grantKey").and_then(|v| v.as_str())?.to_string();
+                    let session = parsed.get("sessionId").and_then(|v| v.as_str()).unwrap_or("");
+                    let (thread, bot) = crate::task_grants::thread_for_session(&db, &owner, session)?;
+                    crate::task_grants::create(&db, &owner, &bot, &thread, &[key], "card", &approval).ok()
+                })
+                .await
+                .ok()
+                .flatten();
+                body["scope"] = json!("task");
+                if let Some(g) = grant {
+                    body["grant"] = g.to_json();
+                }
+            }
             if prepared {
                 body["execution"] =
                     crate::subscription_mcp::execute_prepared(&state, &auth_user, &id_for_response).await;

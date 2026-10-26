@@ -443,7 +443,7 @@ fn open_threads(db: &DbHandle, project_id: &str) -> rusqlite::Result<Vec<OpenThr
     let mut stmt = conn.prepare(
         "SELECT t.id, t.title, t.status, COALESCE(json_extract(a.config, '$.botProfile.displayName'), a.name)
          FROM bot_threads t JOIN agents a ON a.id = t.bot_id
-         WHERE t.project_id = ?1 AND t.incognito = 0 AND t.status NOT IN ('done', 'failed', 'declined')
+         WHERE t.project_id = ?1 AND t.incognito = 0 AND t.status NOT IN ('done', 'failed', 'declined') AND t.archived_at IS NULL
          ORDER BY t.last_activity_at DESC LIMIT 20",
     )?;
     let rows = stmt.query_map(params![project_id], |r| Ok(OpenThread { id: r.get(0)?, title: r.get(1)?, status: r.get(2)?, bot_name: r.get(3)? }))?;
@@ -806,7 +806,10 @@ pub async fn maybe_synthesize<R: CoordinatorRuntime>(db: &DbHandle, rt: &R, user
         let conn = db.connect().ok()?;
         let mut stmt = conn
             .prepare(
-                "SELECT title, status, summary, updated_at FROM bot_threads
+                // An archived thread counts as back (closed): it never holds up the wrap-up.
+                "SELECT CASE WHEN archived_at IS NOT NULL THEN title || ' (closed)' ELSE title END,
+                        CASE WHEN archived_at IS NOT NULL THEN 'done' ELSE status END, summary, updated_at
+                 FROM bot_threads
                  WHERE project_id = ?1 AND kind = 'task' AND incognito = 0",
             )
             .ok()?;

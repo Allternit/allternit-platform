@@ -58,6 +58,8 @@ const DATA_KEYS: &[&str] = &[
     "loginId", "health", "previous", "label",
     "taskId", "capability", "detail", "threadId",
     "attentionId", "botName",
+    // "urgent" when a bot marked it so: it reaches the owner during quiet hours (cloud-api notifications::level).
+    "urgency",
 ];
 
 /// Extra keys a phone event (`phone.step`, `phone.run.completed`) carries, in

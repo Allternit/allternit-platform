@@ -688,6 +688,14 @@ pub async fn send(db: &DbHandle, tx: &dyn ChannelTransport, owner: &str, thread_
                 > 0,
             None => false,
         };
+        // A live one-task grant stands in for the consumed-once approval row, but only when
+        // autonomy itself isn't holding (a guard such as the taint floor or PII still asks).
+        // Posting files also needs `upload`.
+        let granted = !ok
+            && aut_hold.is_none()
+            && crate::task_grants::live_grant_for(db, owner, &bot_id, thread_id, "send").is_some()
+            && (req.files.is_empty() || crate::task_grants::live_grant_for(db, owner, &bot_id, thread_id, "upload").is_some());
+        let ok = ok || granted;
         if !ok {
             let pending: Option<String> = conn
                 .query_row(

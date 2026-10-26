@@ -392,7 +392,7 @@ pub fn spawn_notify_pref(db: PgPool, user: String, event: &'static str, msg: Pus
         if !super::notifications::enabled(&db, &user, event).await {
             return;
         }
-        if super::notifications::hold_if_quiet(&db, &user, event, &msg, None, None).await {
+        if super::notifications::hold_if_quiet(&db, &user, event, &msg, super::notifications::level(event, &msg.data), None, None).await {
             return;
         }
         if rate_limited && !allow_message_push(&db, &user, &msg.tag).await {
@@ -430,7 +430,7 @@ pub async fn channel_push_allowed(db: &PgPool, user: &str, route_id: &str, runti
     }
     let tag = format!("channel-{route_id}");
     let probe = PushMessage { kind: "channel_message", title: String::new(), body: String::new(), url: String::new(), tag, data: Value::Null, ttl_secs: 0, high_urgency: false };
-    if super::notifications::hold_if_quiet(db, user, "message.received", &probe, None, None).await {
+    if super::notifications::hold_if_quiet(db, user, "message.received", &probe, super::notifications::Level::Normal, None, None).await {
         return false;
     }
     allow_message_push(db, user, &format!("channel-{route_id}")).await

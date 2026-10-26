@@ -1092,6 +1092,8 @@ export namespace Session {
       await import("@/runtime/session/linked-prs")
         .then(({ LinkedPRs }) => LinkedPRs.removeSession(sessionID))
         .catch(() => {})
+      // One-task grant: the session's "Allow for this task" rules end with it.
+      await PermissionNext.clearTask(sessionID).catch(() => {})
       // WP-S1U-3: the session's last turn gets its ROUTE_MODEL label now.
       await import("@/runtime/routing/turn-router")
         .then((m) => m.endSession(sessionID, "session_deleted"))

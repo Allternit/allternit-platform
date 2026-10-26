@@ -73,6 +73,20 @@ export const PermissionRoutes = lazy(() =>
         return c.json(true)
       },
     )
+    .post(
+      "/task/:sessionID/clear",
+      describeRoute({
+        summary: "Clear one-task permissions",
+        description: "Drop the session's \"Allow for this task\" rules (allternit-api calls this when the thread closes or a grant is revoked).",
+        operationId: "permission.task.clear",
+        responses: { 200: { description: "Cleared", content: { "application/json": { schema: resolver(z.any()) } } } },
+      }),
+      validator("param", z.object({ sessionID: z.string() })),
+      async (c) => {
+        const { sessionID } = c.req.valid("param")
+        return c.json({ sessionID, cleared: await PermissionNext.clearTask(sessionID) })
+      },
+    )
     .get(
       "/",
       describeRoute({

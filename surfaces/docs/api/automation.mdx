@@ -381,6 +381,10 @@ Returns all routines and loops whose `execution_domain` is `local`.
 }
 ```
 
+## Routines and loops tied to a thread
+
+A routine or loop created from inside a bot thread belongs to that thread. On create, when `metadata.sessionId` (routine) or `sessionId` (loop) is one of a thread's sessions, the server stamps `metadata.sourceThreadId`. When the thread is resolved, archived or paused by its owner, its tied routines and loops are set to `paused` with `metadata.closedWithThread`, and the matching Gizzi cron jobs stop. Reopening the thread sets them back to `active`. See [Threads and subagents](/guides/bot-threads#what-stops-when-a-thread-closes).
+
 ## Error codes
 
 | Status | Meaning |

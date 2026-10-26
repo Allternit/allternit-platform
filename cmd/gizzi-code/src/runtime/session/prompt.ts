@@ -77,6 +77,8 @@ import * as BotInbox from "@/runtime/bots/bot-inbox"
 import { isRoutineTurnText } from "@/runtime/bots/bot-routines"
 import { isMessageAgentSession, MessageAgentTool } from "@/runtime/tools/builtins/message-agent"
 import { SuggestTaskTool } from "@/runtime/tools/builtins/suggest-task"
+import { GrantTaskPermissionTool } from "@/runtime/tools/builtins/grant-task-permission"
+import { THREAD_TOOL_IDS } from "@/runtime/tools/builtins/thread-tools"
 import { isAppBotSession } from "@/runtime/bots/app-bot-routing"
 import { SessionHandoff } from "@/runtime/session/handoff"
 import { SessionPause } from "@/runtime/session/pause"
@@ -1910,6 +1912,18 @@ const message = await createUserMessage(input)
     if (SuggestTaskTool.id in tools) {
       const allowed = await isAppBotSession(input.session.id).catch(() => false)
       if (!allowed) delete tools[SuggestTaskTool.id]
+    }
+
+    // grant_task_permission: only an app bot's chat has a thread to grant for.
+    if (GrantTaskPermissionTool.id in tools) {
+      const allowed = await isAppBotSession(input.session.id).catch(() => false)
+      if (!allowed) delete tools[GrantTaskPermissionTool.id]
+    }
+
+    // thread_update / thread_close / thread_search: only an app bot's chat steers its own thread.
+    if (THREAD_TOOL_IDS.some((id) => id in tools)) {
+      const allowed = await isAppBotSession(input.session.id).catch(() => false)
+      if (!allowed) for (const id of THREAD_TOOL_IDS) delete tools[id]
     }
 
     return tools

@@ -55,18 +55,28 @@
 //!
 //! Migration `102_notification_quiet_hours.sql`.
 //!
-//! - `GET /api/v1/notifications/quiet-hours` → `{enabled, start: "HH:MM", end: "HH:MM", timeZone, allowCalls}`
+//! - `GET /api/v1/notifications/quiet-hours` → `{enabled, start: "HH:MM", end: "HH:MM", timeZone, allowCalls, letThrough}`
 //! - `PUT /api/v1/notifications/quiet-hours` with any subset of those keys → the same shape. 400 `bad_value`
 //!   (bad time, unknown zone, wrong type, unknown key, empty body).
 //!
-//! No row = off, 22:00 to 07:00 UTC, calls ring. The window is in the person's own zone (so it follows
+//! - `POST /api/v1/notifications/ack?t=<token>` (no auth; the token is the secret) → 204: the person opened a
+//!   paged push, so it stops repeating. Sent by the service worker on click.
+//!
+//! No row = off, 22:00 to 07:00 UTC, calls ring, urgent alerts get through. The window is in the person's own zone (so it follows
 //! daylight saving time), may wrap midnight, and `start == end` means no quiet hours.
 //!
 //! While a person is in quiet hours the sink and the direct pushes (in-app messages, relayed channel
 //! messages, missed calls) don't send: [`hold_if_quiet`] records the push in `notification_held` (the sink
 //! also marks the event `held` in `notification_push_log`). In-app call rings still ring when `allowCalls`
-//! is on; when it's off the ring is silent and the missed call that follows is held. Critical problems are
-//! held too. About once a minute the sink loop runs [`summarize_once`]: for every person with held pushes
+//! is on; when it's off the ring is silent and the missed call that follows is held.
+//!
+//! Every push has a [`Level`] ([`level`]): urgent (critical problems, anything a bot marked
+//! `urgency: "urgent"`), needs you (approvals, threads waiting on the person, sign-in needed), normal
+//! (messages, calls, other problems) or low. `letThrough` (`urgent` default, `needs_you`, `none`) says which
+//! levels still go out during quiet hours. An urgent push that goes out during quiet hours pages: it is
+//! recorded in `notification_repeat` (migration `107_quiet_hours_levels.sql`) with an ack link in its data,
+//! and [`repeat_once`] sends it again every [`REPEAT_EVERY_MINUTES`] until it is opened or resolves (same
+//! tag), at most [`MAX_REPEATS`] times. About once a minute the sink loop runs [`summarize_once`]: for every person with held pushes
 //! who is no longer in quiet hours it claims them all in one `UPDATE … RETURNING` (so a restart or a second
 //! replica never sends the summary twice) and sends one push, "While you were away" with counts by kind
 //! ([`summary_body`]), opening `/`, tag `quiet-summary`. Nothing is re-sent one by one, so held pushes older
@@ -110,6 +120,37 @@ pub const DEFAULTS: &[(&str, bool)] = &[
     ("attention.resolved", false),
 ];
 
+/// How much a push matters during quiet hours. Ordered: a higher level gets through more.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Level {
+    Low,
+    Normal,
+    NeedsYou,
+    Urgent,
+}
+
+/// The level of one backbone event (or a direct push, which passes its own).
+pub fn level(event: &str, data: &Value) -> Level {
+    if s(data, &["urgency"]) == Some("urgent") {
+        return Level::Urgent;
+    }
+    match event {
+        "attention.opened" => match s(data, &["severity"]) {
+            Some("critical") => Level::Urgent,
+            Some("info") => Level::Low,
+            _ => Level::Normal,
+        },
+        "approval.requested" | "thread.needs_user" | "subscription.login_needed" => Level::NeedsYou,
+        "message.received" | "call.ended" => Level::Normal,
+        _ => Level::Low,
+    }
+}
+
+/// Resend an unopened urgent push sent in quiet hours this often ...
+pub const REPEAT_EVERY_MINUTES: i32 = 5;
+/// ... this many more times.
+pub const MAX_REPEATS: i32 = 3;
+
 /// Only look at events stored this recently (the sink polls every few seconds).
 const SCAN_WINDOW_MINUTES: i64 = 10;
 /// Don't push an event that happened at its producer longer ago than this.
@@ -123,6 +164,7 @@ pub fn routes() -> Router<Arc<ApiState>> {
     Router::new()
         .route("/api/v1/notifications/preferences", get(get_route).put(put_route))
         .route("/api/v1/notifications/quiet-hours", get(get_quiet_route).put(put_quiet_route))
+        .route("/api/v1/notifications/ack", axum::routing::post(ack_route))
 }
 
 /// Event types a person can get pushed: every user-subject event in the registry.
@@ -248,11 +290,31 @@ pub struct QuietHours {
     pub end_min: i32,
     pub time_zone: String,
     pub allow_calls: bool,
+    /// The lowest level that still goes out during quiet hours; `None` holds everything.
+    pub let_through: Option<Level>,
 }
 
 impl Default for QuietHours {
     fn default() -> Self {
-        Self { enabled: false, start_min: 22 * 60, end_min: 7 * 60, time_zone: "UTC".into(), allow_calls: true }
+        Self { enabled: false, start_min: 22 * 60, end_min: 7 * 60, time_zone: "UTC".into(), allow_calls: true, let_through: Some(Level::Urgent) }
+    }
+}
+
+/// `letThrough` on the wire and in `notification_quiet_hours.let_through`.
+fn let_through_str(l: Option<Level>) -> &'static str {
+    match l {
+        Some(Level::Urgent) => "urgent",
+        Some(_) => "needs_you",
+        None => "none",
+    }
+}
+
+fn parse_let_through(text: &str) -> Option<Option<Level>> {
+    match text {
+        "urgent" => Some(Some(Level::Urgent)),
+        "needs_you" => Some(Some(Level::NeedsYou)),
+        "none" => Some(None),
+        _ => None,
     }
 }
 
@@ -282,7 +344,7 @@ impl QuietHours {
     }
 
     pub fn json(&self) -> Value {
-        json!({ "enabled": self.enabled, "start": hhmm(self.start_min), "end": hhmm(self.end_min), "timeZone": self.time_zone, "allowCalls": self.allow_calls })
+        json!({ "enabled": self.enabled, "start": hhmm(self.start_min), "end": hhmm(self.end_min), "timeZone": self.time_zone, "allowCalls": self.allow_calls, "letThrough": let_through_str(self.let_through) })
     }
 
     /// Apply a PUT body (any subset of the response keys). `Err("bad_value")` on anything invalid.
@@ -294,6 +356,7 @@ impl QuietHours {
             match key.as_str() {
                 "enabled" => self.enabled = value.as_bool().ok_or("bad_value")?,
                 "allowCalls" => self.allow_calls = value.as_bool().ok_or("bad_value")?,
+                "letThrough" => self.let_through = value.as_str().and_then(parse_let_through).ok_or("bad_value")?,
                 "start" => self.start_min = value.as_str().and_then(parse_hhmm).ok_or("bad_value")?,
                 "end" => self.end_min = value.as_str().and_then(parse_hhmm).ok_or("bad_value")?,
                 "timeZone" => {
@@ -305,6 +368,11 @@ impl QuietHours {
             }
         }
         Ok(())
+    }
+
+    /// Whether a push at `level` is held at `now`.
+    pub fn holds_at(&self, level: Level, now: DateTime<Utc>) -> bool {
+        self.active_at(now) && self.let_through.is_none_or(|min| level < min)
     }
 }
 
@@ -324,15 +392,24 @@ pub fn parse_hhmm(text: &str) -> Option<i32> {
 
 /// `user`'s quiet hours, or the defaults when they never set them.
 pub async fn quiet_hours(db: &PgPool, user: &str) -> Result<QuietHours, sqlx::Error> {
-    let row: Option<(bool, i32, i32, String, bool)> = sqlx::query_as("SELECT enabled, start_min, end_min, time_zone, allow_calls FROM notification_quiet_hours WHERE user_id = $1").bind(user).fetch_optional(db).await?;
-    Ok(row.map(|(enabled, start_min, end_min, time_zone, allow_calls)| QuietHours { enabled, start_min, end_min, time_zone, allow_calls }).unwrap_or_default())
+    let row: Option<(bool, i32, i32, String, bool, String)> = sqlx::query_as("SELECT enabled, start_min, end_min, time_zone, allow_calls, let_through FROM notification_quiet_hours WHERE user_id = $1").bind(user).fetch_optional(db).await?;
+    Ok(row
+        .map(|(enabled, start_min, end_min, time_zone, allow_calls, let_through)| QuietHours {
+            enabled,
+            start_min,
+            end_min,
+            time_zone,
+            allow_calls,
+            let_through: parse_let_through(&let_through).unwrap_or(Some(Level::Urgent)),
+        })
+        .unwrap_or_default())
 }
 
 pub async fn set_quiet_hours(db: &PgPool, user: &str, q: &QuietHours) -> Result<(), sqlx::Error> {
     sqlx::query(
-        "INSERT INTO notification_quiet_hours (user_id, enabled, start_min, end_min, time_zone, allow_calls, updated_at) VALUES ($1, $2, $3, $4, $5, $6, now()) \
+        "INSERT INTO notification_quiet_hours (user_id, enabled, start_min, end_min, time_zone, allow_calls, let_through, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, now()) \
          ON CONFLICT (user_id) DO UPDATE SET enabled = EXCLUDED.enabled, start_min = EXCLUDED.start_min, end_min = EXCLUDED.end_min, \
-         time_zone = EXCLUDED.time_zone, allow_calls = EXCLUDED.allow_calls, updated_at = now()",
+         time_zone = EXCLUDED.time_zone, allow_calls = EXCLUDED.allow_calls, let_through = EXCLUDED.let_through, updated_at = now()",
     )
     .bind(user)
     .bind(q.enabled)
@@ -340,6 +417,7 @@ pub async fn set_quiet_hours(db: &PgPool, user: &str, q: &QuietHours) -> Result<
     .bind(q.end_min)
     .bind(&q.time_zone)
     .bind(q.allow_calls)
+    .bind(let_through_str(q.let_through))
     .execute(db)
     .await
     .map(|_| ())
@@ -365,11 +443,18 @@ pub async fn ring_held(db: &PgPool, user: &str) -> bool {
     }
 }
 
-/// When `user` is in quiet hours, record `msg` as held instead of sending it and return true.
-/// `event_id` is the backbone event for the sink (held once, however often it's looked at); `None` for a
-/// direct push. The caller then doesn't send.
-pub async fn hold_if_quiet(db: &PgPool, user: &str, event: &str, msg: &PushMessage, severity: Option<&str>, event_id: Option<&str>) -> bool {
-    if !is_quiet(db, user).await {
+/// When `user` is in quiet hours and `level` is below what they let through, record `msg` as held
+/// instead of sending it and return true. `event_id` is the backbone event for the sink (held once,
+/// however often it's looked at); `None` for a direct push. The caller then doesn't send.
+pub async fn hold_if_quiet(db: &PgPool, user: &str, event: &str, msg: &PushMessage, level: Level, severity: Option<&str>, event_id: Option<&str>) -> bool {
+    let holds = match quiet_hours(db, user).await {
+        Ok(q) => q.holds_at(level, Utc::now()),
+        Err(error) => {
+            tracing::debug!("notifications: reading quiet hours failed: {error}");
+            false
+        }
+    };
+    if !holds {
         return false;
     }
     let held = sqlx::query("INSERT INTO notification_held (user_id, event_type, tag, severity, source, event_id) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (event_id) DO NOTHING")
@@ -389,6 +474,102 @@ pub async fn hold_if_quiet(db: &PgPool, user: &str, event: &str, msg: &PushMessa
             false
         }
     }
+}
+
+/// An urgent push about to go out during `user`'s quiet hours pages: record it for [`repeat_once`] and put
+/// its ack link in the data, so opening it on any device stops the repeats. Anything else is returned as is.
+pub async fn page_if_urgent(db: &PgPool, user: &str, level: Level, mut msg: PushMessage) -> PushMessage {
+    if level != Level::Urgent || !is_quiet(db, user).await {
+        return msg;
+    }
+    // A newer page for the same thing replaces the older one.
+    let _ = ack_tag(db, user, &msg.tag).await;
+    let token = uuid::Uuid::new_v4().simple().to_string();
+    let ack = format!("{}/api/v1/notifications/ack?t={token}", super::channel_inbound::public_base());
+    if let Some(data) = msg.data.as_object_mut() {
+        data.insert("ack".into(), json!(ack));
+    } else {
+        msg.data = json!({ "ack": ack });
+    }
+    let recorded = sqlx::query(
+        "INSERT INTO notification_repeat (user_id, tag, kind, title, body, url, data, ack_token, next_at) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now() + make_interval(mins => $9))",
+    )
+    .bind(user)
+    .bind(&msg.tag)
+    .bind(msg.kind)
+    .bind(&msg.title)
+    .bind(&msg.body)
+    .bind(&msg.url)
+    .bind(&msg.data)
+    .bind(&token)
+    .bind(REPEAT_EVERY_MINUTES)
+    .execute(db)
+    .await;
+    if let Err(error) = recorded {
+        tracing::warn!("notifications: recording a page failed (it goes out once): {error}");
+    }
+    msg
+}
+
+/// Stop repeating `user`'s open pages with `tag` (the item resolved, or a newer page replaced it).
+pub async fn ack_tag(db: &PgPool, user: &str, tag: &str) -> Result<u64, sqlx::Error> {
+    sqlx::query("UPDATE notification_repeat SET acked_at = now() WHERE user_id = $1 AND tag = $2 AND acked_at IS NULL")
+        .bind(user)
+        .bind(tag)
+        .execute(db)
+        .await
+        .map(|r| r.rows_affected())
+}
+
+fn static_kind(kind: &str) -> &'static str {
+    match kind {
+        "message" => "message",
+        "channel_message" => "channel_message",
+        "call" => "call",
+        "missed_call" => "missed_call",
+        _ => "event",
+    }
+}
+
+/// Send every due, unopened page again. Each due row is claimed (count bumped, next time moved) in one
+/// statement, so restarts and replicas never double a repeat. Returns how many were sent.
+pub async fn repeat_once(db: &PgPool, transport: &dyn PushTransport, vapid: &Vapid) -> Result<usize, sqlx::Error> {
+    type Row = (String, String, String, String, String, String, Value);
+    let due: Vec<Row> = sqlx::query_as(
+        "UPDATE notification_repeat SET sent_count = sent_count + 1, next_at = now() + make_interval(mins => $1) \
+         WHERE id IN (SELECT id FROM notification_repeat WHERE acked_at IS NULL AND sent_count < $2 AND next_at <= now() \
+                      ORDER BY next_at LIMIT 200 FOR UPDATE SKIP LOCKED) \
+         RETURNING user_id, tag, kind, title, body, url, data",
+    )
+    .bind(REPEAT_EVERY_MINUTES)
+    .bind(MAX_REPEATS)
+    .fetch_all(db)
+    .await?;
+    let mut sent = 0;
+    for (user, tag, kind, title, body, url, data) in due {
+        let msg = PushMessage { kind: static_kind(&kind), title, body, url, tag, data, ttl_secs: 3600, high_urgency: true };
+        if web_push::send_to_user(db, transport, vapid, &user, &msg).await > 0 {
+            sent += 1;
+        }
+    }
+    Ok(sent)
+}
+
+#[derive(serde::Deserialize)]
+struct AckQuery {
+    t: Option<String>,
+}
+
+/// The service worker reports a paged push was opened. The token is the only credential (it was only ever
+/// sent to that person's devices); an unknown token is still 204, so nothing can be probed.
+async fn ack_route(State(state): State<Arc<ApiState>>, axum::extract::Query(q): axum::extract::Query<AckQuery>) -> Response {
+    if let Some(token) = q.t.as_deref().map(str::trim).filter(|t| !t.is_empty() && t.len() <= 64) {
+        if let Err(error) = sqlx::query("UPDATE notification_repeat SET acked_at = now() WHERE ack_token = $1 AND acked_at IS NULL").bind(token).execute(&state.db).await {
+            return internal(&error.to_string());
+        }
+    }
+    StatusCode::NO_CONTENT.into_response()
 }
 
 /// One held push, as the summary counts it: (event type, tag, severity).
@@ -801,6 +982,12 @@ async fn decide_and_send(db: &PgPool, transport: &dyn PushTransport, vapid: &Vap
     if occurred_at.is_some_and(|t| Utc::now() - t > chrono::Duration::hours(STALE_AFTER_HOURS)) {
         return Outcome::Skipped;
     }
+    if matches!(event.as_str(), "approval.resolved" | "attention.resolved") {
+        // Resolved: whatever was paging for it stops, whether or not this event is pushed.
+        if let Some(m) = message_for(event, data) {
+            let _ = ack_tag(db, user, &m.tag).await;
+        }
+    }
     if !enabled(db, user, event).await {
         return Outcome::Off;
     }
@@ -818,9 +1005,11 @@ async fn decide_and_send(db: &PgPool, transport: &dyn PushTransport, vapid: &Vap
         }
     }
     let severity = (event == "attention.opened").then(|| s(data, &["severity"])).flatten();
-    if hold_if_quiet(db, user, event, &msg, severity, Some(event_id.as_str())).await {
+    let lvl = level(event, data);
+    if hold_if_quiet(db, user, event, &msg, lvl, severity, Some(event_id.as_str())).await {
         return Outcome::Held;
     }
+    let msg = page_if_urgent(db, user, lvl, msg).await;
     if event == "message.received" && !web_push::allow_message_push(db, user, &msg.tag).await {
         return Outcome::Skipped;
     }
@@ -887,10 +1076,14 @@ pub fn spawn_push_sink(db: PgPool) {
                 if let Err(error) = summarize_once(&db, &transport, &vapid).await {
                     tracing::warn!("notifications: quiet-hours summary pass failed: {error}");
                 }
+                if let Err(error) = repeat_once(&db, &transport, &vapid).await {
+                    tracing::warn!("notifications: page repeat pass failed: {error}");
+                }
             }
             if passes % 1200 == 0 {
                 let _ = sqlx::query("DELETE FROM notification_push_log WHERE created_at < now() - interval '2 days'").execute(&db).await;
                 let _ = sqlx::query("DELETE FROM notification_held WHERE held_at < now() - interval '7 days'").execute(&db).await;
+                let _ = sqlx::query("DELETE FROM notification_repeat WHERE created_at < now() - interval '2 days'").execute(&db).await;
             }
             tokio::time::sleep(POLL).await;
         }
@@ -906,7 +1099,7 @@ mod tests {
 
     pub(crate) async fn schema(db: &PgPool) {
         events_backbone_schema(db).await;
-        for sql in [include_str!("../../migrations_pg/039_push_subscriptions.sql"), include_str!("../../migrations_pg/060_notification_preferences.sql"), include_str!("../../migrations_pg/102_notification_quiet_hours.sql")] {
+        for sql in [include_str!("../../migrations_pg/039_push_subscriptions.sql"), include_str!("../../migrations_pg/060_notification_preferences.sql"), include_str!("../../migrations_pg/102_notification_quiet_hours.sql"), include_str!("../../migrations_pg/107_quiet_hours_levels.sql")] {
             sqlx::raw_sql(&sql.replace("public.", "")).execute(db).await.expect("migration applies");
         }
     }
@@ -1044,22 +1237,108 @@ mod tests {
         // Off, or start == end: never quiet.
         assert!(!QuietHours { enabled: false, ..ny.clone() }.active_at(utc("2026-01-15T03:30:00Z")));
         assert!(!QuietHours { start_min: 600, end_min: 600, ..ny.clone() }.active_at(utc("2026-01-15T15:00:00Z")));
-        // Default: off, 22:00–07:00 UTC, calls ring.
-        assert_eq!(QuietHours::default().json(), json!({ "enabled": false, "start": "22:00", "end": "07:00", "timeZone": "UTC", "allowCalls": true }));
+        // Default: off, 22:00–07:00 UTC, calls ring, urgent alerts get through.
+        assert_eq!(QuietHours::default().json(), json!({ "enabled": false, "start": "22:00", "end": "07:00", "timeZone": "UTC", "allowCalls": true, "letThrough": "urgent" }));
     }
 
     #[test]
     fn quiet_hours_put_validation() {
         let mut q = QuietHours::default();
         q.apply(json!({ "enabled": true, "start": "23:15", "timeZone": "Europe/London" }).as_object().unwrap()).unwrap();
-        assert_eq!(q.json(), json!({ "enabled": true, "start": "23:15", "end": "07:00", "timeZone": "Europe/London", "allowCalls": true }));
+        assert_eq!(q.json(), json!({ "enabled": true, "start": "23:15", "end": "07:00", "timeZone": "Europe/London", "allowCalls": true, "letThrough": "urgent" }));
         q.apply(json!({ "allowCalls": false }).as_object().unwrap()).unwrap();
+        q.apply(json!({ "letThrough": "needs_you" }).as_object().unwrap()).unwrap();
+        assert_eq!(q.let_through, Some(Level::NeedsYou));
+        q.apply(json!({ "letThrough": "none" }).as_object().unwrap()).unwrap();
+        assert_eq!((q.let_through, q.json()["letThrough"].as_str()), (None, Some("none")));
         assert!(!q.allow_calls && q.enabled, "a subset leaves the rest alone");
-        for bad in [json!({}), json!({ "start": "25:00" }), json!({ "timeZone": "Mars/Base" }), json!({ "enabled": "yes" }), json!({ "end": 420 }), json!({ "quiet": true })] {
+        for bad in [json!({}), json!({ "start": "25:00" }), json!({ "timeZone": "Mars/Base" }), json!({ "enabled": "yes" }), json!({ "end": 420 }), json!({ "quiet": true }), json!({ "letThrough": "all" }), json!({ "letThrough": true })] {
             let before = q.clone();
             assert_eq!(q.clone().apply(bad.as_object().unwrap()), Err("bad_value"), "{bad}");
             assert_eq!(q, before);
         }
+    }
+
+    #[test]
+    fn levels_and_what_quiet_hours_let_through() {
+        assert_eq!(level("attention.opened", &json!({ "severity": "critical" })), Level::Urgent);
+        assert_eq!(level("attention.opened", &json!({ "severity": "warn" })), Level::Normal);
+        assert_eq!(level("attention.opened", &json!({ "severity": "info" })), Level::Low);
+        assert_eq!(level("approval.requested", &json!({})), Level::NeedsYou);
+        assert_eq!(level("thread.needs_user", &json!({})), Level::NeedsYou);
+        assert_eq!(level("message.received", &json!({})), Level::Normal);
+        assert_eq!(level("agent.run.completed", &json!({})), Level::Low);
+        // A bot can mark its own message urgent.
+        assert_eq!(level("message.received", &json!({ "urgency": "urgent" })), Level::Urgent);
+        assert_eq!(level("thread.needs_user", &json!({ "urgency": "normal" })), Level::NeedsYou);
+
+        let now = Utc::now();
+        let mut q = QuietHours { enabled: true, start_min: 0, end_min: 1439, ..QuietHours::default() };
+        if !q.active_at(now) {
+            return;
+        }
+        // Default: only urgent gets through.
+        assert!(!q.holds_at(Level::Urgent, now));
+        assert!(q.holds_at(Level::NeedsYou, now) && q.holds_at(Level::Normal, now));
+        q.let_through = Some(Level::NeedsYou);
+        assert!(!q.holds_at(Level::NeedsYou, now) && q.holds_at(Level::Normal, now));
+        q.let_through = None;
+        assert!(q.holds_at(Level::Urgent, now));
+        // Not in quiet hours: nothing is held.
+        q.enabled = false;
+        assert!(!q.holds_at(Level::Low, now));
+    }
+
+    #[tokio::test]
+    async fn an_urgent_push_in_quiet_hours_pages_until_opened() {
+        let db = test_pool().await;
+        schema(&db).await;
+        let vapid = vapid();
+        let (key, public, auth) = device(&db, "u1").await;
+        let rec = Recorder::default();
+        let q = QuietHours { enabled: true, start_min: 0, end_min: 1439, ..QuietHours::default() };
+        set_quiet_hours(&db, "u1", &q).await.unwrap();
+        if !q.active_at(Utc::now()) {
+            return;
+        }
+        let normal = emit(&db, "u1", "message.received", json!({ "thread_id": "t1", "bot_id": "b1", "text": "hi" })).await;
+        let urgent = emit(&db, "u1", "attention.opened", json!({ "attention_id": "a1", "severity": "critical", "summary": "Site is down." })).await;
+        sink_once(&db, &rec, &vapid).await.unwrap();
+        assert_eq!(outcome(&db, &normal).await, "held");
+        assert_eq!(outcome(&db, &urgent).await, "sent", "urgent gets through by default");
+        let payload: Value = serde_json::from_slice(&decrypt(&rec.sent.lock().unwrap()[0].2, &key, &public, &auth)).unwrap();
+        let ack = payload["data"]["ack"].as_str().expect("paged push carries its ack link").to_string();
+        assert!(ack.contains("/api/v1/notifications/ack?t="), "{ack}");
+
+        // Not due yet: nothing repeats.
+        assert_eq!(repeat_once(&db, &rec, &vapid).await.unwrap(), 0);
+        let due = || sqlx::query("UPDATE notification_repeat SET next_at = now() - interval '1 second' WHERE acked_at IS NULL").execute(&db);
+        for _ in 0..MAX_REPEATS {
+            due().await.unwrap();
+            assert_eq!(repeat_once(&db, &rec, &vapid).await.unwrap(), 1);
+        }
+        due().await.unwrap();
+        assert_eq!(repeat_once(&db, &rec, &vapid).await.unwrap(), 0, "at most MAX_REPEATS resends");
+        assert_eq!(rec.sent.lock().unwrap().len(), 1 + MAX_REPEATS as usize);
+
+        // A second page, opened on the phone: no more repeats.
+        sqlx::query("DELETE FROM notification_repeat").execute(&db).await.unwrap();
+        let again = emit(&db, "u1", "attention.opened", json!({ "attention_id": "a2", "severity": "critical", "summary": "Still down." })).await;
+        sink_once(&db, &rec, &vapid).await.unwrap();
+        assert_eq!(outcome(&db, &again).await, "sent");
+        let token: String = sqlx::query_scalar("SELECT ack_token FROM notification_repeat WHERE tag = 'attention-a2'").fetch_one(&db).await.unwrap();
+        sqlx::query("UPDATE notification_repeat SET acked_at = now() WHERE ack_token = $1").bind(&token).execute(&db).await.unwrap();
+        due().await.unwrap();
+        assert_eq!(repeat_once(&db, &rec, &vapid).await.unwrap(), 0, "opened: stops");
+
+        // A third page, resolved: the resolve event stops it.
+        let third = emit(&db, "u1", "attention.opened", json!({ "attention_id": "a3", "severity": "critical", "summary": "Down again." })).await;
+        sink_once(&db, &rec, &vapid).await.unwrap();
+        assert_eq!(outcome(&db, &third).await, "sent");
+        emit(&db, "u1", "attention.resolved", json!({ "attention_id": "a3", "summary": "Back up." })).await;
+        sink_once(&db, &rec, &vapid).await.unwrap();
+        due().await.unwrap();
+        assert_eq!(repeat_once(&db, &rec, &vapid).await.unwrap(), 0, "resolved: stops");
     }
 
     #[test]

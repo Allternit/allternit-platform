@@ -138,8 +138,36 @@ Type to filter by title. Use the arrow keys and Enter, or click; **Esc** closes.
 | `queued` | Queued |
 | `idle`, `paused` | Idle |
 | `done`, `failed`, `declined` | Resolved |
+| any status, archived | Resolved (shown as **Archived**) |
 
 Checklist progress is reported as completed steps out of total steps. Review means the result needs attention; it is not a claim that the task has been approved. Use Stop on an active turn to interrupt execution, including a turn started by the server. Stopping a turn and resolving a task are separate actions.
+
+## Archiving, renaming and closing threads
+
+A thread is a room for one piece of work. When the work changes or ends, the thread says so.
+
+- **Archive.** In the Bots rail, open a thread's menu and choose **Archive**. The thread leaves the open list, its main chat stops listing it, and it counts as closed for the project wrap-up. Its transcript stays: open it any time to read it. **Unarchive** (same menu) or **Reopen** (the banner at the top of an archived thread, or the Threads panel) brings it back. A bot's main chat can't be archived. Archiving works the same on Desktop, the `ai.allternit.com` phone layout and the `m.allternit.com` PWA, and it is kept on the server, so every device sees it.
+- **Your bot renames it.** When you change what a thread is for ("actually, make it a dinner, not a lunch"), the bot renames the thread and restates its goal, so the rail shows what it is doing now. Your main chat keeps its name.
+- **Your bot closes it.** When you tell the bot to stop, drop or cancel the task, it closes the thread as dropped and archives it. When the work is finished, it closes the thread as done. You can still ask about a closed thread afterwards; the bot can look up past threads, archived ones included.
+- **Your bot asks for you.** When it can't go on without you, the bot puts the thread in **Needs you** with a short reason. It marks the ask urgent only for time-critical things (an outage, money at risk, someone waiting on you today); an urgent ask reaches you during quiet hours.
+
+### What stops when a thread closes
+
+Resolving, archiving or pausing a thread runs one close-out step:
+
+- Permissions you gave "for this task" end. The bot asks again next time.
+- Reminders, loops and routines set from inside that thread stop. Your bot's other routines keep running. A routine whose home is the thread stops too.
+- Reopening, unarchiving or resuming the thread turns those reminders back on. Session loops of a thread that was resolved or archived are deleted, not paused, so they don't come back.
+
+A pause from a usage limit is not a close: nothing stops, and the thread resumes on its own.
+
+### For developers (archive and close-out)
+
+- Migration `V277__bot_thread_archive.sql` adds `bot_threads.archived_at`. Thread views carry `archivedAt` and `archived`; an archived thread's `group` is `resolved`. `GET /api/v1/threads` leaves archived threads out unless `includeResolved` or `includeArchived` is set. Channel threads (email, phone, people), the coordinator's open-thread list and the main chat context treat archived threads as closed.
+- Close-out lives in `cmd/allternit-api/src/thread_closeout.rs`: `thread_closed` (resolved or archived), `thread_paused` (owner pause through `PATCH`), `thread_reopened`. It calls `task_grants::revoke_for_thread`, sets tied `routines` and `loops` to `paused` with `metadata.closedWithThread`, and calls gizzi `POST /cron/thread/:threadId/close` with `{sessionIds, jobIds, remove}` (reopen: `POST /cron/thread/:threadId/reopen` with `{jobIds}`).
+- A routine or loop is tied to a thread when `metadata.sourceThreadId` names it (stamped at create time when the routine's `metadata.sessionId` or the loop's `sessionId` belongs to the thread), when `metadata.sessionId` names one of its sessions, or when the thread is the routine's home (`metadata.threadId`). The local scheduler never claims a routine tied to a resolved or archived thread (`TIED_TO_CLOSED_THREAD`).
+- Bot tools (gizzi, app bot chats only): `thread_update {title?, goal?, needs_you?: {reason, urgency?}}`, `thread_close {outcome: "done" | "dropped", note}` and `thread_search {query}` in `cmd/gizzi-code/src/runtime/tools/builtins/thread-tools.ts`. The server routes are in `cmd/allternit-api/src/thread_bot_tools.rs`; the thread always comes from the calling session. `threadApi.patch`, `threadApi.archive` and `threadApi.unarchive` exist on both the gizzi client (`runtime/bots/platform-threads.ts`) and the web client (`src/lib/bots/threads.ts`).
+- Client: `archiveBotThread(sessionId, archived, {threadId?, hubSession?})` in `src/lib/bots/bot-threads.ts` calls the server and keeps the session `metadata.archived` flag; `mergeServerThreads` takes archived from the server. `reopenThread` (`ThreadResolvedBanner.tsx`) unarchives first, then sets a resolved status back to `idle`.
 
 ## Tasks your bot suggests
 
@@ -200,9 +228,14 @@ These authenticated routes belong to the private Allternit API data plane, norma
 | Method | Runtime path | Purpose |
 | --- | --- | --- |
 | GET / POST | `/api/v1/threads` | List or create threads. |
-| GET / PATCH | `/api/v1/threads/:id` | Read or update a thread. |
+| GET / PATCH | `/api/v1/threads/:id` | Read or update a thread. `PATCH` also takes `urgency` (`urgent` or `normal`), carried on the `thread.needs_user` event. |
 | GET | `/api/v1/threads/by-session/:session_id` | Find the durable thread for a session. |
 | POST | `/api/v1/threads/:id/resolve` | Resolve a task thread. |
+| POST | `/api/v1/threads/:id/archive` | Archive a thread: it closes (task grants revoked, tied reminders stopped) and its transcript stays readable. 409 for a bot's main chat. |
+| POST | `/api/v1/threads/:id/unarchive` | Bring an archived thread back; reminders the archive stopped start again. |
+| POST | `/api/v1/bot-routing/thread/update` | `{sessionId, title?, goal?, needsYou?: {reason, urgency?}}` → rename the calling session's thread, restate its goal, or put it in `needs_you`. 409 when renaming a standing thread. |
+| POST | `/api/v1/bot-routing/thread/close` | `{sessionId, outcome: "done" \| "dropped", note?}` → `done` resolves the task thread; `dropped` resolves it `declined` and archives it. 409 for standing threads. |
+| POST | `/api/v1/bot-routing/thread/search` | `{sessionId, query, limit?}` → the owner's threads (open, resolved and archived, never incognito) whose title, goal, summary or status line match every word. |
 | POST | `/api/v1/threads/:id/usage` | Report model context usage. |
 | POST | `/api/v1/threads/:id/handoff` | Checkpoint and create a fresh generation. |
 | PUT | `/api/v1/threads/:id/deps` | Set dependencies. |

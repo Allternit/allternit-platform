@@ -86,6 +86,38 @@ Email only reads an explicit policy; with none set, the mailbox's reply mode sta
 
 Held, drafted and told actions are written to `inbox_items` with `type` `autonomy.ask`, `autonomy.draft` or `autonomy.digest`. The id is derived from the correlation id, so a retry never makes a second card. `metadata` carries `channel`, `to`, `level`, `threadId` and, for holds, `approvalId`.
 
+## One-task grants
+
+A one-task grant lets a bot act on one thread without a new approval for the actions it names. The check runs inside `evaluate_ctx`: when the place level holds an action (Ask first, or a limit was hit) and the send's `thread_id` has a live grant covering it, the verdict becomes `Send` with a digest line, and `autonomy_actions` records an extra row with outcome `granted` and the `thread_id`. The envelope, trust floor and egress guards run after the grant and can still hold or block. `payment`, `sign` and `delete` are never covered.
+
+`message` maps to the grant action `send`. The other grant actions are `upload`, `submit`, `booking` and `call`. ACI classes map as `FileUpload` to `upload`, `FormSubmit` to `submit` and `Payment` to `payment`.
+
+`channel_gateway::send` accepts a live `send` grant (plus `upload` when files are attached) in place of a consumed-once `gateway_approvals` row, as long as autonomy itself is not holding. Email sends on a bot thread under a grant skip the review step. Calls pass their thread, so a `call` grant and the trust floor apply to them too.
+
+### `GET /task-grants?thread_id=<thread>`
+
+Live grants on a thread the caller owns: `{ grants: [...], actions: [...], grantedCount }`. `actions` is the union shown in the header chip. `grantedCount` is the number of `granted` outcomes on the thread.
+
+### `POST /task-grants`
+
+`{ threadId, actions: [...], sourceRef? }`. A grant from a card. Needs a person's session proof (the `X-Allternit-Human-Proof` header or a Clerk session token), because an agent authenticates as its owner too. Without one the answer is `403 person_required`. A second card grant on the same thread adds its actions to the live one.
+
+### `POST /task-grants/words`
+
+`{ sessionId, actions: [...], quote, messageId? }`. Called by gizzi's `grant_task_permission` tool. `quote` is the owner's latest non-synthetic message, read by the tool from the session store. Refused with `403` when the thread's trust floor is tainted, when the latest labelled input on the thread is not the owner's, when the quote contains an untrusted fence, or when an action is not named in the quote. Only `send`, `upload`, `submit`, `booking` and `call` can be granted this way.
+
+### `DELETE /task-grants/{id}`
+
+Revokes one grant. The thread close-out hook calls `task_grants::revoke_for_thread` on resolve, archive and pause. Both also clear gizzi's session rules through `POST /permission/task/{sessionID}/clear`.
+
+### Approval cards
+
+`cowork_approvals` content for a gizzi permission ask carries `grantKey` (the grant action) and `scopes` when the class may be granted. It is never set for `subscription`, `mcp_app`, payment, sign or delete classes. The same `grantKey` rides on the `tool_permission` SSE metadata. `POST /cowork/approvals` accepts `scope: "task"`: with a person's proof it relays reply `task` to gizzi and records a `card` grant for the session's thread. Without proof it counts as once. `scope: "always"` relays gizzi's project-scoped `always` when the card has `always` patterns.
+
+In gizzi, reply `task` adds session-scoped allow rules that are never written to disk and are dropped when the session is deleted or the thread closes. It counts as once for always-ask classes and for payment, sign and delete classes.
+
+The plan card's answer **Approve plan and allow its sends and uploads**, sent with a person's proof to `POST /questions/{id}/reply`, records a `card` grant for `send` and `upload` on the plan's thread.
+
 ## Storage
 
-Runtime migration `V233__autonomy_policies.sql`: `autonomy_policies` (the settings) and `autonomy_actions` (what was done, used for the daily limits). Both are in the runtime database. There is no cloud-side table.
+Runtime migration `V233__autonomy_policies.sql`: `autonomy_policies` (the settings) and `autonomy_actions` (what was done, used for the daily limits). `V276__task_grants.sql` adds `task_grants` (one-task grants, `actions_json`, `source` `card` or `words`, `expires_at` 7 days out, `revoked_at`) and `autonomy_actions.thread_id`. All three are in the runtime database. There is no cloud-side table.

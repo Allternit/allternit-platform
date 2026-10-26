@@ -69,6 +69,8 @@ import {
 import { GetAgentEmailStatusTool, SendAgentEmailTool } from "@/runtime/tools/builtins/agent-email"
 import { MessageAgentTool } from "@/runtime/tools/builtins/message-agent"
 import { SuggestTaskTool } from "@/runtime/tools/builtins/suggest-task"
+import { GrantTaskPermissionTool } from "@/runtime/tools/builtins/grant-task-permission"
+import { ThreadCloseTool, ThreadSearchTool, ThreadUpdateTool } from "@/runtime/tools/builtins/thread-tools"
 import { MdxGraphTool } from "@/runtime/tools/builtins/mdx-graph"
 import { subscriptionCapabilityTools } from "@/runtime/tools/builtins/subscription"
 
@@ -204,6 +206,11 @@ export namespace ToolRegistry {
       // tool record unless the session is a canonical bot chat.
       MessageAgentTool,
       SuggestTaskTool,
+      GrantTaskPermissionTool,
+      // Thread tools (W3): gated like suggest_task (app bot chats only).
+      ThreadUpdateTool,
+      ThreadCloseTool,
+      ThreadSearchTool,
       ...(Flag.GIZZI_ENABLE_LSP_TOOL ? [LspTool] : []),
       ...(config.experimental?.batch_tool === true ? [BatchTool] : []),
       ...(Flag.GIZZI_CLIENT === "cli" ? [PlanExitTool, PlanEnterTool] : []),
