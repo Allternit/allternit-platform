@@ -1163,8 +1163,14 @@ const browserCaptureAPI = {
 
 type TeachEvent =
   | { t: number; kind: 'navigate'; url: string; title?: string }
-  | { t: number; kind: 'click'; url?: string; label: string; role?: string; selector?: string }
-  | { t: number; kind: 'input'; url?: string; label: string; field?: string; valuePreview?: string }
+  | { t: number; kind: 'click'; url?: string; label: string; role?: string; selector?: string; id?: string; name?: string; frame?: string; tag?: string; type?: string }
+  | { t: number; kind: 'input'; url?: string; label: string; field?: string; valuePreview?: string; id?: string; name?: string; frame?: string; tag?: string; type?: string }
+  | { t: number; kind: 'key'; url?: string; key: string; label?: string; frame?: string }
+  | { t: number; kind: 'select'; url?: string; label: string; value: string; css?: string; frame?: string }
+  | { t: number; kind: 'upload'; url?: string; label: string; fileName: string; css?: string }
+  | { t: number; kind: 'download'; url?: string; fileName: string; fromUrl?: string }
+  | { t: number; kind: 'copy'; url?: string; textPreview: string }
+  | { t: number; kind: 'paste'; url?: string; label: string; css?: string }
   | { t: number; kind: 'app'; app: string; window?: string }
   | { t: number; kind: 'snapshot'; id: string }
   | { t: number; kind: 'narration'; text: string };
@@ -1180,6 +1186,9 @@ const teachAPI = {
     ipcRenderer.invoke('teach:stop'),
   setNarration: (on: boolean): Promise<void> => ipcRenderer.invoke('teach:set-narration', on),
   getSnapshot: (id: string): Promise<string | null> => ipcRenderer.invoke('teach:get-snapshot', id),
+  /** Wait for the next finished download whose name matches a glob (a Teach run's expect_download step). */
+  waitForDownload: (pattern: string, timeoutMs?: number): Promise<{ ok: boolean; fileName?: string; savePath?: string; error?: string }> =>
+    ipcRenderer.invoke('teach:wait-download', pattern, timeoutMs),
   onState: (cb: (s: TeachStateInfo) => void): (() => void) => {
     const listener = (_event: IpcRendererEvent, s: TeachStateInfo) => cb(s);
     ipcRenderer.on('teach:state', listener);

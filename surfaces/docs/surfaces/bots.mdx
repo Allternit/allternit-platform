@@ -16,13 +16,36 @@ From top to bottom:
 | Part | What it shows |
 | --- | --- |
 | **+ New** | Opens the bots home, where you can hand work to your bots or create one. |
-| Main bot | Your main bot as a large photo tile. Click it to open its bot screen. With no main bot set, the tile opens [main bot setup](#your-main-bot). |
-| Promoted | Up to three promoted bots with unframed avatars. Use **⋯ → Unpromote** on an icon to remove it. |
+| Main bot | Your main bot as a large photo tile. Click it to open its bot screen. With no main bot set, the tile opens [main bot setup](#your-main-bot). Small marks on the photo show its state: a thin ring while it works, an amber dot when it needs you, a blue dot for unread messages, and a green phone badge while it is on a call (click the badge to open that call's chat). |
+| Promoted | Up to three promoted bots with unframed avatars, with the same marks as the main bot. Use **⋯ → Unpromote** on an icon to remove it. |
 | Projects | Your bot projects. Threads are not listed here; open the project to see them. |
-| Bots | One row per bot: photo, status dot and the last line from its newest thread. Click to open its bot screen. |
-| Group chats | Pinned at the bottom, above your account row. A group chat opens on its [group stage](#group-stage). |
+| Bots | One row per bot: photo, status dot and the last line from its newest thread. The time of its last activity sits at the right of the name ("2m", "Fri"; hover for the full date), and a dot at the right of the last line means unread messages. While the bot is working or waiting on you, **Working** or **Needs you** replaces the last line, the same words as the thread header. Click to open its bot screen. |
+| Group chats | Pinned at the bottom, above your account row, with the time of the last message. A group chat opens on its [group stage](#group-stage). |
 
 Only one bot is the main bot at a time. Making a bot the main bot removes the flag from the previous one. On desktop, drag a bot from the Bots list (or a promoted icon) onto the main bot tile to make it the main bot, or onto the promoted row to promote it. On a phone, use the bot's **⋯** menu. Needs-you items appear on the bots home and the project page, not in the rail. The phone drawer (`ai.allternit.com` phone layout and the `m.allternit.com` PWA) shows the same rail.
+
+## Bots home: your team
+
+The bots home opens with **Your team** above the composer: your main bot first and a little larger, then pinned bots, the other bots, then your group chats (stacked member avatars). Under each one is what it is doing now:
+
+| Word | Meaning |
+| --- | --- |
+| **Working** | A thread is running. The avatar gets a thin ring. |
+| **Needs you** | A thread is waiting on your answer or approval, or the bot needs fixing. A small dot sits on the avatar. |
+| **Talking** | The bot is on a voice session or a phone call. A green **Join** pill on the avatar opens that call's chat. |
+| **Idle** | Nothing running. |
+
+A group chat shows **Needs you** when any member needs you and **Working** when any member is working. Click an avatar to open its chat; **@** next to a name puts that bot in **To:**. Hover an avatar for how the bot runs (its runtime, node and proof).
+
+The switch at the right of **Your team** changes the view, like other overviews (see [Session overview](/guides/session-overview)):
+
+- **List** (default): the row of avatars. It scrolls sideways when the team is wide.
+- **Grid**: cards with the avatar, status word, last line, time and an unread dot, plus **New bot**. The grid scrolls inside its own area.
+- **Deck**: large cards that snap sideways, with the bot's current task ("Now: …"), its last line and the time.
+
+The choice is remembered. On a phone the grid has two columns and deck cards fill most of the width.
+
+**When one bot is in To:**, the home takes that bot: the title reads "What should &lt;Bot&gt; work on?", the **To:** chip shows the bot's avatar and status word, the composer border takes the bot's own colour, and the top of the page gets a faint wash of that colour. Bots without a colour of their own keep the neutral page. Picking A:// or a project goes back to the team view. The same home shows in the full app, on phones and in [Allternit Bots](/guides/allternit-bots-app).
 
 ## Your main bot
 
