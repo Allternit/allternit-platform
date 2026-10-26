@@ -1127,6 +1127,15 @@ fn parse_resume(body: &serde_json::Value) -> Option<ResumeRequest> {
 }
 
 /// An SSE frame stamped with the resume cursor (omitted before one is known).
+/// `handoff: {from, to}` on a gizzi assistant message (open-lane refusal
+/// handoff), as the chat client's `handoff` frame carries it.
+fn handoff_from_message_info(info: &serde_json::Value) -> Option<serde_json::Value> {
+    let handoff = info.get("handoff")?;
+    let from = handoff.get("from")?.as_str().filter(|s| !s.is_empty())?;
+    let to = handoff.get("to")?.as_str().filter(|s| !s.is_empty())?;
+    Some(json!({ "from": from, "to": to }))
+}
+
 fn sse_frame(cursor: u64) -> Event {
     if cursor > 0 {
         Event::default().id(cursor.to_string())
@@ -2031,6 +2040,8 @@ async fn agent_chat_bridge(
         // Newest assistant usage seen on the bus (message.updated carries the
         // full message info incl. tokens) — attached to the finish frame.
         let mut last_usage: Option<serde_json::Value> = None;
+        // Assistant messages whose open-lane handoff frame went out.
+        let mut handoffs_sent = std::collections::HashSet::<String>::new();
         // Latest context report (session.context.updated) and whether the
         // turn's token counts were estimated — folded into the finish usage.
         let mut last_context: Option<serde_json::Value> = None;
@@ -2172,6 +2183,18 @@ async fn agent_chat_bridge(
                             }
                             if let Some(usage) = usage_from_message_info(info) {
                                 last_usage = Some(usage);
+                            }
+                            // Open lane: a refused turn answered by an open
+                            // model (gizzi sets `handoff` on the message).
+                            if let Some(handoff) = handoff_from_message_info(info) {
+                                let id = info.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                                if handoffs_sent.insert(id) {
+                                    yield Ok(sse_frame(trace_cursor).data(json!({
+                                        "type": "handoff",
+                                        "messageId": msg_id,
+                                        "handoff": handoff,
+                                    }).to_string()));
+                                }
                             }
                             if turn_error.is_none() {
                                 if let Some(err) = info.get("error") {
@@ -2832,6 +2855,17 @@ mod tests {
         assert_eq!(super::delta_route("step-start"), super::DeltaRoute::Drop);
     }
     use super::*;
+
+    #[test]
+    fn handoff_frame_reads_the_message_handoff() {
+        let info = json!({"id": "m", "role": "assistant", "handoff": {"from": "claude-cli/claude-sonnet", "to": "allternit/glm-5.3-flash-open"}});
+        assert_eq!(
+            handoff_from_message_info(&info),
+            Some(json!({"from": "claude-cli/claude-sonnet", "to": "allternit/glm-5.3-flash-open"}))
+        );
+        assert_eq!(handoff_from_message_info(&json!({"id": "m"})), None);
+        assert_eq!(handoff_from_message_info(&json!({"handoff": {"from": "", "to": "x"}})), None);
+    }
 
     #[test]
     fn location_never_reaches_stored_message_fields() {
