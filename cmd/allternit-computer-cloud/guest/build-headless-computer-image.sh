@@ -155,6 +155,8 @@ ExecStartPost=/bin/sh -c "printf 'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/allter
 Restart=always
 RestartSec=2
 RuntimeDirectory=allternit
+# Shared with the driver's socket; neither unit may delete it when it stops.
+RuntimeDirectoryPreserve=yes
 
 [Install]
 WantedBy=multi-user.target

@@ -138,6 +138,8 @@ write_files:
       Restart=on-failure
       RestartSec=5
       RuntimeDirectory=allternit
+      # Shared with run.sh's session-bus.env; keep it when the driver stops.
+      RuntimeDirectoryPreserve=yes
       StateDirectory=allternit/driver
 
       [Install]
