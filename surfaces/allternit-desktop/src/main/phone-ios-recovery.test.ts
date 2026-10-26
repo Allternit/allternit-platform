@@ -9,7 +9,7 @@ import { PhoneLinkHealthMonitor, type LinkedPhone } from './phone-link-health.js
 import { probeLinkedPhone } from './phone-link-backend.js';
 import { SigningError, type RunnerArtifacts, type RunnerSigner, type SignRequest } from './phone-ios-runner.js';
 import type { GoIosLike, IctrlLike, IosDriverDeps, IosLinkRecord } from './phone-link-ios.js';
-import { IosRecoveryScheduler, RENEWAL_RETRY_MS, renewalDue, RESIGN_WINDOW_MS, type IosRecoveryDeps } from './phone-ios-recovery.js';
+import { IosRecoveryScheduler, RENEWAL_RETRY_MS, renewalDue, renewalNotice, RESIGN_WINDOW_MS, type IosRecoveryDeps, type RenewalBlocker } from './phone-ios-recovery.js';
 
 const instant = () => Promise.resolve();
 const LAN = '192.168.1.20:8200';
@@ -302,6 +302,46 @@ describe('IosRecoveryScheduler — renewal', () => {
     expect(d.store.load('U')?.expiresAt).toBe(new Date(NOW + 7 * 86400_000).toISOString());
     expect(recovered).toHaveLength(0);
     expect(w.logs.some((l) => l.includes("isn't answering yet"))).toBe(true);
+  });
+});
+
+describe('renewal that needs a person', () => {
+  it('tells the person why, once per cause, through onNeedsYou', async () => {
+    const cases: Array<[Partial<IosLinkRecord>, Parameters<typeof world>[0], 'ok' | 'password_required', RenewalBlocker]> = [
+      [{}, { connected: false, runnerStandalone: true }, 'ok', 'cable'],
+      [{}, { runnerStandalone: true }, 'password_required', 'apple_sign_in'],
+      [{ appleId: undefined }, { runnerStandalone: true }, 'ok', 'no_apple_id'],
+    ];
+    for (const [over, opts, behavior, blocker] of cases) {
+      const w = world(opts);
+      const d = deps(w, renewSigner(w, behavior));
+      d.store.save(record(over));
+      const seen: RenewalBlocker[] = [];
+      d.onNeedsYou = (_r, b) => seen.push(b);
+      await new IosRecoveryScheduler({ deps: async () => d }).tick();
+      expect(seen).toEqual([blocker]);
+    }
+  });
+
+  it('a renewed helper raises no notice', async () => {
+    const w = world({ runnerStandalone: true });
+    const d = deps(w, renewSigner(w));
+    d.store.save(record());
+    const seen: RenewalBlocker[] = [];
+    d.onNeedsYou = (_r, b) => seen.push(b);
+    await new IosRecoveryScheduler({ deps: async () => d }).tick();
+    expect(seen).toEqual([]);
+  });
+
+  it('the notice names the phone, the deadline and the one thing to do', () => {
+    const r = record({ deviceName: 'iPhone (4)', expiresAt: '2026-10-26T01:27:28Z' });
+    const before = Date.parse('2026-10-25T20:00:00Z');
+    const sign = renewalNotice(r, 'apple_sign_in', before, 'America/Chicago');
+    expect(sign.title).toBe('Sign in to Apple for iPhone (4)');
+    expect(sign.body).toContain('stops working Sun, Oct 25, 8:27 PM');
+    expect(sign.body).toContain('open Phone Link setup and sign in');
+    expect(renewalNotice(r, 'cable', before, 'America/Chicago').title).toBe('Plug in iPhone (4)');
+    expect(renewalNotice(r, 'cable', Date.parse('2026-10-26T03:00:00Z'), 'America/Chicago').body).toContain('stopped working Sun, Oct 25, 8:27 PM');
   });
 });
 

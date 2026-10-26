@@ -65,11 +65,46 @@ export function renewalDue(record: IosLinkRecord, at: number): boolean {
   return Number.isFinite(expires) && expires - at <= RESIGN_WINDOW_MS;
 }
 
+/** Why a due renewal needs a person. */
+export type RenewalBlocker = 'cable' | 'apple_sign_in' | 'no_apple_id' | 'failed';
+
 export interface IosRecoveryDeps extends IosDriverDeps {
   /** Test hook; reconnectIos's default is a real setTimeout. */
   sleep?: (ms: number) => Promise<void>;
   /** Called after a pass actually recovered a phone, so health re-probes it. */
   onRecovered?: (udid: string, kind: 'renewal' | 'remount') => void;
+  /**
+   * Called when a due renewal needs a person, so Desktop can tell them before
+   * the helper stops working (a log line alone reaches nobody).
+   */
+  onNeedsYou?: (record: IosLinkRecord, blocker: RenewalBlocker) => void;
+}
+
+/**
+ * The notice for a renewal that needs a person: what to do and by when.
+ * Pure; `timeZone` is for tests (default: this computer's).
+ */
+export function renewalNotice(record: IosLinkRecord, blocker: RenewalBlocker, now: number, timeZone?: string): { title: string; body: string } {
+  const name = record.deviceName ?? 'your iPhone';
+  const at = record.expiresAt ? Date.parse(record.expiresAt) : NaN;
+  const when = Number.isFinite(at)
+    ? new Date(at).toLocaleString('en-US', { timeZone, weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+    : null;
+  const deadline = !when
+    ? `Phone Link's helper on ${name} needs renewing.`
+    : at <= now
+      ? `Phone Link's helper on ${name} stopped working ${when}.`
+      : `Phone Link's helper on ${name} stops working ${when}.`;
+  switch (blocker) {
+    case 'cable':
+      return { title: `Plug in ${name}`, body: `${deadline} Plug it into this Mac and unlock it, and Allternit renews it by itself.` };
+    case 'apple_sign_in':
+      return { title: `Sign in to Apple for ${name}`, body: `${deadline} The saved Apple sign-in expired, so it can't renew by itself. With the iPhone plugged in, open Phone Link setup and sign in.` };
+    case 'no_apple_id':
+      return { title: `Sign in to Apple for ${name}`, body: `${deadline} No Apple ID is saved for it, so it can't renew by itself. With the iPhone plugged in, open Phone Link setup and sign in.` };
+    case 'failed':
+      return { title: `Phone Link couldn't renew ${name}`, body: `${deadline} With the iPhone plugged in, open Phone Link setup to renew it.` };
+  }
 }
 
 /**
@@ -83,10 +118,12 @@ export async function renewIosSignature(deps: IosRecoveryDeps, record: IosLinkRe
   const name = record.deviceName ?? record.udid;
   if (!connected.includes(record.udid)) {
     log(`the helper's signature for ${name} is inside the renewal window, but the phone isn't on the cable as far as macOS's USB service (usbmuxd) can see; renewal needs it plugged in. If it is plugged in: unlock it and tap Trust, or re-plug it; if go-ios still lists no phone, restart usbmuxd (sudo killall usbmuxd)`);
+    deps.onNeedsYou?.(record, 'cable');
     return 'manual';
   }
   if (deps.signer.needsAppleId && !record.appleId) {
     log(`the helper's signature for ${name} is inside the renewal window, but this link has no Apple ID on record; run Phone Link setup once to enable automatic renewal`);
+    deps.onNeedsYou?.(record, 'no_apple_id');
     return 'manual';
   }
   let artifacts: RunnerArtifacts;
@@ -94,6 +131,7 @@ export async function renewIosSignature(deps: IosRecoveryDeps, record: IosLinkRe
     artifacts = await deps.artifacts();
   } catch (error) {
     log(`couldn't fetch the helper to renew it: ${brief(error)}`);
+    deps.onNeedsYou?.(record, 'failed');
     return 'manual';
   }
   let signed: SignedRunner;
@@ -111,9 +149,11 @@ export async function renewIosSignature(deps: IosRecoveryDeps, record: IosLinkRe
   } catch (error) {
     if (error instanceof SigningError && error.code === 'password_required') {
       log(`the saved Apple sign-in for ${name} expired; plug the phone in and run Phone Link setup to sign in again`);
+      deps.onNeedsYou?.(record, 'apple_sign_in');
     } else {
       const code = error instanceof SigningError ? error.code : 'signing_failed';
       log(`re-signing the helper for ${name} failed (${code}); leaving renewal to Phone Link setup`);
+      deps.onNeedsYou?.(record, 'failed');
     }
     return 'manual';
   }
@@ -122,6 +162,7 @@ export async function renewIosSignature(deps: IosRecoveryDeps, record: IosLinkRe
     await deps.goios.install(record.udid, signed.runnerIpa);
   } catch (error) {
     log(`re-signed the helper for ${name} but couldn't install it: ${brief(error)}`);
+    deps.onNeedsYou?.(record, 'failed');
     return 'manual';
   }
   // Only now is the record updated — install is what renews the signature.

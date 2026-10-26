@@ -60,7 +60,7 @@ import {
 } from './phone-call-bridge.js';
 import { CallBridgeWindow } from './phone-call-bridge-window.js';
 import { callBridgeSummary, DEFAULT_CALL_BRIDGE, sanitizeCallBridge, type CallBridgeConfig } from './phone-call-bridge-config.js';
-import { IosRecoveryScheduler, type IosRecoveryDeps } from './phone-ios-recovery.js';
+import { IosRecoveryScheduler, renewalNotice, type IosRecoveryDeps } from './phone-ios-recovery.js';
 import { createGoIosExec, createGoIosSpawn, ensureDdi, ensureGoIos, GoIos } from './phone-goios.js';
 import { ensureRunnerArtifacts, pickSigner } from './phone-ios-runner.js';
 import { readPairRecord, startLoopbackForward } from './phone-usbmux.js';
@@ -404,6 +404,7 @@ class PhoneService {
     const dir = this.dir();
     const store = fileLinkStore(path.join(dir, 'phone-link-ios.json'));
     let built: Promise<IosRecoveryDeps | null> | null = null;
+    const renewalNoticed = new Set<string>();
     const deps = () => {
       if (store.all().length === 0) return Promise.resolve(null); // no linked iPhone: never touch go-ios
       built ??= (async (): Promise<IosRecoveryDeps | null> => {
@@ -435,6 +436,16 @@ class PhoneService {
               const deviceId = store.load(udid)?.deviceId ?? udid;
               log.info(`[Phone] iPhone recovery (${kind}) succeeded for ${store.load(udid)?.deviceName ?? udid}; refreshing health`);
               void this.linkedHealth?.check(deviceId).catch(() => {});
+            },
+            onNeedsYou: (record, blocker) => {
+              // One notice per cause per signature: the cable check runs every
+              // pass, and a new expiry (a renewal elsewhere) starts a new cycle.
+              const key = `${record.udid}|${blocker}|${record.expiresAt ?? ''}`;
+              if (renewalNoticed.has(key)) return;
+              renewalNoticed.add(key);
+              const notice = renewalNotice(record, blocker, Date.now());
+              log.warn(`[Phone] ${notice.title}: ${notice.body}`);
+              if (Notification.isSupported()) new Notification({ title: notice.title, body: notice.body }).show();
             },
             logger: (m) => log.info(m),
           };
