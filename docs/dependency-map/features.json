@@ -44,7 +44,7 @@
       "label": "Interactive answers",
       "product": "product:ai-allternit",
       "status": "live",
-      "description": "Assistant replies can include an interactive card written in OpenUI Lang inside an openui code fence (38 components: layout, metrics, tables, line/area/bar/pie charts, tabs, checklists, inputs that recompute on the page), built up statement by statement while the reply streams; buttons and choices send a follow-up message; Query()/Mutation() read and (with an Allow each time) change data through the user's MCP connectors. When components can't do it, an ```app fence draws a small HTML/JS app inline in the reply, in the MCP sandbox proxy with no network, themed with --viz-* variables and watched by a heartbeat. allternit-api checks each finished reply's cards against the catalog (card_check frame: diagnostics + text fallback) and stores the checks and the user's card state per message (message_card_meta). The app sends the model manual with every chat turn unless Settings says Text only; channels get cards as readable text and apps as one line.",
+      "description": "Assistant replies can include an interactive card written in OpenUI Lang inside an openui code fence (38 components: layout, metrics, tables, line/area/bar/pie charts, tabs, checklists, inputs that recompute on the page), built up statement by statement while the reply streams; buttons and choices send a follow-up message; Query()/Mutation() read and (with an Allow each time) change data through the user's MCP connectors. When components can't do it, an ```app fence draws a small HTML/JS app inline in the reply, in the MCP sandbox proxy with no network, themed with --viz-* variables and watched by a heartbeat. allternit-api checks each finished reply's cards against the catalog (card_check frame: diagnostics + text fallback) and stores the checks and the user's card state per message (message_card_meta). The app sends the model manual with every chat turn unless Settings says Text only; channels get cards as readable text and apps as one line. Every reply also follows one answer shape (plain Markdown, never forced JSON): bottom line first, no step narration, inline source links, a table for 3+ options, one next step, a length line per Response Style, and one placement rule (reply by default at any length; a card only to pick, adjust or explore; an artifact only for something kept, edited or shared, or when asked). Eight named templates (Comparison, Plan, How-to, Troubleshooting, Status report, Research brief, Decision, Quick answer) live in answer-shapes.md + answer-templates.json, byte-identical in allternit-ai and allternit-api; a deterministic picker (whole-word triggers by priority) names one per turn in gizzi's turn-only turnSystem layer. Assistant replies render the answer layout (<Markdown answer> only: title, dateline, bottom-line callout, label lists, full tables, source pills, Contents row). A failed card queues a one-time repair note for the next turn (card_repair.rs, ALLTERNIT_CARD_REPAIR). shape-lint.ts and scripts/answer-eval/run.mjs check answer shape per brain on demand.",
       "touches": [
         "allternit-ai/src/lib/openui",
         "allternit-ai/src/components/ai-elements",
@@ -63,7 +63,14 @@
         "allternit/cmd/allternit-api/src/v1_*",
         "allternit-ai/src/lib/apps",
         "allternit-ai/src/components/chat",
-        "allternit-ai/src/components/artifact"
+        "allternit-ai/src/components/artifact",
+        "allternit-ai/src/lib/answers",
+        "allternit-ai/src/lib/artifacts",
+        "allternit/cmd/allternit-api/src/answer_*",
+        "allternit/cmd/allternit-api/src/agent_*",
+        "allternit/cmd/gizzi-code/src/runtime/session",
+        "allternit/cmd/gizzi-code/src/runtime/drivers",
+        "allternit-ai/src/design"
       ],
       "decisions": [
         {
@@ -89,12 +96,17 @@
         {
           "on": "2026-10-20",
           "note": "Agent steps that reach a connector show the app's logo and the first three things found (process/app-preview.ts); the summary line ends with the apps' logos; links into known app hosts render as source chips (app-source-links.ts). Guide: guides/agent-steps."
+        },
+        {
+          "on": "2026-10-25",
+          "note": "Eoj: structured answers are deterministic and never forced JSON: shape rules every brain gets, named templates picked from the user's words before the turn, and one placement rule (reply by default, card to pick/adjust/explore, artifact to keep/edit/share). Generative UI cards stay the way to get interactive answers. Card repair is a one-time next-turn note, not a silent second turn. Answer styling applies only to assistant replies, not files, memory or artifacts."
         }
       ],
       "evidence": [
+        "allternit/cmd/allternit-api/migrations/V251__message_card_meta.sql",
         "allternit/surfaces/docs/guides/interactive-answers.mdx",
-        "allternit/surfaces/docs/release-notes.mdx",
-        "allternit/cmd/allternit-api/migrations/V251__message_card_meta.sql"
+        "allternit/surfaces/docs/guides/response-parts.mdx",
+        "allternit/surfaces/docs/release-notes.mdx"
       ]
     },
     {
@@ -2366,15 +2378,19 @@
       "label": "Agent steps in replies",
       "product": "product:ai-allternit",
       "status": "live",
-      "description": "The working line above a reply (what the agent is doing now, with a timer), its summary when done, and the steps in order (line style in Chat, Code and bot threads; a step card in Cowork). Steps that reach a connected app show its logo and first finds. The agent's task list (TaskCreate/TaskUpdate, TodoWrite, gizzi todowrite) shows as one checklist card ('3 steps left', ticks, a spinning ring and shimmer on the running step) folded across the message's step groups and shared with the Cowork session panel's Progress. A web search step shows its sites' icons and result count, and opens to titled page links instead of raw output. Same on Desktop, the ai.allternit.com phone layout and the m.allternit.com PWA. While media_generate runs, the reply shows a frame shaped like the requested image or video (square or 16:9 by default) with the BlockPulse block-square pulse and a 'Generating image · Ns' foot; the finished picture shows in the chat itself (soft reveal, Download / Open / Copy prompt) instead of a file row.",
+      "description": "The merged agent stream above a reply (Chat, Cowork, Code, bot and project threads): the agent's one-line plan, the last 2 finished steps and the live step (dotted spinner, shimmer label), older steps folded into '+N earlier', an elapsed timer. Chips stay in view the whole time: web-search sources ('Searched 9 websites' with favicons), files made (open/download), failed steps. When done it folds to one line, 'Worked for 12s · 4 steps' ('Thought for 12s' when it only thought), plus the chips; opening it shows the trail (tree line, plan sentence, each step with icon, verb and detail, searches grouped with their sources). Steps that reach a connected app show its logo and first finds. The task list is no longer drawn inline: it moved to the right-pane Progress (feature:progress-pane); inline source cards and plan cards are gone (sources become pills and chips through the response-parts contract). While media_generate runs, the reply shows a result-shaped frame with BlockPulse; the finished picture shows inline with Download / Open / Copy prompt. A Memory Drive Dream's Steps opens into the trail (defaultOpen). Same on Desktop, the ai.allternit.com phone layout and the m.allternit.com PWA.",
       "touches": [
         "allternit-ai/src/components/ai-elements",
         "allternit-ai/src/views/cowork",
         "allternit-ai/src/components/bot-chat",
-        "allternit-ai/src/components/brand"
+        "allternit-ai/src/components/brand",
+        "allternit-ai/src/lib/ai",
+        "allternit-ai/src/views/settings",
+        "allternit/cmd/gizzi-code/src/runtime/session"
       ],
       "evidence": [
-        "allternit/surfaces/docs/guides/agent-steps.mdx"
+        "allternit/surfaces/docs/guides/agent-steps.mdx",
+        "allternit/surfaces/docs/guides/response-parts.mdx"
       ],
       "decisions": [
         {
@@ -2384,6 +2400,10 @@
         {
           "on": "2026-10-24",
           "note": "Eoj: BoardUI look pass — generated images and videos: a result-shaped frame with the shared BlockPulse (one drawBlockPulse, also used by TeamNetwork and the photo sprite preview) replaces the pixel mosaic; finished media renders inline as GeneratedMediaCard with Download, Open and Copy prompt; reduced motion draws still squares and no fade (ai #805)."
+        },
+        {
+          "on": "2026-10-25",
+          "note": "Eoj: one merged stream per turn (plan line, last 2 steps + live step, '+N earlier', timer), important things as chips the whole time (sources, files, failures, approvals), fold to 'Worked for … · N steps' with a BoardUI-style trail. Progress never inline: the checklist card and plan cards left the reply. Sources and plans come from one response-parts contract (plan, step, source, file, approval, answer) every brain is mapped into, native where the brain gives it, parsed fallback otherwise."
         }
       ]
     },
@@ -2711,6 +2731,56 @@
         "allternit/surfaces/docs/guides/glance-lines.mdx",
         "allternit-ai/src/components/glance/GlanceLine.tsx",
         "allternit/cmd/gizzi-code/src/runtime/tools/builtins/glance.ts"
+      ]
+    },
+    {
+      "id": "feature:progress-pane",
+      "label": "Progress in the right pane",
+      "product": "product:ai-allternit",
+      "status": "live",
+      "description": "A chip in every chat's header, top right ('Step 2 of 3' / 'All 3 done', a ring that fills), shown only when the turn on screen has a plan. It opens Progress in the right pane: the plan as a checklist (ticks, spinning running step, failures), the working folder and context use. Chat docks its own Progress column; Cowork and Code open their session panel (Progress first); bot threads dock it when wide; project threads and narrow windows open it over the thread; phone = bottom sheet. The checklist is folded from todo tool calls and response-parts plan parts, so every brain's plan (TodoWrite/Task tools, gizzi todowrite, Codex plan, ACP plan) shows the same way, and it is saved with the conversation. Same on Desktop, the ai.allternit.com phone layout and the m.allternit.com PWA.",
+      "touches": [
+        "allternit-ai/src/components/progress-pane",
+        "allternit-ai/src/views/cowork",
+        "allternit-ai/src/views/code",
+        "allternit-ai/src/views/bots",
+        "allternit-ai/src/views/project",
+        "allternit-ai/src/views/chat",
+        "allternit-ai/src/components/ai-elements"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-25",
+          "note": "Eoj: Progress always lives in the right pane, never inline; a header chip on every chat surface (Chat, Cowork, Code, bot threads) opens it; the phone gets a sheet."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/progress-pane.mdx"
+      ]
+    },
+    {
+      "id": "feature:message-actions",
+      "label": "Actions under a reply (Retry with versions, Retry with…, feedback, follow-ups)",
+      "product": "product:ai-allternit",
+      "status": "live",
+      "description": "One shared action row under replies in Chat, Cowork, Code and bot threads: copy, reply, speak, thumbs up/down with a reason after a thumbs-down (Wrong, Too long, Wrong format, Other), Retry on the latest reply (reverts the turn through POST /agent-sessions/:id/revert, gizzi SessionRevert, and resends; the replaced reply stays as a version, flipped with ‹ 2/2 ›, kept in memory for the app session), Retry with… (model picker, that retry only), and always-visible follow-ups from follow-ups/suggestions parts or the answer's closing 'Next step:' line (no canned prompts). Messages with images and vendor-app bots don't offer Retry. Same on Desktop, the ai.allternit.com phone layout and the m.allternit.com PWA.",
+      "touches": [
+        "allternit-ai/src/components/chat",
+        "allternit-ai/src/lib/chat",
+        "allternit-ai/src/views/cowork",
+        "allternit-ai/src/views/code",
+        "allternit-ai/src/components/bot-chat",
+        "allternit-ai/src/views/bots",
+        "allternit/cmd/gizzi-code/src/runtime/session"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-25",
+          "note": "Eoj: Retry must be real (revert and resend, keep versions), with Retry with… for another model once; feedback asks why after a thumbs-down; follow-ups only from the answer itself, never canned."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/chat-composer.mdx"
       ]
     },
     {

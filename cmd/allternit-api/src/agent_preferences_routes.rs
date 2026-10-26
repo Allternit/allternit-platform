@@ -935,36 +935,19 @@ fn save_learned_style(
 
 // ─── STYLE.md sync ────────────────────────────────────────────────────────────
 
-/// One-line response-style directive written into the managed STYLE.md.
+/// One-line response-style directive written into the managed STYLE.md: the
+/// same length rule the chat bridge's answer-shape block carries
+/// (crate::answer_shapes), so the file and the chat never disagree.
 fn style_directive(style: &str) -> &'static str {
     match style {
-        "concise" => {
-            "Respond concisely. Keep answers short and direct; skip preamble and unnecessary elaboration."
-        }
-        "detailed" => {
-            "Respond in detail. Explain your reasoning, include relevant context, and cover edge cases."
-        }
         // "custom" has no directive of its own — the custom instructions carry it.
         "custom" => "",
-        _ => "Respond with balanced detail: thorough enough to be useful, concise enough to stay readable.",
+        _ => crate::answer_shapes::length_rule(style),
     }
 }
 
-/// Response-style directive injected into agent-chat system instructions at
-/// send time. These strings must match what the iOS client injected before
-/// composition moved server-side — change them in lockstep with the clients.
-/// Returns None for styles without a directive ("balanced", "custom").
-pub(crate) fn chat_style_directive(style: &str) -> Option<&'static str> {
-    match style {
-        "concise" => Some(
-            "Response style: keep responses brief and to the point — no preamble, no recap, no filler.",
-        ),
-        "detailed" => Some(
-            "Response style: give thorough, detailed responses — full context, reasoning, and examples where they help.",
-        ),
-        _ => None,
-    }
-}
+/// Points STYLE.md readers at the answer shapes the chat bridge sends.
+const STYLE_MD_SHAPES_NOTE: &str = "Replies follow Allternit's answer shapes: the bottom line first, then a named template (Quick answer, How-to, Troubleshooting, Comparison, Decision, Plan, Research brief, Status report). The full rules ride with every chat.";
 
 /// Render the fully platform-managed STYLE.md content.
 fn render_style_md(
@@ -983,6 +966,8 @@ fn render_style_md(
         out.push_str(directive);
         out.push_str("\n\n");
     }
+    out.push_str(STYLE_MD_SHAPES_NOTE);
+    out.push_str("\n\n");
     if !custom_instructions.is_empty() {
         out.push_str("## Custom Instructions\n\n");
         out.push_str(custom_instructions);
@@ -1180,6 +1165,18 @@ mod profile_tests {
         )
         .unwrap();
         assert_eq!(load_user_messages(&conn, "u1").unwrap(), vec!["mine".to_string()]);
+    }
+
+    #[test]
+    fn style_md_carries_the_answer_shape_length_rule() {
+        for style in ["concise", "balanced", "detailed"] {
+            let md = render_style_md(style, "", &UserProfile::default(), &WritingStyle::default());
+            assert!(md.contains(crate::answer_shapes::length_rule(style)), "{style}");
+            assert!(md.contains("answer shapes"));
+        }
+        let custom = render_style_md("custom", "be brief", &UserProfile::default(), &WritingStyle::default());
+        assert!(!custom.contains("Length"));
+        assert!(custom.contains("be brief"));
     }
 
     #[test]

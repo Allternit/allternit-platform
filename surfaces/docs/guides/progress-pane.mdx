@@ -1,0 +1,49 @@
+---
+title: 'Progress'
+description: 'The progress chip at the top right of every conversation, and the Progress pane it opens: the agent plan as a checklist, the working folder and context use.'
+---
+
+When the agent plans a task, a small chip shows at the top right of the conversation, for example **Step 2 of 3**. Its ring fills as steps finish. When everything is finished it says **All 3 done**. A turn without a plan doesn't show the chip.
+
+Click the chip to open **Progress** in the right pane. It lists the plan as a checklist: finished steps are ticked, the step running now spins, and a failed step shows a red cross. The pane also shows the working folder and how much of the context window is used, when the session has them. Click the chip again, or the pane's close button, to hide it.
+
+The checklist is saved with the conversation, so it's still there when you reopen the thread. The conversation itself only shows the steps as they run (see [Agent steps in replies](/guides/agent-steps)). The plan stays in Progress; it is no longer drawn as a checklist card in the reply.
+
+On a phone, tap the chip to open Progress as a sheet from the bottom of the screen. Drag it down to close it.
+
+This works the same on Desktop, on ai.allternit.com (including the phone layout) and in the m.allternit.com app.
+
+## Where the chip shows
+
+| Surface | Where | What it opens |
+| --- | --- | --- |
+| **Chat** | Top right, beside the artifacts button | Progress in the chat's right pane. Opening an artifact replaces Progress in that pane. |
+| **Cowork** | The session header | The session pane (Progress, Outputs, Used in this session). When there is no plan, the outputs button opens the same pane. See [Cowork session panel](/guides/cowork-session-panel). |
+| **Code** | The session header | The session panel, where Progress is the top card. See [Session panel](/code/session-panel). |
+| **Bot threads** | The thread header | Progress docked beside the thread. On a narrow window, or a thread embedded in a project page, it opens over the thread. |
+| **Project threads** | Top right of the thread | Progress over the thread, because the thread is already in the project's pane. |
+
+## Where the plan comes from
+
+The plan is whatever list the agent keeps, from any brain: Claude's to-do list (TodoWrite, TaskCreate and TaskUpdate), gizzi's todowrite, Codex's plan, or an ACP agent's plan (Gemini CLI, Kimi, Qwen and others). Each brain's plan is mapped into the same `plan` part, so it always shows as one checklist. See [Response parts](/guides/response-parts).
+
+## For developers
+
+Source: `allternit-ai/src/`:
+
+| File | Role |
+| --- | --- |
+| `components/progress-pane/progress-model.ts` | Pure chip logic: `progressChipModel` (label, ring fraction, running), `turnHasPlan` / `currentTurn` (the chip only shows for the turn on screen). |
+| `components/progress-pane/ProgressChip.tsx` | Header chip with an SVG ring. Toggles a pane (`onToggle`), or opens `panel` as a popover on desktop or a bottom sheet on the phone (`ui/popover`). |
+| `components/progress-pane/ProgressPane.tsx` | `useThreadProgress(messages, live)`, `ProgressPanel` (checklist in the `step-check*` look from `process.css`, working folder, context), the `progressPane()` PaneSpec for PaneWorkspace surfaces, per-workspace open state (`useProgressPaneOpen`, `toggleProgressPane`). |
+| `components/progress-pane/ChatProgress.tsx` | Chat's chip and docked Progress column (Chat has its own right pane, not a PaneWorkspace). |
+| `components/progress-pane/progress-pane.css` | Chip, ring and panel styles; reduced motion; phone sizing. |
+| `views/cowork/session-panel/CoworkSessionPanel.tsx`, `session-data.ts` | The session button is the progress chip (or the outputs button) and toggles the session pane; Progress renders as a checklist; `TodoEntry.activeForm` passed through. |
+| `views/cowork/artifact-session/ArtifactSessionLayout.tsx`, `views/cowork/CoworkRoot.tsx` | `sessionPanel` docks the session panel as the `progress` pane; the chip renders on the phone too. |
+| `views/code/session-panel/ProgressCard.tsx`, `CodeSessionPanel.tsx`, `views/code/CodeSessionHeader.tsx` | `CodeProgressChip` in the header and `CodeProgressCard` at the top of the session panel. |
+| `views/ChatView.tsx` | Chip top right; Progress takes the chat's one right pane. |
+| `views/bots/BotChatSessionView.tsx` | Chip in `ThreadHeader` children (or at the top of an embedded thread); `progressPane` docked when the window is wide. |
+| `views/project/workspace/ProjectConversation.tsx` | Chip top right, Progress over the thread. |
+| `preview-progress-pane.html`, `dev/ProgressPanePreview.tsx` | Dev preview: mid-run, done, phone sheet. |
+
+The checklist is folded from the message's todo tool calls and `plan` parts by `foldChecklist` (`components/ai-elements/process/checklist.ts`) and `parseTodosFromMessages`.

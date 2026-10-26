@@ -1,0 +1,132 @@
+---
+title: 'Response parts and answer shapes'
+description: 'For developers: the response-parts contract every brain is mapped into, the answer templates and picker, the card repair loop and the answer eval runner.'
+---
+
+Every reply, from any brain, is drawn from the same six parts, and every brain gets the same answer-shape rules. This page is for developers. What people see is in [Agent steps in replies](/guides/agent-steps), [Progress](/guides/progress-pane) and [Interactive answers](/guides/interactive-answers#how-answers-are-laid-out).
+
+## Where sources and plans come from
+
+When a model cites a web page, the chat shows that page as a source pill. The pill comes from the model's own citation: Claude's citations, ChatGPT's url citations, Gemini's grounding, or Claude Code's web search results. Allternit does not guess sources from the reply text. The agent's plan always appears as one checklist in the Progress pane, whether the plan came from Claude's to-do list, Codex's plan or another CLI agent's plan. If a model returns no structured sources, Allternit reads the search tool's output instead, the same way it did before.
+
+## The contract
+
+The contract has six parts. Every brain is mapped into them. The types and normalizers are in `allternit-ai/src/lib/ai/response-parts.ts`, and the runtime copy is in `cmd/gizzi-code/src/runtime/session/response-parts.ts`.
+
+| Part | Wire frame | UIPart or message field | Shown in |
+| --- | --- | --- | --- |
+| plan | `plan` with `planId`, `steps` (legacy), `items` (`id`, `content`, `status`), `origin` | `metadata.plan`; also a `plan` part when no todo tool call holds the same list | The [Progress pane](/guides/progress-pane) |
+| step | `content_block_start` (tool_use), then `tool_result` or `tool_error` | `dynamic-tool` | Live rows in the stream |
+| source | `source` with `sourceId`, `url`, `title`, `host`, optional `snippet`, `origin`, optional `toolCallId` | `source-document` (plus host, origin, snippet, toolCallId), deduped by url | Source pills and the "Searched N websites" chip |
+| file / artifact | `artifact` with `artifactId`, `kind`, `url`, `title` | `artifact` | File chips |
+| approval / question | `tool_permission`, `approval` | Permission store card | Inline card |
+| answer | `content_block_delta` text | `text` | The reply |
+
+Every new frame field is additive. Older apps ignore `source` and `plan` frames they don't know, and they keep folding plans from todo tool calls. The UI reads sources only through `messageSources(parts)`. That function returns the structured sources first and then the `webResults()` fallback, marked `origin: "parsed"`.
+
+**How sources travel.** gizzi stores provider citations on the text part as `metadata.sources`, and search and fetch results on the completed tool part as `state.metadata.sources`. Both bridges (allternit-api `v1_routes.rs` and gizzi `agent-compat.ts`) turn these into `source` frames. History reloads read the same fields from `metadata.parts`.
+
+**How plans travel.** Every native plan is written to gizzi's Todo list, and both bridges forward each `todo.updated` event as a `plan` frame.
+
+### Brains: native or parsed fallback
+
+| Brain | Sources | Plan |
+| --- | --- | --- |
+| gizzi SDK, Anthropic API | Native: AI SDK `source` (citations and web_search results), `origin: anthropic-citation` | Native: todowrite |
+| gizzi SDK, OpenAI Responses | Native: `url_citation` annotations, `origin: openai-url-citation` | Native: todowrite |
+| gizzi SDK, Gemini | Native: grounding chunks, `origin: gemini-grounding` | Native: todowrite |
+| gizzi `websearch` / `webfetch` tools | Native: tool `metadata.sources` | None |
+| Claude Code (claude-cli) | Native: WebSearch `tool_use_result`, `origin: claude-code-websearch` | Native: TodoWrite is mirrored to Todo; TaskCreate and TaskUpdate fall back to `foldChecklist` |
+| Codex (app-server) | Parsed fallback (Codex sends no result urls) | Native: `turn/plan/updated` |
+| ACP CLIs (Gemini CLI, Kimi, Qwen and others) | Parsed fallback | Native: ACP `plan` session update |
+| Other MCP or third-party search tools | Parsed fallback (`webResults`) | None |
+
+### Files
+
+| File | Role |
+| --- | --- |
+| `allternit-ai/src/lib/ai/response-parts.ts` | Contract types, a normalizer for each native format, `messageSources`, `planFromNative`. |
+| `allternit-ai/src/lib/ai/rust-stream-adapter.ts` | `source`, `citation`, `plan` and `todo.updated` frames become contract parts. `replayStreamFrames` for tests. |
+| `allternit-ai/src/lib/agents/native-agent-api.ts` | `onSource` and `onPlan` callbacks for the chat stream. |
+| `allternit-ai/src/lib/agents/mode-session-store.ts` | `metadata.sources` and `metadata.plan` on the assistant message. |
+| `allternit-ai/src/lib/agents/message-ui-parts.ts` | Source and plan parts for live messages and history reloads. |
+| `allternit-ai/src/lib/ai/response-parts.replay.test.ts` | Replay fixtures for each native format and the bridge frames. |
+| `cmd/gizzi-code/src/runtime/session/response-parts.ts` | Runtime contract: source and plan normalizers, frame builders. |
+| `cmd/gizzi-code/src/runtime/session/processor.ts` | AI SDK `source` goes to text `metadata.sources`; observed plans and TodoWrite go to Todo. |
+| `cmd/gizzi-code/src/runtime/drivers/local-cli-driver.ts` | Claude Code WebSearch sources; Codex and ACP plan events. |
+| `cmd/gizzi-code/src/runtime/server/routes/agent-compat.ts` | `source` and `plan` frames. |
+| `cmd/allternit-api/src/v1_routes.rs` | `source_frames_for_part`, `plan_frame_for_todos`. |
+
+## Answer shapes and templates
+
+Every brain gets one plain-Markdown block of answer-shape rules (never forced JSON): bottom line first, no step narration, inline source links, a table when comparing 3 or more things, one next step, a length line from the user's Response Style, and the one placement rule ("Where an answer goes": the reply by default at any length; an interactive card only to pick, adjust, fill in or explore; an artifact only for something kept, edited or shared on its own, or when asked).
+
+The rules and the template registry are two files, byte-identical in both repos; each repo pins their SHA-256 in a test:
+
+- `allternit-ai/src/lib/openui/answer-shapes.md` and `answer-templates.json`
+- `cmd/allternit-api/src/answer_shapes.md` and `answer_templates.json`
+
+### The templates
+
+| Template | Priority | Used for | Sections | Card it can suggest |
+| --- | --- | --- | --- | --- |
+| Comparison | 1 | "A vs B", "best X for…" | Criteria, Comparison (table), Recommendation, What would change my choice, Next step | `Compare` |
+| Plan | 2 | A plan, rollout or roadmap | Goal, Steps (checklist), Risks, First action | `Checklist` |
+| How-to | 3 | "how do I…" | Steps (numbered), Check it worked | None |
+| Troubleshooting | 4 | An error, something broken | Cause, Fix, Verify | None |
+| Status report | 5 | Status, progress, what changed | Done, In progress, Blocked, Next | None |
+| Research brief | 6 | Research, "what's known about…" | Findings (each with its source link), Open questions | None |
+| Decision | 7 | "should I…", "which one" | Options (table), Recommendation, Trade-offs, Next step | `Choice` |
+| Quick answer | fallback | A fact, yes or no, a definition | The bottom line, then up to 3 bullets, no headings | None |
+
+Comparison, Plan, Research brief and Status report open with a `##` title and an italic dateline, then the bottom line.
+
+### The picker
+
+The template is picked before the agent starts, from the user's message, so the same question always gets the same layout. `pickAnswerTemplate` (app, `src/lib/openui/answer-shapes.ts`) and `pick_template` (server, `answer_shapes.rs`) try templates by priority, low to high, and take the first one whose trigger phrase appears in the message as whole words, ignoring case; otherwise Quick answer. The picked template rides as one line ("Use answer template: …") in gizzi's turn-only `turnSystem` layer, so the cached system block stays byte-identical turn to turn.
+
+| File | Role |
+| --- | --- |
+| `allternit-ai/src/lib/openui/answer-shapes.ts` | Renders the block from the two files, `lengthRule` per style, the picker, `answerTemplateLine`, cached Response Style. |
+| `allternit-ai/src/lib/openui/answer-instructions.ts` | `answerShapesInstructions()`; `withInteractiveAnswers` puts the block right after the caller's prompt on every send path (agent-chat bridge, Code mode local gizzi, terminal body). The card hand-off line is only sent on Auto. |
+| `allternit-ai/src/lib/agents/mode-session-store.ts` | Code mode's direct gizzi send carries the template line as `turnSystem`. |
+| `allternit-ai/src/lib/openui/answers-library.tsx`, `src/lib/artifacts/output-choice.ts` | The card and artifact manuals defer to "Where an answer goes" (the old "about 15 lines goes to an artifact" rule is gone). |
+| `allternit-ai/src/views/settings/ResponseStylePanel.tsx` | Copy explains the shapes; a load or save updates the cached style. |
+| `cmd/allternit-api/src/answer_shapes.rs` | Server copy: `length_rule`, `pick_template`, `turn_template_line`, `has_answer_shapes` (detects a client copy by its `## Answer shape` heading). |
+| `cmd/allternit-api/src/v1_routes.rs` | `compose_system_instructions` adds the block unless the client prompt already has it (iOS and API callers get the server copy); `turn_layers` sends the template line in `turnSystem`. |
+| `cmd/allternit-api/src/agent_preferences_routes.rs` | STYLE.md uses the same length rule and names the templates. |
+| `cmd/gizzi-code/src/runtime/session/prompt.ts` | `turnSystem` carries the template line, the card-repair note and the location. |
+| `cmd/gizzi-code/src/runtime/drivers/cli-session-flags.ts`, `local-cli-driver.ts` | `cliTurnMessage`: CLIs with no system-prompt channel (Gemini CLI and other text CLIs, Antigravity, Qwen, Cursor, OpenCode, CodeBuddy, DevEco, OpenClaw, Pi, OMP) get the session instructions at the start of the message, as ACP CLIs already did. |
+| `cmd/gizzi-code/test/session/answer-shapes-reach-every-brain.test.ts` | Checks the block reaches in-process models, Claude Code (append and bot flags), Codex developer instructions, ACP CLIs and the no-channel CLIs. |
+
+## Card repair loop
+
+At the end of a turn, allternit-api checks each `openui` card (`openui_text::check_reply`, the same check behind the `card_check` frame). Failed cards become a short repair note, quoting the card and its errors, queued per user and chat. The next send carries it once in gizzi's turn-only `turnSystem` layer, joined with the location layer; it is never stored on the user message. It is bounded to one retry: a turn that carried a note never queues another. Notes are held in memory, so a restart drops them. `ALLTERNIT_CARD_REPAIR=0` (or `off`, `false`) turns it off; it is on by default.
+
+| File | Role |
+| --- | --- |
+| `cmd/allternit-api/src/card_repair.rs` | `repair_note`, `should_queue`, `queue`, `take`, `join_turn_layers`, the env flag. |
+| `cmd/allternit-api/src/v1_routes.rs` (`agent_chat_bridge`) | Takes the pending note before the send, joins it into `turnSystem`, and queues a new note after the `card_check` frames. |
+
+**Why not a silent repair turn in the same stream.** The reply text has already streamed to the app by the time cards are checked. A second gizzi prompt would leave a synthetic user message and a duplicate reply in session history, and the app has no frame that swaps a card in place. The next-turn note fixes the model's card without either.
+
+## Answer shape lint and eval
+
+`lintAnswerShape(markdown, template, { style })` in `allternit-ai/src/lib/answers/shape-lint.ts` is a pure check that passes or fails each rule: bottom line, title, dateline, sections in order, table, steps list, no narration, one next step, and the length band for the Response Style. Template sections live in `ANSWER_TEMPLATE_SHAPES` (pass the registry through `options.templates` to swap them).
+
+The eval runner sends a fixed prompt set (2 or 3 per template) to real brains and scores each reply with the lint:
+
+```bash
+node scripts/answer-eval/run.mjs --brain <model id>[,…] [--only comparison,plan] [--style balanced] --yes
+```
+
+- Without `--yes` it only prints what it would send; every prompt is a real, possibly metered model turn.
+- `--fixtures scripts/answer-eval/fixtures` is a no-network dry run over saved answers (`<brain>/<promptId>.md`).
+- Env: `ALLTERNIT_API_URL` (default `http://127.0.0.1:8013`) and `ALLTERNIT_API_TOKEN`. Replies are read from the `/api/v1/ai/chat` SSE stream.
+
+| File | Role |
+| --- | --- |
+| `allternit-ai/src/lib/answers/shape-lint.ts` | The lint. |
+| `allternit-ai/src/lib/answers/shape-eval.ts` | Prompt set, SSE reply reader, per-brain scoring and table. |
+| `allternit-ai/scripts/answer-eval/run.mjs`, `fixtures/` | The on-demand runner and its dry-run answers. |
+| `allternit-ai/src/lib/answers/__fixtures__/` | Lint test fixtures (a ChatGPT-style comparison passes; a narrated answer fails). |

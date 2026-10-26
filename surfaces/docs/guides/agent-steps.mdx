@@ -1,31 +1,36 @@
 ---
 title: 'Agent steps in replies'
-description: 'The working line above a reply, its summary, the task list checklist, web search sources, generated images and videos, steps that reach your connected apps, their previews, and source chips in the answer.'
+description: 'The merged stream above a reply: the plan line, live steps, chips for sources, files and failures, the Worked for summary and its trail, steps that reach your connected apps, web search sources, generated images and videos, and source chips in the answer.'
 ---
 
-While the assistant works, one line above the reply shows what it is doing now, for example "Searching Slack for messages since yesterday", with a timer. When it stops, the line becomes a summary of the work, for example "Ran 2 searches, read 3 sources". Click the line to see each step in order. Click a step to see its input and result.
+## Watching an agent work
 
-This works the same in Chat, Code, bot threads and project threads, on Desktop, ai.allternit.com (including the phone layout) and the m.allternit.com app. Cowork lists the same steps as a card; see [Cowork session panel](/guides/cowork-session-panel#in-the-conversation).
+While an agent works, the reply shows its plan in one grey line, then the last two things it did and the step it is on now (a dotted spinner and a moving label, for example "Searching Slack for messages since yesterday"), with a timer under them. Older steps fold into "+N earlier steps"; click it, or the live step, to see them all.
+
+Some things stay in view as chips the whole time:
+
+- **Sources:** the websites it searched, for example "Searched 9 websites" with the sites' icons. Click to list them.
+- **Files** it made. Click a file to open it, or its arrow to download it.
+- **Failures:** "1 step failed". Click to see which.
+
+When it finishes, the steps fold into one line, such as "Worked for 12s · 4 steps" (or "Thought for 12s" if it only thought). The chips stay under it. Click the line to see the full trail: the plan, every step on a tree line with its icon and what it did, and each search's sources. Click any step to see what went in and what came back.
+
+The agent's task list is no longer drawn in the reply. It lives in [Progress](/guides/progress-pane), in the right pane (on a phone, a sheet), opened from the chip at the top right of the conversation. Interactive questions and approvals still show as cards in the thread; see [Composer, replies and questions](/guides/chat-composer#answering-an-agent-question).
+
+This works the same in Chat, Cowork, Code, bot threads and project threads, on Desktop, ai.allternit.com (including the phone layout) and the m.allternit.com app. In Memory Drive, a Dream's **Steps** opens straight into the trail; see [Nightly Dream](/guides/memory-drive#nightly-dream).
 
 ## Steps in your connected apps
 
 A step that reaches one of your connected apps (Settings → Connectors), such as Slack, Gmail, GitHub, Linear or Granola, shows the app's logo and name: "Searched **Slack** for messages since yesterday", "Read **GitHub** pull requests".
 
 - **What it found.** When the step finishes, it shows the first three things it found, such as messages, emails, pull requests, issues or notes. Each row shows who or what it is, one line of text and when, with "+N more" for the rest. A row with a link opens the item in its app.
-- **While the assistant works,** the steps stay open and the newest step shows what it found. Older steps close to one line each. When the reply is done, the steps fold back into the summary line, which ends with the logos of the apps used.
+- **While the assistant works,** the newest step shows what it found. When the reply is done, the steps fold back into the summary line, which ends with the logos of the apps used.
 - **Full results.** When the reply is done, the full result appears as a table or card under the steps, as before. Click a closed step to see what it found along with its raw input and result.
 - A step whose result is plain text, or not a list of things, shows no preview. Click it to see the result.
 
-## The task list as a checklist
+## The task list
 
-When the assistant keeps a task list, the reply shows it as one checklist card instead of an "Updated tasks" step per change. The card header reads "3 steps left" while it works and "All 4 steps done" when finished. Each step shows its state:
-
-- An empty ring: to do.
-- A spinning ring: in progress. The step's text shimmers and reads as what is happening now, for example "Researching feature flags".
-- A filled tick and struck-through text: done.
-- A red cross: failed.
-
-Click the header to fold the list away. A reply that keeps working on the same list in a later group of steps updates the same tasks. It works with terminal agents' task tools (TaskCreate, TaskUpdate, TodoWrite) and gizzi's todowrite. The Cowork session panel's Progress shows the same list.
+The agent's task list (Claude's TodoWrite, TaskCreate and TaskUpdate, gizzi's todowrite, Codex's plan or an ACP agent's plan) shows as one checklist in [Progress](/guides/progress-pane), not in the reply. Each update changes the same list there, and the chip at the top right reads "Step 2 of 3" while it works and "All 3 done" when finished.
 
 ## Web searches and their sources
 
@@ -33,7 +38,9 @@ A web search step shows the icons of the sites it found and the number of result
 
 A search whose result has no links still opens to its raw result.
 
-## Source chips in the answer
+## Source pills and chips in the answer
+
+Web pages the agent cites show as small pills with the site's icon and name, like "github", and several in a row become one pill, "github +2". The pill comes from the model's own citation, not from guessing at the reply text; see [How long answers are laid out](/guides/interactive-answers#how-long-answers-are-laid-out) and, for developers, [Response parts](/guides/response-parts).
 
 When the answer links to something in one of your apps, such as a Slack message, a GitHub commit, a Linear issue, a Gmail thread, a Notion page or a Google Drive file, the link shows as a small chip with the app's logo. You can see at a glance where each point came from. Clicking a chip asks before it opens the link, the same as any other link in a reply.
 
@@ -57,19 +64,24 @@ Source: `allternit-ai/src/components/ai-elements/`:
 
 | File | Role |
 | --- | --- |
-| `process/ProcessBlock.tsx` | The working line, summary and step list (`line` style), and Cowork's step card (`steps` style). App logos, preview cards and the logos on the summary. |
+| `process/ProcessBlock.tsx` | The merged stream: live view (plan line, last 2 steps, live row, "+N earlier", timer), the folded "Worked for" summary and the trail; `planLine`, `currentThought`, `thoughtHeadline`; `files`, `durationMs` and `defaultOpen` props (the Memory Drive Dream view opens into the trail). Cowork sets the `steps` style, which only tightens the type. App logos, preview cards and the logos on the summary. |
+| `process/StreamChips.tsx` | The chips row: sources ("Searched N websites"), file chips (open and download), failed steps. |
+| `process/step-icon.tsx` | Per-kind step icon, app logo, error and interrupted marks, the dotted spinner. |
+| `process/process.css` | Stream, trail (tree line), chips, phone sizing, reduced motion. |
 | `process/describe-tool.ts` | Turns a tool call into plain words. `toolApp()` finds the app behind `mcp__<server>__<tool>` and `mcp__allternit-connectors__<app>__<tool>`. Connector tools become `app-search` ("Searched Slack for …") or `app-read` ("Read GitHub pull requests") steps, summed as "Ran N searches, read N sources". |
 | `process/app-preview.ts` | `appPreview(output)`: the first three rows of a connector result (title or sender, who or where, one line of text, short time, https link, unread). It reads `structuredContent`, JSON text content or plain JSON, and returns `null` for anything that is not a list of things. Results are cached so streaming re-renders parse each one once. |
-| `process/checklist.ts` | `foldChecklist(calls, seed)`: the task list folded from todo tool calls. Snapshot tools (TodoWrite, todowrite, `{todos}` results) replace the list; TaskCreate appends (id from "Task #N" in its result) and TaskUpdate patches by `taskId`, `deleted` removes. Shared with the Cowork session panel (`session-data.ts`). |
+| `process/checklist.ts` | `foldChecklist(calls, seed)`: the task list folded from todo tool calls, for the [Progress pane](/guides/progress-pane). Snapshot tools (TodoWrite, todowrite, `{todos}` results) replace the list; TaskCreate appends (id from "Task #N" in its result) and TaskUpdate patches by `taskId`, `deleted` removes. Shared with the Cowork session panel (`session-data.ts`). |
 | `process/web-results.ts` | `webResults(output)`: the pages a web search returned: a terminal agent's `Links: [...]` text, result arrays, `{results}`, `{web:{results}}`, `{organic}`, content blocks. Deduped by URL. |
-| `process/StepCards.tsx` | `ChecklistCard` (the task list card), `SearchSources` (the opened search's page list) and `SourceStack` (site icons and count in the step row). |
+| `process/StepCards.tsx` | `ChecklistCard` (kept for the Progress pane, not drawn inline), `SearchSources` (the opened search's page list) and `SourceStack` (site icons and count in the step row). |
 | `app-source-links.ts` | A rehype step that runs after Streamdown's own steps. It gives links to known app hosts the `app-source-link` class and a logo, so Streamdown's link check still applies. |
 | `process/RenderingCard.tsx` | `RenderingFrame` image and video shapes: the frame with `BlockPulse` and a "Generating image · Ns" foot. `mediaAspect()` reads `width`/`height` or `aspect`/`aspect_ratio`. |
 | `GeneratedMediaCard.tsx` | The finished `media_generate` result in the transcript: the picture with a soft reveal and the Download, Open and Copy prompt buttons. It also exports `MediaPreview` (SVG as an image, HTML/canvas in a scaled `allow-scripts` sandbox, video from an authed blob shared per URL), `isMediaArtifact` and `mediaRatio`. |
 | `generated-media.css` | `.generated-media-reveal`: 320 ms fade plus blur-to-sharp. Off under `prefers-reduced-motion`. |
 | `artifact-from-part.ts`, `artifact.types.ts` | `media_generate` artifacts carry `media: { prompt, width, height }`. Video defaults to 1920×1080 and canvas images to 1024×1024. |
-| `UnifiedMessageRenderer.tsx` | Generated media renders as `GeneratedMediaCard`; other outputs keep `ArtifactCard`. Groups tool parts into process blocks, and passes each block the task list as the blocks above it left it (`checklistSeed`). Connector result views (`view-kit/ConnectorToolView`) show once the block is no longer streaming. |
+| `UnifiedMessageRenderer.tsx` | Generated media renders as `GeneratedMediaCard`; other outputs keep `ArtifactCard`. Groups tool parts into process blocks and passes each block its non-media files as chips (media keeps `GeneratedMediaCard`, Artifacts v2 keeps `ArtifactTranscriptCard`). It no longer draws inline source cards or plan cards: sources become pills and chips, and the plan goes to Progress. Connector result views (`view-kit/ConnectorToolView`) show once the block is no longer streaming. |
 
 The block-square pulse is `src/components/brand/BlockPulse.tsx`. `drawBlockPulse` is the only drawing code (`TeamNetwork` uses it too). `BlockPulse` is a looping canvas that fills its container. Its colours come from `--ui-text-primary` and `--block-pulse-tint` (default `#26A0BE`). Reduced motion draws one still frame, and nothing animates while it is off-screen. The studio pane's rendering frame (`src/views/cowork/artifact-session/ArtifactStudioPane.tsx`) takes its aspect from `mediaAspect`, and the Create bot photo sprite (`PhotoSpritePanel.tsx`) uses the same pulse.
 
 Logos come from `ConnectorLogo` (bundled `public/app-icons`, then the logos catalog, then the site's favicon). Tool output is untrusted: preview rows hold plain strings, and only https links are kept.
+
+Dev preview: `preview-steps.html` with `src/dev/StepsPreview.tsx` (live run with `?live=1`, done folded, done opened, thought only; `?theme=dark`). Sources and plans reach the stream through the [response-parts contract](/guides/response-parts).

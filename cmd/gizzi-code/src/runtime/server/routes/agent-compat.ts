@@ -64,6 +64,7 @@ import { Provider } from "@/runtime/providers/provider"
 import { Bus } from "@/shared/bus"
 import { Log } from "@/shared/util/log"
 import { fileFrameForPart, toolFramesForPart, usageFromMessageInfo } from "./tool-frames"
+import { planFrameForTodos, sourceFramesForPart } from "@/runtime/session/response-parts"
 
 const log = Log.create({ service: "agent-compat" })
 
@@ -813,6 +814,8 @@ export const AgentCompatRoutes = () =>
         // This session's assistant message ids: only their file parts are
         // generated artifacts (user attachments are file parts too).
         const assistantMessages = new Set<string>()
+        // Response-parts contract: source urls already framed this turn.
+        const sourcesSent = new Set<string>()
         const unsub = Bus.subscribeAll((event: any) => {
           const type = event?.type
           const props = event?.properties ?? {}
@@ -839,6 +842,10 @@ export const AgentCompatRoutes = () =>
                   .finally(() => pendingApps.delete(pending))
                 pendingApps.add(pending)
               }
+            }
+            // Real citations / search results stored on the part (after its tool_result) → `source` frames (additive).
+            if (part?.type === "text" || part?.type === "tool") {
+              for (const frame of sourceFramesForPart(part, msgID, sourcesSent)) push(frame)
             }
             // A file the model generated (not the user's own attachment).
             if (part?.type === "file" && assistantMessages.has(part?.messageID)) {
@@ -882,6 +889,12 @@ export const AgentCompatRoutes = () =>
               }
               push({ type: "context_usage", messageId: msgID, context: lastContext })
             }
+            return
+          }
+          if (type === "todo.updated") {
+            // The session's plan changed (todowrite, Claude Code TodoWrite,
+            // Codex / ACP plans) → one normalized `plan` frame.
+            if (Array.isArray(props.todos)) push(planFrameForTodos(props.todos, msgID))
             return
           }
           if (type === "session.compacted") {

@@ -24,7 +24,7 @@ import type {
   TaskHandle,
 } from "@/runtime/runtime-driver"
 import { claudeToolDecision, deniedMessage } from "@/runtime/bots/bot-turn"
-import { codexDeveloperInstructions, acpCanLoadSession, acpMcpServers, claudePermissionFlags, claudeSessionFlags, codexPlanParams, codexThreadRequest, opencodeResumeFlags, qwenResumeFlags, vendorSessionIdFromEvent, codexMcpConfig, withInstructions, claudeContextArgv } from "@/runtime/drivers/cli-session-flags"
+import { codexDeveloperInstructions, cliTurnMessage, acpCanLoadSession, acpMcpServers, claudePermissionFlags, claudeSessionFlags, codexPlanParams, codexThreadRequest, opencodeResumeFlags, qwenResumeFlags, vendorSessionIdFromEvent, codexMcpConfig, withInstructions, claudeContextArgv } from "@/runtime/drivers/cli-session-flags"
 import { ContextBreakdown } from "@/runtime/session/context-breakdown"
 import { ContextBreakdownStore } from "@/runtime/session/context-breakdown-store"
 import { CodexContext } from "@/runtime/session/codex-context"
@@ -50,6 +50,7 @@ import { CliBackgroundTasks } from "@/runtime/session/cli-background-tasks"
 import { ProcessRegistry } from "@/runtime/process-registry"
 import { acpGateDecision } from "@/runtime/drivers/acp-gate"
 import { PermissionNext } from "@/runtime/tools/guard/permission/next"
+import { sourcesFromClaudeCodeToolResult, todosFromNativePlan } from "@/runtime/session/response-parts"
 
 const log = Log.create({ service: "local-cli-driver" })
 
@@ -146,7 +147,7 @@ export class LocalCliDriver implements RuntimeDriver {
     }
 
     const task = this.tasks.get(handle.taskId)
-    const message = task?.prompt ?? ""
+    const prompt = task?.prompt ?? ""
 
     yield { type: "status", status: "running" }
     await this.logEvent(handle.taskId, { type: "status", status: "running" })
@@ -160,6 +161,8 @@ export class LocalCliDriver implements RuntimeDriver {
     // The path is one argv element (it may contain spaces, e.g. a custom tool).
     const baseCmd = [cliPath, ...parseCmd(this.specArgs())]
     const adapter = resolveAdapter(this.cliName)
+    // CLIs without a system-prompt channel get the session's instructions in the message.
+    const message = cliTurnMessage(prompt, task?.systemPrompt, this.cliName, adapter.mode)
 
     if (task?.attachments && task.attachments.length > 0 && !adapter.supportsAttachments) {
       throw new Error(
@@ -740,11 +743,15 @@ export class LocalCliDriver implements RuntimeDriver {
             for (const [idx, part] of userContent.entries()) {
               if (!part || typeof part !== "object") continue
               if (part.type === "tool_result") {
+                // Claude Code puts the tool's structured result beside the
+                // content (`tool_use_result`); WebSearch's carries the pages.
+                const sources = userContent.length === 1 ? sourcesFromClaudeCodeToolResult(evt.tool_use_result) : []
                 const toolResultEv = {
                   type: "tool_result",
                   id: String(part.tool_use_id ?? `${handle.taskId}-tool-${idx}`),
                   content: extractTextContent(part.content),
                   isError: Boolean(part.is_error),
+                  ...(sources.length ? { sources } : {}),
                 } as AgentEvent
                 yield toolResultEv
                 await this.logEvent(handle.taskId, toolResultEv)
@@ -1077,6 +1084,12 @@ export class LocalCliDriver implements RuntimeDriver {
         if (!update || !update.sessionUpdate) return
 
         switch (update.sessionUpdate) {
+          case "plan": {
+            // ACP plan update: the agent's whole plan, every time.
+            const todos = todosFromNativePlan(update)
+            if (todos) pushEvent({ type: "plan", entries: todos })
+            break
+          }
           case "agent_message_chunk": {
             const text = extractTextContent(update.content)
             if (text) pushEvent({ type: "text_delta", delta: text })
@@ -1502,6 +1515,19 @@ export class LocalCliDriver implements RuntimeDriver {
               if (context) {
                 lastCodexContext = context
                 pushEvent({ type: "context", ...context })
+              }
+              continue
+            }
+
+            if (method === "turn/plan/updated") {
+              // Codex's own plan ({plan:[{step,status}], explanation}).
+              const todos = todosFromNativePlan(params)
+              if (todos) {
+                pushEvent({
+                  type: "plan",
+                  entries: todos,
+                  ...(typeof params.explanation === "string" ? { explanation: params.explanation } : {}),
+                })
               }
               continue
             }
@@ -2693,6 +2719,8 @@ interface StreamJsonEvent {
   is_error?: boolean
   request_id?: string
   request?: { subtype?: string; tool_name?: string; input?: Record<string, unknown> | string }
+  /** `user` tool results: Claude Code's structured result beside the content (WebSearch carries its pages). */
+  tool_use_result?: unknown
 }
 
 interface OpenclawEvent {

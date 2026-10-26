@@ -11,6 +11,7 @@ import { Tool } from "@/runtime/tools/builtins/tool"
 import TurndownService from "turndown"
 import DESCRIPTION from "@/runtime/tools/builtins/webfetch.txt"
 import { abortAfterAny } from "@/shared/util/abort"
+import { toSource } from "@/runtime/session/response-parts"
 
 const MAX_RESPONSE_SIZE = 5 * 1024 * 1024 // 5MB
 const DEFAULT_TIMEOUT = 30 * 1000 // 30 seconds
@@ -98,6 +99,9 @@ export const WebFetchTool = Tool.define("webfetch", {
     const contentType = response.headers.get("content-type") || ""
     const mime = contentType.split(";")[0]?.trim().toLowerCase() || ""
     const title = `${params.url} (${contentType})`
+    // The fetched page as a structured source (response-parts contract).
+    const pageSource = toSource({ url: params.url }, "tool")
+    const sourceMeta = pageSource ? { sources: [pageSource] } : {}
 
     // Check if response is an image
     const isImage = mime.startsWith("image/") && mime !== "image/svg+xml" && mime !== "image/vnd.fastbidsheet"
@@ -128,13 +132,13 @@ export const WebFetchTool = Tool.define("webfetch", {
           return {
             output: markdown,
             title,
-            metadata: {},
+            metadata: sourceMeta,
           }
         }
         return {
           output: content,
           title,
-          metadata: {},
+          metadata: sourceMeta,
         }
 
       case "text":
@@ -143,27 +147,27 @@ export const WebFetchTool = Tool.define("webfetch", {
           return {
             output: text,
             title,
-            metadata: {},
+            metadata: sourceMeta,
           }
         }
         return {
           output: content,
           title,
-          metadata: {},
+          metadata: sourceMeta,
         }
 
       case "html":
         return {
           output: content,
           title,
-          metadata: {},
+          metadata: sourceMeta,
         }
 
       default:
         return {
           output: content,
           title,
-          metadata: {},
+          metadata: sourceMeta,
         }
     }
   },

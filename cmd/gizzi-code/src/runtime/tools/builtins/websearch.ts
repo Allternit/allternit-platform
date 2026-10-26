@@ -2,6 +2,7 @@ import z from "zod/v4"
 import { Tool } from "@/runtime/tools/builtins/tool"
 import DESCRIPTION from "@/runtime/tools/builtins/websearch.txt"
 import { abortAfterAny } from "@/shared/util/abort"
+import { sourcesFromExaText } from "@/runtime/session/response-parts"
 
 const API_CONFIG = {
   BASE_URL: "https://mcp.exa.ai",
@@ -122,10 +123,13 @@ export const WebSearchTool = Tool.define("websearch", async () => {
           if (line.startsWith("data: ")) {
             const data: McpSearchResponse = JSON.parse(line.substring(6))
             if (data.result && data.result.content && data.result.content.length > 0) {
+              const output = data.result.content[0].text
+              // The pages found, structured, so the chat shows real source pills.
+              const sources = sourcesFromExaText(output)
               return {
-                output: data.result.content[0].text,
+                output,
                 title: `Web search: ${params.query}`,
-                metadata: {},
+                metadata: sources.length ? { sources } : {},
               }
             }
           }
