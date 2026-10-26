@@ -562,6 +562,7 @@
               "guides/progress-pane",
               "guides/response-parts",
               "guides/agent-run-tree",
+              "guides/subagents",
               "guides/pdf-citations"
             ],
             "icon": "/icons/book.svg"

@@ -2374,6 +2374,35 @@
       ]
     },
     {
+      "id": "feature:subagent-catalog",
+      "label": "Subagent catalog and faces",
+      "product": "product:gizzi-code",
+      "status": "building",
+      "description": "15 built-in subagent types (Explorer, Planner, Builder, Code Reviewer, Verifier, Debugger, Web Researcher, Browser Operator, Computer Operator, Docs Writer, Data Analyst, UI Designer, Release Engineer, Security Reviewer, Scribe) with model classes small/standard/deep so delegated work runs cheap by default, a face per type from the Office Professionals pack on every subagent surface, Settings → Subagents to edit looks and add custom types (stored per user in subagent_types), synced into gizzi and exported to the Claude Code and Codex brains.",
+      "touches": [
+        "allternit/cmd/gizzi-code/src/runtime/agents",
+        "allternit/cmd/gizzi-code/src/runtime/loop/agent.ts",
+        "allternit/cmd/gizzi-code/src/runtime/tools/builtins/task.ts",
+        "allternit/cmd/allternit-api/src/subagent_type_routes.rs",
+        "allternit-ai/src/lib/subagents",
+        "allternit-ai/src/components/subagents",
+        "allternit-ai/src/components/agent-run-tree",
+        "allternit-ai/src/views/settings/SubagentsPanel.tsx",
+        "allternit-ai/public/avatar-packs/office-professionals"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-25",
+          "note": "Eoj: a look belongs to the subagent type; default faces come from the Office Professionals pack; build the catalog in the same change. Rejected the realistic analyst/designer/engineer/counsel/assistant faces; Amir, Kira, Grant, Jonah and Elena were drawn from the Allternit Series cast in the house style instead."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/subagents.mdx",
+        "allternit/surfaces/docs/api/subagent-types.mdx",
+        "allternit/cmd/gizzi-code/src/runtime/agents/builtin-catalog.ts"
+      ]
+    },
+    {
       "id": "feature:agent-steps",
       "label": "Agent steps in replies",
       "product": "product:ai-allternit",
