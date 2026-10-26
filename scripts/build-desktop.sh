@@ -74,6 +74,13 @@ if [ "$SKIP_PLATFORM" = false ]; then
   step "Building workspace UI (ai.allternit.com)…"
   PLATFORM_DIR="$(resolve_hosted_ui "$WORKSPACE_ROOT")" || die "ai.allternit.com UI not found"
   link_oss_platform "$PLATFORM_DIR" "$WORKSPACE_ROOT"
+  # Packaging refuses a UI behind origin/main (prepare-platform-static.cjs).
+  # A UI that IS main now stays acceptable when main moves during this build.
+  git -C "$PLATFORM_DIR" fetch --quiet origin main 2>/dev/null || true
+  UI_HEAD="$(git -C "$PLATFORM_DIR" rev-parse HEAD 2>/dev/null || true)"
+  if [ -n "$UI_HEAD" ] && [ "$UI_HEAD" = "$(git -C "$PLATFORM_DIR" rev-parse origin/main 2>/dev/null)" ]; then
+    export ALLTERNIT_UI_MAIN_AT_START="$UI_HEAD"
+  fi
   cd "$PLATFORM_DIR"
   NEXT_PUBLIC_ALLTERNIT_DESKTOP_AUTH=1 pnpm run build
   

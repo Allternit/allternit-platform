@@ -79,7 +79,13 @@ function checkUiSource(uiDir) {
   // it is a warning in CI. Local builds keep failing: a stale local checkout is
   // the bug this guard exists for. A dirty tree still fails everywhere.
   const inCi = process.env.GITHUB_ACTIONS === 'true' || process.env.CI === 'true';
-  if (behind && inCi && !dirty) {
+  // Same for a local build-desktop.sh run: it records the UI commit that was
+  // origin/main when the build started (ALLTERNIT_UI_MAIN_AT_START), and an
+  // hour-long build must not fail because ai main moved meanwhile.
+  const mainAtStart = process.env.ALLTERNIT_UI_MAIN_AT_START || '';
+  if (behind && !dirty && mainAtStart && head === mainAtStart) {
+    log(`note: Workspace UI ${head.slice(0, 9)} was origin/main when this build started; ${behind} commit(s) merged since. Packaging the commit the build started from.`);
+  } else if (behind && inCi && !dirty) {
     log(`note (CI): Workspace UI ${head.slice(0, 9)} is ${behind} commit(s) behind origin/main because main moved during this run; packaging the commit checked out at job start.`);
   } else if (behind) {
     problems.push(`${behind} commit(s) behind origin/main`);
