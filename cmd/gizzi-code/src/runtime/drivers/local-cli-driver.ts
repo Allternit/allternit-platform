@@ -1103,12 +1103,12 @@ export class LocalCliDriver implements RuntimeDriver {
           case "tool_call": {
             const toolCallId = String(update.toolCallId ?? "")
             if (!toolCallId) break
-            pushEvent({
-              type: "tool_call",
-              id: toolCallId,
-              name: String(update.title ?? update.kind ?? "tool"),
-              arguments: update.rawInput ?? {},
-            })
+            pushEvent({ type: "tool_call", id: toolCallId, ...acpToolStep(update) })
+            // Some agents report a tool already finished in its first update.
+            const status = String(update.status ?? "")
+            if (status === "completed" || status === "failed") {
+              pushEvent({ type: "tool_result", id: toolCallId, content: extractTextContent(update.content), isError: status === "failed" })
+            }
             break
           }
           case "tool_call_update": {
@@ -2837,6 +2837,36 @@ function codexWebSearchQuery(item: Record<string, unknown>): string {
  * {query}, web_fetch {url}, exec_command {command}, patch_apply {changes},
  * mcp__server__tool. Messages, reasoning and plans are not tools.
  */
+/**
+ * An ACP tool call named by its `kind` the way the steps UI reads tools
+ * (execute → bash, fetch → web_fetch, a query-only search → web_search), with
+ * the agent's own title kept as the step's description.
+ */
+export function acpToolStep(update: Record<string, unknown>): { name: string; arguments: unknown } {
+  const raw = update.rawInput && typeof update.rawInput === "object" && !Array.isArray(update.rawInput) ? (update.rawInput as Record<string, unknown>) : {}
+  const title = typeof update.title === "string" ? update.title.trim() : ""
+  const kind = typeof update.kind === "string" ? update.kind : ""
+  const locations = Array.isArray(update.locations) ? (update.locations as Array<Record<string, unknown>>) : []
+  const path = [raw.path, raw.file_path, raw.filePath, locations[0]?.path].find((p): p is string => typeof p === "string" && p !== "")
+  const url = [raw.url, raw.uri].find((u): u is string => typeof u === "string" && /^https?:\/\//.test(u))
+  const query = [raw.query, raw.q].find((q): q is string => typeof q === "string" && q !== "")
+  const args = { ...raw, ...(path && !raw.path ? { path } : {}), ...(title ? { description: title } : {}) }
+  switch (kind) {
+    case "execute":
+      return { name: "bash", arguments: args }
+    case "read":
+      return { name: "read", arguments: args }
+    case "edit":
+      return { name: "edit", arguments: args }
+    case "fetch":
+      return url || !query ? { name: "web_fetch", arguments: args } : { name: "web_search", arguments: args }
+    case "search":
+      return query && !path ? { name: "web_search", arguments: args } : { name: "grep", arguments: args }
+    default:
+      return { name: title || kind || "tool", arguments: raw }
+  }
+}
+
 export function codexToolCall(item: Record<string, unknown> | undefined): Extract<AgentEvent, { type: "tool_call" }> | undefined {
   if (!item || typeof item.id !== "string") return undefined
   const id = item.id

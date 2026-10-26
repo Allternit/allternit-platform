@@ -122,6 +122,27 @@ test("Codex app-server thread/start uses result.thread.id", async () => {
   expect(codexThreadId({ threadId: "old-shape" })).toBeUndefined()
 })
 
+describe("ACP tool calls are named by kind", () => {
+  test("execute is bash with the agent's title as its description", async () => {
+    const { acpToolStep } = await import("@/runtime/drivers/local-cli-driver")
+    expect(acpToolStep({ kind: "execute", title: "Run the tests", rawInput: { command: "bun test" } })).toEqual({
+      name: "bash",
+      arguments: { command: "bun test", description: "Run the tests" },
+    })
+  })
+  test("a query-only search or fetch is a web search; a url fetch reads the page", async () => {
+    const { acpToolStep } = await import("@/runtime/drivers/local-cli-driver")
+    expect(acpToolStep({ kind: "search", title: "Search the web", rawInput: { query: "linear pricing" } }).name).toBe("web_search")
+    expect(acpToolStep({ kind: "fetch", title: "Search", rawInput: { query: "jira pricing" } }).name).toBe("web_search")
+    expect(acpToolStep({ kind: "fetch", rawInput: { url: "https://asana.com/pricing" } }).name).toBe("web_fetch")
+    expect(acpToolStep({ kind: "search", rawInput: { pattern: "todo" }, locations: [{ path: "/w/src" }] }).name).toBe("grep")
+  })
+  test("unknown kinds keep the agent's title", async () => {
+    const { acpToolStep } = await import("@/runtime/drivers/local-cli-driver")
+    expect(acpToolStep({ kind: "other", title: "Thinking about it", rawInput: {} }).name).toBe("Thinking about it")
+  })
+})
+
 describe("Codex app-server tool items become steps", () => {
   test("a web search is web_search {query} and its results are sources", async () => {
     const { codexToolCall, codexToolResult } = await import("@/runtime/drivers/local-cli-driver")
