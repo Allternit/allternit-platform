@@ -132,6 +132,10 @@ export type BaseAgentDefinition = {
    * full CLAUDE.md and interprets their output. Saves ~5-15 Gtok/week across
    * 34M+ Explore spawns. Kill-switch: tengu_slim_subagent_claudemd. */
   omitClaudeMd?: boolean
+  /** Display name for the subagent's card (catalog types). */
+  title?: string
+  /** Bot-avatar face slug for the subagent's card (catalog types). */
+  face?: string
 }
 
 // Built-in agents - dynamic prompts only, no static systemPrompt field

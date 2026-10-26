@@ -22,6 +22,8 @@ import {
 } from "@/runtime/agents/subagent-run-contract"
 import { BackgroundTask } from "@/runtime/session/background-task"
 import { HookDispatcher } from "@/runtime/hooks/dispatcher"
+import { DELEGATION_HINT } from "@/runtime/agents/builtin-catalog"
+import { resolveModelClass } from "@/runtime/agents/model-class"
 
 const log = Log.create({ service: "tool.task" })
 
@@ -46,6 +48,11 @@ type TaskMetadata = {
   sessionId: string
   model: { modelID: string; providerID: string }
   background?: boolean
+  /** Subagent identity for the app's task card. */
+  agent?: string
+  title?: string
+  face?: string
+  modelClass?: string
 }
 
 export const TaskTool = Tool.define<typeof parameters, TaskMetadata>("task", async (ctx) => {
@@ -60,8 +67,10 @@ export const TaskTool = Tool.define<typeof parameters, TaskMetadata>("task", asy
   const description = DESCRIPTION.replace(
     "{agents}",
     accessibleAgents
+      // Legacy aliases (general, explore) stay callable but list once, under their catalog name.
+      .filter((a) => !a.aliasOf)
       .map((a) => `- ${a.name}: ${a.description ?? "This subagent should only be called manually by the user."}`)
-      .join("\n"),
+      .join("\n") + `\n\n${DELEGATION_HINT}`,
   )
   return {
     description,
@@ -82,7 +91,7 @@ export const TaskTool = Tool.define<typeof parameters, TaskMetadata>("task", asy
         })
       }
 
-      const agent = await Agent.get(params.subagent_type)
+      const agent = await Agent.getSubagent(params.subagent_type)
       if (!agent) throw new Error(`Unknown agent type: ${params.subagent_type} is not a valid agent type`)
 
       const hasTaskPermission = agent.permission.some((rule) => rule.permission === "task")
@@ -145,11 +154,20 @@ export const TaskTool = Tool.define<typeof parameters, TaskMetadata>("task", asy
       if (msg.info.role !== "assistant") throw new Error("Not an assistant message")
       const info = msg.info
 
-      // Model: the agent's own → models.jobs (explore → explorer, general → coder) → the caller's.
+      // Model: the agent's own → models.jobs (explorer/builder jobs) → its model
+      // class (subagents default to small, so delegated work runs cheap) → the
+      // caller's. A class that can't be routed falls back to the caller's model.
+      const parentModel = { modelID: msg.info.modelID, providerID: msg.info.providerID }
       const jobName = ModelJobs.jobForAgent(agent.name)
-      const model = agent.model ?? (jobName ? await ModelJobs.jobModel(jobName) : undefined) ?? {
-        modelID: msg.info.modelID,
-        providerID: msg.info.providerID,
+      const model =
+        agent.model ??
+        (jobName ? await ModelJobs.jobModel(jobName) : undefined) ??
+        (await resolveModelClass(agent.modelClass ?? (agent.mode === "subagent" ? "small" : "inherit"), parentModel))
+      const identity = {
+        agent: agent.name,
+        title: agent.title ?? agent.name,
+        ...(agent.face ? { face: agent.face } : {}),
+        ...(agent.modelClass ? { modelClass: agent.modelClass } : {}),
       }
 
       ctx.metadata({
@@ -157,6 +175,7 @@ export const TaskTool = Tool.define<typeof parameters, TaskMetadata>("task", asy
         metadata: {
           sessionId: session.id,
           model,
+          ...identity,
         },
       })
 
@@ -267,7 +286,7 @@ export const TaskTool = Tool.define<typeof parameters, TaskMetadata>("task", asy
 
         return {
           title: params.description,
-          metadata: { sessionId: session.id, model, background: true },
+          metadata: { sessionId: session.id, model, background: true, ...identity },
           output: [
             `background_task_id: ${backgroundTaskID}`,
             `task_id: ${session.id}`,
@@ -299,6 +318,7 @@ export const TaskTool = Tool.define<typeof parameters, TaskMetadata>("task", asy
           sessionId: session.id,
           model,
           result: card,
+          ...identity,
         },
         output,
       }
