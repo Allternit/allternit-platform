@@ -362,6 +362,9 @@ struct GizziMessageInfo {
     cost: Option<f64>,
     #[serde(default, rename = "tokensEstimated")]
     tokens_estimated: Option<bool>,
+    /// Open-lane refusal handoff `{from, to}` (gizzi MessageV2.Assistant).
+    #[serde(default)]
+    handoff: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -656,14 +659,19 @@ fn run_telemetry(message: &GizziMessage) -> serde_json::Value {
         (None, Some(m)) => Some(m.clone()),
         _ => None,
     };
-    json!({
+    let mut telemetry = json!({
         "modelId": model_id,
         "startedAt": started,
         "endedAt": ended,
         "usage": usage,
         "toolCalls": tools.len(),
         "toolFailures": failures,
-    })
+    });
+    // The chat's "Answered by … (handoff)" note after a reload.
+    if let Some(handoff) = info.handoff.as_ref().filter(|h| h["from"].is_string() && h["to"].is_string()) {
+        telemetry["handoff"] = json!({ "from": handoff["from"], "to": handoff["to"] });
+    }
+    telemetry
 }
 
 /// Gizzi's compiled server currently only accepts a fixed set of surface values.
@@ -3861,6 +3869,22 @@ mod run_telemetry_tests {
         assert!(t["usage"].get("cost").is_none());
         assert_eq!(t["toolCalls"], 2);
         assert_eq!(t["toolFailures"], 1);
+    }
+
+    #[test]
+    fn handed_off_messages_carry_the_handoff() {
+        let m = message(json!({
+            "info": {"id": "msg_2", "sessionID": "ses_1", "role": "assistant",
+                     "time": {"created": 1000, "completed": 2000},
+                     "providerID": "allternit", "modelID": "deepseek-v4.1-flash-open",
+                     "handoff": {"from": "claude-cli/claude-sonnet", "to": "allternit/deepseek-v4.1-flash-open"}},
+            "parts": [{"type": "text", "text": "answer"}]
+        }));
+        let t = run_telemetry(&m);
+        assert_eq!(t["handoff"]["from"], "claude-cli/claude-sonnet");
+        assert_eq!(t["handoff"]["to"], "allternit/deepseek-v4.1-flash-open");
+        let plain = message(json!({"info": {"id": "m", "sessionID": "s", "role": "assistant"}, "parts": []}));
+        assert!(run_telemetry(&plain).get("handoff").is_none());
     }
 
     #[test]
