@@ -80,3 +80,16 @@ export function contentText(content: unknown): string {
   }
   return ""
 }
+
+/** A tool call's arguments as a record: an object as is, a JSON string parsed, anything else empty. */
+export function toolInput(value: unknown): Record<string, unknown> {
+  if (typeof value === "string") {
+    const raw = value
+    try {
+      value = JSON.parse(raw)
+    } catch {
+      return raw.trim() ? { input: raw } : {}
+    }
+  }
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {}
+}

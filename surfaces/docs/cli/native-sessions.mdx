@@ -35,6 +35,8 @@ The same operations are available in the **desktop and web app**: open the sessi
 
 `NativeSource.pickup()` snapshots the native transcript at pickup time and creates a **new** Gizzi session carrying a first-class `source_ref` (harness id, origin session id, origin file path, content fingerprint). The new session starts as an ordinary Gizzi session — you can continue it, branch it, or export it.
 
+The picked-up chat looks like a chat that ran in Allternit: each reply keeps its text and its tool calls in order, and every tool call shows as a step with its input (for example the shell command) and its output. Output longer than 20,000 characters is cut in the chat; the full text stays in the native file.
+
 Safety guarantees:
 
 - The origin native file is **never written** — the catalog is strictly read-only.
