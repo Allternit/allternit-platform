@@ -36,9 +36,15 @@ pub struct DbHandle {
     path: PathBuf,
 }
 
+/// How long a connection waits on a locked database before giving up.
+const BUSY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
 impl DbHandle {
     pub fn new(path: PathBuf) -> SqlResult<Self> {
         let mut conn = Connection::open(&path)?;
+        conn.busy_timeout(BUSY_TIMEOUT)?;
+        // Readers never wait on a writer (persistent per file; a no-op once set).
+        conn.pragma_update(None, "journal_mode", "WAL")?;
         // Union-merge lineage left version gaps (V49, V88/V89) on some DBs:
         // the file exists, current version is already past it, history never
         // recorded the row. Refinery's default abort_missing treats that as
@@ -67,8 +73,14 @@ impl DbHandle {
         Self::new(path)
     }
 
+    /// A connection that waits for a busy database instead of failing at
+    /// once: SQLite's default busy timeout is 0, so two writers colliding (a
+    /// background job and a sign-in check) returned "database is locked" and
+    /// failed requests such as creating a chat session.
     pub fn connect(&self) -> SqlResult<Connection> {
-        Connection::open(&self.path)
+        let conn = Connection::open(&self.path)?;
+        conn.busy_timeout(BUSY_TIMEOUT)?;
+        Ok(conn)
     }
 
     /// Filesystem path backing this handle (for DB-size reporting).
@@ -651,3 +663,16 @@ mod migration_version_tests {
     }
 }
 
+
+#[cfg(test)]
+mod busy_timeout_tests {
+    #[test]
+    fn connections_wait_on_a_busy_database() {
+        let db = super::DbHandle::new_memory().unwrap();
+        let conn = db.connect().unwrap();
+        let ms: i64 = conn.query_row("PRAGMA busy_timeout", [], |r| r.get(0)).unwrap();
+        assert_eq!(ms, 5000);
+        let mode: String = conn.query_row("PRAGMA journal_mode", [], |r| r.get(0)).unwrap();
+        assert_eq!(mode.to_lowercase(), "wal");
+    }
+}
