@@ -40,10 +40,14 @@ export function getAuthMethodDescription(): string {
   if (hasToken) {
     return source
   }
-  const { key, source: apiKeySource } = getAllternitApiKeyWithSource()
-  if (key) {
-    return apiKeySource
-  }
+  // Under CI the key lookup throws when no key is set; /status reports
+  // "none" instead of failing.
+  try {
+    const { key, source: apiKeySource } = getAllternitApiKeyWithSource()
+    if (key) {
+      return apiKeySource
+    }
+  } catch {}
   return 'none'
 }
 

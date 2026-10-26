@@ -202,6 +202,11 @@ describe("InstructionPrompt.systemPaths GIZZI_CONFIG_DIR", () => {
       },
     })
     await using projectTmp = await tmpdir()
+    // Other test files write instruction files into the shared test home's
+    // ~/.gizzi, which would win over the global config dir.
+    await using homeTmp = await tmpdir()
+    const originalHome = process.env["GIZZI_TEST_HOME"]
+    process.env["GIZZI_TEST_HOME"] = homeTmp.path
 
     delete process.env["GIZZI_CONFIG_DIR"]
     const originalGlobalConfig = Global.Path.config
@@ -216,6 +221,7 @@ describe("InstructionPrompt.systemPaths GIZZI_CONFIG_DIR", () => {
         },
       })
     } finally {
+      process.env["GIZZI_TEST_HOME"] = originalHome
       ;(Global.Path as { config: string }).config = originalGlobalConfig
     }
   })

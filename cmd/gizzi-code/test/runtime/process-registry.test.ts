@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test"
+import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { spawn } from "node:child_process"
 import { ProcessRegistry } from "../../src/runtime/process-registry"
 
@@ -11,6 +11,12 @@ function alive(pid: number | undefined): boolean {
     return false
   }
 }
+
+// Children tracked by earlier test files would skew size().
+beforeEach(() => {
+  ProcessRegistry.killAll()
+  ProcessRegistry.resetForTests()
+})
 
 afterEach(() => {
   ProcessRegistry.killAll()

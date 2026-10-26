@@ -178,9 +178,10 @@ describe("ProviderQuotas registry", () => {
     const supported = ProviderQuotas.supported()
     expect(supported).toContain("kimi-cli")
     expect(supported).toContain("openrouter")
+    expect(supported).toContain("codex-cli")
+    expect(supported).toContain("claude-cli")
     expect(supported).not.toContain("anthropic")
     expect(supported).not.toContain("openai")
-    expect(supported).not.toContain("claude-cli")
   })
 
   test("providers without a fetcher report unsupported, never a guess", async () => {

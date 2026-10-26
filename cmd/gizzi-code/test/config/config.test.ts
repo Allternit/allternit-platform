@@ -685,8 +685,8 @@ test("does not try to install dependencies in read-only GIZZI_CONFIG_DIR", async
   }
 })
 
-test("installs dependencies in writable GIZZI_CONFIG_DIR", async () => {
-  await using tmp = await tmpdir<string>({
+async function loadWithConfigDir(autoInstall: boolean) {
+  const tmp = await tmpdir<string>({
     init: async (dir) => {
       const cfg = path.join(dir, "configdir")
       await fs.mkdir(cfg, { recursive: true })
@@ -695,7 +695,10 @@ test("installs dependencies in writable GIZZI_CONFIG_DIR", async () => {
   })
 
   const prev = process.env.GIZZI_CONFIG_DIR
+  const prevInstall = process.env.GIZZI_AUTO_INSTALL_DEPS
   process.env.GIZZI_CONFIG_DIR = tmp.extra
+  if (autoInstall) process.env.GIZZI_AUTO_INSTALL_DEPS = "1"
+  else delete process.env.GIZZI_AUTO_INSTALL_DEPS
 
   try {
     await Instance.provide({
@@ -705,13 +708,25 @@ test("installs dependencies in writable GIZZI_CONFIG_DIR", async () => {
         await Config.waitForDependencies()
       },
     })
-
-    expect(await Filesystem.exists(path.join(tmp.extra, "package.json"))).toBe(true)
-    expect(await Filesystem.exists(path.join(tmp.extra, ".gitignore"))).toBe(true)
   } finally {
     if (prev === undefined) delete process.env.GIZZI_CONFIG_DIR
     else process.env.GIZZI_CONFIG_DIR = prev
+    if (prevInstall === undefined) delete process.env.GIZZI_AUTO_INSTALL_DEPS
+    else process.env.GIZZI_AUTO_INSTALL_DEPS = prevInstall
   }
+  return tmp
+}
+
+test("installs dependencies in writable GIZZI_CONFIG_DIR when GIZZI_AUTO_INSTALL_DEPS=1", async () => {
+  await using tmp = await loadWithConfigDir(true)
+  expect(await Filesystem.exists(path.join(tmp.extra, "package.json"))).toBe(true)
+  expect(await Filesystem.exists(path.join(tmp.extra, ".gitignore"))).toBe(true)
+})
+
+test("leaves GIZZI_CONFIG_DIR untouched by default", async () => {
+  await using tmp = await loadWithConfigDir(false)
+  expect(await Filesystem.exists(path.join(tmp.extra, "package.json"))).toBe(false)
+  expect(await Filesystem.exists(path.join(tmp.extra, ".gitignore"))).toBe(false)
 })
 
 test("resolves scoped npm plugins in config", async () => {

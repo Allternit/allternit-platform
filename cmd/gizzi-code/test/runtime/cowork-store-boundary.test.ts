@@ -7,7 +7,7 @@
  * fabric-transport endpoints. In default `legacy` mode (standalone gizzi)
  * writes still work but the boundary documents them as the local projection.
  */
-import { afterEach, describe, expect, test } from "bun:test"
+import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import {
   CoworkStoreBoundaryError,
   assertCoworkWriteAllowed,
@@ -16,6 +16,11 @@ import {
   resolveCoworkStoreMode,
 } from "../../src/runtime/cowork/store-boundary"
 import { RunService, ScheduleService, ApprovalService, CheckpointService } from "../../src/runtime/cowork/cowork.service"
+
+// Other files may have resolved and cached the mode already.
+beforeEach(() => {
+  resetCoworkStoreBoundaryForTests()
+})
 
 afterEach(() => {
   delete process.env.GIZZI_COWORK_STORE

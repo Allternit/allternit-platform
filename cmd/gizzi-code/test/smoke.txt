@@ -155,3 +155,8 @@ test/session/background-shell.test.ts
 test/session/session-tasks.test.ts
 test/session/background-task-mirror.test.ts
 test/session/cli-background-tasks.test.ts
+test/config/config.test.ts
+test/runtime/provider-quota.test.ts
+test/runtime/cowork-store-boundary.test.ts
+test/runtime/process-registry.test.ts
+test/commands/status-json.test.ts
