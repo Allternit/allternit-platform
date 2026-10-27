@@ -363,7 +363,7 @@ export namespace Agent {
       },
     }
 
-    // The 15-type subagent catalog (runtime/agents/builtin-catalog.ts).
+    // The 11-type subagent catalog (runtime/agents/builtin-catalog.ts).
     // Scoped types ("*": deny) layer their rules after the user's so config
     // can't widen them (e.g. hand a reviewer edit); builder lets the user's win.
     for (const entry of BUILTIN_CATALOG) {
@@ -497,7 +497,7 @@ export namespace Agent {
     return state().then((x) => withOverride(x[agent]))
   }
 
-  /** Resolve a `subagent_type`, following legacy aliases (plan → planner) when
+  /** Resolve a `subagent_type`, following legacy aliases (explore → explorer) when
    * the name is unknown or names a primary agent. */
   export async function getSubagent(name: string) {
     const agents = await state()

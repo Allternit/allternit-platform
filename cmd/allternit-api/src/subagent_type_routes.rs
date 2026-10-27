@@ -22,22 +22,20 @@ use crate::auth::AuthUser;
 use crate::AppState;
 
 /// Slugs of the built-in subagent types (must match the client + gizzi lists).
-pub const BUILTIN_SUBAGENT_SLUGS: [&str; 15] = [
+/// planner, debugger, docs-writer and scribe were folded into the main loop as
+/// gizzi skills (2026-10-27), so those slugs are free for custom types.
+pub const BUILTIN_SUBAGENT_SLUGS: [&str; 11] = [
     "explorer",
-    "planner",
     "builder",
     "code-reviewer",
     "verifier",
-    "debugger",
     "web-researcher",
     "browser-operator",
     "computer-operator",
-    "docs-writer",
     "data-analyst",
     "ui-designer",
     "release-engineer",
     "security-reviewer",
-    "scribe",
 ];
 
 const MAX_PROMPT: usize = 20_000;
@@ -483,7 +481,8 @@ mod tests {
         assert!(!valid_slug("has space"));
         assert!(!valid_slug(&"a".repeat(41)));
         assert!(valid_slug(&"a".repeat(40)));
-        assert!(is_builtin_slug("scribe"));
+        assert!(is_builtin_slug("verifier"));
+        assert!(!is_builtin_slug("scribe"));
         assert!(!is_builtin_slug("my-agent"));
     }
 
@@ -537,7 +536,7 @@ mod tests {
         let state = beta_test::test_app_state(&temp).await;
         let router = subagent_type_router().with_state(state);
 
-        let (s, _) = call(&router, "POST", "/subagent-types", json!({"slug": "planner", "name": "P"}), "u1").await;
+        let (s, _) = call(&router, "POST", "/subagent-types", json!({"slug": "explorer", "name": "P"}), "u1").await;
         assert_eq!(s, StatusCode::CONFLICT);
 
         let body = json!({"slug": "lead", "name": "Lead", "tools": ["read"], "look": {"pack": "dot", "face": "a"}});

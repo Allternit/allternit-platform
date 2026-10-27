@@ -1,9 +1,28 @@
 ---
 title: 'Subagents'
-description: 'The 15 built-in subagents your agents hand work to, what each one costs, how to give one a face and a name, and how to add your own.'
+description: 'The 11 built-in subagents your agents hand work to, when an agent uses one, how to give one a face and a name, and how to add your own.'
 ---
 
-Your agents hand pieces of a task to subagents. A subagent works on its own, then returns a short result to the agent that started it. Small subagents run on a cheaper model, so searching, running tests, reading logs, writing docs and writing summaries cost less than doing the same work in the main conversation.
+Your agents hand pieces of a task to subagents. A subagent works on its own, then returns a short result to the agent that started it.
+
+## When an agent uses a subagent
+
+Each handoff loses some context, so an agent hands work to a subagent only when one of these is true:
+
+- **The work can run in parallel.** For example, two searches in unrelated parts of a codebase, or several scoped changes at once.
+- **The work needs a fresh context.** For example, a large search, long logs, or a browser or computer session whose details the agent doesn't need to keep.
+- **The work needs different tools.** For example, a browser or a computer that the agent doesn't use itself.
+
+In every other case the agent does the work itself and loads a skill with the steps. Planning, debugging, docs and summaries work this way:
+
+| Skill | Replaces | What the agent does |
+|---|---|---|
+| `planning` | Planner | Reads the code, then writes a numbered plan with files, checks and risks. |
+| `debugging` | Debugger | Works from the error to the root cause, fixes it and proves the fix. |
+| `docs-writing` | Docs Writer | Updates the docs in the same change as the feature. |
+| `summarizing` | Scribe | Writes summaries and handoffs that keep every decision and open item. |
+
+If an agent still asks for `planner`, `debugger`, `docs-writer`, `scribe` or `plan`, gizzi tells it to load the matching skill. Past runs of these types keep their faces in the run tree.
 
 Every subagent type has a face, a name and a model class. The same type looks the same in every chat, on every device.
 
@@ -12,22 +31,18 @@ Every subagent type has a face, a name and a model class. The same type looks th
 | Subagent | Model class | What it does |
 |---|---|---|
 | Explorer | Small | Searches code and files. Read-only. |
-| Planner | Deep | Researches the codebase and writes the plan. Read-only. |
 | Builder | Standard | Makes one scoped change in its own worktree. |
 | Code Reviewer | Standard | Finds bugs in a diff. Read-only. |
 | Verifier | Small | Runs typecheck, tests and lint, and reports the failures. |
-| Debugger | Small | Reads logs and traces, and finds the cause. |
 | Web Researcher | Standard | Searches the web and writes a cited summary. |
 | Browser Operator | Standard | Uses websites. Stops and asks before it pays, posts, sends or deletes. |
 | Computer Operator | Standard | Uses desktop apps on a computer. Same stop-and-ask rule. |
-| Docs Writer | Small | Writes user and developer docs. |
 | Data Analyst | Standard | Reads data and makes charts and tables. |
 | UI Designer | Standard | Makes mockups from the project's real CSS. |
 | Release Engineer | Standard | Builds, writes release notes and opens PRs. Never deploys without your go. |
 | Security Reviewer | Deep | Checks for leaked secrets, auth holes and injection. Read-only. |
-| Scribe | Small | Writes summaries, handoffs and transcripts. |
 
-The older names still work: `general` runs Builder, `explore` runs Explorer and `subagent_type: plan` runs Planner.
+The older names still work: `general` runs Builder and `explore` runs Explorer.
 
 ## Model classes
 
@@ -77,3 +92,4 @@ On the ai.allternit.com phone layout and the m.allternit.com app, Settings → S
 
 - Custom subagents and look changes are stored per user through the [subagent types API](/api/subagent-types).
 - gizzi config options for subagents: [CLI configuration](/cli/configuration#subagents).
+- To check whether a subagent type helps, run the [subagent evals](/guides/subagent-evals).

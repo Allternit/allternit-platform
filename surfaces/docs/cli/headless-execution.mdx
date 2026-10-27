@@ -71,6 +71,8 @@ gizzi exec "Draft release notes from CHANGELOG.md" \
 | `3` | `--review`: the reviewer returned **FAIL** |
 | `4` | `--review`: the reviewer returned **PARTIAL** (something could not be checked) |
 
+A run whose session pauses before a usage limit (for example the Allternit Cloud free monthly limit) ends at once with exit code `1` and the message `Paused before a usage limit (…) until <date>`. In JSON output it is an `error` event named `SessionPaused`. Run again with `--model` on another provider.
+
 ## Review in CI
 
 `gizzi run --review` asks a fresh reviewer to check the uncommitted changes (after the run, or on its own when you give no prompt). The reviewer starts with no knowledge of how the code was written, reads the changed files and their callers, and returns a verdict:

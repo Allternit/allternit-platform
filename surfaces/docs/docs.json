@@ -567,6 +567,7 @@
               "guides/response-parts",
               "guides/agent-run-tree",
               "guides/subagents",
+              "guides/subagent-evals",
               "guides/pdf-citations"
             ],
             "icon": "/icons/book.svg"
