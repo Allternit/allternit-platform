@@ -1,0 +1,26 @@
+# Agent Trees settings for this repo (`gizzi agents tree …`, factory/engine/src/agents/trees).
+# A new tree is cloned from the warm base (../.agent-trees-base/allternit) with its
+# build output and mtimes, so cargo rebuilds only what changed since the base.
+
+[seed]
+# Never cloned from the base (names match at any depth; paths are repo-relative).
+# node_modules is never cloned: pnpm hardlinks it from its store (the deps step).
+exclude = [".git", ".steering/state", ".session-worktree", ".shared-target", ".gw-target",
+           "surfaces/allternit-desktop/release"]
+
+[[seed.deps]]
+when = "pnpm-lock.yaml"
+run = "CI=true pnpm install --frozen-lockfile --offline --ignore-scripts || CI=true pnpm install --frozen-lockfile --ignore-scripts"
+
+[base]
+# `gizzi agents tree base refresh --build` runs these in the base through
+# scripts/build-queue, so every tree starts with warm check and debug output.
+build = ["cargo check --workspace --all-targets", "cargo build -p allternit-api -p allternit-factory"]
+
+[clean]
+build_dirs = ["target", "node_modules", "dist", ".next", "release", ".turbo", ".vite"]
+
+[reaper]
+idle_hours = 24
+dev_server_hours = 24
+min_free_gb = 50

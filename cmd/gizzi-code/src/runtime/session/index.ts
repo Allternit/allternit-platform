@@ -437,10 +437,13 @@ export namespace Session {
         environmentId: z.string().min(1).optional(),
         /** Repos to clone into the workspace; override the environment's repos when given. */
         repos: z.array(z.object({ url: z.string().min(1), branch: z.string().optional() })).optional(),
+        /** A pre-made id (the session.create route makes one to own the session's Agent Tree). */
+        id: Identifier.schema("session").optional(),
       })
       .optional(),
     async (input) => {
       return createNext({
+        id: input?.id,
         parentID: input?.parentID,
         directory: Instance.directory,
         title: input?.title,

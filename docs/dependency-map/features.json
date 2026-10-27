@@ -2962,6 +2962,43 @@
         "allternit/surfaces/allternit-desktop/src/main/browser-capture-manager.ts",
         "allternit/surfaces/allternit-desktop/src/main/web-request-hub.ts"
       ]
+    },
+    {
+      "id": "feature:agent-trees",
+      "label": "Agent Trees",
+      "product": "product:factory",
+      "status": "building",
+      "description": "One leased git worktree per agent (`gizzi agents tree`): made from fresh origin/main behind a free-disk gate, seeded from a warm base by APFS clone or reflink so cargo rebuilds only what changed, checkpointed after each edit by the Claude Code, Codex and Kimi hooks, landed by `done`, kept by `pause`, and cleaned by the merged + idle + clean reaper. Factory bots get trees and `down --rm-worktree` lands or pauses them. Surfaces: the gizzi CLI, the Factory engine's /api/factory/trees routes, and the Tree card in the Code session panel on Desktop, the ai.allternit.com phone layout and the m.allternit.com PWA.",
+      "touches": [
+        "allternit/factory/engine",
+        "allternit/cmd/allternit-factory",
+        "allternit/cmd/gizzi-code/src/cli",
+        "allternit-ai/src/views/code",
+        "allternit-ai/src/lib/factory"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-27",
+          "note": "Trees replace hand-made session worktrees: AGENTS.md worktree rules (fresh main, disk gate, ownership, forward-only sync, kill what you started, teardown) enforced in code. Seeding by clone measured 12 s + 16 s cargo check with 0 crates rebuilt vs 101 s cold; node_modules is never cloned (offline pnpm install 43 s vs 56 s clone)."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/factory/trees.mdx",
+        "allternit/factory/engine/src/agents/trees/mod.rs",
+        "allternit/factory/engine/src/agents/trees/http.rs",
+        "allternit/factory/engine/src/agents/spawn.rs",
+        "allternit/cmd/allternit-factory/src/trees.rs",
+        "allternit/cmd/gizzi-code/src/cli/commands/factory/agents.ts",
+        "allternit/agent-trees.toml",
+        "allternit/.steering/bin/tree-hook.sh",
+        "allternit/.steering/bin/session-worktree.sh",
+        "allternit/.steering/bin/steer-install.sh",
+        "allternit/.claude/settings.json",
+        "allternit-ai/src/views/code/session-panel/TreeCard.tsx",
+        "allternit-ai/src/lib/factory/client.ts",
+        "allternit-ai/src/lib/factory/hooks.ts",
+        "allternit-ai/src/lib/factory/types.ts"
+      ]
     }
   ],
   "journeys": [

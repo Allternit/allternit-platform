@@ -1,0 +1,363 @@
+---
+title: "Agent Trees"
+description: "One leased git worktree per agent: seeded warm from a base, checkpointed after every edit, landed with one command and reaped when idle."
+---
+
+<Note>
+Merged with the Factory engine (`factory/engine/src/agents/trees`, part `agents`). It ships with the next gizzi and Desktop runtime release. Until your installed gizzi has `gizzi agents tree`, use the plain git steps in `AGENTS.md`.
+</Note>
+
+`gizzi agents tree` gives every agent its own git worktree, called a **tree**. A tree has an owner, a state and a lease. It starts from fresh `origin/main`, gets its build output from a warm base, saves a checkpoint after each edit, and is removed by one command when its work is on main.
+
+## Why trees exist
+
+Plain worktrees worked, but every rule around them was a paragraph in `AGENTS.md` that each agent had to follow by hand. They often didn't:
+
+- **The disk filled.** On 2026-09-30 about 127 worktrees filled the disk to 100%. Each one kept its own `target/` and `node_modules/` after the session ended.
+- **Cold rebuilds.** A new worktree started with no build output. A cold `cargo check` of the Factory engine took 101 s.
+- **False passes.** The shared `.shared-target` let a worktree's cargo run reuse another worktree's output, so a check could pass on code it never compiled.
+- **Shared-checkout damage.** Sessions committed and switched branches in the shared checkout, or re-pointed a worktree they did not own.
+- **Manual cleanup.** Landing meant stopping processes, deleting build output, removing the worktree, deleting the branch here and on origin, then running the discipline check. Steps got skipped.
+- **Dev servers.** Old `vite` and `wrangler dev` servers ran for days. On 2026-10-25 they pushed `fseventsd` to 32 GB and the Mac into heavy swap.
+
+Trees turn those rules into code. Each rule below names the command that enforces it.
+
+## Lifecycle
+
+```bash
+gizzi agents tree new session/abc123        # make (or reuse) the tree
+cd ../allternit-session-abc123
+eval "$(gizzi agents tree env)"             # its own data dir and target dir
+# ... work; a checkpoint is saved after each edit ...
+gizzi agents tree done                      # after the PR is merged
+```
+
+1. **`new`** checks the branch name (never `main`), checks free disk, fetches `origin/main`, writes a lease, makes the worktree and seeds it. Running `new` again for the same branch reuses the tree. A worktree you made by hand on that branch is adopted (leased to you) instead.
+2. **Work.** The CLI hooks save a checkpoint after each edit. `rewind` puts the files back to any checkpoint.
+3. **`done`** lands the tree when its work is on `origin/main`.
+4. **`pause`** keeps a tree whose work is not merged yet. **`resume`** makes it active again.
+
+The default path is `<repo parent>/<repo>-<branch slug>`, so `session/abc123` in `allternit` becomes `allternit-session-abc123`, the same name the session hook has always used. The tree id is `<repo>~<branch slug>`, for example `allternit~session-abc123`.
+
+Leases live in `<factory home>/trees/leases.json`. A lease lasts 24 hours (1 hour for a `--once` tree) and every checkpoint, `sync` or `resume` pushes it out again.
+
+### What `done` does
+
+In order:
+
+1. Checks the work is on `origin/main`. The branch tip must be an ancestor of `origin/main`, or `gh` must report a merged PR for the branch (for squash merges).
+2. Refuses if the work is not merged or has uncommitted files. The message tells you to merge first, `pause` to keep it, or pass `--abandon`. With `--abandon`, the whole state (commits and uncommitted files, as one commit) is first pushed to `salvage/<branch>-<date>`.
+3. Stops the processes running in the tree. Agent CLIs (`claude`, `codex`, `kimi`, `gizzi`, `gizzi-code`, `agy`) and your own process chain are never signalled.
+4. Deletes build output (the `[clean] build_dirs` names, only where git ignores them, so a tracked `release/` folder stays).
+5. Runs `git worktree remove` without `--force`. If git refuses, `done` stops and nothing is forced. Only `--abandon` may force the removal, and only after all the work is pushed to its `salvage/` branch.
+6. Deletes the branch here and on origin, deletes the tree's checkpoint refs here and on origin, and drops the lease.
+7. Runs `scripts/git-discipline-check.sh` when the repo has one and prints PASS or FAIL.
+
+Running `done` inside a worktree made by hand leases it to you first, then lands it.
+
+### Factory bots
+
+`gizzi agents up` gives each Terminal bot that asks for a worktree a tree on branch `ao/<slug>`, owned by `bot:<slug>`, seeded source only (workers write code, the orchestrator builds). If the fetch fails it uses the last fetched main.
+
+`gizzi agents down <bot> --rm-worktree` lands the bot's tree. If the tree holds unmerged or uncommitted work, it is paused instead and the reason is printed. It is never force-deleted. A worktree from before trees is removed only if a plain `git worktree remove` succeeds.
+
+## Verbs
+
+| Command | What it does |
+|---|---|
+| `gizzi agents tree new <branch>` | Make or reuse a tree: fresh `origin/main`, free-disk gate, lease, warm-base seed, env file |
+| `gizzi agents tree list [--all] [--size] [--path P]` | Every tree with owner, state, behind main, uncommitted files, processes, checkpoints, overlaps and machine warnings. `--all` adds worktrees with no lease. `--size` runs `du` (slow on big trees) |
+| `gizzi agents tree env [tree]` | Print the tree's env lines, for `eval` |
+| `gizzi agents tree sync [tree]` | Forward-only update to `origin/main` |
+| `gizzi agents tree checkpoint [tree] [--tool T]` | Save a checkpoint now (the hooks do this after each edit) |
+| `gizzi agents tree checkpoints [tree]` | The tree's checkpoints, newest first |
+| `gizzi agents tree rewind <n> [tree]` | Put the files back to checkpoint `n`. The current state is saved first |
+| `gizzi agents tree pause [tree]` | Keep the tree for a later resume. Pushes the branch and checkpoints. Never reaped |
+| `gizzi agents tree resume [tree]` | Make a paused tree active again |
+| `gizzi agents tree done [tree] [--abandon]` | Land the tree (see above) |
+| `gizzi agents tree reap [--apply] [--size]` | Apply the merged + idle + clean rule to every worktree. A dry run without `--apply` |
+| `gizzi agents tree overlap` | Files changed in more than one live tree |
+| `gizzi agents tree base status` | Where the base is, its commit, how far behind main, and whether it is clean |
+| `gizzi agents tree base refresh [--build]` | Make or fast-forward the base and install deps. `--build` also warms it |
+| `gizzi agents tree reaper install [--hours N]` | Run `reap --apply` every `N` hours (default 6) |
+| `gizzi agents tree reaper uninstall` | Remove the schedule |
+
+`[tree]` is a tree id (it contains `~`) or a path. Without it, the command acts on the tree you are in.
+
+Flags for `new`:
+
+| Flag | Effect |
+|---|---|
+| `--path P` | Put the tree at `P` instead of the default path |
+| `--owner kind:id` | `session:<id>`, `bot:<name>` or `human:<name>` |
+| `--once` | A one-off tree (a ledger commit): plain checkout, no deps, lease of 1 hour |
+| `--source-only` | Skip the dependency steps |
+| `--plain` | Check out plainly instead of cloning the base |
+| `--force-disk` | Ignore the free-disk gate. For a person who decided |
+| `--offline` | Use the last fetched `origin/main` when the fetch fails. Without it, a failed fetch stops `new` (exit `3`) |
+
+Every verb takes `--json` and uses the [Factory exit codes](/factory/commands#exit-codes).
+
+## The warm base and seeding
+
+The base is a clean, detached worktree on `origin/main` at `<repo parent>/.agent-trees-base/<repo>`. It keeps its build output.
+
+A new tree on a new branch is seeded like this:
+
+1. `git worktree add --no-checkout` at the base's commit.
+2. The base's files are cloned in with their mtimes: an APFS clone (`cp -c`) on macOS, a reflink (`cp --reflink=always`) on Linux. `.git`, `node_modules` and the `[seed] exclude` entries are skipped.
+3. The index is filled from HEAD, and the tree fast-forwards to `origin/main`. Git rewrites only the files that changed.
+4. The `[[seed.deps]]` steps run (unless `--source-only`).
+
+Because mtimes are kept, cargo sees every unchanged crate as fresh. Measured on 2026-10-27 on Eoj's Mac:
+
+| Step | Time |
+|---|---|
+| Seeding the platform repo by clone | 12 s |
+| Then `cargo check` of the Factory engine | 16 s, 0 crates rebuilt |
+| `cargo check` from cold, for comparison | 101 s |
+| Cloning a 4.6 GB cargo deps folder | 0.91 s, about 47 MB of disk |
+
+A clone shares blocks with the base, so it costs only the blocks that later change.
+
+`node_modules` is never cloned. pnpm already hardlinks it from its store, and an offline install (43 s) was faster than cloning its many small files (56 s). An install also has no stale absolute bin paths.
+
+A plain checkout is used instead when:
+
+- the branch already exists (locally or on origin),
+- `--plain` or `--once` is passed,
+- there is no base, or the base has uncommitted changes,
+- the machine can't clone. The engine probes with a real one-file clone, so ext4 (no reflink) falls back to a plain checkout instead of a full copy. Windows always gets a plain checkout.
+
+`list` shows how each tree was seeded (`clone` or `plain`) and how long it took.
+
+### Keeping the base fresh
+
+```bash
+gizzi agents tree base status
+gizzi agents tree base refresh --build
+```
+
+`refresh` makes the base if it is missing, or fast-forwards it to `origin/main`. It refuses if the base has changed files. Then it runs the deps steps. With `--build` it runs the `[base] build` commands, through `scripts/build-queue` when the repo has one, so the base build waits its turn with other builds.
+
+## The tree env
+
+```bash
+eval "$(gizzi agents tree env)"
+```
+
+`new` also writes these lines to `<tree>/.allternit-tree/env`. The folder is added to the repo's `info/exclude`, so git never sees it.
+
+| Line | Why |
+|---|---|
+| `export ALLTERNIT_TREE=<id>` | Which tree this shell is in |
+| `export ALLTERNIT_TREE_OWNER=<kind:id>` | The owner, so later verbs from this shell pass the ownership check |
+| `export ALLTERNIT_DATA_DIR=<tree>/.allternit-tree/data` | Its own data dir, never the installed Desktop's sqlite |
+| `export ALLTERNIT_USER_DATA_DIR=<tree>/.allternit-tree/data` | Same, for unpackaged Electron |
+| `export CARGO_TARGET_DIR=<tree>/target` | Its own cloned `target/`, never the shared `.shared-target` |
+| `unset ALLTERNIT_API_PORT` | Never port 8013, which belongs to the installed Desktop |
+
+## Ownership
+
+Every tree has an owner: `session:<id>`, `bot:<name>` or `human:<name>`. The caller is resolved from `--owner`, then `ALLTERNIT_TREE_OWNER`, then the Factory bot this terminal is (`bot@team`), then `$USER`.
+
+Only the owner may `rewind`, `pause`, `resume` or `done` a tree. Anyone else is refused with the owner's name and told to message them. A person can pass `--as-owner` to override. The HTTP rewind route needs no flag, because the app's caller is the person.
+
+## Sync is forward only
+
+`sync` fast-forwards a tree to `origin/main`. It refuses when the tree has uncommitted files, or when the tree has commits `origin/main` doesn't (it can't fast-forward). It never rebases, merges or resets. The owner does that.
+
+## Checkpoints and rewind
+
+A checkpoint is the tree's full working state (tracked edits and untracked files, not ignored ones) saved as a commit under `refs/checkpoints/<repo>/<slug>/<n>`. It is written through a throwaway index, so your real index, HEAD and files are not touched. An unchanged tree is not saved twice. A tree that still matches its commit has nothing to save.
+
+`rewind <n>` first saves the current state as a new checkpoint, then puts the files back to checkpoint `n`. Files that were not in checkpoint `n` are deleted. The restored state shows as uncommitted changes against HEAD. Because the current state was saved first, a rewind can itself be undone by rewinding to the checkpoint it printed.
+
+`pause` pushes the checkpoint refs to origin so another machine can resume. `done` deletes them here and on origin.
+
+## Overlaps
+
+`overlap` (and `list`) compares the files each live tree changed against `origin/main`: committed since the fork, plus uncommitted. Two trees of the same repo that touch the same file are listed with the files. It is an early warning, not a lock.
+
+## Reap
+
+```bash
+gizzi agents tree reap            # dry run: what would happen
+gizzi agents tree reap --apply    # do it
+```
+
+`reap` checks every worktree of every repo that has a lease, plus the repo you run it from. The shared checkout, the base, and worktrees git marks prunable or whose folder is gone are skipped. For each worktree, in this order:
+
+1. **Stopped:** dev servers running longer than `dev_server_hours`, whatever the tree's state. Agent CLIs are never stopped.
+2. **Kept:** paused trees.
+3. **Kept:** detached worktrees (build trees). A `--once` tree is not exempt.
+4. **Kept:** locked worktrees.
+5. **Kept:** any tree with a process still running in it.
+6. **Kept:** merged and clean, but not idle yet ("in use or new, removed once idle").
+7. **Kept:** merged, clean and idle, but a file in it is open.
+8. **Removed:** merged into `origin/main`, no uncommitted files, nothing unpushed, idle. It is landed the way `done` lands it (without the discipline check). If landing fails, it is kept with the reason.
+9. **Cleaned:** not merged (or with uncommitted or unpushed work) and idle. Its build output is deleted and the tree is kept. If it has no build output it is just listed as kept.
+10. **Kept:** everything else ("in use").
+
+A tree is **idle** when all three hold:
+
+- its lease has expired, or it has no lease,
+- it is not new: its `.git` file is older than `idle_hours`. A new tree has no commits of its own, so it looks merged, and a cloned one keeps old mtimes. New trees are kept until idle.
+- no source file (outside `.git` and build output) was touched in `idle_hours`.
+
+With `--apply`, `reap` also runs `git worktree prune` and drops leases whose folder was removed by hand. It prints free disk before and after.
+
+### Scheduled reaper
+
+```bash
+gizzi agents tree reaper install --hours 6
+gizzi agents tree reaper uninstall
+```
+
+The schedule runs `reap --apply --size`, so each lease's disk use stays current for the Tree card. On macOS this installs the launchd agent `com.allternit.agent-trees-reaper` (low priority I/O, `Nice` 10, log in `<factory home>/trees/reaper.log`). On Linux it installs the systemd user timer `allternit-agent-trees-reaper.timer`. Other systems are refused.
+
+## Hooks
+
+`.steering/bin/tree-hook.sh` runs the Factory engine directly. Outside a tree, or with an engine too old to know `agents tree`, it exits 0, so a hook never blocks an agent.
+
+| Hook | Event | What it does |
+|---|---|---|
+| `tree-hook.sh checkpoint` | PostToolUse | Saves a checkpoint of the active tree the tool ran in, after an edit tool or a shell command. Reads and searches are skipped |
+| `tree-hook.sh guard` | PreToolUse (Bash) | Blocks `npm install`, `npm i`, `npm ci` and `npm add` in a worktree of a pnpm repo. `npm install -g` is allowed |
+
+Who gets them:
+
+| CLI | Where |
+|---|---|
+| Claude Code | The committed `.claude/settings.json` |
+| Codex | `~/.codex/hooks.json`, written by `.steering/bin/steer-install.sh` |
+| Kimi CLI | `~/.kimi/config.toml`, written by `steer-install.sh` |
+| gizzi-code | The `allternit-steering` plugin (`tools/agent-orchestrator/gizzi-plugin`), installed by `steer-install.sh` |
+
+The session hook (`.steering/bin/session-worktree.sh`) tells a session in the shared checkout to run `gizzi agents tree new "session/<id>" --owner "session:<id>"` when the installed gizzi has the `tree` verb, and the plain `git worktree add` steps when it doesn't.
+
+## `agent-trees.toml`
+
+Optional, at the repo root. Unset keys keep their defaults. A file that does not parse is an error, so a tree is never seeded the wrong way.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `[seed] exclude` | `[".git", ".steering/state", ".session-worktree"]` | Never cloned from the base. A name matches at any depth; an entry with `/` is a repo-relative path. `.git` and `node_modules` are always excluded |
+| `[[seed.deps]] when` | `"pnpm-lock.yaml"` | Run the step only if this file exists in the tree |
+| `[[seed.deps]] run` | `CI=true pnpm install --frozen-lockfile --offline --ignore-scripts`, falling back to the same without `--offline` | Shell command run in a new tree (and in the base on refresh), in order |
+| `[base] build` | `[]` | Commands `base refresh --build` runs in the base |
+| `[clean] build_dirs` | `["target", "node_modules", "dist", ".next", "release", ".turbo", ".vite"]` | Build output names that `done` and `reap` delete (only where git ignores them) |
+| `[reaper] idle_hours` | `24` | No process and no source file touched for this long counts toward idle |
+| `[reaper] dev_server_hours` | `24` | Dev servers running longer than this are stopped by `reap` and warned about by `list` |
+| `[reaper] dev_server_patterns` | `vite`, `next dev`, `wrangler dev`, `wrangler pages dev`, `wrangler pages deployment tail`, `webpack serve`, `pnpm dev`, `pnpm run dev`, `npm run dev`, `storybook dev`, `astro dev` | Matched against the program and its first three arguments (basenames), not the whole command line. A shell whose script mentions `vite` is not a dev server, and `vitest` is not `vite` |
+| `[reaper] min_free_gb` | `50` | `new` refuses below this much free disk; `list` warns |
+
+The platform repo's file adds `.shared-target`, `.gw-target` and `surfaces/allternit-desktop/release` to `exclude`, and sets `[base] build` to `cargo check --workspace --all-targets` and `cargo build -p allternit-api -p allternit-factory`.
+
+## Machine warnings
+
+`list` (and the Tree card) adds warnings when:
+
+- free disk is under `min_free_gb`,
+- a dev server in a tree has run longer than `dev_server_hours`,
+- on macOS, `fseventsd` holds more than 8 GB (the 2026-10-25 slowdown).
+
+## HTTP API
+
+Served by the Factory engine and proxied by allternit-api for Desktop, web and phone. Fields are camelCase. Errors use the Factory error shape and codes (`usage`, `refused`, `not_found`, `transport`, `internal`).
+
+### `GET /api/factory/trees?path=&all=`
+
+`path` limits the answer to the tree containing that path. `all=true` adds worktrees with no lease.
+
+```json
+{
+  "trees": [
+    {
+      "id": "allternit~session-abc123",
+      "repo": "allternit",
+      "repoPath": "/Users/me/Desktop/allternit-workspace/allternit",
+      "path": "/Users/me/Desktop/allternit-workspace/allternit-session-abc123",
+      "branch": "session/abc123",
+      "base": "9f1c…",
+      "owner": { "kind": "session", "id": "abc123", "label": "abc123" },
+      "state": "active",
+      "leased": true,
+      "createdAt": "2026-10-27T09:00:00Z",
+      "updatedAt": "2026-10-27T09:40:00Z",
+      "expiresAt": "2026-10-28T09:40:00Z",
+      "seed": { "strategy": "clone", "seconds": 12.0 },
+      "behindMain": 3,
+      "aheadMain": 2,
+      "dirtyFiles": 4,
+      "sizeBytes": null,
+      "sizeAt": null,
+      "processes": [
+        { "pid": 4242, "command": "node …/vite --port 5173", "devServer": true, "ageSecs": 3600, "protected": false }
+      ],
+      "checkpointCount": 7,
+      "lastCheckpointAt": "2026-10-27T09:40:00Z"
+    }
+  ],
+  "machine": { "freeBytes": 120000000000, "warnings": [] },
+  "overlaps": [ { "a": "allternit~session-abc123", "b": "allternit~ao-docs", "files": ["AGENTS.md"] } ]
+}
+```
+
+`state` is `active`, `paused` or `done`. `owner.kind` is `session`, `bot` or `human`. `seed.strategy` is `clone` or `plain`. A worktree with no lease has `leased: false` and owner label `no lease`.
+
+### `GET /api/factory/trees/:id/checkpoints`
+
+```json
+{
+  "checkpoints": [
+    { "n": 7, "sha": "1a2b…", "at": "2026-10-27T09:40:00Z", "tool": "Edit", "files": 4, "summary": "AGENTS.md, surfaces/docs/docs.json, … (+2)" }
+  ]
+}
+```
+
+Newest first. `tool` is what the checkpoint followed (`null` when saved by hand).
+
+### `POST /api/factory/trees/:id/rewind`
+
+Body:
+
+```json
+{ "checkpoint": 5 }
+```
+
+Answer: the tree after the rewind, and the number of the checkpoint that holds the state before it (rewind to it to undo).
+
+```json
+{ "tree": { "id": "allternit~session-abc123", "state": "active", "checkpointCount": 8 }, "savedAs": 8 }
+```
+
+`tree` is the full tree object shown above (shortened here). An unknown tree or checkpoint is `not_found`.
+
+## Code sessions: the Worktree switch
+
+In Code, the **Worktree** switch on the Environment card makes a local session run in its own tree. When the session starts, Desktop asks gizzi for `isolation: "worktree"`. gizzi then runs `gizzi agents tree new session/<id> --owner session:<id>` from the session's folder, creates the session inside the tree, and keeps that folder for every later turn, so tools, builds and checkpoints all happen in the tree. The switch is set when the session starts: once its first turn has run, the switch shows the choice and can't move a running session. Start a new session to change it.
+
+## Tree card in the Code session panel
+
+The Code session panel shows a **Tree** card for the session's tree: the one gizzi made for it with the Worktree switch, or the tree its folder sits in. It is in Desktop, the ai.allternit.com phone layout and the m.allternit.com PWA (on the phone the facts wrap in the sheet instead of truncating). It shows:
+
+- the branch, the state (Active, Paused, Done), how far it is behind main, its size when known, and the owner,
+- the processes running in it, with dev servers marked,
+- a warning when another tree changed the same files,
+- the machine warnings,
+- the checkpoints, newest first, with **Show all** past the first few. Each has **Rewind**, confirmed in place. After a rewind the card offers **Undo**, which rewinds to the checkpoint the rewind saved.
+
+## Limits
+
+- **No crash journal.** Git is the store: the worktree, the branch and the checkpoint refs survive a crash on their own. The lease file is the only extra state, and `new` re-adopts a worktree it lost.
+- **`du` counts clones in full.** It can't see shared blocks, so `list --size` and the reaper's sizes overstate what a cloned tree really uses. Free disk (before and after `reap`) is the true figure.
+- **Size is measured, not live.** `list --size`, `reap --size` and the scheduled reaper store each lease's size. The HTTP list and the Tree card show the last stored figure and when it was taken.
+- **Windows.** There is no clone backend (plain checkouts only), no free-disk gate (free space can't be read), no process detection, and no scheduled reaper.
+- **Disk gate.** `new` checks free space only (`min_free_gb`). The `AGENTS.md` rule to stop when the workspace is over 150 GB is still yours to check.
+
+## Related
+
+- [Agents](/factory/agents)
+- [Command reference: `gizzi agents`](/factory/commands#gizzi-agents)
+- [Architecture](/factory/architecture)

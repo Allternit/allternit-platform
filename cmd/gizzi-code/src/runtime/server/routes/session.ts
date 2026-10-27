@@ -28,6 +28,11 @@ import { lazy } from "@/shared/util/lazy"
 import { SessionTrace } from "@/runtime/session/trace"
 import { SessionSupportBundle } from "@/runtime/session/support-bundle"
 import { Scratchpad } from "@/runtime/session/scratchpad"
+import { Instance } from "@/runtime/context/project/instance"
+import { InstanceBootstrap } from "@/runtime/context/project/bootstrap"
+import { Identifier } from "@/shared/id/id"
+import { runEngine } from "@/cli/factory/engine"
+import { $ } from "bun"
 import { SessionContextUsage } from "@/runtime/session/context-usage"
 import { LinkedPRs } from "@/runtime/session/linked-prs"
 
@@ -387,7 +392,29 @@ export const SessionRoutes = lazy(() =>
           input.defaultModel = model
           input.defaultModelSource = "user"
         }
-        const session = await Session.create(input)
+        // `isolation: "worktree"` (Code's Worktree switch): the session gets its
+        // own Agent Tree (gizzi agents tree), seeded from the repo's warm base,
+        // and is created inside it. Later requests for the session use its
+        // stored directory (server.ts), so every turn runs in the tree.
+        if (input?.isolation === "worktree") {
+          const tree = await sessionTree(Instance.directory)
+          if (tree) {
+            const { isolation: _drop, ...rest } = input
+            const id = Identifier.descending("session")
+            const made = await runEngine<{ tree: { path: string } }>(
+              ["--root", tree.root, "agents", "tree", "new", `session/${id.slice(-12)}`, "--owner", `session:${id}`, "--offline"],
+              { timeoutMs: 180_000 },
+            )
+            const session = await Instance.provide({
+              directory: made.data.tree.path,
+              init: InstanceBootstrap,
+              fn: () => Session.create({ ...rest, id }),
+            })
+            return c.json(session)
+          }
+        }
+        const { isolation: _drop, ...rest } = input ?? {}
+        const session = await Session.create(rest)
         return c.json(session)
       },
     )
@@ -1037,3 +1064,11 @@ export const SessionRoutes = lazy(() =>
       },
     ),
 )
+
+
+/** The git checkout a new session's tree is cut from, or null outside git. */
+async function sessionTree(directory: string): Promise<{ root: string } | null> {
+  const top = await $`git rev-parse --show-toplevel`.quiet().nothrow().cwd(directory).text()
+  const root = top.trim()
+  return root ? { root } : null
+}

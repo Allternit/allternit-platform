@@ -63,6 +63,23 @@ Team { name, preset: string|null, presets: string[], agents: string[] /* ids */,
 TeamPlanStep { action: 'spawn'|'bind'|'skip'|'stop', agent: string, harness?: string, machine?: string, reason: string }
 ```
 
+#### Trees (Agent Trees, `agents::trees`)
+- `GET /api/factory/trees?path=&all=` → `{ trees: Tree[], machine: { freeBytes: number|null, warnings: string[] }, overlaps: { a: string, b: string, files: string[] }[] }`. With `path`, only the tree containing it (deepest match). `all` adds worktrees with no lease (`leased: false`).
+- `GET /api/factory/trees/:id/checkpoints` → `{ checkpoints: Checkpoint[] }`, newest first.
+- `POST /api/factory/trees/:id/rewind` body `{ checkpoint: number }` → `{ tree: Tree, savedAs: number }`. The current state is saved first (`savedAs`), so a rewind can be undone. An unknown tree or checkpoint is `not_found`.
+
+```
+Tree { id /* '<repo>~<branch slug>' */, repo, repoPath, path, branch: string|null, base: string,
+       owner: { kind: 'session'|'bot'|'human', id, label }, state: 'active'|'paused'|'done', leased: boolean,
+       createdAt: string|null, updatedAt: string|null, expiresAt: string|null,
+       seed: { strategy: 'clone'|'plain', seconds: number } | null,
+       behindMain: number|null, aheadMain: number|null, dirtyFiles: number|null,
+       sizeBytes: number|null, sizeAt: string|null,
+       processes: { pid, command, devServer: boolean, ageSecs: number|null, protected: boolean }[],
+       checkpointCount: number, lastCheckpointAt: string|null }
+Checkpoint { n: number, sha, at, tool: string|null, files: number, summary }
+```
+
 ### Orchestration
 - `POST /api/factory/send` body `{ to: string /* address, agent id, or 'channel:<threadId>' */, text: string, queue?: boolean, threadId?: string, nodeId?: string, dagId?: string, idempotencyKey?: string /* or the Idempotency-Key header */, dryRun?: boolean }` → `Delivery`. A repeated `idempotencyKey` returns the first Delivery. `dryRun` → `{ dryRun: true, plan: { to, via, threadId, records: string[], ifQueued?: string[] } }` and writes nothing. A send that can't be resolved returns `not_found` and writes nothing. Vendor sends need `threadId`. When `threadId` is given, the engine records the text as a thread message, and `messageId` names it.
 - `GET /api/factory/deliveries?agent=&thread=&node=` → `{ deliveries: Delivery[] }`
@@ -77,7 +94,10 @@ Delivery { id, to: string, via: 'session'|'pane'|'pane_queue'|'vendor_ticket'|'c
            ticket: string|null /* 'T-14' */, threadId: string|null,
            messageId: string|null /* the outbound thread message this delivery carried */,
            nodeId: string|null, dagId: string|null /* the DAG of nodeId */,
-           at: string, detail: string|null }
+           at: string, detail: string|null,
+           tier?: 'push'|'turn'|'pull' /* terminal and live sends */,
+           note?: string /* one sentence on how it landed */,
+           hopId?: string /* the agent_hops row for this send */ }
 ```
 
 ### Workflows

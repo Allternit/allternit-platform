@@ -99,6 +99,95 @@ export const AgentsCommand = cmd({
       .command(engineVerb(P, { command: "wall [team]", describe: "open the live wall of agent terminals", interactive: "always" }))
       .command(engineVerb(P, { command: "attach <bot>", describe: "drop into a Terminal bot's pane (bot@team)", interactive: "always" }))
       .command(engineVerb(P, { command: "doctor", describe: "check panes, harnesses and the registry against reality" }))
+      .command(
+        engineGroup(
+          P,
+          "tree",
+          "Agent Trees: one leased worktree per agent, seeded from a warm base, checkpointed, landed and reaped",
+          [
+            {
+              command: "new <branch>",
+              describe: "make (or reuse) a tree: fresh origin/main, disk gate, lease, warm-base seed, its own env",
+              options: {
+                path: { type: "string", describe: "where to put it (default <repo>-<branch slug> next to the repo)" },
+                owner: { type: "string", describe: "session:<id>, bot:<name> or human:<name>" },
+                once: { type: "boolean", describe: "a one-off tree (ledger commit): source only, expires in an hour" },
+                "source-only": { type: "boolean", describe: "skip dependency installs (code-only workers)" },
+                plain: { type: "boolean", describe: "check out plainly instead of cloning the base" },
+                "force-disk": { type: "boolean", describe: "ignore the free-disk gate" },
+                offline: { type: "boolean", describe: "use the last fetched origin/main if the fetch fails" },
+              },
+            },
+            {
+              command: "list",
+              describe: "every tree: owner, state, behind main, processes, overlaps, machine warnings",
+              options: {
+                all: { type: "boolean", describe: "include worktrees with no lease" },
+                size: { type: "boolean", describe: "measure disk use (slow on big trees)" },
+                path: { type: "string", describe: "only the tree containing this path" },
+              },
+            },
+            { command: "env [tree]", describe: "print the tree's env: eval \"$(gizzi agents tree env)\"" },
+            { command: "sync [tree]", describe: "forward-only update to origin/main" },
+            {
+              command: "checkpoint [tree]",
+              describe: "save a checkpoint now (the CLI hooks do it after each edit)",
+              options: { tool: { type: "string", describe: "what the checkpoint follows" } },
+            },
+            { command: "checkpoints [tree]", describe: "the tree's checkpoints, newest first" },
+            {
+              command: "rewind <n> [tree]",
+              describe: "put the files back to checkpoint <n> (the current state is saved first)",
+              options: { "as-owner": { type: "boolean", describe: "act on a tree you don't own" } },
+            },
+            {
+              command: "pause [tree]",
+              describe: "keep the tree for a later resume (pushes branch + checkpoints; never reaped)",
+              options: { "as-owner": { type: "boolean", describe: "act on a tree you don't own" } },
+            },
+            {
+              command: "resume [tree]",
+              describe: "make a paused tree active again",
+              options: { "as-owner": { type: "boolean", describe: "act on a tree you don't own" } },
+            },
+            {
+              command: "done [tree]",
+              describe: "land it: merge check, stop its processes, delete build output, branch and checkpoints, remove it",
+              options: {
+                abandon: { type: "boolean", describe: "not merged: push it to a salvage/ branch, then remove it" },
+                "as-owner": { type: "boolean", describe: "act on a tree you don't own" },
+              },
+            },
+            {
+              command: "reap",
+              describe: "merged + idle + clean rule over every worktree (a dry run unless --apply)",
+              options: {
+                apply: { type: "boolean", describe: "do it" },
+                size: { type: "boolean", describe: "measure disk use" },
+              },
+            },
+            { command: "overlap", describe: "files changed in more than one live tree" },
+          ],
+          [
+            engineGroup(P, "base", "the warm base trees are cloned from", [
+              { command: "status", describe: "where the base is, its commit, how far behind main" },
+              {
+                command: "refresh",
+                describe: "make or fast-forward the base and install deps",
+                options: { build: { type: "boolean", describe: "also run the repo's base build (through the build queue)" } },
+              },
+            ]),
+            engineGroup(P, "reaper", "the scheduled reaper (launchd / systemd user timer)", [
+              {
+                command: "install",
+                describe: "run `reap --apply` every few hours",
+                options: { hours: { type: "number", describe: "how often (default 6)" } },
+              },
+              { command: "uninstall", describe: "remove the schedule" },
+            ]),
+          ],
+        ),
+      )
       .command(AgentModesCommand)
       .command(BotCommand)
       .demandCommand(1, "Specify an agents command (see gizzi agents --help)"),

@@ -56,6 +56,7 @@ pub fn router() -> Router<Arc<ServiceState>> {
         .route("/api/factory/teams/:name/up", post(teams_up))
         .route("/api/factory/teams/:name/down", post(teams_down))
         .merge(crate::agents::live_sessions::route())
+        .merge(crate::agents::trees::http::route())
         .route("/api/factory/send", post(send_h))
         .route("/api/factory/deliveries", get(deliveries_h))
         .route("/api/factory/events", get(events_h))

@@ -16,6 +16,7 @@ mod exec;
 mod mirror;
 mod part;
 mod tree;
+mod trees;
 mod work;
 
 use std::process::ExitCode;

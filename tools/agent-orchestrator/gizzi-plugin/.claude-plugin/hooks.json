@@ -1,5 +1,5 @@
 {
-  "description": "Steering checkpoint Stop hook, git-discipline gate, commit gate, session worktree ritual, and shared-checkout guard. Commands run in the session's project directory; they no-op unless the project has .steering/checkpoint.md.",
+  "description": "Steering checkpoint Stop hook, git-discipline gate, commit gate, session worktree ritual, and shared-checkout guard. Commands run in the session's project directory; they no-op unless the project has .steering/checkpoint.md, plus the Agent Trees checkpoint and pnpm-only guard (silent outside a tree).",
   "hooks": {
     "Stop": [
       {
@@ -51,6 +51,16 @@
             "timeout": 10
           }
         ]
+      },
+      {
+        "matcher": "Bash|shell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .steering/bin/tree-hook.sh guard",
+            "timeout": 10
+          }
+        ]
       }
     ],
     "UserPromptSubmit": [
@@ -60,6 +70,17 @@
             "type": "command",
             "command": "bash .steering/bin/session-worktree.sh",
             "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .steering/bin/tree-hook.sh checkpoint",
+            "timeout": 20
           }
         ]
       }

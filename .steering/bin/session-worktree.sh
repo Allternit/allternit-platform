@@ -33,6 +33,30 @@ repo_name=$(basename "$top")
 short=$(printf '%s' "$session_id" | tail -c 7)
 branch=$(git -C "$top" branch --show-current 2>/dev/null)
 
+# Agent Trees (gizzi agents tree) when the installed gizzi has it; the
+# plain git ritual otherwise.
+# (yargs exits 0 on an unknown verb, so look for it in the listing.)
+if command -v gizzi >/dev/null 2>&1 && gizzi agents --help 2>&1 | grep -qE '^[[:space:]]+gizzi agents tree '; then
+cat <<EOF
+[steering] SESSION WORKTREE REQUIRED (an Agent Tree). This session is in the shared checkout
+($top), which multiple agents use — commits and branch switches here collide
+with other sessions. Do this NOW, before any other work:
+
+  gizzi agents tree new "session/$short" --owner "session:$session_id" --root "$top"
+  cd "$(dirname "$top")/$repo_name-session-$short"
+  eval "\$(gizzi agents tree env)"
+
+(Without gizzi: git -C "$top" worktree add "$top-session-$short" -b "session/$short")
+
+The tree starts from fresh origin/main, is seeded from the warm base (build
+output included, so builds are incremental), has its own data dir and target,
+and is checkpointed after each edit. Work only inside it. When the PR is
+merged, land it: \`gizzi agents tree done\` (stops its processes, deletes build
+output, the branch here and on origin, runs git-discipline-check). To stop
+before merge: \`gizzi agents tree pause\`. Do NOT commit or switch branches in
+the shared checkout — a PreToolUse guard blocks it.
+EOF
+else
 cat <<EOF
 [steering] SESSION WORKTREE REQUIRED. This session is in the shared checkout
 ($top), which multiple agents use — commits and branch switches here collide
@@ -47,4 +71,5 @@ session (current base branch: ${branch:-unknown}). When your work is reviewed
 and merged, the worktree is removed and session/$short deleted. Do NOT commit
 or switch branches in the shared checkout — a PreToolUse guard blocks it.
 EOF
+fi
 exit 0

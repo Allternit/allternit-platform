@@ -73,8 +73,9 @@ reason="[steering] BLOCKED: \`$command\` mutates git state in the shared checkou
 Per-session worktree rule: sessions must work in their own linked worktree so
 concurrent agents never collide on one HEAD. Create/reuse yours:
 
+  gizzi agents tree new session/<id> --root \"$top\"   (Agent Trees)
+  # or, with an older gizzi:
   git -C \"$top\" worktree add \"$top-session-<id>\" -b \"session/<id>\"
-  cd \"$top-session-<id>\"
 
 then re-run the command there. (Human/orchestrator merges from the shared
 checkout remain allowed via STEER_GUARD_OFF=1.)"

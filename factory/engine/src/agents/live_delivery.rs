@@ -26,7 +26,7 @@ use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::json;
 
 /// C4: longest body accepted.
 pub const MAX_BODY: usize = 64 * 1024;
