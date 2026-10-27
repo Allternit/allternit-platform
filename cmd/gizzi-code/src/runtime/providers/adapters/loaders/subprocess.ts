@@ -235,6 +235,8 @@ export class SubprocessLanguageModel implements LanguageModelV2 {
     const subagents = delegates
       ? { off: subagentsOff, extra: subagentsOff ? [] : await configSubagents().catch(() => []) }
       : undefined
+    // The request names an account for this CLI (cli_accounts id, or "default").
+    const cliAccountId = options?.headers?.["x-gizzi-cli-account"] || undefined
     const task = await driver.assign({
       taskId: generateTaskId(),
       prompt: message,
@@ -262,6 +264,7 @@ export class SubprocessLanguageModel implements LanguageModelV2 {
       mcp: sessionID && !toolsOff ? bridgeConfig(sessionID) : undefined,
       toolsOff,
       subagents,
+      cliAccountId,
       // A bot turn: the CLI runs isolated from the user's own settings, with
       // the bot's tool allowlist (runtime/bots/bot-turn.ts).
       bot,

@@ -75,6 +75,7 @@ export function parseCodexModels(stdout: string): DiscoveredModel[] {
 /** One entry of cli-catalog.json (the fields gizzi uses). */
 export interface CatalogTool {
   id: string
+  aliases?: string[]
   name: string
   bin: string
   icon?: string
@@ -83,6 +84,8 @@ export interface CatalogTool {
   headless?: { args: string[]; modelArgs?: string[] }
   models?: DiscoveredModel[]
   envKeys?: { path: string; model?: string }
+  /** Env var that points the CLI at its own config/sign-in dir (a second account); absent = single-account. */
+  accountHomeEnv?: string
   custom?: boolean
 }
 
