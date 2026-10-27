@@ -68,6 +68,8 @@ jobs:
 
       # Full suite in release mode, mirroring the VPS deploy loop and the
       # cloud-api workflow's test gate.
+      # Test databases start as a copy of one migrated template (db.rs
+      # test_template): running all migrations per test took 42 of the 76 min.
       - name: Test
         env:
           CARGO_BUILD_JOBS: "2"
