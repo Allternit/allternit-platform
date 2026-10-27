@@ -164,6 +164,9 @@ def collect_ops(spec: Spec) -> list[Op]:
                     op.streams = True
                 if op.response_schema is None and "application/json" in content:
                     op.response_schema = content["application/json"].get("schema") or {}
+            # Only an event stream (no JSON answer, e.g. AG-UI): only the `…Stream`
+            # method, and the body goes as given (no `stream: true`).
+            op.stream_only = op.streams and op.response_schema is None
             op.paginated = any(p.name == "after" for p in op.query)
             ops.append(op)
     assign_method_names(ops)
@@ -353,9 +356,10 @@ def gen_ts(spec: Spec, ops: list[Op]) -> tuple[str, str]:
                 + (f", body: {body_arg}" if body_arg else "")
                 + ", options }"
             )
-            o.append(f"  {op.method_name}({', '.join(args)}): Promise<{resp}> {{")
-            o.append(f"    return this._client.request<{resp}>({req_obj});")
-            o.append("  }")
+            if not op.stream_only:
+                o.append(f"  {op.method_name}({', '.join(args)}): Promise<{resp}> {{")
+                o.append(f"    return this._client.request<{resp}>({req_obj});")
+                o.append("  }")
             if op.paginated:
                 item = page_item(spec, op.response_schema)
                 global TS_REF_PREFIX
@@ -377,8 +381,11 @@ def gen_ts(spec: Spec, ops: list[Op]) -> tuple[str, str]:
                 o.append("  }")
             if op.streams:
                 o.append("")
-                o.append(doc_ts(f"`{op.method_name}` with `stream: true`: yields the raw server-sent events.", "  ").rstrip("\n"))
+                if not op.stream_only:
+                    o.append(doc_ts(f"`{op.method_name}` with `stream: true`: yields the raw server-sent events.", "  ").rstrip("\n"))
                 stream_body = "{ ...(body ?? {}), stream: true }" if body_arg else "{ stream: true }"
+                if op.stream_only:
+                    stream_body = body_arg or "{}"
                 req_obj = (
                     f'{{ method: "{op.method}", path: `{call_path}`'
                     + (f", query: {query_expr}" if query_expr else "")
@@ -546,11 +553,12 @@ def gen_py(spec: Spec, ops: list[Op]) -> str:
                        + (", idempotency_key=idempotency_key" if post else "")
                        + ", timeout=timeout, extra_headers=extra_headers")
             desc = (op.summary or "") + ("\n\n" + op.description if op.description else "")
-            o.append("")
-            o.append(f"    def {op.py_name}({sig}) -> {ret}:")
-            o.append(py_doc(f"{desc.strip()}\n\n``{op.method} {op.path}``", "        ").rstrip("\n"))
-            o.extend(emit_body_lines())
-            o.append(f"        return self._client.request({call_kw})  # type: ignore[return-value]")
+            if not op.stream_only:
+                o.append("")
+                o.append(f"    def {op.py_name}({sig}) -> {ret}:")
+                o.append(py_doc(f"{desc.strip()}\n\n``{op.method} {op.path}``", "        ").rstrip("\n"))
+                o.extend(emit_body_lines())
+                o.append(f"        return self._client.request({call_kw})  # type: ignore[return-value]")
             if op.paginated:
                 item = page_item(spec, resp)
                 item_t = py_type(spec, item) if item is not None and ref_name(item) else "Dict[str, Any]"
@@ -568,9 +576,10 @@ def gen_py(spec: Spec, ops: list[Op]) -> str:
             if op.streams:
                 o.append("")
                 o.append(f"    def {op.py_name}_stream({sig}) -> Iterator[SSEEvent]:")
-                o.append(py_doc(f"``{op.py_name}`` with ``stream: true``: yields the raw server-sent events.", "        ").rstrip("\n"))
+                stream_doc = f"{desc.strip()}\n\n``{op.method} {op.path}``" if op.stream_only else f"``{op.py_name}`` with ``stream: true``: yields the raw server-sent events."
+                o.append(py_doc(stream_doc, "        ").rstrip("\n"))
                 o.extend(emit_body_lines())
-                if body is not None:
+                if body is not None and not op.stream_only:
                     o.append("        _body['stream'] = True")
                 o.append(f"        return self._client.stream_request({call_kw})")
         o.append("")

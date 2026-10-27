@@ -4,7 +4,9 @@
 //! waited for the whole answer before hearing anything. A native gizzi turn is
 //! streamed here instead: subscribe to gizzi's `/event` stream, send the same
 //! message the channel path sends, and turn the session's bus events into the
-//! call stream's `text.delta` and `tool` events as they happen.
+//! call stream's `text.delta` and `tool` events as they happen. A `tool` event
+//! carries the call's `input` once known and, when it ends, its `output` or
+//! `error` (each bounded to [`TOOL_DETAIL_MAX`] characters).
 //!
 //! Vendor-bound and placed (remote) sessions have no local event stream; the
 //! caller falls back to the final-reply behaviour for those (see
@@ -178,14 +180,58 @@ impl TurnFold {
         // What was said before the tool is spoken before the tool's event.
         self.flush(out);
         let phase = self.tools.entry(call.clone()).or_insert(0);
+        // The call's arguments and result ride along (bounded) for Platform API
+        // streams; the call stream strips them (`voice_calls::forward_turn_event`).
+        let state = &part["state"];
+        let input = state.get("input").filter(|i| i.as_object().is_some_and(|o| !o.is_empty())).map(|i| bounded_json(i, TOOL_DETAIL_MAX));
         if *phase == 0 {
             *phase = 1;
-            out.push(json!({ "type": "tool", "name": name, "status": "started", "toolCallId": call }));
+            let mut ev = json!({ "type": "tool", "name": name, "status": "started", "toolCallId": call });
+            if let Some(i) = &input {
+                ev["input"] = i.clone();
+            }
+            out.push(ev);
         }
         if let Some(status) = terminal.filter(|_| *phase == 1) {
             *phase = 2;
-            out.push(json!({ "type": "tool", "name": name, "status": status, "toolCallId": call }));
+            let mut ev = json!({ "type": "tool", "name": name, "status": status, "toolCallId": call });
+            if let Some(i) = input {
+                ev["input"] = i;
+            }
+            let detail = |v: &Value| match v {
+                Value::Null => None,
+                Value::String(s) => Some(clip_chars(s, TOOL_DETAIL_MAX)),
+                other => Some(clip_chars(&other.to_string(), TOOL_DETAIL_MAX)),
+            };
+            if let Some(o) = detail(&state["output"]) {
+                ev["output"] = json!(o);
+            }
+            if let Some(e) = detail(&state["error"]) {
+                ev["error"] = json!(e);
+            }
+            out.push(ev);
         }
+    }
+}
+
+/// The most of a tool call's arguments or result passed on (characters).
+pub(crate) const TOOL_DETAIL_MAX: usize = 8_000;
+
+/// At most `max` characters, with an ellipsis when cut.
+pub(crate) fn clip_chars(s: &str, max: usize) -> String {
+    match s.char_indices().nth(max) {
+        Some((i, _)) => format!("{}…", &s[..i]),
+        None => s.to_string(),
+    }
+}
+
+/// The value itself when its JSON fits in `max` characters, else its JSON text clipped.
+pub(crate) fn bounded_json(v: &Value, max: usize) -> Value {
+    let text = v.to_string();
+    if text.chars().count() <= max {
+        v.clone()
+    } else {
+        Value::String(clip_chars(&text, max))
     }
 }
 

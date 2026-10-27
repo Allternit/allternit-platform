@@ -215,6 +215,24 @@
       "label": "HAR-derived API routes",
       "kind": "module",
       "path": "allternit/cmd/allternit-api/src/har_api_routes.rs"
+    },
+    {
+      "id": "allternit/cmd/allternit-cloud-api/src/routes/platform_v1/hosting.rs",
+      "label": "platform hosting relay",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-cloud-api/src/routes/platform_v1/hosting.rs"
+    },
+    {
+      "id": "allternit/cmd/allternit-api/src/platform_agents.rs",
+      "label": "platform agents runtime",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-api/src/platform_agents.rs"
+    },
+    {
+      "id": "allternit/domains/agent-evals",
+      "label": "agent evals",
+      "kind": "module",
+      "path": "allternit/domains/agent-evals"
     }
   ],
   "edges": [
@@ -727,6 +745,16 @@
         "allternit/surfaces/allternit-desktop/src/main/teach-recorder.ts",
         "allternit/surfaces/allternit-desktop/src/main/browser-capture-manager.ts",
         "allternit/surfaces/allternit-desktop/src/main/web-request-hub.ts"
+      ]
+    },
+    {
+      "source": "allternit/cmd/allternit-cloud-api/src/routes/platform_v1/hosting.rs",
+      "target": "allternit/cmd/allternit-api/src/platform_agents.rs",
+      "kind": "relayed signed HTTP + SSE (runtime device token): Platform API agent definitions, sessions and turns; the turn stream carries text.delta, tool.started/completed/failed (bounded input/output) and done/error with usage, consumed by conversations.rs (message.* / tool.* events) and ag_ui.rs (AG-UI events)",
+      "evidence": [
+        "allternit/cmd/allternit-cloud-api/src/routes/platform_v1/hosting.rs",
+        "allternit/cmd/allternit-cloud-api/src/routes/platform_v1/ag_ui.rs",
+        "allternit/cmd/allternit-api/src/platform_agents.rs"
       ]
     }
   ]

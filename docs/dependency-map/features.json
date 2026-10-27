@@ -1080,7 +1080,8 @@
       "touches": [
         "allternit/cmd/allternit-cloud-api/src/routes/platform_v1",
         "allternit/sdk/platform-ts",
-        "allternit/surfaces/platform.allternit.com"
+        "allternit/surfaces/platform.allternit.com",
+        "allternit/cmd/allternit-api/src/platform_agents.rs"
       ],
       "decisions": [
         {
@@ -1102,11 +1103,16 @@
         {
           "on": "2026-10-20",
           "note": "/v1/phones (scope phones, unbound keys only): list, history, one tool, task and skill run (202, background) relayed signed as the project owner to the Desktop serving the phone (registered_phones.runtime_id, pg 096). Texts and calls still wait for the Desktop approval dialog. phone.step and phone.run.completed webhooks come from the Desktop owner ledger via /api/v1/runtime/events and fan out to the owner's projects with a subscribed endpoint."
+        },
+        {
+          "on": "2026-10-27",
+          "note": "AG-UI out: POST /v1/agents/{id}/ag-ui streams a conversation turn as AG-UI events (RUN_STARTED, TEXT_MESSAGE_*, TOOL_CALL_*, RUN_FINISHED/RUN_ERROR) so CopilotKit and other AG-UI frontends can drive an agent. threadId maps to a conversation id or platform_conversations.external_thread_id (pg 108); the last user message is the input, client tools/state unused. The runtime turn stream (platform_agents.rs) now also passes tool.started/completed/failed with bounded input/output, and the conversation SSE gains matching tool.* events (old clients skip them)."
         }
       ],
       "evidence": [
         "allternit/surfaces/docs/api/platform/billing.mdx",
-        "allternit/surfaces/docs/api/platform/phones.mdx"
+        "allternit/surfaces/docs/api/platform/phones.mdx",
+        "allternit/surfaces/docs/api/platform/ag-ui.mdx"
       ]
     },
     {

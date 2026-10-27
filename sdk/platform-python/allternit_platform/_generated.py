@@ -384,6 +384,44 @@ class ConversationsResource:
             _body['metadata'] = metadata
         return self._client.request("POST", f"/v1/agents/{_q(id)}/conversations", body=_body, idempotency_key=idempotency_key, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
 
+    def run_agent_ag_ui_stream(self, id: str, *, messages: List[Dict[str, Any]], thread_id: str = NOT_GIVEN, run_id: str = NOT_GIVEN, parent_run_id: str = NOT_GIVEN, tools: List[Dict[str, Any]] = NOT_GIVEN, context: List[Dict[str, Any]] = NOT_GIVEN, state: Any = NOT_GIVEN, forwarded_props: Any = NOT_GIVEN, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Iterator[SSEEvent]:
+        """Run the agent for an AG-UI frontend
+
+        Runs one conversation turn over the AG-UI protocol (https://docs.ag-ui.com), so AG-UI
+        clients such as CopilotKit's `HttpAgent` can drive the agent. The body is AG-UI's
+        `RunAgentInput`. `threadId` is one of the agent's conversation ids, or any other string,
+        which is kept on the conversation the first run opens so later runs continue it; no
+        `threadId` opens a new conversation. The server keeps the history: the turn's input is
+        the last `user` message's text. Client-side `tools`, `context` and `state` are not used.
+        The answer is server-sent events, one `data:` JSON AG-UI event each: `RUN_STARTED`,
+        `TEXT_MESSAGE_START` / `TEXT_MESSAGE_CONTENT` / `TEXT_MESSAGE_END`, `TOOL_CALL_START` /
+        `TOOL_CALL_ARGS` / `TOOL_CALL_END` / `TOOL_CALL_RESULT` for each tool the agent uses,
+        then `RUN_FINISHED` or `RUN_ERROR` (`{message, code}`). `runId` is echoed (generated when
+        missing). Refusals before the stream starts are plain errors, as for messages:
+        `402 spend_cap_reached` / `payment_method_required`, `409 conversation_busy`,
+        `503 runtime_starting`. The reply is stored and metered like any conversation message.
+
+        ``POST /v1/agents/{id}/ag-ui``
+        """
+        _body: Dict[str, Any] = {}
+        if thread_id is not NOT_GIVEN:
+            _body['threadId'] = thread_id
+        if run_id is not NOT_GIVEN:
+            _body['runId'] = run_id
+        if parent_run_id is not NOT_GIVEN:
+            _body['parentRunId'] = parent_run_id
+        if messages is not NOT_GIVEN:
+            _body['messages'] = messages
+        if tools is not NOT_GIVEN:
+            _body['tools'] = tools
+        if context is not NOT_GIVEN:
+            _body['context'] = context
+        if state is not NOT_GIVEN:
+            _body['state'] = state
+        if forwarded_props is not NOT_GIVEN:
+            _body['forwardedProps'] = forwarded_props
+        return self._client.stream_request("POST", f"/v1/agents/{_q(id)}/ag-ui", body=_body, idempotency_key=idempotency_key, timeout=timeout, extra_headers=extra_headers)
+
     def get(self, id: str, *, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "Conversation":
         """Retrieve a conversation
 
@@ -397,8 +435,11 @@ class ConversationsResource:
         """Send a message
 
         Sends a message and answers with the agent's reply. With `stream: true` the answer is
-        server-sent events: `message.delta` (`{"delta": "..."}`) while the agent writes, then
-        `message.completed` (the stored reply) or `error`. The first message starts the
+        server-sent events: `message.delta` (`{"delta": "..."}`) while the agent writes,
+        `tool.started` / `tool.completed` / `tool.failed` (`{"tool_call_id", "name", "input"?,
+        "output"?, "error"?}`; arguments and results are cut at 8,000 characters) as it uses
+        tools, then `message.completed` (the stored reply) or `error`. Clients should skip
+        event names they don't know. The first message starts the
         project's hosted runtime: `503 runtime_starting` means retry in a few seconds.
         One message at a time per conversation (`409 conversation_busy`). A project at its
         monthly spend cap gets `402 spend_cap_reached`; one with no card on file gets

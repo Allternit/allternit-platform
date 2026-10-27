@@ -11,6 +11,7 @@ A conversation is a chat between your app and one [agent](/api/platform/agents).
 | `GET` | `/v1/agents/{id}/conversations` | The agent's conversations, oldest first, without messages (`?limit=&after=` pages) |
 | `GET` | `/v1/conversations/{id}` | The conversation with its latest 200 messages, oldest first |
 | `POST` | `/v1/conversations/{id}/messages` | Send `{ "content", "stream"? }`, get the agent's reply |
+| `POST` | `/v1/agents/{id}/ag-ui` | Run a turn for an [AG-UI frontend](/api/platform/ag-ui) |
 
 ```bash
 curl https://api.allternit.com/v1/agents/agent_3f9…/conversations \
@@ -27,7 +28,7 @@ curl https://api.allternit.com/v1/conversations/conv_81c…/messages \
   "error": null, "created_at": "2026-10-06T21:12:44Z" }
 ```
 
-**Streaming.** With `"stream": true` the answer is server-sent events: `message.delta` events with `{ "delta": "…" }` while the agent writes, then one `message.completed` carrying the stored reply, or an `error` event (`{ "error": { "type", "code", "message" } }`). The reply is stored even if your client disconnects mid-stream.
+**Streaming.** With `"stream": true` the answer is server-sent events: `message.delta` events with `{ "delta": "…" }` while the agent writes, `tool.started`, `tool.completed` and `tool.failed` events (`{ "tool_call_id", "name", "input"?, "output"?, "error"? }`, arguments and results cut at 8,000 characters) as it uses its tools, then one `message.completed` carrying the stored reply, or an `error` event (`{ "error": { "type", "code", "message" } }`). The reply is stored even if your client disconnects mid-stream. Skip event names you don't know: new ones may be added. To drive an agent from an AG-UI frontend such as CopilotKit, see [AG-UI frontends](/api/platform/ag-ui).
 
 **Failures.** If the agent's turn fails, the reply comes back with `status: "failed"` and an `error` sentence (streamed: an `error` event with code `turn_failed`); your message and the failure both stay in the conversation.
 

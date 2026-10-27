@@ -642,6 +642,26 @@ export type CreateConversationRequest = {
 
 export type CreateConversationResponse = Conversation;
 
+export type RunAgentAgUiRequest = {
+  threadId?: string;
+  runId?: string;
+  parentRunId?: string;
+  /**
+   * AG-UI messages; the last `user` message (string content, or its `text` parts) is the turn's input.
+   */
+  messages: Array<{
+    id?: string;
+    role: "developer" | "system" | "assistant" | "user" | "tool" | "activity" | "reasoning";
+    content?: unknown;
+  }>;
+  tools?: Array<Record<string, unknown>>;
+  context?: Array<Record<string, unknown>>;
+  state?: unknown;
+  forwardedProps?: unknown;
+};
+
+export type RunAgentAgUiResponse = unknown;
+
 export type GetConversationResponse = Conversation;
 
 export type SendConversationMessageRequest = {

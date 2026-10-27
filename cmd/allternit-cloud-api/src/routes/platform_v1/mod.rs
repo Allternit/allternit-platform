@@ -1,6 +1,6 @@
 //! Allternit Platform API (`/v1`): the developer-facing surface.
 //!
-//! One module per area (`accounts`, `agents`, `conversations`, `numbers`, `messages`, `calls` (voice and realtime), `webhooks`,
+//! One module per area (`accounts`, `agents`, `conversations`, `ag_ui` (AG-UI frontends), `numbers`, `messages`, `calls` (voice and realtime), `webhooks`,
 //! `channels`, `twin`, `computers`, `phones` (the owner's own phones, relayed to their Desktop), `usage`). Also `billing` (spend caps) and `stripe_plan` (Stripe meters, dry run by default).
 //! Hosted agents run on a per-project runtime (`hosting`).
 //! Each area exposes `register(RouteTable) -> RouteTable`; `build_table` below
@@ -25,6 +25,7 @@
 //! → handler.
 
 pub mod accounts;
+pub mod ag_ui;
 pub mod agent_tools;
 pub mod agents;
 pub mod billing;
@@ -210,6 +211,7 @@ fn build_table() -> RouteTable {
     let table = agents::register(table);
     let table = knowledge::register(table);
     let table = conversations::register(table);
+    let table = ag_ui::register(table);
     let table = model_keys::register(table);
     let table = numbers::register(table);
     let table = messages::register(table);
