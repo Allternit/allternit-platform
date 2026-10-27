@@ -3332,6 +3332,8 @@ async fn delete_account_route(
     }
 }
 
+const CALLBACK_PATH: &str = "/api/v1/connectors/oauth/callback";
+
 fn public_base() -> String {
     std::env::var("ALLTERNIT_PUBLIC_BASE_URL")
         .unwrap_or_else(|_| "http://127.0.0.1:8013".to_string())
