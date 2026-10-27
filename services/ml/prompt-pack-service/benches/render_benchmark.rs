@@ -126,15 +126,13 @@ fn setup(rt: &Runtime) -> BenchContext {
     let template_path = "prompts/welcome.j2";
 
     let partial_name = format!("{}/{}/partials/footer", pack_id, version);
-    let template = format!(
-        r#"{% set greeting = "Hello" %}
+    let template = r#"{% set greeting = "Hello" %}
 {{ greeting }} {{ user.name }} ({{ user.tier }})
 {% for item in items %}- {{ item }}
 {% endfor %}
-{% include "{}" %}
-"#,
-        partial_name
-    );
+{% include "__PARTIAL__" %}
+"#
+    .replace("__PARTIAL__", &partial_name);
 
     let partial = "Generated at {{ context.run_id }} | locale {{ context.locale }}";
 
@@ -181,13 +179,14 @@ fn bench_render(c: &mut Criterion) {
     });
 
     group.bench_function("cold_render", |b| {
+        let ctx = &ctx;
         b.to_async(&rt).iter(|| {
             let mut request = ctx.base_request.clone();
             let nonce = counter.fetch_add(1, Ordering::Relaxed);
             request
                 .variables
                 .insert("nonce".to_string(), json!(nonce));
-            ctx.renderer.render(&request, &ctx.pack)
+            async move { ctx.renderer.render(&request, &ctx.pack).await }
         });
     });
 

@@ -214,7 +214,11 @@ impl E2ETestHarness {
             .post(&upload_url)
             .multipart(reqwest::multipart::Form::new()
                 .text("path", "/tmp/test.txt")
-                .file("file", std::io::Cursor::new(test_content.as_bytes()))
+                .part(
+                    "file",
+                    reqwest::multipart::Part::bytes(test_content.as_bytes().to_vec())
+                        .file_name("test.txt"),
+                )
             )
             .send()
             .await

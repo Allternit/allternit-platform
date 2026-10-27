@@ -625,7 +625,7 @@ mod tests {
 
         let enforcer = NetworkPolicyEnforcer::with_rate_limit("tap-test".to_string(), policy, 1000);
 
-        assert_eq!(enforcer.tap_name(), "tap-test");
+        assert_eq!(enforcer._tap_name(), "tap-test");
         assert_eq!(enforcer.rate_limit_kbps, Some(1000));
         assert!(!enforcer.policy.egress_allowed);
     }

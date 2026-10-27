@@ -804,7 +804,7 @@ mod tests {
         assert_eq!(config.connection_timeout_ms, 10000);
         assert_eq!(config.retry_attempts, 5);
         assert_eq!(
-            config.get_extra("custom"),
+            config.extra.get("custom"),
             Some(&serde_json::json!("value"))
         );
     }

@@ -174,7 +174,7 @@ mod tests {
     fn test_container_config_builder() {
         let config = ContainerConfig::new("alpine:latest")
             .with_command(vec!["echo".to_string(), "hello".to_string()])
-            .with_volume("/host:/container".to_string());
+            .with_volume("/host:/container");
 
         assert_eq!(config.image, "alpine:latest");
         assert!(config.command.is_some());

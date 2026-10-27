@@ -828,6 +828,7 @@ mod tests {
     use std::time::Duration;
     use tempfile::NamedTempFile;
     use tokio::time::sleep;
+    use uuid::Uuid;
 
     #[tokio::test]
     async fn test_task_queue() {

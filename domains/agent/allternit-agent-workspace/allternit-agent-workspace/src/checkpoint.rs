@@ -309,7 +309,7 @@ mod tests {
         let checkpoint = manager.create("session_1", agent_state, task_state).unwrap();
         
         assert_eq!(checkpoint.session_id, "session_1");
-        assert_eq!(checkpoint.agent_state.mood, AgentMood::Focused);
+        assert!(matches!(checkpoint.agent_state.mood, AgentMood::Focused));
 
         let latest = manager.latest().unwrap();
         assert!(latest.is_some());

@@ -1260,6 +1260,7 @@ mod tests {
                 policy_engine.clone(),
                 context_router.clone(),
                 pool.clone(),
+                Arc::new(allternit_memory::v2::memory_policy::DefaultMemoryPolicy),
             )
             .await
             .unwrap(),

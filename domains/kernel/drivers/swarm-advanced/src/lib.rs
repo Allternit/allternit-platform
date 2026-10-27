@@ -316,6 +316,7 @@ pub enum SwarmAdvancedError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     #[tokio::test]
     async fn test_swarm_advanced_engine_creation() {

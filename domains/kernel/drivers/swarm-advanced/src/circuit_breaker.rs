@@ -162,6 +162,7 @@ impl CircuitBreaker {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     #[test]
     fn test_circuit_breaker_creation() {
