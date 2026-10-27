@@ -73,6 +73,12 @@
       "path": "allternit/surfaces/docs"
     },
     {
+      "id": "allternit/domains/agent-evals",
+      "label": "Subagent evals (Python task suite for the subagent catalog)",
+      "kind": "module",
+      "path": "allternit/domains/agent-evals"
+    },
+    {
       "id": "allternit/domains/computer-use/core",
       "label": "Computer-use engine (ACU gateway :8760, Python)",
       "kind": "module",
@@ -173,6 +179,12 @@
       "label": "OpenMuse live AG-UI HTTP runtime",
       "kind": "external",
       "path": "allternit/services/subscription-gateway/adapters/openmuse-copilotkit/provider.ts"
+    },
+    {
+      "id": "external:ag-ui-agent",
+      "label": "Any user-supplied AG-UI agent (HTTP/SSE)",
+      "kind": "external",
+      "path": "allternit/services/subscription-gateway/adapters/ag-ui/provider.ts"
     },
     {
       "id": "allternit/cmd/allternit-sideload",
@@ -620,6 +632,16 @@
       "kind": "access-key session exchange and authenticated loopback AG-UI SSE; own thread/run completion",
       "evidence": [
         "allternit/services/subscription-gateway/adapters/openmuse-copilotkit/provider.ts",
+        "allternit/surfaces/docs/guides/local-vendor-bots.mdx"
+      ]
+    },
+    {
+      "source": "allternit/services/subscription-gateway",
+      "target": "external:ag-ui-agent",
+      "kind": "AG-UI RunAgentInput POST + SSE to a user URL (loopback, or https with public DNS pinned to the checked address); own thread/run completion",
+      "evidence": [
+        "allternit/services/subscription-gateway/adapters/ag-ui/provider.ts",
+        "allternit/services/subscription-gateway/adapters/_shared/ag-ui.ts",
         "allternit/surfaces/docs/guides/local-vendor-bots.mdx"
       ]
     },
