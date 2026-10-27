@@ -1,0 +1,173 @@
+#!/usr/bin/env python3
+"""scripts/bin-cache — reuse a release binary whose sources have not changed.
+
+Desktop builds compiled factory, voice-service, allternit-tts, allternit-api
+and local-engine from source every time, even when nobody touched them (25+
+minutes for factory alone). After each cargo build, `store` keeps the binary
+with the list of workspace files cargo says it was built from (its .d file).
+Before the next build, `fetch` hashes those same files in the checkout being
+built; when every hash matches, it copies the stored binary out and the build
+is skipped.
+
+Usage:
+  bin-cache fetch <name> <dest> [--root DIR]
+      0 and copies the binary to <dest> when an entry matches, 1 otherwise.
+  bin-cache store <name> <binary> <depfile> [--root DIR]
+      Keep <binary> (built from the checkout at --root, default cwd) keyed by
+      the sources listed in <depfile> (cargo's target/release/<bin>.d).
+      --built-in OLD maps a .d written from another checkout of the same repo
+      (paths under OLD are read under --root): the key then describes --root,
+      so store this way only when those sources are the same in both.
+
+What the key covers: every workspace file the .d lists (sources, include_str!
+files, migrations), every tracked file in each workspace package those files
+belong to (build.rs and its inputs), the root Cargo.toml and Cargo.lock
+(dependency versions, profiles), rustc -vV, and the build env that changes
+output (MACOSX_DEPLOYMENT_TARGET, CARGO_BUILD_TARGET, RUSTFLAGS). Files are
+compared by git blob hash, so a dirty checkout is compared by content.
+ALLTERNIT_NO_BIN_CACHE=1 turns it off. Cache: ~/.cache/allternit-bin-cache.
+"""
+import hashlib, json, os, shutil, subprocess, sys, time
+from pathlib import Path
+
+CACHE = Path(os.environ.get("ALLTERNIT_BIN_CACHE", Path.home() / ".cache/allternit-bin-cache"))
+KEEP = 4
+ENV_KEYS = ("MACOSX_DEPLOYMENT_TARGET", "CARGO_BUILD_TARGET", "RUSTFLAGS", "CARGO_ENCODED_RUSTFLAGS")
+
+
+def run(*cmd, cwd=None, inp=None):
+    return subprocess.run(cmd, cwd=cwd, input=inp, capture_output=True, text=True, check=True).stdout
+
+
+def toolchain(root):
+    return run("rustc", "-vV", cwd=root)
+
+
+def blob_hashes(root, rel):
+    """git blob id per relative path (working tree contents). Missing → '-'."""
+    present = [p for p in rel if (root / p).is_file()]
+    ids = run("git", "hash-object", "--stdin-paths", cwd=root, inp="\n".join(present) + "\n").split() if present else []
+    got = dict(zip(present, ids))
+    return {p: got.get(p, "-") for p in rel}
+
+
+def package_files(root, packages):
+    if not packages:
+        return []
+    out = run("git", "ls-files", "-z", "--", *packages, cwd=root)
+    return [p for p in out.split("\0") if p]
+
+
+def key_for(root, files, packages):
+    rel = sorted(set(files) | set(package_files(root, packages)) | {"Cargo.toml", "Cargo.lock"})
+    h = hashlib.sha256()
+    for p, b in blob_hashes(root, rel).items():
+        h.update(f"{p}\0{b}\n".encode())
+    h.update(toolchain(root).encode())
+    for k in ENV_KEYS:
+        h.update(f"{k}={os.environ.get(k, '')}\n".encode())
+    return h.hexdigest()
+
+
+def parse_depfile(depfile, root, built_in=None):
+    """Workspace-relative inputs and their package dirs from cargo's .d file.
+    built_in: the checkout the .d was written from, when it is not root."""
+    text = Path(depfile).read_text().replace("\\\n", " ")
+    deps = text.split(":", 1)[1] if ":" in text else ""
+    # Paths are space-separated with spaces escaped as "\ ".
+    paths = [p.replace("\0", " ") for p in deps.replace("\\ ", "\0").split()]
+    root = root.resolve()
+    if built_in:
+        old = str(Path(built_in)).rstrip("/") + "/"
+        paths = [str(root) + "/" + p[len(old):] if p.startswith(old) else p for p in paths]
+    target = Path(os.environ.get("CARGO_TARGET_DIR", root / "target")).resolve()
+    files, packages = set(), set()
+    for p in paths:
+        ap = Path(p).resolve()
+        if ap.is_relative_to(target) or not ap.is_relative_to(root) or "target" in ap.relative_to(root).parts:
+            continue  # generated OUT_DIR files, registry crates (covered by Cargo.lock)
+        rel = ap.relative_to(root)
+        files.add(str(rel))
+        d = ap.parent
+        while d != root and d.is_relative_to(root):
+            if (d / "Cargo.toml").is_file():
+                packages.add(str(d.relative_to(root)))
+                break
+            d = d.parent
+    return sorted(files), sorted(packages)
+
+
+def entries(name):
+    d = CACHE / name
+    if not d.is_dir():
+        return []
+    out = []
+    for e in d.iterdir():
+        try:
+            out.append((json.loads((e / "meta.json").read_text()), e))
+        except Exception:
+            continue
+    return sorted(out, key=lambda m: -m[0]["stored_at"])
+
+
+def cmd_fetch(name, dest, root):
+    for meta, e in entries(name):
+        try:
+            k = key_for(root, meta["files"], meta["packages"])
+        except subprocess.CalledProcessError:
+            continue
+        if k == meta["key"] and (e / "bin").is_file():
+            dest = Path(dest)
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            tmp = dest.with_name(dest.name + ".bin-cache-tmp")
+            shutil.copy2(e / "bin", tmp)
+            tmp.replace(dest)
+            print(f"bin-cache: reused {name} built {time.strftime('%Y-%m-%d %H:%M', time.localtime(meta['stored_at']))} "
+                  f"from {meta.get('commit', '?')[:9]} (sources unchanged)")
+            return 0
+    return 1
+
+
+def cmd_store(name, binary, depfile, root, built_in=None):
+    files, packages = parse_depfile(depfile, root, built_in)
+    if not files:
+        print(f"bin-cache: {depfile} lists no workspace files; not caching {name}", file=sys.stderr)
+        return 1
+    k = key_for(root, files, packages)
+    e = CACHE / name / k[:20]
+    tmp = e.with_name(e.name + f".tmp{os.getpid()}")
+    shutil.rmtree(tmp, ignore_errors=True)
+    tmp.mkdir(parents=True)
+    shutil.copy2(binary, tmp / "bin")
+    commit = run("git", "rev-parse", "HEAD", cwd=root).strip()
+    (tmp / "meta.json").write_text(json.dumps({"name": name, "key": k, "files": files, "packages": packages,
+                                               "commit": commit, "stored_at": time.time()}))
+    shutil.rmtree(e, ignore_errors=True)
+    tmp.replace(e)
+    for _, old in entries(name)[KEEP:]:
+        shutil.rmtree(old, ignore_errors=True)
+    print(f"bin-cache: stored {name} ({len(files)} files, {len(packages)} packages) from {commit[:9]}")
+    return 0
+
+
+def main():
+    a = sys.argv[1:]
+    if not a or a[0] in ("-h", "--help"):
+        print(__doc__.strip()); return 0
+    root, built_in = Path("."), None
+    if "--built-in" in a:
+        i = a.index("--built-in"); built_in = a[i + 1]; del a[i:i + 2]
+    if "--root" in a:
+        i = a.index("--root"); root = Path(a[i + 1]); del a[i:i + 2]
+    root = Path(run("git", "rev-parse", "--show-toplevel", cwd=root).strip())
+    if os.environ.get("ALLTERNIT_NO_BIN_CACHE") == "1":
+        return 1 if a[0] == "fetch" else 0
+    if a[0] == "fetch" and len(a) == 3:
+        return cmd_fetch(a[1], a[2], root)
+    if a[0] == "store" and len(a) == 4:
+        return cmd_store(a[1], a[2], a[3], root, built_in)
+    sys.exit("usage: bin-cache fetch <name> <dest> [--root DIR] | store <name> <binary> <depfile> [--root DIR]")
+
+
+if __name__ == "__main__":
+    sys.exit(main())

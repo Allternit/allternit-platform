@@ -73,12 +73,16 @@ for line in sys.stdin:
         print(line.strip()[:160])
 ' "$product")
   [ -n "$busy" ] || exit 0
+  qname=$([ "$product" = "gizzi-code" ] && echo gizzi || echo desktop)
   reason="[build-guard] BLOCKED: another process is already building $product:
 $busy
 
 Two concurrent builds of the same product overwrite each other's output and
-leave a stale copy installed. Wait for it to finish (or coordinate with the
-session that owns it), run bash scripts/build-state.sh, then build.
+leave a stale copy installed. Ask the build queue whether that build will
+contain your commit; it waits for it and answers once:
+  scripts/build-queue need $qname --contains <sha>
+(0 = built, 3 = nothing will contain it: then queue your build). Or wait for
+it to finish, run bash scripts/build-state.sh, then build.
 (Deliberate override: BUILD_GUARD_OFF=1.)"
 fi
 

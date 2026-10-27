@@ -29,6 +29,8 @@ The desktop app has been prepared for distribution. Here's what's been done and 
 
 ### Step 1: Build Desktop Installers (You Need to Do This)
 
+**Build queue and reuse (2026-10-25).** `scripts/build-desktop.sh` runs through the machine-wide build queue, `scripts/build-queue`. It waits while another heavy build runs and records the commits it built. A release build uses `ALLTERNIT_BUILD_MAIN=1 scripts/build-desktop.sh` in a clean, detached worktree, which moves it to the newest `origin/main` when it starts. To check whether a build has (or will have) a commit, run `scripts/build-queue need desktop --contains <sha>` (exit 0 = built, 3 = nothing will). The Rust sidecars (factory, voice-service, allternit-tts, allternit-api, local-engine) are copied from `scripts/bin-cache` when none of their sources changed. `ALLTERNIT_NO_BIN_CACHE=1` rebuilds them. The rule for sessions is in `AGENTS.md`, under "release train".
+
 Due to code signing requirements and environment issues, you need to build the final installers on your machine:
 
 ```bash

@@ -1,0 +1,314 @@
+#!/usr/bin/env python3
+"""scripts/build-queue — one machine-wide, first-come-first-served lane for heavy builds.
+
+Every session tests and merges on its own, but only one heavy build (Desktop,
+gizzi production, runtime packaging, release cargo build/test, zig release)
+runs on this Mac at a time, and every build records the commits it built. A
+session that needs its change in a build asks the queue instead of starting
+another one.
+
+Usage:
+  build-queue run <product> [--repo DIR]... [--sync-main] -- <command> [args...]
+      Wait for the lane, run the command, record what it built. --repo names
+      each git checkout the build reads (default: the current one). With
+      --sync-main each clean, detached checkout moves to the newest origin/main
+      when the build STARTS, so a queued build also carries everything that
+      merges while it waits. Inside a run, nested runs pass straight through
+      (BUILD_QUEUE_HELD=1).
+
+  build-queue need <product> --contains <sha> [--in DIR]
+      Answer once whether <product> has or will have commit <sha> (of the repo
+      at DIR, default the current one):
+        0  a finished, successful build contains it (prints the build)
+        -  a running or queued build will contain it: waits for it, then
+           answers again (no polling needed by the caller)
+        3  nothing built or queued contains it: start one with `run`
+        1  the build that would have contained it failed
+
+  build-queue status [--json]
+      The lane (running + queued) and the last build of each product.
+
+State lives in ~/.allternit/state/build-queue/ (tickets/ + history.jsonl).
+"""
+import fcntl, json, os, signal, subprocess, sys, time
+from pathlib import Path
+
+STATE = Path(os.environ.get("BUILD_QUEUE_DIR", Path.home() / ".allternit/state/build-queue"))
+TICKETS = STATE / "tickets"
+HISTORY = STATE / "history.jsonl"
+LOCK = STATE / "queue.lock"
+POLL = 5
+
+
+def git(d, *args):
+    try:
+        return subprocess.run(["git", "-C", str(d), *args], capture_output=True, text=True, timeout=120).stdout.strip()
+    except Exception:
+        return ""
+
+
+def repo_name(d):
+    """The repo's identity across worktrees: the folder of its shared .git."""
+    common = git(d, "rev-parse", "--path-format=absolute", "--git-common-dir")
+    return Path(common).parent.name if common else Path(d).resolve().name
+
+
+def repo_state(d):
+    sha = git(d, "rev-parse", "HEAD")
+    dirty = bool(git(d, "status", "--porcelain", "--untracked-files=no"))
+    return {"name": repo_name(d), "path": str(Path(d).resolve()), "sha": sha, "dirty": dirty}
+
+
+def contains(d, sha, built):
+    return bool(built) and subprocess.run(
+        ["git", "-C", str(d), "merge-base", "--is-ancestor", sha, built], capture_output=True).returncode == 0
+
+
+def alive(pid):
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+
+
+class locked:
+    def __enter__(self):
+        TICKETS.mkdir(parents=True, exist_ok=True)
+        self.f = open(LOCK, "a")
+        fcntl.flock(self.f, fcntl.LOCK_EX)
+
+    def __exit__(self, *a):
+        fcntl.flock(self.f, fcntl.LOCK_UN)
+        self.f.close()
+
+
+def tickets():
+    """Live tickets, oldest first. Tickets of dead processes are dropped."""
+    out = []
+    for p in sorted(TICKETS.glob("*.json")):
+        try:
+            t = json.loads(p.read_text())
+        except Exception:
+            continue
+        if alive(t["pid"]):
+            t["_path"] = p
+            out.append(t)
+        else:
+            p.unlink(missing_ok=True)
+    return out
+
+
+def write_ticket(t):
+    tmp = t["_path"].with_suffix(".tmp")
+    tmp.write_text(json.dumps({k: v for k, v in t.items() if k != "_path"}))
+    tmp.replace(t["_path"])
+
+
+def history():
+    if not HISTORY.exists():
+        return []
+    out = []
+    for line in HISTORY.read_text().splitlines():
+        try:
+            out.append(json.loads(line))
+        except Exception:
+            pass
+    return out
+
+
+def ago(ts):
+    s = int(time.time() - ts)
+    return f"{s // 3600}h{s % 3600 // 60:02d}m" if s >= 3600 else f"{s // 60}m{s % 60:02d}s"
+
+
+def describe(b):
+    shas = " ".join(f"{r['name']}@{r['sha'][:9]}{'-dirty' if r.get('dirty') else ''}" for r in b.get("repos", []))
+    return f"{b['product']} [{shas or 'no repo'}] in {b.get('cwd', '?')}"
+
+
+# ------------------------------------------------------------------- run
+def cmd_run(argv):
+    if "--" not in argv:
+        sys.exit("build-queue run: put the build command after --")
+    i = argv.index("--")
+    opts, command = argv[:i], argv[i + 1:]
+    if not opts or not command:
+        sys.exit("usage: build-queue run <product> [--repo DIR]... [--sync-main] -- <command>")
+    if os.environ.get("BUILD_QUEUE_HELD"):
+        os.execvp(command[0], command)
+    product, repos, sync_main = opts[0], [], False
+    j = 1
+    while j < len(opts):
+        if opts[j] == "--repo":
+            repos.append(opts[j + 1]); j += 2
+        elif opts[j] == "--sync-main":
+            sync_main = True; j += 1
+        else:
+            sys.exit(f"build-queue run: unknown option {opts[j]}")
+    repos = repos or ["."]
+
+    now = time.time()
+    with locked():
+        me = {"product": product, "pid": os.getpid(), "cwd": os.getcwd(), "cmd": command,
+              "repo_paths": [str(Path(r).resolve()) for r in repos], "sync_main": sync_main,
+              "queued_at": now, "_path": TICKETS / f"{time.time_ns()}-{os.getpid()}.json"}
+        write_ticket(me)
+
+    def cleanup(*_):
+        me["_path"].unlink(missing_ok=True)
+    signal.signal(signal.SIGHUP, lambda *a: (cleanup(), sys.exit(129)))
+
+    told = False
+    try:
+        while True:
+            with locked():
+                live = tickets()
+                if live and live[0]["_path"] == me["_path"]:
+                    break
+            if not told:
+                ahead = [t for t in live if t["_path"] != me["_path"] and t["_path"].name < me["_path"].name]
+                print(f"[build-queue] waiting: {len(ahead)} build(s) ahead — " +
+                      "; ".join(f"{t['product']} (pid {t['pid']}, {t['cwd']})" for t in ahead), file=sys.stderr, flush=True)
+                told = True
+            time.sleep(POLL)
+
+        if sync_main:
+            for r in repos:
+                st = repo_state(r)
+                if not st["sha"]:
+                    continue
+                if st["dirty"] or git(r, "symbolic-ref", "-q", "HEAD"):
+                    print(f"[build-queue] {r} is on a branch or has local changes; building it as it is", file=sys.stderr)
+                    continue
+                git(r, "fetch", "-q", "origin", "main")
+                git(r, "checkout", "-q", "--detach", "origin/main")
+        me["repos"] = [repo_state(r) for r in repos]
+        me["started_at"] = time.time()
+        with locked():
+            write_ticket(me)
+        print(f"[build-queue] start {describe(me)}", file=sys.stderr, flush=True)
+
+        child = subprocess.Popen(command, env={**os.environ, "BUILD_QUEUE_HELD": "1"})
+        for s in (signal.SIGINT, signal.SIGTERM):
+            signal.signal(s, lambda sig, _f: child.send_signal(sig))
+        code = child.wait()
+        # Read the commits again: a build may refresh a checkout itself (build-desktop.sh moves
+        # the default UI worktree to origin/main), and the record must say what was really built.
+        rec = {"product": product, "cwd": me["cwd"], "cmd": command, "repos": [repo_state(r) for r in repos],
+               "queued_at": me["queued_at"], "started_at": me["started_at"], "finished_at": time.time(),
+               "status": "ok" if code == 0 else f"failed ({code})"}
+        with locked():
+            with open(HISTORY, "a") as f:
+                f.write(json.dumps(rec) + "\n")
+        took = int(rec["finished_at"] - rec["started_at"])
+        print(f"[build-queue] {rec['status']} after {took // 60}m{took % 60:02d}s: {describe(rec)}", file=sys.stderr)
+        return code if code >= 0 else 128 - code
+    finally:
+        cleanup()
+
+
+# ------------------------------------------------------------------- need
+def cmd_need(argv):
+    product, sha, where = None, None, "."
+    j = 0
+    while j < len(argv):
+        a = argv[j]
+        if a == "--contains":
+            sha = argv[j + 1]; j += 2
+        elif a == "--in":
+            where = argv[j + 1]; j += 2
+        elif product is None:
+            product = a; j += 1
+        else:
+            sys.exit(f"build-queue need: unexpected {a}")
+    if not product or not sha:
+        sys.exit("usage: build-queue need <product> --contains <sha> [--in DIR]")
+    full = git(where, "rev-parse", "--verify", "-q", f"{sha}^{{commit}}")
+    if not full:
+        sys.exit(f"build-queue need: {sha} is not a commit in {where} (fetch first?)")
+    name = repo_name(where)
+
+    def built_sha(b):
+        return next((r["sha"] for r in b.get("repos", []) if r["name"] == name), "")
+
+    waited = set()
+    while True:
+        with locked():
+            live = tickets()
+            done = [b for b in history() if b["product"] == product]
+        # A finished, successful build that has it.
+        has = [b for b in done if contains(where, full, built_sha(b))]
+        good = [b for b in has if b["status"] == "ok"]
+        if good:
+            print(f"built: {describe(good[-1])} — finished {ago(good[-1]['finished_at'])} ago")
+            return 0
+        # A running or queued build that will have it.
+        target = None
+        for t in live:
+            if t["product"] != product:
+                continue
+            if "repos" in t:  # started: it read its commits already
+                if contains(where, full, next((r["sha"] for r in t["repos"] if r["name"] == name), "")):
+                    target = t; break
+            elif t.get("sync_main"):  # queued: it reads newest main when it starts
+                git(where, "fetch", "-q", "origin", "main")
+                if contains(where, full, git(where, "rev-parse", "origin/main")):
+                    target = t; break
+        if not target:
+            failed = [b for b in has if b["started_at"] in waited]
+            if failed:
+                print(f"failed: {describe(failed[-1])} — {failed[-1]['status']}")
+                return 1
+            print(f"none: no {product} build has or will have {full[:9]} — start one with `build-queue run {product} …`")
+            return 3
+        state = "running" if "repos" in target else "queued"
+        print(f"[build-queue] waiting for the {state} {target['product']} build (pid {target['pid']}, {target['cwd']})",
+              file=sys.stderr, flush=True)
+        while alive(target["pid"]) and target["_path"].exists():
+            time.sleep(POLL)
+        with locked():
+            for b in reversed(history()):
+                if b["product"] == product and b["cwd"] == target["cwd"] and b["queued_at"] == target["queued_at"]:
+                    waited.add(b["started_at"]); break
+
+
+# ------------------------------------------------------------------- status
+def cmd_status(argv):
+    with locked():
+        live = tickets()
+        done = history()
+    last = {}
+    for b in done:
+        last[b["product"]] = b
+    if "--json" in argv:
+        print(json.dumps({"lane": [{k: v for k, v in t.items() if k != "_path"} for t in live],
+                          "last": list(last.values())}, indent=1))
+        return 0
+    if not live:
+        print("  lane empty")
+    for t in live:
+        if "repos" in t:
+            print(f"  RUNNING {ago(t['started_at']):>7}  {describe(t)}")
+        else:
+            print(f"  QUEUED  {ago(t['queued_at']):>7}  {t['product']} in {t['cwd']}{' (newest main at start)' if t.get('sync_main') else ''}")
+    for p, b in sorted(last.items()):
+        took = int(b["finished_at"] - b["started_at"])
+        print(f"  last {p}: {b['status']}, {took // 60}m{took % 60:02d}s, {ago(b['finished_at'])} ago — {describe(b)}")
+    return 0
+
+
+def main():
+    if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help", "help"):
+        print(__doc__.strip()); return 0
+    cmd, rest = sys.argv[1], sys.argv[2:]
+    fn = {"run": cmd_run, "need": cmd_need, "status": cmd_status}.get(cmd)
+    if not fn:
+        sys.exit(f"build-queue: unknown command {cmd} (run, need, status)")
+    return fn(rest)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
