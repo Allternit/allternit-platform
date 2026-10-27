@@ -10,6 +10,10 @@ import { ARTIFACT_TOOLS } from "@/runtime/tools/builtins/artifact"
 import { QuestionTool } from "@/runtime/tools/builtins/question"
 import { TodoWriteTool } from "@/runtime/tools/builtins/todo"
 import { GlanceTool } from "@/runtime/tools/builtins/glance"
+import { SkillTool } from "@/runtime/tools/builtins/skill"
+import { Tool as ToolNS } from "@/runtime/tools/builtins/tool"
+import { Skill } from "@/runtime/skills/skill"
+import { BUNDLED_SKILLS } from "@/runtime/skills/bundledSkills"
 import { Log } from "@/shared/util/log"
 import { Bus } from "@/shared/bus"
 import { CLI_PERMISSION_TOOL } from "@/runtime/drivers/cli-session-flags"
@@ -31,7 +35,9 @@ export namespace CliBridge {
   /** The tools a CLI gets: the ones only gizzi can do for this session. */
   // todowrite: CLI brains (Claude Code -p has no todo tool) keep the task list
   // that Cowork's Progress panel reads.
-  export const TOOLS: Tool.Info[] = [PaneArtifactTool, PaneBrowserTool, MediaGenerateTool, TodoWriteTool, GlanceTool, ...ARTIFACT_TOOLS]
+  // skill: gizzi's own skills (planning, debugging, docs-writing, summarizing…),
+  // which the delegation rule tells the CLI to load (agents/builtin-catalog.ts).
+  export const TOOLS: Tool.Info[] = [PaneArtifactTool, PaneBrowserTool, MediaGenerateTool, TodoWriteTool, GlanceTool, BuiltinSkillTool(), ...ARTIFACT_TOOLS]
 
   const token = randomBytes(32).toString("hex")
 
@@ -280,6 +286,8 @@ export namespace CliBridge {
       async ask(req) {
         // The task list is bookkeeping, allowed for every agent (loop/agent.ts); never prompt for it.
         if (req.permission === "todowrite") return
+        // gizzi's built-in skills are instructions only; loading one never prompts.
+        if (req.permission === "skill") return
         return await PermissionNext.ask({ ...req, sessionID, ruleset: session.permission ?? [] })
       },
     }
@@ -316,7 +324,7 @@ export namespace CliBridge {
           capabilities: { tools: { listChanged: false } },
           serverInfo: { name: SERVER_NAME, version: "1.0.0" },
           instructions:
-            "Allternit session tools: the document open beside the chat (pane_artifact), the pane's browser (pane_browser), image/video generation rendered in the user's app (media_generate), the user's Artifacts (artifact_create, artifact_update, artifact_read, artifact_suggest; artifact_claim and artifact_release for one frame of a design canvas), the task list shown as the session's Progress (todowrite), the one-line status on the session's sidebar row (glance), and multiple-choice questions to the user (question). To ask the user anything, use question: the CLI's own ask-the-user tools (AskUserQuestion, request_user_input) never reach them.",
+            "Allternit session tools: the document open beside the chat (pane_artifact), the pane's browser (pane_browser), image/video generation rendered in the user's app (media_generate), the user's Artifacts (artifact_create, artifact_update, artifact_read, artifact_suggest; artifact_claim and artifact_release for one frame of a design canvas), the task list shown as the session's Progress (todowrite), the one-line status on the session's sidebar row (glance), gizzi's built-in skills (skill), and multiple-choice questions to the user (question). To ask the user anything, use question: the CLI's own ask-the-user tools (AskUserQuestion, request_user_input) never reach them.",
         })
       case "ping":
         return ok(req.id, {})
@@ -329,4 +337,34 @@ export namespace CliBridge {
         return fail(req.id, -32601, `Method not found: ${req.method}`)
     }
   }
+}
+
+/**
+ * The skill tool limited to gizzi's built-in skills: the CLI already loads the
+ * user's own skill folders itself, and listing them again would fill its
+ * context twice.
+ */
+function BuiltinSkillTool(): Tool.Info {
+  return ToolNS.define("skill", async () => {
+    // Outside a project (no instance) the bundled list still names them;
+    // a failure here must not cost the CLI every other bridge tool.
+    const skills = await Skill.all()
+      .then((all) => all.filter((s) => s.source === "builtin"))
+      .catch(() => BUNDLED_SKILLS.map((s) => ({ name: s.name, description: s.description })))
+    const parameters = z.object({ name: z.string().describe("The name of the skill to load") })
+    return {
+      description: [
+        "Load one of gizzi's built-in skills: step-by-step instructions you follow yourself in this session.",
+        "",
+        ...skills.map((s) => `- ${s.name}: ${s.description}`),
+      ].join("\n"),
+      parameters,
+      async execute(params: z.infer<typeof parameters>, ctx) {
+        if (!skills.some((s) => s.name === params.name))
+          throw new Error(`Skill "${params.name}" is not a gizzi built-in skill. Available: ${skills.map((s) => s.name).join(", ")}`)
+        const inner = await SkillTool.init()
+        return inner.execute(params, ctx)
+      },
+    }
+  })
 }

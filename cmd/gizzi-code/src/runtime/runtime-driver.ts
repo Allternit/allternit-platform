@@ -52,6 +52,13 @@ export interface AgentTask {
    * bridge and, where it can, none of its own tools either.
    */
   toolsOff?: boolean
+  /**
+   * Subagents for the CLI's own delegation tool. Off: the agent may not
+   * delegate (permission task: deny), so the CLI's own subagent tool is
+   * switched off too. Extra: the user's config subagents, added to the
+   * catalog the CLI gets (agents/brain-export.ts).
+   */
+  subagents?: { off?: boolean; extra?: import("@/runtime/agents/brain-export").ExportedAgent[] }
 }
 
 export interface TaskHandle {

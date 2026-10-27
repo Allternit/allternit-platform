@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -46,6 +47,12 @@ def gizzi_argv() -> list:
                          "and `node scripts/build.mjs` in cmd/gizzi-code/packages/sdk, "
                          "or set ALLTERNIT_EVAL_GIZZI to a gizzi command (it must include the 2026-10-27 skills)")
     return ["bun", str(src / "script/dev.mjs")]
+
+
+# Tool names as gizzi records them: a CLI brain's own subagent tool, and the
+# skill tool (gizzi's own, or the CLI bridge's).
+CLI_AGENT_TOOLS = {"Agent", "Task"}
+SKILL_TOOLS = {"skill", "mcp__allternit__skill", "allternit_skill"}
 
 
 def arm_config(arm: str) -> dict:
@@ -149,13 +156,44 @@ def export_cost(session_id: str, env: dict) -> tuple[float, dict]:
     return cost, tokens
 
 
+def claude_cli_cost(work: Path) -> tuple[float, dict]:
+    """A claude-cli brain's cost and tokens from Claude Code's own session log
+    for the work folder (the gizzi session records no price for a CLI brain).
+    totalCostUSD is Claude Code's API-price total, its subagents included; on
+    a subscription nothing is charged. The log folder is removed afterwards."""
+    folder = Path.home() / ".claude/projects" / re.sub(r"[^A-Za-z0-9]", "-", str(work))
+    cost, usage = 0.0, {}
+    if not folder.is_dir():
+        return cost, {}
+    for log in folder.rglob("*.jsonl"):
+        last = 0.0
+        for line in log.read_text(errors="replace").splitlines():
+            try:
+                ev = json.loads(line)
+            except ValueError:
+                continue
+            msg = ev.get("message")
+            if ev.get("type") == "cost-state":
+                last = float(ev.get("totalCostUSD") or 0)
+            elif ev.get("type") == "assistant" and isinstance(msg, dict) and msg.get("usage"):
+                usage[msg.get("id")] = msg["usage"]
+        cost += last
+    shutil.rmtree(folder, ignore_errors=True)
+    tokens = {"input": 0, "output": 0, "cache_read": 0}
+    for u in usage.values():
+        tokens["input"] += u.get("input_tokens", 0) + u.get("cache_creation_input_tokens", 0)
+        tokens["output"] += u.get("output_tokens", 0)
+        tokens["cache_read"] += u.get("cache_read_input_tokens", 0)
+    return cost, tokens
+
+
 def run_attempt(task: dict, arm: str, model: str, attempt_dir: Path, max_minutes: float) -> dict:
     root = attempt_dir / "work"
     if root.exists():
         shutil.rmtree(root)
     root.mkdir(parents=True)
     write_fixture(root, task)
-    env = dict(os.environ, GIZZI_CONFIG_CONTENT=json.dumps(arm_config(arm)), GIZZI_SUBAGENT_SYNC_OFF="1", GIZZI_NO_BRAIN_AGENTS="1")
+    env = dict(os.environ, GIZZI_CONFIG_CONTENT=json.dumps(arm_config(arm)), GIZZI_SUBAGENT_SYNC_OFF="1")
     argv = gizzi_argv() + ["run", "--format", "json", "--dir", str(root)]
     if model:
         argv += ["--model", model]
@@ -176,7 +214,7 @@ def run_attempt(task: dict, arm: str, model: str, attempt_dir: Path, max_minutes
                 p.kill()
     wall = time.monotonic() - t0
 
-    session_id, children, subagents, errors = None, [], [], []
+    session_id, children, subagents, skills, errors = None, [], [], [], []
     for line in events.read_text(errors="replace").splitlines():
         try:
             ev = json.loads(line)
@@ -184,17 +222,26 @@ def run_attempt(task: dict, arm: str, model: str, attempt_dir: Path, max_minutes
             continue
         session_id = session_id or ev.get("sessionID")
         part = ev.get("part") or {}
-        if ev.get("type") == "tool_use" and part.get("tool") == "task":
-            st = part.get("state") or {}
+        tool = part.get("tool") if ev.get("type") == "tool_use" else None
+        st = part.get("state") or {}
+        if tool == "task":
             subagents.append((st.get("input") or {}).get("subagent_type"))
             child = (st.get("metadata") or {}).get("sessionId")
             if child:
                 children.append(child)
+        elif tool in CLI_AGENT_TOOLS:
+            # A CLI brain's own subagent tool (Claude Code's Agent): its cost is
+            # already in the brain's turn total, so there is no child to add.
+            subagents.append((st.get("input") or {}).get("subagent_type") or "general-purpose")
+        elif tool in SKILL_TOOLS:
+            skills.append((st.get("input") or {}).get("name"))
         elif ev.get("type") == "error":
             errors.append(json.dumps(ev.get("error"))[:300])
 
     cost, tokens = (0.0, {})
-    if session_id:
+    if model.startswith("claude-cli/"):
+        cost, tokens = claude_cli_cost(root.resolve())
+    elif session_id:
         cost, tokens = export_cost(session_id, env)
         for child in children:
             c, t = export_cost(child, env)
@@ -204,7 +251,7 @@ def run_attempt(task: dict, arm: str, model: str, attempt_dir: Path, max_minutes
     checks = grade(root, task)
     return {
         "task": task["id"], "skill": task["skill"], "arm": arm, "pass": all(c["ok"] for c in checks),
-        "checks": checks, "subagents": subagents, "cost_usd": round(cost, 6), "tokens": tokens,
+        "checks": checks, "subagents": subagents, "skills": skills, "cost_usd": round(cost, 6), "tokens": tokens,
         "wall_s": round(wall, 1), "timed_out": timed_out, "exit": p.returncode, "errors": errors, "session_id": session_id,
     }
 
