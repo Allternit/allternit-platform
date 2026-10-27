@@ -229,7 +229,7 @@ Executes a tool or action against a connected connector.
 | `path` | string | No | Generic API path for raw passthrough. |
 | `method` | string | No | HTTP method for raw passthrough. |
 
-The account is chosen in this order: `connection_id` or `account` if given, else the default, else the most recently used. An account that matches nothing returns `404` with `{ "error": "account_not_found", "accounts": [...] }`; it never falls back to another account. The model-facing connector tools take the same optional `account` string ("Which connected account to use, by email or name. Omit for the default."). A bot's connector binding may carry a `connectionId`; a tool call with no explicit `account` uses it.
+The account is chosen in this order: `connection_id` or `account` if given, else the default, else the most recently used. An account that matches nothing returns `404` with `{ "error": "account_not_found", "accounts": [...] }`; it never falls back to another account. The model-facing connector tools take the same optional `account` string ("Which connected account to use, by email or name. Omit for the default."). A bot's connector binding may carry a `connectionId`; a tool call with no explicit `account` uses it (a bot runtime sends the binding's id in the `x-allternit-connection-id` header of its MCP requests).
 
 ### Example request
 
