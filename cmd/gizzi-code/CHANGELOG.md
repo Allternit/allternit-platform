@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+## 2.2.15 (2026-10-27)
+
+### Added
+- `gizzi agents tree`: one leased worktree per agent, seeded from a warm copy of main, with
+  checkpoints and rewind, overlap warnings, `done` to land and clean up, and a reaper that
+  removes only merged, idle, clean trees. See the Agent Trees docs.
+- Sessions created with `isolation: "worktree"` now run in their own tree.
+
+### Changed
+- Planning, debugging, docs writing and summarizing are bundled skills; the subagent catalog
+  is down to 11 types. A task naming a folded type gets a pointer to the skill.
+
+### Fixed
+- `/status` reports auth "none" instead of failing when no key is set.
+
 ## 2.2.14 (2026-10-26)
 
 ### Added
