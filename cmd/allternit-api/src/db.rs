@@ -31,6 +31,41 @@ fn ensure_exec_binding_agent_identity(conn: &Connection) -> SqlResult<()> {
     Ok(())
 }
 
+/// Tests open hundreds of fresh databases, and running every migration into
+/// each one was most of the CI test time. In test builds a new database file
+/// starts as a copy of one migrated template, so the runner in `new` finds
+/// nothing left to apply. `ALLTERNIT_NO_TEST_DB_TEMPLATE=1` turns it off.
+#[cfg(any(test, feature = "test-helpers"))]
+mod test_template {
+    use std::path::{Path, PathBuf};
+    use std::sync::OnceLock;
+
+    static TEMPLATE: OnceLock<Option<PathBuf>> = OnceLock::new();
+
+    pub(super) fn seed(path: &Path) {
+        if path.exists() || std::env::var_os("ALLTERNIT_NO_TEST_DB_TEMPLATE").is_some() {
+            return;
+        }
+        if let Some(template) = TEMPLATE.get_or_init(build) {
+            // On failure `new` migrates the empty file the usual way.
+            let _ = std::fs::copy(template, path);
+        }
+    }
+
+    fn build() -> Option<PathBuf> {
+        let name = format!("allternit-test-template-{}.db", uuid::Uuid::new_v4());
+        let path = std::env::temp_dir().join(name);
+        // Rollback journal, not WAL, so the whole template is one file.
+        let mut conn = rusqlite::Connection::open(&path).ok()?;
+        super::embedded::migrations::runner()
+            .set_abort_missing(false)
+            .run(&mut conn)
+            .ok()?;
+        super::ensure_exec_binding_agent_identity(&conn).ok()?;
+        Some(path)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct DbHandle {
     path: PathBuf,
@@ -41,6 +76,8 @@ const BUSY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 impl DbHandle {
     pub fn new(path: PathBuf) -> SqlResult<Self> {
+        #[cfg(any(test, feature = "test-helpers"))]
+        test_template::seed(&path);
         let mut conn = Connection::open(&path)?;
         conn.busy_timeout(BUSY_TIMEOUT)?;
         // Readers never wait on a writer (persistent per file; a no-op once set).
