@@ -3,13 +3,19 @@
 # Allternit Desktop — Full Build Pipeline
 #
 # Usage:
-#   ./scripts/build-desktop.sh [--skip-platform] [--skip-api] [--skip-electron]
+#   ./scripts/build-desktop.sh [--release] [--skip-platform] [--skip-api] [--skip-electron]
+#
+# A normal build makes the app for this Mac only (one DMG, this Mac's driver
+# Python). --release makes every mac artifact (arm64 + x64, DMG + zip) and
+# stages the driver Python for all platforms: use it for a public release.
 #
 # Runs through the machine-wide build queue (scripts/build-queue): it waits
 # for any other heavy build to finish and records the commits it built.
 # ALLTERNIT_BUILD_MAIN=1 moves clean, detached checkouts to the newest
 # origin/main when the build starts. Rust sidecars whose sources did not
-# change are reused (scripts/bin-cache); ALLTERNIT_NO_BIN_CACHE=1 rebuilds.
+# change are reused (scripts/bin-cache), and so is gizzi-code when nothing it
+# is built from changed; ALLTERNIT_NO_BIN_CACHE=1 rebuilds. Each stage prints
+# how long it took, with a summary at the end.
 # ─────────────────────────────────────────────────────────────────────────────
 
 set -e
@@ -29,14 +35,37 @@ PYTHON_BIN="${PYTHON_BIN:-$(command -v python3.11 || command -v python3)}"
 ok() { echo -e "\033[32m✓\033[0m $1"; }
 warn() { echo -e "\033[33m⚠\033[0m $1"; }
 die() { echo -e "\033[31m✗\033[0m $1" >&2; exit 1; }
-step() { echo ""; echo -e "\033[1;34m▶\033[0m $1"; }
+# Stage times: each step closes the one before it; the summary prints on exit.
+BUILD_START=$SECONDS
+STAGE_NAME=""
+STAGE_START=$SECONDS
+STAGE_TIMES=()
+end_stage() {
+  [ -n "$STAGE_NAME" ] || return 0
+  local took=$((SECONDS - STAGE_START))
+  STAGE_TIMES+=("$(printf '%4dm%02ds  %s' $((took / 60)) $((took % 60)) "$STAGE_NAME")")
+  echo -e "\033[2m  ⏱ $((took / 60))m$((took % 60))s  $STAGE_NAME\033[0m"
+  STAGE_NAME=""
+}
+step() { end_stage; STAGE_NAME="$1"; STAGE_START=$SECONDS; echo ""; echo -e "\033[1;34m▶\033[0m $1"; }
+print_stage_times() {
+  end_stage
+  [ ${#STAGE_TIMES[@]} -gt 0 ] || return 0
+  local total=$((SECONDS - BUILD_START))
+  echo ""
+  echo "Stage times:"
+  printf '%s\n' "${STAGE_TIMES[@]}"
+  printf '%4dm%02ds  total\n' $((total / 60)) $((total % 60))
+}
 
 # Parse flags
 SKIP_PLATFORM=false
 SKIP_API=false
 SKIP_ELECTRON=false
+RELEASE=false
 for arg in "$@"; do
   case $arg in
+    --release) RELEASE=true ;;
     --skip-platform) SKIP_PLATFORM=true ;;
     --skip-api) SKIP_API=true ;;
     --skip-electron) SKIP_ELECTRON=true ;;
@@ -51,7 +80,13 @@ if [ -z "${BUILD_QUEUE_HELD:-}" ]; then
   exec "$SCRIPT_DIR/build-queue" run desktop "${QUEUE_ARGS[@]}" -- "$SCRIPT_DIR/build-desktop.sh" "$@"
 fi
 
+trap print_stage_times EXIT
 cd "$WORKSPACE_ROOT"
+
+# This Mac only unless --release (prepare-allternit-driver.cjs, build-local.cjs).
+if [ "$RELEASE" = false ]; then
+  export ALLTERNIT_HOST_ONLY=1
+fi
 
 # Cargo output: the shared target dir (AGENTS.md: every session exports
 # CARGO_TARGET_DIR) or the default ./target. Looking only in ./target made
@@ -65,13 +100,12 @@ case "$CARGO_OUT" in /*) ;; *) CARGO_OUT="$WORKSPACE_ROOT/$CARGO_OUT" ;; esac
 reuse() { "$SCRIPT_DIR/bin-cache" fetch "$1" "$2" --root "$WORKSPACE_ROOT"; }
 remember() { "$SCRIPT_DIR/bin-cache" store "$1" "$2" "$2.d" --root "$WORKSPACE_ROOT" || warn "bin-cache: could not keep $1"; }
 
-# ── 1. Build Platform static export ──────────────────────────────────────────
-# The Electron app loads the hosted platform by default; the static export is
-# built later by prepare-platform-static (Vite) for offline fallback. The
-# legacy Next.js standalone server build is skipped because the platform is
-# now a Vite app and the standalone output is no longer consumed.
+# ── 1. Workspace UI (ai.allternit.com) ──────────────────────────────────────
+# Built once, by prepare-platform-static in step 5 (`pnpm run dist`), with the
+# Desktop env (local gateway, Clerk key). This step only picks the checkout and
+# pins it; building it here as well cost a second full Vite build every time.
 if [ "$SKIP_PLATFORM" = false ]; then
-  step "Building workspace UI (ai.allternit.com)…"
+  step "Preparing workspace UI checkout (ai.allternit.com)…"
   PLATFORM_DIR="$(resolve_hosted_ui "$WORKSPACE_ROOT")" || die "ai.allternit.com UI not found"
   link_oss_platform "$PLATFORM_DIR" "$WORKSPACE_ROOT"
   # Packaging refuses a UI behind origin/main (prepare-platform-static.cjs).
@@ -81,12 +115,16 @@ if [ "$SKIP_PLATFORM" = false ]; then
   if [ -n "$UI_HEAD" ] && [ "$UI_HEAD" = "$(git -C "$PLATFORM_DIR" rev-parse origin/main 2>/dev/null)" ]; then
     export ALLTERNIT_UI_MAIN_AT_START="$UI_HEAD"
   fi
-  cd "$PLATFORM_DIR"
-  NEXT_PUBLIC_ALLTERNIT_DESKTOP_AUTH=1 pnpm run build
-  
-  PLATFORM_OUT="$PLATFORM_DIR/dist"
-  [ -d "$PLATFORM_OUT" ] || die "Platform build failed — output directory not found at $PLATFORM_OUT"
-  ok "Platform static export → $PLATFORM_OUT"
+  # prepare-platform-static builds this same checkout.
+  export ALLTERNIT_AI_PATH="$PLATFORM_DIR"
+  if [ "$SKIP_ELECTRON" = true ]; then
+    # No packaging step will build it: build it here.
+    (cd "$PLATFORM_DIR" && NEXT_PUBLIC_ALLTERNIT_DESKTOP_AUTH=1 pnpm run build)
+    [ -d "$PLATFORM_DIR/dist" ] || die "Platform build failed — output directory not found at $PLATFORM_DIR/dist"
+    ok "Platform static export → $PLATFORM_DIR/dist"
+  else
+    ok "Workspace UI → $PLATFORM_DIR (built once when packaging)"
+  fi
 fi
 
 # ── 2. Build Gizzi Code Binary ───────────────────────────────────────────────
@@ -96,25 +134,34 @@ ARCH=$(uname -m | sed 's/arm64/arm64/;s/x86_64/x64/')
 OS=$(uname | tr '[:upper:]' '[:lower:]' | sed 's/darwin/darwin/')
 GIZZI_TARGET="${OS}-${ARCH}"   # e.g. darwin-arm64
 
-# bun install inside cmd/gizzi-code fails: it is a pnpm workspace package
-# (workspace:* deps). Match CI (gizzi-code-quality.yml): install/build from
-# the repo root, then compile the binary.
+# Reused when nothing it is built from changed: every tracked file of
+# gizzi-code and the workspace packages it depends on, the lockfile and bun.
 cd "$WORKSPACE_ROOT"
-pnpm --filter "@allternit/gizzi-code^..." run build
-pnpm --filter "@allternit/gizzi-sdk" run build
-cd "$GIZZI_DIR"
-bun run script/build-production.js --target="$GIZZI_TARGET"
-
-GIZZI_BIN="$GIZZI_DIR/dist/gizzi-code"
-# The build script might suffix it with the target, check both
-if [ ! -f "$GIZZI_BIN" ]; then
-    GIZZI_BIN="$GIZZI_DIR/dist/gizzi-code-$GIZZI_TARGET"
-fi
-
-[ -f "$GIZZI_BIN" ] || die "gizzi-code build failed — binary not found at $GIZZI_BIN"
-
 mkdir -p "$RESOURCES_DIR/bin"
-cp "$GIZZI_BIN" "$RESOURCES_DIR/bin/gizzi-code"
+if ! reuse "gizzi-code-$GIZZI_TARGET" "$RESOURCES_DIR/bin/gizzi-code"; then
+  # bun install inside cmd/gizzi-code fails: it is a pnpm workspace package
+  # (workspace:* deps). Match CI (gizzi-code-quality.yml): install/build from
+  # the repo root, then compile the binary.
+  pnpm --filter "@allternit/gizzi-code^..." run build
+  pnpm --filter "@allternit/gizzi-sdk" run build
+  (cd "$GIZZI_DIR" && bun run script/build-production.js --target="$GIZZI_TARGET")
+
+  GIZZI_BIN="$GIZZI_DIR/dist/gizzi-code"
+  # The build script might suffix it with the target, check both
+  if [ ! -f "$GIZZI_BIN" ]; then
+      GIZZI_BIN="$GIZZI_DIR/dist/gizzi-code-$GIZZI_TARGET"
+  fi
+
+  [ -f "$GIZZI_BIN" ] || die "gizzi-code build failed — binary not found at $GIZZI_BIN"
+
+  cp "$GIZZI_BIN" "$RESOURCES_DIR/bin/gizzi-code"
+  GIZZI_DIRS="$(pnpm -r --filter "@allternit/gizzi-code..." exec pwd 2>/dev/null | sed "s#^$WORKSPACE_ROOT/##" | paste -sd, -)"
+  if [ -n "$GIZZI_DIRS" ]; then
+    "$SCRIPT_DIR/bin-cache" store-dirs "gizzi-code-$GIZZI_TARGET" "$GIZZI_BIN" --root "$WORKSPACE_ROOT" \
+      --dirs "$GIZZI_DIRS" --files pnpm-lock.yaml,package.json,pnpm-workspace.yaml --tool "bun --version" \
+      || warn "bin-cache: could not keep gizzi-code"
+  fi
+fi
 chmod +x "$RESOURCES_DIR/bin/gizzi-code"
 ok "gizzi-code → $RESOURCES_DIR/bin/gizzi-code"
 
@@ -219,6 +266,26 @@ if [ "$SKIP_API" = false ]; then
   ok "local-engine → $RESOURCES_DIR/bin/allternit-local-engine"
 fi
 
+# ── 3b. Phone Link Apple ID signer (macOS) ─────────────────────────────────
+# A standalone cargo workspace (cmd/allternit-sideload). Staged here so it is
+# reused when unchanged; prepare-sideload.cjs then finds it already staged.
+if [[ "$OSTYPE" == "darwin"* ]] && [ "${ALLTERNIT_SKIP_SIDELOAD:-}" != 1 ]; then
+  step "Building allternit-sideload (Rust)…"
+  SIDELOAD_DIR="$WORKSPACE_ROOT/cmd/allternit-sideload"
+  if ! reuse allternit-sideload "$RESOURCES_DIR/bin/allternit-sideload"; then
+    cargo build --release --manifest-path "$SIDELOAD_DIR/Cargo.toml"
+    SIDELOAD_TARGET="$(cargo metadata --format-version 1 --no-deps --manifest-path "$SIDELOAD_DIR/Cargo.toml" | "$PYTHON_BIN" -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])')"
+    SIDELOAD_BIN="$SIDELOAD_TARGET/release/allternit-sideload"
+    [ -f "$SIDELOAD_BIN" ] || die "allternit-sideload build failed — binary not found at $SIDELOAD_BIN"
+    cp "$SIDELOAD_BIN" "$RESOURCES_DIR/bin/allternit-sideload"
+    # Its own workspace and lockfile: keyed by its folder, not the root Cargo.lock.
+    "$SCRIPT_DIR/bin-cache" store-dirs allternit-sideload "$SIDELOAD_BIN" --root "$WORKSPACE_ROOT" \
+      --dirs cmd/allternit-sideload --tool "rustc -vV" || warn "bin-cache: could not keep allternit-sideload"
+  fi
+  chmod +x "$RESOURCES_DIR/bin/allternit-sideload"
+  ok "allternit-sideload → $RESOURCES_DIR/bin/allternit-sideload"
+fi
+
 # ── 4. Download Lume Virtualization (macOS) ──────────────────────────────────
 if [[ "$OSTYPE" == "darwin"* ]]; then
   step "Downloading Lume virtualization binary…"
@@ -262,10 +329,8 @@ if [ "$SKIP_ELECTRON" = false ]; then
   # @babel/core 7 -> 8); a lockfile that is really out of date should fail here.
   pnpm install --frozen-lockfile
 
-  # Build the renderer and main process
-  pnpm run build
-
-  # Package with electron-builder
+  # Package: `dist` stages every sidecar, builds the UI and the main process
+  # (`npm run build`) once, then runs electron-builder.
   pnpm run dist
 
   ok "Electron app built → $DESKTOP_DIR/release/"
