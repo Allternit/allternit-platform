@@ -129,7 +129,9 @@ const PAGE_SCRIPT = `(() => {
   const clip = (s, n) => String(s == null ? '' : s).replace(/\\s+/g, ' ').trim().slice(0, n);
   // "Customer name:" → "Customer name" (the UI adds its own colon).
   const noColon = (s) => s.replace(/\\s*:\\s*$/, '');
-  const interactive = 'a,button,input,select,textarea,summary,label,[role],[onclick],[tabindex]';
+  const controls = 'a,button,input,select,textarea,summary,label,[role=button],[role=link],[role=tab],[role=menuitem],[role=menuitemcheckbox],[role=menuitemradio],[role=checkbox],[role=radio],[role=switch],[role=option],[role=combobox],[role=searchbox],[role=textbox],[role=treeitem],[role=gridcell]';
+  // Containers that take a click (a header, a card) when no control is inside the path.
+  const clickables = '[onclick],[tabindex]';
   const cssEsc = (v) => (window.CSS && CSS.escape ? CSS.escape(v) : v);
   // What a person sees next to a field: its <label>, else aria/placeholder/name.
   const fieldLabel = (el) => {
@@ -233,11 +235,19 @@ const PAGE_SCRIPT = `(() => {
         return;
       }
     }
-    const t = raw ? raw.closest(interactive) || raw : null;
+    // Enter in a form makes the browser click the submit button itself
+    // (detail 0, no pointer); the Enter is the step, not this click.
+    if (e.detail === 0 && Date.now() - lastEnterAt < 300) return;
+    const control = raw ? raw.closest(controls) : null;
+    const t = control || (raw ? raw.closest(clickables) || raw : null);
     if (!t || t.nodeType !== 1) return;
     // A native <select> reports through its change event; its click is not a step.
     if (t.tagName === 'SELECT') return;
-    send(attrs({ k: 'click', label: safeLabel(t), role: t.getAttribute('role') || t.tagName.toLowerCase(), selector: selector(t) }, t));
+    // A container's text is everything in it ("Main menu Search Appearance …");
+    // name it by what was under the pointer instead.
+    let lbl = safeLabel(t);
+    if (!control && raw !== t && lbl.length > 40) lbl = label(raw).slice(0, 80);
+    send(attrs({ k: 'click', label: lbl, role: t.getAttribute('role') || t.tagName.toLowerCase(), selector: selector(t) }, t));
   }, true);
   document.addEventListener('change', (e) => {
     const t = e.target;
@@ -254,8 +264,15 @@ const PAGE_SCRIPT = `(() => {
       send({ k: 'select', label: sens ? (t.getAttribute('name') || 'select') : fieldLabel(t), value: sens ? '' : clip(t.selectedOptions && t.selectedOptions[0] ? t.selectedOptions[0].text : t.value, 80), css: selector(t) });
       return;
     }
-    const field = clip(t.getAttribute('name') || t.id || '', 40);
     const choice = type === 'checkbox' || type === 'radio';
+    if (!choice && sentValue.get(t) === t.value) return;
+    sendField(t, type, choice);
+  }, true);
+  // A typed field as one input event; on Enter/Tab it goes out before the key.
+  const sentValue = new WeakMap();
+  const isTextField = (el) => !!el && el.nodeType === 1 && (el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && !/^(checkbox|radio|file|hidden|submit|button|image|reset|range|color)$/i.test(el.getAttribute('type') || '')));
+  const sendField = (t, type, choice) => {
+    const field = clip(t.getAttribute('name') || t.id || '', 40);
     // A radio/checkbox is named by its group ("Pizza Size"); the value is the option picked ("Medium").
     const lbl = choice ? (groupLabel(t) || fieldLabel(t)) : fieldLabel(t);
     const o = attrs({ k: 'input', label: lbl, field: field || undefined }, t);
@@ -263,8 +280,15 @@ const PAGE_SCRIPT = `(() => {
       if (choice) o.valuePreview = clip((type === 'checkbox' && !t.checked ? 'unchecked: ' : '') + fieldLabel(t), 40);
       else o.valuePreview = clip(t.value, 40);
     }
+    if (!choice) sentValue.set(t, t.value);
     send(o);
+  };
+  // What the field held when it got focus: unchanged text is not a step.
+  document.addEventListener('focusin', (e) => {
+    const t = e.target;
+    if (isTextField(t) && !sentValue.has(t)) sentValue.set(t, t.value);
   }, true);
+  let lastEnterAt = 0;
   // Enter / Tab / Escape and modifier shortcuts only; never plain characters.
   document.addEventListener('keydown', (e) => {
     if (e.isComposing || !e.key) return;
@@ -272,8 +296,13 @@ const PAGE_SCRIPT = `(() => {
     if (e.key === 'Enter' || e.key === 'Tab' || e.key === 'Escape') key = e.key;
     else if ((e.metaKey || e.ctrlKey) && e.key.length === 1 && !e.altKey) key = (e.metaKey ? 'Meta+' : 'Ctrl+') + (e.shiftKey ? 'Shift+' : '') + e.key.toLowerCase();
     if (!key) return;
-    if (key === 'Enter' || key === 'Tab') flushAll();
     const a = document.activeElement;
+    if (key === 'Enter' || key === 'Tab') {
+      flushAll();
+      // The field's change event fires after this key; send the text now so it comes first.
+      if (isTextField(a) && sentValue.get(a) !== a.value) sendField(a, (a.getAttribute('type') || '').toLowerCase(), false);
+      if (key === 'Enter') lastEnterAt = Date.now();
+    }
     const o = { k: 'key', key: key };
     if (a && a.nodeType === 1 && a !== document.body && a !== document.documentElement) o.label = safeLabel(a);
     send(o);
