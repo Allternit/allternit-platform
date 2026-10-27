@@ -99,9 +99,11 @@ The wrapper also passes `-c.buildVersion=<version>.<height>` (CFBundleVersion /
 Windows FileVersion) and writes `resources/build-info.json`, which is packed
 next to the sidecars and surfaced in-app: Settings → About shows
 "Allternit Desktop 1.1.1-b4177 · build 1.1.1.4177" via `app:get-info`.
-CI/release builds keep clean version-only names and report no buildInfo (the
-wrapper skips CI and the workflow pins the suffix to empty; the
-`resources/build-info.json` extraResource is simply absent there). Override
+CI/release builds keep clean version-only names. The wrapper still writes
+`resources/build-info.json` there, with the version, an empty suffix and no
+buildVersion, so Settings shows just the version. The file is never
+committed (it is in `.gitignore`): a stale copy committed by mistake shipped
+in 1.1.12 and showed "build 1.1.1.<timestamp>". Override
 with `ALLTERNIT_BUILD_SUFFIX="-custom"` (or `=""` for clean names locally)
 and `ALLTERNIT_BUILD_VERSION` for the buildVersion string.
 

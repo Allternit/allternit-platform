@@ -33,27 +33,31 @@ if (
 }
 
 const extraArgs = [];
+const pkg = require(path.join(__dirname, '..', 'package.json'));
+let buildVersion;
 if (process.env.ALLTERNIT_BUILD_SUFFIX) {
-  const pkg = require(path.join(__dirname, '..', 'package.json'));
   // An explicit -b<N> suffix carries the build number; without this the
   // bundle version fell back to a timestamp and never matched the DMG name.
   height ??= /^-b(\d+)$/.exec(process.env.ALLTERNIT_BUILD_SUFFIX)?.[1] ?? null;
-  const buildVersion = process.env.ALLTERNIT_BUILD_VERSION || `${pkg.version}.${height ?? Date.now()}`;
+  buildVersion = process.env.ALLTERNIT_BUILD_VERSION || `${pkg.version}.${height ?? Date.now()}`;
   extraArgs.push(`-c.buildVersion=${buildVersion}`);
-  try {
-    fs.writeFileSync(
-      path.join(__dirname, '..', 'resources', 'build-info.json'),
-      JSON.stringify({
-        version: pkg.version,
-        buildVersion,
-        buildSuffix: process.env.ALLTERNIT_BUILD_SUFFIX,
-        builtAt: new Date().toISOString(),
-      }, null, 2) + '\n'
-    );
-  } catch {
-    // resources/ is staged by the prepare:* steps; if it is absent the app
-    // simply reports no buildInfo.
-  }
+}
+// Written on every build, CI release builds too (no suffix, no build
+// number): a stale file from an earlier local build once shipped in public
+// releases, so Settings showed "1.1.13 (build 1.1.1.<timestamp>)".
+try {
+  fs.writeFileSync(
+    path.join(__dirname, '..', 'resources', 'build-info.json'),
+    JSON.stringify({
+      version: pkg.version,
+      ...(buildVersion ? { buildVersion } : {}),
+      buildSuffix: process.env.ALLTERNIT_BUILD_SUFFIX || '',
+      builtAt: new Date().toISOString(),
+    }, null, 2) + '\n'
+  );
+} catch {
+  // resources/ is staged by the prepare:* steps; if it is absent the app
+  // simply reports no buildInfo.
 }
 
 // Windows cannot hold an empty environment variable, so the clean-name case
