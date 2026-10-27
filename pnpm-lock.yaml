@@ -2614,9 +2614,6 @@ importers:
 
   services/subscription-gateway:
     dependencies:
-      '@ag-ui/client':
-        specifier: 0.0.59
-        version: 0.0.59
       '@allternit/agent-gateway':
         specifier: workspace:*
         version: link:../../platform/packages/agent-gateway

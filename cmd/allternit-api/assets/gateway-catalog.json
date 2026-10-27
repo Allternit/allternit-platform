@@ -937,6 +937,64 @@
       }
     },
     {
+      "id": "ag-ui",
+      "displayName": "Any AG-UI agent",
+      "agentNoun": "agent",
+      "legalName": "AG-UI protocol (any compatible agent)",
+      "logoAsset": "/assets/vendors/ag-ui.svg",
+      "monogram": "AG",
+      "modes": [
+        "linked"
+      ],
+      "recommendedLane": "official",
+      "profiles": [
+        {
+          "id": "ag-ui-endpoint",
+          "label": "Connect an AG-UI agent",
+          "authType": "api_key",
+          "lane": "official",
+          "adapterId": "ag-ui",
+          "guarantee": "best_effort",
+          "recommended": true,
+          "scopes": [
+            "agent.read",
+            "messages.send",
+            "replies.read"
+          ],
+          "permissionDescription": [
+            "Send messages to the AG-UI agent at the URL you enter",
+            "Receive its replies in a new conversation"
+          ],
+          "endpointLabel": "Agent run URL",
+          "endpointPlaceholder": "https://agent.example.com/agent",
+          "credentialLabel": "Token (optional)",
+          "credentialDescription": "Enter the URL your agent\u2019s AG-UI endpoint accepts runs on: https on a public host, or http://127.0.0.1 for an agent on this computer. Add a bearer token if the agent asks for one. Conversation history lasts for this gateway session.",
+          "credentialHelpUrl": "https://docs.ag-ui.com"
+        }
+      ],
+      "permissions": {
+        "read": [
+          "the configured agent",
+          "current-run replies"
+        ],
+        "send": [
+          "isolated conversation messages"
+        ],
+        "control": [],
+        "sync": [
+          "completed replies"
+        ],
+        "unavailable": [
+          "conversation resume",
+          "tool calls",
+          "approval forwarding",
+          "cancellation",
+          "memory editing",
+          "computer control"
+        ]
+      }
+    },
+    {
       "id": "openbot-nightly",
       "displayName": "OpenBot · Nightly",
       "agentNoun": "Bot",

@@ -1,8 +1,8 @@
-import { HttpAgent } from '@ag-ui/client';
 import { randomUUID } from 'node:crypto';
 import { BaseAaiProvider, fail, ok, type AaiResult, type OpenContextInput, type MessageInput, type EventsInput, type EventsResult } from '@allternit/agent-gateway';
 import { agentCapabilityManifestSchema } from '@allternit/subscription-fabric-contracts';
 import { PairedLocalTransport, isObject } from '../_shared/paired-local.js';
+import { runAgUi } from '../_shared/ag-ui.js';
 
 export const CAPABILITIES = agentCapabilityManifestSchema.parse({
  vendor:'openmuse-copilotkit', adapterId:'openmuse-copilotkit', lane:'local', guarantee:'best_effort',
@@ -17,7 +17,7 @@ export const CAPABILITIES = agentCapabilityManifestSchema.parse({
 type Reply = AaiResult<{messageId:string;correlationId:string;reply:string;guarantee:'best_effort'}>;
 type Context = {id:string;owner:string;threadId:string;closed:boolean;busy:boolean;messages:{id:string;role:'user'|'assistant'|'system';content:string}[];sends:Map<string,Promise<Reply>>;sendTexts:Map<string,string>;replies:{requestId:string;correlationId:string;reply:string}[]};
 
-/** Native OpenMuse CopilotKit runtime over its pinned AG-UI HTTP/SSE transport. */
+/** Native OpenMuse CopilotKit runtime over the AG-UI HTTP/SSE transport (adapters/_shared/ag-ui.ts). */
 export class OpenMuseCopilotkitProvider extends BaseAaiProvider {
  readonly adapterId='openmuse-copilotkit';
  private transport:PairedLocalTransport;
@@ -81,41 +81,20 @@ export class OpenMuseCopilotkitProvider extends BaseAaiProvider {
  }
  private async send(c:Context,input:MessageInput):Promise<Reply> {
   const session=await this.session();if(!session.ok)return session;
-  const allowed=`${this.transport.base}/api/copilotkit/agent/default/run`,fetchImpl=this.transport.options.fetch??fetch,runId=randomUUID();
-  let transportFailure:AaiResult<never>|undefined;
-  const agent=new HttpAgent({agentId:'default',threadId:c.threadId,url:allowed,headers:{authorization:`Bearer ${session.value}`},fetch:async(url,init)=>{
-   if(new URL(url).href!==allowed||init.method!=='POST')throw Error('Unapproved OpenMuse runtime request');
-   let body:unknown;try{body=JSON.parse(String(init.body));}catch{throw Error('Invalid AG-UI request body');}
-   if(!isObject(body)||body.threadId!==c.threadId||body.runId!==runId)throw Error('OpenMuse run identity mismatch');
-   const response=await fetchImpl(url,{...init,redirect:'error',signal:AbortSignal.any([init.signal??new AbortController().signal,AbortSignal.timeout(this.timeoutMs)])});
-   if(!response.ok){if(response.status===401||response.status===403)this.clearSession(session.value);transportFailure=response.status===401||response.status===403?fail('AUTH_REVOKED','OpenMuse rejected its session credential.'):
-     response.status===429?fail('RATE_LIMITED','OpenMuse is rate limiting this run.'):
-     fail('VENDOR_UNAVAILABLE',`OpenMuse AG-UI run returned HTTP ${response.status}.`,{retryable:false});}
-   return response;
-  }});
   const userMessage={id:randomUUID(),role:'user' as const,content:input.text};
-  agent.setMessages([...c.messages,userMessage]);
-  let runError=false,started=false,finished=false,runIdentityMismatch=false;
-  const identityMatches=(event:{threadId?:string;runId?:string})=>event.threadId===c.threadId&&event.runId===runId;
-  const subscription=agent.subscribe({
-   onRunStartedEvent:({event})=>{started=true;if(!identityMatches(event))runIdentityMismatch=true;},
-   onRunFinishedEvent:({event,outcome})=>{finished=outcome==='success';if(!identityMatches(event))runIdentityMismatch=true;},
-   onRunErrorEvent:()=>{runError=true;}
-  });
-  try {
-   const result=await agent.runAgent({runId,tools:[],context:[],forwardedProps:{}});
-   const additions=result.newMessages??[];
-   if(runError)return fail('VENDOR_UNAVAILABLE','OpenMuse reported a failed AG-UI run.',{retryable:false});
-   if(runIdentityMismatch)return fail('ADAPTER_DRIFT','OpenMuse returned run events for a different thread or run.',{retryable:false});
-   if(!started||!finished)return transportFailure??fail('ADAPTER_DRIFT','OpenMuse did not confirm completion for the submitted thread and run.',{retryable:false});
-   const replies=additions.filter(m=>m.role==='assistant'&&typeof m.content==='string'&&m.content.trim());
-   const reply=replies.map(m=>m.content as string).join('\n\n');
-   if(!reply.trim())return transportFailure??fail('ADAPTER_DRIFT','OpenMuse finished without an assistant reply attributable to this run.',{retryable:false});
-   c.messages=[...c.messages,userMessage,...replies.map(m=>({id:m.id,role:'assistant' as const,content:m.content as string}))];
-   c.replies.push({requestId:userMessage.id,correlationId:input.correlationId,reply});
-   return ok({messageId:userMessage.id,correlationId:input.correlationId,reply,guarantee:'best_effort'});
-  } catch {return transportFailure??fail('VENDOR_UNAVAILABLE','OpenMuse did not confirm this run. Check the vendor conversation before sending again.',{retryable:false});}
-  finally {subscription.unsubscribe();await agent.detachActiveRun().catch(()=>undefined);}
+  const run=await runAgUi({url:`${this.transport.base}/api/copilotkit/agent/default/run`,threadId:c.threadId,runId:randomUUID(),messages:[...c.messages,userMessage],headers:{authorization:`Bearer ${session.value}`},fetch:this.transport.options.fetch,timeoutMs:this.timeoutMs});
+  if(run.status!==undefined){if(run.status===401||run.status===403){this.clearSession(session.value);return fail('AUTH_REVOKED','OpenMuse rejected its session credential.');}
+   return run.status===429?fail('RATE_LIMITED','OpenMuse is rate limiting this run.'):fail('VENDOR_UNAVAILABLE',`OpenMuse AG-UI run returned HTTP ${run.status}.`,{retryable:false});}
+  if(run.error)return fail('VENDOR_UNAVAILABLE','OpenMuse reported a failed AG-UI run.',{retryable:false});
+  if(run.identityMismatch)return fail('ADAPTER_DRIFT','OpenMuse returned run events for a different thread or run.',{retryable:false});
+  if(run.transport)return fail('VENDOR_UNAVAILABLE','OpenMuse did not confirm this run. Check the vendor conversation before sending again.',{retryable:false});
+  if(!run.started||!run.finished)return fail('ADAPTER_DRIFT','OpenMuse did not confirm completion for the submitted thread and run.',{retryable:false});
+  const replies=run.messages.filter(m=>m.role==='assistant'&&m.content.trim());
+  const reply=replies.map(m=>m.content).join('\n\n');
+  if(!reply.trim())return fail('ADAPTER_DRIFT','OpenMuse finished without an assistant reply attributable to this run.',{retryable:false});
+  c.messages=[...c.messages,userMessage,...replies.map(m=>({id:m.id,role:'assistant' as const,content:m.content}))];
+  c.replies.push({requestId:userMessage.id,correlationId:input.correlationId,reply});
+  return ok({messageId:userMessage.id,correlationId:input.correlationId,reply,guarantee:'best_effort'});
  }
  async events(input:EventsInput):Promise<AaiResult<EventsResult>> {
   const c=this.live(input.contextId);if(!c.ok)return c;const after=Number(input.cursor??0);

@@ -2100,6 +2100,10 @@
         {
           "on": "2026-10-14",
           "note": "Eoj: all connected bots must talk together in group chats and look like their own product. Vendor members now answer inline in rooms through their connector with the room history (one standing thread per room), never a native model; each connector has its own look pack (brand accent + logo; Messages assistants use an iMessage face). allternit-api routes direct connectors by vendor id (DIRECT_ADAPTER_VENDORS) so account discovery works."
+        },
+        {
+          "on": "2026-10-27",
+          "note": "Eoj approved an 'Any AG-UI agent' connector: one generic adapter (ag-ui) for any agent that speaks AG-UI over HTTP/SSE, configured by URL + optional token sealed as JSON {url, token}. Public hosts must be https with every DNS answer public and the socket pinned to the checked address; http only on loopback. The gateway now uses its own AG-UI client (adapters/_shared/ag-ui.ts) for OpenMuse too, and @ag-ui/client is no longer a direct dependency."
         }
       ],
       "evidence": [
@@ -2109,6 +2113,8 @@
         "allternit/services/subscription-gateway/adapters/opendots-copilotkit/provider.ts",
         "allternit/services/subscription-gateway/adapters/ds-bot/provider.ts",
         "allternit/services/subscription-gateway/adapters/openmuse-copilotkit/provider.ts",
+        "allternit/services/subscription-gateway/adapters/ag-ui/provider.ts",
+        "allternit/services/subscription-gateway/adapters/_shared/ag-ui.ts",
         "allternit/services/subscription-gateway/adapters/openbot-nightly/provider.ts",
         "allternit/services/subscription-gateway/adapters/rakazo/provider.ts",
         "allternit/services/subscription-gateway/adapters/frockbot/provider.ts",

@@ -18,6 +18,7 @@ On Desktop, the website phone layout, and the PWA, the same connection flow uses
 | Invisible Dots | Server API token | Existing Dot conversation, queued delivery supported | Completed matched replies; approvals stay in vendor UI; no shared bot cancellation |
 | OpenDots · CopilotKit | Enforced owner access token; vendor Intelligence connection configured | New isolated vendor thread; official Intelligence SDK and WebSocket transport | Completed current-run replies; approvals stay in OpenDots; no cancellation or computer control |
 | OpenMuse · CopilotKit | Runtime OPENMUSE_ACCESS_KEY; live agent configured | New isolated AG-UI conversation | Current-run replies; history lasts in this gateway process; no resume, approvals or cancellation |
+| Any AG-UI agent | Agent run URL and optional token, sealed as JSON `{"url","token"}`; see [Any AG-UI agent](#any-ag-ui-agent) | New isolated AG-UI thread | Current-run replies; history lasts in this gateway process; no tools, resume, approvals or cancellation |
 | DS Bot | DSH Web launch token; explicit loopback origin configured on the Sessions computer | Existing bot session; select its model in DSH first | Completed caller-matched turns; approval decisions remain in DSH; no cancellation |
 | Hivekeep | API client key with isolated conversation access | New isolated API conversation | Completed replies only; review approvals in Hivekeep; no streaming or cancellation |
 | OpenBot · Nightly | Team API session token from the host's local login; loopback port set with `SUBS_GATEWAY_OPENBOT_NIGHTLY_URL` | Existing agent conversation | Completed turn replies; no approvals, cancellation or streaming |
@@ -57,6 +58,24 @@ Iris, Poke, Instinct, Flip, Cue and Pally are assistants you text. Allternit tex
 3. In Settings → Connections choose the assistant and enter JSON `{"handle":"+1…"}` with the number or iMessage address you text it at. Flip's published number is filled in for you.
 
 Replies are the assistant's next texts after yours. If you text the same assistant by hand while Allternit is waiting, that text can be taken as the reply.
+
+## Any AG-UI agent
+
+Any agent that speaks the [AG-UI protocol](https://docs.ag-ui.com) over HTTP can be connected without a vendor-specific adapter. Examples are agents built with LangGraph, CrewAI, Mastra, Pydantic AI or CopilotKit runtimes that expose an AG-UI endpoint.
+
+1. In Settings → Connections choose **Any AG-UI agent**.
+2. Enter the **Agent run URL**: the address the agent accepts AG-UI runs on (a POST that streams Server-Sent Events). Use `https` for an agent on a public host, or `http://127.0.0.1:PORT/...` (or `localhost`, `::1`) for an agent on the computer that runs the gateway.
+3. Add a **Token** if the agent asks for a bearer token, then save and start the check.
+
+Allternit stores the URL and token together as one encrypted credential, JSON `{"url":"…","token":"…"}`. Agents that need another header can be given `"headers":{"X-Api-Key":"…"}` in that JSON through the gateway API. Each connection is one agent, named after its host.
+
+What the connection checks:
+
+- The URL must not contain a user name, password or `#fragment`, and plain `http` is accepted only for loopback addresses.
+- For a public host, every address the name resolves to must be public. Private networks, link-local and cloud metadata addresses (`169.254.169.254`), carrier-grade NAT (`100.64.0.0/10`), IPv6 unique-local addresses and other reserved ranges are refused. The request then goes to the address that was checked, so a DNS answer that changes later cannot send it elsewhere. Redirects are not followed.
+- The first check sends a GET with your token: a 401 or 403 means the token was refused, a 5xx or no answer means the agent is unavailable. Most AG-UI endpoints answer 405 to a GET, which counts as reachable.
+
+Each message starts an AG-UI run in a new isolated thread with the conversation so far. A reply is shown only after the agent reports the run started and finished successfully for that exact thread and run. Tool calls, state updates and reasoning events are read but not shown or answered, and a run that pauses for input is reported as unsupported. History lasts while the gateway runs; there is no resume, approval forwarding or cancellation.
 
 ## Projects on hold
 
