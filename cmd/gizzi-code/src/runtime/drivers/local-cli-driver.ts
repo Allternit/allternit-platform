@@ -180,6 +180,7 @@ export class LocalCliDriver implements RuntimeDriver {
       bot: task?.bot,
       plan: task?.plan,
       toolsOff: task?.toolsOff,
+      subagents: task?.subagents,
       model: task?.model,
     })
 
@@ -1882,6 +1883,8 @@ interface CliAdapter {
       plan?: AgentTask["plan"]
       /** No tools this turn (see AgentTask.toolsOff). */
       toolsOff?: boolean
+      /** The CLI's own subagents (see AgentTask.subagents). */
+      subagents?: AgentTask["subagents"]
       /** The session's model (the picker's choice); the CLI validates it. */
       model?: string
     },
@@ -1948,7 +1951,10 @@ const CLI_ADAPTERS: Record<string, CliAdapter> = {
         // The Allternit subagent catalog as Claude Code subagents, so its own
         // delegation runs on haiku/sonnet/opus by class. Bots keep their own
         // tool policy, and a tools-off completion has nothing to delegate.
-        ...(ctx.bot || ctx.toolsOff ? [] : claudeAgentsFlags()),
+        // Subagents off for the agent: Claude's own Agent tool goes too.
+        ...(ctx.subagents?.off
+          ? ["--disallowedTools", "Task", "--disallowedTools", "Agent"]
+          : ctx.bot || ctx.toolsOff ? [] : claudeAgentsFlags(ctx.subagents?.extra)),
         // The picked model first; without one, the env override or Claude's default.
         ...modelFlag(
           sessionModel(ctx.model, "claude-cli") ??

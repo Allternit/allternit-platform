@@ -50,6 +50,28 @@ export function exportedAgents(): ExportedAgent[] {
   return [...builtins, ...customs]
 }
 
+/**
+ * The user's own subagents from gizzi config (`agent.<name>` with
+ * `mode: subagent` and a prompt), for a CLI brain's delegation tool. A
+ * subagent denied edit gets Claude's read tools plus Bash.
+ */
+export async function configSubagents(): Promise<ExportedAgent[]> {
+  const [{ Agent }, { PermissionNext }] = await Promise.all([
+    import("@/runtime/loop/agent"),
+    import("@/runtime/tools/guard/permission/next"),
+  ])
+  const catalog = new Set(BUILTIN_CATALOG.map((a) => a.name))
+  return (await Agent.list())
+    .filter((a) => a.mode === "subagent" && !a.native && !a.hidden && a.prompt?.trim() && !catalog.has(a.name))
+    .map((a) => ({
+      slug: a.name,
+      description: a.description ?? a.name,
+      prompt: a.prompt!,
+      tools: PermissionNext.evaluate("edit", "*", a.permission).action === "deny" ? ["Read", "Grep", "Glob", "Bash"] : undefined,
+      modelClass: a.modelClass ?? "inherit",
+    }))
+}
+
 const CLAUDE_MODEL: Record<ModelClass, string> = {
   small: "haiku",
   standard: "sonnet",
@@ -57,10 +79,12 @@ const CLAUDE_MODEL: Record<ModelClass, string> = {
   inherit: "inherit",
 }
 
-/** JSON for Claude Code's `--agents` flag. */
-export function claudeAgentsJson(): string {
+/** JSON for Claude Code's `--agents` flag. Extra agents never replace a catalog type. */
+export function claudeAgentsJson(extra: ExportedAgent[] = []): string {
   const out: Record<string, { description: string; prompt: string; tools?: string[]; model: string }> = {}
-  for (const a of exportedAgents()) {
+  const agents = exportedAgents()
+  const taken = new Set(agents.map((a) => a.slug))
+  for (const a of [...agents, ...extra.filter((e) => !taken.has(e.slug))]) {
     out[a.slug] = {
       description: a.description,
       prompt: a.prompt,
@@ -72,10 +96,10 @@ export function claudeAgentsJson(): string {
 }
 
 /** `--agents` flags for a claude-cli launch; empty when disabled. */
-export function claudeAgentsFlags(): string[] {
+export function claudeAgentsFlags(extra: ExportedAgent[] = []): string[] {
   if (["1", "true"].includes((process.env.GIZZI_NO_BRAIN_AGENTS ?? "").toLowerCase())) return []
   try {
-    return ["--agents", claudeAgentsJson()]
+    return ["--agents", claudeAgentsJson(extra)]
   } catch {
     return []
   }

@@ -24,6 +24,15 @@ In every other case the agent does the work itself and loads a skill with the st
 
 If an agent still asks for `planner`, `debugger`, `docs-writer`, `scribe` or `plan`, gizzi tells it to load the matching skill. Past runs of these types keep their faces in the run tree.
 
+### With Claude Code or Codex as the brain
+
+When a session runs on an installed CLI such as Claude Code or Codex, that CLI uses its own subagent tool. gizzi gives it the same rules:
+
+- The built-in subagents, and your own subagents from gizzi config, become the CLI's subagents.
+- The CLI's system prompt gets the delegation rule above.
+- The CLI loads gizzi's built-in skills, such as `planning` and `debugging`, through the `skill` tool on the `allternit` MCP server.
+- If the agent's config denies `task`, gizzi also turns off Claude Code's own `Agent` tool.
+
 Every subagent type has a face, a name and a model class. The same type looks the same in every chat, on every device.
 
 ## The built-in subagents

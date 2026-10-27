@@ -24,6 +24,8 @@ import { BrainContextReaders } from "@/runtime/session/brain-context-readers"
 import { Instance } from "@/runtime/context/project/instance"
 import * as BotTurn from "@/runtime/bots/bot-turn"
 import { planInstructions } from "@/runtime/drivers/cli-session-flags"
+import { cliDelegationNote } from "@/runtime/agents/builtin-catalog"
+import { configSubagents } from "@/runtime/agents/brain-export"
 
 const log = Log.create({ service: "subprocess-lm" })
 
@@ -226,6 +228,13 @@ export class SubprocessLanguageModel implements LanguageModelV2 {
     // internal completions: the user's text is data there, so the CLI must not
     // act on it or ask the user anything.
     const toolsOff = options?.headers?.["x-gizzi-tools-off"] === "1"
+    // gizzi's delegation rule and subagents, for the CLI's own delegation tool.
+    // Bots keep their own tool policy; a tools-off completion delegates nothing.
+    const delegates = !bot && !toolsOff && Boolean(sessionID)
+    const subagentsOff = options?.headers?.["x-gizzi-subagents-off"] === "1"
+    const subagents = delegates
+      ? { off: subagentsOff, extra: subagentsOff ? [] : await configSubagents().catch(() => []) }
+      : undefined
     const task = await driver.assign({
       taskId: generateTaskId(),
       prompt: message,
@@ -233,7 +242,14 @@ export class SubprocessLanguageModel implements LanguageModelV2 {
       // The session's instructions (mode contract, artifact-session note…)
       // go to the CLI as its system prompt; without them it only sees the
       // last user message.
-      systemPrompt: [systemText, plan ? planInstructions(this.providerID, plan) : ""].filter(Boolean).join("\n\n") || undefined,
+      systemPrompt:
+        [
+          systemText,
+          plan ? planInstructions(this.providerID, plan) : "",
+          subagents ? cliDelegationNote(CliBridge.SERVER_NAME, subagents.off) : "",
+        ]
+          .filter(Boolean)
+          .join("\n\n") || undefined,
       // The CLI executes its own tools opaquely; the session id lets the
       // driver's ACP permission requests gate through the session's
       // PermissionNext policy instead of auto-approving.
@@ -245,6 +261,7 @@ export class SubprocessLanguageModel implements LanguageModelV2 {
       // gizzi's session tools (pane document, pane browser, media) over MCP.
       mcp: sessionID && !toolsOff ? bridgeConfig(sessionID) : undefined,
       toolsOff,
+      subagents,
       // A bot turn: the CLI runs isolated from the user's own settings, with
       // the bot's tool allowlist (runtime/bots/bot-turn.ts).
       bot,

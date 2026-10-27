@@ -380,3 +380,14 @@ export function catalogAgent(name: string): CatalogAgent | undefined {
 /** The parent-prompt rule for when to delegate (task tool description). */
 export const DELEGATION_HINT =
   "Delegate only when one of these is true: the work can run in parallel with other work, it needs a fresh context (a large search, long logs, a big page or screen session you don't need to keep), or it needs tools you don't have. Otherwise do it yourself and load the matching skill: planning, debugging, docs-writing or summarizing. Each handoff loses context, so keep the plan, the reasoning and the final answer in your own loop."
+
+/**
+ * The same rule for a CLI brain (Claude Code, Codex…), appended to its system
+ * prompt: it never sees gizzi's task tool, and it loads gizzi's skills through
+ * the CLI bridge (integrations/cli-bridge). Off: the agent may not delegate.
+ */
+export function cliDelegationNote(server: string, off?: boolean): string {
+  const skill = `the ${server} MCP server's skill tool (mcp__${server}__skill)`
+  if (off) return `Do all the work yourself in this session: subagents are off. For planning, debugging, docs or summaries, load the matching skill with ${skill}.`
+  return `${DELEGATION_HINT} Load those skills with ${skill}.`
+}

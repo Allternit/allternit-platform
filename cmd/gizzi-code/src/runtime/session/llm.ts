@@ -380,6 +380,9 @@ export namespace LLM {
         ...(Object.keys(tools).some((name) => name !== "invalid" && name !== "StructuredOutput")
           ? {}
           : { "x-gizzi-tools-off": "1" }),
+        // Subagents are off for this agent (permission task: deny): CLI brains
+        // then get no subagents of their own either (loaders/subprocess.ts).
+        ...(tools.task ? {} : { "x-gizzi-subagents-off": "1" }),
         // Subscription Fabric: this send's human action (D16), minted by the
         // chat bridge, and the request id that keys the task's idempotency.
         ...(Provider.isFabricModel(input.model)

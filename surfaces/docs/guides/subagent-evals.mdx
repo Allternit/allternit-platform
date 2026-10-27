@@ -43,7 +43,9 @@ python3 -m evals --model <provider/model>                       # all tasks, all
 python3 -m evals --report runs/<timestamp>/results.jsonl        # print a report again
 ```
 
-A full run is 60 attempts (10 tasks × 3 arms × 2 runs) and calls a paid model. Run one attempt first and read its cost before you start a full run. Each task runs twice by default because a regression can show up in only one of two runs.
+`--model` takes any gizzi model: an API model, such as `allternit/kimi-k3`, or an installed CLI, such as `claude-cli/claude-sonnet-5`. On a CLI the eval runs gizzi's arms through the CLI's own subagent tool (see [Subagents](/guides/subagents)). For `claude-cli`, cost comes from Claude Code's own session log. It is the API price, subagents included; a Claude subscription is not charged that amount.
+
+A full run is 60 attempts (10 tasks × 3 arms × 2 runs) and can call a paid model. Run one attempt first and read its cost before you start a full run. Each task runs twice by default because a regression can show up in only one of two runs.
 
 Results go to `runs/<timestamp>/`: `results.jsonl` (one line per attempt), `report.md`, and each attempt's event log and work folder. Cost includes the subagents' own sessions.
 
