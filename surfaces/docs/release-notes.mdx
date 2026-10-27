@@ -5,6 +5,18 @@ description: 'Changelog for the Allternit platform, SDKs, and Gizzi Code CLI'
 
 # Release Notes
 
+## 2026-10-27 — Tool calls you can read at a glance
+
+The same changes apply on Desktop, on ai.allternit.com (including the phone layout) and in the m.allternit.com app.
+
+- **Every tool step in view while the agent works:** a header such as "Using 3 tools · 14s" with the apps' logos, and up to six steps on a thin line under it. Older steps fold into "+N earlier steps". When it finishes it reads "Used 4 tools · 12s".
+- **What each step found and how long it took:** a step ends with, for example, "4 results · 1.2s" and a check. Replies from before this change show the check without a time.
+- **Failures say why:** a failed step shows its reason under it without opening it, the header adds "· 1 failed", and on the latest reply the step has **Retry**.
+- **Approvals on the step:** a step that needs your OK shows what it will do and Deny, Always and Allow on its own row. The header reads "Waiting for approval". It no longer shows again as a card or above the text box.
+- **Run again:** under the latest reply that used tools, the retry button reads **Run again**.
+
+See [Agent steps in replies](/guides/agent-steps).
+
 ## 2026-10-25 — Your Mac tells you when the iPhone helper needs you
 
 - **Phone Link on iPhone:** when the weekly renewal of the iPhone helper can't happen by itself, Desktop now shows a macOS notification with the time the helper stops working and what to do (plug the iPhone in, or sign in to Apple in Phone Link setup). Before, this was only written to the log, so the phone went offline without warning. See [Phone Link](/guides/phone-link).
