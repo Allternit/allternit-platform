@@ -5,14 +5,16 @@ description: 'Store per-user custom subagent types and overrides of the built-in
 
 ## Overview
 
-Allternit ships 15 built-in subagent types. Their defaults live in the client and in gizzi, not in this API. The Subagent Types API stores only the caller's own rows:
+Allternit ships 11 built-in subagent types. Their defaults live in the client and in gizzi, not in this API. The Subagent Types API stores only the caller's own rows:
 
 - **Custom types** (`is_custom: true`) — new types with a slug that is not a built-in.
 - **Overrides** (`is_custom: false`) — changes to a built-in type, keyed by the built-in's slug. Fields left `null` keep the shipped default.
 
 Deleting a custom type removes it. Deleting an override resets that built-in to its defaults.
 
-Built-in slugs: `explorer`, `planner`, `builder`, `code-reviewer`, `verifier`, `debugger`, `web-researcher`, `browser-operator`, `computer-operator`, `docs-writer`, `data-analyst`, `ui-designer`, `release-engineer`, `security-reviewer`, `scribe`.
+Built-in slugs: `explorer`, `builder`, `code-reviewer`, `verifier`, `web-researcher`, `browser-operator`, `computer-operator`, `data-analyst`, `ui-designer`, `release-engineer`, `security-reviewer`.
+
+`planner`, `debugger`, `docs-writer` and `scribe` were built-in until 2026-10-27. They are now gizzi skills, so you can use those slugs for custom types. An existing override row for one of them is no longer applied. Delete it to use the slug for a custom type.
 
 <Note>
 This namespace is served by the Allternit API data-plane node (`http://127.0.0.1:8013` on the same machine, or your paired or provisioned node). The hosted Cloud API at `https://api.allternit.com` does not route it. See [Cloud API](/api/cloud-api).

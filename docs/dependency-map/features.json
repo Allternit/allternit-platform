@@ -2441,7 +2441,7 @@
       "label": "Subagent catalog and faces",
       "product": "product:gizzi-code",
       "status": "building",
-      "description": "15 built-in subagent types (Explorer, Planner, Builder, Code Reviewer, Verifier, Debugger, Web Researcher, Browser Operator, Computer Operator, Docs Writer, Data Analyst, UI Designer, Release Engineer, Security Reviewer, Scribe) with model classes small/standard/deep so delegated work runs cheap by default, a face per type from the Office Professionals pack on every subagent surface, Settings → Subagents to edit looks and add custom types (stored per user in subagent_types), synced into gizzi and exported to the Claude Code and Codex brains.",
+      "description": "11 built-in subagent types (Explorer, Builder, Code Reviewer, Verifier, Web Researcher, Browser Operator, Computer Operator, Data Analyst, UI Designer, Release Engineer, Security Reviewer) with model classes small/standard/deep; planning, debugging, docs-writing and summarizing are bundled gizzi skills the main loop runs itself (folded 2026-10-27), with subagent evals in domains/agent-evals/subagents; a face per type from the Office Professionals pack on every subagent surface, Settings → Subagents to edit looks and add custom types (stored per user in subagent_types), synced into gizzi and exported to the Claude Code and Codex brains.",
       "touches": [
         "allternit/cmd/gizzi-code/src/runtime/agents",
         "allternit/cmd/gizzi-code/src/runtime/loop",
@@ -2450,9 +2450,15 @@
         "allternit-ai/src/lib/subagents",
         "allternit-ai/src/components/subagents",
         "allternit-ai/src/components/agent-run-tree",
-        "allternit-ai/src/views/settings"
+        "allternit-ai/src/views/settings",
+        "allternit/cmd/gizzi-code/src/runtime/skills",
+        "allternit/domains/agent-evals"
       ],
       "decisions": [
+        {
+          "on": "2026-10-27",
+          "note": "Eoj approved folding subagents per Anthropic's 'when to fold subagents into your main agent loop': keep a subagent only for parallel work, a fresh context, or different tools. Planner, Debugger, Docs Writer and Scribe became skills; the delegation hint states the rule; the catalog stays the look. Subagent evals (split/folded/single, 10 tasks) decide further folds."
+        },
         {
           "on": "2026-10-25",
           "note": "Eoj: a look belongs to the subagent type; default faces come from the Office Professionals pack; build the catalog in the same change. Rejected the realistic analyst/designer/engineer/counsel/assistant faces; Amir, Kira, Grant, Jonah and Elena were drawn from the Allternit Series cast in the house style instead."
@@ -2461,7 +2467,8 @@
       "evidence": [
         "allternit/surfaces/docs/guides/subagents.mdx",
         "allternit/surfaces/docs/api/subagent-types.mdx",
-        "allternit/cmd/gizzi-code/src/runtime/agents/builtin-catalog.ts"
+        "allternit/cmd/gizzi-code/src/runtime/agents/builtin-catalog.ts",
+        "allternit/surfaces/docs/guides/subagent-evals.mdx"
       ]
     },
     {

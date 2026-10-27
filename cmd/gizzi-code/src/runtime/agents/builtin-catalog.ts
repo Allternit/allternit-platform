@@ -1,5 +1,5 @@
 /**
- * The built-in subagent catalog: 15 focused subagent types that ship inside
+ * The built-in subagent catalog: 11 focused subagent types that ship inside
  * the gizzi binary (no loose .md files at runtime). One source for:
  *   - runtime agents (runtime/loop/agent.ts merges these into its built-ins),
  *   - the ink-app AgentTool (builtInAgents.ts generates AgentDefinitions),
@@ -7,6 +7,11 @@
  *
  * Kept dependency-free (plain data) so every one of those paths can import it
  * without pulling the runtime graph along.
+ *
+ * A type stays a subagent only when the work is parallel, needs a fresh
+ * throwaway context, or needs a different tool set from the parent. Types that
+ * failed that test (planner, debugger, docs-writer, scribe) were folded into
+ * the main loop as bundled skills; see FOLDED_TYPES.
  *
  * Model classes are logical: `small` (cheap/fast), `standard` (the parent's
  * model), `deep` (the strongest available), `inherit` (always the parent's).
@@ -166,25 +171,6 @@ export const BUILTIN_CATALOG: CatalogAgent[] = [
     ].join("\n"),
   },
   {
-    name: "planner",
-    title: "Planner",
-    description:
-      "Designs an implementation plan for a non-trivial change: steps, critical files, risks and trade-offs. Read-only.",
-    mode: "subagent",
-    modelClass: "deep",
-    face: "theo",
-    steps: 40,
-    permission: only({ bash: READ_ONLY_BASH, websearch: "allow", webfetch: "allow" }),
-    tools: [...CC_READ, "Bash", "WebSearch", "WebFetch"],
-    prompt: [
-      "You are Planner, a software architect. You read; you do not edit.",
-      "Understand the existing code first, then design the smallest correct change that fits its patterns.",
-      "Output: a numbered step plan, the files each step touches, trade-offs you rejected and why, risks, and how to verify.",
-      "Flag anything that needs a human decision instead of guessing.",
-      RESULT_RULE,
-    ].join("\n"),
-  },
-  {
     name: "builder",
     title: "Builder",
     description:
@@ -240,24 +226,6 @@ export const BUILTIN_CATALOG: CatalogAgent[] = [
     ].join("\n"),
   },
   {
-    name: "debugger",
-    title: "Debugger",
-    description: "Finds the root cause of a bug, error or failing log from evidence. Read-only; returns cause + suggested fix.",
-    mode: "subagent",
-    modelClass: "small",
-    face: "nia",
-    steps: 40,
-    permission: only({ bash: READ_ONLY_BASH }),
-    tools: [...CC_READ, "Bash"],
-    prompt: [
-      "You are Debugger. Work from evidence: the error, stack trace or logs first, then the code paths they point to.",
-      "Form hypotheses, check each against the code, and discard the ones the evidence rules out.",
-      "Return the root cause (file:line), why it happens, the minimal fix, and how to confirm it. Say how confident you are.",
-      "Never modify files.",
-      RESULT_RULE,
-    ].join("\n"),
-  },
-  {
     name: "web-researcher",
     title: "Web Researcher",
     description: "Researches a question on the web and returns a cited summary (docs, APIs, versions, prior art).",
@@ -309,32 +277,6 @@ export const BUILTIN_CATALOG: CatalogAgent[] = [
       STOP_RULE,
       "Never type passwords or secrets yourself; ask the user to do it.",
       RESULT_RULE + " Include what changed on the machine.",
-    ].join("\n"),
-  },
-  {
-    name: "docs-writer",
-    title: "Docs Writer",
-    description: "Writes or updates documentation (README, guides, .md/.mdx). Can only edit docs files.",
-    mode: "subagent",
-    modelClass: "small",
-    face: "imani",
-    steps: 40,
-    permission: only({
-      bash: READ_ONLY_BASH,
-      edit: {
-        "*": "deny",
-        "docs/*": "allow",
-        "*/docs/*": "allow",
-        "*.md": "allow",
-        "*.mdx": "allow",
-      },
-    }),
-    tools: [...CC_READ, "Edit", "Write"],
-    prompt: [
-      "You are Docs Writer. Read the code and existing docs first; document what the code actually does.",
-      "Plain, direct language. Match the existing docs' structure, tone and navigation. Keep examples runnable.",
-      "You may edit only docs/** and *.md / *.mdx files. Never change source code.",
-      RESULT_RULE + " List the docs you changed.",
     ].join("\n"),
   },
   {
@@ -410,36 +352,31 @@ export const BUILTIN_CATALOG: CatalogAgent[] = [
       RESULT_RULE,
     ].join("\n"),
   },
-  {
-    name: "scribe",
-    title: "Scribe",
-    description: "Summarizes transcripts, logs, diffs or docs into tight summaries, notes and handoffs. Cheap, read-only.",
-    mode: "subagent",
-    modelClass: "small",
-    face: "elena",
-    steps: 20,
-    permission: only({}),
-    tools: CC_READ,
-    prompt: [
-      "You are Scribe. Read the material and write the shortest summary that keeps every decision, open item, owner and file path.",
-      "For handoffs: state, what is done, what is open (all of it), next steps, and where things live.",
-      "Never invent facts that are not in the source.",
-      RESULT_RULE,
-    ].join("\n"),
-  },
 ]
 
 /** Legacy names that now resolve to catalog types (configs and callers keep working). */
 export const CATALOG_ALIASES: Record<string, string> = {
   general: "builder",
   explore: "explorer",
-  plan: "planner",
+}
+
+/**
+ * Former subagent types that now run in the main loop as bundled skills
+ * (runtime/skills/bundled). A task call naming one gets a pointer to the skill
+ * instead of "unknown agent". A user's own custom type with the same slug wins.
+ */
+export const FOLDED_TYPES: Record<string, string> = {
+  planner: "planning",
+  plan: "planning",
+  debugger: "debugging",
+  "docs-writer": "docs-writing",
+  scribe: "summarizing",
 }
 
 export function catalogAgent(name: string): CatalogAgent | undefined {
   return BUILTIN_CATALOG.find((a) => a.name === name)
 }
 
-/** The parent-prompt nudge (task tool description). */
+/** The parent-prompt rule for when to delegate (task tool description). */
 export const DELEGATION_HINT =
-  "Delegate search (explorer), tests/typecheck/lint (verifier), log and error digging (debugger), docs (docs-writer) and summaries (scribe) to these cheap subagents instead of doing them in your own context."
+  "Delegate only when one of these is true: the work can run in parallel with other work, it needs a fresh context (a large search, long logs, a big page or screen session you don't need to keep), or it needs tools you don't have. Otherwise do it yourself and load the matching skill: planning, debugging, docs-writing or summarizing. Each handoff loses context, so keep the plan, the reasoning and the final answer in your own loop."

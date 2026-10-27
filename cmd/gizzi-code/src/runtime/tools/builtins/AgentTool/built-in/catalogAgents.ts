@@ -2,7 +2,7 @@ import { BUILTIN_CATALOG } from '@/runtime/agents/builtin-catalog'
 import type { BuiltInAgentDefinition } from '../loadAgentsDir.js'
 
 /**
- * The 15-type Allternit subagent catalog as ink-app AgentDefinitions.
+ * The 11-type Allternit subagent catalog as ink-app AgentDefinitions.
  * One source: runtime/agents/builtin-catalog.ts. `model` carries the class
  * name (small/standard/deep/inherit); utils/model/agent.ts resolves it.
  */
