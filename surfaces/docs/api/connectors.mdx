@@ -46,7 +46,8 @@ See [Authentication](/api/authentication).
 | `tier` | integer | Connector tier. |
 | `mcp_backed` | boolean | Whether the connector is exposed through the MCP surface. |
 | `backend` | string | `rust_native` for curated connectors, `open_connector` for sidecar-backed connectors, `allternit_native` for the Allternit Mail connector. |
-| `connection` | object | `{ "status": "connected" \| "disconnected" \| "pending", "account": string }`. |
+| `connection` | object | `{ "status": "connected" \| "disconnected" \| "pending", "account": string }`. The default account's status, kept for older clients. |
+| `accounts` | array | Every account of this connector for the caller: `{ "id", "account", "status", "is_default" }`. Absent on servers without multi-account connectors. |
 
 ## Endpoints
 
@@ -56,6 +57,9 @@ See [Authentication](/api/authentication).
 | `GET` | `/api/v1/connectors/:id` | Get one connector with live status. |
 | `GET` | `/api/v1/connectors/setup-status` | Whether connector setup (sidecar and configuration) is complete. |
 | `POST` | `/api/v1/connectors/:id/connect` | Start or complete a connection. |
+| `GET` | `/api/v1/connectors/:id/accounts` | List the caller's accounts of this connector. |
+| `PATCH` | `/api/v1/connectors/:id/accounts/:conn_id` | Make one account the default and/or rename it. |
+| `DELETE` | `/api/v1/connectors/:id/accounts/:conn_id` | Remove one account. |
 | `POST` | `/api/v1/connectors/:id/refresh` | Refresh an existing connection. |
 | `POST` | `/api/v1/connectors/:id/poll` | Poll a device-flow authorization. |
 | `POST` | `/api/v1/connectors/:id/execute` | Execute a connector action. |
@@ -117,6 +121,7 @@ Starts a connection flow. The request body and response shape depend on the conn
 |-------|------|----------|-------------|
 | `via` | string | No | Force an auth type (`local_cli`, `api_key`, `oauth2`, `device_flow`, `no_auth`). |
 | `api_key` | string | No | API key for `api_key` connectors. |
+| `add` | boolean | No | `true` adds a new account (a new pending row). Without it, a connector that already has an account reconnects its default. |
 
 ### Local CLI example (GitHub)
 
@@ -173,6 +178,38 @@ curl -X POST http://127.0.0.1:8013/api/v1/connectors/some-api/connect \
 }
 ```
 
+## Accounts
+
+A user can have several connections of one connector. Each is one row with its own id; one row per user and connector is the default. The first connected row becomes the default. When a sign-in completes, the row's key is set from the provider's identity (email or login). Signing in again with an account that already exists updates that row and drops the pending one, so re-authorizing never makes a duplicate.
+
+```http
+GET /api/v1/connectors/gmail/accounts
+```
+
+```json
+{
+  "accounts": [
+    { "id": "c_01", "account": "me@example.com", "account_key": "me@example.com", "status": "connected", "is_default": true, "created_at": "2026-10-27T09:00:00Z", "updated_at": "2026-10-27T09:00:00Z" },
+    { "id": "c_02", "account": "me@work.example", "account_key": "me@work.example", "status": "connected", "is_default": false, "created_at": "2026-10-27T09:05:00Z", "updated_at": "2026-10-27T09:05:00Z" }
+  ]
+}
+```
+
+```http
+PATCH /api/v1/connectors/gmail/accounts/c_02
+Content-Type: application/json
+
+{ "default": true, "label": "Work" }
+```
+
+Both fields are optional. `default: true` makes this the only default for the user and connector. `label` is a display name.
+
+```http
+DELETE /api/v1/connectors/gmail/accounts/c_02
+```
+
+Removes that one account. If it was the default, the most recently updated remaining account becomes the default. `DELETE /:id/disconnect` still removes every account of the connector.
+
 ## Execute a connector action
 
 ```http
@@ -187,8 +224,12 @@ Executes a tool or action against a connected connector.
 |-------|------|----------|-------------|
 | `tool` | string | No | Action or tool name. |
 | `input` | object | No | Action arguments. |
+| `connection_id` | string | No | Run as this account (an `id` from `/accounts`). |
+| `account` | string | No | Run as the account whose email or name matches (case-insensitive). Used when `connection_id` is absent. |
 | `path` | string | No | Generic API path for raw passthrough. |
 | `method` | string | No | HTTP method for raw passthrough. |
+
+The account is chosen in this order: `connection_id` or `account` if given, else the default, else the most recently used. An account that matches nothing returns `404` with `{ "error": "account_not_found", "accounts": [...] }`; it never falls back to another account. The model-facing connector tools take the same optional `account` string ("Which connected account to use, by email or name. Omit for the default."). A bot's connector binding may carry a `connectionId`; a tool call with no explicit `account` uses it (a bot runtime sends the binding's id in the `x-allternit-connection-id` header of its MCP requests).
 
 ### Example request
 
@@ -266,6 +307,7 @@ curl -X POST http://127.0.0.1:8013/api/v1/connectors/mcp \
 | `400 Bad Request` | `local_cli_not_authenticated` | CLI binary exists but is not logged in. |
 | `401 Unauthorized` | — | Missing or invalid bearer token. |
 | `404 Not Found` | `connector_not_found` | Connector id not in catalog or sidecar. |
+| `404 Not Found` | `account_not_found` | `connection_id` or `account` matches none of the caller's accounts; the body lists them. |
 | `409 Conflict` | `not_connected` | Execute or refresh called before connect. |
 | `409 Conflict` | `duplicate_name` | Server-side naming conflict. |
 | `502 Bad Gateway` | `sidecar_unavailable` | The open-connector sidecar is unreachable. |

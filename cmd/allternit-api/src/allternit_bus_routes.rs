@@ -383,6 +383,10 @@ struct ConnectorBindingInput {
     autonomous: bool,
     #[serde(default)]
     allowed_actions: Option<Vec<String>>,
+    /// Which of the user's connected accounts this bot uses (an account row
+    /// id from `GET /connectors/:id/accounts`); unset = the default account.
+    #[serde(default, alias = "connectionId")]
+    connection_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -448,16 +452,33 @@ async fn resolve_agent_connectors(
                 let mut resolved = false;
 
                 // 1. Lookup owned connector connection.
-                let row: Option<(Option<String>, Option<String>, String)> = conn
-                    .query_row(
-                        "SELECT access_token, refresh_token, COALESCE(backend, 'rust_native') FROM connector_connections
-                         WHERE connector_id = ?1 AND user_id = ?2 AND status = 'connected'
-                         ORDER BY updated_at DESC LIMIT 1",
-                        params![b.connector_id, user_id],
-                        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-                    )
-                    .optional()
+                // The binding's chosen account, else the default, else the
+                // most recent connected one (same rule as `/execute`).
+                let accounts = crate::connector_routes::load_accounts(&conn, &b.connector_id, &user_id)
                     .map_err(internal)?;
+                let connected: Vec<_> = accounts.iter().filter(|a| a.status == "connected").cloned().collect();
+                let picked = match crate::connector_routes::pick_account(&connected, b.connection_id.as_deref(), None) {
+                    Ok(p) => p.map(|a| a.id.clone()),
+                    Err(_) => {
+                        errors.push(format!(
+                            "{} ({}): the connected account chosen for this bot is no longer connected",
+                            b.label, b.provider
+                        ));
+                        continue;
+                    }
+                };
+                let row: Option<(Option<String>, Option<String>, String)> = match picked {
+                    Some(account_id) => conn
+                        .query_row(
+                            "SELECT access_token, refresh_token, COALESCE(backend, 'rust_native') FROM connector_connections
+                             WHERE id = ?1",
+                            params![account_id],
+                            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                        )
+                        .optional()
+                        .map_err(internal)?,
+                    None => None,
+                };
 
                 match row {
                     // Sidecar-backed index row: tokens are NULL by design (the

@@ -431,7 +431,24 @@ pub async fn invalidate_caches() {
 /// Returns (Allternit catalog id, account_label) pairs, with sidecar service
 /// ids reverse-mapped to Allternit catalog ids so `connector_routes.rs` can
 /// match them against the catalog without leaking the sidecar spelling.
+/// Only the user's default (`connectionName = user_id`) connections; added
+/// accounts are in `list_user_connections_all`.
 pub async fn list_user_connections(user_id: &str) -> Result<Vec<(String, String)>, ProxyError> {
+    Ok(list_user_connections_all(user_id)
+        .await?
+        .into_iter()
+        .filter(|(_, alias, _)| alias == user_id)
+        .map(|(service, _, label)| (service, label))
+        .collect())
+}
+
+/// Every live connection of this user, including added accounts: aliases
+/// equal to `user_id` (the default / legacy name) or starting with
+/// `"{user_id}:"` (added accounts, see `connectionName` in the multi-account
+/// rule). Returns (Allternit catalog id, alias, account_label).
+pub async fn list_user_connections_all(
+    user_id: &str,
+) -> Result<Vec<(String, String, String)>, ProxyError> {
     let url = format!("{}/v1/apps", sidecar_url());
     let mut req = client().get(&url);
     if let Some(tok) = runtime_token() {
@@ -444,13 +461,17 @@ pub async fn list_user_connections(user_id: &str) -> Result<Vec<(String, String)
         return Err(ProxyError::bad_status(status, &text));
     }
     let env: Value = serde_json::from_str(&text).map_err(ProxyError::decode)?;
+    let added_prefix = format!("{user_id}:");
     let out = env
         .get("data")
         .and_then(|d| d.as_array())
         .map(|apps| {
             apps.iter()
-                .filter(|a| a.get("alias").and_then(|v| v.as_str()) == Some(user_id))
                 .filter_map(|a| {
+                    let alias = a.get("alias").and_then(|v| v.as_str())?;
+                    if alias != user_id && !alias.starts_with(&added_prefix) {
+                        return None;
+                    }
                     let service = a.get("service").and_then(|v| v.as_str()).unwrap_or("");
                     if service.is_empty() {
                         return None;
@@ -463,7 +484,7 @@ pub async fn list_user_connections(user_id: &str) -> Result<Vec<(String, String)
                         .to_string();
                     // Report the connection under the Allternit catalog spelling.
                     let key = allternit_id(service).unwrap_or_else(|| service.to_string());
-                    Some((key, label))
+                    Some((key, alias.to_string(), label))
                 })
                 .collect()
         })
@@ -471,7 +492,9 @@ pub async fn list_user_connections(user_id: &str) -> Result<Vec<(String, String)
     Ok(out)
 }
 
-/// Sidecar `POST /api/oauth/authorizations {service, connectionName: user_id}`.
+/// Sidecar `POST /api/oauth/authorizations {service, connectionName}`. `user_id`
+/// is the connection name: the user id for the default account, `user_id:key`
+/// for an added one (callers pass `AccountRow::sidecar_name`).
 /// `service` is the Allternit catalog id and is resolved to the sidecar
 /// provider id internally. Returns the sidecar's authorization object (contains
 /// `authorizationUrl`). No state is persisted in Rust by this call — the
