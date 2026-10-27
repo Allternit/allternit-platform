@@ -7,7 +7,8 @@
 #
 # A normal build makes the app for this Mac only (one DMG, this Mac's driver
 # Python). --release makes every mac artifact (arm64 + x64, DMG + zip) and
-# stages the driver Python for all platforms: use it for a public release.
+# stages the driver Python for all platforms. The public GitHub release is
+# built by .github/workflows/release-desktop.yml (see DESKTOP_RELEASE.md).
 #
 # Runs through the machine-wide build queue (scripts/build-queue): it waits
 # for any other heavy build to finish and records the commits it built.
