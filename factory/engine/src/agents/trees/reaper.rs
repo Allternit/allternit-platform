@@ -271,7 +271,11 @@ pub fn schedule(engine: &Path, root: &Path, hours: u32, install: bool) -> anyhow
     let label = "com.allternit.agent-trees-reaper";
     if cfg!(target_os = "macos") {
         let plist = crate::platform::user_home_or("/tmp").join(format!("Library/LaunchAgents/{label}.plist"));
+        #[cfg(unix)]
         let uid = unsafe { libc::getuid() };
+        // Never reached: this branch only runs on macOS. libc is a unix-only dependency.
+        #[cfg(not(unix))]
+        let uid = 0u32;
         let _ = std::process::Command::new("launchctl").args(["bootout", &format!("gui/{uid}/{label}")]).status();
         if !install {
             let _ = std::fs::remove_file(&plist);
