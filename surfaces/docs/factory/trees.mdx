@@ -75,7 +75,7 @@ Running `done` inside a worktree made by hand leases it to you first, then lands
 | `gizzi agents tree pause [tree]` | Keep the tree for a later resume. Pushes the branch and checkpoints. Never reaped |
 | `gizzi agents tree resume [tree]` | Make a paused tree active again |
 | `gizzi agents tree done [tree] [--abandon]` | Land the tree (see above) |
-| `gizzi agents tree reap [--apply] [--size]` | Apply the merged + idle + clean rule to every worktree. A dry run without `--apply` |
+| `gizzi agents tree reap [--apply] [--size]` | Apply the merged + idle + clean rule to every worktree. Run from a folder of repos, it covers each repo inside. A dry run without `--apply` |
 | `gizzi agents tree overlap` | Files changed in more than one live tree |
 | `gizzi agents tree base status` | Where the base is, its commit, how far behind main, and whether it is clean |
 | `gizzi agents tree base refresh [--build]` | Make or fast-forward the base and install deps. `--build` also warms it |
@@ -214,7 +214,7 @@ gizzi agents tree reaper install --hours 6
 gizzi agents tree reaper uninstall
 ```
 
-The schedule runs `reap --apply --size`, so each lease's disk use stays current for the Tree card. It runs through the launcher `<factory home>/trees/reaper-run.sh`, which looks for the engine on every run (newest Desktop runtime, the app bundle, Homebrew, the binary that ran the install, then `PATH`) and uses the first one that has `agents tree`. Runtime updates and `brew upgrade` move the binary, so a fixed path would stop working after the next update. On macOS this installs the launchd agent `com.allternit.agent-trees-reaper` (low priority I/O, `Nice` 10, log in `<factory home>/trees/reaper.log`). On Linux it installs the systemd user timer `allternit-agent-trees-reaper.timer`. Other systems are refused.
+The schedule runs `reap --apply --size`, so each lease's disk use stays current for the Tree card. Install it from the folder that holds your repos (for example the workspace root) and it covers every repo directly inside it, or from one repo to cover only that repo. It runs through the launcher `<factory home>/trees/reaper-run.sh`, which looks for the engine on every run (newest Desktop runtime, the app bundle, Homebrew, the binary that ran the install, then `PATH`) and uses the first one that has `agents tree`. Runtime updates and `brew upgrade` move the binary, so a fixed path would stop working after the next update. On macOS this installs the launchd agent `com.allternit.agent-trees-reaper` (low priority I/O, `Nice` 10, log in `<factory home>/trees/reaper.log`). On Linux it installs the systemd user timer `allternit-agent-trees-reaper.timer`. Other systems are refused.
 
 ## Hooks
 
