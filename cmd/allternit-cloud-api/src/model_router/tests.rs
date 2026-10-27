@@ -253,6 +253,43 @@ mod pricing {
         assert_eq!(prices.wholesale_completion_per_1m, None);
     }
 
+    fn listed_price(models: &[ModelInfo], alias: &str, key: &str) -> f64 {
+        models
+            .iter()
+            .find(|m| m.id == alias)
+            .and_then(|m| m.extra.get(key))
+            .and_then(|v| v.as_f64())
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn listed_prices_are_the_billed_retail_per_token() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::remove_var("INFERENCE_MARKUP");
+
+        // Live pricing: wholesale per-token × 1.5, never the wholesale itself.
+        let router = ModelRouter::new(
+            vec![StubProvider::with_pricing(0.0000001, 0.0000002)],
+            starter_catalog(),
+        );
+        let models = router.list_models().await;
+        assert!((listed_price(&models, "gpt-4o", "prompt_price") - 0.00000015).abs() < 1e-15);
+        assert!((listed_price(&models, "gpt-4o", "completion_price") - 0.0000003).abs() < 1e-15);
+
+        // No live pricing: the static per-1M catalog price, listed per token.
+        let router = ModelRouter::new(vec![StubProvider::without_pricing()], starter_catalog());
+        let models = router.list_models().await;
+        assert!((listed_price(&models, "gpt-4o", "prompt_price") - 0.0000025).abs() < 1e-15);
+        assert!((listed_price(&models, "gpt-4o", "completion_price") - 0.00001).abs() < 1e-15);
+        for model in &models {
+            assert!(
+                listed_price(&models, &model.id, "prompt_price") < 1e-4,
+                "{} lists a per-1M price as per-token",
+                model.id
+            );
+        }
+    }
+
     #[tokio::test]
     async fn stream_options_include_usage_is_injected_for_streaming() {
         let provider = StubProvider::without_pricing();

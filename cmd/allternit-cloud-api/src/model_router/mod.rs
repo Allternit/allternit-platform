@@ -303,6 +303,7 @@ impl ModelRouter {
 
             // If we have a live provider, enrich with upstream metadata.
             // Upstream values take precedence over static catalog defaults.
+            let mut upstream_model = None;
             if let Some(provider) = self.providers.get(&entry.provider) {
                 match provider.list_models().await {
                     Ok(upstream_models) => {
@@ -310,9 +311,10 @@ impl ModelRouter {
                             .into_iter()
                             .find(|m| m.id == entry.upstream_id)
                         {
-                            for (k, v) in upstream.extra {
-                                info.extra.insert(k, v);
+                            for (k, v) in &upstream.extra {
+                                info.extra.insert(k.clone(), v.clone());
                             }
+                            upstream_model = Some(upstream);
                         }
                     }
                     Err(e) => {
@@ -324,6 +326,22 @@ impl ModelRouter {
                         );
                     }
                 }
+            }
+
+            // The listed price is what a request is billed (`retail_prices`),
+            // per token. Upstream extras carry our wholesale cost, which is
+            // never shown, and the catalog is per 1M.
+            let retail = retail_from(entry, upstream_model.as_ref());
+            for (key, per_1m) in [
+                ("prompt_price", retail.prompt_per_1m),
+                ("completion_price", retail.completion_per_1m),
+            ] {
+                info.extra.insert(
+                    key.to_string(),
+                    serde_json::Value::Number(
+                        serde_json::Number::from_f64(per_1m / 1_000_000.0).unwrap_or(0.into()),
+                    ),
+                );
             }
 
             models.push(info);
@@ -442,45 +460,52 @@ impl ModelRouter {
             .resolve(alias)
             .ok_or_else(|| ModelRouterError::UnknownModel(alias.to_string()))?;
 
-        if let Some(provider) = self.providers.get(&entry.provider) {
-            // A failed/slow upstream list must never block a request: fall
-            // back to the static catalog prices.
-            if let Ok(models) = provider.list_models().await {
-                if let Some(upstream) = models.iter().find(|m| m.id == entry.upstream_id) {
-                    // Provider pricing extras are per-TOKEN USD (OpenRouter
-                    // convention, see openrouter::fetch_models); the catalog
-                    // and everything downstream are per-1M.
-                    let prompt = upstream
-                        .extra
-                        .get("prompt_price")
-                        .and_then(|v| v.as_f64())
-                        .map(|v| v * 1_000_000.0);
-                    let completion = upstream
-                        .extra
-                        .get("completion_price")
-                        .and_then(|v| v.as_f64())
-                        .map(|v| v * 1_000_000.0);
-                    if let (Some(wholesale_prompt), Some(wholesale_completion)) =
-                        (prompt, completion)
-                    {
-                        let markup = inference_markup();
-                        return Ok(RetailPrices {
-                            prompt_per_1m: wholesale_prompt * markup,
-                            completion_per_1m: wholesale_completion * markup,
-                            wholesale_prompt_per_1m: Some(wholesale_prompt),
-                            wholesale_completion_per_1m: Some(wholesale_completion),
-                        });
-                    }
-                }
-            }
-        }
+        // A failed/slow upstream list must never block a request: fall back
+        // to the static catalog prices.
+        let upstream = match self.providers.get(&entry.provider) {
+            Some(provider) => provider
+                .list_models()
+                .await
+                .ok()
+                .and_then(|models| models.into_iter().find(|m| m.id == entry.upstream_id)),
+            None => None,
+        };
+        Ok(retail_from(entry, upstream.as_ref()))
+    }
+}
 
-        Ok(RetailPrices {
-            prompt_per_1m: entry.prompt_price,
-            completion_per_1m: entry.completion_price,
-            wholesale_prompt_per_1m: None,
-            wholesale_completion_per_1m: None,
-        })
+/// Retail prices for a catalog entry given its upstream listing, if any.
+///
+/// Live upstream pricing is our wholesale cost, marked up by
+/// `INFERENCE_MARKUP`; without it the static catalog price applies and the
+/// wholesale side is unknown.
+fn retail_from(entry: &catalog::ModelAliasEntry, upstream: Option<&ModelInfo>) -> RetailPrices {
+    // Provider pricing extras are per-TOKEN USD (OpenRouter convention, see
+    // openrouter::fetch_models); the catalog and everything downstream are
+    // per-1M.
+    let per_1m = |key: &str| {
+        upstream
+            .and_then(|m| m.extra.get(key))
+            .and_then(|v| v.as_f64())
+            .map(|v| v * 1_000_000.0)
+    };
+    if let (Some(wholesale_prompt), Some(wholesale_completion)) =
+        (per_1m("prompt_price"), per_1m("completion_price"))
+    {
+        let markup = inference_markup();
+        return RetailPrices {
+            prompt_per_1m: wholesale_prompt * markup,
+            completion_per_1m: wholesale_completion * markup,
+            wholesale_prompt_per_1m: Some(wholesale_prompt),
+            wholesale_completion_per_1m: Some(wholesale_completion),
+        };
+    }
+
+    RetailPrices {
+        prompt_per_1m: entry.prompt_price,
+        completion_per_1m: entry.completion_price,
+        wholesale_prompt_per_1m: None,
+        wholesale_completion_per_1m: None,
     }
 }
 
