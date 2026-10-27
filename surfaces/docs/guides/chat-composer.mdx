@@ -65,13 +65,13 @@ For a consequential call the agent can ask a **decision tree** instead: options 
 
 Agents that run on an installed CLI brain (Claude CLI, Codex, Kimi and other CLI agents) ask with the same card. They end their turn when they ask, and your answers are sent as your next message, so they pick up from there.
 
-The thread updates while that next turn runs. If the agent then needs your approval, for example to run a command, the approval card appears in the thread as it does for any other turn.
+The thread updates while that next turn runs. If the agent then needs your approval, for example to run a command, Deny and Allow appear on that step in the reply, as they do for any other turn.
 
 ## Several cards at once
 
 Questions, approvals and suggestions don't block each other. Each card works on its own:
 
-- Every pending approval shows above the text box, not only the first.
+- An approval for a step in the reply shows on that step, with Deny and Allow. Every other pending approval shows above the text box, not only the first.
 - When agents ask more than one question, the question card shows one at a time with tabs to switch. A half-typed answer stays put while you answer another.
 - Answering, approving or declining one card changes only that card. The others stay as they are, and the reply keeps running.
 - A decided card stays decided. It does not come back as pending when the thread reloads or new text streams in.
@@ -79,7 +79,7 @@ Questions, approvals and suggestions don't block each other. Each card works on 
 
 ## While an answer is being made
 
-- The steps show above the reply as they run, then fold into one line such as "Worked for 12s · 4 steps". See [Agent steps in replies](/guides/agent-steps).
+- The steps show above the reply as they run, then fold into one line such as "Used 4 tools · 12s". See [Agent steps in replies](/guides/agent-steps).
 - When the agent keeps a plan, a chip at the top right reads **Step 2 of 3** and opens [Progress](/guides/progress-pane) in the right pane.
 - A small rounded pill shows what the agent is doing now, such as "Creating report.csv".
 - While the agent writes a file, a grey placeholder in the file's shape holds its place: a table for CSV and spreadsheets, a page for documents, lines for code, a frame for web pages. After 3 seconds a soft light runs around its edge. With reduced motion turned on, nothing moves.

@@ -1,11 +1,18 @@
 ---
 title: 'Agent steps in replies'
-description: 'The merged stream above a reply: the plan line, live steps, chips for sources, files and failures, the Worked for summary and its trail, steps that reach your connected apps, web search sources, generated images and videos, and source chips in the answer.'
+description: 'The merged stream above a reply: the plan line, the Using N tools header and its rail, how long each step took, failures with Retry, approvals on the step they gate, chips for sources, files and failures, the Used N tools summary and its trail, steps that reach your connected apps, web search sources, generated images and videos, and source chips in the answer.'
 ---
 
 ## Watching an agent work
 
-While an agent works, the reply shows its plan in one grey line, then the last two things it did and the step it is on now (a dotted spinner and a moving label, for example "Searching Slack for messages since yesterday"), with a timer under them. Older steps fold into "+N earlier steps"; click it, or the live step, to see them all.
+While an agent works, the reply shows its plan in one grey line, then a header such as "[app logos] Using 3 tools · 14s". Under the header, on a thin line at the left, are the tool steps: up to six, with older ones folded into "+N earlier steps" (click it to see every step and thought). There is no box around them.
+
+- **Each step** shows its icon, what it did ("Searched Slack for messages since yesterday"), what it found and how long it took ("4 results · 1.2s"), then a check. The step running now has a moving label instead.
+- **A failed step** is red. The reason shows under it without opening it, and the header adds "· 1 failed". On the latest finished reply, the row has **Retry**, which runs the turn again (the same as the reply's Retry).
+- **A step that needs your approval** gets a blue outline, says what it will do (for example "Sends as Raven to 48 people in #release") and has **Deny**, **Always** (or **For this task**, when the request allows it) and **Allow**. The header changes to "Waiting for approval". The approval no longer shows a second time as a card or above the composer. An approval that no step can show, such as a send to your subscription, keeps its card.
+- **Click the header** to fold the steps away and again to show them.
+
+If the agent only thinks, there is no header: the plan and the latest thought show, with a timer.
 
 Some things stay in view as chips the whole time:
 
@@ -13,9 +20,11 @@ Some things stay in view as chips the whole time:
 - **Files** it made. Click a file to open it, or its arrow to download it.
 - **Failures:** "1 step failed". Click to see which.
 
-When it finishes, the steps fold into one line, such as "Worked for 12s · 4 steps" (or "Thought for 12s" if it only thought). The chips stay under it. Click the line to see the full trail: the plan, every step on a tree line with its icon and what it did, and each search's sources. Click any step to see what went in and what came back.
+When it finishes, the steps fold into one line, such as "[app logos] Used 4 tools · 12s · 1 failed" (or "Thought for 12s" if it only thought). A reply from before step timing was recorded reads what it did instead, for example "Searched the web, read 3 pages". The chips stay under it. Click the line to see the full trail: the plan, every step on a tree line with its icon and what it did, and each search's sources. Click any step to see what went in and what came back.
 
-The agent's task list is no longer drawn in the reply. It lives in [Progress](/guides/progress-pane), in the right pane (on a phone, a sheet), opened from the chip at the top right of the conversation. Interactive questions and approvals still show as cards in the thread; see [Composer, replies and questions](/guides/chat-composer#answering-an-agent-question).
+The agent's task list is no longer drawn in the reply. It lives in [Progress](/guides/progress-pane), in the right pane (on a phone, a sheet), opened from the chip at the top right of the conversation. Interactive questions still show as cards. Approvals show on the step they gate (see above); see [Composer, replies and questions](/guides/chat-composer#answering-an-agent-question).
+
+Under the last reply, a reply that used tools has **Run again** in words next to the other actions; it runs the turn again, tools and all. Other replies keep the plain retry icon.
 
 This works the same in Chat, Cowork, Code, bot threads and project threads, on Desktop, ai.allternit.com (including the phone layout) and the m.allternit.com app. In Memory Drive, a Dream's **Steps** opens straight into the trail; see [Nightly Dream](/guides/memory-drive#nightly-dream).
 
@@ -66,7 +75,8 @@ Source: `allternit-ai/src/components/ai-elements/`:
 
 | File | Role |
 | --- | --- |
-| `process/ProcessBlock.tsx` | The merged stream: live view (plan line, last 2 steps, live row, "+N earlier", timer), the folded "Worked for" summary and the trail; `planLine`, `currentThought`, `thoughtHeadline`; `files`, `durationMs` and `defaultOpen` props (the Memory Drive Dream view opens into the trail). Cowork sets the `steps` style, which only tightens the type. App logos, preview cards and the logos on the summary. |
+| `process/ProcessBlock.tsx` | The merged stream: live view (plan line, `process-head` "Using N tools · 14s" / "Waiting for approval" / "· N failed", the tool rows on the rail, last 6 with "+N earlier"), the folded "Used N tools · 12s" summary and the trail. Each row ends with `stepMeta` ("4 results · 1.2s", from `appPreview` totals and `ProcessStep.durationMs`) and a check; an error row shows its reason and Retry from `ProcessRetryContext` (given by `StreamingChatComposer` around the latest finished reply only); a running row with a pending permission whose `tool.callID` is the step id draws `StepApproval`; `planLine`, `currentThought`, `thoughtHeadline`; `files`, `durationMs` and `defaultOpen` props (the Memory Drive Dream view opens into the trail). Cowork sets the `steps` style, which only tightens the type. App logos, preview cards and the logos on the summary. |
+| `process/inline-approvals.ts` | `usePendingApprovalFor(callId)`, `useClaimApproval`, `useUnclaimed(requests)`, `useAnyWaiting(ids)`. A row claims the request it shows; `ChatThreadInlineGate`, `ChatView` and `CodeCanvas` drop claimed requests from their cards and composer stack, so an approval shows once. Subscription sends are never claimed. |
 | `process/StreamChips.tsx` | The chips row: sources ("Searched N websites"), file chips (open and download), failed steps. |
 | `process/step-icon.tsx` | Per-kind step icon, app logo, error and interrupted marks, the dotted spinner. |
 | `process/process.css` | Stream, trail (tree line), chips, phone sizing, reduced motion. |
@@ -80,10 +90,10 @@ Source: `allternit-ai/src/components/ai-elements/`:
 | `GeneratedMediaCard.tsx` | The finished `media_generate` result in the transcript: the picture with a soft reveal and the Download, Open and Copy prompt buttons. It also exports `MediaPreview` (SVG as an image, HTML/canvas in a scaled `allow-scripts` sandbox, video from an authed blob shared per URL), `isMediaArtifact` and `mediaRatio`. |
 | `generated-media.css` | `.generated-media-reveal`: 320 ms fade plus blur-to-sharp. Off under `prefers-reduced-motion`. |
 | `artifact-from-part.ts`, `artifact.types.ts` | `media_generate` artifacts carry `media: { prompt, width, height }`. Video defaults to 1920×1080 and canvas images to 1024×1024. |
-| `UnifiedMessageRenderer.tsx` | Generated media renders as `GeneratedMediaCard`; other outputs keep `ArtifactCard`. Groups tool parts into process blocks and passes each block its non-media files as chips (media keeps `GeneratedMediaCard`, Artifacts v2 keeps `ArtifactTranscriptCard`). It no longer draws inline source cards or plan cards: sources become pills and chips, and the plan goes to Progress. Connector result views (`view-kit/ConnectorToolView`) show once the block is no longer streaming. |
+| `UnifiedMessageRenderer.tsx` | Maps each `dynamic-tool` part's `startedAt`/`finishedAt` (stamped by `rust-stream-adapter.ts` on `tool_use` and on `tool_result`/`tool_error`, saved with the message) to `ProcessStep.durationMs`; bot tool records pass their own `durationMs` (`bot-chat/process-steps.ts`). Generated media renders as `GeneratedMediaCard`; other outputs keep `ArtifactCard`. Groups tool parts into process blocks and passes each block its non-media files as chips (media keeps `GeneratedMediaCard`, Artifacts v2 keeps `ArtifactTranscriptCard`). It no longer draws inline source cards or plan cards: sources become pills and chips, and the plan goes to Progress. Connector result views (`view-kit/ConnectorToolView`) show once the block is no longer streaming. |
 
 The block-square pulse is `src/components/brand/BlockPulse.tsx`. `drawBlockPulse` is the only drawing code (`TeamNetwork` uses it too). `BlockPulse` is a looping canvas that fills its container. Its colours come from `--ui-text-primary` and `--block-pulse-tint` (default `#26A0BE`). Reduced motion draws one still frame, and nothing animates while it is off-screen. The studio pane's rendering frame (`src/views/cowork/artifact-session/ArtifactStudioPane.tsx`) takes its aspect from `mediaAspect`, and the Create bot photo sprite (`PhotoSpritePanel.tsx`) uses the same pulse.
 
 Logos come from `ConnectorLogo` (bundled `public/app-icons`, then the logos catalog, then the site's favicon). Tool output is untrusted: preview rows hold plain strings, and only https links are kept.
 
-Dev preview: `preview-steps.html` with `src/dev/StepsPreview.tsx` (live run with `?live=1`, done folded, done opened, thought only; `?theme=dark`). Sources and plans reach the stream through the [response-parts contract](/guides/response-parts).
+Dev preview: `preview-steps.html` with `src/dev/StepsPreview.tsx` (live run with `?live=1`, waiting for approval, done folded, done opened with a failed step and Retry, thought only; `?theme=dark`). Sources and plans reach the stream through the [response-parts contract](/guides/response-parts).
