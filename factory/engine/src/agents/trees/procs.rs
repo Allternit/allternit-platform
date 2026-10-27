@@ -52,21 +52,35 @@ pub fn cwds() -> BTreeMap<u32, PathBuf> {
     map
 }
 
-/// `(age seconds, command)` for each pid.
-fn describe(pids: &[u32]) -> BTreeMap<u32, (Option<u64>, String)> {
+/// `(process group, age seconds, command)` for each pid.
+fn describe(pids: &[u32]) -> BTreeMap<u32, (Option<u32>, Option<u64>, String)> {
     let mut map = BTreeMap::new();
     if pids.is_empty() {
         return map;
     }
     let list = pids.iter().map(u32::to_string).collect::<Vec<_>>().join(",");
-    if let Ok(out) = Command::new("ps").args(["-o", "pid=,etime=,command=", "-p", &list]).output() {
+    if let Ok(out) = Command::new("ps").args(["-o", "pid=,pgid=,etime=,command=", "-p", &list]).output() {
         for line in String::from_utf8_lossy(&out.stdout).lines() {
             let mut it = line.split_whitespace();
-            let (Some(pid), Some(etime)) = (it.next().and_then(|p| p.parse::<u32>().ok()), it.next()) else { continue };
-            map.insert(pid, (parse_etime(etime), it.collect::<Vec<_>>().join(" ")));
+            let (Some(pid), Some(pgid), Some(etime)) = (it.next().and_then(|p| p.parse::<u32>().ok()), it.next(), it.next()) else { continue };
+            map.insert(pid, (pgid.parse().ok(), parse_etime(etime), it.collect::<Vec<_>>().join(" ")));
         }
     }
     map
+}
+
+/// The caller's process group: every member of the calling pipeline
+/// (`… | head`) shares it, and none of them may be stopped.
+fn own_group() -> Option<u32> {
+    #[cfg(unix)]
+    {
+        // SAFETY: getpgrp has no preconditions.
+        Some(unsafe { libc::getpgrp() } as u32)
+    }
+    #[cfg(not(unix))]
+    {
+        None
+    }
 }
 
 /// `ps` etime: `[[dd-]hh:]mm:ss`.
@@ -121,13 +135,14 @@ pub fn in_tree_from(cwds: &BTreeMap<u32, PathBuf>, tree: &Path, is_dev_server: i
     let pids: Vec<u32> = cwds.iter().filter(|(_, cwd)| cwd.starts_with(&tree)).map(|(p, _)| *p).collect();
     let info = describe(&pids);
     let chain = own_chain();
+    let group = own_group();
     pids.into_iter()
         .filter_map(|pid| {
-            let (age, command) = info.get(&pid).cloned()?;
+            let (pgid, age, command) = info.get(&pid).cloned()?;
             Some(TreeProcess {
                 pid,
                 dev_server: is_dev_server(&command),
-                protected: chain.contains(&pid) || is_harness(&command),
+                protected: chain.contains(&pid) || (pgid.is_some() && pgid == group) || is_harness(&command),
                 command,
                 age_secs: age,
             })
@@ -207,6 +222,20 @@ mod tests {
         assert!(is_harness("/Users/joe/.local/bin/claude --resume"));
         assert!(is_harness("gizzi-code serve --port 1"));
         assert!(!is_harness("node /x/node_modules/.bin/vite"));
+    }
+
+    #[test]
+    fn a_sibling_in_the_callers_pipeline_is_protected() {
+        // A child shares this test process's group, like `done | head` shares the caller's.
+        let here = std::env::current_dir().unwrap();
+        let mut child = Command::new("sleep").arg("5").spawn().unwrap();
+        let mut map = BTreeMap::new();
+        map.insert(child.id(), here.clone());
+        let procs = in_tree_from(&map, &here, |_| false);
+        assert!(procs.first().is_some_and(|p| p.protected), "{procs:?}");
+        assert!(stop(&procs, Duration::from_millis(10)).is_empty());
+        child.kill().ok();
+        child.wait().ok();
     }
 
     #[test]
