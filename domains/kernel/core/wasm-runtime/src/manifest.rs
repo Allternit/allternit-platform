@@ -287,6 +287,7 @@ mod tests {
         manifest.allowed_paths = vec![("/tmp".to_string(), "/tmp".to_string())]
             .into_iter()
             .collect();
+        manifest.allowed_env = vec!["HOME".to_string()];
 
         let grant = manifest.to_capability_grant("test-id".to_string(), "test-tenant".to_string());
 

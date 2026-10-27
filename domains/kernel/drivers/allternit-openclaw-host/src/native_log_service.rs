@@ -518,6 +518,7 @@ fn parse_timestamp(s: &str) -> Result<DateTime<Utc>, LogError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Datelike;
 
     #[test]
     fn test_parse_bracketed_format() {

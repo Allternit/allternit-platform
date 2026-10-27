@@ -347,7 +347,7 @@ pub enum WorkflowExecutorError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{NodeConstraints, WorkflowNode};
+    use crate::{NodeConstraints, WorkflowEdge, WorkflowNode};
 
     fn create_test_workflow() -> WorkflowDefinition {
         WorkflowDefinition {

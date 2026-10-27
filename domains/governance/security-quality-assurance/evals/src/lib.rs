@@ -1620,6 +1620,7 @@ mod tests {
                 policy_engine.clone(),
                 context_router.clone(),
                 pool.clone(),
+                Arc::new(allternit_memory::v2::memory_policy::DefaultMemoryPolicy),
             )
             .await
             .unwrap(),
@@ -1678,6 +1679,7 @@ mod tests {
             tool_gateway,
             skill_registry.clone(),
             task_queue,
+            pool.clone(),
         ));
 
         // Create session manager

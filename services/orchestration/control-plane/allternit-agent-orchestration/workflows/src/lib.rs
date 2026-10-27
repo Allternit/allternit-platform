@@ -1159,7 +1159,7 @@ mod tests {
     use allternit_tools_gateway::ToolGateway;
     use data_encoding::BASE64;
     use ring::rand::SystemRandom;
-    use ring::signature::Ed25519KeyPair;
+    use ring::signature::{Ed25519KeyPair, KeyPair};
     use sqlx::SqlitePool;
     use tempfile::NamedTempFile;
 
@@ -1358,6 +1358,7 @@ mod tests {
             tool_gateway,
             skill_registry,
             task_queue,
+            pool.clone(),
         );
 
         // Create and register a workflow definition that references the skill
@@ -1601,6 +1602,7 @@ mod tests {
             tool_gateway,
             skill_registry,
             task_queue,
+            pool.clone(),
         );
 
         // Create and register a workflow definition that references the skill
@@ -1828,6 +1830,7 @@ mod tests {
             tool_gateway,
             skill_registry,
             task_queue,
+            pool.clone(),
         );
 
         let workflow_def = WorkflowDefinition {
