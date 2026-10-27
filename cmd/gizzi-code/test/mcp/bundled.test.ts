@@ -4,6 +4,7 @@ import { bundledMcpServers, withBundledMcpServers } from "@/runtime/tools/mcp/bu
 const originalDisable = process.env.GIZZI_DISABLE_BUNDLED_MCPS
 const originalNpx = process.env.GIZZI_ALLOW_NPX_BUNDLED_MCPS
 const originalToken = process.env.ALLTERNIT_INTERNAL_SERVICE_TOKEN
+const originalUser = process.env.ALLTERNIT_USER_ID
 
 afterEach(() => {
   if (originalDisable === undefined) delete process.env.GIZZI_DISABLE_BUNDLED_MCPS
@@ -12,6 +13,8 @@ afterEach(() => {
   else process.env.GIZZI_ALLOW_NPX_BUNDLED_MCPS = originalNpx
   if (originalToken === undefined) delete process.env.ALLTERNIT_INTERNAL_SERVICE_TOKEN
   else process.env.ALLTERNIT_INTERNAL_SERVICE_TOKEN = originalToken
+  if (originalUser === undefined) delete process.env.ALLTERNIT_USER_ID
+  else process.env.ALLTERNIT_USER_ID = originalUser
 })
 
 describe("bundled MCP discovery", () => {
@@ -47,6 +50,7 @@ describe("bundled MCP discovery", () => {
 
   test("registers the connector MCP only with the internal token configured", () => {
     delete process.env.ALLTERNIT_INTERNAL_SERVICE_TOKEN
+    delete process.env.ALLTERNIT_USER_ID
     expect(bundledMcpServers()["allternit-connectors"]).toBeUndefined()
 
     process.env.ALLTERNIT_INTERNAL_SERVICE_TOKEN = "test-secret"
@@ -62,6 +66,7 @@ describe("bundled MCP discovery", () => {
 
   test("registers the platform tools MCP only with the internal token configured", () => {
     delete process.env.ALLTERNIT_INTERNAL_SERVICE_TOKEN
+    delete process.env.ALLTERNIT_USER_ID
     expect(bundledMcpServers()["allternit-tools"]).toBeUndefined()
 
     process.env.ALLTERNIT_INTERNAL_SERVICE_TOKEN = "test-secret"
