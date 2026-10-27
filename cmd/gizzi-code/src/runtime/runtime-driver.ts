@@ -59,6 +59,13 @@ export interface AgentTask {
    * catalog the CLI gets (agents/brain-export.ts).
    */
   subagents?: { off?: boolean; extra?: import("@/runtime/agents/brain-export").ExportedAgent[] }
+  /**
+   * Which of the user's signed-in accounts for this CLI runs the turn (an
+   * added account's id from allternit-api's /providers/:id/accounts, or
+   * "default" for the stock home). Unset: the bot's own account, then the
+   * user's default (drivers/cli-accounts.ts).
+   */
+  cliAccountId?: string
 }
 
 export interface TaskHandle {

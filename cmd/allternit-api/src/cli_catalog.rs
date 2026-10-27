@@ -117,6 +117,11 @@ pub(crate) struct CliTool {
     pub sign_in_page: Option<String>,
     #[serde(default)]
     pub auth: Option<AuthCheck>,
+    /// Env var that points the CLI at its own config/sign-in dir, which is how
+    /// a second account gets its own sign-in (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`).
+    /// Absent = the CLI stays single-account.
+    #[serde(default)]
+    pub account_home_env: Option<String>,
     #[serde(default)]
     pub install: Option<InstallRecipe>,
     #[serde(default)]

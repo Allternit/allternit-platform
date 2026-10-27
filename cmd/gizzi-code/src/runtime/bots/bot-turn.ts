@@ -45,6 +45,8 @@ export const BotTurnInfo = z.object({
    * its allowlist goes to the app's approval flow instead of being refused.
    */
   gated: z.boolean().optional(),
+  /** The bot's own account for its CLI brain (cli_accounts id); absent = the user's default. */
+  cliAccountId: z.string().optional(),
 })
 export type BotTurnInfo = z.infer<typeof BotTurnInfo>
 

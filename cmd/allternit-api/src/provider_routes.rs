@@ -5,7 +5,7 @@ use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
-    routing::{get, post},
+    routing::{get, patch, post},
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
@@ -51,6 +51,22 @@ pub fn provider_router() -> Router<Arc<AppState>> {
             post(confirm_provider_connect),
         )
         .route("/providers/:id/connect/code", post(submit_provider_connect_code))
+        .route(
+            "/providers/:id/accounts",
+            get(list_cli_accounts).post(add_cli_account),
+        )
+        .route(
+            "/providers/:id/accounts/:acc",
+            patch(update_cli_account).delete(delete_cli_account),
+        )
+        .route(
+            "/providers/:id/accounts/:acc/status",
+            get(cli_account_status),
+        )
+        .route(
+            "/providers/:id/accounts/:acc/connect/code",
+            post(submit_cli_account_code),
+        )
         .route("/providers/auth/status", get(list_provider_auth_status))
         .route("/providers/video/generate", post(generate_video))
         .merge(crate::cli_tools::router())
@@ -1728,28 +1744,43 @@ fn cli_alive(binary: &str, args: &[&str], expect: Option<&str>) -> bool {
 /// `claude auth status` exits 0 even when `loggedIn` is false (no subscription
 /// / expired OAuth). Parse the JSON so Home does not default to a dead Claude.
 fn claude_cli_logged_in(binary: &str) -> bool {
-    let output = std::process::Command::new(binary)
-        .args(["auth", "status"])
+    claude_cli_status(binary, None).0
+}
+
+/// `(logged in, email)` from `claude auth status`. `home` points the CLI at an
+/// added account's config dir (`CLAUDE_CONFIG_DIR`); `None` is the stock home.
+fn claude_cli_status(binary: &str, home: Option<&std::path::Path>) -> (bool, Option<String>) {
+    let mut cmd = std::process::Command::new(binary);
+    cmd.args(["auth", "status"])
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
-        .output();
-    let Ok(output) = output else {
-        return false;
+        .stderr(std::process::Stdio::null());
+    if let Some(home) = home {
+        cmd.env("CLAUDE_CONFIG_DIR", home);
+    }
+    let Ok(output) = cmd.output() else {
+        return (false, None);
     };
     if !output.status.success() {
-        return false;
+        return (false, None);
     }
     let stdout = String::from_utf8_lossy(&output.stdout);
     if let Ok(value) = serde_json::from_str::<serde_json::Value>(&stdout) {
-        return value
+        let logged_in = value
             .get("loggedIn")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
+        let email = value
+            .get("email")
+            .and_then(|v| v.as_str())
+            .filter(|e| !e.is_empty())
+            .map(str::to_string);
+        return (logged_in, email);
     }
     let lower = stdout.to_lowercase();
-    !lower.contains("\"loggedin\": false")
+    let logged_in = !lower.contains("\"loggedin\": false")
         && !lower.contains("not logged")
-        && !lower.contains("logged out")
+        && !lower.contains("logged out");
+    (logged_in, None)
 }
 
 /// The catalog's sign-in locations for a CLI, when it lists any.
@@ -2083,6 +2114,486 @@ async fn confirm_provider_connect(
     // Promote to default so the one-click flow actually routes agents to it.
     crate::onboarding_routes::persist_cli_default(&state, meta.id, meta.label, binary, meta.model);
     Json(json!({ "status": "success", "provider": id, "confirmed": true })).into_response()
+}
+
+// ─── Coding CLI accounts ──────────────────────────────────────────────────────
+//
+// More than one signed-in account per coding CLI. The default account is the
+// CLI's stock home (no row); an added account is a `cli_accounts` row (V279)
+// with its own home under ~/.allternit/cli-homes/<id>, which gizzi's driver
+// (drivers/cli-accounts.ts) points the CLI at with the catalog's
+// `accountHomeEnv`. Only CLIs that list one are multi-account; the rest stay
+// single-account and `multi` is false.
+
+fn cli_homes_root() -> std::path::PathBuf {
+    home_file(&[".allternit", "cli-homes"])
+}
+
+/// The catalog CLI for `id` when it can hold more than one account.
+fn multi_account_tool(id: &str) -> Option<&'static crate::cli_catalog::CliTool> {
+    crate::cli_catalog::find(id)
+        .or_else(|| crate::cli_catalog::tools().iter().find(|t| t.bin == id))
+        .filter(|t| t.account_home_env.is_some())
+}
+
+struct CliAccountRow {
+    id: String,
+    label: String,
+    home_dir: String,
+    identity: Option<String>,
+    is_default: bool,
+}
+
+fn cli_account_rows(
+    conn: &rusqlite::Connection,
+    user_id: &str,
+    tool_id: &str,
+) -> rusqlite::Result<Vec<CliAccountRow>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, label, home_dir, identity, is_default FROM cli_accounts
+         WHERE user_id = ?1 AND tool_id = ?2 ORDER BY created_at, rowid",
+    )?;
+    let rows = stmt.query_map(rusqlite::params![user_id, tool_id], |r| {
+        Ok(CliAccountRow {
+            id: r.get(0)?,
+            label: r.get(1)?,
+            home_dir: r.get(2)?,
+            identity: r.get(3)?,
+            is_default: r.get::<_, i64>(4)? != 0,
+        })
+    })?;
+    rows.collect()
+}
+
+fn cli_account_row(
+    conn: &rusqlite::Connection,
+    user_id: &str,
+    tool_id: &str,
+    acc: &str,
+) -> rusqlite::Result<Option<CliAccountRow>> {
+    Ok(cli_account_rows(conn, user_id, tool_id)?
+        .into_iter()
+        .find(|r| r.id == acc))
+}
+
+/// Tell gizzi which added account is each CLI's default: its driver has no
+/// database, so it reads `defaults.json` (`{tool_id: account_id}`) in the homes
+/// root. A CLI with no default row is absent, meaning the stock home.
+fn write_cli_account_defaults(conn: &rusqlite::Connection) {
+    let mut map = serde_json::Map::new();
+    let rows: rusqlite::Result<Vec<(String, String)>> = (|| {
+        let mut stmt = conn.prepare("SELECT tool_id, id FROM cli_accounts WHERE is_default = 1 ORDER BY updated_at")?;
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+        rows.collect()
+    })();
+    match rows {
+        Ok(rows) => {
+            for (tool, id) in rows {
+                map.insert(tool, json!(id));
+            }
+        }
+        Err(e) => return warn!("cli account defaults not written: {e}"),
+    }
+    let root = cli_homes_root();
+    let written = std::fs::create_dir_all(&root)
+        .and_then(|_| std::fs::write(root.join("defaults.json"), serde_json::Value::Object(map).to_string()));
+    if let Err(e) = written {
+        warn!("cli account defaults not written: {e}");
+    }
+}
+
+/// `(signed in, who)` for an added account: the CLI run against its home.
+fn cli_account_login_status(tool: &crate::cli_catalog::CliTool, binary: &str, home: &std::path::Path) -> (bool, Option<String>) {
+    match tool.id.as_str() {
+        "claude-cli" => claude_cli_status(binary, Some(home)),
+        "codex-cli" => (
+            cli_alive(binary, &["--version"], Some("codex")) && home.join("auth.json").exists(),
+            None,
+        ),
+        _ => (false, None),
+    }
+}
+
+fn cli_account_json(row: &CliAccountRow, authenticated: bool, identity: Option<String>) -> serde_json::Value {
+    json!({
+        "id": row.id,
+        "label": row.label,
+        "identity": identity.or_else(|| row.identity.clone()),
+        "authenticated": authenticated,
+        "is_default": row.is_default,
+    })
+}
+
+fn account_not_found() -> Response {
+    (StatusCode::NOT_FOUND, Json(json!({"error": "account_not_found"}))).into_response()
+}
+
+/// `{"accounts":[{id,label,identity,authenticated,is_default}], "multi":bool}`:
+/// the implicit default account first, then the added ones.
+async fn list_cli_accounts(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Response {
+    let Some(user) = get_user(&headers) else {
+        return unauthorized();
+    };
+    let Some((binary, meta)) = subscription_provider(&id) else {
+        return (StatusCode::NOT_FOUND, Json(json!({"error": "unknown_provider"}))).into_response();
+    };
+    let tool = multi_account_tool(meta.id);
+    let rows = match (&tool, state.db.connect()) {
+        (Some(_), Ok(conn)) => match cli_account_rows(&conn, &user.user_id, meta.id) {
+            Ok(rows) => rows,
+            Err(e) => return db_error(e),
+        },
+        (Some(_), Err(e)) => return db_error(e),
+        (None, _) => Vec::new(),
+    };
+    let default_identity = if tool.is_some() && meta.id == "claude-cli" {
+        claude_cli_status(binary, None).1
+    } else {
+        None
+    };
+    let mut accounts = vec![json!({
+        "id": "default",
+        "label": "Default",
+        "identity": default_identity,
+        "authenticated": subscription_auth_check(&id, binary),
+        "is_default": !rows.iter().any(|r| r.is_default),
+    })];
+    if let Some(tool) = tool {
+        for row in &rows {
+            let (ok, who) = cli_account_login_status(tool, binary, std::path::Path::new(&row.home_dir));
+            accounts.push(cli_account_json(row, ok, who));
+        }
+    }
+    Json(json!({ "accounts": accounts, "multi": tool.is_some() })).into_response()
+}
+
+#[derive(Debug, Deserialize)]
+struct AddAccountBody {
+    label: String,
+    /// Same meaning as on `/providers/:id/connect`.
+    #[serde(default)]
+    remote: bool,
+}
+
+/// Create an account (row + home dir) and start the CLI's own sign-in in it.
+/// Same response shape as `/providers/:id/connect`, plus `account:{id,label}`;
+/// poll `GET /providers/:id/accounts/:acc/status`.
+async fn add_cli_account(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<AddAccountBody>,
+) -> Response {
+    let Some(user) = get_user(&headers) else {
+        return unauthorized();
+    };
+    let Some((binary, meta)) = subscription_provider(&id) else {
+        return (StatusCode::NOT_FOUND, Json(json!({"error": "unknown_provider"}))).into_response();
+    };
+    let Some(tool) = multi_account_tool(meta.id) else {
+        return (StatusCode::BAD_REQUEST, Json(json!({"error": "single_account_only"}))).into_response();
+    };
+    let env_name = tool.account_home_env.as_deref().unwrap_or_default();
+    let label = body.label.trim().to_string();
+    if label.is_empty() || label.chars().count() > 60 || label.eq_ignore_ascii_case("default") {
+        return (StatusCode::BAD_REQUEST, Json(json!({"error": "invalid_label"}))).into_response();
+    }
+    let Some(binary_path) = crate::cli_tools::resolve_binary(binary) else {
+        return Json(json!({
+            "status": "not_installed",
+            "provider": id,
+            "label": meta.label,
+            "binary": binary,
+            "page": meta.page,
+            "install": crate::cli_tools::install_json(&id, binary),
+        }))
+        .into_response();
+    };
+
+    let acc_id = format!("ca_{}", &uuid::Uuid::new_v4().simple().to_string()[..12]);
+    let home = cli_homes_root().join(&acc_id);
+    let conn = match state.db.connect() {
+        Ok(c) => c,
+        Err(e) => return db_error(e),
+    };
+    let now = chrono::Utc::now().to_rfc3339();
+    if let Err(e) = conn.execute(
+        "INSERT INTO cli_accounts (id, user_id, tool_id, label, home_dir, is_default, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, 0, ?6, ?6)",
+        rusqlite::params![acc_id, user.user_id, meta.id, label, home.to_string_lossy(), now],
+    ) {
+        return match e {
+            rusqlite::Error::SqliteFailure(f, _) if f.code == rusqlite::ErrorCode::ConstraintViolation => {
+                (StatusCode::CONFLICT, Json(json!({"error": "label_taken"}))).into_response()
+            }
+            e => db_error(e),
+        };
+    }
+    let rollback = |conn: &rusqlite::Connection| {
+        let _ = conn.execute("DELETE FROM cli_accounts WHERE id = ?1", rusqlite::params![acc_id]);
+        let _ = std::fs::remove_dir_all(&home);
+    };
+    if let Err(e) = std::fs::create_dir_all(&home) {
+        rollback(&conn);
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "home_create_failed", "details": e.to_string()})),
+        )
+            .into_response();
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&home, std::fs::Permissions::from_mode(0o700));
+    }
+
+    if meta.login.is_empty() {
+        return Json(json!({
+            "status": "started",
+            "provider": id,
+            "label": meta.label,
+            "page": meta.page,
+            "account": {"id": acc_id, "label": label},
+        }))
+        .into_response();
+    }
+    let (argv, hint) = login_argv(meta.id, meta.login, body.remote);
+    let key = format!("{}:{}", meta.id, acc_id);
+    match crate::cli_tools::start_login_with_env(&key, &binary_path, &argv, hint, &[(env_name, home.as_path())]).await {
+        Ok(login) => Json(json!({
+            "status": "started",
+            "provider": id,
+            "label": meta.label,
+            "page": meta.page,
+            "login": login,
+            "account": {"id": acc_id, "label": label},
+        }))
+        .into_response(),
+        Err(e) => {
+            rollback(&conn);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "spawn_failed", "details": e, "page": meta.page})),
+            )
+                .into_response()
+        }
+    }
+}
+
+/// Same shape as `/providers/:id/connect/status`, for one added account's sign-in.
+async fn cli_account_status(
+    State(state): State<Arc<AppState>>,
+    Path((id, acc)): Path<(String, String)>,
+    headers: HeaderMap,
+) -> Response {
+    let Some(user) = get_user(&headers) else {
+        return unauthorized();
+    };
+    let Some((binary, meta)) = subscription_provider(&id) else {
+        return (StatusCode::NOT_FOUND, Json(json!({"error": "unknown_provider"}))).into_response();
+    };
+    let Some(tool) = multi_account_tool(meta.id) else {
+        return (StatusCode::BAD_REQUEST, Json(json!({"error": "single_account_only"}))).into_response();
+    };
+    let conn = match state.db.connect() {
+        Ok(c) => c,
+        Err(e) => return db_error(e),
+    };
+    let row = match cli_account_row(&conn, &user.user_id, meta.id, &acc) {
+        Ok(Some(row)) => row,
+        Ok(None) => return account_not_found(),
+        Err(e) => return db_error(e),
+    };
+    let (connected, who) = cli_account_login_status(tool, binary, std::path::Path::new(&row.home_dir));
+    let key = format!("{}:{}", meta.id, row.id);
+    if connected {
+        if let Some(who) = who.as_deref().filter(|w| row.identity.as_deref() != Some(*w)) {
+            let _ = conn.execute(
+                "UPDATE cli_accounts SET identity = ?1, updated_at = ?2 WHERE id = ?3 AND user_id = ?4",
+                rusqlite::params![who, chrono::Utc::now().to_rfc3339(), row.id, user.user_id],
+            );
+        }
+        crate::cli_tools::note_signed_in(&key).await;
+    }
+    let login = crate::cli_tools::login_view(&key).await;
+    let failed = !connected && matches!(login, Some((_, true, _)));
+    Json(json!({
+        "status": if connected { "success" } else if failed { "failed" } else { "pending" },
+        "provider": id,
+        "label": meta.label,
+        "account": cli_account_json(&row, connected, who),
+        "login": login.map(|(view, ..)| view),
+    }))
+    .into_response()
+}
+
+/// Paste the sign-in code into an added account's waiting CLI (Claude).
+async fn submit_cli_account_code(
+    State(state): State<Arc<AppState>>,
+    Path((id, acc)): Path<(String, String)>,
+    headers: HeaderMap,
+    Json(body): Json<ConnectCodeBody>,
+) -> Response {
+    let Some(user) = get_user(&headers) else {
+        return unauthorized();
+    };
+    let Some((_, meta)) = subscription_provider(&id) else {
+        return (StatusCode::NOT_FOUND, Json(json!({"error": "unknown_provider"}))).into_response();
+    };
+    if body.code.trim().is_empty() || body.code.len() > 4096 {
+        return (StatusCode::BAD_REQUEST, Json(json!({"error": "invalid_code"}))).into_response();
+    }
+    let conn = match state.db.connect() {
+        Ok(c) => c,
+        Err(e) => return db_error(e),
+    };
+    match cli_account_row(&conn, &user.user_id, meta.id, &acc) {
+        Ok(Some(_)) => {}
+        Ok(None) => return account_not_found(),
+        Err(e) => return db_error(e),
+    }
+    match crate::cli_tools::submit_code(&format!("{}:{}", meta.id, acc), &body.code).await {
+        Ok(()) => Json(json!({"ok": true})).into_response(),
+        Err(error) => (StatusCode::CONFLICT, Json(json!({"error": error}))).into_response(),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct UpdateAccountBody {
+    /// true = make this the user's default for the CLI (`default` = the stock home).
+    #[serde(default)]
+    default: Option<bool>,
+    #[serde(default)]
+    label: Option<String>,
+}
+
+/// `PATCH {default?:bool, label?:string}` on an added account, or
+/// `{default:true}` on `default` (back to the stock home). Answers `{"ok":true}`.
+async fn update_cli_account(
+    State(state): State<Arc<AppState>>,
+    Path((id, acc)): Path<(String, String)>,
+    headers: HeaderMap,
+    Json(body): Json<UpdateAccountBody>,
+) -> Response {
+    let Some(user) = get_user(&headers) else {
+        return unauthorized();
+    };
+    let Some((_, meta)) = subscription_provider(&id) else {
+        return (StatusCode::NOT_FOUND, Json(json!({"error": "unknown_provider"}))).into_response();
+    };
+    if multi_account_tool(meta.id).is_none() {
+        return (StatusCode::BAD_REQUEST, Json(json!({"error": "single_account_only"}))).into_response();
+    }
+    let conn = match state.db.connect() {
+        Ok(c) => c,
+        Err(e) => return db_error(e),
+    };
+    let now = chrono::Utc::now().to_rfc3339();
+    if acc == "default" {
+        if body.label.is_some() || body.default != Some(true) {
+            return (StatusCode::BAD_REQUEST, Json(json!({"error": "default_account_fixed"}))).into_response();
+        }
+        if let Err(e) = conn.execute(
+            "UPDATE cli_accounts SET is_default = 0, updated_at = ?3 WHERE user_id = ?1 AND tool_id = ?2",
+            rusqlite::params![user.user_id, meta.id, now],
+        ) {
+            return db_error(e);
+        }
+        write_cli_account_defaults(&conn);
+        return Json(json!({"ok": true})).into_response();
+    }
+    match cli_account_row(&conn, &user.user_id, meta.id, &acc) {
+        Ok(Some(_)) => {}
+        Ok(None) => return account_not_found(),
+        Err(e) => return db_error(e),
+    }
+    if let Some(label) = &body.label {
+        let label = label.trim();
+        if label.is_empty() || label.chars().count() > 60 || label.eq_ignore_ascii_case("default") {
+            return (StatusCode::BAD_REQUEST, Json(json!({"error": "invalid_label"}))).into_response();
+        }
+        if let Err(e) = conn.execute(
+            "UPDATE cli_accounts SET label = ?1, updated_at = ?2 WHERE id = ?3 AND user_id = ?4",
+            rusqlite::params![label, now, acc, user.user_id],
+        ) {
+            return match e {
+                rusqlite::Error::SqliteFailure(f, _) if f.code == rusqlite::ErrorCode::ConstraintViolation => {
+                    (StatusCode::CONFLICT, Json(json!({"error": "label_taken"}))).into_response()
+                }
+                e => db_error(e),
+            };
+        }
+    }
+    if let Some(make_default) = body.default {
+        // One default per user + CLI.
+        let result = conn
+            .execute(
+                "UPDATE cli_accounts SET is_default = 0, updated_at = ?3 WHERE user_id = ?1 AND tool_id = ?2",
+                rusqlite::params![user.user_id, meta.id, now],
+            )
+            .and_then(|_| {
+                if make_default {
+                    conn.execute(
+                        "UPDATE cli_accounts SET is_default = 1 WHERE id = ?1 AND user_id = ?2",
+                        rusqlite::params![acc, user.user_id],
+                    )
+                } else {
+                    Ok(0)
+                }
+            });
+        if let Err(e) = result {
+            return db_error(e);
+        }
+        write_cli_account_defaults(&conn);
+    }
+    Json(json!({"ok": true})).into_response()
+}
+
+/// Remove an added account: its row and its home dir (so its sign-in goes
+/// too). The default account cannot be removed.
+async fn delete_cli_account(
+    State(state): State<Arc<AppState>>,
+    Path((id, acc)): Path<(String, String)>,
+    headers: HeaderMap,
+) -> Response {
+    let Some(user) = get_user(&headers) else {
+        return unauthorized();
+    };
+    let Some((_, meta)) = subscription_provider(&id) else {
+        return (StatusCode::NOT_FOUND, Json(json!({"error": "unknown_provider"}))).into_response();
+    };
+    if acc == "default" {
+        return (StatusCode::BAD_REQUEST, Json(json!({"error": "cannot_delete_default"}))).into_response();
+    }
+    if multi_account_tool(meta.id).is_none() {
+        return (StatusCode::BAD_REQUEST, Json(json!({"error": "single_account_only"}))).into_response();
+    }
+    let conn = match state.db.connect() {
+        Ok(c) => c,
+        Err(e) => return db_error(e),
+    };
+    let row = match cli_account_row(&conn, &user.user_id, meta.id, &acc) {
+        Ok(Some(row)) => row,
+        Ok(None) => return account_not_found(),
+        Err(e) => return db_error(e),
+    };
+    if let Err(e) = conn.execute(
+        "DELETE FROM cli_accounts WHERE id = ?1 AND user_id = ?2",
+        rusqlite::params![row.id, user.user_id],
+    ) {
+        return db_error(e);
+    }
+    // Only ever delete inside the homes root, whatever the row says.
+    let home = std::path::PathBuf::from(&row.home_dir);
+    if home.starts_with(cli_homes_root()) && home != cli_homes_root() {
+        let _ = std::fs::remove_dir_all(&home);
+    }
+    write_cli_account_defaults(&conn);
+    Json(json!({"ok": true})).into_response()
 }
 
 // ─── Hugging Face GGUF search (PocketPal-style local model discovery) ────────
