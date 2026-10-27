@@ -207,7 +207,7 @@ file workflow and unsaved-change handling.
 
 ## Updates and recovery (m.allternit.com)
 
-The m.allternit.com app runs a service worker (`fabric-session-service-worker.js`). It loads the page from the network first, so a new deploy shows up the next time you open the app. Offline, it opens the last copy it saved. Build files (`/assets/...`) have the build hash in their names, so the worker keeps them and serves them from its cache.
+The m.allternit.com app runs a service worker (`fabric-session-service-worker.js`). It loads the page from the network first, so a new deploy shows up the next time you open the app. Every merge to allternit-ai main deploys m.allternit.com (Cloudflare Pages project `allternit-m`). Offline, it opens the last copy it saved. Build files (`/assets/...`) have the build hash in their names, so the worker keeps them and serves them from its cache.
 
 Cloudflare Pages answers a request for a missing file with the app page (`index.html`) and status 200. The worker never stores a response of type `text/html` under a build file's name. If it finds one already stored, it deletes it and downloads the file again. Before that rule (cache `allternit-fabric-session-v140` and earlier), one such response could leave the app blank on every launch.
 
@@ -222,7 +222,7 @@ The m.allternit.com app sends errors to `/client-errors` on its own host. A Clou
 - build files that fail to load before the app starts
 - a snapshot (what is on screen, viewport, Home Screen or Safari) when the screen is still nearly empty 20 seconds after launch
 
-Read them live with `wrangler pages deployment tail <deployment-id> --project-name allternit-remote-control` (the full deployment id from `wrangler pages deployment list`).
+Read them live with `wrangler pages deployment tail <deployment-id> --project-name allternit-m` (the full deployment id from `wrangler pages deployment list`).
 
 ## Artifact import on phones
 

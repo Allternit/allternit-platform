@@ -38,7 +38,8 @@ Without it, `release-desktop.yml` cannot bundle the workspace UI.
 | **allternit-docs** | docs.allternit.com | `surfaces/docs/dist` (unzipped `export.zip`) | `.github/workflows/deploy-docs-cloudflare.yml` |
 | **allternit-office** | office.allternit.com | `allternit-ai` `tmp/office-site` (`vite.office.config.ts` + `scripts/prepare-office-site.mjs`) | manual `wrangler pages deploy` from clean origin/main (see `surfaces/docs/surfaces/office-web.mdx`) |
 | **allternit-office-addins** | allternit-office-addins.pages.dev | office add-in `pages-deploy/` | `.github/workflows/deploy-cloudflare-pages.yml` |
-| **allternit-remote-control** | m.allternit.com | Allternit Mobile, the phone PWA (formerly fabrictransport.allternit.com; source in Allternit/allternit-ai) | wrangler CLI / allternit-ai |
+| **allternit-m** | m.allternit.com | Allternit Mobile, the phone PWA (formerly fabrictransport.allternit.com; source in Allternit/allternit-ai) | Git build of allternit-ai main (`scripts/cf-pages-build-pwa.sh`), since 2026-10-27 |
+| allternit-remote-control | none | Retired direct-upload project that served m.allternit.com until 2026-10-27 | not used |
 
 ### Deployed from Allternit/allternit-ai (private) — not this repo
 
