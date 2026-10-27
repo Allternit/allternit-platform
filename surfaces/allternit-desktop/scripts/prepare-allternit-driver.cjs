@@ -80,6 +80,11 @@ function targets() {
     if (keys.length === 0) throw new Error(`No driver Python for ALLTERNIT_PACK_OS=${osName} ALLTERNIT_PACK_ARCH=${arch}`);
     return keys;
   }
+  // build-desktop.sh without --release: this Mac's Python only.
+  if (process.env.ALLTERNIT_HOST_ONLY === '1' && process.env.ALLTERNIT_PACK_ALL !== '1') {
+    const key = `${process.platform}-${process.arch}`;
+    return PYTHONS[key] ? [key] : [];
+  }
   if (process.env.ALLTERNIT_PACK_ALL === '1' || process.platform === 'darwin') {
     return ['darwin-arm64', 'darwin-x64', 'linux-x64', 'win32-x64'];
   }

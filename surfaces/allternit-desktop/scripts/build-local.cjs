@@ -15,6 +15,8 @@
 //     resources/build-info.json is written next to the sidecars so the
 //     running app can report its build number (app:get-info → buildInfo).
 //     ALLTERNIT_BUILD_VERSION overrides the buildVersion string.
+//   - ALLTERNIT_HOST_ONLY=1 (build-desktop.sh without --release): one DMG
+//     for this Mac's arch instead of every mac target.
 const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -63,6 +65,17 @@ if (process.platform === 'win32' && !process.env.ALLTERNIT_BUILD_SUFFIX) {
     '-c.artifactName=Allternit-Desktop-${version}-${arch}.${ext}',
     '-c.nsis.artifactName=Allternit-Setup-${version}.exe',
   );
+}
+
+// build-desktop.sh without --release: one DMG for this Mac (the mac config
+// also makes x64 and zip artifacts, which only a public release needs).
+// Arguments given on the command line win.
+if (
+  process.env.ALLTERNIT_HOST_ONLY === '1' &&
+  process.platform === 'darwin' &&
+  !process.argv.slice(2).some((a) => /^--(mac|arm64|x64|universal)$/.test(a))
+) {
+  extraArgs.push('--mac', 'dmg', process.arch === 'arm64' ? '--arm64' : '--x64');
 }
 
 let command = process.execPath;

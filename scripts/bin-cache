@@ -18,12 +18,16 @@ Usage:
       --built-in OLD maps a .d written from another checkout of the same repo
       (paths under OLD are read under --root): the key then describes --root,
       so store this way only when those sources are the same in both.
+  bin-cache store-dirs <name> <binary> --dirs D1,D2 [--files F1,F2] [--tool CMD] [--root DIR]
+      For a build that is not cargo (gizzi-code with bun): the key is every
+      tracked file under the --dirs, the --files (lockfiles, build scripts)
+      and the output of --tool (e.g. "bun --version").
 
 What the key covers: every workspace file the .d lists (sources, include_str!
 files, migrations), every tracked file in each workspace package those files
 belong to (build.rs and its inputs), the root Cargo.toml and Cargo.lock
 (dependency versions, profiles), rustc -vV, and the build env that changes
-output (MACOSX_DEPLOYMENT_TARGET, CARGO_BUILD_TARGET, RUSTFLAGS). Files are
+output (MACOSX_DEPLOYMENT_TARGET, CARGO_BUILD_TARGET, RUSTFLAGS, GIZZI_CHANNEL). Files are
 compared by git blob hash, so a dirty checkout is compared by content.
 ALLTERNIT_NO_BIN_CACHE=1 turns it off. Cache: ~/.cache/allternit-bin-cache.
 """
@@ -32,15 +36,11 @@ from pathlib import Path
 
 CACHE = Path(os.environ.get("ALLTERNIT_BIN_CACHE", Path.home() / ".cache/allternit-bin-cache"))
 KEEP = 4
-ENV_KEYS = ("MACOSX_DEPLOYMENT_TARGET", "CARGO_BUILD_TARGET", "RUSTFLAGS", "CARGO_ENCODED_RUSTFLAGS")
+ENV_KEYS = ("MACOSX_DEPLOYMENT_TARGET", "CARGO_BUILD_TARGET", "RUSTFLAGS", "CARGO_ENCODED_RUSTFLAGS", "GIZZI_CHANNEL")
 
 
 def run(*cmd, cwd=None, inp=None):
     return subprocess.run(cmd, cwd=cwd, input=inp, capture_output=True, text=True, check=True).stdout
-
-
-def toolchain(root):
-    return run("rustc", "-vV", cwd=root)
 
 
 def blob_hashes(root, rel):
@@ -58,12 +58,16 @@ def package_files(root, packages):
     return [p for p in out.split("\0") if p]
 
 
-def key_for(root, files, packages):
-    rel = sorted(set(files) | set(package_files(root, packages)) | {"Cargo.toml", "Cargo.lock"})
+CARGO_BASE = ["Cargo.toml", "Cargo.lock"]
+RUSTC = ["rustc", "-vV"]
+
+
+def key_for(root, files, packages, base=CARGO_BASE, tool=RUSTC):
+    rel = sorted(set(files) | set(package_files(root, packages)) | set(base))
     h = hashlib.sha256()
     for p, b in blob_hashes(root, rel).items():
         h.update(f"{p}\0{b}\n".encode())
-    h.update(toolchain(root).encode())
+    h.update(run(*tool, cwd=root).encode())
     for k in ENV_KEYS:
         h.update(f"{k}={os.environ.get(k, '')}\n".encode())
     return h.hexdigest()
@@ -113,14 +117,15 @@ def entries(name):
 def cmd_fetch(name, dest, root):
     for meta, e in entries(name):
         try:
-            k = key_for(root, meta["files"], meta["packages"])
-        except subprocess.CalledProcessError:
+            k = key_for(root, meta["files"], meta["packages"], meta.get("base", CARGO_BASE), meta.get("tool", RUSTC))
+        except (subprocess.CalledProcessError, FileNotFoundError):
             continue
         if k == meta["key"] and (e / "bin").is_file():
             dest = Path(dest)
             dest.parent.mkdir(parents=True, exist_ok=True)
             tmp = dest.with_name(dest.name + ".bin-cache-tmp")
-            shutil.copy2(e / "bin", tmp)
+            # A fresh mtime: build-state.sh calls the newest copy in a checkout current.
+            shutil.copy(e / "bin", tmp)
             tmp.replace(dest)
             print(f"bin-cache: reused {name} built {time.strftime('%Y-%m-%d %H:%M', time.localtime(meta['stored_at']))} "
                   f"from {meta.get('commit', '?')[:9]} (sources unchanged)")
@@ -133,7 +138,11 @@ def cmd_store(name, binary, depfile, root, built_in=None):
     if not files:
         print(f"bin-cache: {depfile} lists no workspace files; not caching {name}", file=sys.stderr)
         return 1
-    k = key_for(root, files, packages)
+    return keep(name, binary, root, files, packages)
+
+
+def keep(name, binary, root, files, packages, base=CARGO_BASE, tool=RUSTC):
+    k = key_for(root, files, packages, base, tool)
     e = CACHE / name / k[:20]
     tmp = e.with_name(e.name + f".tmp{os.getpid()}")
     shutil.rmtree(tmp, ignore_errors=True)
@@ -141,6 +150,7 @@ def cmd_store(name, binary, depfile, root, built_in=None):
     shutil.copy2(binary, tmp / "bin")
     commit = run("git", "rev-parse", "HEAD", cwd=root).strip()
     (tmp / "meta.json").write_text(json.dumps({"name": name, "key": k, "files": files, "packages": packages,
+                                               "base": list(base), "tool": list(tool),
                                                "commit": commit, "stored_at": time.time()}))
     shutil.rmtree(e, ignore_errors=True)
     tmp.replace(e)
@@ -154,7 +164,10 @@ def main():
     a = sys.argv[1:]
     if not a or a[0] in ("-h", "--help"):
         print(__doc__.strip()); return 0
-    root, built_in = Path("."), None
+    root, built_in, opts = Path("."), None, {}
+    for flag in ("--dirs", "--files", "--tool"):
+        if flag in a:
+            i = a.index(flag); opts[flag] = a[i + 1]; del a[i:i + 2]
     if "--built-in" in a:
         i = a.index("--built-in"); built_in = a[i + 1]; del a[i:i + 2]
     if "--root" in a:
@@ -166,7 +179,12 @@ def main():
         return cmd_fetch(a[1], a[2], root)
     if a[0] == "store" and len(a) == 4:
         return cmd_store(a[1], a[2], a[3], root, built_in)
-    sys.exit("usage: bin-cache fetch <name> <dest> [--root DIR] | store <name> <binary> <depfile> [--root DIR]")
+    if a[0] == "store-dirs" and len(a) == 3 and opts.get("--dirs"):
+        split = lambda v: [x for x in (v or "").split(",") if x]
+        return keep(a[1], a[2], root, [], split(opts["--dirs"]), split(opts.get("--files")),
+                    (opts.get("--tool") or "true").split())
+    sys.exit("usage: bin-cache fetch <name> <dest> [--root DIR] | store <name> <binary> <depfile> [--root DIR]"
+             " | store-dirs <name> <binary> --dirs D1,D2 [--files F1,F2] [--tool CMD] [--root DIR]")
 
 
 if __name__ == "__main__":
