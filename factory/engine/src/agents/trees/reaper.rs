@@ -72,10 +72,30 @@ pub struct ReapRequest {
     pub with_size: bool,
 }
 
+/// The main checkouts directly inside `dir`, for a folder that holds several
+/// repos (the workspace root the scheduled reaper runs from). A main checkout
+/// has a `.git` directory; a linked worktree has a `.git` file and is skipped.
+fn child_repos(dir: &Path) -> Vec<PathBuf> {
+    let Ok(rd) = std::fs::read_dir(dir) else { return Vec::new() };
+    let mut out: Vec<PathBuf> = rd
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.join(".git").is_dir())
+        .map(|p| canonical(&p))
+        .collect();
+    out.sort();
+    out
+}
+
 pub fn reap(store: &LeaseStore, req: ReapRequest) -> TreeResult<ReapReport> {
     let leases = store.list()?;
     let mut repos: Vec<PathBuf> = leases.iter().map(|l| canonical(&l.repo_path)).collect();
-    repos.extend(req.repos.iter().filter_map(|r| git::main_checkout(r).ok()).map(|p| canonical(&p)));
+    for r in &req.repos {
+        match git::main_checkout(r) {
+            Ok(main) => repos.push(canonical(&main)),
+            Err(_) => repos.extend(child_repos(r)),
+        }
+    }
     repos.sort();
     repos.dedup();
     let mut report = ReapReport { applied: req.apply, ..Default::default() };
@@ -385,6 +405,20 @@ pub fn schedule(engine: &Path, root: &Path, hours: u32, install: bool) -> anyhow
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn child_repos_skips_worktrees_and_plain_folders() {
+        let d = std::env::temp_dir().join(format!("reap-children-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join("repo/.git")).unwrap();
+        std::fs::create_dir_all(d.join("tree")).unwrap();
+        std::fs::write(d.join("tree/.git"), "gitdir: /x").unwrap();
+        std::fs::create_dir_all(d.join("notes")).unwrap();
+        let found = child_repos(&d);
+        assert_eq!(found.len(), 1);
+        assert!(found[0].ends_with("repo"));
+        std::fs::remove_dir_all(&d).ok();
+    }
 
     #[test]
     fn launcher_finds_a_current_engine() {
