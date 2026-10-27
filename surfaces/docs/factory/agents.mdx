@@ -196,8 +196,13 @@ Only `PROBLEM` turns the check red.
 
 On Desktop, Code mode's terminal wall shows the same panes as xterm tiles, so a keystroke in either shows up in both.
 
+## Worktrees
+
+A Terminal bot that works in a worktree gets an [Agent Tree](/factory/trees): its own branch `ao/<slug>` from fresh `origin/main`, owned by the bot and seeded from the warm base. `gizzi agents down <bot> --rm-worktree` lands it, or pauses it when it holds unmerged or uncommitted work. People and sessions use the same `gizzi agents tree` verbs.
+
 ## Related
 
 - [Command reference: `gizzi agents`](/factory/commands#gizzi-agents)
+- [Agent Trees](/factory/trees)
 - [Orchestration](/factory/orchestration)
 - [Bot threads](/guides/bot-threads), [Vendor bots](/guides/vendor-bots), [Bot autonomy](/guides/bot-autonomy)

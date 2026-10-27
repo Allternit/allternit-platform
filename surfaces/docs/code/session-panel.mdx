@@ -38,7 +38,7 @@ For a session on this computer:
 
 - **This computer**, with **Save**. Save turns the folder into a [cloud environment](/code/cloud-environments): its name is the folder name and its repo is the folder's git remote and branch. You need to be signed in.
 - The folder name and path.
-- The branch (or a dash when the folder is not a git repo), with a **Worktree** switch. Turn it on to run the session in its own git worktree.
+- The branch (or a dash when the folder is not a git repo), with a **Worktree** switch. Turn it on before the first message to run the session in its own [Agent Tree](/factory/trees): a git worktree from the latest main, seeded with the repo's build output so builds start warm, and checkpointed after each edit. The switch is set when the session starts; after the first message it shows the choice, and a new session can make a different one.
 - **Remote Control**. Remote control works per computer, not per session: when this Desktop is paired with Allternit Mobile, all of its sessions can be reached from your phone. The switch shows whether this computer is paired, and clicking it opens Settings → Allternit Mobile. On the web it is off and says it needs Allternit Desktop.
 
 For a cloud session:
@@ -46,6 +46,10 @@ For a cloud session:
 - The environment name and its status: **Connecting**, **Setting up**, nothing once it is ready, or **Failed** with the error. The gear opens the environment editor.
 - **Repositories**, one row per repo. Click **+** to add a repo to the environment.
 - The branch.
+
+### Tree
+
+When the session runs in an Agent Tree (the Worktree switch, or a folder that is a tree), the card shows the branch, its state, how far it is behind main, its size, its owner, what is running in it, files another tree also changed, and disk warnings. Below that are the tree's checkpoints, newest first. **Rewind** puts the files back to a checkpoint after you confirm, and saves the current state first, so **Undo** brings it back. On a phone the card is in the Session sheet. [How trees work](/factory/trees).
 
 ### Context
 

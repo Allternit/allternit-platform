@@ -96,7 +96,7 @@ fn assert_shape(md: &str, name: &str, value: &Value) {
 fn api_md_shapes_parse() {
     let md = api_md();
     let d: Vec<String> = shape(&md, "Delivery").into_iter().map(|(k, _)| k).collect();
-    assert_eq!(d, ["id", "to", "via", "state", "ticket", "threadId", "messageId", "nodeId", "dagId", "at", "detail"]);
+    assert_eq!(d, ["id", "to", "via", "state", "ticket", "threadId", "messageId", "nodeId", "dagId", "at", "detail", "tier", "note", "hopId"]);
     let a = shape(&md, "Agent");
     assert!(a.iter().any(|(k, _)| k == "fields") && a.iter().any(|(k, _)| k == "binding"));
 }

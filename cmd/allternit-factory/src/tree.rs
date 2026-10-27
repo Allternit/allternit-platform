@@ -174,6 +174,9 @@ pub enum AgentsCmd {
     Mirror { to: String },
     /// Check transport, tools and harnesses.
     Doctor,
+    /// Agent Trees: one leased, seeded worktree per agent.
+    #[command(subcommand)]
+    Tree(crate::trees::TreeCmd),
 }
 
 /// Free-form arguments a verb parses itself.
@@ -716,6 +719,7 @@ fn agents(ctx: &Ctx, cmd: AgentsCmd) -> u8 {
             run(&ctx, Target::Pane(args))
         }
         AgentsCmd::Doctor => run(ctx, Target::Pane(vec!["doctor".into()])),
+        AgentsCmd::Tree(cmd) => crate::trees::run(ctx, cmd),
         AgentsCmd::Wall { team: Some(team) } => crate::part::wall(ctx, &team),
         AgentsCmd::Wall { team: None } => {
             if ctx.json {

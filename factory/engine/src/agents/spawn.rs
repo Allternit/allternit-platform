@@ -166,7 +166,12 @@ impl Spawner {
         };
         let cleanup = |workdir: PathBuf| async move {
             if wt_created {
+                // Just made for this spawn, no work in it yet.
                 let _ = remove_worktree(&workdir).await;
+                let store = crate::agents::trees::LeaseStore::open_default();
+                if let Ok(Some(l)) = store.find_by_path(&workdir) {
+                    let _ = store.remove(&l.id);
+                }
             }
         };
 
@@ -459,7 +464,7 @@ impl Spawner {
             if let Some(dir) = wt_dir {
                 let dir_path = Path::new(&dir);
                 if is_ao_worktree(dir_path, slug) {
-                    remove_worktree(dir_path).await?;
+                    land_worktree(dir_path).await?;
                 }
             }
         }
@@ -803,19 +808,58 @@ async fn create_worktree(repo: &Path, slug: &str) -> Result<(PathBuf, bool)> {
         .parent()
         .unwrap_or(Path::new("/tmp"))
         .join(format!("{}-ao-{}", root.file_name().unwrap_or_default().to_string_lossy(), slug));
-    let status = Command::new("git")
-        .arg("-C")
-        .arg(&root)
-        .args(["worktree", "add"])
-        .arg(&wt)
-        .arg("-b")
-        .arg(format!("ao/{}", slug))
-        .status()
-        .await?;
-    if !status.success() {
-        bail!("git worktree add failed");
-    }
-    Ok((wt, true))
+    // An Agent Tree: fresh origin/main, the disk gate, a lease owned by the
+    // bot, seeded from the warm base. Source only: workers write code, the
+    // orchestrator builds.
+    let slug = slug.to_string();
+    let path = wt.clone();
+    let out = tokio::task::spawn_blocking(move || {
+        crate::agents::trees::ops::new_tree(
+            &crate::agents::trees::LeaseStore::open_default(),
+            crate::agents::trees::ops::NewRequest {
+                cwd: &root,
+                branch: &format!("ao/{slug}"),
+                owner: crate::agents::trees::Owner {
+                    kind: crate::agents::trees::OwnerKind::Bot,
+                    id: slug.clone(),
+                    label: slug.clone(),
+                },
+                path: Some(path),
+                once: false,
+                source_only: true,
+                plain: false,
+                force_disk: false,
+                offline: true,
+            },
+        )
+    })
+    .await?
+    .map_err(|e| anyhow::anyhow!("{} ({})", e.fact, e.action))?;
+    Ok((out.tree.path, !out.reused))
+}
+
+/// Land an agent's tree when its session stops. Work that is not on
+/// origin/main (or not committed) is never deleted: the tree is paused instead.
+async fn land_worktree(wt: &Path) -> Result<()> {
+    let wt = wt.to_path_buf();
+    tokio::task::spawn_blocking(move || {
+        use crate::agents::trees::{land, LeaseStore, TreeState};
+        let store = LeaseStore::open_default();
+        let Some(lease) = store.find_by_path(&wt)? else {
+            // Made before trees: remove only if git agrees it is clean.
+            let st = std::process::Command::new("git").args(["worktree", "remove"]).arg(&wt).current_dir(&wt).status()?;
+            if !st.success() {
+                eprintln!("allternit-factory: kept {} (it has changes; land it with `gizzi agents tree done`)", wt.display());
+            }
+            return Ok(());
+        };
+        if let Err(e) = land::done(&store, &lease, land::DoneRequest { abandon: false, skip_discipline: true }) {
+            crate::agents::trees::ops::set_state(&store, &lease, TreeState::Paused).ok();
+            eprintln!("allternit-factory: paused tree {} instead of removing it: {}", lease.id, e.fact);
+        }
+        Ok(())
+    })
+    .await?
 }
 
 async fn remove_worktree(wt: &Path) -> Result<()> {

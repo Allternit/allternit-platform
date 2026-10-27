@@ -95,6 +95,28 @@ EOF
   ok "added build guard to $KIMI_HOME/config.toml"
 fi
 
+if [ -f "$KIMI_HOME/config.toml" ] && grep -q 'tree-hook\.sh' "$KIMI_HOME/config.toml"; then
+  skip "Agent Trees hooks already registered in $KIMI_HOME/config.toml"
+else
+  mkdir -p "$KIMI_HOME"; touch "$KIMI_HOME/config.toml"
+  cat >> "$KIMI_HOME/config.toml" <<'EOF'
+
+# Agent Trees: a checkpoint of the tree after each edit, and the pnpm-only
+# guard (no `npm install` in a pnpm repo). Silent outside a tree.
+[[hooks]]
+event = "PostToolUse"
+command = "bash .steering/bin/tree-hook.sh checkpoint"
+timeout = 20
+
+[[hooks]]
+event = "PreToolUse"
+matcher = "Bash"
+command = "bash .steering/bin/tree-hook.sh guard"
+timeout = 10
+EOF
+  ok "added Agent Trees hooks to $KIMI_HOME/config.toml"
+fi
+
 if [ -f "$KIMI_HOME/config.toml" ] && grep -q 'git-discipline-gate\.sh' "$KIMI_HOME/config.toml"; then
   skip "git-discipline gate already registered in $KIMI_HOME/config.toml"
 else
@@ -132,6 +154,8 @@ commit_gate_entry = {"type": "command", "command": "bash .steering/bin/steer-pre
 wt_entry = {"type": "command", "command": "bash .steering/bin/session-worktree.sh", "timeout": 10}
 guard_entry = {"type": "command", "command": "bash .steering/bin/guard-main-checkout.sh", "timeout": 10}
 build_guard_entry = {"type": "command", "command": "bash .steering/bin/guard-build.sh", "timeout": 10}
+tree_guard_entry = {"type": "command", "command": "bash .steering/bin/tree-hook.sh guard", "timeout": 10}
+tree_ckpt_entry = {"type": "command", "command": "bash .steering/bin/tree-hook.sh checkpoint", "timeout": 20}
 cfg = {"hooks": {}}
 if os.path.exists(path):
     with open(path) as f:
@@ -140,9 +164,11 @@ if os.path.exists(path):
 changed = False
 for event, entry, matcher in (("Stop", stop_entry, None), ("PreToolUse", commit_gate_entry, "Bash|shell"),
                               ("UserPromptSubmit", wt_entry, None), ("PreToolUse", guard_entry, "Bash|shell"),
-                              ("PreToolUse", build_guard_entry, "Bash|shell")):
+                              ("PreToolUse", build_guard_entry, "Bash|shell"),
+                              ("PreToolUse", tree_guard_entry, "Bash|shell"), ("PostToolUse", tree_ckpt_entry, None)):
     groups = cfg["hooks"].setdefault(event, [])
-    if any(entry["command"].split()[-1] in h.get("command", "")
+    # Whole command: "guard" alone would also match guard-main-checkout.sh.
+    if any(" ".join(entry["command"].split()[1:]) in h.get("command", "")
            for g in groups for h in g.get("hooks", [])):
         print(f"  [skip] {event} already registered in hooks.json")
         continue

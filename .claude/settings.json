@@ -50,6 +50,16 @@
             "timeout": 10
           }
         ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .steering/bin/tree-hook.sh guard",
+            "timeout": 10
+          }
+        ]
       }
     ],
     "UserPromptSubmit": [
@@ -70,6 +80,18 @@
             "type": "command",
             "command": "bash .steering/bin/session-worktree.sh",
             "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .steering/bin/tree-hook.sh checkpoint",
+            "timeout": 20
           }
         ]
       }

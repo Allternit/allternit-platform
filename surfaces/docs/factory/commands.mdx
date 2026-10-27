@@ -38,7 +38,7 @@ The crew. See [Agents](/factory/agents).
 |---|---|---|
 | `gizzi agents up [<team>] [--preset P] [--on <computer>] [--dry-run]` | `rig up` | Boot a team from `team.yaml`: spawn Terminal panes, bind Hosted and Vendor bots |
 | `gizzi agents ps` | `rig ps` | Every bot with binding, state, node and proof, reconciled against live panes |
-| `gizzi agents down <team\|bot> [--rm-worktree]` | `rig down` | Stop a team's panes, or one bot's pane (`--rm-worktree` also removes the worktree it was started in) |
+| `gizzi agents down <team\|bot> [--rm-worktree]` | `rig down` | Stop a team's panes, or one bot's pane (`--rm-worktree` also lands the bot's [tree](/factory/trees), or pauses it when it holds unmerged or uncommitted work) |
 | `gizzi agents whoami` | `rig whoami` | Which bot and team this session is |
 | `gizzi agents recover [<bot>] [--apply] [--lead <id>\|--as-human]` | `rig seat handover`, `rig restore` | Show (or, with `--apply`, do) what to restart after a crash: dead, unfinished sessions you own, relaunched with the harness's own resume when it recorded a session |
 | `gizzi agents snapshot` / `restore` | `rig snapshot` / `restore` | Save or restore a whole team |
@@ -50,6 +50,25 @@ The crew. See [Agents](/factory/agents).
 | `gizzi agents wall [<team>]` | `rig tui` terminals view | Open the live wall of panes, or one team's |
 | `gizzi agents attach <bot@team>` | drop into a terminal | Open one bot: its pane, its session or its thread |
 | `gizzi agents doctor` | `rig doctor`, `rig health` | Check harnesses, panes and transport |
+
+### `gizzi agents tree`
+
+One leased worktree per agent. See [Agent Trees](/factory/trees).
+
+| Command | OpenRig | What it does |
+|---|---|---|
+| `gizzi agents tree new <branch> [--path] [--owner] [--once] [--source-only] [--plain] [--force-disk] [--offline]` | — | Make or reuse a tree: fresh `origin/main`, free-disk gate, lease, warm-base seed, its own env |
+| `gizzi agents tree list [--all] [--size] [--path P]` | — | Every tree: owner, state, behind main, processes, checkpoints, overlaps, machine warnings |
+| `gizzi agents tree env [tree]` | — | Print the tree's env: `eval "$(gizzi agents tree env)"` |
+| `gizzi agents tree sync [tree]` | — | Forward-only update to `origin/main` (clean trees already in main's past) |
+| `gizzi agents tree checkpoint [tree]` / `checkpoints [tree]` | — | Save a checkpoint now, or list them newest first |
+| `gizzi agents tree rewind <n> [tree] [--as-owner]` | — | Put the files back to checkpoint `n` (the current state is saved first) |
+| `gizzi agents tree pause\|resume [tree] [--as-owner]` | — | Keep a tree for later (pushes branch and checkpoints; never reaped), or make it active again |
+| `gizzi agents tree done [tree] [--abandon] [--as-owner]` | — | Land it: merge check, stop its processes, delete build output, branch and checkpoints, remove it, run the discipline check |
+| `gizzi agents tree reap [--apply] [--size]` | — | The merged + idle + clean rule over every worktree (a dry run without `--apply`) |
+| `gizzi agents tree overlap` | — | Files changed in more than one live tree |
+| `gizzi agents tree base status\|refresh [--build]` | — | The warm base trees are cloned from |
+| `gizzi agents tree reaper install [--hours N]\|uninstall` | — | Schedule `reap --apply` (launchd or a systemd user timer) |
 
 ## `gizzi orchestration`
 

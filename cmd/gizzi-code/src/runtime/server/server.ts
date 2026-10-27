@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs"
 import { BusEvent } from "@/shared/bus/bus-event"
 import { Bus } from "@/shared/bus"
 import { Log } from "@/shared/util/log"
@@ -358,7 +359,10 @@ export namespace Server {
           if (c.req.path === "/log") return next()
           // Cron routes are global and should not require a project directory.
           if (c.req.path.startsWith("/cron")) return next()
-          const raw = c.req.query("directory") || c.req.header("x-gizzi-directory") || c.req.header("x-gizzi-directory") || process.cwd()
+          const explicit = c.req.query("directory") || c.req.header("x-gizzi-directory")
+          // A session made in its own Agent Tree keeps working there when a
+          // caller sends no directory (Code's local sessions don't).
+          const raw = explicit || (await sessionDirectory(c.req.path)) || process.cwd()
           const directory = (() => {
             try {
               return decodeURIComponent(raw)
@@ -839,5 +843,19 @@ export namespace Server {
     }
 
     return server
+  }
+}
+
+
+/** `/v1/session/<id>/…` → that session's stored directory, if it still exists. */
+async function sessionDirectory(pathname: string): Promise<string | undefined> {
+  const m = /^\/(?:v1\/)?session\/(ses_[A-Za-z0-9]+)/.exec(pathname)
+  if (!m) return undefined
+  try {
+    const { Session } = await import("@/runtime/session")
+    const info = await Session.get(m[1])
+    return info.directory && existsSync(info.directory) ? info.directory : undefined
+  } catch {
+    return undefined
   }
 }
