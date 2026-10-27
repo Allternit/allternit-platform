@@ -360,7 +360,7 @@ patch_checksum() {
   ok "Checksum patched → $platform_key: $checksum"
 }
 
-step "Patching SHA256 checksums into $MANIFEST_FILE…"
+step "Patching SHA256 checksums into ${MANIFEST_FILE}…"
 
 BINARY_PATH="$RESOURCES_DIR/bin/allternit-api"
 if [ -f "$BINARY_PATH" ]; then
