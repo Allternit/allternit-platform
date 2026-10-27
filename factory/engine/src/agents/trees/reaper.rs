@@ -264,11 +264,53 @@ fn synthetic_lease(main: &Path, path: &Path, branch: Option<String>) -> Lease {
     }
 }
 
+fn sh_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+/// The launcher the schedule runs. It looks for the engine on every run,
+/// because Desktop runtime updates and brew upgrades move the binary the
+/// install ran from: newest Desktop runtime, the app bundle, brew, the
+/// installing binary, then PATH. Only an engine that has `agents tree` runs.
+pub fn launcher_script(engine: &Path, root: &Path) -> String {
+    format!(
+        r#"#!/bin/sh
+# Agent Trees reaper launcher, written by `gizzi agents tree reaper install`.
+rt_mac="$HOME/Library/Application Support/@allternit/desktop/runtime/versions"
+rt_linux="$HOME/.config/@allternit/desktop/runtime/versions"
+newest() {{ ls -td "$1"/*/bin/allternit-factory 2>/dev/null | head -n 1; }}
+for e in "$(newest "$rt_mac")" "$(newest "$rt_linux")" \
+  '/Applications/Allternit Desktop.app/Contents/Resources/bin/allternit-factory' \
+  /opt/homebrew/opt/gizzi-code/libexec/allternit-factory /usr/local/opt/gizzi-code/libexec/allternit-factory \
+  {engine} "$(command -v allternit-factory)"; do
+  if [ -n "$e" ] && [ -x "$e" ] && "$e" agents tree reap --help >/dev/null 2>&1; then
+    exec "$e" --root {root} agents tree reap --apply --size
+  fi
+done
+echo "$(date): no allternit-factory with Agent Trees found; reinstall Allternit Desktop or gizzi-code" >&2
+exit 1
+"#,
+        engine = sh_quote(&engine.to_string_lossy()),
+        root = sh_quote(&root.to_string_lossy()),
+    )
+}
+
 /// Install the scheduled reaper (launchd on macOS, a systemd user timer on
-/// Linux), running `<engine> agents tree reap --apply --size` every `hours`
-/// (the size pass keeps each lease's disk use current for the Tree card).
+/// Linux), running `agents tree reap --apply --size` every `hours` through
+/// [`launcher_script`] (the size pass keeps each lease's disk use current for
+/// the Tree card).
 pub fn schedule(engine: &Path, root: &Path, hours: u32, install: bool) -> anyhow::Result<String> {
     let label = "com.allternit.agent-trees-reaper";
+    let launcher = crate::agents::registry::factory_home().join("trees/reaper-run.sh");
+    if install && (cfg!(target_os = "macos") || cfg!(target_os = "linux")) {
+        std::fs::create_dir_all(launcher.parent().unwrap())?;
+        std::fs::write(&launcher, launcher_script(engine, root))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&launcher, std::fs::Permissions::from_mode(0o755))?;
+        }
+    }
     if cfg!(target_os = "macos") {
         let plist = crate::platform::user_home_or("/tmp").join(format!("Library/LaunchAgents/{label}.plist"));
         #[cfg(unix)]
@@ -279,6 +321,7 @@ pub fn schedule(engine: &Path, root: &Path, hours: u32, install: bool) -> anyhow
         let _ = std::process::Command::new("launchctl").args(["bootout", &format!("gui/{uid}/{label}")]).status();
         if !install {
             let _ = std::fs::remove_file(&plist);
+            let _ = std::fs::remove_file(&launcher);
             return Ok(format!("removed {}", plist.display()));
         }
         let log = crate::agents::registry::factory_home().join("trees/reaper.log");
@@ -288,8 +331,7 @@ pub fn schedule(engine: &Path, root: &Path, hours: u32, install: bool) -> anyhow
 <plist version="1.0"><dict>
   <key>Label</key><string>{label}</string>
   <key>ProgramArguments</key><array>
-    <string>{engine}</string><string>--root</string><string>{root}</string>
-    <string>agents</string><string>tree</string><string>reap</string><string>--apply</string><string>--size</string>
+    <string>/bin/sh</string><string>{launcher}</string>
   </array>
   <key>StartInterval</key><integer>{secs}</integer>
   <key>StandardOutPath</key><string>{log}</string>
@@ -298,8 +340,7 @@ pub fn schedule(engine: &Path, root: &Path, hours: u32, install: bool) -> anyhow
   <key>Nice</key><integer>10</integer>
 </dict></plist>
 "#,
-            engine = engine.display(),
-            root = root.display(),
+            launcher = launcher.display(),
             secs = hours * 3600,
             log = log.display(),
         );
@@ -319,15 +360,15 @@ pub fn schedule(engine: &Path, root: &Path, hours: u32, install: bool) -> anyhow
             let _ = std::process::Command::new("systemctl").args(["--user", "disable", "--now", "allternit-agent-trees-reaper.timer"]).status();
             let _ = std::fs::remove_file(&svc);
             let _ = std::fs::remove_file(&timer);
+            let _ = std::fs::remove_file(&launcher);
             return Ok("removed the systemd user timer".into());
         }
         std::fs::create_dir_all(&dir)?;
         std::fs::write(
             &svc,
             format!(
-                "[Unit]\nDescription=Allternit Agent Trees reaper\n\n[Service]\nType=oneshot\nNice=10\nExecStart={} --root {} agents tree reap --apply --size\n",
-                engine.display(),
-                root.display()
+                "[Unit]\nDescription=Allternit Agent Trees reaper\n\n[Service]\nType=oneshot\nNice=10\nExecStart=/bin/sh \"{}\"\n",
+                launcher.display()
             ),
         )?;
         std::fs::write(
@@ -344,6 +385,15 @@ pub fn schedule(engine: &Path, root: &Path, hours: u32, install: bool) -> anyhow
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn launcher_finds_a_current_engine() {
+        let s = launcher_script(Path::new("/old/v1/bin/allternit-factory"), Path::new("/w/it's"));
+        assert!(s.contains("'/old/v1/bin/allternit-factory'"));
+        assert!(s.contains("--root '/w/it'\\''s' agents tree reap --apply --size"));
+        // A newer runtime is tried before the binary the install ran from.
+        assert!(s.find("rt_mac\")").unwrap() < s.find("/old/v1").unwrap());
+    }
 
     #[test]
     fn reasons_read_plainly() {
