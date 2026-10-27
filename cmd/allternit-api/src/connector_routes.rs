@@ -2757,11 +2757,13 @@ async fn oauth_callback(
             let sealed_access = crate::token_crypto::seal(&access);
             let refr = refresh.as_deref().map(crate::token_crypto::seal);
             let exp = expires_at.clone();
+            // Only the row this sign-in started: its state is unique to one user.
+            let st3 = st.clone();
             let _ = tokio::task::spawn_blocking(move || {
                 let conn = db2.connect()?;
                 conn.execute(
-                    "UPDATE connector_connections SET status='connected', access_token=?1, refresh_token=?2, expires_at=?3, metadata=NULL, updated_at=CURRENT_TIMESTAMP WHERE connector_id=?4 AND status='pending'",
-                    params![sealed_access, refr, exp, cid],
+                    "UPDATE connector_connections SET status='connected', access_token=?1, refresh_token=?2, expires_at=?3, metadata=NULL, updated_at=CURRENT_TIMESTAMP WHERE connector_id=?4 AND status='pending' AND json_extract(metadata,'$.state')=?5",
+                    params![sealed_access, refr, exp, cid, st3],
                 )?;
                 Ok::<_, rusqlite::Error>(())
             })
@@ -2991,11 +2993,12 @@ async fn poll_device(
             let db2 = state.db.clone();
             let cid = id.clone();
             let acc = crate::token_crypto::seal(&access);
+            let uid2 = user_id.clone();
             let _ = tokio::task::spawn_blocking(move || {
                 let conn = db2.connect()?;
                 conn.execute(
-                    "UPDATE connector_connections SET status='connected', access_token=?1, metadata=NULL, updated_at=CURRENT_TIMESTAMP WHERE connector_id=?2 AND status='pending'",
-                    params![acc, cid],
+                    "UPDATE connector_connections SET status='connected', access_token=?1, metadata=NULL, updated_at=CURRENT_TIMESTAMP WHERE connector_id=?2 AND user_id=?3 AND status='pending'",
+                    params![acc, cid, uid2],
                 )?;
                 Ok::<_, rusqlite::Error>(())
             })
