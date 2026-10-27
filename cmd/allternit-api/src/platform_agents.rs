@@ -25,7 +25,9 @@
 //! The bot id is the agent id. A bot answers only its signed owner. Turns run
 //! through the same turner as phone calls ([`crate::voice_calls::production_turner`]),
 //! so instructions, memory, the twin persona and autonomy rules all apply.
-//! SSE events: `{"type":"text.delta","text"}` while it writes, then
+//! SSE events: `{"type":"text.delta","text"}` while it writes, tool steps as
+//! `{"type":"tool.started"|"tool.completed"|"tool.failed","toolCallId","name",
+//! "input"?,"output"?,"error"?}`, then
 //! `{"type":"done","text","usage"?}` or `{"type":"error","message","usage"?}`.
 //! `usage` (when the model ran) is `{model, inputTokens, outputTokens,
 //! inputCostMicrousd, outputCostMicrousd}`: tokens and the provider list price
@@ -504,8 +506,10 @@ async fn turn_h(
     Sse::new(stream).into_response()
 }
 
-/// Pass text deltas on (and keep the full text); keep the turn's token usage for
-/// the final event; tool steps and other events stay on the runtime.
+/// Pass text deltas and tool steps on (and keep the full text); keep the turn's
+/// token usage for the final event; other events stay on the runtime.
+/// A turner `tool` step becomes `tool.started` / `tool.completed` / `tool.failed`
+/// `{toolCallId, name, input?, output?, error?}` (input/output bounded by the turner).
 fn forward(ev: Value, written: &mut String, usage: &mut Value, out: &mpsc::UnboundedSender<Value>) {
     if ev["type"] == "usage" {
         let mut u = ev;
@@ -520,6 +524,22 @@ fn forward(ev: Value, written: &mut String, usage: &mut Value, out: &mpsc::Unbou
             written.push_str(t);
             let _ = out.send(json!({ "type": "text.delta", "text": t }));
         }
+        return;
+    }
+    if ev["type"] == "tool" {
+        let kind = match ev["status"].as_str().unwrap_or("") {
+            "started" => "tool.started",
+            "done" => "tool.completed",
+            "error" => "tool.failed",
+            _ => return,
+        };
+        let mut step = json!({ "type": kind, "toolCallId": ev["toolCallId"], "name": ev["name"] });
+        for k in ["input", "output", "error"] {
+            if !ev[k].is_null() {
+                step[k] = ev[k].clone();
+            }
+        }
+        let _ = out.send(step);
     }
 }
 
@@ -579,6 +599,26 @@ mod tests {
         assert!(perms.contains(&("*agent_knowledge_search*", "allow")), "a listed tool is allowed");
         assert!(!perms.iter().any(|(p, _)| *p == "*agent_channel_post*"), "an unlisted tool stays denied");
         assert!(!perms.iter().any(|(p, _)| p.contains("calendar")), "a tool without a runtime backing allows nothing");
+    }
+
+    #[test]
+    fn forward_passes_tool_steps_with_their_details() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let (mut written, mut usage) = (String::new(), Value::Null);
+        forward(json!({ "type": "tool", "name": "websearch", "status": "started", "toolCallId": "c1" }), &mut written, &mut usage, &tx);
+        forward(json!({ "type": "tool", "name": "websearch", "status": "done", "toolCallId": "c1", "input": { "q": "x" }, "output": "3 results" }), &mut written, &mut usage, &tx);
+        forward(json!({ "type": "tool", "name": "bash", "status": "error", "toolCallId": "c2", "error": "denied" }), &mut written, &mut usage, &tx);
+        forward(json!({ "type": "tool.step", "name": "x" }), &mut written, &mut usage, &tx);
+        drop(tx);
+        let mut got = vec![];
+        while let Ok(v) = rx.try_recv() {
+            got.push(v);
+        }
+        assert_eq!(got, vec![
+            json!({ "type": "tool.started", "toolCallId": "c1", "name": "websearch" }),
+            json!({ "type": "tool.completed", "toolCallId": "c1", "name": "websearch", "input": { "q": "x" }, "output": "3 results" }),
+            json!({ "type": "tool.failed", "toolCallId": "c2", "name": "bash", "error": "denied" }),
+        ]);
     }
 
     #[test]

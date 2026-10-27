@@ -678,6 +678,7 @@
               "api/platform/agents",
               "api/platform/knowledge",
               "api/platform/conversations",
+              "api/platform/ag-ui",
               "api/platform/numbers",
               "api/platform/messaging",
               "api/platform/voice",

@@ -1,0 +1,99 @@
+---
+title: 'Use an agent from an AG-UI frontend (CopilotKit)'
+sidebarTitle: 'AG-UI frontends'
+description: 'Drive a hosted agent from CopilotKit or any other AG-UI client over one streaming endpoint.'
+---
+
+[AG-UI](https://docs.ag-ui.com) is an open protocol between agent backends and chat frontends. `POST /v1/agents/{id}/ag-ui` speaks it, so an AG-UI client such as CopilotKit's `HttpAgent` can talk to your [agent](/api/platform/agents) directly. Scope `agents`.
+
+Each run is one turn of a [conversation](/api/platform/conversations): the same key auth, spend cap, one-turn-at-a-time rule, hosted runtime and token billing apply, and the reply is stored on the conversation like any other message.
+
+## Request
+
+The body is AG-UI's `RunAgentInput`:
+
+| Field | |
+|---|---|
+| `threadId` | One of this agent's conversation ids (`conv_…`), or any string of up to 200 characters. A string that isn't a conversation id is kept on the conversation the first run opens, so later runs with the same `threadId` continue it. Leave it out to open a new conversation; its id is then the run's thread. |
+| `runId` | Echoed in `RUN_STARTED` and `RUN_FINISHED`; one is generated when missing. |
+| `messages` | The chat so far. The server keeps the history, so only the last `user` message is used: its text, or the `text` parts when `content` is an array. 1 to 16,000 characters. |
+| `tools`, `context`, `state`, `forwardedProps` | Accepted and not used yet. The agent runs its own tools (set on the agent); frontend-defined tools are not called. |
+
+```bash
+curl -N https://api.allternit.com/v1/agents/agent_3f9…/ag-ui \
+  -H "Authorization: Bearer $ALLTERNIT_KEY" -H "Content-Type: application/json" \
+  -H "Accept: text/event-stream" \
+  -d '{ "threadId": "support-4411", "runId": "run_1", "tools": [], "context": [], "state": {}, "forwardedProps": {},
+        "messages": [{ "id": "m1", "role": "user", "content": "Can I book a cleaning next Tuesday?" }] }'
+```
+
+## Response
+
+Server-sent events, one `data:` line of JSON per AG-UI event:
+
+```text
+data: {"type":"RUN_STARTED","threadId":"support-4411","runId":"run_1"}
+data: {"type":"TEXT_MESSAGE_START","messageId":"msg_9a1…","role":"assistant"}
+data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"msg_9a1…","delta":"Let me check "}
+data: {"type":"TEXT_MESSAGE_END","messageId":"msg_9a1…"}
+data: {"type":"TOOL_CALL_START","toolCallId":"call_1","toolCallName":"calendar","parentMessageId":"msg_9a1…"}
+data: {"type":"TOOL_CALL_ARGS","toolCallId":"call_1","delta":"{\"day\":\"Tuesday\"}"}
+data: {"type":"TOOL_CALL_END","toolCallId":"call_1"}
+data: {"type":"TOOL_CALL_RESULT","messageId":"msg_c40…","toolCallId":"call_1","content":"10:00, 14:30","role":"tool"}
+data: {"type":"TEXT_MESSAGE_START","messageId":"msg_7d2…","role":"assistant"}
+data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"msg_7d2…","delta":"Tuesday has openings at 10:00 and 2:30."}
+data: {"type":"TEXT_MESSAGE_END","messageId":"msg_7d2…"}
+data: {"type":"RUN_FINISHED","threadId":"support-4411","runId":"run_1"}
+```
+
+- Text before a tool call is closed with `TEXT_MESSAGE_END`; text after it is a new message.
+- Tool arguments arrive in one `TOOL_CALL_ARGS` event, once the runtime knows them. Arguments and results are cut at 8,000 characters. A tool that failed reports its error as the `TOOL_CALL_RESULT` content.
+- A failed turn ends with `RUN_ERROR` (`{ "message", "code": "turn_failed" }`) instead of `RUN_FINISHED`.
+
+Refusals before the stream starts are plain JSON [errors](/api/platform/errors), not events: `401`/`403` for the key, `402 spend_cap_reached` or `402 payment_method_required`, `409 conversation_busy` (a run on this thread is still going), `503 runtime_starting` (retry in a few seconds, as with messages).
+
+## CopilotKit
+
+Keep your Allternit key on your server. Point CopilotKit's runtime at the agent with an AG-UI `HttpAgent`:
+
+```ts
+// app/api/copilotkit/route.ts (Next.js)
+import { CopilotRuntime, ExperimentalEmptyAdapter, copilotRuntimeNextJSAppRouterEndpoint } from "@copilotkit/runtime";
+import { HttpAgent } from "@ag-ui/client";
+
+const runtime = new CopilotRuntime({
+  agents: {
+    frontDesk: new HttpAgent({
+      url: "https://api.allternit.com/v1/agents/agent_3f9…/ag-ui",
+      headers: { Authorization: `Bearer ${process.env.ALLTERNIT_KEY}` },
+    }),
+  },
+});
+
+export const POST = async (req: Request) => {
+  const { handleRequest } = copilotRuntimeNextJSAppRouterEndpoint({
+    runtime,
+    serviceAdapter: new ExperimentalEmptyAdapter(),
+    endpoint: "/api/copilotkit",
+  });
+  return handleRequest(req);
+};
+```
+
+Then use it in the page with `<CopilotKit runtimeUrl="/api/copilotkit" agent="frontDesk">` and any CopilotKit chat component. The same `HttpAgent` also works on its own, on a server:
+
+```ts
+import { HttpAgent } from "@ag-ui/client";
+
+const agent = new HttpAgent({
+  url: "https://api.allternit.com/v1/agents/agent_3f9…/ag-ui",
+  headers: { Authorization: `Bearer ${process.env.ALLTERNIT_KEY}` },
+  threadId: "support-4411",
+});
+agent.addMessage({ id: "m1", role: "user", content: "Can I book a cleaning next Tuesday?" });
+await agent.runAgent({}, { onTextMessageContentEvent: ({ event }) => process.stdout.write(event.delta) });
+```
+
+The SDKs also expose the raw stream: `client.conversations.runAgentAgUiStream(agentId, body)` in [TypeScript](/api/platform/sdks/typescript) and `client.conversations.run_agent_ag_ui_stream(agent_id, messages=[…])` in [Python](/api/platform/sdks/python).
+
+Errors: `invalid_messages`, `invalid_content`, `invalid_thread_id`, plus those of [sending a message](/api/platform/conversations).

@@ -6,8 +6,12 @@
 //! * `GET  /v1/conversations/{id}` returns it with its messages, oldest first.
 //! * `POST /v1/conversations/{id}/messages` `{content, stream?}` sends a message
 //!   and answers with the agent's reply; with `stream: true` it answers as
-//!   server-sent events: `message.delta` `{delta}` while the agent writes, then
-//!   `message.completed` (the stored reply) or `error` (`{error:{type,code,message}}`).
+//!   server-sent events: `message.delta` `{delta}` while the agent writes,
+//!   `tool.started` / `tool.completed` / `tool.failed`
+//!   `{tool_call_id, name, input?, output?, error?}` as it uses tools (clients
+//!   that don't know them skip them), then `message.completed` (the stored
+//!   reply) or `error` (`{error:{type,code,message}}`).
+//! * `POST /v1/agents/{id}/ag-ui` runs a turn for an AG-UI frontend (see [`super::ag_ui`]).
 //!
 //! The first message brings the project's hosted runtime up (see [`super::hosting`]);
 //! while it starts, the call answers `503 runtime_starting` and the developer
@@ -75,17 +79,17 @@ impl Drop for TurnLock {
 }
 
 #[derive(Debug, Clone, Serialize, FromRow)]
-struct ConvRow {
-    id: String,
-    account_id: String,
-    agent_id: String,
+pub(crate) struct ConvRow {
+    pub(crate) id: String,
+    pub(crate) account_id: String,
+    pub(crate) agent_id: String,
     runtime_id: Option<String>,
     runtime_session_id: Option<String>,
     metadata: Value,
     created_at: DateTime<Utc>,
 }
 
-const CONV_COLUMNS: &str = "id, account_id, agent_id, runtime_id, runtime_session_id, metadata, created_at";
+pub(crate) const CONV_COLUMNS: &str = "id, account_id, agent_id, runtime_id, runtime_session_id, metadata, created_at";
 
 #[derive(Debug, Clone, Serialize, FromRow)]
 pub struct Message {
@@ -185,7 +189,7 @@ async fn list_conversations(
 }
 
 /// A conversation the caller may see (its account, its project, a live agent).
-async fn fetch_conversation(db: &PgPool, caller: &PlatformCaller, id: &str) -> Result<ConvRow, PlatformError> {
+pub(crate) async fn fetch_conversation(db: &PgPool, caller: &PlatformCaller, id: &str) -> Result<ConvRow, PlatformError> {
     let account = caller.account_filter(None)?;
     sqlx::query_as::<_, ConvRow>(&format!(
         "SELECT c.{} FROM platform_conversations c JOIN platform_agents a ON a.id = c.agent_id \
@@ -231,7 +235,7 @@ struct SendBody {
     stream: bool,
 }
 
-async fn insert_message(db: &PgPool, conversation_id: &str, role: &str, content: &str, status: &str, error: Option<&str>) -> Result<Message, PlatformError> {
+pub(crate) async fn insert_message(db: &PgPool, conversation_id: &str, role: &str, content: &str, status: &str, error: Option<&str>) -> Result<Message, PlatformError> {
     let m = sqlx::query_as::<_, Message>(&format!(
         "INSERT INTO platform_conversation_messages (id, conversation_id, role, content, status, error) VALUES ($1, $2, $3, $4, $5, $6) RETURNING {MSG_COLUMNS}"
     ))
@@ -310,7 +314,7 @@ async fn ensure_agent_key(state: &ApiState, host: &dyn AgentHost, caller: &Platf
 
 /// Make sure the runtime has the agent's current definition and the conversation has a session there.
 /// Returns the runtime, the session and whether the agent runs on the project's own model key.
-async fn prepare(state: &ApiState, host: &dyn AgentHost, caller: &PlatformCaller, conv: &ConvRow) -> Result<(HostRuntime, String, bool), PlatformError> {
+pub(crate) async fn prepare(state: &ApiState, host: &dyn AgentHost, caller: &PlatformCaller, conv: &ConvRow) -> Result<(HostRuntime, String, bool), PlatformError> {
     let (rt, own_key) = ensure_agent_key(state, host, caller, &conv.agent_id).await?;
     let agent_id = &conv.agent_id;
     let session = match (&conv.runtime_id, &conv.runtime_session_id) {
@@ -337,17 +341,17 @@ async fn prepare(state: &ApiState, host: &dyn AgentHost, caller: &PlatformCaller
 
 /// Who a turn's usage belongs to.
 #[derive(Clone)]
-struct TurnMeter {
-    project_id: String,
-    account_id: String,
-    key_id: String,
-    own_key: bool,
+pub(crate) struct TurnMeter {
+    pub(crate) project_id: String,
+    pub(crate) account_id: String,
+    pub(crate) key_id: String,
+    pub(crate) own_key: bool,
 }
 
 /// Record a turn's token usage (`usage` from the runtime's final event) against
 /// the reply `message_id`. Idempotent per message; failures are logged, never
 /// surfaced to the developer (the reply already happened).
-async fn meter_turn(db: &PgPool, m: &TurnMeter, message_id: &str, usage: &Value) {
+pub(crate) async fn meter_turn(db: &PgPool, m: &TurnMeter, message_id: &str, usage: &Value) {
     if !usage.is_object() {
         return;
     }
@@ -425,6 +429,17 @@ pub(crate) async fn collect_turn(mut upstream: crate::routes::voice_calls_cloud:
         Some(f) => Err(f),
         None => Ok(text),
     }
+}
+
+/// A runtime tool step as the conversation stream shows it.
+fn tool_event(ev: &Value) -> Value {
+    let mut v = json!({ "tool_call_id": ev["toolCallId"], "name": ev["name"] });
+    for k in ["input", "output", "error"] {
+        if !ev[k].is_null() {
+            v[k] = ev[k].clone();
+        }
+    }
+    v
 }
 
 fn error_event(code: &str, message: &str) -> Event {
@@ -506,6 +521,9 @@ async fn send_message(
                         text.push_str(&d);
                         // The developer hung up: keep reading so the reply is still stored.
                         let _ = tx.send(Event::default().event("message.delta").data(json!({ "delta": d }).to_string()));
+                    }
+                    Some(kind @ ("tool.started" | "tool.completed" | "tool.failed")) => {
+                        let _ = tx.send(Event::default().event(kind).data(tool_event(&ev).to_string()));
                     }
                     Some("done") => {
                         text = ev["text"].as_str().unwrap_or(&text).to_string();
