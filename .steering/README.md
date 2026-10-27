@@ -48,8 +48,15 @@ Run `.steering/bin/steer-install.sh` once per machine (idempotent; re-run after
 
 The hook script speaks every CLI's block protocol at once: stderr + exit 2
 (kimi, Claude Code) and `{"decision":"block","reason":...}` JSON on stdout
-(codex, gizzi-code). It no-ops in any project without `.steering/checkpoint.md`,
-so the global registrations are safe for other repos.
+(codex, gizzi-code). It no-ops in any project without `.steering/checkpoint.md`.
+
+Codex hooks are global, so a bare `bash .steering/bin/x.sh` would fail with
+exit 127 in any directory without that file. `steer-install.sh` copies
+`run-hook.py` and `install-codex-hooks.py` to `~/.steering/bin/` and rewrites
+each Codex command to `/usr/bin/python3 ~/.steering/bin/run-hook.py
+.steering/bin/<hook> [mode]`. The launcher finds the current repo's hook and
+exits 0 where the repo has none (`tree-hook.sh` is optional, so older
+checkouts skip it). Codex asks you to trust the changed hooks once.
 
 ## Session worktree hooks
 

@@ -8,8 +8,10 @@
 #   gizzi-code  ~/.gizzi/plugins/allternit-steering (plugin copied from repo)
 #   agy         no hook support — steering applies via AGENTS.md convention only
 #
-# The hook script itself no-ops in any project without .steering/checkpoint.md,
-# so global registrations are safe.
+# Codex hooks are global, so each command goes through ~/.steering/bin/run-hook.py
+# (installed from this repo), which finds the current repo's .steering/bin and
+# exits 0 where there is none. A bare `bash .steering/bin/x.sh` fails with 127
+# outside the repo.
 set -uo pipefail
 
 REPO=$(cd "$(dirname "$0")/.." && pwd)          # <repo>/.steering
@@ -189,6 +191,10 @@ if changed:
         json.dump(cfg, f, indent=2)
         f.write("\n")
 PY
+# Route the hooks through the launcher so they work from any directory.
+mkdir -p "$HOME/.steering/bin"
+cp "$REPO/.steering/bin/run-hook.py" "$REPO/.steering/bin/install-codex-hooks.py" "$HOME/.steering/bin/"
+/usr/bin/python3 "$HOME/.steering/bin/install-codex-hooks.py" --config "$CODEX_HOME/hooks.json" --write | sed 's/^/  /'
 CT="$CODEX_HOME/config.toml"
 touch "$CT"
 if grep -q 'codex_hooks' "$CT"; then

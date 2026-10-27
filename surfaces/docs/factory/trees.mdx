@@ -230,7 +230,7 @@ Who gets them:
 | CLI | Where |
 |---|---|
 | Claude Code | The committed `.claude/settings.json` |
-| Codex | `~/.codex/hooks.json`, written by `.steering/bin/steer-install.sh` |
+| Codex | `~/.codex/hooks.json`, written by `.steering/bin/steer-install.sh`. Commands go through `~/.steering/bin/run-hook.py`, so they exit 0 outside a repo that has the hook |
 | Kimi CLI | `~/.kimi/config.toml`, written by `steer-install.sh` |
 | gizzi-code | The `allternit-steering` plugin (`tools/agent-orchestrator/gizzi-plugin`), installed by `steer-install.sh` |
 
