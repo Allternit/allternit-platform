@@ -239,12 +239,6 @@
       "label": "platform agents runtime",
       "kind": "module",
       "path": "allternit/cmd/allternit-api/src/platform_agents.rs"
-    },
-    {
-      "id": "allternit/domains/agent-evals",
-      "label": "agent evals",
-      "kind": "module",
-      "path": "allternit/domains/agent-evals"
     }
   ],
   "edges": [
