@@ -1,0 +1,56 @@
+---
+title: 'Subagent evals'
+description: 'Ten end-to-end tasks that check whether a subagent type helps, or whether the work is better done by the main agent with a skill.'
+---
+
+Each handoff to a subagent loses some context and adds time. The subagent evals show, with numbers, whether a subagent type is worth that cost. They run the same ten tasks three ways and grade every attempt with code, not with a model.
+
+## The three arms
+
+| Arm | What the agent has |
+|---|---|
+| `split` | The 11 built-in subagents, plus Planner, Debugger, Docs Writer and Scribe as subagents, with the old "delegate these" hint. This is the design before 2026-10-27. |
+| `folded` | The 11 built-in subagents. Planning, debugging, docs and summaries are skills the agent runs itself. This is the current design. |
+| `single` | No subagents. The `task` tool is denied. |
+
+## The tasks
+
+| Task | Exercises | Graded by |
+|---|---|---|
+| `debug-failing-test` | debugging | Hidden tests pass, and the existing tests are unchanged |
+| `debug-from-log` | debugging | A hidden test for the crash in `app.log` passes |
+| `plan-only` | planning | `PLAN.md` is a numbered plan that names the files and tests, and no source file changed |
+| `plan-then-build` | planning | Hidden tests for a discount feature across three modules pass |
+| `docs-cli-flag` | docs-writing | The README documents `--json` with an example, and no source file changed |
+| `summarize-handoff` | summarizing | `HANDOFF.md` keeps every decision, owner, open item, file and date, and leaves out the small talk |
+| `search-callers` | explorer | `CALLERS.txt` lists exactly the callers of `load_items` |
+| `parallel-two-modules` | builder | Hidden tests for two independent functions pass |
+| `review-diff` | code-reviewer | `REVIEW.md` names the division-by-zero bug and the existing off-by-one, and the diff is not applied |
+| `verify-and-fix` | verifier | Two separate failures are fixed and the tests are unchanged |
+
+Every attempt starts from a fresh copy of a small Python project. Hidden tests are written after the agent finishes, so the agent can't fit its change to them.
+
+## Run them
+
+The evals live in `domains/agent-evals/subagents` in the platform repo. They need Python 3 and gizzi built from source, or a gizzi command in `ALLTERNIT_EVAL_GIZZI` that includes the 2026-10-27 skills.
+
+```bash
+cd domains/agent-evals/subagents
+python3 -m evals --selftest        # checks the graders; no model calls
+python3 -m evals --list
+python3 -m evals --model <provider/model> --tasks debug-from-log --arms split --repeats 1
+python3 -m evals --model <provider/model>                       # all tasks, all arms, 2 runs each
+python3 -m evals --report runs/<timestamp>/results.jsonl        # print a report again
+```
+
+A full run is 60 attempts (10 tasks × 3 arms × 2 runs) and calls a paid model. Run one attempt first and read its cost before you start a full run. Each task runs twice by default because a regression can show up in only one of two runs.
+
+Results go to `runs/<timestamp>/`: `results.jsonl` (one line per attempt), `report.md`, and each attempt's event log and work folder. Cost includes the subagents' own sessions.
+
+## Read the report
+
+- Keep a skill folded when `folded` passes at least as often as `split`, for the same or lower cost.
+- A subagent type earns its place when `folded` beats `single` on pass rate or cost for its tasks.
+- Change one thing at a time, then run the evals again.
+
+If a session pauses before a usage limit, `gizzi run` ends with exit code `1` and the attempt fails with a `SessionPaused` error. Pick a model on another provider with `--model`.

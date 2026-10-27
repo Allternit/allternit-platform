@@ -22,7 +22,7 @@ import {
 } from "@/runtime/agents/subagent-run-contract"
 import { BackgroundTask } from "@/runtime/session/background-task"
 import { HookDispatcher } from "@/runtime/hooks/dispatcher"
-import { DELEGATION_HINT } from "@/runtime/agents/builtin-catalog"
+import { DELEGATION_HINT, FOLDED_TYPES } from "@/runtime/agents/builtin-catalog"
 import { resolveModelClass } from "@/runtime/agents/model-class"
 
 const log = Log.create({ service: "tool.task" })
@@ -92,6 +92,11 @@ export const TaskTool = Tool.define<typeof parameters, TaskMetadata>("task", asy
       }
 
       const agent = await Agent.getSubagent(params.subagent_type)
+      const folded = FOLDED_TYPES[params.subagent_type]
+      if (folded && (!agent || agent.mode === "primary"))
+        throw new Error(
+          `${params.subagent_type} is no longer a subagent: do this work yourself in this session and load the "${folded}" skill for the steps.`,
+        )
       if (!agent) throw new Error(`Unknown agent type: ${params.subagent_type} is not a valid agent type`)
 
       const hasTaskPermission = agent.permission.some((rule) => rule.permission === "task")

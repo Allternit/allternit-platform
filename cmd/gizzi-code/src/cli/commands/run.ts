@@ -766,6 +766,18 @@ export const RunCommand = cmd({
             }
           }
 
+          // A session paused before a usage limit waits for the reset (days for a
+          // monthly limit). Nobody can resume a headless run, so end it with the reason.
+          if ((event.type as string) === "session.paused") {
+            const props = event.properties as unknown as { sessionID: string; until: number; limit: string }
+            if (props.sessionID !== sessionID) continue
+            const err = `Paused before a usage limit (${props.limit}) until ${new Date(props.until).toISOString()}. Run again with --model on another provider.`
+            error = error ? error + EOL + err : err
+            if (!emit("error", { error: { name: "SessionPaused", data: { message: err, until: props.until, limit: props.limit } } })) UI.error(err)
+            process.exitCode = 1
+            break
+          }
+
           if (event.type === "session.error") {
             const props = event.properties
             if (props.sessionID !== sessionID || !props.error) continue

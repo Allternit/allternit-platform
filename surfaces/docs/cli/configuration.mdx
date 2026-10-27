@@ -82,13 +82,13 @@ Pick a model per job in `models.jobs` (project `config.json`), or in the Alltern
 | `coder` | Builder subagents (`builder`, and the older `general`) |
 | `review` | The reviewer (`/review`, `gizzi run --review`, goal rounds) and Code Reviewer subagents |
 | `goalEscalate` | The model a goal switches to after two rounds with the same failures |
-| `summarizer` | Compacting long sessions, and Scribe subagents |
+| `summarizer` | Compacting long sessions |
 | `webResearch` | Web Researcher subagents |
 | `chat`, `goalJudge` | Accepted and stored; not used yet |
 
 ## Subagents
 
-gizzi ships 15 built-in subagent types. The full list is in [Subagents](/guides/subagents). Each type has a model class:
+gizzi ships 11 built-in subagent types. The full list, and when an agent uses one instead of a skill, is in [Subagents](/guides/subagents). Each type has a model class:
 
 | `model` value | Model used |
 |---|---|

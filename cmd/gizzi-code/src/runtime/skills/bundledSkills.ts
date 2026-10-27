@@ -2,6 +2,10 @@
 import agentOrchestratorMd from "./bundled/agentOrchestrator.md"
 import steerParallelAgentMd from "./bundled/steerParallelAgent.md"
 import artifactsMd from "./bundled/artifacts.md"
+import planningMd from "./bundled/planning.md"
+import debuggingMd from "./bundled/debugging.md"
+import docsWritingMd from "./bundled/docs-writing.md"
+import summarizingMd from "./bundled/summarizing.md"
 
 export interface BundledSkillDefinition {
   name: string
@@ -30,6 +34,36 @@ export const BUNDLED_SKILLS: readonly BundledSkillDefinition[] = [
       "Make or change an Allternit artifact (doc, slides, sheet, design, dashboard, motion, page, card, diagram, image, code): when to make one, and the exact body format for each kind. Load before calling artifact_create or artifact_update unless the system prompt already has the artifact format guides (the Allternit app sends them).",
     builtin: true,
     content: artifactsMd,
+  },
+  // The planner, debugger, docs-writer and scribe subagents were folded into
+  // the main loop as these skills (runtime/agents/builtin-catalog.ts FOLDED_TYPES).
+  {
+    name: "planning",
+    description:
+      "Plan a non-trivial change in your own context: read the code first, then a numbered step plan with files, checks, rejected options and risks. Load before multi-file or hard-to-redo work.",
+    builtin: true,
+    content: planningMd,
+  },
+  {
+    name: "debugging",
+    description:
+      "Find and fix the root cause of a bug, error, failing test or odd log from the evidence: hypotheses, file:line cause, smallest fix, the same fix in sibling code, proof it works.",
+    builtin: true,
+    content: debuggingMd,
+  },
+  {
+    name: "docs-writing",
+    description:
+      "Write or update user and developer docs in the same change as the feature: match the existing pages, runnable examples, nav updated, docs checks run.",
+    builtin: true,
+    content: docsWritingMd,
+  },
+  {
+    name: "summarizing",
+    description:
+      "Write summaries, notes and handoffs from transcripts, logs, diffs or docs that keep every decision, open item, owner and file path.",
+    builtin: true,
+    content: summarizingMd,
   },
   {
     name: "import-from-claude-codex",
