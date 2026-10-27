@@ -52,6 +52,20 @@ export interface AgentTask {
    * bridge and, where it can, none of its own tools either.
    */
   toolsOff?: boolean
+  /**
+   * Subagents for the CLI's own delegation tool. Off: the agent may not
+   * delegate (permission task: deny), so the CLI's own subagent tool is
+   * switched off too. Extra: the user's config subagents, added to the
+   * catalog the CLI gets (agents/brain-export.ts).
+   */
+  subagents?: { off?: boolean; extra?: import("@/runtime/agents/brain-export").ExportedAgent[] }
+  /**
+   * Which of the user's signed-in accounts for this CLI runs the turn (an
+   * added account's id from allternit-api's /providers/:id/accounts, or
+   * "default" for the stock home). Unset: the bot's own account, then the
+   * user's default (drivers/cli-accounts.ts).
+   */
+  cliAccountId?: string
 }
 
 export interface TaskHandle {

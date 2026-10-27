@@ -490,6 +490,18 @@ pub(crate) async fn start_login(
     argv: &[&str],
     hint: Option<String>,
 ) -> Result<Value, String> {
+    start_login_with_env(key, binary, argv, hint, &[]).await
+}
+
+/// `start_login` with extra env on the CLI: an added account's config dir
+/// (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`), so its sign-in lands in that home.
+pub(crate) async fn start_login_with_env(
+    key: &str,
+    binary: &std::path::Path,
+    argv: &[&str],
+    hint: Option<String>,
+    env: &[(&str, &std::path::Path)],
+) -> Result<Value, String> {
     if let Some(old) = LOGINS.lock().unwrap().remove(key) {
         if let Ok(mut old) = old.try_lock() {
             if let Some(kill) = old.kill.take() {
@@ -501,6 +513,7 @@ pub(crate) async fn start_login(
         .args(argv)
         .env("NO_COLOR", "1")
         .env("TERM", "dumb")
+        .envs(env.iter().copied())
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())

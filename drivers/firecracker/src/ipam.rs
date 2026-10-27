@@ -487,9 +487,9 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(ipam.subnet().to_string(), "172.16.0.0/24");
+        assert_eq!(ipam._subnet().to_string(), "172.16.0.0/24");
         assert_eq!(ipam.gateway(), Ipv4Addr::new(172, 16, 0, 1));
-        assert_eq!(ipam.allocation_count(), 0);
+        assert_eq!(ipam._allocation_count(), 0);
         assert!(path.exists());
     }
 
@@ -506,7 +506,7 @@ mod tests {
 
         // First allocation should return an IP
         let ip1 = ipam.allocate(vm_id).await.unwrap();
-        assert!(ipam.subnet().contains(&ip1));
+        assert!(ipam._subnet().contains(&ip1));
         assert_ne!(ip1, ipam.gateway()); // Should not allocate gateway
 
         // Second allocation for same VM should return same IP
@@ -515,7 +515,7 @@ mod tests {
 
         // Release should work
         ipam.release(vm_id).await.unwrap();
-        assert_eq!(ipam.allocation_count(), 0);
+        assert_eq!(ipam._allocation_count(), 0);
     }
 
     #[tokio::test]
@@ -539,7 +539,7 @@ mod tests {
             let ipam = IpamState::load_or_create("172.16.0.0/24", path)
                 .await
                 .unwrap();
-            assert_eq!(ipam.allocation_count(), 1);
+            assert_eq!(ipam._allocation_count(), 1);
             assert_eq!(ipam.allocated.get(&vm_id), Some(&allocated_ip));
         }
     }

@@ -686,7 +686,7 @@ pub(crate) fn adapter_for_auth(vendor: &str, auth_type: &str) -> Option<&'static
 /// (services/subscription-gateway/adapters/<id>). Without this, an account for
 /// them reaches the gateway with no adapter and every call is UNSUPPORTED.
 pub(crate) const DIRECT_ADAPTER_VENDORS: &[&str] = &[
-    "openclaw", "openmausbot", "codync", "hivekeep", "invisible-dots", "opendots-copilotkit", "openmuse-copilotkit",
+    "openclaw", "openmausbot", "codync", "hivekeep", "invisible-dots", "opendots-copilotkit", "openmuse-copilotkit", "ag-ui",
     "openbot-copilotkit", "ds-bot", "openbot-nightly", "rakazo", "frockbot", "sidemates", "nanomuse", "vellum-assistant",
     "gawkbot", "opendots-anil", "munder-difflin", "happy", "iris", "poke", "instinct", "flip", "cue", "pally",
 ];
@@ -1784,7 +1784,7 @@ mod tests {
         let packs = v["packs"].as_array().expect("packs");
         let bots = v["botProjects"].as_array().expect("botProjects");
         // Every pack and bot project in assets/gateway-catalog.json.
-        assert_eq!(packs.len(), 37);
+        assert_eq!(packs.len(), 38);
         assert_eq!(bots.len(), 34);
         assert_eq!(packs[0]["id"], "hermes");
         for p in packs {

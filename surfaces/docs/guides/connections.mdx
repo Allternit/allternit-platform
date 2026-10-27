@@ -88,6 +88,24 @@ A phone way says **Verified reader** when the app's path was checked on a real p
 
 Every other app, and an app on a kind of phone it wasn't checked on, gets the sign-in check: signed in, or **Not signed in**. Kimi and Perplexity try the usual ways through their menus until a signed-in phone is checked. If a phone way still shows dashes after a check, open the app on the phone once to make sure it is signed in and has finished loading. The next check picks the facts up.
 
+## More than one account
+
+You can connect more than one account to the same app, for example a personal and a work Gmail, or two Claude Code sign-ins. Open the app (or the coding tool) and look at its **Accounts** block:
+
+- Each row shows who it is signed in as, a **Default** chip on the account bots use when nothing else is said, a status dot, and the way it is connected (**Connector**, **Browser sign-in**, **Phone app** with the phone's name, or the coding tool).
+- **Add another account** signs in a second account. If the app can add through more than one way, you first choose which (**Connector** or **Browser sign-in**). Phone apps are listed one per phone and are changed on the phone.
+- **Make default** moves the Default chip to that account. **Rename** gives an account a name you recognize. **Remove** asks first, then signs that one account out and leaves the others. If you remove the default, the most recently used one becomes the default.
+
+When a bot needs an app, it uses the account in this order:
+
+1. **The account you name in the request.** "Send it from my work Gmail" or "use the account ending in @acme.com" picks the account whose email or name matches. If no account matches, the bot says so and lists the accounts it has; it does not fall back to another one.
+2. **The bot's own account for that app.** In a bot's **Connected Apps**, an app with more than one account gets an account menu. Leave it on **Default account** to follow your default.
+3. **Your default account.**
+
+**Coding tools.** Under Settings › Connections › Coding tools, a tool that can hold several sign-ins (Claude Code, Codex and Gemini CLI where the installed version supports it) shows **Add another account** under its row. Give the account a name such as Work, then sign in with the same link or code as the first time. The first account keeps the tool's own sign-in; added accounts keep their sign-in in their own folder under `~/.allternit/cli-homes`, so they never overwrite each other. Tools that can hold only one sign-in don't show the button.
+
+An Allternit server older than this feature shows each connector's one account without **Add another account**, **Make default** or **Rename**.
+
 ## Coding tools
 
 The Coding tools tab is only for CLI brains: Claude Code, Codex, Grok and the other command-line tools Allternit can install and sign in on a computer. See [Coding tools on any computer](/guides/subscriptions#coding-tools-on-any-computer) for the steps.

@@ -35,6 +35,10 @@ http://127.0.0.1:8013/api/v1
 | `POST` | `/api/v1/providers/:id/connect` | Start a provider connect flow |
 | `GET` | `/api/v1/providers/:id/connect/status` | Check connect status |
 | `POST` | `/api/v1/providers/:id/connect/confirm` | Confirm a completed connect flow |
+| `GET` | `/api/v1/providers/:id/accounts` | List a coding CLI's accounts (the implicit default first) and whether it can hold several |
+| `POST` | `/api/v1/providers/:id/accounts` | Add an account and start its sign-in |
+| `PATCH` | `/api/v1/providers/:id/accounts/:acc` | Make an account the default or rename it |
+| `DELETE` | `/api/v1/providers/:id/accounts/:acc` | Remove an added account and its folder |
 | `POST` | `/api/v1/providers/:id/connect/code` | Paste the code a sign-in page showed into the waiting CLI |
 | `GET` | `/api/v1/cli-tools/catalog` | Every coding CLI Allternit supports, installed or not, plus your custom ones |
 | `POST` | `/api/v1/cli-tools/custom` | Add a coding CLI that isn't in the catalog (your own computer only) |
@@ -324,6 +328,30 @@ curl -X POST https://api.allternit.com/api/v1/providers/cli-provider/connect/con
   "confirmed": true
 }
 ```
+
+## Coding CLI accounts
+
+A coding CLI can hold several sign-ins when its catalog entry has `accountHomeEnv`, the environment variable that points the CLI at its config folder (`CLAUDE_CONFIG_DIR` for Claude Code, `CODEX_HOME` for Codex). The default account is the CLI's own sign-in and needs no row. Each added account has its own folder, `~/.allternit/cli-homes/<id>`, so its sign-in is kept apart; a second Claude Code account gets its own macOS Keychain entry through its own config folder.
+
+```http
+GET /api/v1/providers/claude-cli/accounts
+```
+
+```json
+{
+  "accounts": [
+    { "id": "default", "label": "Default", "identity": "me@example.com", "authenticated": true, "is_default": true },
+    { "id": "a1b2", "label": "Work", "identity": "me@work.example", "authenticated": true, "is_default": false }
+  ],
+  "multi": true
+}
+```
+
+`multi` is `false` when the CLI cannot hold several accounts; clients then hide the add button. A server without the route answers `404`.
+
+`POST /api/v1/providers/:id/accounts` takes `{ "label": "Work" }`, creates the account and its folder, and starts the same sign-in as [Connect a provider](#connect-a-provider) with the account's folder set. The response has the same shape. `PATCH` takes `{ "default": true }` or `{ "label": "..." }`. `DELETE` removes the row and its folder; the `default` account can't be deleted. `auth/status` checks each account against its own folder.
+
+A session, bot or brain config may carry `cli_account_id` next to the CLI provider id. The account used is the one named in the request, else the bot's, else the default. The subscription gateway's `POST /v1/tasks` accepts `routing.account_id`, which must be an eligible account of that vendor or the call fails with `409 { "error": "account_not_eligible" }`.
 
 ## Media generation
 

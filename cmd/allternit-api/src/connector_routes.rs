@@ -10,7 +10,8 @@
 //! `crate::open_connector_proxy`: the sidecar holds the real credential in its
 //! own encrypted SQLite and Rust keeps only an index row (backend='open_connector',
 //! V17, tokens NULL). Connection state for both backends lives in
-//! `connector_connections`, scoped by (connector_id, user_id). A third
+//! `connector_connections`, scoped by (connector_id, user_id, account_key): a user can
+//! connect several accounts of one connector (V278), one of them the default. A third
 //! backend, `allternit_native`, marks the Allternit Mail connector: its row is
 //! index-only like the sidecar rows, but the credential is the per-agent
 //! mailflare key sealed in `agent_identity_channels`, and its MCP tools
@@ -20,7 +21,7 @@ use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
     response::{Html, IntoResponse},
-    routing::{delete, get, post},
+    routing::{delete, get, patch, post},
     Json, Router,
 };
 use rusqlite::params;
@@ -107,6 +108,11 @@ pub fn connector_router() -> Router<Arc<AppState>> {
         .route("/connectors/:id/poll", post(poll_device))
         .route("/connectors/:id/execute", post(execute_connector))
         .route("/connectors/:id/disconnect", delete(disconnect_connector))
+        .route("/connectors/:id/accounts", get(list_accounts_route))
+        .route(
+            "/connectors/:id/accounts/:conn_id",
+            patch(update_account_route).delete(delete_account_route),
+        )
 }
 
 /// Unified MCP surface: one endpoint (`/api/v1/connectors/mcp`, Clerk-
@@ -122,9 +128,17 @@ pub fn connector_router() -> Router<Arc<AppState>> {
 /// `initialize`, `server/discover`, `ping` and notifications answered here;
 /// list results in canonical order; modern results decorated). The sidecar is
 /// reached through the `mcp-client` crate.
-async fn mcp_proxy(headers: axum::http::HeaderMap, Json(body): Json<Value>) -> impl IntoResponse {
+async fn mcp_proxy(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+    Json(body): Json<Value>,
+) -> impl IntoResponse {
     let user_id = caller(&headers);
-    serve_connectors_mcp(&headers, body, |body| async move { proxy_mcp_value(user_id, body).await }).await
+    let bot_conn = bot_connection_header(&headers);
+    serve_connectors_mcp(&headers, body, |body| async move {
+        proxy_mcp_value(&state.db, user_id, body, bot_conn).await
+    })
+    .await
 }
 
 fn connectors_server_spec() -> mcp_protocol::ServerSpec {
@@ -509,11 +523,12 @@ pub async fn mcp_proxy_internal(
     // Allternit Mail is served in-process, not by the sidecar: intercept its
     // tools here (ownership is enforced against the authenticated user_id
     // inside the tool handlers, same as the REST surface).
+    let bot_conn = bot_connection_header(&headers);
     serve_connectors_mcp(&headers, body, |body| async move {
         if let Some(resp) = handle_allternit_mail_mcp(&state, &user_id, &body).await {
             return Ok(resp);
         }
-        proxy_mcp_value(user_id, body).await
+        proxy_mcp_value(&state.db, user_id, body, bot_conn).await
     })
     .await
 }
@@ -557,6 +572,7 @@ async fn handle_allternit_mail_mcp(
                     .unwrap_or_default(),
                 Err(_) => Vec::new(),
             };
+            add_account_param(&mut tools);
             if let Some(own) = crate::agent_email_routes::mail_mcp_tools().as_array() {
                 tools.extend(own.iter().cloned());
             }
@@ -611,11 +627,104 @@ async fn handle_allternit_mail_mcp(
     }
 }
 
+/// Header a bot turn's runtime sets to the bot's connector binding
+/// `connectionId`: the account to use when a tool call names no `account`.
+fn bot_connection_header(headers: &axum::http::HeaderMap) -> Option<String> {
+    headers
+        .get("x-allternit-connection-id")
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+}
+
+/// Offer the optional `account` argument on every sidecar tool, so a model
+/// with several accounts connected can pick one.
+fn add_account_param(tools: &mut [Value]) {
+    for tool in tools {
+        let Some(schema) = tool.get_mut("inputSchema").and_then(|s| s.as_object_mut()) else {
+            continue;
+        };
+        let props = schema
+            .entry("properties")
+            .or_insert_with(|| json!({}));
+        if let Some(props) = props.as_object_mut() {
+            props.entry("account").or_insert_with(|| {
+                json!({
+                    "type": "string",
+                    "description": "Which connected account to use, by email or name. Omit for the default.",
+                })
+            });
+        }
+    }
+}
+
+/// For a `tools/call`: take the model's `account` argument out of the call
+/// (the sidecar's tools do not know it) and resolve the sidecar connection
+/// name it, else the bot binding's `connection_id`, else the default account
+/// maps to. Anything else runs as the user's default connection.
+async fn mcp_call_alias(
+    db: &crate::db::DbHandle,
+    user_id: &str,
+    body: &mut Value,
+    bot_conn: Option<&str>,
+) -> Result<String, (StatusCode, Json<Value>)> {
+    if body.get("method").and_then(|m| m.as_str()) != Some("tools/call") {
+        return Ok(user_id.to_string());
+    }
+    let Some(args) = body
+        .get_mut("params")
+        .and_then(|p| p.get_mut("arguments"))
+        .and_then(|a| a.as_object_mut())
+    else {
+        return Ok(user_id.to_string());
+    };
+    let account = args
+        .remove("account")
+        .and_then(|v| v.as_str().map(str::to_string))
+        .filter(|s| !s.trim().is_empty());
+    let name = body
+        .get("params")
+        .and_then(|p| p.get("name"))
+        .and_then(|n| n.as_str())
+        .unwrap_or("");
+    // Sidecar tools are named `<service>.<action>`.
+    let Some((service, _)) = name.split_once('.') else {
+        return Ok(user_id.to_string());
+    };
+    let connector_id =
+        crate::open_connector_proxy::allternit_id(service).unwrap_or_else(|| service.to_string());
+    // An explicit `account` wins over the bot's binding.
+    let conn_id = if account.is_some() { None } else { bot_conn };
+    sidecar_alias(db, user_id, &connector_id, conn_id, account.as_deref()).await
+}
+
 /// Shared core of both MCP proxy entry points: forward the JSON-RPC body to
-/// the sidecar with the per-user `x-oo-connector-alias` header.
-async fn proxy_mcp_value(user_id: String, body: Value) -> Result<Value, axum::response::Response> {
-    match crate::open_connector_proxy::proxy_mcp(&user_id, body).await {
-        Ok(resp) => Ok(resp),
+/// the sidecar with the per-user `x-oo-connector-alias` header (the user id,
+/// or the connection name of the account the call selected).
+async fn proxy_mcp_value(
+    db: &crate::db::DbHandle,
+    user_id: String,
+    mut body: Value,
+    bot_conn: Option<String>,
+) -> Result<Value, axum::response::Response> {
+    let alias = mcp_call_alias(db, &user_id, &mut body, bot_conn.as_deref())
+        .await
+        .map_err(|r| r.into_response())?;
+    let is_list = body.get("method").and_then(|m| m.as_str()) == Some("tools/list");
+    match crate::open_connector_proxy::proxy_mcp(&alias, body).await {
+        Ok(mut resp) => {
+            if is_list {
+                if let Some(tools) = resp
+                    .get_mut("result")
+                    .and_then(|r| r.get_mut("tools"))
+                    .and_then(|t| t.as_array_mut())
+                {
+                    add_account_param(tools);
+                }
+            }
+            Ok(resp)
+        }
         Err(e) if e.unreachable => Err((
             StatusCode::BAD_GATEWAY,
             Json(
@@ -714,6 +823,394 @@ fn is_curated(id: &str) -> bool {
     meta().get(id).is_some()
 }
 
+// ---------------------------------------------------------------------------
+// Multiple accounts per connector (V278). A user can hold several
+// `connector_connections` rows per connector, told apart by `account_key`
+// (the provider identity, lower-cased). Exactly one row per (connector, user)
+// is the default; reads that name no account use it.
+// ---------------------------------------------------------------------------
+
+/// One account row of a connector for one user (no tokens).
+#[derive(Debug, Clone)]
+pub(crate) struct AccountRow {
+    pub id: String,
+    pub account: String,
+    pub account_key: String,
+    pub status: String,
+    pub is_default: bool,
+    pub metadata: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl AccountRow {
+    fn meta_str(&self, key: &str) -> Option<String> {
+        let md: Value = serde_json::from_str(self.metadata.as_deref()?).ok()?;
+        md.get(key)
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+            .filter(|s| !s.is_empty())
+    }
+
+    /// User-visible name: the label if one was set, else the provider account.
+    pub(crate) fn display(&self) -> String {
+        if let Some(l) = self.meta_str("label") {
+            return l;
+        }
+        if !self.account.is_empty() {
+            return self.account.clone();
+        }
+        if !self.account_key.is_empty() && !self.account_key.starts_with("pending:") {
+            return self.account_key.clone();
+        }
+        self.id.clone()
+    }
+
+    /// Sidecar `connectionName` / alias for this account: the bare user id for
+    /// the default/legacy connection (so pre-existing sidecar connections keep
+    /// working), `user_id:key` for an added one (stored at creation, because
+    /// the identity is not known until the flow finishes).
+    pub(crate) fn sidecar_name(&self, user_id: &str) -> String {
+        self.meta_str("connection_name")
+            .unwrap_or_else(|| user_id.to_string())
+    }
+
+    fn to_json(&self) -> Value {
+        let mut v = json!({
+            "id": self.id,
+            "account": self.account,
+            "account_key": self.account_key,
+            "status": self.status,
+            "is_default": self.is_default,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        });
+        if let Some(l) = self.meta_str("label") {
+            v["label"] = json!(l);
+        }
+        v
+    }
+}
+
+/// All of one user's accounts for a connector, most recently updated first.
+pub(crate) fn load_accounts(
+    conn: &rusqlite::Connection,
+    connector_id: &str,
+    user_id: &str,
+) -> rusqlite::Result<Vec<AccountRow>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, COALESCE(account,''), account_key, status, is_default, metadata,
+                COALESCE(created_at,''), COALESCE(updated_at,'')
+         FROM connector_connections WHERE connector_id=?1 AND user_id=?2
+         ORDER BY updated_at DESC, created_at DESC",
+    )?;
+    let rows = stmt
+        .query_map(params![connector_id, user_id], |r| {
+            Ok(AccountRow {
+                id: r.get(0)?,
+                account: r.get(1)?,
+                account_key: r.get(2)?,
+                status: r.get(3)?,
+                is_default: r.get::<_, i64>(4)? != 0,
+                metadata: r.get(5)?,
+                created_at: r.get(6)?,
+                updated_at: r.get(7)?,
+            })
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows)
+}
+
+/// An explicit connection id / account name matched none of the user's accounts.
+#[derive(Debug)]
+pub(crate) struct AccountNotFound;
+
+/// Selection rule: explicit (`connection_id`, else `account` matched
+/// case-insensitively against account / account_key / label) -> else the
+/// default -> else the most recent. Never falls back from an explicit choice:
+/// an unknown one is `Err`. `Ok(None)` means the user has no account at all.
+/// `rows` must be ordered most recently updated first (`load_accounts`).
+pub(crate) fn pick_account<'a>(
+    rows: &'a [AccountRow],
+    connection_id: Option<&str>,
+    account: Option<&str>,
+) -> Result<Option<&'a AccountRow>, AccountNotFound> {
+    if let Some(cid) = connection_id.map(str::trim).filter(|s| !s.is_empty()) {
+        return rows
+            .iter()
+            .find(|r| r.id == cid)
+            .map(Some)
+            .ok_or(AccountNotFound);
+    }
+    if let Some(a) = account.map(str::trim).filter(|s| !s.is_empty()) {
+        let a = a.to_lowercase();
+        return rows
+            .iter()
+            .find(|r| {
+                r.account.to_lowercase() == a
+                    || r.account_key == a
+                    || r.display().to_lowercase() == a
+            })
+            .map(Some)
+            .ok_or(AccountNotFound);
+    }
+    // Default, then most recent; a connected account beats a pending one.
+    Ok(rows
+        .iter()
+        .find(|r| r.is_default && r.status == "connected")
+        .or_else(|| rows.iter().find(|r| r.status == "connected"))
+        .or_else(|| rows.iter().find(|r| r.is_default))
+        .or_else(|| rows.first()))
+}
+
+/// 404 for `AccountNotFound`, listing the names the caller could have used.
+pub(crate) fn account_not_found(rows: &[AccountRow]) -> (StatusCode, Json<Value>) {
+    let labels: Vec<String> = rows.iter().map(|r| r.display()).collect();
+    (
+        StatusCode::NOT_FOUND,
+        Json(json!({ "error": "account_not_found", "accounts": labels })),
+    )
+}
+
+/// The `account_key` the next write for (connector, user) should land on.
+/// - A known identity that matches an existing account (key or account name)
+///   lands on that row: re-auth, not a duplicate.
+/// - `add`, with other accounts present: a fresh `pending:` row; the key is
+///   replaced by the identity once the flow reports it (`settle_account`).
+/// - Otherwise the default row is reconnected (today's behaviour).
+fn write_key(
+    conn: &rusqlite::Connection,
+    connector_id: &str,
+    user_id: &str,
+    add: bool,
+    identity: &str,
+) -> rusqlite::Result<String> {
+    let ident = identity.trim().to_lowercase();
+    let rows = load_accounts(conn, connector_id, user_id)?;
+    if !ident.is_empty() {
+        if let Some(r) = rows
+            .iter()
+            .find(|r| r.account_key == ident || r.account.to_lowercase() == ident)
+        {
+            return Ok(r.account_key.clone());
+        }
+    }
+    if add && !rows.is_empty() {
+        return Ok(if ident.is_empty() {
+            format!("pending:{}", &uuid::Uuid::new_v4().simple().to_string()[..12])
+        } else {
+            ident
+        });
+    }
+    Ok(match rows.iter().find(|r| r.is_default).or(rows.first()) {
+        Some(r) => r.account_key.clone(),
+        None => ident,
+    })
+}
+
+/// After a write: give the row its provider identity as `account_key`
+/// (merging into an existing account of the same identity and deleting the
+/// duplicate), then make sure the connector has a usable default.
+fn settle_account(
+    conn: &rusqlite::Connection,
+    connector_id: &str,
+    user_id: &str,
+    row_key: &str,
+    identity: &str,
+) -> rusqlite::Result<()> {
+    let ident = identity.trim().to_lowercase();
+    if !ident.is_empty() && ident != row_key {
+        let id_of = |key: &str| -> rusqlite::Result<Option<String>> {
+            conn.query_row(
+                "SELECT id FROM connector_connections WHERE connector_id=?1 AND user_id=?2 AND account_key=?3",
+                params![connector_id, user_id, key],
+                |r| r.get(0),
+            )
+            .map(Some)
+            .or_else(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => Ok(None),
+                e => Err(e),
+            })
+        };
+        let existing = id_of(&ident)?;
+        let source = id_of(row_key)?;
+        match (existing, source) {
+            (Some(target), Some(src)) if target != src => {
+                // Same account authorised again: the fresh credential moves
+                // onto the established row and the pending one goes away.
+                conn.execute(
+                    "UPDATE connector_connections SET
+                       (auth_type, status, access_token, refresh_token, expires_at, scopes, account, metadata, backend, updated_at)
+                     = (SELECT auth_type, status, access_token, refresh_token, expires_at, scopes, account, metadata, backend, CURRENT_TIMESTAMP
+                        FROM connector_connections WHERE id=?2)
+                     WHERE id=?1",
+                    params![target, src],
+                )?;
+                conn.execute("DELETE FROM connector_connections WHERE id=?1", params![src])?;
+            }
+            (None, Some(src)) => {
+                conn.execute(
+                    "UPDATE connector_connections SET account_key=?2 WHERE id=?1",
+                    params![src, ident],
+                )?;
+            }
+            _ => {}
+        }
+    }
+    ensure_default(conn, connector_id, user_id)
+}
+
+/// One default per (connector, user): keep an existing connected default,
+/// move off a default that is not connected when another account is, and
+/// promote the best row when none is set.
+fn ensure_default(
+    conn: &rusqlite::Connection,
+    connector_id: &str,
+    user_id: &str,
+) -> rusqlite::Result<()> {
+    conn.execute(
+        "UPDATE connector_connections SET is_default=0
+         WHERE connector_id=?1 AND user_id=?2 AND is_default=1 AND status<>'connected'
+           AND EXISTS (SELECT 1 FROM connector_connections o
+                       WHERE o.connector_id=?1 AND o.user_id=?2 AND o.status='connected')",
+        params![connector_id, user_id],
+    )?;
+    let defaults: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM connector_connections WHERE connector_id=?1 AND user_id=?2 AND is_default=1",
+        params![connector_id, user_id],
+        |r| r.get(0),
+    )?;
+    if defaults == 0 {
+        conn.execute(
+            "UPDATE connector_connections SET is_default=1 WHERE id=(
+               SELECT id FROM connector_connections WHERE connector_id=?1 AND user_id=?2
+               ORDER BY (status='connected') DESC, updated_at DESC LIMIT 1)",
+            params![connector_id, user_id],
+        )?;
+    }
+    Ok(())
+}
+
+/// Where a sidecar-backed connect lands: the account row's key plus the
+/// sidecar `connectionName` it authorises under.
+struct SidecarTarget {
+    key: String,
+    conn_name: String,
+}
+
+fn sidecar_target(
+    conn: &rusqlite::Connection,
+    connector_id: &str,
+    user_id: &str,
+    add: bool,
+) -> rusqlite::Result<SidecarTarget> {
+    let rows = load_accounts(conn, connector_id, user_id)?;
+    if add && !rows.is_empty() {
+        let key = format!("pending:{}", &uuid::Uuid::new_v4().simple().to_string()[..12]);
+        let conn_name = format!("{user_id}:{key}");
+        return Ok(SidecarTarget { key, conn_name });
+    }
+    Ok(match rows.iter().find(|r| r.is_default).or(rows.first()) {
+        Some(r) => SidecarTarget {
+            key: r.account_key.clone(),
+            conn_name: r.sidecar_name(user_id),
+        },
+        None => SidecarTarget {
+            key: String::new(),
+            conn_name: user_id.to_string(),
+        },
+    })
+}
+
+async fn resolve_sidecar_target(
+    db: &crate::db::DbHandle,
+    user_id: &str,
+    id: &str,
+    add: bool,
+) -> Result<SidecarTarget, String> {
+    let db = db.clone();
+    let uid = user_id.to_string();
+    let id_s = id.to_string();
+    tokio::task::spawn_blocking(move || {
+        let conn = db.connect().map_err(|e| e.to_string())?;
+        sidecar_target(&conn, &id_s, &uid, add).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("db task: {e}"))?
+}
+
+/// Added sidecar accounts (alias `user_id:key`) whose OAuth finished in the
+/// sidecar: flip their index row to connected and take the identity from the
+/// sidecar's account label (merging a re-authorised account into its row).
+async fn sync_added_accounts(
+    db: &crate::db::DbHandle,
+    user_id: &str,
+    added: Vec<(String, String, String)>,
+) {
+    if added.is_empty() {
+        return;
+    }
+    let db = db.clone();
+    let uid = user_id.to_string();
+    let _ = tokio::task::spawn_blocking(move || {
+        let conn = db.connect()?;
+        for (service, alias, label) in added {
+            let row: Option<(String, String, String)> = conn
+                .query_row(
+                    "SELECT account_key, status, COALESCE(account,'') FROM connector_connections
+                     WHERE connector_id=?1 AND user_id=?2
+                       AND json_extract(COALESCE(metadata,'{}'),'$.connection_name')=?3",
+                    params![service, uid, alias],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                )
+                .ok();
+            let Some((key, status, account)) = row else { continue };
+            if status != "connected" || (!label.is_empty() && account != label) {
+                conn.execute(
+                    "UPDATE connector_connections SET status='connected', account=CASE WHEN ?4<>'' THEN ?4 ELSE account END, updated_at=CURRENT_TIMESTAMP
+                     WHERE connector_id=?1 AND user_id=?2 AND account_key=?3",
+                    params![service, uid, key, label],
+                )?;
+                settle_account(&conn, &service, &uid, &key, &label)?;
+            }
+        }
+        Ok::<_, rusqlite::Error>(())
+    })
+    .await;
+}
+
+/// The sidecar `connectionName` a call for `connector_id` should run under
+/// (see `pick_account` for the selection rule). 404 `account_not_found` when
+/// an explicit connection/account matches none of the user's accounts.
+async fn sidecar_alias(
+    db: &crate::db::DbHandle,
+    user_id: &str,
+    connector_id: &str,
+    connection_id: Option<&str>,
+    account: Option<&str>,
+) -> Result<String, (StatusCode, Json<Value>)> {
+    let db = db.clone();
+    let (uid, cid) = (user_id.to_string(), connector_id.to_string());
+    let (want_conn, want_account) = (connection_id.map(str::to_string), account.map(str::to_string));
+    let picked = tokio::task::spawn_blocking(move || {
+        let conn = db.connect()?;
+        let rows = load_accounts(&conn, &cid, &uid)?;
+        Ok::<_, rusqlite::Error>(
+            match pick_account(&rows, want_conn.as_deref(), want_account.as_deref()) {
+                Err(AccountNotFound) => Err(account_not_found(&rows)),
+                Ok(Some(r)) => Ok(r.sidecar_name(&uid)),
+                Ok(None) => Ok(uid.clone()),
+            },
+        )
+    })
+    .await;
+    match picked {
+        Ok(Ok(r)) => r,
+        // A lookup failure must not break calls that worked before accounts.
+        _ => Ok(user_id.to_string()),
+    }
+}
+
 /// Catalog id of Allternit's own agent-email connector. It lives in
 /// `connectors.meta.json` (so `is_curated` is true and the catalog merge never
 /// consults the sidecar for it), but connect/disconnect are special-cased:
@@ -797,16 +1294,19 @@ async fn connect_allternit_mail(
         let acc = address.clone();
         tokio::task::spawn_blocking(move || {
             let conn = db.connect().map_err(|e| e.to_string())?;
+            // One mailbox marker per user: always the existing row.
+            let key = write_key(&conn, ALLTERNIT_MAIL_ID, &uid, false, "").map_err(|e| e.to_string())?;
             conn.execute(
-                "INSERT INTO connector_connections (id, connector_id, user_id, auth_type, status, account, metadata, backend)
-                 VALUES (?1, ?2, ?3, 'allternit_native', 'connected', ?4, ?5, 'allternit_native')
-                 ON CONFLICT(connector_id, user_id) DO UPDATE SET
+                "INSERT INTO connector_connections (id, connector_id, user_id, auth_type, status, account, metadata, backend, account_key)
+                 VALUES (?1, ?2, ?3, 'allternit_native', 'connected', ?4, ?5, 'allternit_native', ?6)
+                 ON CONFLICT(connector_id, user_id, account_key) DO UPDATE SET
                    auth_type='allternit_native', status='connected', account=excluded.account,
                    metadata=excluded.metadata, backend='allternit_native',
                    access_token=NULL, refresh_token=NULL, updated_at=CURRENT_TIMESTAMP",
-                params![uuid::Uuid::new_v4().to_string(), ALLTERNIT_MAIL_ID, uid, acc, metadata],
+                params![uuid::Uuid::new_v4().to_string(), ALLTERNIT_MAIL_ID, uid, acc, metadata, key],
             )
             .map_err(|e| e.to_string())?;
+            ensure_default(&conn, ALLTERNIT_MAIL_ID, &uid).map_err(|e| e.to_string())?;
             Ok::<_, String>(())
         })
         .await
@@ -866,23 +1366,32 @@ struct SidecarView {
         >,
     >,
     connections: std::collections::HashMap<String, String>,
+    /// Live added accounts (alias `user_id:key`): (catalog id, alias, label).
+    added: Vec<(String, String, String)>,
 }
 
 async fn sidecar_view(user_id: &str) -> SidecarView {
     use crate::open_connector_proxy as sidecar;
     match sidecar::provider_summaries().await {
         Ok(map) => {
-            let conns = sidecar::list_user_connections(user_id)
+            let conns = sidecar::list_user_connections_all(user_id)
                 .await
                 .unwrap_or_default();
+            let (default_conns, added): (Vec<_>, Vec<_>) =
+                conns.into_iter().partition(|(_, alias, _)| alias == user_id);
             SidecarView {
                 providers: Some(map),
-                connections: conns.into_iter().collect(),
+                connections: default_conns
+                    .into_iter()
+                    .map(|(service, _, label)| (service, label))
+                    .collect(),
+                added,
             }
         }
         Err(_) => SidecarView {
             providers: None,
             connections: std::collections::HashMap::new(),
+            added: Vec::new(),
         },
     }
 }
@@ -953,34 +1462,57 @@ fn detect_local_cli(m: &Value) -> Value {
 /// per connector is the difference between ~1,100 connection opens and one,
 /// once the catalog covers the full sidecar provider set (`sidecar_only_entries`)
 /// rather than just the legacy 181.
-fn fetch_connection_rows(
-    db: &crate::db::DbHandle,
-    user_id: &str,
-) -> std::collections::HashMap<String, (String, String)> {
+fn fetch_connection_rows(db: &crate::db::DbHandle, user_id: &str) -> ConnRows {
     db.connect()
         .ok()
         .and_then(|conn| {
             let mut stmt = conn
-                .prepare("SELECT connector_id, status, COALESCE(account,'') FROM connector_connections WHERE user_id=?1")
+                .prepare("SELECT connector_id, id, status, COALESCE(account,''), is_default FROM connector_connections WHERE user_id=?1 ORDER BY connector_id, is_default DESC, updated_at DESC")
                 .ok()?;
+            let mut out: ConnRows = std::collections::HashMap::new();
             let rows = stmt
                 .query_map(params![user_id], |row| {
-                    Ok((row.get::<_, String>(0)?, (row.get::<_, String>(1)?, row.get::<_, String>(2)?)))
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, i64>(4)? != 0,
+                    ))
                 })
-                .ok()?
-                .filter_map(|r| r.ok())
-                .collect();
-            Some(rows)
+                .ok()?;
+            for (connector_id, id, status, account, is_default) in rows.filter_map(|r| r.ok()) {
+                // Default row first: it is what the single `connection` shows.
+                let entry = out.entry(connector_id).or_insert_with(|| ConnSummary {
+                    status: status.clone(),
+                    account: account.clone(),
+                    accounts: Vec::new(),
+                });
+                entry.accounts.push(json!({
+                    "id": id, "account": account, "status": status, "is_default": is_default,
+                }));
+            }
+            Some(out)
         })
         .unwrap_or_default()
 }
+
+/// The default account's status/account (what the legacy single `connection`
+/// field reports) plus every account, per connector.
+struct ConnSummary {
+    status: String,
+    account: String,
+    accounts: Vec<Value>,
+}
+
+type ConnRows = std::collections::HashMap<String, ConnSummary>;
 
 fn merge(
     c: &Value,
     user_id: &str,
     db: &crate::db::DbHandle,
     sv: &SidecarView,
-    rows: &std::collections::HashMap<String, (String, String)>,
+    rows: &ConnRows,
 ) -> Value {
     let id = c.get("id").and_then(|i| i.as_str()).unwrap_or("");
     if !is_curated(id) {
@@ -1018,8 +1550,9 @@ fn merge(
 
     let (conn_status, account) = rows
         .get(id)
-        .cloned()
+        .map(|s| (s.status.clone(), s.account.clone()))
         .unwrap_or_else(|| ("disconnected".to_string(), String::new()));
+    let accounts = rows.get(id).map(|s| s.accounts.clone()).unwrap_or_default();
 
     let mut out = c.clone();
     if let Some(obj) = out.as_object_mut() {
@@ -1056,6 +1589,7 @@ fn merge(
             "connection".to_string(),
             json!({ "status": conn_status, "account": account }),
         );
+        obj.insert("accounts".to_string(), json!(accounts));
     }
     out
 }
@@ -1070,14 +1604,15 @@ fn merge_sidecar(
     user_id: &str,
     db: &crate::db::DbHandle,
     sv: &SidecarView,
-    rows: &std::collections::HashMap<String, (String, String)>,
+    rows: &ConnRows,
 ) -> Value {
     let id = c.get("id").and_then(|i| i.as_str()).unwrap_or("");
 
     let (db_status, db_account) = rows
         .get(id)
-        .cloned()
+        .map(|s| (s.status.clone(), s.account.clone()))
         .unwrap_or_else(|| ("disconnected".to_string(), String::new()));
+    let accounts = rows.get(id).map(|s| s.accounts.clone()).unwrap_or_default();
 
     let mut out = c.clone();
     let mut provider_auth_type = String::from("unknown");
@@ -1148,9 +1683,16 @@ fn merge_sidecar(
             if db_status != "connected" {
                 mark_sidecar_connected(db, id, user_id, &provider_auth_type, account);
             }
+            // The default account is the one shown; the live sidecar label
+            // only fills in when the default row has none yet.
+            let shown = if db_status == "connected" && !db_account.is_empty() {
+                db_account.clone()
+            } else {
+                account.clone()
+            };
             obj.insert(
                 "connection".to_string(),
-                json!({ "status": "connected", "account": account }),
+                json!({ "status": "connected", "account": shown }),
             );
         } else {
             obj.insert(
@@ -1158,6 +1700,7 @@ fn merge_sidecar(
                 json!({ "status": db_status, "account": db_account }),
             );
         }
+        obj.insert("accounts".to_string(), json!(accounts));
     }
     out
 }
@@ -1173,14 +1716,27 @@ fn mark_sidecar_connected(
     account: &str,
 ) {
     if let Ok(conn) = db.connect() {
+        // The live connection is the legacy-named one (alias = user_id), so
+        // it belongs to the row without an added-account connection name.
+        let key: String = conn
+            .query_row(
+                "SELECT account_key FROM connector_connections
+                 WHERE connector_id=?1 AND user_id=?2
+                   AND json_extract(COALESCE(metadata,'{}'),'$.connection_name') IS NULL
+                 ORDER BY is_default DESC, updated_at DESC LIMIT 1",
+                params![id, user_id],
+                |r| r.get(0),
+            )
+            .unwrap_or_default();
         let _ = conn.execute(
-            "INSERT INTO connector_connections (id, connector_id, user_id, auth_type, status, account, backend)
-             VALUES (?1, ?2, ?3, ?4, 'connected', ?5, 'open_connector')
-             ON CONFLICT(connector_id, user_id) DO UPDATE SET
+            "INSERT INTO connector_connections (id, connector_id, user_id, auth_type, status, account, backend, account_key)
+             VALUES (?1, ?2, ?3, ?4, 'connected', ?5, 'open_connector', ?6)
+             ON CONFLICT(connector_id, user_id, account_key) DO UPDATE SET
                status='connected', account=excluded.account, backend='open_connector',
                access_token=NULL, refresh_token=NULL, updated_at=CURRENT_TIMESTAMP",
-            params![uuid::Uuid::new_v4().to_string(), id, user_id, auth_type, account],
+            params![uuid::Uuid::new_v4().to_string(), id, user_id, auth_type, account, key],
         );
+        let _ = settle_account(&conn, id, user_id, &key, account);
     }
 }
 
@@ -1276,6 +1832,7 @@ async fn list_connectors(
     let db = state.db.clone();
     let sv = sidecar_view(&user_id).await;
     let sidecar_ok = sv.providers.is_some();
+    sync_added_accounts(&db, &user_id, sv.added.clone()).await;
     let rows = fetch_connection_rows(&db, &user_id);
     let legacy = catalog_connectors();
     let legacy_ids: std::collections::HashSet<&str> = legacy
@@ -1414,6 +1971,9 @@ struct ConnectBody {
     values: Option<Value>,
     /// `allternit-mail` only: the agent to provision a mailbox for.
     agent_id: Option<String>,
+    /// Connect ANOTHER account instead of reconnecting the default one.
+    #[serde(default)]
+    add: bool,
 }
 
 async fn connect_connector(
@@ -1434,7 +1994,9 @@ async fn connect_connector(
         api_key: None,
         values: None,
         agent_id: None,
+        add: false,
     });
+    let add = body.add;
     if id == ALLTERNIT_MAIL_ID {
         return connect_allternit_mail(&state, &user_id, body).await;
     }
@@ -1449,7 +2011,7 @@ async fn connect_connector(
     });
 
     match via.as_str() {
-        "local_cli" => connect_local_cli(&state, &user_id, &id, &c, &m).await,
+        "local_cli" => connect_local_cli(&state, &user_id, &id, &c, &m, add).await,
         "api_key" => {
             connect_api_key(
                 &state,
@@ -1458,11 +2020,12 @@ async fn connect_connector(
                 &c,
                 body.api_key.as_deref(),
                 body.values.as_ref(),
+                add,
             )
             .await
         }
-        "oauth2" => connect_oauth2(&state, &user_id, &id, &c, &m).await,
-        "device_flow" => connect_device(&state, &user_id, &id, &c, &m).await,
+        "oauth2" => connect_oauth2(&state, &user_id, &id, &c, &m, add).await,
+        "device_flow" => connect_device(&state, &user_id, &id, &c, &m, add).await,
         other => (
             StatusCode::BAD_REQUEST,
             Json(json!({ "error": "unsupported_auth_type", "via": other })),
@@ -1512,10 +2075,20 @@ async fn connect_sidecar(
         .via
         .clone()
         .unwrap_or_else(|| auth_types.first().cloned().unwrap_or_default());
+    // Which account row / sidecar connectionName this connect authorises.
+    let target = match resolve_sidecar_target(&state.db, user_id, id, body.add).await {
+        Ok(t) => t,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": e })),
+            )
+        }
+    };
 
     match via.as_str() {
         "oauth2" => {
-            let auth = match sidecar::start_oauth(id, user_id).await {
+            let auth = match sidecar::start_oauth(id, &target.conn_name).await {
                 Ok(a) => a,
                 Err(e) if e.unreachable => {
                     return (
@@ -1551,7 +2124,7 @@ async fn connect_sidecar(
                 );
             }
             if let Err(e) =
-                persist_sidecar_row(&state.db, user_id, id, "oauth2", "pending", "").await
+                persist_sidecar_row(&state.db, user_id, id, "oauth2", "pending", "", &target).await
             {
                 return (
                     StatusCode::INTERNAL_SERVER_ERROR,
@@ -1584,16 +2157,16 @@ async fn connect_sidecar(
             }
             let resp = sidecar::upsert_credential(
                 id,
-                user_id,
+                &target.conn_name,
                 json!({ "authType": "api_key", "values": { "apiKey": key } }),
             )
             .await;
-            finish_sidecar_connect(state, user_id, id, c, "api_key", resp).await
+            finish_sidecar_connect(state, user_id, id, c, "api_key", resp, &target).await
         }
         "no_auth" => {
             let resp =
-                sidecar::upsert_credential(id, user_id, json!({ "authType": "no_auth" })).await;
-            finish_sidecar_connect(state, user_id, id, c, "no_auth", resp).await
+                sidecar::upsert_credential(id, &target.conn_name, json!({ "authType": "no_auth" })).await;
+            finish_sidecar_connect(state, user_id, id, c, "no_auth", resp, &target).await
         }
         "custom_credential" => {
             let values = body
@@ -1610,11 +2183,11 @@ async fn connect_sidecar(
             }
             let resp = sidecar::upsert_credential(
                 id,
-                user_id,
+                &target.conn_name,
                 json!({ "authType": "custom_credential", "values": values }),
             )
             .await;
-            finish_sidecar_connect(state, user_id, id, c, "custom_credential", resp).await
+            finish_sidecar_connect(state, user_id, id, c, "custom_credential", resp, &target).await
         }
         other => (
             StatusCode::BAD_REQUEST,
@@ -1633,6 +2206,7 @@ async fn finish_sidecar_connect(
     c: &Value,
     auth_type: &str,
     resp: Result<Value, crate::open_connector_proxy::ProxyError>,
+    target: &SidecarTarget,
 ) -> (StatusCode, Json<Value>) {
     let r = match resp {
         Ok(r) => r,
@@ -1658,7 +2232,7 @@ async fn finish_sidecar_connect(
         .or_else(|| r.get("alias").and_then(|v| v.as_str()))
         .unwrap_or("")
         .to_string();
-    match persist_sidecar_row(&state.db, user_id, id, auth_type, "connected", &account).await {
+    match persist_sidecar_row(&state.db, user_id, id, auth_type, "connected", &account, target).await {
         Ok(()) => (
             StatusCode::OK,
             Json(json!({
@@ -1686,6 +2260,7 @@ async fn persist_sidecar_row(
     auth_type: &str,
     status: &str,
     account: &str,
+    target: &SidecarTarget,
 ) -> Result<(), String> {
     let db = db.clone();
     let uid = user_id.to_string();
@@ -1693,18 +2268,25 @@ async fn persist_sidecar_row(
     let at = auth_type.to_string();
     let st = status.to_string();
     let acc = account.to_string();
+    let key = target.key.clone();
+    // Only added accounts carry a connection name; the default keeps the bare
+    // user id and needs no metadata.
+    let metadata = (target.conn_name != user_id)
+        .then(|| json!({ "connection_name": target.conn_name }).to_string());
     tokio::task::spawn_blocking(move || {
         let conn = db.connect().map_err(|e| e.to_string())?;
         conn.execute(
-            "INSERT INTO connector_connections (id, connector_id, user_id, auth_type, status, account, backend)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'open_connector')
-             ON CONFLICT(connector_id, user_id) DO UPDATE SET
+            "INSERT INTO connector_connections (id, connector_id, user_id, auth_type, status, account, backend, account_key, metadata)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'open_connector', ?7, ?8)
+             ON CONFLICT(connector_id, user_id, account_key) DO UPDATE SET
                auth_type=excluded.auth_type, status=excluded.status, account=excluded.account,
-               backend='open_connector', access_token=NULL, refresh_token=NULL, metadata=NULL,
+               backend='open_connector', access_token=NULL, refresh_token=NULL,
+               metadata=COALESCE(excluded.metadata, metadata),
                updated_at=CURRENT_TIMESTAMP",
-            params![uuid::Uuid::new_v4().to_string(), id_s, uid, at, st, acc],
+            params![uuid::Uuid::new_v4().to_string(), id_s, uid, at, st, acc, key, metadata],
         )
         .map_err(|e| e.to_string())?;
+        settle_account(&conn, &id_s, &uid, &key, &acc).map_err(|e| e.to_string())?;
         Ok(())
     })
     .await
@@ -1732,7 +2314,7 @@ async fn refresh_connector(
     let row = tokio::task::spawn_blocking(move || {
         let conn = db.connect()?;
         conn.query_row(
-            "SELECT auth_type, status FROM connector_connections WHERE connector_id=?1 AND user_id=?2",
+            "SELECT auth_type, status FROM connector_connections WHERE connector_id=?1 AND user_id=?2 ORDER BY is_default DESC, updated_at DESC LIMIT 1",
             params![id_s, uid],
             |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
         )
@@ -1771,6 +2353,7 @@ async fn refresh_connector(
                         api_key: None,
                         values: None,
                         agent_id: None,
+                        add: false,
                     },
                 )
                 .await
@@ -1779,9 +2362,9 @@ async fn refresh_connector(
     }
 
     match stored_auth.as_str() {
-        "local_cli" => connect_local_cli(&state, &user_id, &id, &c, &m).await,
-        "oauth2" => connect_oauth2(&state, &user_id, &id, &c, &m).await,
-        "device_flow" => connect_device(&state, &user_id, &id, &c, &m).await,
+        "local_cli" => connect_local_cli(&state, &user_id, &id, &c, &m, false).await,
+        "oauth2" => connect_oauth2(&state, &user_id, &id, &c, &m, false).await,
+        "device_flow" => connect_device(&state, &user_id, &id, &c, &m, false).await,
         "api_key" => (
             StatusCode::BAD_REQUEST,
             Json(
@@ -1801,6 +2384,7 @@ async fn connect_local_cli(
     id: &str,
     c: &Value,
     m: &Value,
+    add: bool,
 ) -> (StatusCode, Json<Value>) {
     let lc = m.get("local_cli").cloned().unwrap_or_else(|| json!({}));
     let cmd = lc
@@ -1899,14 +2483,16 @@ async fn connect_local_cli(
         .to_string();
     let res = tokio::task::spawn_blocking(move || {
         let conn = db.connect()?;
+        let key = write_key(&conn, &id_s, &uid, add, &acc)?;
         conn.execute(
-            "INSERT INTO connector_connections (id, connector_id, user_id, auth_type, status, access_token, account, scopes)
-             VALUES (?1, ?2, ?3, 'local_cli', 'connected', ?4, ?5, ?6)
-             ON CONFLICT(connector_id, user_id) DO UPDATE SET
+            "INSERT INTO connector_connections (id, connector_id, user_id, auth_type, status, access_token, account, scopes, account_key)
+             VALUES (?1, ?2, ?3, 'local_cli', 'connected', ?4, ?5, ?6, ?7)
+             ON CONFLICT(connector_id, user_id, account_key) DO UPDATE SET
                auth_type='local_cli', status='connected', access_token=excluded.access_token,
                account=excluded.account, scopes=excluded.scopes, updated_at=CURRENT_TIMESTAMP",
-            params![cid, id_s, uid, tok, acc, scopes],
+            params![cid, id_s, uid, tok, acc, scopes, key],
         )?;
+        settle_account(&conn, &id_s, &uid, &key, &acc)?;
         Ok::<_, rusqlite::Error>(())
     })
     .await;
@@ -1940,6 +2526,7 @@ async fn connect_api_key(
     c: &Value,
     api_key: Option<&str>,
     values: Option<&Value>,
+    add: bool,
 ) -> (StatusCode, Json<Value>) {
     let key = if let Some(k) = api_key.map(str::trim).filter(|s| !s.is_empty()) {
         k.to_string()
@@ -1972,13 +2559,17 @@ async fn connect_api_key(
     let key = crate::token_crypto::seal(&key);
     let res = tokio::task::spawn_blocking(move || {
         let conn = db.connect()?;
+        // No provider identity comes with a bare key: `add` makes a new
+        // pending-keyed account, otherwise the default row is rotated.
+        let row_key = write_key(&conn, &id_s, &uid, add, "")?;
         conn.execute(
-            "INSERT INTO connector_connections (id, connector_id, user_id, auth_type, status, access_token)
-             VALUES (?1, ?2, ?3, 'api_key', 'connected', ?4)
-             ON CONFLICT(connector_id, user_id) DO UPDATE SET
+            "INSERT INTO connector_connections (id, connector_id, user_id, auth_type, status, access_token, account_key)
+             VALUES (?1, ?2, ?3, 'api_key', 'connected', ?4, ?5)
+             ON CONFLICT(connector_id, user_id, account_key) DO UPDATE SET
                auth_type='api_key', status='connected', access_token=excluded.access_token, updated_at=CURRENT_TIMESTAMP",
-            params![cid, id_s, uid, key],
+            params![cid, id_s, uid, key, row_key],
         )?;
+        settle_account(&conn, &id_s, &uid, &row_key, "")?;
         Ok::<_, rusqlite::Error>(())
     })
     .await;
@@ -2006,6 +2597,12 @@ struct ExecuteBody {
     input: Option<Value>,
     path: Option<String>,
     method: Option<String>,
+    /// Which connected account to use: an account row id ...
+    #[serde(default, alias = "connectionId")]
+    connection_id: Option<String>,
+    /// ... or its email / name (case-insensitive). Neither: the default.
+    #[serde(default)]
+    account: Option<String>,
 }
 
 /// Synthesized connector-MCP: execute any tool declared in `meta.tools[]` against
@@ -2143,22 +2740,36 @@ async fn execute_connector(
     let user_id = caller(&headers);
 
     if !is_curated(&id) {
-        return execute_sidecar(&user_id, &id, &c, body).await;
+        return execute_sidecar(&state, &user_id, &id, &c, body).await;
     }
 
     // Load active connection + token.
     let db = state.db.clone();
     let id_s = id.to_string();
     let uid = user_id.clone();
-    let row = tokio::task::spawn_blocking(move || {
+    let (want_conn, want_account) = (body.connection_id.clone(), body.account.clone());
+    let picked = tokio::task::spawn_blocking(move || {
         let conn = db.connect()?;
-        conn.query_row(
-            "SELECT status, COALESCE(access_token,'') FROM connector_connections WHERE connector_id=?1 AND user_id=?2",
-            params![id_s, uid],
-            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
-        )
+        let rows = load_accounts(&conn, &id_s, &uid)?;
+        match pick_account(&rows, want_conn.as_deref(), want_account.as_deref()) {
+            Err(AccountNotFound) => Ok(Err(account_not_found(&rows))),
+            Ok(None) => Err(rusqlite::Error::QueryReturnedNoRows),
+            Ok(Some(r)) => conn
+                .query_row(
+                    "SELECT status, COALESCE(access_token,'') FROM connector_connections WHERE id=?1",
+                    params![r.id],
+                    |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+                )
+                .map(Ok),
+        }
     })
     .await;
+    let row = match picked {
+        Ok(Ok(Err(not_found))) => return not_found,
+        Ok(Ok(Ok(v))) => Ok(Ok(v)),
+        Ok(Err(e)) => Ok(Err(e)),
+        Err(e) => Err(e),
+    };
 
     let (status, token) = match row {
         Ok(Ok(v)) => v,
@@ -2285,6 +2896,7 @@ async fn execute_connector(
 /// /v1/actions/:actionId` with the per-user alias. Response is normalized to
 /// the same `{status:"ok", result:...}` shape the curated path returns.
 async fn execute_sidecar(
+    state: &Arc<AppState>,
     user_id: &str,
     id: &str,
     c: &Value,
@@ -2325,7 +2937,21 @@ async fn execute_sidecar(
         Err(resp) => return resp,
     };
     let input = body.input.clone().unwrap_or_else(|| json!({}));
-    match sidecar::execute(&action_id, user_id, input).await {
+    // Which of the user's accounts runs this: explicit, else default, else
+    // most recent. No account row at all keeps the legacy connection name.
+    let alias = match sidecar_alias(
+        &state.db,
+        user_id,
+        id,
+        body.connection_id.as_deref(),
+        body.account.as_deref(),
+    )
+    .await
+    {
+        Ok(a) => a,
+        Err(resp) => return resp,
+    };
+    match sidecar::execute(&action_id, &alias, input).await {
         Ok(env) => {
             let data = env.get("data").cloned().unwrap_or_else(|| json!({}));
             let result = data.get("result").cloned().unwrap_or(data);
@@ -2437,18 +3063,22 @@ async fn disconnect_connector(
         };
     }
     if !is_curated(&id) {
-        // Proxy the real disconnect to the sidecar first. If it is down, bail
-        // so the user can retry — otherwise the sidecar would keep the secret
-        // while our index row says disconnected. Other errors (e.g. the
-        // connection is already gone) fall through to index cleanup.
-        if let Err(e) = crate::open_connector_proxy::disconnect(&id, &user_id).await {
-            if e.unreachable {
-                return (
-                    StatusCode::BAD_GATEWAY,
-                    Json(
-                        json!({ "error": "sidecar_unavailable", "id": id, "message": "Connector sidecar unavailable — credential NOT removed. Retry when it is back." }),
-                    ),
-                );
+        // Proxy the real disconnect to the sidecar first, once per account
+        // (the default/legacy name always, plus each added account's). If it
+        // is down, bail so the user can retry — otherwise the sidecar would
+        // keep the secret while our index row says disconnected. Other errors
+        // (e.g. the connection is already gone) fall through to index cleanup.
+        let names = account_sidecar_names(&state.db, &user_id, &id).await;
+        for name in names {
+            if let Err(e) = crate::open_connector_proxy::disconnect(&id, &name).await {
+                if e.unreachable {
+                    return (
+                        StatusCode::BAD_GATEWAY,
+                        Json(
+                            json!({ "error": "sidecar_unavailable", "id": id, "message": "Connector sidecar unavailable — credential NOT removed. Retry when it is back." }),
+                        ),
+                    );
+                }
             }
         }
     }
@@ -2456,8 +3086,9 @@ async fn disconnect_connector(
     let id_s = id.clone();
     let res = tokio::task::spawn_blocking(move || {
         let conn = db.connect()?;
+        // Every account of this connector for this user.
         let n = conn.execute(
-            "UPDATE connector_connections SET status='disconnected', access_token=NULL, refresh_token=NULL, updated_at=CURRENT_TIMESTAMP WHERE connector_id=?1 AND user_id=?2",
+            "DELETE FROM connector_connections WHERE connector_id=?1 AND user_id=?2",
             params![id_s, user_id],
         )?;
         Ok::<_, rusqlite::Error>(n)
@@ -2479,7 +3110,227 @@ async fn disconnect_connector(
     }
 }
 
-// ─── S2: owned OAuth2 (loopback) + device-flow engine ─────────────────────────
+/// Sidecar connection names to clear for a connector: the user's default name
+/// (even with no row, so a stray connection never survives) plus every added
+/// account's stored name.
+async fn account_sidecar_names(
+    db: &crate::db::DbHandle,
+    user_id: &str,
+    connector_id: &str,
+) -> Vec<String> {
+    let db = db.clone();
+    let (uid, cid) = (user_id.to_string(), connector_id.to_string());
+    let mut names = vec![user_id.to_string()];
+    let rows = tokio::task::spawn_blocking(move || {
+        let conn = db.connect().ok()?;
+        load_accounts(&conn, &cid, &uid).ok()
+    })
+    .await
+    .ok()
+    .flatten()
+    .unwrap_or_default();
+    for r in rows {
+        let n = r.sidecar_name(user_id);
+        if !names.contains(&n) {
+            names.push(n);
+        }
+    }
+    names
+}
+
+/// `GET /connectors/:id/accounts` -> `{"accounts":[{id, account, account_key,
+/// status, is_default, created_at, updated_at, label?}]}`, default first.
+async fn list_accounts_route(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let user_id = caller(&headers);
+    if !is_curated(&id) {
+        // Pick up added accounts whose sign-in just finished in the sidecar.
+        if let Ok(live) = crate::open_connector_proxy::list_user_connections_all(&user_id).await {
+            let added = live.into_iter().filter(|(_, alias, _)| *alias != user_id).collect();
+            sync_added_accounts(&state.db, &user_id, added).await;
+        }
+    }
+    accounts_response(&state.db, &user_id, &id, StatusCode::OK, json!({})).await
+}
+
+/// The `{"accounts":[...]}` body (default first, then most recent), merged
+/// with `extra`'s fields, under `status`.
+async fn accounts_response(
+    db: &crate::db::DbHandle,
+    user_id: &str,
+    connector_id: &str,
+    status: StatusCode,
+    extra: Value,
+) -> (StatusCode, Json<Value>) {
+    let db = db.clone();
+    let (uid, cid) = (user_id.to_string(), connector_id.to_string());
+    let rows = tokio::task::spawn_blocking(move || {
+        let conn = db.connect()?;
+        load_accounts(&conn, &cid, &uid)
+    })
+    .await;
+    match rows {
+        Ok(Ok(mut rows)) => {
+            rows.sort_by_key(|r| !r.is_default);
+            let mut body = extra;
+            body["accounts"] = json!(rows.iter().map(AccountRow::to_json).collect::<Vec<_>>());
+            (status, Json(body))
+        }
+        Ok(Err(e)) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": e.to_string() })),
+        ),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": format!("db task: {}", e) })),
+        ),
+    }
+}
+
+#[derive(Deserialize)]
+struct UpdateAccountBody {
+    /// `true` makes this the connector's default account.
+    default: Option<bool>,
+    /// Display name stored in `metadata.label`; empty clears it.
+    label: Option<String>,
+}
+
+/// `PATCH /connectors/:id/accounts/:conn_id` with `{"default":true}` and/or
+/// `{"label":"Work"}` -> the `GET .../accounts` body. 404 `account_not_found`
+/// when `conn_id` is not one of this user's accounts of this connector.
+async fn update_account_route(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+    Path((id, conn_id)): Path<(String, String)>,
+    Json(body): Json<UpdateAccountBody>,
+) -> impl IntoResponse {
+    let user_id = caller(&headers);
+    let db = state.db.clone();
+    let (cid, uid, rid) = (id.clone(), user_id.clone(), conn_id.clone());
+    let res = tokio::task::spawn_blocking(move || {
+        let conn = db.connect()?;
+        let rows = load_accounts(&conn, &cid, &uid)?;
+        if !rows.iter().any(|r| r.id == rid) {
+            return Ok::<_, rusqlite::Error>(Err(account_not_found(&rows)));
+        }
+        if let Some(label) = body.label {
+            let label = label.trim().to_string();
+            if label.is_empty() {
+                conn.execute(
+                    "UPDATE connector_connections SET metadata=json_remove(COALESCE(metadata,'{}'),'$.label') WHERE id=?1 AND connector_id=?2 AND user_id=?3",
+                    params![rid, cid, uid],
+                )?;
+            } else {
+                conn.execute(
+                    "UPDATE connector_connections SET metadata=json_set(COALESCE(metadata,'{}'),'$.label',?4) WHERE id=?1 AND connector_id=?2 AND user_id=?3",
+                    params![rid, cid, uid, label],
+                )?;
+            }
+        }
+        if body.default == Some(true) {
+            conn.execute(
+                "UPDATE connector_connections SET is_default=(id=?1) WHERE connector_id=?2 AND user_id=?3",
+                params![rid, cid, uid],
+            )?;
+        }
+        Ok(Ok(()))
+    })
+    .await;
+    match res {
+        Ok(Ok(Ok(()))) => accounts_response(&state.db, &user_id, &id, StatusCode::OK, json!({})).await,
+        Ok(Ok(Err(not_found))) => not_found,
+        Ok(Err(e)) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": e.to_string() })),
+        ),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": format!("db task: {}", e) })),
+        ),
+    }
+}
+
+/// `DELETE /connectors/:id/accounts/:conn_id` removes one account (its
+/// sidecar credential too) -> `{"status":"removed","id":<conn_id>,"accounts":[...]}`.
+/// If it was the default, the most recently updated remaining account is
+/// promoted (connected ones first).
+async fn delete_account_route(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+    Path((id, conn_id)): Path<(String, String)>,
+) -> impl IntoResponse {
+    let user_id = caller(&headers);
+    let db = state.db.clone();
+    let (cid, uid, rid) = (id.clone(), user_id.clone(), conn_id.clone());
+    let found = tokio::task::spawn_blocking(move || {
+        let conn = db.connect()?;
+        let rows = load_accounts(&conn, &cid, &uid)?;
+        Ok::<_, rusqlite::Error>(match rows.iter().find(|r| r.id == rid) {
+            Some(r) => Ok(r.clone()),
+            None => Err(account_not_found(&rows)),
+        })
+    })
+    .await;
+    let row = match found {
+        Ok(Ok(Ok(r))) => r,
+        Ok(Ok(Err(not_found))) => return not_found,
+        Ok(Err(e)) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": e.to_string() })),
+            )
+        }
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": format!("db task: {}", e) })),
+            )
+        }
+    };
+    if !is_curated(&id) {
+        // Same rule as full disconnect: if the sidecar is down, keep the row
+        // so the credential is not orphaned.
+        if let Err(e) =
+            crate::open_connector_proxy::disconnect(&id, &row.sidecar_name(&user_id)).await
+        {
+            if e.unreachable {
+                return (
+                    StatusCode::BAD_GATEWAY,
+                    Json(
+                        json!({ "error": "sidecar_unavailable", "id": id, "message": "Connector sidecar unavailable — credential NOT removed. Retry when it is back." }),
+                    ),
+                );
+            }
+        }
+    }
+    let db = state.db.clone();
+    let (cid, uid, rid) = (id.clone(), user_id.clone(), conn_id.clone());
+    let res = tokio::task::spawn_blocking(move || {
+        let conn = db.connect()?;
+        conn.execute(
+            "DELETE FROM connector_connections WHERE id=?1 AND connector_id=?2 AND user_id=?3",
+            params![rid, cid, uid],
+        )?;
+        ensure_default(&conn, &cid, &uid)
+    })
+    .await;
+    match res {
+        Ok(Ok(())) => {
+            accounts_response(&state.db, &user_id, &id, StatusCode::OK, json!({ "status": "removed", "id": conn_id })).await
+        }
+        Ok(Err(e)) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": e.to_string() })),
+        ),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": format!("db task: {}", e) })),
+        ),
+    }
+}
 
 const CALLBACK_PATH: &str = "/api/v1/connectors/oauth/callback";
 
@@ -2556,6 +3407,7 @@ async fn persist_pending(
     id: &str,
     auth_type: &str,
     metadata: String,
+    add: bool,
 ) -> Result<(), String> {
     let db = db.clone();
     let uid = user_id.to_string();
@@ -2563,15 +3415,19 @@ async fn persist_pending(
     let at = auth_type.to_string();
     tokio::task::spawn_blocking(move || {
         let conn = db.connect().map_err(|e| e.to_string())?;
+        // `add`: a new pending account next to the existing ones (its state is
+        // what the callback / poll finds); otherwise the default row restarts.
+        let key = write_key(&conn, &id_s, &uid, add, "").map_err(|e| e.to_string())?;
         conn.execute(
-            "INSERT INTO connector_connections (id, connector_id, user_id, auth_type, status, metadata)
-             VALUES (?1, ?2, ?3, ?4, 'pending', ?5)
-             ON CONFLICT(connector_id, user_id) DO UPDATE SET
+            "INSERT INTO connector_connections (id, connector_id, user_id, auth_type, status, metadata, account_key)
+             VALUES (?1, ?2, ?3, ?4, 'pending', ?5, ?6)
+             ON CONFLICT(connector_id, user_id, account_key) DO UPDATE SET
                status='pending', auth_type=excluded.auth_type, metadata=excluded.metadata,
                access_token=NULL, refresh_token=NULL, updated_at=CURRENT_TIMESTAMP",
-            params![uuid::Uuid::new_v4().to_string(), id_s, uid, at, metadata],
+            params![uuid::Uuid::new_v4().to_string(), id_s, uid, at, metadata, key],
         )
         .map_err(|e| e.to_string())?;
+        ensure_default(&conn, &id_s, &uid).map_err(|e| e.to_string())?;
         Ok(())
     })
     .await
@@ -2584,6 +3440,7 @@ async fn connect_oauth2(
     id: &str,
     c: &Value,
     m: &Value,
+    add: bool,
 ) -> (StatusCode, Json<Value>) {
     let (client_id, client_secret) = read_client(id, m);
     let client_id = match client_id {
@@ -2617,7 +3474,7 @@ async fn connect_oauth2(
     let redirect = redirect_uri();
     let oauth_state = uuid::Uuid::new_v4().to_string();
     let meta_json = json!({ "state": oauth_state, "token_url": token_url, "redirect_uri": redirect, "client_id": client_id, "client_secret": client_secret }).to_string();
-    if let Err(e) = persist_pending(&state.db, user_id, id, "oauth2", meta_json).await {
+    if let Err(e) = persist_pending(&state.db, user_id, id, "oauth2", meta_json, add).await {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({ "error": e })),
@@ -2679,18 +3536,18 @@ async fn oauth_callback(
     let found = tokio::task::spawn_blocking(move || {
         let conn = db.connect()?;
         let mut stmt = conn.prepare(
-            "SELECT connector_id, user_id, COALESCE(metadata,'{}') FROM connector_connections WHERE status='pending' AND json_extract(metadata,'$.state')=?1",
+            "SELECT id, connector_id, user_id, COALESCE(metadata,'{}') FROM connector_connections WHERE status='pending' AND json_extract(metadata,'$.state')=?1",
         )?;
         let row = stmt
             .query_row(params![st2], |r| {
-                Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?, r.get::<_, String>(2)?))
+                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, Option<String>>(2)?, r.get::<_, String>(3)?))
             })
             .ok();
         Ok::<_, rusqlite::Error>(row)
     })
     .await;
 
-    let (connector_id, _user_id, metadata_s) = match found {
+    let (row_id, connector_id, user_id, metadata_s) = match found {
         Ok(Ok(Some(r))) => r,
         _ => {
             return crate::oauth_result_page::render(crate::oauth_result_page::Outcome::Failed, "This sign-in has expired", "Start connecting again from Allternit.")
@@ -2757,12 +3614,16 @@ async fn oauth_callback(
             let sealed_access = crate::token_crypto::seal(&access);
             let refr = refresh.as_deref().map(crate::token_crypto::seal);
             let exp = expires_at.clone();
+            // Only the row this sign-in started: its state is unique to one user.
+            let st3 = st.clone();
+            let uid3 = user_id.unwrap_or_default();
             let _ = tokio::task::spawn_blocking(move || {
                 let conn = db2.connect()?;
                 conn.execute(
-                    "UPDATE connector_connections SET status='connected', access_token=?1, refresh_token=?2, expires_at=?3, metadata=NULL, updated_at=CURRENT_TIMESTAMP WHERE connector_id=?4 AND status='pending'",
-                    params![sealed_access, refr, exp, cid],
+                    "UPDATE connector_connections SET status='connected', access_token=?1, refresh_token=?2, expires_at=?3, metadata=NULL, updated_at=CURRENT_TIMESTAMP WHERE id=?6 AND connector_id=?4 AND status='pending' AND json_extract(metadata,'$.state')=?5",
+                    params![sealed_access, refr, exp, cid, st3, row_id],
                 )?;
+                ensure_default(&conn, &cid, &uid3)?;
                 Ok::<_, rusqlite::Error>(())
             })
             .await;
@@ -2782,6 +3643,7 @@ async fn connect_device(
     id: &str,
     c: &Value,
     m: &Value,
+    add: bool,
 ) -> (StatusCode, Json<Value>) {
     let (client_id, _) = read_client(id, m);
     let client_id = match client_id {
@@ -2854,7 +3716,7 @@ async fn connect_device(
                 );
             }
             let meta_json = json!({ "device_code": device_code, "token_url": token_url, "client_id": client_id, "interval": interval }).to_string();
-            if let Err(e) = persist_pending(&state.db, user_id, id, "device_flow", meta_json).await
+            if let Err(e) = persist_pending(&state.db, user_id, id, "device_flow", meta_json, add).await
             {
                 return (
                     StatusCode::INTERNAL_SERVER_ERROR,
@@ -2912,16 +3774,16 @@ async fn poll_device(
         let conn = db.connect()?;
         let v = conn
             .query_row(
-                "SELECT COALESCE(metadata,'{}') FROM connector_connections WHERE connector_id=?1 AND user_id=?2 AND status='pending'",
+                "SELECT id, COALESCE(metadata,'{}') FROM connector_connections WHERE connector_id=?1 AND user_id=?2 AND status='pending' ORDER BY updated_at DESC LIMIT 1",
                 params![id_s, uid],
-                |r| r.get::<_, String>(0),
+                |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
             )
             .ok();
         Ok::<_, rusqlite::Error>(v)
     })
     .await;
 
-    let metadata_s = match found {
+    let (row_id, metadata_s) = match found {
         Ok(Ok(Some(s))) => s,
         _ => {
             return (
@@ -2991,12 +3853,14 @@ async fn poll_device(
             let db2 = state.db.clone();
             let cid = id.clone();
             let acc = crate::token_crypto::seal(&access);
+            let uid2 = user_id.clone();
             let _ = tokio::task::spawn_blocking(move || {
                 let conn = db2.connect()?;
                 conn.execute(
-                    "UPDATE connector_connections SET status='connected', access_token=?1, metadata=NULL, updated_at=CURRENT_TIMESTAMP WHERE connector_id=?2 AND status='pending'",
-                    params![acc, cid],
+                    "UPDATE connector_connections SET status='connected', access_token=?1, metadata=NULL, updated_at=CURRENT_TIMESTAMP WHERE id=?4 AND connector_id=?2 AND user_id=?3 AND status='pending'",
+                    params![acc, cid, uid2, row_id],
                 )?;
+                ensure_default(&conn, &cid, &uid2)?;
                 Ok::<_, rusqlite::Error>(())
             })
             .await;
@@ -3615,5 +4479,74 @@ mod offline_identity_tests {
         );
         std::fs::write(dir.path().join(DEVICE_IDENTITY_FILE), stale).unwrap();
         assert!(offline_device_identity(dir.path(), "allternit_runtime_x").is_none());
+    }
+}
+
+#[cfg(test)]
+mod multi_account_tests {
+    use super::*;
+
+    fn row(id: &str, account: &str, key: &str, status: &str, is_default: bool) -> AccountRow {
+        AccountRow {
+            id: id.into(),
+            account: account.into(),
+            account_key: key.into(),
+            status: status.into(),
+            is_default,
+            metadata: None,
+            created_at: String::new(),
+            updated_at: String::new(),
+        }
+    }
+
+    #[test]
+    fn selection_is_explicit_then_default_then_most_recent() {
+        // Most recently updated first, as `load_accounts` returns them.
+        let rows = vec![
+            row("c2", "Work@Example.com", "work@example.com", "connected", false),
+            row("c1", "me@example.com", "me@example.com", "connected", true),
+        ];
+        assert_eq!(pick_account(&rows, None, None).unwrap().unwrap().id, "c1");
+        assert_eq!(pick_account(&rows, Some("c2"), None).unwrap().unwrap().id, "c2");
+        assert_eq!(
+            pick_account(&rows, None, Some("WORK@example.com")).unwrap().unwrap().id,
+            "c2"
+        );
+        // Unknown explicit choices never fall back to the default.
+        assert!(pick_account(&rows, Some("nope"), None).is_err());
+        assert!(pick_account(&rows, None, Some("other@example.com")).is_err());
+        // No default connected: most recent connected wins over a pending default.
+        let rows = vec![
+            row("c3", "b@x.com", "b@x.com", "connected", false),
+            row("c1", "", "pending:1", "pending", true),
+        ];
+        assert_eq!(pick_account(&rows, None, None).unwrap().unwrap().id, "c3");
+        assert!(pick_account(&[], None, None).unwrap().is_none());
+    }
+
+    #[test]
+    fn adding_an_account_keeps_the_default_and_reauth_does_not_duplicate() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = crate::db::DbHandle::new(temp.path().join("t.db")).unwrap();
+        let conn = db.connect().unwrap();
+        let connect = |add: bool, ident: &str| {
+            let key = write_key(&conn, "gmail", "u1", add, ident).unwrap();
+            conn.execute(
+                "INSERT INTO connector_connections (id, connector_id, user_id, auth_type, status, account, account_key)
+                 VALUES (?1, 'gmail', 'u1', 'oauth2', 'connected', ?2, ?3)
+                 ON CONFLICT(connector_id, user_id, account_key) DO UPDATE SET status='connected', account=excluded.account",
+                params![uuid::Uuid::new_v4().to_string(), ident, key],
+            )
+            .unwrap();
+            settle_account(&conn, "gmail", "u1", &key, ident).unwrap();
+        };
+        connect(false, "A@x.com");
+        connect(true, "b@x.com");
+        connect(true, "B@x.com"); // same account again: re-auth
+        let rows = load_accounts(&conn, "gmail", "u1").unwrap();
+        assert_eq!(rows.len(), 2);
+        let default = rows.iter().find(|r| r.is_default).unwrap();
+        assert_eq!(default.account_key, "a@x.com");
+        assert_eq!(rows.iter().filter(|r| r.is_default).count(), 1);
     }
 }

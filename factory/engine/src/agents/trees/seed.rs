@@ -136,6 +136,7 @@ fn clone_tree(kind: CloneKind, root: &Path, src: &Path, dst: &Path, excluded: &B
 }
 
 /// Run the repo's dependency steps in `dir` (`when` = a file that must exist).
+/// Child output goes to stderr: stdout carries the engine's `--json` document.
 pub fn run_steps(dir: &Path, steps: &[Step]) -> Result<Vec<String>> {
     let mut ran = Vec::new();
     for step in steps {
@@ -148,6 +149,7 @@ pub fn run_steps(dir: &Path, steps: &[Step]) -> Result<Vec<String>> {
             .arg("-c")
             .arg(&step.run)
             .current_dir(dir)
+            .stdout(std::io::stderr())
             .status()
             .with_context(|| format!("running `{}`", step.run))?;
         if !status.success() {
@@ -254,9 +256,9 @@ pub fn refresh_base(main: &Path, cfg: &TreesConfig, build: bool) -> Result<Strin
         let queue = base.join("scripts/build-queue");
         for cmd in &cfg.base.build {
             let status = if queue.exists() {
-                Command::new(&queue).args(["run", "trees-base", "--", "sh", "-c", cmd]).current_dir(&base).status()
+                Command::new(&queue).args(["run", "trees-base", "--", "sh", "-c", cmd]).current_dir(&base).stdout(std::io::stderr()).status()
             } else {
-                Command::new("sh").arg("-c").arg(cmd).current_dir(&base).status()
+                Command::new("sh").arg("-c").arg(cmd).current_dir(&base).stdout(std::io::stderr()).status()
             }
             .with_context(|| format!("running `{cmd}` in the base"))?;
             if !status.success() {

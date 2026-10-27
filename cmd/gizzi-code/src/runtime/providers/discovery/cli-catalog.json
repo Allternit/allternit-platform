@@ -34,6 +34,7 @@
           "output": 32000
         }
       ],
+      "accountHomeEnv": "CLAUDE_CONFIG_DIR",
       "signIn": "subscription",
       "login": [
         "auth",
@@ -93,6 +94,7 @@
           "output": 32768
         }
       ],
+      "accountHomeEnv": "CODEX_HOME",
       "signIn": "subscription",
       "login": [
         "login"

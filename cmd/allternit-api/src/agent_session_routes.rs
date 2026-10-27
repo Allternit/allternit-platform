@@ -2860,13 +2860,20 @@ pub(crate) fn bot_turn_marker(db: &DbHandle, agent_id: &str, session_id: Option<
     ask_tools.sort();
     // Template approval gates (`config.approvals`, e.g. "Send email: always").
     let gated = config.get("approvals").and_then(serde_json::Value::as_array).map_or(false, |a| !a.is_empty());
-    Some(json!({
+    let mut marker = json!({
         "id": agent_id,
         "name": name,
         "allowedTools": allowed_tools,
         "askTools": ask_tools,
         "gated": gated,
-    }))
+    });
+    // The bot's own account for its CLI brain (`config.cli_account_id`, a
+    // `cli_accounts` id); absent = the user's default. gizzi's zod schema
+    // takes a string or nothing, so it is never sent as null.
+    if let Some(account) = config.get("cli_account_id").and_then(serde_json::Value::as_str).filter(|a| !a.is_empty()) {
+        marker["cliAccountId"] = json!(account);
+    }
+    Some(marker)
 }
 
 /// The bot marker for a session the app tagged as a bot's (`isBot` with its

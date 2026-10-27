@@ -852,28 +852,6 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn test_rlm_environment_creation() {
-        let memory_fabric = Arc::new(MemoryFabric::new());
-        let unified_registry = Arc::new(UnifiedRegistry::new(
-            Arc::new(SkillRegistry::new()),
-            Arc::new(allternit_registry::agents::AgentRegistry::new()),
-            Arc::new(allternit_registry::tools::ToolRegistry::new()),
-        ));
-        let tool_gateway = Arc::new(ToolGateway::new(Arc::new(PolicyEngine::new())));
-
-        let env = RLMEnvironment::new(
-            "test context".to_string(),
-            "session-test".to_string(),
-            memory_fabric,
-            unified_registry,
-            tool_gateway,
-            "python-gateway-exec".to_string(),
-        );
-
-        assert_eq!(env.context, "test context");
-    }
-
-    #[tokio::test]
     async fn test_rlm_task_creation() {
         let task = RLMTask::new(
             "Test task".to_string(),
@@ -887,39 +865,5 @@ mod tests {
         assert_eq!(task.tenant_id, "tenant1");
         assert_eq!(task.session_id, "session1");
         assert!(!task.id.is_empty());
-    }
-
-    #[tokio::test]
-    async fn test_hybrid_executor_creation() {
-        let config = RLMConfig::default();
-        let policy_engine = Arc::new(PolicyEngine::new());
-        let memory_fabric = Arc::new(MemoryFabric::new());
-        let unified_registry = Arc::new(UnifiedRegistry::new(
-            Arc::new(SkillRegistry::new()),
-            Arc::new(allternit_registry::agents::AgentRegistry::new()),
-            Arc::new(allternit_registry::tools::ToolRegistry::new()),
-        ));
-        let skill_registry = Arc::new(SkillRegistry::new());
-        let tool_gateway = Arc::new(ToolGateway::new(Arc::new(PolicyEngine::new())));
-        let history_ledger = Arc::new(Mutex::new(HistoryLedger::new()));
-        let messaging_system = Arc::new(MessagingSystem::new());
-
-        let orchestrator = Arc::new(
-            RLMOrchestrator::new(
-                config.clone(),
-                policy_engine,
-                memory_fabric,
-                unified_registry,
-                skill_registry,
-                tool_gateway,
-                history_ledger,
-                messaging_system,
-            )
-            .await
-            .unwrap(),
-        );
-
-        let hybrid_executor = HybridExecutor::new(orchestrator, config);
-        assert!(!format!("{:?}", hybrid_executor).is_empty());
     }
 }

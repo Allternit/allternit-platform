@@ -933,7 +933,7 @@ mod tests {
     use allternit_tools_gateway::ToolGateway;
     use data_encoding::BASE64;
     use ring::rand::SystemRandom;
-    use ring::signature::Ed25519KeyPair;
+    use ring::signature::{Ed25519KeyPair, KeyPair};
     use sqlx::SqlitePool;
     use tempfile::NamedTempFile;
 

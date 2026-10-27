@@ -28,6 +28,7 @@ describe("CliBridge MCP server", () => {
       "media_generate",
       "todowrite",
       "glance",
+      "skill",
       "artifact_create",
       "artifact_update",
       "artifact_suggest",

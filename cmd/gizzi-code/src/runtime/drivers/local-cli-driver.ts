@@ -47,6 +47,7 @@ import os from "node:os"
 import path from "node:path"
 import { Readable, Writable } from "node:stream"
 import { CliBackgroundTasks } from "@/runtime/session/cli-background-tasks"
+import { CliAccounts } from "@/runtime/drivers/cli-accounts"
 import { ProcessRegistry } from "@/runtime/process-registry"
 import { acpGateDecision } from "@/runtime/drivers/acp-gate"
 import { PermissionNext } from "@/runtime/tools/guard/permission/next"
@@ -180,12 +181,16 @@ export class LocalCliDriver implements RuntimeDriver {
       bot: task?.bot,
       plan: task?.plan,
       toolsOff: task?.toolsOff,
+      subagents: task?.subagents,
       model: task?.model,
     })
 
     // CLIs whose records lack what they send: their provider calls pass through BrainRelay.
     const relay = task?.sessionID && adapter.relayEnv ? adapter.relayEnv(task.sessionID) : undefined
-    const env = adapter.env || relay ? { ...adapter.env, ...relay, ...task?.env } : task?.env
+    const baseEnv = adapter.env || relay ? { ...adapter.env, ...relay, ...task?.env } : task?.env
+    // A signed-in account other than the stock one: the CLI's own config dir (default sets nothing).
+    const accountEnv = CliAccounts.env(this.cliName, task?.cliAccountId, task?.bot?.cliAccountId)
+    const env = accountEnv ? { ...baseEnv, ...accountEnv } : baseEnv
 
     let failed = false
     try {
@@ -1713,7 +1718,7 @@ export class LocalCliDriver implements RuntimeDriver {
       const sessionID = this.tasks.get(handle.taskId)?.sessionID
       if (sessionID && lastCodexContext) {
         const status = await Promise.race([mcpStatus, new Promise<undefined>((r) => setTimeout(() => r(undefined), 5_000))])
-        recordCodexContext({ threadId, sessionID, providerID: this.cliName, modelID: model ?? "codex", cwd, mcpStatus: status, context: lastCodexContext })
+        recordCodexContext({ threadId, sessionID, providerID: this.cliName, modelID: model ?? "codex", cwd, codexHome: env?.CODEX_HOME, mcpStatus: status, context: lastCodexContext })
       }
     } catch (err) {
       log.error("codex app-server request failed", { error: err, taskId: handle.taskId })
@@ -1882,6 +1887,8 @@ interface CliAdapter {
       plan?: AgentTask["plan"]
       /** No tools this turn (see AgentTask.toolsOff). */
       toolsOff?: boolean
+      /** The CLI's own subagents (see AgentTask.subagents). */
+      subagents?: AgentTask["subagents"]
       /** The session's model (the picker's choice); the CLI validates it. */
       model?: string
     },
@@ -1948,7 +1955,10 @@ const CLI_ADAPTERS: Record<string, CliAdapter> = {
         // The Allternit subagent catalog as Claude Code subagents, so its own
         // delegation runs on haiku/sonnet/opus by class. Bots keep their own
         // tool policy, and a tools-off completion has nothing to delegate.
-        ...(ctx.bot || ctx.toolsOff ? [] : claudeAgentsFlags()),
+        // Subagents off for the agent: Claude's own Agent tool goes too.
+        ...(ctx.subagents?.off
+          ? ["--disallowedTools", "Task", "--disallowedTools", "Agent"]
+          : ctx.bot || ctx.toolsOff ? [] : claudeAgentsFlags(ctx.subagents?.extra)),
         // The picked model first; without one, the env override or Claude's default.
         ...modelFlag(
           sessionModel(ctx.model, "claude-cli") ??
@@ -2383,9 +2393,9 @@ export function codexContext(tokenUsage: unknown): { used: number; size: number 
 }
 
 /** The thread's rollout file under CODEX_HOME/sessions/YYYY/MM/DD/, newest days first. */
-async function codexRolloutFile(threadId: string): Promise<string | undefined> {
+async function codexRolloutFile(threadId: string, codexHome?: string): Promise<string | undefined> {
   const { readdir } = await import("node:fs/promises")
-  const root = path.join(process.env.CODEX_HOME ?? path.join(os.homedir(), ".codex"), "sessions")
+  const root = path.join(codexHome ?? process.env.CODEX_HOME ?? path.join(os.homedir(), ".codex"), "sessions")
   const list = async (dir: string) => (await readdir(dir).catch(() => [] as string[])).sort().reverse()
   for (const year of await list(root))
     for (const month of await list(path.join(root, year)))
@@ -2404,15 +2414,17 @@ function recordCodexContext(input: {
   providerID: string
   modelID: string
   cwd?: string
+  /** An added account's CODEX_HOME; unset = the stock home. */
+  codexHome?: string
   mcpStatus: unknown
   context: { used: number; size: number }
 }) {
   void (async () => {
     try {
       const { readFile } = await import("node:fs/promises")
-      const file = await codexRolloutFile(input.threadId)
+      const file = await codexRolloutFile(input.threadId, input.codexHome)
       if (!file) return
-      const home = process.env.CODEX_HOME ?? path.join(os.homedir(), ".codex")
+      const home = input.codexHome ?? process.env.CODEX_HOME ?? path.join(os.homedir(), ".codex")
       const agentFiles: Record<string, string> = {}
       for (const candidate of [path.join(home, "AGENTS.md"), input.cwd ? path.join(input.cwd, "AGENTS.md") : ""]) {
         if (!candidate) continue

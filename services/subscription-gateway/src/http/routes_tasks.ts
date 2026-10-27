@@ -17,6 +17,7 @@ import {
 } from "@allternit/subscription-fabric-contracts";
 import { needsResolution, resolveForNewTask } from "../router/dispatch.js";
 import {
+  getAccount,
   getActiveThreadMapping,
   getTask,
   getTaskByIdempotency,
@@ -163,7 +164,7 @@ export function tasksRouter(deps: GatewayDeps): Router {
     // its AAI adapter (routes/app-route-tasks.ts). Turns the gateway's own
     // vendor adapters submit (x-subs-route-chosen) were routed already.
     const internal = req.headers["x-subs-route-chosen"] === "1";
-    if (deps.appRouteTasks && !internal) {
+    if (deps.appRouteTasks && !internal && body.routing?.account_id === undefined) {
       const pick = await deps.appRouteTasks.pick(task).catch(() => null);
       if (pick) {
         task.status_detail = `via ${pick.route}: ${pick.reason}`;
@@ -196,6 +197,39 @@ export function tasksRouter(deps: GatewayDeps): Router {
         on_divergence: task.options.on_divergence ?? mapping.on_divergence,
       };
       task.routing = { ...task.routing, provider: mapping.provider, account_id: mapping.account_id };
+    }
+    // An explicit routing.account_id (a person asked for that account): it
+    // must be an account this gateway can drive right now, with the same
+    // checks the router applies to a candidate (enabled, session ready or
+    // degraded, plan offers the capability). Otherwise 409 — never a silent
+    // fall back to another account. A thread's own account (mapping above)
+    // wins over a requested one: a thread lives in one account.
+    if (body.routing?.account_id !== undefined && task.routing.account_id === body.routing.account_id) {
+      const account = getAccount(deps.db, body.routing.account_id);
+      const offered = (provider: string): boolean => {
+        const manifests = deps.adapterRegistry?.adapters.map((a) => a.manifest).filter((m) => m.provider === provider);
+        if (!manifests) return true; // no registry wired (unit tests)
+        return manifests.some((m) =>
+          m.capabilities.some(
+            (c) =>
+              c.id === task.capability &&
+              c.status !== "disabled" &&
+              c.min_capability_version <= task.capability_version &&
+              (c.plans.length === 0 || account?.plan == null || c.plans.includes(account.plan))
+          )
+        );
+      };
+      const eligible =
+        account !== null &&
+        account.enabled &&
+        (account.session_health === "ready" || account.session_health === "degraded") &&
+        (body.routing.provider === undefined || body.routing.provider === account.provider) &&
+        offered(account.provider);
+      if (!eligible || account === null) {
+        res.status(409).json({ error: "account_not_eligible", account_id: body.routing.account_id });
+        return;
+      }
+      task.routing = { ...task.routing, provider: account.provider };
     }
     // P4 — pick-time routing (§A2): an unrouted auto task is resolved against
     // a fresh snapshot before enqueue; the decision persists on the task and a

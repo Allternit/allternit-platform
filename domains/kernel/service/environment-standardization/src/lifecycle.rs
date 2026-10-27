@@ -244,7 +244,7 @@ mod tests {
 
     #[test]
     fn test_lifecycle_result_success() {
-        let result = LifecycleResult::success(&["provision", "install"], "output");
+        let result = LifecycleResult::success(vec!["provision", "install"], "output");
         
         assert!(result.success);
         assert_eq!(result.stages_completed.len(), 2);
@@ -253,7 +253,7 @@ mod tests {
 
     #[test]
     fn test_lifecycle_result_failure() {
-        let result = LifecycleResult::failure(&["provision"], "error message");
+        let result = LifecycleResult::failure(vec!["provision"], "error message");
         
         assert!(!result.success);
         assert_eq!(result.stages_completed.len(), 1);

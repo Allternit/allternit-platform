@@ -2106,6 +2106,10 @@
         {
           "on": "2026-10-14",
           "note": "Eoj: all connected bots must talk together in group chats and look like their own product. Vendor members now answer inline in rooms through their connector with the room history (one standing thread per room), never a native model; each connector has its own look pack (brand accent + logo; Messages assistants use an iMessage face). allternit-api routes direct connectors by vendor id (DIRECT_ADAPTER_VENDORS) so account discovery works."
+        },
+        {
+          "on": "2026-10-27",
+          "note": "Eoj approved an 'Any AG-UI agent' connector: one generic adapter (ag-ui) for any agent that speaks AG-UI over HTTP/SSE, configured by URL + optional token sealed as JSON {url, token}. Public hosts must be https with every DNS answer public and the socket pinned to the checked address; http only on loopback. The gateway now uses its own AG-UI client (adapters/_shared/ag-ui.ts) for OpenMuse too, and @ag-ui/client is no longer a direct dependency."
         }
       ],
       "evidence": [
@@ -2115,6 +2119,8 @@
         "allternit/services/subscription-gateway/adapters/opendots-copilotkit/provider.ts",
         "allternit/services/subscription-gateway/adapters/ds-bot/provider.ts",
         "allternit/services/subscription-gateway/adapters/openmuse-copilotkit/provider.ts",
+        "allternit/services/subscription-gateway/adapters/ag-ui/provider.ts",
+        "allternit/services/subscription-gateway/adapters/_shared/ag-ui.ts",
         "allternit/services/subscription-gateway/adapters/openbot-nightly/provider.ts",
         "allternit/services/subscription-gateway/adapters/rakazo/provider.ts",
         "allternit/services/subscription-gateway/adapters/frockbot/provider.ts",
@@ -2447,7 +2453,7 @@
       "label": "Subagent catalog and faces",
       "product": "product:gizzi-code",
       "status": "building",
-      "description": "11 built-in subagent types (Explorer, Builder, Code Reviewer, Verifier, Web Researcher, Browser Operator, Computer Operator, Data Analyst, UI Designer, Release Engineer, Security Reviewer) with model classes small/standard/deep; planning, debugging, docs-writing and summarizing are bundled gizzi skills the main loop runs itself (folded 2026-10-27), with subagent evals in domains/agent-evals/subagents; a face per type from the Office Professionals pack on every subagent surface, Settings → Subagents to edit looks and add custom types (stored per user in subagent_types), synced into gizzi and exported to the Claude Code and Codex brains.",
+      "description": "11 built-in subagent types (Explorer, Builder, Code Reviewer, Verifier, Web Researcher, Browser Operator, Computer Operator, Data Analyst, UI Designer, Release Engineer, Security Reviewer) with model classes small/standard/deep; planning, debugging, docs-writing and summarizing are bundled gizzi skills the main loop runs itself (folded 2026-10-27), with subagent evals in domains/agent-evals/subagents; a face per type from the Office Professionals pack on every subagent surface, Settings → Subagents to edit looks and add custom types (stored per user in subagent_types), synced into gizzi and exported to the Claude Code and Codex brains, which also get the delegation rule, config subagents and gizzi's built-in skills through the CLI bridge.",
       "touches": [
         "allternit/cmd/gizzi-code/src/runtime/agents",
         "allternit/cmd/gizzi-code/src/runtime/loop",
@@ -2458,9 +2464,14 @@
         "allternit-ai/src/components/agent-run-tree",
         "allternit-ai/src/views/settings",
         "allternit/cmd/gizzi-code/src/runtime/skills",
-        "allternit/domains/agent-evals"
+        "allternit/cmd/gizzi-code/src/runtime/integrations",
+        "allternit/cmd/gizzi-code/src/runtime/drivers"
       ],
       "decisions": [
+        {
+          "on": "2026-10-27",
+          "note": "Eoj: run the subagent evals on the installed CLIs instead of waiting for Allternit Cloud. CLI brains now get the fold rule in their system prompt, config subagents in their own subagent tool, gizzi's built-in skills through the bridge, and no Agent tool when task is denied; the eval reads claude-cli cost from Claude Code's own session log."
+        },
         {
           "on": "2026-10-27",
           "note": "Eoj approved folding subagents per Anthropic's 'when to fold subagents into your main agent loop': keep a subagent only for parallel work, a fresh context, or different tools. Planner, Debugger, Docs Writer and Scribe became skills; the delegation hint states the rule; the catalog stays the look. Subagent evals (split/folded/single, 10 tasks) decide further folds."
@@ -2474,7 +2485,8 @@
         "allternit/surfaces/docs/guides/subagents.mdx",
         "allternit/surfaces/docs/api/subagent-types.mdx",
         "allternit/cmd/gizzi-code/src/runtime/agents/builtin-catalog.ts",
-        "allternit/surfaces/docs/guides/subagent-evals.mdx"
+        "allternit/surfaces/docs/guides/subagent-evals.mdx",
+        "allternit/domains/agent-evals/subagents/evals/__main__.py"
       ]
     },
     {
