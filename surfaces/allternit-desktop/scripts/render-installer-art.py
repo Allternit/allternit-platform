@@ -5,6 +5,8 @@ Writes dmg-background.png + dmg-background@2x.png (macOS DMG window;
 electron-builder merges the pair into a Retina TIFF) and installer-sidebar.bmp +
 installer-header.bmp (Windows NSIS, 24-bit). Icon slots match dmg.contents in
 package.json (app at 130,200, Applications at 410,200, 80 px icons).
+Also writes trayTemplate.png + @2x: the menu bar icon, the app-icon A alone in
+an 18 pt square, black on transparent (macOS tints template images).
 
 Needs Google Chrome and Pillow. Run: python3 scripts/render-installer-art.py
 """
@@ -13,7 +15,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageDraw
 
 HERE = Path(__file__).resolve().parent
 BUILD = HERE.parent / "build"
@@ -94,8 +96,23 @@ def bmp(body: str, w: int, h: int, name: str) -> None:
     png.unlink()
 
 
+def tray(scale: int) -> None:
+    # The A glyph on a 5x5 grid: 3.5 pt cells, 3 pt blocks, centred in 18 pt.
+    cells = [(2, 0), (1, 1), (3, 1), (0, 2), (1, 2), (2, 2), (3, 2), (4, 2), (0, 3), (4, 3), (0, 4), (4, 4)]
+    size, cell, block = 18 * scale, 3.5 * scale, 3 * scale
+    origin = (size - (4 * cell + block)) / 2
+    im = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(im)
+    for col, row in cells:
+        x, y = origin + col * cell, origin + row * cell
+        draw.rounded_rectangle([x, y, x + block - 1, y + block - 1], radius=0.75 * scale, fill=(0, 0, 0, 255))
+    im.save(BUILD / ("trayTemplate@2x.png" if scale == 2 else "trayTemplate.png"))
+
+
 render(DMG, 540, 380, 1, BUILD / "dmg-background.png")
 render(DMG, 540, 380, 2, BUILD / "dmg-background@2x.png")
 bmp(SIDEBAR, 164, 314, "installer-sidebar")
 bmp(HEADER, 150, 57, "installer-header")
-print("wrote", ", ".join(p.name for p in sorted(BUILD.glob("dmg-background*.png")) + sorted(BUILD.glob("installer-*.bmp"))))
+tray(1)
+tray(2)
+print("wrote", ", ".join(p.name for p in sorted(BUILD.glob("dmg-background*.png")) + sorted(BUILD.glob("installer-*.bmp")) + sorted(BUILD.glob("trayTemplate*.png"))))

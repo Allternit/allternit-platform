@@ -118,8 +118,9 @@ Desktop App (Electron)
 
 ### Installer art
 The DMG window background (`build/dmg-background.png` + `@2x`) and the Windows
-NSIS bitmaps (`build/installer-sidebar.bmp`, `build/installer-header.bmp`) are
-generated from the A://TERNIT wordmark by `scripts/render-installer-art.py`
+NSIS bitmaps (`build/installer-sidebar.bmp`, `build/installer-header.bmp`)
+and the menu bar icon (`build/trayTemplate.png` + `@2x`) are generated from the
+A://TERNIT wordmark by `scripts/render-installer-art.py`
 (needs Google Chrome and Pillow). Edit the script, not the images, and re-run it.
 The DMG icon slots in the script match `build.dmg.contents` in `package.json`;
 move both together. `*.png` is gitignored at the repo root, so add the PNGs with

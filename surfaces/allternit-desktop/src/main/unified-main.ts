@@ -7,7 +7,7 @@
  * - Version-locked: Desktop 1.2.3 = Backend 1.2.3
  */
 
-import { app, autoUpdater, BrowserWindow, ipcMain, nativeTheme, Notification, safeStorage, session, Tray, Menu, dialog, globalShortcut, screen, protocol, type WebContents } from 'electron';
+import { app, autoUpdater, BrowserWindow, ipcMain, nativeTheme, Notification, safeStorage, session, Tray, Menu, dialog, globalShortcut, screen, protocol, nativeImage, type WebContents } from 'electron';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve, basename } from 'node:path';
 import * as fs from 'node:fs';
@@ -2232,13 +2232,19 @@ function installAppMenu(): void {
  */
 function createTray(): void {
   const buildDir = join(__dirname, '../../build');
-  const iconPath = [join(buildDir, 'trayTemplate.png'), join(buildDir, 'tray-icon.png')].find((p) => fs.existsSync(p));
+  // The black template only works on macOS; it vanishes on a dark Windows or
+  // Linux taskbar, so those get the colour app icon.
+  const candidates = process.platform === 'darwin'
+    ? ['trayTemplate.png', 'tray-icon.png']
+    : process.platform === 'win32' ? ['icon.ico', 'icon.png'] : ['icon.png'];
+  const iconPath = candidates.map((name) => join(buildDir, name)).find((p) => fs.existsSync(p));
   if (!iconPath) {
     log.warn('[Tray] No tray icon in build/; menu bar icon not shown');
     return;
   }
 
-  tray = new Tray(iconPath);
+  // icon.png is 1024 px; Linux status areas draw a tray image at its own size.
+  tray = new Tray(iconPath.endsWith('icon.png') ? nativeImage.createFromPath(iconPath).resize({ width: 24, height: 24 }) : iconPath);
   tray.setToolTip('Allternit');
   tray.on('click', () => {
     const prefs = persistedState.get('prefs');
