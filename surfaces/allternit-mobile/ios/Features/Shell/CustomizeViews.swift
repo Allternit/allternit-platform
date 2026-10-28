@@ -119,15 +119,11 @@ struct RailTabsSheet: View {
 
 /// Customize (allternit-ai src/views/customize/CustomizeView.tsx): what the
 /// assistant can use. Skills, Plugins (CapabilitiesSettingsView), Connectors
-/// and Webhooks are native screens; MCP servers open the web Settings page
-/// in-app.
+/// Webhooks and MCP servers are native screens.
 struct CustomizeSheet: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var auth = AuthManager.shared
-    @State private var safariURL: IdentifiableURL? = nil
     @State private var isConnectorsPresented = false
-
-    private static let webBase = "https://ai.allternit.com/settings/"
 
     var body: some View {
         NavigationStack {
@@ -154,7 +150,9 @@ struct CustomizeSheet: View {
                         }
                     }
                     Section("More") {
-                        webRow("MCP servers", icon: "cpu", section: "mcp")
+                        NavigationLink { McpServersSettingsView() } label: {
+                            Label("MCP servers", systemImage: "cpu")
+                        }
                         NavigationLink { WebhooksSettingsView() } label: {
                             Label("Webhooks", systemImage: "arrow.triangle.branch")
                         }
@@ -166,7 +164,6 @@ struct CustomizeSheet: View {
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
             }
-            .sheet(item: $safariURL) { SafariView(url: $0.url) }
             .sheet(isPresented: $isConnectorsPresented) { ConnectorsListView() }
         }
     }
@@ -183,15 +180,5 @@ struct CustomizeSheet: View {
                 .foregroundColor(Color("TextSecondary"))
         }
         .contentShape(Rectangle())
-    }
-
-    private func webRow(_ title: String, icon: String, section: String) -> some View {
-        Button {
-            if let url = URL(string: Self.webBase + section) { safariURL = IdentifiableURL(url: url) }
-        } label: {
-            row(title, icon: icon, trailing: "arrow.up.right")
-        }
-        .buttonStyle(.plain)
-        .accessibilityHint("Opens on the web")
     }
 }

@@ -232,6 +232,9 @@ struct SettingsView: View {
             NavigationLink { CapabilitiesSettingsView(kind: .plugin) } label: {
                 SettingsRowLabel(title: "Plugins", systemImage: "puzzlepiece.extension")
             }
+            NavigationLink { McpServersSettingsView() } label: {
+                SettingsRowLabel(title: "MCP servers", systemImage: "cpu")
+            }
             NavigationLink { SubagentsSettingsView() } label: {
                 SettingsRowLabel(title: "Subagents", systemImage: "point.3.filled.connected.trianglepath.dotted")
             }

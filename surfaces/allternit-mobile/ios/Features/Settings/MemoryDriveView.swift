@@ -211,9 +211,13 @@ enum MemoryDriveAPI {
 /// files Allternit remembers from. Pick a drive, read and edit files, and
 /// delete memories forever.
 ///
-/// Phone subset: history and diffs, git clone tokens, Dreaming, imports
-/// (ChatGPT/Claude/agents), the ledger and copies stay on Desktop / the web;
-/// they need a wide two-pane view or a desktop file picker.
+/// Each file has its history (diffs, compare with now, restore), and the
+/// drive's copies (a folder or your own git repository with a token) are
+/// under Keep a copy.
+///
+/// Phone subset: git clone tokens, Dreaming, imports (ChatGPT/Claude/agents)
+/// and the ledger stay on Desktop / the web; they need a wide two-pane view
+/// or a desktop file picker.
 struct MemoryDriveView: View {
     @EnvironmentObject private var authManager: AuthManager
     @State private var mounts: [MemoryDriveMount] = []
@@ -275,6 +279,9 @@ struct MemoryDriveView: View {
                 } label: {
                     SettingsRowLabel(title: "Drive", systemImage: "externaldrive")
                 }
+            }
+            NavigationLink { MemoryDriveCopiesView() } label: {
+                SettingsRowLabel(title: "Keep a copy", systemImage: "arrow.triangle.2.circlepath")
             }
             if let info {
                 if mounts.count <= 1 { row("Drive", info.name) }
@@ -423,6 +430,7 @@ struct MemoryDriveFileView: View {
     @State private var saveError: String? = nil
     @State private var isPurging = false
     @State private var confirmDiscard = false
+    @State private var isShowingHistory = false
 
     private var managedNote: String? { MemoryDriveAPI.managedNote(path) }
     private var canEdit: Bool { canWrite && managedNote == nil }
@@ -463,6 +471,12 @@ struct MemoryDriveFileView: View {
                 }
             }
         }
+        .navigationDestination(isPresented: $isShowingHistory) {
+            MemoryDriveHistoryView(path: path, drive: drive, canWrite: canEdit, onRestored: { message in
+                onSaved(message)
+                Task { await load() }
+            })
+        }
         .confirmationDialog("Discard your edits?", isPresented: $confirmDiscard, titleVisibility: .visible) {
             Button("Discard", role: .destructive) { stopEditing() }
             Button("Keep editing", role: .cancel) {}
@@ -484,13 +498,20 @@ struct MemoryDriveFileView: View {
                         .disabled(conflict || draft == file?.content)
                 }
             }
-        } else if canEdit, let file {
-            ToolbarItem(placement: .primaryAction) {
-                Button("Edit") {
-                    draft = file.content
-                    conflict = false
-                    saveError = nil
-                    editing = true
+        } else {
+            if file != nil {
+                ToolbarItem(placement: .primaryAction) {
+                    Button { isShowingHistory = true } label: { Label("History", systemImage: "clock.arrow.circlepath") }
+                }
+            }
+            if canEdit, let file {
+                ToolbarItem(placement: .primaryAction) {
+                    Button("Edit") {
+                        draft = file.content
+                        conflict = false
+                        saveError = nil
+                        editing = true
+                    }
                 }
             }
         }
