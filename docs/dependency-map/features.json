@@ -43,6 +43,10 @@
         {
           "on": "2026-10-28",
           "note": "Cowork folds into Chat (Eoj): Chat keeps its session view and gains Cowork's studio, approval picker (Ask before actions / Auto-approve / Read-only via metadata.codePermissionMode) and computer button; chats do not run as the main bot; Cowork's tabs (Execute, Routines, Loops, Web, Agents, Sync) are dropped and Routines/Loops keep their own pages; Quick task creates a chat; Tasks, drafts and runs live under Home. Stored cowork ids, /api/v1/cowork/* routes and cowork_* tables stay as aliases. feature:cowork merged into this feature."
+        },
+        {
+          "on": "2026-10-28",
+          "note": "A:// orchestrates every chat (Eoj, reverses the main-bot part of ai #871): new chats bind to the main bot (mainBotChat) and get message_agent, so A:// hands work to the user's other bots as task threads (bot_routing::caller_for_session accepts mainBotChat). The chat is never adopted as a bot thread and shows no agent card (card deleted, ai #874). Picking another bot answers directly."
         }
       ],
       "evidence": [
