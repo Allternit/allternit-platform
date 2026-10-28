@@ -6,6 +6,8 @@ import SwiftUI
 ///
 /// - session → Chats with that session (`.openChatSession`)
 /// - thread  → the thread's current chat session, else the bot's page
+/// - call    → the incoming-call screen (InappCallStore); a ring that already
+///             ended opens its thread, where the missed call is
 /// - bot     → the bot's page in a sheet
 /// - channel → the bots hub
 /// - settings → Settings
@@ -101,6 +103,15 @@ struct DeepLinkHost: ViewModifier {
             openSession(id)
         case .thread(let botId, let threadId):
             Task { await openThread(botId: botId, threadId: threadId) }
+        case .call(let room, _, let threadId, let botId):
+            Task {
+                isResolving = true
+                let ringing = await InappCallStore.shared.showRing(room: room)
+                isResolving = false
+                if !ringing, !botId.isEmpty, !threadId.isEmpty {
+                    await openThread(botId: botId, threadId: threadId)
+                }
+            }
         case .bot(let id):
             Task { await openBot(id) }
         case .channel:

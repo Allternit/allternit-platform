@@ -41,12 +41,19 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
     // MARK: - UNUserNotificationCenterDelegate
 
     /// In the foreground, still show the banner (a bot answering while you
-    /// look at another screen is worth seeing).
+    /// look at another screen is worth seeing). A ring is the exception: the
+    /// incoming-call screen takes it (InappCallStore), so no banner.
     nonisolated func userNotificationCenter(
         _ center: UNUserNotificationCenter,
         willPresent notification: UNNotification
     ) async -> UNNotificationPresentationOptions {
-        [.banner, .list, .sound]
+        let userInfo = notification.request.content.userInfo
+        let type = userInfo["type"] as? String
+        let room = (userInfo["data"] as? [String: Any])?["room"] as? String
+        let handled = await MainActor.run {
+            InappCallStore.shared.handlesForegroundPush(type: type, room: room)
+        }
+        return handled ? [] : [.banner, .list, .sound]
     }
 
     nonisolated func userNotificationCenter(
