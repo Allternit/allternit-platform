@@ -1,0 +1,37 @@
+---
+title: "Mail triage eval"
+description: "How the needs you or can wait sort for incoming mail is built and measured"
+---
+
+**Status: PREVIEW (internal).** See [status labels](/architecture#status-labels).
+
+Before this classifier, "needs you" was only ever set by a bot: `notifications::level` in `cmd/allternit-cloud-api/src/routes/notifications.rs` maps backbone events (`thread.needs_user`, `urgency: "urgent"`) to a quiet-hours level. Nothing read an incoming message and decided. `routes/mail_triage.rs` does, and `evals/triage` measures it.
+
+## How the sort works
+
+1. Plain rules settle the obvious mail as "can wait" with no model call: Gmail Promotions or Social, an auto-reply, a calendar response. List headers (`List-Unsubscribe`, `Precedence`) count only when Gmail also filed the message under Promotions or Social.
+2. A message about a failed payment, a security alert or a paused account is protected: no rule may settle it, whatever its sender or headers say.
+3. A model reads everything else and answers with a verdict and a one-sentence reason. A model failure is an error, never a default verdict.
+
+The rules only ever say "can wait". Every result records what decided it, `rule:<id>` or `model:<name>`.
+
+## Run it
+
+```sh
+# Rules only: no model calls, no cost.
+cargo run -p allternit-cloud-api --features triage-eval --bin mail-triage-eval -- --rules-only
+
+# With a model (metered). BOT_MODEL selects it.
+BOT_MODEL=claude-sonnet-5-5 ALLTERNIT_API_KEY=... \
+  cargo run -p allternit-cloud-api --features triage-eval --bin mail-triage-eval
+```
+
+Model mode calls the model router's OpenAI-compatible `/chat/completions` (set `TRIAGE_EVAL_BASE_URL` to change the host). Results go to `evals/triage/results-<model>.md`.
+
+## Reading the numbers
+
+Recall for needs you is the headline: of the messages that needed the person, how many were flagged. A miss is a failed payment nobody saw. Precision is how many flagged messages really needed them; a low value makes people ignore the list.
+
+The set is 62 invented messages, so it is a regression check for rule, prompt and model changes, not proof of accuracy on a real inbox. Add a case to `evals/triage/build-set.py` whenever real use shows a mistake, then run `python3 evals/triage/build-set.py`.
+
+The set and the approach come from OpenDuet (MIT, Copyright (c) 2026 CopilotKit); the licence is `evals/triage/LICENSE-openduet`.

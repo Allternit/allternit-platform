@@ -279,3 +279,10 @@ per-harness hook output table and the unread-mail notice in
 `factory/engine/src/agents/live_delivery.rs`, `factory/engine/src/agents/delivery.rs`,
 `cmd/gizzi-code/src/cli/commands/hook.ts` and `cmd/gizzi-code/src/runtime/live/`
 are adapted from it. Each adapted file carries that attribution in its header.
+
+**OpenDuet** (CopilotKit/openduet, MIT, Copyright (c) 2026 CopilotKit): the
+mail triage rules and prompt in
+`cmd/allternit-cloud-api/src/routes/mail_triage.rs`, and the labelled set,
+`build-set.py` and results format in `evals/triage/`, are adapted from its
+`openbot/server/src/openduet/triage.ts` and `evals/triage/`. The licence text
+is `evals/triage/LICENSE-openduet`.
