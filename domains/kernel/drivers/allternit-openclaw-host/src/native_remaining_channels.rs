@@ -1248,19 +1248,4 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_security_policy_allowlist() {
-        let config = ChannelServiceConfig {
-            security_policy: SecurityPolicy::Allowlist {
-                allowed_channels: vec!["whatsapp".to_string(), "signal".to_string()],
-            },
-            enable_security_controls: true,
-            ..Default::default()
-        };
-
-        let service = ChannelService::with_config(config);
-
-        // This would be tested in a more complex scenario with actual channels
-        assert!(true); // Placeholder test
-    }
 }

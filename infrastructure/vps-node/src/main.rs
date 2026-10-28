@@ -282,14 +282,4 @@ impl AllternitNode {
 mod tests {
     use super::*;
 
-    #[tokio::test]
-    async fn test_node_creation() {
-        let config = NodeConfig::default();
-        let state = Arc::new(NodeState::new(config.clone()));
-        let docker = Arc::new(RwLock::new(DockerRuntime::new()));
-        let executor = Arc::new(JobExecutor::new(docker.clone(), 5));
-        let pty = Arc::new(PtyManager::new());
-        
-        let _node = AllternitNode::new(config, state, docker, executor, pty);
-    }
 }

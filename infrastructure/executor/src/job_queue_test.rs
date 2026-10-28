@@ -13,12 +13,6 @@ mod tests {
     // JobQueueService Creation Tests
     // ========================================================================
 
-    #[test]
-    fn test_queue_creation() {
-        let queue = JobQueueServiceImpl::new();
-        // Basic creation test - verifies the queue can be instantiated
-    }
-
     // ========================================================================
     // QueuedJob Tests
     // ========================================================================

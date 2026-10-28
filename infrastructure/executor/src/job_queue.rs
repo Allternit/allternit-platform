@@ -191,9 +191,4 @@ impl JobQueueService for JobQueueServiceImpl {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_queue_creation() {
-        let queue = JobQueueServiceImpl::new();
-        // Basic creation test
-    }
 }

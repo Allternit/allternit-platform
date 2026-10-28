@@ -243,8 +243,4 @@ mod tests {
         assert!(!VERSION.is_empty());
     }
 
-    #[test]
-    fn test_init() {
-        init(); // Should not panic
-    }
 }

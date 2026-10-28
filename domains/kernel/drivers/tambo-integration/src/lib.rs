@@ -645,13 +645,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_tambo_engine_creation() {
-        let engine = TamboEngine::new();
-        // Just verify it creates without error
-        assert!(true);
-    }
-
-    #[test]
     fn test_ui_spec_creation() {
         let mut properties = HashMap::new();
         properties.insert("label".to_string(), serde_json::json!("Click Me"));

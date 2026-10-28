@@ -243,13 +243,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_ivkge_engine_creation() {
-        let engine = IvkgeAdvancedEngine::new();
-        // Just verify it creates without error
-        assert!(true);
-    }
-
-    #[test]
     fn test_bounding_box_creation() {
         let bbox = BoundingBox {
             x: 100,

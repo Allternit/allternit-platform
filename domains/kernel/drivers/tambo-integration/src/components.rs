@@ -254,13 +254,6 @@ impl Default for ComponentLibrary {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_component_library_creation() {
-        let library = ComponentLibrary::new();
-        // Just verify it creates without error
-        assert!(true);
-    }
-
     #[tokio::test]
     async fn test_get_available_types() {
         let library = ComponentLibrary::new();
