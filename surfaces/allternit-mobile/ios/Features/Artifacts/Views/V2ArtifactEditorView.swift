@@ -458,6 +458,15 @@ private struct DocBlocksEditor: View {
     @ViewBuilder
     private func row(_ block: Binding<ArtifactBodyEditing.DocBlock>) -> some View {
         switch block.wrappedValue.role {
+        case .image(let src):
+            VStack(alignment: .leading, spacing: 6) {
+                DocImagePreview(src: src)
+                TextField("Describe the image", text: block.text, axis: .vertical)
+                    .font(.footnote)
+                    .foregroundColor(Color("TextPrimary"))
+                    .accessibilityLabel("Image description")
+            }
+            .padding(.vertical, 4)
         case .fixed(let label):
             Label("\(label) — edit on the web or Desktop", systemImage: "lock")
                 .font(.caption)
@@ -480,6 +489,41 @@ private struct DocBlocksEditor: View {
             TextField("Text", text: block.text, axis: .vertical)
                 .font(.body)
                 .foregroundColor(Color("TextPrimary"))
+        }
+    }
+}
+
+/// An image block in the doc editor: the picture, small.
+private struct DocImagePreview: View {
+    let src: String
+    @State private var image: UIImage?
+    @State private var failed = false
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(uiImage: image).resizable().scaledToFit()
+            } else {
+                ZStack {
+                    RoundedRectangle(cornerRadius: Theme.radiusSM).fill(Color("BgSecondary"))
+                    if failed {
+                        Label("Image", systemImage: "photo").font(.caption).foregroundColor(Color("TextSecondary"))
+                    } else {
+                        ProgressView()
+                    }
+                }
+                .frame(height: 120)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: 220, alignment: .leading)
+        .clipShape(RoundedRectangle(cornerRadius: Theme.radiusSM))
+        .accessibilityHidden(true)
+        .task(id: src) {
+            guard !src.isEmpty, let data = try? await ArtifactMediaLoader.data(for: src), let decoded = UIImage(data: data) else {
+                failed = true
+                return
+            }
+            image = decoded
         }
     }
 }

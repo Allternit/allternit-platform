@@ -38,7 +38,10 @@ enum ArtifactBodyEditing {
             /// A table cell (`path` = [block, row, cell]). Cells that hold
             /// anything but one paragraph/heading show their text read-only.
             case tableCell(row: Int, column: Int, editable: Bool)
-            /// Not editable on the phone (image, divider…): shown as a label.
+            /// An image block: shown, with its description (`alt`) as the text.
+            /// The picture itself is changed on the web (an image URL).
+            case image(src: String)
+            /// Not editable on the phone (divider…): shown as a label.
             case fixed(String)
         }
         let id: String
@@ -284,7 +287,9 @@ enum ArtifactBodyEditing {
                         }
                     }
                     if cellCount == 0 { out.append(DocBlock(id: "\(i)", path: [i], role: .fixed("Table"), original: "", text: "")) }
-                case "image": out.append(DocBlock(id: "\(i)", path: [i], role: .fixed("Image"), original: "", text: ""))
+                case "image":
+                    let alt = cellText(block["alt"])
+                    out.append(DocBlock(id: "\(i)", path: [i], role: .image(src: cellText(block["src"])), original: alt, text: alt))
                 case "divider": out.append(DocBlock(id: "\(i)", path: [i], role: .fixed("Divider"), original: "", text: ""))
                 default: out.append(DocBlock(id: "\(i)", path: [i], role: .fixed("Block"), original: "", text: ""))
                 }
@@ -412,7 +417,11 @@ enum ArtifactBodyEditing {
             throw EditError.unreadable
         }
         for edit in edits where edit.text != edit.original {
-            if edit.path.count == 1, var block = blocks[safe: edit.path[0]] as? [String: Any] {
+            if case .image = edit.role, var block = blocks[safe: edit.path[0]] as? [String: Any] {
+                let alt = edit.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                if alt.isEmpty { block.removeValue(forKey: "alt") } else { block["alt"] = alt }
+                blocks[edit.path[0]] = block
+            } else if edit.path.count == 1, var block = blocks[safe: edit.path[0]] as? [String: Any] {
                 block["content"] = runs(for: edit.text, replacing: block["content"])
                 blocks[edit.path[0]] = block
             } else if edit.path.count == 3, var table = blocks[safe: edit.path[0]] as? [String: Any],
