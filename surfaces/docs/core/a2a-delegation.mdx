@@ -5,7 +5,7 @@ description: How Allternit routes @mentions to swarms, sub-agents, and peer agen
 
 ## Overview
 
-**A2A Delegation** is the runtime routing layer that decides what happens when a user @mentions an agent in an Allternit surface such as chat or cowork. Instead of every agent running the request itself, `useA2ADelegation` inspects the target agent's identity and dispatches the task to the right execution path: a swarm run, a direct agent-to-agent (A2A) message, or a normal single-agent run.
+**A2A Delegation** is the runtime routing layer that decides what happens when a user @mentions an agent in an Allternit surface such as chat or code. Instead of every agent running the request itself, `useA2ADelegation` inspects the target agent's identity and dispatches the task to the right execution path: a swarm run, a direct agent-to-agent (A2A) message, or a normal single-agent run.
 
 The hook lives in `surfaces/ai.allternit.com/src/lib/agents/use-a2a-delegation.ts` and is the bridge between the social convention of @mentioning an agent and the platform's multi-agent execution primitives.
 

@@ -2,10 +2,10 @@
   "features": [
     {
       "id": "feature:chat",
-      "label": "Chat with streamed replies",
+      "label": "Chat with streamed replies (includes former Cowork)",
       "product": "product:ai-allternit",
       "status": "live",
-      "description": "The main conversation view: send a message, watch the reply stream in, with attachments and artifacts beside it.",
+      "description": "The main conversation view: send a message, watch the reply stream in, with attachments and artifacts beside it. Longer agent work runs here too: approval picker, studio panes for docs/slides/websites, computer button, session panel and Quick task; the Tasks board sits on Home.",
       "touches": [
         "allternit-ai/src/views/chat",
         "allternit-ai/src/components/chat",
@@ -17,7 +17,13 @@
         "allternit/cmd/gizzi-code/src/runtime/session",
         "allternit/cmd/gizzi-code/src/runtime/providers",
         "allternit-ai/src/components/ui",
-        "allternit-ai/src/lib/attachments"
+        "allternit-ai/src/lib/attachments",
+        "allternit-ai/src/views/cowork",
+        "allternit-ai/src/lib/cowork",
+        "allternit-ai/src/lib/cowork-team",
+        "allternit/cmd/allternit-api/src/cowork",
+        "allternit/cmd/allternit-api/src/cowork_*",
+        "allternit/platform/packages/cowork-engine"
       ],
       "decisions": [
         {
@@ -31,12 +37,23 @@
         {
           "on": "2026-10-08",
           "note": "Any file or folder can be attached (no allow-list; text sniffed by content). Cards appear at once with Reading…; video/audio/other files go as Allternit Cloud links; sent messages show chips, not extracted text. Eoj: no grey ring on the composer; the tray only shows behind a reply strip or attachment cards."
+        },
+        {
+          "on": "2026-10-27",
+          "note": "Task status filters shared between desktop board/table and phone task lists; counts retain real Factory/Cowork states. Scheduled opens Automation Tasks through the existing shell route. Existing artifact session panes and conversation drafts are reused."
+        },
+        {
+          "on": "2026-10-28",
+          "note": "Cowork folds into Chat (Eoj): Chat keeps its session view and gains Cowork's studio, approval picker (Ask before actions / Auto-approve / Read-only via metadata.codePermissionMode) and computer button; chats do not run as the main bot; Cowork's tabs (Execute, Routines, Loops, Web, Agents, Sync) are dropped and Routines/Loops keep their own pages; Quick task creates a chat; Tasks, drafts and runs live under Home. Stored cowork ids, /api/v1/cowork/* routes and cowork_* tables stay as aliases. feature:cowork merged into this feature."
         }
       ],
       "evidence": [
         "allternit/surfaces/docs/api/agent-chat.mdx",
         "allternit/cmd/allternit-api/src/chat_routes.rs",
-        "allternit/surfaces/docs/guides/chat-composer.mdx"
+        "allternit/surfaces/docs/guides/chat-composer.mdx",
+        "allternit/surfaces/docs/guides/chat-sessions.mdx",
+        "allternit/surfaces/docs/api/cowork.mdx",
+        "allternit/surfaces/docs/api/cowork-teams.mdx"
       ]
     },
     {
@@ -906,7 +923,7 @@
       "label": "Automation Tasks and bot routines (List, Graph, Calendar)",
       "product": "product:ai-allternit",
       "status": "live",
-      "description": "Routines, goals, loops and agent heartbeats a bot runs on a schedule, managed from Automation Tasks, Cowork → Routines, a bot's Routines tab and a bot chat's Routines panel, each with a List / Graph / Calendar switch. The calendar is editable (click to add, drag to move); Month shows named, time-stamped chips tinted by type with +N more, and on Automation Tasks a click opens an anchored details card (schedule in words, next run, bot, last run, Open / Run now / Edit / Pause). Phones show dots and a day list. Failed runs alert and pause after 3 in a row.",
+      "description": "Routines, goals, loops and agent heartbeats a bot runs on a schedule, managed from Automation Tasks, a bot's Routines tab and a bot chat's Routines panel, each with a List / Graph / Calendar switch. The calendar is editable (click to add, drag to move); Month shows named, time-stamped chips tinted by type with +N more, and on Automation Tasks a click opens an anchored details card (schedule in words, next run, bot, last run, Open / Run now / Edit / Pause). Phones show dots and a day list. Failed runs alert and pause after 3 in a row.",
       "touches": [
         "allternit-ai/src/components/bots",
         "allternit-ai/src/views/cowork",
@@ -926,32 +943,6 @@
       ],
       "evidence": [
         "allternit/surfaces/docs/guides/bot-routines.mdx"
-      ]
-    },
-    {
-      "id": "feature:cowork",
-      "label": "Cowork",
-      "product": "product:ai-allternit",
-      "status": "live",
-      "description": "Long-running work an agent carries out alongside you, with teams and preferences.",
-      "touches": [
-        "allternit-ai/src/views/cowork",
-        "allternit-ai/src/lib/cowork",
-        "allternit-ai/src/lib/cowork-team",
-        "allternit/cmd/allternit-api/src/cowork",
-        "allternit/cmd/allternit-api/src/cowork_*",
-        "allternit/platform/packages/cowork-engine"
-      ],
-      "decisions": [
-        {
-          "on": "2026-10-27",
-          "note": "Task status filters shared between desktop board/table and phone task lists; counts retain real Factory/Cowork states. Scheduled opens Automation Tasks through the existing shell route. Existing artifact session panes and conversation drafts are reused."
-        }
-      ],
-      "evidence": [
-        "allternit/surfaces/docs/api/cowork.mdx",
-        "allternit/surfaces/docs/api/cowork-teams.mdx",
-        "allternit/surfaces/docs/guides/cowork-session-panel.mdx"
       ]
     },
     {
@@ -2752,7 +2743,7 @@
       "label": "All chats at a glance (session overview: list + grid + deck)",
       "product": "product:ai-allternit",
       "status": "building",
-      "description": "Every open session of the current mode as live cards (latest reply, working / needs you / new reply, last activity) in a two-column grid or a sideways deck, with a project dropdown filter and no visible scrollbars. Home = chats + Cowork, Code = code threads by repo, ACI = agent runs; a bot's deck Threads tab uses the same component for its threads (Take it / Not now on suggestions, x marks done) and its Tasks tab became nested dropdowns (thread > step > subagent). Closing a card archives (metadata.archived / setCodeSessionArchived). Desktop: Open all recents / Open all code recents open on the cards with a List switch back to RecentsView / ThreadsView. Phone (ai.allternit.com phone layout + m.allternit.com): count button in the Chats and Code headers and See all over drawer Recents open PhoneOverviewOverlay. List · Grid · Deck is the standard switch on every overview (OverviewLayoutSwitch): built-in list rows, or the caller's own list (group chat roster rows; Desktop Recents / Code Recents list pages). Projects (ProjectView + BotProjectsListView via ProjectsOverview) and Artifacts (ArtifactsView preview cards) use the same switch.",
+      "description": "Every open session of the current mode as live cards (latest reply, working / needs you / new reply, last activity) in a two-column grid or a sideways deck, with a project dropdown filter and no visible scrollbars. Home = chats (including former Cowork sessions), Code = code threads by repo, ACI = agent runs; a bot's deck Threads tab uses the same component for its threads (Take it / Not now on suggestions, x marks done) and its Tasks tab became nested dropdowns (thread > step > subagent). Closing a card archives (metadata.archived / setCodeSessionArchived). Desktop: Open all recents / Open all code recents open on the cards with a List switch back to RecentsView / ThreadsView. Phone (ai.allternit.com phone layout + m.allternit.com): count button in the Chats and Code headers and See all over drawer Recents open PhoneOverviewOverlay. List · Grid · Deck is the standard switch on every overview (OverviewLayoutSwitch): built-in list rows, or the caller's own list (group chat roster rows; Desktop Recents / Code Recents list pages). Projects (ProjectView + BotProjectsListView via ProjectsOverview) and Artifacts (ArtifactsView preview cards) use the same switch.",
       "touches": [
         "allternit-ai/src/components",
         "allternit-ai/src/views",

@@ -169,8 +169,8 @@ Code: `allternit-ai/src/lib/agents/mode-session-store.ts` (`reconcileStream`,
 
 ## Quitting with work in progress
 
-When Desktop quits, it hands work that has **started** (a cowork job that is
-leased or running) to the cloud continuation so it can finish. Idle Cowork
+When Desktop quits, it hands work that has **started** (a background job that is
+leased or running) to the cloud continuation so it can finish. Idle
 sessions and queued jobs stay on this computer and are picked up again on
 the next launch; they are not sent to the cloud.
 
@@ -225,7 +225,7 @@ Desktop hosts the Allternit API and Gizzi runtime locally. It is not part of the
 
 Under the latest reply, the run line shows what the run took: the model, time, tokens in and out, tool calls, **failed** tool calls (in red, when any failed), cost, context used and the cache state. Click it for the full breakdown.
 
-In Code it stays in view, because it is part of reading the run. In Chat, Cowork and bot chats it appears when you hover or focus the reply's footer. On touch screens (the phone layout and the m.allternit.com app) it is always shown, since there is no hover.
+In Code it stays in view, because it is part of reading the run. In Chat and bot chats it appears when you hover or focus the reply's footer. On touch screens (the phone layout and the m.allternit.com app) it is always shown, since there is no hover.
 
 For developers: `RunTelemetry` (`src/components/chat/RunTelemetry.tsx`) renders the line from the message's `metadata.telemetry` (`toolCalls`, `toolFailures`, `usage`). `StreamingChatComposer` takes `runLine: 'hover' | 'always'`; `CodeCanvas` and `CodeCanvasTileSession` pass `'always'`. The hover wrappers (also in `RunFooter`) add `[@media(hover:none)]:opacity-100`. In bot chats, `RunFooter` wraps the run line and `RunStrip` as one line that grows in height (`min-h-5`, not a fixed `h-5`, which clipped wrapped lines into the composer on phones); beside the run line `RunStrip` takes `besideSummary` and shows only tok/s and kernel fields, since time, tokens and cost are already in the run line. Items never break inside themselves (`6 in / 556 out` stays together); the line wraps between them.
 
