@@ -112,6 +112,13 @@ pub async fn chat_completions(
     let user_id = auth.user.user_id.clone();
     let alias = request.model.clone();
 
+    // Hard lines hold on every Cloud request, BYOK included: the keyword
+    // pre-check here, the full moderation check on the open lane below.
+    if let Some(line) = crate::services::hard_line::standard_check(&request.messages) {
+        crate::services::open_lane::record_block(&state.db, &user_id, line.category()).await;
+        return Ok(crate::services::open_lane::hard_line_response(line.category()));
+    }
+
     // BYOK first: when the user has their own key for the alias's provider,
     // the call routes through it — their money, so our allowance, free rate
     // limit, pool breaker, and pool policy do not apply. Early return keeps

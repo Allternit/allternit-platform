@@ -47,7 +47,7 @@ In order:
 
 1. Checks the work is on `origin/main`. The branch tip must be an ancestor of `origin/main`, or `gh` must report a merged PR for the branch (for squash merges).
 2. Refuses if the work is not merged or has uncommitted files. The message tells you to merge first, `pause` to keep it, or pass `--abandon`. With `--abandon`, the whole state (commits and uncommitted files, as one commit) is first pushed to `salvage/<branch>-<date>`.
-3. Stops the processes running in the tree. Agent CLIs (`claude`, `codex`, `kimi`, `gizzi`, `gizzi-code`, `agy`) and your own process chain are never signalled.
+3. Stops the processes running in the tree. Agent CLIs (gizzi, `gizzi-code` and the other coding-agent CLIs the Factory drives) and your own process chain are never signalled.
 4. Deletes build output (the `[clean] build_dirs` names, only where git ignores them, so a tracked `release/` folder stays).
 5. Runs `git worktree remove` without `--force`. If git refuses, `done` stops and nothing is forced. Only `--abandon` may force the removal, and only after all the work is pushed to its `salvage/` branch.
 6. Deletes the branch here and on origin, deletes the tree's checkpoint refs here and on origin, and drops the lease.
@@ -229,9 +229,9 @@ Who gets them:
 
 | CLI | Where |
 |---|---|
-| Claude Code | The committed `.claude/settings.json` |
-| Codex | `~/.codex/hooks.json`, written by `.steering/bin/steer-install.sh`. Commands go through `~/.steering/bin/run-hook.py`, so they exit 0 outside a repo that has the hook |
-| Kimi CLI | `~/.kimi/config.toml`, written by `steer-install.sh` |
+| CLIs that read a committed project settings file | That committed settings file |
+| CLIs with a per-user hooks file | Their hooks file in your home folder, written by `.steering/bin/steer-install.sh`. Commands go through `~/.steering/bin/run-hook.py`, so they exit 0 outside a repo that has the hook |
+| CLIs with a per-user config file | Their config file in your home folder, written by `steer-install.sh` |
 | gizzi-code | The `allternit-steering` plugin (`tools/agent-orchestrator/gizzi-plugin`), installed by `steer-install.sh` |
 
 The session hook (`.steering/bin/session-worktree.sh`) tells a session in the shared checkout to run `gizzi agents tree new "session/<id>" --owner "session:<id>"` when the installed gizzi has the `tree` verb, and the plain `git worktree add` steps when it doesn't.

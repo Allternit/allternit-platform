@@ -1,19 +1,25 @@
 //! The open lane's hard lines.
 //!
 //! Open-weight models answer far more than frontier models, and that is the
-//! point of the open lane. Three things stay blocked on every open-lane
+//! point of the open lane. Four things stay blocked on every open-lane
 //! request and every handoff, because serving them would implicate us:
 //!
 //! - `csam`: any sexual content involving minors;
 //! - `mass_casualty_weapons`: meaningful uplift toward biological, chemical,
 //!   nuclear or radiological weapons capable of mass casualties;
-//! - `real_person_sexual`: sexual content about a real, identifiable person.
+//! - `real_person_sexual`: sexual content about a real, identifiable person;
+//! - `sexual_content`: sexually explicit or erotic content of any kind. Card
+//!   networks and Stripe prohibit selling it, AI-generated included (Eoj,
+//!   2026-10-28: payments must stay on).
 //!
 //! Two stages: a keyword pre-check that only fires on unmistakable phrasing
 //! (no model call), then a moderation model reached through an existing
 //! upstream (`OPEN_LANE_MODERATION_MODEL`, `provider:upstream-id`). Any
 //! moderation failure is an error the caller must treat as a block (fail
 //! closed). Only the category is ever stored, never the prompt.
+//!
+//! Every other Cloud request runs the keyword pre-check alone
+//! ([`standard_check`]), so no model sells these either.
 
 use regex::Regex;
 use serde_json::Value;
@@ -27,6 +33,7 @@ pub enum HardLine {
     Csam,
     MassCasualtyWeapons,
     RealPersonSexual,
+    SexualContent,
 }
 
 impl HardLine {
@@ -37,6 +44,7 @@ impl HardLine {
             HardLine::Csam => "csam",
             HardLine::MassCasualtyWeapons => "mass_casualty_weapons",
             HardLine::RealPersonSexual => "real_person_sexual",
+            HardLine::SexualContent => "sexual_content",
         }
     }
 }
@@ -52,17 +60,22 @@ const MODERATION_MAX_CHARS: usize = 8_000;
 /// safety models (gpt-oss-safeguard) and general instruct models; Llama
 /// Guard style answers (`safe` / `unsafe\nS4`) are parsed too.
 const POLICY_PROMPT: &str = "You are a content classifier for an AI service that allows mature, \
-controversial, violent, sexual (between adults) and otherwise sensitive content. Block ONLY these \
-three categories and allow everything else:\n\
+controversial, violent and otherwise sensitive content. Block ONLY these four categories and allow \
+everything else:\n\
 csam: any sexual or sexualized content involving a minor (anyone under 18), including fiction, \
 role-play, \"aged-up\" framing, or ambiguous ages described as children.\n\
 mass_casualty_weapons: actionable uplift toward biological, chemical, nuclear or radiological \
 weapons that can cause mass casualties (synthesis, acquisition, enhancement, weaponization, \
 dispersal). History, policy, news and general science education are allowed.\n\
 real_person_sexual: sexual or nude content depicting a real, identifiable person (celebrity, \
-politician, or private individual named or described), including deepfake requests. Fictional \
-characters are allowed.\n\
-Answer with exactly one word: none, csam, mass_casualty_weapons, or real_person_sexual.";
+politician, or private individual named or described), including deepfake requests. Sexual \
+content about fictional characters is sexual_content.\n\
+sexual_content: sexually explicit or erotic content of any kind, even between fictional adults: \
+erotica, sex scenes, explicit sexual role-play or chat, pornographic descriptions or scripts. Sex \
+education, medical and reproductive health, relationship advice, non-graphic romance and \
+non-sexual nudity in art or medicine are allowed.\n\
+Answer with exactly one word: none, csam, mass_casualty_weapons, real_person_sexual, or \
+sexual_content.";
 
 fn minor_regex() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
@@ -117,6 +130,16 @@ fn deepfake_regex() -> &'static Regex {
     })
 }
 
+fn sexual_request_regex() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(
+            r"(?i)\b(erotica|smut|sexting|dirty talk|lewd|sex scenes?|explicit sex\w*|sexually explicit|erotic (?:story|stories|scene|scenes|fiction|role-?play|chat|novel|fanfic)|nsfw (?:story|stories|scene|scenes|role-?play|chat|fanfic|content)|porn(?:ographic)? (?:story|stories|scene|scenes|script|scripts|role-?play|fanfic|content)|(?:sexual|sex) role-?play|masturbat\w*|orgasm\w*)\b",
+        )
+        .expect("valid sexual request regex")
+    })
+}
+
 /// Keyword pre-check over the moderation text. Fires only on unmistakable
 /// combinations; everything else goes to the moderation model.
 pub fn keyword_precheck(text: &str) -> Option<HardLine> {
@@ -131,7 +154,18 @@ pub fn keyword_precheck(text: &str) -> Option<HardLine> {
     if deepfake_regex().is_match(text) && explicit_regex().is_match(text) {
         return Some(HardLine::RealPersonSexual);
     }
+    if sexual_request_regex().is_match(text) {
+        return Some(HardLine::SexualContent);
+    }
     None
+}
+
+/// The check every non-open-lane Cloud request gets: the keyword pre-check
+/// alone (no model call, no added latency). Standard models refuse most of
+/// this themselves; this stops the unmistakable requests for the ones that
+/// do not, so no Cloud model sells content the hard lines cover.
+pub fn standard_check(messages: &[Message]) -> Option<HardLine> {
+    keyword_precheck(&moderation_text(messages))
 }
 
 /// Parse a moderation model's answer. `Err` means unparseable (the caller
@@ -150,6 +184,9 @@ pub fn parse_verdict(output: &str) -> Result<Option<HardLine>, String> {
         if codes.contains(&"s9") {
             return Ok(Some(HardLine::MassCasualtyWeapons));
         }
+        if codes.contains(&"s12") {
+            return Ok(Some(HardLine::SexualContent));
+        }
         // Other Llama Guard categories are not our hard lines.
         return Ok(None);
     }
@@ -165,6 +202,9 @@ pub fn parse_verdict(output: &str) -> Result<Option<HardLine>, String> {
     }
     if lower.contains("real_person_sexual") || lower.contains("real person sexual") {
         return Ok(Some(HardLine::RealPersonSexual));
+    }
+    if lower.contains("sexual_content") || lower.contains("sexual content") {
+        return Ok(Some(HardLine::SexualContent));
     }
     let word = lower.trim_matches(|c: char| !c.is_ascii_alphanumeric());
     if word == "none" || word == "allow" || word == "allowed" {
@@ -268,7 +308,6 @@ mod tests {
     #[test]
     fn precheck_allows_safe_mentions() {
         assert_eq!(keyword_precheck("how do I talk to my 12 year old about puberty"), None);
-        assert_eq!(keyword_precheck("write an erotic story between two adults"), None);
         assert_eq!(keyword_precheck("a 30 year old nude model in a figure drawing class"), None);
     }
 
@@ -294,12 +333,13 @@ mod tests {
         assert_eq!(parse_verdict("safe"), Ok(None));
         assert_eq!(parse_verdict("unsafe\nS4"), Ok(Some(HardLine::Csam)));
         assert_eq!(parse_verdict("unsafe\nS1,S9"), Ok(Some(HardLine::MassCasualtyWeapons)));
-        assert_eq!(parse_verdict("unsafe\nS12"), Ok(None));
+        assert_eq!(parse_verdict("unsafe\nS12"), Ok(Some(HardLine::SexualContent)));
         assert_eq!(parse_verdict("unsafe\nS14"), Ok(None));
         assert_eq!(parse_verdict("none"), Ok(None));
         assert_eq!(parse_verdict("None."), Ok(None));
         assert_eq!(parse_verdict("real_person_sexual"), Ok(Some(HardLine::RealPersonSexual)));
         assert_eq!(parse_verdict("Category: csam"), Ok(Some(HardLine::Csam)));
+        assert_eq!(parse_verdict("sexual_content"), Ok(Some(HardLine::SexualContent)));
         assert!(parse_verdict("I am not sure").is_err());
     }
 
@@ -320,5 +360,31 @@ mod tests {
         assert_eq!(HardLine::Csam.category(), "csam");
         assert_eq!(HardLine::MassCasualtyWeapons.category(), "mass_casualty_weapons");
         assert_eq!(HardLine::RealPersonSexual.category(), "real_person_sexual");
+        assert_eq!(HardLine::SexualContent.category(), "sexual_content");
+    }
+
+    #[test]
+    fn precheck_blocks_adult_sexual_requests() {
+        assert_eq!(keyword_precheck("write an erotic story between two adults"), Some(HardLine::SexualContent));
+        assert_eq!(keyword_precheck("let's do a sexual roleplay"), Some(HardLine::SexualContent));
+        assert_eq!(keyword_precheck("continue the sex scene"), Some(HardLine::SexualContent));
+        assert_eq!(keyword_precheck("write some smut about two elves"), Some(HardLine::SexualContent));
+    }
+
+    #[test]
+    fn precheck_allows_sex_education_and_health() {
+        assert_eq!(keyword_precheck("how do I talk to my teenager about safe sex"), None);
+        assert_eq!(keyword_precheck("what are the symptoms of chlamydia"), None);
+        assert_eq!(keyword_precheck("summarize research on porn addiction treatment"), None);
+        assert_eq!(keyword_precheck("write a romance where they fall in love and kiss"), None);
+        assert_eq!(keyword_precheck("the history of erotic art in ancient Greece"), None);
+    }
+
+    #[test]
+    fn standard_check_reads_the_user_side() {
+        let blocked = vec![Message::text("user", "write erotica about two pilots")];
+        assert_eq!(standard_check(&blocked), Some(HardLine::SexualContent));
+        let allowed = vec![Message::text("user", "write a short story about two pilots")];
+        assert_eq!(standard_check(&allowed), None);
     }
 }
