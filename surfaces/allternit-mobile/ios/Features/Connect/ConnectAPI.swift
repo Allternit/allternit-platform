@@ -325,6 +325,105 @@ enum ChannelConnectAPI {
         ]))
     }
 
+    /// Who may email the bot: "owner" = the owner's account email plus `allowed`.
+    static func emailSenders(botId: String) async throws -> (policy: String, allowed: [String], owner: String?) {
+        let v = try await ConnectHTTP.call("GET", "agents/\(ConnectHTTP.escape(botId))/identity/email/senders")
+        return (v.at("senderPolicy")?.jString ?? "owner", (v.at("allowedSenders")?.jArray ?? []).compactMap(\.jString),
+                v.at("ownerAddress")?.jString)
+    }
+
+    static func saveEmailSenders(botId: String, policy: String, allowed: [String]) async throws {
+        _ = try await ConnectHTTP.call("PUT", "agents/\(ConnectHTTP.escape(botId))/identity/email/senders", body: .object([
+            "senderPolicy": .string(policy), "allowedSenders": .array(allowed.map { .string($0) }),
+        ]))
+    }
+
+    /// connect-api.ts changeEmailAddress: the old mailbox goes first; if the new
+    /// name is taken the bot gets its default address back (`restored`).
+    static func changeEmailAddress(botId: String, localPart: String) async throws -> String {
+        let path = "agents/\(ConnectHTTP.escape(botId))/identity/email"
+        _ = try await ConnectHTTP.call("DELETE", path)
+        do {
+            let made = try await ConnectHTTP.call("POST", path, body: .object(["localPart": .string(localPart)]))
+            return made.at("address")?.jString ?? ""
+        } catch {
+            let restored = (try? await ConnectHTTP.call("POST", path, body: .object([:])))?.at("address")?.jString
+            let status = (error as? ConnectError)?.status
+            let why = status == 409 ? "That address is taken."
+                : status == 400 ? "Use 3–40 letters, numbers or single hyphens." : error.localizedDescription
+            throw EmailAddressError(message: restored.map { "\(why) The bot is back on \($0)." }
+                ?? "\(why) The bot has no address right now. Close this and open Email again to get one.", restored: restored)
+        }
+    }
+
+    struct EmailAddressError: LocalizedError {
+        let message: String
+        let restored: String?
+        var errorDescription: String? { message }
+    }
+
+    struct DnsRecord: Sendable {
+        let type: String
+        let host: String
+        let value: String
+        let purpose: String?
+        let ok: Bool?
+    }
+
+    struct DomainCheck: Sendable {
+        let domain: String
+        let verified: Bool
+        let records: [DnsRecord]
+    }
+
+    private static func domainCheck(_ v: JSONValue, domain: String) -> DomainCheck {
+        DomainCheck(
+            domain: v.at("domain")?.jString ?? domain,
+            verified: v.at("state")?.jString == "verified",
+            records: (v.at("records")?.jArray ?? []).map { r in
+                DnsRecord(type: r.at("type")?.jString ?? "", host: r.at("host")?.jString ?? "",
+                          value: r.at("value")?.jString ?? "", purpose: r.at("purpose")?.jString, ok: r.at("ok")?.jBool)
+            })
+    }
+
+    /// Add a company domain for bot mail; answers the DNS records to add.
+    static func setEmailDomain(_ domain: String) async throws -> DomainCheck {
+        var d = domain.trimmingCharacters(in: .whitespaces).lowercased()
+        if d.hasSuffix(".") { d.removeLast() }
+        do {
+            let v = try await ConnectHTTP.call("PUT", "agent-email/domains/\(ConnectHTTP.escape(d))", body: .object([:]))
+            return domainCheck(v, domain: d)
+        } catch let e as ConnectError {
+            let why = e.code == "domain_taken" ? "That domain is already used for bot email on another Allternit account."
+                : e.code == "custom_domains_unavailable" || e.status == 503 ? "Company domains aren’t switched on for your account yet. Your bot keeps its shared address."
+                : e.status == 400 ? "Enter a domain like acme.com or mail.acme.com." : e.message
+            throw ConnectError(status: e.status, code: e.code, message: why)
+        }
+    }
+
+    /// Live check (each record looked up at public DNS).
+    static func emailDomainStatus(_ domain: String) async throws -> DomainCheck {
+        let v = try await ConnectHTTP.call("GET", "agent-email/domains?domain=\(ConnectHTTP.escape(domain))")
+        let rows = v.at("domains")?.jArray ?? []
+        let one = rows.isEmpty ? v : (rows.first { $0.at("domain")?.jString == domain } ?? rows.last ?? v)
+        return domainCheck(one, domain: domain)
+    }
+
+    /// Move the bot to a verified domain, keeping the part before the @.
+    static func moveEmailToDomain(botId: String, address: String, domain: String) async throws -> String {
+        let localPart = String(address.split(separator: "@").first ?? "")
+        let path = "agents/\(ConnectHTTP.escape(botId))/identity/email"
+        _ = try await ConnectHTTP.call("DELETE", path)
+        do {
+            let made = try await ConnectHTTP.call("POST", path, body: .object(["localPart": .string(localPart), "domain": .string(domain)]))
+            return made.at("address")?.jString ?? address
+        } catch {
+            let restored = (try? await ConnectHTTP.call("POST", path, body: .object(["localPart": .string(localPart)])))?.at("address")?.jString
+            throw EmailAddressError(message: restored.map { "\(error.localizedDescription) The bot is back on \($0)." }
+                ?? "\(error.localizedDescription) Open Email again to give the bot an address.", restored: restored)
+        }
+    }
+
     // Phone numbers
 
     static func availability() async -> [String: Bool] {

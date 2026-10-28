@@ -275,6 +275,10 @@ final class EmailConnectFlow: ConnectFlow {
     private var address = ""
     private var replyMode = "approve"
     private var allowlist: [String] = []
+    private var senderPolicy = "owner"
+    private var allowedSenders: [String] = []
+    private var ownerAddress: String?
+    private var domainCheck: ChannelConnectAPI.DomainCheck?
 
     init(botId: String?) {
         target = botId
@@ -293,6 +297,11 @@ final class EmailConnectFlow: ConnectFlow {
                 address = made.address
                 replyMode = made.replyMode ?? "approve"
                 allowlist = made.allowlist
+                if let senders = try? await ChannelConnectAPI.emailSenders(botId: bot) {
+                    senderPolicy = senders.policy
+                    allowedSenders = senders.allowed
+                    ownerAddress = senders.owner
+                }
             } else {
                 comingSoon = "Give a bot an email address that anyone can write to, with replies you approve or automate. Bot email isn’t switched on for your account yet."
             }
@@ -309,8 +318,56 @@ final class EmailConnectFlow: ConnectFlow {
                 "Only you can make it act until you add others.",
                 "Add a company domain later for branded addresses.",
             ])),
-            ConnectStep(id: "address", title: "Your address is live", kind: .intro(
-                body: "\(name) answers at \(address). Anyone can write to it; replies follow the setting on the next step.", bullets: [])),
+            ConnectStep(id: "address", title: "Your address is live", kind: .form(
+                body: "\(name) answers at \(address). Anyone can write to it; replies follow the settings on the next steps. To use a different name, type it below. The old address stops working once you continue.",
+                fields: [
+                    WizardField(key: "localPart", label: "New name (optional)", placeholder: String(address.split(separator: "@").first ?? ""),
+                                hint: "Letters, numbers and single hyphens, 3–40 long. The part after the @ stays \(address.split(separator: "@").last.map { "@\($0)" } ?? "the same").",
+                                optional: true, keyboard: .asciiCapable),
+                ],
+                initial: WizardValues(),
+                submitLabel: "Continue",
+                onSubmit: { [unowned self] v in
+                    let local = v.string("localPart").lowercased()
+                    guard let bot = self.target, !local.isEmpty,
+                          local != String(self.address.split(separator: "@").first ?? "") else { return nil }
+                    do {
+                        self.address = try await ChannelConnectAPI.changeEmailAddress(botId: bot, localPart: local)
+                    } catch let e as ChannelConnectAPI.EmailAddressError {
+                        if let restored = e.restored { self.address = restored }
+                        self.changed()
+                        throw e
+                    }
+                    self.changed()
+                    return nil
+                })),
+            ConnectStep(id: "senders", title: "Who can email this bot?", kind: .form(
+                body: ownerAddress.map { "Only people allowed here can make \(name) act by email. Includes you (\($0)); add anyone else below." }
+                    ?? "Only people allowed here can make \(name) act by email. Add your own address too.",
+                fields: [
+                    WizardField(key: "senderPolicy", label: "Who can email it", kind: .radio([
+                        WizardOption(value: "owner", label: "Only me and people I add", hint: "Mail from anyone else is held for you to look at."),
+                        WizardOption(value: "anyone", label: "Anyone", hint: "Any sender can start a thread with the bot."),
+                    ])),
+                    WizardField(key: "allowedSenders", label: "Also allow", kind: .multiline, placeholder: "jane@acme.com, acme.com",
+                                hint: "Email addresses or whole domains. Separate entries with commas.", optional: true,
+                                keyboard: .emailAddress),
+                ],
+                initial: WizardValues(text: ["senderPolicy": senderPolicy, "allowedSenders": allowedSenders.joined(separator: ", ")]),
+                submitLabel: "Save",
+                onSubmit: { [unowned self] v in
+                    guard let bot = self.target else { return nil }
+                    let list = v.string("allowedSenders").split(whereSeparator: { $0 == "," || $0.isNewline })
+                        .map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+                    do {
+                        try await ChannelConnectAPI.saveEmailSenders(botId: bot, policy: v.string("senderPolicy"), allowed: list)
+                    } catch {
+                        throw ConnectError(status: nil, code: nil, message: "Couldn’t save who can email the bot: \(error.localizedDescription)")
+                    }
+                    self.senderPolicy = v.string("senderPolicy")
+                    self.allowedSenders = list
+                    return nil
+                })),
             ConnectStep(id: "mode", title: "Who can the bot reply to?", kind: .form(
                 body: nil,
                 fields: [
@@ -336,9 +393,72 @@ final class EmailConnectFlow: ConnectFlow {
                     }
                     return nil
                 })),
+            ConnectStep(id: "domain", title: "Company domain (optional)", kind: .form(
+                body: "For addresses like support@yourcompany.com. You add four DNS records where your domain is managed, and we check them live. Use a domain or subdomain that doesn’t already receive mail elsewhere: its mail will go to your bots.",
+                fields: [
+                    WizardField(key: "domain", label: "Domain", placeholder: "bots.acme.com",
+                                hint: "Leave blank to stay on the shared address.", optional: true, keyboard: .URL),
+                ],
+                initial: WizardValues(),
+                submitLabel: "Check domain",
+                onSubmit: { [unowned self] v in
+                    let domain = v.string("domain")
+                    guard !domain.isEmpty else { return "done" }
+                    do {
+                        self.domainCheck = try await ChannelConnectAPI.setEmailDomain(domain)
+                    } catch {
+                        throw ConnectError(status: nil, code: nil, message: "Couldn’t start the domain check: \(error.localizedDescription)")
+                    }
+                    self.changed()
+                    return "domain-status"
+                })),
+        ] + (domainCheck == nil ? [] : [
+            ConnectStep(id: "domain-status", title: "Checking your domain", kind: .waiting(
+                body: domainCheck.map(Self.recordsText), status: "Verifying DNS records…", pollSeconds: 4, skippable: true, cancelLabel: nil,
+                poll: { [unowned self] in await self.pollDomain() })),
+        ]) + [
             ConnectStep(id: "done", title: "Email is connected", kind: .done(
-                body: "Mail to \(address) lands in \(name)’s threads. You approve replies unless you chose otherwise. A company domain can be added from Allternit on your computer.")),
+                body: "Mail to \(address) lands in \(name)’s threads. To try it, email it from your own inbox. You approve replies unless you chose otherwise.")),
         ]
+    }
+
+    private func pollDomain() async -> WaitingPoll {
+        guard let current = domainCheck else { return WaitingPoll(state: .done) }
+        let check: ChannelConnectAPI.DomainCheck
+        do {
+            check = try await ChannelConnectAPI.emailDomainStatus(current.domain)
+        } catch {
+            return WaitingPoll(state: .pending, detail: "Couldn’t check just now. Trying again…\n\n\(Self.recordsText(current))")
+        }
+        domainCheck = check
+        guard check.verified else {
+            let waiting = check.records.filter { $0.ok == false }.count
+            let lead = waiting > 0 ? "\(waiting) of \(check.records.count) records not found yet. " : ""
+            return WaitingPoll(state: .pending, detail: "\(lead)DNS can take a few minutes to update. You can keep waiting or skip; email works on the shared address meanwhile.\n\n\(Self.recordsText(check))")
+        }
+        guard let bot = target, !check.domain.isEmpty, !address.lowercased().hasSuffix("@\(check.domain)") else {
+            return WaitingPoll(state: .done, detail: "Records verified. Your domain is ready for bot addresses.")
+        }
+        do {
+            address = try await ChannelConnectAPI.moveEmailToDomain(botId: bot, address: address, domain: check.domain)
+            changed()
+            return WaitingPoll(state: .done, detail: "Records verified. The bot’s address is now \(address).")
+        } catch let e as ChannelConnectAPI.EmailAddressError {
+            if let restored = e.restored { address = restored }
+            changed()
+            return WaitingPoll(state: .failed, error: e.message)
+        } catch {
+            return WaitingPoll(state: .failed, error: "The records verified, but the bot couldn’t move to the domain. Try again.")
+        }
+    }
+
+    /// The DNS records to add, one block each (press and hold to copy).
+    nonisolated private static func recordsText(_ check: ChannelConnectAPI.DomainCheck) -> String {
+        check.records.map { r in
+            let found = r.ok == true ? " · found" : r.ok == false ? " · not yet" : ""
+            let purpose = r.purpose.map { " (\($0))" } ?? ""
+            return "\(r.type)\(found)\(purpose)\nHost: \(r.host)\nValue: \(r.value)"
+        }.joined(separator: "\n\n")
     }
 
     override func finish() async {

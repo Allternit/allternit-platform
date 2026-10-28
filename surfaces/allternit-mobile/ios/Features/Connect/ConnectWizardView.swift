@@ -257,6 +257,7 @@ struct ConnectWizardView: View {
                     .font(.subheadline)
                     .foregroundColor(Color("TextSecondary"))
                     .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
             }
         }
     }
