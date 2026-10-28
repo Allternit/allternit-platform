@@ -1,8 +1,8 @@
-import { IntelligenceAgent, type IntelligenceAgentConfig } from '@copilotkit/core';
 import { randomUUID } from 'node:crypto';
 import { BaseAaiProvider, fail, ok, type AaiResult, type OpenContextInput, type MessageInput, type EventsInput, type EventsResult } from '@allternit/agent-gateway';
 import { agentCapabilityManifestSchema } from '@allternit/subscription-fabric-contracts';
 import { PairedLocalTransport, isId, isObject } from '../_shared/paired-local.js';
+import { runIntelligence, type IntelligenceSocketFactory } from '../_shared/copilotkit-intelligence.js';
 export const CAPABILITIES = agentCapabilityManifestSchema.parse({
  vendor:'opendots-copilotkit', adapterId:'opendots-copilotkit', lane:'local', guarantee:'best_effort',
  context:{supported:true,resume:true,parallel:false,maxParallel:1,isolation:'isolated'},
@@ -12,14 +12,12 @@ export const CAPABILITIES = agentCapabilityManifestSchema.parse({
  computer:{view:false,control:false,takeover:false},artifacts:{read:false,write:false,export:false},
  events:{native:false,polling:true,transcriptDerived:false,replay:true},runtime:{alwaysOn:false,localRequired:true,cloud:false}
 });
-type Client = Pick<IntelligenceAgent,'threadId'|'addMessage'|'subscribe'|'runAgent'|'detachActiveRun'>;
-type Factory = (config:IntelligenceAgentConfig)=>Client;
 type Reply = AaiResult<{messageId:string;correlationId:string;reply:string;guarantee:'best_effort'}>;
 type Context = {id:string;owner:string;bot:string;remote:string;closed:boolean;busy:boolean;sends:Map<string,Promise<Reply>>;replies:{requestId:string;correlationId:string;reply:string}[]};
 export class OpenDotsCopilotkitProvider extends BaseAaiProvider {
  readonly adapterId='opendots-copilotkit'; private transport:PairedLocalTransport; private contexts=new Map<string,Context>(); private sendTexts=new Map<string,string>();
- private pollMs:number; private timeoutMs:number; private factory:Factory; private realtimeOrigin:string;
- constructor(options:{baseUrl?:string;token?:string;fetch?:typeof fetch;pollMs?:number;replyTimeoutMs?:number;agentFactory?:Factory;realtimeOrigin?:string}={}) { super();this.transport=new PairedLocalTransport('CopilotKit OpenDots',{...options,baseUrl:options.baseUrl??'http://127.0.0.1:4310'});this.pollMs=options.pollMs??500;this.timeoutMs=options.replyTimeoutMs??120000;this.factory=options.agentFactory??(config=>new IntelligenceAgent(config));this.realtimeOrigin=new URL(options.realtimeOrigin??'wss://realtime.intelligence.copilotkit.ai').origin; }
+ private pollMs:number; private timeoutMs:number; private socket?:IntelligenceSocketFactory; private realtimeOrigin:string;
+ constructor(options:{baseUrl?:string;token?:string;fetch?:typeof fetch;pollMs?:number;replyTimeoutMs?:number;socket?:IntelligenceSocketFactory;realtimeOrigin?:string}={}) { super();this.transport=new PairedLocalTransport('CopilotKit OpenDots',{...options,baseUrl:options.baseUrl??'http://127.0.0.1:4310'});this.pollMs=options.pollMs??500;this.timeoutMs=options.replyTimeoutMs??120000;this.socket=options.socket;this.realtimeOrigin=new URL(options.realtimeOrigin??'wss://realtime.intelligence.copilotkit.ai').origin; }
  async list() {
  const token=this.transport.credential();if(!token)return fail('AUTH_REQUIRED','Supply the configured OpenDots owner token.');
  try{const probe=await (this.transport.options.fetch??fetch)(this.transport.base+'/api/workspace',{redirect:'error',signal:AbortSignal.timeout(15000)});void probe.body?.cancel();if(![401,403].includes(probe.status))return fail('POLICY_DENIED','Configure an owner access token in OpenDots before connecting Allternit.');}catch{return fail('VENDOR_UNAVAILABLE','CopilotKit OpenDots is unreachable.');}
@@ -44,26 +42,23 @@ export class OpenDotsCopilotkitProvider extends BaseAaiProvider {
  if(info.value.mode!=='intelligence'||!isObject(info.value.intelligence)||typeof info.value.intelligence.wsUrl!=='string'||!isObject(info.value.agents)||!Object.hasOwn(info.value.agents,c.bot))return fail('ADAPTER_DRIFT','OpenDots did not expose the selected Intelligence agent.');
  try{const ws=new URL(info.value.intelligence.wsUrl);if(ws.protocol!=='wss:'||ws.origin!==this.realtimeOrigin) return fail('POLICY_DENIED','OpenDots returned an unapproved realtime endpoint.');}catch{return fail('ADAPTER_DRIFT','OpenDots returned an invalid realtime endpoint.');}
  const token=this.transport.credential();if(!token)return fail('AUTH_REQUIRED','The owner token is unavailable.');
- const messageId=randomUUID();let failure:AaiResult<never>|undefined;let runError=false;let timer:ReturnType<typeof setTimeout>|undefined;
- const sdkFetch=(async(url:Parameters<typeof fetch>[0],init?:Parameters<typeof fetch>[1])=>{
-  const target=new URL(typeof url==='string'?url:url instanceof URL?url.href:url.url);if(target.origin!==this.transport.base||!['run','connect'].some(mode=>target.pathname===`/api/copilotkit/agent/${encodeURIComponent(c.bot)}/${mode}`)||init?.method!=='POST')throw Error('Unapproved SDK request');
-  const body:unknown=JSON.parse(String(init.body));if(!isObject(body)||body.threadId!==c.remote)throw Error('Foreign SDK thread');
-  const result=await this.transport.response(target.pathname,body);if(!result.ok){failure=result;throw Error('Vendor refused SDK request');}
+ const messageId=randomUUID();let failure:AaiResult<never>|undefined;
+ const runFetch=(async(url:Parameters<typeof fetch>[0],init?:Parameters<typeof fetch>[1])=>{
+  const target=new URL(typeof url==='string'?url:url instanceof URL?url.href:url.url);if(target.origin!==this.transport.base||target.pathname!==`/api/copilotkit/agent/${encodeURIComponent(c.bot)}/run`||init?.method!=='POST')throw Error('Unapproved Intelligence request');
+  const body:unknown=JSON.parse(String(init.body));if(!isObject(body)||body.threadId!==c.remote)throw Error('Foreign Intelligence thread');
+  const result=await this.transport.response(target.pathname,body);if(!result.ok){failure=result;throw Error('Vendor refused Intelligence request');}
   const receipt:unknown=await result.value.clone().json();
-  if(!isObject(receipt)||receipt.threadId!==c.remote||!isObject(receipt.realtime)||typeof receipt.realtime.clientUrl!=='string'){failure=fail('ADAPTER_DRIFT','OpenDots returned foreign realtime credentials.');throw Error('Invalid SDK receipt');}
-  const ws=new URL(receipt.realtime.clientUrl);if(ws.protocol!=='wss:'||ws.origin!==this.realtimeOrigin){failure=fail('POLICY_DENIED','OpenDots returned an unapproved realtime endpoint.');throw Error('Invalid SDK endpoint');}
+  if(!isObject(receipt)||receipt.threadId!==c.remote||!isObject(receipt.realtime)||typeof receipt.realtime.clientUrl!=='string'){failure=fail('ADAPTER_DRIFT','OpenDots returned foreign realtime credentials.');throw Error('Invalid Intelligence receipt');}
+  const ws=new URL(receipt.realtime.clientUrl);if(ws.protocol!=='wss:'||ws.origin!==this.realtimeOrigin){failure=fail('POLICY_DENIED','OpenDots returned an unapproved realtime endpoint.');throw Error('Invalid Intelligence endpoint');}
   return result.value;
  }) as typeof fetch;
- let agent:Client;try{agent=this.factory({url:info.value.intelligence.wsUrl,runtimeUrl:this.transport.base+'/api/copilotkit',agentId:c.bot,headers:{Authorization:`Bearer ${token}`},fetch:sdkFetch});}catch{return fail('VENDOR_UNAVAILABLE','The OpenDots SDK could not initialize. Check the gateway installation.');}agent.threadId=c.remote;
- const subscription=agent.subscribe({onRunErrorEvent:()=>{runError=true;}});
- try{agent.addMessage({id:messageId,role:'user',content:input.text});
- const result=await Promise.race([agent.runAgent(),new Promise<never>((_,reject)=>{timer=setTimeout(()=>reject(Error('Wait expired')),this.timeoutMs);})]);
- if(runError)return fail('VENDOR_UNAVAILABLE','OpenDots reported a run error. Review the vendor conversation.',{retryable:false});
- const reply=result.newMessages.filter(m=>m.role==='assistant').at(-1)?.content;
+ const result=await runIntelligence({runtimeUrl:this.transport.base+'/api/copilotkit',agentId:c.bot,threadId:c.remote,messages:[{id:messageId,role:'user',content:input.text}],headers:{Authorization:`Bearer ${token}`},fetch:runFetch,socket:this.socket,timeoutMs:this.timeoutMs});
+ if(failure)return failure;
+ if(result.error)return fail('VENDOR_UNAVAILABLE','OpenDots reported a run error. Review the vendor conversation.',{retryable:false});
+ if(result.transport||result.status||result.identityMismatch||(!result.finished&&!result.interrupted))return fail('VENDOR_UNAVAILABLE','OpenDots has not confirmed this run. Check its conversation before sending again.',{retryable:false});
+ const reply=result.messages.filter(m=>m.role==='assistant').at(-1)?.content;
  if(typeof reply!=='string'||!reply.trim())return fail('ADAPTER_DRIFT','OpenDots did not return a current-run assistant reply. Review approvals in the vendor app.');
  c.replies.push({requestId:messageId,correlationId:input.correlationId,reply});return ok({messageId,correlationId:input.correlationId,reply,guarantee:'best_effort'});
- }catch{return failure??fail('VENDOR_UNAVAILABLE','OpenDots has not confirmed this run. Check its conversation before sending again.',{retryable:false});}
- finally{if(timer)clearTimeout(timer);subscription.unsubscribe();await agent.detachActiveRun().catch(()=>undefined);}
  }
  async events(input:EventsInput):Promise<AaiResult<EventsResult>> {const c=this.live(input.contextId);if(!c.ok)return c;const after=Number(input.cursor??0);if(!Number.isSafeInteger(after)||after<0||after>c.value.replies.length)return fail('CONTEXT_NOT_FOUND','Invalid CopilotKit OpenDots event cursor.');
  const rows=c.value.replies.slice(after,after+Math.max(1,Math.min(input.limit??100,500)));return ok({events:rows.map((r,i)=>({cursor:String(after+i+1),event:{type:'agent.message.completed' as const,botId:`opendots-copilotkit:${c.value.bot}`,threadId:c.value.id,generationId:'1',source:'vendor' as const,vendor:'opendots-copilotkit',adapter:'opendots-copilotkit',lane:'local' as const,remoteContextId:c.value.remote,remoteEventId:r.requestId,correlationId:r.correlationId,causationId:r.requestId,guarantee:'best_effort' as const,at:new Date().toISOString(),payload:{reply:r.reply,messageId:r.requestId}}})),nextCursor:String(after+rows.length)}); }

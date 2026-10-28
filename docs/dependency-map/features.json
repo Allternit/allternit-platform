@@ -2123,6 +2123,10 @@
         {
           "on": "2026-10-27",
           "note": "Eoj approved an 'Any AG-UI agent' connector: one generic adapter (ag-ui) for any agent that speaks AG-UI over HTTP/SSE, configured by URL + optional token sealed as JSON {url, token}. Public hosts must be https with every DNS answer public and the socket pinned to the checked address; http only on loopback. The gateway now uses its own AG-UI client (adapters/_shared/ag-ui.ts) for OpenMuse too, and @ag-ui/client is no longer a direct dependency."
+        },
+        {
+          "on": "2026-10-27",
+          "note": "Eoj approved dropping the last CopilotKit code dependency: OpenDots and OpenBot (CopilotKit) now run through the gateway's own Intelligence client (adapters/_shared/copilotkit-intelligence.ts, wire-compatible with @copilotkit/core 1.75.0 IntelligenceAgent run mode: POST /agent/:id/run receipt, Phoenix channel join with stream_mode run, ag_ui_event pushes). No /connect replay or reconnect; a dropped socket is reported as unconfirmed. @copilotkit/core is removed. The OpenBot default realtime origin is now wss:// (the old https:// default could never match a wss endpoint)."
         }
       ],
       "evidence": [
@@ -2134,6 +2138,8 @@
         "allternit/services/subscription-gateway/adapters/openmuse-copilotkit/provider.ts",
         "allternit/services/subscription-gateway/adapters/ag-ui/provider.ts",
         "allternit/services/subscription-gateway/adapters/_shared/ag-ui.ts",
+        "allternit/services/subscription-gateway/adapters/_shared/copilotkit-intelligence.ts",
+        "allternit/services/subscription-gateway/adapters/openbot-copilotkit/provider.ts",
         "allternit/services/subscription-gateway/adapters/openbot-nightly/provider.ts",
         "allternit/services/subscription-gateway/adapters/rakazo/provider.ts",
         "allternit/services/subscription-gateway/adapters/frockbot/provider.ts",

@@ -169,6 +169,12 @@
       "path": "allternit/services/subscription-gateway/adapters/opendots-copilotkit/provider.ts"
     },
     {
+      "id": "external:openbot-copilotkit-runtime",
+      "label": "CopilotKit OpenBot deployment (Better Auth session) and Intelligence realtime",
+      "kind": "external",
+      "path": "allternit/services/subscription-gateway/adapters/openbot-copilotkit/provider.ts"
+    },
+    {
       "id": "external:ds-bot-dsh",
       "label": "DS Bot DSH signed-cookie local session RPC",
       "kind": "external",
@@ -623,9 +629,20 @@
     {
       "source": "allternit/services/subscription-gateway",
       "target": "external:opendots-copilotkit-runtime",
-      "kind": "owner-token loopback HTTP and approved Intelligence WebSocket origin; isolated conversation IDs",
+      "kind": "owner-token loopback HTTP run receipt and approved Intelligence WebSocket origin (Phoenix channel, own client); isolated conversation IDs",
       "evidence": [
         "allternit/services/subscription-gateway/adapters/opendots-copilotkit/provider.ts",
+        "allternit/services/subscription-gateway/adapters/_shared/copilotkit-intelligence.ts",
+        "allternit/surfaces/docs/guides/local-vendor-bots.mdx"
+      ]
+    },
+    {
+      "source": "allternit/services/subscription-gateway",
+      "target": "external:openbot-copilotkit-runtime",
+      "kind": "user session cookie HTTPS run receipt and approved Intelligence WebSocket origin (Phoenix channel, own client); minted thread IDs",
+      "evidence": [
+        "allternit/services/subscription-gateway/adapters/openbot-copilotkit/provider.ts",
+        "allternit/services/subscription-gateway/adapters/_shared/copilotkit-intelligence.ts",
         "allternit/surfaces/docs/guides/local-vendor-bots.mdx"
       ]
     },
