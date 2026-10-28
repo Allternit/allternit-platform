@@ -32,14 +32,6 @@ struct OfficeArtifact: Decodable, Sendable {
     }
 }
 
-/// Summary row from `GET v1/artifacts` (list endpoint returns full rows).
-struct OfficeArtifactSummary: Decodable, Identifiable, Sendable {
-    let id: String
-    let title: String
-    let type: String?
-    let updatedAt: String?
-}
-
 enum OfficeFamily: String, Sendable {
     case docs
     case sheets
@@ -73,14 +65,6 @@ final class OfficeArtifactClient: @unchecked Sendable {
     static let shared = OfficeArtifactClient()
 
     private let client = APIClient.shared
-
-    /// `GET {apiBaseURL}/artifacts` — `{"artifacts": [...]}` envelope
-    /// (apiBaseURL already ends with /api/v1).
-    func listArtifacts() async throws -> [OfficeArtifactSummary] {
-        struct Envelope: Decodable { let artifacts: [OfficeArtifactSummary] }
-        let envelope: Envelope = try await client.get(path: "artifacts")
-        return envelope.artifacts
-    }
 
     /// `GET {apiBaseURL}/artifacts/:id` — `{"artifact": {...}}` envelope.
     func getArtifact(id: String) async throws -> OfficeArtifact {
