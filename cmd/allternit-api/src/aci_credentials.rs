@@ -537,7 +537,9 @@ fn ephemeral_secrets(user_id: &str) -> Vec<String> {
     match map.get_mut(user_id) {
         Some(list) => {
             list.retain(|(_, at)| at.elapsed() < EPHEMERAL_TTL);
-            list.iter().filter(|(v, _)| v.chars().count() >= 4).map(|(v, _)| v.clone()).collect()
+            // 3, not 6: a one-off is often a CVC or short code, and a stray
+            // redacted match on a page costs less than a leaked one.
+            list.iter().filter(|(v, _)| v.chars().count() >= 3).map(|(v, _)| v.clone()).collect()
         }
         None => Vec::new(),
     }
