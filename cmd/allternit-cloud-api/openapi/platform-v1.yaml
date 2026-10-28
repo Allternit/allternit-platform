@@ -1825,7 +1825,7 @@ paths:
       operationId: callPhoneTool
       summary: Run one phone tool
       description: |
-        One phone tool through the Desktop phone gateway, exactly as a bot calls it: `phone.devices`, `phone.screenshot`, `phone.read_ui`, `phone.screen_text`, `phone.tap`, `phone.type`, `phone.find_and_tap`, `phone.swipe`, `phone.home`, `phone.back`, `phone.key`, `phone.open_app`, `phone.sms.read`, `phone.sms.send`, `phone.call.dial`.
+        One phone tool through the Desktop phone gateway, exactly as a bot calls it: `phone.devices`, `phone.screenshot`, `phone.read_ui`, `phone.screen_text`, `phone.tap`, `phone.type`, `phone.find_and_tap`, `phone.swipe`, `phone.home`, `phone.back`, `phone.key`, `phone.open_app`, `phone.sms.read`, `phone.sms.send`, `phone.call.dial`. An iPhone running the Allternit app (serial `app:<phoneId>`) is screen only plus its in-app browser: `phone.screenshot`, `phone.devices` and `phone.web.open`, `phone.web.snapshot`, `phone.web.click`, `phone.web.type`, `phone.web.scroll`, `phone.web.back`, `phone.web.wait` (the app must be open; taps on native apps answer `not_supported`).
         `phone.sms.send` and `phone.call.dial` wait for the person to approve on their Desktop (up to 80 s; then 503 `phone_timeout`); a refusal is a 200 result with `ok: false, error: approval_denied`. Tool failures are 200 with `ok: false`. 409 `phone_offline` when the phone isn't connected, 503 `phone_desktop_offline` / `phone_gateway_unavailable` when the Desktop or its phone gateway isn't running. The call is a `phone.step` webhook like any other.
       tags: [Phones]
       parameters:

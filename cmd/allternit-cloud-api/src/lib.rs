@@ -530,6 +530,9 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         // Phone stream relay (Phones 2.0): the account's runtime upserts and
         // lists its registered phones with its device credential.
         .merge(routes::registered_phones::routes())
+        // iPhone via the App Store app: Clerk-managed app phone keys, and a
+        // key-authenticated socket ticket for that phone's own node sockets.
+        .merge(routes::app_phones::routes())
         // Code mode cloud environments (CODE_PARITY Contract B): Clerk
         // session / compute-scoped API token / runtime device token per
         // request; `/resolve` is runtime-device only and the one place secret

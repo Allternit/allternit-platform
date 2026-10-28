@@ -363,6 +363,10 @@ struct AciRunBody {
     /// environment (`sandbox_env`) — never into `task`/model context, never
     /// into logs, receipts, or stream frames (see `aci_credentials`).
     credential_names: Option<Vec<String>>,
+    /// The device whose browser the run drives. `app:<phoneId>` is the
+    /// Allternit iOS app's in-app browser (`phone_app`); absent = this
+    /// runtime's browser.
+    target_device: Option<String>,
 }
 
 /// Canonical action descriptor for the ACU loop route. Ephemeral ids
@@ -455,6 +459,29 @@ async fn aci_run(
             Json(json!({"error": "goal is required"})),
         )
             .into_response();
+    }
+    // A run aimed at the iPhone app's browser must never fall through to this
+    // runtime's own browser. The ACU planning loop has no phone-browser
+    // adapter yet (its browser actions go to the toolset executor on this
+    // runtime), so the run is refused with a clear reason instead.
+    if let Some(device) = body
+        .target_device
+        .as_deref()
+        .map(str::trim)
+        .filter(|d| !d.is_empty() && *d != "this-device")
+    {
+        let status = match device.strip_prefix(crate::phone_app::APP_SERIAL_PREFIX) {
+            Some(phone_id) if !crate::phone_app::control_open(&user.user_id, phone_id).await => {
+                (StatusCode::CONFLICT, "app_not_open", "Open the Allternit app on the iPhone and try again.")
+            }
+            Some(_) => (
+                StatusCode::NOT_IMPLEMENTED,
+                "phone_browser_runs_unavailable",
+                "Bot runs in the iPhone app's browser are not available on this Desktop yet.",
+            ),
+            None => (StatusCode::BAD_REQUEST, "unknown_target_device", "targetDevice must be app:<phoneId>."),
+        };
+        return (status.0, Json(json!({ "error": status.1, "message": status.2 }))).into_response();
     }
 
     let run_id = uuid::Uuid::new_v4().to_string();
@@ -1318,6 +1345,7 @@ mod tests {
             session_persistence: Some(json!("dont-keep")),
             approval_id: Some("grant-from-a-prior-attempt".to_string()),
             credential_names: None,
+            target_device: None,
         };
         let h1 = crate::aci_approvals::hash_action_payload(&aci_action_descriptor(&body, &body.goal));
 
@@ -1334,6 +1362,7 @@ mod tests {
             thread_id: None,
             approval_id: None,
             credential_names: None,
+            target_device: None,
         };
         let h2 = crate::aci_approvals::hash_action_payload(&aci_action_descriptor(&retry, &retry.goal));
         assert_eq!(h1, h2);
@@ -1362,6 +1391,7 @@ mod tests {
             session_persistence: None,
             approval_id: None,
             credential_names: None,
+            target_device: None,
         };
         let action_hash = crate::aci_approvals::hash_action_payload(&aci_action_descriptor(&body, &body.goal));
         let approval_id = store.create("user-1", "aci.sensitive_action", &json!({}));
