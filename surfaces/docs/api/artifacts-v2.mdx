@@ -507,3 +507,27 @@ The schema is `cmd/allternit-cloud-api/migrations_pg/085_artifacts_v2.sql`. It c
 ## Navigation presentation
 
 The shared client uses `src/styles/artifact-navigation.css` for the Artifacts toolbar and inline mode selector. `ArtifactsView` keeps its title outside a nonwrapping, horizontally scrollable controls group; `ModeDock` uses nonshrinking buttons in the same single-row pattern. Both use `--font-ui`. Selection uses neutral translucent gradients and inset highlights rather than mode accent tokens, with solid surfaces for reduced transparency or increased contrast. This CSS is imported by the shared components used on Desktop, web and the phone PWA.
+
+
+## Library archive
+
+`GET /api/v2/artifacts` accepts `archived=true` for the caller's archive.
+Omitted or `false` returns saved work. This filter combines with scope, kind, title search, origin and cursor pagination.
+Updated servers include `archive_supported: true` in the list response.
+
+```http
+PUT /api/v2/artifacts/:id/library
+Content-Type: application/json
+
+{"archived": true}
+```
+
+Send `false` to restore. Success returns `204 No Content`; repeated writes are idempotent.
+The caller must have at least view access. The server derives the user from authentication and rejects extra request fields.
+Missing or inaccessible artifacts return `404`; invalid request bodies return `400`.
+
+Archive is private library metadata per viewer. It does not change the artifact body, versions, updated time, ownership, grants or public link.
+Access checks still apply to archived lists. Deleting the artifact also deletes its library metadata.
+
+Deploy the Cloud API with Postgres migration `109_artifact_library_archive.sql` before releasing archive clients.
+Clients must not interpret an older server's unfiltered list as an archive.

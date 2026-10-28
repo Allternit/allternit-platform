@@ -907,6 +907,10 @@
         {
           "on": "2026-10-24",
           "note": "Eoj: BoardUI look pass — calendar month chips with time and type tint (goals blue, routines green, loops purple, heartbeats amber), +N more day list, block names and times in Week/Day, and an anchored TaskDetailsCard on Automation Tasks with Run now / Edit / Pause; phones keep dots plus a day list and the same card as a sheet (ai #806)."
+        },
+        {
+          "on": "2026-10-27",
+          "note": "Routine rows expose exact next-run time in the saved timezone, bot and execution location, explicit last result, failed-run review and Run history. Scheduler mutations are serialized and disable conflicting controls. Shared row covers Desktop, web phone and PWA."
         }
       ],
       "evidence": [
@@ -927,7 +931,12 @@
         "allternit/cmd/allternit-api/src/cowork_*",
         "allternit/platform/packages/cowork-engine"
       ],
-      "decisions": [],
+      "decisions": [
+        {
+          "on": "2026-10-27",
+          "note": "Task status filters shared between desktop board/table and phone task lists; counts retain real Factory/Cowork states. Scheduled opens Automation Tasks through the existing shell route. Existing artifact session panes and conversation drafts are reused."
+        }
+      ],
       "evidence": [
         "allternit/surfaces/docs/api/cowork.mdx",
         "allternit/surfaces/docs/api/cowork-teams.mdx",
@@ -1420,6 +1429,10 @@
         {
           "on": "2026-10-24",
           "note": "Eoj: BoardUI look pass — the chat's Artifacts pane shows generated images and videos at the top as a two-column Gallery (MediaPreview tiles) above the Files list (ai #805)."
+        },
+        {
+          "on": "2026-10-27",
+          "note": "Accepted Duet-inspired organization adapted to existing components: list/grid grouped by kind, Saved work/Archive per authenticated viewer through PUT /api/v2/artifacts/:id/library and migration 109, distinct archive caches with stale-response guards, phone Back and desktop expand/return controls. Sharing and artifact content stay unchanged. Source prepared for Desktop, ai phone and m PWA; release pending."
         }
       ],
       "evidence": [

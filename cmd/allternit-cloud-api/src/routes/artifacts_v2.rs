@@ -94,6 +94,7 @@ pub fn routes() -> Router<Arc<ApiState>> {
             "/api/v2/artifacts/:id/sharing",
             get(get_sharing).put(put_sharing),
         )
+        .route("/api/v2/artifacts/:id/library", axum::routing::put(set_library_archive))
         .route("/api/v2/public/artifacts/:id", get(public_artifact))
         .route(
             "/api/v2/org/artifact-settings",
@@ -561,6 +562,7 @@ struct ListQuery {
     origin: Option<String>,
     cursor: Option<String>,
     limit: Option<i64>,
+    archived: Option<bool>,
 }
 
 fn encode_cursor(updated_at: DateTime<Utc>, id: &str) -> String {
@@ -620,6 +622,8 @@ async fn list_artifacts(
          AND ($6::text IS NULL OR a.title ILIKE $6 ESCAPE '\\')
          AND ($7::text IS NULL OR a.origin->>'surface' = $7)
          AND ($8::timestamptz IS NULL OR (a.updated_at, a.id) < ($8, $9))
+         AND EXISTS (SELECT 1 FROM artifact_library_archives la
+                     WHERE la.artifact_id = a.id AND la.user_id = $1) = $11
          ORDER BY a.updated_at DESC, a.id DESC
          LIMIT $10"
     );
@@ -634,6 +638,7 @@ async fn list_artifacts(
         .bind(cursor.as_ref().map(|(at, _)| *at))
         .bind(cursor.as_ref().map(|(_, id)| id.as_str()).unwrap_or(""))
         .bind(limit + 1)
+        .bind(query.archived.unwrap_or(false))
         .fetch_all(&state.db)
         .await?;
     let next_cursor = if rows.len() as i64 > limit {
@@ -662,7 +667,34 @@ async fn list_artifacts(
                 .map(|access| summary_json(row, access, &caller, &names))
         })
         .collect();
-    Ok(Json(json!({ "items": items, "next_cursor": next_cursor })))
+    Ok(Json(json!({ "items": items, "next_cursor": next_cursor, "archive_supported": true })))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LibraryArchiveRequest {
+    archived: bool,
+}
+
+async fn set_library_archive(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    body: Bytes,
+) -> Result<StatusCode> {
+    let caller = caller(&state, &headers).await?;
+    let request: LibraryArchiveRequest = parse_json(&body)?;
+    // Any authorized viewer may organize their own library. This never
+    // archives another user's copy or grants access to a removed share.
+    load_with_access(&state.db, &id, &caller).await?;
+    if request.archived {
+        sqlx::query("INSERT INTO artifact_library_archives (user_id, artifact_id) VALUES ($1, $2) ON CONFLICT DO NOTHING")
+            .bind(&caller.id).bind(&id).execute(&state.db).await?;
+    } else {
+        sqlx::query("DELETE FROM artifact_library_archives WHERE user_id = $1 AND artifact_id = $2")
+            .bind(&caller.id).bind(&id).execute(&state.db).await?;
+    }
+    Ok(StatusCode::NO_CONTENT)
 }
 
 // ---------------------------------------------------------------------------

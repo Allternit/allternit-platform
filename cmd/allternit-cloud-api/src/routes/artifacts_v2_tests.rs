@@ -18,6 +18,8 @@ async fn setup() -> (Router, PgPool) {
         .execute(&state.db)
         .await
         .expect("085 applies");
+    sqlx::raw_sql(include_str!("../../migrations_pg/109_artifact_library_archive.sql"))
+        .execute(&state.db).await.expect("109 applies");
     let db = state.db.clone();
     (routes().with_state(state), db)
 }
@@ -78,6 +80,61 @@ async fn share(router: &Router, owner: &Value, id: &str, visibility: &str, share
         Some(json!({ "visibility": visibility, "shares": shares })),
     )
     .await
+}
+
+#[tokio::test]
+async fn library_archive_is_per_viewer_and_preserves_access() {
+    let (router, db) = setup().await;
+    let owner = who("archive_owner", Some("org_archive"), None);
+    let viewer = who("archive_viewer", Some("org_archive"), None);
+    let outsider = who("archive_outsider", None, None);
+    let id = create(&router, &owner, "doc", "Keep this document").await;
+    let (status, _) = share(&router, &owner, &id, "org", json!([])).await;
+    assert_eq!(status, StatusCode::OK);
+    let library = format!("/api/v2/artifacts/{id}/library");
+    for _ in 0..2 {
+        let (status, _) = call(&router, "PUT", &library, &viewer, Some(json!({"archived": true}))).await;
+        assert_eq!(status, StatusCode::NO_CONTENT, "archive is idempotent and available to viewers");
+    }
+    let (status, saved) = call(&router, "GET", "/api/v2/artifacts", &viewer, None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(saved["items"].as_array().unwrap().is_empty());
+    let (_, archived) = call(&router, "GET", "/api/v2/artifacts?archived=true&q=Keep&kind=doc", &viewer, None).await;
+    assert_eq!(archived["items"][0]["id"], json!(id));
+    assert_eq!(archived["archive_supported"], json!(true));
+    let (_, owner_saved) = call(&router, "GET", "/api/v2/artifacts", &owner, None).await;
+    assert_eq!(owner_saved["items"][0]["id"], json!(id));
+    let (status, _) = call(&router, "GET", &format!("/api/v2/artifacts/{id}"), &viewer, None).await;
+    assert_eq!(status, StatusCode::OK, "archiving does not revoke read access");
+    let (status, _) = call(&router, "PUT", &library, &outsider, Some(json!({"archived": true}))).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _) = call(&router, "PUT", &library, &viewer, Some(json!({"archived": false}))).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (_, restored) = call(&router, "GET", "/api/v2/artifacts", &viewer, None).await;
+    assert_eq!(restored["items"][0]["id"], json!(id));
+    // Revoking the share also hides an archived copy; the archive is never an access grant.
+    call(&router, "PUT", &library, &viewer, Some(json!({"archived": true}))).await;
+    share(&router, &owner, &id, "private", json!([])).await;
+    let (_, revoked) = call(&router, "GET", "/api/v2/artifacts?archived=true", &viewer, None).await;
+    assert!(revoked["items"].as_array().unwrap().is_empty());
+    call(&router, "DELETE", &format!("/api/v2/artifacts/{id}"), &owner, None).await;
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM artifact_library_archives WHERE artifact_id = $1")
+        .bind(&id).fetch_one(&db).await.unwrap();
+    assert_eq!(count, 0, "delete cascades to library metadata");
+}
+
+#[tokio::test]
+async fn library_archive_authenticates_and_validates_the_request() {
+    let (router, _) = setup().await;
+    let owner = who("archive_owner", None, None);
+    let id = create(&router, &owner, "doc", "Archive validation").await;
+    let path = format!("/api/v2/artifacts/{id}/library");
+    let (status, _) = send(&router, request("PUT", &path, None, Some(json!({"archived": true})))).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    for body in [json!({}), json!({"archived": "true"}), json!({"archived": true, "user_id": "someone_else"})] {
+        let (status, _) = call(&router, "PUT", &path, &owner, Some(body)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
 }
 
 #[tokio::test]
