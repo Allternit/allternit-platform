@@ -50,14 +50,29 @@ enum ArtifactBodyEditing {
     }
 
     /// One tab of a tabbed doc. `model` is nil when the phone can't edit
-    /// that tab's body (it's kept as it is).
+    /// that tab's body (it's kept as it is, but can still be renamed or
+    /// deleted). A tab added here has an empty `originalTitle`.
     struct DocTab: Identifiable, Equatable, Sendable {
         let id: String
-        let title: String
+        var title: String
+        let originalTitle: String
         let originalBody: String
         var model: Model?
 
-        var hasChanges: Bool { model?.hasChanges ?? false }
+        var hasChanges: Bool { title != originalTitle || (model?.hasChanges ?? false) }
+
+        /// doc-tabs.ts addTab: `Tab N`, an empty Markdown body.
+        static func added(after tabs: [DocTab]) -> DocTab {
+            DocTab(id: newTabId(tabs), title: "Tab \(tabs.count + 1)", originalTitle: "",
+                   originalBody: "", model: .markdown("", original: ""))
+        }
+
+        /// doc-tabs.ts newTabId.
+        static func newTabId(_ tabs: [DocTab]) -> String {
+            var n = tabs.count + 1
+            while tabs.contains(where: { $0.id == "t\(n)" }) { n += 1 }
+            return "t\(n)"
+        }
     }
 
     struct SheetGrid: Equatable, Sendable {
@@ -97,7 +112,10 @@ enum ArtifactBodyEditing {
         case markdown(String, original: String)
         case docBlocks([DocBlock])
         case docMarkdownField(String, original: String)
-        case docTabs([DocTab])
+        /// `originalIds` = the saved tab order, so adding, deleting or
+        /// reordering a tab counts as a change. Empty when the phone just
+        /// turned a plain doc into tabs.
+        case docTabs([DocTab], originalIds: [String])
         case sheet(SheetGrid)
         case blockSlides([BlockSlide])
         case simpleSlides([SimpleSlide])
@@ -108,8 +126,8 @@ enum ArtifactBodyEditing {
                 return text != original
             case .docBlocks(let blocks):
                 return blocks.contains { $0.text != $0.original }
-            case .docTabs(let tabs):
-                return tabs.contains(where: \.hasChanges)
+            case .docTabs(let tabs, let originalIds):
+                return tabs.map(\.id) != originalIds || tabs.contains(where: \.hasChanges)
             case .sheet(let grid):
                 return grid.rows != grid.original
             case .blockSlides(let slides):
@@ -170,6 +188,19 @@ enum ArtifactBodyEditing {
         ((content as? [Any]) ?? []).map { cellText(($0 as? [String: Any])?["text"]) }.joined()
     }
 
+    /// The web's "Add tab" on a plain doc: the whole doc becomes Tab 1
+    /// (edits kept) and an empty Tab 2 follows. nil for models that aren't
+    /// a single doc body.
+    static func addingFirstTab(to model: Model, originalBody: String) -> Model? {
+        switch model {
+        case .markdown, .docMarkdownField, .docBlocks:
+            let first = DocTab(id: "t1", title: "Tab 1", originalTitle: "Tab 1", originalBody: originalBody, model: model)
+            return .docTabs([first, DocTab.added(after: [first])], originalIds: [])
+        default:
+            return nil
+        }
+    }
+
     /// A tab body's own format (doc-tabs.ts `formatOf`).
     static func tabFormat(_ body: String) -> String {
         body.drop(while: { $0.isWhitespace }).hasPrefix("{") ? docFormat : "text/markdown"
@@ -211,9 +242,9 @@ enum ArtifactBodyEditing {
         // Tabs first, like the web's DocTabsEditor (readTabs before parseDocBody).
         if allowTabs, let tabs = readTabs(root) {
             return .docTabs(tabs.map { tab in
-                DocTab(id: tab.id, title: tab.title, originalBody: tab.body,
+                DocTab(id: tab.id, title: tab.title, originalTitle: tab.title, originalBody: tab.body,
                        model: docModel(body: tab.body, format: tabFormat(tab.body), allowTabs: false))
-            })
+            }, originalIds: tabs.map(\.id))
         }
         if let blocks = root["blocks"] as? [Any] {
             var out: [DocBlock] = []
@@ -348,7 +379,7 @@ enum ArtifactBodyEditing {
             return (try string(root), originalFormat)
         case .docBlocks(let edits):
             return (try serializeDoc(edits, originalBody: originalBody, title: title), docFormat)
-        case .docTabs(let tabs):
+        case .docTabs(let tabs, _):
             return try serializeTabs(tabs, title: title)
         case .sheet(let grid):
             return (try serializeSheet(grid, originalBody: originalBody, title: title), sheetFormat)

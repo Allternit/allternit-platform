@@ -4,8 +4,9 @@ import SwiftUI
 /// shared store as a new version (`POST /api/v2/artifacts/:id/versions`),
 /// so Desktop, the web and the PWA open the same edit. Bodies are written
 /// in the web editors' formats (ArtifactBodyEditing); anything the phone
-/// can't edit (images, dividers, layout) is kept as it is. Docs with
-/// several tabs get a tab picker and save every tab as one version.
+/// can't edit (images, dividers, layout) is kept as it is. Docs get the
+/// web's tab bar: add, rename and delete tabs; Save writes every tab as one
+/// version.
 struct V2ArtifactEditorView: View {
     let artifact: ArtifactV2
     let initialModel: ArtifactBodyEditing.Model
@@ -83,7 +84,20 @@ struct V2ArtifactEditorView: View {
     private var editor: some View {
         switch model {
         case .markdown, .docMarkdownField, .docBlocks:
-            DocModelEditor(model: $model)
+            if artifact.kind == "doc" {
+                VStack(spacing: 0) {
+                    DocTabBar {
+                        AddTabButton(label: "Add tab") {
+                            if let tabbed = ArtifactBodyEditing.addingFirstTab(to: model, originalBody: artifact.version.body) {
+                                model = tabbed
+                            }
+                        }
+                    }
+                    DocModelEditor(model: $model)
+                }
+            } else {
+                DocModelEditor(model: $model)
+            }
         case .docTabs:
             DocTabsEditor(tabs: docTabsBinding)
         case .sheet:
@@ -96,7 +110,10 @@ struct V2ArtifactEditorView: View {
     }
 
     private var docTabsBinding: Binding<[ArtifactBodyEditing.DocTab]> {
-        Binding(get: { if case .docTabs(let t) = model { return t }; return [] }, set: { model = .docTabs($0) })
+        Binding(
+            get: { if case .docTabs(let t, _) = model { return t }; return [] },
+            set: { next in if case .docTabs(_, let ids) = model { model = .docTabs(next, originalIds: ids) } }
+        )
     }
 
     private var sheetBinding: Binding<ArtifactBodyEditing.SheetGrid> {
@@ -186,11 +203,47 @@ private struct DocModelEditor: View {
     }
 }
 
-/// Docs with several tabs: a tab picker over the doc editor. Every tab's
-/// edits are kept while switching; Save writes all tabs as one version.
+/// The strip above a doc (editors.tsx DocTabsEditor tablist).
+private struct DocTabBar<Content: View>: View {
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) { content }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+        }
+        .background(Color("BgSecondary"))
+        .overlay(alignment: .bottom) { Rectangle().fill(Color("BorderSubtle")).frame(height: 0.5) }
+    }
+}
+
+private struct AddTabButton: View {
+    let label: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Label(label, systemImage: "plus")
+                .font(.subheadline)
+                .foregroundColor(Color("TextSecondary"))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("docAddTab")
+    }
+}
+
+/// Docs with tabs (editors.tsx DocTabsEditor): every tab's edits are kept
+/// while switching. Tap the open tab to rename it (the web's double-click),
+/// × deletes it (the last tab stays), + adds one and opens its rename.
+/// Save writes all tabs as one version.
 private struct DocTabsEditor: View {
     @Binding var tabs: [ArtifactBodyEditing.DocTab]
     @State private var activeId: String?
+    @State private var renamingId: String?
+    @State private var renameText = ""
 
     private var activeIndex: Int {
         tabs.firstIndex { $0.id == activeId } ?? 0
@@ -198,18 +251,25 @@ private struct DocTabsEditor: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if tabs.count > 1 {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 6) {
-                        ForEach(Array(tabs.enumerated()), id: \.element.id) { index, tab in
+            DocTabBar {
+                if tabs.count > 1 {
+                    ForEach(Array(tabs.enumerated()), id: \.element.id) { index, tab in
+                        HStack(spacing: 0) {
                             tabButton(tab, selected: index == activeIndex)
+                            if index == activeIndex {
+                                Button { remove(tab.id) } label: {
+                                    Image(systemName: "xmark")
+                                        .font(.caption2.weight(.semibold))
+                                        .foregroundColor(Color("TextSecondary"))
+                                        .frame(width: 28, height: 28)
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityLabel("Delete tab \(tab.title)")
+                            }
                         }
                     }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
                 }
-                .background(Color("BgSecondary"))
-                .overlay(alignment: .bottom) { Rectangle().fill(Color("BorderSubtle")).frame(height: 0.5) }
+                AddTabButton(label: tabs.count > 1 ? "Tab" : "Add tab") { add() }
             }
             if tabs.indices.contains(activeIndex) {
                 if tabs[activeIndex].model != nil {
@@ -229,11 +289,42 @@ private struct DocTabsEditor: View {
                 }
             }
         }
+        .alert("Tab name", isPresented: Binding(get: { renamingId != nil }, set: { if !$0 { renamingId = nil } })) {
+            TextField("Tab name", text: $renameText)
+            Button("Rename") { commitRename() }
+            Button("Cancel", role: .cancel) { renamingId = nil }
+        }
+    }
+
+    private func add() {
+        let tab = ArtifactBodyEditing.DocTab.added(after: tabs)
+        tabs.append(tab)
+        activeId = tab.id
+        startRename(tab)
+    }
+
+    private func remove(_ id: String) {
+        guard tabs.count > 1, let index = tabs.firstIndex(where: { $0.id == id }) else { return }
+        tabs.remove(at: index)
+        if activeId == id || activeId == nil { activeId = tabs[min(index, tabs.count - 1)].id }
+    }
+
+    private func startRename(_ tab: ArtifactBodyEditing.DocTab) {
+        renameText = tab.title
+        renamingId = tab.id
+    }
+
+    private func commitRename() {
+        let title = renameText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let id = renamingId, !title.isEmpty, let index = tabs.firstIndex(where: { $0.id == id }) {
+            tabs[index].title = title
+        }
+        renamingId = nil
     }
 
     private func tabButton(_ tab: ArtifactBodyEditing.DocTab, selected: Bool) -> some View {
         Button {
-            activeId = tab.id
+            if selected { startRename(tab) } else { activeId = tab.id }
         } label: {
             HStack(spacing: 5) {
                 if tab.model == nil {
@@ -257,6 +348,7 @@ private struct DocTabsEditor: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("\(tab.title) tab\(tab.hasChanges ? ", edited" : "")")
+        .accessibilityHint(selected ? "Rename this tab" : "")
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }

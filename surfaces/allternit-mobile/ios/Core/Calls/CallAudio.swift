@@ -105,7 +105,7 @@ final class CallRingtone {
         if sound {
             try? AVAudioSession.sharedInstance().setCategory(.ambient, options: [.mixWithOthers])
             try? AVAudioSession.sharedInstance().setActive(true)
-            if let data = Self.toneWAV(), let player = try? AVAudioPlayer(data: data) {
+            if let data = callToneWAV(seconds: 3, burst: 0.9), let player = try? AVAudioPlayer(data: data) {
                 player.numberOfLoops = -1
                 player.volume = 0.6
                 player.play()
@@ -127,34 +127,58 @@ final class CallRingtone {
             try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         }
     }
+}
 
-    /// 3 s of 16-bit mono PCM: 0.9 s burst with soft edges, then silence.
-    private static func toneWAV() -> Data? {
-        let rate = 22_050
-        let total = rate * 3
-        let burst = Int(Double(rate) * 0.9)
-        let fade = Int(Double(rate) * 0.05)
-        var pcm = Data(capacity: total * 2)
-        for i in 0..<total {
-            var sample = 0.0
-            if i < burst {
-                let t = Double(i) / Double(rate)
-                let edge = min(1, Double(min(i, burst - i)) / Double(fade))
-                sample = (sin(2 * .pi * 440 * t) + sin(2 * .pi * 480 * t)) * 0.25 * edge
-            }
-            var value = Int16(max(-1, min(1, sample)) * Double(Int16.max)).littleEndian
-            withUnsafeBytes(of: &value) { pcm.append(contentsOf: $0) }
-        }
-        var header = Data()
-        func u32(_ v: UInt32) { var x = v.littleEndian; withUnsafeBytes(of: &x) { header.append(contentsOf: $0) } }
-        func u16(_ v: UInt16) { var x = v.littleEndian; withUnsafeBytes(of: &x) { header.append(contentsOf: $0) } }
-        header.append(contentsOf: Array("RIFF".utf8)); u32(UInt32(36 + pcm.count))
-        header.append(contentsOf: Array("WAVE".utf8))
-        header.append(contentsOf: Array("fmt ".utf8)); u32(16); u16(1); u16(1)
-        u32(UInt32(rate)); u32(UInt32(rate * 2)); u16(2); u16(16)
-        header.append(contentsOf: Array("data".utf8)); u32(UInt32(pcm.count))
-        return header + pcm
+/// The ringback you hear while calling out (phase `.calling`): the US tone,
+/// 2 s on, 4 s off. Plays inside the call's own audio session (already
+/// active for the call, so no category change) and stops once they answer,
+/// decline or you hang up.
+@MainActor
+final class CallRingback {
+    private var player: AVAudioPlayer?
+
+    func start() {
+        guard player == nil, let data = callToneWAV(seconds: 6, burst: 2),
+              let player = try? AVAudioPlayer(data: data) else { return }
+        player.numberOfLoops = -1
+        player.volume = 0.35
+        player.play()
+        self.player = player
     }
+
+    func stop() {
+        player?.stop()
+        player = nil
+    }
+}
+
+/// `seconds` of 16-bit mono PCM: a 440 + 480 Hz burst of `burst` seconds
+/// with soft edges, then silence.
+private func callToneWAV(seconds: Double, burst burstSeconds: Double) -> Data? {
+    let rate = 22_050
+    let total = Int(Double(rate) * seconds)
+    let burst = Int(Double(rate) * burstSeconds)
+    let fade = Int(Double(rate) * 0.05)
+    var pcm = Data(capacity: total * 2)
+    for i in 0..<total {
+        var sample = 0.0
+        if i < burst {
+            let t = Double(i) / Double(rate)
+            let edge = min(1, Double(min(i, burst - i)) / Double(fade))
+            sample = (sin(2 * .pi * 440 * t) + sin(2 * .pi * 480 * t)) * 0.25 * edge
+        }
+        var value = Int16(max(-1, min(1, sample)) * Double(Int16.max)).littleEndian
+        withUnsafeBytes(of: &value) { pcm.append(contentsOf: $0) }
+    }
+    var header = Data()
+    func u32(_ v: UInt32) { var x = v.littleEndian; withUnsafeBytes(of: &x) { header.append(contentsOf: $0) } }
+    func u16(_ v: UInt16) { var x = v.littleEndian; withUnsafeBytes(of: &x) { header.append(contentsOf: $0) } }
+    header.append(contentsOf: Array("RIFF".utf8)); u32(UInt32(36 + pcm.count))
+    header.append(contentsOf: Array("WAVE".utf8))
+    header.append(contentsOf: Array("fmt ".utf8)); u32(16); u16(1); u16(1)
+    u32(UInt32(rate)); u32(UInt32(rate * 2)); u16(2); u16(16)
+    header.append(contentsOf: Array("data".utf8)); u32(UInt32(pcm.count))
+    return header + pcm
 }
 
 // MARK: - LiveKit

@@ -6,9 +6,9 @@ import SwiftUI
 /// to the type, so the face picked here is the face every run of that type
 /// shows in every chat (SubagentCatalog updates as soon as you save).
 ///
-/// Phone subset: the face picker offers the office-professionals faces
-/// (every one has the blink/working frames subagents need); other avatar
-/// packs are picked on Desktop / the web. List layout only (no grid/deck switch).
+/// The face picker offers the same characters as the web: every pack face
+/// with the blink/working frames subagents need (SubagentCatalog.pickable).
+/// List layout only (no grid/deck switch).
 struct SubagentsSettingsView: View {
     @EnvironmentObject private var authManager: AuthManager
 
@@ -329,8 +329,8 @@ struct SubagentEditorView: View {
 
                 Section {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 52), spacing: 10)], spacing: 10) {
-                        ForEach(SubagentCatalog.seedFaces, id: \.self) { face in
-                            let option = SubagentLook(pack: SubagentCatalog.pack, face: face)
+                        ForEach(SubagentCatalog.pickable, id: \.self) { option in
+                            let face = option.face
                             let selected = look.pack == option.pack && look.face == option.face
                             Button { look = SubagentLook(pack: option.pack, face: option.face, accent: look.accent) } label: {
                                 SubagentLookImage(look: option, name: face, size: 48)

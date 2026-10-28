@@ -71,14 +71,19 @@ final class InappCallStore: ObservableObject {
 
     /// Rings waiting for me that I haven't answered or declined.
     @Published private(set) var incoming: [IncomingCall] = []
-    @Published private(set) var active: ActiveCall?
+    @Published private(set) var active: ActiveCall? {
+        didSet { syncRingback() }
+    }
 
     /// The ring on screen (newest first, like the web's `incoming[0]`).
     var ringing: IncomingCall? { active == nil ? incoming.first : nil }
 
     private let api = InappCallsClient.shared
     private let ringtone = CallRingtone()
-    private var session: CallAudioSession?
+    private let ringback = CallRingback()
+    private var session: CallAudioSession? {
+        didSet { syncRingback() }
+    }
     private var pollTask: Task<Void, Never>?
     /// Outgoing: the thread watcher while it rings.
     private var watchTask: Task<Void, Never>?
@@ -165,6 +170,11 @@ final class InappCallStore: ObservableObject {
         active = ActiveCall(room: call.room, threadId: call.threadId, botId: call.botId,
                             userId: call.from.userId, label: call.from.label, phase: .missed)
         syncRing()
+    }
+
+    /// Ringback only while they're being rung and the call audio is joined.
+    private func syncRingback() {
+        if active?.outgoing == true, active?.phase == .calling, session != nil { ringback.start() } else { ringback.stop() }
     }
 
     private func syncRing() {

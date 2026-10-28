@@ -45,6 +45,12 @@ final class SubagentCatalog: ObservableObject {
     nonisolated static let seedFaces = ["kest", "theo", "daniel", "maya", "ray", "nia", "saanvi", "li-wei",
                                     "mara", "imani", "amir", "kira", "grant", "jonah", "elena"]
 
+    /// Faces a look can be set to: pack characters with portrait, blink and
+    /// working frames (web SubagentsPanel lookFromPackSelection).
+    nonisolated static let pickable: [SubagentLook] =
+        seedFaces.map { SubagentLook(pack: pack, face: $0) }
+        + ["drop", "moon"].map { SubagentLook(pack: "gizzi-youtube", face: $0) }
+
     /// The user's saved looks by slug (custom types and overrides).
     @Published private var overrides: [String: SubagentLook] = [:]
     private var loaded = false
