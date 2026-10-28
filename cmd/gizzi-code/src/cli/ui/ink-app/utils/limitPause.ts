@@ -14,6 +14,7 @@
 import { SessionPause } from '@/runtime/session/pause.js'
 import { SessionLimit } from '@/runtime/session/limit.js'
 import { ProviderQuotas } from '@/runtime/providers/quota/index.js'
+import { CloudContinue } from '@/runtime/session/cloud-continue.js'
 import type { Message } from '../types/message.js'
 
 export type ReplPauseSuggestion = { providerID: string; modelID: string; label: string; headroom?: number }
@@ -27,6 +28,8 @@ export type ReplPause = {
   /** limit_hit: a turn was cut off and continues at the reset; quota: landed before the limit. */
   reason: 'limit_hit' | 'quota'
   suggest?: ReplPauseSuggestion
+  /** "Keep going on Allternit Cloud" (`/keep-going`): the Cloud model and the account's funds. */
+  cloud?: CloudContinue.Offer
 }
 
 /** "openrouter/z-ai/glm-4.7-flash" → "openrouter"; bare model names have no provider. */
@@ -73,6 +76,22 @@ export async function suggestionFor(providerID: string | undefined): Promise<Rep
   try {
     const s = await SessionPause.suggestAlternative(providerID)
     return s ? { providerID: s.providerID, modelID: s.modelID, label: s.label, headroom: s.headroom ?? undefined } : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * The "Keep going on Allternit Cloud" offer for a chat paused on `model`
+ * ("claude-cli/sonnet"), or undefined when signed out of Cloud or already
+ * on Cloud. Only an offer: `/keep-going` switches, on the user's command.
+ */
+export async function cloudOfferFor(model: string | null | undefined): Promise<CloudContinue.Offer | undefined> {
+  const provider = providerOfModel(model)
+  if (provider === CloudContinue.PROVIDER_ID) return undefined
+  const modelID = provider ? model!.slice(provider.length + 1) : model ?? undefined
+  try {
+    return await CloudContinue.offer(modelID)
   } catch {
     return undefined
   }

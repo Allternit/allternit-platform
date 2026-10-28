@@ -797,7 +797,7 @@ export const SessionRoutes = lazy(() =>
       describeRoute({
         summary: "Resume a paused session",
         description:
-          "Resume a session paused before a usage limit. Without a model it continues on its own model (normally done automatically at the reset); with one, it is the explicit \"Resume now on …\" on another model.",
+          "Resume a session paused before a usage limit. Without a model it continues on its own model (normally done automatically at the reset); with one, it is the explicit \"Resume now on …\" on another model. With `cloud: true` it is \"Keep going on Allternit Cloud\": the session switches to the Cloud model in `paused.cloud` for the following turns and continues, or, with no Cloud funds left, returns `{ resumed: false, reason: \"no_funds\" }` without switching. `check: true` only refreshes `paused.cloud`.",
         operationId: "session.resume",
         responses: {
           200: { description: "Resumed", content: { "application/json": { schema: resolver(z.any()) } } },
@@ -807,11 +807,22 @@ export const SessionRoutes = lazy(() =>
       validator("param", z.object({ sessionID: z.string() })),
       validator(
         "json",
-        z.object({ model: z.object({ providerID: z.string(), modelID: z.string() }).optional() }).optional(),
+        z
+          .object({
+            model: z.object({ providerID: z.string(), modelID: z.string() }).optional(),
+            cloud: z.boolean().optional(),
+            check: z.boolean().optional(),
+          })
+          .optional(),
       ),
       async (c) => {
         const { sessionID } = c.req.valid("param")
         const body = c.req.valid("json") ?? {}
+        if (body.cloud) {
+          // Decides now (offer, funds); the resumed turn runs in the background.
+          const { done: _done, ...result } = await SessionPause.continueOnCloud(sessionID, { check: body.check })
+          return c.json(result)
+        }
         // The resumed turn runs in the background; the caller follows it on /event.
         void SessionPause.resume(sessionID, { model: body.model }).catch(() => undefined)
         return c.json({ resumed: true })

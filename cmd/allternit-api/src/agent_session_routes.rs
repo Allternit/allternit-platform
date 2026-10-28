@@ -587,6 +587,7 @@ fn transform_message(message: GizziMessage) -> serde_json::Value {
             "model": message.info.model,
             "telemetry": run_telemetry(&message),
             "handoff": handoff_of(&message.parts),
+            "cloudContinue": part_meta(&message.parts, "cloudContinue"),
             "parts": message.parts,
             "error": message.info.error.as_ref().and_then(|e| e.data.clone()),
         }
@@ -597,9 +598,17 @@ fn transform_message(message: GizziMessage) -> serde_json::Value {
 /// `{ from, generation, reason }`, so clients draw the rip instead of a
 /// user bubble. `null` for every other message.
 fn handoff_of(parts: &[GizziMessagePart]) -> serde_json::Value {
+    part_meta(parts, "handoff")
+}
+
+/// The first part's `metadata[key]`, else `null`. `cloudContinue` marks the
+/// message where a session paused at the user's own subscription limit kept
+/// going on Allternit Cloud (`{ modelID, label, limit, from }`), so clients
+/// draw a note instead of a user bubble.
+fn part_meta(parts: &[GizziMessagePart], key: &str) -> serde_json::Value {
     parts
         .iter()
-        .find_map(|p| p.metadata.as_ref().and_then(|m| m.get("handoff")).cloned())
+        .find_map(|p| p.metadata.as_ref().and_then(|m| m.get(key)).cloned())
         .unwrap_or(serde_json::Value::Null)
 }
 
@@ -3644,6 +3653,20 @@ mod tests {
         let plain: Vec<GizziMessagePart> = serde_json::from_value(json!([{"type": "text", "text": "hi"}])).unwrap();
         let wire = serde_json::to_value(&plain).unwrap();
         assert!(wire[0].get("mime").is_none() && wire[0].get("source").is_none() && wire[0].get("id").is_none());
+    }
+
+    #[test]
+    fn keep_going_on_cloud_note_is_tagged() {
+        let parts: Vec<GizziMessagePart> = serde_json::from_value(json!([
+            {"type": "text", "text": "Continued on Allternit Cloud (DeepSeek V4 Pro) after the Codex 5-hour limit was reached.",
+             "metadata": {"cloudContinue": {"modelID": "deepseek-v4-pro", "label": "DeepSeek V4 Pro", "limit": "Codex 5-hour limit", "from": "codex-cli"}}},
+            {"type": "text", "text": "Carry on where you left off; don't repeat finished work.", "synthetic": true}
+        ]))
+        .unwrap();
+        assert_eq!(part_meta(&parts, "cloudContinue")["modelID"], "deepseek-v4-pro");
+        assert!(part_meta(&parts, "handoff").is_null());
+        let plain: Vec<GizziMessagePart> = serde_json::from_value(json!([{"type": "text", "text": "hi"}])).unwrap();
+        assert!(part_meta(&plain, "cloudContinue").is_null());
     }
 
     #[test]

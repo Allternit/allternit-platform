@@ -98,6 +98,25 @@ Subscription sends require a human-initiated request and the applicable disclosu
 
 The disclosure explains provider-terms risk. Acknowledgement is not provider authorization. Availability and quotas remain controlled by the provider.
 
+## When a usage limit pauses a session
+
+Your own subscription has its own usage limits, for example a 5-hour or weekly limit. As a session gets close, the strip above the composer says **Approaching usage limit**. When the limit is reached, the agent finishes its current step (**Usage limit reached · Wrapping up**), then the session pauses: **Wrapped up past your usage limit** or **Paused until 7:40 PM · … · resumes on its own**. At the reset, the session continues by itself on the same model.
+
+### Keep going on Allternit Cloud
+
+If you don't want to wait, a paused session on your own subscription shows **Keep going on Allternit Cloud**, with the Cloud model it will use and what you have to spend, for example "DeepSeek V4 Pro · $4.20 Cloud balance" or "$1.50 free left this month".
+
+- **Nothing changes until you tap it.** Allternit never moves a session to Cloud by itself, and nothing is charged without the tap.
+- **Which model:** the same model when Allternit Cloud offers it, otherwise Allternit Cloud's default model. Open models are never picked for you.
+- **What happens:** the same session continues on that Cloud model, paid from your Cloud credits (or your plan's or free monthly allowance). The transcript shows "Continued on Allternit Cloud (DeepSeek V4 Pro) after the 5-hour limit was reached.", and the model picker shows the Cloud model.
+- **No credits left:** the button reads **Add Cloud credits** and opens **Settings → Billing**. When you come back, the button changes to **Keep going on Allternit Cloud**. See [Credits and auto top-up](/guides/credits-and-auto-top-up).
+- **Signed out of Allternit Cloud:** the button doesn't show.
+- **When your subscription resets:** the session stays on Cloud. To go back, pick your subscription's model in the model picker.
+
+It works the same on Desktop, ai.allternit.com, the phone layout and the m.allternit.com app. In the gizzi terminal, the paused line says `/keep-going on Allternit Cloud (…)`; type `/keep-going` to do the same thing (with no credits left, it opens billing in your browser).
+
+A session paused on Allternit Cloud's own monthly limit, or on a bot's spending budget, doesn't offer this.
+
 ## When a subscription needs you
 
 Your subscriptions run in their own browser on your Sessions computer. If a vendor stops one until a person steps in (a bot check, an expired sign-in, a restricted account, or a browser profile busy in another window), Allternit tells you wherever you are:
@@ -131,7 +150,7 @@ If OpenAI rejects a Codex code, turn on "device code authorization for Codex" in
 | Authentication required | Reopen sign-in on the Sessions computer. |
 | Verification challenge | Complete the provider's check yourself. |
 | Profile locked | Close the conflicting use of that profile before reconnecting. |
-| Usage limit | Wait for the provider's reset or select another entitled lane. |
+| Usage limit | Wait for the provider's reset, select another entitled lane, or tap **Keep going on Allternit Cloud** ([details](#keep-going-on-allternit-cloud)). |
 | UI drift / degraded / provider down | Inspect the status and update or repair the adapter before retrying. |
 | Missing Sessions computer | Bind or restore the computer and gateway connection. |
 
