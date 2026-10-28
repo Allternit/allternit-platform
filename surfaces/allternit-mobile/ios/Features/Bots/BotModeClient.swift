@@ -415,6 +415,15 @@ final class BotModeClient: @unchecked Sendable {
         try await client.post(path: "agent-sessions/\(Self.query(sessionId))/messages", body: Body(text: text))
     }
 
+    /// Sends the person's own message into a session and starts the turn
+    /// (web native-agent-api.ts `sessionApi.sendMessage(id, { text })`:
+    /// `POST /api/v1/agent-sessions/:id/messages`). Returns once the
+    /// message is accepted; the reply streams in the chat.
+    func sendUserMessage(sessionId: String, text: String) async throws {
+        struct Body: Encodable { let text: String }
+        try await client.post(path: "agent-sessions/\(Self.query(sessionId))/messages", body: Body(text: text))
+    }
+
     // MARK: Computers (computer_routes.rs / computer_embed.rs / computer_ws.rs)
 
     func listComputers(botId: String? = nil) async throws -> [ComputerRecord] {
