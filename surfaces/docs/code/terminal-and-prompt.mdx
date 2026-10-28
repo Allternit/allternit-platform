@@ -1,13 +1,13 @@
 ---
 title: 'Terminal and prompt'
-description: 'How the Code terminal fills the view, how Grid and Deck switch between shells, and how the one-line terminal prompt works on Desktop and ai.allternit.com.'
+description: 'How the Code terminal fills the view, how Grid and Deck show its shells, and how the terminal prompt and its status row work on Desktop and ai.allternit.com.'
 ---
 
 Code has two kinds of session. A **Code session** is a conversation with an agent: messages, tool steps, approvals and the files it made. A **terminal** is a live shell (or a Terminal bot's CLI) on your computer or cloud computer. Both live in Code mode.
 
 ## Terminal
 
-Open the terminal with **Terminal** in the status row under the prompt. Press it again to go back to the session. The session panel's **Terminal** row and a terminal session's card in the Code overview open it too. It takes the whole Code view, edge to edge, with no card around it. The session panel closes while the terminal is open, and comes back when you close it.
+Open the terminal with **Terminal** in the status row under the prompt. Press it again to go back to the session. The session panel's **Terminal** row and a terminal session's card in the Code overview open it too. It takes the whole Code view, edge to edge, with no card around it. On Desktop it is always dark, in light and dark mode, like the terminal cards in the Code overview. The prompt and its status row stay under it. The session panel closes while the terminal is open, and comes back when you close it.
 
 - **One shell** fills the view.
 - **Two or three shells** split the view evenly, side by side. More shells wrap to new rows.
@@ -18,17 +18,24 @@ With more than one shell, the terminal bar shows two layout buttons:
 | Button | What it does |
 | --- | --- |
 | **Grid** | Every shell at once, side by side. |
-| **Deck** | One shell fills the view. Tabs in the bar switch between shells. |
+| **Deck** | A sideways row of tall shells, 400 px wide, that scrolls and snaps: the same Deck as the session overviews. |
 
-Double-click a shell's title bar, or use its zoom button, to open it in Deck. **Esc** goes back to Grid.
+Double-click a shell's title bar, or use its zoom button, to make it fill the view. **Esc** puts it back.
 
 On a phone, the terminal is always one shell at a time with a strip of tabs. See [Code on a phone](/code/on-a-phone#terminal).
 
 ## Prompt
 
-In Code, the prompt is one row across the whole width of the Code view, like a real terminal: an open line between two dashed rules, with no box around it. On that one row: `❯`, the text you type, **+** (attach), voice, the model, how much of the context is used, the permission mode (**Manual**, **Auto**…), **Terminal** and send. As you type more, the line grows upward (up to about ten lines) and the buttons stay on its bottom edge. Press **Enter** to run, **Shift+Enter** for a new line.
+In Code, the prompt is an input line across the whole width of the Code view, like a real terminal: an open line between two dashed rules, with no box around it. On the line: **+** (attach), `❯`, the text you type, voice and run. As you type more, the line grows upward (up to about ten lines). Press **Enter** to run, **Shift+Enter** for a new line.
 
-Before a session starts, the computer, folder and **Worktree** sit above the line as plain text. Chat and other modes keep the rounded composer.
+Directly under the line is the status row:
+
+| Side | What it shows |
+| --- | --- |
+| Left | The computer, the repo, the branch, **Worktree** (on `main` before a session starts) and the permission mode (**Manual**, **Auto**…). |
+| Right | The model, how much of the context is used, and **Terminal**. |
+
+Before a session starts, the computer and repo open pickers. In a running session the repo and branch are plain text, because the session's folder is fixed. Chat and other modes keep the rounded composer.
 
 ## Console drawer retired
 
@@ -36,8 +43,8 @@ The bottom Console drawer is off on Desktop (2026-10-28). Its shell tab is the f
 
 ## For developers
 
-- Terminal: `src/views/code/CodeTerminalCanvas.tsx`. The grid uses one column per shell, up to three. Deck reuses the maximized-tile state (`maximizedTileId`), and the bar's `terminal-layout-switch` group sets it.
+- Terminal: `src/views/code/CodeTerminalCanvas.tsx` and `code-terminal.css` (`.code-terminal-dark`, `.code-terminal-bar`). Desktop shells use the dark scheme (`scheme` passed to `TerminalSurface`). Grid uses one column per shell, up to three. Deck (`data-layout="deck"` on `code-terminal-grid`) restyles the same tiles as 400 px snap cards, so no shell remounts. Zoom keeps `maximizedTileId`.
 - Open state: `useCodeTerminalStore` in `src/views/code/code-terminal.store.ts` (`open`, `toggle`, `openCodeTerminal()`). The status row's `code-bottom-status-terminal` button (`CodeBottomStatusBar.tsx`) toggles it. Factory bot attach (`src/components/factory/pane/attach.ts`) and `MultiTabTerminal` call `openCodeTerminal()`.
 - The `<ConsoleDrawer />` mount in `src/shell/ShellApp.tsx` is commented out, not deleted.
 - Mounts: `src/views/code/CodeCanvas.tsx` (launchpad and conversation). Both drop their padding while `terminalCanvasOpen` is true, and the docked `CodeSessionPanel` is hidden.
-- Prompt: `src/views/chat/ChatComposer.tsx`, `codeTerminal` branch. The `composer-terminal-line` row holds the text row and the `composer-compact-controls` row side by side. The textarea auto-grows from 24 to 200 px.
+- Prompt: `src/views/chat/ChatComposer.tsx`, `codeTerminal` branch. `composer-terminal-line` stacks `composer-terminal-input` (dashed rules: attach, text, voice, run) over `composer-compact-controls` (the status row). `bottomDockContent` fills its left side (`CodeBottomStatusBar` with `CodeWorkspaceBar` as `leading`), and `bottomDockTrailing` its right end (`CodeTerminalButton`). The textarea auto-grows from 24 to 200 px.
