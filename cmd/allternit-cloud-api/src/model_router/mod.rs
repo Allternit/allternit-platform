@@ -246,6 +246,23 @@ impl ModelRouter {
         }
     }
 
+    /// A real call to every upstream (`list_models`), each under `timeout`.
+    /// Returns `(provider_id, answered)` pairs. Used by the setup checklist
+    /// (`GET /api/v1/setup/checks`); never sends a completion, so it costs nothing.
+    pub async fn check_upstreams(&self, timeout: std::time::Duration) -> Vec<(String, bool)> {
+        let calls = self.providers.values().map(|provider| {
+            let provider = provider.clone();
+            async move {
+                let ok = matches!(
+                    tokio::time::timeout(timeout, provider.list_models()).await,
+                    Ok(Ok(_))
+                );
+                (provider.provider_id().to_string(), ok)
+            }
+        });
+        futures::future::join_all(calls).await
+    }
+
     /// Returns true if at least one upstream provider is configured.
     pub fn is_enabled(&self) -> bool {
         !self.providers.is_empty()

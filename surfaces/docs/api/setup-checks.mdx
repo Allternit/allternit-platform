@@ -1,0 +1,84 @@
+---
+title: 'Setup checks API'
+description: 'Read the setup checklist: one row per dependency, each Ready, Not checked or Needs setup, decided from a live call.'
+---
+
+## Overview
+
+`GET /api/v1/setup/checks` returns the rows of the [setup checklist](/guides/setup-checklist). Each row comes from a real call, never from a configured value alone. Checks run in parallel, each under a short timeout, and one failing never fails the rest: it reads `not_checked`. Responses hold verdicts and short sentences only. No keys, tokens or addresses.
+
+## Where it is served
+
+| Server | Rows it returns |
+|---|---|
+| Allternit Cloud API (`https://api.allternit.com`) | `account`, `brain`, `computers`, `channels` |
+| Runtime `allternit-api` (Desktop, hosted runtimes) | The cloud rows, called with your own Bearer, plus `google` and `accounts` |
+
+The web app and the phone app call whichever backend they are connected to and show the rows they get. When a runtime cannot reach the cloud, the four cloud rows come back `not_checked` with the reason.
+
+## Authentication
+
+A Clerk session, an API token with the `compute` scope, or a paired runtime device token. See [Authentication](/api/authentication).
+
+## Request
+
+```bash
+GET /api/v1/setup/checks
+```
+
+## Response
+
+```json
+{
+  "scope": "runtime",
+  "generatedAt": "2026-10-27T12:00:00Z",
+  "rows": [
+    {
+      "id": "brain",
+      "title": "Brain and model access",
+      "required": true,
+      "status": "ready",
+      "detail": "Allternit models answered a live request.",
+      "fix": null
+    },
+    {
+      "id": "google",
+      "title": "Google (Gmail and Calendar)",
+      "required": false,
+      "status": "needs_setup",
+      "detail": "Gmail not connected yet.",
+      "fix": { "label": "Connect Google", "section": "subscriptions" }
+    }
+  ]
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `scope` | `cloud` from the Cloud API, `runtime` from `allternit-api`. |
+| `rows[].id` | `account`, `brain`, `computers`, `channels`, `google`, `accounts`. |
+| `rows[].required` | `true` when the product cannot work without it. Optional rows never count against completion. |
+| `rows[].status` | `ready`, `not_checked` or `needs_setup`. |
+| `rows[].detail` | One sentence for the person. |
+| `rows[].fix` | `null`, or `label` plus the Settings section id that fixes it. The app opens that section; it is never another origin. |
+
+Notification permission is read on the device by the app, so it is not a row here.
+
+## How each row is decided
+
+| Row | Ready when | Needs setup when | Not checked when |
+|---|---|---|---|
+| `account` | The calling session verified. | Never. | The plan could not be read. |
+| `brain` | A stored provider key is accepted, or a hosted model upstream answered `list_models` and credits remain. | The key is rejected, credits are used up, or nothing is set up. | No provider answered in time. |
+| `computers` | A paired computer reported within 5 minutes. | None is paired. | All paired computers are silent. |
+| `channels` | A channel route is live. | None is connected. | The list could not be read. |
+| `google` | Gmail and Calendar are held by the connector service, or have an unexpired or refreshable token. | A sign-in is gone or expired. | The connector service did not answer. |
+| `accounts` | Every other connection is confirmed the same way. | One needs a new sign-in. | The connector service did not answer. |
+
+## Errors
+
+| Status | Meaning |
+|---|---|
+| 401 | No valid session or token. |
+
+Individual check failures are never an error status.

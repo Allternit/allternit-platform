@@ -269,6 +269,35 @@ impl InferenceKeyService {
             .transpose()
     }
 
+    /// Ask each provider whether the user's stored key still works (the same
+    /// `GET {base}/models` as at save time). `Ok(true)` accepted, `Ok(false)`
+    /// rejected (401/403), `Err(())` the provider could not be reached or
+    /// answered something else. Nothing is stored or returned but verdicts.
+    pub async fn verdicts_for_user(&self, user_id: &str) -> Vec<(String, Result<bool, ()>)> {
+        let rows: Vec<(String,)> = sqlx::query_as(
+            "SELECT provider_id FROM user_inference_keys WHERE user_id = $1 AND status = 'active' ORDER BY provider_id",
+        )
+        .bind(user_id)
+        .fetch_all(&self.db)
+        .await
+        .unwrap_or_default();
+        let calls = rows.into_iter().map(|(provider_id,)| async move {
+            let verdict = match (
+                byok_base_url(&provider_id),
+                self.get_decrypted(user_id, &provider_id).await,
+            ) {
+                (Some(base), Ok(Some(key))) => match self.validator.validate(base, &key).await {
+                    Ok(()) => Ok(true),
+                    Err(ApiError::BadRequest(_)) => Ok(false),
+                    Err(_) => Err(()),
+                },
+                _ => Err(()),
+            };
+            (provider_id, verdict)
+        });
+        futures::future::join_all(calls).await
+    }
+
     /// Cheap existence check for the BYOK routing hot path (no decrypt).
     pub async fn has_key(&self, user_id: &str, provider_id: &str) -> Result<bool, ApiError> {
         sqlx::query_scalar::<_, bool>(
