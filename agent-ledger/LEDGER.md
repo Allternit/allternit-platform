@@ -1265,3 +1265,5 @@ Cross-compiled gizzi-code-win32-x64 from macOS (`bun build --target=win32-x64` �
 - 2026-10-21 Codex — [Refined sidebar](summaries/2026-10-21-refined-sidebar-codex.md): ai #719 and platform #1763 merged; 11 targeted tests, docs links and dependency-map validation passed. Desktop packaging and PWA deployment not run under the user's build/deploy restrictions.
 
 - 2026-10-22 — Codex: merged live group room brief ([ai #766](https://github.com/Allternit/allternit-ai/pull/766)); companion docs/nav/map and release boundaries. [Attestation](summaries/2026-10-22-2251-group-room-brief-codex-live-room-brief.md).
+
+- 2026-10-27 · Codex · Workspace UX: merged UI #858 (`367490066`) and API/docs #1922 (`2a44894f7`); 24 frontend and 10 API tests pass; web/API releases triggered, Desktop awaits release train. [Attestation](summaries/2026-10-27-1959-workspace-ux-codex-merge.md).
