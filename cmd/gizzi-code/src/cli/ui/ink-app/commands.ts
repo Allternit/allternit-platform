@@ -1,6 +1,7 @@
 // biome-ignore-all assist/source/organizeImports: ANT-ONLY import markers must not be reordered
 import addDir from './commands/add-dir/index.js'
 import resumeNow from './commands/resume-now/index.js'
+import keepGoing from './commands/keep-going/index.js'
 import autofixPr from './commands/autofix-pr/index.js'
 import backfillSessions from './commands/backfill-sessions/index.js'
 import btw from './commands/btw/index.js'
@@ -392,6 +393,7 @@ const COMMANDS = memoize((): Command[] => [
   ...(forkCmd ? [forkCmd] : []),
   ...(pet ? [pet] : []),
   resumeNow,
+  keepGoing,
   ...(proactive ? [proactive] : []),
   ...(briefCommand ? [briefCommand] : []),
   ...(assistantCommand ? [assistantCommand] : []),

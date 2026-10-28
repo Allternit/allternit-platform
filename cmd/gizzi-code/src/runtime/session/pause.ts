@@ -7,6 +7,7 @@ import { SessionRetry } from "@/runtime/session/retry"
 import { Config } from "@/runtime/context/config/config"
 import { ProviderQuotas, type QuotaWindow } from "@/runtime/providers/quota"
 import { SessionLimit } from "@/runtime/session/limit"
+import { CloudContinue } from "@/runtime/session/cloud-continue"
 import { Log } from "@/shared/util/log"
 
 /**
@@ -19,7 +20,8 @@ import { Log } from "@/shared/util/log"
  *    resets 7:40pm (America/Chicago)"),
  *  - a rate limit with a long retry-after.
  * Switching to another model is never automatic: `resume(…, { model })` is
- * the explicit "Resume now on …".
+ * the explicit "Resume now on …", and `continueOnCloud` is the explicit
+ * "Keep going on Allternit Cloud" (never switched back at the reset).
  */
 export namespace SessionPause {
   const log = Log.create({ service: "session.pause" })
@@ -196,7 +198,7 @@ export namespace SessionPause {
    */
   export function pause(
     sessionID: string,
-    p: Omit<Paused, "at" | "suggest">,
+    p: Omit<Paused, "at" | "suggest" | "cloud">,
     landing: { state: "wrapped" | "paused"; window?: QuotaWindow } = { state: "paused" },
   ) {
     const paused: Paused = { ...p, at: Date.now() }
@@ -205,7 +207,11 @@ export namespace SessionPause {
     schedule(sessionID, paused)
     Bus.publish(Event.Paused, { sessionID, until: paused.until, limit: paused.limit, reason: paused.reason, providerID: paused.providerID })
     log.info("paused before a limit", { sessionID, until: new Date(paused.until).toISOString(), limit: paused.limit })
-    void offerAlternative(sessionID, paused).catch((error) => log.warn("no alternative model offered", { sessionID, error }))
+    // One after the other: both add to the same `paused` record.
+    void offerAlternative(sessionID, paused)
+      .catch((error) => log.warn("no alternative model offered", { sessionID, error }))
+      .then(() => offerCloud(sessionID, paused))
+      .catch((error) => log.warn("no Cloud offer", { sessionID, error }))
     return paused
   }
 
@@ -299,6 +305,78 @@ export namespace SessionPause {
     Session.setPaused({ sessionID, paused: { ...current.paused, suggest } })
   }
 
+  /** The model the session was running on when it paused (its last turn's). */
+  async function pausedModel(sessionID: string) {
+    const msgs = await MessageV2.filterCompacted(MessageV2.stream(sessionID))
+    return (msgs.findLast((m) => m.info.role === "user")?.info as MessageV2.User | undefined)?.model
+  }
+
+  /** Whether "Keep going on Allternit Cloud" applies to this pause at all. */
+  function cloudApplies(paused: Paused): boolean {
+    // Cloud's own limit, and spending limits, aren't helped by more Cloud.
+    return paused.providerID !== CloudContinue.PROVIDER_ID && paused.reason !== "budget" && paused.reason !== "budget-check-failed"
+  }
+
+  /**
+   * After pausing on the user's own subscription: offer to keep going on
+   * Allternit Cloud (the model it would use and the account's funds). Only
+   * an offer; the switch is `continueOnCloud`, on the user's tap.
+   */
+  async function offerCloud(sessionID: string, paused: Paused) {
+    if (!cloudApplies(paused)) return
+    const model = await pausedModel(sessionID)
+    const cloud = await CloudContinue.offer(model?.providerID === CloudContinue.PROVIDER_ID ? undefined : model?.modelID)
+    if (!cloud) return
+    const current = await Session.get(sessionID).catch(() => undefined)
+    if (!current?.paused || current.paused.at !== paused.at) return
+    Session.setPaused({ sessionID, paused: { ...current.paused, cloud } })
+  }
+
+  export type CloudResult =
+    | { resumed: true; cloud: CloudContinue.Offer }
+    | { resumed: false; reason: "not_paused" | "not_applicable" | "signed_out" }
+    | { resumed: false; reason: "no_funds" | "checked"; cloud: CloudContinue.Offer }
+
+  /**
+   * "Keep going on Allternit Cloud" (the user's tap): re-read the Cloud
+   * offer, and with funds left switch the session to `allternit/<model>` for
+   * the following turns, clear the pause and continue, leaving a note in the
+   * transcript. With no funds it only refreshes the offer (the client sends
+   * the user to add credits). `check` refreshes without switching.
+   */
+  export async function continueOnCloud(
+    sessionID: string,
+    opts: {
+      check?: boolean
+      fetch?: (url: string, init?: RequestInit) => Promise<Response>
+      /** Tests only: stands in for `resume`. */
+      resume?: typeof resume
+    } = {},
+  ): Promise<CloudResult & { done?: Promise<unknown> }> {
+    const session = await Session.get(sessionID)
+    const paused = session.paused
+    if (!paused) return { resumed: false, reason: "not_paused" }
+    if (!cloudApplies(paused)) return { resumed: false, reason: "not_applicable" }
+    const model = await pausedModel(sessionID)
+    const cloud = await CloudContinue.offer(model?.providerID === CloudContinue.PROVIDER_ID ? undefined : model?.modelID, opts.fetch)
+    if (!cloud) {
+      const { cloud: _gone, ...rest } = paused
+      Session.setPaused({ sessionID, paused: rest })
+      return { resumed: false, reason: "signed_out" }
+    }
+    if (opts.check || cloud.funds.kind === "none") {
+      Session.setPaused({ sessionID, paused: { ...paused, cloud } })
+      return { resumed: false, reason: opts.check ? "checked" : "no_funds", cloud }
+    }
+    log.info("continuing on Allternit Cloud", { sessionID, model: cloud.modelID, limit: paused.limit })
+    const done = (opts.resume ?? resume)(sessionID, {
+      model: { providerID: CloudContinue.PROVIDER_ID, modelID: cloud.modelID },
+      note: { text: CloudContinue.note(cloud.label, paused.limit), cloudContinue: { modelID: cloud.modelID, label: cloud.label, limit: paused.limit, from: paused.providerID } },
+    })
+    done.catch((error) => log.warn("continuing on Cloud failed", { sessionID, error }))
+    return { resumed: true, cloud, done }
+  }
+
   function schedule(sessionID: string, paused: Paused) {
     clearTimeout(timers.get(sessionID))
     const wait = Math.max(0, paused.until + RESET_GRACE_MS - Date.now())
@@ -328,7 +406,14 @@ export namespace SessionPause {
    * Resume a paused session: run the held turn, or tell the model to carry
    * on. `model` is the explicit "Resume now on …" (early, other provider).
    */
-  export async function resume(sessionID: string, opts: { model?: { providerID: string; modelID: string } } = {}) {
+  export async function resume(
+    sessionID: string,
+    opts: {
+      model?: { providerID: string; modelID: string }
+      /** A visible note for the transcript, sent with the continue prompt (Keep going on Cloud). */
+      note?: ResumeNote
+    } = {},
+  ) {
     const session = await Session.get(sessionID)
     clearTimeout(timers.get(sessionID))
     timers.delete(sessionID)
@@ -352,16 +437,30 @@ export namespace SessionPause {
       agent: lastUser.agent,
       model,
       ...(lastUser.system ? { system: lastUser.system } : {}),
-      parts: [
-        {
-          type: "text",
-          synthetic: true,
-          text: early
-            ? `Continuing on ${model.providerID}/${model.modelID} before the limit reset. Carry on where you left off; don't repeat finished work.`
-            : "The usage limit has reset. Continue where you left off; don't repeat finished work.",
-        },
-      ],
+      parts: continueParts({ note: opts.note, early, model }),
     })
+  }
+
+  type ResumeNote = { text: string; cloudContinue: Record<string, unknown> }
+
+  /**
+   * What a resumed session is told: the visible Cloud note (when it kept
+   * going on Allternit Cloud) and the synthetic "carry on" prompt.
+   */
+  export function continueParts(input: { note?: ResumeNote; early: boolean; model: { providerID: string; modelID: string } }) {
+    const carryOn = "Carry on where you left off; don't repeat finished work."
+    return [
+      ...(input.note ? [{ type: "text" as const, text: input.note.text, metadata: { cloudContinue: input.note.cloudContinue } }] : []),
+      {
+        type: "text" as const,
+        synthetic: true,
+        text: input.note
+          ? carryOn
+          : input.early
+            ? `Continuing on ${input.model.providerID}/${input.model.modelID} before the limit reset. ${carryOn}`
+            : "The usage limit has reset. Continue where you left off; don't repeat finished work.",
+      },
+    ]
   }
 
   /** Re-arm timers for sessions that were paused before gizzi restarted. */

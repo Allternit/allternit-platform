@@ -199,6 +199,18 @@ export namespace Session {
           suggest: z
             .object({ providerID: z.string(), modelID: z.string(), label: z.string(), headroom: z.number().optional() })
             .optional(),
+          /**
+           * "Keep going on Allternit Cloud": the Cloud model this session
+           * would continue on and the account's Cloud funds. Absent when
+           * signed out of Cloud. Only ever used on the user's tap.
+           */
+          cloud: z
+            .object({
+              modelID: z.string(),
+              label: z.string(),
+              funds: z.object({ kind: z.enum(["balance", "plan", "free", "none"]), usd: z.number().optional() }),
+            })
+            .optional(),
         })
         .optional(),
       /** Where the session stands against its model's usage limit (wrap-up). */

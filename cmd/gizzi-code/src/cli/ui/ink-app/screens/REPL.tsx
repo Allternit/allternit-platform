@@ -315,7 +315,7 @@ import exit from '../commands/exit/index';
 import { ExitFlow } from '../components/ExitFlow';
 import { getCurrentWorktreeSession } from '../utils/worktree';
 import { popAllEditable, enqueue, type SetAppState, getCommandQueue, getCommandQueueLength, removeByFilter } from '../utils/messageQueueManager';
-import { approachingFor, limitInTurn, providerOfModel, quotaLandingFor, suggestionFor } from '../utils/limitPause';
+import { approachingFor, cloudOfferFor, limitInTurn, providerOfModel, quotaLandingFor, suggestionFor } from '../utils/limitPause';
 import { useLimitPauseResume } from '../hooks/useLimitPauseResume';
 import { PausedBar } from '../components/PromptInput/PausedBar';
 import { useCommandQueue } from '../hooks/useCommandQueue';
@@ -3451,6 +3451,9 @@ export function REPL({
             setAppState(prev => ({ ...prev, replPause: { ...p, providerID: pauseProvider, reason } }));
             void suggestionFor(pauseProvider).then(suggest => {
               if (suggest) setAppState(prev => prev.replPause ? { ...prev, replPause: { ...prev.replPause, suggest } } : prev);
+            });
+            if (pauseProvider !== 'allternit') void cloudOfferFor(mainLoopModelParam).then(cloud => {
+              if (cloud) setAppState(prev => prev.replPause ? { ...prev, replPause: { ...prev.replPause, cloud } } : prev);
             });
           };
           const hit = limitInTurn(messagesRef.current.slice(turnTelemetryBaselineRef.current?.messageCount ?? 0));

@@ -804,7 +804,9 @@
         "allternit/cmd/gizzi-code/src/runtime/session",
         "allternit-ai/src/components/settings",
         "allternit/cmd/allternit-cloud-api/src/routes/billing_*",
-        "allternit/cmd/allternit-cloud-api/src/services"
+        "allternit/cmd/allternit-cloud-api/src/services",
+        "allternit-ai/src/components/chat",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/commands/keep-going"
       ],
       "decisions": [
         {
@@ -830,12 +832,17 @@
         {
           "on": "2026-10-25",
           "note": "Chargebacks: charge.dispute.created holds the disputed amount in the cloud wallet (dispute_hold, balance may go negative, usage clamp no longer resets a negative balance), turns auto top-up off (blocked while open or lost) and sends an ops alert; charge.dispute.closed won/warning_closed gives it back, lost keeps it. Pack PaymentIntents now carry clerk_user_id/kind=credit_pack metadata. Migration 106 billing_disputes. Live webhook endpoint must add both dispute events."
+        },
+        {
+          "on": "2026-10-27",
+          "note": "Keep going on Allternit Cloud (button only, nothing charged without the tap, no automatic switching): a session paused/wrapped at the user's own subscription limit gets paused.cloud {modelID, label, funds} from gizzi (same model if /v1/models lists it, else deepseek-v4-pro, never lane open; funds from /billing/credits + /me/usage). POST /session/:id/resume {cloud:true} switches to allternit/<model>, clears the pause and continues with a 'Continued on Allternit Cloud (…) after the … was reached.' note (part metadata.cloudContinue, surfaced by allternit-api as message metadata.cloudContinue). No funds: button reads Add Cloud credits and opens billing. Strip on Chat/Code/Bot threads on all surfaces; gizzi TUI /keep-going."
         }
       ],
       "evidence": [
         "allternit/surfaces/docs/api/usage.mdx",
         "allternit/surfaces/docs/admin/spend-limits.mdx",
         "allternit/surfaces/docs/guides/credits-and-auto-top-up.mdx",
+        "allternit/surfaces/docs/guides/subscriptions.mdx",
         "allternit/surfaces/docs/api/cloud-billing.mdx",
         "allternit/surfaces/docs/operations/upstream-funding.mdx"
       ]

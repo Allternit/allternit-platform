@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { useEffect, useState } from 'react';
 import { limitLabel, untilLabel } from '@/runtime/bots/session-pause.js';
+import { CloudContinue } from '@/runtime/session/cloud-continue.js';
 import { Box, Text } from '../../ink';
 import { useAppState } from '../../state/AppState';
 
@@ -8,7 +9,9 @@ import { useAppState } from '../../state/AppState';
  * "⏸ Paused until 7:40 PM · Claude 5-hour limit · resumes on its own" (P3.17),
  * or, short of a pause, "◔ Approaching usage limit · …" past limits.warn_at,
  * the same copy as Desktop's composer bar and the pet HUD. Offers the model
- * with the most limit left only as an explicit `/resume-now`.
+ * with the most limit left only as an explicit `/resume-now`, and Allternit
+ * Cloud only as an explicit `/keep-going` (the strip's "Keep going on
+ * Allternit Cloud" button).
  */
 export function PausedBar(): React.ReactNode {
   const pause = useAppState(s => s.replPause);
@@ -33,10 +36,12 @@ export function PausedBar(): React.ReactNode {
   const label = limitLabel({ until: pause.until, limit: pause.limit, providerID: pause.providerID });
   const s = pause.suggest;
   const alt = s ? ` · /resume-now to continue on ${s.label}${s.headroom !== undefined ? ` (${Math.round(s.headroom * 100)}% left)` : ''}` : '';
+  const c = pause.cloud;
+  const cloud = c ? c.funds.kind === 'none' ? ' · /keep-going to add Cloud credits' : ` · /keep-going on Allternit Cloud (${c.label} · ${CloudContinue.fundsLabel(c.funds)})` : '';
   return <Box paddingX={2}>
       <Text wrap="wrap">
         <Text color="warning">⏸ Paused until {untilLabel(pause.until, now)}</Text>
-        <Text dimColor> · {label} · {pause.reason === 'limit_hit' ? 'continues on its own' : 'resumes on its own'}{alt}</Text>
+        <Text dimColor> · {label} · {pause.reason === 'limit_hit' ? 'continues on its own' : 'resumes on its own'}{alt}{cloud}</Text>
       </Text>
     </Box>;
 }
