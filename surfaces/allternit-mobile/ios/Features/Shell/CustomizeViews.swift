@@ -118,9 +118,9 @@ struct RailTabsSheet: View {
 }
 
 /// Customize (allternit-ai src/views/customize/CustomizeView.tsx): what the
-/// assistant can use. Connectors and Webhooks are native screens; Skills,
-/// Plugins and MCP servers read files on your computer, so they open the
-/// matching web Settings page in-app (as Settings does today).
+/// assistant can use. Skills, Plugins (CapabilitiesSettingsView), Connectors
+/// and Webhooks are native screens; MCP servers open the web Settings page
+/// in-app.
 struct CustomizeSheet: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var auth = AuthManager.shared
@@ -142,12 +142,16 @@ struct CustomizeSheet: View {
                         .listRowBackground(Color.clear)
                 } else {
                     Section {
-                        webRow("Skills", icon: "book", section: "skills")
+                        NavigationLink { CapabilitiesSettingsView(kind: .skill) } label: {
+                            Label("Skills", systemImage: "book")
+                        }
                         Button { isConnectorsPresented = true } label: {
                             row("Connectors", icon: "powerplug", trailing: "chevron.right")
                         }
                         .buttonStyle(.plain)
-                        webRow("Plugins", icon: "puzzlepiece.extension", section: "plugins")
+                        NavigationLink { CapabilitiesSettingsView(kind: .plugin) } label: {
+                            Label("Plugins", systemImage: "puzzlepiece.extension")
+                        }
                     }
                     Section("More") {
                         webRow("MCP servers", icon: "cpu", section: "mcp")
