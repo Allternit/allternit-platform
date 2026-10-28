@@ -47,6 +47,8 @@ export const BotTurnInfo = z.object({
   gated: z.boolean().optional(),
   /** The bot's own account for its CLI brain (cli_accounts id); absent = the user's default. */
   cliAccountId: z.string().optional(),
+  /** The bot's own account for its subscription brain (gateway account id); absent = the user's default. */
+  subsAccountId: z.string().optional(),
 })
 export type BotTurnInfo = z.infer<typeof BotTurnInfo>
 

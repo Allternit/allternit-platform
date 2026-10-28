@@ -25,6 +25,11 @@
  *   assistant message; the chat bridges turn them into artifact cards.
  * - Abort → `POST /v1/tasks/:id/cancel`. A dropped event stream reconnects
  *   (the gateway replays missed events) until the task is terminal.
+ * - Account: the one named in the request (`x-gizzi-subs-account`), else the
+ *   bot's own (`BotTurn` `subsAccountId`), goes in `routing.account_id`;
+ *   absent = the gateway picks the user's default. An account the gateway
+ *   cannot use now (409 `account_not_eligible`) fails the turn with a clear
+ *   message — never a silent fallback to another account.
  */
 
 import { createHash } from "crypto"
@@ -32,6 +37,7 @@ import type { LanguageModelV2, LanguageModelV2StreamPart } from "@ai-sdk/provide
 import { Log } from "@/shared/util/log"
 import { Token } from "@/shared/util/token"
 import { resolveTaskSessionID } from "@/runtime/session/stream-context"
+import * as BotTurn from "@/runtime/bots/bot-turn"
 import { FabricError, HUMAN_ACTION_HEADER, fabricFetch, fabricJson, providerDisplayName } from "./client"
 import { askProviderQuestion, confirmSend } from "./human-gate"
 import { cancelFabricTask, followFabricTask, submitFabricTask, type FabricTask, type FabricTaskBody, type FollowHandlers } from "./tasks"
@@ -39,6 +45,9 @@ import { createThoughtStream } from "./thoughts"
 import { FabricContext } from "@/runtime/session/fabric-context"
 
 const log = Log.create({ service: "fabric-lm" })
+
+/** Header naming the subscription account for this request (wins over the bot's own). */
+export const SUBS_ACCOUNT_HEADER = "x-gizzi-subs-account"
 
 /** Provider questions answered in one turn before it stops asking. */
 const MAX_QUESTION_ROUNDS = 5
@@ -101,6 +110,9 @@ export class SubscriptionFabricLanguageModel implements LanguageModelV2 {
     const continuing = hasAssistantTurn(options.prompt ?? [])
     const fabricProvider = this.fabricProvider
     const modelClass = this.modelId
+    const named = headers[SUBS_ACCOUNT_HEADER]?.trim() || undefined
+    const accountID = named ?? (BotTurn.get(sessionID)?.subsAccountId || undefined)
+    const accountSource: "request" | "bot" = named ? "request" : "bot"
 
     const stream = new ReadableStream<LanguageModelV2StreamPart>({
       start: async (controller) => {
@@ -176,6 +188,8 @@ export class SubscriptionFabricLanguageModel implements LanguageModelV2 {
             continuing,
             fabricProvider,
             modelClass,
+            accountID,
+            accountSource,
             signal: abortSignal,
           })
           taskID = task.task_id
@@ -209,6 +223,8 @@ export class SubscriptionFabricLanguageModel implements LanguageModelV2 {
               continuing: true,
               fabricProvider,
               modelClass,
+              accountID,
+              accountSource,
               signal: abortSignal,
             })
             taskID = next.task_id
@@ -297,6 +313,10 @@ async function submit(input: {
   continuing: boolean
   fabricProvider: string
   modelClass: string
+  /** Gateway account to run on; absent = the user's default. */
+  accountID?: string
+  /** Who chose `accountID`: named in the request, or the bot's own. */
+  accountSource?: "request" | "bot"
   signal?: AbortSignal
 }): Promise<FabricTask> {
   // One idempotency key per send: the continue→create fallback reuses the
@@ -306,12 +326,19 @@ async function submit(input: {
     prompt: input.prompt,
     thread_id: input.sessionID,
     options: taskOptions(input.modelClass),
-    routing: { provider: input.fabricProvider },
+    routing: input.accountID ? { provider: input.fabricProvider, account_id: input.accountID } : { provider: input.fabricProvider },
     priority: "interactive",
     idempotency_key: `gizzi-${input.sessionID}-${input.requestID}`,
   })
   const send = (capability: "chat.create" | "chat.continue") =>
-    submitFabricTask(body(capability), input.humanAction, input.signal)
+    submitFabricTask(body(capability), input.humanAction, input.signal).catch((error) => {
+      // The chosen account is signed out, disabled or out of its plan's
+      // limit: say so — never retry on another account.
+      if (error instanceof FabricError && error.code === "account_not_eligible") {
+        throw new FabricError(accountUnavailableMessage(input.fabricProvider, input.accountSource), error.status, error.code, error.body)
+      }
+      throw error
+    })
   if (!input.continuing) return send("chat.create")
   try {
     return await send("chat.continue")
@@ -321,6 +348,15 @@ async function submit(input: {
     if (error instanceof FabricError && error.code === "thread_not_mapped") return send("chat.create")
     throw error
   }
+}
+
+/** The reply's error when the chosen subscription account can't be used (Register 1). */
+export function accountUnavailableMessage(provider: string, source: "request" | "bot" = "bot"): string {
+  const name = providerDisplayName(provider)
+  if (source === "request") {
+    return `The ${name} account chosen for this message can't be used right now (signed out, or out of its plan's limit). Pick another account and send again.`
+  }
+  return `This bot's ${name} account can't be used right now (signed out, or out of its plan's limit). Pick another account in the bot's settings.`
 }
 
 function taskFailureMessage(task: FabricTask, provider: string): string {

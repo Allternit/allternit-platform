@@ -3,6 +3,7 @@ import { discoverSubscriptionFabric, providersFromCatalog } from "../../src/runt
 import { createHash } from "node:crypto"
 import { FABRIC_INLINE_LIMIT_BYTES, SubscriptionFabricLanguageModel } from "../../src/runtime/providers/fabric/language-model"
 import { PermissionNext } from "../../src/runtime/tools/guard/permission/next"
+import * as BotTurn from "../../src/runtime/bots/bot-turn"
 import { Instance } from "../../src/runtime/context/project/instance"
 import { tmpdir } from "../fixture/fixture"
 
@@ -286,6 +287,56 @@ describe("SubscriptionFabricLanguageModel", () => {
     const parts = await run(model, { prompt: [userTurn("hi")], headers: headers() })
     const error = parts.find((p) => p.type === "error")
     expect(String(error.error.message)).toContain("acknowledge the subscription disclosure")
+  })
+
+  test("account: the bot's own subscription account rides in routing; a request-named one wins; none = no account_id", async () => {
+    const posts: any[] = []
+    fakeForwarder((c) => {
+      if (c.method === "POST" && c.path === "/v1/tasks") {
+        posts.push(c.body)
+        return json({ task_id: "t1", status: "queued" }, 201)
+      }
+      if (c.path === "/v1/tasks/t1/events") return sse([{ event: "task.status", data: { status: "completed" } }])
+      if (c.path === "/v1/tasks/t1") return json({ task_id: "t1", status: "completed", result: { text: "ok", artifact_ids: [] } })
+      return json({}, 404)
+    })
+    const model = new SubscriptionFabricLanguageModel("subs-chatgpt", "chatgpt", "fast")
+    try {
+      await run(model, { prompt: [userTurn("hi")], headers: headers() })
+      BotTurn.mark("ses_1", { id: "b1", subsAccountId: "acc-bot" })
+      await run(model, { prompt: [userTurn("hi")], headers: headers() })
+      await run(model, { prompt: [userTurn("hi")], headers: headers({ "x-gizzi-subs-account": "acc-named" }) })
+    } finally {
+      BotTurn.reset()
+    }
+    expect(posts.map((p) => p.routing)).toEqual([
+      { provider: "chatgpt" },
+      { provider: "chatgpt", account_id: "acc-bot" },
+      { provider: "chatgpt", account_id: "acc-named" },
+    ])
+  })
+
+  test("account: an account the gateway can't use fails the turn clearly, with no retry on another account", async () => {
+    const posts: any[] = []
+    fakeForwarder((c) => {
+      if (c.method === "POST" && c.path === "/v1/tasks") {
+        posts.push(c.body)
+        return json({ error: "account_not_eligible", account_id: c.body.routing.account_id }, 409)
+      }
+      return json({}, 404)
+    })
+    const model = new SubscriptionFabricLanguageModel("subs-chatgpt", "chatgpt", "fast")
+    BotTurn.mark("ses_1", { id: "b1", subsAccountId: "acc-bot" })
+    let parts: any[]
+    try {
+      parts = await run(model, { prompt: [userTurn("hi")], headers: headers() })
+    } finally {
+      BotTurn.reset()
+    }
+    expect(posts).toHaveLength(1)
+    const error = parts.find((p) => p.type === "error")
+    expect(String(error.error.message)).toContain("This bot's ChatGPT account can't be used right now")
+    expect(String(error.error.message)).toContain("Pick another account in the bot's settings.")
   })
 
   test("a dropped event stream reconnects until the task is terminal", async () => {
