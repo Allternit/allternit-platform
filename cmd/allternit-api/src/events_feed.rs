@@ -227,11 +227,25 @@ async fn stream(
             }
         }
     };
+    // App-phone pairing prompts (`phone_app`) ride the same stream as named
+    // SSE events (`phone_app.pair_request` / `phone_app.pair_resolved`), live
+    // only: a Desktop that reconnects reads GET /api/v1/phones/app/pair/pending.
+    let mut app_phone_events = crate::phone_app::subscribe();
     let s: std::pin::Pin<Box<dyn Stream<Item = Result<Event, Infallible>> + Send>> = Box::pin(async_stream::stream! {
         let mut cursor = start;
         let mut tick = tokio::time::interval(POLL);
         loop {
-            tick.tick().await;
+            let app_event = tokio::select! {
+                _ = tick.tick() => None,
+                event = app_phone_events.recv() => match event {
+                    Ok(event) if event.account == uid => Some(event),
+                    _ => continue,
+                },
+            };
+            if let Some(event) = app_event {
+                yield Ok(Event::default().event(event.name).data(event.data.to_string()));
+                continue;
+            }
             let (db, uid, after) = (db.clone(), uid.clone(), cursor);
             let res = tokio::task::spawn_blocking(move || db.connect().and_then(|c| fetch_batch(&c, &uid, after))).await;
             if let Ok(Ok((items, next))) = res {
