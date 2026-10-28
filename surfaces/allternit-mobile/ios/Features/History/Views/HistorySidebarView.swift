@@ -77,6 +77,17 @@ struct HistorySidebarView: View {
     @State private var isMiniAppsPresented = false
     @State private var isDecisionsPresented = false
     @State private var isInboxPresented = false
+    @State private var isPhonesPresented = false
+    @State private var isCustomizePresented = false
+    @State private var isRailTabsPresented = false
+    /// "Continue CLI session": the surface the picked-up session opens in.
+    @State private var cliPickerSurface: CLIPickerSurface? = nil
+    @ObservedObject private var railTabs = RailTabsStore.shared
+    @ObservedObject private var phones = BotPhonesStore.shared
+
+    struct CLIPickerSurface: Identifiable {
+        let id: String
+    }
     @ObservedObject private var inbox = InboxStore.shared
     @ObservedObject private var botStore = BotModeStore.shared
     @ObservedObject private var botStatus = BotStatusStore.shared
@@ -136,12 +147,28 @@ struct HistorySidebarView: View {
         .sheet(isPresented: $isInboxPresented) {
             InboxSheet()
         }
+        .sheet(isPresented: $isPhonesPresented) {
+            PhonesSheet { botId in openBotPhone(botId) }
+        }
+        .sheet(isPresented: $isCustomizePresented) {
+            CustomizeSheet()
+        }
+        .sheet(isPresented: $isRailTabsPresented) {
+            RailTabsSheet(mode: railTabMode)
+        }
+        .sheet(item: $cliPickerSurface) { picker in
+            NativeSessionPickerSheet(surface: picker.id) { sessionId in
+                openPickedUpSession(sessionId, surface: picker.id)
+            }
+        }
         .task {
             // Inbox count, Teammates and the Bots badge read these.
             AgentHubStore.shared.fetchAgentsIfNeeded()
             async let inboxLoad: Void = inbox.refresh()
             async let threadsLoad: Void = botStore.refreshThreads()
             _ = await (inboxLoad, threadsLoad)
+            // The Phones badge: unread across the bots' phones.
+            await phones.refresh()
         }
         .fullScreenCover(isPresented: $isSearchPresented) {
             ShellSearchView(
@@ -184,6 +211,7 @@ struct HistorySidebarView: View {
             // a closing drawer folds the dial.
             if isOpen {
                 Task { await loadSessions() }
+                Task { await phones.refresh() }
             } else {
                 isDialExpanded = false
             }
@@ -263,6 +291,39 @@ struct HistorySidebarView: View {
         let action: () -> Void
     }
 
+    /// The rail-tabs mode for "Show in rail" (Bots uses Home's, as on the web).
+    private var railTabMode: RailTabsStore.TabMode {
+        switch modeStore.shellMode {
+        case .code: return .code
+        case .aci: return .browser
+        case .home, .bots: return .home
+        }
+    }
+
+    /// The web's tab id for a drawer row, when "Show in rail" can hide it.
+    private func railTabId(for rowId: String) -> String? {
+        switch rowId {
+        case "projects": return "projects"
+        case "artifacts": return "artifacts-library"
+        case "automation": return modeStore.shellMode == .code ? "code-automations" : "automation-tasks"
+        case "customize": return "customize"
+        case "mcp-apps": return "mini-apps"
+        default: return nil
+        }
+    }
+
+    /// The mode's rows the user chose to show, then More.
+    private var visibleRailRows: [RailRow] {
+        let mode = railTabMode
+        let shown = railRows.filter { row in
+            guard let tabId = railTabId(for: row.id) else { return true }
+            return railTabs.isVisible(tabId, in: mode)
+        }
+        let more = RailRow(id: "more", label: "More", icon: "ellipsis", isActive: false,
+                           badge: 0) { isRailTabsPresented = true }
+        return shown + [more]
+    }
+
     /// The mode's rail (PhoneDrawer railRows). Shared sections keep the mode.
     private var railRows: [RailRow] {
         let tab = modeStore.activeTab
@@ -270,10 +331,11 @@ struct HistorySidebarView: View {
         let artifacts = RailRow(id: "artifacts", label: "Artifacts", icon: "doc.text", isActive: tab == .artifacts) { go(.artifacts) }
         let automation = RailRow(id: "automation", label: "Automation Tasks", icon: "clock", isActive: tab == .automation) { go(.automation) }
         let decisions = RailRow(id: "decisions", label: "Decisions", icon: "checkmark.seal", isActive: false) { isDecisionsPresented = true }
+        let customize = RailRow(id: "customize", label: "Customize", icon: "slider.horizontal.3", isActive: false) { isCustomizePresented = true }
         switch modeStore.shellMode {
         case .home:
             return [
-                projects, artifacts, automation, decisions,
+                projects, artifacts, automation, customize, decisions,
                 RailRow(id: "models", label: "Models", icon: "brain.head.profile", isActive: tab == .models) { go(.models) },
             ]
         case .code:
@@ -301,6 +363,10 @@ struct HistorySidebarView: View {
                 Text(row.label)
                     .font(.body)
                     .fontWeight(row.isActive ? .semibold : .regular)
+                if row.id == "more", railTabs.anyHidden(in: railTabMode) {
+                    Circle().fill(modeStore.shellMode.accent).frame(width: 6, height: 6)
+                        .accessibilityHidden(true)
+                }
                 Spacer()
                 if row.badge > 0 {
                     Text(row.badge > 99 ? "99+" : "\(row.badge)")
@@ -327,7 +393,7 @@ struct HistorySidebarView: View {
     private var railList: some View {
         List {
             Section {
-                ForEach(railRows) { railRowView($0) }
+                ForEach(visibleRailRows) { railRowView($0) }
             }
 
             if modeStore.shellMode == .home {
@@ -562,6 +628,8 @@ struct HistorySidebarView: View {
             .accessibilityLabel("Settings, signed in as \(authManager.displayName)")
             .accessibilityIdentifier("drawerSettings")
 
+            PhonesDrawerButton { isPhonesPresented = true }
+
             Spacer()
 
             newPill
@@ -586,15 +654,22 @@ struct HistorySidebarView: View {
     }
 
     /// Press-and-hold ways to start (PhoneDrawer newOptions). "Continue CLI
-    /// session" is left out: iOS has no native-session picker yet.
+    /// session" picks up a Claude Code, Codex, Grok… session from your computer.
     private var newOptions: [NewOption] {
         let quickTask = NewOption(id: "quick-task", label: "Quick task", icon: "pip") { isQuickTaskPresented = true }
         let scheduled = NewOption(id: "scheduled", label: "New scheduled task", icon: "clock") { isScheduledTaskPresented = true }
+        func continueCLI(_ surface: String) -> NewOption {
+            NewOption(id: "continue-cli", label: "Continue CLI session", icon: "apple.terminal") {
+                cliPickerSurface = CLIPickerSurface(id: surface)
+            }
+        }
         switch modeStore.shellMode {
         case .home:
-            return [NewOption(id: "chat", label: "New chat", icon: "square.and.pencil") { newItem() }, scheduled, quickTask]
+            return [NewOption(id: "chat", label: "New chat", icon: "square.and.pencil") { newItem() },
+                    continueCLI("chat"), scheduled, quickTask]
         case .code:
-            return [NewOption(id: "thread", label: "New thread", icon: "terminal") { newItem() }, scheduled, quickTask]
+            return [NewOption(id: "thread", label: "New thread", icon: "terminal") { newItem() },
+                    continueCLI("code"), scheduled, quickTask]
         case .aci:
             return [NewOption(id: "session", label: "New session", icon: "globe") { newItem() }, quickTask]
         case .bots:
@@ -677,6 +752,20 @@ struct HistorySidebarView: View {
     private func openBotChat(_ botId: String) {
         botStore.pendingOpenBotId = botId
         go(.agents)
+    }
+
+    /// Opens a bot's phone in Bots mode (the Phones list).
+    private func openBotPhone(_ botId: String) {
+        botStore.pendingOpenPhoneBotId = botId
+        go(.agents)
+    }
+
+    /// A CLI session was picked up: open it where it belongs.
+    private func openPickedUpSession(_ sessionId: String, surface: String) {
+        modeStore.selectBarItem(surface == "code" ? .code : .chats)
+        selectedSessionId = sessionId
+        closeDrawer()
+        Task { await loadSessions() }
     }
 
     // MARK: - Teammates

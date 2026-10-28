@@ -6,7 +6,9 @@ import SwiftUI
 // persist through `/api/v1/bot-groups`; member turns run on this device the
 // way the web's group-chat-turn-runner does: each responding bot answers in
 // an ephemeral agent session, sees the room history, may "(pass)", and may
-// @mention another member into the next round.
+// @mention another member into the next round. Bots that run on another
+// vendor (Grok, OpenMausBot, Poke…) answer through their own connection on
+// one standing thread per room (VendorGroupTurn).
 // -----------------------------------------------------------------------------
 
 struct GroupRowLabel: View {
@@ -102,6 +104,7 @@ struct NewGroupChatSheet: View {
     @State private var selected: Set<String> = []
     @State private var isSaving = false
     @State private var error: String? = nil
+    @State private var vendors: [String: String] = [:]
 
     private var canCreate: Bool {
         !name.trimmingCharacters(in: .whitespaces).isEmpty && (2...6).contains(selected.count) && !isSaving
@@ -120,7 +123,14 @@ struct NewGroupChatSheet: View {
                         } label: {
                             HStack(spacing: 10) {
                                 BotAvatarView(bot: bot, size: 30)
-                                Text(bot.botDisplayName).foregroundColor(Color("TextPrimary"))
+                                VStack(alignment: .leading, spacing: 1) {
+                                    Text(bot.botDisplayName).foregroundColor(Color("TextPrimary"))
+                                    if let vendor = vendors[bot.id] {
+                                        Text("Runs on \(vendor)")
+                                            .font(.caption)
+                                            .foregroundColor(Color("TextSecondary"))
+                                    }
+                                }
                                 Spacer()
                                 if selected.contains(bot.id) {
                                     Image(systemName: "checkmark.circle.fill").foregroundColor(Color("AccentPrimary"))
@@ -131,7 +141,7 @@ struct NewGroupChatSheet: View {
                 } header: {
                     Text("Members")
                 } footer: {
-                    Text("Pick 2 to 6 bots.")
+                    Text("Pick 2 to 6 bots. Bots on another service (Grok, Poke…) answer through their own connection.")
                 }
                 if let error {
                     Text(error).foregroundColor(Theme.statusError)
@@ -139,6 +149,7 @@ struct NewGroupChatSheet: View {
             }
             .navigationTitle("New group chat")
             .navigationBarTitleDisplayMode(.inline)
+            .task { vendors = await GroupVendorLabels.load(store.bots.map(\.id)) }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
@@ -154,7 +165,8 @@ struct NewGroupChatSheet: View {
         Task {
             defer { isSaving = false }
             do {
-                let group = try await store.createGroup(name: name.trimmingCharacters(in: .whitespaces), members: members)
+                let group = try await store.createGroup(name: name.trimmingCharacters(in: .whitespaces), members: members,
+                                                        vendorIds: Set(vendors.keys))
                 dismiss()
                 onCreated(group)
             } catch {
@@ -175,6 +187,7 @@ struct GroupChatView: View {
     @State private var speakingBotId: String? = nil
     @State private var isRunning = false
     @State private var runError: String? = nil
+    @State private var isAddingMembers = false
 
     var body: some View {
         if let group = store.group(groupId) {
@@ -218,6 +231,16 @@ struct GroupChatView: View {
             .background(Color("BgPrimary"))
             .navigationTitle(group.name)
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { isAddingMembers = true } label: { Image(systemName: "person.badge.plus") }
+                        .disabled(isRunning)
+                        .accessibilityLabel("Add members")
+                }
+            }
+            .sheet(isPresented: $isAddingMembers) {
+                AddGroupMembersSheet(group: group)
+            }
         } else {
             FriendlyStateView(style: .empty, icon: "person.3", title: "Group not found",
                               message: "This room was deleted on another device.")
@@ -277,7 +300,9 @@ struct GroupChatView: View {
             )
             speakingBotId = nil
             isRunning = false
-            if finished.replies == 0 && !finished.cancelled {
+            if !finished.problems.isEmpty {
+                runError = finished.problems.joined(separator: "\n")
+            } else if finished.replies == 0 && !finished.cancelled {
                 runError = "Nobody answered. Check that the members' brains are set up."
             }
         }
@@ -360,7 +385,12 @@ struct GroupStageView: View {
 /// Runs member turns (lib/bots/group-chat-turn-runner.ts, native subset).
 @MainActor
 final class GroupTurnRunner {
-    struct Outcome { let replies: Int; let cancelled: Bool }
+    struct Outcome {
+        let replies: Int
+        let cancelled: Bool
+        /// Why a vendor member didn't answer (needs approval, signed out…).
+        var problems: [String] = []
+    }
 
     private static let maxRounds = 3
     private static let maxMessagesPerSend = 10
@@ -378,15 +408,31 @@ final class GroupTurnRunner {
         var replies = 0
         var responders = Self.responders(for: userText, members: room.members, sinceUser: [])
         var allReplies: [GroupChatMessage] = []
+        var problems: [String] = []
         defer { Self.rememberRound(room: room, userText: userText, replies: allReplies) }
+        // A vendor-bound bot never answers with a native brain.
+        let vendorBound = await VendorGroupTurn.vendorBoundMembers(room.members)
         for _ in 0..<Self.maxRounds {
             guard !responders.isEmpty, !cancelled else { break }
             var roundReplies: [GroupChatMessage] = []
             for member in responders {
-                guard !cancelled, replies < Self.maxMessagesPerSend,
-                      let bot = bots.first(where: { $0.id == member.botId }) else { continue }
-                onSpeaker(member.botId)
-                guard let text = await reply(as: member, bot: bot, in: room, userText: userText) else { continue }
+                guard !cancelled, replies < Self.maxMessagesPerSend else { continue }
+                let answer: String?
+                if vendorBound.contains(member.botId) {
+                    onSpeaker(member.botId)
+                    let outcome = await VendorGroupTurn.run(
+                        room: room, member: member,
+                        prompt: Self.prompt(for: member, in: room, userText: userText),
+                        isCancelled: { [weak self] in self?.cancelled ?? true }
+                    )
+                    if let problem = outcome.problem { problems.append(problem) }
+                    answer = outcome.text
+                } else {
+                    guard let bot = bots.first(where: { $0.id == member.botId }) else { continue }
+                    onSpeaker(member.botId)
+                    answer = await reply(as: member, bot: bot, in: room, userText: userText)
+                }
+                guard let text = answer else { continue }
                 let message = GroupChatMessage(id: UUID().uuidString, from: "bot", botId: member.botId,
                                                displayName: member.displayName, text: text,
                                                timestamp: ISO8601DateFormatter().string(from: Date()), threadId: nil)
@@ -404,10 +450,12 @@ final class GroupTurnRunner {
             }
         }
         onSpeaker(nil)
-        return Outcome(replies: replies, cancelled: cancelled)
+        return Outcome(replies: replies, cancelled: cancelled, problems: problems)
     }
 
-    private func reply(as member: GroupChatMember, bot: AgentRecord, in room: BotGroupChat, userText: String) async -> String? {
+    /// The member's turn prompt: who's in the room, the recent log, what the
+    /// user said (buildMemberHistory). Vendor members get the same transcript.
+    static func prompt(for member: GroupChatMember, in room: BotGroupChat, userText: String) -> String {
         let names = room.members.map(\.displayName).joined(separator: ", ")
         let history = room.log.suffix(Self.maxHistory).map { "\($0.displayName ?? "User"): \($0.text)" }.joined(separator: "\n")
         let prompt = [
@@ -423,6 +471,11 @@ final class GroupTurnRunner {
             "You may @mention another member to pull them into the next round.",
             "Escalate to @user if a real human judgment is needed.",
         ].joined(separator: "\n")
+        return prompt
+    }
+
+    private func reply(as member: GroupChatMember, bot: AgentRecord, in room: BotGroupChat, userText: String) async -> String? {
+        let prompt = Self.prompt(for: member, in: room, userText: userText)
         let system = ["You are \(member.displayName). You must ALWAYS identify yourself as \(member.displayName).",
                       bot.systemPrompt ?? ""].filter { !$0.isEmpty }.joined(separator: "\n\n")
         var sessionId: String? = nil
@@ -506,5 +559,114 @@ final class GroupTurnRunner {
                 || named.contains($0.botId.lowercased())
         }
         return picked.isEmpty ? members : picked
+    }
+}
+
+/// Which bots run on another vendor, with the vendor's name for the label.
+enum GroupVendorLabels {
+    @MainActor
+    static func load(_ botIds: [String]) async -> [String: String] {
+        var out: [String: String] = [:]
+        for id in botIds {
+            guard let binding = await VendorGroupTurn.binding(for: id), binding.isVendor else { continue }
+            out[id] = binding.externalAgentName ?? binding.vendor.map(pretty) ?? "another service"
+        }
+        return out
+    }
+
+    private static func pretty(_ vendor: String) -> String {
+        vendor.split(separator: "-").map { $0.prefix(1).uppercased() + $0.dropFirst() }.joined(separator: " ")
+    }
+}
+
+/// Add bots to a room (web useVendorPhoneThreads addToGroup): any bot not
+/// in it yet, vendor bots included; a vendor bot joins as `source: "vendor"`
+/// and answers through its own connection. Rooms hold up to 6 members.
+struct AddGroupMembersSheet: View {
+    let group: BotGroupChat
+
+    @ObservedObject private var store = BotModeStore.shared
+    @Environment(\.dismiss) private var dismiss
+    @State private var selected: Set<String> = []
+    @State private var vendors: [String: String] = [:]
+    @State private var isSaving = false
+
+    private var candidates: [AgentRecord] {
+        let inRoom = Set(group.members.map(\.botId))
+        return store.bots.filter { !inRoom.contains($0.id) }
+    }
+
+    private var room: Int { max(0, 6 - group.members.count) }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                if candidates.isEmpty {
+                    Text("Every bot is already in this room.")
+                        .font(.footnote)
+                        .foregroundColor(Color("TextSecondary"))
+                } else if room == 0 {
+                    Text("This room is full (6 members).")
+                        .font(.footnote)
+                        .foregroundColor(Color("TextSecondary"))
+                } else {
+                    Section {
+                        ForEach(candidates) { bot in
+                            Button {
+                                if selected.contains(bot.id) { selected.remove(bot.id) }
+                                else if selected.count < room { selected.insert(bot.id) }
+                            } label: {
+                                HStack(spacing: 10) {
+                                    BotAvatarView(bot: bot, size: 30)
+                                    VStack(alignment: .leading, spacing: 1) {
+                                        Text(bot.botDisplayName).foregroundColor(Color("TextPrimary"))
+                                        if let vendor = vendors[bot.id] {
+                                            Text("Runs on \(vendor)")
+                                                .font(.caption)
+                                                .foregroundColor(Color("TextSecondary"))
+                                        }
+                                    }
+                                    Spacer()
+                                    if selected.contains(bot.id) {
+                                        Image(systemName: "checkmark.circle.fill").foregroundColor(Color("AccentPrimary"))
+                                    }
+                                }
+                            }
+                        }
+                    } footer: {
+                        Text("Up to \(room) more.")
+                    }
+                }
+            }
+            .navigationTitle("Add members")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(isSaving ? "Adding…" : "Add") { add() }
+                        .disabled(selected.isEmpty || isSaving)
+                }
+            }
+            .task { vendors = await GroupVendorLabels.load(candidates.map(\.id)) }
+        }
+    }
+
+    private func add() {
+        isSaving = true
+        var updated = group
+        for bot in candidates where selected.contains(bot.id) {
+            updated.members.append(GroupChatMember(
+                botId: bot.id, displayName: bot.botDisplayName,
+                handle: BotModeStore.slugify(bot.botDisplayName),
+                source: vendors[bot.id] != nil ? "vendor" : "native", providerId: nil
+            ))
+        }
+        updated.updatedAt = ISO8601DateFormatter().string(from: Date())
+        let next = updated
+        Task {
+            defer { isSaving = false }
+            await store.saveGroup(next)
+            dismiss()
+        }
     }
 }

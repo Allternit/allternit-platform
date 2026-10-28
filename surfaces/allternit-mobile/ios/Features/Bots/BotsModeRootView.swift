@@ -18,6 +18,8 @@ enum BotRoute: Hashable {
     case routines(String)
     case memory(String)
     case channels(String)
+    /// The bot's phone: its number, address and channel conversations.
+    case phone(String)
     case stage(String)
     /// The existing full Bot Home dashboard (artifacts, automation, files).
     case home(String)
@@ -78,12 +80,17 @@ struct BotsModeRootView: View {
         .onAppear(perform: openPendingBot)
         .onChange(of: store.pendingOpenBotId) { _, _ in openPendingBot() }
         .onChange(of: store.pendingNewThread) { _, _ in openPendingBot() }
+        .onChange(of: store.pendingOpenPhoneBotId) { _, _ in openPendingBot() }
     }
 
     private func openPendingBot() {
         if let botId = store.pendingOpenBotId {
             store.pendingOpenBotId = nil
             navigator.path = [.chat(botId: botId, sessionId: nil)]
+        }
+        if let botId = store.pendingOpenPhoneBotId {
+            store.pendingOpenPhoneBotId = nil
+            navigator.path = [.phone(botId)]
         }
         if store.pendingNewThread {
             store.pendingNewThread = false
@@ -336,6 +343,8 @@ struct BotRouteDestination: View {
             withBot(botId) { BotMemoryView(bot: $0) }
         case .channels(let botId):
             withBot(botId) { BotChannelsView(bot: $0) }
+        case .phone(let botId):
+            withBot(botId) { BotPhoneView(bot: $0) }
         case .stage(let botId):
             withBot(botId) { BotLiveStageView(bot: $0) }
         case .home(let botId):
