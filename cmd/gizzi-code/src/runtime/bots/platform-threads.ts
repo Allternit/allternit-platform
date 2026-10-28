@@ -43,6 +43,12 @@ export interface PlatformThread {
   /** Set when archived (closed; still readable). */
   archivedAt?: string | null
   archived?: boolean
+  /** One line: what this thread is for. Part of the bot's context in it. */
+  purpose?: string | null
+  /** Icon key from the app's fixed thread icon set. */
+  icon?: string | null
+  /** Colour key from the app's fixed thread palette. */
+  color?: string | null
 }
 
 export interface CreateThreadInput {

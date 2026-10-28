@@ -448,6 +448,7 @@ impl CredentialStore {
     /// observation before it reaches a model (redaction). Values shorter than
     /// 6 characters are left out (too many false matches). Never logged.
     pub fn screening_secrets(&self, user_id: &str) -> Vec<(String, String, Option<String>)> {
+        let ephemeral = ephemeral_secrets(user_id);
         let records: Vec<(String, CredentialRecord)> = self
             .records
             .lock()
@@ -462,6 +463,7 @@ impl CredentialStore {
                 let value = crate::token_crypto::open(&record.sealed_value);
                 (value.chars().count() >= 6).then_some((name, value, record.bind))
             })
+            .chain(ephemeral.into_iter().map(|v| ("one-off secret".to_string(), v, None)))
             .collect()
     }
 
@@ -510,6 +512,39 @@ impl CredentialStore {
 /// `<computer_use_dir>/credentials/credentials.jsonl` and are reloaded at
 /// boot. The file is written mode-0600 on Unix (created via the same
 /// computer-use dir the receipts use; see `seal_strict` for the key source).
+/// One-off secrets the person typed into the masked secret box
+/// (`request_human` with `secret`). Held in memory only, per user, for 30
+/// minutes, so screenshots and observations can be screened for the value
+/// like a vault secret. Never persisted, never logged.
+static EPHEMERAL_SECRETS: Lazy<std::sync::Mutex<HashMap<String, Vec<(String, std::time::Instant)>>>> =
+    Lazy::new(|| std::sync::Mutex::new(HashMap::new()));
+
+const EPHEMERAL_TTL: std::time::Duration = std::time::Duration::from_secs(30 * 60);
+
+/// Remember a one-off secret for screening (see `screening_secrets`).
+pub fn remember_ephemeral_secret(user_id: &str, value: &str) {
+    if value.is_empty() {
+        return;
+    }
+    let mut map = EPHEMERAL_SECRETS.lock().unwrap_or_else(|p| p.into_inner());
+    let list = map.entry(user_id.to_string()).or_default();
+    list.retain(|(_, at)| at.elapsed() < EPHEMERAL_TTL);
+    list.push((value.to_string(), std::time::Instant::now()));
+}
+
+fn ephemeral_secrets(user_id: &str) -> Vec<String> {
+    let mut map = EPHEMERAL_SECRETS.lock().unwrap_or_else(|p| p.into_inner());
+    match map.get_mut(user_id) {
+        Some(list) => {
+            list.retain(|(_, at)| at.elapsed() < EPHEMERAL_TTL);
+            // 3, not 6: a one-off is often a CVC or short code, and a stray
+            // redacted match on a page costs less than a leaked one.
+            list.iter().filter(|(v, _)| v.chars().count() >= 3).map(|(v, _)| v.clone()).collect()
+        }
+        None => Vec::new(),
+    }
+}
+
 pub static CREDENTIALS: Lazy<CredentialStore> = Lazy::new(|| {
     CredentialStore::new_persisted(credentials_dir().join("credentials.jsonl"))
 });

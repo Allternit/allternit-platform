@@ -84,6 +84,7 @@ use allternit_api::local_engine_routes::local_engine_router;
 use allternit_api::local_studio_routes::local_studio_router;
 use allternit_api::mcp_routes::mcp_router;
 use allternit_api::me_routes::me_router;
+use allternit_api::setup_routes::setup_router;
 use allternit_api::memory_reconstruction_routes::memory_reconstruction_router;
 use allternit_api::memory_routes::memory_router;
 use allternit_api::memory_drive_routes::memory_drive_router;
@@ -1001,6 +1002,7 @@ async fn main() {
         .merge(file_router())
         .merge(memory_router())
         .merge(me_router())
+        .merge(setup_router())
         .merge(local_brain_router())
         .merge(library_router())
         .merge(workflow_router())
@@ -1110,6 +1112,7 @@ async fn main() {
         .merge(allternit_api::memory_curation::memory_curation_router())
         .merge(allternit_api::coordinator_routes::coordinator_router())
         .merge(allternit_api::delegate_routes::delegate_router())
+        .merge(allternit_api::morning_brief::brief_router())
         .merge(allternit_api::slack_webhook_routes::slack_binding_router())
         .merge(model_training_router())
         .merge(photon_router())

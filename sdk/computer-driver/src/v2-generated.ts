@@ -49,8 +49,8 @@ export type ComputerV2ActInput = { id: string; op: "click" | "set_value" | "sele
 export type ComputerV2RunBatchInput = { app?: string | null; pid?: number | null; window_id?: number | null; version?: number | null; steps: Array<{ act?: { id: string; op: "click" | "set_value" | "select" | "press" | "menu" | "focus"; value?: string | null; key?: string | null } | null; menu?: string | Array<string> | null; pixel?: { tool: string; args?: Record<string, unknown> | null } | null; wait?: number | null; wait_for?: { id?: string | null; role?: string | null; name?: string | null; text?: string | null; gone?: boolean | null; value?: string | null; enabled?: boolean | null } | null; expect?: { id?: string | null; role?: string | null; name?: string | null; text?: string | null; gone?: boolean | null; value?: string | null; enabled?: boolean | null } | null; timeout_ms?: number | null }> };
 /** Check bounded conditions on the current UI without acting: role, name, text, gone, value, enabled. Each check is {id?, role?, name?, text?, gone?, value?, enabled?}; all given parts must hold. Returns one ok per check. Use after act/run_batch, or to poll with timeout_ms. */
 export type ComputerV2VerifyInput = { app?: string | null; pid?: number | null; window_id?: number | null; checks: Array<{ id?: string | null; role?: string | null; name?: string | null; text?: string | null; gone?: boolean | null; value?: string | null; enabled?: boolean | null }>; timeout_ms?: number | null };
-/** Pause and hand the computer to a person: the live view opens with input enabled and the agent's hold on control is released. The same session resumes when the person signals done, or when timeout_ms elapses. Use for CAPTCHAs, push/SMS 2FA and judgment calls. */
-export type ComputerV2RequestHumanInput = { reason?: string | null; timeout_ms?: number | null };
+/** Pause and hand the computer to a person: the live view opens with input enabled and the agent's hold on control is released. The same session resumes when the person signals done, or when timeout_ms elapses. Use for CAPTCHAs, push/SMS 2FA and judgment calls. Pass secret to ask for a one-off secret in a masked box instead of handing over control. */
+export type ComputerV2RequestHumanInput = { reason?: string | null; timeout_ms?: number | null; secret?: { label: string; field?: string | null; domain?: string | null } | null };
 /** Type a vault credential into the FOCUSED field. The value never enters the model context, prompts or logs. kind: secret (the stored value) or totp (a fresh code from a stored TOTP seed). The credential is bound to an app or domain: pass `domain` (the app you are filling into); it must match the credential's binding. On this Mac a person approves each use, like typing. */
 export type ComputerV2UseCredentialInput = { name: string; kind?: "secret" | "totp" | null; source?: "vault" | "keychain" | "bitwarden" | "onepassword" | null; domain?: string | null };
 /** Hand a bounded UI subtask (fill a form, search and pick a result, toggle settings) to the fast decision loop instead of driving each step yourself. Give the goal, the literal inputs it may type (it never invents text), success checks in verify syntax, and limits. Each step reads the element map, picks one action from the visible elements x allowed ops with a ~100 ms typed decision (POST /v1/decisions), runs it through the same lease/approval/audit path (predictable steps batched with expect checks), and checks success with verify. Returns a step trace and a status: done, escalated (with the reason and the current screen: continue from there yourself), or failed. One approval covers the whole subtask on this computer. Repeat subtasks replay from the cache with zero decisions (the result's cache block says hit, healed, recorded or miss); only subtasks with at least one exact (non-ask) success check are cached. Input values are never stored, only their names. With api_options, an MCP/API call you hold is offered ahead of GUI steps (status use_api hands it back to you). With best_of N and computers, N rollouts run on N sandbox computers and a judge picks one by step narratives. */
@@ -749,6 +749,28 @@ export const COMPUTER_V2_TOOL_SCHEMAS = {
       "timeout_ms": {
         "type": "integer",
         "description": "How long to wait for the person (default 300000, max 1800000)."
+      },
+      "secret": {
+        "type": "object",
+        "description": "Ask the person for a one-off secret (password, 2FA code, card CVC) that is not saved in the vault. They type it into a masked box; it goes straight into the focused field and never reaches you, the logs or the transcript. Focus the field first. The result only says the field was filled.",
+        "properties": {
+          "label": {
+            "type": "string",
+            "description": "What to ask for, shown above the masked box (e.g. 'Password for acme.com' or '6-digit code')."
+          },
+          "field": {
+            "type": "string",
+            "description": "Optional name of the field it will fill, shown to the person."
+          },
+          "domain": {
+            "type": "string",
+            "description": "Optional app or site domain the secret is for. If the person chooses to save it to the vault, it is bound there."
+          }
+        },
+        "required": [
+          "label"
+        ],
+        "additionalProperties": false
       }
     },
     "required": [],
@@ -1298,7 +1320,7 @@ export const COMPUTER_V2_STRUCTURED_MEMBERS = [
   },
   {
     "name": "request_human",
-    "description": "Pause and hand the computer to a person: the live view opens with input enabled and the agent's hold on control is released. The same session resumes when the person signals done, or when timeout_ms elapses. Use for CAPTCHAs, push/SMS 2FA and judgment calls.",
+    "description": "Pause and hand the computer to a person: the live view opens with input enabled and the agent's hold on control is released. The same session resumes when the person signals done, or when timeout_ms elapses. Use for CAPTCHAs, push/SMS 2FA and judgment calls. Pass secret to ask for a one-off secret in a masked box instead of handing over control.",
     "risk": "reversible",
     "default_enabled": true,
     "needs_confirm": false,

@@ -1029,7 +1029,7 @@
     },
     {
       "name": "request_human",
-      "description": "Pause and hand the computer to a person: the live view opens with input enabled and the agent's hold on control is released. The same session resumes when the person signals done, or when timeout_ms elapses. Use for CAPTCHAs, push/SMS 2FA and judgment calls.",
+      "description": "Pause and hand the computer to a person: the live view opens with input enabled and the agent's hold on control is released. The same session resumes when the person signals done, or when timeout_ms elapses. Use for CAPTCHAs, push/SMS 2FA and judgment calls. Pass secret to ask for a one-off secret in a masked box instead of handing over control.",
       "risk": "reversible",
       "default_enabled": true,
       "needs_confirm": false,
@@ -1047,6 +1047,28 @@
           "timeout_ms": {
             "type": "integer",
             "description": "How long to wait for the person (default 300000, max 1800000)."
+          },
+          "secret": {
+            "type": "object",
+            "description": "Ask the person for a one-off secret (password, 2FA code, card CVC) that is not saved in the vault. They type it into a masked box; it goes straight into the focused field and never reaches you, the logs or the transcript. Focus the field first. The result only says the field was filled.",
+            "properties": {
+              "label": {
+                "type": "string",
+                "description": "What to ask for, shown above the masked box (e.g. 'Password for acme.com' or '6-digit code')."
+              },
+              "field": {
+                "type": "string",
+                "description": "Optional name of the field it will fill, shown to the person."
+              },
+              "domain": {
+                "type": "string",
+                "description": "Optional app or site domain the secret is for. If the person chooses to save it to the vault, it is bound there."
+              }
+            },
+            "required": [
+              "label"
+            ],
+            "additionalProperties": false
           }
         },
         "required": [],

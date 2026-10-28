@@ -142,6 +142,43 @@ Type to filter by title. Use the arrow keys and Enter, or click; **Esc** closes.
 
 Checklist progress is reported as completed steps out of total steps. Review means the result needs attention; it is not a claim that the task has been approved. Use Stop on an active turn to interrupt execution, including a turn started by the server. Stopping a turn and resolving a task are separate actions.
 
+## Threads with a purpose
+
+Give a thread a purpose and it stays on one job. A thread can carry three things besides its name:
+
+- **A purpose.** One line, up to 160 characters, saying what the thread is for. It is optional.
+- **An icon.** One of 16 icons (chat, work, code, writing, research, ideas, launch, numbers, marketing, operations, bugs, learning, planning, email, shopping, personal).
+- **A colour.** One of 8 colours: blue, green, amber, red, teal, orange, slate and ink. They are the app's own colours, so they follow light and dark mode.
+
+### Start one
+
+On the bot's screen, choose **New thread**. Type a name if you like, then choose **Give it an icon, colour and purpose**. You can fill in any of it. With a purpose you can leave the task box empty. The plain **New thread** from the rail or the switcher still works as before: no questions, an empty thread.
+
+### What the bot does
+
+- **It says hello.** A thread with a purpose opens with a message from the bot that names the purpose, and three starter tasks as chips. Tap a chip and it is sent as your message. The chips go away once anyone has said something in the thread.
+- **The bot writes the starters.** The bot's own brain suggests them through your normal model routing. While it thinks you see "Thinking of ways to start". If the call fails you get three general starters and a note with **Try again**.
+- **It stays on topic.** The purpose is added to the thread's context on every turn, so the bot keeps the work there on that purpose and suggests a new thread for something unrelated. It is also carried into the next context window when the thread continues in a fresh one.
+
+### Change it later
+
+Click the purpose button next to the thread's name at the top of the thread (an icon and the purpose, or **Purpose** when there is none). Pick a new icon or colour, edit the line, and choose **Save**. Clear the line to remove the purpose. If saving fails, the message stays in the popover and nothing changes.
+
+### Where you see it
+
+- **Thread lists.** Each thread shows its icon in its colour: in the bot's thread list, in the Bots rail, and in the task log. Archived threads stay folded under, as before.
+- **Runs.** Anything that runs in a thread with a colour wears a small tag, a dot in the thread's colour and the thread's name: routine runs (the routine row and its earlier runs), the agent run tree under a reply, and session loops in Automation.
+
+This works the same on Desktop, the `ai.allternit.com` phone layout and the `m.allternit.com` PWA. On a phone the pickers use larger tap targets.
+
+### For developers (purpose, icon and colour)
+
+- Migration `V281__bot_thread_purpose.sql` adds `bot_threads.purpose`, `icon` and `color` (all nullable text). `cloud-api` does not store bot threads, so it has no matching migration.
+- Thread views carry `purpose`, `icon` and `color`. `POST /api/v1/threads` and `PATCH /api/v1/threads/:id` accept the same three fields. Limits: `purpose` is collapsed to one line and capped at 160 characters; `icon` must be one of `THREAD_ICONS`, `color` one of `THREAD_COLORS` (both in `thread_routes.rs`); anything else is a 400. On `PATCH`, an omitted field is left alone and an empty string clears it.
+- `POST /api/v1/threads/:id/starters` (no body) returns `{starters: string[3], source: "model" | "fallback"}`. It asks the bot's brain through `gizzi_completion::complete_ephemeral` and returns the static fallback when the call fails or gives fewer than three tasks. 400 when the thread has no purpose.
+- Handoff checkpoints begin with `Purpose of this thread: ...` (`thread_context`).
+- Client: `src/lib/bots/thread-look.ts` holds the icon and colour keys and the key-to-token map (`THREAD_COLOR_VAR`; no raw hex), the hello text and the fallback starters. `threadApi.starters` and `useThreadStarters` (`thread-starters.ts`, cached per thread) feed `ThreadPurposeHello`. `ThreadLookFields` and `ThreadLookButton` (`ThreadLookEditor.tsx`) are the pickers and the header editor. `ThreadTag` and `ThreadTagForSession` (`ThreadLookMark.tsx`) are the run tag. `mode-session-store.ts` adds `threadPurposeContext` to the system prompt of a thread's session. `createBotThread` and `startThreadWith` take `purpose`, `icon`, `color` and a `title`.
+
 ## Archiving, renaming and closing threads
 
 A thread is a room for one piece of work. When the work changes or ends, the thread says so.
@@ -227,10 +264,11 @@ These authenticated routes belong to the private Allternit API data plane, norma
 
 | Method | Runtime path | Purpose |
 | --- | --- | --- |
-| GET / POST | `/api/v1/threads` | List or create threads. |
-| GET / PATCH | `/api/v1/threads/:id` | Read or update a thread. `PATCH` also takes `urgency` (`urgent` or `normal`), carried on the `thread.needs_user` event. |
+| GET / POST | `/api/v1/threads` | List or create threads. `POST` also takes `purpose`, `icon` and `color`. |
+| GET / PATCH | `/api/v1/threads/:id` | Read or update a thread. `PATCH` also takes `urgency` (`urgent` or `normal`), carried on the `thread.needs_user` event, and `purpose`, `icon` and `color` (an empty string clears one). |
 | GET | `/api/v1/threads/by-session/:session_id` | Find the durable thread for a session. |
 | POST | `/api/v1/threads/:id/resolve` | Resolve a task thread. |
+| POST | `/api/v1/threads/:id/starters` | Three starter tasks for a thread with a purpose, written by the bot's brain; static fallback on failure. |
 | POST | `/api/v1/threads/:id/archive` | Archive a thread: it closes (task grants revoked, tied reminders stopped) and its transcript stays readable. 409 for a bot's main chat. |
 | POST | `/api/v1/threads/:id/unarchive` | Bring an archived thread back; reminders the archive stopped start again. |
 | POST | `/api/v1/bot-routing/thread/update` | `{sessionId, title?, goal?, needsYou?: {reason, urgency?}}` → rename the calling session's thread, restate its goal, or put it in `needs_you`. 409 when renaming a standing thread. |

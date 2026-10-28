@@ -444,6 +444,8 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         // Clerk session or `account` API token per-request, 503 without
         // CLERK_SECRET_KEY. Desktop's way to share what web writes directly.
         .merge(routes::me_flags::routes())
+        // Setup checklist: live checks for account, brain, computers, channels.
+        .merge(routes::setup_checks::routes())
         // Open lane settings (acceptable use, 18+, refusal handoff); Clerk
         // session or `account` API token per-request.
         .merge(routes::open_lane::routes())
