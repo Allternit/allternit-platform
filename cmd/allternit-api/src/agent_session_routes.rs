@@ -103,20 +103,39 @@ fn agent_allowed_on_surface(
     };
 
     let modes: Vec<String> = serde_json::from_str(&enabled).unwrap_or_default();
-    // Normalize surface names: gizzi uses some different names.
-    let normalized_surface = match surface {
-        "chat" | "cowork" | "code" | "browser" | "design" => surface,
-        _ => surface,
-    };
-
-    if modes.iter().any(|m| m == normalized_surface || m == "all") {
+    if modes.iter().any(|m| m == "all" || same_surface(m, surface)) {
         Ok(())
     } else {
         Err(format!(
             "Agent {} is not enabled for surface '{}'",
-            agent_id, normalized_surface
+            agent_id, surface
         ))
     }
+}
+
+/// Cowork is folded into Chat: `chat` and `cowork` are one surface, so an
+/// agent enabled for either runs on both. Other surfaces match exactly.
+fn same_surface(enabled: &str, requested: &str) -> bool {
+    fn fold(s: &str) -> &str {
+        if s == "cowork" { "chat" } else { s }
+    }
+    fold(enabled) == fold(requested)
+}
+
+/// True for the user's main bot: the bot flagged `botProfile.chiefOfStaff`,
+/// or one made from the A:// primary template (`config.templateId`), the
+/// same chain as the client's `resolveMainBot`. Every chat runs as it.
+pub(crate) fn is_main_bot(db: &DbHandle, agent_id: &str) -> bool {
+    let Ok(conn) = db.connect() else { return false };
+    let config: Option<String> = conn
+        .query_row("SELECT config FROM agents WHERE id = ?1", params![agent_id], |r| r.get(0))
+        .ok()
+        .flatten();
+    let config = config
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+        .unwrap_or(serde_json::Value::Null);
+    config["botProfile"]["chiefOfStaff"].as_bool() == Some(true)
+        || config["templateId"].as_str() == Some("primary-a")
 }
 
 pub fn agent_session_router() -> Router<Arc<AppState>> {
@@ -3059,7 +3078,7 @@ pub(crate) async fn native_turn_request(db: &DbHandle, session_id: &str, bot_id:
     }
     let client = gizzi_client(&headers);
     if let Some(bag) = db.get_session_metadata(session_id).ok().flatten().filter(|bag| bag["projectRole"] == "thread") {
-        let mode = match bag["codePermissionMode"].as_str() { Some("plan") => "plan", Some("acceptEdits") => "acceptEdits", _ => "default" };
+        let mode = match bag["codePermissionMode"].as_str() { Some("plan") => "plan", Some("acceptEdits") => "acceptEdits", Some("auto") => "auto", _ => "default" };
         let response = client.put(format!("{}/permission/mode/{}", gizzi_base(), urlencoding::encode(session_id))).json(&json!({ "mode": mode })).send().await.map_err(|e| format!("could not enforce project permissions: {e}"))?;
         if !response.status().is_success() { return Err(format!("runtime refused project permission mode ({})", response.status())); }
     }

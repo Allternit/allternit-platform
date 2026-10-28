@@ -172,3 +172,31 @@ describe("evaluatePolicy: floor and configured deny beat bypass", () => {
     expect(error.message).toContain("recursive rm of ~")
   })
 })
+
+describe("Catastrophic.deletes", () => {
+  test("sees deletes through wrappers, shells and substitutions", () => {
+    for (const command of [
+      "rm notes.txt",
+      "rmdir build",
+      "unlink a.txt",
+      "trash ~/Downloads/old.zip",
+      "git clean -fdx",
+      "git -C repo rm src/a.ts",
+      "find . -name '*.log' -delete",
+      "find . -name '*.tmp' -exec rm {} \;",
+      "sudo env FOO=1 rm a",
+      "bash -c 'rm a'",
+      "echo $(rm a)",
+      "eval rm a",
+      "rm 'unclosed",
+    ]) {
+      expect(Catastrophic.deletes(command)).toBe(true)
+    }
+  })
+
+  test("leaves ordinary commands alone", () => {
+    for (const command of ["npm test", "git status", "git commit -m 'remove rm usage'", "ls -la", "echo rm", "grep -r unlink src"]) {
+      expect(Catastrophic.deletes(command)).toBe(false)
+    }
+  })
+})

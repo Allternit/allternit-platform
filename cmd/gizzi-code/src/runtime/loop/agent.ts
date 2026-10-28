@@ -177,7 +177,8 @@ export namespace Agent {
         "*id_ecdsa.pub": "allow",
       },
     }, "default")
-    const user = PermissionNext.fromConfig(cfg.permission ?? {})
+    // Tagged "user" so auto mode in app sessions keeps the person's own asks.
+    const user = PermissionNext.fromConfig(cfg.permission ?? {}, "user")
 
     const result: Record<string, Info> = {
       build: {
@@ -455,7 +456,7 @@ export namespace Agent {
         : item.summaryPolicy
       item.harness = value.harness ?? item.harness
       item.options = mergeDeep(item.options, value.options ?? {})
-      item.permission = PermissionNext.merge(item.permission, PermissionNext.fromConfig(value.permission ?? {}))
+      item.permission = PermissionNext.merge(item.permission, PermissionNext.fromConfig(value.permission ?? {}, "user"))
     }
 
     // Ensure Truncate.GLOB is allowed unless explicitly configured
