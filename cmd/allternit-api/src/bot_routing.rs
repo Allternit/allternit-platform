@@ -159,7 +159,11 @@ fn bot_name_and_owner(conn: &rusqlite::Connection, bot_id: &str) -> Option<(Stri
 }
 
 /// The app bot behind `session_id`, or `None` when the session is not a
-/// bot's own chat (a regular chat, a group room, a subagent).
+/// bot's own chat (a regular chat, a group room, a subagent). A person's chat
+/// runs as their main bot (`mainBotChat`, A:// by default) and counts too:
+/// A:// orchestrates every chat and hands work to the other bots (Eoj,
+/// 2026-10-28). Such a chat is never adopted as a bot thread, so hand-offs
+/// from it start top-level task threads.
 pub fn caller_for_session(db: &DbHandle, session_id: &str) -> Option<Caller> {
     let bag = db.get_session_metadata(session_id).ok().flatten()?;
     if bag["isGroupChat"].as_bool() == Some(true) {
@@ -168,7 +172,8 @@ pub fn caller_for_session(db: &DbHandle, session_id: &str) -> Option<Caller> {
     let s = |k: &str| bag[k].as_str().filter(|v| !v.is_empty()).map(str::to_string);
     let bot_id = s("botCanonicalFor")
         .or_else(|| s("botThreadOf"))
-        .or_else(|| if bag["isBot"].as_bool() == Some(true) { s("agentId") } else { None })?;
+        .or_else(|| if bag["isBot"].as_bool() == Some(true) { s("agentId") } else { None })
+        .or_else(|| if bag["mainBotChat"].as_bool() == Some(true) { s("agentId") } else { None })?;
     let conn = db.connect().ok()?;
     let (name, user_id) = bot_name_and_owner(&conn, &bot_id)?;
     drop(conn);
@@ -972,6 +977,8 @@ mod tests {
             .unwrap();
         state.db.set_session_metadata("s-main", &json!({"isBot": true, "agentId": "main", "botCanonicalFor": "main", "projectId": "proj-1"})).unwrap();
         state.db.set_session_metadata("s-plain", &json!({"sessionMode": "agent"})).unwrap();
+        state.db.set_session_metadata("s-chat", &json!({"sessionMode": "agent", "agentId": "main", "mainBotChat": true, "originSurface": "chat"})).unwrap();
+        state.db.set_session_metadata("s-chat-plain", &json!({"sessionMode": "agent", "agentId": "plain", "mainBotChat": true})).unwrap();
         state.db.set_session_metadata("s-group", &json!({"isGroupChat": true, "botThreadOf": "main"})).unwrap();
         state.db.set_session_metadata("s-other", &json!({"isBot": true, "botCanonicalFor": "other"})).unwrap();
         state.db.clone()
@@ -985,6 +992,11 @@ mod tests {
         assert!(c.thread_id.is_some(), "the main chat is adopted as its standing thread");
         assert_eq!(c.project_id.as_deref(), Some("proj-1"));
         assert!(caller_for_session(&db, "s-plain").is_none());
+        // A person's chat runs as A:// and hands work off as A://, without becoming a bot thread.
+        let chat = caller_for_session(&db, "s-chat").unwrap();
+        assert_eq!((chat.bot_id.as_str(), chat.name.as_str()), ("main", "A://"));
+        assert!(chat.thread_id.is_none());
+        assert!(caller_for_session(&db, "s-chat-plain").is_none(), "only a bot can be the chat's caller");
         assert!(caller_for_session(&db, "s-group").is_none());
         assert!(caller_for_session(&db, "nope").is_none());
     }
