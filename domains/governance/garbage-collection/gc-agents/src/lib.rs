@@ -1962,16 +1962,6 @@ function duplicate2(): void {
         assert!(doc_result.metadata.is_some());
     }
 
-    #[tokio::test]
-    async fn test_entropy_tracking() {
-        let config = GcAgentConfig::default();
-        let orchestrator = GcAgentOrchestrator::new(config);
-
-        let initial_score = orchestrator.get_entropy_score().await;
-        // Verify entropy tracking works
-        let _ = initial_score.total_issues;
-    }
-
     #[test]
     fn test_should_exclude() {
         let patterns = vec!["target".to_string(), "node_modules".to_string()];

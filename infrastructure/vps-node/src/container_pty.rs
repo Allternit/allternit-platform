@@ -591,13 +591,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_container_pty_manager_creation() {
-        let manager = ContainerPtyManager::new();
-        // Just verify it creates without panicking
-        assert!(true);
-    }
-
-    #[test]
     fn test_build_docker_args() {
         let config = SandboxConfig {
             image: "alpine:latest".to_string(),

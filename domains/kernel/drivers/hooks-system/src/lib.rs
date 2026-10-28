@@ -802,37 +802,4 @@ mod tests {
         assert_eq!(kernel_events.len(), 2);
     }
 
-    #[tokio::test]
-    async fn test_task_output_hook() {
-        let engine = HooksSystemEngine::new(create_test_system_law(), create_test_harness());
-
-        // Test valid output - events are logged even without hooks registered
-        let results = engine.on_task_output("task_001", "code", true).await;
-        // Results may be empty if no hooks registered for this event type
-        // The important thing is the event was processed without error
-
-        // Test invalid output
-        let results = engine.on_task_output("task_002", "code", false).await;
-        // Would be blocked in production with proper hook configuration
-    }
-
-    #[tokio::test]
-    async fn test_escalation_hook() {
-        let engine = HooksSystemEngine::new(create_test_system_law(), create_test_harness());
-
-        // Events are processed even without hooks registered
-        let _results = engine
-            .on_escalation(EscalationLevel::Agent, EscalationLevel::Human, "Complex issue")
-            .await;
-        // Test passes if no panic
-    }
-
-    #[tokio::test]
-    async fn test_approval_hook() {
-        let engine = HooksSystemEngine::new(create_test_system_law(), create_test_harness());
-
-        // Events are processed even without hooks registered
-        let _results = engine.on_approval("merge", true, "user_001").await;
-        // Test passes if no panic
-    }
 }

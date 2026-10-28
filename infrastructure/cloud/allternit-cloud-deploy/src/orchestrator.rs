@@ -265,10 +265,4 @@ impl DeploymentOrchestrator {
 mod tests {
     use super::*;
     
-    #[tokio::test]
-    async fn test_orchestrator_creation() {
-        // This would require a mock provider
-        // For now, just verify the struct can be created
-        let _ = DeploymentOrchestrator::new;
-    }
 }

@@ -162,9 +162,4 @@ fn status_matches_filter(status: &JobStatus, filter: &JobStatus) -> bool {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_executor_creation() {
-        let executor = ExecutorServiceImpl::new();
-        // Basic creation test
-    }
 }

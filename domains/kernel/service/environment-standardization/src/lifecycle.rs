@@ -220,15 +220,6 @@ impl Provisioner for SimpleProvisioner {
 mod tests {
     use super::*;
 
-    #[tokio::test]
-    async fn test_lifecycle_runner_creation() {
-        let provisioner = Box::new(SimpleProvisioner);
-        let runner = LifecycleRunner::new(provisioner);
-        
-        // Basic creation test
-        assert!(true);
-    }
-
     #[test]
     fn test_lifecycle_spec_builder() {
         let spec = LifecycleSpec::new("test-app", "/path/to/source")

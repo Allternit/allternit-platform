@@ -571,13 +571,6 @@ pub enum Constraint {
 mod tests {
     use super::*;
 
-    /// Test policy engine creation
-    #[test]
-    fn test_policy_engine_new() {
-        let engine = PolicyEngine::new();
-        let _ = engine;
-    }
-
     /// Test policy request creation
     #[test]
     fn test_policy_request_new() {

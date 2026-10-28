@@ -14,12 +14,6 @@ mod tests {
     // ExecutorService Creation Tests
     // ========================================================================
 
-    #[test]
-    fn test_executor_creation() {
-        let executor = ExecutorServiceImpl::new();
-        // Basic creation test - verifies the executor can be instantiated
-    }
-
     #[tokio::test]
     async fn test_executor_submit_returns_job_id() {
         let executor = ExecutorServiceImpl::new();

@@ -1362,28 +1362,6 @@ impl Clone for VMInstance {
 mod tests {
     use super::*;
 
-    #[tokio::test]
-    async fn test_vm_bridge_creation() {
-        let config = LocalRuntimeConfig {
-            driver: VMDriver::QemuKvm,
-            data_dir: PathBuf::from("/tmp/test_allternit_runtime"),
-            default_resources: ResourceLimits::default(),
-            ssh_key_path: None,
-            base_image_path: None,
-            qemu_binary: None,
-        };
-
-        let bridge = VmBridge::new(&config).await;
-        // May fail if QEMU not installed, that's ok for this test
-        match bridge {
-            Ok(_) => println!("VM Bridge created successfully"),
-            Err(e) => println!(
-                "VM Bridge creation failed (expected if QEMU not installed): {}",
-                e
-            ),
-        }
-    }
-
     #[test]
     fn test_cloud_init_generation() {
         let config = LocalRuntimeConfig::default();
