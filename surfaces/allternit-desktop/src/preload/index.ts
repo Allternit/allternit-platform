@@ -734,6 +734,11 @@ const phonesAPI = {
   forget: (id: string): Promise<void> => ipcRenderer.invoke('phone:forget', id),
   startScrcpy: (serial: string): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('phone:scrcpy-start', serial),
   stopScrcpy: (serial: string): Promise<void> => ipcRenderer.invoke('phone:scrcpy-stop', serial),
+  /** iPhones connected with the Allternit app (serial "app:…"): [{ serial, name, screen, route: 'iphone-app-store', … }]. */
+  appPhones: (): Promise<unknown> => ipcRenderer.invoke('phone:app-phones'),
+  /** Answer an Allternit app pairing request shown on this Desktop. */
+  appPairDecision: (phoneId: string, approve: boolean): Promise<{ ok: boolean; message?: string }> =>
+    ipcRenderer.invoke('phone:app-pair-decision', phoneId, approve),
   startStream: (serial: string, opts?: PhoneStreamOptions): Promise<{ ok: true } | { ok: false; message: string }> =>
     ipcRenderer.invoke('phone:stream-start', serial, opts ?? {}),
   stopStream: (serial: string): Promise<void> => ipcRenderer.invoke('phone:stream-stop', serial),

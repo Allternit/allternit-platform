@@ -245,6 +245,12 @@
       "label": "platform agents runtime",
       "kind": "module",
       "path": "allternit/cmd/allternit-api/src/platform_agents.rs"
+    },
+    {
+      "id": "allternit/cmd/allternit-api/src/events_feed.rs",
+      "label": "runtime events feed",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-api/src/events_feed.rs"
     }
   ],
   "edges": [
@@ -798,6 +804,24 @@
         "allternit-ai/src/lib/artifacts/api.ts",
         "allternit/cmd/allternit-cloud-api/src/routes/artifacts_v2.rs",
         "allternit/cmd/allternit-cloud-api/migrations_pg/109_artifact_library_archive.sql"
+      ]
+    },
+    {
+      "source": "allternit/surfaces/allternit-desktop",
+      "target": "allternit/cmd/allternit-api/src/phone_ws.rs",
+      "kind": "route iphone-app-store, loopback HTTP + websocket (desktop credential): GET /api/v1/phones (app: rows), POST /api/v1/phones/app/:id/rpc (phone.web.*, screen.prompt), POST /api/v1/phones/app/pair/:phoneId/decision, and a read-only viewer of /ws/phones/app:<id>/stream (plaintext iCTRL packets) for the live view and phone.screenshot",
+      "evidence": [
+        "allternit/surfaces/allternit-desktop/src/main/phone-app-store.ts",
+        "allternit/surfaces/allternit-desktop/src/main/phone-service.ts"
+      ]
+    },
+    {
+      "source": "allternit-ai/src/lib/notifications",
+      "target": "allternit/cmd/allternit-api/src/events_feed.rs",
+      "kind": "SSE /api/v1/events/stream on Desktop: phone_app.pair_request {phoneId,name,model,code} opens the Allternit iPhone app pairing card (route iphone-app-store)",
+      "evidence": [
+        "allternit-ai/src/lib/notifications/runtime-feed.ts",
+        "allternit-ai/src/lib/app-phone-pairing.ts"
       ]
     }
   ]

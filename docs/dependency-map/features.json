@@ -2087,6 +2087,33 @@
       ]
     },
     {
+      "id": "feature:iphone-app-store",
+      "label": "iPhone through the Allternit app (screen + in-app browser)",
+      "product": "product:computer-use",
+      "status": "building",
+      "description": "Route iphone-app-store (serial app:<phoneId>): the App Store app pairs with Desktop (6-digit code, Approve/Deny on Desktop), its broadcast extension streams the screen out through the cloud relay to the node, and bots see it (phone.screenshot, live view on Desktop, ai.allternit.com phone layout and the PWA) and drive the app's own browser (phone.web.*, phone.screen.request). Screen only: taps on other apps need the Bluetooth board.",
+      "touches": [
+        "allternit/surfaces/allternit-desktop",
+        "allternit/cmd/allternit-api/src/phone_ws.rs",
+        "allternit-ai/src/components/phones",
+        "allternit-ai/src/components/computers",
+        "allternit-ai/src/lib/phone-stream",
+        "allternit-ai/src/fabric-session",
+        "allternit-ai/src/lib/notifications"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-27",
+          "note": "Eoj approved the plan (SPEC-iphone-app-screen-2026-10-27.md): no XCTest, no Apple ID signing, no Developer Mode; the phone only dials out. Desktop is one more viewer of the node's app:<id> stream and reuses IosVideoPacketParser; phone.screenshot decodes the last keyframe with Chromium WebCodecs in a hidden window. phone.tap/swipe answer not_supported (\"Taps on native apps need the Bluetooth board\"); phone.web.* go to POST /api/v1/phones/app/:id/rpc. Pair approval is a Desktop card fed by phone_app.pair_request on the runtime events feed."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/iphone-app.mdx",
+        "allternit/surfaces/docs/api/phone-stream-relay.mdx",
+        "allternit/surfaces/allternit-desktop/src/main/phone-app-store.ts"
+      ]
+    },
+    {
       "id": "feature:local-vendor-bots",
       "label": "Local vendor bot adapters",
       "product": "product:digital-twin",

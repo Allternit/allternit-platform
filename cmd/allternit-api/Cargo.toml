@@ -95,6 +95,10 @@ zip = { version = "0.6", default-features = false, features = ["deflate"] }
 md5 = "0.7"
 aes-gcm = "0.10"
 ed25519-dalek = { version = "2", features = ["rand_core"] }
+# App-phone pairing (phone_app_envelope): X25519 via the curve25519-dalek
+# already in the tree for ed25519-dalek, plus HKDF-SHA256.
+curve25519-dalek = "4"
+hkdf = "0.12"
 webauthn-rs = "0.5"
 url = "2"
 

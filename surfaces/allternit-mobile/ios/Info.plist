@@ -20,6 +20,10 @@
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<!-- Full name of the keychain group shared with the AllternitScreen
+	     broadcast extension (Shared/AppPhone/AppPhoneLink.swift). -->
+	<key>AllternitSharedKeychainGroup</key>
+	<string>$(AppIdentifierPrefix)com.allternit.mobile.shared</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>UILaunchScreen</key>

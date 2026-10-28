@@ -1,0 +1,68 @@
+---
+title: Your iPhone with the Allternit app
+description: "Pair the Allternit iPhone app with Allternit Desktop so your bot can see the iPhone's screen while you share it, and use the app's own browser. No cable, board or developer account."
+---
+
+The **Allternit app** for iPhone, from the App Store, lets your bots use your iPhone in two ways:
+
+- **See the screen.** When you tap **Share screen**, the app streams the iPhone's screen to your Allternit Desktop, from anywhere. You can watch it in Allternit on your computer, on ai.allternit.com and in the m.allternit.com phone app, and your bot can take screenshots of it.
+- **Use the app's browser.** While the Allternit app is open, your bot can open web pages in the app's own browser, read them, click, type, scroll and go back.
+
+You don't need a cable, a jailbreak, an Apple developer account or Developer Mode. The iPhone only connects out to Allternit, so it works on any network.
+
+## What works and what doesn't
+
+| | Without the Bluetooth board | With the Bluetooth board |
+|---|---|---|
+| Seeing the screen while you share it | Yes | Yes |
+| Your bot using the Allternit app's browser | Yes | Yes |
+| Taps, swipes and typing in other apps | No | Coming with the Bluetooth board |
+| Opening other apps, Home, Back | No | Coming with the Bluetooth board |
+
+In Allternit these iPhones are marked **Screen only**. If a bot tries to tap one, it gets the answer "Taps on native apps need the Bluetooth board". To let a bot tap and type on an iPhone today, use the [Allternit USB Agent](/guides/usb-agent).
+
+## Pair the iPhone
+
+You need Allternit Desktop running on your computer, signed in to the same account as the app.
+
+1. Install **Allternit** from the App Store and sign in.
+2. In the app, open **Settings → Phones → Let your bots use this iPhone**, and pick your computer.
+3. The app shows a 6-digit code. Allternit Desktop shows a card with the iPhone's name and the same code.
+4. Check that the two codes match, then choose **Approve** on Desktop. Choose **Deny** if you didn't start this or the codes differ.
+
+The iPhone now shows in **Settings → Computers → Phones** and in the rail's phone list. You can see the steps there too, under **Connect with the Allternit iPhone app**.
+
+## Share the screen
+
+Tap **Share screen** in the Allternit app, then **Start Broadcast**. iOS asks each time; only you can start it. While it's on, the app shows "Your bot can see this screen" with a **Stop** button, and iOS shows its own recording indicator.
+
+When the iPhone isn't sharing, its row says "Open the Allternit app on your iPhone and tap Share screen". A bot can ask you to start sharing: the app then shows the Share screen sheet, and you decide.
+
+The iPhone only sends video while someone is watching. When nobody is, the broadcast pauses.
+
+## What your bot can do
+
+Your bot uses the same phone tools it uses for every phone. These iPhones have the serial `app:` followed by an id, and `phone.devices` lists them with the route `iphone-app-store`.
+
+| Tool | What it does |
+|---|---|
+| `phone.screenshot` | The latest picture of the shared screen. |
+| `phone.screen.request` | Asks you to share the screen (shows the Share screen sheet in the app). |
+| `phone.web.open` | Opens a page in the Allternit app's browser. |
+| `phone.web.snapshot` | The page's address, title, a picture and its elements, each with a ref. |
+| `phone.web.click`, `phone.web.type` | Click or type into an element by its ref from the latest snapshot. |
+| `phone.web.scroll`, `phone.web.back`, `phone.web.wait` | Scroll, go back, or wait for the page to settle. |
+
+The browser tools work only while the Allternit app is open on the iPhone. Otherwise the bot is told to ask you to open it. The app shows "Bot is using the browser" with a **Stop** button while a bot works there; Stop ends that bot's turn. Element refs are only good for the snapshot that gave them, and the bot can't run its own scripts in the page.
+
+Taps, swipes, `phone.open_app`, `phone.home`, plain-English `phone.task` runs, texts and calls are not available on these iPhones.
+
+## Privacy
+
+- The screen goes from the iPhone to your own Desktop through Allternit's relay, sealed with a key only the iPhone and your Desktop hold. Allternit doesn't store it.
+- Each iPhone gets its own key. Remove the iPhone in the app, or in Allternit, to revoke it.
+- Nothing is shared until you tap **Start Broadcast**, and **Stop** ends it at once.
+
+## For developers
+
+The node routes, the pairing handshake and the viewer stream format are in the [Phone Stream Relay API](/api/phone-stream-relay#iphones-with-the-allternit-app).

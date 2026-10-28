@@ -47,8 +47,9 @@ final class ACIBrowserController: ObservableObject {
     @Published private(set) var navigation = ACINavigationState()
 
     /// Set by the representable in `makeUIView`; weak so the controller can
-    /// outlive a torn-down web view without holding it.
-    fileprivate weak var webView: WKWebView?
+    /// outlive a torn-down web view without holding it. Read by
+    /// ACIBrowserBridge when a bot drives this browser.
+    fileprivate(set) weak var webView: WKWebView?
 
     private var loadedInitialURL = false
 
@@ -91,6 +92,10 @@ struct ACIWebBrowserView: View {
     
     @State private var isExtensionChatOpen = false
     @State private var extensionInput = ""
+    @State private var runError: String?
+
+    @ObservedObject private var bridge = ACIBrowserBridge.shared
+    @ObservedObject private var phone = AppPhoneService.shared
 
     private let theme = ModeTheme(mode: .browser)
 
@@ -105,11 +110,25 @@ struct ACIWebBrowserView: View {
         VStack(spacing: 0) {
             urlBar
             progressBar
+            if bridge.isBotActive {
+                botBanner
+            }
             ACIBrowserWebView(controller: controller)
                 .onAppear { controller.loadIfNeeded(initialURL) }
             toolbar
         }
         .background(Color("BgPrimary"))
+        .animation(.easeOut(duration: 0.2), value: bridge.isBotActive)
+        .onAppear { bridge.attach(controller) }
+        .onDisappear { bridge.detach(controller) }
+        .alert("Couldn't start the run", isPresented: Binding(
+            get: { runError != nil },
+            set: { if !$0 { runError = nil } }
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(runError ?? "")
+        }
         .onChange(of: controller.navigation.url) { _, newURL in
             // Follow navigations unless the user is mid-edit in the bar.
             if !urlFieldFocused, let newURL {
@@ -173,6 +192,49 @@ struct ACIWebBrowserView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
+    }
+
+    // MARK: - Bot banner
+
+    /// Shown while a bot is driving this browser over the control socket
+    /// (guideline 2.5.14: a visible indicator, and a way to stop it).
+    private var botBanner: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "cursorarrow.motionlines")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(theme.accent)
+            Text("Bot is using the browser")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(Color("TextPrimary"))
+            Spacer()
+            Button("Stop") { bridge.stopBot() }
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(Theme.statusError)
+                .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .background(theme.accentSoft)
+        .accessibilityElement(children: .contain)
+    }
+
+    /// With this iPhone paired and the control socket up, the run drives
+    /// THIS browser (target `app:<phoneId>`) and the page stays on screen;
+    /// otherwise the caller's run view takes over as before.
+    private func startAgentRun(_ goal: String) {
+        if let credentials = phone.credentials, phone.isControlConnected {
+            bridge.allowBot()
+            Task {
+                do {
+                    let run = try await ACIAgentClient().startRun(goal: goal, targetDevice: credentials.serial)
+                    bridge.activeRunId = run.sessionId
+                } catch {
+                    runError = error.localizedDescription
+                }
+            }
+        } else {
+            onStartAgentRun?(goal)
+        }
     }
 
     // MARK: - Progress bar
@@ -356,7 +418,7 @@ struct ACIWebBrowserView: View {
                     let goal = extensionInput.trimmingCharacters(in: .whitespacesAndNewlines)
                     guard !goal.isEmpty else { return }
                     isExtensionChatOpen = false
-                    onStartAgentRun?(goal)
+                    startAgentRun(goal)
                 }) {
                     Image(systemName: "arrow.up.circle.fill")
                         .font(.system(size: 32))
@@ -388,7 +450,10 @@ private struct ACIBrowserWebView: UIViewRepresentable {
     }
 
     func makeUIView(context: Context) -> WKWebView {
-        let webView = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
+        let configuration = WKWebViewConfiguration()
+        // The bot bridge's element reader, in its own content world.
+        configuration.userContentController.addUserScript(ACIBrowserBridge.userScript)
+        let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator
         webView.allowsBackForwardNavigationGestures = true
         controller.webView = webView
