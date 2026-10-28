@@ -6,8 +6,10 @@ appId: com.allternit.mobile
     arguments:
       skip-auth: true
       sidebar: true
-- tapOn: "agent | bot hub"
-- assertVisible: "agent | bot hub"
+- tapOn:
+    id: "modeDial"
+- tapOn:
+    id: "modeDialOptionbots"
 - takeScreenshot: agent_hub_home
 # Point taps are used for the tab bar because the HStack of SwiftUI Buttons
 # maps accessibility ids to the wrong tappable regions under Maestro's

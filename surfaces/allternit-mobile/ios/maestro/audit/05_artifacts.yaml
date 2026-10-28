@@ -6,7 +6,7 @@ appId: com.allternit.mobile
     arguments:
       skip-auth: true
       sidebar: true
-- tapOn: "Artifacts Library"
+- tapOn: "Artifacts"
 - takeScreenshot: artifacts_library
 - tapOn: "Open sidebar"
 - takeScreenshot: artifacts_sidebar_open

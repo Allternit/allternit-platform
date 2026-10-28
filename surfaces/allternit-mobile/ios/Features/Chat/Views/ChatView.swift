@@ -2,19 +2,20 @@ import SwiftUI
 
 // MARK: - Mode host shell
 
-/// Top-level tab host: a per-tab content area, no persistent bottom bar —
-/// neither ChatGPT nor Claude's iOS apps put a surface switcher there, so
-/// the [Chats | Projects | Artifacts Library | Agents | Automation Tasks |
-/// Code | ACI] tab list lives in the sidebar header instead
-/// (HistorySidebarView). Cowork is NOT a tab destination; it's a
-/// composer-level toggle inside Chats (BottomDock.tsx ChatCoworkToggle).
+/// Top-level shell (the PWA phone shell, allternit-ai
+/// src/fabric-session/phone/PhoneShell.tsx): one section fills the screen,
+/// no bottom bar. The left drawer (HistorySidebarView, 92% wide) carries the
+/// mode dial — Home · Bots · Code · ACI — plus the mode's rail, pins and
+/// recents. Cowork is NOT a mode; it's a composer-level toggle inside Home.
 struct MainWorkspaceView: View {
     @EnvironmentObject private var modeStore: AppModeStore
     @State private var isSidebarOpen = false
     @State private var dragOffset: CGFloat = 0
     @State private var selectedSessionId: String? = nil
+    @State private var screenWidth: CGFloat = 390
 
-    private let sidebarWidth: CGFloat = 280
+    /// The drawer covers 92% of the screen (PhoneShell's Arc drawer width).
+    private var sidebarWidth: CGFloat { max(screenWidth * 0.92, 260) }
 
     /// Drawer position from 0 (closed) to 1 (open), tracking live drags.
     private var sidebarProgress: CGFloat {
@@ -22,85 +23,36 @@ struct MainWorkspaceView: View {
         return min(max(base + dragOffset, 0), sidebarWidth) / sidebarWidth
     }
 
+    /// Chats paints BgSecondary edge to edge; the other sections lead with
+    /// BgPrimary chrome.
+    private var paneBackground: Color {
+        Color(modeStore.activeTab == .chats ? "BgSecondary" : "BgPrimary")
+    }
+
     var body: some View {
         ZStack {
             // Root backdrop — also the strip behind the status bar / home
             // indicator (the content pane is clipped to the safe area and
-            // can't paint up there itself), so it tracks the active
-            // surface's top color: Chats is the BgSecondary feed edge-to-
-            // edge, the other tabs lead with BgPrimary chrome.
-            Color(modeStore.activeTab == .chats ? "BgSecondary" : "BgPrimary")
+            // can't paint up there itself).
+            paneBackground
                 .edgesIgnoringSafeArea(.all)
 
             ZStack(alignment: .leading) {
-                // Left Sidebar Drawer (mode-aware unified sidebar) —
-                // full-height, edge-to-edge behind the content pane.
+                // The drawer — full-height, edge-to-edge behind the pane.
                 HistorySidebarView(
                     selectedSessionId: $selectedSessionId,
-                    isSidebarOpen: $isSidebarOpen
+                    isSidebarOpen: $isSidebarOpen,
+                    width: sidebarWidth
                 )
 
-                    // Active content container
-                    Group {
-                        switch modeStore.activeTab {
-                        case .chats:
-                            ChatView(
-                                selectedSessionId: $selectedSessionId,
-                                isSidebarOpen: $isSidebarOpen
-                            )
-                        case .projects:
-                            ProjectsListView(
-                                onNewChatInProject: { project in
-                                    // "+ New chat" in a project: select it
-                                    // (the next session create is stamped via
-                                    // SessionContext.projectId) and start a
-                                    // fresh Chats conversation.
-                                    ProjectStore.shared.selectedProjectId = project.id
-                                    selectedSessionId = nil
-                                    modeStore.selectBarItem(.chats)
-                                },
-                                onOpenChat: { session in
-                                    selectedSessionId = session.id
-                                    modeStore.selectBarItem(.chats)
-                                },
-                                onOpenSidebar: {
-                                    withAnimation(.spring(response: 0.35, dampingFraction: 0.86, blendDuration: 0)) {
-                                        isSidebarOpen = true
-                                    }
-                                }
-                            )
-                        case .artifacts:
-                            ArtifactsLibraryView(isSidebarOpen: $isSidebarOpen)
-                        case .agents:
-                            AgentHubView(isSidebarOpen: $isSidebarOpen)
-                        case .automation:
-                            switch modeStore.automationKind {
-                            case .cron:
-                                AutomationTasksListView(isSidebarOpen: $isSidebarOpen)
-                            case .routines:
-                                RoutinesListView(isSidebarOpen: $isSidebarOpen)
-                            case .loops:
-                                LoopsListView(isSidebarOpen: $isSidebarOpen)
-                            }
-                        case .models:
-                            ModelsTabView(isSidebarOpen: $isSidebarOpen)
-                        case .code:
-                            CodeModeView(isSidebarOpen: $isSidebarOpen, selectedSessionId: $selectedSessionId)
-                        case .aci:
-                            ACITabView(isSidebarOpen: $isSidebarOpen, selectedSessionId: $selectedSessionId)
-                        }
-                    }
+                activeSection
                 // Opaque backdrop for the whole pane, bleeding edge-to-edge
-                // (it fully hides the sidebar behind and lets translucent
-                // hairlines inside the surfaces composite against it, not
-                // the sidebar — the accent tab row once showed through as a
-                // red sliver). Sliding right reveals the full-height drawer;
-                // the pane stays full-size — no scale-down card effect.
-                .background(Color(modeStore.activeTab == .chats ? "BgSecondary" : "BgPrimary"))
+                // (it fully hides the drawer behind). Sliding right reveals
+                // the drawer; the pane stays full-size.
+                .background(paneBackground)
                 // Rounded pane while the drawer is showing: a full-screen
                 // mask (NOT .cornerRadius, which clips at the safe-area
-                // bounds and would cut the edge-to-edge backdrop) so the
-                // corners round from the physical screen edges as it slides.
+                // bounds) so the corners round from the physical screen edges.
                 .mask(
                     RoundedRectangle(cornerRadius: 28 * sidebarProgress, style: .continuous)
                         .ignoresSafeArea()
@@ -110,12 +62,24 @@ struct MainWorkspaceView: View {
                 .animation(.spring(response: 0.35, dampingFraction: 0.86, blendDuration: 0), value: isSidebarOpen)
                 // Pane-wide drag only while the drawer is open (to drag it
                 // closed). When closed, the gesture gets the LOWEST
-                // precedence (.none) so every ScrollView inside (agent deck
-                // templates, composer strips) wins its drags — opening is
-                // handled by the left-edge strip below instead.
+                // precedence (.none) so every ScrollView inside wins its
+                // drags — opening is handled by the left-edge strip below.
                 .gesture(drawerGesture, including: isSidebarOpen ? .all : .none)
                 .overlay(alignment: .leading) {
-                    if !isSidebarOpen {
+                    if isSidebarOpen {
+                        // The visible 8% sliver of the pane: tap to close.
+                        Color.clear
+                            .contentShape(Rectangle())
+                            .ignoresSafeArea()
+                            .onTapGesture {
+                                withAnimation(.spring(response: 0.35, dampingFraction: 0.86, blendDuration: 0)) {
+                                    isSidebarOpen = false
+                                }
+                            }
+                            .gesture(drawerGesture)
+                            .accessibilityLabel("Close menu")
+                            .accessibilityAddTraits(.isButton)
+                    } else {
                         Color.clear
                             .frame(width: 28)
                             .contentShape(Rectangle())
@@ -125,9 +89,16 @@ struct MainWorkspaceView: View {
                 }
             }
         }
+        .background(
+            GeometryReader { proxy in
+                Color.clear
+                    .onAppear { screenWidth = proxy.size.width }
+                    .onChange(of: proxy.size.width) { _, width in screenWidth = width }
+            }
+        )
         .onReceive(NotificationCenter.default.publisher(for: .openChatSession)) { note in
-            // Bot Home posts this when a bot thread is tapped: land on Chats
-            // with that session loaded, from whichever tab is showing.
+            // Bot Home / quick task post this: land on Chats with that
+            // session loaded, from whichever section is showing.
             guard let sessionId = note.openChatSessionId else { return }
             selectedSessionId = sessionId
             modeStore.selectBarItem(.chats)
@@ -136,8 +107,8 @@ struct MainWorkspaceView: View {
             }
         }
         .onAppear {
-            // Projects feed the cowork top deck and the Projects tab; load
-            // once per launch (ProjectStore dedupes).
+            // Projects feed the cowork top deck and the Projects section;
+            // load once per launch (ProjectStore dedupes).
             ProjectStore.shared.fetchProjectsIfNeeded()
             // Usage meter (Phase 5): one fetch per launch; streams refresh
             // it on completion (ChatViewModel.finishStreaming).
@@ -153,24 +124,37 @@ struct MainWorkspaceView: View {
             // mode for UI testing — launch args land in UserDefaults.
             if let modeArg = UserDefaults.standard.string(forKey: "mode"),
                let mode = AppMode(rawValue: modeArg) {
+                modeStore.selectBarItem(ModeBarItem.tab(for: mode))
                 modeStore.mode = mode
-                modeStore.activeTab = ModeBarItem.tab(for: mode)
             }
-            // `-open-projects` / `-open-artifacts` (DEBUG only): land on a
-            // tab surface directly (no tap injection in simctl).
+            // `-shell-mode <home|bots|code|aci>` (DEBUG only): pick the dial mode.
+            if let shellArg = UserDefaults.standard.string(forKey: "shell-mode"),
+               let shell = ShellMode(rawValue: shellArg) {
+                modeStore.setShellMode(shell)
+            }
+            // `-open-<section>` (DEBUG only): land on a section directly
+            // (no tap injection in simctl). `-open-settings` and friends are
+            // handled by the drawer, which owns the Settings sheet.
             if launchArgumentEnabled("open-projects") {
                 modeStore.selectBarItem(.projects)
             }
             if launchArgumentEnabled("open-artifacts") {
                 modeStore.selectBarItem(.artifacts)
             }
-            // `-open-agent-hub` (DEBUG only): land on the Agents tab
-            // directly (no tap injection in simctl).
-            if launchArgumentEnabled("open-agent-hub") {
+            if launchArgumentEnabled("open-automation") {
+                modeStore.selectBarItem(.automation)
+            }
+            if launchArgumentEnabled("open-models") {
+                modeStore.selectBarItem(.models)
+            }
+            if launchArgumentEnabled("open-agent-hub") || launchArgumentEnabled("open-bots") {
                 modeStore.selectBarItem(.agents)
             }
-            // `-open-code-filter` (DEBUG only): land on the Code tab —
-            // CodeModeView presents the Phase-8 status filter sheet itself.
+            if launchArgumentEnabled("open-aci") {
+                modeStore.selectBarItem(.aci)
+            }
+            // `-open-code-filter` (DEBUG only): land on Code — CodeModeView
+            // presents the Phase-8 status filter sheet itself.
             if launchArgumentEnabled("open-code-filter") {
                 modeStore.selectBarItem(.code)
             }
@@ -178,8 +162,60 @@ struct MainWorkspaceView: View {
         }
     }
 
-    /// Drawer drag: swiping right from the left margin opens, dragging left
-    /// on an open drawer closes. Home-only — code/ACI have no drawer.
+    @ViewBuilder
+    private var activeSection: some View {
+        switch modeStore.activeTab {
+        case .chats:
+            ChatView(
+                selectedSessionId: $selectedSessionId,
+                isSidebarOpen: $isSidebarOpen
+            )
+        case .projects:
+            ProjectsListView(
+                onNewChatInProject: { project in
+                    // "+ New chat" in a project: select it (the next session
+                    // create is stamped via SessionContext.projectId) and
+                    // start a fresh Home conversation.
+                    ProjectStore.shared.selectedProjectId = project.id
+                    selectedSessionId = nil
+                    modeStore.selectBarItem(.chats)
+                    NotificationCenter.default.post(name: .shellNewChat, object: nil)
+                },
+                onOpenChat: { session in
+                    selectedSessionId = session.id
+                    modeStore.selectBarItem(.chats)
+                },
+                onOpenSidebar: {
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.86, blendDuration: 0)) {
+                        isSidebarOpen = true
+                    }
+                }
+            )
+        case .artifacts:
+            ArtifactsLibraryView(isSidebarOpen: $isSidebarOpen)
+        case .agents:
+            // L4: replace with BotsModeRootView()
+            AgentHubView(isSidebarOpen: $isSidebarOpen)
+        case .automation:
+            switch modeStore.automationKind {
+            case .cron:
+                AutomationTasksListView(isSidebarOpen: $isSidebarOpen)
+            case .routines:
+                RoutinesListView(isSidebarOpen: $isSidebarOpen)
+            case .loops:
+                LoopsListView(isSidebarOpen: $isSidebarOpen)
+            }
+        case .models:
+            ModelsTabView(isSidebarOpen: $isSidebarOpen)
+        case .code:
+            CodeModeView(isSidebarOpen: $isSidebarOpen, selectedSessionId: $selectedSessionId)
+        case .aci:
+            ACITabView(isSidebarOpen: $isSidebarOpen, selectedSessionId: $selectedSessionId)
+        }
+    }
+
+    /// Drawer drag: swiping right from the left edge opens, dragging left
+    /// on an open drawer closes.
     private var drawerGesture: some Gesture {
         DragGesture()
             .onChanged { gesture in
@@ -189,7 +225,7 @@ struct MainWorkspaceView: View {
                         dragOffset = gesture.translation.width
                     }
                 } else if gesture.startLocation.x < 50 && gesture.translation.width > 0 {
-                    // Swiping right from the left margin exposes the sidebar.
+                    // Swiping right from the left margin exposes the drawer.
                     dragOffset = gesture.translation.width
                 }
             }
@@ -309,6 +345,13 @@ struct ChatView: View {
             }
         }
         .background(Color("BgSecondary"))
+        // The drawer's New chat / New pill: start fresh even when the
+        // selection was already nil (a just-sent chat has no selection).
+        .onReceive(NotificationCenter.default.publisher(for: .shellNewChat)) { _ in
+            selectedSessionId = nil
+            viewModel.startNewSession()
+            viewModel.isTemporaryChat = false
+        }
         .sheet(isPresented: $isIntelliSchedulePresented) {
             IntelliSchedulePanel()
         }
