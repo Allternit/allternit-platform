@@ -23,6 +23,12 @@ final class BotModeStore: ObservableObject {
     @Published private(set) var projects: [BotProjectSummary] = []
     @Published private(set) var pinnedBotIds: [String]
     @Published private(set) var canonicalChatIds: [String: String]
+    /// A bot whose main chat Bots mode should open when it next appears
+    /// (drawer search, Teammates); `BotsModeRootView` consumes it.
+    @Published var pendingOpenBotId: String?
+    /// The drawer's New pill in Bots mode: start a thread with the top bot
+    /// of the rail (pinned first, then most recent).
+    @Published var pendingNewThread = false
 
     private let hub = AgentHubStore.shared
     private let client = BotModeClient.shared

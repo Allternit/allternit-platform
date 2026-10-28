@@ -75,6 +75,25 @@ struct BotsModeRootView: View {
         }
         .environmentObject(navigator)
         .tint(Color("AccentPrimary"))
+        .onAppear(perform: openPendingBot)
+        .onChange(of: store.pendingOpenBotId) { _, _ in openPendingBot() }
+        .onChange(of: store.pendingNewThread) { _, _ in openPendingBot() }
+    }
+
+    private func openPendingBot() {
+        if let botId = store.pendingOpenBotId {
+            store.pendingOpenBotId = nil
+            navigator.path = [.chat(botId: botId, sessionId: nil)]
+        }
+        if store.pendingNewThread {
+            store.pendingNewThread = false
+            guard let bot = store.bots.first else { return }
+            Task {
+                // If the thread can't be made, the bot's main chat still opens.
+                let sessionId = try? await store.newThreadSession(for: bot)
+                navigator.path = [.chat(botId: bot.id, sessionId: sessionId)]
+            }
+        }
     }
 
     @ViewBuilder

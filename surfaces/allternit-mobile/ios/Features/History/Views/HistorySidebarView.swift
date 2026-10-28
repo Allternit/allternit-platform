@@ -60,6 +60,10 @@ struct HistorySidebarView: View {
     @State private var isScheduledTaskPresented = false
     @State private var isMiniAppsPresented = false
     @State private var isDecisionsPresented = false
+    @State private var isInboxPresented = false
+    @ObservedObject private var inbox = InboxStore.shared
+    @ObservedObject private var botStore = BotModeStore.shared
+    @ObservedObject private var botStatus = BotStatusStore.shared
 
     private let spring = Animation.spring(response: 0.35, dampingFraction: 0.86, blendDuration: 0)
 
@@ -113,6 +117,10 @@ struct HistorySidebarView: View {
         .sheet(isPresented: $isDecisionsPresented) {
             DecisionsScreen()
         }
+        .sheet(isPresented: $isInboxPresented) {
+            InboxSheet()
+        }
+        .task { await inbox.refresh() }
         .fullScreenCover(isPresented: $isSearchPresented) {
             ShellSearchView(
                 sessions: sessions,
@@ -121,10 +129,7 @@ struct HistorySidebarView: View {
                     ProjectStore.shared.selectedProjectId = project.id
                     go(.projects)
                 },
-                onOpenBot: { bot in
-                    go(.agents)
-                    NotificationCenter.default.post(name: .openBot, object: nil, userInfo: ["agentId": bot.id])
-                }
+                onOpenBot: { bot in openBotChat(bot.id) }
             )
         }
         .alert("Something went wrong", isPresented: Binding(
@@ -178,6 +183,31 @@ struct HistorySidebarView: View {
             ModeDialButton(isExpanded: $isDialExpanded)
             ShellWordmark(mode: modeStore.shellMode)
             Spacer(minLength: 8)
+            Button {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                isInboxPresented = true
+            } label: {
+                Image(systemName: "tray")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(Color("TextPrimary"))
+                    .frame(width: 40, height: 40)
+                    .background(Circle().fill(Color("BgPanel")))
+                    .overlay(Circle().stroke(Color("BorderSubtle"), lineWidth: 1))
+                    .overlay(alignment: .topTrailing) {
+                        if !inbox.items.isEmpty {
+                            Text(inbox.items.count > 99 ? "99+" : "\(inbox.items.count)")
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 5)
+                                .frame(minWidth: 17, minHeight: 17)
+                                .background(Capsule().fill(Color("AccentPrimary")))
+                                .offset(x: 3, y: -2)
+                        }
+                    }
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(inbox.items.isEmpty ? "Inbox" : "Inbox, \(inbox.items.count) need you")
+            .accessibilityIdentifier("drawerInbox")
             Button {
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
                 isSearchPresented = true
@@ -265,6 +295,10 @@ struct HistorySidebarView: View {
         List {
             Section {
                 ForEach(railRows) { railRowView($0) }
+            }
+
+            if modeStore.shellMode == .home {
+                teammatesSection
             }
 
             activeBotSection
@@ -587,6 +621,78 @@ struct HistorySidebarView: View {
         withAnimation(spring) { isSidebarOpen = false }
     }
 
+    /// Opens a bot's main chat in Bots mode (search, Teammates).
+    private func openBotChat(_ botId: String) {
+        botStore.pendingOpenBotId = botId
+        go(.agents)
+    }
+
+    // MARK: - Teammates
+
+    /// Bots waiting on you, working, or active in the last 15 minutes, in
+    /// that order (the PWA drawer's TeammatesStrip).
+    private var teammates: [(bot: AgentRecord, needsYou: Bool, working: Bool)] {
+        let recent = ISO8601DateFormatter()
+        recent.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let cutoff = Date().addingTimeInterval(-15 * 60)
+        let entries = botStore.bots.compactMap { bot -> (bot: AgentRecord, needsYou: Bool, working: Bool, rank: Int)? in
+            let needsYou = botStore.waitingCount(for: bot.id) > 0 || botStatus.needsAttention(for: bot.id)
+            let working = botStore.workingCount(for: bot.id) > 0 || botStatus.isWorking(for: bot.id)
+            let active = botStore.threads(for: bot.id).contains {
+                (recent.date(from: $0.lastActivityAt) ?? ISO8601DateFormatter().date(from: $0.lastActivityAt) ?? .distantPast) > cutoff
+            }
+            guard needsYou || working || active else { return nil }
+            return (bot, needsYou, working, needsYou ? 0 : working ? 1 : 2)
+        }
+        return entries.sorted { $0.rank < $1.rank }.prefix(8).map { ($0.bot, $0.needsYou, $0.working) }
+    }
+
+    @ViewBuilder
+    private var teammatesSection: some View {
+        let list = teammates
+        if !list.isEmpty {
+            let needsYou = list.filter(\.needsYou).count
+            Section {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 10) {
+                        ForEach(list, id: \.bot.id) { entry in
+                            Button {
+                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                openBotChat(entry.bot.id)
+                            } label: {
+                                BotAvatarView(bot: entry.bot, size: 36)
+                                    .overlay(alignment: .bottomTrailing) {
+                                        if entry.needsYou || entry.working {
+                                            Circle()
+                                                .fill(entry.needsYou ? Color.orange : Color.green)
+                                                .frame(width: 10, height: 10)
+                                                .overlay(Circle().stroke(Color("BgPrimary"), lineWidth: 2))
+                                        }
+                                    }
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel(entry.bot.botDisplayName
+                                + (entry.needsYou ? ", needs you" : entry.working ? ", working" : ""))
+                        }
+                    }
+                    .padding(.horizontal, 4)
+                }
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
+            } header: {
+                HStack {
+                    sectionLabel("Teammates")
+                    Spacer()
+                    if needsYou > 0 {
+                        Text("\(needsYou) need\(needsYou == 1 ? "s" : "") you")
+                            .font(.caption.weight(.semibold))
+                            .foregroundColor(.orange)
+                    }
+                }
+            }
+        }
+    }
+
     private func go(_ tab: ModeBarItem) {
         modeStore.selectBarItem(tab)
         closeDrawer()
@@ -628,8 +734,7 @@ struct HistorySidebarView: View {
             modeStore.selectBarItem(.aci)
         case .bots:
             modeStore.selectBarItem(.agents)
-            // L4 hook: the Bots root starts a thread with the main bot.
-            NotificationCenter.default.post(name: .botsNewThreadRequested, object: nil)
+            botStore.pendingNewThread = true
         }
         closeDrawer()
     }
@@ -814,12 +919,6 @@ extension Notification.Name {
     /// The drawer's New chat: ChatView starts a fresh conversation even when
     /// the selection was already nil.
     static let shellNewChat = Notification.Name("com.allternit.shellNewChat")
-    /// Search picked a bot (userInfo: agentId). The Bots root (lane L4)
-    /// opens that bot's page.
-    static let openBot = Notification.Name("com.allternit.openBot")
-    /// The drawer's New thread in Bots mode. The Bots root (lane L4) starts
-    /// a thread with the main bot.
-    static let botsNewThreadRequested = Notification.Name("com.allternit.botsNewThreadRequested")
 }
 
 extension Notification {
