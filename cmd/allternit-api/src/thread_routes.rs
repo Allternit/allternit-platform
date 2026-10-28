@@ -82,6 +82,7 @@ pub fn thread_router() -> Router<Arc<AppState>> {
         .route("/threads", get(list_threads).post(create_thread))
         .route("/threads/by-session/:session_id", get(thread_by_session))
         .route("/threads/:id", get(get_thread).patch(patch_thread))
+        .route("/threads/:id/starters", post(thread_starters))
         .route("/threads/:id/resolve", post(resolve_thread))
         .route("/threads/:id/archive", post(archive_thread))
         .route("/threads/:id/unarchive", post(unarchive_thread))
@@ -148,7 +149,69 @@ pub struct ThreadView {
     /// its panel `group` reads `resolved` and it drops out of open-thread lists.
     pub archived_at: Option<String>,
     pub archived: bool,
+    /// One line: what this thread is for (V281). Joins the thread's system context.
+    pub purpose: Option<String>,
+    /// Icon key from `THREAD_ICONS`.
+    pub icon: Option<String>,
+    /// Colour key from `THREAD_COLORS`; clients map it to a design token.
+    pub color: Option<String>,
     pub created_at: String,
+}
+
+/// Icon keys a thread may wear (the app maps each to a Phosphor icon).
+pub const THREAD_ICONS: &[&str] = &[
+    "chat", "briefcase", "code", "pencil", "search", "idea", "rocket", "chart", "megaphone", "gear", "bug", "book", "calendar", "mail", "cart", "heart",
+];
+/// Colour keys a thread may wear (the app maps each to an existing design token).
+pub const THREAD_COLORS: &[&str] = &["blue", "green", "amber", "red", "teal", "orange", "slate", "ink"];
+pub const MAX_PURPOSE_CHARS: usize = 160;
+
+/// The thread's look as sent by a client. An empty string clears a field.
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LookBody {
+    pub purpose: Option<String>,
+    pub icon: Option<String>,
+    pub color: Option<String>,
+}
+
+impl LookBody {
+    /// Trim, validate and normalise: `Some("")` means clear.
+    pub fn checked(mut self) -> Result<Self, String> {
+        if let Some(p) = self.purpose.as_mut() {
+            let one_line = p.split_whitespace().collect::<Vec<_>>().join(" ");
+            if one_line.chars().count() > MAX_PURPOSE_CHARS {
+                return Err(format!("purpose must be at most {MAX_PURPOSE_CHARS} characters"));
+            }
+            *p = one_line;
+        }
+        if let Some(i) = self.icon.as_deref() {
+            if !i.is_empty() && !THREAD_ICONS.contains(&i) {
+                return Err(format!("unknown icon `{i}`"));
+            }
+        }
+        if let Some(c) = self.color.as_deref() {
+            if !c.is_empty() && !THREAD_COLORS.contains(&c) {
+                return Err(format!("unknown color `{c}`"));
+            }
+        }
+        Ok(self)
+    }
+}
+
+/// Write a thread's look. `None` leaves a field alone; `Some("")` clears it.
+pub fn set_look(db: &DbHandle, id: &str, look: &LookBody) -> rusqlite::Result<()> {
+    let conn = db.connect()?;
+    conn.execute(
+        "UPDATE bot_threads SET
+             purpose = CASE WHEN ?2 IS NULL THEN purpose ELSE NULLIF(?2, '') END,
+             icon = CASE WHEN ?3 IS NULL THEN icon ELSE NULLIF(?3, '') END,
+             color = CASE WHEN ?4 IS NULL THEN color ELSE NULLIF(?4, '') END,
+             updated_at = ?5
+         WHERE id = ?1",
+        params![id, look.purpose, look.icon, look.color, now()],
+    )?;
+    Ok(())
 }
 
 #[derive(Debug, Deserialize)]
@@ -190,6 +253,10 @@ pub struct PatchThreadBody {
     pub todo: Option<Vec<TodoItem>>,
     pub summary: Option<String>,
     pub project_id: Option<String>,
+    /// Look (V281): purpose, icon key, colour key. An empty string clears.
+    pub purpose: Option<String>,
+    pub icon: Option<String>,
+    pub color: Option<String>,
     /// `urgent` | `normal`: carried on the `thread.needs_user` ledger event so
     /// the quiet-hours pager can let an urgent ask through.
     pub urgency: Option<String>,
@@ -272,7 +339,7 @@ fn now() -> String {
 
 const COLS: &str = "t.id, t.bot_id, t.project_id, t.parent_thread_id, t.kind, t.incognito, t.title, t.objective, \
      t.success_criteria, t.status, t.status_line, t.todo, t.summary, t.checkpoint, t.current_session_id, \
-     t.created_by, t.last_activity_at, t.resolved_at, t.created_at, t.user_id, t.archived_at";
+     t.created_by, t.last_activity_at, t.resolved_at, t.created_at, t.user_id, t.archived_at, t.purpose, t.icon, t.color";
 
 struct Stored {
     view: ThreadView,
@@ -314,6 +381,9 @@ fn map_row(row: &Row<'_>) -> rusqlite::Result<Stored> {
             resolved_at: row.get(17)?,
             archived: archived_at.is_some(),
             archived_at,
+            purpose: row.get(21)?,
+            icon: row.get(22)?,
+            color: row.get(23)?,
             created_at: row.get(18)?,
         },
         user_id: row.get(19)?,
@@ -755,6 +825,9 @@ pub async fn create<R: ThreadRuntime>(db: &DbHandle, rt: &R, user_id: &str, body
 /// and plan. Carried at the top of the next window's checkpoint.
 fn thread_context(t: &ThreadView) -> String {
     let mut out = String::new();
+    if let Some(p) = t.purpose.as_deref().filter(|p| !p.is_empty()) {
+        out.push_str(&format!("Purpose of this thread: {p}\n"));
+    }
     if let Some(o) = t.objective.as_deref() {
         out.push_str(&format!("Objective: {o}\n"));
     }
@@ -1123,14 +1196,34 @@ async fn list_threads(
 async fn create_thread(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
-    Json(body): Json<CreateThreadBody>,
+    Json(raw): Json<Value>,
 ) -> Response {
+    let body: CreateThreadBody = match serde_json::from_value(raw.clone()) {
+        Ok(b) => b,
+        Err(e) => return err(StatusCode::BAD_REQUEST, format!("invalid thread: {e}")),
+    };
+    let look = match serde_json::from_value::<LookBody>(raw).map_err(|e| e.to_string()).and_then(LookBody::checked) {
+        Ok(l) => l,
+        Err(e) => return err(StatusCode::BAD_REQUEST, e),
+    };
     if !verify_bot_ownership(&state, &user.user_id, &body.bot_id).await {
         return err(StatusCode::FORBIDDEN, "bot not found or access denied");
     }
     let rt = GizziRuntime { db: state.db.clone() };
     match create(&state.db, &rt, &user.user_id, body).await {
-        Ok(t) => (StatusCode::CREATED, Json(json!({ "thread": t }))).into_response(),
+        Ok(mut t) => {
+            if look.purpose.is_some() || look.icon.is_some() || look.color.is_some() {
+                let db = state.db.clone();
+                let tid = t.id.clone();
+                if let Err(r) = blocking(move || set_look(&db, &tid, &look)).await {
+                    return r;
+                }
+                if let Ok(Some(fresh)) = load_view(&state.db, &t.id) {
+                    t = fresh;
+                }
+            }
+            (StatusCode::CREATED, Json(json!({ "thread": t }))).into_response()
+        }
         Err(e) if e.contains("required") || e.contains("unknown") || e.contains("kind") || e.contains("cycle") => {
             err(StatusCode::BAD_REQUEST, e)
         }
@@ -1210,6 +1303,10 @@ pub(crate) async fn patch_thread(
             return err(StatusCode::BAD_REQUEST, "urgency must be urgent or normal");
         }
     }
+    let look = match (LookBody { purpose: body.purpose.clone(), icon: body.icon.clone(), color: body.color.clone() }).checked() {
+        Ok(l) => l,
+        Err(e) => return err(StatusCode::BAD_REQUEST, e),
+    };
     let urgency = body.urgency.clone();
     let db = state.db.clone();
     let tid = id.clone();
@@ -1241,6 +1338,9 @@ pub(crate) async fn patch_thread(
                 ts
             ],
         )?;
+        if look.purpose.is_some() || look.icon.is_some() || look.color.is_some() {
+            set_look(&db, &tid, &look)?;
+        }
         load(&db, &tid)
     })
     .await;
@@ -1378,6 +1478,59 @@ pub async fn set_archived(db: &DbHandle, id: &str, archived: bool, actor: (&str,
         crate::thread_closeout::thread_reopened(db, id).await;
     }
     Ok(after)
+}
+
+/// Three first tasks for a thread with a purpose, written by the bot's brain
+/// through the same one-shot completion path the rest of the API uses. A
+/// static fallback comes back (`source: "fallback"`) when the call fails, so
+/// the chips always have something to offer.
+pub fn fallback_starters(purpose: &str) -> Vec<String> {
+    let p = purpose.trim().trim_end_matches('.');
+    vec![
+        format!("Outline a plan for: {p}"),
+        format!("What do you need from me to get going on: {p}?"),
+        format!("Suggest the first three tasks for: {p}"),
+    ]
+}
+
+/// Parse a model reply into at most three one-line tasks (JSON array or lines).
+pub fn parse_starters(reply: &str) -> Vec<String> {
+    let trimmed = reply.trim();
+    let from_json = trimmed.find('[').zip(trimmed.rfind(']')).and_then(|(a, b)| serde_json::from_str::<Vec<String>>(&trimmed[a..=b]).ok());
+    let lines: Vec<String> = match from_json {
+        Some(v) => v.into_iter().map(|l| l.trim().to_string()).collect(),
+        None => trimmed
+            .lines()
+            .map(|l| l.trim().trim_start_matches(|c: char| c == '-' || c == '*' || c == ' ').trim_start_matches(|c: char| c.is_ascii_digit()).trim_start_matches(['.', ')']).trim().to_string())
+            .collect(),
+    };
+    lines.into_iter().filter(|l| !l.is_empty() && l.chars().count() <= 200).take(3).collect()
+}
+
+async fn thread_starters(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Path(id): Path<String>,
+) -> Response {
+    let t = match owned(&state, &user, &id).await {
+        Ok(t) => t,
+        Err(r) => return r,
+    };
+    let Some(purpose) = t.purpose.clone().filter(|p| !p.is_empty()) else {
+        return err(StatusCode::BAD_REQUEST, "this thread has no purpose");
+    };
+    let bot = bot_name(&state.db, &t.bot_id);
+    let system = format!(
+        "You are {bot}. A thread was just opened for this purpose: {purpose}. Suggest exactly three first tasks the user could ask you to do there. \
+         Each is one short imperative sentence the user would send as their own message. Reply with a JSON array of three strings and nothing else."
+    );
+    let reply = crate::gizzi_completion::complete_ephemeral("Suggest the three starter tasks.", Some(&system), None).await;
+    let parsed = reply.as_deref().map(parse_starters).unwrap_or_default();
+    if parsed.len() == 3 {
+        Json(json!({ "starters": parsed, "source": "model" })).into_response()
+    } else {
+        Json(json!({ "starters": fallback_starters(&purpose), "source": "fallback" })).into_response()
+    }
 }
 
 async fn archive_thread(
@@ -1787,6 +1940,37 @@ mod tests {
         assert_eq!(group_of("queued"), "queued");
         assert_eq!(group_of("failed"), "resolved");
         assert_eq!(group_of("paused"), "idle");
+    }
+
+    #[tokio::test]
+    async fn a_thread_carries_a_purpose_icon_and_colour() {
+        let state = setup("look").await;
+        let rt = FakeRt::default();
+        let t = create(&state.db, &rt, "user-a", body("Launch")).await.unwrap();
+        assert!(t.purpose.is_none() && t.icon.is_none() && t.color.is_none());
+
+        let (s, v) = call(&state, "PATCH", &format!("/threads/{}", t.id), "user-a", Some(json!({"purpose": "  Plan the\n launch ", "icon": "rocket", "color": "teal"}))).await;
+        assert_eq!(s, StatusCode::OK);
+        assert_eq!(v["thread"]["purpose"], "Plan the launch");
+        assert_eq!(v["thread"]["icon"], "rocket");
+        assert_eq!(v["thread"]["color"], "teal");
+        assert!(thread_context(&load_view(&state.db, &t.id).unwrap().unwrap()).starts_with("Purpose of this thread: Plan the launch"));
+
+        let (s, _) = call(&state, "PATCH", &format!("/threads/{}", t.id), "user-a", Some(json!({"color": "#ff0000"}))).await;
+        assert_eq!(s, StatusCode::BAD_REQUEST, "only palette keys");
+        let (s, _) = call(&state, "PATCH", &format!("/threads/{}", t.id), "user-a", Some(json!({"icon": "nope"}))).await;
+        assert_eq!(s, StatusCode::BAD_REQUEST);
+
+        let (_, v) = call(&state, "PATCH", &format!("/threads/{}", t.id), "user-a", Some(json!({"purpose": ""}))).await;
+        assert!(v["thread"]["purpose"].is_null(), "an empty purpose clears it");
+        assert_eq!(v["thread"]["icon"], "rocket", "other fields stay");
+    }
+
+    #[test]
+    fn starters_parse_from_json_or_lines_and_fall_back() {
+        assert_eq!(parse_starters("Sure:\n[\"A\", \"B\", \"C\", \"D\"]"), vec!["A", "B", "C"]);
+        assert_eq!(parse_starters("1. One\n2. Two\n- Three"), vec!["One", "Two", "Three"]);
+        assert_eq!(fallback_starters("Ship the site.").len(), 3);
     }
 
     #[tokio::test]
