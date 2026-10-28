@@ -324,6 +324,7 @@
               "operations/hosted-driver",
               "operations/upstream-funding",
               "operations/database-migrations",
+              "operations/mail-triage-eval",
               "internal/channel-apps-owner-setup"
             ],
             "icon": "/icons/screen.svg"

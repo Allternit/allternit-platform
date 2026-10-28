@@ -17,6 +17,7 @@ required-features = ["stripe-plan-cli"]
 
 [features]
 stripe-plan-cli = []
+triage-eval = []
 
 [dependencies]
 # Allternit internal
@@ -106,3 +107,10 @@ tower = { workspace = true, features = ["util"] }
 http-body-util = { workspace = true }
 hyper = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
+
+# Mail triage eval (evals/triage), not built by default:
+# cargo run -p allternit-cloud-api --features triage-eval --bin mail-triage-eval -- --rules-only
+[[bin]]
+name = "mail-triage-eval"
+path = "src/bin/mail_triage_eval.rs"
+required-features = ["triage-eval"]
