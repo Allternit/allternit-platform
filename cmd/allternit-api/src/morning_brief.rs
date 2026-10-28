@@ -817,7 +817,7 @@ mod tests {
 
     #[test]
     fn json_is_found_inside_prose() {
-        assert_eq!(json_in("Sure! {\"a\": 1} done")["a"], 1);
+        assert_eq!(json_in("Sure! {\"a\": 1} done").unwrap()["a"], 1);
         assert!(json_in("no json").is_none());
     }
 }
