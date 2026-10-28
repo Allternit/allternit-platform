@@ -16,8 +16,10 @@ import SwiftUI
 ///   doesn't draw → `ArtifactLiveWebView`: the web's own viewer, signed in
 ///   as the user, with the page runtime bridge.
 ///
-/// Docs, sheets and decks the user can edit get an Edit button
-/// (V2ArtifactEditorView), which saves a new v2 version.
+/// Docs (including docs with several tabs), sheets and decks the user can
+/// edit get an Edit button (V2ArtifactEditorView), which saves a new v2
+/// version. PDFs, images and videos get Save or share (the share sheet:
+/// Save to Files / Photos); the live web viewer handles its own exports.
 struct V2ArtifactView: View {
     let artifactId: String
     var initialTitle: String? = nil
@@ -35,6 +37,8 @@ struct V2ArtifactView: View {
     @State private var editModel: ArtifactBodyEditing.Model?
     @State private var showingEditor = false
     @State private var needsSignIn = false
+    @State private var isExporting = false
+    @State private var sharedFile: SharedArtifactFile?
 
 
     var body: some View {
@@ -63,6 +67,16 @@ struct V2ArtifactView: View {
                 Text(actionError ?? "")
             }
             .sheet(item: $signURL) { item in PDFSignView(sourceURL: item.url) }
+            .sheet(item: $sharedFile) { file in
+                ArtifactShareSheet(items: [file.url])
+                    .presentationDetents([.medium, .large])
+            }
+            .overlay(alignment: .bottom) {
+                if isExporting {
+                    ArtifactExportProgressPill(label: "Preparing file…")
+                        .padding(.bottom, 24)
+                }
+            }
             .fullScreenCover(isPresented: $showingEditor) {
                 if let artifact, let editModel {
                     V2ArtifactEditorView(
@@ -94,6 +108,13 @@ struct V2ArtifactView: View {
                         showingEditor = true
                     } label: { Image(systemName: "square.and.pencil") }
                     .accessibilityLabel("Edit")
+                }
+                if shareSource(artifact) != nil {
+                    Button {
+                        Task { await shareFile(artifact) }
+                    } label: { Image(systemName: "square.and.arrow.up") }
+                    .disabled(isExporting)
+                    .accessibilityLabel("Save or share")
                 }
                 if let text = copyableText(artifact) {
                     Button {
@@ -277,6 +298,70 @@ struct V2ArtifactView: View {
         case "doc": return ArtifactBodyDecoder.docMarkdown(body: a.version.body, format: a.version.bodyFormat) ?? a.version.body
         default: return a.version.body.isEmpty ? nil : a.version.body
         }
+    }
+
+    // MARK: - Save or share
+
+    private enum ShareSource {
+        case pdf(String)
+        case media(String, isVideo: Bool)
+    }
+
+    private func shareSource(_ a: ArtifactV2) -> ShareSource? {
+        let body = a.version.body
+        switch a.kind {
+        case "pdf":
+            guard a.version.bodyFormat == "application/pdf", !body.isEmpty else { return nil }
+            return .pdf(body)
+        case "image":
+            guard let url = ArtifactBodyDecoder.firstURI(body) else { return nil }
+            if case .string("video")? = a.version.meta?["media"] { return .media(url, isVideo: true) }
+            return .media(url, isVideo: false)
+        case "video":
+            return ArtifactBodyDecoder.videoURL(body: body, meta: a.version.meta).map { .media($0, isVideo: true) }
+        default:
+            return nil
+        }
+    }
+
+    private func shareFile(_ a: ArtifactV2) async {
+        guard let source = shareSource(a) else { return }
+        isExporting = true
+        defer { isExporting = false }
+        do {
+            let data: Data
+            let ext: String
+            switch source {
+            case .pdf(let base64):
+                guard let pdf = Data(base64Encoded: base64, options: .ignoreUnknownCharacters) else { throw ArtifactContentError.badURL }
+                data = pdf
+                ext = "pdf"
+            case .media(let url, let isVideo):
+                data = try await ArtifactMediaLoader.data(for: url)
+                ext = isVideo ? Self.videoExtension(url) : Self.imageExtension(data)
+            }
+            let base = a.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            let file = try ArtifactFileShare.write(data, suggestedName: "\(base.isEmpty ? "Artifact" : base).\(ext)", mimeType: nil)
+            sharedFile = SharedArtifactFile(url: file)
+        } catch is CancellationError {
+            return
+        } catch {
+            actionError = FriendlyErrorMessage.from(error.localizedDescription)
+        }
+    }
+
+    private static func imageExtension(_ data: Data) -> String {
+        let head = [UInt8](data.prefix(12))
+        if head.starts(with: [0xFF, 0xD8]) { return "jpg" }
+        if head.starts(with: [0x47, 0x49, 0x46]) { return "gif" }
+        if head.count >= 12, head.starts(with: [0x52, 0x49, 0x46, 0x46]), head[8...11].elementsEqual([0x57, 0x45, 0x42, 0x50]) { return "webp" }
+        if let text = String(data: data.prefix(256), encoding: .utf8), text.contains("<svg") { return "svg" }
+        return "png"
+    }
+
+    private static func videoExtension(_ url: String) -> String {
+        let path = URL(string: url)?.pathExtension.lowercased() ?? ""
+        return ["mp4", "mov", "m4v", "webm"].contains(path) ? path : "mp4"
     }
 
     // MARK: - Actions

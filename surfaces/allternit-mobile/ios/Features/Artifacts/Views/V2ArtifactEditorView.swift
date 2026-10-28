@@ -4,7 +4,8 @@ import SwiftUI
 /// shared store as a new version (`POST /api/v2/artifacts/:id/versions`),
 /// so Desktop, the web and the PWA open the same edit. Bodies are written
 /// in the web editors' formats (ArtifactBodyEditing); anything the phone
-/// can't edit (tables, images, layout) is kept as it is.
+/// can't edit (images, dividers, layout) is kept as it is. Docs with
+/// several tabs get a tab picker and save every tab as one version.
 struct V2ArtifactEditorView: View {
     let artifact: ArtifactV2
     let initialModel: ArtifactBodyEditing.Model
@@ -81,14 +82,10 @@ struct V2ArtifactEditorView: View {
     @ViewBuilder
     private var editor: some View {
         switch model {
-        case .markdown, .docMarkdownField:
-            TextEditor(text: markdownBinding)
-                .font(.system(.body, design: .monospaced))
-                .scrollContentBackground(.hidden)
-                .padding(.horizontal, 12)
-                .accessibilityLabel("Document text")
-        case .docBlocks:
-            DocBlocksEditor(blocks: docBlocksBinding)
+        case .markdown, .docMarkdownField, .docBlocks:
+            DocModelEditor(model: $model)
+        case .docTabs:
+            DocTabsEditor(tabs: docTabsBinding)
         case .sheet:
             SheetEditor(grid: sheetBinding)
         case .blockSlides:
@@ -98,26 +95,8 @@ struct V2ArtifactEditorView: View {
         }
     }
 
-    private var markdownBinding: Binding<String> {
-        Binding(
-            get: {
-                switch model {
-                case .markdown(let text, _), .docMarkdownField(let text, _): return text
-                default: return ""
-                }
-            },
-            set: { next in
-                switch model {
-                case .markdown(_, let original): model = .markdown(next, original: original)
-                case .docMarkdownField(_, let original): model = .docMarkdownField(next, original: original)
-                default: break
-                }
-            }
-        )
-    }
-
-    private var docBlocksBinding: Binding<[ArtifactBodyEditing.DocBlock]> {
-        Binding(get: { if case .docBlocks(let b) = model { return b }; return [] }, set: { model = .docBlocks($0) })
+    private var docTabsBinding: Binding<[ArtifactBodyEditing.DocTab]> {
+        Binding(get: { if case .docTabs(let t) = model { return t }; return [] }, set: { model = .docTabs($0) })
     }
 
     private var sheetBinding: Binding<ArtifactBodyEditing.SheetGrid> {
@@ -168,19 +147,220 @@ struct V2ArtifactEditorView: View {
 
 // MARK: - Doc
 
+/// One doc body: Markdown in a text editor, block docs block by block.
+private struct DocModelEditor: View {
+    @Binding var model: ArtifactBodyEditing.Model
+
+    var body: some View {
+        switch model {
+        case .docBlocks:
+            DocBlocksEditor(blocks: Binding(
+                get: { if case .docBlocks(let b) = model { return b }; return [] },
+                set: { model = .docBlocks($0) }
+            ))
+        default:
+            TextEditor(text: markdownBinding)
+                .font(.system(.body, design: .monospaced))
+                .scrollContentBackground(.hidden)
+                .padding(.horizontal, 12)
+                .accessibilityLabel("Document text")
+        }
+    }
+
+    private var markdownBinding: Binding<String> {
+        Binding(
+            get: {
+                switch model {
+                case .markdown(let text, _), .docMarkdownField(let text, _): return text
+                default: return ""
+                }
+            },
+            set: { next in
+                switch model {
+                case .markdown(_, let original): model = .markdown(next, original: original)
+                case .docMarkdownField(_, let original): model = .docMarkdownField(next, original: original)
+                default: break
+                }
+            }
+        )
+    }
+}
+
+/// Docs with several tabs: a tab picker over the doc editor. Every tab's
+/// edits are kept while switching; Save writes all tabs as one version.
+private struct DocTabsEditor: View {
+    @Binding var tabs: [ArtifactBodyEditing.DocTab]
+    @State private var activeId: String?
+
+    private var activeIndex: Int {
+        tabs.firstIndex { $0.id == activeId } ?? 0
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if tabs.count > 1 {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(Array(tabs.enumerated()), id: \.element.id) { index, tab in
+                            tabButton(tab, selected: index == activeIndex)
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                }
+                .background(Color("BgSecondary"))
+                .overlay(alignment: .bottom) { Rectangle().fill(Color("BorderSubtle")).frame(height: 0.5) }
+            }
+            if tabs.indices.contains(activeIndex) {
+                if tabs[activeIndex].model != nil {
+                    DocModelEditor(model: Binding(
+                        get: { tabs[safeTab: activeIndex]?.model ?? .markdown("", original: "") },
+                        set: { next in if tabs.indices.contains(activeIndex) { tabs[activeIndex].model = next } }
+                    ))
+                    .id(tabs[activeIndex].id)
+                } else {
+                    FriendlyStateView(
+                        style: .empty,
+                        icon: "lock",
+                        title: "This tab can't be edited here",
+                        message: "Edit \u{201C}\(tabs[activeIndex].title)\u{201D} on the web or Desktop. Your edits to the other tabs still save."
+                    )
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            }
+        }
+    }
+
+    private func tabButton(_ tab: ArtifactBodyEditing.DocTab, selected: Bool) -> some View {
+        Button {
+            activeId = tab.id
+        } label: {
+            HStack(spacing: 5) {
+                if tab.model == nil {
+                    Image(systemName: "lock").font(.caption2)
+                }
+                Text(tab.title)
+                    .font(.subheadline.weight(selected ? .semibold : .regular))
+                    .lineLimit(1)
+                if tab.hasChanges {
+                    Circle().fill(Color("AccentPrimary")).frame(width: 6, height: 6)
+                        .accessibilityHidden(true)
+                }
+            }
+            .foregroundColor(selected ? Color("TextPrimary") : Color("TextSecondary"))
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .background(
+                Capsule().fill(selected ? Color("BgPrimary") : Color.clear)
+            )
+            .overlay(Capsule().stroke(selected ? Color("BorderSubtle") : Color.clear, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(tab.title) tab\(tab.hasChanges ? ", edited" : "")")
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+}
+
+private extension Array where Element == ArtifactBodyEditing.DocTab {
+    subscript(safeTab index: Int) -> Element? {
+        indices.contains(index) ? self[index] : nil
+    }
+}
+
 private struct DocBlocksEditor: View {
     @Binding var blocks: [ArtifactBodyEditing.DocBlock]
+
+    /// Consecutive cells of one table render as a grid; everything else is a row.
+    private enum Segment: Identifiable {
+        case single(Int)
+        case table(id: String, rows: [[Int]])
+
+        var id: String {
+            switch self {
+            case .single(let i): return "b\(i)"
+            case .table(let id, _): return "t\(id)"
+            }
+        }
+    }
+
+    private var segments: [Segment] {
+        var out: [Segment] = []
+        var i = 0
+        while i < blocks.count {
+            guard case .tableCell = blocks[i].role, let table = blocks[i].path.first else {
+                out.append(.single(i)); i += 1; continue
+            }
+            var rows: [[Int]] = []
+            var lastRow = -1
+            while i < blocks.count, case .tableCell(let row, _, _) = blocks[i].role, blocks[i].path.first == table {
+                if row != lastRow { rows.append([]); lastRow = row }
+                rows[rows.count - 1].append(i)
+                i += 1
+            }
+            out.append(.table(id: "\(table)", rows: rows))
+        }
+        return out
+    }
 
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 10) {
-                ForEach($blocks) { $block in
-                    row($block)
+                ForEach(segments) { segment in
+                    switch segment {
+                    case .single(let i):
+                        row($blocks[i])
+                    case .table(_, let rows):
+                        tableGrid(rows)
+                    }
                 }
             }
             .padding(16)
         }
         .scrollDismissesKeyboard(.interactively)
+    }
+
+    private func tableGrid(_ rows: [[Int]]) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            Grid(alignment: .topLeading, horizontalSpacing: 0, verticalSpacing: 0) {
+                ForEach(Array(rows.enumerated()), id: \.offset) { r, cells in
+                    GridRow {
+                        ForEach(cells, id: \.self) { i in
+                            tableCell($blocks[i], header: r == 0)
+                        }
+                    }
+                }
+            }
+            .overlay(Rectangle().stroke(Color("BorderSubtle"), lineWidth: 1))
+        }
+    }
+
+    @ViewBuilder
+    private func tableCell(_ block: Binding<ArtifactBodyEditing.DocBlock>, header: Bool) -> some View {
+        let editable: Bool = {
+            if case .tableCell(_, _, let e) = block.wrappedValue.role { return e }
+            return false
+        }()
+        let row: Int = { if case .tableCell(let r, _, _) = block.wrappedValue.role { return r }; return 0 }()
+        let column: Int = { if case .tableCell(_, let c, _) = block.wrappedValue.role { return c }; return 0 }()
+        Group {
+            if editable {
+                TextField("", text: block.text, axis: .vertical)
+                    .foregroundColor(Color("TextPrimary"))
+            } else {
+                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                    Image(systemName: "lock").font(.caption2)
+                    Text(block.wrappedValue.text.isEmpty ? "Locked" : block.wrappedValue.text)
+                }
+                .foregroundColor(Color("TextSecondary"))
+            }
+        }
+        .font(.footnote.weight(header ? .semibold : .regular))
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .frame(width: 140, alignment: .topLeading)
+        .background(header ? Color("BgSecondary") : Color.clear)
+        .overlay(Rectangle().stroke(Color("BorderSubtle"), lineWidth: 0.5))
+        .accessibilityLabel("Table row \(row + 1), column \(column + 1)\(editable ? "" : ", edit on the web or Desktop")")
     }
 
     @ViewBuilder
@@ -191,6 +371,8 @@ private struct DocBlocksEditor: View {
                 .font(.caption)
                 .foregroundColor(Color("TextSecondary"))
                 .padding(.vertical, 6)
+        case .tableCell:
+            tableCell(block, header: false)
         case .heading(let level):
             TextField("Heading", text: block.text, axis: .vertical)
                 .font(level <= 1 ? .title2.weight(.bold) : level == 2 ? .title3.weight(.semibold) : .headline)
