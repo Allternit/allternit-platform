@@ -4078,3 +4078,31 @@ pub(crate) async fn abort_automation_session(db:&DbHandle,session_id:&str)->Resu
     let client=gizzi_client(&HeaderMap::new());
     gizzi_no_content(&client,reqwest::Method::POST,&format!("/v1/session/{}/abort",urlencoding::encode(session_id)),Some(json!({}))).await.map_err(|_|"Runtime did not confirm cancellation".into())
 }
+
+/// Best-effort delete of a scratch session (the morning brief's model turn runs in one).
+pub(crate) async fn delete_scratch_session(db: &DbHandle, session_id: &str) {
+    if let Some(target) = crate::placement::session_target(db, session_id) {
+        let path = format!("/agent-sessions/{}", urlencoding::encode(session_id));
+        let _ = crate::placement::call(&target, reqwest::Method::DELETE, &path, None).await;
+        return;
+    }
+    let client = gizzi_client(&HeaderMap::new());
+    let path = format!("/v1/session/{}", urlencoding::encode(session_id));
+    let _ = gizzi_no_content(&client, reqwest::Method::DELETE, &path, None).await;
+}
+
+/// Deny every tool in a session (placed or local), so a turn there can only write text.
+pub(crate) async fn deny_all_tools(db: &DbHandle, session_id: &str) -> Result<(), String> {
+    let rules = json!([{ "permission": "*", "pattern": "*", "action": "deny" }]);
+    if let Some(target) = crate::placement::session_target(db, session_id) {
+        crate::placement::call(
+            &target,
+            reqwest::Method::PATCH,
+            &format!("/agent-sessions/{}", urlencoding::encode(session_id)),
+            Some(json!({ "metadata": { "permission": rules } })),
+        )
+        .await?;
+        return Ok(());
+    }
+    restrict_session(session_id, rules).await
+}
