@@ -2377,6 +2377,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/computers/:id/toolset/schema", get(get_toolset_schema))
         .route("/computers/:id/toolset/events", get(get_toolset_events))
         .route("/computers/:id/human-done", post(post_human_done))
+        .route("/computers/:id/secret", post(post_secret).get(get_secret))
         .route("/computers/:id/safety", get(crate::computer_safety::get_safety).put(crate::computer_safety::put_safety))
         .route(
             "/projects/:project_id/safety",
@@ -2399,6 +2400,70 @@ async fn post_human_done(
     };
     let found = crate::computer_v2::human_gate_done(&computer.id);
     Json(json!({ "ok": true, "window_open": found })).into_response()
+}
+
+/// Body of `POST /computers/:id/secret`. Not `Debug`: `text` is the secret.
+#[derive(Deserialize)]
+struct SecretBody {
+    #[serde(default)]
+    text: Option<String>,
+    #[serde(default)]
+    save_as: Option<String>,
+    #[serde(default)]
+    cancel: bool,
+}
+
+/// The person answers a pending secret request (`request_human` with
+/// `secret`) from the masked box. Owner-auth only (`resolve_computer`), valid
+/// only while a request is pending (409 otherwise). The value is typed into
+/// the focused field by the waiting call and never echoed, logged or audited.
+async fn post_secret(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<SecretBody>,
+) -> Response {
+    let computer = match resolve_computer(&state, &user, &id, &headers).await {
+        Ok(c) => c,
+        Err((status, message)) => return (status, Json(json!({ "error": "computer_unavailable", "message": message }))).into_response(),
+    };
+    let text = if body.cancel { None } else { body.text };
+    if !body.cancel && text.as_deref().map_or(true, str::is_empty) {
+        return (StatusCode::BAD_REQUEST, Json(json!({ "error": "invalid_secret", "message": "text is required" }))).into_response();
+    }
+    if text.as_deref().is_some_and(|t| t.len() > 4096) {
+        return (StatusCode::BAD_REQUEST, Json(json!({ "error": "invalid_secret", "message": "text is too long" }))).into_response();
+    }
+    match crate::computer_v2::secret_supply(&computer.id, text, body.save_as).await {
+        Ok(()) => Json(json!({ "ok": true })).into_response(),
+        Err(crate::computer_v2::SecretError::NoPending) => (
+            StatusCode::CONFLICT,
+            Json(json!({ "error": "no_secret_request", "message": "No secret request is waiting on this computer (it may have expired or been answered)." })),
+        )
+            .into_response(),
+        Err(crate::computer_v2::SecretError::Failed(message)) => {
+            (StatusCode::BAD_GATEWAY, Json(json!({ "error": "secret_failed", "message": message }))).into_response()
+        }
+    }
+}
+
+/// Whether a secret request is pending (label only, never a value), so a
+/// surface that connected late can show the masked box.
+async fn get_secret(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Response {
+    let computer = match resolve_computer(&state, &user, &id, &headers).await {
+        Ok(c) => c,
+        Err((status, message)) => return (status, Json(json!({ "error": "computer_unavailable", "message": message }))).into_response(),
+    };
+    match crate::computer_v2::secret_pending(&computer.id) {
+        Some((label, waiting_s)) => Json(json!({ "pending": true, "label": label, "waiting_s": waiting_s })).into_response(),
+        None => Json(json!({ "pending": false })).into_response(),
+    }
 }
 
 async fn post_toolset(

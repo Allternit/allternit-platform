@@ -59,6 +59,10 @@ The overlay plays `computer.action` events from the computer's events channel in
 - The badge next to the real pointer on this Mac is a Desktop window (`surfaces/allternit-desktop/src/main/agent-cursor-window.ts`) that loads `companion.html?surface=agent-cursor`. Its page uses the `window.allternitAgentCursor` bridge: `show()`, `hide()`, `getDisplay()` (width, height and scale factor of the primary display) and `onDisplay(callback)`.
 - Motion comes from Cua's MIT `@trycua/cursor-motion` player, vendored in allternit-ai at `src/vendor/cua-cursor-motion/` with the upstream commit in its README.
 
+## When the agent needs a password or code
+
+If a site asks for a value the agent doesn't have, such as a password, a 2FA code or a card security code, a small box appears under the computer's screen with a label saying what is needed. Type the value into the masked field (the eye button shows what you typed) and press Send. It is typed straight into the field on the computer; the agent never sees it and it is not written to the chat or the logs. Tick **Save to vault** to keep it for next time, bound to that site. Cancel tells the agent you declined. If you take more than 10 minutes the request expires and the box says so. The box looks the same on Desktop, the phone layout and the installed web app.
+
 ## Which computer your phone and the web use
 
 m.allternit.com, ai.allternit.com and other cloud surfaces send each request to one of your computers, called your default node. It's picked this way:

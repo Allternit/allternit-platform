@@ -179,6 +179,9 @@ pub async fn execute_v2(
                 error: None,
             })
         }
+        "request_human" if input.get("secret").is_some_and(Value::is_object) => {
+            request_secret(user, computer, target, input, run_id).await
+        }
         "request_human" => request_human(state, user, computer, target, input, run_id).await,
         "use_credential" => use_credential(user, target, input).await,
         "skills" => crate::computer_subtask::skills(state, user, input),
@@ -348,6 +351,197 @@ async fn request_human(
         m
     });
     Ok(human_result(&reason, timed_out, true))
+}
+
+// ---------------------------------------------------------------------------
+// request_human { secret }: a masked box for a one-off value.
+// ---------------------------------------------------------------------------
+
+/// How long the masked box waits for the person.
+const SECRET_TTL: Duration = Duration::from_secs(600);
+
+/// What the person sent through `POST /computers/:id/secret`. Not `Debug`:
+/// the value must never reach a log line.
+pub struct SecretReply {
+    /// `None` = the person cancelled.
+    pub text: Option<String>,
+    pub save_as: Option<String>,
+    /// The typing outcome goes back to the route so the box can show an error.
+    pub ack: tokio::sync::oneshot::Sender<Result<(), String>>,
+}
+
+struct SecretGate {
+    tx: tokio::sync::oneshot::Sender<SecretReply>,
+    label: String,
+    since: std::time::Instant,
+}
+
+/// At most one pending secret request per computer.
+static SECRET_GATES: Lazy<Mutex<HashMap<String, SecretGate>>> = Lazy::new(|| Mutex::new(HashMap::new()));
+
+/// Why a secret could not be delivered.
+pub enum SecretError {
+    /// No request is pending (never asked, answered, cancelled or expired): 409.
+    NoPending,
+    /// Typing it into the computer failed.
+    Failed(String),
+}
+
+/// Is a secret request pending on this computer? (label, seconds waiting)
+pub fn secret_pending(computer_id: &str) -> Option<(String, u64)> {
+    SECRET_GATES
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .get(computer_id)
+        .map(|g| (g.label.clone(), g.since.elapsed().as_secs()))
+}
+
+/// Hand the person's value (or their cancel) to the waiting `request_human`
+/// call, which types it and answers. The value moves through a channel; it is
+/// never stored, logged or put in an event.
+pub async fn secret_supply(
+    computer_id: &str,
+    text: Option<String>,
+    save_as: Option<String>,
+) -> Result<(), SecretError> {
+    let gate = SECRET_GATES.lock().unwrap_or_else(|p| p.into_inner()).remove(computer_id);
+    let Some(gate) = gate else { return Err(SecretError::NoPending) };
+    let (ack, ack_rx) = tokio::sync::oneshot::channel();
+    if gate.tx.send(SecretReply { text, save_as, ack }).is_err() {
+        return Err(SecretError::NoPending);
+    }
+    match tokio::time::timeout(Duration::from_secs(45), ack_rx).await {
+        Ok(Ok(Ok(()))) => Ok(()),
+        Ok(Ok(Err(e))) => Err(SecretError::Failed(e)),
+        _ => Err(SecretError::Failed("the computer didn't confirm the field was filled".into())),
+    }
+}
+
+fn secret_result(message: String, is_error: bool) -> ToolsetResult {
+    ToolsetResult {
+        is_error,
+        content: vec![text(message)],
+        browser_state: None,
+        screen: screen_info(None),
+        error: None,
+    }
+}
+
+/// request_human with `secret`: show the person a masked box, wait for the
+/// value, type it into the focused field through the same path as
+/// `use_credential`, and answer with only that the field was filled. The agent
+/// keeps control of the computer the whole time; the value never enters the
+/// model context, the event stream, the audit row or the transcript.
+async fn request_secret(
+    user: &AuthUser,
+    computer: &ComputerResponse,
+    target: &Target,
+    input: &Value,
+    run_id: &str,
+) -> Result<ToolsetResult, Fail> {
+    let spec = input.get("secret").cloned().unwrap_or(Value::Null);
+    let label = spec
+        .get("label")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .ok_or_else(|| Fail::from("secret needs a label that says what to ask the person for"))?
+        .chars()
+        .take(120)
+        .collect::<String>();
+    let field = spec.get("field").and_then(Value::as_str).map(str::trim).filter(|f| !f.is_empty()).map(|f| f.chars().take(80).collect::<String>());
+    let domain = spec.get("domain").and_then(Value::as_str).map(str::trim).filter(|d| !d.is_empty()).map(str::to_string);
+
+    let (tx, rx) = tokio::sync::oneshot::channel::<SecretReply>();
+    {
+        let mut gates = SECRET_GATES.lock().unwrap_or_else(|p| p.into_inner());
+        if gates.contains_key(&computer.id) {
+            return Err(Fail::from("a secret request is already waiting on this computer"));
+        }
+        gates.insert(computer.id.clone(), SecretGate { tx, label: label.clone(), since: std::time::Instant::now() });
+    }
+    // The label and field are what the model asked for; the value is not known yet.
+    emit_human_event(&computer.id, "secret_requested", &label, run_id, {
+        let mut m = Map::new();
+        m.insert("label".into(), json!(label));
+        m.insert("field".into(), json!(field));
+        m.insert("domain".into(), json!(domain));
+        m.insert("ttl_ms".into(), json!(SECRET_TTL.as_millis() as u64));
+        m.insert("can_save".into(), json!(true));
+        m.insert("input_enabled".into(), json!(false));
+        m
+    });
+
+    let waited = tokio::time::timeout(SECRET_TTL, rx).await;
+    SECRET_GATES.lock().unwrap_or_else(|p| p.into_inner()).remove(&computer.id);
+
+    let reply = match waited {
+        Ok(Ok(reply)) => reply,
+        Ok(Err(_)) => return Ok(secret_result(format!("The request for '{label}' was withdrawn."), true)),
+        Err(_) => {
+            emit_human_event(&computer.id, "secret_cancelled", &label, run_id, {
+                let mut m = Map::new();
+                m.insert("expired".into(), json!(true));
+                m
+            });
+            return Ok(secret_result(
+                format!("The person didn't provide '{label}' within 10 minutes. The field is still empty."),
+                true,
+            ));
+        }
+    };
+
+    let Some(value) = reply.text else {
+        emit_human_event(&computer.id, "secret_cancelled", &label, run_id, {
+            let mut m = Map::new();
+            m.insert("expired".into(), json!(false));
+            m
+        });
+        let _ = reply.ack.send(Ok(()));
+        return Ok(secret_result(format!("The person declined to provide '{label}'. The field is still empty."), true));
+    };
+
+    // Screen later screenshots and observations for this value.
+    crate::aci_credentials::remember_ephemeral_secret(&user.user_id, &value);
+
+    let typed = type_secret(target, &value).await;
+    let mut saved = false;
+    let mut save_note: Option<String> = None;
+    if typed.is_ok() {
+        if let Some(name) = reply.save_as.as_deref().map(str::trim).filter(|n| !n.is_empty()) {
+            let created = crate::aci_credentials::CREDENTIALS.create(
+                &user.user_id,
+                name,
+                crate::aci_credentials::CredentialType::Env,
+                &value,
+                domain.as_deref(),
+            );
+            saved = created.is_ok();
+            if !saved {
+                save_note = Some(format!("It was typed, but couldn't be saved as '{name}' (name taken, invalid, or no vault key)."));
+            }
+        }
+    }
+    drop(value);
+
+    match typed {
+        Ok(()) => {
+            emit_human_event(&computer.id, "secret_supplied", &label, run_id, {
+                let mut m = Map::new();
+                m.insert("saved".into(), json!(saved));
+                m
+            });
+            let _ = reply.ack.send(match save_note {
+                Some(note) => Err(note),
+                None => Ok(()),
+            });
+            Ok(secret_result(format!("The person provided '{label}' and it was typed into the focused field."), false))
+        }
+        Err(fail) => {
+            let _ = reply.ack.send(Err("couldn't type into the focused field".to_string()));
+            Err(fail)
+        }
+    }
 }
 
 fn human_result(reason: &str, timed_out: bool, resumed: bool) -> ToolsetResult {

@@ -161,6 +161,23 @@ POST /api/v1/computers/:id/human-done
 
 which wakes the waiting call; it re-takes the lease (a person still driving keeps control — agents never preempt a person) and returns "The session has control again."
 
+### Masked secret box
+
+When a site asks for a one-off value that is not saved in the vault (a password, a 2FA code, a card CVC), call `request_human` with a `secret` instead of handing over the whole computer:
+
+```json
+{ "toolset": "computer", "member": "request_human", "input": { "secret": { "label": "6-digit code from your authenticator", "field": "Verification code", "domain": "example.com" } } }
+```
+
+Focus the field first. The live view shows the person a masked box with the label (`computer.secret_requested`, which carries the label, field and domain, never a value). The person types the value; it goes to `POST /api/v1/computers/:id/secret` and the waiting call types it into the focused field through the same path as `use_credential`, then emits `computer.secret_supplied` (`{ saved }` only). The agent keeps control the whole time, and the tool result says only that the field was filled. The value never enters the model context, the events, the audit rows or the transcript, and later screenshots and observations are screened for it like a vault secret. If the person cancels, or 10 minutes pass with no answer, the call returns an error result saying the field is still empty (`computer.secret_cancelled`).
+
+| Route | Behavior |
+|---|---|
+| `POST /api/v1/computers/:id/secret` with `{ "text", "save_as"? }` or `{ "cancel": true }` | Owner-auth only. Valid only while a request is pending; `409 no_secret_request` otherwise. `400` for an empty or over-long value. `502 secret_failed` when typing failed. `save_as` stores the value in the vault under that name, bound to the request's `domain`. |
+| `GET /api/v1/computers/:id/secret` | `{ "pending": true, "label", "waiting_s" }` or `{ "pending": false }`, so a surface that connected late can show the box. Never a value. |
+
+One request can wait per computer at a time. Desktop, the ai.allternit.com phone layout and the m.allternit.com PWA all show the same box under the live view.
+
 ### Browser results
 
 Every dispatched browser result, success or failure, carries `browser_state`:
