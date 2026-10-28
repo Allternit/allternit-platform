@@ -548,6 +548,10 @@ struct ChatContentView: View {
                 // text; sending truncates + re-sends (onSend below).
                 editingMessageId = message.id
                 inputText = message.content
+            },
+            sessionId: viewModel.currentSessionId,
+            onSendPrompt: { prompt in
+                viewModel.sendMessage(prompt, runtimeModelId: modelStore.selectedModelId, effort: modelStore.effortForSend)
             }
         )
         .id(message.id)
