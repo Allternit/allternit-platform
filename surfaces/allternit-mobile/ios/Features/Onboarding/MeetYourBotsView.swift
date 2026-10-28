@@ -250,6 +250,47 @@ final class MeetYourBotsModel: ObservableObject {
         removedDrafts.insert(id)
     }
 
+    /// The routine editor's save (RoutinesStep fromEditorDraft): a template
+    /// routine keeps its prompt, a custom one's title is its instruction.
+    func saveRoutine(id: String?, edit: RoutineEdit) {
+        let title = edit.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let id, let i = routines.firstIndex(where: { $0.id == id }) {
+            routines[i].cron = edit.rule.cron
+            routines[i].scheduleLabel = edit.rule.label
+            if !title.isEmpty { routines[i].title = title }
+            if routines[i].custom { routines[i].prompt = routines[i].title }
+            if let key = edit.botKey { routines[i].botKey = key }
+        } else if !title.isEmpty {
+            routines.append(MeetRoutineDraft(id: "custom:\(UUID().uuidString)", botKey: edit.botKey ?? meetMainKey, title: title,
+                                             prompt: title, cron: edit.rule.cron, scheduleLabel: edit.rule.label,
+                                             enabled: true, custom: true))
+        }
+    }
+
+    /// Who can run a routine: the main bot and the team.
+    var routineBots: [WizardOption] {
+        [WizardOption(value: meetMainKey, label: leader)] + members.compactMap { id in
+            catalog.template(id).map { WizardOption(value: id, label: $0.name) }
+        }
+    }
+
+    // MARK: Who leads — vendor / new / import
+
+    /// A plain-words line about what a setup sheet just did.
+    @Published var setupNote: String?
+
+    /// A bot made or connected from the main step: reload the roster and pick it to lead.
+    func adoptLeader(_ outcome: BotSetupOutcome) async {
+        setupNote = outcome.summary
+        await loadRoster()
+        let id = outcome.mainBotId ?? outcome.botIds.first
+        if let id, roster.contains(where: { $0.id == id }) {
+            mainChoice = .bot(id: id)
+        } else if id != nil {
+            setupNote = outcome.summary + " It’s on your account; pick it below once your bots list catches up."
+        }
+    }
+
     func routineBotName(_ key: String) -> String {
         key == meetMainKey ? leader : catalog.template(key)?.name ?? "Bot"
     }
@@ -374,6 +415,23 @@ struct MeetYourBotsView: View {
     @ObservedObject private var hub = AgentHubStore.shared
     @State private var notificationsOn = false
     @State private var askingNotifications = false
+    @State private var leadSheet: LeadSheet?
+    @State private var editing: RoutineEditTarget?
+
+    /// The "who leads" setup paths beyond the looks (useBotSetup modes vendor / new / import).
+    private enum LeadSheet: String, Identifiable {
+        case vendor, new, importBot
+        var id: String { rawValue }
+    }
+
+    /// The routine the editor is open for; nil id = a new routine.
+    private struct RoutineEditTarget: Identifiable {
+        let id: String
+        let draftId: String?
+        let title: String
+        let rule: RoutineRule
+        let botKey: String
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -403,6 +461,33 @@ struct MeetYourBotsView: View {
         }
         .background(Color("BgPrimary").ignoresSafeArea())
         .animation(.easeOut(duration: 0.22), value: model.stepIndex)
+        .sheet(item: $leadSheet) { which in
+            switch which {
+            case .vendor:
+                NavigationStack {
+                    VendorConnectView(offerMain: true) { first, main in
+                        let ids = [main ?? first].compactMap { $0 }
+                        Task { await model.adoptLeader(BotSetupOutcome(botIds: ids, mainBotId: main, summary: "Vendor bot connected.")) }
+                    }
+                    .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { leadSheet = nil } } }
+                }
+            case .new:
+                NewBotSheet { outcome in Task { await model.adoptLeader(outcome) } }
+            case .importBot:
+                ImportBotSheet { outcome in Task { await model.adoptLeader(outcome) } }
+            }
+        }
+        .sheet(item: $editing) { target in
+            RoutineScheduleEditor(
+                title: target.title, initial: target.rule, titleEditable: target.draftId == nil || isCustom(target.draftId),
+                botChoices: model.routineBots, initialBot: target.botKey,
+                onSave: { edit in
+                    model.saveRoutine(id: target.draftId, edit: edit)
+                    editing = nil
+                },
+                onDelete: target.draftId.map { id in { model.removeRoutine(id); editing = nil } },
+                onCancel: { editing = nil })
+        }
         .task {
             hub.fetchAgentsIfNeeded()
             await model.loadRoster()
@@ -712,8 +797,59 @@ struct MeetYourBotsView: View {
                     }
                 }
             }
+            Text("OR BRING ONE").font(.caption2.weight(.semibold).monospaced()).foregroundColor(Color("TextSecondary"))
+            leadPath("Connect a vendor bot", detail: "ChatGPT, Claude, Gemini, Grok and more — your own subscription, as a bot.",
+                     icon: "link") { leadSheet = .vendor }
+            leadPath("Make a new bot", detail: "Give it a job, a name and a look.", icon: "plus.circle") { leadSheet = .new }
+            leadPath("Import a bot", detail: "Bring in a team file you already have.", icon: "square.and.arrow.down") { leadSheet = .importBot }
+            if let note = model.setupNote {
+                Text(note).font(.caption).foregroundColor(Color("TextSecondary")).fixedSize(horizontal: false, vertical: true)
+            }
             offlineCard
         }
+    }
+
+    private func leadPath(_ title: String, detail: String, icon: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            card {
+                HStack(spacing: 12) {
+                    Image(systemName: icon)
+                        .font(.system(size: 17, weight: .medium))
+                        .foregroundColor(Color("AccentPrimary"))
+                        .frame(width: 36, height: 36)
+                        .background(Color("AccentPrimary").opacity(0.12))
+                        .clipShape(RoundedRectangle(cornerRadius: Theme.radiusSM, style: .continuous))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(title).font(.subheadline.weight(.semibold)).foregroundColor(Color("TextPrimary"))
+                        Text(detail).font(.caption).foregroundColor(Color("TextSecondary")).multilineTextAlignment(.leading)
+                    }
+                    Spacer(minLength: 8)
+                    Image(systemName: "chevron.right").font(.caption).foregroundColor(Color("TextSecondary"))
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .disabled(model.rosterState != .loaded)
+    }
+
+    private func isCustom(_ id: String?) -> Bool {
+        id.flatMap { id in model.routines.first { $0.id == id }?.custom } ?? false
+    }
+
+    private func edit(_ r: MeetRoutineDraft) {
+        editing = RoutineEditTarget(id: r.id, draftId: r.id, title: r.title,
+                                    rule: r.rule ?? RoutineRule(repeatKind: .weekdays, at: 9 * 60, days: RoutineRule.weekdays),
+                                    botKey: r.botKey)
+    }
+
+    /// RoutinesStep "+ Add a routine": the next whole hour, at most 9 PM, weekdays or today.
+    private func addRoutine() {
+        let at = min(21 * 60, (Calendar.current.component(.hour, from: Date()) + 1) * 60)
+        let dow = Calendar.current.component(.weekday, from: Date()) - 1
+        let rule = (1...5).contains(dow)
+            ? RoutineRule(repeatKind: .weekdays, at: at, days: RoutineRule.weekdays)
+            : RoutineRule(repeatKind: .weekly, at: at, days: [dow])
+        editing = RoutineEditTarget(id: "new", draftId: nil, title: "", rule: rule, botKey: meetMainKey)
     }
 
     private func isLook(_ id: String) -> Bool {
@@ -757,7 +893,7 @@ struct MeetYourBotsView: View {
     private var routinesStep: some View {
         VStack(alignment: .leading, spacing: 14) {
             title("When your bots work")
-            sub("Your bots come with these routines. Turn off any you don’t want; you can change times later in Automation Tasks.")
+            sub("Your bots come with these routines. Turn off any you don’t want, or tap one to change its time.")
             if model.routines.isEmpty {
                 card {
                     Text("None of your bots run on a schedule yet.")
@@ -768,12 +904,21 @@ struct MeetYourBotsView: View {
             ForEach(model.routines) { r in
                 card {
                     HStack(spacing: 12) {
-                        tile(forKey: r.botKey, size: 32)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(r.title).font(.subheadline.weight(.semibold)).foregroundColor(Color("TextPrimary"))
-                            Text("\(model.routineBotName(r.botKey)) · \(r.scheduleLabel)")
-                                .font(.caption).foregroundColor(Color("TextSecondary")).lineLimit(2)
+                        Button { edit(r) } label: {
+                            HStack(spacing: 12) {
+                                tile(forKey: r.botKey, size: 32)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(r.title).font(.subheadline.weight(.semibold)).foregroundColor(Color("TextPrimary"))
+                                        .multilineTextAlignment(.leading)
+                                    Text("\(model.routineBotName(r.botKey)) · \(r.scheduleLabel)")
+                                        .font(.caption).foregroundColor(Color("TextSecondary")).lineLimit(2)
+                                }
+                                Spacer(minLength: 0)
+                            }
+                            .contentShape(Rectangle())
                         }
+                        .buttonStyle(.plain)
+                        .accessibilityHint("Change when it runs")
                         Spacer(minLength: 8)
                         Toggle("", isOn: Binding(get: { r.enabled }, set: { _ in model.toggleRoutine(r.id) }))
                             .labelsHidden()
@@ -782,8 +927,13 @@ struct MeetYourBotsView: View {
                     }
                 }
             }
+            Button { addRoutine() } label: {
+                Label("Add a routine", systemImage: "plus")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundColor(Color("AccentPrimary"))
+            }
             if model.routines.count > 0 {
-                sub("\(model.routinesOn) of \(model.routines.count) on. Routines run on your computer, even while your phone is in your pocket.")
+                sub("\(model.routinesOn) of \(model.routines.count) on. Tap one to change when it runs. Routines run on your computer, even while your phone is in your pocket.")
             }
         }
     }

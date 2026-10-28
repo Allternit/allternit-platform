@@ -321,7 +321,7 @@ struct BotPhoneView: View {
     @State private var loadError: String? = nil
     @State private var openingId: String? = nil
     @State private var openError: String? = nil
-    @State private var safariURL: IdentifiableURL? = nil
+    @State private var givingPhone = false
 
     var body: some View {
         List {
@@ -335,7 +335,7 @@ struct BotPhoneView: View {
             } else if !snapshot.hasPhone {
                 FriendlyStateView(style: .empty, icon: "iphone", title: "No phone yet",
                                   message: "Give \(bot.botDisplayName) a number, an email address or a messaging channel.",
-                                  actionTitle: "Give it a phone", action: { safariURL = IdentifiableURL(url: BotPhoneLinks.givePhone) })
+                                  actionTitle: "Give it a phone", action: { givingPhone = true })
                     .listRowBackground(Color.clear)
             } else {
                 identitySection
@@ -345,6 +345,11 @@ struct BotPhoneView: View {
             Section {
                 NavigationLink(value: BotRoute.channels(bot.id)) {
                     Label("Channels", systemImage: "dot.radiowaves.left.and.right")
+                }
+                if snapshot.hasPhone {
+                    Button { givingPhone = true } label: {
+                        Label("Add a number, email or app", systemImage: "plus")
+                    }
                 }
             }
         }
@@ -360,7 +365,9 @@ struct BotPhoneView: View {
                 await load()
             }
         }
-        .sheet(item: $safariURL) { SafariView(url: $0.url) }
+        .sheet(isPresented: $givingPhone, onDismiss: { Task { await load() } }) {
+            GiveBotPhoneSheet(botId: bot.id)
+        }
         .alert("Couldn't open that conversation", isPresented: Binding(
             get: { openError != nil }, set: { if !$0 { openError = nil } }
         )) {
@@ -488,11 +495,4 @@ struct BotPhoneView: View {
         }
         isLoading = false
     }
-}
-
-enum BotPhoneLinks {
-    /// iOS has no native connect wizard yet: "Give a bot a phone" opens the
-    /// web's Connectors settings (the connect flow for numbers, email and
-    /// messaging channels) in-app.
-    static let givePhone = URL(string: "https://ai.allternit.com/settings/connectors")!
 }

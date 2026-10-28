@@ -49,12 +49,17 @@ struct MeetRoutineDraft: Identifiable, Equatable {
     /// "<templateId>:<routineId>".
     let id: String
     /// `meetMainKey` or a template id.
-    let botKey: String
-    let title: String
-    let prompt: String
-    let cron: String
-    let scheduleLabel: String
+    var botKey: String
+    var title: String
+    var prompt: String
+    var cron: String
+    var scheduleLabel: String
     var enabled: Bool
+    /// Added in the flow (its title is its instruction), not from a template.
+    var custom = false
+
+    /// The schedule as the editor sees it (routine-rule ruleFromCron).
+    var rule: RoutineRule? { RoutineRule(cron: cron) }
 
     static func drafts(for template: MeetBotTemplate) -> [MeetRoutineDraft] {
         template.visibleRoutines.compactMap { r in

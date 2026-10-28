@@ -39,8 +39,8 @@ struct PhonesDrawerButton: View {
 
 /// "Your bots' phones": one row per bot that has a channel, number or email,
 /// with its unread count. Choosing one opens that bot's phone in Bots mode.
-/// "Give a bot a phone" opens the connect flow (web Connectors settings,
-/// in-app — iOS has no native connect wizard).
+/// "Give a bot a phone" opens the native connect flow (GiveBotPhoneSheet):
+/// a number, email, or a messaging app.
 struct PhonesSheet: View {
     var onOpenPhone: (String) -> Void
 
@@ -49,7 +49,7 @@ struct PhonesSheet: View {
     @ObservedObject private var botStore = BotModeStore.shared
     @ObservedObject private var hub = AgentHubStore.shared
     @ObservedObject private var auth = AuthManager.shared
-    @State private var safariURL: IdentifiableURL? = nil
+    @State private var givingPhone = false
 
     var body: some View {
         NavigationStack {
@@ -57,11 +57,11 @@ struct PhonesSheet: View {
                 content
                 Section {
                     Button {
-                        safariURL = IdentifiableURL(url: BotPhoneLinks.givePhone)
+                        givingPhone = true
                     } label: {
                         Label("Give a bot a phone", systemImage: "plus")
                     }
-                    .disabled(!auth.isSignedIn && !auth.isSkippingAuth)
+                    .disabled(!auth.isSignedIn)
                 }
             }
             .navigationTitle("Your bots' phones")
@@ -78,7 +78,9 @@ struct PhonesSheet: View {
                     await phones.refresh()
                 }
             }
-            .sheet(item: $safariURL) { SafariView(url: $0.url) }
+            .sheet(isPresented: $givingPhone, onDismiss: { Task { await phones.refresh() } }) {
+                GiveBotPhoneSheet(botId: nil)
+            }
         }
         .presentationDetents([.medium, .large])
     }
