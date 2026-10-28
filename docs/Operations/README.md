@@ -15,6 +15,7 @@ This folder contains everything needed to deploy Allternit Node to enterprise cl
 | `PRODUCTION_DEPLOYMENT_GUIDE.md` | Complete deployment instructions |
 | `PRODUCTION_READINESS_TRACKER.md` | Task tracking & action items |
 | `PRODUCTION_PREPARATION_SUMMARY.md` | Quick reference summary |
+| `SELF_HOSTED_RUNNER.md` | The self-hosted CI runner that compiles allternit-api: host, security rules, rebuild |
 | `service-config.sh` | Centralized port configuration |
 | ~~`start-platform.sh`~~ | Retired — moved to `archive/bin-legacy/`; use `pnpm dev:platform-stack` from the repo root |
 
