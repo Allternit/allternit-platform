@@ -237,6 +237,14 @@ pub enum StreamingError {
     #[error("Buffer overflow")]
     BufferOverflow,
 
+    #[error("Invalid state transition: {from} -> {to}")]
+    InvalidStateTransition {
+        /// State the transition started from
+        from: String,
+        /// State the transition was attempted to
+        to: String,
+    },
+
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 }

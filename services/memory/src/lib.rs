@@ -1,3 +1,7 @@
+pub mod memory_agent_adapter;
+
+pub use memory_agent_adapter::{MemoryAgentAdapter, MemoryAgentConfig};
+
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{info, debug};

@@ -1360,6 +1360,7 @@ mod tests {
             task_queue,
             pool.clone(),
         );
+        workflow_engine.initialize_schema().await.unwrap();
 
         // Create and register a workflow definition that references the skill
         let workflow_def = WorkflowDefinition {
@@ -1604,6 +1605,7 @@ mod tests {
             task_queue,
             pool.clone(),
         );
+        workflow_engine.initialize_schema().await.unwrap();
 
         // Create and register a workflow definition that references the skill
         let workflow_def = WorkflowDefinition {
@@ -1790,7 +1792,7 @@ mod tests {
             requires_policy_gate: false,
             publisher: allternit_skills::PublisherInfo {
                 publisher_id: "test_publisher".to_string(),
-                public_key_id: "test_public_key".to_string(),
+                public_key_id: "key1".to_string(),
             },
             signature: allternit_skills::SignatureInfo {
                 manifest_sig: String::new(),
@@ -1832,6 +1834,7 @@ mod tests {
             task_queue,
             pool.clone(),
         );
+        workflow_engine.initialize_schema().await.unwrap();
 
         let workflow_def = WorkflowDefinition {
             workflow_id: "verify_workflow".to_string(),

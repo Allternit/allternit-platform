@@ -37,7 +37,7 @@ parking_lot = "0.12"
 dashmap = "6.1"
 
 # WebSocket for signaling (T2-A5)
-# STUB_APPROVED: tokio-tungstenite = "0.24"
+tokio-tungstenite = "0.24"
 
 # URL parsing
 url = "2.5"

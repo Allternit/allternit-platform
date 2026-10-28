@@ -16,6 +16,7 @@ use crate::types::{
     StreamingResult, VideoFrame, StreamDirection,
 };
 use crate::audio::AudioChannel;
+use crate::controller::sync::MAX_SYNC_DRIFT_MS;
 use crate::controller::{StreamMultiplexer, StreamSynchronizer, StreamInfo, StreamType};
 
 use chrono::Utc;
@@ -41,6 +42,51 @@ pub enum ControllerState {
     Error,
     /// Shut down
     Closed,
+}
+
+/// Kind of interrupt handled by [`FullDuplexController::handle_interrupt`]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum InterruptType {
+    /// The user started speaking (barge-in)
+    VoiceActivity,
+    /// Interrupt requested explicitly by the user or application
+    Manual,
+    /// Interrupt raised by a timeout; streaming resumes automatically
+    Timeout,
+}
+
+/// Per-stream configuration for [`FullDuplexController::start_duplex_stream`]
+#[derive(Debug, Clone)]
+pub struct StreamConfig {
+    /// Identifier of the multiplexed stream to register
+    pub stream_id: String,
+    /// Stream priority (0-255, higher = more important)
+    pub priority: u8,
+    /// Remote peer this stream is connected to, if known
+    pub peer_id: Option<String>,
+}
+
+impl Default for StreamConfig {
+    fn default() -> Self {
+        Self {
+            stream_id: format!("duplex_stream_{}", uuid::Uuid::new_v4()),
+            priority: 128,
+            peer_id: None,
+        }
+    }
+}
+
+/// Handle returned by [`FullDuplexController::start_duplex_stream`]
+#[derive(Debug, Clone)]
+pub struct DuplexStreamHandle {
+    /// Session the stream belongs to
+    pub session_id: String,
+    /// Controller that owns the stream
+    pub controller_id: String,
+    /// Multiplexed stream identifier
+    pub stream_id: String,
+    /// When streaming started
+    pub started_at: chrono::DateTime<Utc>,
 }
 
 /// Configuration for FullDuplexController
@@ -432,11 +478,11 @@ impl FullDuplexController {
         let sync_id = format!(
             "sync_{}_{}",
             Utc::now().timestamp_millis(),
-            self.stats.lock().await.sync_count
+            self.stats.lock().await.synchronized_frames
         );
         
         // Update stats
-        self.stats.lock().await.sync_count += 1;
+        self.stats.lock().await.synchronized_frames += 1;
         
         Ok(MultimodalFrame {
             sync_id,
@@ -469,8 +515,8 @@ impl FullDuplexController {
         }
         
         // 3. Create multiplexed stream
-        let stream_info = StreamInfo::new(
-            self.config.session_id.clone(),
+        let mut stream_info = StreamInfo::new(
+            config.stream_id.clone(),
             if self.config.enable_audio && self.config.enable_video {
                 StreamType::AudioVideo
             } else if self.config.enable_audio {
@@ -479,20 +525,31 @@ impl FullDuplexController {
                 StreamType::Video
             },
             StreamDirection::Bidirectional,
-        );
+        )
+        .with_priority(config.priority);
+        if let Some(peer_id) = config.peer_id.clone() {
+            stream_info = stream_info.with_peer_id(peer_id);
+        }
         
-        self.mux.register_stream(stream_info, config).await?;
+        self.mux.register_stream(stream_info).await?;
         
         // 4. Start sync coordinator
         self.start_sync_loop().await?;
         
-        // 5. Transition to streaming state
+        // 5. Transition to streaming state (Initializing -> Ready -> Connecting -> Streaming)
+        if *self.state.read().await == ControllerState::Initializing {
+            self.transition_state(ControllerState::Ready).await?;
+        }
+        if *self.state.read().await == ControllerState::Ready {
+            self.transition_state(ControllerState::Connecting).await?;
+        }
         self.transition_state(ControllerState::Streaming).await?;
         
         // 6. Return handle for control
         Ok(DuplexStreamHandle {
             session_id: self.config.session_id.clone(),
             controller_id: self.config.controller_id.clone(),
+            stream_id: config.stream_id,
             started_at: Utc::now(),
         })
     }
@@ -584,8 +641,8 @@ impl FullDuplexController {
         // 1. Validate state transition is legal
         if !self.is_valid_transition(current_state, new_state) {
             return Err(StreamingError::InvalidStateTransition {
-                from: current_state,
-                to: new_state,
+                from: format!("{:?}", current_state),
+                to: format!("{:?}", new_state),
             });
         }
         

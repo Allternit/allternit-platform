@@ -6,17 +6,19 @@ mod arbiter;
 mod circuit_breaker;
 mod executor;
 mod retry;
+mod tools;
 
 pub use arbiter::*;
 pub use circuit_breaker::*;
 pub use executor::*;
 pub use retry::*;
+pub use tools::*;
 
 // Re-export ToolCall and ToolResult from events
 pub use crate::events::{ToolCall, ToolResult};
 
 /// Tool execution error
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error)]
 pub enum ToolExecError {
     #[error("Tool not found: {0}")]
     ToolNotFound(String),

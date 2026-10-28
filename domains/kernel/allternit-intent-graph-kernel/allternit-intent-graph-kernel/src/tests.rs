@@ -42,7 +42,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "Storage::get_subgraph is a stub that returns no edges"]
     async fn test_subgraph_retrieval() -> Result<()> {
         let pool = sqlx::sqlite::SqlitePoolOptions::new()
             .max_connections(1)
