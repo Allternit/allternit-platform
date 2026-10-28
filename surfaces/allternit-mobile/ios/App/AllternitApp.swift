@@ -25,6 +25,9 @@ struct AllternitApp: App {
         // Must register before this initializer returns — BGTaskScheduler
         // requires the handler in place before app launch completes.
         BackgroundRefreshManager.register()
+        // Registers the scene observer that applies the saved Light/Dark/System
+        // choice as soon as the first window activates.
+        _ = AppearanceStore.shared
         #if DEBUG
         // `-reset-onboarding` (DEBUG only): also clears the Phase-10
         // onboarding gate (the ChatView site clears the dictation/priming

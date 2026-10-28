@@ -59,6 +59,7 @@ struct HistorySidebarView: View {
     @State private var isQuickTaskPresented = false
     @State private var isScheduledTaskPresented = false
     @State private var isMiniAppsPresented = false
+    @State private var isDecisionsPresented = false
 
     private let spring = Animation.spring(response: 0.35, dampingFraction: 0.86, blendDuration: 0)
 
@@ -68,7 +69,6 @@ struct HistorySidebarView: View {
                 header
 
                 if modeStore.shellMode == .bots {
-                    // L4: replace with the Bots rail (BotRailView) once it lands.
                     botsRail
                 } else {
                     railList
@@ -109,6 +109,9 @@ struct HistorySidebarView: View {
         }
         .sheet(isPresented: $isMiniAppsPresented) {
             MiniAppsStoreView()
+        }
+        .sheet(isPresented: $isDecisionsPresented) {
+            DecisionsScreen()
         }
         .fullScreenCover(isPresented: $isSearchPresented) {
             ShellSearchView(
@@ -211,14 +214,15 @@ struct HistorySidebarView: View {
         let projects = RailRow(id: "projects", label: "Projects", icon: "folder", isActive: tab == .projects) { go(.projects) }
         let artifacts = RailRow(id: "artifacts", label: "Artifacts", icon: "doc.text", isActive: tab == .artifacts) { go(.artifacts) }
         let automation = RailRow(id: "automation", label: "Automation Tasks", icon: "clock", isActive: tab == .automation) { go(.automation) }
+        let decisions = RailRow(id: "decisions", label: "Decisions", icon: "checkmark.seal", isActive: false) { isDecisionsPresented = true }
         switch modeStore.shellMode {
         case .home:
             return [
-                projects, artifacts, automation,
+                projects, artifacts, automation, decisions,
                 RailRow(id: "models", label: "Models", icon: "brain.head.profile", isActive: tab == .models) { go(.models) },
             ]
         case .code:
-            return [projects, artifacts, automation]
+            return [projects, artifacts, automation, decisions]
         case .aci:
             return [
                 RailRow(id: "mcp-apps", label: "MCP Apps", icon: "square.grid.2x2", isActive: false) {
@@ -425,7 +429,7 @@ struct HistorySidebarView: View {
         .accessibilityHint("Swipe left to delete, right to \(isPinned ? "unpin" : "pin")")
     }
 
-    // MARK: - Bots rail (placeholder until L4)
+    // MARK: - Bots rail
 
     private var botsRail: some View {
         List {
@@ -434,6 +438,7 @@ struct HistorySidebarView: View {
                 railRowView(RailRow(id: "projects", label: "Projects", icon: "folder", isActive: modeStore.activeTab == .projects) { go(.projects) })
                 railRowView(RailRow(id: "artifacts", label: "Artifacts", icon: "doc.text", isActive: modeStore.activeTab == .artifacts) { go(.artifacts) })
                 railRowView(RailRow(id: "automation", label: "Automation Tasks", icon: "clock", isActive: modeStore.activeTab == .automation) { go(.automation) })
+                railRowView(RailRow(id: "decisions", label: "Decisions", icon: "checkmark.seal", isActive: false) { isDecisionsPresented = true })
             }
             activeBotSection
             if !recentSessions.isEmpty {
@@ -687,7 +692,7 @@ struct HistorySidebarView: View {
         return pinsStore.pins
             .sorted { $0.pinnedAt > $1.pinnedAt }
             .compactMap { byId[$0.id] }
-            .filter(belongsToMode)
+            .filter { belongsToMode($0) }
             .prefix(10)
             .map { $0 }
     }

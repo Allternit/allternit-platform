@@ -309,7 +309,7 @@ struct DevicePairingView: View {
         value.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? value
     }
 
-    static func parseDate(_ raw: String) -> Date? {
+    nonisolated static func parseDate(_ raw: String) -> Date? {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         if let date = formatter.date(from: raw) { return date }

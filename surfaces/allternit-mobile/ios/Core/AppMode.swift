@@ -148,7 +148,7 @@ final class AppModeStore: ObservableObject {
     /// or loops (`/v1/automations/loops`, Phase 3). All three list views
     /// read/write this via a shared segmented control so any one is
     /// reachable from the same tab rather than needing a separate nav item.
-    @Published var automationKind: AutomationKind = .cron
+    @Published var automationKind: AutomationKind = .overview
 
     init(defaults: UserDefaults = .standard) {
         let shell: ShellMode
@@ -240,6 +240,7 @@ enum ModeBarItem: String, CaseIterable {
 
 /// The sub-surfaces of the Automation Tasks tab (`ModeBarItem.automation`).
 enum AutomationKind: String, CaseIterable {
+    case overview = "Overview"
     case cron = "Cron"
     case routines = "Routines"
     case loops = "Loops"

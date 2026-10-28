@@ -47,12 +47,27 @@ struct BotsModeRootView: View {
     @StateObject private var auth = AuthManager.shared
     @StateObject private var navigator = BotNavigator()
 
-    init() {}
+    /// Opens the shell drawer (the edge swipe also works).
+    var onOpenSidebar: (() -> Void)?
+
+    init(onOpenSidebar: (() -> Void)? = nil) {
+        self.onOpenSidebar = onOpenSidebar
+    }
 
     var body: some View {
         NavigationStack(path: $navigator.path) {
             content
                 .navigationTitle("Bots")
+                .toolbar {
+                    if let onOpenSidebar {
+                        ToolbarItem(placement: .topBarLeading) {
+                            Button(action: onOpenSidebar) {
+                                Image(systemName: "line.3.horizontal")
+                            }
+                            .accessibilityLabel("Open menu")
+                        }
+                    }
+                }
                 .navigationDestination(for: BotRoute.self) { route in
                     BotRouteDestination(route: route)
                 }

@@ -194,10 +194,15 @@ struct MainWorkspaceView: View {
         case .artifacts:
             ArtifactsLibraryView(isSidebarOpen: $isSidebarOpen)
         case .agents:
-            // L4: replace with BotsModeRootView()
-            AgentHubView(isSidebarOpen: $isSidebarOpen)
+            BotsModeRootView(onOpenSidebar: {
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.86, blendDuration: 0)) {
+                    isSidebarOpen = true
+                }
+            })
         case .automation:
             switch modeStore.automationKind {
+            case .overview:
+                AutomationOverviewRoot(isSidebarOpen: $isSidebarOpen)
             case .cron:
                 AutomationTasksListView(isSidebarOpen: $isSidebarOpen)
             case .routines:

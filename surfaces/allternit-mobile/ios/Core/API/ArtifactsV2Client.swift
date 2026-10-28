@@ -171,6 +171,12 @@ struct ArtifactV2Version: Decodable, Hashable, Sendable {
         if case .string(let value)? = meta?[key] { return value }
         return nil
     }
+
+    // JSONValue is only Equatable, so hash on the fields that identify a version.
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(version)
+        hasher.combine(body)
+    }
 }
 
 /// The full artifact (`artifact_json`): the summary plus the version the

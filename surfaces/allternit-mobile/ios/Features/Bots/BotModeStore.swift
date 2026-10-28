@@ -79,7 +79,7 @@ final class BotModeStore: ObservableObject {
     }
 
     func threads(for botId: String) -> [BotThread] {
-        threads.filter { $0.botId == botId }.sorted(by: Self.threadOrder)
+        threads.filter { $0.botId == botId }.sorted { Self.threadOrder($0, $1) }
     }
 
     /// Open threads of a bot, not counting its main chat (PhoneBotPage counts).
@@ -98,7 +98,7 @@ final class BotModeStore: ObservableObject {
         threads.filter { $0.botId == botId && $0.group == "working" }.count
     }
 
-    static func threadOrder(_ a: BotThread, _ b: BotThread) -> Bool {
+    nonisolated static func threadOrder(_ a: BotThread, _ b: BotThread) -> Bool {
         if a.groupOrder != b.groupOrder { return a.groupOrder < b.groupOrder }
         return a.lastActivityAt > b.lastActivityAt
     }
