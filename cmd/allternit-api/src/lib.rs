@@ -128,6 +128,9 @@ pub mod placement;
 pub mod coordinator_routes;
 pub mod delegate_routes;
 pub mod morning_brief;
+// One source with cloud-api's eval (`evals/triage` measures this exact code).
+#[path = "../../allternit-cloud-api/src/routes/mail_triage.rs"]
+pub mod mail_triage;
 pub mod gateway_placement;
 pub mod browser_history_service;
 pub mod procedural_memory_service;

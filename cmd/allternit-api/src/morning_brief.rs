@@ -253,6 +253,9 @@ pub struct MailMsg {
     pub subject: String,
     pub snippet: String,
     pub date: String,
+    /// Gmail label ids (e.g. `CATEGORY_PROMOTIONS`) when the connector returns them; the triage
+    /// rules use them to settle obvious mail without a model call.
+    pub labels: Vec<String>,
 }
 
 async fn fetch_mail(user_id: &str) -> Source<Vec<MailMsg>> {
@@ -279,6 +282,11 @@ async fn fetch_mail(user_id: &str) -> Source<Vec<MailMsg>> {
             subject: clean(&s(m, &["subject", "title"]), 120),
             snippet: clean(&s(m, &["snippet", "preview", "body"]), 200),
             date: s(m, &["date", "internalDate", "receivedAt"]),
+            labels: ["labelIds", "labels"]
+                .iter()
+                .find_map(|k| m[*k].as_array())
+                .map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect())
+                .unwrap_or_default(),
         })
         .filter(|m| !m.subject.is_empty() || !m.snippet.is_empty())
         .collect();
@@ -328,14 +336,41 @@ async fn fetch_calendar(user_id: &str, from: DateTime<Utc>, to: DateTime<Utc>) -
     Source::Ok(out)
 }
 
-// TODO(coordinator): mail_triage from feat/od-triage
-// The mail "needs you / can wait" classifier lives in cloud-api
-// (`routes/mail_triage.rs`: `triage(&Message, &Person, model, now, complete) -> TriageResult`;
-// rules only say "can wait", protected mail always reaches the model). Until it is wired in,
-// this returns `None`, and the brief lists unread mail as one "not sorted yet" line instead of
-// guessing. Keep the signature close to the cloud-api fn: messages in, one verdict + reason each.
-async fn triage_mail(_user_id: &str, _msgs: &[MailMsg]) -> Option<Vec<(bool, String)>> {
-    None
+/// Sorts unread mail with the shared classifier (`crate::mail_triage`, the code `evals/triage`
+/// measures): rules first, then the bot's own brain for the rest, four at a time. Any model
+/// failure returns `None` and the brief lists the mail as "not sorted yet" rather than guessing.
+async fn triage_mail(db: &DbHandle, bot: &BotRow, bot_id: &str, msgs: &[MailMsg]) -> Option<Vec<(bool, String)>> {
+    use crate::mail_triage::{triage, Complete, Message, Person, Verdict};
+    use futures::stream::{self, StreamExt};
+    let person = Person { name: "the user".into(), email: String::new(), about: None };
+    let now = Utc::now().to_rfc3339();
+    let model = bot.name.clone();
+    let results: Vec<Result<(bool, String), String>> = stream::iter(msgs.iter().map(|m| {
+        let message = Message {
+            id: m.date.clone(),
+            from: m.from.clone(),
+            subject: m.subject.clone(),
+            date: m.date.clone(),
+            labels: m.labels.clone(),
+            body: m.snippet.clone(),
+            ..Default::default()
+        };
+        let (person, now, model) = (person.clone(), now.clone(), model.clone());
+        let (db, bot_id, bot_name) = (db.clone(), bot_id.to_string(), bot.name.clone());
+        async move {
+            let ask = move |prompt: String| {
+                let (db, bot_id, bot_name) = (db.clone(), bot_id.clone(), bot_name.clone());
+                Box::pin(async move { ask_model(&db, &bot_id, &bot_name, &prompt).await })
+                    as std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, String>> + Send>>
+            };
+            let complete: Complete<'_> = &ask;
+            triage(&message, &person, &model, &now, complete).await.map(|r| (r.verdict == Verdict::NeedsYou, r.reason))
+        }
+    }))
+    .buffered(4)
+    .collect()
+    .await;
+    results.into_iter().collect::<Result<Vec<_>, _>>().ok()
 }
 
 // ─── Brief ───────────────────────────────────────────────────────────────────
@@ -419,7 +454,7 @@ async fn build_brief(db: &DbHandle, user_id: &str, bot_id: &str, bot: &BotRow, d
     match mail {
         Source::NotConnected => unchecked.push(connect_row("Gmail", "Gmail", Some(GMAIL), "Not connected, so I didn't look at your mail.")),
         Source::Failed => unchecked.push(connect_row("Gmail", "Gmail", None, "I couldn't read it just now.")),
-        Source::Ok(msgs) if !msgs.is_empty() => match triage_mail(user_id, &msgs).await {
+        Source::Ok(msgs) if !msgs.is_empty() => match triage_mail(db, bot, bot_id, &msgs).await {
             Some(verdicts) => {
                 for (m, (needs_you, reason)) in msgs.iter().zip(verdicts) {
                     let title = format!("{}: {}", m.from, m.subject);

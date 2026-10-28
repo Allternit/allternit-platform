@@ -195,7 +195,10 @@ pub fn triage_prompt(m: &Message, person: &Person, now: &str) -> String {
     let in_cc = has(&m.cc, &person.email);
     let list = m.header("List-Id").map(str::trim).filter(|s| !s.is_empty());
     let who = person.name.as_str();
-    let position = if in_to || in_cc {
+    // Without the person's own address (the morning brief has only the mailbox), say nothing about it.
+    let position = if person.email.is_empty() {
+        String::new()
+    } else if in_to || in_cc {
         if in_cc && !in_to { format!("({who} is copied, not a direct recipient.)") } else { String::new() }
     } else if let Some(l) = list {
         format!("({who} gets this through the group or list {l}, as one of its members.)")
