@@ -20,6 +20,7 @@ import { FabricPage } from "@/pages/FabricPage";
 import { PortalLandingPage } from "@/pages/PortalLandingPage";
 import { ModelsPage } from "@/pages/ModelsPage";
 import { PlansPage } from "@/pages/PlansPage";
+import { CloudPage } from "@/pages/CloudPage";
 import { AdminCustomersPage } from "@/pages/AdminCustomersPage";
 import { AdminFundingPage } from "@/pages/AdminFundingPage";
 import { PlaygroundPage } from "@/pages/console/PlaygroundPage";
@@ -164,6 +165,7 @@ export default function App() {
           </RequireAuth>
         }
       />
+      <Route path="/cloud" element={<CloudPage />} />
       <Route path="/models/*" element={<ModelsPage />} />
       <Route path="/plans/*" element={<PlansPage />} />
       <Route path="/billing/*" element={<BillingRoute />} />

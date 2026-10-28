@@ -7,6 +7,7 @@ import { usePlatformAuth } from "@/lib/platform-auth-client";
 import { useTheme } from "@/lib/theme";
 
 const NAV_LINKS = [
+  { to: "/cloud", label: "Cloud API" },
   { to: "/models", label: "Models" },
   { to: "/plans", label: "Plans" },
 ];
@@ -21,8 +22,8 @@ export function PublicHeader() {
 
   return (
     <header className="w-full border-b border-[var(--border-subtle)] bg-[var(--bg-primary)]/90 backdrop-blur-sm">
-      <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-6">
-        <Link to="/" className="flex items-center gap-2">
+      <div className="mx-auto flex h-16 max-w-7xl items-center justify-between gap-3 px-4 sm:px-6">
+        <Link to="/" className="flex min-w-0 shrink items-center gap-2">
           <AllternitWordmark variant={isDark ? "light" : "dark"} height={28} />
         </Link>
 
@@ -38,7 +39,7 @@ export function PublicHeader() {
           ))}
         </nav>
 
-        <div className="flex items-center gap-2">
+        <div className="flex shrink-0 items-center gap-2">
           <button
             type="button"
             onClick={() => setTheme(isDark ? "light" : "dark")}
@@ -59,14 +60,14 @@ export function PublicHeader() {
             <>
               <SignInModalButton
                 redirectUrl={redirectUrl}
-                className="text-[13px] font-medium text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)]"
+                className="whitespace-nowrap text-[13px] font-medium text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)]"
               >
                 Sign in
               </SignInModalButton>
               <SignInModalButton
                 mode="sign-up"
                 redirectUrl={redirectUrl}
-                className="inline-flex items-center rounded-lg bg-[var(--accent-primary)] px-3 py-1.5 text-[13px] font-medium text-[#FDF8F3] transition-colors hover:brightness-110"
+                className="inline-flex items-center whitespace-nowrap rounded-lg bg-[var(--accent-primary)] px-3 py-1.5 text-[13px] font-medium text-[#FDF8F3] transition-colors hover:brightness-110"
               >
                 Sign up
               </SignInModalButton>

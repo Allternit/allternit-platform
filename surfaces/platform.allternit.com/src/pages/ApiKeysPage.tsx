@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import {
   Key,
   Plus,
@@ -29,6 +30,8 @@ const AVAILABLE_SCOPES = [
   { value: "compute", label: "Compute" },
   { value: "billing", label: "Billing" },
   { value: "devices", label: "Devices" },
+  // Required for POST /v1/chat/completions (Allternit Cloud). Spends prepaid credits.
+  { value: "inference", label: "Run models" },
 ];
 
 function formatDate(iso?: string | null): string {
@@ -46,9 +49,13 @@ export function ApiKeysPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [showCreate, setShowCreate] = useState(false);
-  const [newName, setNewName] = useState("");
-  const [newScopes, setNewScopes] = useState<string[]>(["read"]);
+  // `/api-keys?create=inference` (linked from the public /cloud page) opens the
+  // create form with the model-running scope already picked.
+  const [searchParams] = useSearchParams();
+  const createPreset = searchParams.get("create") === "inference";
+  const [showCreate, setShowCreate] = useState(createPreset);
+  const [newName, setNewName] = useState(createPreset ? "Allternit Cloud" : "");
+  const [newScopes, setNewScopes] = useState<string[]>(createPreset ? ["inference"] : ["read"]);
   const [creating, setCreating] = useState(false);
   const [createdKey, setCreatedKey] = useState<CreatedApiKey | null>(null);
 
@@ -266,6 +273,11 @@ export function ApiKeysPage() {
                     </label>
                   ))}
                 </div>
+                {newScopes.includes("inference") && (
+                  <p className="mt-1.5 text-[12px] text-[var(--text-tertiary)]">
+                    Run models lets this key call <code className="font-mono">/v1/chat/completions</code>. Calls spend your prepaid credits.
+                  </p>
+                )}
               </div>
               <div className="flex justify-end gap-2">
                 <button type="button" className={QUIET_BUTTON_CLASS} onClick={() => setShowCreate(false)}>

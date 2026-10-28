@@ -14,6 +14,7 @@ const routes = [
   'runs',
   'schedules',
   'approvals',
+  'cloud',
   'models',
   'plans',
   'billing',

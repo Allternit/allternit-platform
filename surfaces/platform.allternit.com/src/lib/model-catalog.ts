@@ -22,6 +22,8 @@ export interface LiveModelInfo {
   prompt_price?: number;
   completion_price?: number;
   context_length?: number;
+  /** "standard" or "open" (open-weight models with far fewer refusals). */
+  lane?: string;
   extra?: Record<string, unknown>;
 }
 
