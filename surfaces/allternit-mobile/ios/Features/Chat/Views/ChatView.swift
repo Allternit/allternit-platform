@@ -609,8 +609,8 @@ struct ChatContentView: View {
                     percentText: percentText,
                     resetsLabel: usageStore.resetsLabel,
                     onUpgrade: {
-                        // Placeholder — the real upgrade flow is TBD.
-                        usageSafariURL = IdentifiableURL(url: URL(string: "https://allternit.com/upgrade")!)
+                        // Shown on the US storefront only (StorefrontGate).
+                        usageSafariURL = IdentifiableURL(url: AccountPlanStore.shared.upgradeURL)
                     },
                     onDismiss: {
                         usageStore.dismissBannerForToday()
@@ -695,15 +695,14 @@ struct ChatContentView: View {
                         if usageStore.isAtLimit {
                             UsageWallCard(
                                 resetsLabel: usageStore.resetsLabel,
+                                // Buttons show on the US storefront only
+                                // (StorefrontGate); elsewhere the card
+                                // shows the reset time alone.
                                 onAddCredits: {
-                                    // Placeholder — the real credits
-                                    // purchase flow is TBD.
-                                    usageSafariURL = IdentifiableURL(url: URL(string: "https://allternit.com/credits")!)
+                                    usageSafariURL = IdentifiableURL(url: StorefrontGate.creditsURL)
                                 },
                                 onGetPro: {
-                                    // Placeholder — the real upgrade flow
-                                    // is TBD.
-                                    usageSafariURL = IdentifiableURL(url: URL(string: "https://allternit.com/upgrade")!)
+                                    usageSafariURL = IdentifiableURL(url: AccountPlanStore.shared.upgradeURL)
                                 }
                             )
                             .padding(.horizontal, 12)

@@ -12,6 +12,8 @@ struct UsageLimitBanner: View {
     let resetsLabel: String?
     let onUpgrade: () -> Void
     let onDismiss: () -> Void
+    /// "Upgrade" links out to the web, allowed on the US storefront only.
+    @ObservedObject private var storefront = StorefrontGate.shared
 
     var body: some View {
         HStack(spacing: 10) {
@@ -20,7 +22,7 @@ struct UsageLimitBanner: View {
                 .foregroundColor(Theme.statusWarning)
 
             VStack(alignment: .leading, spacing: 1) {
-                Text("You've used \(percentText) of your weekly limit")
+                Text("You've used \(percentText) of your usage limit")
                     .font(.subheadline)
                     .fontWeight(.medium)
                     .foregroundColor(Color("TextPrimary"))
@@ -33,18 +35,20 @@ struct UsageLimitBanner: View {
 
             Spacer(minLength: 8)
 
-            Button(action: {
-                let generator = UIImpactFeedbackGenerator(style: .light)
-                generator.impactOccurred()
-                onUpgrade()
-            }) {
-                Text("Upgrade")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(.black)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(Color("AccentPrimary"))
-                    .clipShape(Capsule())
+            if storefront.allowsPurchaseLinks {
+                Button(action: {
+                    let generator = UIImpactFeedbackGenerator(style: .light)
+                    generator.impactOccurred()
+                    onUpgrade()
+                }) {
+                    Text("Upgrade")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(.black)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(Color("AccentPrimary"))
+                        .clipShape(Capsule())
+                }
             }
 
             Button(action: onDismiss) {
@@ -69,6 +73,16 @@ struct UsageWallCard: View {
     let resetsLabel: String?
     let onAddCredits: () -> Void
     let onGetPro: () -> Void
+    /// Credits / Pro buttons link out to the web: US storefront only.
+    @ObservedObject private var storefront = StorefrontGate.shared
+
+    private var message: String {
+        if storefront.allowsPurchaseLinks {
+            return resetsLabel.map { "Your limit resets \($0). Add credits or upgrade to Pro to keep going." }
+                ?? "Add credits or upgrade to Pro to keep going."
+        }
+        return resetsLabel.map { "Your limit resets \($0)." } ?? "Your limit resets soon."
+    }
 
     var body: some View {
         VStack(spacing: 14) {
@@ -84,42 +98,43 @@ struct UsageWallCard: View {
                     .font(.system(.headline, design: .serif))
                     .foregroundColor(Color("TextPrimary"))
 
-                Text(resetsLabel.map { "Your weekly limit resets \($0). Add credits or upgrade to Pro to keep going." }
-                     ?? "Add credits or upgrade to Pro to keep going.")
+                Text(message)
                     .font(.subheadline)
                     .foregroundColor(Color("TextSecondary"))
                     .multilineTextAlignment(.center)
             }
 
-            HStack(spacing: 10) {
-                Button(action: {
-                    let generator = UIImpactFeedbackGenerator(style: .light)
-                    generator.impactOccurred()
-                    onAddCredits()
-                }) {
-                    Text("Add credits")
-                        .font(.system(.subheadline, weight: .semibold))
-                        .foregroundColor(Color("AccentPrimary"))
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 40)
-                        .background(
-                            RoundedRectangle(cornerRadius: Theme.radiusMD)
-                                .stroke(Color("AccentPrimary"), lineWidth: 1)
-                        )
-                }
+            if storefront.allowsPurchaseLinks {
+                HStack(spacing: 10) {
+                    Button(action: {
+                        let generator = UIImpactFeedbackGenerator(style: .light)
+                        generator.impactOccurred()
+                        onAddCredits()
+                    }) {
+                        Text("Add credits")
+                            .font(.system(.subheadline, weight: .semibold))
+                            .foregroundColor(Color("AccentPrimary"))
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 40)
+                            .background(
+                                RoundedRectangle(cornerRadius: Theme.radiusMD)
+                                    .stroke(Color("AccentPrimary"), lineWidth: 1)
+                            )
+                    }
 
-                Button(action: {
-                    let generator = UIImpactFeedbackGenerator(style: .light)
-                    generator.impactOccurred()
-                    onGetPro()
-                }) {
-                    Text("Get Pro")
-                        .font(.system(.subheadline, weight: .semibold))
-                        .foregroundColor(.black)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 40)
-                        .background(Color("AccentPrimary"))
-                        .clipShape(RoundedRectangle(cornerRadius: Theme.radiusMD))
+                    Button(action: {
+                        let generator = UIImpactFeedbackGenerator(style: .light)
+                        generator.impactOccurred()
+                        onGetPro()
+                    }) {
+                        Text("Get Pro")
+                            .font(.system(.subheadline, weight: .semibold))
+                            .foregroundColor(.black)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 40)
+                            .background(Color("AccentPrimary"))
+                            .clipShape(RoundedRectangle(cornerRadius: Theme.radiusMD))
+                    }
                 }
             }
         }
