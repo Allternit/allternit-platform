@@ -106,12 +106,12 @@ async fn signed_in_user(state: &ApiState, headers: &HeaderMap) -> Result<String,
 
 /// Who is calling: the user, and the organization active for them (from the
 /// Clerk session, or the one the paired runtime was approved under).
-struct Caller {
-    user_id: String,
-    organization_id: Option<String>,
+pub(crate) struct Caller {
+    pub(crate) user_id: String,
+    pub(crate) organization_id: Option<String>,
 }
 
-async fn signed_in_caller(state: &ApiState, headers: &HeaderMap) -> Result<Caller, ApiError> {
+pub(crate) async fn signed_in_caller(state: &ApiState, headers: &HeaderMap) -> Result<Caller, ApiError> {
     if let Some(token) = crate::routes::runtime_pairing::device_token_from_headers(headers) {
         let device = crate::routes::runtime_pairing::runtime_device_for_token(&state.db, token, None).await?;
         let organization_id: Option<String> =

@@ -66,6 +66,7 @@
             "group": "Workspace workflows",
             "pages": [
               "guides/first-run-setup",
+              "guides/setup-checklist",
               "guides/sidebar-navigation",
               "guides/session-overview",
               "guides/decisions",
@@ -726,6 +727,7 @@
               "api/inbox",
               "api/status",
               "api/me",
+              "api/setup-checks",
               "api/quickstart"
             ],
             "icon": "/icons/play.svg"

@@ -1,0 +1,43 @@
+---
+title: Setup checklist
+description: See what your Allternit depends on, which parts work right now, and the one click that fixes each gap. Find it in Settings, and at the end of first-run setup.
+---
+
+The setup checklist lists what your Allternit depends on and checks each item with a real call, so a green row means it works right now, not just that something was filled in. It is on Allternit Desktop, ai.allternit.com and the m.allternit.com phone app.
+
+## Where to find it
+
+- **Settings, then Setup.** On a phone, Setup is in the Account card of Settings.
+- **The last step of first-run setup.** After your workspace is built, the checklist shows what is ready and what still needs you. See [First-run setup](/guides/first-run-setup).
+
+## What each status means
+
+| Status | Meaning |
+|---|---|
+| **Ready** | A live check just passed. |
+| **Not checked** | Nothing is wrong that we can see, but we could not confirm it. A sleeping computer, a service that did not answer in time, or a permission you have not been asked for yet. |
+| **Needs setup** | A live check failed or nothing is set up. The row says why. |
+
+Rows marked **Optional** never count against you. Select **Check again** to run every check again.
+
+## What it checks
+
+| Item | How it is checked |
+|---|---|
+| **Account and plan** | The session you are using is verified, and your plan is read. |
+| **Brain and model access** | Allternit models are asked for their model list. If you added your own provider key, the provider is asked whether it still accepts the key. No message is sent and nothing is charged. |
+| **Google (Gmail and Calendar)** | The connector service is asked whether it still holds both sign-ins. Optional. |
+| **Other connected accounts** | Each connected account is confirmed the same way, and an expired sign-in is named. Optional. |
+| **Notifications** | Your browser, phone or Desktop permission to show notifications on this device. |
+| **Your computers** | A paired computer is reachable when it reported in during the last 5 minutes. A sleeping computer reads Not checked until it is running. Optional. |
+| **Channels** | Your connected channel accounts, such as Telegram. Optional. |
+
+## Fix a gap
+
+Each row that is not Ready has one button that opens the screen that fixes it, for example **Open billing** or **Connect Google**. Fix it there, return to Setup and select **Check again**.
+
+If a row stays Not checked, the check could not run. Select **Check again** in a minute. The checklist never shows a key or token, only a yes or no.
+
+## For developers
+
+The checklist reads [`GET /api/v1/setup/checks`](/api/setup-checks). To add an item, see the API page.

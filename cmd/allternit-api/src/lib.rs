@@ -286,6 +286,7 @@ pub mod commerce;
 pub mod commerce_routes;
 pub mod marketplace_routes;
 pub mod me_routes;
+pub mod setup_routes;
 pub mod mailflare_client;
 pub mod media;
 pub mod model_training_routes;
