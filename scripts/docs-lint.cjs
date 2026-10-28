@@ -166,6 +166,9 @@ for (const mdxPath of collectMdxFiles(DOCS_DIR)) {
       if (['surfaces/native-agent.mdx', 'guides/local-vendor-bots.mdx'].some((p) => mdxPath.endsWith(p))) continue;
       // Subagents and the CLI configuration page document how each brain (Claude Code, Codex) gets the subagent catalog.
       if (['cli/configuration.mdx', 'guides/subagents.mdx'].some((p) => mdxPath.endsWith(p))) continue;
+      // Tree process protection/hook paths and subagent evals document the
+      // installed CLI integrations by their actual commands and log formats.
+      if (['factory/trees.mdx', 'guides/subagent-evals.mdx'].some((p) => mdxPath.endsWith(p))) continue;
       // Bot isolation documents provider-specific CLI flags, config paths and login behavior.
       if (mdxPath.endsWith('surfaces/bots.mdx')) continue;
       if (mdxPath.endsWith('guides/subscriptions.mdx')) continue;
