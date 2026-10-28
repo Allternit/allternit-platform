@@ -401,6 +401,20 @@ final class BotModeClient: @unchecked Sendable {
         return try await client.post(path: "agent-sessions", body: body)
     }
 
+    /// Stores the bot's greeting as the chat's first message, from the bot,
+    /// without a model turn (web bot-greeting.ts `persistBotGreeting`):
+    /// `POST /api/v1/agent-sessions/:id/messages` role assistant + noReply,
+    /// labelled `source: "bot-greeting"`.
+    func storeGreeting(sessionId: String, text: String) async throws {
+        struct Body: Encodable {
+            let text: String
+            let role = "assistant"
+            let noReply = true
+            let metadata = ["source": "bot-greeting"]
+        }
+        try await client.post(path: "agent-sessions/\(Self.query(sessionId))/messages", body: Body(text: text))
+    }
+
     // MARK: Computers (computer_routes.rs / computer_embed.rs / computer_ws.rs)
 
     func listComputers(botId: String? = nil) async throws -> [ComputerRecord] {

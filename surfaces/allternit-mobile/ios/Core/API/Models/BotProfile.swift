@@ -107,3 +107,18 @@ enum BotCategory: String, Codable, Sendable, CaseIterable, Identifiable {
 /// Category catalog in filter-chip order, mirroring the `BOT_CATEGORIES`
 /// constant in lib/bots/bot-profile.ts.
 let BOT_CATEGORIES: [BotCategory] = BotCategory.allCases
+
+extension AgentRecord {
+    /// The hello a bot's new main chat opens with (web bot-greeting.ts
+    /// `botGreetingFor`): the profile's welcome, else "Hi, I'm <name>.
+    /// <what it does> What can I help you with?".
+    var botGreeting: String {
+        if let welcome = botProfile?.welcomeMessage?.trimmingCharacters(in: .whitespacesAndNewlines), !welcome.isEmpty {
+            return welcome
+        }
+        let about = (botProfile?.tagline?.isEmpty == false ? botProfile?.tagline : description)?
+            .split(whereSeparator: \.isWhitespace).joined(separator: " ") ?? ""
+        let line = about.isEmpty ? "" : " " + (".!?".contains(about.last!) ? about : about + ".")
+        return "Hi, I'm \(botDisplayName).\(line) What can I help you with?"
+    }
+}

@@ -246,11 +246,17 @@ final class BotModeStore: ObservableObject {
         if let running = creatingMainChat[bot.id] {
             return try await running.value
         }
+        let greeting = bot.botGreeting
         let task = Task { [client] () throws -> String in
             let session = try await client.createBotSession(
                 botId: bot.id, botName: bot.botDisplayName, name: "Bot Chat",
                 metadata: ["botCanonicalFor": bot.id]
             )
+            // The bot speaks first. Best effort: a runtime that can't store
+            // assistant notes still opens the chat.
+            if session.id.hasPrefix("ses") {
+                try? await client.storeGreeting(sessionId: session.id, text: greeting)
+            }
             return session.id
         }
         creatingMainChat[bot.id] = task
