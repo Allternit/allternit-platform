@@ -347,6 +347,28 @@ final class ArtifactsV2Client: @unchecked Sendable {
         try await send(path: "api/v2/artifacts", method: "POST", body: try JSONEncoder().encode(input))
     }
 
+    /// `POST /api/v2/artifacts/:id/versions` (AppendRequest) — saves an edit
+    /// as a new version. `baseVersion` is the version the edit started from;
+    /// the server answers 409 when someone saved after it. `meta` replaces
+    /// the version meta (the server defaults it to `{}`), so pass the
+    /// current version's meta to keep it.
+    func appendVersion(id: String, baseVersion: Int, body: String, bodyFormat: String, meta: [String: JSONValue]?) async throws -> ArtifactV2 {
+        struct Body: Encodable {
+            let baseVersion: Int
+            let body: String
+            let bodyFormat: String
+            let meta: [String: JSONValue]?
+            let author: String
+            enum CodingKeys: String, CodingKey {
+                case body, meta, author
+                case baseVersion = "base_version"
+                case bodyFormat = "body_format"
+            }
+        }
+        let payload = Body(baseVersion: baseVersion, body: body, bodyFormat: bodyFormat, meta: meta, author: "user")
+        return try await send(path: "api/v2/artifacts/\(Self.escape(id))/versions", method: "POST", body: try JSONEncoder().encode(payload))
+    }
+
     func delete(id: String) async throws {
         try await sendNoContent(path: "api/v2/artifacts/\(Self.escape(id))", method: "DELETE")
     }
