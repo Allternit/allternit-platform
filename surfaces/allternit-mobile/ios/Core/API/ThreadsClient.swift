@@ -37,6 +37,14 @@ struct BotThread: Decodable, Identifiable, Hashable {
     let currentSessionId: String?
     let generation: Int
     let lastActivityAt: String
+    /// "user" | "bot" | "import" … — main chat threads are `standing` +
+    /// `import` + "Main chat" (web lib/bots/threads.ts isMainChatThread).
+    var createdBy: String? = nil
+    var projectId: String? = nil
+
+    var isMainChat: Bool {
+        kind == "standing" && createdBy == "import" && title == "Main chat"
+    }
 
     /// Waiting on you first, then working, queued, idle, resolved.
     var groupOrder: Int {

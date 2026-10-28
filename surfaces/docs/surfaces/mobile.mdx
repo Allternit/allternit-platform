@@ -252,6 +252,20 @@ On ai.allternit.com on a phone and in the m.allternit.com app, the menu (tap **â
 
 Developer notes: the mode list is shared with Desktop through `src/shell/mode-buttons.ts`. The phone keeps the active mode in `usePhoneNav().mode`. Opening a mode's own section (Chats, Bots, Code or ACI) sets the mode. Shared sections (Projects, Artifacts, Automation Tasks, Settings) keep the current mode. `setMode` switches modes from the dial (`PhoneModeWheel.tsx`). The drawer has no visible title bar; its title stays for screen readers. The Bots rail is the Desktop one: `PhoneDrawer` renders `ShellRail` with `embedded` and `mode="bot"` (`BotModeRail` reads `usePhoneSurface()` for touch sizes and turns off drag-to-promote). `phone.css` `.phone-bot-rail` scales its type and keeps **Group chats** above the floating footer.
 
+## Bot Mode in the iOS app
+
+The native iPhone app (`surfaces/allternit-mobile/ios`, `Features/Bots/`) has the same Bot Mode as the PWA.
+
+- **Rail.** The quick bot strip across the top (tap a bot to open its main chat), then **Threads** with the count of threads waiting on you, **Groups**, **Computers**, your bot **Projects**, pinned bots, group chats and every bot. A green dot means the bot is working and an amber dot means it needs you. Swipe a bot to pin it or open its profile.
+- **Main chat.** Tapping a bot opens its main chat. The app finds the existing one first (this phone's pin, then the bot's `canonicalThreadId`, then its newest Main chat thread) and only creates a new one when there is none.
+- **Bot page.** Tap the bot's name in a chat. The page shows the profile card with **Edit** and **Stage**, then rows for Threads, Tasks, Routines, Artifacts, Memory, Computer and Channels.
+- **Threads.** Threads are grouped into Waiting on you, Working, Queued, Idle and Resolved, and the list refreshes every 15 seconds. Waiting threads have **Approve** and **Decline** buttons.
+- **Group chats.** Make a room with 2 to 6 bots. Every member answers, or only the members you @mention. A bot can @mention another bot to bring it into the next round. The stage strip shows who is talking.
+- **Live stage.** Give the bot files, photos or links, then choose **Plan first**, **Do it** or **Ask me first**. The bot's main chat stays open under the stage.
+- **Computers.** Open any computer to see its screen. **Take control** gets the control lease for this phone. The screen reconnects with full control, and with view-only access when someone else takes over. A bot's own desktop uses the bot desktop routes: observe, take over and hand back.
+
+Developer notes: endpoints are `/api/v1/agents`, `/api/v1/threads` (with `approve` and `decline`), `/api/v1/bot-projects`, `/api/v1/bot-groups`, `/api/v1/cowork/memory?bot=`, `/api/v1/gateway/bots/:id/channels`, `/api/v1/computers` (`status`, `control`, `control/take`, `control/release`, `ws-token`) and `/ws/computers/:id/vnc`. Group chat turns run on the device the same way as the web's `group-chat-turn-runner.ts`: each bot answers in an ephemeral agent session. The VNC client supports only the RFB "None" security type, so a computer that asks for a VNC password shows the connection error.
+
 ## Quick bot strip
 
 Jump into a bot's chat without opening the menu.
