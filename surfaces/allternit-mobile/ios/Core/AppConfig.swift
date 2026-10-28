@@ -7,8 +7,8 @@ import Foundation
 /// - `CLERK_PUBLISHABLE_KEY` — Clerk publishable key (`pk_test_…` / `pk_live_…`).
 ///
 /// Unset or unresolved `$(VAR)` values fall back to the dev defaults below.
-/// There is intentionally no hardcoded production URL (the public gateway host
-/// for mobile is still an open Phase-0 question).
+/// Release falls back to the public gateway (api.allternit.com), never to a
+/// localhost dev server.
 enum AppConfig {
     /// Default: the local dev gateway.
     static let apiBaseURL: URL = {
@@ -25,7 +25,11 @@ enum AppConfig {
            let url = URL(string: value) {
             return url
         }
+        #if DEBUG
         return URL(string: "http://127.0.0.1:8013/api/v1")!
+        #else
+        return URL(string: "https://api.allternit.com/api/v1")!
+        #endif
     }()
 
     /// Base URL of the ACI (Agent-Computer-Interface) endpoints —
@@ -106,7 +110,7 @@ enum AppConfig {
         if let value = infoPlistValue("ALLTERNIT_MESH_CONTROL_URL") {
             return value
         }
-        return "https://allternit-headscale.fly.dev"
+        return "https://mail.news.allternit.com:8444"
     }()
 
     /// Empty until a real publishable key is provided — AuthManager treats an

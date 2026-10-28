@@ -44,9 +44,6 @@ struct ModelManagementListContent: View {
                 NavigationLink("Benchmark") {
                     BenchmarkView()
                 }
-                NavigationLink("On-Device (Experimental)") {
-                    OnDeviceChatView()
-                }
             }
         }
         .listStyle(.insetGrouped)
