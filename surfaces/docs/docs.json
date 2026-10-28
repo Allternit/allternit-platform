@@ -72,6 +72,7 @@
               "guides/glance-lines",
               "architecture/sidebar-layout",
               "guides/meet-your-bots",
+              "guides/morning-brief",
               "guides/bot-setup-picker",
               "guides/platform-workflows",
               "guides/agency-kernel",
@@ -724,6 +725,7 @@
               "api/event-stream",
               "api/runtime-events",
               "api/inbox",
+              "api/morning-brief",
               "api/status",
               "api/me",
               "api/quickstart"

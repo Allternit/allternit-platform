@@ -1,0 +1,74 @@
+---
+title: 'Morning Brief API'
+description: 'Fetch or create a bot daily brief, run the first-day introduction, and record the answer to it.'
+---
+
+## Overview
+
+Three routes behind the bot's main chat. The brief is generated once per user, bot and local day, however many devices or tabs ask, and is posted as one message in the bot's main chat. The first-day introduction runs once per user and bot.
+
+<Note>
+This namespace is served by the Allternit API data-plane node (`http://127.0.0.1:8013` on the same machine, or your paired or provisioned node). The hosted Cloud API does not route it.
+</Note>
+
+## Base URL
+
+```
+http://127.0.0.1:8013/api/v1
+```
+
+All requests need a bearer token. The bot must belong to the caller, and `sessionId` must be that bot's main chat.
+
+## POST /bots/:id/brief/today
+
+```json
+{ "sessionId": "ses_...", "tzOffsetMinutes": -420, "ask": false }
+```
+
+`tzOffsetMinutes` is the caller's UTC offset in minutes and decides which local day it is. `ask: true` means the person asked for the brief ("Brief me"), so it is built even on the first day.
+
+| Response | Meaning |
+| --- | --- |
+| `200 {"status":"ready","brief":{...}}` | The existing brief, or the one just built. |
+| `200 {"status":"none","reason":"first_day"}` | No brief yet. The first day belongs to the introduction. |
+| `202 {"status":"generating"}` | Another device is building it. Ask again in a few seconds. |
+| `400` / `404` | `sessionId` is not the bot's main chat, or the bot is not yours. |
+| `502` | The brief could not be built. The lock is released, so the next call tries again. |
+
+The `brief` object:
+
+- `date`, `botId`, `botName`, `opening`, `generatedBy` (`model` or `fallback`).
+- `needsYou[]`: `id`, `source` (`inbox` or `mail`), `kind`, `level` (`urgent` or `needs_you`), `title`, `why`, `startPrompt`.
+- `canWait[]`: `title`, `note`.
+- `calendar[]`: `start`, `end`, `title`, `allDay` for the local day.
+- `unchecked[]`: `source`, `reason`, and `action` (`{kind:"connect", connector, label}`) when connecting would fix it.
+- `elsewhere`: how many items wait on other bots.
+
+`startPrompt` is the text to send as the first message of a new task thread (`POST /threads` with `kind: "task"`). The Start button does exactly that.
+
+### How it is built
+
+- Items come from the Needs-you inbox, ranked with the quiet-hours levels (urgent, needs you, normal, low).
+- Today's calendar and unread mail come from the Google Calendar and Gmail connectors. If one is not connected or fails, it is listed under `unchecked` and nothing is claimed about it.
+- The bot writes the opening line and a short reason for each row with its own model, in a scratch session with every tool denied. Mail and calendar text is fenced as untrusted data, and the model can only refer to rows by number.
+- Unread mail is not sorted yet: it appears as one "not sorted yet" line until the mail triage classifier is wired in.
+
+## POST /bots/:id/intro
+
+```json
+{ "sessionId": "ses_...", "tzOffsetMinutes": -420 }
+```
+
+On a new bot's first open, builds and posts three short bubbles (who you are, three ways to help, an invitation to correct it) and returns `{"status":"posted","intro":{"bubbles":[...],"needsConnect":[...]}}`. Without Gmail or Calendar the bubbles promise nothing about mail, and `needsConnect` lists the connect cards to show. Later calls return the stored state. Bots created before this feature return `{"status":"none"}`.
+
+## POST /bots/:id/intro/reply
+
+```json
+{ "answer": "off", "text": "I run a bakery, not a law firm." }
+```
+
+`answer` is `right` or `off`. An `off` answer with `text` is saved to the bot's memory as a correction. The app also sends the answer to the chat as the person's own message.
+
+## Storage
+
+`bot_briefs` (unique on user, bot and local date) and `bot_intro` (primary key user and bot), migration `V280`.
