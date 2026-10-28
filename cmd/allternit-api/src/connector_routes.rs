@@ -1041,7 +1041,10 @@ fn settle_account(
                 conn.execute(
                     "UPDATE connector_connections SET
                        (auth_type, status, access_token, refresh_token, expires_at, scopes, account, metadata, backend, updated_at)
-                     = (SELECT auth_type, status, access_token, refresh_token, expires_at, scopes, account, metadata, backend, CURRENT_TIMESTAMP
+                     = (SELECT auth_type, status, access_token, refresh_token, expires_at, scopes, account,
+                               -- keep the account's own metadata (its renamed label) when the sign-in row has none
+                               COALESCE(metadata, (SELECT t.metadata FROM connector_connections t WHERE t.id=?1)),
+                               backend, CURRENT_TIMESTAMP
                         FROM connector_connections WHERE id=?2)
                      WHERE id=?1",
                     params![target, src],
@@ -1058,6 +1061,58 @@ fn settle_account(
         }
     }
     ensure_default(conn, connector_id, user_id)
+}
+
+/// Who signed in, for an OAuth/device connector account: read from the token
+/// response when the provider puts it there (Notion's owner, Slack's team),
+/// else from the provider's "who am I" endpoint (GitHub `/user`, or a
+/// `userinfo_url` in the connector's metadata). "" when it can't be told;
+/// the account then keeps its `pending:` key and stays unnamed.
+async fn oauth_identity(connector_id: &str, md: &Value, tok: &Value, access: &str) -> String {
+    let pick = |v: &Value, keys: &[&str]| -> Option<String> {
+        keys.iter()
+            .find_map(|k| v.pointer(k).and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty()))
+            .map(str::to_string)
+    };
+    // Notion: the person who authorised; Slack (OAuth v2): the workspace.
+    if let Some(who) = pick(tok, &["/owner/user/person/email", "/owner/user/name", "/team/name", "/workspace_name"]) {
+        return who;
+    }
+    let url = md
+        .get("userinfo_url")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .or_else(|| connector_id.contains("github").then(|| "https://api.github.com/user".to_string()));
+    let Some(url) = url else { return String::new() };
+    let Ok(client) = reqwest::Client::builder().timeout(std::time::Duration::from_secs(6)).build() else {
+        return String::new();
+    };
+    let me: Value = match client
+        .get(&url)
+        .bearer_auth(access)
+        .header("Accept", "application/json")
+        .header("User-Agent", "Allternit")
+        .send()
+        .await
+    {
+        Ok(r) if r.status().is_success() => r.json().await.unwrap_or_else(|_| json!({})),
+        _ => return String::new(),
+    };
+    pick(&me, &["/email", "/login", "/preferred_username", "/username", "/name"]).unwrap_or_default()
+}
+
+/// Name a freshly connected row after its provider identity and merge it into
+/// an existing account of that identity (re-auth, not a duplicate).
+fn name_connected_row(conn: &rusqlite::Connection, row_id: &str, connector_id: &str, user_id: &str, identity: &str) -> rusqlite::Result<()> {
+    if identity.trim().is_empty() {
+        return Ok(());
+    }
+    conn.execute(
+        "UPDATE connector_connections SET account=CASE WHEN COALESCE(account,'')='' THEN ?2 ELSE account END WHERE id=?1",
+        params![row_id, identity.trim()],
+    )?;
+    let key: String = conn.query_row("SELECT account_key FROM connector_connections WHERE id=?1", params![row_id], |r| r.get(0))?;
+    settle_account(conn, connector_id, user_id, &key, identity)
 }
 
 /// One default per (connector, user): keep an existing connected default,
@@ -3617,12 +3672,16 @@ async fn oauth_callback(
             // Only the row this sign-in started: its state is unique to one user.
             let st3 = st.clone();
             let uid3 = user_id.unwrap_or_default();
+            let who = oauth_identity(&connector_id, &md, &tok, &access).await;
             let _ = tokio::task::spawn_blocking(move || {
                 let conn = db2.connect()?;
-                conn.execute(
+                let n = conn.execute(
                     "UPDATE connector_connections SET status='connected', access_token=?1, refresh_token=?2, expires_at=?3, metadata=NULL, updated_at=CURRENT_TIMESTAMP WHERE id=?6 AND connector_id=?4 AND status='pending' AND json_extract(metadata,'$.state')=?5",
                     params![sealed_access, refr, exp, cid, st3, row_id],
                 )?;
+                if n > 0 {
+                    name_connected_row(&conn, &row_id, &cid, &uid3, &who)?;
+                }
                 ensure_default(&conn, &cid, &uid3)?;
                 Ok::<_, rusqlite::Error>(())
             })
@@ -3854,12 +3913,16 @@ async fn poll_device(
             let cid = id.clone();
             let acc = crate::token_crypto::seal(&access);
             let uid2 = user_id.clone();
+            let who = oauth_identity(&id, &json!({}), &d, &access).await;
             let _ = tokio::task::spawn_blocking(move || {
                 let conn = db2.connect()?;
-                conn.execute(
+                let n = conn.execute(
                     "UPDATE connector_connections SET status='connected', access_token=?1, metadata=NULL, updated_at=CURRENT_TIMESTAMP WHERE id=?4 AND connector_id=?2 AND user_id=?3 AND status='pending'",
                     params![acc, cid, uid2, row_id],
                 )?;
+                if n > 0 {
+                    name_connected_row(&conn, &row_id, &cid, &uid2, &who)?;
+                }
                 ensure_default(&conn, &cid, &uid2)?;
                 Ok::<_, rusqlite::Error>(())
             })
@@ -4547,6 +4610,41 @@ mod multi_account_tests {
         assert_eq!(rows.len(), 2);
         let default = rows.iter().find(|r| r.is_default).unwrap();
         assert_eq!(default.account_key, "a@x.com");
+        assert_eq!(rows.iter().filter(|r| r.is_default).count(), 1);
+    }
+
+    #[test]
+    fn an_oauth_sign_in_is_named_after_who_signed_in_and_reauth_merges() {
+        // GitHub/Notion/Slack: the row starts pending with no identity and is
+        // named once the callback learns who signed in.
+        let temp = tempfile::tempdir().unwrap();
+        let db = crate::db::DbHandle::new(temp.path().join("t.db")).unwrap();
+        let conn = db.connect().unwrap();
+        let sign_in = |who: &str| {
+            let key = write_key(&conn, "github", "u1", true, "").unwrap();
+            let id = uuid::Uuid::new_v4().to_string();
+            conn.execute(
+                "INSERT INTO connector_connections (id, connector_id, user_id, auth_type, status, account_key)
+                 VALUES (?1, 'github', 'u1', 'oauth2', 'connected', ?2)",
+                params![id, key],
+            )
+            .unwrap();
+            name_connected_row(&conn, &id, "github", "u1", who).unwrap();
+        };
+        sign_in("octocat");
+        // The person renames it; signing in again must keep that name.
+        conn.execute(
+            "UPDATE connector_connections SET metadata='{\"label\":\"Personal\"}' WHERE account_key='octocat'",
+            [],
+        )
+        .unwrap();
+        sign_in("work-bot");
+        sign_in("OctoCat"); // the same GitHub account again
+        let rows = load_accounts(&conn, "github", "u1").unwrap();
+        assert_eq!(rows.len(), 2);
+        let octo = rows.iter().find(|r| r.account_key == "octocat").unwrap();
+        assert_eq!(octo.meta_str("label").as_deref(), Some("Personal"));
+        assert!(rows.iter().any(|r| r.account_key == "work-bot"));
         assert_eq!(rows.iter().filter(|r| r.is_default).count(), 1);
     }
 }

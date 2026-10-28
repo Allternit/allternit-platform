@@ -7,7 +7,7 @@ Code has two kinds of session. A **Code session** is a conversation with an agen
 
 ## Terminal
 
-Open the terminal from the terminal pill in the workspace bar above the prompt, or the session panel's **Terminal** row. It takes the whole Code view, edge to edge, with no card around it. The session panel closes while the terminal is open, and comes back when you close it.
+Open the terminal with **Terminal** in the status row under the prompt. Press it again to go back to the session. The session panel's **Terminal** row and a terminal session's card in the Code overview open it too. It takes the whole Code view, edge to edge, with no card around it. The session panel closes while the terminal is open, and comes back when you close it.
 
 - **One shell** fills the view.
 - **Two or three shells** split the view evenly, side by side. More shells wrap to new rows.
@@ -26,12 +26,18 @@ On a phone, the terminal is always one shell at a time with a strip of tabs. See
 
 ## Prompt
 
-In Code, the prompt is one row across the whole width of the Code view, like a real terminal: an open line between two dashed rules, with no box around it. On that one row: `❯`, the text you type, **+** (attach), voice, the model, how much of the context is used, the permission mode (**Manual**, **Auto**…), **Console** and send. As you type more, the line grows upward (up to about ten lines) and the buttons stay on its bottom edge. Press **Enter** to run, **Shift+Enter** for a new line.
+In Code, the prompt is one row across the whole width of the Code view, like a real terminal: an open line between two dashed rules, with no box around it. On that one row: `❯`, the text you type, **+** (attach), voice, the model, how much of the context is used, the permission mode (**Manual**, **Auto**…), **Terminal** and send. As you type more, the line grows upward (up to about ten lines) and the buttons stay on its bottom edge. Press **Enter** to run, **Shift+Enter** for a new line.
 
 Before a session starts, the computer, folder and **Worktree** sit above the line as plain text. Chat and other modes keep the rounded composer.
+
+## Console drawer retired
+
+The bottom Console drawer is off on Desktop (2026-10-28). Its shell tab is the full-view terminal above. Its other tabs (Output, Problems, Runs, Plan, Ports, Changes, Mission Control, Tasks, Usage, Artifacts) are not shown in Code for now. The preview pane's **View session activity** link went with it.
 
 ## For developers
 
 - Terminal: `src/views/code/CodeTerminalCanvas.tsx`. The grid uses one column per shell, up to three. Deck reuses the maximized-tile state (`maximizedTileId`), and the bar's `terminal-layout-switch` group sets it.
+- Open state: `useCodeTerminalStore` in `src/views/code/code-terminal.store.ts` (`open`, `toggle`, `openCodeTerminal()`). The status row's `code-bottom-status-terminal` button (`CodeBottomStatusBar.tsx`) toggles it. Factory bot attach (`src/components/factory/pane/attach.ts`) and `MultiTabTerminal` call `openCodeTerminal()`.
+- The `<ConsoleDrawer />` mount in `src/shell/ShellApp.tsx` is commented out, not deleted.
 - Mounts: `src/views/code/CodeCanvas.tsx` (launchpad and conversation). Both drop their padding while `terminalCanvasOpen` is true, and the docked `CodeSessionPanel` is hidden.
 - Prompt: `src/views/chat/ChatComposer.tsx`, `codeTerminal` branch. The `composer-terminal-line` row holds the text row and the `composer-compact-controls` row side by side. The textarea auto-grows from 24 to 200 px.

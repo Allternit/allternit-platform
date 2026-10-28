@@ -119,6 +119,7 @@ import { resolveDevUserDataPath } from './desktop-data-dir.js';
 import { coworkDeviceHeaders, coworkDeviceInfo, isInAppBrowsableUrl } from './cowork-device.js';
 import { isProvisionedMode } from './provisioned-bootstrap.js';
 import { startIdleApply } from './provisioned-runtime-apply.js';
+import { buildAppMenu, type AppMenuCommand } from './app-menu.js';
 
 // Fix PATH for macOS
 fixPath();
@@ -446,6 +447,7 @@ let pushServiceState = () => {
 };
 let miniWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
+let trayMenu: Menu | null = null;
 let activePlatformUrl: string = isDev ? URLS.DEV_UI : URLS.PRODUCTION_UI;
 // False until startup has picked the UI to load. Until then activePlatformUrl
 // is only its default (the hosted ai.allternit.com), which the desktop shell
@@ -2194,22 +2196,61 @@ function showConnectionSettings(): void {
   mainWindow.loadFile(join(__dirname, '../../static/connect.html'));
 }
 
+/** Send a workspace command from the app menu or tray to the main window. */
+function sendMenuCommand(command: AppMenuCommand): void {
+  showOrReopenMainWindow();
+  const send = () => mainWindow?.webContents.send('window:event:menu-command', { command });
+  if (mainWindow?.webContents.isLoading()) mainWindow.webContents.once('did-finish-load', send);
+  else send();
+}
+
+function installAppMenu(): void {
+  Menu.setApplicationMenu(buildAppMenu({
+    sendCommand: sendMenuCommand,
+    quickChat: () => toggleMiniWindow(),
+    toggleHud: () => toggleHudWindow(),
+    checkForUpdates: () => {
+      if (!app.isPackaged) return;
+      try {
+        autoUpdater.checkForUpdates();
+      } catch (error) {
+        log.warn('[Menu] Update check failed:', error);
+      }
+      void checkRuntimeNow();
+    },
+    openUrl: (url) => openExternalAllowlisted(url),
+    quickChatAccelerator: QUICK_CHAT_HOTKEY,
+    hudAccelerator: HUD_HOTKEY,
+  }));
+}
+
+/**
+ * Menu bar icon. The A:// mark is a template image (macOS tints it for light
+ * and dark menu bars). Click opens the HUD, the way Claude's menu bar icon
+ * opens its quick chat; right-click (or Control-click) opens the status menu.
+ * Menu bar mode keeps its own click: show or hide the main window.
+ */
 function createTray(): void {
-  const iconPath = join(__dirname, '../../build/tray-icon.png');
-  if (!fs.existsSync(iconPath)) return;
+  const buildDir = join(__dirname, '../../build');
+  const iconPath = [join(buildDir, 'trayTemplate.png'), join(buildDir, 'tray-icon.png')].find((p) => fs.existsSync(p));
+  if (!iconPath) {
+    log.warn('[Tray] No tray icon in build/; menu bar icon not shown');
+    return;
+  }
 
   tray = new Tray(iconPath);
-  tray.setToolTip('Allternit Desktop');
-  // In menu bar mode, single-click toggles window visibility
+  tray.setToolTip('Allternit');
   tray.on('click', () => {
     const prefs = persistedState.get('prefs');
     if (prefs.menuBarMode) {
-      if (mainWindow?.isVisible()) {
-        mainWindow.hide();
-      } else {
-        showOrReopenMainWindow();
-      }
+      if (mainWindow?.isVisible()) mainWindow.hide();
+      else showOrReopenMainWindow();
+      return;
     }
+    toggleHudWindow();
+  });
+  tray.on('right-click', () => {
+    if (trayMenu) tray?.popUpContextMenu(trayMenu);
   });
   updateTrayMenu();
 }
@@ -2273,7 +2314,9 @@ async function updateTrayMenu(): Promise<void> {
     { label: 'Quit', click: () => app.quit() },
   ];
 
-  tray.setContextMenu(Menu.buildFromTemplate(template));
+  trayMenu = Menu.buildFromTemplate(template);
+  // macOS: left click is the HUD, so the menu pops up on right-click only.
+  if (process.platform !== 'darwin') tray.setContextMenu(trayMenu);
 }
 
 // ============================================================================
@@ -2659,6 +2702,7 @@ app.whenReady().then(async () => {
   }
 
   initializeAppOnce();
+  installAppMenu();
   createTray();
   startExtensionBridge();
   startAcuExtensionRelay();
