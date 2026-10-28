@@ -52,6 +52,22 @@ struct HistorySidebarView: View {
 
     @State private var statusFilter: RecentsStatusFilter = .all
     @State private var dateFilter: RecentsDateFilter = .all
+    /// Home's type filter (PhoneDrawer TYPE_OPTIONS; tasks aren't recents here).
+    @State private var typeFilter: Set<RecentType> = []
+
+    enum RecentType: String, CaseIterable {
+        case chat = "Chat", cowork = "Cowork", agent = "Agent"
+
+        static func of(_ session: AgentSession) -> RecentType {
+            if session.originSurface == "cowork" { return .cowork }
+            if let agentId = session.agentId, !agentId.isEmpty { return .agent }
+            return .chat
+        }
+    }
+
+    private var isRecentsFiltered: Bool {
+        statusFilter != .all || dateFilter != .all || !typeFilter.isEmpty
+    }
 
     @State private var isDialExpanded = false
     @State private var isSettingsPresented = false
@@ -120,7 +136,13 @@ struct HistorySidebarView: View {
         .sheet(isPresented: $isInboxPresented) {
             InboxSheet()
         }
-        .task { await inbox.refresh() }
+        .task {
+            // Inbox count, Teammates and the Bots badge read these.
+            AgentHubStore.shared.fetchAgentsIfNeeded()
+            async let inboxLoad: Void = inbox.refresh()
+            async let threadsLoad: Void = botStore.refreshThreads()
+            _ = await (inboxLoad, threadsLoad)
+        }
         .fullScreenCover(isPresented: $isSearchPresented) {
             ShellSearchView(
                 sessions: sessions,
@@ -170,6 +192,7 @@ struct HistorySidebarView: View {
             // Filters belong to the mode's list; a mode switch starts clean.
             statusFilter = .all
             dateFilter = .all
+            typeFilter = []
         }
         .onReceive(NotificationCenter.default.publisher(for: .historyMutated)) { _ in
             Task { await loadSessions() }
@@ -235,6 +258,8 @@ struct HistorySidebarView: View {
         let label: String
         let icon: String
         let isActive: Bool
+        /// A count beside the label (Bots: threads waiting on you).
+        var badge: Int = 0
         let action: () -> Void
     }
 
@@ -277,6 +302,14 @@ struct HistorySidebarView: View {
                     .font(.body)
                     .fontWeight(row.isActive ? .semibold : .regular)
                 Spacer()
+                if row.badge > 0 {
+                    Text(row.badge > 99 ? "99+" : "\(row.badge)")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 7)
+                        .frame(minHeight: 20)
+                        .background(Capsule().fill(Color("AccentPrimary")))
+                }
             }
             .foregroundColor(Color("TextPrimary"))
             .frame(minHeight: 44)
@@ -284,7 +317,7 @@ struct HistorySidebarView: View {
         }
         .buttonStyle(.plain)
         .listRowBackground(row.isActive ? modeStore.shellMode.accent.opacity(0.14) : Color.clear)
-        .accessibilityLabel(row.label)
+        .accessibilityLabel(row.badge > 0 ? "\(row.label), \(row.badge) waiting" : row.label)
         .accessibilityAddTraits(row.isActive ? [.isSelected] : [])
         .accessibilityIdentifier("drawerRow\(row.id)")
     }
@@ -306,6 +339,11 @@ struct HistorySidebarView: View {
             if !pinnedSessions.isEmpty {
                 Section {
                     ForEach(pinnedSessions) { recentRow($0) }
+                        .onMove { from, to in
+                            var ids = pinnedSessions.map(\.id)
+                            ids.move(fromOffsets: from, toOffset: to)
+                            pinsStore.reorder(ids)
+                        }
                 } header: {
                     sectionLabel("Pinned")
                 }
@@ -352,7 +390,7 @@ struct HistorySidebarView: View {
             .listRowBackground(Color.clear)
             .listRowSeparator(.hidden)
         } else if recentSessions.isEmpty {
-            let filtered = statusFilter != .all || dateFilter != .all
+            let filtered = isRecentsFiltered
             FriendlyInlineStateView(
                 style: .empty,
                 icon: Self.emptyIcon(for: modeStore.shellMode),
@@ -363,6 +401,7 @@ struct HistorySidebarView: View {
                     if filtered {
                         statusFilter = .all
                         dateFilter = .all
+                        typeFilter = []
                     } else {
                         newItem()
                     }
@@ -378,8 +417,20 @@ struct HistorySidebarView: View {
     }
 
     private var recentsFilterMenu: some View {
-        let filtered = statusFilter != .all || dateFilter != .all
+        let filtered = isRecentsFiltered
         return Menu {
+            if modeStore.shellMode == .home {
+                Section("Type") {
+                    ForEach(RecentType.allCases, id: \.self) { type in
+                        Toggle(type.rawValue, isOn: Binding(
+                            get: { typeFilter.contains(type) },
+                            set: { on in
+                                if on { typeFilter.insert(type) } else { typeFilter.remove(type) }
+                            }
+                        ))
+                    }
+                }
+            }
             Picker("Status", selection: $statusFilter) {
                 ForEach(RecentsStatusFilter.allCases, id: \.self) { Text($0.rawValue).tag($0) }
             }
@@ -468,7 +519,8 @@ struct HistorySidebarView: View {
     private var botsRail: some View {
         List {
             Section {
-                railRowView(RailRow(id: "bots", label: "Bots", icon: "cpu", isActive: modeStore.activeTab == .agents) { go(.agents) })
+                railRowView(RailRow(id: "bots", label: "Bots", icon: "cpu", isActive: modeStore.activeTab == .agents,
+                                    badge: botStore.waitingCount) { go(.agents) })
                 railRowView(RailRow(id: "projects", label: "Projects", icon: "folder", isActive: modeStore.activeTab == .projects) { go(.projects) })
                 railRowView(RailRow(id: "artifacts", label: "Artifacts", icon: "doc.text", isActive: modeStore.activeTab == .artifacts) { go(.artifacts) })
                 railRowView(RailRow(id: "automation", label: "Automation Tasks", icon: "clock", isActive: modeStore.activeTab == .automation) { go(.automation) })
@@ -811,6 +863,9 @@ struct HistorySidebarView: View {
         return sessions
             .filter { session in
                 guard belongsToMode(session), !pinnedIds.contains(session.id) else { return false }
+                if modeStore.shellMode == .home, !typeFilter.isEmpty, !typeFilter.contains(RecentType.of(session)) {
+                    return false
+                }
                 switch statusFilter {
                 case .all, .active: if !session.active { return false }
                 case .archived: if session.active { return false }

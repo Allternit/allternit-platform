@@ -53,6 +53,20 @@ final class RailPinsStore: ObservableObject {
         save()
     }
 
+    /// Drag-to-reorder: `orderedIds` is the visible pinned list, top first.
+    /// Their own pinnedAt times are handed back out newest-first in the new
+    /// order, so pins from other modes keep their place.
+    func reorder(_ orderedIds: [String]) {
+        let times = pins.filter { orderedIds.contains($0.id) }.map(\.pinnedAt).sorted(by: >)
+        guard times.count == orderedIds.count else { return }
+        let newTime = Dictionary(uniqueKeysWithValues: zip(orderedIds, times))
+        pins = pins.map { pin in
+            guard let time = newTime[pin.id] else { return pin }
+            return PinnedRailEntry(id: pin.id, kind: pin.kind, mode: pin.mode, pinnedAt: time)
+        }
+        save()
+    }
+
     private func save() {
         if let data = try? JSONEncoder().encode(pins) {
             defaults.set(data, forKey: Self.storageKey)
