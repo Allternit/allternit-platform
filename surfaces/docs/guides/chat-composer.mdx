@@ -43,8 +43,8 @@ Source: `allternit-ai/src/`:
 | `lib/chat/message-feedback.ts` | Votes and reasons on message metadata (`feedback`, `feedbackReason`), with a device-local fallback for rows outside the store. |
 | `lib/chat/follow-ups.ts` | Follow-ups from `follow-ups` or `suggestions` parts, else the answer's closing "Next step:" line. |
 | `components/chat/StreamingChatComposer.tsx` | Uses `MessageActions`; Retry only on the latest reply. |
-| `views/cowork/CoworkTranscript.tsx` | Versions, the retry wrapper (snapshot and rollback) and feedback for Chat. |
-| `views/ChatView.tsx`, `views/cowork/CoworkRoot.tsx`, `views/code/CodeCanvas.tsx` | `handleRegenerate(options)` calls `retryLastTurn` on each surface's store. |
+| `views/chat/SessionTranscript.tsx` | Versions, the retry wrapper (snapshot and rollback) and feedback for Chat. |
+| `views/ChatView.tsx`, `views/code/CodeCanvas.tsx` | `handleRegenerate(options)` calls `retryLastTurn` on each surface's store. |
 | `components/bot-chat/BotTranscript.tsx`, `SettledBubble.tsx`, `views/bots/BotChatSessionView.tsx` | Bot threads: the action row on the latest reply, versions over transcript rows, retry through `prepareRetry` and `handleSend` with a `modelId`. |
 | `preview-message-actions.html`, `dev/MessageActionsPreview.tsx` | Dev preview (`?theme=dark`, `?phone=1`). |
 
