@@ -42,7 +42,21 @@ export namespace CliAccounts {
     const id = requested || bot || defaults()[tool.id]
     if (!id || id === "default" || !safe(id)) return undefined
     const home = path.join(root(), id)
-    if (!fs.existsSync(home)) return undefined
+    if (!fs.existsSync(home) || !belongsTo(home, tool.id)) return undefined
     return { [tool.accountHomeEnv]: home }
+  }
+
+  /**
+   * Whether an account home is this CLI's: allternit-api writes the CLI id to
+   * `.allternit-cli-tool` when it makes the home. A bot's account can be
+   * another CLI's after its brain switched (Claude → Codex); that one is
+   * skipped, never handed to the wrong CLI.
+   */
+  function belongsTo(home: string, toolId: string): boolean {
+    try {
+      return fs.readFileSync(path.join(home, ".allternit-cli-tool"), "utf8").trim() === toolId
+    } catch {
+      return true
+    }
   }
 }
