@@ -62,7 +62,8 @@ actor RFBClient {
         components.host = base.host
         components.port = base.port
         components.path = path.path
-        components.query = path.query
+        // Keep the query percent-encoded verbatim so tokens with "+" or "/" survive.
+        components.percentEncodedQuery = path.percentEncodedQuery
         return components.url
     }
 

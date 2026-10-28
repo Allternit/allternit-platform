@@ -321,7 +321,7 @@ struct BotDesktopView: View {
 /// keyboard first responder (UIKeyInput for software keyboards, UIPress for
 /// hardware). Points are reported in view coordinates; the parent converts
 /// to framebuffer pixels.
-private struct DesktopInteractionOverlay: UIViewRepresentable {
+struct DesktopInteractionOverlay: UIViewRepresentable {
     var isKeyboardVisible: Bool
     var onTap: (CGPoint) -> Void
     var onRightClick: (CGPoint) -> Void
@@ -349,7 +349,7 @@ private struct DesktopInteractionOverlay: UIViewRepresentable {
     }
 }
 
-private final class DesktopKeyboardCaptureView: UIView, UIKeyInput {
+final class DesktopKeyboardCaptureView: UIView, UIKeyInput {
     var onTap: ((CGPoint) -> Void)?
     var onRightClick: ((CGPoint) -> Void)?
     var onKeysym: ((UInt32, Bool) -> Void)?
