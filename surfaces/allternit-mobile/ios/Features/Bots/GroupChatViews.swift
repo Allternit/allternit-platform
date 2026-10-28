@@ -377,6 +377,8 @@ final class GroupTurnRunner {
         var room = start
         var replies = 0
         var responders = Self.responders(for: userText, members: room.members, sinceUser: [])
+        var allReplies: [GroupChatMessage] = []
+        defer { Self.rememberRound(room: room, userText: userText, replies: allReplies) }
         for _ in 0..<Self.maxRounds {
             guard !responders.isEmpty, !cancelled else { break }
             var roundReplies: [GroupChatMessage] = []
@@ -391,6 +393,7 @@ final class GroupTurnRunner {
                 room.log.append(message)
                 room.updatedAt = message.timestamp
                 roundReplies.append(message)
+                allReplies.append(message)
                 replies += 1
                 onReply(room)
             }
@@ -447,6 +450,44 @@ final class GroupTurnRunner {
         } catch {
             return nil
         }
+    }
+
+    // MARK: - Group memory (lib/bots/group-chat-memory.ts)
+
+    /// Each member that took part gets one saved memory of the round (the
+    /// room, what you asked, what it said, what others asked it), so its main
+    /// chat knows what happened here. Fire and forget.
+    static func rememberRound(room: BotGroupChat, userText: String, replies: [GroupChatMessage]) {
+        guard !replies.isEmpty else { return }
+        for member in room.members {
+            guard let line = roundMemory(room: room, member: member, userText: userText, replies: replies) else { continue }
+            Task { try? await BotModeClient.shared.addMemory(botId: member.botId, content: line, type: "group-chat", source: "group-chat") }
+        }
+    }
+
+    static func roundMemory(room: BotGroupChat, member: GroupChatMember, userText: String,
+                            replies: [GroupChatMessage], now: Date = Date()) -> String? {
+        func clip(_ text: String, _ max: Int) -> String {
+            let t = text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+            return t.count > max ? String(t.prefix(max - 1)) + "…" : t
+        }
+        func addresses(_ text: String) -> Bool {
+            let lower = text.lowercased()
+            return lower.contains("@\(member.handle.lowercased())") || lower.contains("@\(member.displayName.lowercased())")
+        }
+        let own = replies.filter { $0.botId == member.botId }.map(\.text)
+        let asks = replies
+            .filter { $0.botId != member.botId && addresses($0.text) }
+            .map { "\($0.displayName ?? "A member") asked you: \"\(clip($0.text, 220))\"" }
+        guard !own.isEmpty || !asks.isEmpty else { return nil }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US")
+        formatter.dateFormat = "MMM d, h:mm a"
+        return ([
+            "Group chat \"#\(room.name)\" (\(formatter.string(from: now))).",
+            "Your user said: \"\(clip(userText, 220))\"",
+            own.isEmpty ? "" : "You said: \"\(clip(own.joined(separator: " "), 260))\"",
+        ] + asks).filter { !$0.isEmpty }.joined(separator: " ")
     }
 
     static func mentions(_ text: String) -> [String] {

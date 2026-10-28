@@ -357,8 +357,8 @@ final class BotModeClient: @unchecked Sendable {
         return response.memories ?? []
     }
 
-    func addMemory(botId: String, content: String) async throws {
-        try await client.post(path: "cowork/memory", body: AddMemoryBody(bot: botId, content: content, type: "fact", source: "user"))
+    func addMemory(botId: String, content: String, type: String = "fact", source: String = "user") async throws {
+        try await client.post(path: "cowork/memory", body: AddMemoryBody(bot: botId, content: content, type: type, source: source))
     }
 
     func forgetMemory(id: String) async throws {
