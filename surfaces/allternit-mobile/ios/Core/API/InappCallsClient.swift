@@ -9,6 +9,10 @@ import Foundation
 /// - `POST /api/v1/phone/contacts/:userId/ring/:room/decline` → `{ok}`
 /// - `POST /api/v1/phone/contacts/:userId/ring/:room/cancel`  → `{ok}`
 /// - `GET  /api/v1/phone/threads/:id/events?after=` → `{events:[…]}`
+/// - `GET  /api/v1/phone/contacts?botId=` → `[{userId?, label, reach:{app,…}}]`
+///   (phone_invites.rs; the web's `invitesApi.contacts`)
+/// - `POST /api/v1/phone/contacts/:userId/ring {botId, mode:"voice"}`
+///   → `{callId, threadId, room, token, url, state, answeredBy?}` (the web's `ringContact`)
 ///
 /// Goes DIRECT to `AppConfig.cloudAPIBaseURL` with the Bearer (like
 /// PushTokenClient): the call state lives in the cloud, so a sleeping or
@@ -49,11 +53,39 @@ final class InappCallsClient: Sendable {
         let room: String?
     }
 
+    /// Someone the bot's owner can reach. Callable in the app when they
+    /// joined through the bot's invite (`userId` set and `reach.app`) — the
+    /// web's `inApp` rule in ContactsApp.
+    struct Contact: Decodable, Equatable, Sendable, Identifiable {
+        struct Reach: Decodable, Equatable, Sendable {
+            let app: Bool?
+        }
+        let userId: String?
+        let label: String
+        let reach: Reach?
+
+        var id: String { userId ?? label }
+        var isCallable: Bool { (userId?.isEmpty == false) && reach?.app == true }
+    }
+
+    /// `POST …/ring` result. No room/token/url = an older server (no audio).
+    struct RingResult: Decodable, Sendable {
+        let callId: String?
+        let threadId: String?
+        let room: String?
+        let token: String?
+        let url: String?
+        let state: String?
+        let answeredBy: String?
+    }
+
     /// A failed call request: HTTP status (0 = couldn't reach the cloud)
     /// plus the server's `error` code (`call_over`, `livekit_not_configured`…).
     struct CallError: Error, LocalizedError, Sendable {
         let status: Int
         let code: String?
+        /// `callee_offline` carries the thread the missed call landed in.
+        var threadId: String? = nil
 
         /// Plain words, the same as the web's `inappCallErrorText`.
         var errorDescription: String? {
@@ -91,6 +123,18 @@ final class InappCallsClient: Sendable {
         let _: OK = try await send("POST", "api/v1/phone/contacts/\(Self.enc(userId))/ring/\(Self.enc(room))/cancel")
     }
 
+    /// The bot's contacts. Not Bot-mode data: lives in the cloud.
+    func contacts(botId: String) async throws -> [Contact] {
+        let rows: [Contact] = try await send("GET", "api/v1/phone/contacts?botId=\(Self.enc(botId))")
+        return rows
+    }
+
+    /// Ring someone linked through `botId`'s invite.
+    func ring(userId: String, botId: String) async throws -> RingResult {
+        try await send("POST", "api/v1/phone/contacts/\(Self.enc(userId))/ring",
+                       body: ["botId": botId, "mode": "voice"])
+    }
+
     func events(threadId: String, after: Int = 0) async throws -> [ThreadEvent] {
         struct Body: Decodable { let events: [ThreadEvent]? }
         let body: Body = try await send("GET", "api/v1/phone/threads/\(Self.enc(threadId))/events?after=\(after)")
@@ -100,7 +144,7 @@ final class InappCallsClient: Sendable {
     // MARK: - Transport
 
     private struct OK: Decodable {}
-    private struct ErrorBody: Decodable { let error: String? }
+    private struct ErrorBody: Decodable { let error: String?; let threadId: String? }
 
     private static func enc(_ value: String) -> String {
         var allowed = CharacterSet.urlPathAllowed
@@ -108,7 +152,7 @@ final class InappCallsClient: Sendable {
         return value.addingPercentEncoding(withAllowedCharacters: allowed) ?? value
     }
 
-    private func send<T: Decodable>(_ method: String, _ path: String) async throws -> T {
+    private func send<T: Decodable>(_ method: String, _ path: String, body: [String: String]? = nil) async throws -> T {
         let client = APIClient.shared
         var components = URLComponents(
             url: AppConfig.cloudAPIBaseURL.appendingPathComponent(String(path.split(separator: "?", maxSplits: 1)[0])),
@@ -119,7 +163,10 @@ final class InappCallsClient: Sendable {
         }
         guard let url = components?.url else { throw CallError(status: 0, code: nil) }
         var request = try await client.authorizedRequest(url: url, method: method)
-        if method == "POST" { request.httpBody = Data("{}".utf8) }
+        if method == "POST" {
+            request.httpBody = (try? JSONSerialization.data(withJSONObject: body ?? [:])) ?? Data("{}".utf8)
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        }
         request.timeoutInterval = 15
         let data: Data
         let response: URLResponse
@@ -130,8 +177,8 @@ final class InappCallsClient: Sendable {
         }
         guard let http = response as? HTTPURLResponse else { throw CallError(status: 0, code: nil) }
         guard (200...299).contains(http.statusCode) else {
-            let code = (try? JSONDecoder().decode(ErrorBody.self, from: data))?.error
-            throw CallError(status: http.statusCode, code: code)
+            let body = try? JSONDecoder().decode(ErrorBody.self, from: data)
+            throw CallError(status: http.statusCode, code: body?.error, threadId: body?.threadId)
         }
         do {
             return try JSONDecoder().decode(T.self, from: data.isEmpty ? Data("{}".utf8) : data)

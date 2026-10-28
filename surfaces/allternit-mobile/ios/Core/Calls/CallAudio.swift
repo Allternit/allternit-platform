@@ -93,21 +93,24 @@ enum CallAudioSessionConfig {
 /// The ring while the app is open: the web's soft two-tone burst
 /// (440 + 480 Hz, 0.9 s every 3 s, `ring-tone.ts`), synthesised in memory,
 /// plus a vibration each burst. Uses the ambient category so the silent
-/// switch silences the tone (the vibration still comes).
+/// switch silences the tone (the vibration still comes). `sound: false`
+/// (Settings → Notifications → Ring sound off) vibrates only.
 @MainActor
 final class CallRingtone {
     private var player: AVAudioPlayer?
     private var vibrate: Timer?
 
-    func start() {
-        guard player == nil else { return }
-        try? AVAudioSession.sharedInstance().setCategory(.ambient, options: [.mixWithOthers])
-        try? AVAudioSession.sharedInstance().setActive(true)
-        if let data = Self.toneWAV(), let player = try? AVAudioPlayer(data: data) {
-            player.numberOfLoops = -1
-            player.volume = 0.6
-            player.play()
-            self.player = player
+    func start(sound: Bool = true) {
+        guard player == nil, vibrate == nil else { return }
+        if sound {
+            try? AVAudioSession.sharedInstance().setCategory(.ambient, options: [.mixWithOthers])
+            try? AVAudioSession.sharedInstance().setActive(true)
+            if let data = Self.toneWAV(), let player = try? AVAudioPlayer(data: data) {
+                player.numberOfLoops = -1
+                player.volume = 0.6
+                player.play()
+                self.player = player
+            }
         }
         AudioServicesPlaySystemSound(kSystemSoundID_Vibrate)
         vibrate = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { _ in

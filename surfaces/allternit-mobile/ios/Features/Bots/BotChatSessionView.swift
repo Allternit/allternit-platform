@@ -62,6 +62,7 @@ struct BotChatSessionView: View {
             status.subscribe(botId: bot.id)
             await resolve()
         }
+        .task { await InappCallStore.shared.loadCallableContacts(botId: bot.id) }
         .onDisappear { status.unsubscribe(botId: bot.id) }
         .onChange(of: viewModel.transientError) { _, error in
             // A main-chat pin whose session is gone: drop it so the next
@@ -106,6 +107,7 @@ struct BotChatSessionView: View {
             .accessibilityLabel("\(bot.botDisplayName) profile")
         }
         ToolbarItemGroup(placement: .topBarTrailing) {
+            BotCallButton(botId: bot.id)
             Button {
                 navigator.open(.stage(bot.id))
             } label: {

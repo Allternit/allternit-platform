@@ -42,6 +42,7 @@ struct BotPageView: View {
             desktop.fetchStatusIfNeeded(botId: bot.id)
             await loadCounts()
         }
+        .task { await InappCallStore.shared.loadCallableContacts(botId: bot.id) }
         .onDisappear { status.unsubscribe(botId: bot.id) }
     }
 
@@ -78,6 +79,7 @@ struct BotPageView: View {
                         .background(Color("BgSecondary"))
                         .clipShape(Capsule())
                 }
+                BotCallButton(botId: bot.id, style: .capsule)
             }
             .padding(.top, 4)
         }

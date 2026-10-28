@@ -16,6 +16,12 @@ import UIKit
 /// - A ring that disappears without us acting is looked up in the thread
 ///   log: `call.missed` / `call.cancelled` → "Missed call"; answered on
 ///   another device → it just goes away.
+/// - Outgoing (the web's `ringContact` + `startOutgoingCall`, from the bot's
+///   Contacts app): mic → `POST /api/v1/phone/contacts/:userId/ring` → join
+///   the room at once so audio is ready, then watch the thread every 3 s for
+///   answered / declined / missed / cancelled. Hanging up while it rings is
+///   `POST …/cancel`. The callee's auto-answer bot picks up straight away
+///   (`answeredBy: "agent"`).
 @MainActor
 final class InappCallStore: ObservableObject {
     static let shared = InappCallStore()
@@ -23,6 +29,8 @@ final class InappCallStore: ObservableObject {
     typealias IncomingCall = InappCallsClient.IncomingCall
 
     enum Phase: Equatable {
+        /// Outgoing: ringing them, nobody has picked up yet.
+        case calling
         case connecting
         case live
         /// Call over; `note` says why.
@@ -36,8 +44,9 @@ final class InappCallStore: ObservableObject {
     }
 
     struct ActiveCall: Equatable {
-        let room: String
-        let threadId: String
+        /// Empty for an outgoing call until the cloud hands back its room.
+        var room: String
+        var threadId: String
         let botId: String
         let userId: String
         let label: String
@@ -46,6 +55,18 @@ final class InappCallStore: ObservableObject {
         var speaker = false
         var startedAt: Date?
         var note: String?
+        /// I rang them (the web's `direction: 'out'`).
+        var outgoing = false
+        /// Title for an ended call when it isn't plain "Call ended"
+        /// ("No answer", "Declined", "Busy", "Can't connect").
+        var endTitle: String?
+    }
+
+    /// Settings → Notifications → Ring sound. Off = incoming calls vibrate
+    /// only. Per device (UserDefaults), like the web's "Incoming calls" toggle.
+    nonisolated static let ringSoundKey = "calls.ringSound"
+    static var ringSoundOn: Bool {
+        UserDefaults.standard.object(forKey: ringSoundKey) as? Bool ?? true
     }
 
     /// Rings waiting for me that I haven't answered or declined.
@@ -59,6 +80,13 @@ final class InappCallStore: ObservableObject {
     private let ringtone = CallRingtone()
     private var session: CallAudioSession?
     private var pollTask: Task<Void, Never>?
+    /// Outgoing: the thread watcher while it rings.
+    private var watchTask: Task<Void, Never>?
+    /// Outgoing: which ring attempt is current, so a cancel during the
+    /// `POST …/ring` request can cancel the ring once its room is known.
+    private var attempt = UUID()
+    /// Contacts per bot, for the Call buttons (fetched once per screen open).
+    @Published private(set) var callableContacts: [String: [InappCallsClient.Contact]] = [:]
     private var isForeground = true
     /// Rings acted on here (declined, answered, mic denied) so the next poll
     /// doesn't bring them back while the server catches up.
@@ -140,7 +168,7 @@ final class InappCallStore: ObservableObject {
     }
 
     private func syncRing() {
-        if ringing != nil, isForeground { ringtone.start() } else { ringtone.stop() }
+        if ringing != nil, isForeground { ringtone.start(sound: Self.ringSoundOn) } else { ringtone.stop() }
     }
 
     // MARK: - Links + pushes
@@ -220,17 +248,163 @@ final class InappCallStore: ObservableObject {
     }
 
     /// Mic denied / no audio here: turn the ring down on the server too.
+    /// (Outgoing never rang anyone yet, so it just closes.)
     func declineActive() {
         guard let call = active else { return }
         active = nil
+        syncRing()
+        guard !call.outgoing, !call.room.isEmpty else { return }
         Task { try? await api.decline(userId: call.userId, room: call.room) }
     }
 
+    /// Hang up, or cancel an outgoing ring nobody has picked up yet.
     func hangUp() {
-        guard active != nil else { return }
+        guard let call = active else { return }
+        let ringingOut = call.outgoing && (call.phase == .calling || call.phase == .connecting)
+        attempt = UUID()
         endLocally(note: nil)
         active = nil
         syncRing()
+        if ringingOut, !call.room.isEmpty {
+            Task { try? await api.cancel(userId: call.userId, room: call.room) }
+        }
+    }
+
+    // MARK: - Outgoing
+
+    /// Who this bot's owner can call in the app (cached per bot).
+    func loadCallableContacts(botId: String) async {
+        guard AuthManager.shared.isSignedIn, !botId.isEmpty else { return }
+        guard let rows = try? await api.contacts(botId: botId) else { return }
+        callableContacts[botId] = rows.filter(\.isCallable)
+    }
+
+    /// Ring someone linked through `botId`'s invite. The call screen shows
+    /// "Calling…" with Cancel until they answer.
+    func call(_ contact: InappCallsClient.Contact, botId: String) async {
+        guard active == nil, let userId = contact.userId, contact.isCallable else { return }
+        let me = UUID()
+        attempt = me
+        incoming = []
+        active = ActiveCall(room: "", threadId: "", botId: botId, userId: userId,
+                            label: contact.label, phase: .connecting, outgoing: true)
+        syncRing()
+        guard CallAudio.isAvailable else {
+            active?.phase = .unavailable
+            return
+        }
+        guard await CallAudioSessionConfig.microphoneAllowed() else {
+            if attempt == me { active?.phase = .micDenied }
+            return
+        }
+        guard attempt == me else { return }
+
+        let rung: InappCallsClient.RingResult
+        do {
+            rung = try await api.ring(userId: userId, botId: botId)
+        } catch let error as InappCallsClient.CallError {
+            guard attempt == me else { return }
+            if let thread = error.threadId { active?.threadId = thread }
+            switch (error.status, error.code) {
+            case (0, _): endOutgoing("Can't connect", error.errorDescription)
+            case (_, "callee_offline"):
+                endOutgoing("No answer", "\(contact.label) isn't on Allternit right now. We'll let them know you called.")
+            case (_, "callee_busy"): endOutgoing("Busy", error.errorDescription)
+            case (404, _), (405, _), (501, _):
+                endOutgoing("Can't call", "In-app calling isn't available yet.")
+            default: endOutgoing("Call failed", error.errorDescription)
+            }
+            return
+        } catch {
+            if attempt == me { endOutgoing("Call failed", "Couldn't ring them.") }
+            return
+        }
+
+        guard let room = rung.room, !room.isEmpty else {
+            if attempt == me { active?.threadId = rung.threadId ?? ""; endOutgoing("Can't call", "Calling isn't available right now.") }
+            return
+        }
+        guard attempt == me else {
+            // Cancelled while the ring request was in flight.
+            Task { try? await api.cancel(userId: userId, room: room) }
+            return
+        }
+        let byAgent = rung.answeredBy == "agent"
+        active?.room = room
+        active?.threadId = rung.threadId ?? ""
+        active?.phase = byAgent ? .connecting : .calling
+
+        guard let token = rung.token, let url = rung.url, !token.isEmpty, !url.isEmpty else {
+            endOutgoing("Call failed", "Couldn't connect audio. Check your connection and try again.")
+            Task { try? await api.cancel(userId: userId, room: room) }
+            return
+        }
+        let result = await CallAudio.join(url: url, token: token) { [weak self] in
+            self?.remoteEnded(room: room)
+        }
+        switch result {
+        case .joined(let joined):
+            guard attempt == me, active?.room == room else { joined.leave(); return }
+            session = joined
+            if byAgent || rung.threadId == nil {
+                active?.phase = .live
+                active?.startedAt = Date()
+            } else {
+                watchOutgoing(room: room, threadId: rung.threadId ?? "", userId: userId, attempt: me)
+            }
+        case .failed:
+            guard attempt == me else { return }
+            endOutgoing("Can't connect", "Couldn't connect audio. Check your microphone and try again.")
+            Task { try? await api.cancel(userId: userId, room: room) }
+        }
+    }
+
+    /// The web's 3 s thread watcher; gives up after a minute (the cloud
+    /// stops ringing at 45 s) and cancels so they see a missed call.
+    private func watchOutgoing(room: String, threadId: String, userId: String, attempt me: UUID) {
+        watchTask?.cancel()
+        watchTask = Task { [weak self] in
+            var after = 0
+            let started = Date()
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 3_000_000_000)
+                guard let self, !Task.isCancelled, self.attempt == me, self.active?.phase == .calling else { return }
+                if let events = try? await self.api.events(threadId: threadId, after: after) {
+                    guard self.attempt == me, self.active?.phase == .calling else { return }
+                    for event in events {
+                        after = max(after, event.id)
+                        guard event.room == room else { continue }
+                        switch event.kind {
+                        case "call.answered":
+                            self.active?.phase = .live
+                            self.active?.startedAt = Date()
+                            return
+                        case "call.declined":
+                            self.endOutgoing("Declined", "They declined the call.")
+                            return
+                        case "call.missed":
+                            self.endOutgoing("No answer", "They didn't answer. We'll let them know you called.")
+                            return
+                        case "call.cancelled":
+                            self.endOutgoing("Call ended", "Call cancelled.")
+                            return
+                        default:
+                            continue
+                        }
+                    }
+                }
+                if Date().timeIntervalSince(started) > 60 {
+                    self.endOutgoing("No answer", "They didn't answer. We'll let them know you called.")
+                    Task { try? await self.api.cancel(userId: userId, room: room) }
+                    return
+                }
+            }
+        }
+    }
+
+    private func endOutgoing(_ title: String, _ note: String?) {
+        endLocally(note: note)
+        active?.endTitle = title
     }
 
     func setMuted(_ muted: Bool) {
@@ -245,7 +419,7 @@ final class InappCallStore: ObservableObject {
 
     /// Close the ended / missed / denied screen.
     func dismiss() {
-        guard let phase = active?.phase, phase != .connecting, phase != .live else { return }
+        guard let phase = active?.phase, phase != .connecting, phase != .live, phase != .calling else { return }
         active = nil
         syncRing()
     }
@@ -267,7 +441,8 @@ final class InappCallStore: ObservableObject {
     // MARK: - Ending
 
     private func remoteEnded(room: String) {
-        guard active?.room == room, active?.phase == .live || active?.phase == .connecting else { return }
+        guard active?.room == room,
+              active?.phase == .live || active?.phase == .connecting || active?.phase == .calling else { return }
         endLocally(note: "Call ended.")
     }
 
@@ -276,6 +451,8 @@ final class InappCallStore: ObservableObject {
     }
 
     private func endLocally(note: String?) {
+        watchTask?.cancel()
+        watchTask = nil
         session?.leave()
         session = nil
         active?.phase = .ended

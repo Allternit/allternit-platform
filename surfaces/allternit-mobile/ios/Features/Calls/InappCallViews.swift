@@ -118,7 +118,8 @@ struct InappCallScreen: View {
                     header(label: call.label, status: elapsed(since: call.startedAt, now: context.date), pulsing: false)
                 }
             default:
-                header(label: call.label, status: statusText(call), pulsing: call.phase == .connecting)
+                header(label: call.label, status: statusText(call),
+                       pulsing: call.phase == .connecting || call.phase == .calling)
             }
             if let detail = detailText(call) {
                 Text(detail)
@@ -139,6 +140,17 @@ struct InappCallScreen: View {
     @ViewBuilder
     private func controls(_ call: InappCallStore.ActiveCall) -> some View {
         switch call.phase {
+        case .calling:
+            HStack(spacing: 28) {
+                toggleButton(symbol: "speaker.wave.2.fill", on: call.speaker, caption: "Speaker",
+                             label: call.speaker ? "Turn speaker off" : "Turn speaker on") {
+                    store.setSpeaker(!call.speaker)
+                }
+                roundButton(symbol: "phone.down.fill", color: .red, caption: "Cancel",
+                            label: "Cancel call to \(call.label)") {
+                    store.hangUp()
+                }
+            }
         case .connecting, .live:
             HStack(spacing: 28) {
                 toggleButton(symbol: call.muted ? "mic.slash.fill" : "mic.fill", on: call.muted,
@@ -151,20 +163,26 @@ struct InappCallScreen: View {
                              label: call.speaker ? "Turn speaker off" : "Turn speaker on") {
                     store.setSpeaker(!call.speaker)
                 }
-                roundButton(symbol: "phone.down.fill", color: .red, caption: "End",
-                            label: "Hang up call with \(call.label)") {
+                roundButton(symbol: "phone.down.fill", color: .red,
+                            caption: call.outgoing && call.phase == .connecting ? "Cancel" : "End",
+                            label: call.outgoing && call.phase == .connecting
+                                ? "Cancel call to \(call.label)" : "Hang up call with \(call.label)") {
                     store.hangUp()
                 }
             }
         case .micDenied:
             VStack(spacing: 12) {
                 primaryButton("Open Settings") { store.openSystemSettings() }
-                secondaryButton("Decline") { store.declineActive() }
+                secondaryButton(call.outgoing ? "Not now" : "Decline") { store.declineActive() }
             }
         case .unavailable:
             VStack(spacing: 12) {
-                secondaryButton("Decline") { store.declineActive() }
-                secondaryButton("Not now") { store.dismiss() }
+                if call.outgoing {
+                    secondaryButton("Done") { store.dismiss() }
+                } else {
+                    secondaryButton("Decline") { store.declineActive() }
+                    secondaryButton("Not now") { store.dismiss() }
+                }
             }
         case .missed, .ended:
             VStack(spacing: 12) {
@@ -178,12 +196,13 @@ struct InappCallScreen: View {
 
     private func statusText(_ call: InappCallStore.ActiveCall) -> String {
         switch call.phase {
+        case .calling: return "Calling…"
         case .connecting: return "Connecting…"
         case .live: return "On call"
-        case .ended: return "Call ended"
+        case .ended: return call.endTitle ?? "Call ended"
         case .missed: return "Missed call"
         case .micDenied: return "Microphone is off"
-        case .unavailable: return "Can't answer here"
+        case .unavailable: return call.outgoing ? "Can't call here" : "Can't answer here"
         }
     }
 
@@ -194,9 +213,15 @@ struct InappCallScreen: View {
         case .missed:
             return "\(call.label) called while you were away."
         case .micDenied:
-            return "To answer calls, allow the microphone for Allternit in Settings. The call is still ringing on your other devices."
+            return call.outgoing
+                ? "To call, allow the microphone for Allternit in Settings."
+                : "To answer calls, allow the microphone for Allternit in Settings. The call is still ringing on your other devices."
         case .unavailable:
-            return "This version of the iPhone app can't carry call audio yet. Answer on ai.allternit.com or Allternit Desktop — it's still ringing there."
+            return call.outgoing
+                ? "This version of the iPhone app can't carry call audio yet. Call from ai.allternit.com or Allternit Desktop."
+                : "This version of the iPhone app can't carry call audio yet. Answer on ai.allternit.com or Allternit Desktop — it's still ringing there."
+        case .calling:
+            return "Allternit call"
         case .connecting, .live:
             return nil
         }

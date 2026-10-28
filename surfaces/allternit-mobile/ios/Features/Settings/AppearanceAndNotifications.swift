@@ -140,6 +140,8 @@ struct NotificationsSettingsView: View {
     @Environment(\.openURL) private var openURL
     @Environment(\.scenePhase) private var scenePhase
     @State private var status: UNAuthorizationStatus? = nil
+    /// Per device: off = incoming Allternit calls vibrate only (InappCallStore).
+    @AppStorage(InappCallStore.ringSoundKey) private var ringSound = true
 
     var body: some View {
         List {
@@ -171,6 +173,19 @@ struct NotificationsSettingsView: View {
                 }
             } footer: {
                 Text("Allternit notifies you when a bot finishes, needs an answer, or a computer goes offline.")
+            }
+            Section {
+                Toggle(isOn: $ringSound) {
+                    Text("Ring sound")
+                        .font(.subheadline)
+                        .foregroundColor(Color("TextPrimary"))
+                }
+            } header: {
+                Text("Incoming calls")
+            } footer: {
+                Text(ringSound
+                     ? "Allternit calls ring and vibrate while the app is open. The silent switch still silences the ring."
+                     : "Allternit calls vibrate only, with no ring sound. This setting is for this iPhone only.")
             }
         }
         .listStyle(.insetGrouped)
