@@ -49,6 +49,9 @@ struct SettingsView: View {
     @State private var isRuntimeOperationsPresented = false
     /// Pushed Compute Nodes view (infra section).
     @State private var isNodesManagerPresented = false
+    /// Settings → Phones ("Let your bots use this iPhone").
+    @State private var isPhonesPresented = false
+    @ObservedObject private var appPhone = AppPhoneService.shared
     /// Pushed Cloud Deploy view (infra section).
     @State private var isCloudDeployPresented = false
     /// Pushed VPS & Servers view (infra section).
@@ -97,6 +100,7 @@ struct SettingsView: View {
                 productsSection
                 voiceSection
                 dataControlsSection
+                phonesSection
                 meshSection
                 infraSection
                 #if DEBUG
@@ -152,6 +156,9 @@ struct SettingsView: View {
             }
             .navigationDestination(isPresented: $isNodesManagerPresented) {
                 NodesManagerView()
+            }
+            .navigationDestination(isPresented: $isPhonesPresented) {
+                AppPhonesSettingsView()
             }
             .navigationDestination(isPresented: $isCloudDeployPresented) {
                 CloudDeployManagerView()
@@ -778,6 +785,31 @@ struct SettingsView: View {
         }
         .foregroundColor(destructive ? Theme.statusError : Color("TextPrimary"))
         .contentShape(Rectangle())
+    }
+
+    // MARK: - Phones
+
+    private var phonesSection: some View {
+        Section {
+            Button(action: { isPhonesPresented = true }) {
+                HStack(spacing: 10) {
+                    Image(systemName: "iphone.gen3")
+                        .font(.subheadline)
+                        .frame(width: 20)
+                    Text("Let your bots use this iPhone")
+                        .font(.subheadline)
+                    Spacer()
+                    Text(appPhone.credentials.map { "Paired · \($0.runtimeName)" } ?? "Off")
+                        .font(.caption)
+                        .foregroundColor(Color("TextSecondary"))
+                        .lineLimit(1)
+                }
+                .foregroundColor(Color("TextPrimary"))
+                .contentShape(Rectangle())
+            }
+        } header: {
+            Text("Phones")
+        }
     }
 
     // MARK: - Mesh
