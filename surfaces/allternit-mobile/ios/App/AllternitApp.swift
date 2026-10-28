@@ -106,6 +106,9 @@ struct AllternitApp: App {
                 OnboardingView()
             } else {
                 MainWorkspaceView()
+                    // iPhone link: screen-sharing banner, share prompt,
+                    // control socket lifecycle (Features/Phones).
+                    .appPhoneOverlays()
                     .environmentObject(modeStore)
                     .environmentObject(agentModeStore)
             }

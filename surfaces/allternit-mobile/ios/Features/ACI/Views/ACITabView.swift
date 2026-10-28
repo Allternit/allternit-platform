@@ -19,6 +19,8 @@ struct ACITabView: View {
     @Binding var selectedSessionId: String?
 
     private let theme = ModeTheme(mode: .browser)
+    /// A bot's `web.open` while the browser was closed lands here.
+    @ObservedObject private var bridge = ACIBrowserBridge.shared
 
     private enum Destination {
         case landing
@@ -114,6 +116,7 @@ struct ACITabView: View {
             if let sessionId = selectedSessionId {
                 destination = .chat(sessionId: sessionId)
             }
+            openRequestedURL()
             #if DEBUG
             // `-open-browser-chat` (DEBUG only): open a fresh browser chat
             // for screenshot/send-path verification.
@@ -121,6 +124,9 @@ struct ACITabView: View {
                 destination = .chat(sessionId: nil)
             }
             #endif
+        }
+        .onChange(of: bridge.requestedURL) { _, _ in
+            openRequestedURL()
         }
         .onChange(of: selectedSessionId) { _, newValue in
             if let sessionId = newValue {
@@ -152,6 +158,14 @@ struct ACITabView: View {
         .sheet(isPresented: $isSiteAPIsPresented) {
             SiteAPIsView()
         }
+    }
+
+    /// Opens the browser at the URL a bot asked for (the bridge waits for
+    /// the browser view to attach, then drives it).
+    private func openRequestedURL() {
+        guard let url = bridge.requestedURL else { return }
+        bridge.requestedURL = nil
+        destination = .browser(url)
     }
 
     private func backToLanding() {
