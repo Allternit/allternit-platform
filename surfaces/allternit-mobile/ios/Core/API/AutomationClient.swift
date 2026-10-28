@@ -108,9 +108,12 @@ struct CreateAutomationRoutineRequest: Encodable, Sendable {
     let timezone: String
     let executionDomain: String
     let config: [String: String]
+    /// Optional row metadata (the web's `bot-routine` source / botName /
+    /// title / fromTemplate). Omitted from the body when nil.
+    var metadata: [String: JSONValue]? = nil
 
     enum CodingKeys: String, CodingKey {
-        case name, description, timezone, config
+        case name, description, timezone, config, metadata
         case agentId = "agent_id"
         case scheduleType = "schedule_type"
         case scheduleExpression = "schedule_expression"

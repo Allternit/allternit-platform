@@ -84,13 +84,13 @@ enum BotAvatarSource: Equatable {
         for candidate in candidates {
             guard let object = object(candidate) else { continue }
             if case .object(let pet)? = object["pet"],
-               case .string(let sprite)? = pet["spriteUrl"], let url = URL(string: sprite) {
+               case .string(let sprite)? = pet["spriteUrl"], let url = webAssetURL(sprite) {
                 return .sprite(url)
             }
             if case .string(let type)? = object["type"], type == "image" {
-                if case .string(let uri)? = object["uri"], let url = URL(string: uri) { return .image(url) }
+                if case .string(let uri)? = object["uri"], let url = webAssetURL(uri) { return .image(url) }
                 if case .object(let data)? = object["data"],
-                   case .string(let uri)? = data["url"], let url = URL(string: uri) { return .image(url) }
+                   case .string(let uri)? = data["url"], let url = webAssetURL(uri) { return .image(url) }
             }
             // An avatar object we don't draw natively (mascot, geometric,
             // pet vector): never show its JSON as text.
@@ -101,6 +101,15 @@ enum BotAvatarSource: Equatable {
         }
         return .legacy
     }
+
+    /// Pack sprites are stored as web paths ("/avatar-packs/…"), served by
+    /// the web app; a bare path would never load on the phone.
+    static func webAssetURL(_ raw: String) -> URL? {
+        if raw.hasPrefix("/") { return URL(string: raw, relativeTo: webOrigin)?.absoluteURL }
+        return URL(string: raw)
+    }
+
+    static let webOrigin = URL(string: "https://ai.allternit.com")!
 
     private static func object(_ value: JSONValue?) -> [String: JSONValue]? {
         switch value {
@@ -152,12 +161,20 @@ private final class SpriteFrameCache {
     }
 }
 
-private struct SpriteAvatar: View {
+/// A sprite-sheet avatar (row 0 is the idle loop). Also used by the Meet
+/// your bots flow for template looks.
+struct SpriteAvatar: View {
     let url: URL
     let size: CGFloat
     let live: Bool
     @State private var frames: [CGImage] = []
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    init(url: URL, size: CGFloat, live: Bool) {
+        self.url = url
+        self.size = size
+        self.live = live
+    }
 
     var body: some View {
         Group {
