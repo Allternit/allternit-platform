@@ -189,7 +189,7 @@ link; change it from Desktop or the web.
 
 The same compact control and sharing window appear on Desktop,
 ai.allternit.com (including its phone layout), and the m.allternit.com PWA.
-The older Cowork artifact pane uses the same visual treatment with its
+The chat studio's artifact pane uses the same visual treatment with its
 existing private/organization view-or-edit choices; it does not offer email
 invites or public links.
 
@@ -206,7 +206,7 @@ everything you own and everything shared with you, newest first.
 - **Search** by title.
 - **Filter** by library (*Saved work*, *Archive*), owner (*Everything*, *Mine*, *Shared with me*) and kind.
 - Switch between **List**, **Grid** and **Deck**, the same switch as the other overviews. On a phone the switch sits beside the large **Artifacts** title at the top of the screen, and the filter button in the top bar holds owner and kind. Deck shows tall preview cards side by side; scroll sideways.
-- Labels show where an artifact came from: **Cowork**, **Code**, **Bot**, or
+- Labels show where an artifact came from: **Chat**, **Code**, **Bot**, or
   **Legacy** (see below). Shared items show the owner's avatar.
 - **Cards** show the artifact as a page resting in a soft frame, with its kind badge, title and **Edited** time below. Hover a card for its **⋯** menu and a **Pin to deck** button; on touch screens they stay visible.
 - **Previews**: each card shows the artifact itself: the image, the first
@@ -252,7 +252,7 @@ one tile at a time plays how it's built (off when your phone asks for reduced
 motion).
 The **+** button at the bottom lists every kind too, plus PDF, image and video
 uploads, Allternit Design and Office. In the two-column phone grid, cards show
-the kind and time only; the Cowork / Code / Bot / Legacy label shows in List
+the kind and time only; the Chat / Code / Bot / Legacy label shows in List
 and Deck.
 
 ### Start from your connected tools
@@ -274,7 +274,7 @@ shows your artifacts again when you reconnect.
 ## Older artifacts (Legacy)
 
 Artifacts you made before this update — Office docs, sheets and decks,
-Design projects, saved chat artifacts, canvas outputs and Cowork's local
+Design projects, saved chat artifacts, canvas outputs and older chat sessions' local
 artifacts — are copied into your account automatically the first time you
 sign in on each device. They show the **Legacy** label. Nothing is deleted:
 the originals stay where they were.
@@ -325,7 +325,7 @@ say. See [Pages that act like apps](/guides/artifact-apps).
   `output-choice.ts`.
 - The one window: `src/components/artifacts/ArtifactWindow.tsx`; hosts in
   `ArtifactWindowHost.tsx` (overlay/sheet at the app roots, docked in
-  ChatView) and `ArtifactPaneWindow.tsx` (Cowork and project panes).
+  ChatView) and `ArtifactPaneWindow.tsx` (chat studio and project panes).
 - Model contract: the turn carries `output: {kind}` when an Output is picked,
   and the system prompt carries the artifacts manual
   (`ARTIFACTS_MANUAL`), the motion body manual when Motion is on for the user,

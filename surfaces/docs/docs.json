@@ -114,7 +114,6 @@
               "guides/ops-sheets",
               "guides/project-panels",
               "guides/artifact-modes",
-              "guides/cowork-session-panel",
               "guides/tasks",
               "guides/code-session-list",
               "guides/code-linked-prs",
@@ -566,6 +565,7 @@
               "guides/custom-voices",
               "guides/attachments",
               "guides/chat-composer",
+              "guides/chat-sessions",
               "guides/interactive-answers",
               "guides/write-in-my-style",
               "guides/share-location",
@@ -982,6 +982,10 @@
     }
   },
   "redirects": [
+    {
+      "source": "/guides/cowork-session-panel",
+      "destination": "/guides/chat-sessions"
+    },
     {
       "source": "/core/commrails",
       "destination": "/factory/overview"

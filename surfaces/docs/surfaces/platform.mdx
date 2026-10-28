@@ -11,7 +11,7 @@ description: The workspace web UI and the platform.allternit.com cloud console
 
 | Surface | What it is | Where it lives |
 |---|---|---|
-| Workspace UI | Chat, code, cowork, design and agent views. Packaged into [Desktop](/surfaces/desktop) and served as the web app. Vite + React SPA. | Separate `allternit-ai` repository (Desktop builds it via `ALLTERNIT_AI_PATH`) |
+| Workspace UI | Chat, code, design and agent views. Packaged into [Desktop](/surfaces/desktop) and served as the web app. Vite + React SPA. | Separate `allternit-ai` repository (Desktop builds it via `ALLTERNIT_AI_PATH`) |
 | Cloud console | `@allternit/platform-console`: organization management, compute, billing, API keys, docs, and the runtime pairing approval page (`/pair`) | `surfaces/platform.allternit.com` |
 
 Earlier versions of this page described a Next.js 15 app in `surfaces/allternit-platform` on port 3013 with Prisma and Drizzle. That directory no longer exists on main.
@@ -32,7 +32,7 @@ Sign-in, sign-up and the first-run setup for new accounts are described in [Cons
 ## Workspace UI: what it does
 
 - Streaming agent chat with tool calls
-- Code sessions, cowork teams, design view
+- Code sessions, agent teams, design view
 - Agent creation and management ([Agents API](/api/agents))
 - MCP server management ([MCP](/tools/mcp))
 
