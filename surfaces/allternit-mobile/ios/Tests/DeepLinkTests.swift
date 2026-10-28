@@ -18,7 +18,7 @@ final class DeepLinkTests: XCTestCase {
 
     func testPushPaths() {
         XCTAssertEqual(DeepLink.parse(path: "/?allternit_thread=t-1&bot=b-1"), .thread(botId: "b-1", threadId: "t-1"))
-        XCTAssertEqual(DeepLink.parse(path: "/?allternit_call=room&from=u&thread=t-2&bot=b-2"), .thread(botId: "b-2", threadId: "t-2"))
+        XCTAssertEqual(DeepLink.parse(path: "/?allternit_call=room&from=u&thread=t-2&bot=b-2"), .call(room: "room", from: "u", threadId: "t-2", botId: "b-2"))
         XCTAssertEqual(DeepLink.parse(path: "/?allternit_channel=slack"), .channel("slack"))
         XCTAssertEqual(DeepLink.parse(path: "/settings/billing"), .settings("billing"))
         XCTAssertNil(DeepLink.parse(path: "/"))

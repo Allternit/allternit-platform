@@ -98,6 +98,8 @@ struct MainWorkspaceView: View {
         )
         // Universal Links + push taps (DeepLinkRouter) and the Meet your bots intro.
         .modifier(DeepLinkHost())
+        // Allternit calls: ring polling + the incoming / live call screens.
+        .modifier(InappCallHost())
         .modifier(MeetYourBotsHost())
         .onReceive(NotificationCenter.default.publisher(for: .openChatSession)) { note in
             // Bot Home / quick task post this: land on Chats with that

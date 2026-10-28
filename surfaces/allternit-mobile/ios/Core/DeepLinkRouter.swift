@@ -17,8 +17,11 @@ enum DeepLink: Equatable, Sendable {
     case session(String)
     /// A bot's page (`/b/<botId>`).
     case bot(String)
-    /// A bot thread (push `allternit_thread` / `allternit_call`).
+    /// A bot thread (push `allternit_thread`).
     case thread(botId: String, threadId: String)
+    /// A ringing Allternit call (push `allternit_call=<room>&from=&thread=&bot=`):
+    /// the incoming-call screen, or the thread when the ring already ended.
+    case call(room: String, from: String, threadId: String, botId: String)
     /// A relayed channel message (push `allternit_channel`) — lands on the bots.
     case channel(String)
     /// Settings, optionally a section (`/settings/billing`).
@@ -70,9 +73,8 @@ enum DeepLink: Equatable, Sendable {
         if let thread = query["allternit_thread"], let bot = query["bot"] {
             return .thread(botId: bot, threadId: thread)
         }
-        if query["allternit_call"] != nil, let thread = query["thread"], let bot = query["bot"] {
-            // Calls aren't answered in the iPhone app yet; open the thread.
-            return .thread(botId: bot, threadId: thread)
+        if let room = query["allternit_call"] {
+            return .call(room: room, from: query["from"] ?? "", threadId: query["thread"] ?? "", botId: query["bot"] ?? "")
         }
         if let provider = query["allternit_channel"] {
             return .channel(provider)
