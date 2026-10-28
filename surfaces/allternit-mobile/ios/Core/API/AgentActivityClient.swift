@@ -8,7 +8,9 @@ import Foundation
 /// factory_core_router())`) — NOT under `/api/v1` — so, exactly like
 /// `ACIAgentClient` for `/api/aci/*`, requests go through
 /// `APIClient.authorizedRequest(url:)` against `AppConfig.factoryBaseURL`
-/// rather than `APIClient.get/post(path:)`.
+/// rather than `APIClient.get/post(path:)`. Sent through
+/// `InstanceConnection.runtimeAPIData` — the Factory routes live on the
+/// user's allternit-api, so Release relays them to the active computer.
 final class AgentActivityClient: @unchecked Sendable {
     private let client: APIClient
     private let baseURL: URL
@@ -25,7 +27,7 @@ final class AgentActivityClient: @unchecked Sendable {
     /// last_ts }] }`.
     func listThreads() async throws -> [AgentActivityThreadSummary] {
         let request = try await client.authorizedRequest(url: baseURL.appendingPathComponent("mail/threads"))
-        let (data, response) = try await client.session.data(for: request)
+        let (data, response) = try await InstanceConnection.runtimeAPIData(for: request, session: client.session)
         try client.validate(response, data: data)
         do {
             return try JSONDecoder().decode(AgentActivityThreadListResponse.self, from: data).threads
@@ -41,7 +43,7 @@ final class AgentActivityClient: @unchecked Sendable {
         let request = try await client.authorizedRequest(
             url: baseURL.appendingPathComponent("mail/thread/\(Self.escape(threadId))")
         )
-        let (data, response) = try await client.session.data(for: request)
+        let (data, response) = try await InstanceConnection.runtimeAPIData(for: request, session: client.session)
         try client.validate(response, data: data)
         do {
             return try JSONDecoder().decode(AgentActivityMessageListResponse.self, from: data).messages
@@ -68,7 +70,7 @@ final class AgentActivityClient: @unchecked Sendable {
             url: baseURL.appendingPathComponent("mail/send"), method: "POST"
         )
         request.httpBody = try JSONEncoder().encode(SendBody(thread: threadId, body: body))
-        let (data, response) = try await client.session.data(for: request)
+        let (data, response) = try await InstanceConnection.runtimeAPIData(for: request, session: client.session)
         try client.validate(response, data: data)
     }
 
@@ -86,7 +88,7 @@ final class AgentActivityClient: @unchecked Sendable {
             url: baseURL.appendingPathComponent("mail/decide"), method: "POST"
         )
         request.httpBody = try JSONEncoder().encode(DecideBody(thread: threadId, approve: approve))
-        let (data, response) = try await client.session.data(for: request)
+        let (data, response) = try await InstanceConnection.runtimeAPIData(for: request, session: client.session)
         try client.validate(response, data: data)
     }
 
@@ -109,7 +111,7 @@ final class AgentActivityClient: @unchecked Sendable {
             url: baseURL.appendingPathComponent("mail/share"), method: "POST"
         )
         request.httpBody = try JSONEncoder().encode(ShareBody(thread: threadId, assetRef: assetRef, note: note))
-        let (data, response) = try await client.session.data(for: request)
+        let (data, response) = try await InstanceConnection.runtimeAPIData(for: request, session: client.session)
         try client.validate(response, data: data)
     }
 
@@ -129,7 +131,7 @@ final class AgentActivityClient: @unchecked Sendable {
             url: baseURL.appendingPathComponent("ledger/tail"), method: "POST"
         )
         request.httpBody = try JSONEncoder().encode(LedgerTailBody(count: count))
-        let (data, response) = try await client.session.data(for: request)
+        let (data, response) = try await InstanceConnection.runtimeAPIData(for: request, session: client.session)
         try client.validate(response, data: data)
         do {
             return try JSONDecoder().decode([LedgerEvent].self, from: data)

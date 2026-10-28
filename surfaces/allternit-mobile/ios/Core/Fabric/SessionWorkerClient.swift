@@ -192,7 +192,7 @@ final class SessionWorkerClient: @unchecked Sendable {
 
     /// `GET /v1/fabric/peers` — returns nodes matching the optional query.
     func fetchPeers(query: CapabilityQuery? = nil) async throws -> [NodeIdentity] {
-        var components = URLComponents(url: baseURL.appendingPathComponent("v1/fabric/peers"),
+        var components = URLComponents(url: baseURL.appendingPathComponent(Self.routed("v1/fabric/peers", base: baseURL)),
                                        resolvingAgainstBaseURL: false)
         if let query {
             var items: [URLQueryItem] = []
@@ -241,7 +241,7 @@ final class SessionWorkerClient: @unchecked Sendable {
             request.setValue(lease.signature, forHTTPHeaderField: "X-Allternit-Lease")
         }
         request.httpBody = try JSONEncoder().encode(CapabilityInvocationRequest(capability: capability, inputs: inputs))
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await InstanceConnection.data(for: request, session: session)
         try validate(response, data: data)
         return try JSONDecoder().decode(InvocationResult.self, from: data)
     }
@@ -315,7 +315,7 @@ final class SessionWorkerClient: @unchecked Sendable {
                     if let lease {
                         request.setValue(lease.signature, forHTTPHeaderField: "X-Allternit-Lease")
                     }
-                    let (bytes, response) = try await self.session.bytes(for: request)
+                    let (bytes, response) = try await InstanceConnection.bytes(for: request, session: self.session)
                     try self.validate(response, data: nil)
 
                     let decoder = JSONDecoder()
@@ -370,14 +370,14 @@ final class SessionWorkerClient: @unchecked Sendable {
 
     private func get<T: Decodable>(path: String) async throws -> T {
         let request = try await authorizedRequest(path: path)
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await InstanceConnection.data(for: request, session: session)
         try validate(response, data: data)
         return try JSONDecoder().decode(T.self, from: data)
     }
 
     private func get<T: Decodable>(url: URL) async throws -> T {
         let request = try await authorizedRequest(url: url)
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await InstanceConnection.data(for: request, session: session)
         try validate(response, data: data)
         return try JSONDecoder().decode(T.self, from: data)
     }
@@ -385,13 +385,13 @@ final class SessionWorkerClient: @unchecked Sendable {
     private func post<T: Decodable, B: Encodable>(path: String, body: B) async throws -> T {
         var request = try await authorizedRequest(path: path, method: "POST")
         request.httpBody = try JSONEncoder().encode(body)
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await InstanceConnection.data(for: request, session: session)
         try validate(response, data: data)
         return try JSONDecoder().decode(T.self, from: data)
     }
 
     private func authorizedRequest(path: String, method: String = "GET") async throws -> URLRequest {
-        let url = baseURL.appendingPathComponent(path)
+        let url = baseURL.appendingPathComponent(Self.routed(path, base: baseURL))
         return try await authorizedRequest(url: url, method: method)
     }
 
@@ -423,6 +423,14 @@ final class SessionWorkerClient: @unchecked Sendable {
         guard (200...299).contains(httpResponse.statusCode) else {
             throw APIError.httpError(statusCode: httpResponse.statusCode, message: nil)
         }
+    }
+
+    /// Over the runtime relay the computer's allternit-api answers, and it
+    /// mirrors gizzi's `/v1/fabric/*` and `/v1/session-worker/*` under
+    /// `/api/v1/...` (allternit-api fabric_routes.rs; Allternit Desktop
+    /// serves the same `/api/v1/fabric/*` paths from its relay).
+    private static func routed(_ path: String, base: URL) -> String {
+        RuntimeRelayClient.isRelayURL(base) ? "api/\(path)" : path
     }
 
     private static func escape(_ sessionID: String) -> String {

@@ -129,6 +129,10 @@ struct LoopsListView: View {
 
                 Divider().background(Color("BorderSubtle"))
 
+                // Runs on the user's computer: "Connect a computer" when none answers.
+
+                ConnectComputerView()
+
                 content
             }
             .background(Color("BgPrimary").edgesIgnoringSafeArea(.all))

@@ -65,6 +65,9 @@ struct CodeModeView: View {
             VStack(spacing: 0) {
                 header
                 Divider().background(Color("BorderSubtle"))
+                // Terminal, files, diffs and permissions run on the user's
+                // computer: one "Connect a computer" state when none answers.
+                ConnectComputerView()
 
                 if environmentStore.environment == .cloud, environmentStore.pairedRuntimeId == nil {
                     cloudUnpairedNotice
@@ -827,8 +830,8 @@ struct CodeThreadChatView: View {
         FriendlyStateView(
             style: .error,
             icon: "terminal",
-            title: "No instance available",
-            message: "Start `gizzi serve --tunnel` on your computer, then retry.",
+            title: "Connect a computer or Allternit Cloud",
+            message: "Open Allternit Desktop on your computer, or wake your cloud computer, then retry.",
             actionTitle: "Retry",
             action: {
                 Task {

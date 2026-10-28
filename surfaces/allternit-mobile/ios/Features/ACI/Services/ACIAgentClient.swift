@@ -16,6 +16,11 @@ import Foundation
 /// `.nest("/api", aci_router())`) — NOT under `/api/v1` — so requests go
 /// through `APIClient.authorizedRequest(url:)` against `AppConfig.aciBaseURL`,
 /// the same pattern AgentChatClient uses for `/api/agent-chat`.
+///
+/// The ACI routes live on the user's own allternit-api, not on cloud-api, so
+/// requests go out through `InstanceConnection.runtimeAPIData/Bytes`: in
+/// Release that is the runtime relay to the active computer (as the PWA
+/// relays them); a DEBUG build pointed at a local allternit-api goes direct.
 final class ACIAgentClient: @unchecked Sendable {
     private let client: APIClient
     private let baseURL: URL
@@ -68,7 +73,7 @@ final class ACIAgentClient: @unchecked Sendable {
         )
         request.httpBody = try JSONEncoder().encode(body)
 
-        let (data, response) = try await client.session.data(for: request)
+        let (data, response) = try await InstanceConnection.runtimeAPIData(for: request, session: client.session)
         try client.validate(response, data: data)
         do {
             return try JSONDecoder().decode(ACIRun.self, from: data)
@@ -96,7 +101,7 @@ final class ACIAgentClient: @unchecked Sendable {
                     // kill quiet stretches between screenshots.
                     request.timeoutInterval = 600
 
-                    let (bytes, response) = try await client.session.bytes(for: request)
+                    let (bytes, response) = try await InstanceConnection.runtimeAPIBytes(for: request, session: client.session)
                     try client.validate(response)
 
                     let decoder = JSONDecoder()
@@ -146,7 +151,7 @@ final class ACIAgentClient: @unchecked Sendable {
             url: baseURL.appendingPathComponent("stop/\(Self.escape(runId))"),
             method: "POST"
         )
-        let (data, response) = try await client.session.data(for: request)
+        let (data, response) = try await InstanceConnection.runtimeAPIData(for: request, session: client.session)
         try client.validate(response, data: data)
     }
 
@@ -160,7 +165,7 @@ final class ACIAgentClient: @unchecked Sendable {
             url = components.url ?? url
         }
         let request = try await client.authorizedRequest(url: url, method: "POST")
-        let (data, response) = try await client.session.data(for: request)
+        let (data, response) = try await InstanceConnection.runtimeAPIData(for: request, session: client.session)
         try client.validate(response, data: data)
     }
 

@@ -27,7 +27,7 @@ import * as os from 'node:os';
 import log from 'electron-log';
 import WebSocket from 'ws';
 import { URLS } from './config.js';
-import { dropRuntimeCredentialForGizzi, isGizziProviderListPath } from './relay-gizzi-credential.js';
+import { dropRuntimeCredentialForGizzi, isGizziOwnedRelayPath, isGizziProviderListPath } from './relay-gizzi-credential.js';
 import { isDesktopAuthNavigation, shouldPairWithLateClerkToken } from './desktop-auth-url.js';
 import { ClerkTokenBroker } from './clerk-token-broker.js';
 import { cloudAccountMismatch, type CloudReconnectResult } from './cloud-account.js';
@@ -1617,6 +1617,7 @@ export class DesktopAuthManager {
       || requestPath.startsWith('/v1/question')
       || requestPath === '/v1/session'
       || requestPath.startsWith('/v1/session/')
+      || isGizziOwnedRelayPath(requestPath)
     ) {
       return `${URLS.GIZZI}${requestPath}`;
     }
@@ -1693,7 +1694,16 @@ export class DesktopAuthManager {
     this.relayLocalSockets.get(socketId)?.close();
     const session = this.session;
     if (!session) return;
-    const local = new WebSocket(`${URLS.API.replace(/^http/, 'ws')}${requestPath}`, {
+    // gizzi-owned sockets (the pty attach the native phone app opens over
+    // the relay) go to the local gizzi-code, which needs no credential.
+    const toGizzi = isGizziOwnedRelayPath(requestPath);
+    const local = new WebSocket(`${(toGizzi ? URLS.GIZZI : URLS.API).replace(/^http/, 'ws')}${requestPath}`, toGizzi ? {
+      headers: {
+        'X-Allternit-Relayed': '1',
+        'X-Allternit-User-Id': session.userId,
+        'X-Allternit-User-Email': session.userEmail,
+      },
+    } : {
       headers: {
         Authorization: `Bearer ${session.accessToken}`,
         'X-Allternit-Desktop-Access-Token': session.accessToken,
