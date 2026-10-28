@@ -16,12 +16,12 @@ Install **Allternit** from the App Store and open it. You can:
 The first time you open it, **Meet your bots** sets up your team:
 
 1. Pick bots for your team from a list you can filter by category. Bots already on your account aren't made twice.
-2. Choose who leads: A:// as it comes, A:// dressed as one of the cast with a name you choose, or a bot you already have. If you already have a main bot, this step is skipped.
-3. Turn each bot's routines on or off.
+2. Choose who leads: A:// as it comes, A:// dressed as one of the cast with a name you choose, a bot you already have, a bot from another service you connect now, a new bot you make (a job, a name and a look), or a bot imported from a team file (from Files or a link; imported bots come in for chat, without the file's rooms, routines or playbooks). If you already have a main bot, this step is skipped.
+3. Turn each bot's routines on or off, and tap one to set when it runs: every day, weekdays or chosen days, at a time. You can also add your own routine.
 4. Allow notifications, so you hear when a bot needs you. You can change this later in **Settings → Notifications**.
 5. Pick a first job and edit it.
 
-Nothing is created until you tap **Start the job**. The last step shows what was made, with the reason for anything that failed, and **Retry what didn't finish** tries only those again. The first job is sent to your main bot's chat. If your computer is offline, you can still pick the team and finish later. To make a new bot, or connect one from another service, as your main bot, use Allternit Desktop or ai.allternit.com.
+Nothing is created until you tap **Start the job**. The last step shows what was made, with the reason for anything that failed, and **Retry what didn't finish** tries only those again. The first job is sent to your main bot's chat. If your computer is offline, you can still pick the team and finish later.
 
 ## Getting around
 
@@ -31,7 +31,7 @@ The mode dial at the top switches between **Home**, **Bots**, **Code** and **ACI
 - **Inbox** (the tray button at the top): everything your bots are waiting on you for, such as approvals, held messages, missed calls and failed runs. Tap the button on a row, or swipe right for it; swipe left to snooze it for an hour or dismiss it,
 - **Teammates** (in Home): the bots that are working or need you right now. Tap one to open its chat,
 - **New**: a chat, a quick task or a scheduled task. Press and hold **New** in Home or Code and pick **Continue CLI session** to bring a Claude Code, Codex, Grok or other CLI session from your computer into Allternit. The app copies it and leaves the original as it was,
-- **Phones** (the phone button at the bottom, with a count of unread messages): your bots' phones. Each bot with a number, email address or messaging channel is listed. Open one to see its number, email and conversations, unread first. Opening a conversation marks it read on every device. **Give a bot a phone** opens the connect page from ai.allternit.com,
+- **Phones** (the phone button at the bottom, with a count of unread messages): your bots' phones. Each bot with a number, email address or messaging channel is listed. Open one to see its number, email and conversations, unread first. Opening a conversation marks it read on every device. **Give a bot a phone** connects one (see [Connect a bot](#connect-a-bot)),
 - **Customize** (in Home): Skills, Connectors, Plugins, MCP servers and Webhooks. **More** in each mode's list has **Show in rail** switches to hide or show its rows; a dot on **More** means something is hidden,
 - **Projects**, **Artifacts**, **Automation** and **Decisions**,
 - **Settings**.
@@ -44,7 +44,20 @@ If you don't have a computer paired yet, those screens show **Connect a computer
 
 ## Bots
 
-Bots mode lists your bots with their status. In the drawer, the **Bots** row shows how many threads are waiting on you. Open a bot for its threads, tasks, artifacts, routines, memory and channels. Group chats and the live stage are there too. A group chat can have up to 6 bots, including bots that run on another service, such as Grok or Poke; those show **Runs on …** and answer through their own connection. If one of them needs approval or doesn't answer, the room says so. If a bot has a computer, you can watch it and take control from the phone. If that computer's screen sharing has a password, the app asks for it. On a Mac that is the name and password of an account on the Mac, not your Allternit sign-in. The app keeps it only while the screen is open.
+Bots mode lists your bots with their status. In the drawer, the **Bots** row shows how many threads are waiting on you. Open a bot for its threads, tasks, artifacts, routines, memory and channels. A bot's **Routines** has an **On a schedule** section where you can change when each one runs. Group chats and the live stage are there too. A group chat can have up to 6 bots, including bots that run on another service, such as Grok or Poke; those show **Runs on …** and answer through their own connection. If one of them needs approval or doesn't answer, the room says so. If a bot has a computer, you can watch it and take control from the phone. If that computer's screen sharing has a password, the app asks for it. On a Mac that is the name and password of an account on the Mac, not your Allternit sign-in. The app keeps it only while the screen is open.
+
+## Connect a bot
+
+**Connect** on a bot's page (also **Give a bot a phone** in Phones, and the bot's Phone and Channels screens) gives it a way to reach people:
+
+- **Phone number:** search by area code, local or toll-free, and buy one. Then register it for texting as a business or as an individual; the individual path texts you a code. Carrier review shows its status as it goes.
+- **Email:** the bot gets an address. Choose how it replies and who it may answer.
+- **Telegram:** name the bot, tap **Confirm** in Telegram, then **Start**. If your computer can't do that, paste a bot token instead.
+- **Slack, Discord, Teams and WhatsApp Business:** the sign-in page opens in the app. When you close it, the app waits for the connection. Discord then lets you pick channels.
+
+**Bots from other services** (Connect a vendor bot): accept the terms, then sign in on the window that opens on your computer. The phone checks for up to about 5 minutes. Some products ask for API keys. You can make the connected bot your main bot.
+
+Not on the phone: WhatsApp personal, moving an existing number to Allternit, custom email domains and changing a bot's email address. Use Desktop or ai.allternit.com for those.
 
 ## Artifacts
 
@@ -52,11 +65,13 @@ Bots mode lists your bots with their status. In the drawer, the **Bots** row sho
 
 Tap **Edit** on a document, sheet or deck you can edit:
 
-- **Documents:** edit paragraphs, headings and list items. Tables and images can't be edited on the phone. Markdown documents edit as plain text. Documents with several tabs are read-only on the phone.
+- **Documents:** edit paragraphs, headings, list items and the text in table cells that hold one paragraph. Images, dividers and cells with more than one paragraph stay locked. Markdown documents edit as plain text. A document with several tabs shows them as pills along the top; a dot marks a tab you changed, and **Save** keeps all of them. Adding, renaming or deleting tabs needs Desktop or the web.
 - **Sheets:** edit any cell (start with `=` for a formula), and add rows and columns.
 - **Decks:** edit the text on each slide.
 
 **Save** makes a new version that every device sees. If someone else saved first, the app tells you and offers **Get the latest**.
+
+Exports and downloads from the viewer, such as MP4, CSV, XLSX, DOCX and PNG, open the share sheet so you can save them to Files or Photos. **PDF** opens the print sheet, which can save a PDF. PDFs, images and videos have a **Save or share** button. Files over 512 MB can't be saved on the phone.
 
 ## Calls
 
@@ -64,7 +79,9 @@ A bot can call you. While the app is open, the call rings full screen with the c
 
 On a call you have a timer, **Mute**, **Speaker** (the earpiece is used until you turn it on) and **End**. The call keeps going if you leave the app. A call you didn't answer shows **Missed call**, with **Open conversation**. A call answered on another device stops ringing.
 
-The app needs microphone access to answer. If it's off, the app says so and offers **Open Settings**. When the app is closed, a call arrives as a notification, not the full iPhone call screen. Calling out from the iPhone isn't available yet.
+The app needs microphone access to answer. If it's off, the app says so and offers **Open Settings**. When the app is closed, a call arrives as a notification, not the full iPhone call screen. To have calls vibrate without ringing, turn off **Settings → Notifications → Incoming calls → Ring sound** (this iPhone only).
+
+You can call people who joined through a bot's invite: tap the phone button in the bot's chat or **Call** on its page, then pick the person. The call screen shows **Calling…** with **Speaker** and **Cancel**. If the person has a bot that answers for them, it connects at once. Otherwise the call ends with **No answer**, **Declined** or **Busy**.
 
 ## Settings
 
@@ -73,7 +90,8 @@ Most Settings screens work in the app:
 - **Skills and Plugins:** what's installed on your computer, with a switch for each and **Remove from this computer**. Browsing and installing new ones needs Desktop.
 - **Subagents:** the built-in types and your own. Create one, edit its name, when to use it, model, step limit, tools, instructions and face, reset a built-in or delete your own.
 - **Your twin:** edit how your twin speaks and what bots may say for you. Accept, edit or dismiss what bots suggest, and add, edit or delete memories.
-- **Memory Drive:** pick a drive, then read, edit and save files. If a file changed meanwhile, the app offers to reload it. **Delete memories forever** asks you to type *delete forever*. History, git tokens and imports stay on Desktop and the web.
+- **MCP servers** (also in Customize): the servers on your computer, each with its status (Connected, Not connected, Failed, Needs sign-in or Off) and a switch. Add or edit one (name, description, command, arguments one per line, tags), see its tools, connect or disconnect it now, or remove it. Servers that come from another app's settings, such as Claude, Codex or Gemini, are read-only here; the screen says where to change them.
+- **Memory Drive:** pick a drive, then read, edit and save files. If a file changed meanwhile, the app offers to reload it. **History** lists a file's versions: see what changed, compare with the current file, or **Restore this version**, which saves it as a new version so nothing is lost. **Keep a copy** copies the drive to a folder on your computer or to your own git repository; the access token is stored sealed and never shown again. **Delete memories forever** asks you to type *delete forever*. Imports stay on Desktop and the web.
 
 ## Notifications and links
 
