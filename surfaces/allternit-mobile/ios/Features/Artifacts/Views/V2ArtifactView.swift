@@ -11,8 +11,13 @@ import SwiftUI
 /// - pdf → PDFKit, with Sign (PDFSignView) on a temp copy
 /// - Office records imported from the old sectioned store → "Open in
 ///   editor" (OfficeDocumentView + its WKWebView editor)
-/// - card / dashboard / ops / motion and canvas designs need the web
-///   runtime: they say so and open Allternit on the web.
+/// - card / dashboard / ops / motion, canvas designs, unrendered video
+///   projects, pages that use storage/AI/connectors and any kind the app
+///   doesn't draw → `ArtifactLiveWebView`: the web's own viewer, signed in
+///   as the user, with the page runtime bridge.
+///
+/// Docs, sheets and decks the user can edit get an Edit button
+/// (V2ArtifactEditorView), which saves a new v2 version.
 struct V2ArtifactView: View {
     let artifactId: String
     var initialTitle: String? = nil
@@ -25,11 +30,12 @@ struct V2ArtifactView: View {
     @State private var isLoading = true
     @State private var confirmDelete = false
     @State private var actionError: String?
-    @State private var safariURL: IdentifiableURL?
     @State private var signURL: IdentifiableURL?
     @State private var showingLegacyEditor = false
+    @State private var editModel: ArtifactBodyEditing.Model?
+    @State private var showingEditor = false
+    @State private var needsSignIn = false
 
-    private static let webAppURL = URL(string: "https://ai.allternit.com/?view=library")!
 
     var body: some View {
         NavigationStack {
@@ -56,8 +62,17 @@ struct V2ArtifactView: View {
             } message: {
                 Text(actionError ?? "")
             }
-            .sheet(item: $safariURL) { item in SafariView(url: item.url).ignoresSafeArea() }
             .sheet(item: $signURL) { item in PDFSignView(sourceURL: item.url) }
+            .fullScreenCover(isPresented: $showingEditor) {
+                if let artifact, let editModel {
+                    V2ArtifactEditorView(
+                        artifact: artifact,
+                        model: editModel,
+                        onSaved: { saved in self.artifact = saved },
+                        onConflict: { Task { await load() } }
+                    )
+                }
+            }
         }
         .task { await load() }
     }
@@ -72,6 +87,14 @@ struct V2ArtifactView: View {
         }
         if let artifact {
             ToolbarItemGroup(placement: .topBarTrailing) {
+                if artifact.canEdit, ArtifactBodyEditing.isEditable(kind: artifact.kind),
+                   let model = ArtifactBodyEditing.model(kind: artifact.kind, body: artifact.version.body, format: artifact.version.bodyFormat) {
+                    Button {
+                        editModel = model
+                        showingEditor = true
+                    } label: { Image(systemName: "square.and.pencil") }
+                    .accessibilityLabel("Edit")
+                }
                 if let text = copyableText(artifact) {
                     Button {
                         UIPasteboard.general.string = text
@@ -97,6 +120,15 @@ struct V2ArtifactView: View {
     private var content: some View {
         if isLoading {
             ProgressView("Loading artifact…")
+        } else if error != nil, needsSignIn {
+            FriendlyStateView(
+                style: .empty,
+                icon: "person.crop.circle.badge.questionmark",
+                title: "Sign in to open this artifact",
+                message: "Artifacts are saved to your Allternit account, so they open once you're signed in.",
+                actionTitle: "Sign in",
+                action: { AuthManager.shared.signIn() }
+            )
         } else if let error {
             FriendlyStateView(
                 style: .offline,
@@ -147,6 +179,9 @@ struct V2ArtifactView: View {
                 ArtifactPageWebView(source: .url(url))
             } else if format == "text/markdown" {
                 ArtifactPageWebView(source: .html(ArtifactHTML.markdown(body)))
+            } else if a.runtimeVersion != 1, a.id.hasPrefix("art_"), ArtifactLiveWebView.pageNeedsRuntime(a) {
+                // Stored data, AI or connectors: the web's page runtime.
+                ArtifactLiveWebView(artifact: a)
             } else {
                 ArtifactPageWebView(source: .html(body))
             }
@@ -156,13 +191,14 @@ struct V2ArtifactView: View {
             } else if format == "text/html" {
                 ArtifactPageWebView(source: .html(body))
             } else {
-                unreadable("doc")
+                ArtifactLiveWebView(artifact: a)
             }
         case "design":
             if let html = ArtifactBodyDecoder.designHTML(body: body, format: format) {
                 ArtifactPageWebView(source: .html(html))
             } else {
-                needsWeb(a, reason: "Canvas designs open in Allternit Design on the web or Desktop.")
+                // Canvas designs: the web draws the artboards (canvasToHtml).
+                ArtifactLiveWebView(artifact: a)
             }
         case "diagram":
             if format == "image/svg+xml" || body.trimmingCharacters(in: .whitespaces).hasPrefix("<svg") {
@@ -174,7 +210,7 @@ struct V2ArtifactView: View {
             if let grid = ArtifactBodyDecoder.sheetGrid(body: body, format: format) {
                 SheetGridView(grid: grid)
             } else {
-                unreadable("sheet")
+                ArtifactLiveWebView(artifact: a)
             }
         case "slides":
             if let slides = ArtifactBodyDecoder.slides(body: body) {
@@ -182,7 +218,7 @@ struct V2ArtifactView: View {
             } else if let md = ArtifactBodyDecoder.docMarkdown(body: body, format: format) {
                 ArtifactPageWebView(source: .html(ArtifactHTML.markdown(md)))
             } else {
-                unreadable("deck")
+                ArtifactLiveWebView(artifact: a)
             }
         case "code":
             CodeBodyView(code: body)
@@ -198,7 +234,8 @@ struct V2ArtifactView: View {
             if let url = ArtifactBodyDecoder.videoURL(body: body, meta: a.version.meta) {
                 ArtifactVideoView(urlString: url)
             } else {
-                needsWeb(a, reason: "This video project hasn't been rendered yet. Open it on the web or Desktop to cut and export it.")
+                // An unrendered video project: the web's viewer previews it.
+                ArtifactLiveWebView(artifact: a)
             }
         case "pdf":
             if format == "application/pdf", let data = Data(base64Encoded: body, options: .ignoreUnknownCharacters),
@@ -219,7 +256,8 @@ struct V2ArtifactView: View {
                 unreadable("PDF")
             }
         default:
-            needsWeb(a, reason: "\(a.knownKind?.noun ?? "This artifact") runs live in Allternit on the web and Desktop.")
+            // card / dashboard / ops / motion and kinds newer than this app.
+            ArtifactLiveWebView(artifact: a)
         }
     }
 
@@ -232,16 +270,6 @@ struct V2ArtifactView: View {
         )
     }
 
-    private func needsWeb(_ a: ArtifactV2, reason: String) -> some View {
-        FriendlyStateView(
-            style: .empty,
-            icon: ArtifactV2Kind.systemImage(for: a.kind),
-            title: a.title,
-            message: reason,
-            actionTitle: "Open Allternit on the web",
-            action: { safariURL = IdentifiableURL(url: Self.webAppURL) }
-        )
-    }
 
     private func copyableText(_ a: ArtifactV2) -> String? {
         switch a.kind {
@@ -258,9 +286,11 @@ struct V2ArtifactView: View {
         do {
             artifact = try await ArtifactsV2Client.shared.get(id: artifactId)
             error = nil
+            needsSignIn = false
         } catch is CancellationError {
             return
         } catch {
+            needsSignIn = (error as? APIError)?.httpStatus == 401
             self.error = error.localizedDescription
         }
         isLoading = false
