@@ -45,8 +45,8 @@ struct FileBrowserView: View {
         FriendlyStateView(
             style: .error,
             icon: "folder",
-            title: "No instance available",
-            message: "Start `gizzi serve --tunnel` on your computer, then retry.",
+            title: "Connect a computer or Allternit Cloud",
+            message: "Open Allternit Desktop on your computer, or wake your cloud computer, then retry.",
             actionTitle: "Retry",
             action: { Task { await resolve() } }
         )

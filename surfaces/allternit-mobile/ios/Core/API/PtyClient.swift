@@ -15,23 +15,26 @@ struct PtyInfo: Decodable, Sendable {
 /// Client for the standalone gizzi-code server's pty routes — REST plus the
 /// WebSocket attach (cmd/gizzi-code/docs/pty-websocket-protocol.md).
 ///
-/// Unlike `APIClient.shared` this always connects DIRECTLY to
-/// `AppConfig.gizziCodeBaseURL` (no EnvironmentStore relay route): the cloud
-/// relay envelope (`APIClient.relayRequest`) cannot carry a WebSocket
-/// upgrade, so in `.cloud` mode the terminal still talks to the gizzi
-/// server itself.
+/// The target comes from `InstanceConnection`: an explicit/tunnel URL or the
+/// mesh proxy is dialled directly; the relay to the user's computer carries
+/// REST in the proxy envelope and the attach over a relay socket ticket
+/// (`RuntimeRelayClient.webSocket`), as on m.allternit.com.
 final class PtyClient: @unchecked Sendable {
     static let shared = PtyClient()
 
     let baseURL: URL
-    private let client: APIClient
+    private let endpointBaseURL: URL
 
     init(baseURL: URL = AppConfig.gizziCodeBaseURL) {
         self.baseURL = baseURL
-        self.client = APIClient(
-            baseURL: baseURL,
-            tokenProvider: { try await AuthManager.shared.getToken() }
-        )
+        self.endpointBaseURL = baseURL
+    }
+
+    /// Per-call target: the given base URL, or — for the static default —
+    /// whatever `InstanceConnection.resolve()` picks now (explicit URL →
+    /// mesh → the relay to the user's computer).
+    private func client() async throws -> APIClient {
+        try await InstanceConnection.gizziClient(for: endpointBaseURL)
     }
 
     // MARK: - REST
@@ -40,13 +43,13 @@ final class PtyClient: @unchecked Sendable {
     /// mux panes are born 80x24 (integrations/pty/index.ts:335-339) and are
     /// resized afterwards via `resize(id:cols:rows:)`.
     func createPty(title: String? = nil) async throws -> PtyInfo {
-        try await client.post(path: "v1/pty/create", body: CreatePtyRequest(title: title))
+        try await client().post(path: "v1/pty/create", body: CreatePtyRequest(title: title))
     }
 
     /// `PUT /v1/pty/:id` — `{ "size": { "rows": R, "cols": C } }`. Resize is
     /// REST-only; it does NOT go over the socket (protocol doc §Client→server).
     func resize(id: String, cols: Int, rows: Int) async throws {
-        try await client.put(
+        try await client().put(
             path: "v1/pty/\(Self.escape(id))",
             body: UpdatePtyRequest(size: .init(rows: rows, cols: cols))
         )
@@ -55,7 +58,7 @@ final class PtyClient: @unchecked Sendable {
     /// `DELETE /v1/pty/:id` — kills the pty server-side. Detaching (closing
     /// the WebSocket) leaves it alive; only call this to end the shell.
     func deletePty(id: String) async throws {
-        try await client.delete(path: "v1/pty/\(Self.escape(id))")
+        try await client().delete(path: "v1/pty/\(Self.escape(id))")
     }
 
     // MARK: - WebSocket
@@ -65,8 +68,17 @@ final class PtyClient: @unchecked Sendable {
     /// same auth middleware as REST (protocol doc §Auth): Clerk Bearer, plus
     /// the DEBUG `-skip-auth` dev headers mirroring APIClient:118-125.
     func connectWebSocket(ptyId: String) async throws -> URLSessionWebSocketTask {
+        let base = try await InstanceConnection.gizziBaseURL(for: endpointBaseURL)
+        let path = "v1/pty/\(Self.escape(ptyId))/connect"
+        if RuntimeRelayClient.isRelayURL(base) {
+            // Relayed: the ticket carries auth; the task comes back resumed
+            // and past the tunnel's ready frame.
+            return try await InstanceConnection.webSocketTask(
+                for: URLRequest(url: base.appendingPathComponent(path))
+            )
+        }
         guard var components = URLComponents(
-            url: baseURL.appendingPathComponent("v1/pty/\(Self.escape(ptyId))/connect"),
+            url: base.appendingPathComponent(path),
             resolvingAgainstBaseURL: false
         ) else {
             throw APIError.invalidResponse

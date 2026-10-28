@@ -19,13 +19,17 @@ struct FileDiff: Decodable, Identifiable, Sendable {
 /// `GET v1/session/:id/diff`). Like `FileClient`/`PtyClient` this connects
 /// to whatever `baseURL` the caller resolved (see `InstanceConnection`).
 final class SessionDiffClient: @unchecked Sendable {
-    private let client: APIClient
+    private let endpointBaseURL: URL
 
     init(baseURL: URL = AppConfig.gizziCodeBaseURL) {
-        self.client = APIClient(
-            baseURL: baseURL,
-            tokenProvider: { try await AuthManager.shared.getToken() }
-        )
+        self.endpointBaseURL = baseURL
+    }
+
+    /// Per-call target: the given base URL, or — for the static default —
+    /// whatever `InstanceConnection.resolve()` picks now (explicit URL →
+    /// mesh → the relay to the user's computer).
+    private func client() async throws -> APIClient {
+        try await InstanceConnection.gizziClient(for: endpointBaseURL)
     }
 
     /// `GET v1/session/:id/diff`. The result is storage-backed and only as
@@ -33,7 +37,7 @@ final class SessionDiffClient: @unchecked Sendable {
     /// mean either "no changes" or "not summarized yet"; callers should
     /// offer a manual refresh rather than treating `[]` as a hard error.
     func diff(sessionID: String) async throws -> [FileDiff] {
-        try await client.get(path: "v1/session/\(Self.escape(sessionID))/diff")
+        try await client().get(path: "v1/session/\(Self.escape(sessionID))/diff")
     }
 
     private static func escape(_ id: String) -> String {
