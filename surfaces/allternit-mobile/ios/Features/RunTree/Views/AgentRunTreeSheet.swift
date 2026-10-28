@@ -203,21 +203,20 @@ private struct RunNodeCard: View {
         )
     }
 
+    @ViewBuilder
     private var face: some View {
-        ZStack {
-            Circle().fill(isRoot ? Color("BgSecondary") : Color("AccentPrimary").opacity(0.14))
-            if isRoot {
+        if isRoot {
+            ZStack {
+                Circle().fill(Color("BgSecondary"))
                 Image(systemName: "point.3.connected.trianglepath.dotted")
                     .font(.system(size: 11, weight: .bold))
                     .foregroundColor(Color("TextSecondary"))
-            } else {
-                Text(String(node.name.prefix(1)))
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundColor(Color("TextPrimary"))
             }
+            .frame(width: 24, height: 24)
+            .accessibilityHidden(true)
+        } else {
+            SubagentFaceView(subagent: node.slug ?? node.name, name: node.name, running: node.status == .running)
         }
-        .frame(width: 24, height: 24)
-        .accessibilityHidden(true)
     }
 
     @ViewBuilder

@@ -215,7 +215,18 @@ struct ToolCallsRail: View {
         .padding(.leading, 6)
     }
 
+    @ViewBuilder
     private func rowIcon(_ call: ToolCallRecord, symbol: String) -> some View {
+        if call.isAgentStep {
+            SubagentFaceView(subagent: call.summary.subagent, name: call.summary.verb,
+                             running: call.state == .running, size: 18)
+                .overlay(Circle().stroke(Color("BorderSubtle"), lineWidth: 1))
+        } else {
+            plainRowIcon(call, symbol: symbol)
+        }
+    }
+
+    private func plainRowIcon(_ call: ToolCallRecord, symbol: String) -> some View {
         ZStack {
             Circle().fill(Color("BgPrimary"))
             if call.isAgentStep {
