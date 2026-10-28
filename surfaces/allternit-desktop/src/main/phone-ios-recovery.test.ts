@@ -333,6 +333,27 @@ describe('renewal that needs a person', () => {
     expect(seen).toEqual([]);
   });
 
+  it('a renewed helper iOS refuses to run asks the person to trust it, under the new signature', async () => {
+    const w = world({ runnerStandalone: true });
+    const d = deps(w, renewSigner(w));
+    d.goios = { ...d.goios, launch: async () => ({ ok: false, error: 'Error code: 2', untrusted: true, notInstalled: false }) };
+    d.store.save(record());
+    const seen: Array<[string | undefined, RenewalBlocker]> = [];
+    d.onNeedsYou = (r, b) => seen.push([r.expiresAt, b]);
+    await new IosRecoveryScheduler({ deps: async () => d }).tick();
+    expect(seen).toEqual([[d.store.load('U')?.expiresAt, 'trust']]);
+  });
+
+  it('a renewed helper that never answers asks the person to unlock the phone', async () => {
+    const w = world({ runnerStandalone: false, lanDeadHosts: [LAN] });
+    const d = deps(w, renewSigner(w), { discover: async () => null });
+    d.store.save(record());
+    const seen: RenewalBlocker[] = [];
+    d.onNeedsYou = (_r, b) => seen.push(b);
+    await new IosRecoveryScheduler({ deps: async () => d }).tick();
+    expect(seen).toEqual(['unlock']);
+  });
+
   it('the notice names the phone, the deadline and the one thing to do', () => {
     const r = record({ deviceName: 'iPhone (4)', expiresAt: '2026-10-26T01:27:28Z' });
     const before = Date.parse('2026-10-25T20:00:00Z');
@@ -342,6 +363,8 @@ describe('renewal that needs a person', () => {
     expect(sign.body).toContain('open Phone Link setup and sign in');
     expect(renewalNotice(r, 'cable', before, 'America/Chicago').title).toBe('Plug in iPhone (4)');
     expect(renewalNotice(r, 'cable', Date.parse('2026-10-26T03:00:00Z'), 'America/Chicago').body).toContain('stopped working Sun, Oct 25, 8:27 PM');
+    expect(renewalNotice(r, 'trust', before).body).toContain('VPN & Device Management');
+    expect(renewalNotice(r, 'unlock', before).title).toBe('Unlock iPhone (4)');
   });
 });
 
