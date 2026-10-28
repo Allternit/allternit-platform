@@ -3127,6 +3127,31 @@
         "allternit/surfaces/docs/tools/computer-toolset.mdx",
         "allternit-ai/src/components/computers/ComputerSecretBox.tsx"
       ]
+    },
+    {
+      "id": "feature:desktop-menu-bar",
+      "label": "Desktop menu bar icon and app menu",
+      "product": "product:ai-allternit",
+      "status": "live",
+      "description": "Allternit Desktop's A:// menu bar icon (click opens the HUD, right-click opens the status menu) and the macOS app menu (Allternit Desktop, File, Edit, View, Window, Help). Workspace commands (New Session, modes, sidebar, Settings, Find, Bot Activity) reach the renderer as window:event:menu-command.",
+      "touches": [
+        "allternit/surfaces/allternit-desktop/src/main/app-menu.ts",
+        "allternit/surfaces/allternit-desktop/src/main/unified-main.ts",
+        "allternit/surfaces/allternit-desktop/build",
+        "allternit-ai/src/shell/desktop-menu.ts",
+        "allternit-ai/src/shell/ShellApp.tsx",
+        "allternit-ai/src/shell/ShellRail.tsx",
+        "surface:desktop"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-28",
+          "note": "Eoj asked for a menu bar icon that opens the HUD (like Claude's opens quick chat) and the standard top-left app menus. The tray code existed but never ran: build/tray-icon.png was never added. Now a trayTemplate.png A:// mark; macOS left-click = HUD, right-click = menu."
+        }
+      ],
+      "evidence": [
+        "surfaces/docs/surfaces/desktop.mdx#menu-bar-icon"
+      ]
     }
   ],
   "journeys": [
