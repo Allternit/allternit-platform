@@ -451,6 +451,9 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
                     sessionId: sessionId,
                     text: trimmed,
                     agentId: self.sessionContext.agentId,
+                    // Artifact studio sessions ("Make something new") carry
+                    // their standing instructions on every turn, as the web does.
+                    systemPrompt: ArtifactStudioLauncher.shared.systemPrompt(for: sessionId),
                     runtimeModelId: runtimeModelId,
                     effort: effort,
                     attachments: attachmentRefs.isEmpty ? nil : attachmentRefs,
@@ -544,8 +547,8 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
             updateMessage(messageId) { message in
                 message.artifacts.append(record)
             }
-            // Streams are the only artifact source (no backend list
-            // endpoint), so the library collects them as they arrive.
+            // Saved to Artifacts v2 (idempotent draft id) so the library
+            // and every other surface see it.
             ArtifactLibraryStore.shared.record(record, sessionId: currentSessionId)
 
         case .finish(let payload):

@@ -19,21 +19,16 @@ enum ArtifactContentError: Error, LocalizedError, Sendable {
     }
 }
 
-/// Loads the content of an `ArtifactRecord`.
-///
-/// The backend has no content-serving endpoint yet — `GET /v1/artifacts/:id`
-/// is a stub that always 404s (services/replies-runtime/src/index.ts:42),
-/// and the `artifact.created` event itself is the content carrier
-/// (platform/packages/replies-contract). So resolution is a fallback chain
-/// over the fields the event can carry, mirroring the web client
-/// (timeline-stream.ts), which never fetches artifact content over HTTP:
+/// Loads the content of a chat-frame `ArtifactRecord` for the in-chat card
+/// viewer. The `artifact.created` frame is the content carrier, so
+/// resolution is a fallback chain over the fields it can carry:
 ///
 /// 1. `url` — provider-hosted file URL (native `file` stream parts). External
 ///    http(s) URLs are fetched WITHOUT the Clerk Bearer (never leak the token
 ///    to a third-party host); gateway-relative paths go through APIClient.
 /// 2. `inlinePreview` — full inline content (`<document>` extraction path).
-/// 3. `GET artifacts/:artifactId` — the reserved route shape; 404 today, but
-///    the call is correct for when the backend fills it in.
+/// 3. Artifacts v2 (`GET /api/v2/artifacts/:id`) for an `art_` id — the
+///    body of the record the frame refers to.
 /// 4. `.failed` with the last error, or `noContentSource`.
 @MainActor
 final class ArtifactContentLoader: ObservableObject {
@@ -105,10 +100,10 @@ final class ArtifactContentLoader: ObservableObject {
             return preview
         }
 
-        // 3. GET /v1/artifacts/:artifactId (reserved route shape; 404 stub today)
-        if let artifactId = artifact.artifactId, !artifactId.isEmpty {
+        // 3. Artifacts v2 record body
+        if let artifactId = artifact.artifactId, artifactId.hasPrefix("art_") {
             do {
-                return try await fetchGatewayContent(artifactId: artifactId)
+                return try await ArtifactsV2Client.shared.get(id: artifactId).version.body
             } catch {
                 lastError = error
             }
@@ -166,19 +161,5 @@ final class ArtifactContentLoader: ObservableObject {
             return Data(base64Encoded: dataString)
         }
         return dataString.removingPercentEncoding?.data(using: .utf8)
-    }
-
-    /// GET `artifacts/:artifactId` on the gateway. Route shape confirmed in
-    /// replies-runtime; the stub's 404 JSON surfaces as a typed APIError.
-    private func fetchGatewayContent(artifactId: String) async throws -> String {
-        let escaped = artifactId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? artifactId
-        var request = try await client.authorizedRequest(path: "artifacts/\(escaped)")
-        request.setValue("*/*", forHTTPHeaderField: "Accept")
-        let (data, response) = try await client.session.data(for: request)
-        try client.validate(response, data: data)
-        guard let text = String(data: data, encoding: .utf8) else {
-            throw ArtifactContentError.binaryContent
-        }
-        return text
     }
 }

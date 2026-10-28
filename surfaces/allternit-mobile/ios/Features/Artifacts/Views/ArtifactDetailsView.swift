@@ -110,6 +110,16 @@ struct ArtifactDetailsView: View {
     @StateObject private var loader = ArtifactContentLoader()
 
     var body: some View {
+        // Library rows (bot pages included) are Artifacts v2 records: open
+        // the rendered v2 view. Chat-frame cards keep the local viewer.
+        if artifact.id.hasPrefix("art_") {
+            V2ArtifactView(artifactId: artifact.id, initialTitle: artifact.title)
+        } else {
+            frameBody
+        }
+    }
+
+    private var frameBody: some View {
         NavigationStack {
             VStack(spacing: 0) {
                 // Preview/Code selector if preview is supported.
