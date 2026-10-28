@@ -719,6 +719,7 @@
               "api/autonomy",
               "api/inapp-calls",
               "api/web-push",
+              "api/ios-push",
               "api/notifications",
               "api/allternit-api",
               "api/phone-stream-relay",

@@ -103,6 +103,7 @@ struct SettingsView: View {
                 brainSpikeSection
                 #endif
                 infrastructureSection
+                SettingsIntroSection(onDismissSettings: { dismiss() })
                 aboutSection
                     // Anchor for the `-open-settings-data` DEBUG scroll.
                     .id("aboutSection")

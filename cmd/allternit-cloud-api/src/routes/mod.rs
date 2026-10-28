@@ -62,6 +62,7 @@ pub mod inapp_calls;
 pub mod mcp_oauth_approvals;
 pub mod vendor_bot_keys;
 pub mod web_push;
+pub mod apns;
 pub mod mail_triage;
 pub mod notifications;
 pub mod channel_onboarding;

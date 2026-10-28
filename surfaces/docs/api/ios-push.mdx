@@ -1,0 +1,79 @@
+---
+title: iPhone push (APNs)
+description: Native push for the Allternit iPhone app. Device token routes, APNs key setup, payload, and how taps open the app.
+---
+
+The Allternit iPhone app (`com.allternit.mobile`) gets the same notifications as [Web Push](/api/web-push): rings, missed calls, thread messages, channel messages, and every backbone event the person is notified about. cloud-api sends each one to Apple Push Notification service (APNs) as well as to the browser subscriptions. [Notification preferences](/api/notifications), quiet hours, the per-thread collapse and the hourly cap are applied once, before either transport, so the phone and the browser always agree.
+
+It is off until the APNs key below is set. With it unset, the token routes answer `503 {"error":"apns_not_configured"}` and nothing is sent. The push pipeline itself is switched on by the Web Push VAPID keys, so both sets must be present for iPhones to get pushes. Migration `110_apns_device_tokens.sql` adds the token table; the Contabo deploy applies it.
+
+## Turn it on
+
+Create a key in Apple Developer → Certificates, IDs & Profiles → Keys, with **Apple Push Notifications service (APNs)** enabled. Download the `.p8` file once (Apple doesn't let you download it again). Then set these on `allternit-cloud-api`:
+
+| Variable | Value |
+|---|---|
+| `APNS_KEY_P8` | Contents of the `.p8` file (PEM). Literal `\n` escapes are accepted for one-line secret stores |
+| `APNS_KEY_ID` | The key's 10-character id |
+| `APNS_TEAM_ID` | The Apple Developer team id |
+| `APNS_TOPIC` | Optional. The app's bundle id. Default `com.allternit.mobile` |
+| `APNS_ENV` | Optional. `production` (default) or `sandbox`, used for a token whose app didn't say which |
+
+One token-auth key works for every app in the team and for both the sandbox and production gateways. cloud-api signs an ES256 provider token with it and reuses that token for 40 minutes (Apple rejects tokens older than an hour and refreshing more than every 20 minutes).
+
+## Routes
+
+Both take a Clerk session or a `compute`-scoped API key. The app calls cloud-api directly, never through the runtime relay.
+
+- `POST /api/v1/device-tokens`:
+
+```json
+{ "token": "a1b2…(hex)", "platform": "ios", "environment": "production", "deviceId": "6F1C…" }
+```
+
+returns `201 {"ok": true, "id": "apns_…"}`. `environment` is `sandbox` for debug builds and `production` for TestFlight and App Store builds; the push goes to the matching APNs host. `deviceId` is the app's `identifierForVendor`, so a reinstall replaces the old token. A token belongs to one person: registering it while signed in as someone else moves it. A person may register 10 iPhones. Errors: `400 bad_token | unsupported_platform`, `429 too_many_devices`.
+
+- `DELETE /api/v1/device-tokens` with `{"token": "a1b2…"}` returns `{"ok": true, "removed": true}`. The app calls it on sign-out, before the session ends.
+
+APNs answering `410`, `BadDeviceToken`, `Unregistered` or `DeviceTokenNotForTopic` deletes the token. Other failures are counted, and a token is removed after 8 in a row. `403 ExpiredProviderToken` makes cloud-api sign a new provider token.
+
+## Payload
+
+```json
+{
+  "aps": {
+    "alert": { "title": "Raven", "body": "Done: weekly update drafted" },
+    "sound": "default",
+    "badge": 1,
+    "thread-id": "<tag>",
+    "mutable-content": 1
+  },
+  "type": "event",
+  "url": "/?allternit_thread=<threadId>&bot=<botId>",
+  "tag": "<tag>",
+  "data": { "event": "agent.run.completed", "botId": "…", "threadId": "…" }
+}
+```
+
+`type`, `url`, `tag` and `data` are the same as in the [Web Push payload](/api/web-push#what-gets-pushed). `tag` is also sent as `apns-collapse-id` (first 64 bytes), so the phone keeps only the latest of each. Calls and urgent pages go out at `apns-priority: 10`, everything else at `5`. `apns-expiration` follows the message's TTL. The server keeps no unread count, so `badge` is `1` and the app clears it when opened.
+
+## In the app
+
+- Permission is asked with a reason on screen, never on first launch: in the **Meet your bots** intro's notifications step, on the empty-chat card, or in Settings → Getting started → Notifications. After that, every launch and every sign-in registers again without asking.
+- Tapping a notification opens its `url`: a thread opens its current chat (or the bot's page when the thread has no live session), a channel message opens the bots, `/settings/…` opens Settings.
+- The app also opens [Universal Links](#universal-links) to the same screens.
+
+Code: `surfaces/allternit-mobile/ios/Core/PushNotificationManager.swift`, `App/AppDelegate.swift`, `Core/API/PushTokenClient.swift`, `Core/DeepLinkRouter.swift`. Server: `cmd/allternit-cloud-api/src/routes/apns.rs`, called from `web_push::send_to_user`.
+
+## Universal Links
+
+`https://ai.allternit.com` and `https://m.allternit.com` serve `/.well-known/apple-app-site-association` (allternit-ai `public/.well-known/`, copied into the PWA build by `scripts/prepare-fabric-session-pwa.mjs`, served as `application/json`). With the app installed, these open in it:
+
+| Link | Opens |
+|---|---|
+| `/b/<botId>` | The bot's page |
+| `/i/<code>` | The phone invite page, in the app |
+| `/settings`, `/settings/<section>` | Settings |
+| any path with `?session=<id>` | That chat |
+
+The app needs the `applinks:ai.allternit.com` and `applinks:m.allternit.com` associated domains, and the file's `appIDs` must carry the real team id (`<TEAMID>.com.allternit.mobile`).

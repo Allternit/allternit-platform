@@ -125,6 +125,9 @@ struct MainWorkspaceView: View {
                 }
             }
         }
+        // Universal Links + push taps (DeepLinkRouter) and the Meet your bots intro.
+        .modifier(DeepLinkHost())
+        .modifier(MeetYourBotsHost())
         .onReceive(NotificationCenter.default.publisher(for: .openChatSession)) { note in
             // Bot Home posts this when a bot thread is tapped: land on Chats
             // with that session loaded, from whichever tab is showing.
@@ -786,6 +789,12 @@ struct ChatContentView: View {
             PermissionPrimingSheet(permission: .notifications) {
                 Task { _ = await NotificationService.requestAuthorization() }
             }
+        }
+        // A prompt stashed while this chat is already on screen (the Meet
+        // your bots intro's first job) fills the composer too.
+        .onReceive(OnboardingStore.shared.$pendingPrompt.compactMap { $0 }) { prompt in
+            inputText = prompt
+            DispatchQueue.main.async { OnboardingStore.shared.pendingPrompt = nil }
         }
         .onAppear {
             viewModel.sessionContext = sessionContext
