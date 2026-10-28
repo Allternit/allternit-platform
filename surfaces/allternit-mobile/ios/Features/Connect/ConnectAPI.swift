@@ -456,6 +456,30 @@ enum ChannelConnectAPI {
         return BoughtNumber(accountId: id, e164: v.at("number")?.at("e164")?.jString ?? e164)
     }
 
+    /// Port an existing number in (`POST phone/numbers/port`); answers the number's account id.
+    @MainActor
+    static func portNumber(e164: String, botId: String) async throws -> String {
+        let rt = try await runtimeId()
+        let v = try await ConnectHTTP.call("POST", "phone/numbers/port", body: .object([
+            "e164": .string(e164), "runtimeId": .string(rt), "botId": .string(botId),
+        ]))
+        guard let id = v.at("number")?.at("id")?.jString else {
+            throw ConnectError(status: nil, code: nil, message: "The port started but its details didn’t come back. Check Your bots’ phones.")
+        }
+        return id
+    }
+
+    enum PortState: Sendable { case pending, done, rejected(String?) }
+
+    /// connect-api.ts portStatus.
+    static func portStatus(accountId: String) async throws -> PortState {
+        let v = try await ConnectHTTP.call("GET", "phone/numbers/\(ConnectHTTP.escape(accountId))/port")
+        let state = (v.at("port")?.at("state")?.jString ?? "").lowercased()
+        if ["ported", "completed", "done", "activated"].contains(state) { return .done }
+        if ["cancelled", "canceled", "exception", "rejected", "failed"].contains(state) { return .rejected(state) }
+        return .pending
+    }
+
     private static func registration(_ v: JSONValue, individual: Bool) -> PhoneRegistrationState {
         let reg = v.at("registration")
         let state = reg?.at("state")?.jString ?? "pending"

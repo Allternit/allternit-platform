@@ -65,6 +65,10 @@ final class PhoneNumberFlow: ConnectFlow {
     private var number: BoughtNumber?
     private var registration: PhoneRegistrationState?
     private var individual = false
+    /// "Already have a number? Port it in." (PhoneWizard.tsx porting path).
+    private var porting = false
+    private var portAccountId: String?
+    private var portedE164 = ""
 
     init(botId: String?) {
         pickedBot = botId
@@ -78,6 +82,9 @@ final class PhoneNumberFlow: ConnectFlow {
     }
 
     private var doneBody: String {
+        if porting {
+            return "\(portedE164.isEmpty ? "Your number" : portedE164) answers as your bot once the port completes. Carriers take a few days; we email you when it's done, and the number keeps working on your old carrier until then."
+        }
         let e164 = number?.e164 ?? "Your number"
         var text = "\(e164) answers calls now, and texts arrive as threads."
         switch registration?.state {
@@ -103,6 +110,45 @@ final class PhoneNumberFlow: ConnectFlow {
         return registration?.state == "needs_code" ? "code" : "registration"
     }
 
+    private var portSteps: [ConnectStep] {
+        [
+            ConnectStep(id: "port", title: "Which number should we port?", kind: .form(
+                body: "Porting moves your existing number to Allternit’s carrier. Your number keeps working until the port completes.",
+                fields: [
+                    WizardField(key: "e164", label: "Phone number", placeholder: "+1 415 555 0132",
+                                hint: "Include the country code.", contentType: .telephoneNumber, keyboard: .phonePad),
+                ],
+                initial: WizardValues(text: ["e164": portedE164]),
+                submitLabel: "Start the port",
+                onSubmit: { [unowned self] v in
+                    guard let bot = self.pickedBot else { throw ConnectError(status: nil, code: nil, message: "Pick which bot answers this number first.") }
+                    let e164 = v.string("e164")
+                    do {
+                        self.portAccountId = try await ChannelConnectAPI.portNumber(e164: e164, botId: bot)
+                    } catch {
+                        throw ConnectError(status: nil, code: nil, message: "Couldn’t start the port: \(error.localizedDescription)")
+                    }
+                    self.portedE164 = e164
+                    self.accountId = self.portAccountId
+                    self.changed()
+                    return nil
+                })),
+            ConnectStep(id: "port-waiting", title: "Port in progress", kind: .waiting(
+                body: "Starting the port…", status: "Waiting for the carrier…", pollSeconds: 10, skippable: true, cancelLabel: nil,
+                poll: { [unowned self] in
+                    guard let id = self.portAccountId else { return WaitingPoll(state: .pending, detail: "Starting the port…") }
+                    switch try await ChannelConnectAPI.portStatus(accountId: id) {
+                    case .done: return WaitingPoll(state: .done, detail: "The port completed.")
+                    case .rejected(let reason):
+                        return WaitingPoll(state: .failed, error: reason.map { "The port was rejected: \($0). Fix the details and try again." }
+                            ?? "The port was rejected. Check the account details and try again.")
+                    case .pending:
+                        return WaitingPoll(state: .pending, detail: "Carriers take a few days (usually a few business days). You can keep waiting or continue; we email you when it completes.")
+                    }
+                })),
+        ]
+    }
+
     private static let verticals: [WizardOption] = [
         ("PROFESSIONAL", "Professional services"), ("HEALTHCARE", "Healthcare"), ("RETAIL", "Retail"),
         ("REAL_ESTATE", "Real estate"), ("EDUCATION", "Education"), ("HOSPITALITY", "Restaurants and hospitality"),
@@ -122,19 +168,27 @@ final class PhoneNumberFlow: ConnectFlow {
                 body: "Pick a number and your bot can take calls and texts.",
                 bullets: ["Search by area code and pick a local or toll-free number.",
                           "Calls work the moment the number is yours.",
-                          "SMS turns on when the carrier approves your registration."])),
+                          "SMS turns on when the carrier approves your registration.",
+                          "Already have a number? Choose to port it in on the next step."])),
             ConnectStep(id: "bot", title: "Which bot answers this number?", kind: .form(
                 body: bots.isEmpty ? "Create a bot first — the number needs a bot to answer it." : nil,
-                fields: botId == nil && !bots.isEmpty
+                fields: (botId == nil && !bots.isEmpty
                     ? [WizardField(key: "botId", label: "Bot", kind: .radio(bots), hint: "Calls and texts for the number land in this bot’s threads.")]
-                    : [],
-                initial: WizardValues(text: ["botId": pickedBot ?? bots.first?.value ?? ""]),
-                submitLabel: "Pick a number",
+                    : []) + (bots.isEmpty && botId == nil ? [] : [
+                        WizardField(key: "source", label: "Number", kind: .radio([
+                            WizardOption(value: "new", label: "Get a new number", hint: "Search by area code and buy one now."),
+                            WizardOption(value: "port", label: "Port my existing number", hint: "Move a number you already have to Allternit’s carrier. It keeps working until the port completes."),
+                        ])),
+                    ]),
+                initial: WizardValues(text: ["botId": pickedBot ?? bots.first?.value ?? "", "source": porting ? "port" : "new"]),
+                submitLabel: "Continue",
                 onSubmit: { [unowned self] v in
                     let chosen = self.botId ?? (v.string("botId").isEmpty ? nil : v.string("botId")) ?? bots.first?.value
                     guard let chosen else { throw ConnectError(status: nil, code: nil, message: "Create a bot first — the number needs a bot to answer it.") }
                     self.pickedBot = chosen
-                    return nil
+                    self.porting = v.string("source") == "port"
+                    self.changed()
+                    return self.porting ? "port" : nil
                 })),
             ConnectStep(id: "search", title: "Find a number", kind: .form(
                 body: nil,
@@ -262,7 +316,8 @@ final class PhoneNumberFlow: ConnectFlow {
                     default: return WaitingPoll(state: .pending, detail: "In carrier review (usually a few days to two weeks; the carriers set the pace). You can continue — texting turns on by itself when approved.")
                     }
                 })),
-            ConnectStep(id: "done", title: "Your number is live", kind: .done(body: doneBody)),
+        ] + (porting ? portSteps : []) + [
+            ConnectStep(id: "done", title: porting ? "Port started" : "Your number is live", kind: .done(body: doneBody)),
         ]
     }
 }
