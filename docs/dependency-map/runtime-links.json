@@ -772,6 +772,16 @@
         "allternit/cmd/allternit-cloud-api/src/routes/platform_v1/ag_ui.rs",
         "allternit/cmd/allternit-api/src/platform_agents.rs"
       ]
+    },
+    {
+      "source": "allternit-ai/src/lib/artifacts",
+      "target": "allternit/cmd/allternit-cloud-api/src/routes/artifacts_*",
+      "kind": "HTTP GET /api/v2/artifacts?archived=bool and PUT /api/v2/artifacts/:id/library (per-viewer archive, unchanged artifact ACLs)",
+      "evidence": [
+        "allternit-ai/src/lib/artifacts/api.ts",
+        "allternit/cmd/allternit-cloud-api/src/routes/artifacts_v2.rs",
+        "allternit/cmd/allternit-cloud-api/migrations_pg/109_artifact_library_archive.sql"
+      ]
     }
   ]
 }

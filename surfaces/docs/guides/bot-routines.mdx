@@ -11,11 +11,21 @@ A routine runs as one of your bots, so every create form asks which bot runs it.
 
 If you have no bots yet, the forms tell you to create one first. The API refuses a routine with no bot (`agent_required`), whether it runs on your computer or in the cloud; see [Automation API](/api/automation#routines-and-bots).
 
+## Reading routine status
+
+A routine row identifies the bot and whether it runs in the cloud or on a computer.
+The next run uses the routine's saved timezone; its zone appears beside the schedule.
+**Waiting for scheduler** means the recorded next-run time has arrived and the server has not yet reported a running job.
+
+The last run shows its result in words. A failed run with a recorded error exposes **Review failed run**.
+**Run history** expands the row to show its output, instructions, schedule editor and previous runs.
+Pause and resume save through the scheduler API; controls wait for an in-flight action before allowing another.
+
 ## The Routines tab
 
 Open a bot and choose **Routines**. Each routine is one row:
 
-- **Schedule in plain words**, for example "Every day at 8:00 AM", "Weekdays at 9:00 AM" or "Every 6 hours", then **Next run in 2 h 14 min** (it counts down), **Paused**, or **Running** with the step the bot is on.
+- **Schedule in plain words**, for example "Every day at 8:00 AM", "Weekdays at 9:00 AM" or "Every 6 hours", then the **next run date and time in the schedule’s timezone**, **Paused**, or **Running** with the step the bot is on.
 - **Apps and brain**: the apps the last run read from, an arrow, and the apps it wrote to (for example Linear and Sentry → Slack), then the model that ran it. They come from the tools the run actually used, so a routine that has not run yet shows none.
 - **Last run**: when it last ran and whether it worked.
 - **Run strip**: the last 14 runs as small bars, oldest on the left. Green worked, red failed, grey was stopped or had nothing new, and a pulsing bar is running now.

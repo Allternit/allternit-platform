@@ -213,3 +213,14 @@ interface Sharing { visibility:'private'|'people'|'org'|'link'; shares:{principa
 - New writes go to v2 only once the app ships v2. Old local routes stay for reading.
 - `legacy-import.ts` runs once per user per device after sign-in: content-artifacts (C), sectioned artifacts (D), canvases (E) and Cowork's browser store (F) → `POST /api/v2/artifacts` with `runtime_version:1`, `origin.legacy_source`, deterministic ids. Shares on D (`org` view/edit) map to `visibility:'org'` + edit share rows for the org members only if the owner is in a Clerk org; otherwise private.
 - After all four phases ship, the old stores become read-only and are removed one release later.
+
+
+## Library organization (2026-10-27)
+
+The per-viewer archive is stored in `artifact_library_archives` (migration 109), keyed by authenticated user and artifact. `PUT /api/v2/artifacts/:id/library` accepts only `{archived:boolean}` and returns 204. View access is sufficient; archive does not change the content or sharing contract.
+
+The list query's `archived` flag defaults to false. Its predicate remains inside the existing ACL-filtered, cursor-paginated SQL query, before LIMIT. Search, kind, scope and origin combine with it. The list response advertises `archive_supported:true`; clients reject archived lists without that capability to avoid misrepresenting older servers.
+
+Saved and archived lists have distinct cache keys. New creations enter saved lists only. Archive writes wait for server acknowledgement, invalidate matching library membership, then refresh caches. Request sequencing prevents a pre-mutation list response or a prior account's list from repopulating the current library.
+
+Apply migration 109 and deploy Cloud API before releasing the shared workspace UI. No production migration is executed by this source change.
