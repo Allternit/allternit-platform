@@ -41,6 +41,20 @@ The A:// mark sits in the macOS menu bar, beside the other status icons. Click i
 
 The icon is a template image (`surfaces/allternit-desktop/build/trayTemplate.png` and `@2x`), so macOS draws it white on a dark menu bar. Code: `createTray` in `src/main/unified-main.ts`.
 
+## HUD
+
+The HUD is a chat that floats over other apps. It is one card on the desktop, with no frosted window around it. The message box sits at the top and the Agent mode, Plugins and Artifacts row sits at the bottom, under a thin line. Replies appear in a second card below it.
+
+The row above the card has three buttons:
+
+- **Sun or moon:** switches the HUD between light and dark. The HUD keeps its own setting, apart from the main window.
+- **Pen:** opens a drawing layer over the whole screen. Pick a color and a line width, draw, then press **Save** to keep a PNG, **Clear** to start again, or **Done** or `Escape` to close the layer. The HUD stays open.
+- **X:** closes the HUD. `Escape` in the HUD also closes it.
+
+Drag the dotted handle to move the HUD, or drag its edges to resize it.
+
+Code: the HUD is `src/shell/hud/HudShell.tsx` and `hud-shell.css` in allternit-ai. The drawing layer is a separate full-screen window (`createAnnotationWindow` in `src/main/unified-main.ts`) that loads `/hud/annotate`. `ShellApp` renders only `AnnotationView` at that path.
+
 ## App menu
 
 The top-left menu bar has the usual Mac menus:
