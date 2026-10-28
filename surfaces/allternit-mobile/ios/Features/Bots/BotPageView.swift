@@ -13,6 +13,7 @@ struct BotPageView: View {
     @EnvironmentObject private var navigator: BotNavigator
     @State private var routinesCount: Int? = nil
     @State private var channelNames: [String]? = nil
+    @State private var connecting = false
 
     private var accent: Color {
         if let hex = bot.botAccentColor { return Color(hex: hex) }
@@ -44,6 +45,9 @@ struct BotPageView: View {
         }
         .task { await InappCallStore.shared.loadCallableContacts(botId: bot.id) }
         .onDisappear { status.unsubscribe(botId: bot.id) }
+        .sheet(isPresented: $connecting, onDismiss: { Task { await loadCounts() } }) {
+            GiveBotPhoneSheet(botId: bot.id)
+        }
     }
 
     private var banner: some View {
@@ -80,6 +84,16 @@ struct BotPageView: View {
                         .clipShape(Capsule())
                 }
                 BotCallButton(botId: bot.id, style: .capsule)
+                Button { connecting = true } label: {
+                    Label("Connect", systemImage: "plus")
+                        .font(.subheadline.weight(.medium))
+                        .padding(.horizontal, 14)
+                        .frame(minHeight: 36)
+                        .background(Color("BgSecondary"))
+                        .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .accessibilityHint("Give \(bot.botDisplayName) a number, an email address or a messaging channel")
             }
             .padding(.top, 4)
         }
@@ -254,15 +268,44 @@ struct BotRoutinesView: View {
     @State private var routines: [Routine] = []
     @State private var isLoading = true
     @State private var error: String? = nil
+    /// The bot's scheduled Automation routines (bot-routine.service: `agent_id` = the bot).
+    @State private var scheduled: [AutomationRoutine] = []
+    @State private var editing: AutomationRoutine?
+    @State private var saving = false
+    @State private var saveError: String?
 
     var body: some View {
         List {
-            if isLoading && routines.isEmpty {
+            if !scheduled.isEmpty {
+                Section {
+                    ForEach(scheduled) { r in
+                        Button { saveError = nil; editing = r } label: {
+                            HStack(spacing: 10) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(Self.title(r.name, bot: bot)).foregroundColor(Color("TextPrimary")).lineLimit(2)
+                                    Text([RoutineRule(cron: r.scheduleExpression)?.label ?? r.scheduleExpression,
+                                          r.isEnabled ? nil : "Paused"].compactMap { $0 }.joined(separator: " · "))
+                                        .font(.caption)
+                                        .foregroundColor(Color("TextSecondary"))
+                                }
+                                Spacer(minLength: 8)
+                                Image(systemName: "clock").foregroundColor(Color("TextSecondary"))
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityHint("Change when it runs")
+                    }
+                } header: {
+                    Text("On a schedule")
+                }
+            }
+            if isLoading && routines.isEmpty && scheduled.isEmpty {
                 ProgressView().frame(maxWidth: .infinity)
             } else if let error {
                 FriendlyStateView(style: .error, icon: "exclamationmark.triangle", title: "Couldn't load routines",
                                   message: error, actionTitle: "Retry", action: { Task { await load() } })
-            } else if routines.isEmpty {
+            } else if routines.isEmpty && scheduled.isEmpty {
                 Text("\(bot.botDisplayName) has no routines yet. Add one from Automation.")
                     .font(.footnote)
                     .foregroundColor(Color("TextSecondary"))
@@ -284,11 +327,47 @@ struct BotRoutinesView: View {
         .navigationTitle("Routines")
         .refreshable { await load() }
         .task { await load() }
+        .sheet(item: $editing) { r in
+            RoutineScheduleEditor(
+                title: Self.title(r.name, bot: bot),
+                initial: RoutineRule(cron: r.scheduleExpression) ?? RoutineRule(repeatKind: .weekdays, at: 9 * 60, days: RoutineRule.weekdays),
+                saving: saving, error: saveError,
+                onSave: { edit in save(r, rule: edit.rule) },
+                onCancel: { editing = nil })
+        }
+    }
+
+    /// "[bot:Name] Morning note" → "Morning note".
+    private static func title(_ name: String, bot: AgentRecord) -> String {
+        let prefix = "[bot:\(bot.botDisplayName)] "
+        if name.hasPrefix(prefix) { return String(name.dropFirst(prefix.count)) }
+        if name.hasPrefix("[bot:"), let end = name.firstIndex(of: "]") {
+            return name[name.index(after: end)...].trimmingCharacters(in: .whitespaces)
+        }
+        return name
+    }
+
+    private func save(_ r: AutomationRoutine, rule: RoutineRule) {
+        saving = true
+        saveError = nil
+        Task {
+            defer { saving = false }
+            do {
+                try await AutomationClient.shared.updateSchedule(id: r.id, cron: rule.cron, timezone: TimeZone.current.identifier)
+                editing = nil
+                await load()
+            } catch {
+                saveError = "Couldn’t save the schedule: \(FriendlyErrorMessage.from(error.localizedDescription))"
+            }
+        }
     }
 
     private func load() async {
         isLoading = true
         defer { isLoading = false }
+        if let rows = try? await AutomationClient.shared.listRoutines(recentRuns: 0) {
+            scheduled = rows.filter { $0.agentId == bot.id && $0.scheduleType == "cron" }
+        }
         do {
             routines = try await RoutinesClient.shared.listRoutines().filter { $0.agentId == bot.id }
             error = nil
@@ -401,6 +480,7 @@ struct BotChannelsView: View {
     @State private var channels: [BotChannel] = []
     @State private var isLoading = true
     @State private var error: String? = nil
+    @State private var connecting = false
 
     var body: some View {
         List {
@@ -410,7 +490,7 @@ struct BotChannelsView: View {
                 FriendlyStateView(style: .error, icon: "exclamationmark.triangle", title: "Couldn't load channels",
                                   message: error, actionTitle: "Retry", action: { Task { await load() } })
             } else if channels.isEmpty {
-                Text("No messaging connections yet. Connect Telegram, Slack and more from Settings → Connectors.")
+                Text("No messaging connections yet.")
                     .font(.footnote)
                     .foregroundColor(Color("TextSecondary"))
             } else {
@@ -434,10 +514,18 @@ struct BotChannelsView: View {
                     Label(email, systemImage: "envelope")
                 }
             }
+            Section {
+                Button { connecting = true } label: {
+                    Label("Connect a channel", systemImage: "plus")
+                }
+            }
         }
         .navigationTitle("Channels")
         .refreshable { await load() }
         .task { await load() }
+        .sheet(isPresented: $connecting, onDismiss: { Task { await load() } }) {
+            GiveBotPhoneSheet(botId: bot.id)
+        }
     }
 
     private func load() async {
