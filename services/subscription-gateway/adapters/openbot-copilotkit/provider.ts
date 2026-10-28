@@ -1,9 +1,9 @@
-import { IntelligenceAgent, type IntelligenceAgentConfig } from '@copilotkit/core';
 import { randomUUID } from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { BaseAaiProvider, fail, ok, type AaiResult, type OpenContextInput, type MessageInput, type EventsInput, type EventsResult, type CursoredEvent, type AgentSummary } from '@allternit/agent-gateway';
 import { agentCapabilityManifestSchema } from '@allternit/subscription-fabric-contracts';
 import { isObject, isId, type Json } from '../_shared/paired-local.js';
+import { runIntelligence, type IntelligenceSocketFactory } from '../_shared/copilotkit-intelligence.js';
 
 export const CAPABILITIES = agentCapabilityManifestSchema.parse({
  vendor:'openbot-copilotkit', adapterId:'openbot-copilotkit', lane:'local', guarantee:'best_effort',
@@ -17,13 +17,11 @@ export const CAPABILITIES = agentCapabilityManifestSchema.parse({
 
 type Scope = { binding?: { id?: string; accountBindingId?: string }; credential?: { apiKey: string } };
 type Account = { origin: string; cookie: string };
-type Client = Pick<IntelligenceAgent, 'threadId' | 'addMessage' | 'subscribe' | 'runAgent' | 'detachActiveRun'>;
-type Factory = (config: IntelligenceAgentConfig) => Client;
 type Reply = AaiResult<{ messageId: string; correlationId: string; reply: string; guarantee: 'best_effort' }>;
 type Context = { id: string; owner: string; bot: string; thread: string; closed: boolean; busy: boolean; sends: Map<string, Promise<Reply>>; sendTexts: Map<string, string>; events: CursoredEvent[] };
 
 const scopeStore = () => (globalThis as unknown as Record<symbol, AsyncLocalStorage<Scope> | undefined>)[Symbol.for('allternit.aai.callScope')]?.getStore();
-const DEFAULT_REALTIME = 'https://realtime.intelligence.copilotkit.ai';
+const DEFAULT_REALTIME = 'wss://realtime.intelligence.copilotkit.ai';
 const TOKEN = /^[A-Za-z0-9._~%+\-/=]{8,4096}$/;
 
 /** https origin, or loopback http origin, with no path, query or credentials. */
@@ -37,23 +35,23 @@ export function appOrigin(raw: string): string | null {
 }
 
 /**
- * CopilotKit runtime of an OpenBot deployment, driven through the pinned @copilotkit/core Intelligence SDK
- * (same protocol as adapters/opendots-copilotkit). Authentication is the user's own Better Auth session,
+ * CopilotKit runtime of an OpenBot deployment, driven through the gateway's own Intelligence client
+ * (adapters/_shared/copilotkit-intelligence.ts, wire-compatible with @copilotkit/core 1.75.0; same protocol as adapters/opendots-copilotkit). Authentication is the user's own Better Auth session,
  * sent as the session cookie on every request. The bot list is GET /api/agents, threads are minted by
- * POST /api/threads/mint, and sends go through /api/copilotkit/agent/:id/run with the SDK run receipt.
+ * POST /api/threads/mint, and sends go through /api/copilotkit/agent/:id/run with the Intelligence run receipt.
  */
 export class OpenBotCopilotkitProvider extends BaseAaiProvider {
  readonly adapterId = 'openbot-copilotkit';
  private readonly contexts = new Map<string, Context>();
  private readonly fetchImpl: typeof fetch;
- private readonly factory: Factory;
+ private readonly socket?: IntelligenceSocketFactory;
  private readonly realtimeOrigin: string;
  private readonly timeoutMs: number;
 
- constructor(options: { fetch?: typeof fetch; agentFactory?: Factory; realtimeOrigin?: string; replyTimeoutMs?: number } = {}) {
+ constructor(options: { fetch?: typeof fetch; socket?: IntelligenceSocketFactory; realtimeOrigin?: string; replyTimeoutMs?: number } = {}) {
   super();
   this.fetchImpl = options.fetch ?? fetch;
-  this.factory = options.agentFactory ?? (config => new IntelligenceAgent(config));
+  this.socket = options.socket;
   this.realtimeOrigin = new URL(options.realtimeOrigin ?? DEFAULT_REALTIME).origin;
   this.timeoutMs = options.replyTimeoutMs ?? 120_000;
  }
@@ -158,42 +156,30 @@ export class OpenBotCopilotkitProvider extends BaseAaiProvider {
   catch { return fail('ADAPTER_DRIFT', 'OpenBot returned an invalid realtime endpoint.', { retryable: false }); }
 
   const messageId = randomUUID();
-  let failure: AaiResult<never> | undefined, runError = false, timer: ReturnType<typeof setTimeout> | undefined;
-  // Only this bot's run and join routes on this origin are reachable through the SDK; everything else is refused.
-  const sdkFetch = (async (url: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+  let failure: AaiResult<never> | undefined;
+  // Only this bot's run route on this origin is reachable through the client; everything else is refused.
+  const runFetch = (async (url: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
    const target = new URL(typeof url === 'string' ? url : url instanceof URL ? url.href : url.url);
-   if (target.origin !== account.origin || !['run', 'connect'].some(mode => target.pathname === `/api/copilotkit/agent/${encodeURIComponent(c.bot)}/${mode}`) || init?.method !== 'POST') throw Error('Unapproved SDK request');
+   if (target.origin !== account.origin || target.pathname !== `/api/copilotkit/agent/${encodeURIComponent(c.bot)}/run` || init?.method !== 'POST') throw Error('Unapproved Intelligence request');
    const body: unknown = JSON.parse(String(init.body));
-   if (!isObject(body) || body.threadId !== c.thread) throw Error('Foreign SDK thread');
+   if (!isObject(body) || body.threadId !== c.thread) throw Error('Foreign Intelligence thread');
    const result = await this.request(account, target.pathname, { method: 'POST', body: body as Json });
-   if (!result.ok) { failure = result; throw Error('OpenBot refused SDK request'); }
+   if (!result.ok) { failure = result; throw Error('OpenBot refused Intelligence request'); }
    const receipt: unknown = await result.value.clone().json();
-   if (!isObject(receipt) || receipt.threadId !== c.thread || !isObject(receipt.realtime) || typeof receipt.realtime.clientUrl !== 'string') { failure = fail('ADAPTER_DRIFT', 'OpenBot returned foreign realtime credentials.'); throw Error('Invalid SDK receipt'); }
+   if (!isObject(receipt) || receipt.threadId !== c.thread || !isObject(receipt.realtime) || typeof receipt.realtime.clientUrl !== 'string') { failure = fail('ADAPTER_DRIFT', 'OpenBot returned foreign realtime credentials.'); throw Error('Invalid Intelligence receipt'); }
    const ws = new URL(receipt.realtime.clientUrl);
-   if (ws.protocol !== 'wss:' || ws.origin !== this.realtimeOrigin) { failure = fail('POLICY_DENIED', 'OpenBot returned an unapproved realtime endpoint.'); throw Error('Invalid SDK endpoint'); }
+   if (ws.protocol !== 'wss:' || ws.origin !== this.realtimeOrigin) { failure = fail('POLICY_DENIED', 'OpenBot returned an unapproved realtime endpoint.'); throw Error('Invalid Intelligence endpoint'); }
    return result.value;
   }) as typeof fetch;
 
-  let agent: Client;
-  try { agent = this.factory({ url: info.value.intelligence.wsUrl, runtimeUrl: `${account.origin}/api/copilotkit`, agentId: c.bot, headers: { cookie: account.cookie }, fetch: sdkFetch }); }
-  catch { return fail('VENDOR_UNAVAILABLE', 'The CopilotKit SDK could not initialize. Check the gateway installation.'); }
-  agent.threadId = c.thread;
-  const subscription = agent.subscribe({ onRunErrorEvent: () => { runError = true; } });
-  try {
-   agent.addMessage({ id: messageId, role: 'user', content: input.text });
-   const result = await Promise.race([agent.runAgent(), new Promise<never>((_, reject) => { timer = setTimeout(() => reject(Error('Wait expired')), this.timeoutMs); })]);
-   if (runError) return fail('VENDOR_UNAVAILABLE', 'OpenBot reported a run error. Review the conversation in OpenBot.', { retryable: false });
-   const reply = result.newMessages.filter(m => m.role === 'assistant').at(-1)?.content;
-   if (typeof reply !== 'string' || !reply.trim()) return fail('ADAPTER_DRIFT', 'OpenBot did not return a current-run assistant reply.', { retryable: false });
-   c.events.push({ cursor: String(c.events.length + 1), event: { type: 'agent.message.completed', botId: `openbot-copilotkit:${c.bot}`, threadId: c.id, generationId: '1', source: 'vendor', vendor: 'openbot-copilotkit', adapter: 'openbot-copilotkit', lane: 'local', remoteContextId: c.thread, remoteEventId: messageId, correlationId: input.correlationId, causationId: input.correlationId, guarantee: 'best_effort', at: new Date().toISOString(), payload: { reply, messageId } } });
-   return ok({ messageId, correlationId: input.correlationId, reply, guarantee: 'best_effort' as const });
-  } catch {
-   return failure ?? fail('VENDOR_UNAVAILABLE', 'OpenBot has not confirmed this run. Check its conversation before sending again.', { retryable: false });
-  } finally {
-   if (timer) clearTimeout(timer);
-   subscription.unsubscribe();
-   await agent.detachActiveRun().catch(() => undefined);
-  }
+  const result = await runIntelligence({ runtimeUrl: `${account.origin}/api/copilotkit`, agentId: c.bot, threadId: c.thread, messages: [{ id: messageId, role: 'user', content: input.text }], headers: { cookie: account.cookie }, fetch: runFetch, socket: this.socket, timeoutMs: this.timeoutMs });
+  if (failure) return failure;
+  if (result.error) return fail('VENDOR_UNAVAILABLE', 'OpenBot reported a run error. Review the conversation in OpenBot.', { retryable: false });
+  if (result.transport || result.status || result.identityMismatch || (!result.finished && !result.interrupted)) return fail('VENDOR_UNAVAILABLE', 'OpenBot has not confirmed this run. Check its conversation before sending again.', { retryable: false });
+  const reply = result.messages.filter(m => m.role === 'assistant').at(-1)?.content;
+  if (typeof reply !== 'string' || !reply.trim()) return fail('ADAPTER_DRIFT', 'OpenBot did not return a current-run assistant reply.', { retryable: false });
+  c.events.push({ cursor: String(c.events.length + 1), event: { type: 'agent.message.completed', botId: `openbot-copilotkit:${c.bot}`, threadId: c.id, generationId: '1', source: 'vendor', vendor: 'openbot-copilotkit', adapter: 'openbot-copilotkit', lane: 'local', remoteContextId: c.thread, remoteEventId: messageId, correlationId: input.correlationId, causationId: input.correlationId, guarantee: 'best_effort', at: new Date().toISOString(), payload: { reply, messageId } } });
+  return ok({ messageId, correlationId: input.correlationId, reply, guarantee: 'best_effort' as const });
  }
 
  async events(input: EventsInput): Promise<AaiResult<EventsResult>> {
