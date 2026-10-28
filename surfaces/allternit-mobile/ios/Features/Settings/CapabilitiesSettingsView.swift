@@ -5,9 +5,9 @@ import SwiftUI
 /// SkillsSettingsPanel / PluginsSettingsPanel). Tap a row for its details
 /// and to remove it from the computer.
 ///
-/// Phone subset: Browse / Add (the full capabilities manager and plugin
-/// marketplace) stay on Desktop and the web: installing writes a whole
-/// package tree to the computer and needs the desktop file picker.
+/// Skills can be created here (+, the web's Create skill). Uploading a
+/// skill or plugin package and the plugin marketplace stay on Desktop and
+/// the web: they write a whole package tree from the desktop file picker.
 struct CapabilitiesSettingsView: View {
     let kind: CapabilitiesClient.Kind
 
@@ -19,6 +19,7 @@ struct CapabilitiesSettingsView: View {
     @State private var actionError: String? = nil
     @State private var pending: Set<String> = []
     @State private var search = ""
+    @State private var isCreating = false
 
     private var noun: String { kind == .skill ? "skill" : "plugin" }
     private var title: String { kind == .skill ? "Skills" : "Plugins" }
@@ -60,7 +61,9 @@ struct CapabilitiesSettingsView: View {
                         style: .empty,
                         icon: icon,
                         title: "No \(noun)s installed yet",
-                        message: "Add \(noun)s from Settings → \(title) in Allternit Desktop or on ai.allternit.com."
+                        message: kind == .skill
+                            ? "Tap + to write one, or add skills from Settings → Skills in Allternit Desktop or on ai.allternit.com."
+                            : "Add plugins from Settings → Plugins in Allternit Desktop or on ai.allternit.com."
                     )
                 } else if visible.isEmpty {
                     Text("No \(noun)s match “\(search)”.")
@@ -87,6 +90,21 @@ struct CapabilitiesSettingsView: View {
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
         .searchable(text: $search, prompt: "Search \(noun)s")
+        .toolbar {
+            if kind == .skill && authManager.canCallAccountAPIs {
+                ToolbarItem(placement: .primaryAction) {
+                    Button { isCreating = true } label: { Image(systemName: "plus") }
+                        .accessibilityLabel("Create skill")
+                }
+            }
+        }
+        .sheet(isPresented: $isCreating) {
+            CreateSkillSheet { created in
+                items.removeAll { $0.id == created.id }
+                items.append(created)
+                items.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+            }
+        }
         .task { if !loaded { await load() } }
         .refreshable { await load() }
         .onChange(of: authManager.isSignedIn) { _, signedIn in
@@ -160,6 +178,80 @@ struct CapabilitiesSettingsView: View {
         } catch {
             if let current = items.firstIndex(where: { $0.id == item.id }) { items[current].enabled = !enabled }
             actionError = "Couldn't turn \(item.name) \(enabled ? "on" : "off"). \(SettingsLoadFailure.from(error).message)"
+        }
+    }
+}
+
+/// Create skill (CustomizeView's Create skill): a name, when to use it and
+/// the instructions, written to `~/.allternit/skills/<name>/` on the computer.
+private struct CreateSkillSheet: View {
+    let onCreated: (InstalledCapability) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var name = ""
+    @State private var description = ""
+    @State private var instructions = ""
+    @State private var saving = false
+    @State private var error: String?
+
+    private var canSave: Bool {
+        !name.trimmingCharacters(in: .whitespaces).isEmpty
+            && !description.trimmingCharacters(in: .whitespaces).isEmpty && !saving
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    TextField("Name", text: $name)
+                        .textInputAutocapitalization(.words)
+                    TextField("When to use it", text: $description, axis: .vertical)
+                        .lineLimit(2...4)
+                } footer: {
+                    Text("Agents read “when to use it” to decide when to load the skill.")
+                }
+                Section {
+                    TextField("Steps, rules and examples the agent should follow", text: $instructions, axis: .vertical)
+                        .lineLimit(6...16)
+                        .font(.system(.subheadline, design: .monospaced))
+                } header: { Text("Instructions") } footer: {
+                    Text("Saved as SKILL.md on your computer. Edit it later on Desktop or the web.")
+                }
+                if let error {
+                    Section { Text(error).font(.subheadline).foregroundColor(Theme.statusError) }
+                }
+            }
+            .navigationTitle("New skill")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() }.disabled(saving) }
+                ToolbarItem(placement: .confirmationAction) {
+                    if saving { ProgressView() } else {
+                        Button("Create") { Task { await create() } }.disabled(!canSave)
+                    }
+                }
+            }
+            .interactiveDismissDisabled(saving)
+        }
+    }
+
+    @MainActor
+    private func create() async {
+        saving = true
+        error = nil
+        defer { saving = false }
+        do {
+            let created = try await CapabilitiesClient.shared.createSkill(
+                name: name.trimmingCharacters(in: .whitespaces),
+                description: description.trimmingCharacters(in: .whitespacesAndNewlines),
+                instructions: instructions
+            )
+            onCreated(created)
+            dismiss()
+        } catch let failure as CapabilitiesClient.CreateError {
+            error = failure.errorDescription
+        } catch {
+            self.error = "Couldn't save the skill. \(SettingsLoadFailure.from(error).message)"
         }
     }
 }

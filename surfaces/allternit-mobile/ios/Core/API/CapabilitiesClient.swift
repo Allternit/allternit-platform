@@ -224,6 +224,71 @@ final class CapabilitiesClient: @unchecked Sendable {
         try await write(capability.configPath, content: String(decoding: data, as: UTF8.self))
     }
 
+    enum CreateError: LocalizedError {
+        case exists(String)
+        var errorDescription: String? {
+            switch self {
+            case .exists(let name): return "A skill called \u{201C}\(name)\u{201D} is already on this computer. Pick another name."
+            }
+        }
+    }
+
+    /// The web's `createSkill` (capabilityWriter.ts): `~/.allternit/skills/<slug>/`
+    /// with `SKILL.md` and `config.json`. SKILL.md also gets `name` and
+    /// `description` frontmatter so CLI brains that read skill folders pick it up.
+    func createSkill(name: String, description: String, instructions: String) async throws -> InstalledCapability {
+        let slug = Self.slugify(name)
+        let dir = "\(Self.skillRoots[0])/\(slug)"
+        if (try? await read("\(dir)/SKILL.md")) != nil { throw CreateError.exists(name) }
+        let now = ISO8601DateFormatter().string(from: Date())
+        let body = instructions.trimmingCharacters(in: .whitespacesAndNewlines)
+        let skillMD = """
+        ---
+        name: \(slug)
+        description: \(Self.yamlQuoted(description))
+        ---
+
+        # \(name)
+
+        \(body.isEmpty ? description : body)
+
+        """
+        let config: [String: Any] = [
+            "name": name, "description": description, "tags": [String](), "category": "general",
+            "enabled": true, "version": "1.0.0", "author": "User", "createdAt": now, "updatedAt": now,
+        ]
+        let data = try JSONSerialization.data(withJSONObject: config, options: [.prettyPrinted, .sortedKeys])
+        try await write("\(dir)/SKILL.md", content: skillMD)
+        try await write("\(dir)/config.json", content: String(decoding: data, as: UTF8.self))
+        return InstalledCapability(kind: .skill, dirPath: dir, name: name, description: description,
+                                   author: "User", version: "1.0.0", updatedAt: now, enabled: true,
+                                   configPath: "\(dir)/config.json")
+    }
+
+    /// capabilityWriter.ts `slugify`.
+    static func slugify(_ value: String) -> String {
+        var out = ""
+        var dash = false
+        for ch in value.lowercased() {
+            if ch.isASCII && (ch.isLetter || ch.isNumber) {
+                out.append(ch)
+                dash = false
+            } else if !dash {
+                out.append("-")
+                dash = true
+            }
+        }
+        let trimmed = String(out.trimmingCharacters(in: CharacterSet(charactersIn: "-")).prefix(48))
+        return trimmed.isEmpty ? "item" : trimmed
+    }
+
+    private static func yamlQuoted(_ value: String) -> String {
+        let flat = value.replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        return "\"\(flat)\""
+    }
+
     /// The web's `deleteCapability` / `uninstallMarketplacePlugin`: removes the folder.
     func remove(_ capability: InstalledCapability) async throws {
         try await delete(capability.dirPath)
