@@ -1,26 +1,22 @@
 ---
 title: 'Terminal and prompt'
-description: 'How the Code terminal fills the view, how Grid and Deck show its shells, and how the terminal prompt and its status row work on Desktop and ai.allternit.com.'
+description: 'How Terminal mode shows a terminal session in the Code view, and how the terminal prompt and its status row work on Desktop and ai.allternit.com.'
 ---
 
 Code has two kinds of session. A **Code session** is a conversation with an agent: messages, tool steps, approvals and the files it made. A **terminal** is a live shell (or a Terminal bot's CLI) on your computer or cloud computer. Both live in Code mode.
 
-## Terminal
+## Terminal mode
 
-Open the terminal with **Terminal** in the status row under the prompt. Press it again to go back to the session. The session panel's **Terminal** row and a terminal session's card in the Code overview open it too. It takes the whole Code view, edge to edge, with no card around it. On Desktop it is always dark, in light and dark mode, like the terminal cards in the Code overview. The prompt and its status row stay under it. The session panel closes while the terminal is open, and comes back when you close it.
+Terminal mode is the regular Code view with a terminal session where the thread was. Turn it on with **Terminal** in the status row under the prompt. While it is on, that button reads **Thread**: press it to go back to the thread. A terminal session's card in the Code overview, and the session panel's **Terminal** row, turn it on too.
 
-- **One shell** fills the view.
-- **Two or three shells** split the view evenly, side by side. More shells wrap to new rows.
-- **+** in the terminal bar opens another shell. **×** closes the terminal.
+- **The session line** at the top shows the session's name, then `zsh` and the repo and branch for a shell, or the bot's address for a Terminal bot.
+- **The session** fills the rest of the view. On Desktop it is always dark, in light and dark mode, like the terminal cards in the Code overview. The prompt and status row sit on the same dark surface.
+- **The prompt types into the session.** What you run goes to the shell (or the bot's CLI) as a line, followed by Enter. You can also click the session and type in it directly.
+- **A Terminal bot** opened from the overview is shown as the session. **Shell** on the session line goes back to your own shell.
+- **Nothing floats over it.** The canvas-mode button and the floating session menu hide in Terminal mode and come back with the thread.
+- **No computer connected** (for example ai.allternit.com with no computer paired) shows **Not connected** with a **Connect** button instead of an error.
 
-With more than one shell, the terminal bar shows two layout buttons:
-
-| Button | What it does |
-| --- | --- |
-| **Grid** | Every shell at once, side by side. |
-| **Deck** | A sideways row of tall shells, 400 px wide, that scrolls and snaps: the same Deck as the session overviews. |
-
-Double-click a shell's title bar, or use its zoom button, to make it fill the view. **Esc** puts it back.
+To see all your terminal sessions, open the Code overview and pick **Terminal sessions**. It has List, Grid and Deck, the same as Code sessions. See [Session overview](/guides/session-overview).
 
 On a phone, the terminal is always one shell at a time with a strip of tabs. See [Code on a phone](/code/on-a-phone#terminal).
 
@@ -39,12 +35,13 @@ Before a session starts, the computer and repo open pickers. In a running sessio
 
 ## Console drawer retired
 
-The bottom Console drawer is off on Desktop (2026-10-28). Its shell tab is the full-view terminal above. Its other tabs (Output, Problems, Runs, Plan, Ports, Changes, Mission Control, Tasks, Usage, Artifacts) are not shown in Code for now. The preview pane's **View session activity** link went with it.
+The bottom Console drawer is off on Desktop (2026-10-28). Its shell tab is Terminal mode above. Its other tabs (Output, Problems, Runs, Plan, Ports, Changes, Mission Control, Tasks, Usage, Artifacts) are not shown in Code for now. The preview pane's **View session activity** link went with it.
 
 ## For developers
 
-- Terminal: `src/views/code/CodeTerminalCanvas.tsx` and `code-terminal.css` (`.code-terminal-dark`, `.code-terminal-bar`). Desktop shells use the dark scheme (`scheme` passed to `TerminalSurface`). Grid uses one column per shell, up to three. Deck (`data-layout="deck"` on `code-terminal-grid`) restyles the same tiles as 400 px snap cards, so no shell remounts. Zoom keeps `maximizedTileId`.
-- Open state: `useCodeTerminalStore` in `src/views/code/code-terminal.store.ts` (`open`, `toggle`, `openCodeTerminal()`). The status row's `code-bottom-status-terminal` button (`CodeBottomStatusBar.tsx`) toggles it. Factory bot attach (`src/components/factory/pane/attach.ts`) and `MultiTabTerminal` call `openCodeTerminal()`.
+- Terminal mode: `src/views/code/CodeTerminalCanvas.tsx` and `code-terminal.css` (`.code-terminal-dark`, `.code-terminal-session-line`). On Desktop it renders the session line, then one `TerminalSurface` (dark scheme), or `BotSession` (the bot's `PaneMirrorView`) after a `factory-attach-pane` request. CodeCanvas renders it in place of the thread and keeps the session header, prompt and status row; the prompt dock gets `.code-terminal-dark` while it is open. With no runtime (`useRuntimeAvailable`) it shows **Not connected**.
+- Open state and input: `useCodeTerminalStore` in `src/views/code/code-terminal.store.ts` (`open`, `toggle`, `openCodeTerminal()`, `sendInput`). The open session sets `sendInput`; `handleSend` in `CodeCanvas.tsx` hands the prompt to it (shell: `sendTerminalInput(id, text + "\r")`; bot: `sendPaneInput` via `terminalDataToPaneInput`). The status row's `code-bottom-status-terminal` button (`CodeTerminalButton`) toggles it and reads **Thread** while open. Factory bot attach (`src/components/factory/pane/attach.ts`) and `MultiTabTerminal` call `openCodeTerminal()`.
+- `CodeThreadView.tsx` hides `code-canvas-mode-toggle` and the floating `CodeSessionLauncher` while Terminal mode is open. The Gizzi companion sits above the prompt line (`bottom: 100%`) and hides in Terminal mode.
 - The `<ConsoleDrawer />` mount in `src/shell/ShellApp.tsx` is commented out, not deleted.
 - Mounts: `src/views/code/CodeCanvas.tsx` (launchpad and conversation). Both drop their padding while `terminalCanvasOpen` is true, and the docked `CodeSessionPanel` is hidden.
 - Prompt: `src/views/chat/ChatComposer.tsx`, `codeTerminal` branch. `composer-terminal-line` stacks `composer-terminal-input` (dashed rules: attach, text, voice, run) over `composer-compact-controls` (the status row). `bottomDockContent` fills its left side (`CodeBottomStatusBar` with `CodeWorkspaceBar` as `leading`), and `bottomDockTrailing` its right end (`CodeTerminalButton`). The textarea auto-grows from 24 to 200 px.
