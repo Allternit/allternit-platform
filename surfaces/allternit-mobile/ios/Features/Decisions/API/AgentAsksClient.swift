@@ -59,8 +59,27 @@ final class AgentAsksClient: @unchecked Sendable {
         return (envelope.questions ?? []).filter { !$0.questions.isEmpty }
     }
 
+    /// The answer that grants a task's sends and uploads (allternit-api
+    /// task_grants; web plan-grant-label.ts). Only a person may give it.
+    static let planGrantLabel = "Approve plan and allow its sends and uploads"
+
     func replyQuestion(id: String, answers: [ReplyAnswer]) async throws {
-        try await client.post(path: "questions/\(Self.escape(id))/reply", body: ReplyBody(answers: answers))
+        var request = try await client.authorizedRequest(path: "questions/\(Self.escape(id))/reply", method: "POST")
+        request.httpBody = try JSONEncoder().encode(ReplyBody(answers: answers))
+        let grantsPlan = answers.contains { answer in
+            switch answer.answer {
+            case .one(let text): return text == Self.planGrantLabel
+            case .many(let labels): return labels.contains(Self.planGrantLabel)
+            }
+        }
+        // D16 person proof (web fetch-interceptor personProofHeaders): the
+        // person's own Clerk session, so the runtime knows a person approved,
+        // not an agent holding the device token.
+        if grantsPlan, let token = try await AuthManager.shared.getToken(), !token.isEmpty {
+            request.setValue(token, forHTTPHeaderField: "X-Allternit-Human-Proof")
+        }
+        let (data, response) = try await client.send(request)
+        try client.validate(response, data: data)
     }
 
     func rejectQuestion(id: String) async throws {

@@ -286,6 +286,8 @@ final class APIClient: @unchecked Sendable {
     private static let relayForwardedHeaders: Set<String> = [
         "accept", "content-type", "if-none-match", "if-modified-since",
         "last-event-id", "x-request-id",
+        // D16: a person's own act (plan approval); cloud-api forwards it.
+        "x-allternit-human-proof",
     ]
 
     /// Builds the cloud-relay request for an outgoing runtime call

@@ -60,7 +60,7 @@ APNs answering `410`, `BadDeviceToken`, `Unregistered` or `DeviceTokenNotForTopi
 ## In the app
 
 - Permission is asked with a reason on screen, never on first launch: in the **Meet your bots** intro's notifications step, on the empty-chat card, or in Settings → Getting started → Notifications. After that, every launch and every sign-in registers again without asking.
-- Tapping a notification opens its `url`: a thread opens its current chat (or the bot's page when the thread has no live session), a channel message opens the bots, `/settings/…` opens Settings.
+- Tapping a notification opens its `url`: a thread opens its current chat (or the bot's page when the thread has no live session), a channel message opens the bots, `/settings/…` opens Settings, `/computers` opens the computers list. An approval (`data.event` `approval.requested`) opens Decisions, where it can be answered, instead of its `url`.
 - The app also opens [Universal Links](#universal-links) to the same screens.
 
 Code: `surfaces/allternit-mobile/ios/Core/PushNotificationManager.swift`, `App/AppDelegate.swift`, `Core/API/PushTokenClient.swift`, `Core/DeepLinkRouter.swift`. Server: `cmd/allternit-cloud-api/src/routes/apns.rs`, called from `web_push::send_to_user`.

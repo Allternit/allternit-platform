@@ -11,6 +11,7 @@ import SwiftUI
 /// - settings → Settings
 /// - invite  → the web invite page in-app
 /// - computers → the Computers list (Settings → Devices) in a sheet
+/// - decisions → Decisions in a sheet
 struct DeepLinkHost: ViewModifier {
     @ObservedObject private var router = DeepLinkRouter.shared
     @EnvironmentObject private var modeStore: AppModeStore
@@ -19,6 +20,7 @@ struct DeepLinkHost: ViewModifier {
     @State private var botSheet: AgentRecord?
     @State private var isSettingsPresented = false
     @State private var isComputersPresented = false
+    @State private var isDecisionsPresented = false
     @State private var inviteURL: IdentifiableURL?
     @State private var linkError: String?
     @State private var isResolving = false
@@ -69,6 +71,9 @@ struct DeepLinkHost: ViewModifier {
                         }
                 }
             }
+            .sheet(isPresented: $isDecisionsPresented) {
+                DecisionsScreen()
+            }
             .sheet(item: $inviteURL) { item in
                 SafariView(url: item.url)
                     .ignoresSafeArea()
@@ -89,6 +94,7 @@ struct DeepLinkHost: ViewModifier {
         botSheet = nil
         isSettingsPresented = false
         isComputersPresented = false
+        isDecisionsPresented = false
         inviteURL = nil
         switch link {
         case .session(let id):
@@ -105,6 +111,8 @@ struct DeepLinkHost: ViewModifier {
             inviteURL = IdentifiableURL(url: url)
         case .computers:
             isComputersPresented = true
+        case .decisions:
+            isDecisionsPresented = true
         }
     }
 

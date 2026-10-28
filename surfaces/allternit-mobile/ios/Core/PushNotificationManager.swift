@@ -118,8 +118,14 @@ final class PushNotificationManager: NSObject {
     // MARK: - Taps + badge
 
     /// A notification was tapped: open what it points at.
-    func handleTap(urlPath: String?) {
+    /// An approval opens Decisions, where it can be answered; the rest open
+    /// their link.
+    func handleTap(urlPath: String?, event: String? = nil) {
         clearBadge()
+        if event == "approval.requested" {
+            DeepLinkRouter.shared.enqueue(.decisions)
+            return
+        }
         guard let urlPath, !urlPath.isEmpty else { return }
         DeepLinkRouter.shared.open(path: urlPath)
     }

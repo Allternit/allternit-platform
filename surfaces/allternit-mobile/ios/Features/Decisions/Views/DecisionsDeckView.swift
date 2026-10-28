@@ -13,6 +13,8 @@ final class DecisionsStore: ObservableObject {
     @Published private(set) var questionsError: String? = nil
     @Published private(set) var approvalsError: String? = nil
     @Published private(set) var hasLoaded = false
+    /// Who asked, by session id: the session's agent name, else its bot.
+    @Published private(set) var agentNames: [String: String] = [:]
 
     private let asks: AgentAsksClient
     private let factory: FactoryApprovalsClient
@@ -69,9 +71,25 @@ final class DecisionsStore: ObservableObject {
         do {
             questions = try await asks.listQuestions()
             questionsError = nil
+            await resolveAgentNames()
         } catch {
             questionsError = "Couldn't load decisions. \(FriendlyErrorMessage.from(error.localizedDescription))"
         }
+    }
+
+    private func resolveAgentNames() async {
+        let missing = Set(questions.map(\.sessionID)).subtracting(agentNames.keys)
+        guard !missing.isEmpty,
+              let sessions = try? await AgentChatClient().listSessions() else { return }
+        var names = agentNames
+        for session in sessions where missing.contains(session.id) {
+            if let name = session.agentName, !name.isEmpty {
+                names[session.id] = name
+            } else if let agentId = session.agentId, let agent = AgentHubStore.shared.agent(withId: agentId) {
+                names[session.id] = agent.botDisplayName
+            }
+        }
+        agentNames = names
     }
 
     private func refreshApprovals() async {
@@ -176,7 +194,7 @@ struct DecisionsDeckView: View {
                     }
                 }
             }
-            QuestionCardView(request: current) {
+            QuestionCardView(request: current, agentName: store.agentNames[current.sessionID]) {
                 // Let "Sent" read before the next one slides in.
                 Task {
                     try? await Task.sleep(nanoseconds: 700_000_000)

@@ -27,6 +27,8 @@ enum DeepLink: Equatable, Sendable {
     case invite(URL)
     /// The Computers view (`/computers`).
     case computers
+    /// Decisions: questions and approvals waiting on you (approval pushes).
+    case decisions
 
     static let webHosts: Set<String> = ["ai.allternit.com", "m.allternit.com"]
 

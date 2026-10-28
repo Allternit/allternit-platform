@@ -53,9 +53,11 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         _ center: UNUserNotificationCenter,
         didReceive response: UNNotificationResponse
     ) async {
-        let urlPath = response.notification.request.content.userInfo["url"] as? String
+        let userInfo = response.notification.request.content.userInfo
+        let urlPath = userInfo["url"] as? String
+        let event = (userInfo["data"] as? [String: Any])?["event"] as? String
         await MainActor.run {
-            PushNotificationManager.shared.handleTap(urlPath: urlPath)
+            PushNotificationManager.shared.handleTap(urlPath: urlPath, event: event)
         }
     }
 }

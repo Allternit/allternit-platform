@@ -48,6 +48,9 @@ struct AgentSession: Decodable, Sendable, Identifiable {
     /// "true" string form (the create path carries the flag as a string
     /// inside the metadata bag).
     let ephemeral: Bool
+    /// `metadata.agentName` — the agent or bot the session runs as (web
+    /// DecisionsDeck "<agent> asks").
+    let agentName: String?
     // The rest of `metadata` (directory, version, permission, …) stays
     // skipped — not rendered anywhere on iOS.
 
@@ -69,6 +72,7 @@ struct AgentSession: Decodable, Sendable, Identifiable {
         case agentId = "agent_id"
         case projectId = "project_id"
         case ephemeral
+        case agentName
     }
 
     /// Tolerant decode mirroring the web's `normalizeSessionPayload`: only
@@ -91,6 +95,7 @@ struct AgentSession: Decodable, Sendable, Identifiable {
             originSurface = try metadata.decodeIfPresent(String.self, forKey: .originSurface)
             agentId = try metadata.decodeIfPresent(String.self, forKey: .agentId)
             projectId = try metadata.decodeIfPresent(String.self, forKey: .projectId)
+            agentName = (try? metadata.decodeIfPresent(String.self, forKey: .agentName)) ?? nil
             // The backend emits a bool; the create path carries the flag as
             // the string "true" inside the metadata bag.
             if let flag = try metadata.decodeIfPresent(Bool.self, forKey: .ephemeral) {
@@ -102,6 +107,7 @@ struct AgentSession: Decodable, Sendable, Identifiable {
             originSurface = nil
             agentId = nil
             projectId = nil
+            agentName = nil
             ephemeral = false
         }
     }

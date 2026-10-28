@@ -329,6 +329,8 @@ final class RuntimeRelayClient: @unchecked Sendable {
     private static let forwardedHeaders: Set<String> = [
         "accept", "content-type", "if-none-match", "if-modified-since",
         "last-event-id", "x-request-id",
+        // D16: a person's own act (plan approval); cloud-api forwards it.
+        "x-allternit-human-proof",
         "x-allternit-device-id", "x-allternit-device-name", "x-allternit-device-platform",
     ]
 
