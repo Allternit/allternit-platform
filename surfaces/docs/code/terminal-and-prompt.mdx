@@ -1,0 +1,37 @@
+---
+title: 'Terminal and prompt'
+description: 'How the Code terminal fills the view, how Grid and Deck switch between shells, and how the one-line terminal prompt works on Desktop and ai.allternit.com.'
+---
+
+Code has two kinds of session. A **Code session** is a conversation with an agent: messages, tool steps, approvals and the files it made. A **terminal** is a live shell (or a Terminal bot's CLI) on your computer or cloud computer. Both live in Code mode.
+
+## Terminal
+
+Open the terminal from the terminal pill in the workspace bar above the prompt, or the session panel's **Terminal** row. It takes the whole Code view, edge to edge, with no card around it. The session panel closes while the terminal is open, and comes back when you close it.
+
+- **One shell** fills the view.
+- **Two or three shells** split the view evenly, side by side. More shells wrap to new rows.
+- **+** in the terminal bar opens another shell. **×** closes the terminal.
+
+With more than one shell, the terminal bar shows two layout buttons:
+
+| Button | What it does |
+| --- | --- |
+| **Grid** | Every shell at once, side by side. |
+| **Deck** | One shell fills the view. Tabs in the bar switch between shells. |
+
+Double-click a shell's title bar, or use its zoom button, to open it in Deck. **Esc** goes back to Grid.
+
+On a phone, the terminal is always one shell at a time with a strip of tabs. See [Code on a phone](/code/on-a-phone#terminal).
+
+## Prompt
+
+In Code, the prompt is one square terminal line: `❯`, the text you type, and then on the same line **+** (attach), voice, the model, how much of the context is used, and send. As you type more, the line grows upward (up to about ten lines) and the buttons stay on its bottom edge. Press **Enter** to run, **Shift+Enter** for a new line.
+
+Chat and other modes keep the rounded composer.
+
+## For developers
+
+- Terminal: `src/views/code/CodeTerminalCanvas.tsx`. The grid uses one column per shell, up to three. Deck reuses the maximized-tile state (`maximizedTileId`), and the bar's `terminal-layout-switch` group sets it.
+- Mounts: `src/views/code/CodeCanvas.tsx` (launchpad and conversation). Both drop their padding while `terminalCanvasOpen` is true, and the docked `CodeSessionPanel` is hidden.
+- Prompt: `src/views/chat/ChatComposer.tsx`, `codeTerminal` branch. The `composer-terminal-line` row holds the text row and the `composer-compact-controls` row side by side. The textarea auto-grows from 24 to 200 px.
