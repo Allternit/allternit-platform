@@ -192,6 +192,12 @@ export function PortalLandingPage() {
             <p className="mt-4 text-[12px] text-[var(--text-tertiary)]">
               Free tier includes local models and standard rate limits.
             </p>
+            <Link
+              to="/cloud"
+              className="mt-2 inline-flex items-center gap-1 text-[13px] font-medium text-[#D97757] hover:underline"
+            >
+              Calling models from code? See the Cloud API models and prices <ArrowRight size={13} />
+            </Link>
           </div>
 
           <div className="relative">

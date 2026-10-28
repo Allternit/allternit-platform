@@ -1,0 +1,60 @@
+---
+title: "Get started with Allternit Cloud"
+description: "Sign up, create an API key, add credits and make your first chat-completions call to the Allternit Cloud API."
+---
+
+Allternit Cloud is a paid inference API. One Allternit API key calls open and frontier models through a chat-completions compatible endpoint at `https://api.allternit.com/v1`. Requests are paid from prepaid credits.
+
+The public page at [platform.allternit.com/cloud](https://platform.allternit.com/cloud) shows the live model list with prices, the plans and credit packs, and copy-ready code.
+
+## 1. Sign in
+
+Open [platform.allternit.com/cloud](https://platform.allternit.com/cloud) and choose **Sign up and get a key**, or **Sign in** if you have an account. After sign-in you land on the API Keys page with the create form open. If you are already signed in, the button goes straight there.
+
+## 2. Create a key
+
+The create form opens with the name **Allternit Cloud** and the **Run models** scope picked. That scope (`inference`) is what lets a key call `POST /v1/chat/completions`, and those calls spend your credits. Choose **Create key** and copy the key right away. It is shown once.
+
+You can also open **API Keys** in the console at any time, choose **Create key**, and pick **Run models** yourself. See [Authentication](/api/authentication) for the other key types.
+
+## 3. Add credits
+
+Every account gets $2 of model usage a month at no charge, which covers a first test. For more:
+
+- **Credit packs** of $10, $25, $50 or $100 add credits once.
+- **Plans** (Plus, Super, Ultra) add credits every month.
+- **Auto top-up** buys a pack from your saved card when your balance runs low.
+
+Open **Billing** in the console to buy. Details are in [Credits and auto top-up](/guides/credits-and-auto-top-up) and [Cloud billing](/api/cloud-billing).
+
+## 4. Make a call
+
+```bash
+export ALLTERNIT_API_KEY="alt_..."
+
+curl https://api.allternit.com/v1/chat/completions \
+  -H "Authorization: Bearer $ALLTERNIT_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "deepseek-v4-pro",
+    "messages": [{"role": "user", "content": "Say hello in five words."}]
+  }'
+```
+
+Any SDK that speaks the chat-completions format works too: set its base URL to `https://api.allternit.com/v1` and its API key to your Allternit key. The [platform.allternit.com/cloud](https://platform.allternit.com/cloud) page has Python and JavaScript versions of this call.
+
+Use any `id` from [`GET /v1/models`](/api/models) as `model`. That endpoint needs no key and returns each model's `provider`, `context_length`, `lane` and its `prompt_price` and `completion_price` in US dollars per token.
+
+## Data retention
+
+Allternit stores token counts and cost for each request, not your prompts or outputs. See [Data retention](/api/data-retention).
+
+## Open models
+
+Models with `lane: "open"` are open-weight models with far fewer refusals. Using them needs an age check and acceptance of the use policy, and some requests stay blocked on every model. See [Open models](/guides/open-models) and [Open lane](/api/open-lane).
+
+## Related
+
+- [Chat completions](/api/chat-completions)
+- [Models](/api/models)
+- [Cloud billing](/api/cloud-billing)
