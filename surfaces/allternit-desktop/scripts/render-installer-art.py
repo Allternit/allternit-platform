@@ -6,7 +6,7 @@ electron-builder merges the pair into a Retina TIFF) and installer-sidebar.bmp +
 installer-header.bmp (Windows NSIS, 24-bit). Icon slots match dmg.contents in
 package.json (app at 130,200, Applications at 410,200, 80 px icons).
 Also writes trayTemplate.png + @2x: the menu bar icon, the app-icon A alone in
-an 18 pt square, black on transparent (macOS tints template images).
+a 19 pt square of whole-pixel blocks, black on transparent (macOS tints template images).
 
 Needs Google Chrome and Pillow. Run: python3 scripts/render-installer-art.py
 """
@@ -97,15 +97,16 @@ def bmp(body: str, w: int, h: int, name: str) -> None:
 
 
 def tray(scale: int) -> None:
-    # The A glyph on a 5x5 grid: 3.5 pt cells, 3 pt blocks, centred in 18 pt.
+    # The A glyph on a 5x5 grid of square blocks that land on whole pixels:
+    # 4 pt cells, 3 pt blocks, 19 pt square. Fractional cells or rounded
+    # corners blur each block into a "+" at 1x (Eoj 2026-10-28).
     cells = [(2, 0), (1, 1), (3, 1), (0, 2), (1, 2), (2, 2), (3, 2), (4, 2), (0, 3), (4, 3), (0, 4), (4, 4)]
-    size, cell, block = 18 * scale, 3.5 * scale, 3 * scale
-    origin = (size - (4 * cell + block)) / 2
+    size, cell, block = 19 * scale, 4 * scale, 3 * scale
     im = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     draw = ImageDraw.Draw(im)
     for col, row in cells:
-        x, y = origin + col * cell, origin + row * cell
-        draw.rounded_rectangle([x, y, x + block - 1, y + block - 1], radius=0.75 * scale, fill=(0, 0, 0, 255))
+        x, y = col * cell, row * cell
+        draw.rectangle([x, y, x + block - 1, y + block - 1], fill=(0, 0, 0, 255))
     im.save(BUILD / ("trayTemplate@2x.png" if scale == 2 else "trayTemplate.png"))
 
 
