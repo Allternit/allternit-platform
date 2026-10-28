@@ -17,8 +17,15 @@ struct MessageRow: View {
     var isLastUser: Bool = false
     var onRegenerate: () -> Void = {}
     var onEdit: () -> Void = {}
+    /// The chat's agent session — the run tree's task list and the pending
+    /// questions/permissions lookup. Nil before the first send.
+    var sessionId: String? = nil
+    /// Sends a prompt to the agent as a new turn (run tree Retry).
+    var onSendPrompt: ((String) -> Void)? = nil
 
     @State private var isThinkingExpanded = false
+    @State private var showsRunTree = false
+    @ObservedObject private var asks = AgentAskStore.shared
     /// Settings → Capabilities → Artifacts gates the inline artifact cards;
     /// observed so toggling it applies to already-rendered rows.
     @ObservedObject private var settings = SettingsStore.shared
@@ -57,8 +64,17 @@ struct MessageRow: View {
                     thinkingBlock
                 }
 
-                // Tool-call status line
-                if let toolStatus = message.toolStatus {
+                // Tool calls on a rail (Features/RunTree). Falls back to the
+                // one-line status for streams that only name a tool.
+                if !message.toolCalls.isEmpty {
+                    ToolCallsRail(
+                        calls: message.toolCalls,
+                        isStreaming: message.isStreaming,
+                        permissions: rowPermissions,
+                        onOpenRunTree: { showsRunTree = true },
+                        onRetry: isLastAssistant && !message.isStreaming ? onRegenerate : nil
+                    )
+                } else if let toolStatus = message.toolStatus {
                     toolStatusLine(toolStatus)
                 }
 
@@ -66,6 +82,17 @@ struct MessageRow: View {
                 // Skipped when the message is nothing but an error card.
                 if !message.content.isEmpty || message.error == nil {
                     bubble
+                }
+
+                // What the agent waits on: questions answered in place, and
+                // permissions not already drawn on a rail row.
+                if message.role == "assistant" {
+                    ForEach(rowQuestions) { request in
+                        QuestionCardView(request: request)
+                    }
+                    ForEach(unplacedPermissions) { ask in
+                        PermissionAskView(ask: ask)
+                    }
                 }
 
                 // Structured failure card (replaces raw backend error text)
@@ -112,6 +139,57 @@ struct MessageRow: View {
             }
         }
         .padding(.horizontal, 12)
+        .sheet(isPresented: $showsRunTree) {
+            AgentRunTreeSheet(
+                steps: message.toolCalls,
+                sessionId: sessionId,
+                isStreaming: message.isStreaming,
+                onRetry: onSendPrompt
+            )
+            .presentationDetents([.medium, .large])
+        }
+        .task(id: asksRefreshKey) {
+            // The latest reply re-reads what the agent waits on when it
+            // appears and when its stream settles (a reopened chat whose
+            // agent still waits gets its card back).
+            guard message.role == "assistant", isLastAssistant, let sessionId else { return }
+            await asks.refresh(sessionId: sessionId)
+        }
+    }
+
+    // MARK: - Agent asks
+
+    private var asksRefreshKey: String {
+        "\(sessionId ?? "")|\(isLastAssistant)|\(message.isStreaming)"
+    }
+
+    /// The reply's own questions, plus — on the latest reply — any the
+    /// session still lists. Answered ones drop out (AgentAskStore).
+    private var rowQuestions: [AgentQuestionRequest] {
+        var list = message.questions
+        if isLastAssistant {
+            for pending in asks.questions(for: sessionId) where !list.contains(where: { $0.id == pending.id }) {
+                list.append(pending)
+            }
+        }
+        return list.filter { !asks.isResolved($0.id) || message.questions.contains($0) }
+    }
+
+    private var rowPermissions: [AgentPermissionAsk] {
+        var list = message.isStreaming ? message.permissions : []
+        if isLastAssistant {
+            for pending in asks.permissions(for: sessionId) where !list.contains(where: { $0.id == pending.id }) {
+                list.append(pending)
+            }
+        }
+        return list.filter { !asks.isResolved($0.id) }
+    }
+
+    /// Permissions whose tool call isn't on this reply's rail get a card.
+    private var unplacedPermissions: [AgentPermissionAsk] {
+        rowPermissions.filter { ask in
+            !(message.isStreaming && message.toolCalls.contains { $0.id == ask.toolCallId })
+        }
     }
 
     // MARK: - Subviews

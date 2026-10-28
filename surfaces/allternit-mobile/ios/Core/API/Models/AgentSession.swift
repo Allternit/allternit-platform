@@ -161,14 +161,43 @@ struct CreateAgentSessionRequest: Encodable, Sendable {
 /// and so do we.
 struct AgentSessionMessage: Decodable, Sendable, Identifiable {
     /// `GizziMessagePart` as serialized inside `metadata.parts`
-    /// (agent_session_routes.rs:237-251). `state` (`serde_json::Value`) is
-    /// skipped — tool state isn't rendered in the history view.
+    /// (agent_session_routes.rs `GizziMessagePart`). A tool part's `state`
+    /// (`serde_json::Value`, gizzi's ToolPart state) feeds the tool calls
+    /// rail on reloaded chats; it decodes tolerantly and never fails the
+    /// message.
     struct Part: Decodable, Sendable {
         let type: String
         let text: String?
         let filename: String?
         let url: String?
         let tool: String?
+        let id: String?
+        let state: ToolState?
+
+        /// gizzi tool state, as much as the rail draws. Never throws.
+        struct ToolState: Decodable, Sendable {
+            let status: String?
+            let input: [String: String]
+            let title: String?
+            let error: String?
+            let startedAt: Date?
+            let finishedAt: Date?
+
+            private enum CodingKeys: String, CodingKey { case status, input, title, error, time }
+            private struct Time: Decodable { let start: Double?; let end: Double? }
+
+            init(from decoder: Decoder) throws {
+                let c = try? decoder.container(keyedBy: CodingKeys.self)
+                status = (try? c?.decodeIfPresent(String.self, forKey: .status)) ?? nil
+                title = (try? c?.decodeIfPresent(String.self, forKey: .title)) ?? nil
+                error = (try? c?.decodeIfPresent(String.self, forKey: .error)) ?? nil
+                let raw = (try? c?.decodeIfPresent([String: AnyCodable].self, forKey: .input)) ?? nil
+                input = SessionWorkerEvent.PartInfo.PartState.flatten(raw)
+                let time = (try? c?.decodeIfPresent(Time.self, forKey: .time)) ?? nil
+                startedAt = time?.start.map { Date(timeIntervalSince1970: $0 / 1000) }
+                finishedAt = time?.end.map { Date(timeIntervalSince1970: $0 / 1000) }
+            }
+        }
     }
 
     /// `metadata: { agent, model, parts, error }` — only `parts` is decoded;
