@@ -253,6 +253,12 @@ struct BotDesktopView: View {
                     action: { session.retry() }
                 )
             }
+        case .needsCredentials(let needsUsername, let message):
+            connectionOverlay {
+                RFBCredentialsForm(needsUsername: needsUsername, message: message) { username, password in
+                    session.submitCredentials(username: username, password: password)
+                }
+            }
         case .live:
             if session.frame == nil {
                 connectionOverlay {
@@ -306,6 +312,7 @@ struct BotDesktopView: View {
         case .live: return "Live"
         case .reconnecting(let attempt): return "Reconnecting (\(attempt)/\(BotDesktopSession.maxReconnectAttempts))…"
         case .failed: return "Connection failed"
+        case .needsCredentials: return "Sign-in needed"
         }
     }
 

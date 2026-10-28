@@ -68,11 +68,12 @@ actor RFBClient {
     }
 
     /// Connects and completes the RFB handshake: version (3.8), security
-    /// (None — x11vnc `-nopw`), ClientInit(shared), ServerInit, then
+    /// (None for the sandbox's x11vnc `-nopw`; VNC password or Apple sign-in
+    /// for a computer's own screen sharing, see `authenticate`), ClientInit(shared), ServerInit, then
     /// SetPixelFormat / SetEncodings / the initial full-screen
     /// FramebufferUpdateRequest. Throws a typed `RFBError` on any protocol
     /// violation; the caller (BotDesktopSession) owns retry.
-    func connect(wsPath: String) async throws {
+    func connect(wsPath: String, credentials: RFBCredentials? = nil) async throws {
         guard let url = Self.webSocketURL(wsPath: wsPath) else {
             throw RFBError.invalidURL(wsPath)
         }
@@ -96,7 +97,7 @@ actor RFBClient {
         let task = URLSession.shared.webSocketTask(with: request)
         socket = task
         task.resume()
-        try await performHandshake()
+        try await performHandshake(credentials: credentials)
     }
 
     /// The message loop: FramebufferUpdate → apply each rectangle → publish
@@ -160,7 +161,7 @@ actor RFBClient {
 
     // MARK: - Handshake
 
-    private func performHandshake() async throws {
+    private func performHandshake(credentials: RFBCredentials?) async throws {
         let versionMessage = try await nextMessage()
         guard case .protocolVersion(let line) = versionMessage else {
             throw RFBError.unexpectedMessage("expected ProtocolVersion, got \(versionMessage)")
@@ -173,10 +174,10 @@ actor RFBClient {
         case .securityFailure(let reason):
             throw RFBError.securityHandshakeFailed(reason)
         case .securityTypes(let types):
-            guard types.contains(1) else {
+            guard let type = RFBAuth.supportedTypes.first(where: types.contains) else {
                 throw RFBError.noSupportedSecurityType(types)
             }
-            try await send(RFBClientMessage.securitySelectionNone())
+            try await authenticate(type: type, credentials: credentials)
         default:
             throw RFBError.unexpectedMessage("expected Security, got \(securityMessage)")
         }
@@ -195,6 +196,57 @@ actor RFBClient {
             width: UInt16(info.width),
             height: UInt16(info.height)
         ))
+    }
+
+    /// Answers the chosen security type, then reads SecurityResult (sent for
+    /// every type in 3.8, None included). Without credentials for a type that
+    /// needs them this throws `credentialsRequired` before selecting it, so
+    /// the server never counts a failed attempt.
+    private func authenticate(type: UInt8, credentials: RFBCredentials?) async throws {
+        switch type {
+        case 30:
+            guard let credentials, !credentials.username.isEmpty else {
+                throw RFBError.credentialsRequired(needsUsername: true)
+            }
+            try await send(RFBClientMessage.securitySelection(30))
+            let header = try await nextBytes(4)
+            let generator = Array(header[0..<2])
+            let keyLength = Int(header[2]) << 8 | Int(header[3])
+            let prime = try await nextBytes(keyLength)
+            let serverKey = try await nextBytes(keyLength)
+            guard let response = RFBAuth.ardResponse(
+                generator: generator, prime: prime, serverPublicKey: serverKey, credentials: credentials
+            ) else {
+                throw RFBError.securityHandshakeFailed("the computer sent an unusable key")
+            }
+            try await send(Data(response))
+        case 2:
+            guard let credentials, !credentials.password.isEmpty else {
+                throw RFBError.credentialsRequired(needsUsername: false)
+            }
+            try await send(RFBClientMessage.securitySelection(2))
+            let challenge = try await nextBytes(16)
+            guard let response = RFBAuth.vncResponse(challenge: challenge, password: credentials.password) else {
+                throw RFBError.securityHandshakeFailed("couldn't answer the password challenge")
+            }
+            try await send(Data(response))
+        default:
+            try await send(RFBClientMessage.securitySelectionNone())
+        }
+
+        let result = try await nextBytes(4)
+        guard result != [0, 0, 0, 0] else { return }
+        // Failure carries a reason string in 3.8 (some servers close instead).
+        var reason = type == 1 ? "The computer refused the connection." : "Wrong user name or password."
+        if let lengthBytes = try? await nextBytes(4) {
+            let length = lengthBytes.reduce(0) { $0 << 8 | Int($1) }
+            if length > 0, length < 4096, let text = try? await nextBytes(length),
+               let message = String(bytes: text, encoding: .utf8), !message.isEmpty {
+                reason = message
+            }
+        }
+        if type == 1 { throw RFBError.securityHandshakeFailed(reason) }
+        throw RFBError.authenticationFailed(reason)
     }
 
     /// "RFB 003.008\n" — the sandbox's x11vnc always greets with 3.8; we
@@ -236,6 +288,19 @@ actor RFBClient {
         }
     }
 
+    /// Exactly `count` raw handshake bytes (see `RFBStreamParser.takeBytes`).
+    private func nextBytes(_ count: Int) async throws -> [UInt8] {
+        guard let socket else { throw RFBError.notConnected }
+        while true {
+            if let bytes = parser.takeBytes(count) { return bytes }
+            switch try await socket.receive() {
+            case .data(let data): parser.append(data)
+            case .string(let text): parser.append(Data(text.utf8))
+            @unknown default: continue
+            }
+        }
+    }
+
     /// One RFB client message per binary WebSocket frame — the proxy writes
     /// each frame to the TCP socket verbatim, preserving boundaries.
     private func send(_ data: Data) async throws {
@@ -261,6 +326,10 @@ final class BotDesktopSession: ObservableObject {
         /// Backoff exhausted (or a handshake-level failure) — the view
         /// shows the error plus a manual Retry.
         case failed(String)
+        /// The computer's screen sharing wants a sign-in: the view shows the
+        /// form (`message` is set after a wrong attempt) and calls
+        /// `submitCredentials`.
+        case needsCredentials(needsUsername: Bool, message: String?)
     }
 
     @Published private(set) var state: State = .connecting
@@ -287,6 +356,9 @@ final class BotDesktopSession: ObservableObject {
     private var reconnectTask: Task<Void, Never>?
     private var reconnectAttempt = 0
     private var intentionalClose = false
+    /// The last sign-in that worked (or is being tried), reused for
+    /// reconnects; memory only.
+    private var credentials: RFBCredentials?
 
     init(wsPath: String, controlState: BotDesktopStatus.ControlState) {
         self.wsPath = wsPath
@@ -323,6 +395,12 @@ final class BotDesktopSession: ObservableObject {
         reconnectAttempt = 0
         state = .connecting
         connect()
+    }
+
+    /// Connects again with the sign-in from the credentials form.
+    func submitCredentials(username: String, password: String) {
+        credentials = RFBCredentials(username: username, password: password)
+        retry()
     }
 
     // MARK: - Input (gated — see file header)
@@ -381,9 +459,10 @@ final class BotDesktopSession: ObservableObject {
         ))
         self.client = client
         let wsPath = self.wsPath
+        let credentials = self.credentials
         Task { [weak self] in
             do {
-                try await client.connect(wsPath: wsPath)
+                try await client.connect(wsPath: wsPath, credentials: credentials)
                 guard let self, !Task.isCancelled, !self.intentionalClose else { return }
                 self.reconnectAttempt = 0
                 self.state = .live
@@ -408,6 +487,19 @@ final class BotDesktopSession: ObservableObject {
         client = nil
         if let oldClient {
             Task { await oldClient.disconnect() }
+        }
+        // A sign-in problem doesn't get better by retrying: ask the person.
+        switch error as? RFBError {
+        case .credentialsRequired(let needsUsername):
+            state = .needsCredentials(needsUsername: needsUsername, message: nil)
+            return
+        case .authenticationFailed(let reason):
+            let needsUsername = !(credentials?.username.isEmpty ?? true)
+            credentials = nil
+            state = .needsCredentials(needsUsername: needsUsername, message: reason)
+            return
+        default:
+            break
         }
         guard reconnectAttempt < Self.maxReconnectAttempts else {
             state = .failed(error.localizedDescription)

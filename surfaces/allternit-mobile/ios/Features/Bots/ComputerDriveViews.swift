@@ -326,6 +326,12 @@ struct ComputerScreenCanvas: View {
                 Text(message).font(.caption).multilineTextAlignment(.center)
                 Button("Retry") { session.retry() }.buttonStyle(.borderedProminent)
             }
+        case .needsCredentials(let needsUsername, let message):
+            RFBCredentialsForm(needsUsername: needsUsername, message: message) { username, password in
+                session.submitCredentials(username: username, password: password)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color.black.opacity(0.85))
         case .live:
             if session.frame == nil {
                 status { ProgressView().tint(.white); Text("Waiting for the first frame…") }

@@ -12,8 +12,9 @@ import Foundation
 // and only emits complete messages. The web reference client is noVNC
 // (surfaces/ai.allternit.com/src/views/bots/BotDesktopView.tsx).
 //
-// Sandbox x11vnc runs with `-nopw` → Security Type None (1) is the only type
-// ever offered/needed. All multi-byte integer fields are big-endian on the
+// Sandbox x11vnc runs with `-nopw` → Security Type None (1). A paired
+// computer's own screen sharing may ask for a sign-in instead: VNC password
+// (2) or, on a Mac, Apple's user name + password (30) — see RFBAuth.swift. All multi-byte integer fields are big-endian on the
 // wire (RFB 3.8 §6/§7).
 // -----------------------------------------------------------------------------
 
@@ -61,6 +62,11 @@ enum RFBError: LocalizedError {
     case zrleInflateFailed(Int32)
     /// An operation was attempted before the WebSocket connected.
     case notConnected
+    /// The computer's screen sharing asks for a sign-in the viewer doesn't
+    /// have yet (Apple's needs the user name too).
+    case credentialsRequired(needsUsername: Bool)
+    /// SecurityResult said no: wrong name or password, or access refused.
+    case authenticationFailed(String)
 
     var errorDescription: String? {
         switch self {
@@ -73,7 +79,7 @@ enum RFBError: LocalizedError {
         case .securityHandshakeFailed(let reason):
             return "VNC security handshake failed: \(reason)"
         case .noSupportedSecurityType(let types):
-            return "Server offered no password-less security type (offered: \(types))."
+            return "This computer's screen sharing uses a sign-in the app doesn't support (offered: \(types))."
         case .invalidFramebufferSize(let width, let height):
             return "Server advertised an invalid framebuffer (\(width)×\(height))."
         case .unexpectedMessage(let detail):
@@ -96,6 +102,10 @@ enum RFBError: LocalizedError {
             return "ZRLE decompression failed (zlib status \(status))."
         case .notConnected:
             return "The desktop stream isn't connected."
+        case .credentialsRequired:
+            return "This computer's screen sharing asks for a password."
+        case .authenticationFailed(let reason):
+            return reason
         }
     }
 }
@@ -322,6 +332,16 @@ final class RFBStreamParser {
 
     private var available: Int { buffer.count - offset }
 
+    /// Exactly `count` raw bytes, or nil (nothing consumed) until they are
+    /// buffered — for the security exchange, whose shape depends on the type
+    /// the client picked (challenges, Diffie-Hellman keys, SecurityResult).
+    func takeBytes(_ count: Int) -> [UInt8]? {
+        guard available >= count else { return nil }
+        let result = bytes(at: 0, count: count)
+        commit(count)
+        return result
+    }
+
     private func commit(_ count: Int) {
         offset += count
     }
@@ -364,6 +384,11 @@ enum RFBClientMessage {
     /// Security type selection: None (1) — x11vnc runs with `-nopw`.
     static func securitySelectionNone() -> Data {
         Data([1])
+    }
+
+    /// Security type selection by number (2 = VNC password, 30 = Apple).
+    static func securitySelection(_ type: UInt8) -> Data {
+        Data([type])
     }
 
     /// ClientInit: shared-flag 1 (the bot keeps its own session alive).
