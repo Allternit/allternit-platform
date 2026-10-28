@@ -801,7 +801,7 @@ struct MeetYourBotsView: View {
             leadPath("Connect a vendor bot", detail: "ChatGPT, Claude, Gemini, Grok and more — your own subscription, as a bot.",
                      icon: "link") { leadSheet = .vendor }
             leadPath("Make a new bot", detail: "Give it a job, a name and a look.", icon: "plus.circle") { leadSheet = .new }
-            leadPath("Import a bot", detail: "Bring in a team file you already have.", icon: "square.and.arrow.down") { leadSheet = .importBot }
+            leadPath("Import a bot", detail: "Bring in a team file or bot package you already have.", icon: "square.and.arrow.down") { leadSheet = .importBot }
             if let note = model.setupNote {
                 Text(note).font(.caption).foregroundColor(Color("TextSecondary")).fixedSize(horizontal: false, vertical: true)
             }

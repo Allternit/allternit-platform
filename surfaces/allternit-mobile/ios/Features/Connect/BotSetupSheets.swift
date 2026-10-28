@@ -9,7 +9,9 @@ import UniformTypeIdentifiers
 // main chat, like the web's `useBotTemplate(…, { runFirstTask: true })`.
 // Import reads a team file (openmaus.team v1/v2, openmaus.package, or the
 // simple `{ name, bots: [...] }` manifest — lib/bots/team-import.ts) from Files
-// or a link and makes one bot per member.
+// or a link and makes one bot per member, or a bot package (.zip with a
+// bot.json — lib/bots/bot-import.ts, see BotZipImport.swift) and makes that bot
+// with its memory, skills, tasks and docs copied to the computer.
 // -----------------------------------------------------------------------------
 
 /// What a setup sheet made.
@@ -240,6 +242,9 @@ struct ImportBotSheet: View {
     @State private var link = ""
     @State private var picking = false
     @State private var team: TeamFileParser.Team?
+    @State private var package: BotZipPackage?
+    @State private var reading = false
+    @State private var warnings: [String] = []
     @State private var busy = false
     @State private var error: String?
     @State private var made: [String] = []
@@ -258,15 +263,18 @@ struct ImportBotSheet: View {
                     }
                     .pickerStyle(.segmented)
                     if source == "file" {
-                        Button("Choose a team file") { picking = true }.disabled(busy)
+                        Button("Choose a team file or bot package") { picking = true }.disabled(busy || reading)
+                        if reading {
+                            HStack(spacing: 8) { ProgressView(); Text("Reading the file…").foregroundColor(Color("TextSecondary")) }
+                        }
                     } else {
-                        TextField("https://github.com/…/team.json", text: $link)
+                        TextField("https://github.com/…/team.json or bot.zip", text: $link)
                             .keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
                         Button("Read the file") { Task { await fetchLink() } }
                             .disabled(busy || URL(string: link.trimmingCharacters(in: .whitespaces))?.scheme?.hasPrefix("http") != true)
                     }
                 } footer: {
-                    Text("Bring in a bot team you already have: an Allternit team file (.json). Each bot comes in chat-only; you approve anything it sends.")
+                    Text("Bring in bots you already have: an Allternit team file (.json), or a bot package (.zip) exported from Allternit. A package’s memory, skills, tasks and docs are copied to your computer. Bots from a team file come in chat-only; you approve anything a bot sends.")
                 }
                 if let team {
                     Section("\(team.name) · \(team.bots.count) bot\(team.bots.count == 1 ? "" : "s")") {
@@ -286,6 +294,34 @@ struct ImportBotSheet: View {
                         }
                     }
                 }
+                if let package {
+                    let p = package.preview
+                    Section("Bot package") {
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                Text(p.name).font(.subheadline.weight(.semibold))
+                                Spacer()
+                                if !made.isEmpty {
+                                    Image(systemName: "checkmark.circle.fill").foregroundColor(Theme.statusSuccess)
+                                }
+                            }
+                            if !p.description.isEmpty {
+                                Text(p.description).font(.caption).foregroundColor(Color("TextSecondary")).lineLimit(4)
+                            }
+                        }
+                        if let category = p.category, !category.isEmpty {
+                            LabeledContent("Category", value: category.capitalized)
+                        }
+                        LabeledContent("Includes", value: p.contents.isEmpty ? "Just the bot’s settings" : p.contents.joined(separator: " · "))
+                        LabeledContent("Files", value: "\(p.fileCount)")
+                        ForEach(p.warnings, id: \.self) { Text($0).font(.footnote).foregroundColor(Color("TextSecondary")) }
+                    }
+                }
+                if !warnings.isEmpty {
+                    Section("Imported with notes") {
+                        ForEach(warnings, id: \.self) { Text($0).font(.footnote).foregroundColor(Color("TextSecondary")) }
+                    }
+                }
                 if !failures.isEmpty {
                     Section("Not imported") {
                         ForEach(failures, id: \.self) { Text($0).font(.footnote).foregroundColor(Theme.statusError) }
@@ -300,12 +336,12 @@ struct ImportBotSheet: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() }.disabled(busy) }
                 ToolbarItem(placement: .confirmationAction) {
-                    if busy { ProgressView() } else if team != nil {
+                    if busy { ProgressView() } else if team != nil || (package != nil && made.isEmpty) {
                         Button(failures.isEmpty ? "Import" : "Retry") { Task { await runImport() } }.disabled(!auth.isSignedIn)
                     }
                 }
             }
-            .fileImporter(isPresented: $picking, allowedContentTypes: [.json, .plainText]) { result in
+            .fileImporter(isPresented: $picking, allowedContentTypes: [.json, .plainText, .zip]) { result in
                 switch result {
                 case .success(let url): read(url)
                 case .failure(let e): error = e.localizedDescription
@@ -315,17 +351,41 @@ struct ImportBotSheet: View {
         }
     }
 
-    private func load(_ data: Data) {
+    private func load(_ data: Data) async {
         error = nil
         made = []
         failures = []
-        do { team = try TeamFileParser.parse(data) } catch { team = nil; self.error = error.localizedDescription }
+        warnings = []
+        team = nil
+        package = nil
+        if ZipArchive.looksLikeZip(data) {
+            reading = true
+            defer { reading = false }
+            do {
+                package = try await Task.detached(priority: .userInitiated) { try BotZipPackage.load(data) }.value
+            } catch {
+                self.error = error.localizedDescription
+            }
+            return
+        }
+        do { team = try TeamFileParser.parse(data) } catch { self.error = error.localizedDescription }
     }
 
     private func read(_ url: URL) {
         let scoped = url.startAccessingSecurityScopedResource()
         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-        do { load(try Data(contentsOf: url)) } catch { self.error = "Couldn’t read the file: \(error.localizedDescription)" }
+        if let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize, size > ZipArchive.maxTotalBytes {
+            team = nil
+            package = nil
+            error = "This file is too big. Bot packages can hold at most 50 MB of files."
+            return
+        }
+        do {
+            let data = try Data(contentsOf: url)
+            Task { await load(data) }
+        } catch {
+            self.error = "Couldn’t read the file: \(error.localizedDescription)"
+        }
     }
 
     private func fetchLink() async {
@@ -339,16 +399,20 @@ struct ImportBotSheet: View {
         do {
             let (data, response) = try await URLSession.shared.data(from: url)
             if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
-                error = "Couldn’t fetch the team file (\(http.statusCode))."
+                error = "Couldn’t fetch the file (\(http.statusCode))."
                 return
             }
-            load(data)
+            await load(data)
         } catch {
-            self.error = "Couldn’t fetch the team file: \(error.localizedDescription)"
+            self.error = "Couldn’t fetch the file: \(error.localizedDescription)"
         }
     }
 
     private func runImport() async {
+        if let package {
+            await runPackageImport(package)
+            return
+        }
         guard let team else { return }
         busy = true
         error = nil
@@ -377,5 +441,28 @@ struct ImportBotSheet: View {
         onImported(BotSetupOutcome(botIds: ids, mainBotId: main,
                                    summary: "Imported \(team.name) · \(ids.count) bot\(ids.count == 1 ? "" : "s") added"))
         if failures.isEmpty { dismiss() }
+    }
+
+    /// One bot from a .zip package (web importBotFromZip).
+    private func runPackageImport(_ package: BotZipPackage) async {
+        busy = true
+        error = nil
+        warnings = []
+        defer { busy = false }
+        let makeMain = await BotSetupMaker.needsMain()
+        do {
+            let result = try await BotZipImporter.run(package, makeMain: makeMain)
+            made = [package.preview.name]
+            warnings = result.warnings
+            AgentHubStore.shared.fetchAgentsIfNeeded(force: true)
+            let notes = result.warnings.isEmpty ? "" : " · \(result.warnings.count) file\(result.warnings.count == 1 ? "" : "s") not copied"
+            onImported(BotSetupOutcome(botIds: [result.botId], mainBotId: makeMain ? result.botId : nil,
+                                       summary: "Imported \(package.preview.name) from a bot package\(notes)"))
+            if result.warnings.isEmpty { dismiss() }
+        } catch let failure as BotZipError {
+            error = failure.message
+        } catch {
+            self.error = "Couldn’t import the bot: \(FriendlyErrorMessage.from(error.localizedDescription))"
+        }
     }
 }
