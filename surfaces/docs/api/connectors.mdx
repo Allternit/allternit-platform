@@ -180,7 +180,7 @@ curl -X POST http://127.0.0.1:8013/api/v1/connectors/some-api/connect \
 
 ## Accounts
 
-A user can have several connections of one connector. Each is one row with its own id; one row per user and connector is the default. The first connected row becomes the default. When a sign-in completes, the row's key is set from the provider's identity (email or login). Signing in again with an account that already exists updates that row and drops the pending one, so re-authorizing never makes a duplicate.
+A user can have several connections of one connector. Each is one row with its own id; one row per user and connector is the default. The first connected row becomes the default. When a sign-in completes, the row's key is set from the provider's identity (email or login). Signing in again with an account that already exists updates that row and drops the pending one, so re-authorizing never makes a duplicate. The identity comes from the token response when the provider includes it (Notion's owner, Slack's workspace), otherwise from the provider's own profile endpoint (GitHub `/user`, or the connector's `userinfo_url`). An API-key connector has no identity to read, so each added key stays a separate, unnamed account until you rename it.
 
 ```http
 GET /api/v1/connectors/gmail/accounts
