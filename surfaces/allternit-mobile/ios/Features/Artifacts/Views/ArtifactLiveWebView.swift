@@ -31,7 +31,14 @@ import WebKit
 ///
 /// The page runtime itself (sandbox-origin iframe + postMessage, the web's
 /// PageRuntimeFrame) runs unchanged inside the web view. Links that leave
-/// Allternit open in Safari. Data lives in an in-memory store shared by
+/// Allternit open in Safari.
+///
+/// Downloads and exports the web starts (MP4 export, CSV/XLSX/DOCX/PNG
+/// files, `blob:` and `data:` links, server attachments) are caught —
+/// `blob:`/`data:` by a script that reads the file and posts it back as
+/// base64, http(s) by `WKDownload` — saved to a temp file and handed to the
+/// share sheet, so the person can Save to Files or Photos. `window.print()`
+/// (the web's "PDF" exports) opens the iOS print sheet, which saves a PDF. Data lives in an in-memory store shared by
 /// these views for the app session, so nothing persists across launches.
 struct ArtifactLiveWebView: View {
     let artifact: ArtifactV2
@@ -42,8 +49,18 @@ struct ArtifactLiveWebView: View {
         case failed(String)
     }
 
+    /// What a download or export is doing.
+    enum DownloadEvent {
+        case started
+        case finished(URL)
+        case failed(String)
+    }
+
     @State private var phase: Phase = .loading
     @State private var reloadToken = 0
+    @State private var isExporting = false
+    @State private var sharedFile: SharedArtifactFile?
+    @State private var exportError: String?
 
     /// The web app that serves `/a/<id>` (DEFAULT_PUBLIC_BASE_URL in
     /// artifacts_v2.rs).
@@ -51,10 +68,30 @@ struct ArtifactLiveWebView: View {
 
     var body: some View {
         ZStack {
-            ArtifactLiveWebContainer(artifact: artifact, reloadToken: reloadToken) { next in
+            ArtifactLiveWebContainer(artifact: artifact, reloadToken: reloadToken, onPhase: { next in
                 phase = next
-            }
+            }, onDownload: { event in
+                switch event {
+                case .started:
+                    isExporting = true
+                case .finished(let url):
+                    isExporting = false
+                    sharedFile = SharedArtifactFile(url: url)
+                case .failed(let message):
+                    isExporting = false
+                    exportError = message
+                }
+            })
             .opacity(phase == .ready ? 1 : 0.001)
+
+            if isExporting {
+                VStack {
+                    Spacer()
+                    ArtifactExportProgressPill(label: "Preparing download…")
+                        .padding(.bottom, 24)
+                }
+                .transition(.opacity)
+            }
 
             switch phase {
             case .loading:
@@ -75,6 +112,16 @@ struct ArtifactLiveWebView: View {
                 )
                 .background(Color("BgPrimary"))
             }
+        }
+        .animation(.easeOut(duration: 0.2), value: isExporting)
+        .sheet(item: $sharedFile) { file in
+            ArtifactShareSheet(items: [file.url])
+                .presentationDetents([.medium, .large])
+        }
+        .alert("Couldn't save the file", isPresented: Binding(get: { exportError != nil }, set: { if !$0 { exportError = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(exportError ?? "")
         }
     }
 
@@ -148,14 +195,16 @@ private struct ArtifactLiveWebContainer: UIViewRepresentable {
     let artifact: ArtifactV2
     let reloadToken: Int
     let onPhase: (ArtifactLiveWebView.Phase) -> Void
+    let onDownload: (ArtifactLiveWebView.DownloadEvent) -> Void
 
     static let clerkHandlerName = "allternitClerk"
+    static let downloadHandlerName = "allternitDownload"
 
     /// One in-memory store for every live artifact view this launch: the web
     /// bundle stays cached between opens, and nothing outlives the process.
     @MainActor private static let dataStore = WKWebsiteDataStore.nonPersistent()
 
-    func makeCoordinator() -> Coordinator { Coordinator(onPhase: onPhase) }
+    func makeCoordinator() -> Coordinator { Coordinator(onPhase: onPhase, onDownload: onDownload) }
 
     func makeUIView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
@@ -179,6 +228,13 @@ private struct ArtifactLiveWebContainer: UIViewRepresentable {
             forMainFrameOnly: true,
             in: .page
         ))
+        controller.add(context.coordinator.downloadHandler, contentWorld: .page, name: Self.downloadHandlerName)
+        controller.addUserScript(WKUserScript(
+            source: Self.downloadScript,
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: false,
+            in: .page
+        ))
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator
@@ -193,6 +249,7 @@ private struct ArtifactLiveWebContainer: UIViewRepresentable {
 
     func updateUIView(_ webView: WKWebView, context: Context) {
         context.coordinator.onPhase = onPhase
+        context.coordinator.onDownload = onDownload
         if context.coordinator.reloadToken != reloadToken {
             context.coordinator.reloadToken = reloadToken
             context.coordinator.load(Self.pageURL(for: artifact), into: webView)
@@ -203,6 +260,7 @@ private struct ArtifactLiveWebContainer: UIViewRepresentable {
         let controller = webView.configuration.userContentController
         controller.removeScriptMessageHandler(forName: AuthenticatedWebBridge.handlerName, contentWorld: .page)
         controller.removeScriptMessageHandler(forName: clerkHandlerName, contentWorld: .page)
+        controller.removeScriptMessageHandler(forName: downloadHandlerName, contentWorld: .page)
         controller.removeAllUserScripts()
     }
 
@@ -256,6 +314,86 @@ private struct ArtifactLiveWebContainer: UIViewRepresentable {
         """
     }
 
+    /// Runs in every frame: `blob:`/`data:` download links (clicked, or
+    /// `a.click()` on a detached anchor) are read in the page and posted to
+    /// the app as base64; `window.print()` asks the app for the print sheet,
+    /// with the frame's HTML when a hidden frame prints (printHtml).
+    static let downloadScript = """
+    (function () {
+      if (window.__allternitDownloads) return;
+      window.__allternitDownloads = true;
+      var handlers = window.webkit && window.webkit.messageHandlers;
+      var h = handlers && handlers.\(downloadHandlerName);
+      if (!h) return;
+      var MAX = \(ArtifactFileShare.maxBytes);
+      function post(m) { try { h.postMessage(m); } catch (e) {} }
+      function save(href, name) {
+        post({ stage: 'start' });
+        fetch(href).then(function (r) { return r.blob(); }).then(function (b) {
+          if (b.size > MAX) { post({ error: 'tooLarge' }); return; }
+          var fr = new FileReader();
+          fr.onload = function () {
+            var s = String(fr.result || '');
+            var i = s.indexOf(',');
+            post({ name: name || '', mime: b.type || '', data: i >= 0 ? s.slice(i + 1) : '' });
+          };
+          fr.onerror = function () { post({ error: 'read' }); };
+          fr.readAsDataURL(b);
+        }).catch(function () { post({ error: 'read' }); });
+      }
+      window.__allternitSaveURL = save;
+      function intercept(a) {
+        var href = (a && a.href) || '';
+        if (!/^(blob|data):/i.test(href)) return false;
+        save(href, a.getAttribute('download') || '');
+        return true;
+      }
+      document.addEventListener('click', function (e) {
+        var t = e.target;
+        var a = t && t.closest ? t.closest('a[href]') : null;
+        if (a && intercept(a)) e.preventDefault();
+      }, true);
+      var nativeClick = HTMLAnchorElement.prototype.click;
+      HTMLAnchorElement.prototype.click = function () {
+        if (!this.isConnected && intercept(this)) return;
+        return nativeClick.apply(this, arguments);
+      };
+      window.print = function () {
+        post(window === window.top ? { kind: 'print' } : { kind: 'print', html: document.documentElement.outerHTML });
+      };
+      try {
+        var desc = Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype, 'contentWindow');
+        if (desc && desc.get) {
+          Object.defineProperty(HTMLIFrameElement.prototype, 'contentWindow', {
+            configurable: true,
+            enumerable: desc.enumerable,
+            get: function () {
+              var w = desc.get.call(this);
+              try {
+                if (w && w.document && !w.__allternitPrint) {
+                  w.__allternitPrint = true;
+                  w.print = function () { post({ kind: 'print', html: w.document.documentElement.outerHTML }); };
+                }
+              } catch (e) {}
+              return w;
+            }
+          });
+        }
+      } catch (e) {}
+    })();
+    """
+
+    /// Files posted by `downloadScript`.
+    @MainActor
+    final class DownloadHandler: NSObject, WKScriptMessageHandler {
+        weak var coordinator: Coordinator?
+
+        func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+            guard let body = message.body as? [String: Any] else { return }
+            coordinator?.handleScriptMessage(body, isMainFrame: message.frameInfo.isMainFrame, webView: message.webView)
+        }
+    }
+
     /// Bearer for `AuthenticatedWebBridge` (Clerk first, then the runtime
     /// device token, like every other v2 call).
     @MainActor
@@ -282,15 +420,137 @@ private struct ArtifactLiveWebContainer: UIViewRepresentable {
     }
 
     @MainActor
-    final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
+    final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
         let authHandler = AuthHandler()
         let clerkHandler = ClerkHandler()
+        let downloadHandler = DownloadHandler()
         var onPhase: (ArtifactLiveWebView.Phase) -> Void
+        var onDownload: (ArtifactLiveWebView.DownloadEvent) -> Void
         var reloadToken = 0
         private var pageURL: URL?
+        /// Where each running WKDownload is being written.
+        private var downloadDestinations: [ObjectIdentifier: URL] = [:]
+        private var isPrinting = false
 
-        init(onPhase: @escaping (ArtifactLiveWebView.Phase) -> Void) {
+        init(onPhase: @escaping (ArtifactLiveWebView.Phase) -> Void,
+             onDownload: @escaping (ArtifactLiveWebView.DownloadEvent) -> Void) {
             self.onPhase = onPhase
+            self.onDownload = onDownload
+            super.init()
+            downloadHandler.coordinator = self
+        }
+
+        // MARK: Downloads from the page script
+
+        func handleScriptMessage(_ body: [String: Any], isMainFrame: Bool, webView: WKWebView?) {
+            if body["kind"] as? String == "print" {
+                presentPrint(html: body["html"] as? String, webView: webView)
+                return
+            }
+            if body["stage"] as? String == "start" {
+                onDownload(.started)
+                return
+            }
+            if let error = body["error"] as? String {
+                onDownload(.failed(error == "tooLarge"
+                    ? (ArtifactFileShare.ShareError.tooLarge.errorDescription ?? "")
+                    : "The file couldn't be read. Try the export again."))
+                return
+            }
+            guard let base64 = body["data"] as? String else { return }
+            let name = body["name"] as? String
+            let mime = body["mime"] as? String
+            Task {
+                let result: Result<URL, Error> = await Task.detached(priority: .userInitiated) {
+                    guard let data = Data(base64Encoded: base64, options: .ignoreUnknownCharacters) else {
+                        return .failure(ArtifactFileShare.ShareError.empty)
+                    }
+                    return Result { try ArtifactFileShare.write(data, suggestedName: name, mimeType: mime) }
+                }.value
+                switch result {
+                case .success(let url): self.onDownload(.finished(url))
+                case .failure(let error): self.onDownload(.failed(error.localizedDescription))
+                }
+            }
+        }
+
+        /// Reads a `blob:`/`data:` URL inside the page (only the page can).
+        private func saveInPage(_ url: URL, webView: WKWebView) {
+            let js = "window.__allternitSaveURL && window.__allternitSaveURL(\(ArtifactHTML.jsString(url.absoluteString)), '')"
+            webView.evaluateJavaScript(js, completionHandler: nil)
+        }
+
+        /// The iOS print sheet: prints the live page, or a hidden frame's
+        /// HTML. Its Share button saves the PDF to Files.
+        private func presentPrint(html: String?, webView: WKWebView?) {
+            guard !isPrinting else { return }
+            let controller = UIPrintInteractionController.shared
+            let info = UIPrintInfo(dictionary: nil)
+            info.outputType = .general
+            info.jobName = webView?.title.flatMap { $0.isEmpty ? nil : $0 } ?? "Artifact"
+            controller.printInfo = info
+            if let html, !html.isEmpty {
+                controller.printFormatter = UIMarkupTextPrintFormatter(markupText: html)
+            } else if let webView {
+                controller.printFormatter = webView.viewPrintFormatter()
+            } else {
+                return
+            }
+            isPrinting = true
+            controller.present(animated: true) { [weak self] _, _, _ in
+                Task { @MainActor in self?.isPrinting = false }
+            }
+        }
+
+        // MARK: WKDownload (http(s) attachments and anything WebKit downloads)
+
+        func webView(_ webView: WKWebView, navigationAction: WKNavigationAction, didBecome download: WKDownload) {
+            download.delegate = self
+            onDownload(.started)
+        }
+
+        func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload) {
+            download.delegate = self
+            onDownload(.started)
+        }
+
+        func download(_ download: WKDownload, decideDestinationUsing response: URLResponse, suggestedFilename: String) async -> URL? {
+            if response.expectedContentLength > Int64(ArtifactFileShare.maxBytes) {
+                onDownload(.failed(ArtifactFileShare.ShareError.tooLarge.errorDescription ?? ""))
+                return nil
+            }
+            let name = ArtifactFileShare.fileName(suggestedFilename, mimeType: response.mimeType)
+            guard let url = try? ArtifactFileShare.destination(named: name) else {
+                onDownload(.failed("The file couldn't be saved on this phone."))
+                return nil
+            }
+            downloadDestinations[ObjectIdentifier(download)] = url
+            return url
+        }
+
+        func downloadDidFinish(_ download: WKDownload) {
+            if let url = downloadDestinations.removeValue(forKey: ObjectIdentifier(download)) {
+                onDownload(.finished(url))
+            }
+        }
+
+        func download(_ download: WKDownload, didFailWithError error: Error, resumeData: Data?) {
+            let hadDestination = downloadDestinations.removeValue(forKey: ObjectIdentifier(download)) != nil
+            let nsError = error as NSError
+            if nsError.domain == NSURLErrorDomain, nsError.code == NSURLErrorCancelled, !hadDestination { return }
+            onDownload(.failed(FriendlyErrorMessage.from(error.localizedDescription)))
+        }
+
+        func webView(_ webView: WKWebView,
+                     decidePolicyFor navigationResponse: WKNavigationResponse,
+                     decisionHandler: @escaping @MainActor @Sendable (WKNavigationResponsePolicy) -> Void) {
+            let disposition = (navigationResponse.response as? HTTPURLResponse)?
+                .value(forHTTPHeaderField: "Content-Disposition")?.lowercased() ?? ""
+            if !navigationResponse.canShowMIMEType || disposition.hasPrefix("attachment") {
+                decisionHandler(.download)
+            } else {
+                decisionHandler(.allow)
+            }
         }
 
         func load(_ url: URL, into webView: WKWebView) {
@@ -307,6 +567,15 @@ private struct ArtifactLiveWebContainer: UIViewRepresentable {
         func webView(_ webView: WKWebView,
                      decidePolicyFor navigationAction: WKNavigationAction,
                      decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void) {
+            if navigationAction.shouldPerformDownload {
+                if let url = navigationAction.request.url, let scheme = url.scheme?.lowercased(), ["blob", "data"].contains(scheme) {
+                    saveInPage(url, webView: webView)
+                    decisionHandler(.cancel)
+                } else {
+                    decisionHandler(.download)
+                }
+                return
+            }
             // Frames (the page runtime's sandbox origin, embeds) load freely;
             // the main frame stays on the artifact route.
             guard navigationAction.targetFrame?.isMainFrame ?? false, let url = navigationAction.request.url else {
@@ -317,7 +586,10 @@ private struct ArtifactLiveWebContainer: UIViewRepresentable {
                 decisionHandler(.allow)
                 return
             }
-            if let scheme = url.scheme?.lowercased(), ["http", "https", "mailto", "tel"].contains(scheme) {
+            if let scheme = url.scheme?.lowercased(), ["blob", "data"].contains(scheme) {
+                // `location = blobURL` / opening a data URL: save it.
+                saveInPage(url, webView: webView)
+            } else if let scheme = url.scheme?.lowercased(), ["http", "https", "mailto", "tel"].contains(scheme) {
                 UIApplication.shared.open(url)
             }
             decisionHandler(.cancel)
@@ -327,8 +599,13 @@ private struct ArtifactLiveWebContainer: UIViewRepresentable {
                      createWebViewWith configuration: WKWebViewConfiguration,
                      for navigationAction: WKNavigationAction,
                      windowFeatures: WKWindowFeatures) -> WKWebView? {
-            if let url = navigationAction.request.url, let scheme = url.scheme?.lowercased(), ["http", "https"].contains(scheme) {
-                UIApplication.shared.open(url)
+            if let url = navigationAction.request.url, let scheme = url.scheme?.lowercased() {
+                if ["blob", "data"].contains(scheme) {
+                    // `window.open(blobURL)` for an export: save it.
+                    saveInPage(url, webView: webView)
+                } else if ["http", "https"].contains(scheme) {
+                    UIApplication.shared.open(url)
+                }
             }
             return nil
         }

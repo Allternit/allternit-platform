@@ -5,9 +5,14 @@ import Foundation
 /// src/lib/artifacts/editors/{doc,sheet,slides}-body.ts):
 ///
 /// - doc: `application/vnd.allternit.doc+json` `{title, blocks, markdown}` —
-///   paragraph, heading and list-item text is editable; tables, images and
-///   dividers are kept as they are. `markdown` is regenerated like
-///   `documentToMarkdown`. Markdown / plain-text docs stay markdown.
+///   paragraph, heading, list-item and table-cell text is editable; images,
+///   dividers and cells holding more than one block are kept as they are.
+///   `markdown` is regenerated like `documentToMarkdown`. Markdown /
+///   plain-text docs stay markdown.
+/// - tabbed doc (doc-tabs.ts): `{title, tabs:[{id, title, body}], markdown}`
+///   — each tab's body is an ordinary doc body, edited as above, and the
+///   whole thing is written back like `writeTabs` (a single tab collapses
+///   to that tab's body).
 /// - sheet: `application/vnd.allternit.sheet+json` workbook — the first
 ///   sheet's `cells["row:col"]` plus the top-level `rows` matrix
 ///   (`serializeSheet`). Other bodies (`{columns, rows}`, arrays, CSV) are
@@ -30,7 +35,10 @@ enum ArtifactBodyEditing {
             case paragraph
             case heading(Int)
             case listItem(numbered: Bool, number: Int)
-            /// Not editable on the phone (table, image, divider…): shown as a label.
+            /// A table cell (`path` = [block, row, cell]). Cells that hold
+            /// anything but one paragraph/heading show their text read-only.
+            case tableCell(row: Int, column: Int, editable: Bool)
+            /// Not editable on the phone (image, divider…): shown as a label.
             case fixed(String)
         }
         let id: String
@@ -39,6 +47,17 @@ enum ArtifactBodyEditing {
         let role: Role
         let original: String
         var text: String
+    }
+
+    /// One tab of a tabbed doc. `model` is nil when the phone can't edit
+    /// that tab's body (it's kept as it is).
+    struct DocTab: Identifiable, Equatable, Sendable {
+        let id: String
+        let title: String
+        let originalBody: String
+        var model: Model?
+
+        var hasChanges: Bool { model?.hasChanges ?? false }
     }
 
     struct SheetGrid: Equatable, Sendable {
@@ -78,6 +97,7 @@ enum ArtifactBodyEditing {
         case markdown(String, original: String)
         case docBlocks([DocBlock])
         case docMarkdownField(String, original: String)
+        case docTabs([DocTab])
         case sheet(SheetGrid)
         case blockSlides([BlockSlide])
         case simpleSlides([SimpleSlide])
@@ -88,6 +108,8 @@ enum ArtifactBodyEditing {
                 return text != original
             case .docBlocks(let blocks):
                 return blocks.contains { $0.text != $0.original }
+            case .docTabs(let tabs):
+                return tabs.contains(where: \.hasChanges)
             case .sheet(let grid):
                 return grid.rows != grid.original
             case .blockSlides(let slides):
@@ -133,8 +155,8 @@ enum ArtifactBodyEditing {
 
     // MARK: Build
 
-    /// The editable model for a body, or nil when the phone can't edit it
-    /// (e.g. a multi-tab doc), which keeps the viewer read-only.
+    /// The editable model for a body, or nil when the phone can't edit it,
+    /// which keeps the viewer read-only.
     static func model(kind: String, body: String, format: String) -> Model? {
         switch kind {
         case "doc": return docModel(body: body, format: format)
@@ -148,10 +170,50 @@ enum ArtifactBodyEditing {
         ((content as? [Any]) ?? []).map { cellText(($0 as? [String: Any])?["text"]) }.joined()
     }
 
-    private static func docModel(body: String, format: String) -> Model? {
+    /// A tab body's own format (doc-tabs.ts `formatOf`).
+    static func tabFormat(_ body: String) -> String {
+        body.drop(while: { $0.isWhitespace }).hasPrefix("{") ? docFormat : "text/markdown"
+    }
+
+    /// Port of doc-tabs.ts `readTabs` (tabs only — a plain doc returns nil).
+    private static func readTabs(_ root: [String: Any]) -> [(id: String, title: String, body: String)]? {
+        guard let raw = root["tabs"] as? [Any], !raw.isEmpty else { return nil }
+        return raw.enumerated().map { i, item in
+            let t = item as? [String: Any] ?? [:]
+            let body: String
+            if let b = t["body"] as? String {
+                body = b
+            } else if let md = t["markdown"] as? String {
+                body = md
+            } else {
+                let doc = t["doc"] ?? [String: Any]()
+                body = JSONSerialization.isValidJSONObject(doc) ? ((try? string(doc)) ?? "{}") : "{}"
+            }
+            let id = (t["id"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "t\(i + 1)"
+            let title = (t["title"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "Tab \(i + 1)"
+            return (id, title, body)
+        }
+    }
+
+    /// A table cell's text when it is one paragraph/heading (or empty).
+    private static func editableCellText(_ cellBlocks: [Any]) -> String? {
+        if cellBlocks.isEmpty { return "" }
+        guard cellBlocks.count == 1, let only = cellBlocks[0] as? [String: Any],
+              ["paragraph", "heading"].contains(only["type"] as? String ?? "") else { return nil }
+        return runsText(only["content"])
+    }
+
+    private static func docModel(body: String, format: String, allowTabs: Bool = true) -> Model? {
         if format == "text/markdown" || format == "text/plain" { return .markdown(body, original: body) }
         guard let root = parse(body) as? [String: Any] else {
             return format.hasPrefix("text/") ? .markdown(body, original: body) : nil
+        }
+        // Tabs first, like the web's DocTabsEditor (readTabs before parseDocBody).
+        if allowTabs, let tabs = readTabs(root) {
+            return .docTabs(tabs.map { tab in
+                DocTab(id: tab.id, title: tab.title, originalBody: tab.body,
+                       model: docModel(body: tab.body, format: tabFormat(tab.body), allowTabs: false))
+            })
         }
         if let blocks = root["blocks"] as? [Any] {
             var out: [DocBlock] = []
@@ -176,7 +238,21 @@ enum ArtifactBodyEditing {
                             out.append(DocBlock(id: "\(i).\(j)", path: [i, j], role: .fixed("Nested item"), original: "", text: ""))
                         }
                     }
-                case "table": out.append(DocBlock(id: "\(i)", path: [i], role: .fixed("Table"), original: "", text: ""))
+                case "table":
+                    var cellCount = 0
+                    for (r, rowRaw) in ((block["rows"] as? [Any]) ?? []).enumerated() {
+                        for (c, cellRaw) in (((rowRaw as? [String: Any])?["cells"] as? [Any]) ?? []).enumerated() {
+                            let cell = cellRaw as? [String: Any]
+                            let cellBlocks = (cell?["blocks"] as? [Any]) ?? []
+                            let editable = cell != nil ? editableCellText(cellBlocks) : nil
+                            let text = editable ?? cellBlocks.map(blockMarkdown).joined(separator: " ")
+                            out.append(DocBlock(id: "\(i).r\(r).c\(c)", path: [i, r, c],
+                                                role: .tableCell(row: r, column: c, editable: editable != nil),
+                                                original: text, text: text))
+                            cellCount += 1
+                        }
+                    }
+                    if cellCount == 0 { out.append(DocBlock(id: "\(i)", path: [i], role: .fixed("Table"), original: "", text: "")) }
                 case "image": out.append(DocBlock(id: "\(i)", path: [i], role: .fixed("Image"), original: "", text: ""))
                 case "divider": out.append(DocBlock(id: "\(i)", path: [i], role: .fixed("Divider"), original: "", text: ""))
                 default: out.append(DocBlock(id: "\(i)", path: [i], role: .fixed("Block"), original: "", text: ""))
@@ -184,7 +260,7 @@ enum ArtifactBodyEditing {
             }
             return .docBlocks(out)
         }
-        // Several tabs are edited on the web, where each tab has its own editor.
+        // A tab whose body is itself tabbed: the web doesn't nest tabs either.
         if root["tabs"] != nil { return nil }
         if let markdown = root["markdown"] as? String { return .docMarkdownField(markdown, original: markdown) }
         return nil
@@ -272,6 +348,8 @@ enum ArtifactBodyEditing {
             return (try string(root), originalFormat)
         case .docBlocks(let edits):
             return (try serializeDoc(edits, originalBody: originalBody, title: title), docFormat)
+        case .docTabs(let tabs):
+            return try serializeTabs(tabs, title: title)
         case .sheet(let grid):
             return (try serializeSheet(grid, originalBody: originalBody, title: title), sheetFormat)
         case .blockSlides(let slides):
@@ -306,6 +384,22 @@ enum ArtifactBodyEditing {
             if edit.path.count == 1, var block = blocks[safe: edit.path[0]] as? [String: Any] {
                 block["content"] = runs(for: edit.text, replacing: block["content"])
                 blocks[edit.path[0]] = block
+            } else if edit.path.count == 3, var table = blocks[safe: edit.path[0]] as? [String: Any],
+                      var rows = table["rows"] as? [Any], var row = rows[safe: edit.path[1]] as? [String: Any],
+                      var cells = row["cells"] as? [Any], var cell = cells[safe: edit.path[2]] as? [String: Any] {
+                var cellBlocks = (cell["blocks"] as? [Any]) ?? []
+                if var first = cellBlocks.first as? [String: Any] {
+                    first["content"] = runs(for: edit.text, replacing: first["content"])
+                    cellBlocks[0] = first
+                } else {
+                    cellBlocks = [["type": "paragraph", "content": [["text": edit.text]]]]
+                }
+                cell["blocks"] = cellBlocks
+                cells[edit.path[2]] = cell
+                row["cells"] = cells
+                rows[edit.path[1]] = row
+                table["rows"] = rows
+                blocks[edit.path[0]] = table
             } else if edit.path.count == 2, var list = blocks[safe: edit.path[0]] as? [String: Any],
                       var items = list["items"] as? [Any], var item = items[safe: edit.path[1]] as? [String: Any] {
                 item["content"] = runs(for: edit.text, replacing: item["content"])
@@ -318,6 +412,31 @@ enum ArtifactBodyEditing {
         if root["title"] == nil { root["title"] = title }
         root["markdown"] = blocks.map(blockMarkdown).filter { !$0.isEmpty }.joined(separator: "\n\n")
         return try string(root)
+    }
+
+    /// Port of doc-tabs.ts `writeTabs`: one tab collapses to its own body;
+    /// several become `{title, tabs:[{id, title, body}], markdown}` with every
+    /// tab joined under its title in `markdown`.
+    private static func serializeTabs(_ tabs: [DocTab], title: String) throws -> (body: String, format: String) {
+        var written: [(id: String, title: String, body: String)] = []
+        for tab in tabs {
+            var body = tab.originalBody
+            if let model = tab.model, model.hasChanges {
+                body = try serialize(model, kind: "doc", originalBody: tab.originalBody,
+                                     originalFormat: tabFormat(tab.originalBody), title: tab.title).body
+            }
+            written.append((tab.id, tab.title, body))
+        }
+        if written.count == 1, let only = written.first { return (only.body, tabFormat(only.body)) }
+        let markdown = written.map { tab in
+            "# \(tab.title)\n\n\(ArtifactBodyDecoder.docMarkdown(body: tab.body, format: tabFormat(tab.body)) ?? tab.body)"
+        }.joined(separator: "\n\n")
+        let root: [String: Any] = [
+            "title": title,
+            "tabs": written.map { ["id": $0.id, "title": $0.title, "body": $0.body] },
+            "markdown": markdown,
+        ]
+        return (try string(root), docFormat)
     }
 
     // Port of file-io.ts runsToMarkdown / blockToMarkdown.
