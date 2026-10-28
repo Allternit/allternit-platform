@@ -61,6 +61,16 @@ export interface UsbPhoneBackend {
   call(name: string, serial: string, args: Record<string, unknown>): Promise<ToolResult>;
 }
 
+/**
+ * iPhones connected with the Allternit App Store app (phone-app-store.ts).
+ * Serials start with "app:". The screen and the app's own browser only.
+ */
+export interface AppPhoneLane extends UsbPhoneBackend {
+  /** Re-reads the node's phone list when stale. Never throws. */
+  refresh(): Promise<void>;
+  devices(): Array<{ serial: string; platform: 'ios'; via: 'allternit-app'; route: 'iphone-app-store'; name: string; screen: boolean; note: string }>;
+}
+
 /** A Phone-Linked phone as phone.devices lists it, health included. */
 export interface LinkedPhoneDevice {
   serial: string;
@@ -106,6 +116,8 @@ export interface PhoneToolDeps {
   activity?: (serial: string, delta: number) => void;
   /** Phone-Linked phones, when any are linked. Consulted exactly like usb. */
   links?: () => PhoneLinkBackend | null;
+  /** iPhones with the Allternit app (serial "app:…"): screen + the app's browser. */
+  apps?: () => AppPhoneLane | null;
   /**
    * An approved dial went out (phone-call-bridge.ts): true when the phone has
    * Call audio set up, so the bot joins the call once it connects.
@@ -150,7 +162,11 @@ export type ToolErrorCode =
   // Android Phone Link: the accessibility service is off, so no screen read or tap works
   | 'accessibility_off'
   // element lookup (phone.find_and_tap)
-  | 'not_found';
+  | 'not_found'
+  // iPhone with the Allternit app (app:…): no taps on native apps without the Bluetooth board
+  | 'not_supported'
+  // phone.web.*: the Allternit app is not open on the iPhone
+  | 'app_not_open';
 
 export type ToolResult =
   | { ok: true; [key: string]: unknown }
@@ -165,17 +181,18 @@ const fail = (error: ToolErrorCode, message: string, extra: { retryAfterSec?: nu
 
 // ── Tool catalogue (what the MCP shim advertises) ───────────────────────────
 
-const serialProp = { type: 'string', description: 'Phone serial from phone.devices: Android phones as "host:port", iPhones on a USB Agent as "usb:…", Phone-Linked phones as "link:…". Optional when exactly one phone is online.' };
+const serialProp = { type: 'string', description: 'Phone serial from phone.devices: Android phones as "host:port", iPhones on a USB Agent as "usb:…", Phone-Linked phones as "link:…", iPhones with the Allternit app as "app:…". Optional when exactly one phone is online.' };
+const appSerialProp = { type: 'string', description: 'An iPhone connected with the Allternit app ("app:…" from phone.devices). Optional when it is the only phone online.' };
 
 export const PHONE_TOOLS = [
   {
     name: 'phone.devices',
-    description: 'List connected phones: Android phones (adb), iPhones on an Allternit USB Agent (serial "usb:…"), and Phone-Linked phones with the AI apps signed in (serial "link:…", with per-phone health).',
+    description: 'List connected phones: Android phones (adb), iPhones on an Allternit USB Agent (serial "usb:…"), Phone-Linked phones with the AI apps signed in (serial "link:…", with per-phone health), and iPhones with the Allternit app (serial "app:…", route "iphone-app-store": screen only plus the app\'s browser through phone.web.*; screen says whether the screen is shared now).',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
     name: 'phone.screenshot',
-    description: 'Take a screenshot of the phone. Returns a base64 image (PNG on Android, JPEG of the AirPlay mirror on USB-Agent iPhones, JPEG on Phone-Linked phones) with its width and height. Tap coordinates are pixels of this image; on Phone-Linked phones coordinate_space says the space taps use ("pixels", or "points" when the image is 1:1 points).',
+    description: 'Take a screenshot of the phone. Returns a base64 image (PNG on Android, JPEG of the AirPlay mirror on USB-Agent iPhones, JPEG on Phone-Linked phones and on iPhones with the Allternit app, where it is the latest frame of the shared screen) with its width and height. Tap coordinates are pixels of this image; on Phone-Linked phones coordinate_space says the space taps use ("pixels", or "points" when the image is 1:1 points).',
     inputSchema: { type: 'object', properties: { serial: serialProp }, additionalProperties: false },
   },
   {
@@ -332,6 +349,71 @@ export const PHONE_TOOLS = [
       type: 'object',
       properties: { serial: serialProp, number: { type: 'string' }, subscription_id: { type: 'integer', minimum: 0 } },
       required: ['number'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'phone.screen.request',
+    description: 'iPhone with the Allternit app ("app:…") only: ask the person to share the screen. The app shows the Share screen sheet (only the person can start it). Returns shown and live; once live, use phone.screenshot.',
+    inputSchema: { type: 'object', properties: { serial: appSerialProp }, additionalProperties: false },
+  },
+  {
+    name: 'phone.web.open',
+    description: 'iPhone with the Allternit app ("app:…") only: open a web page in the app\'s own browser. The app must be open on the phone. Then phone.web.snapshot to see it.',
+    inputSchema: {
+      type: 'object',
+      properties: { serial: appSerialProp, url: { type: 'string', maxLength: 2048, description: 'An http or https address.' } },
+      required: ['url'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'phone.web.snapshot',
+    description: 'iPhone with the Allternit app only: the app browser\'s page as url, title, a JPEG and elements [{ref, role, name, text, value?, bounds}]. Refs are valid only until the next snapshot; act with phone.web.click / phone.web.type.',
+    inputSchema: { type: 'object', properties: { serial: appSerialProp }, additionalProperties: false },
+  },
+  {
+    name: 'phone.web.click',
+    description: 'iPhone with the Allternit app only: click an element of the app\'s browser by its ref from the latest phone.web.snapshot.',
+    inputSchema: {
+      type: 'object',
+      properties: { serial: appSerialProp, ref: { type: 'string', maxLength: 200 } },
+      required: ['ref'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'phone.web.type',
+    description: 'iPhone with the Allternit app only: type into a field of the app\'s browser by its ref from the latest phone.web.snapshot (replaces its text). submit presses return after.',
+    inputSchema: {
+      type: 'object',
+      properties: { serial: appSerialProp, ref: { type: 'string', maxLength: 200 }, text: { type: 'string', maxLength: 2000 }, submit: { type: 'boolean' } },
+      required: ['ref', 'text'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'phone.web.scroll',
+    description: 'iPhone with the Allternit app only: scroll the app\'s browser page by dy points (positive = down).',
+    inputSchema: {
+      type: 'object',
+      properties: { serial: appSerialProp, dy: { type: 'integer', minimum: -20000, maximum: 20000 } },
+      required: ['dy'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'phone.web.back',
+    description: 'iPhone with the Allternit app only: go back one page in the app\'s browser.',
+    inputSchema: { type: 'object', properties: { serial: appSerialProp }, additionalProperties: false },
+  },
+  {
+    name: 'phone.web.wait',
+    description: 'iPhone with the Allternit app only: wait up to ms milliseconds (max 10000) for the app\'s browser page to settle.',
+    inputSchema: {
+      type: 'object',
+      properties: { serial: appSerialProp, ms: { type: 'integer', minimum: 0, maximum: 10000 } },
+      required: ['ms'],
       additionalProperties: false,
     },
   },
@@ -654,21 +736,29 @@ export class PhoneToolRunner {
 
   /** The one connected phone, when there is exactly one. */
   private onlyOnline(): string | null {
-    const online = [...this.deps.onlineSerials(), ...(this.deps.usb?.()?.serials() ?? []), ...(this.deps.links?.()?.serials() ?? [])];
+    const online = [
+      ...this.deps.onlineSerials(),
+      ...(this.deps.usb?.()?.serials() ?? []),
+      ...(this.deps.links?.()?.serials() ?? []),
+      ...(this.deps.apps?.()?.serials() ?? []),
+    ];
     return online.length === 1 ? online[0] : null;
   }
 
   private async dispatch(name: string, a: Record<string, unknown>): Promise<ToolResult> {
     const usb = this.deps.usb?.() ?? null;
     const links = this.deps.links?.() ?? null;
+    const apps = this.deps.apps?.() ?? null;
+    await apps?.refresh();
     if (name === 'phone.devices') {
       const android = this.deps.onlineSerials();
       const iphones = usb?.serials() ?? [];
       const linked = links ? await links.linkedDevices() : [];
+      const appPhones = apps?.devices() ?? [];
       return {
         ok: true,
-        serials: [...android, ...iphones, ...linked.map((d) => d.serial)],
-        devices: [...android.map((serial) => ({ serial, platform: 'android' })), ...iphones.map((serial) => ({ serial, platform: 'ios', via: 'usb-agent' })), ...linked],
+        serials: [...android, ...iphones, ...linked.map((d) => d.serial), ...appPhones.map((d) => d.serial)],
+        devices: [...android.map((serial) => ({ serial, platform: 'android' })), ...iphones.map((serial) => ({ serial, platform: 'ios', via: 'usb-agent' })), ...linked, ...appPhones],
       };
     }
 
@@ -677,8 +767,13 @@ export class PhoneToolRunner {
 
     if (name === 'phone.skills' || name === 'phone.save_skill') return this.skillCall(name, a);
 
-    const serial = this.resolveSerial(a.serial, usb, links);
+    const serial = this.resolveSerial(a.serial, usb, links, apps);
     if (typeof serial !== 'string') return serial;
+    // iPhones with the Allternit app: the screen and the app's browser, nothing that taps.
+    if (apps?.has(serial)) return apps.call(name, serial, a);
+    if (name.startsWith('phone.web.') || name === 'phone.screen.request') {
+      return fail('not_supported', `${name} works on an iPhone connected with the Allternit app (serial "app:…"). On this phone use phone.screenshot, phone.open_app, phone.tap and phone.type.`);
+    }
     // Every lane: phone.task runs on the bot's brain in allternit-api; skills replay there too.
     if (name === 'phone.task') return this.task(serial, a, usb, links);
     if (name === 'phone.run_skill') return this.skillCall(name, { ...a, serial });
@@ -766,10 +861,12 @@ export class PhoneToolRunner {
     });
   }
 
-  private resolveSerial(raw: unknown, usb: UsbPhoneBackend | null, links: PhoneLinkBackend | null): string | ToolResult {
-    const online = [...this.deps.onlineSerials(), ...(usb?.serials() ?? []), ...(links?.serials() ?? [])];
+  private resolveSerial(raw: unknown, usb: UsbPhoneBackend | null, links: PhoneLinkBackend | null, apps: AppPhoneLane | null): string | ToolResult {
+    const online = [...this.deps.onlineSerials(), ...(usb?.serials() ?? []), ...(links?.serials() ?? []), ...(apps?.serials() ?? [])];
     if (raw !== undefined) {
       if (typeof raw !== 'string' || !raw) return fail('invalid_args', 'serial must be a non-empty string.');
+      // A paired app iPhone takes phone.web.* while the app is open, even when its screen isn't shared.
+      if (apps?.has(raw)) return raw;
       if (!online.includes(raw)) return fail('device_offline', `Phone ${raw} is not connected.`);
       return raw;
     }
