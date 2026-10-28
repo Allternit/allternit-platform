@@ -1773,9 +1773,12 @@ const message = await createUserMessage(input)
           )
         }
 
+        // A tool its server marks destructive still asks in an app session's
+        // auto mode (PermissionNext.evaluatePolicy).
+        const descriptor = mcpCatalog.descriptors[key]
         await ctx.ask({
           permission: key,
-          metadata: {},
+          metadata: descriptor?.destructive ? { destructive: true } : {},
           patterns: ["*"],
           always: ["*"],
         })
@@ -1783,7 +1786,6 @@ const message = await createUserMessage(input)
         // Model-initiated call to a tool the proxy marked as needing the user's approval under the
         // app's install permission mode: ask first (never remembered), then let the call carry the
         // approval flag. Declined → tool error.
-        const descriptor = mcpCatalog.descriptors[key]
         if (descriptor?.requiresConfirmation) {
           await McpUserProxy.gate({
             callID: opts.toolCallId,

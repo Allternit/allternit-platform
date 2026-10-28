@@ -38,19 +38,32 @@ static GIZZI_CHAT_SESSIONS: Lazy<Mutex<HashMap<String, (String, String)>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
 /// Normalize the client's requested permission mode. Only the modes the
-/// allternit surfaces expose are accepted; anything absent or unrecognized
-/// falls back to "default" (gizzi's ask-before-write behavior).
+/// allternit surfaces expose are accepted (Chat's Auto · Ask · Read-only pill
+/// sends `auto`/`default`/`plan`; Code also sends `acceptEdits`); anything
+/// absent or unrecognized falls back to "default" (gizzi's ask-before-write
+/// behavior).
 fn parse_permission_mode(body: &serde_json::Value) -> &'static str {
     match body
         .get("permissionMode")
         .or_else(|| body.get("codePermissionMode"))
         .and_then(|v| v.as_str())
     {
+        Some("auto") => "auto",
         Some("default") => "default",
         Some("acceptEdits") => "acceptEdits",
         Some("plan") => "plan",
         _ => "default",
     }
+}
+
+/// Whether a turn gets the user's Cowork settings (instructions, files
+/// folder, trusted folders). Cowork is folded into Chat, so every chat does:
+/// new chats are stored as `chat`, older ones as `cowork`, and a chat whose
+/// surface was never stored counts as chat. Code/design/browser sessions do
+/// not. `bot_is_main` is `None` for a plain (non-bot) turn; a bot turn only
+/// qualifies when it runs as the user's main bot (every chat does).
+fn applies_cowork_prefs(origin_surface: Option<&str>, bot_is_main: Option<bool>) -> bool {
+    matches!(origin_surface, None | Some("chat") | Some("cowork")) && bot_is_main.unwrap_or(true)
 }
 
 async fn create_gizzi_chat_session(
@@ -92,7 +105,10 @@ async fn create_gizzi_chat_session(
     // cmd/gizzi-code/src/runtime/services/agent-event-bridge.ts).
     let mut req = client
         .post(format!("{}/session", gizzi))
-        .json(&json!({ "title": format!("Allternit chat {}", chat_id) }));
+        // `surface` marks this as an app session in gizzi, so auto mode keeps
+        // asking before deletes/payments/signing and question cards work
+        // (gizzi `PermissionNext.isAppSession`).
+        .json(&json!({ "title": format!("Allternit chat {}", chat_id), "surface": "chat" }));
     if let Some(agent_id) = agent_id {
         req = req.header("x-allternit-agent-id", agent_id);
     }
@@ -1634,17 +1650,18 @@ async fn agent_chat_bridge(
         .and_then(|aid| crate::agent_session_routes::bot_turn_marker(&state.db, aid, Some(&chat_id)))
         .or_else(|| crate::agent_session_routes::session_bot_marker(&state.db, &chat_id));
 
-    // Cowork sessions also get the user's Cowork settings: their global
-    // instructions and the folder to save files in (created here, and allowed
-    // without an outside-directory prompt).
-    let is_cowork = state
-        .db
-        .get_session_origin_surface(&chat_id)
-        .ok()
-        .flatten()
-        .as_deref()
-        == Some("cowork");
-    let system_prompt = if is_cowork {
+    // Chat sessions (Cowork folded into Chat) also get the user's Cowork
+    // settings: their global instructions and the folder to save files in
+    // (created here, and allowed without an outside-directory prompt).
+    // A bot other than the user's main bot keeps its own persona only.
+    let origin_surface = state.db.get_session_origin_surface(&chat_id).ok().flatten();
+    let bot_is_main = bot_marker.as_ref().map(|marker| {
+        marker["id"]
+            .as_str()
+            .map_or(false, |id| crate::agent_session_routes::is_main_bot(&state.db, id))
+    });
+    let is_chat_task = applies_cowork_prefs(origin_surface.as_deref(), bot_is_main);
+    let system_prompt = if is_chat_task {
         let db = state.db.clone();
         let uid = user_id_for_record.clone();
         let prefs = tokio::task::spawn_blocking(move || {
@@ -3232,6 +3249,17 @@ mod tests {
     }
 
     #[test]
+    fn cowork_prefs_apply_to_chat_and_legacy_cowork_sessions() {
+        assert!(applies_cowork_prefs(Some("chat"), None));
+        assert!(applies_cowork_prefs(Some("cowork"), None));
+        assert!(applies_cowork_prefs(None, None));
+        assert!(applies_cowork_prefs(Some("chat"), Some(true)));
+        assert!(!applies_cowork_prefs(Some("chat"), Some(false)));
+        assert!(!applies_cowork_prefs(Some("code"), None));
+        assert!(!applies_cowork_prefs(Some("design"), None));
+    }
+
+    #[test]
     fn permission_mode_defaults_when_absent_or_invalid() {
         assert_eq!(parse_permission_mode(&json!({})), "default");
         assert_eq!(parse_permission_mode(&json!({ "permissionMode": "yolo" })), "default");
@@ -3245,6 +3273,9 @@ mod tests {
         assert_eq!(parse_permission_mode(&json!({ "permissionMode": "default" })), "default");
         assert_eq!(parse_permission_mode(&json!({ "permissionMode": "acceptEdits" })), "acceptEdits");
         assert_eq!(parse_permission_mode(&json!({ "permissionMode": "plan" })), "plan");
+        assert_eq!(parse_permission_mode(&json!({ "permissionMode": "auto" })), "auto");
+        // Modes are case-sensitive: gizzi's enum is, so "Auto" is not auto.
+        assert_eq!(parse_permission_mode(&json!({ "permissionMode": "Auto" })), "default");
         assert_eq!(
             parse_permission_mode(&json!({ "codePermissionMode": "acceptEdits" })),
             "acceptEdits"

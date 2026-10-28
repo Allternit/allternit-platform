@@ -719,6 +719,8 @@ export namespace MCP {
     /** Display name of the connector/app the tool belongs to (proxy tools). */
     appName?: string
     title?: string
+    /** The server marked the tool destructive (`annotations.destructiveHint: true`). */
+    destructive?: boolean
   }
 
   /**
@@ -794,6 +796,7 @@ export namespace MCP {
           requiresConfirmation: McpUserProxy.requiresConfirmation(mcpTool),
           appName: ((mcpTool._meta as Record<string, any> | undefined)?.[MCP_CONNECTOR_META_KEY] as { name?: string } | undefined)?.name,
           title: mcpTool.title ?? (mcpTool.annotations as { title?: string } | undefined)?.title,
+          destructive: (mcpTool.annotations as { destructiveHint?: boolean } | undefined)?.destructiveHint === true,
         }
       }
     }

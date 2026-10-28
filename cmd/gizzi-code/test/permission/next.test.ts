@@ -322,6 +322,58 @@ test("evaluatePolicy - auto denies questions, approves work, and still honors ex
   expect(PermissionNext.evaluatePolicy("edit", "src/app.ts", { configured: [], mode: "auto" }).action).toBe("allow")
 })
 
+test("evaluatePolicy - auto in an app session asks before deletes, payments and signing", () => {
+  const app = { configured: [], mode: "auto", app: true }
+  expect(PermissionNext.evaluatePolicy("bash", "rm notes.txt", app).action).toBe("ask")
+  expect(PermissionNext.evaluatePolicy("bash", "sudo rmdir build", app).action).toBe("ask")
+  expect(PermissionNext.evaluatePolicy("bash", "git clean -fd", app).action).toBe("ask")
+  expect(PermissionNext.evaluatePolicy("bash", "find . -name '*.log' -delete", app).action).toBe("ask")
+  expect(PermissionNext.evaluatePolicy("bash", "sh -c 'unlink a.txt'", app).action).toBe("ask")
+  expect(PermissionNext.evaluatePolicy("gmail_delete_message", "*", app).action).toBe("ask")
+  expect(PermissionNext.evaluatePolicy("stripe_pay", "*", app).action).toBe("ask")
+  expect(PermissionNext.evaluatePolicy("docusign_sign", "*", app).action).toBe("ask")
+  expect(PermissionNext.evaluatePolicy("notion_update_page", "*", { ...app, destructive: true }).action).toBe("ask")
+})
+
+test("evaluatePolicy - auto in an app session runs ordinary work and allows questions", () => {
+  const app = { configured: [], mode: "auto", app: true }
+  expect(PermissionNext.evaluatePolicy("edit", "src/app.ts", app).action).toBe("allow")
+  expect(PermissionNext.evaluatePolicy("bash", "npm test", app).action).toBe("allow")
+  expect(PermissionNext.evaluatePolicy("design_render", "*", app).action).toBe("allow")
+  expect(PermissionNext.evaluatePolicy("question", "*", app).action).toBe("allow")
+})
+
+test("evaluatePolicy - auto in an app session keeps the user's asks, denials and the floor", () => {
+  const configured: PermissionNext.Ruleset = [
+    { permission: "*", pattern: "*", action: "ask", source: "default" },
+    { permission: "webfetch", pattern: "*", action: "ask", source: "user" },
+    { permission: "bash", pattern: "curl *", action: "deny", source: "user" },
+  ]
+  const app = { configured, mode: "auto", app: true }
+  expect(PermissionNext.evaluatePolicy("webfetch", "https://example.com", app).action).toBe("ask")
+  // The built-in fallback ask does not make auto ask for everything.
+  expect(PermissionNext.evaluatePolicy("edit", "src/app.ts", app).action).toBe("allow")
+  expect(PermissionNext.evaluatePolicy("bash", "curl https://x", app).action).toBe("deny")
+  expect(PermissionNext.evaluatePolicy("bash", "rm -rf /", app).action).toBe("deny")
+  // An "always" the person gave still counts.
+  const approvals: PermissionNext.Ruleset = [{ permission: "bash", pattern: "rm *", action: "allow" }]
+  expect(PermissionNext.evaluatePolicy("bash", "rm notes.txt", { ...app, configured: [], approvals }).action).toBe("allow")
+})
+
+test("evaluatePolicy - auto in the CLI is unchanged", () => {
+  const cli = { configured: [], mode: "auto" }
+  expect(PermissionNext.evaluatePolicy("bash", "rm notes.txt", cli).action).toBe("allow")
+  expect(PermissionNext.evaluatePolicy("gmail_delete_message", "*", cli).action).toBe("allow")
+  expect(PermissionNext.evaluatePolicy("notion_update_page", "*", { ...cli, destructive: true }).action).toBe("allow")
+  expect(PermissionNext.evaluatePolicy("edit", "src/app.ts", cli).action).toBe("allow")
+  expect(PermissionNext.evaluatePolicy("question", "*", cli).action).toBe("deny")
+  expect(PermissionNext.evaluatePolicy("webfetch", "*", {
+    configured: [{ permission: "webfetch", pattern: "*", action: "ask", source: "user" }],
+    mode: "auto",
+  }).action).toBe("allow")
+  expect(PermissionNext.evaluatePolicy("bash", "rm -rf /", cli).action).toBe("deny")
+})
+
 test("evaluatePolicy - plan mode denies writes but retains explicit read denial", () => {
   expect(PermissionNext.evaluatePolicy("edit", "src/app.ts", { configured: [], mode: "plan" }).action).toBe("deny")
   expect(PermissionNext.evaluatePolicy("read", ".env", {

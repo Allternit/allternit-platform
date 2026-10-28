@@ -69,7 +69,7 @@
       "label": "ai.allternit.com",
       "line": "line:workspace",
       "type": "app",
-      "description": "The agent workspace in the browser (chat, Code, Cowork, Bots, Factory, Docs/Slides/Sheets), with a phone layout on small screens.",
+      "description": "The agent workspace in the browser (Chat with every task tool, Code, Bots, Factory, Docs/Slides/Sheets), with a phone layout on small screens.",
       "url": "https://ai.allternit.com",
       "surfaces": [
         "surface:ai"
