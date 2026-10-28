@@ -38,6 +38,8 @@ struct SettingsView: View {
     @State private var isModelManagementPresented = false
     /// Pushed Organization & Access settings.
     @State private var isOrganizationAccessPresented = false
+    /// Pushed Delete account page (App Store 5.1.1(v)).
+    @State private var isDeleteAccountPresented = false
     /// Pushed custom-instructions editor (Agent section).
     @State private var isInstructionsPresented = false
     /// Pushed Webhook Triggers panel (Agent section; also pushed from the
@@ -137,6 +139,9 @@ struct SettingsView: View {
             }
             .navigationDestination(isPresented: $isOrganizationAccessPresented) {
                 OrganizationAccessView()
+            }
+            .navigationDestination(isPresented: $isDeleteAccountPresented) {
+                DeleteAccountView(onDeleted: { dismiss() })
             }
             .navigationDestination(isPresented: $isInstructionsPresented) {
                 CustomInstructionsView()
@@ -335,6 +340,12 @@ struct SettingsView: View {
                 Text("Sign Out")
             }
             .disabled(!authManager.isSignedIn)
+
+            if authManager.isSignedIn {
+                Button(action: { isDeleteAccountPresented = true }) {
+                    bulkRowLabel("Delete account", systemImage: "person.crop.circle.badge.xmark", destructive: true)
+                }
+            }
         } header: {
             Text("Account")
         }
