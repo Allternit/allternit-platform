@@ -784,7 +784,11 @@ export async function reconnectIos(
   deps: IosDriverDeps,
   udid: string,
   sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms)),
-  opts: { forceCable?: boolean } = {},
+  opts: {
+    forceCable?: boolean;
+    /** The helper is on the cable but won't run: iOS doesn't trust the developer, or it never answered (usually a locked phone). */
+    onStuck?: (why: 'untrusted' | 'no_answer') => void;
+  } = {},
 ): Promise<string | null> {
   const record = deps.store.load(udid);
   if (!record) return null;
@@ -820,6 +824,7 @@ export async function reconnectIos(
     const launched = await deps.goios.launch(udid, record.runnerBundleId, { killExisting: true });
     if (!launched.ok) {
       say(`reconnect: launching the helper failed: ${launched.error}${launched.untrusted ? ' (the developer is not trusted on the iPhone)' : ''}`);
+      if (launched.untrusted) opts.onStuck?.('untrusted');
       return null;
     }
     // The phone is right here on the cable: refresh the pairing file the
@@ -843,6 +848,7 @@ export async function reconnectIos(
       await sleep(1000);
     }
     say(`reconnect: ${last}`);
+    opts.onStuck?.('no_answer');
     return null;
   } catch (error) {
     deps.logger?.(`[phone-link ios] reconnect failed: ${error instanceof Error ? error.message : String(error)}`);

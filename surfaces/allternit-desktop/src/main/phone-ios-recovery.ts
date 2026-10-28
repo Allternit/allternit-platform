@@ -65,8 +65,13 @@ export function renewalDue(record: IosLinkRecord, at: number): boolean {
   return Number.isFinite(expires) && expires - at <= RESIGN_WINDOW_MS;
 }
 
-/** Why a due renewal needs a person. */
-export type RenewalBlocker = 'cable' | 'apple_sign_in' | 'no_apple_id' | 'failed';
+/**
+ * Why the helper needs a person: a due renewal that can't run by itself
+ * (cable, apple_sign_in, no_apple_id, failed), or a helper on the cable that
+ * won't start (trust: iOS wants the new developer certificate trusted after a
+ * renewal; unlock: it never answered, usually because the phone is locked).
+ */
+export type RenewalBlocker = 'cable' | 'apple_sign_in' | 'no_apple_id' | 'failed' | 'trust' | 'unlock';
 
 export interface IosRecoveryDeps extends IosDriverDeps {
   /** Test hook; reconnectIos's default is a real setTimeout. */
@@ -103,7 +108,10 @@ export function renewalNotice(record: IosLinkRecord, blocker: RenewalBlocker, no
     case 'no_apple_id':
       return { title: `Sign in to Apple for ${name}`, body: `${deadline} No Apple ID is saved for it, so it can't renew by itself. With the iPhone plugged in, open Phone Link setup and sign in.` };
     case 'failed':
-      return { title: `Phone Link couldn't renew ${name}`, body: `${deadline} With the iPhone plugged in, open Phone Link setup to renew it.` };
+      return { title: `Phone Link couldn't renew ${name}`, body: `${deadline} With the iPhone plugged in, open Phone Link setup to renew it.` };    case 'trust':
+      return { title: `Trust the developer on ${name}`, body: `Phone Link renewed its helper on ${name}, and the iPhone needs you to trust it once. On the iPhone, open Settings › General › VPN & Device Management, tap the developer app under your Apple ID, then tap Trust. Phone Link reconnects by itself.` };
+    case 'unlock':
+      return { title: `Unlock ${name}`, body: `Phone Link can't start its helper on ${name}. Unlock the iPhone and keep it on Wi-Fi; Phone Link retries every two minutes. If it still doesn't come back, open Phone Link setup.` };
   }
 }
 
@@ -171,7 +179,11 @@ export async function renewIosSignature(deps: IosRecoveryDeps, record: IosLinkRe
   // Installing kills the running helper, so always relaunch: tunnel → image
   // auto → launch → confirm (which also refreshes the pairing file the
   // phone-side Mount-without-a-Mac flow reads).
-  const lan = await reconnectIos(deps, record.udid, deps.sleep, { forceCable: true });
+  const renewed = deps.store.load(record.udid) ?? record;
+  const lan = await reconnectIos(deps, record.udid, deps.sleep, {
+    forceCable: true,
+    onStuck: (why) => deps.onNeedsYou?.(renewed, why === 'untrusted' ? 'trust' : 'unlock'),
+  });
   if (lan) {
     log(`helper for ${name} renewed and answering at ${lan}`);
     deps.onRecovered?.(record.udid, 'renewal');
@@ -190,7 +202,9 @@ export async function remountIosHelper(deps: IosRecoveryDeps, record: IosLinkRec
   const log = (message: string) => deps.logger?.(`[phone-link ios] ${message}`);
   const name = record.deviceName ?? record.udid;
   log(`${name} is on the cable and its helper doesn't answer; remounting the developer image and relaunching the helper`);
-  const lan = await reconnectIos(deps, record.udid, deps.sleep);
+  const lan = await reconnectIos(deps, record.udid, deps.sleep, {
+    onStuck: (why) => deps.onNeedsYou?.(record, why === 'untrusted' ? 'trust' : 'unlock'),
+  });
   if (!lan) {
     log(`couldn't bring the helper back on the cable this time; will retry on a later pass`);
     return false;
