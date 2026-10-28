@@ -13,7 +13,15 @@ Install **Allternit** from the App Store and open it. You can:
 - **Sign In** with your Allternit account (email or Google), or
 - **Create Account**.
 
-The first time you open it, a short setup introduces your bots and asks to send you notifications. You can change that later in **Settings → Notifications**.
+The first time you open it, **Meet your bots** sets up your team:
+
+1. Pick bots for your team from a list you can filter by category. Bots already on your account aren't made twice.
+2. Choose who leads: A:// as it comes, A:// dressed as one of the cast with a name you choose, or a bot you already have. If you already have a main bot, this step is skipped.
+3. Turn each bot's routines on or off.
+4. Allow notifications, so you hear when a bot needs you. You can change this later in **Settings → Notifications**.
+5. Pick a first job and edit it.
+
+Nothing is created until you tap **Start the job**. The last step shows what was made, with the reason for anything that failed, and **Retry what didn't finish** tries only those again. The first job is sent to your main bot's chat. If your computer is offline, you can still pick the team and finish later. To make a new bot, or connect one from another service, as your main bot, use Allternit Desktop or ai.allternit.com.
 
 ## Getting around
 
@@ -22,7 +30,9 @@ The mode dial at the top switches between **Home**, **Bots**, **Code** and **ACI
 - your recent chats, with search and pins. Swipe right on a chat to pin it, and press and drag a pinned chat to move it. The filter button above Recents narrows the list by type (Chat, Cowork, Agent; Home only), status and last activity,
 - **Inbox** (the tray button at the top): everything your bots are waiting on you for, such as approvals, held messages, missed calls and failed runs. Tap the button on a row, or swipe right for it; swipe left to snooze it for an hour or dismiss it,
 - **Teammates** (in Home): the bots that are working or need you right now. Tap one to open its chat,
-- **New**: a chat, a quick task or a scheduled task,
+- **New**: a chat, a quick task or a scheduled task. Press and hold **New** in Home or Code and pick **Continue CLI session** to bring a Claude Code, Codex, Grok or other CLI session from your computer into Allternit. The app copies it and leaves the original as it was,
+- **Phones** (the phone button at the bottom, with a count of unread messages): your bots' phones. Each bot with a number, email address or messaging channel is listed. Open one to see its number, email and conversations, unread first. Opening a conversation marks it read on every device. **Give a bot a phone** opens the connect page from ai.allternit.com,
+- **Customize** (in Home): Skills, Connectors, Plugins, MCP servers and Webhooks. **More** in each mode's list has **Show in rail** switches to hide or show its rows; a dot on **More** means something is hidden,
 - **Projects**, **Artifacts**, **Automation** and **Decisions**,
 - **Settings**.
 
@@ -34,11 +44,36 @@ If you don't have a computer paired yet, those screens show **Connect a computer
 
 ## Bots
 
-Bots mode lists your bots with their status. In the drawer, the **Bots** row shows how many threads are waiting on you. Open a bot for its threads, tasks, artifacts, routines, memory and channels. Group chats and the live stage are there too. If a bot has a computer, you can watch it and take control from the phone. If that computer's screen sharing has a password, the app asks for it. On a Mac that is the name and password of an account on the Mac, not your Allternit sign-in. The app keeps it only while the screen is open.
+Bots mode lists your bots with their status. In the drawer, the **Bots** row shows how many threads are waiting on you. Open a bot for its threads, tasks, artifacts, routines, memory and channels. Group chats and the live stage are there too. A group chat can have up to 6 bots, including bots that run on another service, such as Grok or Poke; those show **Runs on …** and answer through their own connection. If one of them needs approval or doesn't answer, the room says so. If a bot has a computer, you can watch it and take control from the phone. If that computer's screen sharing has a password, the app asks for it. On a Mac that is the name and password of an account on the Mac, not your Allternit sign-in. The app keeps it only while the screen is open.
 
 ## Artifacts
 
-**Artifacts** in the drawer is your library: the things you and your bots made, filtered by kind and by mine or shared. Artifacts made in a chat are saved to it. Documents, sheets, slides and PDFs open in the app. Dashboards, ops boards, motion pieces and cards open their web version in the app. Office files from the library open to read; edit them on ai.allternit.com or Desktop.
+**Artifacts** in the drawer is your library: the things you and your bots made, filtered by kind and by mine or shared. Artifacts made in a chat are saved to it. Every kind opens in the app. Documents, sheets, slides and PDFs open natively. Dashboards, ops sheets, motion pieces, cards, canvas designs and pages that use stored data, AI or connectors open in the same viewer the web uses, signed in, inside the app. AI those pages run is billed to you, as on the web. Links that leave Allternit open in Safari.
+
+Tap **Edit** on a document, sheet or deck you can edit:
+
+- **Documents:** edit paragraphs, headings and list items. Tables and images can't be edited on the phone. Markdown documents edit as plain text. Documents with several tabs are read-only on the phone.
+- **Sheets:** edit any cell (start with `=` for a formula), and add rows and columns.
+- **Decks:** edit the text on each slide.
+
+**Save** makes a new version that every device sees. If someone else saved first, the app tells you and offers **Get the latest**.
+
+## Calls
+
+A bot can call you. While the app is open, the call rings full screen with the caller's name, **Answer** and **Decline**. The ring respects the silent switch, but the phone still vibrates. Tapping a ring notification opens the same screen. If the call has already ended, the notification opens that conversation instead.
+
+On a call you have a timer, **Mute**, **Speaker** (the earpiece is used until you turn it on) and **End**. The call keeps going if you leave the app. A call you didn't answer shows **Missed call**, with **Open conversation**. A call answered on another device stops ringing.
+
+The app needs microphone access to answer. If it's off, the app says so and offers **Open Settings**. When the app is closed, a call arrives as a notification, not the full iPhone call screen. Calling out from the iPhone isn't available yet.
+
+## Settings
+
+Most Settings screens work in the app:
+
+- **Skills and Plugins:** what's installed on your computer, with a switch for each and **Remove from this computer**. Browsing and installing new ones needs Desktop.
+- **Subagents:** the built-in types and your own. Create one, edit its name, when to use it, model, step limit, tools, instructions and face, reset a built-in or delete your own.
+- **Your twin:** edit how your twin speaks and what bots may say for you. Accept, edit or dismiss what bots suggest, and add, edit or delete memories.
+- **Memory Drive:** pick a drive, then read, edit and save files. If a file changed meanwhile, the app offers to reload it. **Delete memories forever** asks you to type *delete forever*. History, git tokens and imports stay on Desktop and the web.
 
 ## Notifications and links
 
@@ -63,4 +98,4 @@ Want a copy first? Export your data from **Settings → Privacy → Export data*
 
 ## For developers
 
-The app is SwiftUI in the platform repo at `surfaces/allternit-mobile/ios` (bundle id `com.allternit.mobile`, project generated by XcodeGen from `project.yml`). It talks to cloud-api at `api.allternit.com`. Calls that belong to a computer go through the runtime relay (`POST /api/v1/runtime-devices/:id/proxy`, `Core/API/RuntimeRelayClient.swift`). Push is described in [iPhone push (APNs)](/api/ios-push). Universal Links come from `public/.well-known/apple-app-site-association` in allternit-ai and are parsed by `Core/DeepLinkRouter.swift`.
+The app is SwiftUI in the platform repo at `surfaces/allternit-mobile/ios` (bundle id `com.allternit.mobile`, project generated by XcodeGen from `project.yml`). It talks to cloud-api at `api.allternit.com`. Calls that belong to a computer go through the runtime relay (`POST /api/v1/runtime-devices/:id/proxy`, `Core/API/RuntimeRelayClient.swift`). Push is described in [iPhone push (APNs)](/api/ios-push). Call audio uses the LiveKit Swift SDK (`Core/Calls/CallAudio.swift`) with the `{token, url, room}` cloud-api returns from `/api/v1/phone/…/answer`. Web-rendered artifacts load `ai.allternit.com/a/<id>` in a WKWebView that receives the record and the Clerk token from the app (`Features/Artifacts/Views/ArtifactLiveWebView.swift`). Meet your bots uses the web's template catalog, generated into `Features/Onboarding/MeetBotCatalogData.swift` by `Scripts/meet-bot-catalog/`. Universal Links come from `public/.well-known/apple-app-site-association` in allternit-ai and are parsed by `Core/DeepLinkRouter.swift`.

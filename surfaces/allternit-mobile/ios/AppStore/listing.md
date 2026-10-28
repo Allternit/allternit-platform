@@ -66,6 +66,8 @@ First release of Allternit for iPhone.
 >
 > Purchases: the app has no in-app purchases. On the United States storefront, Settings → Billing links to our website to manage a plan (guideline 3.1.1(a) US link entitlement); outside the US the app shows plan and usage only, with no link or call to action.
 >
+> Background audio: bots can call the person in the app (voice over LiveKit). The audio background mode keeps an answered call going when the person leaves the app. It is not used for anything else.
+>
 > Encryption: the app uses standard HTTPS and a WireGuard-based network connection to the person's own computers.
 
 ## Export compliance
