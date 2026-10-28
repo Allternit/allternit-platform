@@ -9,14 +9,25 @@ Code has two kinds of session. A **Code session** is a conversation with an agen
 
 Terminal mode is the regular Code view with a terminal session where the thread was. Turn it on with **Terminal** in the status row under the prompt. While it is on, that button reads **Thread**: press it to go back to the thread. A terminal session's card in the Code overview, and the session panel's **Terminal** row, turn it on too.
 
-- **The session line** at the top shows the session's name, then `zsh` and the repo and branch for a shell, or the bot's address for a Terminal bot.
-- **The session** fills the rest of the view. On Desktop it is always dark, in light and dark mode, like the terminal cards in the Code overview. The prompt and status row sit on the same dark surface.
+- **The session line** at the top shows the session's name, then `zsh` and the repo and branch for a shell, or the bot's address for a Terminal bot. With the left rail collapsed, it starts after the window's back, forward and sidebar buttons.
+- **The session** fills the rest of the view. On Desktop it is always dark, in light and dark mode, like the terminal cards in the Code overview. The prompt and status row sit on the same dark surface, and the prompt's two dashed rules stay visible on it.
 - **The prompt types into the session.** What you run goes to the shell (or the bot's CLI) as a line, followed by Enter. You can also click the session and type in it directly.
 - **A Terminal bot** opened from the overview is shown as the session. **Shell** on the session line goes back to your own shell.
-- **Nothing floats over it.** The canvas-mode button and the floating session menu hide in Terminal mode and come back with the thread.
+- **The same panes and session panel as the thread.** Terminal, Changes, Browser, Computer, Files, Artifacts, Transcript, Tasks, Code map (with local gizzi) and the project's own panels open beside the terminal session from the same toolbar, and **Session details** docks on the right. As in thread mode, panes need a session: the new-thread screen has none.
 - **No computer connected** (for example ai.allternit.com with no computer paired) shows **Not connected** with a **Connect** button instead of an error.
 
-To see all your terminal sessions, open the Code overview and pick **Terminal sessions**. It has List, Grid and Deck, the same as Code sessions. See [Session overview](/guides/session-overview).
+## Switching sessions
+
+The session switcher sits at the top right of the Code view, in the session header (or, before the first message, in the tools at the top right). It follows the mode:
+
+| Mode | Button | Lists |
+| --- | --- | --- |
+| Thread | **Threads** and the count | Your recent thread sessions. Pick one to open it. |
+| Terminal | **Terminals** and the count | **Your shell** and your Terminal bots. Pick one to show it as the session. |
+
+**See all** at the bottom opens the Code overview on that kind, in **List**, **Grid** or **Deck**. See [Session overview](/guides/session-overview).
+
+On a phone, the count button in the header does the same: in the terminal it opens the overview on **Terminal sessions**.
 
 On a phone, the terminal is always one shell at a time with a strip of tabs. See [Code on a phone](/code/on-a-phone#terminal).
 
@@ -41,7 +52,10 @@ The bottom Console drawer is off on Desktop (2026-10-28). Its shell tab is Termi
 
 - Terminal mode: `src/views/code/CodeTerminalCanvas.tsx` and `code-terminal.css` (`.code-terminal-dark`, `.code-terminal-session-line`). On Desktop it renders the session line, then one `TerminalSurface` (dark scheme), or `BotSession` (the bot's `PaneMirrorView`) after a `factory-attach-pane` request. CodeCanvas renders it in place of the thread and keeps the session header, prompt and status row; the prompt dock gets `.code-terminal-dark` while it is open. With no runtime (`useRuntimeAvailable`) it shows **Not connected**.
 - Open state and input: `useCodeTerminalStore` in `src/views/code/code-terminal.store.ts` (`open`, `toggle`, `openCodeTerminal()`, `sendInput`). The open session sets `sendInput`; `handleSend` in `CodeCanvas.tsx` hands the prompt to it (shell: `sendTerminalInput(id, text + "\r")`; bot: `sendPaneInput` via `terminalDataToPaneInput`). The status row's `code-bottom-status-terminal` button (`CodeTerminalButton`) toggles it and reads **Thread** while open. Factory bot attach (`src/components/factory/pane/attach.ts`) and `MultiTabTerminal` call `openCodeTerminal()`.
-- `CodeThreadView.tsx` hides `code-canvas-mode-toggle` and the floating `CodeSessionLauncher` while Terminal mode is open. The Gizzi companion sits above the prompt line (`bottom: 100%`) and hides in Terminal mode.
+- Session switcher: `src/views/code/CodeSessionSwitcher.tsx` (`code-session-switcher`). It reads `useCodeTerminalStore.open` for the kind, lists `useModeOverview("code")` rows, sets `useCodeTerminalStore.botId` for a Terminal bot with a live pane (else `openOverviewItem`), and **See all** calls `rememberOverviewLayout("desktop:code", layout)`, sets `useCodeOverviewKind` and opens `code-threads`. It sits in `CodeSessionHeader` and, before the header shows, in `CodeTopRightTools` (`code-top-right-tools`, `CodeThreadView.tsx`) with the session toolbar (`CodeSessionLauncher placement="inline"`) or the canvas toggle. `CodeTopRightTools` publishes its width as `--code-floating-tools-w`, which the session line uses as right padding. Phone: `PhoneOverviewButton kind`.
+- Collapsed rail: `.code-terminal-session-line[data-at-top]` (launchpad) and `CodeSessionHeader` pad by `--titlebar-controls-w` under `[data-rail-collapsed=true]`.
+- Dashed rules: `.code-terminal-dark` sets `--polish-hairline` / `--polish-hairline-strong` for `composer-terminal-input`.
+- The shown Terminal bot is `useCodeTerminalStore.botId` (null = your shell). The Gizzi companion sits above the prompt line (`bottom: 100%`) and hides in Terminal mode.
 - The `<ConsoleDrawer />` mount in `src/shell/ShellApp.tsx` is commented out, not deleted.
-- Mounts: `src/views/code/CodeCanvas.tsx` (launchpad and conversation). Both drop their padding while `terminalCanvasOpen` is true, and the docked `CodeSessionPanel` is hidden.
+- Mounts: `src/views/code/CodeCanvas.tsx` (launchpad and conversation). Both drop their padding while `terminalCanvasOpen` is true; the docked `CodeSessionPanel` stays available.
 - Prompt: `src/views/chat/ChatComposer.tsx`, `codeTerminal` branch. `composer-terminal-line` stacks `composer-terminal-input` (dashed rules: attach, text, voice, run) over `composer-compact-controls` (the status row). `bottomDockContent` fills its left side (`CodeBottomStatusBar` with `CodeWorkspaceBar` as `leading`), and `bottomDockTrailing` its right end (`CodeTerminalButton`). The textarea auto-grows from 24 to 200 px.
