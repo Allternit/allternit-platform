@@ -22,11 +22,11 @@ The rules only ever say "can wait". Every result records what decided it, `rule:
 cargo run -p allternit-cloud-api --features triage-eval --bin mail-triage-eval -- --rules-only
 
 # With a model (metered). BOT_MODEL selects it.
-BOT_MODEL=claude-sonnet-5-5 ALLTERNIT_API_KEY=... \
+BOT_MODEL=<model-id> ALLTERNIT_API_KEY=... \
   cargo run -p allternit-cloud-api --features triage-eval --bin mail-triage-eval
 ```
 
-Model mode calls the model router's OpenAI-compatible `/chat/completions` (set `TRIAGE_EVAL_BASE_URL` to change the host). Results go to `evals/triage/results-<model>.md`.
+Model mode calls the model router's `/chat/completions` endpoint (set `TRIAGE_EVAL_BASE_URL` to change the host). Results go to `evals/triage/results-<model>.md`.
 
 ## Reading the numbers
 
