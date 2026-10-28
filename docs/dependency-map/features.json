@@ -18,9 +18,7 @@
         "allternit/cmd/gizzi-code/src/runtime/providers",
         "allternit-ai/src/components/ui",
         "allternit-ai/src/lib/attachments",
-        "allternit-ai/src/views/cowork",
-        "allternit-ai/src/lib/cowork",
-        "allternit-ai/src/lib/cowork-team",
+        "allternit-ai/src/lib/tasks",
         "allternit/cmd/allternit-api/src/cowork",
         "allternit/cmd/allternit-api/src/cowork_*",
         "allternit/platform/packages/cowork-engine"
@@ -193,7 +191,7 @@
         "allternit-ai/src/components/computers",
         "allternit-ai/src/lib/attachments",
         "allternit-ai/src/views/automation",
-        "allternit-ai/src/views/cowork",
+        "allternit-ai/src/views/tasks",
         "allternit/cmd/allternit-api",
         "allternit/cmd/gizzi-code"
       ],
@@ -522,7 +520,7 @@
         "allternit/cmd/allternit-api/src/memory_relations",
         "allternit/services/memory",
         "allternit-ai/src/views/settings",
-        "allternit-ai/src/views/cowork",
+        "allternit-ai/src/views/tasks",
         "allternit-ai/src/components/ai-elements",
         "allternit/services/subscription-gateway"
       ],
@@ -926,7 +924,7 @@
       "description": "Routines, goals, loops and agent heartbeats a bot runs on a schedule, managed from Automation Tasks, a bot's Routines tab and a bot chat's Routines panel, each with a List / Graph / Calendar switch. The calendar is editable (click to add, drag to move); Month shows named, time-stamped chips tinted by type with +N more, and on Automation Tasks a click opens an anchored details card (schedule in words, next run, bot, last run, Open / Run now / Edit / Pause). Phones show dots and a day list. Failed runs alert and pause after 3 in a row.",
       "touches": [
         "allternit-ai/src/components/bots",
-        "allternit-ai/src/views/cowork",
+        "allternit-ai/src/views/tasks",
         "allternit-ai/src/views/bots",
         "allternit/cmd/allternit-api/src/routine_*",
         "allternit/cmd/allternit-api/src/automation_*"
@@ -1150,7 +1148,6 @@
         }
       ],
       "evidence": [
-        "allternit/surfaces/docs",
         "allternit/surfaces/docs"
       ]
     },
@@ -1383,9 +1380,8 @@
         "allternit-ai/src/components/settings",
         "allternit-ai/src/views/library",
         "allternit-ai/src/views/design",
-        "allternit-ai/src/views/cowork",
-        "allternit-ai/src/components/artifact-share",
-        "allternit-ai/src/views/chat"
+        "allternit-ai/src/views/chat",
+        "allternit-ai/src/components/artifact-share"
       ],
       "decisions": [
         {
@@ -1597,7 +1593,7 @@
         "allternit/cmd/allternit-cloud-api/src/routes/artifacts_*",
         "allternit-ai/src/lib/artifacts",
         "allternit-ai/src/components/artifacts",
-        "allternit-ai/src/views/cowork"
+        "allternit-ai/src/views/chat"
       ],
       "decisions": [
         {
@@ -1924,7 +1920,6 @@
         "allternit-ai/src/components/computers",
         "allternit-ai/src/components/phone-link",
         "allternit-ai/src/components/onboarding",
-        "allternit-ai/src/views/settings",
         "allternit-ai/src/lib",
         "allternit/cmd/allternit-sideload",
         "allternit/cmd/allternit-cloud-api"
@@ -2518,7 +2513,7 @@
       "description": "The merged agent stream above a reply (Chat, Cowork, Code, bot and project threads): the agent's one-line plan, then a 'Using N tools · 14s' header with app logos ('Waiting for approval', '· N failed') and the tool rows on a thin rail with no card (last 6, older folded into '+N earlier'); each row ends with what it found and how long it took ('4 results · 1.2s', from tool part startedAt/finishedAt) and a check; a failed row shows its reason and Retry (latest reply); a step with a pending approval shows Deny / Always / Allow on its row and claims the request from the card and composer stack (process/inline-approvals.ts). Chips stay in view the whole time: web-search sources ('Searched 9 websites' with favicons), files made (open/download), failed steps. When done it folds to one line, '[logos] Used 4 tools · 12s' ('Thought for 12s' when it only thought), plus the chips; opening it shows the trail (tree line, plan sentence, each step with icon, verb and detail, searches grouped with their sources). Steps that reach a connected app show its logo and first finds. The task list is no longer drawn inline: it moved to the right-pane Progress (feature:progress-pane); inline source cards and plan cards are gone (sources become pills and chips through the response-parts contract). While media_generate runs, the reply shows a result-shaped frame with BlockPulse; the finished picture shows inline with Download / Open / Copy prompt. A Memory Drive Dream's Steps opens into the trail (defaultOpen). Same on Desktop, the ai.allternit.com phone layout and the m.allternit.com PWA.",
       "touches": [
         "allternit-ai/src/components/ai-elements",
-        "allternit-ai/src/views/cowork",
+        "allternit-ai/src/views/chat",
         "allternit-ai/src/components/bot-chat",
         "allternit-ai/src/components/brand",
         "allternit-ai/src/lib/ai",
@@ -2724,7 +2719,6 @@
         "allternit-ai/src/views/chat",
         "allternit-ai/src/views",
         "allternit-ai/src/views/code",
-        "allternit-ai/src/views/cowork",
         "allternit-ai/src/lib/agents"
       ],
       "decisions": [
@@ -2832,7 +2826,7 @@
       "touches": [
         "allternit-ai/src/components",
         "allternit-ai/src/lib/agents",
-        "allternit-ai/src/views/cowork",
+        "allternit-ai/src/views/tasks",
         "allternit/cmd/gizzi-code/src/runtime/integrations",
         "allternit/cmd/gizzi-code/src/runtime/tools"
       ],
@@ -2882,11 +2876,10 @@
       "description": "A chip in every chat's header, top right ('Step 2 of 3' / 'All 3 done', a ring that fills), shown only when the turn on screen has a plan. It opens Progress in the right pane: the plan as a checklist (ticks, spinning running step, failures), the working folder and context use. Chat docks its own Progress column; Cowork and Code open their session panel (Progress first); bot threads dock it when wide; project threads and narrow windows open it over the thread; phone = bottom sheet. The checklist is folded from todo tool calls and response-parts plan parts, so every brain's plan (TodoWrite/Task tools, gizzi todowrite, Codex plan, ACP plan) shows the same way, and it is saved with the conversation. Same on Desktop, the ai.allternit.com phone layout and the m.allternit.com PWA.",
       "touches": [
         "allternit-ai/src/components/progress-pane",
-        "allternit-ai/src/views/cowork",
+        "allternit-ai/src/views/chat",
         "allternit-ai/src/views/code",
         "allternit-ai/src/views/bots",
         "allternit-ai/src/views/project",
-        "allternit-ai/src/views/chat",
         "allternit-ai/src/components/ai-elements"
       ],
       "decisions": [
@@ -2908,7 +2901,7 @@
       "touches": [
         "allternit-ai/src/components/chat",
         "allternit-ai/src/lib/chat",
-        "allternit-ai/src/views/cowork",
+        "allternit-ai/src/views/chat",
         "allternit-ai/src/views/code",
         "allternit-ai/src/components/bot-chat",
         "allternit-ai/src/views/bots",

@@ -79,7 +79,7 @@
         "allternit-ai/src/shell",
         "allternit-ai/src/views/chat",
         "allternit-ai/src/views/code",
-        "allternit-ai/src/views/cowork",
+        "allternit-ai/src/views/tasks",
         "allternit-ai/src/views/bots",
         "allternit-ai/src/views/project",
         "allternit-ai/src/views/settings"
