@@ -33,6 +33,12 @@ packages:
   SwiftTerm:
     url: https://github.com/migueldeicaza/SwiftTerm
     from: "1.2.0"
+  # In-app bot calls: the web carries call audio over LiveKit
+  # (Core/Calls/CallAudio.swift). 2.15+ need swift-tools 6.1, beyond Xcode
+  # 16.2; 2.14.1 is the newest on tools 6.0. Bump after the Xcode upgrade.
+  LiveKit:
+    url: https://github.com/livekit/client-sdk-swift
+    exactVersion: "2.14.1"
 targets:
   Allternit:
     type: application
@@ -114,6 +120,8 @@ targets:
       # … and system iconv (git_path_iconv for unicode path handling).
       - sdk: libiconv.tbd
       # Document import / preview support.
+      - package: LiveKit
+        product: LiveKit
       - sdk: QuickLook.framework
       - sdk: UniformTypeIdentifiers.framework
       - package: clerk-ios
