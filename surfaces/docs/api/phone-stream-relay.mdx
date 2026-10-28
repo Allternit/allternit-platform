@@ -87,6 +87,17 @@ The Desktop's session socket, one per streamed phone (scrcpy is one device per p
 
 3. **Heartbeat.** The relay pings every 30 s; a peer silent for 90 s is treated as gone and the session ends (phones marked offline, viewers get `desktop_offline`).
 
+## iPhones with the Allternit app
+
+The App Store app (route `iphone-app-store`, serial `app:` plus the phone id) reaches the node without a Desktop phone-link session. User guide: [Your iPhone with the Allternit app](/guides/iphone-app).
+
+- **Listing.** `GET /api/v1/phones` includes the app phones with `route: "iphone-app-store"` and `screen: true` while the broadcast extension's ingest socket is open.
+- **Pairing** (`WS /api/v1/phones/app/pair?phone=…`). After the app's `hello` the node answers `{"type":"pending","pub"}`, raises `phone_app.pair_request` `{phoneId, name, model, code}` on the runtime events feed, and Desktop shows the name and 6-digit code with Approve and Deny. Desktop answers with `POST /api/v1/phones/app/pair/:phoneId/decision` `{"approve": bool}` (desktop credential, loopback).
+- **Viewers.** The same `ws-token` and `/ws/phones/:serial/stream` as above. Binary frames are the broadcast's plaintext iCTRL packets, one per frame: `u8 type | u32 big-endian length | payload`, with 0 status, 1 config (`{width, height, scale, rotation}`), 2 one H.264 Annex-B access unit, 3 ended, 4 audio config (AAC), 5 one AAC frame. Viewers mint read-only tokens; input frames are ignored, because taps on other apps need the Bluetooth board.
+- **The app's browser.** `POST /api/v1/phones/app/:id/rpc` `{method, params}` (desktop credential) forwards to the app's control socket. Methods: `web.open {url}`, `web.snapshot` (`{url, title, elements, jpegBase64, viewport}`), `web.click {ref}`, `web.type {ref, text, submit?}`, `web.scroll {dy}` (`{ok, scrollY}`), `web.back` (adds `wentBack`), `web.wait {ms}` and `screen.prompt` (`{shown, live}`). Errors: 409 `app_not_open` when the app isn't open, and the app's own codes `stopped_by_user`, `browser_not_open`, `stale_ref`, `not_editable`, `bad_params`, `unknown_method`, `script_error`, `internal`. Desktop exposes these to bots as `phone.web.*` and `phone.screen.request`.
+
+Desktop code: `surfaces/allternit-desktop/src/main/phone-app-store.ts` (the lane, viewer session and node client) and `phone-app-still.ts` (screenshots: the last keyframe decoded with Chromium's WebCodecs in a hidden window).
+
 ## Cloud side
 
 `allternit-cloud-api` holds the only persistence, one row per `(account, serial)`:
