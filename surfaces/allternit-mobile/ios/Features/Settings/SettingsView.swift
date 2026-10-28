@@ -403,19 +403,8 @@ struct SettingsView: View {
                     }
                 }
 
-                Button(action: {
-                    // Placeholder — the real credits purchase flow is TBD.
-                    safariURL = IdentifiableURL(url: URL(string: "https://allternit.com/credits")!)
-                }) {
-                    bulkRowLabel("Buy credits", systemImage: "creditcard")
-                }
-
-                Button(action: {
-                    // Placeholder — the real upgrade flow is TBD.
-                    safariURL = IdentifiableURL(url: URL(string: "https://allternit.com/upgrade")!)
-                }) {
-                    bulkRowLabel("Get Pro", systemImage: "star")
-                }
+                // US storefront only (StorefrontGate): link out to pay.
+                PayLinkRows()
             } else {
                 // The backend's own words when metering isn't configured
                 // (503 `usage_metering_unavailable`); a generic friendly state
