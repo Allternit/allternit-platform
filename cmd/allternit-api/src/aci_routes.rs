@@ -199,6 +199,10 @@ static ACI_RUN_EVENTS: Lazy<Mutex<HashMap<String, RunEventBuffer>>> =
 /// bound; the oldest frames drop first.
 const MAX_BUFFERED_FRAMES: usize = 1000;
 
+/// Phone web runs in flight (run id -> stop requested). `aci_stop` sets the
+/// flag; the loop checks it before each step.
+static PHONE_WEB_RUNS: Lazy<Mutex<HashMap<String, bool>>> = Lazy::new(|| Mutex::new(HashMap::new()));
+
 fn buffer_create(run_id: &str) {
     if let Ok(mut store) = ACI_RUN_EVENTS.lock() {
         store.entry(run_id.to_string()).or_insert_with(|| RunEventBuffer {
@@ -461,28 +465,30 @@ async fn aci_run(
             .into_response();
     }
     // A run aimed at the iPhone app's browser must never fall through to this
-    // runtime's own browser. The ACU planning loop has no phone-browser
-    // adapter yet (its browser actions go to the toolset executor on this
-    // runtime), so the run is refused with a clear reason instead.
-    if let Some(device) = body
+    // runtime's own browser: it runs as a phone web task (phone_task.rs) that
+    // drives the app's ACI browser over its control socket, streamed through
+    // the same run buffer as an ACU run.
+    let app_target: Option<String> = match body
         .target_device
         .as_deref()
         .map(str::trim)
         .filter(|d| !d.is_empty() && *d != "this-device")
     {
-        let status = match device.strip_prefix(crate::phone_app::APP_SERIAL_PREFIX) {
-            Some(phone_id) if !crate::phone_app::control_open(&user.user_id, phone_id).await => {
-                (StatusCode::CONFLICT, "app_not_open", "Open the Allternit app on the iPhone and try again.")
+        None => None,
+        Some(device) => {
+            let refusal = match device.strip_prefix(crate::phone_app::APP_SERIAL_PREFIX) {
+                Some(phone_id) if !crate::phone_app::control_open(&user.user_id, phone_id).await => {
+                    Some((StatusCode::CONFLICT, "app_not_open", "Open the Allternit app on the iPhone and try again."))
+                }
+                Some(_) => None,
+                None => Some((StatusCode::BAD_REQUEST, "unknown_target_device", "targetDevice must be app:<phoneId>.")),
+            };
+            if let Some((code, error, message)) = refusal {
+                return (code, Json(json!({ "error": error, "message": message }))).into_response();
             }
-            Some(_) => (
-                StatusCode::NOT_IMPLEMENTED,
-                "phone_browser_runs_unavailable",
-                "Bot runs in the iPhone app's browser are not available on this Desktop yet.",
-            ),
-            None => (StatusCode::BAD_REQUEST, "unknown_target_device", "targetDevice must be app:<phoneId>."),
-        };
-        return (status.0, Json(json!({ "error": status.1, "message": status.2 }))).into_response();
-    }
+            Some(device.to_string())
+        }
+    };
 
     let run_id = uuid::Uuid::new_v4().to_string();
 
@@ -664,6 +670,45 @@ async fn aci_run(
     };
     let sandbox_env = crate::aci_credentials::CredentialStore::sandbox_env(&bound_credentials);
     crate::aci_credentials::record_run_binding(&run_id, &user.user_id, &bound_credentials);
+
+    if let Some(serial) = app_target {
+        if !crate::phone_replay::gateway_available() {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(json!({ "error": "phone_gateway_unavailable", "message": "Allternit Desktop's phone gateway isn't running on this computer." })),
+            )
+                .into_response();
+        }
+        let model = crate::phone_replay::brain(&state.db, body.bot_id.as_deref(), body.model.as_deref());
+        buffer_create(&run_id);
+        PHONE_WEB_RUNS.lock().map(|mut m| m.insert(run_id.clone(), false)).ok();
+        let (id, goal, db) = (run_id.clone(), decision.sanitized_goal.clone(), state.db.clone());
+        tokio::spawn(async move {
+            let push_id = id.clone();
+            let cancel_id = id.clone();
+            let report = crate::phone_task::run_web_task_as(
+                id.clone(),
+                &serial,
+                &goal,
+                20,
+                model,
+                move |frame| buffer_push(&push_id, frame, false),
+                move || PHONE_WEB_RUNS.lock().map(|m| m.get(&cancel_id).copied().unwrap_or(false)).unwrap_or(false),
+            )
+            .await;
+            crate::phone_runs::record_run_completed(&db, &report, "aci");
+            let status = match report["status"].as_str() {
+                Some("done") => "Done",
+                Some("cancelled") => "Idle",
+                _ => "Error",
+            };
+            let message = report["result"].as_str().unwrap_or(report["status"].as_str().unwrap_or_default()).to_string();
+            buffer_push(&id, json!({ "type": "state", "data": { "status": status, "lastMessage": message } }), false);
+            buffer_push(&id, json!({ "type": "done", "data": report }), true);
+            PHONE_WEB_RUNS.lock().map(|mut m| m.remove(&id)).ok();
+        });
+        return (StatusCode::OK, Json(json!({ "sessionId": run_id, "adapterId": "phone-browser" }))).into_response();
+    }
 
     // Start the run in ACU's streaming mode: the planning loop launches in
     // the gateway's background and the HTTP response is an SSE stream of
@@ -953,6 +998,12 @@ async fn aci_stream_passthrough(state: Arc<AppState>, id: String) -> Response {
 // ─── POST /api/aci/stop/:id ───────────────────────────────────────────────────
 
 async fn aci_stop(State(state): State<Arc<AppState>>, Path(id): Path<String>) -> Response {
+    if let Ok(mut runs) = PHONE_WEB_RUNS.lock() {
+        if let Some(stop) = runs.get_mut(&id) {
+            *stop = true;
+            return Json(json!({"run_id": id, "status": "cancelled"})).into_response();
+        }
+    }
     let acu = acu_base(&state);
     let client = reqwest::Client::new();
     match client
