@@ -25,7 +25,7 @@ pub const HANDOFF_HEADER: &str = "x-allternit-handoff";
 
 /// Version of the acceptable use text the UI shows; stored acceptance is
 /// for this text.
-pub const AUP_VERSION: &str = "2026-10-25";
+pub const AUP_VERSION: &str = "2026-10-28";
 
 /// One user's open-lane settings. No row = nothing accepted, handoff off.
 #[derive(Debug, Clone, Default, Serialize, sqlx::FromRow)]

@@ -24,13 +24,14 @@ Far fewer refusals is not the same as no limits. The open lane still refuses the
 
 ## What stays blocked
 
-Three kinds of request are blocked on every open-lane request and every handoff, whatever the wording, framing or role-play:
+Four kinds of request are blocked on every open-lane request and every handoff, whatever the wording, framing or role-play:
 
 - **Sexual content involving minors.** Anything sexual about anyone under 18, including fiction and "aged-up" framing.
 - **Mass-casualty weapons.** Real help making, getting, improving or spreading biological, chemical, nuclear or radiological weapons. History, news, policy and ordinary science are fine.
-- **Sexual content about real people.** Sexual or nude content of a real, identifiable person, including deepfakes. Fictional characters are fine.
+- **Sexual content about real people.** Sexual or nude content of a real, identifiable person, including deepfakes.
+- **Sexually explicit content of any kind.** Erotica, sex scenes, explicit sexual role-play or chat, including about fictional adults. Card networks do not allow selling it. Sex education, health questions, relationship advice and non-graphic romance are fine.
 
-A blocked request gets the error `content_policy_hard_line` and nothing is generated. Allternit records only the category and the time, never your prompt. If the safety check itself cannot run, open models stop answering until it is back (they fail closed) and you see `open_lane_moderation_unavailable`.
+A blocked request gets the error `content_policy_hard_line` and nothing is generated. Every other Allternit Cloud model gets a quick keyword check for the same four lines, so unmistakable requests are blocked there too. Allternit records only the category and the time, never your prompt. If the safety check itself cannot run, open models stop answering until it is back (they fail closed) and you see `open_lane_moderation_unavailable`.
 
 Everything else Allternit's terms allow stays open. You are responsible for how you use the answers.
 

@@ -46,7 +46,9 @@ Errors use the standard Chat Completions error shape:
 
 ### Hard-line filter
 
-Categories: `csam`, `mass_casualty_weapons`, `real_person_sexual`. The filter (`services/hard_line.rs`) runs a keyword pre-check for unmistakable phrasing, then a moderation model through an existing upstream (`OPEN_LANE_MODERATION_MODEL`). It reads the system and user messages (latest 8,000 characters). A block writes one `open_lane_blocks` row with the category only; prompt text is never stored.
+Categories: `csam`, `mass_casualty_weapons`, `real_person_sexual`, `sexual_content`. The filter (`services/hard_line.rs`) runs a keyword pre-check for unmistakable phrasing, then a moderation model through an existing upstream (`OPEN_LANE_MODERATION_MODEL`). It reads the system and user messages (latest 8,000 characters). A block writes one `open_lane_blocks` row with the category only; prompt text is never stored.
+
+Every other `/v1/chat/completions` request, BYOK included, runs the keyword pre-check alone (`hard_line::standard_check`, no model call) and answers the same `400 content_policy_hard_line` when it fires.
 
 ## Settings routes
 

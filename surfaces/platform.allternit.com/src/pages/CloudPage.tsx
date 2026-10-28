@@ -905,6 +905,7 @@ export function CloudPage() {
               <li>Sexual content involving minors.</li>
               <li>Real help making or spreading mass-casualty weapons.</li>
               <li>Sexual content about real, identifiable people.</li>
+              <li>Sexually explicit content of any kind, fiction included.</li>
             </ul>
             <p className="mt-3 text-[12px] text-[var(--text-tertiary)]">
               A blocked request returns <code className="font-mono">content_policy_hard_line</code> and nothing is
