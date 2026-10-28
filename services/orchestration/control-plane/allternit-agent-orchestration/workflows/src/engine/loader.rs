@@ -161,7 +161,7 @@ workflow:
 
         // Set up dependencies
         let temp_db_path = format!("/tmp/test_loader_db_{}.db", Uuid::new_v4());
-        let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}", temp_db_path))
+        let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}?mode=rwc", temp_db_path))
             .await
             .unwrap();
         let temp_history_path = format!("/tmp/test_loader_history_{}.jsonl", Uuid::new_v4());
@@ -250,7 +250,7 @@ workflow:
 
         // Set up dependencies
         let temp_db_path = format!("/tmp/test_loader_invalid_db_{}.db", Uuid::new_v4());
-        let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}", temp_db_path))
+        let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}?mode=rwc", temp_db_path))
             .await
             .unwrap();
         let temp_history_path =

@@ -158,9 +158,65 @@ impl Storage {
         root_node_id: &NodeId,
         depth: Option<usize>,
     ) -> Result<Vec<(Node, Edge)>> {
-        // This is a simplified version of subgraph retrieval for now
-        // A full recursive CTE with mapping is complex for a quick fix
-        Ok(vec![])
+        // Breadth-first walk over outgoing edges from the root. Each result pairs
+        // an edge with the node it points to. `depth` bounds the number of hops
+        // (None = unbounded); the visited set keeps cycles from looping forever.
+        use std::collections::{HashSet, VecDeque};
+
+        let mut results = Vec::new();
+        let mut visited: HashSet<NodeId> = HashSet::new();
+        let mut queue: VecDeque<(NodeId, usize)> = VecDeque::new();
+        visited.insert(*root_node_id);
+        queue.push_back((*root_node_id, 0));
+
+        while let Some((node_id, level)) = queue.pop_front() {
+            if depth.is_some_and(|max| level >= max) {
+                continue;
+            }
+
+            let rows = sqlx::query(
+                r#"SELECT * FROM edges WHERE from_node_id = ? ORDER BY created_at, edge_id"#,
+            )
+            .bind(node_id.to_string())
+            .fetch_all(&self.pool)
+            .await
+            .map_err(IGKError::Database)?;
+
+            for row in rows {
+                let edge = self.map_row_to_edge(&row)?;
+                let target = self
+                    .get_node(&edge.to_node_id)
+                    .await?
+                    .ok_or_else(|| IGKError::NodeNotFound(edge.to_node_id.to_string()))?;
+                if visited.insert(edge.to_node_id) {
+                    queue.push_back((edge.to_node_id, level + 1));
+                }
+                results.push((target, edge));
+            }
+        }
+
+        Ok(results)
+    }
+
+    fn map_row_to_edge(&self, row: &sqlx::sqlite::SqliteRow) -> Result<Edge> {
+        use std::str::FromStr;
+
+        let edge_id_str: String = row.get("edge_id");
+        let from_str: String = row.get("from_node_id");
+        let to_str: String = row.get("to_node_id");
+        let edge_type_str: String = row.get("edge_type");
+        let metadata_str: String = row.get("metadata");
+        let created_at_str: String = row.get("created_at");
+        let parse_uuid = |s: &str| Uuid::from_str(s).map_err(|e| IGKError::Internal(e.to_string()));
+
+        Ok(Edge {
+            edge_id: parse_uuid(&edge_id_str)?,
+            from_node_id: parse_uuid(&from_str)?,
+            to_node_id: parse_uuid(&to_str)?,
+            edge_type: serde_json::from_str(&format!("\"{}\"", edge_type_str)).map_err(IGKError::Serialization)?,
+            metadata: serde_json::from_str(&metadata_str).map_err(IGKError::Serialization)?,
+            created_at: DateTime::parse_from_rfc3339(&created_at_str).map_err(|e| IGKError::Internal(e.to_string()))?.with_timezone(&Utc),
+        })
     }
 
     pub async fn create_event(&self, event: &Event) -> Result<Event> {

@@ -259,6 +259,55 @@ impl SqliteMemoryStorage {
             .await
             .map_err(|e| MemoryError::Io(std::io::Error::other(e)))?;
 
+        // Repair rows written by the earlier v2 insert path: it stored status and
+        // authority as Debug strings ('Active', 'Agent') that the lowercase
+        // filters never matched, and '{}' placeholders that do not parse as
+        // provenance / retention policy.
+        sqlx::query(
+            "UPDATE memory_entries SET status = lower(status)
+             WHERE status IN ('Active', 'Superseded', 'Archived')",
+        )
+        .execute(&pool)
+        .await
+        .map_err(|e| MemoryError::Io(std::io::Error::other(e)))?;
+        sqlx::query(
+            "UPDATE memory_entries SET authority = lower(authority)
+             WHERE authority IN ('User', 'Agent', 'System')",
+        )
+        .execute(&pool)
+        .await
+        .map_err(|e| MemoryError::Io(std::io::Error::other(e)))?;
+        let retention_json =
+            serde_json::to_string(&default_retention_policy()).map_err(MemoryError::Json)?;
+        sqlx::query("UPDATE memory_entries SET retention_policy = ? WHERE retention_policy = '{}'")
+            .bind(&retention_json)
+            .execute(&pool)
+            .await
+            .map_err(|e| MemoryError::Io(std::io::Error::other(e)))?;
+        let placeholder_rows: Vec<(String, Option<String>, Option<String>, String)> = sqlx::query_as(
+            "SELECT memory_id, session_id, agent_id, content FROM memory_entries WHERE provenance = '{}'",
+        )
+        .fetch_all(&pool)
+        .await
+        .map_err(|e| MemoryError::Io(std::io::Error::other(e)))?;
+        for (memory_id, session_id, agent_id, content) in placeholder_rows {
+            let content: serde_json::Value =
+                serde_json::from_str(&content).unwrap_or(serde_json::Value::Null);
+            let provenance = MemoryProvenance {
+                source_session: session_id,
+                source_agent: agent_id.unwrap_or_else(|| "agent".to_string()),
+                derivation_chain: vec![],
+                integrity_hash: content_hash(&content)?,
+                signature: None,
+            };
+            sqlx::query("UPDATE memory_entries SET provenance = ? WHERE memory_id = ?")
+                .bind(serde_json::to_string(&provenance).map_err(MemoryError::Json)?)
+                .bind(&memory_id)
+                .execute(&pool)
+                .await
+                .map_err(|e| MemoryError::Io(std::io::Error::other(e)))?;
+        }
+
         Ok(SqliteMemoryStorage { pool })
     }
 }
@@ -266,18 +315,24 @@ impl SqliteMemoryStorage {
 #[async_trait]
 impl MemoryStorage for SqliteMemoryStorage {
     async fn store_memory(&self, memory: &MemoryEntry) -> Result<(), MemoryError> {
-        // Use v2 semantics to prevent truth loss
-        self.store_memory_v2(
+        // Use v2 semantics to prevent truth loss, keeping the entry's own
+        // session/agent, provenance, retention policy and timeline values.
+        let now = memory.valid_from.unwrap_or(memory.created_at);
+        let incoming = crate::v2::types::MemoryTimeline::new_active(
+            now,
+            self.parse_authority_internal(Some(&memory.authority)),
+            memory.confidence,
+        );
+        self.store_versioned_internal(
             &memory.tenant_id,
             &memory.memory_id,
             &format!("{:?}", memory.memory_type),
             &memory.content,
             &memory.metadata,
             &memory.tags,
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
+            now,
+            incoming,
+            Some(RowFields::from_entry(memory)?),
         )
         .await
     }
@@ -293,69 +348,13 @@ impl MemoryStorage for SqliteMemoryStorage {
         tags: &[String],
         now: u64,
     ) -> Result<(), MemoryError> {
-        use crate::v2::conflict::choose_strategy;
-        use crate::v2::truth_engine::TruthEngine;
         use crate::v2::types::{MemoryAuthority, MemoryTimeline};
 
-        let slot = TruthEngine::slot_key(content, tags, metadata);
-
-        // Find existing active memory by slot or memory_id
-        let existing = if let Some(slot_key) = slot.as_ref() {
-            self.find_active_by_slot_internal(tenant_id, slot_key)
-                .await?
-        } else {
-            self.find_active_by_memory_id_internal(tenant_id, memory_id)
-                .await?
-        };
-
-        let mut incoming = MemoryTimeline::new_active(now, MemoryAuthority::Agent, 0.75);
-
-        if let Some(ex) = existing {
-            let mut existing_tl = MemoryTimeline {
-                status: self.parse_status_internal(&ex.status),
-                valid_from: ex.valid_from.unwrap_or(ex.created_at),
-                valid_to: ex.valid_to,
-                confidence: ex.confidence.unwrap_or(0.75),
-                authority: self.parse_authority_internal(ex.authority.as_deref()),
-                supersedes_memory_id: ex.supersedes_memory_id.clone(),
-            };
-
-            let strategy = choose_strategy(memory_type, tags);
-            crate::v2::truth_engine::TruthEngine::apply(
-                now,
-                &mut existing_tl,
-                &mut incoming,
-                strategy,
-            );
-
-            self.update_timeline_internal(tenant_id, &ex.memory_id, &existing_tl)
-                .await?;
-            let new_memory_id = format!("{}::v{}", memory_id, now);
-            incoming.supersedes_memory_id = Some(ex.memory_id.clone());
-            self.insert_memory_row_internal(
-                tenant_id,
-                &new_memory_id,
-                memory_type,
-                content,
-                metadata,
-                tags,
-                &incoming,
-            )
-            .await?;
-            return Ok(());
-        }
-
-        self.insert_memory_row_internal(
-            tenant_id,
-            memory_id,
-            memory_type,
-            content,
-            metadata,
-            tags,
-            &incoming,
+        let incoming = MemoryTimeline::new_active(now, MemoryAuthority::Agent, 0.75);
+        self.store_versioned_internal(
+            tenant_id, memory_id, memory_type, content, metadata, tags, now, incoming, None,
         )
-        .await?;
-        Ok(())
+        .await
     }
 
     async fn retrieve_memory(&self, memory_id: &str) -> Result<Option<MemoryEntry>, MemoryError> {
@@ -1009,10 +1008,10 @@ impl SqliteMemoryStorage {
                 supersedes_memory_id = ?
             WHERE tenant_id = ? AND memory_id = ?",
         )
-        .bind(format!("{:?}", tl.status))
+        .bind(status_str(&tl.status))
         .bind(tl.valid_to.map(|v| v as i64))
         .bind(tl.confidence)
-        .bind(format!("{:?}", tl.authority))
+        .bind(authority_str(&tl.authority))
         .bind(&tl.supersedes_memory_id)
         .bind(tenant)
         .bind(memory_id)
@@ -1032,47 +1031,175 @@ impl SqliteMemoryStorage {
         metadata: &serde_json::Value,
         tags: &[String],
         tl: &crate::v2::types::MemoryTimeline,
+        fields: &RowFields,
     ) -> Result<(), MemoryError> {
         let content_json = serde_json::to_string(content).map_err(MemoryError::Json)?;
         let tags_json = serde_json::to_string(tags).map_err(MemoryError::Json)?;
-        let provenance_json =
-            serde_json::to_string(&serde_json::json!({})).map_err(MemoryError::Json)?; // placeholder
-        let retention_policy_json =
-            serde_json::to_string(&serde_json::json!({})).map_err(MemoryError::Json)?; // placeholder
 
         sqlx::query(
             "INSERT INTO memory_entries (
-                memory_id, tenant_id, memory_type, content, created_at, last_accessed,
+                memory_id, tenant_id, session_id, agent_id, memory_type, content, created_at, last_accessed,
                 access_count, sensitivity_tier, tags, provenance, retention_policy,
                 consolidation_state, created_at_index, last_accessed_index,
                 status, valid_from, valid_to, confidence, authority, supersedes_memory_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(memory_id)
         .bind(tenant)
+        .bind(&fields.session_id)
+        .bind(&fields.agent_id)
         .bind(memory_type)
         .bind(&content_json)
-        .bind(tl.valid_from as i64)
-        .bind(tl.valid_from as i64) // last_accessed
-        .bind(0i32) // access_count
-        .bind(0i32) // sensitivity_tier
+        .bind(fields.created_at as i64)
+        .bind(fields.last_accessed as i64)
+        .bind(fields.access_count as i32)
+        .bind(fields.sensitivity_tier as i32)
         .bind(&tags_json)
-        .bind(&provenance_json) // placeholder
-        .bind(&retention_policy_json) // placeholder
-        .bind("Raw") // consolidation_state
-        .bind(tl.valid_from as i64)
-        .bind(tl.valid_from as i64)
-        .bind(format!("{:?}", tl.status))
+        .bind(&fields.provenance_json)
+        .bind(&fields.retention_policy_json)
+        .bind(&fields.consolidation_state)
+        .bind(fields.created_at as i64)
+        .bind(fields.last_accessed as i64)
+        .bind(status_str(&tl.status))
         .bind(tl.valid_from as i64)
         .bind(tl.valid_to.map(|v| v as i64))
         .bind(tl.confidence)
-        .bind(format!("{:?}", tl.authority))
+        .bind(authority_str(&tl.authority))
         .bind(&tl.supersedes_memory_id)
         .execute(&self.pool)
         .await
         .map_err(|e| MemoryError::Io(std::io::Error::other(e)))?;
 
         Ok(())
+    }
+
+    /// Shared v2 write path: supersede the active version (if any) instead of
+    /// overwriting it, then insert the incoming version. `fields` carries the
+    /// non-timeline columns from a full `MemoryEntry`; when absent they are
+    /// inherited from the superseded row, or defaulted for a brand-new memory.
+    async fn store_versioned_internal(
+        &self,
+        tenant_id: &str,
+        memory_id: &str,
+        memory_type: &str,
+        content: &serde_json::Value,
+        metadata: &serde_json::Value,
+        tags: &[String],
+        now: u64,
+        mut incoming: crate::v2::types::MemoryTimeline,
+        fields: Option<RowFields>,
+    ) -> Result<(), MemoryError> {
+        use crate::v2::conflict::choose_strategy;
+        use crate::v2::truth_engine::TruthEngine;
+        use crate::v2::types::MemoryTimeline;
+
+        let slot = TruthEngine::slot_key(content, tags, metadata);
+
+        // Find existing active memory by slot, falling back to memory_id
+        let existing = match slot.as_ref() {
+            Some(slot_key) => self.find_active_by_slot_internal(tenant_id, slot_key).await?,
+            None => None,
+        };
+        let existing = match existing {
+            Some(ex) => Some(ex),
+            None => {
+                self.find_active_by_memory_id_internal(tenant_id, memory_id)
+                    .await?
+            }
+        };
+
+        if let Some(ex) = existing {
+            let mut existing_tl = MemoryTimeline {
+                status: self.parse_status_internal(&ex.status),
+                valid_from: ex.valid_from.unwrap_or(ex.created_at),
+                valid_to: ex.valid_to,
+                confidence: ex.confidence.unwrap_or(0.75),
+                authority: self.parse_authority_internal(ex.authority.as_deref()),
+                supersedes_memory_id: ex.supersedes_memory_id.clone(),
+            };
+
+            let strategy = choose_strategy(memory_type, tags);
+            TruthEngine::apply(now, &mut existing_tl, &mut incoming, strategy);
+
+            let fields = match fields {
+                Some(f) => f,
+                None => {
+                    self.inherit_fields_internal(tenant_id, &ex.memory_id, content, now)
+                        .await?
+                }
+            };
+
+            self.update_timeline_internal(tenant_id, &ex.memory_id, &existing_tl)
+                .await?;
+            let new_memory_id = format!("{}::v{}", memory_id, now);
+            incoming.supersedes_memory_id = Some(ex.memory_id.clone());
+            return self
+                .insert_memory_row_internal(
+                    tenant_id,
+                    &new_memory_id,
+                    memory_type,
+                    content,
+                    metadata,
+                    tags,
+                    &incoming,
+                    &fields,
+                )
+                .await;
+        }
+
+        let fields = match fields {
+            Some(f) => f,
+            None => RowFields::defaults(None, None, 0, content, now)?,
+        };
+        self.insert_memory_row_internal(
+            tenant_id, memory_id, memory_type, content, metadata, tags, &incoming, &fields,
+        )
+        .await
+    }
+
+    /// Non-timeline columns for a new version written without a full entry:
+    /// carry session/agent, sensitivity, provenance and retention over from the
+    /// version it supersedes.
+    async fn inherit_fields_internal(
+        &self,
+        tenant: &str,
+        memory_id: &str,
+        content: &serde_json::Value,
+        now: u64,
+    ) -> Result<RowFields, MemoryError> {
+        let row = sqlx::query(
+            "SELECT session_id, agent_id, sensitivity_tier, provenance, retention_policy
+             FROM memory_entries WHERE tenant_id = ? AND memory_id = ?",
+        )
+        .bind(tenant)
+        .bind(memory_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| MemoryError::Io(std::io::Error::other(e)))?;
+
+        let Some(row) = row else {
+            return RowFields::defaults(None, None, 0, content, now);
+        };
+        let session_id: Option<String> = row.get("session_id");
+        let agent_id: Option<String> = row.get("agent_id");
+        let tier = row.get::<i32, _>("sensitivity_tier") as u8;
+        let mut fields = RowFields::defaults(session_id, agent_id, tier, content, now)?;
+
+        // Keep the superseded version's provenance (extended with its id) and
+        // retention policy when they parse; otherwise keep the defaults.
+        if let Ok(mut prov) =
+            serde_json::from_str::<MemoryProvenance>(row.get::<&str, _>("provenance"))
+        {
+            prov.derivation_chain.push(memory_id.to_string());
+            prov.integrity_hash = content_hash(content)?;
+            prov.signature = None;
+            fields.provenance_json = serde_json::to_string(&prov).map_err(MemoryError::Json)?;
+        }
+        let retention: &str = row.get("retention_policy");
+        if serde_json::from_str::<MemoryRetentionPolicy>(retention).is_ok() {
+            fields.retention_policy_json = retention.to_string();
+        }
+        Ok(fields)
     }
 
     fn parse_status_internal(&self, s: &str) -> crate::v2::types::MemoryStatus {
@@ -1263,5 +1390,103 @@ impl crate::v2::graph::GraphStore for SqliteMemoryStorage {
             }
             Err(_) => Err(anyhow::anyhow!("Not in tokio runtime")),
         }
+    }
+}
+
+/// Columns of a `memory_entries` row that are not part of the v2 timeline.
+struct RowFields {
+    session_id: Option<String>,
+    agent_id: Option<String>,
+    created_at: u64,
+    last_accessed: u64,
+    access_count: u32,
+    sensitivity_tier: u8,
+    provenance_json: String,
+    retention_policy_json: String,
+    consolidation_state: String,
+}
+
+impl RowFields {
+    fn from_entry(memory: &MemoryEntry) -> Result<Self, MemoryError> {
+        Ok(Self {
+            session_id: memory.session_id.clone(),
+            agent_id: memory.agent_id.clone(),
+            created_at: memory.created_at,
+            last_accessed: memory.last_accessed,
+            access_count: memory.access_count,
+            sensitivity_tier: memory.sensitivity_tier,
+            provenance_json: serde_json::to_string(&memory.provenance)
+                .map_err(MemoryError::Json)?,
+            retention_policy_json: serde_json::to_string(&memory.retention_policy)
+                .map_err(MemoryError::Json)?,
+            consolidation_state: format!("{:?}", memory.consolidation_state),
+        })
+    }
+
+    /// Defaults for a memory written through `store_memory_v2` with no entry:
+    /// provenance names the agent and hashes the content; retention keeps the
+    /// memory without decay and archives rather than deletes it.
+    fn defaults(
+        session_id: Option<String>,
+        agent_id: Option<String>,
+        sensitivity_tier: u8,
+        content: &serde_json::Value,
+        now: u64,
+    ) -> Result<Self, MemoryError> {
+        let provenance = MemoryProvenance {
+            source_session: session_id.clone(),
+            source_agent: agent_id.clone().unwrap_or_else(|| "agent".to_string()),
+            derivation_chain: vec![],
+            integrity_hash: content_hash(content)?,
+            signature: None,
+        };
+        Ok(Self {
+            session_id,
+            agent_id,
+            created_at: now,
+            last_accessed: now,
+            access_count: 0,
+            sensitivity_tier,
+            provenance_json: serde_json::to_string(&provenance).map_err(MemoryError::Json)?,
+            retention_policy_json: serde_json::to_string(&default_retention_policy())
+                .map_err(MemoryError::Json)?,
+            consolidation_state: format!("{:?}", ConsolidationState::Raw),
+        })
+    }
+}
+
+fn default_retention_policy() -> MemoryRetentionPolicy {
+    MemoryRetentionPolicy {
+        time_to_live: None,
+        max_accesses: None,
+        decay_function: crate::MemoryDecayFunction::Linear { rate: 0.0 },
+        consolidation_trigger: crate::ConsolidationTrigger::Manual,
+        deletion_policy: crate::DeletionPolicy::Archival,
+    }
+}
+
+fn content_hash(content: &serde_json::Value) -> Result<String, MemoryError> {
+    use sha2::{Digest, Sha256};
+    let bytes = serde_json::to_vec(content).map_err(MemoryError::Json)?;
+    Ok(format!("{:x}", Sha256::digest(&bytes)))
+}
+
+/// Status values as the rest of the storage layer reads them ('active', ...).
+fn status_str(status: &crate::v2::types::MemoryStatus) -> &'static str {
+    use crate::v2::types::MemoryStatus;
+    match status {
+        MemoryStatus::Active => "active",
+        MemoryStatus::Superseded => "superseded",
+        MemoryStatus::Archived => "archived",
+    }
+}
+
+/// Authority values as `parse_authority_internal` reads them ('agent', ...).
+fn authority_str(authority: &crate::v2::types::MemoryAuthority) -> &'static str {
+    use crate::v2::types::MemoryAuthority;
+    match authority {
+        MemoryAuthority::User => "user",
+        MemoryAuthority::Agent => "agent",
+        MemoryAuthority::System => "system",
     }
 }

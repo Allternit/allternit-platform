@@ -2291,6 +2291,8 @@ name = "allternit-tools"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
+ "base64 0.22.1",
  "chrono",
  "reqwest 0.12.28",
  "scraper",
@@ -9033,6 +9035,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tokio-test",
+ "tokio-tungstenite 0.24.0",
  "tokio-util",
  "tracing",
  "url",

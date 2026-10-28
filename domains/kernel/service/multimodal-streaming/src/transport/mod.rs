@@ -3,8 +3,18 @@
 //! GAP-41, GAP-42: ICE, DTLS, SRTP transport
 //! WIH: GAP-41, GAP-42, Owner: T2-A4
 //!
-//! This module is owned by T2-A4. These are placeholder exports
-//! for coordination until T2-A4 implementation is complete.
+//! ICE connectivity, DTLS handshake, SRTP media protection and SCTP-style
+//! data channels.
+
+mod channel;
+mod dtls;
+mod ice;
+mod srtp;
+
+pub use channel::*;
+pub use dtls::*;
+pub use ice::*;
+pub use srtp::*;
 
 use crate::types::StreamingResult;
 
@@ -31,23 +41,3 @@ impl Default for TransportManager {
         Self::new()
     }
 }
-
-/// ICE agent
-///
-/// Placeholder - full implementation by T2-A4
-pub struct IceAgent;
-
-/// DTLS transport
-///
-/// Placeholder - full implementation by T2-A4
-pub struct DtlsTransport;
-
-/// SRTP context
-///
-/// Placeholder - full implementation by T2-A4
-pub struct SrtpContext;
-
-/// Data channel
-///
-/// Placeholder - full implementation by T2-A4
-pub struct DataChannel;

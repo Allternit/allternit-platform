@@ -196,23 +196,26 @@ mod v2_memory_system_tests {
             .await
             .unwrap();
 
-        // Now we should have both the old (superseded) and new (active) versions
-        // Query for all versions of this memory
-        let all_memories = storage
-            .query_memory(&allternit_memory::storage::MemoryQuery {
-                tenant_id: "tenant_1".to_string(),
-                session_id: Some("session_1".to_string()),
-                agent_id: Some("agent_1".to_string()),
-                memory_types: vec![MemoryType::Declarative],
-                max_sensitivity_tier: Some(5),
-                required_tags: vec!["employment".to_string()],
-                time_range: None,
-                content_search: None,
-                limit: None,
-                status_filter: None, // Query all statuses
-            })
-            .await
-            .unwrap();
+        // Now we should have both the old (superseded) and new (active) versions.
+        // query_memory returns only active rows unless a status is named, so
+        // query each status the test expects. Both versions were written through
+        // store_memory_v2, which takes no session or agent, so don't filter on them.
+        let query_status = |status: &str| allternit_memory::storage::MemoryQuery {
+            tenant_id: "tenant_1".to_string(),
+            session_id: None,
+            agent_id: None,
+            memory_types: vec![MemoryType::Declarative],
+            max_sensitivity_tier: Some(5),
+            required_tags: vec!["employment".to_string()],
+            time_range: None,
+            content_search: None,
+            limit: None,
+            status_filter: Some(status.to_string()),
+        };
+        let mut all_memories = Vec::new();
+        for status in ["active", "superseded"] {
+            all_memories.extend(storage.query_memory(&query_status(status)).await.unwrap());
+        }
 
         // Should have 2 memories: the original (superseded) and the new (active)
         assert_eq!(all_memories.len(), 2);

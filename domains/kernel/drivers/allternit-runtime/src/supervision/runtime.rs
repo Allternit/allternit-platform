@@ -8,8 +8,8 @@ use tracing::{debug, error, info, trace};
 
 use crate::events::{FinishReason, ProviderError, ProviderStreamItem, RuntimeEvent};
 use crate::provider::{ProviderRuntime, ProviderSessionConfig, ProviderSessionHandle};
-use crate::state::{SessionState, TransitionResult};
-use crate::tools::{ToolCall, ToolExecutor, ToolResult};
+use crate::session::{SessionState, TransitionResult};
+use crate::tool_loop::{ToolCall, ToolExecutor, ToolResult};
 
 /// A state transition record for the transcript
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -144,14 +144,17 @@ impl<P: ProviderRuntime, T: ToolExecutor> SessionRuntime<P, T> {
         info!("Starting session runtime");
         
         // Step 1: Initialize (Idle → Initializing → Ready)
-        if let Err(e) = self.initialize(config).await {
-            error!("Initialization failed: {}", e);
-            self.transcript.record_error(format!("Initialization failed: {}", e));
-            return self.transcript;
-        }
+        let mut handle = match self.initialize(config).await {
+            Ok(handle) => handle,
+            Err(e) => {
+                error!("Initialization failed: {}", e);
+                self.transcript.record_error(format!("Initialization failed: {}", e));
+                return self.transcript;
+            }
+        };
         
         // Step 2: Execute the main loop (Ready → ... → Completed/Failed)
-        if let Err(e) = self.execute_loop(prompt).await {
+        if let Err(e) = self.execute_loop(&mut handle, prompt).await {
             error!("Execution loop failed: {}", e);
             self.transcript.record_error(format!("Execution failed: {}", e));
         }
@@ -161,7 +164,10 @@ impl<P: ProviderRuntime, T: ToolExecutor> SessionRuntime<P, T> {
     }
     
     /// Initialize the session with the provider
-    async fn initialize(&mut self, config: ProviderSessionConfig) -> Result<(), ProviderError> {
+    async fn initialize(
+        &mut self,
+        config: ProviderSessionConfig,
+    ) -> Result<ProviderSessionHandle, ProviderError> {
         debug!("Initializing session");
         
         // Idle → Initializing
@@ -182,11 +188,15 @@ impl<P: ProviderRuntime, T: ToolExecutor> SessionRuntime<P, T> {
             })?;
         
         debug!("Session initialized: {}", handle.session_id);
-        Ok(())
+        Ok(handle)
     }
     
     /// Main execution loop
-    async fn execute_loop(&mut self, prompt: String) -> Result<(), ProviderError> {
+    async fn execute_loop(
+        &mut self,
+        handle: &mut ProviderSessionHandle,
+        prompt: String,
+    ) -> Result<(), ProviderError> {
         debug!("Starting execution loop");
         
         // Ready → AwaitingModel
@@ -196,18 +206,8 @@ impl<P: ProviderRuntime, T: ToolExecutor> SessionRuntime<P, T> {
                 message: e.to_string() 
             })?;
         
-        // Create a temporary handle for the provider
-        // In a real implementation, we'd store this in the runtime
-        let config = ProviderSessionConfig {
-            provider_id: "fake".to_string(),
-            model_id: "fake-model".to_string(),
-            api_key: None,
-            base_url: None,
-        };
-        let mut handle = self.provider.start_session(config).await?;
-        
-        // Stream the prompt
-        let mut stream = self.provider.stream_prompt(&mut handle, prompt).await?;
+        // Stream the prompt on the session opened by `initialize`
+        let mut stream = self.provider.stream_prompt(handle, prompt).await?;
         
         // Process stream items
         while let Some(item) = stream.next().await {
@@ -216,7 +216,7 @@ impl<P: ProviderRuntime, T: ToolExecutor> SessionRuntime<P, T> {
                     self.handle_delta(content).await?;
                 }
                 ProviderStreamItem::ToolCall(tool_call) => {
-                    self.handle_tool_call(&mut handle, tool_call).await?;
+                    self.handle_tool_call(handle, tool_call).await?;
                 }
                 ProviderStreamItem::Done(reason) => {
                     self.handle_done(reason).await?;
@@ -284,9 +284,10 @@ impl<P: ProviderRuntime, T: ToolExecutor> SessionRuntime<P, T> {
             Err(e) => {
                 error!("Tool execution failed: {}", e);
                 ToolResult {
-                    call_id: tool_call.id.clone(),
-                    output: serde_json::json!({"error": e.to_string()}),
-                    is_error: true,
+                    tool_call_id: tool_call.id.clone(),
+                    result: serde_json::json!({"error": e.to_string()}),
+                    error: Some(e.to_string()),
+                    execution_time_ms: None,
                 }
             }
         };
@@ -344,7 +345,7 @@ impl<P: ProviderRuntime, T: ToolExecutor> SessionRuntime<P, T> {
 mod runtime_tests {
     use super::*;
     use crate::provider::FakeProviderRuntime;
-    use crate::tools::EchoToolExecutor;
+    use crate::tool_loop::EchoToolExecutor;
     
     #[tokio::test]
     async fn test_happy_path() {
@@ -410,8 +411,8 @@ mod runtime_tests {
         
         // Verify tool result was recorded
         assert_eq!(transcript.tool_results.len(), 1);
-        assert_eq!(transcript.tool_results[0].call_id, "call_1");
-        assert_eq!(transcript.tool_results[0].output["echo"], "hello from tool");
+        assert_eq!(transcript.tool_results[0].tool_call_id, "call_1");
+        assert_eq!(transcript.tool_results[0].result["echo"]["input"], "hello from tool");
         
         // Verify deltas after tool
         assert!(transcript.deltas.contains(&"Tool executed successfully.".to_string()));

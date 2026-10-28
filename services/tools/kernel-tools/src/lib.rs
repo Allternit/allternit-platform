@@ -1,4 +1,5 @@
 pub mod fs;
+pub mod gui;
 pub mod search;
 
 use serde::{Deserialize, Serialize};

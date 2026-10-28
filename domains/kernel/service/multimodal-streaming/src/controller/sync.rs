@@ -12,7 +12,7 @@ use std::collections::VecDeque;
 use tracing::{debug, trace, warn};
 
 /// Maximum allowed drift between audio and video before resync (milliseconds)
-const MAX_SYNC_DRIFT_MS: i64 = 40;
+pub(crate) const MAX_SYNC_DRIFT_MS: i64 = 40;
 
 /// Target synchronization window (milliseconds)
 const SYNC_WINDOW_MS: i64 = 20;

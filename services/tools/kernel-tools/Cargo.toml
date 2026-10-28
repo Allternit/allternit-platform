@@ -13,3 +13,5 @@ scraper = "0.18"
 url = "2.5"
 uuid = { version = "1.0", features = ["v4"] }
 chrono = "0.4"
+async-trait = { workspace = true }
+base64 = { workspace = true }

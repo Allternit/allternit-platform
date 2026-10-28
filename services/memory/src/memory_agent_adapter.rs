@@ -61,47 +61,26 @@ struct IngestResponse {
     error: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
-struct QueryRequest {
-    question: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    max_results: Option<usize>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    tenant_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    session_id: Option<String>,
+/// `/stats` response from the Memory Agent
+#[derive(Debug, Clone, Deserialize)]
+pub struct StatsResponse {
+    pub memories: MemoryStats,
+    pub insights: usize,
+    pub connections: usize,
+    #[serde(default)]
+    pub processed_files: usize,
+    #[serde(default)]
+    pub ollama_connected: bool,
 }
 
-#[derive(Debug, Deserialize)]
-struct QueryResponse {
-    query: String,
-    answer: String,
-    memories: Vec<MemoryEntry>,
-    #[serde(default)]
-    insights: Vec<Value>,
-    sources: Vec<String>,
-    confidence: f32,
-    execution_time_ms: u32,
-}
-
-#[derive(Debug, Deserialize)]
-struct StatsResponse {
-    memories: MemoryStats,
-    insights: usize,
-    connections: usize,
-    #[serde(default)]
-    processed_files: usize,
-    #[serde(default)]
-    ollama_connected: bool,
-}
-
-#[derive(Debug, Deserialize)]
-struct MemoryStats {
-    total: usize,
-    raw: usize,
-    processed: usize,
-    consolidated: usize,
-    archived: usize,
+/// Memory counts by lifecycle stage
+#[derive(Debug, Clone, Deserialize)]
+pub struct MemoryStats {
+    pub total: usize,
+    pub raw: usize,
+    pub processed: usize,
+    pub consolidated: usize,
+    pub archived: usize,
 }
 
 impl MemoryAgentAdapter {
@@ -142,8 +121,8 @@ impl MemoryAgentAdapter {
         }
     }
 
-    /// Get statistics
-    pub async fn stats(&self) -> Result<StatsResponse, MemoryError> {
+    /// Get the Memory Agent's typed statistics
+    pub async fn agent_stats(&self) -> Result<StatsResponse, MemoryError> {
         let url = format!("{}/stats", self.config.base_url);
         
         let response = self.client
@@ -192,8 +171,6 @@ impl MemoryAgentAdapter {
 impl MemoryProvider for MemoryAgentAdapter {
     /// Store a value in memory via HTTP API
     async fn store(&self, key: &str, value: Value) -> Result<(), MemoryError> {
-        let content = serde_json::to_string(&value).unwrap_or_default();
-        
         self.store_entry(MemoryEntry {
             id: uuid::Uuid::new_v4().to_string(),
             key: key.to_string(),
@@ -220,13 +197,13 @@ impl MemoryProvider for MemoryAgentAdapter {
             session_id: entry.session_id,
         };
 
-        let response = self.request_with_retry(|| async {
-            self.client
-                .post(&url)
-                .json(&request)
-                .send()
-                .await
-                .map_err(|e| MemoryError::Connection(e.to_string()))
+        let response = self.request_with_retry(|| {
+            let req = self.client.post(&url).json(&request);
+            async move {
+                req.send()
+                    .await
+                    .map_err(|e| MemoryError::Connection(e.to_string()))
+            }
         }).await?;
 
         if !response.status().is_success() {
@@ -242,7 +219,11 @@ impl MemoryProvider for MemoryAgentAdapter {
             .map_err(|e| MemoryError::Backend(e.to_string()))?;
 
         if result.success {
-            info!("Stored memory entry: {}", entry.key);
+            info!(
+                "Stored memory entry: {} (id {})",
+                entry.key,
+                result.memory_id.as_deref().unwrap_or("unknown")
+            );
             Ok(())
         } else {
             Err(MemoryError::Backend(
@@ -281,13 +262,17 @@ impl MemoryProvider for MemoryAgentAdapter {
     async fn query(&self, query: &MemoryQuery) -> Result<Vec<MemoryEntry>, MemoryError> {
         let url = format!("{}/api/search", self.config.base_url);
         
-        let response = self.request_with_retry(|| async {
-            self.client
+        let limit = query.limit.unwrap_or(20).to_string();
+        let response = self.request_with_retry(|| {
+            let req = self
+                .client
                 .get(&url)
-                .query(&[("q", &query.query), ("limit", &query.limit.unwrap_or(20).to_string())])
-                .send()
-                .await
-                .map_err(|e| MemoryError::Connection(e.to_string()))
+                .query(&[("q", query.query.as_str()), ("limit", limit.as_str())]);
+            async move {
+                req.send()
+                    .await
+                    .map_err(|e| MemoryError::Connection(e.to_string()))
+            }
         }).await?;
 
         if !response.status().is_success() {
@@ -300,7 +285,6 @@ impl MemoryProvider for MemoryAgentAdapter {
         #[derive(Debug, Deserialize)]
         struct SearchResponse {
             memories: Vec<MemoryEntry>,
-            count: usize,
         }
 
         let result: SearchResponse = response
@@ -359,7 +343,7 @@ impl MemoryProvider for MemoryAgentAdapter {
 
     /// Get the backend type
     fn backend_type(&self) -> BackendType {
-        BackendType::Custom("MemoryAgentHTTP".to_string())
+        BackendType::MemoryAgentHttp
     }
 
     /// Get capabilities
@@ -385,19 +369,25 @@ impl MemoryProvider for MemoryAgentAdapter {
 
     /// Get statistics
     async fn stats(&self) -> Result<HashMap<String, Value>, MemoryError> {
-        let stats = self.stats().await?;
+        let stats = self.agent_stats().await?;
         
         let mut result = HashMap::new();
         result.insert("memories_total".to_string(), Value::Number(stats.memories.total.into()));
         result.insert("memories_raw".to_string(), Value::Number(stats.memories.raw.into()));
         result.insert("memories_processed".to_string(), Value::Number(stats.memories.processed.into()));
         result.insert("memories_consolidated".to_string(), Value::Number(stats.memories.consolidated.into()));
+        result.insert("memories_archived".to_string(), Value::Number(stats.memories.archived.into()));
         result.insert("insights".to_string(), Value::Number(stats.insights.into()));
         result.insert("connections".to_string(), Value::Number(stats.connections.into()));
         result.insert("processed_files".to_string(), Value::Number(stats.processed_files.into()));
         result.insert("ollama_connected".to_string(), Value::Bool(stats.ollama_connected));
         
         Ok(result)
+    }
+
+    /// Ping the Memory Agent via its health endpoint
+    async fn ping(&self) -> Result<bool, MemoryError> {
+        self.health().await
     }
 }
 
