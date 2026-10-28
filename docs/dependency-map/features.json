@@ -280,6 +280,10 @@
         {
           "on": "2026-10-25",
           "note": "Threads work as war rooms: archive is server state (bot_threads.archived_at, V277), bots rename, close and search threads (thread_update / thread_close / thread_search), and closing, archiving or pausing a thread pauses its routines and loops and revokes its one-task grants; reopening restores what the close-out stopped."
+        },
+        {
+          "on": "2026-10-27",
+          "note": "Threads carry a purpose, icon and colour (V281). With a purpose the bot greets and offers three starter tasks (POST /threads/:id/starters); runs started there wear the thread's colour tag. Borrowed from OpenDuet channels (MIT)."
         }
       ],
       "evidence": [
@@ -3042,6 +3046,102 @@
         "allternit-ai/src/lib/factory/client.ts",
         "allternit-ai/src/lib/factory/hooks.ts",
         "allternit-ai/src/lib/factory/types.ts"
+      ]
+    },
+    {
+      "id": "feature:morning-brief",
+      "label": "Morning brief and first-day intro",
+      "product": "product:ai-allternit",
+      "status": "live",
+      "description": "Once a day, on the first open of a bot's main chat, the bot posts a brief: what needs you and why (each with Start, which hands it to the bot in a new thread), what can wait, today's calendar, and what it couldn't check. Unread mail is sorted by the shared mail triage classifier. A new bot speaks first with a three-bubble intro and Sounds right / Something's off. Desktop, the ai.allternit.com phone layout and the m.allternit.com PWA share BotChatSessionView.",
+      "touches": [
+        "allternit/cmd/allternit-api",
+        "allternit-ai/src/lib/bots",
+        "allternit-ai/src/components/bot-chat"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-27",
+          "note": "Borrowed from CopilotKit's OpenDuet (MIT) after Eoj asked to close every gap from its launch review. One brief per user, bot and local day (bot_briefs, V280)."
+        }
+      ],
+      "evidence": [
+        "allternit/cmd/allternit-api/src/morning_brief.rs",
+        "allternit/cmd/allternit-api/migrations/V280__bot_brief_intro.sql",
+        "allternit/surfaces/docs/guides/morning-brief.mdx",
+        "allternit-ai/src/components/bot-chat/MorningBriefStrip.tsx"
+      ]
+    },
+    {
+      "id": "feature:mail-triage",
+      "label": "Mail triage (needs you / can wait)",
+      "product": "product:ai-allternit",
+      "status": "live",
+      "description": "Sorts incoming mail into needs you and can wait with a reason for each: rules settle obvious mail (only ever as can wait, never for payment, security or paused-account mail), the bot's brain decides the rest. Measured by evals/triage, a 62-message labelled set vendored from OpenDuet (MIT).",
+      "touches": [
+        "allternit/cmd/allternit-cloud-api",
+        "allternit/cmd/allternit-api"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-27",
+          "note": "One source compiled into both allternit-api (morning brief) and cloud-api (eval bin, feature triage-eval) so the eval measures the exact code that runs. Recall is the headline metric."
+        }
+      ],
+      "evidence": [
+        "allternit/cmd/allternit-cloud-api/src/routes/mail_triage.rs",
+        "allternit/cmd/allternit-cloud-api/src/bin/mail_triage_eval.rs",
+        "allternit/evals/triage/README.md",
+        "allternit/surfaces/docs/operations/mail-triage-eval.mdx"
+      ]
+    },
+    {
+      "id": "feature:setup-checklist",
+      "label": "Setup checklist",
+      "product": "product:ai-allternit",
+      "status": "live",
+      "description": "Settings → Setup (and the end of first-run setup) lists what the user's Allternit depends on: account and plan, brain access, Google, connected accounts, notifications, computers and channels. Each row is Ready, Not checked or Needs setup from a live check, with a fix action and Check again. In the Bots app too.",
+      "touches": [
+        "allternit/cmd/allternit-cloud-api",
+        "allternit/cmd/allternit-api",
+        "allternit-ai/src/views/settings",
+        "allternit-ai/src/components/onboarding"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-27",
+          "note": "A configured value alone is never Ready; brain checks call list_models and re-validate BYOK keys, no completions. Borrowed from OpenDuet (MIT)."
+        }
+      ],
+      "evidence": [
+        "allternit/cmd/allternit-cloud-api/src/routes/setup_checks.rs",
+        "allternit/cmd/allternit-api/src/setup_routes.rs",
+        "allternit/surfaces/docs/guides/setup-checklist.mdx",
+        "allternit/surfaces/docs/api/setup-checks.mdx",
+        "allternit-ai/src/views/settings/SetupPanel.tsx"
+      ]
+    },
+    {
+      "id": "feature:masked-secret-box",
+      "label": "Masked secret box",
+      "product": "product:computer-use",
+      "status": "live",
+      "description": "When a site asks for a one-off value (password, 2FA code, CVC) that isn't in the vault, the agent calls request_human with secret; a masked box appears under the live computer view and the value is typed straight into the named field. It never reaches the model, logs, events or audit rows, and is screened out of screenshots and observations for 30 minutes. Optional Save to vault.",
+      "touches": [
+        "allternit/cmd/allternit-api/src/computer_*",
+        "allternit/cmd/allternit-api/src/aci_*",
+        "allternit-ai/src/components/computers"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-27",
+          "note": "Complements use_credential (saved vault values) and request_human (full takeover). One-off values are screened from 3 characters so a CVC is redacted. Borrowed from OpenDuet (MIT)."
+        }
+      ],
+      "evidence": [
+        "allternit/cmd/allternit-api/src/computer_v2.rs",
+        "allternit/surfaces/docs/tools/computer-toolset.mdx",
+        "allternit-ai/src/components/computers/ComputerSecretBox.tsx"
       ]
     }
   ],
