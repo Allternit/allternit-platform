@@ -88,7 +88,7 @@ struct DeleteAccountView: View {
         } header: {
             Text("What happens")
         } footer: {
-            Text("Want a copy first? Export your data from Settings → Account → Privacy before you delete.")
+            Text("Want a copy first? Export your data from Settings → Privacy before you delete.")
         }
     }
 

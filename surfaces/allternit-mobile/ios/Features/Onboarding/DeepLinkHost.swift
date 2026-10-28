@@ -10,7 +10,7 @@ import SwiftUI
 /// - channel → the bots hub
 /// - settings → Settings
 /// - invite  → the web invite page in-app
-/// - computers → `.openComputersLink` for the Computers view
+/// - computers → the Computers list (Settings → Devices) in a sheet
 struct DeepLinkHost: ViewModifier {
     @ObservedObject private var router = DeepLinkRouter.shared
     @EnvironmentObject private var modeStore: AppModeStore
@@ -18,6 +18,7 @@ struct DeepLinkHost: ViewModifier {
 
     @State private var botSheet: AgentRecord?
     @State private var isSettingsPresented = false
+    @State private var isComputersPresented = false
     @State private var inviteURL: IdentifiableURL?
     @State private var linkError: String?
     @State private var isResolving = false
@@ -58,6 +59,16 @@ struct DeepLinkHost: ViewModifier {
             .sheet(isPresented: $isSettingsPresented) {
                 SettingsView()
             }
+            .sheet(isPresented: $isComputersPresented) {
+                NavigationStack {
+                    DevicePairingView()
+                        .toolbar {
+                            ToolbarItem(placement: .topBarLeading) {
+                                Button("Done") { isComputersPresented = false }
+                            }
+                        }
+                }
+            }
             .sheet(item: $inviteURL) { item in
                 SafariView(url: item.url)
                     .ignoresSafeArea()
@@ -77,6 +88,7 @@ struct DeepLinkHost: ViewModifier {
         // A new link replaces whatever a previous link opened.
         botSheet = nil
         isSettingsPresented = false
+        isComputersPresented = false
         inviteURL = nil
         switch link {
         case .session(let id):
@@ -92,7 +104,7 @@ struct DeepLinkHost: ViewModifier {
         case .invite(let url):
             inviteURL = IdentifiableURL(url: url)
         case .computers:
-            NotificationCenter.default.post(name: .openComputersLink, object: nil)
+            isComputersPresented = true
         }
     }
 

@@ -146,9 +146,3 @@ final class DeepLinkRouter: ObservableObject {
         return pending
     }
 }
-
-extension Notification.Name {
-    /// Posted when a link asks for the Computers view; the view that owns
-    /// Computers listens for it (no-op until one does).
-    static let openComputersLink = Notification.Name("com.allternit.openComputersLink")
-}
