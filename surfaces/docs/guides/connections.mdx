@@ -102,6 +102,8 @@ When a bot needs an app, it uses the account in this order:
 2. **The bot's own account for that app.** In a bot's **Connected Apps**, an app with more than one account gets an account menu. Leave it on **Default account** to follow your default.
 3. **Your default account.**
 
+**A bot's brain.** The same order applies to the account a bot's brain runs on. A bot whose brain is a coding tool (Claude Code, Codex) or a subscription model (ChatGPT, Claude, Kimi and the like) gets an **Account** menu in its brain settings when you have more than one sign-in for it; leave it on **Default account** to follow your default. If the chosen account can't be used right now (signed out, or out of its plan's limit), the bot's reply says so and asks you to pick another account in the bot's settings. It never switches to another account on its own. See [Bots](/surfaces/bots).
+
 **Coding tools.** Under Settings › Connections › Coding tools, a tool that can hold several sign-ins (Claude Code, Codex and Gemini CLI where the installed version supports it) shows **Add another account** under its row. Give the account a name such as Work, then sign in with the same link or code as the first time. The first account keeps the tool's own sign-in; added accounts keep their sign-in in their own folder under `~/.allternit/cli-homes`, so they never overwrite each other. Tools that can hold only one sign-in don't show the button.
 
 An Allternit server older than this feature shows each connector's one account without **Add another account**, **Make default** or **Rename**.

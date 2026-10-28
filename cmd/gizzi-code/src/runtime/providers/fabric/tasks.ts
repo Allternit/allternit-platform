@@ -28,7 +28,8 @@ export interface FabricTask {
 export interface FabricTaskBody {
   capability: string
   prompt: string
-  routing: { provider: string }
+  /** `account_id` pins one gateway account; one it cannot use now is a 409 `account_not_eligible`, never a fallback. */
+  routing: { provider: string; account_id?: string }
   options?: Record<string, unknown>
   thread_id?: string
   priority?: "interactive" | "normal" | "background"

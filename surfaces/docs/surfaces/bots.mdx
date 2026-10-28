@@ -109,6 +109,17 @@ Several threads can belong to one bot. A new thread does not replace the bot's a
 
 Choose a model and harness the runtime can actually use. Connect the needed tools, skills, secrets, and computer before assigning dependent work. Configure role instructions and review requirements for external actions. A template is a starting recipe, not evidence that every dependency is connected.
 
+### The account a bot's brain uses
+
+When the bot's brain runs on one of your own sign-ins and you have more than one, the brain settings show an **Account** menu under the brain/model choice:
+
+- **CLI brains** (Claude Code, Codex): the coding-tool sign-ins under Settings › Connections › Coding tools.
+- **Subscription brains** (ChatGPT, Claude, Kimi and the other subscription models): that subscription's browser sign-ins.
+
+Leave it on **Default account** to follow your default. A chosen account is used for every turn the bot runs: chats, threads, routines and turns the server starts. If that account can't be used right now (signed out, or out of its plan's limit), the reply says so and asks you to pick another account in the bot's settings. The bot does not fall back to another account. A message that names an account wins over the bot's own. See [Connections](/guides/connections) and [Subscriptions](/surfaces/subscriptions).
+
+For developers: the choice is stored on the bot's agent `config` as `cli_account_id` or `subs_account_id`. allternit-api's `bot_turn_marker` puts it on the turn's bot marker as `cliAccountId` / `subsAccountId`; gizzi passes `cliAccountId` to the CLI driver and `subsAccountId` to the subscription gateway as `routing.account_id`. The gateway answers an account it can't use with 409 `account_not_eligible`.
+
 The canonical contract lives in the allternit-ai repo, `src/lib/bots/BOT_AGENT_CONTRACT.md` and is enforced by `validateBot()` in `src/lib/bots/bot-contract.ts`.
 
 Bot secrets use server-side secret references rather than credential values in shared recipes. Saved templates omit credentials, memory, and live threads.

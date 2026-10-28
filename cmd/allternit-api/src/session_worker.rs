@@ -269,6 +269,9 @@ struct AgentRow {
     model: String,
     provider: String,
     system_prompt: Option<String>,
+    /// The agent's `config` JSON (`{}` when unset): the bot's own brain
+    /// accounts ride from it onto the turn's marker.
+    config: Value,
 }
 
 #[derive(Debug)]
@@ -400,7 +403,7 @@ fn load_context(conn: &rusqlite::Connection, task: &TaskRow) -> rusqlite::Result
     };
     let agent = conn
         .query_row(
-            "SELECT id, name, model, provider, system_prompt FROM agents WHERE id = ?1 AND user_id = ?2",
+            "SELECT id, name, model, provider, system_prompt, config FROM agents WHERE id = ?1 AND user_id = ?2",
             params![agent_id, user_id],
             |row| {
                 Ok(AgentRow {
@@ -409,6 +412,7 @@ fn load_context(conn: &rusqlite::Connection, task: &TaskRow) -> rusqlite::Result
                     model: row.get(2)?,
                     provider: row.get(3)?,
                     system_prompt: row.get(4)?,
+                    config: parse(row.get(5)?),
                 })
             },
         )
@@ -482,7 +486,8 @@ fn build_turn(payload: &Value, fallback_prompt: Option<&str>) -> Result<(String,
 /// The `bot` marker (gizzi `runtime/bots/bot-turn.ts`) for this run: the
 /// tool allowlist is the run's `tools` when given, else every tool in
 /// `effective_permissions`; `askTools` are the tools whose effective
-/// permission is `ask`. An empty allowlist means "no allowlist".
+/// permission is `ask`. An empty allowlist means "no allowlist". The bot's
+/// own accounts (`cliAccountId` / `subsAccountId`) come from its config.
 fn bot_marker(agent: &AgentRow, effective_permissions: &Value, payload_tools: Option<&Value>) -> Value {
     let perms = effective_permissions.as_object();
     let mut allowed: Vec<String> = payload_tools
@@ -501,13 +506,16 @@ fn bot_marker(agent: &AgentRow, effective_permissions: &Value, payload_tools: Op
         })
         .unwrap_or_default();
     ask.sort();
-    json!({
+    let mut marker = json!({
         "id": agent.id,
         "name": agent.name,
         "allowedTools": allowed,
         "askTools": ask,
         "gated": false,
-    })
+    });
+    // The bot's own CLI / subscription accounts, as on every other bot turn.
+    crate::agent_session_routes::bot_account_fields(&agent.config, &mut marker);
+    marker
 }
 
 /// `(providerID, modelID)`: an inline Cloud Agent stores `provider/model`

@@ -73,11 +73,13 @@ A subscription can have more than one login, for example a work and a personal C
 - **Add another:** in Settings, choose **Add account** again. In the model picker, choose **Add another *provider* login**. The new login gets its own name, such as "ChatGPT 2".
 - **Choose which one is used first:** the login marked **Used first** handles your chats. Choose **Use this one** on another login to switch, in Settings or in the model picker.
 - **Rename:** choose **Rename** to give a login a clear name, such as Work or Personal.
-- **When one is busy:** if the login used first hits its usage limit or signs out, Allternit uses your other signed-in login for that subscription.
+- **When one is busy:** if the login used first hits its usage limit or signs out, Allternit uses your other signed-in login for that subscription. A bot set to its own login is the exception (see Bots below).
 
 ## Bots
 
 When you connect a bot to a vendor that runs on one of your subscriptions (for example OpenAI dots, which run on ChatGPT), the bot's connection setup asks you to pick one of that subscription's signed-in logins, or to sign in another. Nothing opens on your own computer.
+
+A bot whose brain is a subscription model can have its own login. In the bot's brain settings, the **Account** menu lists that subscription's signed-in logins when there is more than one; **Default account** follows the login used first. A bot with its own login always runs on that login. If it can't be used right now (signed out, or out of its plan's limit), the bot's reply says so and asks you to pick another account in the bot's settings, instead of switching to your other login. See [Bots](/surfaces/bots).
 
 Allternit checks your subscription logins about once a minute. If a login needs signing in again, every bot using it shows **Needs attention**. Sign in again from Settings → Connections and the bots can continue. Their threads are kept.
 

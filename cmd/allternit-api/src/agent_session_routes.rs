@@ -2876,13 +2876,22 @@ pub(crate) fn bot_turn_marker(db: &DbHandle, agent_id: &str, session_id: Option<
         "askTools": ask_tools,
         "gated": gated,
     });
-    // The bot's own account for its CLI brain (`config.cli_account_id`, a
-    // `cli_accounts` id); absent = the user's default. gizzi's zod schema
-    // takes a string or nothing, so it is never sent as null.
-    if let Some(account) = config.get("cli_account_id").and_then(serde_json::Value::as_str).filter(|a| !a.is_empty()) {
-        marker["cliAccountId"] = json!(account);
-    }
+    bot_account_fields(&config, &mut marker);
     Some(marker)
+}
+
+/// The bot's own accounts for its brain, from its agent `config`, onto a bot
+/// marker: `cli_account_id` (a `cli_accounts` id, for a CLI brain) →
+/// `cliAccountId`, and `subs_account_id` (a subscription-gateway browser
+/// sign-in account, for a `subs-<provider>/…` brain) → `subsAccountId`.
+/// Absent = the user's default. gizzi's zod schema takes a string or
+/// nothing, so neither is ever sent as null.
+pub(crate) fn bot_account_fields(config: &serde_json::Value, marker: &mut serde_json::Value) {
+    for (key, field) in [("cli_account_id", "cliAccountId"), ("subs_account_id", "subsAccountId")] {
+        if let Some(account) = config.get(key).and_then(serde_json::Value::as_str).filter(|a| !a.is_empty()) {
+            marker[field] = json!(account);
+        }
+    }
 }
 
 /// The bot marker for a session the app tagged as a bot's (`isBot` with its
@@ -3541,6 +3550,21 @@ mod tests {
         assert_eq!(marker["allowedTools"], json!(["web_search", "code_execution"]));
         assert_eq!(marker["askTools"], json!(["code_execution"]));
         assert_eq!(marker["gated"], true);
+        // No account chosen: the fields are left out, never null.
+        assert!(marker.get("cliAccountId").is_none());
+        assert!(marker.get("subsAccountId").is_none());
+
+        // The bot's own accounts ride on the marker; an empty one is the default.
+        conn.execute(
+            "UPDATE agents SET config = '{\"isBot\":true,\"cli_account_id\":\"acc-cli\",\"subs_account_id\":\"acc-subs\"}' WHERE id = 'b1'",
+            [],
+        )
+        .unwrap();
+        let marker = bot_turn_marker(&db, "b1", None).unwrap();
+        assert_eq!(marker["cliAccountId"], "acc-cli");
+        assert_eq!(marker["subsAccountId"], "acc-subs");
+        conn.execute("UPDATE agents SET config = '{\"isBot\":true,\"subs_account_id\":\"\"}' WHERE id = 'b1'", []).unwrap();
+        assert!(bot_turn_marker(&db, "b1", None).unwrap().get("subsAccountId").is_none());
 
         // An Agent Hub agent (not a bot) keeps today's behavior...
         assert!(bot_turn_marker(&db, "hub", None).is_none());

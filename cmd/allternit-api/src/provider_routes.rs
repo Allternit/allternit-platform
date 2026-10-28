@@ -2345,6 +2345,9 @@ async fn add_cli_account(
         )
             .into_response();
     }
+    // Which CLI the home belongs to, so gizzi never starts another CLI on it
+    // (a bot's `cli_account_id` survives a switch from Claude to Codex).
+    let _ = std::fs::write(home.join(".allternit-cli-tool"), &meta.id);
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
