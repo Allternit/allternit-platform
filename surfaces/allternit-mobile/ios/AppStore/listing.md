@@ -92,3 +92,4 @@ No tracking. No third-party advertising.
 - [ ] Server decision on what deletion does (today: account closed, data kept until privacy@ request; paid plans not cancelled) — the delete screen says this plainly.
 - [ ] Screenshots: 6.9" (1320×2868) and 6.5" (1284×2778), 3–5 each: Home chat, Bots, Inbox/Decisions, computer screen, Settings.
 - [ ] Demo account + demo computer online.
+- [ ] Apple Developer: if the App Store team is not the personal team MQ85968PQP, delete the identifier `com.allternit.mobile.screen` registered on MQ85968PQP during a device test (identifiers are unique across Apple), then register the app IDs on the paid team.
