@@ -1,5 +1,5 @@
 import Foundation
-import UserNotifications
+@preconcurrency import UserNotifications
 
 /// Local response notifications (Phase 5).
 ///
@@ -9,10 +9,9 @@ import UserNotifications
 /// case where the process is still alive (the SSE connection itself is
 /// cancelled on `.background` — see ChatViewModel.handleScenePhase).
 ///
-/// True APNs server push — notifying when a server-side generation
-/// completes after the app was suspended or terminated — is OUT OF SCOPE
-/// for this phase: it needs backend push plumbing (device-token
-/// registration, push pipeline) plus a notification service extension.
+/// Server push (APNs) — a bot answering after the app was suspended or
+/// closed — is `PushNotificationManager` + cloud-api routes/apns.rs; the
+/// authorization granted here also registers this phone for it.
 enum NotificationService {
     /// System authorization, requested only after the app-owned priming
     /// sheet (AppPermission.notifications) got a Continue.

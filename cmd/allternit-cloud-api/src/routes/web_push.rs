@@ -19,6 +19,8 @@
 //! message only for a runtime that doesn't forward its events yet; otherwise the sink sends it from the
 //! forwarded `message.received`, so it is never pushed twice. Payloads are encrypted for the browser (RFC 8291, `aes128gcm`) and signed with VAPID
 //! (RFC 8292). A push service answering 404/410 means the subscription is gone and its row is deleted.
+//! [`send_to_user`] also delivers to the person's iPhones through `routes::apns` when the APNs env is set;
+//! every sender here (and the sink) still needs the VAPID keys, which turn the push pipeline on.
 //!
 //! Payload the service worker receives (JSON): `{type: "call"|"missed_call"|"message"|"channel_message"|"event",
 //! title, body, url, tag, data}` (`event` = a backbone event; `data.event` names it). `url` is a path on the app's own origin that opens the call or thread.
@@ -336,7 +338,8 @@ pub async fn send_to_user(db: &PgPool, transport: &dyn PushTransport, vapid: &Va
             }
         }
     }
-    delivered
+    // The same message to the person's iPhones (no-op unless APNs is configured).
+    delivered + super::apns::send_to_user(db, user, msg).await
 }
 
 /// Whether a message-type push for `collapse_key` may go out now, recording it when it may. One per
@@ -368,7 +371,8 @@ pub async fn can_reach(db: &PgPool, user: &str) -> bool {
     if Vapid::from_env().is_none() {
         return false;
     }
-    sqlx::query_scalar::<_, bool>("SELECT EXISTS (SELECT 1 FROM push_subscriptions WHERE user_id = $1)").bind(user).fetch_one(db).await.unwrap_or(false)
+    let browser = sqlx::query_scalar::<_, bool>("SELECT EXISTS (SELECT 1 FROM push_subscriptions WHERE user_id = $1)").bind(user).fetch_one(db).await.unwrap_or(false);
+    browser || super::apns::can_reach(db, user).await
 }
 
 /// Send `msg` to `user` in the background. Does nothing, and costs nothing, when push isn't configured.

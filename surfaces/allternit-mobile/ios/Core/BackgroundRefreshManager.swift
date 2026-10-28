@@ -1,6 +1,6 @@
 import Foundation
 import BackgroundTasks
-import UserNotifications
+@preconcurrency import UserNotifications
 
 /// Gap 2 mitigation (background stream liveness): the pty/permission SSE
 /// streams are torn down when the app backgrounds — `ChatViewModel

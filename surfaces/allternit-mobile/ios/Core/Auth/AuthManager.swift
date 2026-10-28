@@ -69,6 +69,8 @@ final class AuthManager: ObservableObject {
         isSignedIn = currentSession != nil
 
         if isSignedIn, !wasSignedIn {
+            // Push: send this phone's APNs token for the account now signed in.
+            Task { await PushNotificationManager.shared.didSignIn() }
             Task {
                 do {
                     _ = try await RuntimePairing.shared.ensurePaired()
@@ -142,6 +144,42 @@ final class AuthManager: ObservableObject {
         guard isClerkConfigured else { return }
         authEntryMode = .signIn
         isPresentingAuth = true
+    }
+
+    /// Last Sign in with Apple failure, shown under the button. Nil when the
+    /// person cancelled the Apple sheet (not an error).
+    @Published var appleSignInError: String?
+    @Published private(set) var isSigningInWithApple = false
+
+    /// Native Sign in with Apple through Clerk (ClerkKit 1.1.0
+    /// `Auth.signInWithApple`, which signs up a new Apple ID too). App Store
+    /// guideline 4.8: offered next to Google on the sign-in screen. Needs the
+    /// Sign in with Apple capability on the App ID and Apple enabled as a
+    /// social connection in the Clerk dashboard (native, bundle id
+    /// com.allternit.mobile).
+    func signInWithApple() {
+        guard isClerkConfigured, !isSigningInWithApple else { return }
+        isSigningInWithApple = true
+        appleSignInError = nil
+        Task {
+            defer { isSigningInWithApple = false }
+            do {
+                try await Clerk.shared.auth.signInWithApple()
+                refreshAuthState()
+                // A session still pending a step (e.g. choose an organization)
+                // finishes in Clerk's own sheet.
+                if !isSignedIn {
+                    authEntryMode = .signIn
+                    isPresentingAuth = true
+                }
+            } catch {
+                if (error as NSError).domain == "com.apple.AuthenticationServices.AuthorizationError",
+                   (error as NSError).code == 1001 {
+                    return // cancelled
+                }
+                appleSignInError = error.localizedDescription
+            }
+        }
     }
 
     #if DEBUG
@@ -235,6 +273,8 @@ final class AuthManager: ObservableObject {
             isSkippingAuth = false
             return
         }
+        // Stop pushes to this phone for the account leaving (needs its Bearer).
+        await PushNotificationManager.shared.willSignOut()
         // Revoke the iOS runtime device credential before signing out of Clerk.
         // The revoke call needs the current device token, so it must run first.
         await RuntimePairing.shared.revoke()

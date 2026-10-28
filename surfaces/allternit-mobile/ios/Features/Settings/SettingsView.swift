@@ -41,6 +41,7 @@ struct SettingsView: View {
                     appearanceSection
                     botsSection
                     computersSection
+                    SettingsIntroSection(onDismissSettings: { dismiss() })
                     advancedSection
                         .id("aboutSection")
                     signOutSection

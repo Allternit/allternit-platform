@@ -80,12 +80,21 @@ struct AllternitApp: App {
             .onChange(of: scenePhase) { _, newPhase in
                 if newPhase == .active {
                     authManager.refreshAuthState()
+                    PushNotificationManager.shared.clearBadge()
                 } else if newPhase == .background {
                     BackgroundRefreshManager.scheduleNextRefresh()
                 }
             }
             .onOpenURL { url in
+                // Universal Links (ai./m.allternit.com) and allternit:// open
+                // in the workspace; anything else is a document to view.
+                if DeepLinkRouter.shared.open(url: url) { return }
                 openedDocumentURL = url
+            }
+            .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { activity in
+                if let url = activity.webpageURL {
+                    DeepLinkRouter.shared.open(url: url)
+                }
             }
             .sheet(isPresented: Binding(
                 get: { openedDocumentURL != nil },
@@ -244,6 +253,8 @@ struct LoginGateView: View {
             }
 
             VStack(spacing: 12) {
+                SignInWithAppleRow()
+
                 Button(action: auth.signIn) {
                     Text("Sign In")
                         .font(.headline)
@@ -291,5 +302,45 @@ struct LoginGateView: View {
         }
         .background(Color("BgPrimary").edgesIgnoringSafeArea(.all))
         .onAppear { logoGlowing = true }
+    }
+}
+
+/// "Sign in with Apple" on the sign-in screen (App Store 4.8: the web offers
+/// Google, so Apple sits beside it). Apple's HIG look: black in light mode,
+/// white in dark, Apple logo + "Sign in with Apple". Clerk does the exchange
+/// (`AuthManager.signInWithApple`).
+private struct SignInWithAppleRow: View {
+    @EnvironmentObject private var auth: AuthManager
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        VStack(spacing: 6) {
+            Button(action: auth.signInWithApple) {
+                HStack(spacing: 8) {
+                    if auth.isSigningInWithApple {
+                        ProgressView()
+                            .tint(colorScheme == .dark ? .black : .white)
+                    } else {
+                        Image(systemName: "apple.logo")
+                            .font(.system(size: 17, weight: .semibold))
+                    }
+                    Text("Sign in with Apple")
+                        .font(.headline)
+                }
+                .foregroundColor(colorScheme == .dark ? .black : .white)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 16)
+                .background(colorScheme == .dark ? Color.white : Color.black)
+                .cornerRadius(12)
+            }
+            .accessibilityLabel("Sign in with Apple")
+
+            if let error = auth.appleSignInError {
+                Text(error)
+                    .font(.caption)
+                    .foregroundColor(Color("TextSecondary"))
+                    .multilineTextAlignment(.center)
+            }
+        }
     }
 }
