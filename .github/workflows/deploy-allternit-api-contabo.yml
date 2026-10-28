@@ -11,69 +11,45 @@ on:
       - 'mcp/protocol/**'
       - '.github/workflows/deploy-allternit-api-contabo.yml'
   workflow_dispatch:
-    inputs:
-      hosted:
-        description: Build on a GitHub-hosted runner (use when the self-hosted builder is offline)
-        type: boolean
-        default: false
-
-# One deploy to Contabo at a time. Never cancel a run mid-test or mid-swap;
-# GitHub keeps only the newest waiting run, so it carries every merge since
-# and an older build can never land after a newer one.
-concurrency:
-  group: deploy-allternit-api-contabo
-  cancel-in-progress: false
 
 jobs:
-  # Tests and the release binary compile on the self-hosted builder
-  # (allternit-standby, container gh-runner-api, label allternit-api-builder,
-  # 2026-10-27). Its target dir persists between runs, so only the crates a
-  # merge changed recompile; on a fresh GitHub runner the compile alone was
-  # ~49 of the ~55 min. The runner holds no secrets: the deploy job below
-  # (SSH key, Tailscale) runs on a GitHub-hosted runner. This repo is public,
-  # so fork PRs from anyone outside the org need approval before any workflow
-  # runs (repo setting approval_policy=all_external_contributors); keep it.
-  build:
-    runs-on: ${{ fromJSON(inputs.hosted && '"ubuntu-latest"' || '["self-hosted","allternit-api-builder"]') }}
+  # One job tests and deploys (2026-10-25). Two jobs on two fresh runners
+  # compiled the release dependencies twice (~50 min test + ~40 min build).
+  # Here the release build reuses what `cargo test --release` just compiled.
+  # The API is SQLite-based: tests use throwaway sqlite databases
+  # (DbHandle::new_memory in src/db.rs), so no postgres service is needed.
+  test-and-deploy:
+    # One deploy to Contabo at a time. Never cancel a run mid-test or mid-swap;
+    # GitHub keeps only the newest waiting run, so it carries every merge since
+    # and an older build can never land after a newer one.
+    concurrency:
+      group: deploy-allternit-api-contabo
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # On the builder the target dir sits outside the checkout:
-      # actions/checkout runs git clean, which would delete a target/ inside
-      # the repo and make every build cold.
-      - name: Pick target dir
-        run: |
-          if [ "${{ runner.environment }}" = github-hosted ]; then
-            echo "CARGO_TARGET_DIR=$GITHUB_WORKSPACE/target" >> "$GITHUB_ENV"
-          else
-            echo "CARGO_TARGET_DIR=$HOME/work/_cargo-target/allternit-api" >> "$GITHUB_ENV"
-          fi
-
-      # allternit-api's release build (tests + binary) exceeds the hosted
-      # runner's RAM and gets OOM-killed (exit 137/143, 2026-09-30).
+      # allternit-api's release build (tests + binary) exceeds the runner's RAM
+      # and gets OOM-killed (exit 137/143, 2026-09-30). Add swap and cap
+      # parallel rustc jobs so the build finishes.
       - name: Add swap
-        if: runner.environment == 'github-hosted'
         run: |
           sudo fallocate -l 12G /swapfile2 && sudo chmod 600 /swapfile2
           sudo mkswap /swapfile2 && sudo swapon /swapfile2
           free -h
 
-      # The self-hosted image ships protoc and the pinned Rust toolchain.
       - name: Install protobuf compiler
-        if: runner.environment == 'github-hosted'
         # A stuck apt mirror hung this step for 5+ hours (2026-10-07), holding the deploy queue.
         timeout-minutes: 10
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
 
       - name: Install Rust toolchain
-        if: runner.environment == 'github-hosted'
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-unknown-linux-gnu
 
       - name: Cache cargo
-        if: runner.environment == 'github-hosted'
         uses: actions/cache@v4
         with:
           path: |
@@ -82,6 +58,9 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             target/
+          # A key per commit: actions/cache never overwrites a key, so a
+          # lockfile-only key froze target/ at the last Cargo.lock change and
+          # every run recompiled everything since. Restore the newest run's.
           key: ${{ runner.os }}-cargo-api-contabo-${{ hashFiles('**/Cargo.lock') }}-${{ github.sha }}
           restore-keys: |
             ${{ runner.os }}-cargo-api-contabo-${{ hashFiles('**/Cargo.lock') }}-
@@ -93,12 +72,12 @@ jobs:
       # test_template): running all migrations per test took 42 of the 76 min.
       - name: Test
         env:
-          CARGO_BUILD_JOBS: ${{ runner.environment == 'github-hosted' && '2' || '5' }}
+          CARGO_BUILD_JOBS: "2"
         run: cargo test --release --target x86_64-unknown-linux-gnu -p allternit-api --features test-helpers
 
       - name: Build release binary
         env:
-          CARGO_BUILD_JOBS: ${{ runner.environment == 'github-hosted' && '2' || '5' }}
+          CARGO_BUILD_JOBS: "2"
         run: cargo build --release --target x86_64-unknown-linux-gnu -p allternit-api
 
       # Boot the new binary on a throwaway database BEFORE touching prod. A
@@ -109,7 +88,7 @@ jobs:
         run: |
           D=$(mktemp -d)
           ALLTERNIT_DATA_DIR=$D ALLTERNIT_API_PORT=18999 \
-            "$CARGO_TARGET_DIR/x86_64-unknown-linux-gnu/release/allternit-api" > $D/boot.log 2>&1 &
+            target/x86_64-unknown-linux-gnu/release/allternit-api > $D/boot.log 2>&1 &
           PID=$!
           ok=""
           for i in $(seq 1 60); do
@@ -124,30 +103,6 @@ jobs:
             exit 1
           fi
           echo "boot smoke OK in ${i}s"
-
-      - name: Upload binary
-        uses: actions/upload-artifact@v4
-        with:
-          name: allternit-api
-          path: ${{ env.CARGO_TARGET_DIR }}/x86_64-unknown-linux-gnu/release/allternit-api
-          retention-days: 3
-
-  deploy:
-    needs: build
-    if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Download binary
-        uses: actions/download-artifact@v4
-        with:
-          name: allternit-api
-          path: dist
-
-      - name: Make binary executable
-        run: chmod +x dist/allternit-api
 
       - name: Join Tailscale network
         if: github.ref == 'refs/heads/main'
@@ -173,5 +128,6 @@ jobs:
             echo "No CONTABO_SSH_KEY secret — relying on Tailscale SSH."
             unset CONTABO_SSH_KEY
           fi
-          bash cmd/allternit-api/deploy-contabo.sh dist/allternit-api
+          bash cmd/allternit-api/deploy-contabo.sh \
+            target/x86_64-unknown-linux-gnu/release/allternit-api
           rm -f /tmp/deploy_key
