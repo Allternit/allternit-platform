@@ -109,6 +109,7 @@ struct BotPageView: View {
             pageRow("Artifacts", icon: "square.grid.2x2", value: nil, route: .home(bot.id))
             pageRow("Memory", icon: "brain", value: nil, route: .memory(bot.id))
             pageRow("Computer", icon: "desktopcomputer", value: computerLabel, route: .botComputer(bot.id))
+            pageRow("Phone", icon: "iphone", value: nil, route: .phone(bot.id))
             pageRow("Channels", icon: "dot.radiowaves.left.and.right",
                     value: channelNames.map { $0.isEmpty ? "None" : $0.joined(separator: ", ") },
                     route: .channels(bot.id), last: true)

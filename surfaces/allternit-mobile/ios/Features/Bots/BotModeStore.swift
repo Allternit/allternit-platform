@@ -29,6 +29,9 @@ final class BotModeStore: ObservableObject {
     /// The drawer's New pill in Bots mode: start a thread with the top bot
     /// of the rail (pinned first, then most recent).
     @Published var pendingNewThread = false
+    /// The drawer's Phones list: a bot whose phone (its channels and the
+    /// conversations on them) Bots mode should open next.
+    @Published var pendingOpenPhoneBotId: String?
 
     private let hub = AgentHubStore.shared
     private let client = BotModeClient.shared
@@ -169,7 +172,8 @@ final class BotModeStore: ObservableObject {
     }
 
     /// Creates a room the web way: id = slug of the name, unique-suffixed.
-    func createGroup(name: String, members: [AgentRecord]) async throws -> BotGroupChat {
+    /// `vendorIds`: members whose bot runs on a vendor (saved as `source: "vendor"`).
+    func createGroup(name: String, members: [AgentRecord], vendorIds: Set<String> = []) async throws -> BotGroupChat {
         let base = Self.slugify(name).isEmpty ? "group" : Self.slugify(name)
         var id = base
         var suffix = 2
@@ -184,7 +188,8 @@ final class BotModeStore: ObservableObject {
             image: nil,
             members: members.map {
                 GroupChatMember(botId: $0.id, displayName: $0.botDisplayName,
-                                handle: Self.slugify($0.botDisplayName), source: "native", providerId: nil)
+                                handle: Self.slugify($0.botDisplayName),
+                                source: vendorIds.contains($0.id) ? "vendor" : "native", providerId: nil)
             },
             log: [],
             createdAt: now,
