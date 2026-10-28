@@ -35,6 +35,31 @@ Defaults from `src/main/config.ts`:
 
 The Quick Chat window loads the workspace UI with `/?mini=1`.
 
+## Menu bar icon
+
+The A:// mark sits in the macOS menu bar, beside the other status icons. Click it to open the HUD, the same as `Cmd/Ctrl+Shift+H`. Right-click or Control-click it for the status menu: backend status and mode, Connection Settings, permissions, Show Window, the desktop pet, Allternit Office, Quick Chat, Toggle HUD and Quit. With **menu bar mode** on, a click shows or hides the main window instead. On Windows and Linux, a click opens the HUD and right-click opens the same menu.
+
+The icon is a template image (`surfaces/allternit-desktop/build/trayTemplate.png` and `@2x`), so macOS draws it white on a dark menu bar. Code: `createTray` in `src/main/unified-main.ts`.
+
+## App menu
+
+The top-left menu bar has the usual Mac menus:
+
+| Menu | Items |
+|---|---|
+| Allternit Desktop | About, Check for Updates…, Settings… (`Cmd+,`), Hide, Quit |
+| File | New Session (`Cmd+N`), Quick Chat, Toggle HUD, Close Window |
+| Edit | Undo, Redo, Cut, Copy, Paste, Select All, Find… |
+| View | Home (`Cmd+1`), Bots (`Cmd+2`), Code (`Cmd+3`), ACI (`Cmd+4`), Toggle Sidebar (`Cmd+\`), Bot Activity, zoom, Enter Full Screen |
+| Window | Minimize, Zoom, window list |
+| Help | Allternit Docs, Keyboard Shortcuts |
+
+New Session does what the sidebar's **New** does in the current mode. Find, Bot Activity, Quick Chat and Toggle HUD show their shortcuts, but the key presses stay with the workspace, so a shortcut you changed in Settings keeps working.
+
+Developer notes: the menu is built in `src/main/app-menu.ts`. Workspace commands go to the main window as the `window:event:menu-command` event with `{ command }`. The renderer handles them in `allternit-ai/src/shell/desktop-menu.ts`, `ShellApp.tsx` (Settings, modes, sidebar, Find, Bot Activity) and `ShellRail.tsx` (New Session). The web and the PWA have no app menu.
+
+<a id="keyboard-shortcuts"></a>
+
 ## Workspace shortcuts
 
 These shortcuts work inside the workspace window. You can change them in **Settings → About → Keyboard shortcuts**.
@@ -253,7 +278,7 @@ are sent. Miss counts and causes are omitted when not reported.
 
 ## Mode controls and rail selection
 
-The title bar's top-left corner holds **Back**, **Forward**, the sidebar button and the **mode dial**. The dial shows the current mode as a round icon with its name (Home, Bots, Code or ACI). Hover, focus or click it and all four modes drop in a labelled half-moon under the title bar; click one to switch. Scroll over the dial to cycle through modes, and press Escape to close it. When bots have unread activity, a red count sits on the dial; click it to open bot activity (⌘⇧M). On a narrow sidebar the dial shows the icon only.
+The title bar's top-left corner holds **Back**, **Forward**, the sidebar button and the **mode dial**. The dial shows the current mode as a round icon with its name (Home, Bots, Code or ACI). Hover, focus or click it and all four modes drop in a labelled half-moon under the title bar, spaced so no card overlaps another; click one to switch. Scroll over the dial to cycle through modes, and press Escape to close it. When bots have unread activity, a red count sits on the dial; click it to open bot activity (⌘⇧M). On a narrow sidebar the dial shows the icon only.
 
 With the sidebar collapsed, the controls fade until you point at them. Then the dial appears too, hovering a mode in the half-moon switches to it and previews its sidebar, and your bots show in a strip below.
 
@@ -261,6 +286,6 @@ In full screen the window's traffic lights hide, so the controls move flush into
 
 The top of the sidebar shows the mode's wordmark, the same as the phone menu: A://TERNIT for Home, A://TERNIT BOTS, A://TERNIT ACI, and the gizzi code wordmark in Code.
 
-The selected mode and rail tab have a translucent glass highlight with a fine Allternit double-slash detail. Icons respond to hover and press; keyboard focus stays visible. Motion and transparency follow your system accessibility preferences.
+The selected mode, rail tab and **New** row have a translucent glass highlight with a fine Allternit double-slash detail, and no coloured strip on the left edge. Icons respond to hover and press; keyboard focus stays visible. Motion and transparency follow your system accessibility preferences.
 
 Developer notes: the controls are `RailControls` and `ModeDial` in `src/shell/FloatingWidgets.tsx`; the mode list is `src/shell/mode-buttons.ts`. `src/shell/titlebar-clearance.ts` owns the traffic-light offset (72px in Electron, 4px on the web and in full screen). It listens for the Desktop preload's `enter-full-screen` / `leave-full-screen` window events, and it updates `--titlebar-traffic-w` / `--titlebar-controls-w` for any top bar that pads past the controls. The sidebar wordmark is `src/shell/rail/RailWordmark.tsx`.
