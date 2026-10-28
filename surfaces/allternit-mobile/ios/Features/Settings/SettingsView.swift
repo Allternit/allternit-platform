@@ -5,7 +5,7 @@ import SwiftUI
 /// `PHONE_SETTINGS_GROUPS`): an account card, then Account · Assistant ·
 /// Appearance · Bots & agents · Computers · Advanced, and Log out at the
 /// bottom. Operator pages sit behind the collapsed "Advanced" row, as on the
-/// PWA. Pages without a native screen yet open the same page on the web.
+/// PWA. Every page is native; "Open on the web" opens ai.allternit.com.
 struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var authManager: AuthManager
@@ -28,8 +28,6 @@ struct SettingsView: View {
     #if DEBUG
     @State private var isBrainSpikePresented = false
     #endif
-
-    private static let webBase = "https://ai.allternit.com/settings/"
 
     var body: some View {
         NavigationStack {
@@ -228,10 +226,18 @@ struct SettingsView: View {
                 SettingsRowLabel(title: "Connectors", systemImage: "point.3.connected.trianglepath.dotted", chevron: true)
             }
             .buttonStyle(.plain)
-            webRow("Skills", systemImage: "sparkles", section: "skills")
-            webRow("Plugins", systemImage: "puzzlepiece.extension", section: "plugins")
-            webRow("Subagents", systemImage: "point.3.filled.connected.trianglepath.dotted", section: "subagents")
-            webRow("Your twin", systemImage: "person.2.wave.2", section: "twin")
+            NavigationLink { CapabilitiesSettingsView(kind: .skill) } label: {
+                SettingsRowLabel(title: "Skills", systemImage: "sparkles")
+            }
+            NavigationLink { CapabilitiesSettingsView(kind: .plugin) } label: {
+                SettingsRowLabel(title: "Plugins", systemImage: "puzzlepiece.extension")
+            }
+            NavigationLink { SubagentsSettingsView() } label: {
+                SettingsRowLabel(title: "Subagents", systemImage: "point.3.filled.connected.trianglepath.dotted")
+            }
+            NavigationLink { TwinSettingsView() } label: {
+                SettingsRowLabel(title: "Your twin", systemImage: "person.2.wave.2")
+            }
             NavigationLink { WebhooksSettingsView() } label: {
                 SettingsRowLabel(title: "Webhooks", systemImage: "link")
             }
@@ -376,30 +382,6 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - Helpers
-
-    private func webRow(_ title: String, systemImage: String, section: String) -> some View {
-        Button(action: {
-            if let url = URL(string: Self.webBase + section) { safariURL = IdentifiableURL(url: url) }
-        }) {
-            HStack(spacing: 12) {
-                Image(systemName: systemImage)
-                    .font(.subheadline)
-                    .frame(width: 22)
-                    .foregroundColor(Color("TextSecondary"))
-                Text(title)
-                    .font(.subheadline)
-                    .foregroundColor(Color("TextPrimary"))
-                Spacer()
-                Image(systemName: "arrow.up.right")
-                    .font(.caption)
-                    .foregroundColor(Color("TextSecondary"))
-            }
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityHint("Opens on the web")
-    }
 }
 
 // MARK: - General

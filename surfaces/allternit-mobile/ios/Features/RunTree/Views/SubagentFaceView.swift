@@ -5,9 +5,17 @@ import SwiftUI
 /// device. Built-ins are here; the user's custom types and overrides come from
 /// `GET /api/v1/subagent-types`. The portraits are the web's avatar packs,
 /// served from ai.allternit.com.
-struct SubagentLook: Equatable, Sendable, Decodable {
+struct SubagentLook: Equatable, Hashable, Sendable, Codable {
     let pack: String
     let face: String
+    /// Optional CSS color for rings and chips (kept when saving a look).
+    var accent: String? = nil
+
+    init(pack: String, face: String, accent: String? = nil) {
+        self.pack = pack
+        self.face = face
+        self.accent = accent
+    }
 
     private static let origin = URL(string: "https://ai.allternit.com/avatar-packs")!
 
@@ -21,7 +29,7 @@ struct SubagentLook: Equatable, Sendable, Decodable {
 final class SubagentCatalog: ObservableObject {
     static let shared = SubagentCatalog()
 
-    private static let pack = "office-professionals"
+    nonisolated static let pack = "office-professionals"
     /// Built-ins and folded former built-ins (past runs keep their face).
     private static let builtinFaces: [String: String] = [
         "explorer": "kest", "builder": "daniel", "code-reviewer": "maya", "verifier": "ray",
@@ -34,7 +42,7 @@ final class SubagentCatalog: ObservableObject {
         "general": "builder", "general-purpose": "builder", "worker": "builder", "default": "builder",
         "explore": "explorer", "verification": "verifier",
     ]
-    private static let seedFaces = ["kest", "theo", "daniel", "maya", "ray", "nia", "saanvi", "li-wei",
+    nonisolated static let seedFaces = ["kest", "theo", "daniel", "maya", "ray", "nia", "saanvi", "li-wei",
                                     "mara", "imani", "amir", "kira", "grant", "jonah", "elena"]
 
     /// The user's saved looks by slug (custom types and overrides).
@@ -64,6 +72,18 @@ final class SubagentCatalog: ObservableObject {
             }
             overrides = map
         }
+    }
+
+    /// Settings → Subagents saved or reset a type: every face of that type
+    /// follows at once. nil = no saved look (back to the built-in/seeded face).
+    func setSavedLook(_ look: SubagentLook?, for slug: String) {
+        overrides[slug] = look
+    }
+
+    /// Settings → Subagents loaded the full rows: replace the saved looks.
+    func replaceSavedLooks(_ looks: [String: SubagentLook]) {
+        overrides = looks
+        loaded = true
     }
 
     static func normalize(_ raw: String?) -> String {
