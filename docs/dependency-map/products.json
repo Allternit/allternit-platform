@@ -123,6 +123,28 @@
       ]
     },
     {
+      "id": "product:allternit-ios",
+      "label": "Allternit for iPhone (native SwiftUI app)",
+      "line": "line:workspace",
+      "type": "app",
+      "description": "Native SwiftUI iPhone app (com.allternit.mobile) with the PWA's modes, Bot Mode, artifacts, automation and settings; reaches the user's computer through the cloud-api runtime relay; App Store build.",
+      "surfaces": [
+        "surface:ios"
+      ],
+      "components": [],
+      "uses": [
+        "product:cloud-api",
+        "product:allternit-api",
+        "product:gizzi-code"
+      ],
+      "evidence": [
+        "allternit/surfaces/allternit-mobile/ios/project.yml",
+        "allternit/surfaces/allternit-mobile/ios/Core/API/RuntimeRelayClient.swift",
+        "allternit/surfaces/docs/surfaces/mobile.mdx",
+        "allternit/surfaces/docs/api/ios-push.mdx"
+      ]
+    },
+    {
       "id": "product:office",
       "label": "Allternit Docs, Slides & Sheets",
       "line": "line:workspace",
