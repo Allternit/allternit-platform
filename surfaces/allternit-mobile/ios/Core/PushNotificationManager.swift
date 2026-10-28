@@ -126,6 +126,6 @@ final class PushNotificationManager: NSObject {
 
     /// Opening the app counts as seeing what's new.
     func clearBadge() {
-        UNUserNotificationCenter.current().setBadgeCount(0) { _ in }
+        Task { try? await UNUserNotificationCenter.current().setBadgeCount(0) }
     }
 }

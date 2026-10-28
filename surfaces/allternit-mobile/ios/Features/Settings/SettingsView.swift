@@ -56,6 +56,7 @@ struct SettingsView: View {
                         Button(action: { dismiss() }) {
                             Image(systemName: "xmark")
                                 .font(.system(size: 14, weight: .semibold))
+                                .foregroundColor(Color("TextPrimary"))
                         }
                         .accessibilityLabel("Close settings")
                     }

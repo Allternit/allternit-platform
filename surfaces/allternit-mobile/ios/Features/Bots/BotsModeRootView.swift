@@ -63,6 +63,7 @@ struct BotsModeRootView: View {
                         ToolbarItem(placement: .topBarLeading) {
                             Button(action: onOpenSidebar) {
                                 Image(systemName: "line.3.horizontal")
+                                    .foregroundColor(Color("TextPrimary"))
                             }
                             .accessibilityLabel("Open menu")
                         }
