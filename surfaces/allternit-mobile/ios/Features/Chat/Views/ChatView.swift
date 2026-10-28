@@ -567,10 +567,19 @@ struct ChatContentView: View {
 
     /// Terminal-styled feed row for code threads — see TerminalMessageRow.
     private func terminalRow(_ message: MessageRecord) -> some View {
-        TerminalMessageRow(
-            message: message,
-            isStreamingTail: viewModel.isStreaming && message.id == viewModel.messages.last?.id
-        )
+        VStack(alignment: .leading, spacing: 10) {
+            TerminalMessageRow(
+                message: message,
+                isStreamingTail: viewModel.isStreaming && message.id == viewModel.messages.last?.id
+            )
+            if message.role == "assistant" {
+                TerminalQuestionCards(
+                    message: message,
+                    sessionId: viewModel.currentSessionId,
+                    isLast: message.id == viewModel.messages.last(where: { $0.role == "assistant" })?.id
+                )
+            }
+        }
         .id(message.id)
     }
 
@@ -2546,5 +2555,36 @@ private struct GizziMascotPill: View {
         )
         .transition(.scale.combined(with: .opacity))
         .accessibilityLabel(selectedAgent?.name ?? "Gizzi")
+    }
+}
+
+/// Questions the agent asked in a code thread, answered in place under the
+/// terminal row (the chat feed's MessageRow does the same): the reply's own
+/// questions, plus on the latest reply any the session still lists.
+private struct TerminalQuestionCards: View {
+    let message: MessageRecord
+    let sessionId: String?
+    let isLast: Bool
+
+    @ObservedObject private var asks = AgentAskStore.shared
+
+    var body: some View {
+        ForEach(questions) { request in
+            QuestionCardView(request: request)
+        }
+        .task(id: "\(sessionId ?? "")|\(isLast)|\(message.isStreaming)") {
+            guard isLast, !message.isStreaming, let sessionId else { return }
+            await asks.refresh(sessionId: sessionId)
+        }
+    }
+
+    private var questions: [AgentQuestionRequest] {
+        var list = message.questions
+        if isLast {
+            for pending in asks.questions(for: sessionId) where !list.contains(where: { $0.id == pending.id }) {
+                list.append(pending)
+            }
+        }
+        return list.filter { !asks.isResolved($0.id) || message.questions.contains($0) }
     }
 }
