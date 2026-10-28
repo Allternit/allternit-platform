@@ -328,7 +328,7 @@ if [ "$SKIP_ELECTRON" = false ]; then
   # Ensure dependencies are current. Frozen: a plain `pnpm install` re-resolves
   # and rewrote the shared pnpm-lock.yaml on every Desktop build (bumping jest's
   # @babel/core 7 -> 8); a lockfile that is really out of date should fail here.
-  pnpm install --frozen-lockfile
+  pnpm install --frozen-lockfile --config.confirmModulesPurge=false
 
   # Package: `dist` stages every sidecar, builds the UI and the main process
   # (`npm run build`) once, then runs electron-builder.

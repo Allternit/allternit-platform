@@ -30,6 +30,10 @@ if (
   const rev = spawnSync('git', ['rev-list', '--count', 'HEAD'], { encoding: 'utf8' });
   height = rev.status === 0 && rev.stdout.trim() ? rev.stdout.trim() : String(Date.now());
   process.env.ALLTERNIT_BUILD_SUFFIX = `-b${height}`;
+} else if (process.env.ALLTERNIT_BUILD_SUFFIX === undefined) {
+  // CI without a suffix: clean names. electron-builder fails on an undefined
+  // ${env.ALLTERNIT_BUILD_SUFFIX} in artifactName ("cannot expand pattern").
+  process.env.ALLTERNIT_BUILD_SUFFIX = '';
 }
 
 const extraArgs = [];
