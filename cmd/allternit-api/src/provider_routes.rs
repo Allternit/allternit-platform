@@ -1707,6 +1707,19 @@ fn subscription_provider(id: &str) -> Option<(&'static str, SubscriptionProvider
     }
 }
 
+/// What a chat's vendor-connect card needs for `id` (catalog id, alias or
+/// binary, or a key-only provider): (canonical id, label, `signIn`).
+pub(crate) fn connect_card_meta(id: &str) -> Option<(String, String, String)> {
+    let id = id.trim();
+    if let Some(tool) = crate::cli_catalog::find(id).or_else(|| crate::cli_catalog::tools().iter().find(|t| t.bin == id)) {
+        return Some((tool.id.clone(), tool.name.clone(), tool.sign_in.clone()));
+    }
+    subscription_provider(id).map(|(_, p)| {
+        let sign_in = if p.api_key_only { "api_key" } else { "subscription" };
+        (p.id.to_string(), p.label.to_string(), sign_in.to_string())
+    })
+}
+
 fn home_file(parts: &[&str]) -> std::path::PathBuf {
     let mut p = std::path::PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".to_string()));
     for part in parts {
@@ -1858,14 +1871,14 @@ struct ConnectBody {
 /// remote and the CLI has one (Codex, Grok); Claude's own flow already works
 /// remotely (link, then paste the code the page shows).
 fn login_argv(provider: &str, default: &'static [String], remote: bool) -> (Vec<&'static str>, Option<String>) {
-    match (provider, remote) {
-        ("codex-cli", true) => (
-            vec!["login", "--device-auth"],
-            Some("If OpenAI rejects the code, turn on \"device code authorization for Codex\" in ChatGPT Settings → Security, then try again.".to_string()),
-        ),
-        ("grok", true) => (vec!["login", "--device-auth"], None),
-        _ => (default.iter().map(String::as_str).collect(), None),
+    // A remote computer has no browser next to the CLI: use the catalog's
+    // headless / device-code sign-in (`loginRemote`) when the tool has one.
+    if remote {
+        if let Some(tool) = crate::cli_catalog::find(provider).filter(|t| !t.login_remote.is_empty()) {
+            return (tool.login_remote.iter().map(String::as_str).collect(), tool.login_remote_hint.clone());
+        }
     }
+    (default.iter().map(String::as_str).collect(), None)
 }
 
 async fn connect_provider(
@@ -2775,6 +2788,9 @@ mod auth_status_kind_tests {
         let (_, codex) = subscription_provider("codex-cli").unwrap();
         assert_eq!(login_argv("codex-cli", codex.login, true).0, vec!["login", "--device-auth"]);
         assert_eq!(login_argv("codex-cli", codex.login, false).0, vec!["login"]);
+        assert!(login_argv("codex-cli", codex.login, true).1.is_some(), "codex keeps its device-code hint");
+        let (_, grok) = subscription_provider("grok").unwrap();
+        assert_eq!(login_argv("grok", grok.login, true).0, vec!["login", "--device-auth"]);
     }
 
     #[test]

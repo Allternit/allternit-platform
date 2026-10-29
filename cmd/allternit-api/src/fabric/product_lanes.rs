@@ -83,7 +83,8 @@ impl ManagedInferenceLane {
 ///
 /// Status: **Partial**. VM provisioning for harness runtimes exists via Agent
 /// Cloud, but the harnesses are not yet wrapped as canonical AllternitOS
-/// Harness/Workers, and OpenCode integration is not wired.
+/// Harness/Workers. OpenCode runs through gizzi's `opencode run` CLI adapter
+/// (cmd/gizzi-code/src/runtime/drivers/local-cli-driver.ts).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ManagedHarnessLane {
     pub status: LaneStatus,
@@ -101,16 +102,15 @@ impl ManagedHarnessLane {
     pub fn current() -> Self {
         Self {
             status: LaneStatus::Partial,
-            supported_harnesses: vec!["gizzi".to_string()],
+            supported_harnesses: vec!["gizzi".to_string(), "opencode".to_string()],
             supports_gizzi: true,
-            supports_opencode: false,
+            supports_opencode: true,
             supports_isolated_workspace: true,
             supports_model_gateway_request: false,
             supports_capability_lease: true,
             supports_artifact_receipt: false,
             missing: vec![
                 "OS Harness/Worker contract wrapping".to_string(),
-                "OpenCode harness adapter".to_string(),
                 "artifact + receipt emission".to_string(),
                 "unified workload budget".to_string(),
             ],
@@ -190,11 +190,13 @@ mod tests {
     }
 
     #[test]
-    fn managed_harness_is_partial_and_missing_opencode() {
+    fn managed_harness_is_partial_and_runs_opencode() {
         let lane = ManagedHarnessLane::current();
         assert_eq!(lane.status, LaneStatus::Partial);
         assert!(lane.supports_gizzi);
-        assert!(!lane.supports_opencode);
+        assert!(lane.supports_opencode);
+        assert!(lane.supported_harnesses.contains(&"opencode".to_string()));
+        assert!(!lane.missing.iter().any(|m| m.contains("OpenCode")));
     }
 
     #[test]
