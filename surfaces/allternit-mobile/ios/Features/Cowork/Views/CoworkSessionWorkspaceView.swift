@@ -30,8 +30,7 @@ struct CoworkSessionWorkspaceView: View {
 
                 ChatContentView(
                     sessionId: sessionId,
-                    viewModel: viewModel,
-                    topContentInset: 52
+                    viewModel: viewModel
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }

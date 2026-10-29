@@ -393,6 +393,6 @@ final class AuthManager: ObservableObject {
     /// nil when signed out / skip-auth.
     var currentUserId: String? {
         if SampleWorkspace.isEnabled { return SampleWorkspace.userId }
-        Clerk.shared.user?.id
+        return Clerk.shared.user?.id
     }
 }

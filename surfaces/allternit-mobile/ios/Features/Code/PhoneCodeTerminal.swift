@@ -227,7 +227,7 @@ struct PhoneCodeTerminal: View {
         .padding(.bottom, 4)
     }
 
-    static func stateColor(_ state: String) -> Color {
+    static func stateColor(_ state: String) -> SwiftUI.Color {
         switch state {
         case "working": return Theme.statusInfo
         case "blocked", "needs_you": return Theme.statusWarning
