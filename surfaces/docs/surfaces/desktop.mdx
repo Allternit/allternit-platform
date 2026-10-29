@@ -35,6 +35,8 @@ Defaults from `src/main/config.ts`:
 
 The Quick Chat window loads the workspace UI with `/?mini=1`.
 
+If another app already owns one of these chords, Allternit can't register it and the shortcut does nothing. The tray menu then lists the chord as "in use by another app", and the HUD shows a notice naming the chord that failed, so you can free it in the other app or use the fallback. Developers: `shell.hud.getPrefs()` returns `hotkeys: [{ accelerator, registered }]` for the HUD and Quick Chat chords.
+
 ## Menu bar icon
 
 The A mark (the A from the app icon, drawn as square blocks on whole pixels in a 19 pt square) sits in the macOS menu bar, beside the other status icons. Click it to open the HUD, the same as `Cmd/Ctrl+Shift+H`. Right-click or Control-click it for the status menu: backend status and mode, Connection Settings, permissions, Show Window, the desktop pet, Allternit Office, Quick Chat, Toggle HUD and Quit. With **menu bar mode** on, a click shows or hides the main window instead. On Windows and Linux the tray shows the colour app icon instead, since a black mark would vanish on a dark taskbar. A click opens the HUD and right-click opens the same menu.
@@ -49,13 +51,37 @@ The row above the card has three buttons:
 
 - **Sun or moon:** switches the HUD between light and dark. The HUD keeps its own setting, apart from the main window.
 - **Pen:** opens a drawing layer over the whole screen. Pick a color and a line width, draw, then press **Save** to keep a PNG, **Clear** to start again, or **Done** or `Escape` to close the layer. The HUD stays open.
-- **X:** closes the HUD. `Escape` in the HUD also closes it. When a menu is open, `Escape` closes only the menu.
+- **X:** closes the HUD. `Escape` in the HUD also closes it. When a menu is open, `Escape` closes only the menu. `Cmd+W` (and `Alt+F4` on Windows) hides the HUD the same way, so your draft is still there next time.
+
+**Open in app** (the button in the HUD, or `Cmd/Ctrl+O` while the HUD is focused) hides the HUD and opens the same chat in the main window. Closing the HUD any other way also hands its chat to the main window.
+
+### Opening and focus
+
+The HUD opens on the display under your pointer. The first time on a display it is 620 × 220, centred, 72 px above the bottom of the usable screen (above the Dock or taskbar). Move or resize it and it reopens there on that display, even after a restart; each display keeps its own spot. If a display is unplugged or changes resolution, the HUD moves back fully onto a screen. It can't be dragged or resized off the screen.
+
+Every time the HUD opens, the cursor is in the message box, ready to type. The HUD window is created in the background shortly after the app starts, so the first open is as fast as later ones.
+
+By default the HUD stays up when you click another app (pinned). Turn on **Hide when I click away** in the HUD's settings to have it hide when you click away. It stays up while one of its own menus, pickers or dialogs is open.
+
+### Replies, keyboard and accessibility
+
+When a reply arrives, the window grows upward so the reply has room, with a minimum height for the reply area, and shrinks back when the chat is cleared. A long draft scrolls inside the message box instead of pushing the reply out of view.
+
+- **Move with the keyboard:** `Alt+arrow keys` (`⌥+arrow keys` on a Mac) move the HUD by 20 px.
+- **Resize with the keyboard:** `Alt+Shift+arrow keys` (`⌥⇧+arrow keys`) resize it.
+- **Screen readers:** the HUD is a named dialog, and new replies are announced as they arrive.
+- **Reduce transparency:** with the system's reduce-transparency setting on, the HUD uses solid surfaces.
+- **Signed out:** when you are signed out, the HUD says so and offers **Sign in** instead of an error about the AI provider.
 
 Menus open in full. When you open the model picker, the context meter or a menu in the Agent mode, Plugins and Artifacts row, the HUD window grows on the side with screen space (above the card first) and the card stays where it is. The added space is transparent and clicks go through it. When the menu closes, the window goes back to its size.
 
 Long drafts show in full. When a draft makes the message box taller than the HUD, the window grows upward with its bottom edge fixed, up to the top of the screen. As the draft gets shorter it shrinks back, never below the size it had before. If you resize the HUD by hand, that size becomes the new base. For developers: `useHudComposerFit` (`src/shell/hud/composer-fit.ts`) watches the composer (`[data-hud-composer]` on `ChatBottomBar`) and sets the window with `shell.hud.setBounds`. It pauses while a menu has grown the window or a resize handle is dragged.
 
-Drag the dotted handle to move the HUD, or drag its edges to resize it.
+Drag the dotted handle to move the HUD, or drag its edges to resize it. On Linux with native Wayland the compositor places windows, so the HUD opens where the compositor puts it and you move it by dragging its top strip (the compositor does the move). Launch with `--ozone-platform=x11` to get app-placed positions back.
+
+The HUD floats above other windows on every desktop and over full-screen apps. On Windows and Linux it sits below system menus and notifications.
+
+Developer notes (main process, `surfaces/allternit-desktop`): all size and clamping math is in `src/main/hud-geometry.ts`. Positions are saved per display id in the electron-store key `hudBounds`, and the hide-on-blur choice in `hudHideOnBlur`. IPC: `shell:open-hud` takes `{ sessionId? }` and sends `shell:hud:goto` to the HUD; `shell:hud:handoff` hides the HUD and focuses the main window; every show sends `shell:hud:shown`; `shell:hud:suppress-blur` (true/false) counts open menus; `shell:hud:get-prefs` and `shell:hud:set-prefs` read and write `{ hideOnBlur, hotkeys }`. On Linux, main sends the pointer position on `shell:hud:cursor` while the HUD is open, because click-through can't forward mouse moves there. `shell.hud.windowing.nativeDrag` is true on Wayland. The screenshot button's screen capture is answered by `setDisplayMediaRequestHandler` (the HUD's own display); if it fails the button shows the error. Hotkey→shown timing is logged at debug level as `[HUD] hotkey→shown`.
 
 Code: the HUD is `src/shell/hud/HudShell.tsx` and `hud-shell.css` in allternit-ai. The drawing layer is a separate full-screen window (`createAnnotationWindow` in `src/main/unified-main.ts`) that loads `/hud/annotate`. `ShellApp` renders only `AnnotationView` at that path. The window growth for open menus is `useHudOverlayRoom` in `src/shell/hud/overlay-room.ts`, which calls `shell.hud.setBounds`.
 
@@ -87,9 +113,11 @@ These shortcuts work inside the workspace window. You can change them in **Setti
 | Toggle Bot Activity | `Cmd/Ctrl+Shift+M` |
 | Find in page | `Cmd/Ctrl+F` |
 | Toggle HUD | `Cmd/Ctrl+Shift+H` |
-| Toggle Agent Runner | `Cmd/Ctrl+Shift+A` |
+| Toggle Agent Runner | `Cmd/Ctrl+Shift+A` (web only, see below) |
 
 To change a shortcut, click it, then press the new keys. Shortcuts need a modifier key such as Cmd, Ctrl or Alt. If the keys already belong to another action, that action loses them. The clear button turns a shortcut off, and the reset button puts the default back. Your changes are saved on this device only.
+
+On Desktop, `Cmd/Ctrl+Shift+A` is the global Quick Chat hotkey, which takes the keys before the workspace sees them, so the Agent Runner default never fires there. To use Agent Runner from the keyboard on Desktop, give it another shortcut here.
 
 Code: `allternit-ai/src/lib/shortcuts/shell-shortcuts.ts`.
 
