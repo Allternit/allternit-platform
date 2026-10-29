@@ -331,7 +331,7 @@ struct HistorySidebarView: View {
         let artifacts = RailRow(id: "artifacts", label: "Artifacts", icon: "doc.text", isActive: tab == .artifacts) { go(.artifacts) }
         let automation = RailRow(id: "automation", label: "Automation Tasks", icon: "clock", isActive: tab == .automation) { go(.automation) }
         let decisions = RailRow(id: "decisions", label: "Decisions", icon: "checkmark.seal", isActive: false) { isDecisionsPresented = true }
-        let customize = RailRow(id: "customize", label: "Customize", icon: "slider.horizontal.3", isActive: false) { isCustomizePresented = true }
+        let customize = RailRow(id: "customize", label: "Customize", icon: "slider.horizontal.3", isActive: tab == .customize) { go(.customize) }
         switch modeStore.shellMode {
         case .home:
             return [

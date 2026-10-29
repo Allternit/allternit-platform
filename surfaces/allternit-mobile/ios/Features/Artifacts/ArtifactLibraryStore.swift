@@ -69,6 +69,8 @@ final class ArtifactLibraryStore: ObservableObject {
     @Published var scope: Scope = .all
     @Published var kind: ArtifactV2Kind? = nil
     @Published var searchText: String = ""
+    /// Show the per-viewer Archive instead of Saved work (the web's Show menu).
+    @Published var archived = false
 
     private let client: ArtifactsV2Client
     /// Draft ids already saved (or being saved) this launch.
@@ -80,7 +82,7 @@ final class ArtifactLibraryStore: ObservableObject {
     }
 
     private var query: ArtifactV2ListQuery {
-        ArtifactV2ListQuery(scope: scope.rawValue, kind: kind?.rawValue, query: searchText)
+        ArtifactV2ListQuery(scope: scope.rawValue, kind: kind?.rawValue, query: searchText, archived: archived)
     }
 
     // MARK: - Loading
@@ -148,6 +150,13 @@ final class ArtifactLibraryStore: ObservableObject {
                 await reload()
             }
         }
+    }
+
+    /// Archive or restore one artifact (the ⋯ menu's Archive / Restore to
+    /// saved work); the row leaves the list it was in.
+    func setArchived(id: String, archived: Bool) async throws {
+        try await client.setArchived(id: id, archived: archived)
+        artifacts.removeAll { $0.id == id }
     }
 
     /// Drops a row already archived elsewhere (the detail view).

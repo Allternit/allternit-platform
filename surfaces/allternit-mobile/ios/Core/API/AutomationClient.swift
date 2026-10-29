@@ -80,6 +80,31 @@ struct AutomationGoal: Decodable, Identifiable, Equatable, Sendable {
     }
 }
 
+/// `/api/v1/automation/loops` row (automation.types.ts `Loop`): the
+/// continuous / monitoring tasks on Automation Tasks.
+struct AutomationLoop: Decodable, Identifiable, Equatable, Sendable {
+    let id: String
+    let agentId: String?
+    let goalId: String?
+    let name: String
+    let description: String?
+    let status: String
+    let scheduleType: String
+    let scheduleExpression: String
+    let createdAt: String?
+    let updatedAt: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, description, status
+        case agentId = "agent_id"
+        case goalId = "goal_id"
+        case scheduleType = "schedule_type"
+        case scheduleExpression = "schedule_expression"
+        case createdAt = "created_at"
+        case updatedAt = "updated_at"
+    }
+}
+
 struct CreateAutomationGoalRequest: Encodable, Sendable {
     let title: String
     let description: String?
@@ -201,6 +226,23 @@ final class AutomationClient: @unchecked Sendable {
 
     func deleteGoal(id: String) async throws {
         try await client.delete(path: "automation/goals/\(Self.escape(id))")
+    }
+
+    func listLoops() async throws -> [AutomationLoop] {
+        try await client.get(path: "automation/loops")
+    }
+
+    func setLoopEnabled(id: String, enabled: Bool) async throws {
+        try await client.put(path: "automation/loops/\(Self.escape(id))",
+                             body: UpdateRoutineStatusRequest(status: enabled ? "active" : "paused"))
+    }
+
+    func runLoop(id: String) async throws {
+        try await client.post(path: "automation/loops/\(Self.escape(id))/run")
+    }
+
+    func deleteLoop(id: String) async throws {
+        try await client.delete(path: "automation/loops/\(Self.escape(id))")
     }
 
     private static func escape(_ id: String) -> String {

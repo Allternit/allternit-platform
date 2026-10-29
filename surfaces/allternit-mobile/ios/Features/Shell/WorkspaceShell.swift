@@ -149,6 +149,12 @@ struct MainWorkspaceView: View {
             if launchArgumentEnabled("open-automation") {
                 modeStore.selectBarItem(.automation)
             }
+            if launchArgumentEnabled("open-customize") {
+                modeStore.selectBarItem(.customize)
+            }
+            if launchArgumentEnabled("open-tasks") {
+                modeStore.selectBarItem(.tasks)
+            }
             if launchArgumentEnabled("open-models") {
                 modeStore.selectBarItem(.models)
             }
@@ -205,16 +211,11 @@ struct MainWorkspaceView: View {
                 }
             })
         case .automation:
-            switch modeStore.automationKind {
-            case .overview:
-                AutomationOverviewRoot(isSidebarOpen: $isSidebarOpen)
-            case .cron:
-                AutomationTasksListView(isSidebarOpen: $isSidebarOpen)
-            case .routines:
-                RoutinesListView(isSidebarOpen: $isSidebarOpen)
-            case .loops:
-                LoopsListView(isSidebarOpen: $isSidebarOpen)
-            }
+            AutomationTasksPhoneView(isSidebarOpen: $isSidebarOpen)
+        case .customize:
+            CustomizeScreen(isSidebarOpen: $isSidebarOpen)
+        case .tasks:
+            TasksBoardScreen(isSidebarOpen: $isSidebarOpen)
         case .models:
             ModelsTabView(isSidebarOpen: $isSidebarOpen)
         case .code:

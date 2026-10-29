@@ -184,7 +184,7 @@ struct CapabilitiesSettingsView: View {
 
 /// Create skill (CustomizeView's Create skill): a name, when to use it and
 /// the instructions, written to `~/.allternit/skills/<name>/` on the computer.
-private struct CreateSkillSheet: View {
+struct CreateSkillSheet: View {
     let onCreated: (InstalledCapability) -> Void
 
     @Environment(\.dismiss) private var dismiss
