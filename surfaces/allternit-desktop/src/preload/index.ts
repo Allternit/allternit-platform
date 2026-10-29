@@ -1324,6 +1324,24 @@ contextBridge.exposeInMainWorld('allternitCompanion', {
     setReducedMotion: (reduced: boolean) => ipcRenderer.send('companion:motion-pref', reduced),
   },
   toggleMain: () => ipcRenderer.invoke('companion:toggle-main'),
+  // System drawer (Settings → Developer). The app window reports its summary
+  // and hears "open"; the pet reads it for its dot, hovers and clicks the dot.
+  system: {
+    report: (summary: unknown) => ipcRenderer.send('companion:system-report', summary),
+    get: () => ipcRenderer.invoke('companion:system-get'),
+    on: (callback: (summary: unknown) => void) => {
+      const listener = (_event: IpcRendererEvent, summary: unknown) => callback(summary);
+      ipcRenderer.on('companion:system', listener);
+      return () => ipcRenderer.removeListener('companion:system', listener);
+    },
+    hover: (on: boolean) => ipcRenderer.send('companion:system-hover', on),
+    open: () => ipcRenderer.invoke('companion:system-open'),
+    onOpen: (callback: (tab: string | null) => void) => {
+      const listener = (_event: IpcRendererEvent, tab: unknown) => callback(typeof tab === 'string' ? tab : null);
+      ipcRenderer.on('companion:system-open', listener);
+      return () => ipcRenderer.removeListener('companion:system-open', listener);
+    },
+  },
 });
 
 // The agent cursor overlay (companion.html?surface=agent-cursor): show/hide
