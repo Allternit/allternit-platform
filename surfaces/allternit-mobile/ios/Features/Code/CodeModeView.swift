@@ -358,6 +358,18 @@ struct CodeModeView: View {
         if isNew, CodePermissionMode(rawValue: permissionRaw) != .manual {
             applyPermission(to: id)
         }
+        if isNew, UserDefaults.standard.bool(forKey: CodeWorktree.storageKey) {
+            // The launch's Worktree pick isolates this thread (CodeCanvas
+            // `isolation: pendingWorktree ? 'worktree' : 'none'`).
+            UserDefaults.standard.set(false, forKey: CodeWorktree.storageKey)
+            Task {
+                do {
+                    try await AgentChatClient().updateSessionMetadata(sessionId: id, metadata: ["isolation": "worktree"])
+                } catch {
+                    actionError = FriendlyErrorMessage.from(error.localizedDescription)
+                }
+            }
+        }
         Task {
             // The session names itself from the first turn; pick that up.
             await loadSessions()

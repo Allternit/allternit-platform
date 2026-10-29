@@ -13,7 +13,6 @@ final class CodeTerminalStore: ObservableObject {
         let id = UUID()
         let name: String
         let session: PtySession
-        let client: PtyClient
     }
 
     static let maxTiles = 8
@@ -43,12 +42,12 @@ final class CodeTerminalStore: ObservableObject {
             return
         }
         isOffline = false
-        let client = PtyClient(baseURL: resolved.baseURL)
-        let tile = Tile(
-            name: "Terminal \(nextNumber)",
-            session: PtySession(client: client, attachedInstanceName: resolved.instanceName),
-            client: client
-        )
+        // A relayed computer serves its terminal service (`/terminal/*`), as
+        // m.allternit.com uses; a directly reached gizzi-code serves `/v1/pty`.
+        let session = resolved.isRelay
+            ? PtySession(service: TerminalServiceClient(baseURL: resolved.baseURL), attachedInstanceName: resolved.instanceName)
+            : PtySession(client: PtyClient(baseURL: resolved.baseURL), attachedInstanceName: resolved.instanceName)
+        let tile = Tile(name: "Terminal \(nextNumber)", session: session)
         nextNumber += 1
         tiles.append(tile)
         selectedId = tile.id
@@ -58,10 +57,7 @@ final class CodeTerminalStore: ObservableObject {
     func closeTile(_ id: UUID) {
         guard let index = tiles.firstIndex(where: { $0.id == id }) else { return }
         let tile = tiles.remove(at: index)
-        tile.session.stop()
-        if let ptyId = tile.session.ptyId {
-            Task { try? await tile.client.deletePty(id: ptyId) }
-        }
+        tile.session.close()
         if selectedId == id { selectedId = tiles.last?.id }
     }
 
@@ -241,9 +237,8 @@ struct PhoneCodeTerminal: View {
 
     private var shell: some View {
         VStack(spacing: 0) {
-            if !store.isOffline {
-                tabs
-            }
+            // The tab row stays while offline (only + then), as on the web.
+            tabs
             if store.isOffline {
                 offline
             } else if let tile = store.selected {

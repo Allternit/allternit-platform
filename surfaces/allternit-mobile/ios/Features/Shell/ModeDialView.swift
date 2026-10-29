@@ -152,10 +152,8 @@ struct ShellWordmark: View {
     var body: some View {
         Group {
             if mode == .code {
-                Text("gizzi code")
-                    .font(.system(size: 16, weight: .bold, design: .monospaced))
-                    .foregroundColor(Color("TextPrimary"))
-                    .accessibilityLabel("gizzi code")
+                // The pixel GIZZI CODE lockup the web drawer shows.
+                GizziCodeWordmark(height: 15)
             } else if let suffix = mode.wordmarkSuffix {
                 // Suffixed marks run smaller so they fit beside the dial and search.
                 PixelWordmark(height: 12, suffix: suffix)
