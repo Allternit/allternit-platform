@@ -341,9 +341,20 @@ struct HistorySidebarView: View {
         case .code:
             return [projects, artifacts, automation, decisions]
         case .aci:
+            // PhoneDrawer's ACI rail: each row opens that ACI view; Teach opens over Agent.
+            let aci = ACINavStore.shared
+            let onAci = tab == .aci
+            func openAci(_ aciTab: ACITab) {
+                aci.open(aciTab)
+                go(.aci)
+            }
             return [
-                RailRow(id: "mcp-apps", label: "MCP Apps", icon: "square.grid.2x2", isActive: false) {
-                    isMiniAppsPresented = true
+                RailRow(id: "mcp-apps", label: "MCP Apps", icon: "macwindow", isActive: onAci && aci.tab == .apps) { openAci(.apps) },
+                RailRow(id: "browser-extensions", label: "ACI Extensions", icon: "puzzlepiece.extension", isActive: onAci && aci.tab == .extensions) { openAci(.extensions) },
+                RailRow(id: "computers", label: "Computers", icon: "desktopcomputer", isActive: onAci && aci.tab == .computers) { openAci(.computers) },
+                RailRow(id: "site-apis", label: "Teach", icon: "record.circle", isActive: false) {
+                    aci.openTeach()
+                    go(.aci)
                 },
             ]
         case .bots:
@@ -872,6 +883,7 @@ struct HistorySidebarView: View {
             modeStore.selectBarItem(.code)
         case .aci:
             selectedSessionId = nil
+            ACINavStore.shared.open(.agent)
             modeStore.selectBarItem(.aci)
         case .bots:
             modeStore.selectBarItem(.agents)
