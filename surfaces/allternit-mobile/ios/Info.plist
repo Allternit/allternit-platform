@@ -10,6 +10,8 @@
 	<string>$(ALLTERNIT_GIZZI_CODE_URL)</string>
 	<key>ALLTERNIT_MESH_CONTROL_URL</key>
 	<string>$(ALLTERNIT_MESH_CONTROL_URL)</string>
+	<key>AllternitSharedKeychainGroup</key>
+	<string>$(AppIdentifierPrefix)com.allternit.mobile.shared</string>
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>
 		<string>com.allternit.mobile.refresh</string>

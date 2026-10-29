@@ -29,7 +29,7 @@ Under every reply you can copy it, reply to it, have it read aloud, and rate it.
 - **Thumbs up / down** rate the reply. After a thumbs-down, pick what went wrong: Wrong, Too long, Wrong format or Other. Press the same thumb again to clear it.
 - **Follow-ups** appear under the latest reply when the answer suggests a next step (or the model sends suggestions). They're always shown; click one to send it. There are no canned suggestions.
 
-Older versions are kept while the app is open; they aren't saved to your account. A message that included images can't be retried; send it again instead. Retry works in Chat, Cowork, Code and bot threads, on Desktop, ai.allternit.com (including phones) and the m.allternit.com app. Bots that run in their own vendor app don't offer Retry.
+Older versions are kept while the app is open; they aren't saved to your account. A message that included images can't be retried; send it again instead. Retry works in Chat, Code and bot threads, on Desktop, ai.allternit.com (including phones) and the m.allternit.com app. Bots that run in their own vendor app don't offer Retry.
 
 ### For developers
 
@@ -43,14 +43,14 @@ Source: `allternit-ai/src/`:
 | `lib/chat/message-feedback.ts` | Votes and reasons on message metadata (`feedback`, `feedbackReason`), with a device-local fallback for rows outside the store. |
 | `lib/chat/follow-ups.ts` | Follow-ups from `follow-ups` or `suggestions` parts, else the answer's closing "Next step:" line. |
 | `components/chat/StreamingChatComposer.tsx` | Uses `MessageActions`; Retry only on the latest reply. |
-| `views/cowork/CoworkTranscript.tsx` | Versions, the retry wrapper (snapshot and rollback) and feedback for Chat and Cowork. |
-| `views/ChatView.tsx`, `views/cowork/CoworkRoot.tsx`, `views/code/CodeCanvas.tsx` | `handleRegenerate(options)` calls `retryLastTurn` on each surface's store. |
+| `views/chat/SessionTranscript.tsx` | Versions, the retry wrapper (snapshot and rollback) and feedback for Chat. |
+| `views/ChatView.tsx`, `views/code/CodeCanvas.tsx` | `handleRegenerate(options)` calls `retryLastTurn` on each surface's store. |
 | `components/bot-chat/BotTranscript.tsx`, `SettledBubble.tsx`, `views/bots/BotChatSessionView.tsx` | Bot threads: the action row on the latest reply, versions over transcript rows, retry through `prepareRetry` and `handleSend` with a `modelId`. |
 | `preview-message-actions.html`, `dev/MessageActionsPreview.tsx` | Dev preview (`?theme=dark`, `?phone=1`). |
 
 ## Answering an agent question
 
-When an agent asks you something, the thread shows **Asking a question** and the question card sits just above the text box. It works the same in Chat, Cowork, Code, project threads, bot threads and on phones:
+When an agent asks you something, the thread shows **Asking a question** and the question card sits just above the text box. It works the same in Chat, Code, project threads, bot threads and on phones:
 
 - The top row shows the question, **‹ 1 of 2 ›** when several are asked (the arrows go back and forward), and **✕**, which declines the whole set.
 - Each choice is a numbered row with a short explanation under it. The first row starts highlighted.
@@ -88,7 +88,7 @@ Questions, approvals and suggestions don't block each other. Each card works on 
 
 You don't have to wait for a turn to end. While the agent is working, the text box says **Add to this turn…** and the **send** button comes back as soon as you type, attach a file or drop one in. With nothing typed, the button is **Stop**.
 
-- **Steer:** in Chat, Cowork and Code, a message you send during a turn goes into that turn. It shows in the thread at once, and the agent reads it at its next step, so it can change course without starting over.
+- **Steer:** in Chat and Code, a message you send during a turn goes into that turn. It shows in the thread at once, and the agent reads it at its next step, so it can change course without starting over.
 - **Queue:** if the message can't go into the turn (the chat has no saved session yet, the message has images, or the server turns it down), it waits above the text box as **Queued**, and everything queued is sent as one message when the turn ends. Press **✕** on the Queued strip to cancel it.
 - Files you attach while the agent is working open in their editor on send, just like at any other time. See [Files open in their editor](/guides/attachments#files-open-in-their-editor).
 

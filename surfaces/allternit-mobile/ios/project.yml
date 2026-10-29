@@ -50,6 +50,9 @@ targets:
       - path: Features
       - path: Assets.xcassets
       - path: Config
+      # App phone pairing, keychain and envelope code, also compiled into
+      # AllternitScreen (the broadcast extension) so the two can't drift.
+      - path: Shared
     configFiles:
       Debug: Config/Secrets.xcconfig
       Release: Config/Secrets.xcconfig
@@ -152,6 +155,8 @@ targets:
         product: SwiftTerm
       - target: AllternitWidgets
         embed: true
+      - target: AllternitScreen
+        embed: true
   # Gap 4 (Live Activities): local (non-push) ActivityKit widget for a
   # running Loop's iteration progress — see LoopLiveActivityManager.swift
   # (main target) and AllternitWidgets/LoopLiveActivity.swift (here).
@@ -174,6 +179,38 @@ targets:
         TARGETED_DEVICE_FAMILY: "1,2"
         MARKETING_VERSION: "1.0"
         CURRENT_PROJECT_VERSION: "1"
+        # Same placeholder as the main app — set your team for device builds.
+        DEVELOPMENT_TEAM: ""
+        CODE_SIGN_STYLE: Automatic
+        SKIP_INSTALL: true
+  # Live screen for the owner's bots: a ReplayKit broadcast upload extension
+  # that sends the screen + app sound, sealed, to the paired Desktop
+  # (Shared/AppPhone, SPEC-iphone-app-screen §3). Ported from iCTRL, whose
+  # code was written for Swift 5 mode — kept there rather than retrofitted
+  # for strict concurrency. iOS kills it past ~50 MB, so it links nothing
+  # but system frameworks.
+  AllternitScreen:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: AllternitScreen
+      - path: Shared
+    dependencies:
+      - sdk: ReplayKit.framework
+      - sdk: VideoToolbox.framework
+      - sdk: AudioToolbox.framework
+    settings:
+      base:
+        INFOPLIST_FILE: AllternitScreen/Info.plist
+        PRODUCT_BUNDLE_IDENTIFIER: com.allternit.mobile.screen
+        PRODUCT_NAME: AllternitScreen
+        SWIFT_VERSION: "5.0"
+        IPHONEOS_DEPLOYMENT_TARGET: "17.0"
+        TARGETED_DEVICE_FAMILY: "1,2"
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        CODE_SIGN_ENTITLEMENTS: AllternitScreen/AllternitScreen.entitlements
         # Same placeholder as the main app — set your team for device builds.
         DEVELOPMENT_TEAM: ""
         CODE_SIGN_STYLE: Automatic

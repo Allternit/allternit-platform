@@ -51,6 +51,9 @@ struct BotHomeView: View {
     @State private var isPublishSheetPresented = false
     @State private var isWebhooksSheetPresented = false
     @State private var desktopURL: URL? = nil
+    /// A run started from that browser's Extension chat (when this iPhone
+    /// isn't paired for bots, the run gets its own run view).
+    @State private var desktopAgentGoal: String? = nil
     @State private var taskInput = ""
     @State private var isStartingTask = false
     @State private var startTaskError: String? = nil
@@ -173,10 +176,13 @@ struct BotHomeView: View {
         }
         .sheet(isPresented: Binding<Bool>(
             get: { desktopURL != nil },
-            set: { if !$0 { desktopURL = nil } }
+            set: { if !$0 { desktopURL = nil; desktopAgentGoal = nil } }
         )) {
-            if let url = desktopURL {
-                ACIWebBrowserView(initialURL: url, onExit: { desktopURL = nil })
+            if let goal = desktopAgentGoal {
+                ACIAgentRunView(goal: goal, onExit: { desktopAgentGoal = nil })
+            } else if let url = desktopURL {
+                ACIWebBrowserView(initialURL: url, onExit: { desktopURL = nil },
+                                  onStartAgentRun: { goal in desktopAgentGoal = goal })
             }
         }
         .task {

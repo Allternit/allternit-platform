@@ -17,8 +17,7 @@ This works the same on Desktop, on ai.allternit.com (including the phone layout)
 
 | Surface | Where | What it opens |
 | --- | --- | --- |
-| **Chat** | Top right, beside the artifacts button | Progress in the chat's right pane. Opening an artifact replaces Progress in that pane. |
-| **Cowork** | The session header | The session pane (Progress, Outputs, Used in this session). When there is no plan, the outputs button opens the same pane. See [Cowork session panel](/guides/cowork-session-panel). |
+| **Chat** | The session header, top right | The session panel (Progress, Outputs, Used in this session) in the chat's right pane. When there is no plan, the outputs button opens the same pane. See [Chat sessions](/guides/chat-sessions#session-panel). |
 | **Code** | The session header | The session panel, where Progress is the top card. See [Session panel](/code/session-panel). |
 | **Bot threads** | The thread header | Progress docked beside the thread. On a narrow window, or a thread embedded in a project page, it opens over the thread. |
 | **Project threads** | Top right of the thread | Progress over the thread, because the thread is already in the project's pane. |
@@ -38,8 +37,8 @@ Source: `allternit-ai/src/`:
 | `components/progress-pane/ProgressPane.tsx` | `useThreadProgress(messages, live)`, `ProgressPanel` (checklist in the `step-check*` look from `process.css`, working folder, context), the `progressPane()` PaneSpec for PaneWorkspace surfaces, per-workspace open state (`useProgressPaneOpen`, `toggleProgressPane`). |
 | `components/progress-pane/ChatProgress.tsx` | Chat's chip and docked Progress column (Chat has its own right pane, not a PaneWorkspace). |
 | `components/progress-pane/progress-pane.css` | Chip, ring and panel styles; reduced motion; phone sizing. |
-| `views/cowork/session-panel/CoworkSessionPanel.tsx`, `session-data.ts` | The session button is the progress chip (or the outputs button) and toggles the session pane; Progress renders as a checklist; `TodoEntry.activeForm` passed through. |
-| `views/cowork/artifact-session/ArtifactSessionLayout.tsx`, `views/cowork/CoworkRoot.tsx` | `sessionPanel` docks the session panel as the `progress` pane; the chip renders on the phone too. |
+| `views/chat/session-panel/SessionPanel.tsx`, `session-data.ts` | The session button is the progress chip (or the outputs button) and toggles the session pane; Progress renders as a checklist; `TodoEntry.activeForm` passed through. |
+| `views/chat/artifact-session/ArtifactSessionLayout.tsx`, `views/ChatView.tsx` | `sessionPanel` docks the session panel as the `progress` pane; the chip renders on the phone too. |
 | `views/code/session-panel/ProgressCard.tsx`, `CodeSessionPanel.tsx`, `views/code/CodeSessionHeader.tsx` | `CodeProgressChip` in the header and `CodeProgressCard` at the top of the session panel. |
 | `views/ChatView.tsx` | Chip top right; Progress takes the chat's one right pane. |
 | `views/bots/BotChatSessionView.tsx` | Chip in `ThreadHeader` children (or at the top of an embedded thread); `progressPane` docked when the window is wide. |

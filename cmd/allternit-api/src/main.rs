@@ -1149,6 +1149,9 @@ async fn main() {
         // Phones 2.0 phone stream relay: list registered phones + mint the
         // phone-stream ws token (Clerk/desktop-auth'd, like the computers).
         .merge(allternit_api::phone_ws::phone_api_router())
+        // iPhone via the App Store app: relayed pair/ingest/control sockets
+        // for `app:<phoneId>` plus the Desktop's loopback rpc + pair decision.
+        .merge(allternit_api::phone_app::phone_app_router())
         // Phone run history, saved phone skills (record once, replay with no
         // model) and phone.task on the bot's brain.
         .merge(allternit_api::phone_runs::router())

@@ -87,6 +87,17 @@ The Desktop's session socket, one per streamed phone (scrcpy is one device per p
 
 3. **Heartbeat.** The relay pings every 30 s; a peer silent for 90 s is treated as gone and the session ends (phones marked offline, viewers get `desktop_offline`).
 
+## iPhones with the Allternit app
+
+The App Store app (route `iphone-app-store`, serial `app:` plus the phone id) reaches the node without a Desktop phone-link session. User guide: [Your iPhone with the Allternit app](/guides/iphone-app).
+
+- **Listing.** `GET /api/v1/phones` includes the app phones with `route: "iphone-app-store"` and `screen: true` while the broadcast extension's ingest socket is open.
+- **Pairing** (`WS /api/v1/phones/app/pair?phone=…`). After the app's `hello` the node answers `{"type":"pending","pub"}`, raises `phone_app.pair_request` `{phoneId, name, model, code}` on the runtime events feed, and Desktop shows the name and 6-digit code with Approve and Deny. Desktop answers with `POST /api/v1/phones/app/pair/:phoneId/decision` `{"approve": bool}` (desktop credential, loopback).
+- **Viewers.** The same `ws-token` and `/ws/phones/:serial/stream` as above. Binary frames are the broadcast's plaintext iCTRL packets, one per frame: `u8 type | u32 big-endian length | payload`, with 0 status, 1 config (`{width, height, scale, rotation}`), 2 one H.264 Annex-B access unit, 3 ended, 4 audio config (AAC), 5 one AAC frame. Viewers mint read-only tokens; input frames are ignored, because taps on other apps need the Bluetooth board.
+- **The app's browser.** `POST /api/v1/phones/app/:id/rpc` `{method, params}` (desktop credential) forwards to the app's control socket. Methods: `web.open {url}`, `web.snapshot` (`{url, title, elements, jpegBase64, viewport}`), `web.click {ref}`, `web.type {ref, text, submit?}`, `web.scroll {dy}` (`{ok, scrollY}`), `web.back` (adds `wentBack`), `web.wait {ms}` and `screen.prompt` (`{shown, live}`). Errors: 409 `app_not_open` when the app isn't open, and the app's own codes `stopped_by_user`, `browser_not_open`, `stale_ref`, `not_editable`, `bad_params`, `unknown_method`, `script_error`, `internal`. Desktop exposes these to bots as `phone.web.*` and `phone.screen.request`.
+
+Desktop code: `surfaces/allternit-desktop/src/main/phone-app-store.ts` (the lane, viewer session and node client) and `phone-app-still.ts` (screenshots: the last keyframe decoded with Chromium's WebCodecs in a hidden window).
+
 ## Cloud side
 
 `allternit-cloud-api` holds the only persistence, one row per `(account, serial)`:
@@ -95,3 +106,68 @@ The Desktop's session socket, one per streamed phone (scrcpy is one device per p
 - `GET /api/v1/runtime-devices/me/registered-phones` — the account's rows.
 
 No screen or input data is ever persisted or logged — only identity and timestamps.
+
+## iPhone via the App Store app (`app:` serials)
+
+An iPhone running the Allternit iOS app joins the same plane as `app:<phoneId>` (route `iphone-app-store`). The phone only dials out: the app and its ReplayKit broadcast extension reach the node through the cloud runtime socket relay, and the node feeds the opened packets to the same viewer path as an Android. This round is screen only plus the app's own ACI browser; taps on native apps are not supported.
+
+### Cloud: app phone keys and socket tickets
+
+The broadcast extension cannot refresh a Clerk session, so pairing hands out an **app phone key** (32 random bytes, returned once as 64 lowercase hex characters). The cloud stores only its SHA-256 (`app_phones`, pg migration 110).
+
+| Method | Path | Auth | Purpose |
+|--------|------|------|---------|
+| `POST` | `/api/v1/app-phones` | Clerk / compute token | Body `{ "phoneId", "name", "runtimeDeviceId" }` → `{ "phoneId", "appPhoneKey" }`. The runtime must be the caller's. Re-posting a phone id rotates its key; a phone id held by another account is `409`. |
+| `GET` | `/api/v1/app-phones` | Clerk / compute token | `{ "phones": [{ "phoneId", "serial", "name", "runtimeDeviceId", "createdAt", "lastSeenAt", "revokedAt" }] }` |
+| `DELETE` | `/api/v1/app-phones/:phoneId` | Clerk / compute token | Revoke. Later ticket requests get `401`. |
+| `POST` | `/api/v1/app-phones/:phoneId/socket-ticket` | Header `x-allternit-app-phone-key` | Body `{ "path" }` → `{ "ticket" }` (plus `expiresInSeconds`, `runtimeDeviceId`, `socketPath`). |
+
+The ticket `path` must be exactly `/api/v1/phones/app/pair?phone=<phoneId>`, `/api/v1/phones/app/ingest?phone=<phoneId>` or `/api/v1/phones/app/control?phone=<phoneId>` with the lowercase phone id; anything else is `403`. An unknown, revoked or wrong key is `401`, and a runtime that was removed is `404`: the phone forgets its pairing on either. `403` and `503` (runtime offline or waking) are temporary. The phone then opens `wss://api.allternit.com` + `socketPath` (the existing `/api/v1/runtime-devices/:id/socket?ticket=…` relay socket) within 30 seconds. The route sits under the public rate limiter and touches `last_seen_at`.
+
+### Node sockets (relayed)
+
+All three arrive through the Desktop relay with the Desktop's credential, so the account is the Desktop's signed-in account.
+
+**`WS /api/v1/phones/app/pair?phone=<phoneId>`** — plaintext JSON.
+
+1. App → `{"type":"hello","phoneId","name","model","pub":"<X25519 public key, base64>"}`.
+2. Node → `{"type":"pending","pub":"<node X25519 public key, base64>"}`. Both screens now show the code, and the Desktop's `/api/v1/events/stream` gets the SSE event `phone_app.pair_request` with data `{ "type": "phone_app.pair_request", "phoneId", "serial", "name", "model", "code", "expiresAt" }`.
+3. The person approves or denies on the Desktop within 120 s. Node → `{"type":"approved","pub"}` or `{"type":"denied","reason"}` (`denied`, `timeout`, `replaced`, `bad_key`, `store_failed`). The Desktop gets `phone_app.pair_resolved` `{ "phoneId", "approved", "reason"? }`.
+
+Code = the first 4 bytes of SHA-256(appPub ‖ nodePub) as a big-endian integer, mod 1 000 000, zero-padded to 6 digits. Session key = HKDF-SHA256(ikm = X25519 shared secret, salt = the lowercase phone id as UTF-8, info = `allternit-app-phone v1`, 32 bytes). The node keeps it sealed in its vault and registers `app:<phoneId>` in `registered_phones`.
+
+**`WS /api/v1/phones/app/ingest?phone=<phoneId>`** — the broadcast extension.
+
+- Binary frames, one iCTRL broadcast packet each (packet types 0–5). The frame bytes are that packet's envelope JSON (below) as UTF-8; its plaintext is the raw packet. The node opens each and sends the plaintext packet to viewers of `app:<phoneId>` as a binary frame.
+- Node → extension text frames (plaintext): `{"type":"resume"}` when the first viewer attaches, `{"type":"keyframe"}` when another viewer joins, `{"type":"pause"}` when the last leaves. The extension starts paused.
+- The phone is online while this socket is open. Fifty packets in a row that fail to open end the socket with `{"type":"end","reason":"bad_envelope"}` and close code 4401 (pair again).
+
+**`WS /api/v1/phones/app/control?phone=<phoneId>`** — the foreground app, sealed envelopes as text frames both ways. Node → app: `{"id","method","params"}`. App → node: `{"id","result"}`, `{"id","error":{"code","message"}}` or `{"type":"state","foreground","browserOpen"}`. Methods: `web.open {url}`, `web.snapshot {}`, `web.click {ref}`, `web.type {ref,text,submit?}`, `web.scroll {dy}`, `web.back {}`, `web.wait {ms}` (at most 10 000), and `screen.prompt` (show the broadcast picker).
+
+Ingest and control from a phone with no stored key get `{"type":"end","reason":"not_paired"}` and close code 4401.
+
+### Envelope (iCTRL protocol v1)
+
+Byte-compatible with iCTRL's `SecureEnvelope.swift` **request** construction, used in both directions (the node never uses iCTRL's response form). With K the session key and a fresh 16-byte nonce per message: `tok` = first 4 bytes of SHA-256(K); `K_mac = HMAC(K, "ictrl-v1|mac" ‖ nonce)`; `K_enc = HMAC(K, "ictrl-v1|enc-req" ‖ nonce)`; `ct` = plaintext XOR the HMAC-SHA256 counter keystream (`HMAC(K_enc, nonce ‖ be32(i))`); `tag = HMAC(K_mac, "v1" ‖ tok4 ‖ be64(ts) ‖ nonce ‖ ct)`.
+
+```json
+{"v":1,"tok":"8 hex","ts":1800000000,"nonce":"32 hex","ct":"base64","tag":"64 hex"}
+```
+
+The node checks the tag first, then `|ts − now| ≤ 120 s`, then refuses a nonce already seen inside that window. One window per phone is shared by ingest, control and the nonces the node itself seals, so a node message reflected back at the node is refused as a replay.
+
+### Desktop routes (loopback only)
+
+These need the Desktop access token and refuse relayed requests (`x-allternit-relayed`) with `403 desktop_only`.
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `POST` | `/api/v1/phones/app/:phoneId/rpc` | Body `{ "method", "params" }`. `200 {"result"}`, or `200 {"error":{"code","message"}}` for the app's own error (`stopped_by_user`, `browser_not_open`, `stale_ref`, …); `409 app_not_open` with no control socket; `504 app_timeout` after 30 s; `400` for a method outside the list above. |
+| `POST` | `/api/v1/phones/app/pair/:phoneId/decision` | Body `{ "approve": bool }` → `{"ok":true}`, or `404 no_pending_pair`. |
+| `GET` | `/api/v1/phones/app/pair/pending` | `{ "pairs": [ …pair_request payloads ] }`, for a Desktop that reconnects its event stream. |
+
+Viewers are unchanged: `POST /api/v1/phones/app:<phoneId>/ws-token`, then `/ws/phones/app:<phoneId>/stream`. In `GET /api/v1/phones` an app phone row also carries `"route": "iphone-app-store"`, `"screen": true`, `"appOpen"`, `"foreground"` and `"browserOpen"`.
+
+### Bot runs in the in-app browser
+
+`POST /api/aci/run` accepts `targetDevice: "app:<phoneId>"`. Until the ACU planning loop has a phone-browser adapter, the node refuses such a run rather than drive its own browser: `409 app_not_open` when the app's control socket is closed, otherwise `501 phone_browser_runs_unavailable`. Single browser steps work today through `POST /api/v1/phones/app/:phoneId/rpc`.

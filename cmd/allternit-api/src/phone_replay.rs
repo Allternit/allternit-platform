@@ -1013,7 +1013,10 @@ async fn tool_route(
 ) -> Response {
     let raw = body.name.trim();
     let name = if raw.starts_with("phone.") { raw.to_string() } else { format!("phone.{raw}") };
-    let known = ["devices", "screenshot", "tap", "type", "read_ui", "screen_text", "find_and_tap", "swipe", "home", "back", "key", "open_app", "sms.send", "sms.read", "call.dial"];
+    let known = ["devices", "screenshot", "tap", "type", "read_ui", "screen_text", "find_and_tap", "swipe", "home", "back", "key", "open_app", "sms.send", "sms.read", "call.dial",
+        // iPhone app phones (`app:<id>`): the in-app browser. Desktop main sends
+        // these to `phone_app`'s rpc route for the phone's control socket.
+        "web.open", "web.snapshot", "web.click", "web.type", "web.scroll", "web.back", "web.wait"];
     if !known.iter().any(|k| name == format!("phone.{k}")) {
         return bad(StatusCode::BAD_REQUEST, format!("unknown phone tool \"{raw}\" (use the task or skills routes for phone.task and phone.run_skill)"));
     }

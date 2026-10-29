@@ -15,6 +15,8 @@ struct SettingsView: View {
     @ObservedObject private var plan = AccountPlanStore.shared
     /// Response style + custom instructions (`GET/PUT /api/v1/agent-preferences`).
     @ObservedObject private var preferences = PreferencesStore.shared
+    /// Settings → Phones status ("Paired · <computer>").
+    @ObservedObject private var appPhone = AppPhoneService.shared
 
     /// Operator pages (models, infrastructure…) behind the Advanced row.
     @State private var showOperator = false
@@ -264,6 +266,17 @@ struct SettingsView: View {
             }
             NavigationLink { AllternitMobileSettingsPage() } label: {
                 SettingsRowLabel(title: "Allternit Mobile", systemImage: "iphone")
+            }
+            // Phones ("Let your bots use this iPhone"): screen + ACI browser.
+            NavigationLink { AppPhonesSettingsView() } label: {
+                HStack {
+                    SettingsRowLabel(title: "Let your bots use this iPhone", systemImage: "iphone.gen3")
+                    Spacer()
+                    Text(appPhone.credentials.map { "Paired · \($0.runtimeName)" } ?? "Off")
+                        .font(.caption)
+                        .foregroundColor(Color("TextSecondary"))
+                        .lineLimit(1)
+                }
             }
         } header: {
             Text("Computers")

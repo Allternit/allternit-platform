@@ -184,8 +184,35 @@ export namespace PermissionNext {
       /** Session-scoped allows from a "task" reply; never written to disk. */
       task: {} as Record<string, Ruleset>,
       modes: {} as Record<string, Mode>,
+      /** Sessions known to be app (non-CLI) sessions; only positives are cached. */
+      apps: new Set<string>(),
     }
   })
+
+  /**
+   * Whether a session belongs to an app (Desktop, ai.allternit.com, the PWA)
+   * rather than the gizzi CLI. Auto mode is stricter there: deletes, payments,
+   * signing and the user's own ask rules still ask, and question cards work.
+   *
+   * The `serve` process allternit-api talks to runs with the default
+   * GIZZI_CLIENT ("cli"), so the process flag alone can't tell. The session
+   * can: allternit-api stamps a `surface` (chat, cowork, code, browser,
+   * design) on every session it creates, and the CLI never sets one. A
+   * non-CLI client (GIZZI_CLIENT acp/app/desktop) counts as an app too.
+   */
+  export async function isAppSession(sessionID: string): Promise<boolean> {
+    if (Flag.GIZZI_CLIENT !== "cli") return true
+    const s = await state()
+    if (s.apps.has(sessionID)) return true
+    const row = Database.use((db) => db
+      .select({ surface: SessionTable.surface })
+      .from(SessionTable)
+      .where(eq(SessionTable.id, sessionID))
+      .get())
+    if (!row?.surface) return false
+    s.apps.add(sessionID)
+    return true
+  }
 
   export async function getMode(sessionID: string): Promise<Mode> {
     const s = await state()
@@ -222,12 +249,16 @@ export namespace PermissionNext {
     async (input): Promise<ReplyData | undefined> => {
       const s = await state()
       const { ruleset, mode: modeOverride, ...request } = input
+      const app = await isAppSession(request.sessionID)
+      const destructive = request.metadata?.destructive === true
       for (const pattern of request.patterns ?? []) {
         const mode = modeOverride ?? (await getMode(request.sessionID))
         let rule = evaluatePolicy(request.permission, pattern, {
           configured: ruleset,
           approvals: approvalsFor(s, request.sessionID),
           mode,
+          app,
+          destructive,
         })
         // An approved project panel guard (.allternit/panels, agent.guards)
         // turns an allow into an ask, in every mode; with nobody there to
@@ -415,6 +446,7 @@ export namespace PermissionNext {
         }
         existing.resolve()
         const mode = await getMode(sessionID)
+        const app = await isAppSession(sessionID)
         for (const [id, pending] of Object.entries(s.pending)) {
           if (pending.info.sessionID !== sessionID) continue
           const ok = pending.info.patterns.every(
@@ -422,6 +454,8 @@ export namespace PermissionNext {
               configured: pending.ruleset,
               approvals: approvalsFor(s, sessionID),
               mode,
+              app,
+              destructive: pending.info.metadata?.destructive === true,
             }).action === "allow",
           )
           if (!ok) continue
@@ -444,6 +478,7 @@ export namespace PermissionNext {
 
         const sessionID = existing.info.sessionID
         const mode = await getMode(sessionID)
+        const app = await isAppSession(sessionID)
         for (const [id, pending] of Object.entries(s.pending)) {
           if (pending.info.sessionID !== sessionID) continue
           const ok = pending.info.patterns.every(
@@ -451,6 +486,8 @@ export namespace PermissionNext {
               configured: pending.ruleset,
               approvals: s.approved,
               mode,
+              app,
+              destructive: pending.info.metadata?.destructive === true,
             }).action === "allow",
           )
           if (!ok) continue
@@ -494,6 +531,45 @@ export namespace PermissionNext {
     approvals?: Ruleset
     mode?: string
     skipPermissions?: boolean
+    /** An app (non-CLI) session: auto mode keeps asking for risky work. See `isAppSession`. */
+    app?: boolean
+    /** The tool says it is destructive (MCP `destructiveHint`). */
+    destructive?: boolean
+  }
+
+  /** Name words that mark a delete, beyond TASK_NEVER's own. */
+  const DELETE_WORDS = new Set(["destroy", "erase", "purge", "trash", "unlink"])
+
+  /**
+   * Whether a permission class names a payment, a signature or a delete: a
+   * TASK_NEVER word (or a delete synonym) as a whole word of the name, so
+   * `gmail_delete_message`, `stripe.pay`, `docusign_sign` and `deleteFile`
+   * match while `design` or `display` don't.
+   */
+  export function namesNeverAuto(permission: string): boolean {
+    const words = permission
+      .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .filter(Boolean)
+    return words.some((w) => TASK_NEVER.has(w) || DELETE_WORDS.has(w))
+  }
+
+  /**
+   * What auto mode still asks a person about in an app session: payments,
+   * signing and deletes (TASK_NEVER), a tool marked destructive, and shell
+   * commands that delete files.
+   */
+  function autoAsks(permission: string, pattern: string, destructive: boolean): boolean {
+    if (destructive) return true
+    if (namesNeverAuto(permission)) return true
+    if (Catastrophic.applies(permission) && Catastrophic.deletes(pattern)) return true
+    return false
+  }
+
+  /** Rules the person set themselves (config, session, project), not built-in defaults. */
+  function isUserRule(rule: Rule | undefined): boolean {
+    return rule?.source === "user" || rule?.source === "session" || rule?.source === "project"
   }
 
   /**
@@ -538,6 +614,21 @@ export namespace PermissionNext {
       return { action: "deny", permission, pattern: "*" }
     }
 
+    // Auto in an app session (Desktop/web/PWA chat): work runs without
+    // prompts, but payments, signing, deletes and the person's own ask rules
+    // still ask, a session approval ("always") still counts, and question
+    // cards keep working because someone is there to answer.
+    if (mode === "auto" && input.app) {
+      const approved = lastMatch(permission, pattern, input.approvals ?? [])
+      if (approved?.action === "allow") return approved
+      if (configured?.action === "ask" && isUserRule(configured)) return configured
+      if (autoAsks(permission, pattern, input.destructive ?? false)) {
+        return { action: "ask", permission, pattern: "*" }
+      }
+      return { action: "allow", permission, pattern: "*" }
+    }
+
+    // Auto in the CLI: unattended, so questions are refused and the rest runs.
     if (mode === "auto" && AUTO_QUESTION_PERMISSIONS.has(permission.toLowerCase())) {
       return { action: "deny", permission, pattern: "*" }
     }

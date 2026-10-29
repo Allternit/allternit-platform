@@ -476,7 +476,7 @@ impl PhoneLinkSession {
     /// The returned receiver is the pump's desktop-bound stream; it must be
     /// held by whoever runs the session socket (the senders live on the
     /// session and in the registry's viewers).
-    fn new(
+    pub(crate) fn new(
         id: u64,
         account: String,
         phones: Vec<PhoneHelloPhone>,
@@ -494,6 +494,16 @@ impl PhoneLinkSession {
             }),
             from_producers,
         )
+    }
+
+    /// True while at least one viewer is attached to `serial` (the app-phone
+    /// ingest uses it to pause the broadcast when the last viewer leaves).
+    pub(crate) async fn has_viewers(&self, serial: &str) -> bool {
+        self.viewers
+            .read()
+            .await
+            .get(serial)
+            .is_some_and(|list| !list.is_empty())
     }
 }
 
@@ -820,7 +830,7 @@ fn is_video(msg: &Message) -> bool {
 
 /// Route one desktop-originated frame to the viewers of the serial that
 /// currently owns the socket's output.
-async fn fan_out_to_viewers(session: &Arc<PhoneLinkSession>, msg: Message) {
+pub(crate) async fn fan_out_to_viewers(session: &Arc<PhoneLinkSession>, msg: Message) {
     let serial = session.streaming.read().await.clone();
     let Some(serial) = serial else {
         return;
@@ -876,8 +886,8 @@ pub(crate) trait FrameTransport: Send {
     async fn send(&mut self, msg: Message) -> bool;
 }
 
-struct WsFrameTransport {
-    socket: WebSocket,
+pub(crate) struct WsFrameTransport {
+    pub(crate) socket: WebSocket,
 }
 
 #[async_trait::async_trait]
@@ -1201,13 +1211,19 @@ async fn list_phones(
     let mut phones = Vec::with_capacity(rows.len());
     for row in rows {
         let online = state.phone_link.is_online(&user.user_id, &row.serial).await;
-        phones.push(json!({
+        let mut phone = json!({
             "serial": row.serial,
             "model": row.model.unwrap_or_default(),
             "name": row.name.unwrap_or_default(),
             "online": online,
             "callBridge": row.call_bridge,
-        }));
+        });
+        // iPhone via the App Store app (`phone_app`): screen only, online
+        // while its broadcast extension holds the ingest socket.
+        if let Some(phone_id) = row.serial.strip_prefix(crate::phone_app::APP_SERIAL_PREFIX) {
+            crate::phone_app::decorate_listing(&user.user_id, phone_id, &mut phone).await;
+        }
+        phones.push(phone);
     }
     Json(json!({ "phones": phones })).into_response()
 }

@@ -6,6 +6,11 @@
 	<false/>
 	<key>NSPrivacyTrackingDomains</key>
 	<array/>
+	<!-- What leaves the phone for the app's own features. The phone screen,
+	     app sound and ACI browser snapshots go to the owner's paired Desktop
+	     only when the owner starts sharing; they cross api.allternit.com
+	     sealed with a key only the phone and that Desktop hold. Notes for the
+	     App Store privacy form: surfaces/allternit-mobile/docs/app-store-privacy.md. -->
 	<key>NSPrivacyCollectedDataTypes</key>
 	<array>
 		<!-- Account (Clerk): name and email, linked to the user, for app functionality. -->

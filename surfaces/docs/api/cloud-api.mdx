@@ -158,6 +158,8 @@ Once paired, a runtime opens an outbound WebSocket to the cloud API. A Clerk-aut
 | WS | `/api/v1/runtime-relay/connect/:id` | Device token | Runtime relay WebSocket. |
 | POST | `/api/v1/runtime-devices/:id/proxy` | Clerk | Proxy an HTTP request to the runtime. |
 | POST | `/api/v1/runtime-devices/:id/socket-ticket` | Clerk | Create a one-time WebSocket ticket. |
+| POST | `/api/v1/app-phones/:phoneId/socket-ticket` | App phone key | One-time ticket for an iPhone app phone's own node sockets. See [Phone Stream Relay](/api/phone-stream-relay). |
+| POST / GET / DELETE | `/api/v1/app-phones` (`/:phoneId`) | Clerk | Register (returns the app phone key once), list or revoke iPhone app phones. |
 | WS | `/api/v1/runtime-devices/:id/socket?ticket=...` | Ticket | Browser WebSocket to the runtime. |
 | POST | `/api/v1/runtime-devices/:id/viewer-token` | Clerk | Mint a live desktop (VNC) viewer token for a cloud computer. |
 | GET | `/api/v1/runtime-devices/:id/viewer-check` | Clerk or `compute` token | Automated self-check of the live desktop path: is the cloud computer's VNC socket reachable? |

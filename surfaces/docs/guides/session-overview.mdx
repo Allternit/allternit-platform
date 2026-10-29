@@ -1,6 +1,6 @@
 ---
 title: "All chats at a glance"
-description: "See every open chat, Cowork task, code thread, agent run, group chat or project as a list, a grid of live cards or a deck, on Desktop and on phones."
+description: "See every open chat, code thread, agent run, group chat or project as a list, a grid of live cards or a deck, on Desktop and on phones."
 ---
 
 The overview shows the sessions of the mode you are in as live cards. Each card shows the latest reply, whether the session is working, needs you or has a new reply, and how long ago it last moved. Use it when several sessions run at once and you want to see them all without opening each one.
@@ -11,14 +11,14 @@ Each mode shows its own sessions:
 
 | Mode | Cards | Grouped by |
 |---|---|---|
-| **Home** | Chats and Cowork tasks | Project (Cowork tasks without a project sit under **Cowork**) |
-| **Code** | Code threads | Repo, as in the Code sidebar |
+| **Home** | Chats | Project |
+| **Code** | Code threads and terminal sessions | Repo, as in the Code sidebar |
 | **ACI** | Agent runs | One group |
 | **Bots** | A bot's threads, in its **Threads** tab | The bot's projects. See [The deck above the composer](/guides/bot-threads#the-deck-above-the-composer) |
 | **Group chats** | Your group chats, on the **Group chats** page in Bot Mode | One group. Each card shows the room's members and its latest messages with who said them |
-| **Projects** | Your projects, on the **Projects** page (and Bot Mode's **Projects**) | Kind (Chat, Cowork, Code, Design, Bot). Each card shows the project's icon, its counts and its newest conversation |
+| **Projects** | Your projects, on the **Projects** page (and Bot Mode's **Projects**) | Kind (Chat, Code, Design, Bot). Each card shows the project's icon, its counts and its newest conversation |
 
-Bot sessions stay out of the Home and Code overviews. Each bot's threads have their own overview inside the bot.
+The Code overview shows one kind at a time: **Code sessions** or **Terminal sessions** (Factory Terminal bots). Each kind has List, Grid and Deck. On Desktop the switch sits beside **List · Grid · Deck**. On phones it is under **Sessions** in the layout menu. Terminal sessions are dark terminal cards in Grid and Deck. Open one to see it as the session in Code's [Terminal mode](/code/terminal-and-prompt#terminal-mode). Other bot sessions stay out of the Home and Code overviews. Each bot's threads have their own overview inside the bot.
 
 **Group chat cards.** A room shows **Needs you** (amber) when its last message is a bot's question, and **N new** when it has unread messages. Rename a room from the card's menu. Rooms have no **×**, because a room is deleted from inside it, not archived. **List** on the Group chats page shows the room rows with their avatars.
 
@@ -61,14 +61,15 @@ Each overview remembers the layout you last used. On Desktop the cards are large
 ## For developers
 
 - Component: `src/components/session-overview/SessionOverview.tsx` (`OverviewLayout` = `"list" | "grid" | "deck"`; `OverviewLayoutSwitch` is the shared List · Grid · Deck switch and `OVERVIEW_LAYOUT_OPTIONS` feeds phone menus; `list` replaces the built-in rows with a caller's own list; `hideGroupFilter` hides the project dropdown; `OverviewItem.icon`, `menuItems` and `muted` serve project cards; project dropdown via `QuietMenu`, swipe-up close on phones, layout kept per `layoutScope` in localStorage `allternit.session-overview.layout.<scope>`). Styles in `session-overview.css`: `so-seam` hides scrollbars, `so-fade-x` / `so-fade-y` fade the edges.
-- Data: `useModeOverview(mode)` in `useModeOverview.ts` builds the cards from the chat, Cowork and code session stores (`streamingBySession`, `unreadCounts`, last messages) and the browser agent's runs. `archiveOverviewItem` sets `metadata.archived` (code threads use `setCodeSessionArchived`).
+- Code kind: `useCodeOverviewKind` and `CodeOverviewKindSwitch` in `code-overview-kind.tsx` (persisted as `allternit.session-overview.code-kind`), used by `DesktopSessionOverview`, `ThreadsView` (List) and `PhoneOverviewOverlay`.
+- Data: `useModeOverview(mode, { terminals })` in `useModeOverview.ts` builds the cards from the chat and code session stores (`streamingBySession`, `unreadCounts`, last messages) and the browser agent's runs. `archiveOverviewItem` sets `metadata.archived` (code threads use `setCodeSessionArchived`).
 - Desktop: `DesktopSessionOverview` wraps `RecentsView` (Home) and `ThreadsView` (Code). `useDesktopOverviewLayout(scope)` keeps the layout in `allternit.session-overview.layout.desktop:<scope>`; List renders the original list page with `OverviewLayoutSwitch`. The older `allternit.session-overview.desktop-view.<scope>` value is carried over once (`useOverviewLayout(scope, legacyKey)`).
 - Phone: `PhoneOverviewOverlay` (opened with `usePhoneNav().openOverview(true)`), `PhoneOverviewButton` in the Chats and Code headers, and **See all** in `PhoneDrawer`. Phone list screens pass `layout` to `PhoneFilterButton` (`PhoneSectionChrome.tsx`), which then draws that layout's `OVERVIEW_LAYOUT_OPTIONS` icon instead of the sliders and sets `data-layout`.
 - Bots: `src/views/bots/home/BotThreadsOverview.tsx` in the deck's Threads tab.
 - Group chats: `GroupsListView` (`src/views/bots/GroupsListView.tsx`) renders `SessionOverview` from `groupCard(group, unread)`; List passes the `GroupChatRosterItem` rows as `list` (layout key `allternit.session-overview.layout.<phone|desktop>:group-chats`, carried over from `allternit:group-chats:layout`). Main chat is an `OverviewItem` with `lead: true` (first, outside project groups, same card size), filled from the main session's thread.
 - Cards: `OverviewItem.transcript` (last messages, oldest first; `recentTranscript` takes the last 8, each up to 1,200 characters) fills a `so-body` that is still at rest and scrolls on `:hover` / `:focus-within` (always on touch). A press that moves more than 6 px is a scroll, not a tap. Sizes live in `SIZE` (phone vs Desktop).
 - Rename: `onRename(item, title)`. `renameOverviewItem` calls each store's `updateSession(id, { name })`; bot threads use `threadApi.patch(id, { title })`. `noRename` hides it. The rename field opens after the ⋯ menu has closed (`onCloseAutoFocus`), so the menu's focus return doesn't blur it.
-- Archived chats now show as archived in the Desktop rail's Recents and stay out of the phone drawer's Recents, like Cowork and Code sessions.
-- Projects: `src/components/projects/ProjectsOverview.tsx` turns `UnifiedProject`s into cards (`PROJECT_MODE_GROUP` groups, `ProjectIcon`, `projectCountLine`, the newest project thread's transcript from the chat, Cowork and code session stores via `isProjectThread`). Used by `ProjectView` (Desktop + phone `phoneChrome`) and `BotProjectsListView`. One hidden `CustomizeAppearance` per project, because it closes itself on mount and when its entity changes.
+- Archived chats now show as archived in the Desktop rail's Recents and stay out of the phone drawer's Recents, like Code sessions.
+- Projects: `src/components/projects/ProjectsOverview.tsx` turns `UnifiedProject`s into cards (`PROJECT_MODE_GROUP` groups, `ProjectIcon`, `projectCountLine`, the newest project thread's transcript from the chat and code session stores via `isProjectThread`). Used by `ProjectView` (Desktop + phone `phoneChrome`) and `BotProjectsListView`. One hidden `CustomizeAppearance` per project, because it closes itself on mount and when its entity changes.
 - Artifacts: `ArtifactsView` uses `OverviewLayoutSwitch` and `useOverviewLayout("desktop:artifacts" | "phone:artifacts", "allternit:artifacts:layout")`; Deck is a snapping sideways row of preview cards, and phone List is the thumbnail cards.
 - Story: `src/components/session-overview/SessionOverview.stories.tsx`.

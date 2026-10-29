@@ -5,7 +5,7 @@ description: GenOffice-powered document editor surface for Allternit
 
 ## Overview
 
-**Office Docs** is the Allternit document editor surface. It wraps `@allternit/office-docs-app` inside the platform shell (`surfaces/ai.allternit.com`) and gives agents and users a native `.docx` editing experience. Documents are persisted as artifacts with a binary docx section and an extracted plaintext section for search and cowork.
+**Office Docs** is the Allternit document editor surface. It wraps `@allternit/office-docs-app` inside the platform shell (`surfaces/ai.allternit.com`) and gives agents and users a native `.docx` editing experience. Documents are persisted as artifacts with a binary docx section and an extracted plaintext section for search and agents.
 
 ## Base URL / usage
 
@@ -54,7 +54,7 @@ A persisted document artifact contains at least these sections:
 | Kind | Purpose |
 |---|---|
 | `docs-editor/binary` | Base64-encoded `.docx` bytes (source of truth) |
-| `docs-editor/plaintext` | Extracted text for search, iOS, and cowork |
+| `docs-editor/plaintext` | Extracted text for search, iOS, and agents |
 
 Legacy `docs-editor/<block>` text sections are upgraded on load by generating a `.docx` from their blocks.
 

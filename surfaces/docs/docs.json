@@ -69,6 +69,7 @@
               "guides/setup-checklist",
               "guides/sidebar-navigation",
               "guides/session-overview",
+              "guides/system-drawer",
               "guides/decisions",
               "guides/glance-lines",
               "architecture/sidebar-layout",
@@ -116,7 +117,6 @@
               "guides/ops-sheets",
               "guides/project-panels",
               "guides/artifact-modes",
-              "guides/cowork-session-panel",
               "guides/tasks",
               "guides/code-session-list",
               "guides/code-linked-prs",
@@ -125,6 +125,7 @@
               "guides/phone-for-your-bot",
               "guides/phone-skills",
               "guides/usb-agent",
+              "guides/iphone-app",
               "guides/phone-link",
               "guides/cloud-phones",
               "guides/bot-voice-on-linked-phone",
@@ -568,6 +569,7 @@
               "guides/custom-voices",
               "guides/attachments",
               "guides/chat-composer",
+              "guides/chat-sessions",
               "guides/interactive-answers",
               "guides/write-in-my-style",
               "guides/share-location",
@@ -985,6 +987,10 @@
     }
   },
   "redirects": [
+    {
+      "source": "/guides/cowork-session-panel",
+      "destination": "/guides/chat-sessions"
+    },
     {
       "source": "/core/commrails",
       "destination": "/factory/overview"

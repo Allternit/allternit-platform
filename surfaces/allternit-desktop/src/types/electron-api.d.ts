@@ -631,6 +631,10 @@ export interface PhonesAPI {
   forget(id: string): Promise<void>;
   startScrcpy(serial: string): Promise<{ ok: boolean; error?: string }>;
   stopScrcpy(serial: string): Promise<void>;
+  /** iPhones connected with the Allternit app (serial "app:…", route "iphone-app-store"). */
+  appPhones(): Promise<Array<{ serial: string; platform: 'ios'; via: 'allternit-app'; route: 'iphone-app-store'; name: string; screen: boolean; note: string }>>;
+  /** Approve or deny an Allternit app pairing request (phone_app.pair_request). */
+  appPairDecision(phoneId: string, approve: boolean): Promise<{ ok: boolean; message?: string }>;
   // In-app live view (scrcpy-server video + input; starts only on request).
   startStream(serial: string, opts?: PhoneStreamOptions): Promise<{ ok: true } | { ok: false; message: string }>;
   stopStream(serial: string): Promise<void>;

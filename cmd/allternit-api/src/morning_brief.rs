@@ -345,8 +345,11 @@ async fn triage_mail(db: &DbHandle, bot: &BotRow, bot_id: &str, msgs: &[MailMsg]
     let person = Person { name: "the user".into(), email: String::new(), about: None };
     let now = Utc::now().to_rfc3339();
     let model = bot.name.clone();
-    let results: Vec<Result<(bool, String), String>> = stream::iter(msgs.iter().map(|m| {
-        let message = Message {
+    // Owned messages first: a closure over `&MailMsg` makes the stream's future
+    // lifetime-generic, and axum's handler then fails "FnOnce is not general enough".
+    let messages: Vec<Message> = msgs
+        .iter()
+        .map(|m| Message {
             id: m.date.clone(),
             from: m.from.clone(),
             subject: m.subject.clone(),
@@ -354,7 +357,9 @@ async fn triage_mail(db: &DbHandle, bot: &BotRow, bot_id: &str, msgs: &[MailMsg]
             labels: m.labels.clone(),
             body: m.snippet.clone(),
             ..Default::default()
-        };
+        })
+        .collect();
+    let results: Vec<Result<(bool, String), String>> = stream::iter(messages.into_iter().map(|message| {
         let (person, now, model) = (person.clone(), now.clone(), model.clone());
         let (db, bot_id, bot_name) = (db.clone(), bot_id.to_string(), bot.name.clone());
         async move {
@@ -812,7 +817,7 @@ mod tests {
 
     #[test]
     fn json_is_found_inside_prose() {
-        assert_eq!(json_in("Sure! {\"a\": 1} done")["a"], 1);
+        assert_eq!(json_in("Sure! {\"a\": 1} done").unwrap()["a"], 1);
         assert!(json_in("no json").is_none());
     }
 }

@@ -187,6 +187,11 @@ export class PhoneStreamManager {
     return () => rec.consumers.delete(consumer);
   }
 
+  /** How many consumers watch this serial (the bot's screenshot viewer stops a stream only when it was the last). */
+  consumerCount(serial: string): number {
+    return this.streams.get(serial)?.consumers.size ?? 0;
+  }
+
   sendInput(serial: string, events: PhoneInputEvent[]): { ok: boolean; message?: string } {
     const rec = this.streams.get(serial);
     if (!rec?.session || rec.status.state !== 'live') return { ok: false, message: 'The stream is not live.' };

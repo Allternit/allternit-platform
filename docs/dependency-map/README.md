@@ -13,7 +13,7 @@ One map of every Allternit product, the APIs and SDKs underneath, the surfaces a
 ## Before changing a feature (agents)
 
 1. Query impact live. It reads your working tree, so it is always current:
-   `python3.11 scripts/dependency-map.py --impact allternit-ai/src/views/cowork --summary`
+   `python3.11 scripts/dependency-map.py --impact allternit-ai/src/views/tasks --summary`
    (one or more repo-prefixed files or folders, or component ids such as `product:factory`). Use `--ai <worktree>` when your allternit-ai checkout is not the sibling folder. `--summary` prints a short text block per path (part of, features with status, journeys with the step numbers your path is, surfaces reached, how many components could be affected) for a plan or a delegation brief. Without it you get the full JSON.
    The graph is cached in `~/.cache/allternit-depmap/`, keyed on both HEADs, tracked changes and the curated files, so repeat queries take about a second. A path the cached graph does not know (a new untracked file) rebuilds it; `--fresh` forces a rebuild. If your allternit-ai checkout is behind main, references to components it lacks are skipped with a warning.
 2. The JSON lists `changed` (the components your path belongs to), `partOf` (the products built from it), `features` and `journeys` (the ones that name it or a folder containing it), `products` and `surfaces` it can reach, and every `potentiallyAffected` component. Record the affected products, surfaces, contracts, docs and verification in your plan. Reach means review scope, not proof that every consumer needs an edit.

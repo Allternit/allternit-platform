@@ -5,6 +5,23 @@ description: 'Changelog for the Allternit platform, SDKs, and Gizzi Code CLI'
 
 # Release Notes
 
+## 2026-10-28 — The HUD pen closes again, and the HUD is one card
+
+- **Pen fixed:** the HUD's pen button opened a grey layer over the whole screen with no way out. It now opens the drawing layer with colors, width, Clear, Save and Done; **Done** or `Escape` closes it. See [HUD](/surfaces/desktop#hud).
+- **One card:** the HUD no longer sits in a frosted window. The message box and the Agent mode, Plugins and Artifacts row are one card with no line between them, in light or dark.
+- **HUD menus open in full:** the model picker, the context meter and the Agent mode, Plugins and Artifacts menus were cut off at the edge of the HUD. The HUD now grows while a menu is open and shrinks back when it closes. `Escape` with a menu open closes the menu, not the HUD.
+- **Menu bar icon:** the A is drawn with square blocks on whole pixels, like the wordmark. Before, each block blurred into a "+" on a standard (non-Retina) display.
+
+## 2026-10-28 — Longer tasks run in Chat
+
+The same changes apply on Desktop, on ai.allternit.com (including the phone layout) and in the m.allternit.com app.
+
+- Cowork is now part of Chat.
+- **Approval in Chat:** pick **Ask before actions**, **Auto-approve** or **Read-only** above the text box. The choice is saved with the chat and sent with each message.
+- **Studio and computer in Chat:** a chat that makes a document, slides or a website opens beside its studio panes, and the session header has the computer button and the session panel.
+- **Quick task** starts a chat. **Tasks** (board, runs and drafts) are on Home. Routines and Loops keep their own pages.
+- Older sessions are listed with your chats and open in Chat; their links keep working. See [Chat sessions](/guides/chat-sessions).
+
 ## 2026-10-27 — Your Mac tells you when the iPhone needs a tap after a renewal
 
 - **Phone Link on iPhone:** after the weekly renewal, iOS can ask you to trust the helper's new developer certificate, and a locked iPhone can't start the helper. Both were only written to the log, so Phone Link stayed down with no sign why. Desktop now shows a macOS notification for each: **Trust the developer on iPhone** (with the Settings path) or **Unlock iPhone**. See [Phone Link](/guides/phone-link).
@@ -42,7 +59,7 @@ See [Agent steps in replies](/guides/agent-steps).
 The same changes apply on Desktop, on ai.allternit.com (including the phone layout) and in the m.allternit.com app.
 
 - **Watching an agent work:** the reply shows the agent's plan in one line, its last two steps and the step it is on now, with a timer. Websites it searched, files it made and failed steps stay in view as chips. When it finishes, everything folds into one line such as "Worked for 12s · 4 steps"; click it for the full trail. See [Agent steps in replies](/guides/agent-steps).
-- **Progress:** the agent's task list is no longer drawn in the reply. A chip at the top right of every conversation (Chat, Cowork, Code, bot and project threads) reads **Step 2 of 3** and opens the plan as a checklist in the right pane; on a phone it opens as a sheet. See [Progress](/guides/progress-pane).
+- **Progress:** the agent's task list is no longer drawn in the reply. A chip at the top right of every conversation (Chat, Code, bot and project threads) reads **Step 2 of 3** and opens the plan as a checklist in the right pane; on a phone it opens as a sheet. See [Progress](/guides/progress-pane).
 - **Answers:** every brain now lays out replies the same way: the answer first, then a fixed layout for the kind of question (comparison, decision, plan, how-to, troubleshooting, research, status or quick answer), with the length set by Settings → Response style. Long answers get a title, a short date line, a bottom-line callout, full tables and source pills for the pages cited. See [How answers are laid out](/guides/interactive-answers#how-answers-are-laid-out).
 - **Sources and plans from every model:** source pills come from the model's own citations (Claude, ChatGPT, Gemini, Claude Code web search), and every brain's plan lands in the same Progress checklist. See [Response parts and answer shapes](/guides/response-parts).
 - **Cards that can't be drawn:** the brain is told what went wrong, once, with your next message, so the next reply can start with the fixed card.
@@ -146,10 +163,10 @@ The same change applies on Desktop, on ai.allternit.com (including the phone lay
 
 The same changes apply on Desktop, on ai.allternit.com (including the phone layout) and in the m.allternit.com app.
 
-- **Overview:** every open chat, Cowork task, code thread or agent run as live cards, in a grid or a deck. Each card shows the latest reply and whether the session is working or needs you. Filter by project from the line under the title. The **×** archives a session; on phones you can swipe a card up. See [All chats at a glance](/guides/session-overview).
+- **Overview:** every open chat, code thread or agent run as live cards, in a grid or a deck. Each card shows the latest reply and whether the session is working or needs you. Filter by project from the line under the title. The **×** archives a session; on phones you can swipe a card up. See [All chats at a glance](/guides/session-overview).
 - **Where:** **Open all recents** on Desktop now opens on the cards, with **List** for the previous page. On phones, tap the count button in the chat or Code header, or **See all** beside Recents.
 - **Bots:** a bot's **Threads** tab shows its threads as the same cards, with **Take it** and **Not now** on suggestions. The **Tasks** tab is now dropdowns: thread, then steps, then the subagents each step handed work to. See [The deck above the composer](/guides/bot-threads#the-deck-above-the-composer).
-- **Archived chats** leave Recents on phones and show under the Archived filter on Desktop, like Cowork and Code sessions.
+- **Archived chats** leave Recents on phones and show under the Archived filter on Desktop, like Code sessions.
 
 ## 2026-10-21 — API keys in Cloud Console
 
@@ -192,9 +209,9 @@ The same changes apply on Desktop, on ai.allternit.com (including the phone layo
 ## 2026-10-20 — Meet your bots, editable routines calendar
 
 - **Meet your bots** replaces setup's Main bot step and opens once on your first visit to Bot Mode. Watch the Bots network, add bots from the templates by dragging them onto your team or tapping them, pick your main bot (A:// by default, Gizzi, the Gizzi YouTube cast or a vendor bot you already use), see and change your team's routines, and give them a first job. Nothing is created until **Start the job**, and the last page reports each part honestly with **Retry what didn't finish**. **Replay intro** in the Bots rail **⋯** menu shows it again. See [Meet your bots](/guides/meet-your-bots).
-- **Routines → Calendar** is now editable on every routines screen (a bot's Routines tab, Automation Tasks, Cowork → Routines and a bot chat's Routines panel) and opens on **Day**: click an empty time to add a routine, click one to change who runs it, what it does and when, and drag it to move it. Routines that run every few hours draw as one band. See [Bot routines](/guides/bot-routines#edit-routines-on-the-calendar).
+- **Routines → Calendar** is now editable on every routines screen (a bot's Routines tab, Automation Tasks and a bot chat's Routines panel) and opens on **Day**: click an empty time to add a routine, click one to change who runs it, what it does and when, and drag it to move it. Routines that run every few hours draw as one band. See [Bot routines](/guides/bot-routines#edit-routines-on-the-calendar).
 - Built-in templates now each have a default character, and the bot setup picker shows every character whole, with Gizzi's eyes following your pointer and a tap to make it jump.
-- The **List / Graph / Calendar** switch from a bot's Routines tab is now also on **Automation Tasks** (All and Routines tabs, including the phone screen), **Cowork → Routines** and a bot chat's **Routines** panel. These screens show every bot's routines on the graph and calendar, and the switch remembers one choice across all of them. See [Bot routines](/guides/bot-routines#list-graph-and-calendar).
+- The **List / Graph / Calendar** switch from a bot's Routines tab is now also on **Automation Tasks** (All and Routines tabs, including the phone screen) and a bot chat's **Routines** panel. These screens show every bot's routines on the graph and calendar, and the switch remembers one choice across all of them. See [Bot routines](/guides/bot-routines#list-graph-and-calendar).
 
 ## 2026-10-19 — Routine graph and calendar, usage by brain and bot, Bot Mode Marketplace
 
@@ -234,14 +251,14 @@ The same changes apply on Desktop, on ai.allternit.com (including the phone layo
 ## 2026-10-08 — Polished interactive cards
 
 - Cards in replies have a new design: inputs and results in labelled groups, sliders with a filled track, number fields with $ / % and − / + buttons, segmented choices, and up to two actions at the bottom. Numbers animate when you change an input. Light and dark, desktop and phone. See [Interactive answers](/guides/interactive-answers#design).
-- Cards now draw in Chat, Cowork, Code and bot threads instead of showing as a code block, and no longer show up under Outputs.
+- Cards now draw in Chat, Code and bot threads instead of showing as a code block, and no longer show up under Outputs.
 - While a card is being written, one steady placeholder holds its place with the card's title, then the finished card appears in one step. Numbers no longer flash in digit by digit.
 - Cards have a controls panel for the numbers you change and lead with the answer in large type.
 - Starting a new chat shows your message and **Starting chat…** right away, instead of an empty screen while the chat is set up.
 
 ## 2026-10-08 — Interactive answers turned on, with live data
 
-- Assistants now know they can answer with an [interactive card](/guides/interactive-answers) (sliders, metrics, tables, charts, choices) in Chat, Cowork, Code, bot threads, the HUD and Design mode. Plain text stays the default.
+- Assistants now know they can answer with an [interactive card](/guides/interactive-answers) (sliders, metrics, tables, charts, choices) in Chat, Code, bot threads, the HUD and Design mode. Plain text stays the default.
 - Cards can show live data from your connected apps and refresh it. A card that changes something asks first with an **Allow** bar showing the exact tool and arguments; nothing runs until you approve.
 - What you set on a card is remembered when you come back to the chat (on that device).
 - Settings → Response style → **Layout and visuals**: choose **Auto** or **Text only**.

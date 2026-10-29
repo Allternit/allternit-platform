@@ -82,6 +82,61 @@ export namespace Catastrophic {
     return
   }
 
+  // ── Delete detection (not a floor) ────────────────────────────────────
+
+  /** Programs that delete files on their own. */
+  const DELETE_PROGRAMS = new Set(["rm", "rmdir", "unlink", "trash", "trash-put", "gio-trash", "shred", "srm"])
+  const DELETE_MENTION = /(^|[^\w.-])(rm|rmdir|unlink|trash(-put)?|shred|srm)([^\w.-]|$)|\bgit\b.*\b(clean|rm)\b|-delete\b/
+
+  /**
+   * Whether a shell command deletes files: `rm`, `rmdir`, `unlink`, `trash`,
+   * `shred`, `git clean`, `git rm`, `find … -delete`, seen through the same
+   * wrappers, `sh -c` / `eval` and `$(…)` as the floor. Unlike `check` this
+   * never denies: app sessions in auto mode ask a person before these run
+   * (`PermissionNext.evaluatePolicy`). An unparseable command that mentions
+   * one counts as a delete, so a parser gap asks instead of running.
+   */
+  export function deletes(command: string): boolean {
+    return deletesIn(command, 0)
+  }
+
+  function deletesIn(command: string, depth: number): boolean {
+    if (depth > 4) return true
+    const parsed = split(command)
+    if (parsed.error) return DELETE_MENTION.test(command)
+    if (parsed.substitutions.some((sub) => deletesIn(sub, depth + 1))) return true
+    return parsed.commands.some((raw) => {
+      const words = unwrap(raw)
+      if (!words.length) return false
+      const name = basename(words[0])
+      const args = words.slice(1)
+      if (["sh", "bash", "zsh", "dash", "ksh", "fish"].includes(name)) {
+        const c = args.findIndex((a) => a === "-c" || (/^-[a-z]*c[a-z]*$/.test(a) && !a.startsWith("--")))
+        return c >= 0 && args[c + 1] !== undefined && deletesIn(args[c + 1], depth + 1)
+      }
+      if (name === "eval") return deletesIn(args.join(" "), depth + 1)
+      if (DELETE_PROGRAMS.has(name)) return true
+      if (name === "find") return args.includes("-delete") || execDeletes(args, depth)
+      if (name === "git") {
+        let k = 0
+        while (k < args.length && args[k].startsWith("-")) k += GIT_VALUE_OPTS.has(args[k]) ? 2 : 1
+        return args[k] === "clean" || args[k] === "rm"
+      }
+      return false
+    })
+  }
+
+  /** `find … -exec rm {} \;` / `-execdir` / `-ok`: inspect the executed command. */
+  function execDeletes(args: string[], depth: number): boolean {
+    for (let k = 0; k < args.length; k++) {
+      if (!["-exec", "-execdir", "-ok", "-okdir"].includes(args[k])) continue
+      const end = args.findIndex((a, j) => j > k && (a === ";" || a === "+"))
+      const body = args.slice(k + 1, end < 0 ? undefined : end).join(" ")
+      if (deletesIn(body, depth + 1)) return true
+    }
+    return false
+  }
+
   // ── Word splitting ─────────────────────────────────────────────────────
 
   interface Parsed {

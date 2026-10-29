@@ -35,6 +35,47 @@ Defaults from `src/main/config.ts`:
 
 The Quick Chat window loads the workspace UI with `/?mini=1`.
 
+## Menu bar icon
+
+The A mark (the A from the app icon, drawn as square blocks on whole pixels in a 19 pt square) sits in the macOS menu bar, beside the other status icons. Click it to open the HUD, the same as `Cmd/Ctrl+Shift+H`. Right-click or Control-click it for the status menu: backend status and mode, Connection Settings, permissions, Show Window, the desktop pet, Allternit Office, Quick Chat, Toggle HUD and Quit. With **menu bar mode** on, a click shows or hides the main window instead. On Windows and Linux the tray shows the colour app icon instead, since a black mark would vanish on a dark taskbar. A click opens the HUD and right-click opens the same menu.
+
+The icon is a template image (`surfaces/allternit-desktop/build/trayTemplate.png` and `@2x`), so macOS draws it white on a dark menu bar. Code: `createTray` in `src/main/unified-main.ts`.
+
+## HUD
+
+The HUD is a chat that floats over other apps. It is one card on the desktop, with no frosted window around it. The message box sits at the top and the Agent mode, Plugins and Artifacts row sits at the bottom, on the same surface with no line between them. Replies appear in a second card below it.
+
+The row above the card has three buttons:
+
+- **Sun or moon:** switches the HUD between light and dark. The HUD keeps its own setting, apart from the main window.
+- **Pen:** opens a drawing layer over the whole screen. Pick a color and a line width, draw, then press **Save** to keep a PNG, **Clear** to start again, or **Done** or `Escape` to close the layer. The HUD stays open.
+- **X:** closes the HUD. `Escape` in the HUD also closes it. When a menu is open, `Escape` closes only the menu.
+
+Menus open in full. When you open the model picker, the context meter or a menu in the Agent mode, Plugins and Artifacts row, the HUD window grows on the side with screen space (above the card first) and the card stays where it is. The added space is transparent and clicks go through it. When the menu closes, the window goes back to its size.
+
+Drag the dotted handle to move the HUD, or drag its edges to resize it.
+
+Code: the HUD is `src/shell/hud/HudShell.tsx` and `hud-shell.css` in allternit-ai. The drawing layer is a separate full-screen window (`createAnnotationWindow` in `src/main/unified-main.ts`) that loads `/hud/annotate`. `ShellApp` renders only `AnnotationView` at that path. The window growth for open menus is `useHudOverlayRoom` in `src/shell/hud/overlay-room.ts`, which calls `shell.hud.setBounds`.
+
+## App menu
+
+The top-left menu bar has the usual Mac menus:
+
+| Menu | Items |
+|---|---|
+| Allternit Desktop | About, Check for Updates…, Settings… (`Cmd+,`), Hide, Quit |
+| File | New Session (`Cmd+N`), Quick Chat, Toggle HUD, Close Window |
+| Edit | Undo, Redo, Cut, Copy, Paste, Select All, Find… |
+| View | Home (`Cmd+1`), Bots (`Cmd+2`), Code (`Cmd+3`), ACI (`Cmd+4`), Toggle Sidebar (`Cmd+\`), Bot Activity, zoom, Enter Full Screen |
+| Window | Minimize, Zoom, window list |
+| Help | Allternit Docs, Keyboard Shortcuts |
+
+New Session does what the sidebar's **New** does in the current mode. Find, Bot Activity, Quick Chat and Toggle HUD show their shortcuts, but the key presses stay with the workspace, so a shortcut you changed in Settings keeps working.
+
+Developer notes: the menu is built in `src/main/app-menu.ts`. Workspace commands go to the main window as the `window:event:menu-command` event with `{ command }`. The renderer handles them in `allternit-ai/src/shell/desktop-menu.ts`, `ShellApp.tsx` (Settings, modes, sidebar, Find, Bot Activity) and `ShellRail.tsx` (New Session). The web and the PWA have no app menu.
+
+<a id="keyboard-shortcuts"></a>
+
 ## Workspace shortcuts
 
 These shortcuts work inside the workspace window. You can change them in **Settings → About → Keyboard shortcuts**.
@@ -169,8 +210,8 @@ Code: `allternit-ai/src/lib/agents/mode-session-store.ts` (`reconcileStream`,
 
 ## Quitting with work in progress
 
-When Desktop quits, it hands work that has **started** (a cowork job that is
-leased or running) to the cloud continuation so it can finish. Idle Cowork
+When Desktop quits, it hands work that has **started** (a background job that is
+leased or running) to the cloud continuation so it can finish. Idle
 sessions and queued jobs stay on this computer and are picked up again on
 the next launch; they are not sent to the cloud.
 
@@ -225,7 +266,7 @@ Desktop hosts the Allternit API and Gizzi runtime locally. It is not part of the
 
 Under the latest reply, the run line shows what the run took: the model, time, tokens in and out, tool calls, **failed** tool calls (in red, when any failed), cost, context used and the cache state. Click it for the full breakdown.
 
-In Code it stays in view, because it is part of reading the run. In Chat, Cowork and bot chats it appears when you hover or focus the reply's footer. On touch screens (the phone layout and the m.allternit.com app) it is always shown, since there is no hover.
+In Code it stays in view, because it is part of reading the run. In Chat and bot chats it appears when you hover or focus the reply's footer. On touch screens (the phone layout and the m.allternit.com app) it is always shown, since there is no hover.
 
 For developers: `RunTelemetry` (`src/components/chat/RunTelemetry.tsx`) renders the line from the message's `metadata.telemetry` (`toolCalls`, `toolFailures`, `usage`). `StreamingChatComposer` takes `runLine: 'hover' | 'always'`; `CodeCanvas` and `CodeCanvasTileSession` pass `'always'`. The hover wrappers (also in `RunFooter`) add `[@media(hover:none)]:opacity-100`. In bot chats, `RunFooter` wraps the run line and `RunStrip` as one line that grows in height (`min-h-5`, not a fixed `h-5`, which clipped wrapped lines into the composer on phones); beside the run line `RunStrip` takes `besideSummary` and shows only tok/s and kernel fields, since time, tokens and cost are already in the run line. Items never break inside themselves (`6 in / 556 out` stays together); the line wraps between them.
 
@@ -253,7 +294,7 @@ are sent. Miss counts and causes are omitted when not reported.
 
 ## Mode controls and rail selection
 
-The title bar's top-left corner holds **Back**, **Forward**, the sidebar button and the **mode dial**. The dial shows the current mode as a round icon with its name (Home, Bots, Code or ACI). Hover, focus or click it and all four modes drop in a labelled half-moon under the title bar; click one to switch. Scroll over the dial to cycle through modes, and press Escape to close it. When bots have unread activity, a red count sits on the dial; click it to open bot activity (⌘⇧M). On a narrow sidebar the dial shows the icon only.
+The title bar's top-left corner holds **Back**, **Forward**, the sidebar button and the **mode dial**. The dial shows the current mode as a round icon with its name (Home, Bots, Code or ACI). Hover, focus or click it and all four modes drop in a labelled half-moon under the title bar, spaced so no card overlaps another; click one to switch. Scroll over the dial to cycle through modes, and press Escape to close it. When bots have unread activity, a red count sits on the dial; click it to open bot activity (⌘⇧M). On a narrow sidebar the dial shows the icon only.
 
 With the sidebar collapsed, the controls fade until you point at them. Then the dial appears too, hovering a mode in the half-moon switches to it and previews its sidebar, and your bots show in a strip below.
 
@@ -261,6 +302,6 @@ In full screen the window's traffic lights hide, so the controls move flush into
 
 The top of the sidebar shows the mode's wordmark, the same as the phone menu: A://TERNIT for Home, A://TERNIT BOTS, A://TERNIT ACI, and the gizzi code wordmark in Code.
 
-The selected mode and rail tab have a translucent glass highlight with a fine Allternit double-slash detail. Icons respond to hover and press; keyboard focus stays visible. Motion and transparency follow your system accessibility preferences.
+The selected mode, rail tab and **New** row have a translucent glass highlight with a fine Allternit double-slash detail, and no coloured strip on the left edge. Icons respond to hover and press; keyboard focus stays visible. Motion and transparency follow your system accessibility preferences.
 
 Developer notes: the controls are `RailControls` and `ModeDial` in `src/shell/FloatingWidgets.tsx`; the mode list is `src/shell/mode-buttons.ts`. `src/shell/titlebar-clearance.ts` owns the traffic-light offset (72px in Electron, 4px on the web and in full screen). It listens for the Desktop preload's `enter-full-screen` / `leave-full-screen` window events, and it updates `--titlebar-traffic-w` / `--titlebar-controls-w` for any top bar that pads past the controls. The sidebar wordmark is `src/shell/rail/RailWordmark.tsx`.

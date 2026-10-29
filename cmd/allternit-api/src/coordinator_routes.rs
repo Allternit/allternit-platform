@@ -934,7 +934,7 @@ fn apply_worker_settings(db: &DbHandle, worker_id: &str, session_id: &str) -> Re
         bag["projectModel"] = workspace["threadModel"].clone();
     }
     db.set_session_metadata(session_id, &bag).map_err(|e| e.to_string())?;
-    db.set_session_origin_surface(session_id, workspace["mode"].as_str().unwrap_or("cowork")).map_err(|e| e.to_string())?;
+    db.set_session_origin_surface(session_id, workspace["mode"].as_str().unwrap_or("chat")).map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -956,7 +956,7 @@ fn save_workspace(db: &DbHandle, user_id: &str, key: &str, body: WorkspaceBody) 
     if !body.settings.is_object() { return Err("settings must be an object".into()); }
     for field in ["coordinatorPermissionMode", "threadPermissionMode"] {
         if let Some(value) = body.settings.get(field) {
-            if !matches!(value.as_str(), Some("default" | "plan" | "acceptEdits")) { return Err("invalid permission mode".into()); }
+            if !matches!(value.as_str(), Some("default" | "plan" | "acceptEdits" | "auto")) { return Err("invalid permission mode".into()); }
         }
     }
     let mut conn = db.connect().map_err(|e| e.to_string())?;

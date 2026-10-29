@@ -88,7 +88,6 @@ On a phone the graph is shown as stacked cards (trigger, then result). The calen
 The same rows, and the same **List / Graph / Calendar** switch, are on every other screen that lists routines, and they share one remembered choice:
 
 - **Automation Tasks** (the rail, the **Routines** page and the phone's Automation Tasks screen), on every tab: **All**, **Goals**, **Routines**, **Loops** and **Agent Heartbeats**. The search box also filters the graph and the calendar. See [Goals, loops and heartbeats](#goals-loops-and-heartbeats).
-- **Cowork → Routines**, with every bot's routines.
 - A bot chat's **Routines** panel, which starts on that bot's routines and offers **This bot / All bots**.
 
 In **List**, each routine is the same row as on a bot's Routines tab, with live steps, **Stop** and the run strip. Automation Tasks and a bot chat's **Routines** panel add **Edit** in the open row, for the full form. Routines with no bot keep their card until you assign one. Selecting a run in **Graph** or **Calendar** opens the same details panel. The thread links in its run history open that bot's thread. The calendar is editable on all of them, the same way as on a bot's Routines tab. On screens that show every bot's routines, a new routine starts with your first bot selected; pick another under **Who runs it**.
@@ -108,9 +107,9 @@ On a bot's own page, the Automation Tasks list under its Routines keeps its rout
 | --- | --- |
 | `allternit-ai/src/components/bots/schedule/RoutineScheduler.tsx` | Shared calendar. Month chips (`monthDayItems`, `splitMonthChips`, `MONTH_CHIPS`), the **+N more** day list (`DayList`, `DayPopover`), soft tints (`tintBg`, `tintText`, `itemColor` prop), anchored details via `renderDetails` (Radix Popover, phone sheet), dots and a day list when `compact` or below `sm`. |
 | `allternit-ai/src/components/bots/schedule/routine-rule.ts` | `fmtClock` ("9:00a") for chip and block times. |
-| `allternit-ai/src/views/cowork/AutomationSchedule.tsx` | Automation Tasks calendar: `TYPE_COLOR` tints by type, `TaskDetailsCard` (type, run time, `scheduleWords`, bot, last run, Open, Run now, Edit, Pause). **Coming up** and the rows under the calendar open the same card. |
-| `allternit-ai/src/views/cowork/AutomationTasksView.tsx` | Passes `onEdit`, `onToggleActive` and `runningId` to the calendar. |
-| `allternit-ai/src/components/bots/schedule/RoutineScheduler.test.ts`, `allternit-ai/src/views/cowork/AutomationSchedule.test.ts` | Unit tests for month chip order and split, time labels, `fmtClock`, `scheduleWords`. |
+| `allternit-ai/src/views/tasks/AutomationSchedule.tsx` | Automation Tasks calendar: `TYPE_COLOR` tints by type, `TaskDetailsCard` (type, run time, `scheduleWords`, bot, last run, Open, Run now, Edit, Pause). **Coming up** and the rows under the calendar open the same card. |
+| `allternit-ai/src/views/tasks/AutomationTasksView.tsx` | Passes `onEdit`, `onToggleActive` and `runningId` to the calendar. |
+| `allternit-ai/src/components/bots/schedule/RoutineScheduler.test.ts`, `allternit-ai/src/views/tasks/AutomationSchedule.test.ts` | Unit tests for month chip order and split, time labels, `fmtClock`, `scheduleWords`. |
 
 ## When a routine fails
 

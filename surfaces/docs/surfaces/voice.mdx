@@ -52,7 +52,7 @@ All three surfaces build from the same components:
 | Surface | Where voice is hosted |
 | --- | --- |
 | Desktop threads, phone Bots | `ThreadComposer` (`voice` prop from `BotChatSessionView`: transcript reply, session key, bot picker) |
-| Desktop Chat / Cowork, phone Chats | `ChatComposer` (`useStoreReply` on the active session; the bot **Talk** button above the composer dispatches `allternit:voice-start` with `{fullScreen: true}`) |
+| Desktop Chat, phone Chats | `ChatComposer` (`useStoreReply` on the active session; the bot **Talk** button above the composer dispatches `allternit:voice-start` with `{fullScreen: true}`) |
 | Settings | `settings.config.ts` section `voice` → `VoiceSettingsPanel`; the phone settings list mirrors the config, so it appears there too. `allternit:open-settings` with `{section: 'voice'}` opens it. |
 
 Phone sizing comes from `useIsPhoneViewport()`: full-screen controls are 60 px round, padding respects `env(safe-area-inset-*)`, and the PWA's `interactive-widget=resizes-content` viewport keeps the bar above the keyboard. Under `prefers-reduced-motion` the orb is still (its own CSS) and the level ring is off; every state is also text (`role="status"`).

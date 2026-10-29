@@ -68,6 +68,8 @@ First release of Allternit for iPhone.
 >
 > Background audio: bots can call the person in the app (voice over LiveKit). The audio background mode keeps an answered call going when the person leaves the app. It is not used for anything else.
 >
+> Screen sharing: Settings → Computers → Let your bots use this iPhone pairs the app with the person's own Allternit Desktop. A broadcast starts only from the system picker (RPSystemBroadcastPickerView, limited to the com.allternit.mobile.screen extension); a bot can only ask the app to show the picker. While it runs, the app shows "Your bot can see this screen" with Stop, and iOS shows its recording indicator. While a bot uses the app's browser, it shows "Bot is using the browser" with Stop.
+>
 > Encryption: the app uses standard HTTPS and a WireGuard-based network connection to the person's own computers.
 
 ## Export compliance
@@ -76,7 +78,7 @@ The app uses WireGuard (via the Allternit mesh) in addition to HTTPS, so it is n
 
 ## App Privacy (nutrition label)
 
-Matches App/PrivacyInfo.xcprivacy. Data linked to the user, used for App Functionality, not used for tracking:
+Matches App/PrivacyInfo.xcprivacy. Screen sharing rows and why: `surfaces/allternit-mobile/docs/app-store-privacy.md`. Data linked to the user, used for App Functionality, not used for tracking:
 
 - Contact info: name, email address
 - User content: other user content (chats, files), photos (when attached), audio (voice input)

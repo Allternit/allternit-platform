@@ -48,7 +48,11 @@ ensure_ui_build_worktree() {
   local lock_hash stamp="$wt/node_modules/.lock-hash"
   lock_hash="$(shasum "$wt/pnpm-lock.yaml" | cut -d' ' -f1)"
   if [ ! -f "$stamp" ] || [ "$(cat "$stamp")" != "$lock_hash" ]; then
-    (cd "$wt" && pnpm install --frozen-lockfile --ignore-scripts >&2) || return 1
+    # --config.confirmModulesPurge=false: when the store or pnpm version moved,
+    # pnpm asks before recreating node_modules and aborts without a TTY
+    # (ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY) — builds run from agents and
+    # the queue never have one.
+    (cd "$wt" && pnpm install --frozen-lockfile --ignore-scripts --config.confirmModulesPurge=false >&2) || return 1
     echo "$lock_hash" > "$stamp"
   fi
   (cd "$wt" && pwd)

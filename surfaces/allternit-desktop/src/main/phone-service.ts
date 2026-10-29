@@ -35,6 +35,8 @@ import {
   type PhoneStreamStatus,
 } from './phone-scrcpy.js';
 import { PhoneStreamManager, type StreamConsumer } from './phone-stream.js';
+import { AppPhoneBackend, AppPhoneViewerSession, APP_SHARE_SCREEN_MESSAGE, httpAppPhoneNode, isAppSerial, type AppPhoneDevice } from './phone-app-store.js';
+import { decodeStillInWindow } from './phone-app-still.js';
 import { IosVideoSession } from './phone-ios-video.js';
 import { PhoneUserComms, type CallStateName, type CommsResult, type PhoneAppInfo, type PhoneSmsMessage, type PhoneSmsThread } from './phone-user-comms.js';
 import { PhoneLinkPhoneSocket, phoneLinkApiUrl } from './phone-link-cloud.js';
@@ -210,6 +212,8 @@ class PhoneService {
   private artemis: ArtemisManager | null = null;
   private runner: PhoneToolRunner | null = null;
   private linkedBackend: PhoneLinkBackend | null = null;
+  private appBackend: AppPhoneBackend | null = null;
+  private appPhoneTimer: ReturnType<typeof setInterval> | null = null;
   private linkedHealth: PhoneLinkHealthMonitor | null = null;
   private iosRecovery: IosRecoveryScheduler | null = null;
   private gatewayReady: Promise<void> | null = null;
@@ -657,6 +661,7 @@ class PhoneService {
         usb: () => this.usbAgents,
         activity: (serial, delta) => this.manager?.noteAgentActivity(serial, delta),
         links: () => this.ensureLinkedBackend(),
+        apps: () => this.ensureAppBackend(),
         onDialPlaced: (serial, number) => this.callBridge?.noteOutboundDial(serial, number) ?? false,
         // Run history (with frames) + phone.task on the bot's brain + phone skills, all in the local API.
         recorder: new PhoneRunRecorder({
@@ -701,8 +706,9 @@ class PhoneService {
           // phone that just went away simply ends and can be restarted.
           // Linked iPhones (`link:`) are not adb devices: their stream ends on its own socket.
           const online = new Set(manager.onlineSerials());
+          // Nor are iPhones with the Allternit app (`app:`): the node streams those.
           for (const serial of this.streams?.activeSerials() ?? []) {
-            if (!serial.startsWith(LINK_SERIAL_PREFIX) && !online.has(serial)) this.streams?.deviceDisconnected(serial);
+            if (!serial.startsWith(LINK_SERIAL_PREFIX) && !isAppSerial(serial) && !online.has(serial)) this.streams?.deviceDisconnected(serial);
           }
           this.syncLinkSockets();
           void this.screenKeeper?.pass();
@@ -741,6 +747,7 @@ class PhoneService {
   private ensureStreamManager(): PhoneStreamManager {
     this.streams ??= new PhoneStreamManager({
       createSession: (serial, opts) => {
+        if (isAppSerial(serial)) return this.createAppViewerSession(serial);
         const iphone = this.linkedIphone(serial);
         if (iphone) return this.createIosVideoSession(serial, iphone.name || 'iPhone');
         const android = this.linkedAndroid(serial);
@@ -814,6 +821,61 @@ class PhoneService {
     );
   }
 
+  /**
+   * iPhones with the Allternit App Store app (phone-app-store.ts): the node
+   * relays the broadcast extension's screen; this Desktop is one more viewer,
+   * talking to its own allternit-api with the desktop credential.
+   */
+  ensureAppBackend(): AppPhoneBackend {
+    this.appBackend ??= new AppPhoneBackend({
+      node: httpAppPhoneNode({ apiUrl: () => phoneLinkApiUrl(backendManager.getUrl()), headers: () => this.nodeHeaders() }),
+      streams: {
+        start: (serial) => this.startStream(serial),
+        stop: (serial) => this.stopStream(serial),
+        status: (serial) => this.streamStatus(serial),
+        subscribe: (serial, consumer) => this.ensureStreamManager().subscribe(serial, consumer),
+        consumerCount: (serial) => this.ensureStreamManager().consumerCount(serial),
+      },
+      decodeStill: decodeStillInWindow,
+      log: (message) => log.info(message),
+    });
+    return this.appBackend;
+  }
+
+  /** The desktop credential plus the signed-in user, as the node maps it to the account. */
+  private nodeHeaders(): Record<string, string> {
+    const base = backendManager.getLocalAuthHeaders();
+    const session = authManager.getSessionSnapshot();
+    const userId = session?.userId ?? 'desktop-local';
+    return { ...base, 'x-allternit-user-id': userId, 'x-allternit-user-email': session?.userEmail ?? `${userId}@desktop.allternit.local` };
+  }
+
+  private createAppViewerSession(serial: string): AppPhoneViewerSession {
+    const backend = this.ensureAppBackend();
+    return new AppPhoneViewerSession({
+      open: () => httpAppPhoneNode({ apiUrl: () => phoneLinkApiUrl(backendManager.getUrl()), headers: () => this.nodeHeaders() }).openViewer(serial),
+      deviceName: backend.row(serial)?.name || 'iPhone',
+      log: (message) => log.info('[PhoneStream]', message),
+    });
+  }
+
+  /** phone:app-phones: the account's iPhones with the Allternit app, for the phone list. */
+  async appPhones(): Promise<AppPhoneDevice[]> {
+    const backend = this.ensureAppBackend();
+    await backend.refresh(true);
+    return backend.devices();
+  }
+
+  /** phone:app-pair-decision: the person approved or denied a pairing request on this Desktop. */
+  appPairDecision(phoneId: string, approve: boolean): Promise<{ ok: boolean; message?: string }> {
+    if (!/^[0-9a-fA-F-]{8,64}$/.test(phoneId)) return Promise.resolve({ ok: false, message: 'That pairing request is not valid.' });
+    return this.ensureAppBackend().decidePair(phoneId, approve).then((res) => {
+      // A newly paired iPhone: give bots the phone tools now, not after a restart.
+      if (res.ok && approve) void this.ensureGateway().catch((error) => log.warn('[Phone] gateway could not start:', error));
+      return res;
+    });
+  }
+
   private createIosVideoSession(serial: string, deviceName: string): IosVideoSession {
     const backend = this.ensureLinkedBackend();
     return new IosVideoSession({
@@ -836,6 +898,14 @@ class PhoneService {
    * linked iPhone must be reachable on the iCTRL lane — no adb involved.
    */
   async startStream(serial: string, opts?: PhoneStreamOptions): Promise<{ ok: true } | { ok: false; message: string }> {
+    if (isAppSerial(serial)) {
+      // The node relays it: no adb, no Phone Link. Only while the iPhone shares its screen.
+      const apps = this.ensureAppBackend();
+      await apps.refresh(true);
+      if (!apps.row(serial)) return { ok: false, message: 'That iPhone is not paired with this computer.' };
+      if (!apps.row(serial)?.online) return { ok: false, message: APP_SHARE_SCREEN_MESSAGE };
+      return this.ensureStreamManager().start(serial, opts ?? {});
+    }
     if (serial.startsWith(LINK_SERIAL_PREFIX)) {
       // A phone linked a moment ago must be found.
       this.iosRecordsCache = null;
@@ -1428,6 +1498,25 @@ class PhoneService {
       await this.ensureUsbReady().catch((error) => log.warn('[Phone] USB Agent could not start:', error));
     }
     this.startCloudPhoneSync();
+    this.startAppPhoneCheck();
+  }
+
+  /**
+   * iPhones with the Allternit app live in the node, not in a file here, so
+   * the bots' phone tools come up once the node lists one (checked at launch,
+   * when the local API may still be starting, and every 10 min after).
+   */
+  private startAppPhoneCheck(): void {
+    if (this.appPhoneTimer) return;
+    const pass = async () => {
+      if (this.shimRegistered) return;
+      const apps = this.ensureAppBackend();
+      await apps.refresh(true);
+      if (apps.devices().length > 0) await this.ensureGateway();
+    };
+    setTimeout(() => void pass().catch(() => undefined), 20_000).unref?.();
+    this.appPhoneTimer = setInterval(() => void pass().catch(() => undefined), 10 * 60_000);
+    this.appPhoneTimer.unref?.();
   }
 
   // ── cloud phones (cloud-phones.ts) ────────────────────────────────────────
@@ -1639,6 +1728,9 @@ class PhoneService {
     this.linkSyncTimer = null;
     if (this.cloudPhoneTimer) clearInterval(this.cloudPhoneTimer);
     this.cloudPhoneTimer = null;
+    if (this.appPhoneTimer) clearInterval(this.appPhoneTimer);
+    this.appPhoneTimer = null;
+    this.appBackend?.dispose();
     for (const [serial, socket] of this.linkSockets) {
       socket.stop();
       this.cancelLinkDetach(serial);

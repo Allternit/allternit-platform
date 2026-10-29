@@ -39,6 +39,10 @@ final class ACIAgentClient: @unchecked Sendable {
         let openLinksInBrowser: Bool
         let autoVerify: Bool
         let sessionPersistence: String
+        /// `app:<phoneId>` when the run should drive this iPhone's own ACI
+        /// browser (through the phone's control socket) instead of a browser
+        /// on the runtime. Omitted otherwise.
+        let targetDevice: String?
     }
 
     /// Response of `POST /api/aci/run` (browserAgent.store.ts:573).
@@ -59,14 +63,16 @@ final class ACIAgentClient: @unchecked Sendable {
                   allowedSites: [String] = [],
                   openLinksInBrowser: Bool = false,
                   autoVerify: Bool = true,
-                  sessionPersistence: String = "dont-keep") async throws -> ACIRun {
+                  sessionPersistence: String = "dont-keep",
+                  targetDevice: String? = nil) async throws -> ACIRun {
         let body = ACIRunRequest(
             goal: goal,
             model: model,
             allowedSites: allowedSites,
             openLinksInBrowser: openLinksInBrowser,
             autoVerify: autoVerify,
-            sessionPersistence: sessionPersistence
+            sessionPersistence: sessionPersistence,
+            targetDevice: targetDevice
         )
         var request = try await client.authorizedRequest(
             url: baseURL.appendingPathComponent("run"), method: "POST"

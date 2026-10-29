@@ -1,4 +1,4 @@
-//! Native iOS push (APNs) for the Allternit iPhone app. Migration `110_apns_device_tokens.sql`.
+//! Native iOS push (APNs) for the Allternit iPhone app. Migration `111_apns_device_tokens.sql`.
 //!
 //! Rides on the same pipeline as Web Push: every sender in [`super::web_push`] (the backbone push sink,
 //! rings, missed calls, in-app messages, channel messages, quiet-hours summaries, page repeats) ends in

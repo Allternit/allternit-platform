@@ -2,10 +2,10 @@
   "features": [
     {
       "id": "feature:chat",
-      "label": "Chat with streamed replies",
+      "label": "Chat with streamed replies (includes former Cowork)",
       "product": "product:ai-allternit",
       "status": "live",
-      "description": "The main conversation view: send a message, watch the reply stream in, with attachments and artifacts beside it.",
+      "description": "The main conversation view: send a message, watch the reply stream in, with attachments and artifacts beside it. Longer agent work runs here too: approval picker, studio panes for docs/slides/websites, computer button, session panel and Quick task; the Tasks board sits on Home.",
       "touches": [
         "allternit-ai/src/views/chat",
         "allternit-ai/src/components/chat",
@@ -17,7 +17,11 @@
         "allternit/cmd/gizzi-code/src/runtime/session",
         "allternit/cmd/gizzi-code/src/runtime/providers",
         "allternit-ai/src/components/ui",
-        "allternit-ai/src/lib/attachments"
+        "allternit-ai/src/lib/attachments",
+        "allternit-ai/src/lib/tasks",
+        "allternit/cmd/allternit-api/src/cowork",
+        "allternit/cmd/allternit-api/src/cowork_*",
+        "allternit/platform/packages/cowork-engine"
       ],
       "decisions": [
         {
@@ -31,12 +35,27 @@
         {
           "on": "2026-10-08",
           "note": "Any file or folder can be attached (no allow-list; text sniffed by content). Cards appear at once with Reading…; video/audio/other files go as Allternit Cloud links; sent messages show chips, not extracted text. Eoj: no grey ring on the composer; the tray only shows behind a reply strip or attachment cards."
+        },
+        {
+          "on": "2026-10-27",
+          "note": "Task status filters shared between desktop board/table and phone task lists; counts retain real Factory/Cowork states. Scheduled opens Automation Tasks through the existing shell route. Existing artifact session panes and conversation drafts are reused."
+        },
+        {
+          "on": "2026-10-28",
+          "note": "Cowork folds into Chat (Eoj): Chat keeps its session view and gains Cowork's studio, approval picker (Ask before actions / Auto-approve / Read-only via metadata.codePermissionMode) and computer button; chats do not run as the main bot; Cowork's tabs (Execute, Routines, Loops, Web, Agents, Sync) are dropped and Routines/Loops keep their own pages; Quick task creates a chat; Tasks, drafts and runs live under Home. Stored cowork ids, /api/v1/cowork/* routes and cowork_* tables stay as aliases. feature:cowork merged into this feature."
+        },
+        {
+          "on": "2026-10-28",
+          "note": "A:// orchestrates every chat (Eoj, reverses the main-bot part of ai #871): new chats bind to the main bot (mainBotChat) and get message_agent, so A:// hands work to the user's other bots as task threads (bot_routing::caller_for_session accepts mainBotChat). The chat is never adopted as a bot thread and shows no agent card (card deleted, ai #874). Picking another bot answers directly."
         }
       ],
       "evidence": [
         "allternit/surfaces/docs/api/agent-chat.mdx",
         "allternit/cmd/allternit-api/src/chat_routes.rs",
-        "allternit/surfaces/docs/guides/chat-composer.mdx"
+        "allternit/surfaces/docs/guides/chat-composer.mdx",
+        "allternit/surfaces/docs/guides/chat-sessions.mdx",
+        "allternit/surfaces/docs/api/cowork.mdx",
+        "allternit/surfaces/docs/api/cowork-teams.mdx"
       ]
     },
     {
@@ -176,7 +195,7 @@
         "allternit-ai/src/components/computers",
         "allternit-ai/src/lib/attachments",
         "allternit-ai/src/views/automation",
-        "allternit-ai/src/views/cowork",
+        "allternit-ai/src/views/tasks",
         "allternit/cmd/allternit-api",
         "allternit/cmd/gizzi-code"
       ],
@@ -505,7 +524,7 @@
         "allternit/cmd/allternit-api/src/memory_relations",
         "allternit/services/memory",
         "allternit-ai/src/views/settings",
-        "allternit-ai/src/views/cowork",
+        "allternit-ai/src/views/tasks",
         "allternit-ai/src/components/ai-elements",
         "allternit/services/subscription-gateway"
       ],
@@ -906,10 +925,10 @@
       "label": "Automation Tasks and bot routines (List, Graph, Calendar)",
       "product": "product:ai-allternit",
       "status": "live",
-      "description": "Routines, goals, loops and agent heartbeats a bot runs on a schedule, managed from Automation Tasks, Cowork → Routines, a bot's Routines tab and a bot chat's Routines panel, each with a List / Graph / Calendar switch. The calendar is editable (click to add, drag to move); Month shows named, time-stamped chips tinted by type with +N more, and on Automation Tasks a click opens an anchored details card (schedule in words, next run, bot, last run, Open / Run now / Edit / Pause). Phones show dots and a day list. Failed runs alert and pause after 3 in a row.",
+      "description": "Routines, goals, loops and agent heartbeats a bot runs on a schedule, managed from Automation Tasks, a bot's Routines tab and a bot chat's Routines panel, each with a List / Graph / Calendar switch. The calendar is editable (click to add, drag to move); Month shows named, time-stamped chips tinted by type with +N more, and on Automation Tasks a click opens an anchored details card (schedule in words, next run, bot, last run, Open / Run now / Edit / Pause). Phones show dots and a day list. Failed runs alert and pause after 3 in a row.",
       "touches": [
         "allternit-ai/src/components/bots",
-        "allternit-ai/src/views/cowork",
+        "allternit-ai/src/views/tasks",
         "allternit-ai/src/views/bots",
         "allternit/cmd/allternit-api/src/routine_*",
         "allternit/cmd/allternit-api/src/automation_*"
@@ -926,32 +945,6 @@
       ],
       "evidence": [
         "allternit/surfaces/docs/guides/bot-routines.mdx"
-      ]
-    },
-    {
-      "id": "feature:cowork",
-      "label": "Cowork",
-      "product": "product:ai-allternit",
-      "status": "live",
-      "description": "Long-running work an agent carries out alongside you, with teams and preferences.",
-      "touches": [
-        "allternit-ai/src/views/cowork",
-        "allternit-ai/src/lib/cowork",
-        "allternit-ai/src/lib/cowork-team",
-        "allternit/cmd/allternit-api/src/cowork",
-        "allternit/cmd/allternit-api/src/cowork_*",
-        "allternit/platform/packages/cowork-engine"
-      ],
-      "decisions": [
-        {
-          "on": "2026-10-27",
-          "note": "Task status filters shared between desktop board/table and phone task lists; counts retain real Factory/Cowork states. Scheduled opens Automation Tasks through the existing shell route. Existing artifact session panes and conversation drafts are reused."
-        }
-      ],
-      "evidence": [
-        "allternit/surfaces/docs/api/cowork.mdx",
-        "allternit/surfaces/docs/api/cowork-teams.mdx",
-        "allternit/surfaces/docs/guides/cowork-session-panel.mdx"
       ]
     },
     {
@@ -1159,7 +1152,6 @@
         }
       ],
       "evidence": [
-        "allternit/surfaces/docs",
         "allternit/surfaces/docs"
       ]
     },
@@ -1392,9 +1384,8 @@
         "allternit-ai/src/components/settings",
         "allternit-ai/src/views/library",
         "allternit-ai/src/views/design",
-        "allternit-ai/src/views/cowork",
-        "allternit-ai/src/components/artifact-share",
-        "allternit-ai/src/views/chat"
+        "allternit-ai/src/views/chat",
+        "allternit-ai/src/components/artifact-share"
       ],
       "decisions": [
         {
@@ -1606,7 +1597,7 @@
         "allternit/cmd/allternit-cloud-api/src/routes/artifacts_*",
         "allternit-ai/src/lib/artifacts",
         "allternit-ai/src/components/artifacts",
-        "allternit-ai/src/views/cowork"
+        "allternit-ai/src/views/chat"
       ],
       "decisions": [
         {
@@ -1933,7 +1924,6 @@
         "allternit-ai/src/components/computers",
         "allternit-ai/src/components/phone-link",
         "allternit-ai/src/components/onboarding",
-        "allternit-ai/src/views/settings",
         "allternit-ai/src/lib",
         "allternit/cmd/allternit-sideload",
         "allternit/cmd/allternit-cloud-api"
@@ -2098,6 +2088,33 @@
       "evidence": [
         "allternit/cmd/allternit-api/src/phone_ws.rs",
         "allternit/cmd/allternit-cloud-api/src/routes/registered_phones.rs"
+      ]
+    },
+    {
+      "id": "feature:iphone-app-store",
+      "label": "iPhone through the Allternit app (screen + in-app browser)",
+      "product": "product:computer-use",
+      "status": "building",
+      "description": "Route iphone-app-store (serial app:<phoneId>): the App Store app pairs with Desktop (6-digit code, Approve/Deny on Desktop), its broadcast extension streams the screen out through the cloud relay to the node, and bots see it (phone.screenshot, live view on Desktop, ai.allternit.com phone layout and the PWA) and drive the app's own browser (phone.web.*, phone.screen.request). Screen only: taps on other apps need the Bluetooth board.",
+      "touches": [
+        "allternit/surfaces/allternit-desktop",
+        "allternit/cmd/allternit-api/src/phone_ws.rs",
+        "allternit-ai/src/components/phones",
+        "allternit-ai/src/components/computers",
+        "allternit-ai/src/lib/phone-stream",
+        "allternit-ai/src/fabric-session",
+        "allternit-ai/src/lib/notifications"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-27",
+          "note": "Eoj approved the plan (SPEC-iphone-app-screen-2026-10-27.md): no XCTest, no Apple ID signing, no Developer Mode; the phone only dials out. Desktop is one more viewer of the node's app:<id> stream and reuses IosVideoPacketParser; phone.screenshot decodes the last keyframe with Chromium WebCodecs in a hidden window. phone.tap/swipe answer not_supported (\"Taps on native apps need the Bluetooth board\"); phone.web.* go to POST /api/v1/phones/app/:id/rpc. Pair approval is a Desktop card fed by phone_app.pair_request on the runtime events feed."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/iphone-app.mdx",
+        "allternit/surfaces/docs/api/phone-stream-relay.mdx",
+        "allternit/surfaces/allternit-desktop/src/main/phone-app-store.ts"
       ]
     },
     {
@@ -2527,7 +2544,7 @@
       "description": "The merged agent stream above a reply (Chat, Cowork, Code, bot and project threads): the agent's one-line plan, then a 'Using N tools · 14s' header with app logos ('Waiting for approval', '· N failed') and the tool rows on a thin rail with no card (last 6, older folded into '+N earlier'); each row ends with what it found and how long it took ('4 results · 1.2s', from tool part startedAt/finishedAt) and a check; a failed row shows its reason and Retry (latest reply); a step with a pending approval shows Deny / Always / Allow on its row and claims the request from the card and composer stack (process/inline-approvals.ts). Chips stay in view the whole time: web-search sources ('Searched 9 websites' with favicons), files made (open/download), failed steps. When done it folds to one line, '[logos] Used 4 tools · 12s' ('Thought for 12s' when it only thought), plus the chips; opening it shows the trail (tree line, plan sentence, each step with icon, verb and detail, searches grouped with their sources). Steps that reach a connected app show its logo and first finds. The task list is no longer drawn inline: it moved to the right-pane Progress (feature:progress-pane); inline source cards and plan cards are gone (sources become pills and chips through the response-parts contract). While media_generate runs, the reply shows a result-shaped frame with BlockPulse; the finished picture shows inline with Download / Open / Copy prompt. A Memory Drive Dream's Steps opens into the trail (defaultOpen). Same on Desktop, the ai.allternit.com phone layout and the m.allternit.com PWA.",
       "touches": [
         "allternit-ai/src/components/ai-elements",
-        "allternit-ai/src/views/cowork",
+        "allternit-ai/src/views/chat",
         "allternit-ai/src/components/bot-chat",
         "allternit-ai/src/components/brand",
         "allternit-ai/src/lib/ai",
@@ -2733,7 +2750,6 @@
         "allternit-ai/src/views/chat",
         "allternit-ai/src/views",
         "allternit-ai/src/views/code",
-        "allternit-ai/src/views/cowork",
         "allternit-ai/src/lib/agents"
       ],
       "decisions": [
@@ -2752,7 +2768,7 @@
       "label": "All chats at a glance (session overview: list + grid + deck)",
       "product": "product:ai-allternit",
       "status": "building",
-      "description": "Every open session of the current mode as live cards (latest reply, working / needs you / new reply, last activity) in a two-column grid or a sideways deck, with a project dropdown filter and no visible scrollbars. Home = chats + Cowork, Code = code threads by repo, ACI = agent runs; a bot's deck Threads tab uses the same component for its threads (Take it / Not now on suggestions, x marks done) and its Tasks tab became nested dropdowns (thread > step > subagent). Closing a card archives (metadata.archived / setCodeSessionArchived). Desktop: Open all recents / Open all code recents open on the cards with a List switch back to RecentsView / ThreadsView. Phone (ai.allternit.com phone layout + m.allternit.com): count button in the Chats and Code headers and See all over drawer Recents open PhoneOverviewOverlay. List · Grid · Deck is the standard switch on every overview (OverviewLayoutSwitch): built-in list rows, or the caller's own list (group chat roster rows; Desktop Recents / Code Recents list pages). Projects (ProjectView + BotProjectsListView via ProjectsOverview) and Artifacts (ArtifactsView preview cards) use the same switch.",
+      "description": "Every open session of the current mode as live cards (latest reply, working / needs you / new reply, last activity) in a two-column grid or a sideways deck, with a project dropdown filter and no visible scrollbars. Home = chats (including former Cowork sessions), Code = code threads by repo, ACI = agent runs; a bot's deck Threads tab uses the same component for its threads (Take it / Not now on suggestions, x marks done) and its Tasks tab became nested dropdowns (thread > step > subagent). Closing a card archives (metadata.archived / setCodeSessionArchived). Desktop: Open all recents / Open all code recents open on the cards with a List switch back to RecentsView / ThreadsView. Phone (ai.allternit.com phone layout + m.allternit.com): count button in the Chats and Code headers and See all over drawer Recents open PhoneOverviewOverlay. List · Grid · Deck is the standard switch on every overview (OverviewLayoutSwitch): built-in list rows, or the caller's own list (group chat roster rows; Desktop Recents / Code Recents list pages). Projects (ProjectView + BotProjectsListView via ProjectsOverview) and Artifacts (ArtifactsView preview cards) use the same switch. Code's session switcher (CodeSessionSwitcher, top right of the Code view) follows the mode: Threads in thread mode, Terminals in Terminal mode; See all opens the Code overview on that kind in List, Grid or Deck.",
       "touches": [
         "allternit-ai/src/components",
         "allternit-ai/src/views",
@@ -2769,6 +2785,10 @@
         {
           "on": "2026-10-23",
           "note": "Eoj: List joins Grid and Deck on every overview, the same way as group chats, as the standard. Projects move onto the same overview cards (not their old preview cards) with the same switch; Artifacts get the same switch with their own preview cards."
+        },
+        {
+          "on": "2026-10-28",
+          "note": "Eoj: Terminal mode is the regular Code view with a terminal session (back to the approved mock), with the same panes and session panel as threads. A session switcher at the top right switches terminal sessions in Terminal mode and thread sessions in thread mode, and opens List / Grid / Deck."
         }
       ],
       "evidence": [
@@ -2777,7 +2797,33 @@
         "allternit/surfaces/docs/guides/project-coordination.mdx",
         "allternit/surfaces/docs/guides/artifacts.mdx",
         "allternit-ai/src/components/session-overview/SessionOverview.stories.tsx",
-        "allternit-ai/src/components/projects/ProjectsOverview.tsx"
+        "allternit-ai/src/components/projects/ProjectsOverview.tsx",
+        "allternit/surfaces/docs/code/terminal-and-prompt.mdx"
+      ]
+    },
+    {
+      "id": "feature:system-drawer",
+      "label": "System drawer (Needs you, Running, Runs, Problems)",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "A bottom drawer (Desktop, beside the rail) or sheet (phone layout and m.allternit.com PWA) showing what is happening across every session and mode. Needs you: agent permission requests from any surface (usePermissionStore) plus Factory pending approvals, answered in place. Running: streaming chats and code sessions, Terminal bots and dev servers with Open and Stop, a List / Graph switch (the Factory campaign flow, CampaignFlowView) and a Next up strip of the next routine runs. Runs and Problems: runs and parsed failures from code sessions active in the last day, plus failing routines and failed bots. Header: plan usage and Terminal bots working. Opened from the rail indicator (need you / running / problems, each opens its tab), the phone menu footer's pulse button or Cmd/Ctrl+J; never opens by itself. Replaces the Code-only Console drawer.",
+      "touches": [
+        "allternit-ai/src/drawers",
+        "allternit-ai/src/views/code/ConsoleDrawer",
+        "allternit-ai/src/views/code/console",
+        "allternit-ai/src/views/code/RunsView.tsx",
+        "allternit-ai/src/components/factory/views/connected.tsx",
+        "allternit-ai/src/shell/ShellRail.tsx",
+        "allternit-ai/src/shell/ShellFrame.tsx",
+        "allternit-ai/src/shell/ShellApp.tsx",
+        "allternit-ai/src/fabric-session/phone/PhoneDrawer.tsx",
+        "allternit-ai/src/fabric-session/phone/PhoneShell.tsx"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-28",
+          "note": "Eoj: the Factory graph moves out of Canvas mode into a system-level drawer, the live view of what is running. After research across ~30 agent and IDE products (no product approves across sessions, ships a spawn graph or lists problems across sessions), Eoj asked to add the recommended set: Needs you, Running (List / Graph, Next up), Runs, Problems, a usage strip and a segmented rail indicator; phone gets the same tabs as a sheet. The old Console's Output, Plan, Terminals, Ports, Changes, Factory, Tasks, Usage and Artifacts tabs are retired. Daily spend against a cap is not shown: the usage API reports the period's spend only. Canvas mode stays for now."
+        }
       ]
     },
     {
@@ -2841,7 +2887,7 @@
       "touches": [
         "allternit-ai/src/components",
         "allternit-ai/src/lib/agents",
-        "allternit-ai/src/views/cowork",
+        "allternit-ai/src/views/tasks",
         "allternit/cmd/gizzi-code/src/runtime/integrations",
         "allternit/cmd/gizzi-code/src/runtime/tools"
       ],
@@ -2891,11 +2937,10 @@
       "description": "A chip in every chat's header, top right ('Step 2 of 3' / 'All 3 done', a ring that fills), shown only when the turn on screen has a plan. It opens Progress in the right pane: the plan as a checklist (ticks, spinning running step, failures), the working folder and context use. Chat docks its own Progress column; Cowork and Code open their session panel (Progress first); bot threads dock it when wide; project threads and narrow windows open it over the thread; phone = bottom sheet. The checklist is folded from todo tool calls and response-parts plan parts, so every brain's plan (TodoWrite/Task tools, gizzi todowrite, Codex plan, ACP plan) shows the same way, and it is saved with the conversation. Same on Desktop, the ai.allternit.com phone layout and the m.allternit.com PWA.",
       "touches": [
         "allternit-ai/src/components/progress-pane",
-        "allternit-ai/src/views/cowork",
+        "allternit-ai/src/views/chat",
         "allternit-ai/src/views/code",
         "allternit-ai/src/views/bots",
         "allternit-ai/src/views/project",
-        "allternit-ai/src/views/chat",
         "allternit-ai/src/components/ai-elements"
       ],
       "decisions": [
@@ -2917,7 +2962,7 @@
       "touches": [
         "allternit-ai/src/components/chat",
         "allternit-ai/src/lib/chat",
-        "allternit-ai/src/views/cowork",
+        "allternit-ai/src/views/chat",
         "allternit-ai/src/views/code",
         "allternit-ai/src/components/bot-chat",
         "allternit-ai/src/views/bots",
@@ -3162,6 +3207,31 @@
           "on": "2026-10-28",
           "note": "Built for the iPhone App Store submission (platform #1942, ai #881). Open: server cleanup after delete (data erase, Stripe cancel) waits on Eoj; today the account is only marked inactive and the copy says so."
         }
+      ]
+    },
+    {
+      "id": "feature:desktop-menu-bar",
+      "label": "Desktop menu bar icon and app menu",
+      "product": "product:ai-allternit",
+      "status": "live",
+      "description": "Allternit Desktop's A:// menu bar icon (click opens the HUD, right-click opens the status menu) and the macOS app menu (Allternit Desktop, File, Edit, View, Window, Help). Workspace commands (New Session, modes, sidebar, Settings, Find, Bot Activity) reach the renderer as window:event:menu-command.",
+      "touches": [
+        "allternit/surfaces/allternit-desktop/src/main/app-menu.ts",
+        "allternit/surfaces/allternit-desktop/src/main/unified-main.ts",
+        "allternit/surfaces/allternit-desktop/build",
+        "allternit-ai/src/shell/desktop-menu.ts",
+        "allternit-ai/src/shell/ShellApp.tsx",
+        "allternit-ai/src/shell/ShellRail.tsx",
+        "surface:desktop"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-28",
+          "note": "Eoj asked for a menu bar icon that opens the HUD (like Claude's opens quick chat) and the standard top-left app menus. The tray code existed but never ran: build/tray-icon.png was never added. Now a trayTemplate.png A:// mark; macOS left-click = HUD, right-click = menu."
+        }
+      ],
+      "evidence": [
+        "surfaces/docs/surfaces/desktop.mdx#menu-bar-icon"
       ]
     }
   ],
