@@ -218,7 +218,7 @@ struct AccountAvatar: View {
             .font(.system(size: size * 0.4, weight: .semibold))
             .foregroundColor(Color("BgPrimary"))
             .frame(width: size, height: size)
-            .background(Color("TextSecondary"))
+            .background(Color("TextPrimary"))
     }
 }
 
