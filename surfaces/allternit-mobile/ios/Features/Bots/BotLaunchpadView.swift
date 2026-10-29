@@ -901,11 +901,9 @@ struct BotLaunchComposer: View {
     let onSend: () -> Void
 
     @StateObject private var dictation = DictationController()
+    @StateObject private var attachments = AttachmentStore()
     @State private var isDictating = false
     @State private var dictationBase = ""
-    @FocusState private var focused: Bool
-
-    private var canSend: Bool { !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !busy }
 
     private var placeholder: String {
         selectedBot.map { "Ask \($0.botDisplayName) to…" }
@@ -928,10 +926,15 @@ struct BotLaunchComposer: View {
         .padding(.bottom, 8)
         .background(
             // The blurred band the "To:" chip rides in; content scrolls behind it.
+            // web: inset -34px above the To: row, 96% page colour, 14px blur,
+            // fading in over the first 22px.
             Rectangle().fill(.ultraThinMaterial)
-                .overlay(Color("BgPrimary").opacity(0.9))
-                .mask(LinearGradient(stops: [.init(color: .clear, location: 0), .init(color: .black, location: 0.12)],
-                                     startPoint: .top, endPoint: .bottom))
+                .overlay(Color("BgPrimary").opacity(0.96))
+                .mask(VStack(spacing: 0) {
+                    LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom).frame(height: 22)
+                    Rectangle()
+                })
+                .padding(.top, -34)
                 .ignoresSafeArea(edges: .bottom)
         )
         .onChange(of: dictation.transcript) { _, transcript in
@@ -1010,47 +1013,22 @@ struct BotLaunchComposer: View {
         if on { Label(title, systemImage: "checkmark") } else { Text(title) }
     }
 
+    /// The same composer as Home (web BotLaunchpadView mounts ChatComposer):
+    /// + · model · voice/send, with the Agent mode / Plugins / Artifacts deck.
     private var card: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            TextField(placeholder, text: $draft, axis: .vertical)
-                .font(.system(size: 16))
-                .lineLimit(1...6)
-                .focused($focused)
-                .padding(.horizontal, 4)
-                .padding(.top, 4)
-            HStack(spacing: 4) {
-                Spacer()
-                Button(action: toggleDictation) {
-                    Image(systemName: isDictating ? "waveform.circle.fill" : "waveform")
-                        .font(.system(size: 17, weight: .semibold))
-                        .foregroundColor(Color("TextPrimary"))
-                        .frame(width: 36, height: 36)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(isDictating ? "Stop dictation" : "Dictate")
-                Button(action: onSend) {
-                    Group {
-                        if busy {
-                            ProgressView().tint(Color("OnAccent"))
-                        } else {
-                            Image(systemName: "arrow.up").font(.system(size: 15, weight: .bold))
-                        }
-                    }
-                    .foregroundColor(Color("OnAccent"))
-                    .frame(width: 34, height: 34)
-                    .background(Circle().fill(Color("AccentPrimary")))
-                    .opacity(canSend || busy ? 1 : 0.35)
-                }
-                .buttonStyle(.plain)
-                .disabled(!canSend)
-                .accessibilityLabel("Send")
-            }
-        }
-        .padding(12)
-        .background(RoundedRectangle(cornerRadius: 24, style: .continuous).fill(Color("BgPanel")))
-        .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous)
-            .stroke(selectedBot?.botAccentColor.map { Color(hex: $0).opacity(0.6) } ?? Color("BorderSubtle")))
-        .shadow(color: .black.opacity(0.05), radius: 8, y: 2)
+        ComposerView(
+            inputText: $draft,
+            attachmentStore: attachments,
+            isStreaming: false,
+            isSendDisabled: busy,
+            hasActiveSession: false,
+            deck: .full,
+            onSend: { _ in attachments.clear(); onSend() },
+            onStop: {},
+            onVoiceMode: toggleDictation,
+            placeholderOverride: placeholder,
+            accentBorder: selectedBot?.botAccentColor.map { Color(hex: $0).opacity(0.6) }
+        )
     }
 
     private func toggleDictation() {

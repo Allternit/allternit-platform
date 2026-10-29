@@ -50,6 +50,11 @@ struct ComposerView: View {
     /// Called whenever agent mode turns on or off (a deck mode picked or
     /// cleared) so the host can mount a fresh session context.
     var onAgentModeChanged: ((Bool) -> Void)? = nil
+    /// A fixed hint in place of the rotating suggestions (Bots home: "Ask
+    /// Goldie to…").
+    var placeholderOverride: String? = nil
+    /// The picked bot's colour on the card's border (Bots home To: chip).
+    var accentBorder: Color? = nil
 
     @EnvironmentObject private var modeStore: AppModeStore
     @EnvironmentObject private var agentModeStore: AgentModeStore
@@ -83,6 +88,7 @@ struct ComposerView: View {
     /// a chat in session: "Reply…".
     private var placeholder: String {
         if isTerminal { return "describe the task…" }
+        if let placeholderOverride { return placeholderOverride }
         guard deck == .full else { return "Reply…" }
         let list = ComposerPlaceholders.list(agentMode: agentOn, tile: agentOn ? agentModeStore.selectedTile(for: mode) : nil)
         return list[placeholderIndex % list.count]
@@ -195,7 +201,7 @@ struct ComposerView: View {
         .overlay(
             // Quiet card: hairline border that steps up on focus.
             RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(isFocused ? Color("BorderStrong") : Color("BorderSubtle"), lineWidth: 1)
+                .stroke(accentBorder ?? (isFocused ? Color("BorderStrong") : Color("BorderSubtle")), lineWidth: 1)
         )
         .shadow(color: .black.opacity(0.04), radius: 1, y: 1)
         .shadow(color: .black.opacity(0.03), radius: 4, y: 2)

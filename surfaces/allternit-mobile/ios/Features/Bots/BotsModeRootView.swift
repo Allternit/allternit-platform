@@ -61,32 +61,19 @@ struct BotsModeRootView: View {
     var body: some View {
         NavigationStack(path: $navigator.path) {
             content
-                .navigationTitle("Bots")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbarBackground(Color("BgPrimary"), for: .navigationBar)
-                .toolbar {
-                    if let onOpenSidebar {
-                        ToolbarItem(placement: .topBarLeading) {
-                            Button(action: onOpenSidebar) {
-                                Image(systemName: "line.3.horizontal")
-                                    .foregroundColor(Color("TextPrimary"))
-                            }
-                            .accessibilityLabel("Open menu")
-                        }
-                    }
-                    ToolbarItemGroup(placement: .topBarTrailing) {
+                // The web's PhoneHeader (plain icons, no bar chrome); pushed
+                // screens keep their own navigation bars.
+                .toolbar(.hidden, for: .navigationBar)
+                .safeAreaInset(edge: .top, spacing: 0) {
+                    PhoneHeader(title: "Bots", wideSides: true, onMenu: { onOpenSidebar?() }) {
                         // Connections: the apps your bots can use.
-                        Button { isConnectionsPresented = true } label: {
-                            Image(systemName: "square.grid.2x2")
-                                .foregroundColor(Color("TextPrimary"))
+                        PhoneIconButton(systemName: "square.grid.2x2", label: "Connections") {
+                            isConnectionsPresented = true
                         }
-                        .accessibilityLabel("Connections")
                         // Meet your bots again (the rail's ⋯ has the same entry).
-                        Button { BotsIntroStore.shared.replay() } label: {
-                            Image(systemName: "arrow.counterclockwise")
-                                .foregroundColor(Color("TextPrimary"))
+                        PhoneIconButton(systemName: "arrow.counterclockwise", label: "Replay intro") {
+                            BotsIntroStore.shared.replay()
                         }
-                        .accessibilityLabel("Replay intro")
                     }
                 }
                 .navigationDestination(for: BotRoute.self) { route in
