@@ -43,19 +43,11 @@ struct MessageRow: View {
     }
 
     private var messageRowBody: some View {
-        HStack(alignment: .top, spacing: 12) {
+        // Web chat: the user's message is a soft bubble on the right (max
+        // 80% wide); the reply is plain text across the column — no avatars.
+        HStack(alignment: .top, spacing: 0) {
             if message.role == "user" {
-                Spacer(minLength: 40)
-            } else {
-                // Agent Avatar Icon — A:// protocol mark (light/dark variants)
-                Image("AProtocol")
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: 18, height: 18)
-                    .frame(width: 32, height: 32)
-                    .background(Color("BgSecondary"))
-                    .clipShape(Circle())
-                    .overlay(Circle().stroke(Color("BorderSubtle"), lineWidth: 1))
+                Spacer(minLength: 0)
             }
 
             VStack(alignment: message.role == "user" ? .trailing : .leading, spacing: 8) {
@@ -128,17 +120,10 @@ struct MessageRow: View {
                 }
             }
 
-            if message.role == "user" {
-                // User Avatar Icon
-                Image(systemName: "person.circle.fill")
-                    .resizable()
-                    .foregroundColor(Color("TextSecondary"))
-                    .frame(width: 32, height: 32)
-            } else {
-                Spacer(minLength: 40)
-            }
+            .frame(maxWidth: message.role == "user" ? UIScreen.main.bounds.width * 0.8 : .infinity,
+                   alignment: message.role == "user" ? .trailing : .leading)
         }
-        .padding(.horizontal, 12)
+        .padding(.horizontal, 16)
         .sheet(isPresented: $showsRunTree) {
             AgentRunTreeSheet(
                 steps: message.toolCalls,
@@ -198,22 +183,29 @@ struct MessageRow: View {
     private var bubble: some View {
         if message.role == "user" {
             Text(message.content)
-                .font(.body)
-                .foregroundColor(Color.black)
+                .font(.system(size: 15))
+                .lineSpacing(15 * 0.6 - 4)
+                .foregroundColor(Color("TextPrimary"))
                 .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-                .background(Color("AccentPrimary"))
-                .cornerRadius(18)
+                .padding(.vertical, 10)
+                .background(Color("FillNeutral"), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .textSelection(.enabled)
                 .contextMenu { bubbleContextMenu }
+        } else if message.isStreaming, message.content.isEmpty, message.reasoning.isEmpty,
+                  message.toolCalls.isEmpty, message.toolStatus == nil {
+            // Waiting on the first words: the thinking orb.
+            HStack(spacing: 8) {
+                ThinkingOrb(state: .breathing, size: .inline)
+                Text("Working…")
+                    .font(.system(size: 13))
+                    .foregroundColor(Color("TextSecondary"))
+            }
+            .accessibilityElement(children: .combine)
         } else {
             AssistantMarkdown(content: message.content, isStreaming: message.isStreaming)
-            .font(.body)
-            .foregroundColor(Color("TextPrimary"))
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-            .background(Color("BgPrimary"))
-            .cornerRadius(18)
-            .contextMenu { bubbleContextMenu }
+                .font(.system(size: 15))
+                .foregroundColor(Color("TextPrimary"))
+                .contextMenu { bubbleContextMenu }
         }
     }
 

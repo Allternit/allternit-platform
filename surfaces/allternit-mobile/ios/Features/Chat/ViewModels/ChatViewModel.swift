@@ -103,6 +103,9 @@ struct SessionContext: Equatable, Sendable {
     /// Onboarding work-profile answer (Phase 10), sent as
     /// `metadata.persona` — mirrors how projectId/agentModeId are carried.
     var persona: String? = nil
+    /// The composer's permission pill (ChatPermissionMode raw value), sent as
+    /// `metadata.permissionMode`.
+    var permissionMode: String? = nil
 }
 
 /// Send-path failures with user-meaningful messages (surfaced via the
@@ -294,7 +297,8 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
             agentModeId: sessionContext.agentModeId,
             projectId: sessionContext.projectId,
             ephemeral: sessionContext.ephemeral,
-            persona: sessionContext.persona
+            persona: sessionContext.persona,
+            permissionMode: sessionContext.permissionMode
         )
         currentSessionId = session.id
         return session.id
