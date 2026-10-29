@@ -1027,7 +1027,8 @@ struct BotLaunchComposer: View {
             onStop: {},
             onVoiceMode: toggleDictation,
             placeholderOverride: placeholder,
-            accentBorder: selectedBot?.botAccentColor.map { Color(hex: $0).opacity(0.6) }
+            accentBorder: selectedBot?.botAccentColor.map { Color(hex: $0).opacity(0.6) },
+            showsPermission: false
         )
     }
 

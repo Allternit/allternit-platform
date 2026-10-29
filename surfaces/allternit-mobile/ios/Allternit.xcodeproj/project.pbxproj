@@ -287,6 +287,7 @@
 		9F807907EDD2ED5DC349DFA3 /* PlatformSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F1CF8BF1B118A14501CAF25 /* PlatformSettingsView.swift */; };
 		9FC9731FA3314FB5FF3050E8 /* BrainTemplates.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7640CFD6314328B32B5E74B /* BrainTemplates.swift */; };
 		9FED2141772D7016D1172DD7 /* ConnectorsListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2799419D39E60F569C3CAC31 /* ConnectorsListView.swift */; };
+		A013DEEA80EF19EE81EB6AA6 /* NotificationsSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E837436D2E5AB5FC0941654 /* NotificationsSettingsView.swift */; };
 		A02B59C022EB6D39CA17F2D0 /* SetupModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76A861B57BA8E35466089E27 /* SetupModel.swift */; };
 		A04A4796644F30C94952A26A /* VoiceModeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D55AE23DF47255312BD3B49 /* VoiceModeView.swift */; };
 		A06384AC4D74A5073384FC5A /* VoiceSessionProtocolTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BE0D69148A6704E388F4890 /* VoiceSessionProtocolTests.swift */; };
@@ -554,6 +555,7 @@
 		0D5638BF5764B6C95167828D /* BotLaunchpadView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotLaunchpadView.swift; sourceTree = "<group>"; };
 		0D5F1CC189FE9D76750FA4E6 /* ConnectorsClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectorsClient.swift; sourceTree = "<group>"; };
 		0DE71084378D6D46400C9AC6 /* CronJobStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CronJobStore.swift; sourceTree = "<group>"; };
+		0E837436D2E5AB5FC0941654 /* NotificationsSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationsSettingsView.swift; sourceTree = "<group>"; };
 		0F81685E9D60F3C21A678501 /* CoworkTasksStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoworkTasksStore.swift; sourceTree = "<group>"; };
 		10FBC416BB357D8C57841986 /* ACIPhoneChrome.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ACIPhoneChrome.swift; sourceTree = "<group>"; };
 		11D0413225BA57CD09BE936E /* AutomationHubView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutomationHubView.swift; sourceTree = "<group>"; };
@@ -2018,6 +2020,7 @@
 				D11953529A9295E82BD8B098 /* MemorySettingsView.swift */,
 				1808CC15112D76EE1D423E3F /* ModelManagementView.swift */,
 				9A56EA2A93A483FB59104108 /* NodesManagerView.swift */,
+				0E837436D2E5AB5FC0941654 /* NotificationsSettingsView.swift */,
 				BD73566138019C8E36A7C3E3 /* OrganizationAccessView.swift */,
 				1BBC678E465D3B17E1016460 /* PlanUsageViews.swift */,
 				7F1CF8BF1B118A14501CAF25 /* PlatformSettingsView.swift */,
@@ -2579,6 +2582,7 @@
 				FF0D640B1FC2ED46EF885F3B /* NodesModels.swift in Sources */,
 				A2780C16186F740087C1F165 /* NodesStore.swift in Sources */,
 				0248D434000A0135847B7ED3 /* NotificationService.swift in Sources */,
+				A013DEEA80EF19EE81EB6AA6 /* NotificationsSettingsView.swift in Sources */,
 				A633C52EC726A05E9B538B32 /* OfficeArtifactClient.swift in Sources */,
 				BC7DEB6D53F748E38511FC96 /* OfficeDocumentView.swift in Sources */,
 				E6FE4F02E45912D513313DBC /* OfficeDocumentsView.swift in Sources */,

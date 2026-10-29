@@ -55,6 +55,8 @@ struct ComposerView: View {
     var placeholderOverride: String? = nil
     /// The picked bot's colour on the card's border (Bots home To: chip).
     var accentBorder: Color? = nil
+    /// The Auto / Ask / Read-only pill (chat only; the Bots home has none).
+    var showsPermission: Bool = true
 
     @EnvironmentObject private var modeStore: AppModeStore
     @EnvironmentObject private var agentModeStore: AgentModeStore
@@ -225,7 +227,7 @@ struct ComposerView: View {
                 .accessibilityLabel("Add files")
 
                 // How freely this chat works: Auto · Ask · Read-only (chat only).
-                if mode == .chat || mode == .cowork {
+                if showsPermission, mode == .chat || mode == .cowork {
                     ChatPermissionPill(sessionId: sessionId)
                 }
             }
@@ -514,7 +516,8 @@ private struct StreamingBars: View {
 }
 
 /// UITextView-backed composer editor: grows to six lines, then scrolls; the
-/// placeholder is a label laid over the first line.
+/// placeholder is a label laid over the text and wraps like the web's
+/// textarea placeholder.
 struct ComposerTextView: UIViewRepresentable {
     @Binding var text: String
     var placeholder: String
@@ -560,13 +563,13 @@ struct ComposerTextView: UIViewRepresentable {
         let placeholderLabel = context.coordinator.placeholderLabel
         placeholderLabel.font = uiFont
         placeholderLabel.textColor = terminal ? UIColor(TerminalTheme.dim) : UIColor(named: "TextTertiary")
-        placeholderLabel.lineBreakMode = .byTruncatingTail
+        placeholderLabel.numberOfLines = 0
         placeholderLabel.translatesAutoresizingMaskIntoConstraints = false
         textView.addSubview(placeholderLabel)
         NSLayoutConstraint.activate([
             placeholderLabel.leadingAnchor.constraint(equalTo: textView.leadingAnchor),
-            placeholderLabel.centerYAnchor.constraint(equalTo: textView.topAnchor, constant: 12),
-            placeholderLabel.widthAnchor.constraint(lessThanOrEqualTo: textView.widthAnchor),
+            placeholderLabel.topAnchor.constraint(equalTo: textView.topAnchor),
+            placeholderLabel.widthAnchor.constraint(equalTo: textView.frameLayoutGuide.widthAnchor),
         ])
 
         textView.attributedText = attributed(text)
@@ -577,7 +580,11 @@ struct ComposerTextView: UIViewRepresentable {
     func updateUIView(_ textView: UITextView, context: Context) {
         context.coordinator.parent = self
         textView.isEditable = isEnabled
-        context.coordinator.placeholderLabel.text = placeholder
+        context.coordinator.placeholderLabel.attributedText = NSAttributedString(string: placeholder, attributes: [
+            .font: uiFont,
+            .foregroundColor: terminal ? UIColor(TerminalTheme.dim) : (UIColor(named: "TextTertiary") ?? .placeholderText),
+            .paragraphStyle: paragraph,
+        ])
         // Rebuild only for external fills (templates, edit-resend, voice) —
         // never mid-keystroke, so the cursor stays put.
         if textView.text != text {
@@ -595,7 +602,12 @@ struct ComposerTextView: UIViewRepresentable {
 
     func sizeThatFits(_ proposal: ProposedViewSize, uiView: UITextView, context: Context) -> CGSize? {
         let width = proposal.width ?? UIScreen.main.bounds.width
-        let fit = uiView.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
+        var fit = uiView.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
+        if uiView.text.isEmpty {
+            // An empty field is as tall as its wrapped placeholder.
+            let label = context.coordinator.placeholderLabel
+            fit.height = max(fit.height, label.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude)).height)
+        }
         let maxHeight: CGFloat = 24 * 6
         uiView.isScrollEnabled = fit.height > maxHeight + 1
         return CGSize(width: width, height: max(24, min(fit.height, maxHeight)))
