@@ -168,6 +168,11 @@ final class APIClient: @unchecked Sendable {
     /// the proxy envelope, exactly like the web interceptor (which builds
     /// same-origin `/api/*` URLs and forwards `runtimePath(url)`).
     func send(_ request: URLRequest) async throws -> (Data, URLResponse) {
+        // `-sample-workspace` (DEBUG): SampleURLProtocol answers every call,
+        // whatever the route or computer.
+        if SampleURLProtocol.handles(request.url) {
+            return try await session.data(for: request)
+        }
         // A client built on an `allternit-relay://<runtimeId>` placeholder
         // (InstanceConnection.resolve → the user's computer via the cloud
         // relay) always goes through RuntimeRelayClient.
@@ -188,6 +193,9 @@ final class APIClient: @unchecked Sendable {
     /// runtime's status/headers/streaming body untouched, so SSE backpressure
     /// is preserved end-to-end (fetch-interceptor.ts:465-467).
     func sendStream(_ request: URLRequest) async throws -> (URLSession.AsyncBytes, URLResponse) {
+        if SampleURLProtocol.handles(request.url) {
+            return try await session.bytes(for: request)
+        }
         if let runtimeId = RuntimeRelayClient.runtimeId(in: request.url) {
             return try await RuntimeRelayClient.shared.stream(request, runtimeId: runtimeId)
         }

@@ -47,6 +47,13 @@ final class AuthManager: ObservableObject {
 
     /// Configures the Clerk SDK. Call once at app start.
     func configure(publishableKey: String) {
+        // `-sample-workspace` (DEBUG): signed in on the web preview's sample
+        // workspace, past onboarding, with its API answered locally.
+        if SampleWorkspace.isEnabled {
+            SampleWorkspace.activate()
+            isSignedIn = true
+            OnboardingStore.shared.skipThisLaunch()
+        }
         guard !publishableKey.isEmpty else {
             #if DEBUG
             debugLog("CLERK_PUBLISHABLE_KEY is empty — Clerk SDK not configured.")
@@ -64,7 +71,7 @@ final class AuthManager: ObservableObject {
     /// so API calls can upgrade from a short-lived Clerk JWT to a long-lived
     /// cloud-issued device token.
     func refreshAuthState() {
-        guard isClerkConfigured else { return }
+        guard isClerkConfigured, !SampleWorkspace.isEnabled else { return }
         currentSession = Clerk.shared.session
         let wasSignedIn = isSignedIn
         isSignedIn = currentSession != nil
@@ -86,6 +93,7 @@ final class AuthManager: ObservableObject {
 
     /// Clerk session token for the API layer (the SDK caches and refreshes it).
     func getToken() async throws -> String? {
+        if SampleWorkspace.isEnabled { return "sample-workspace" }
         guard isClerkConfigured else { return nil }
         let token = try await Clerk.shared.session?.getToken(.init(skipCache: true))
         #if DEBUG
@@ -113,6 +121,7 @@ final class AuthManager: ObservableObject {
     /// back to the Clerk session token. This is what `APIClient` sends as the
     /// Bearer token, matching desktop's use of `allternit_runtime_…` credentials.
     func effectiveToken() async throws -> String? {
+        if SampleWorkspace.isEnabled { return "sample-workspace" }
         if RuntimePairing.shared.isPaired {
             await RuntimePairing.shared.rotateIfNeeded()
         }
@@ -324,6 +333,7 @@ final class AuthManager: ObservableObject {
     }
 
     func signOut() async throws {
+        if SampleWorkspace.isEnabled { return }
         guard isClerkConfigured else {
             isSkippingAuth = false
             return
@@ -341,6 +351,7 @@ final class AuthManager: ObservableObject {
     /// ("Hey, Joe!"); nil when signed out / skip-auth / no first name, so
     /// the caller falls back to "Hey there!".
     var firstName: String? {
+        if SampleWorkspace.isEnabled { return nil }
         guard isClerkConfigured else { return nil }
         guard let firstName = Clerk.shared.user?.firstName,
               !firstName.isEmpty else { return nil }
@@ -350,6 +361,7 @@ final class AuthManager: ObservableObject {
     /// Display name for the sidebar footer: first name, full name, or the
     /// primary email's local part — whichever resolves first.
     var displayName: String {
+        if SampleWorkspace.isEnabled { return SampleWorkspace.userName }
         guard isClerkConfigured, let user = Clerk.shared.user else { return "Guest" }
         if let firstName = user.firstName, !firstName.isEmpty {
             return firstName
@@ -363,6 +375,8 @@ final class AuthManager: ObservableObject {
     /// Sidebar avatar initial — the first character of `displayName`,
     /// uppercased (matches the reference app's single-letter avatar).
     var avatarInitial: String {
+        // The web preview's account avatar reads "A".
+        if SampleWorkspace.isEnabled { return "A" }
         guard isClerkConfigured else { return "A" }
         return displayName.first.map { String($0).uppercased() } ?? "?"
     }
@@ -370,6 +384,7 @@ final class AuthManager: ObservableObject {
     /// The signed-in user's primary email address (Settings account row);
     /// nil when signed out or the account has no email.
     var primaryEmail: String? {
+        if SampleWorkspace.isEnabled { return nil }
         guard isClerkConfigured else { return nil }
         return Clerk.shared.user?.emailAddresses.first?.emailAddress
     }
@@ -377,6 +392,7 @@ final class AuthManager: ObservableObject {
     /// Clerk user id for ownership filtering (e.g., Projects "Created by you").
     /// nil when signed out / skip-auth.
     var currentUserId: String? {
+        if SampleWorkspace.isEnabled { return SampleWorkspace.userId }
         Clerk.shared.user?.id
     }
 }
