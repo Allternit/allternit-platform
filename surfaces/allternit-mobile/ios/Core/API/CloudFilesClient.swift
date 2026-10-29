@@ -110,8 +110,7 @@ final class CloudFilesClient: @unchecked Sendable {
         let (data, response) = try await session.data(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200...299).contains(status) else {
-            struct Failure: Decodable { let code: String?; let message: String? }
-            let failure = try? JSONDecoder().decode(Failure.self, from: data)
+            let failure = try? JSONDecoder().decode(UploadFailureBody.self, from: data)
             throw UploadError(message: failure?.message ?? fallback, code: failure?.code ?? "http_\(status)")
         }
         if T.self == EmptyReply.self, let empty = EmptyReply() as? T { return empty }
@@ -121,4 +120,10 @@ final class CloudFilesClient: @unchecked Sendable {
             throw APIError.decoding(error)
         }
     }
+}
+
+/// A cloud-api error body (`{ code, message }`).
+private struct UploadFailureBody: Decodable {
+    let code: String?
+    let message: String?
 }
