@@ -1,4 +1,6 @@
 import SwiftUI
+import PhotosUI
+import UniformTypeIdentifiers
 
 #if DEBUG
 /// String wrapper for `.sheet(item:)` debug deep-links.
@@ -29,6 +31,10 @@ struct ArtifactsLibraryView: View {
     @State private var showingOfficeDocuments = false
     @State private var showingConnectors = false
     @State private var searchDraft = ""
+    @State private var tilesShown = false
+    @State private var importingPDF = false
+    @State private var photoItem: PhotosPickerItem?
+    @State private var choosingPhoto = false
     #if DEBUG
     @State private var debugOfficeDocumentId: IdentifiableString? = nil
     #endif
@@ -77,6 +83,15 @@ struct ArtifactsLibraryView: View {
         }
         .sheet(isPresented: $showingConnectors) {
             ConnectorsListView()
+        }
+        .fileImporter(isPresented: $importingPDF, allowedContentTypes: [.pdf]) { result in
+            if case .success(let url) = result { Task { await uploadPDF(url) } }
+        }
+        .photosPicker(isPresented: $choosingPhoto, selection: $photoItem, matching: .images)
+        .onChange(of: photoItem) { _, item in
+            guard let item else { return }
+            photoItem = nil
+            Task { await uploadImage(item) }
         }
         #if DEBUG
         .sheet(item: $debugOfficeDocumentId) { id in
@@ -190,10 +205,9 @@ struct ArtifactsLibraryView: View {
 
     // MARK: - Make something new
 
-    /// The web's gallery order, limited to the types iOS can open.
+    /// The web's gallery order (GALLERY_TILES), minus kinds the org turned off.
     private var tiles: [ArtifactStudioKind] {
-        let order: [ArtifactStudioKind] = [.dashboard, .motion, .page, .research, .build, .image, .video]
-        return order.filter { kind in
+        ArtifactStudioKind.galleryOrder.filter { kind in
             guard let template = kind.templateKind, let settings = store.orgSettings else { return true }
             return settings.allows(kind: template)
         }
@@ -210,9 +224,13 @@ struct ArtifactsLibraryView: View {
             }
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(alignment: .top, spacing: 12) {
-                    ForEach(tiles) { kind in
+                    ForEach(Array(tiles.enumerated()), id: \.element) { index, kind in
                         Button { start(kind) } label: { createCard(kind) }
                             .buttonStyle(.plain)
+                            // amt2-enter: the row slides in on open, 45 ms apart.
+                            .opacity(tilesShown ? 1 : 0)
+                            .offset(x: tilesShown ? 0 : 28)
+                            .animation(.timingCurve(0.2, 0.8, 0.2, 1, duration: 0.42).delay(Double(min(index, 6)) * 0.045), value: tilesShown)
                             .disabled(launcher.launching != nil)
                             .accessibilityLabel("New \(kind.label)")
                             .accessibilityHint(kind.description)
@@ -221,19 +239,17 @@ struct ArtifactsLibraryView: View {
                 .padding(.horizontal, 16)
             }
             .padding(.horizontal, -16)
+            .onAppear {
+                if UIAccessibility.isReduceMotionEnabled { tilesShown = true } else { DispatchQueue.main.async { tilesShown = true } }
+            }
         }
     }
 
     private func createCard(_ kind: ArtifactStudioKind) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             ZStack(alignment: .topTrailing) {
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .fill(Color("FillNeutral"))
-                    .overlay(
-                        Image(systemName: kind.systemImage)
-                            .font(.system(size: 26, weight: .light))
-                            .foregroundColor(Color("TextSecondary"))
-                    )
+                ArtifactCreateTileArt(kind: kind)
+                    .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
                     .padding(3)
                 if launcher.launching == kind {
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -284,6 +300,58 @@ struct ArtifactsLibraryView: View {
         }
     }
 
+    // MARK: - Upload (web createPdfArtifact / createImageArtifact)
+
+    private static let maxUploadBytes = 15 * 1024 * 1024
+
+    private func uploadPDF(_ url: URL) async {
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        guard let data = try? Data(contentsOf: url) else {
+            notice = "Couldn't read that PDF."
+            return
+        }
+        guard data.count <= Self.maxUploadBytes else {
+            notice = "That PDF is over 15 MB. Split or shrink it and try again."
+            return
+        }
+        let title = url.deletingPathExtension().lastPathComponent
+        await upload(name: url.lastPathComponent, input: ArtifactV2CreateInput(
+            kind: "pdf", title: title.isEmpty ? "Untitled PDF" : title, body: data.base64EncodedString(),
+            bodyFormat: "application/pdf", meta: ["filename": .string(url.lastPathComponent)],
+            origin: ArtifactV2Origin(surface: "library")), failure: "Couldn't upload that PDF.")
+    }
+
+    private func uploadImage(_ item: PhotosPickerItem) async {
+        guard let data = try? await item.loadTransferable(type: Data.self) else {
+            notice = "Couldn't read that image."
+            return
+        }
+        guard data.count <= Self.maxUploadBytes else {
+            notice = "That image is over 15 MB. Shrink it and try again."
+            return
+        }
+        let type = item.supportedContentTypes.first { $0.conforms(to: .image) }
+        let mime = type?.preferredMIMEType ?? "image/jpeg"
+        let name = "Image.\(type?.preferredFilenameExtension ?? "jpg")"
+        await upload(name: name, input: ArtifactV2CreateInput(
+            kind: "image", title: "Untitled image", body: "data:\(mime);base64,\(data.base64EncodedString())",
+            bodyFormat: "text/uri-list", meta: ["filename": .string(name)],
+            origin: ArtifactV2Origin(surface: "library")), failure: "Couldn't upload that image.")
+    }
+
+    private func upload(name: String, input: ArtifactV2CreateInput, failure: String) async {
+        notice = "Uploading \(name)…"
+        do {
+            let created = try await ArtifactsV2Client.shared.create(input)
+            notice = nil
+            await store.reload()
+            openArtifact = store.artifacts.compactMap(\.summary).first { $0.id == created.id }
+        } catch {
+            notice = "\(failure) \(FriendlyErrorMessage.from(error.localizedDescription))"
+        }
+    }
+
     // MARK: - Connected tools
 
     private var toolsSection: some View {
@@ -317,6 +385,10 @@ struct ArtifactsLibraryView: View {
                 }
                 .disabled(launcher.launching != nil)
             }
+        }
+        Section("Upload") {
+            Button { importingPDF = true } label: { Label("PDF", systemImage: "square.and.arrow.up") }
+            Button { choosingPhoto = true } label: { Label("Image", systemImage: "square.and.arrow.up") }
         }
         Section("Start from your connected tools") {
             Button { showingConnectors = true } label: { Label("Connect your tools", systemImage: "powerplug") }

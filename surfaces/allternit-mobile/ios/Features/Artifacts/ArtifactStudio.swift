@@ -6,16 +6,27 @@ import Foundation
 /// artifact session: an agent session whose standing instructions say what
 /// to make, with a studio pane beside the chat that shows the result.
 ///
-/// Docs / Sheets / Slides / Design open an Office or Design editor bound to
-/// a record in the old sectioned store, which the phone can't host, so they
-/// aren't offered here (Office records still open from the library).
+/// On the web, Docs / Sheets / Slides / Design open an Office or Design
+/// editor bound to a record in the old sectioned store, which the phone
+/// can't host. Here those tiles start the same session making the Artifacts
+/// v2 kind instead (doc / sheet / slides / design), which the app's own
+/// editor opens; Ops sheets do the same (the web opens a chat with Output →
+/// Ops sheets).
 enum ArtifactStudioKind: String, CaseIterable, Identifiable, Sendable {
-    case dashboard, motion, page, build, image, video, research
+    case docs, sheets, slides, dashboard, ops, motion, design, page, research, build, image, video
+
+    /// The web's gallery order (GALLERY_TILES).
+    static let galleryOrder: [ArtifactStudioKind] = allCases
 
     var id: String { rawValue }
 
     var label: String {
         switch self {
+        case .docs: return "Docs"
+        case .sheets: return "Sheets"
+        case .slides: return "Slides"
+        case .design: return "Design"
+        case .ops: return "Ops sheets"
         case .dashboard: return "Dashboards"
         case .motion: return "Motion"
         case .page: return "Page"
@@ -28,6 +39,11 @@ enum ArtifactStudioKind: String, CaseIterable, Identifiable, Sendable {
 
     var description: String {
         switch self {
+        case .docs: return "A document you write and edit in place, with Allternit drafting alongside."
+        case .sheets: return "A spreadsheet for data, formulas, and charts."
+        case .slides: return "A deck you can present, restyle, and export to PowerPoint."
+        case .design: return "Screens, flows, and graphics laid out on a canvas in Allternit Design."
+        case .ops: return "Live status, logs and actions for a deploy, site, app or server."
         case .dashboard: return "Live charts and tiles that query your connected tools."
         case .motion: return "An animated explainer you can export as video."
         case .page: return "A single web page you can share."
@@ -40,6 +56,11 @@ enum ArtifactStudioKind: String, CaseIterable, Identifiable, Sendable {
 
     var noun: String {
         switch self {
+        case .docs: return "Document"
+        case .sheets: return "Spreadsheet"
+        case .slides: return "Presentation"
+        case .design: return "Design"
+        case .ops: return "Ops sheet"
         case .dashboard: return "Dashboard"
         case .motion: return "Motion"
         case .page: return "Page"
@@ -59,6 +80,11 @@ enum ArtifactStudioKind: String, CaseIterable, Identifiable, Sendable {
 
     var emptyTitle: String {
         switch self {
+        case .docs: return "Draft a plan, memo or brief with Allternit"
+        case .sheets: return "Paste your data and turn it into a sheet"
+        case .slides: return "Paste your ideas and turn them into slides"
+        case .design: return "Describe an idea and turn it into a design"
+        case .ops: return "Describe the deploy, site, app or server to watch"
         case .dashboard: return "Describe the numbers you want to watch"
         case .motion: return "Describe a short animated explainer"
         case .page: return "Describe a page you want to share"
@@ -71,6 +97,11 @@ enum ArtifactStudioKind: String, CaseIterable, Identifiable, Sendable {
 
     var studioHint: String {
         switch self {
+        case .docs: return "The document appears here as Allternit writes it, and opens in the editor."
+        case .sheets: return "The sheet appears here as Allternit builds it, and opens in the editor."
+        case .slides: return "The deck appears here as Allternit builds it, and opens in the editor."
+        case .design: return "The design appears here when it's saved."
+        case .ops: return "Live status, logs and actions appear here."
         case .dashboard: return "Live charts and tiles that query your connected tools appear here."
         case .motion: return "Scenes play here, and you can export the result as an MP4 on the web or Desktop."
         case .page: return "The page renders here as a live preview you can share."
@@ -83,6 +114,11 @@ enum ArtifactStudioKind: String, CaseIterable, Identifiable, Sendable {
 
     var systemImage: String {
         switch self {
+        case .docs: return "doc.text"
+        case .sheets: return "tablecells"
+        case .slides: return "rectangle.on.rectangle"
+        case .design: return "paintbrush.pointed"
+        case .ops: return "gauge.with.dots.needle.33percent"
         case .dashboard: return "chart.bar.xaxis"
         case .motion: return "film.stack"
         case .page: return "globe"
@@ -96,6 +132,11 @@ enum ArtifactStudioKind: String, CaseIterable, Identifiable, Sendable {
     /// Agent mode contract id (`metadata.agentModeId`), nil for none.
     var modeId: String? {
         switch self {
+        case .docs: return "docs"
+        case .sheets: return "data"
+        case .slides: return "slides"
+        case .design: return "website"
+        case .ops: return nil
         case .dashboard: return "data"
         case .motion: return nil
         case .page, .build: return "website"
@@ -108,6 +149,11 @@ enum ArtifactStudioKind: String, CaseIterable, Identifiable, Sendable {
     /// The v2 kind the session's result is (studio pane filter).
     var studioKind: String {
         switch self {
+        case .docs: return "doc"
+        case .sheets: return "sheet"
+        case .slides: return "slides"
+        case .design: return "design"
+        case .ops: return "ops"
         case .dashboard: return "dashboard"
         case .motion: return "motion"
         case .page, .build: return "page"
@@ -120,6 +166,11 @@ enum ArtifactStudioKind: String, CaseIterable, Identifiable, Sendable {
     /// v2 template kind the org can turn off (`templates[kind] = false`).
     var templateKind: String? {
         switch self {
+        case .docs: return "doc"
+        case .sheets: return "sheet"
+        case .slides: return "slides"
+        case .design: return "design"
+        case .ops: return "ops"
         case .dashboard: return "dashboard"
         case .motion: return "motion"
         case .page: return "page"
@@ -127,7 +178,8 @@ enum ArtifactStudioKind: String, CaseIterable, Identifiable, Sendable {
         }
     }
 
-    var isBeta: Bool { self != .page }
+    /// GALLERY_TILES `beta`.
+    var isBeta: Bool { ![.docs, .sheets, .slides, .page].contains(self) }
 
     /// The session's standing instructions — the web's `artifactNoteBody`
     /// for an unbound binding, plus OWN_TOOLS_NOTE
@@ -136,7 +188,7 @@ enum ArtifactStudioKind: String, CaseIterable, Identifiable, Sendable {
         let n = noun.lowercased()
         let note: String
         switch self {
-        case .dashboard, .motion, .page:
+        case .docs, .sheets, .slides, .design, .ops, .dashboard, .motion, .page:
             note = "## Artifact session\n\nThis session makes one \(n), titled \"\(title)\". Make it with `artifact_create` (kind \"\(studioKind)\"); it opens in the pane beside this chat as soon as it is saved. For every later change, call `artifact_read` then `artifact_update` on that same artifact instead of creating another one, unless the user asks for a new one."
         case .image:
             note = "## Artifact session\n\nThis session makes images, starting with \"\(title)\". Make each one with the media_generate tool; the result lands in the session's Outputs and opens beside this chat. Check the rendered PNG it returns and fix it before you call the image done."

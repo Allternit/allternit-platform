@@ -101,6 +101,32 @@ final class CapabilitiesClient: @unchecked Sendable {
         return data
     }
 
+    // MARK: - Skill directory (allternit-ai src/lib/skills/skill-catalog-install.ts)
+
+    /// `GET /api/v1/skills/catalog/installed`: directory ids already
+    /// installed on the computer, mapped to their folder names.
+    func installedCatalogSkills() async throws -> [String: String] {
+        struct Body: Decodable {
+            struct Skill: Decodable { let id: String; let name: String }
+            let skills: [Skill]?
+        }
+        let request = try await client.authorizedRequest(path: "skills/catalog/installed")
+        let body = try JSONDecoder().decode(Body.self, from: try await send(request))
+        return Dictionary((body.skills ?? []).map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first })
+    }
+
+    /// `POST /api/v1/skills/catalog/install` `{ id }`: the API writes the
+    /// skill folder into `~/.agents/skills/<name>` and gizzi rescans
+    /// (skill_catalog_install.rs). Returns the folder name.
+    @discardableResult
+    func installCatalogSkill(id: String) async throws -> String {
+        struct Body: Decodable { let name: String }
+        var request = try await client.authorizedRequest(path: "skills/catalog/install", method: "POST")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(["id": id])
+        return try JSONDecoder().decode(Body.self, from: try await send(request)).name
+    }
+
     // MARK: - Scanning
 
     /// Skills: every folder holding a `SKILL.md` under the skill roots

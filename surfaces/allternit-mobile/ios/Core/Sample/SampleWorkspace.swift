@@ -514,6 +514,23 @@ enum SampleWorkspace {
     }
 
     /// The composer's model pill (`GET /api/v1/models`, bare array).
+    /// `GET /api/v1/connectors` for the sample: a few catalog connectors a
+    /// bakery would use, none connected yet.
+    static var connectors: [[String: Any]] {
+        [
+            ("gmail", "Gmail", "communication", "Read, draft and send email."),
+            ("google-calendar", "Google Calendar", "productivity", "See and schedule events."),
+            ("google-drive", "Google Drive", "productivity", "Find and read files in Drive."),
+            ("slack", "Slack", "communication", "Read channels and post messages."),
+            ("notion", "Notion", "productivity", "Search and update pages."),
+            ("stripe", "Stripe", "finance", "Look up payments, customers and invoices."),
+        ].map { id, name, category, description in
+            ["id": id, "name": name, "category": category, "description": description,
+             "connectable": true, "executable": true, "auth_type": "oauth",
+             "connection": ["status": "disconnected", "account": NSNull()]]
+        }
+    }
+
     static var models: [[String: Any]] { [
         ["id": "allternit/kimi-k3", "name": "Kimi K3", "provider": "allternit", "tier": "flagship", "supports_effort": true],
     ] }

@@ -29,6 +29,9 @@ struct CustomizeScreen: View {
     @State private var detail: InstalledCapability? = nil
     @State private var isCreatingSkill = false
     @State private var isConnectorsPresented = false
+    /// Skill directory ids installed on the computer (id → folder name).
+    @State private var installedCatalog: [String: String] = [:]
+    @State private var showAll = false
 
     enum CustomizeSection: String, CaseIterable {
         case skills, connectors, plugins
@@ -75,7 +78,18 @@ struct CustomizeScreen: View {
 
     private var all: [CustomizeItem] { items[section] ?? [] }
     private var enabled: [CustomizeItem] { all.filter(\.enabled) }
-    private var discoverable: [CustomizeItem] { all.filter { !$0.enabled } }
+
+    /// Discover = local items that are off, plus (Skills) the skill directory
+    /// entries not on the computer yet (the web's useDiscoverExtras).
+    private var discoverable: [CustomizeItem] {
+        let local = all.filter { !$0.enabled }
+        guard section == .skills else { return local }
+        let localIds = Set(all.map(\.id))
+        let extras = SkillCatalog.entries
+            .filter { !localIds.contains($0.id) && installedCatalog[$0.id] == nil }
+            .map(CustomizeItem.init(catalog:))
+        return local + extras
+    }
 
     /// Claude opens on what you have; with nothing on yet, Discover is the page.
     private var effectiveScope: Scope { scope ?? (enabled.isEmpty ? .discover : .yours) }
@@ -309,7 +323,7 @@ struct CustomizeScreen: View {
         HStack(spacing: 2) {
             ForEach([Scope.yours, .discover], id: \.self) { option in
                 let active = option == effectiveScope
-                Button(action: { scope = option }) {
+                Button(action: { scope = option; showAll = false }) {
                     Text(option == .yours ? "Yours" : "Discover")
                         .font(.system(size: 14, weight: active ? .medium : .regular))
                         .foregroundColor(active ? Color("TextPrimary") : Color("TextTertiary"))
@@ -334,6 +348,7 @@ struct CustomizeScreen: View {
         guard next != section else { return }
         section = next
         scope = nil
+        showAll = false
         query = ""
         category = nil
     }
@@ -350,7 +365,7 @@ struct CustomizeScreen: View {
         }
         if loading.contains(section) && all.isEmpty {
             ProgressView().frame(maxWidth: .infinity).padding(.top, 40)
-        } else if let failure = failures[section], all.isEmpty {
+        } else if let failure = failures[section], all.isEmpty, effectiveScope == .yours || discoverable.isEmpty {
             FriendlyInlineStateView(
                 style: .offline,
                 icon: "wifi.slash",
@@ -370,7 +385,7 @@ struct CustomizeScreen: View {
                     installedRow(item)
                 }
             }
-        } else if query.isEmpty && category == nil {
+        } else if query.isEmpty && category == nil && !showAll {
             discoverLanding(filtered)
         } else {
             cardGrid(filtered)
@@ -412,15 +427,65 @@ struct CustomizeScreen: View {
             landingSection("For you") { cardGrid(Array(rest.prefix(6))) }
         }
         if rest.count > 6 {
-            landingSection("More \(section.label.lowercased())") { cardGrid(Array(rest.dropFirst(6).prefix(6))) }
+            landingSection("More \(section.label.lowercased())", onShowAll: { showAll = true }) {
+                cardGrid(Array(rest.dropFirst(6).prefix(6)))
+            }
+        }
+        let counts = Dictionary(grouping: list.compactMap(\.category), by: { $0 }).mapValues { $0.count }
+        let keys = counts.keys.sorted { counts[$0]! != counts[$1]! ? counts[$0]! > counts[$1]! : $0 < $1 }
+        if !keys.isEmpty {
+            landingSection("Categories") {
+                VStack(spacing: 10) {
+                    ForEach(keys, id: \.self) { key in
+                        Button { category = key } label: {
+                            HStack(spacing: 12) {
+                                Image(systemName: section.icon)
+                                    .font(.system(size: 15))
+                                    .foregroundColor(Color("TextSecondary"))
+                                    .frame(width: 36, height: 36)
+                                    .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(Color("BorderSubtle"), lineWidth: 1))
+                                Text(Self.titleCase(key))
+                                    .font(.system(size: 13))
+                                    .foregroundColor(Color("TextPrimary"))
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                Text("\(counts[key] ?? 0)")
+                                    .font(.system(size: 12))
+                                    .foregroundColor(Color("TextTertiary"))
+                            }
+                            .padding(12)
+                            .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color("BgPanel")))
+                            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Color("BorderSubtle"), lineWidth: 1))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
         }
     }
 
-    private func landingSection<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+    static func titleCase(_ value: String) -> String {
+        value.replacingOccurrences(of: "-", with: " ").replacingOccurrences(of: "_", with: " ").capitalized
+    }
+
+    private func landingSection<Content: View>(_ title: String, onShowAll: (() -> Void)? = nil, @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text(title)
-                .font(.system(size: 14, weight: .medium))
-                .foregroundColor(Color("TextPrimary"))
+            HStack {
+                Text(title)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(Color("TextPrimary"))
+                Spacer()
+                if let onShowAll {
+                    Button(action: onShowAll) {
+                        HStack(spacing: 4) {
+                            Text("Show all")
+                            Image(systemName: "arrow.right").font(.system(size: 11))
+                        }
+                        .font(.system(size: 13))
+                        .foregroundColor(Color("TextPrimary"))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
             content()
         }
         .padding(.bottom, 36)
@@ -491,7 +556,7 @@ struct CustomizeScreen: View {
     /// name, description, "by author · Category".
     private func itemCard(_ item: CustomizeItem) -> some View {
         let isPending = pending.contains(item.id)
-        let meta = [item.author.map { "by \($0)" }, item.category?.capitalized].compactMap { $0 }.joined(separator: " · ")
+        let meta = [item.author.map { "by \($0)" }, item.category.map(Self.titleCase)].compactMap { $0 }.joined(separator: " · ")
         return Button(action: { open(item) }) {
             VStack(alignment: .leading, spacing: 0) {
                 ZStack(alignment: .topTrailing) {
@@ -610,13 +675,17 @@ struct CustomizeScreen: View {
     private func open(_ item: CustomizeItem) {
         if let capability = item.capability {
             detail = capability
+        } else if item.catalog != nil {
+            add(item)
         } else {
             isConnectorsPresented = true
         }
     }
 
     private func add(_ item: CustomizeItem) {
-        if item.connector != nil {
+        if item.catalog != nil {
+            Task { await installCatalog(item) }
+        } else if item.connector != nil {
             // Connecting may need sign-in or a key: the connector manager handles it.
             isConnectorsPresented = true
         } else {
@@ -647,6 +716,23 @@ struct CustomizeScreen: View {
         }
     }
 
+    /// One-click install from the skill directory (installCatalogSkill), then
+    /// a rescan so the new folder lists under Yours.
+    @MainActor
+    private func installCatalog(_ item: CustomizeItem) async {
+        guard !pending.contains(item.id) else { return }
+        actionError = nil
+        pending.insert(item.id)
+        defer { pending.remove(item.id) }
+        do {
+            let folder = try await CapabilitiesClient.shared.installCatalogSkill(id: item.id)
+            installedCatalog[item.id] = folder
+            await load(.skills, force: true)
+        } catch {
+            actionError = "Couldn't add \(item.name). \(FriendlyErrorMessage.from(error.localizedDescription))"
+        }
+    }
+
     @MainActor
     private func load(_ which: CustomizeSection, force: Bool) async {
         guard force || items[which] == nil else { return }
@@ -655,6 +741,9 @@ struct CustomizeScreen: View {
         do {
             switch which {
             case .skills:
+                if let installed = try? await CapabilitiesClient.shared.installedCatalogSkills() {
+                    installedCatalog = installed
+                }
                 items[which] = try await CapabilitiesClient.shared.scanSkills().map(CustomizeItem.init(capability:))
             case .plugins:
                 items[which] = try await CapabilitiesClient.shared.scanPlugins().map(CustomizeItem.init(capability:))
@@ -678,6 +767,8 @@ struct CustomizeItem: Identifiable {
     var enabled: Bool
     var capability: InstalledCapability?
     let connector: Connector?
+    /// A skill directory entry not on the computer yet.
+    var catalog: SkillCatalogEntry? = nil
 
     init(capability: InstalledCapability) {
         id = capability.id
@@ -688,6 +779,18 @@ struct CustomizeItem: Identifiable {
         enabled = capability.enabled
         self.capability = capability
         connector = nil
+    }
+
+    init(catalog entry: SkillCatalogEntry) {
+        id = entry.id
+        name = entry.name
+        description = entry.description
+        author = entry.author
+        category = entry.category
+        enabled = false
+        capability = nil
+        connector = nil
+        catalog = entry
     }
 
     init(connector: Connector) {

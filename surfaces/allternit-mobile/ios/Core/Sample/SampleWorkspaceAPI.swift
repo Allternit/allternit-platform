@@ -121,6 +121,15 @@ enum SampleWorkspaceAPI {
             case ["gizzi-instances"]:
                 // The computer answers through the relay, not a tunnel.
                 return ["instances": [Any]()]
+            // Customize: the sample computer has no skill or plugin folders
+            // yet, so Skills opens on the skill directory (Discover), as the
+            // web preview does; connectors list the catalog, none connected.
+            case ["files", "list"]:
+                return ["path": query["path"] ?? "", "entries": [Any]()]
+            case ["skills", "catalog", "installed"]:
+                return ["skills": [Any]()]
+            case ["connectors"]:
+                return ["connectors": SampleWorkspace.connectors]
             default:
                 return nil
             }
