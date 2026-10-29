@@ -7,11 +7,11 @@ Allternit for iPhone is the native app version of [m.allternit.com](https://m.al
 
 ## Sign in
 
-Install **Allternit** from the App Store and open it. You can:
+Install **Allternit** from the App Store and open it. The sign-in screen is the same one m.allternit.com shows, with its moving preview of what Allternit does. You can:
 
-- **Sign in with Apple**, or
-- **Sign In** with your Allternit account (email or Google), or
-- **Create Account**.
+- **Continue with Apple**, **GitHub** or **Google**,
+- **Continue with email**, or
+- **Create an account** (under **New here?**).
 
 The first time you open it, **Meet your bots** sets up your team:
 
@@ -25,16 +25,25 @@ Nothing is created until you tap **Start the job**. The last step shows what was
 
 ## Getting around
 
-The mode dial at the top switches between **Home**, **Bots**, **Code** and **ACI**, the same modes as the phone web app. Tap ☰ to open the drawer. It has:
+The app looks and works like m.allternit.com: the same white (or graphite, in dark mode) screens, header, drawer and composer.
 
-- your recent chats, with search and pins. Swipe right on a chat to pin it, and press and drag a pinned chat to move it. The filter button above Recents narrows the list by type (Chat, Cowork, Agent; Home only), status and last activity,
+The header shows ☰ on the left, the screen's title, and on the right the number of open chats and the new-chat button. Tap the number for **all chats at a glance**, as a list, a grid or a deck. Each card shows **Working** while its reply streams and **New reply** when something arrived since you last looked. Tap ⋯ on a card to open, rename or archive it, tap **X** to archive it, or swipe a deck card up.
+
+Tap ☰ (or swipe from the left edge) to open the drawer. Press and hold ☰ to see your bots and open one. The drawer has:
+
+- the **A://** button, which switches between **Home**, **Bots**, **Code** and **ACI**, the same modes as the phone web app,
 - **Inbox** (the tray button at the top): everything your bots are waiting on you for, such as approvals, held messages, missed calls and failed runs. Tap the button on a row, or swipe right for it; swipe left to snooze it for an hour or dismiss it,
+- **Search**,
+- the mode's own rows. In Home these are **Projects**, **Artifacts**, **Automation Tasks**, **Customize** and **More**. In ACI they are **MCP Apps**, **ACI Extensions**, **Computers** and **Teach**. **More** has **Show in rail** switches to hide or show rows; a dot on **More** means something is hidden,
 - **Teammates** (in Home): the bots that are working or need you right now. Tap one to open its chat,
-- **New**: a chat, a quick task or a scheduled task. Press and hold **New** in Home or Code and pick **Continue CLI session** to bring a Claude Code, Codex, Grok or other CLI session from your computer into Allternit. The app copies it and leaves the original as it was,
-- **Phones** (the phone button at the bottom, with a count of unread messages): your bots' phones. Each bot with a number, email address or messaging channel is listed. Open one to see its number, email and conversations, unread first. Opening a conversation marks it read on every device. **Give a bot a phone** connects one (see [Connect a bot](#connect-a-bot)),
-- **Customize** (in Home): Skills, Connectors, Plugins, MCP servers and Webhooks. **More** in each mode's list has **Show in rail** switches to hide or show its rows; a dot on **More** means something is hidden,
-- **Projects**, **Artifacts**, **Automation** and **Decisions**,
-- **Settings**.
+- **Recents**, with **See all** and a filter for type, status (All, Active, Completed, Archived) and last activity. A chat shows **Working** while it answers and a dot when it has something new. Swipe left on a chat to delete it, swipe right to pin it, and press and drag a pinned chat to move it,
+- **New chat** at the bottom. Press and hold it in Home or Code and pick **Continue CLI session** to bring a Claude Code, Codex, Grok or other CLI session from your computer into Allternit. The app copies it and leaves the original as it was,
+- **Phones** (the phone button at the bottom, with a count of unread messages): your bots' phones. Open one to see its number, email and conversations, unread first. **Give a bot a phone** connects one (see [Connect a bot](#connect-a-bot)),
+- your account, which opens **Settings**.
+
+### The composer
+
+Home's composer is the same as the web's: **+** to add files, the **Auto** pill for how freely the chat works (Auto, Ask before actions, Read-only), the model, and voice. Under it, **Agent mode**, **Plugins** and **Artifacts** open their decks. On a new chat, the **Docs**, **Slides**, **Sites** and **Sheets** tabs below it list templates to start from. The Bots home uses the same composer, with a **To:** row to send to your main bot as a new project or to one bot.
 
 ## Your computer
 
@@ -147,8 +156,13 @@ You can call people who joined through a bot's invite: tap the phone button in t
 
 ## Settings
 
+Settings opens from your account in the drawer. Its groups and order are the same as on m.allternit.com, and the card at the top shows your name and email.
+
 Most Settings screens work in the app:
 
+- **Notifications:** this iPhone's switches (response completions, approval requests, incoming calls and sound, plus the iOS permission with **Send a test**), then your account's phone notifications per event, critical alerts by text (after a 6-digit code check) and quiet hours. Account changes apply to every device.
+- **General → Chat font:** Default, Serif or System, for your bots' replies.
+- **Customize → Discover:** the Allternit skill directory (From Allternit, For you, More skills and Categories). **Add** installs a skill on your computer.
 - **Skills and Plugins:** what's installed on your computer, with a switch for each and **Remove from this computer**. In **Skills**, **+** writes a new skill: a name, when to use it, and its instructions, saved to `~/.allternit/skills/` on your computer. Uploading a skill or plugin package and the plugin marketplace need Desktop or the web.
 - **Subagents:** the built-in types and your own. Create one, edit its name, when to use it, model, step limit, tools, instructions and face, reset a built-in or delete your own.
 - **Your twin:** edit how your twin speaks and what bots may say for you. Accept, edit or dismiss what bots suggest, and add, edit or delete memories.
