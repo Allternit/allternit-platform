@@ -483,7 +483,7 @@ struct SetupPrimaryButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: 14, weight: .semibold))
+            .font(.system(size: 13.5, weight: .semibold))
             .foregroundStyle(SetupPalette.bg)
             .padding(.horizontal, 18)
             .frame(minHeight: height)
@@ -503,8 +503,10 @@ struct SetupGhostButtonStyle: ButtonStyle {
             .font(.system(size: 13, weight: .semibold))
             .foregroundStyle(configuration.isPressed ? SetupPalette.ink : SetupPalette.sub)
             .padding(.horizontal, 14)
-            .frame(minHeight: 44)
+            .frame(height: 38)
             .background(configuration.isPressed ? SetupPalette.fill : .clear, in: RoundedRectangle(cornerRadius: 10))
+            // `.as-ghost` is 38 pt; the tap target keeps 44.
+            .contentShape(Rectangle().inset(by: -3))
             .opacity(enabled ? 1 : 0.4)
     }
 }
@@ -512,13 +514,14 @@ struct SetupGhostButtonStyle: ButtonStyle {
 /// The small ink button inside connect panels (`.as-inline-btn`).
 struct SetupInlineButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var enabled
+    var height: CGFloat = 36
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.system(size: 12.5, weight: .semibold))
             .foregroundStyle(SetupPalette.bg)
             .padding(.horizontal, 14)
-            .frame(minHeight: 36)
+            .frame(minHeight: height)
             .background(SetupPalette.ink, in: RoundedRectangle(cornerRadius: 9))
             .opacity(enabled ? (configuration.isPressed ? 0.85 : 1) : 0.4)
     }

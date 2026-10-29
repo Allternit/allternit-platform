@@ -218,25 +218,37 @@ struct AllternitApp: App {
 }
 
 /// The sign-in screen: the native port of m.allternit.com's phone sign-in
-/// (allternit-ai SignInLayout with the phone SignInStage and compact rail).
-/// Top to bottom: A://TERNIT lockup and counter, the self-building preview
-/// of Home / Bots / Code / ACI, its caption, then "Sign in to Allternit",
-/// the sign-in buttons and the legal line. The page scrolls on small phones.
+/// (allternit-ai fabric-session `SignInScreen`: the phone SignInStage, then
+/// the compact SignInRail around Clerk's stage form). Top to bottom: the
+/// A://TERNIT lockup and counter, the self-building preview of Home / Bots /
+/// Code / ACI, its caption, then "Sign in to Allternit", the social buttons,
+/// "or", the Email field and Continue, "Secured by Clerk" and the legal line.
+/// Like the PWA there is no separate sign-up link: an email Clerk doesn't
+/// know continues into sign-up. Sign in with Apple sits with the social
+/// buttons (App Store 4.8). The page scrolls on small phones.
 struct LoginGateView: View {
     @EnvironmentObject var auth: AuthManager
     @Environment(\.colorScheme) private var colorScheme
 
     var onSkipAuth: (() -> Void)? = nil
 
+    @State private var email = ""
+    /// Clerk's own sheet for the email steps (password or code), started from the Email field.
+    @State private var emailAuth: EmailAuth?
+    @FocusState private var emailFocused: Bool
+
+    private struct EmailAuth: Identifiable {
+        let id = UUID()
+        let identifier: String
+    }
+
     private var palette: SignInPalette { SignInPalette(colorScheme) }
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 12) {
                 SignInStageView()
-
                 rail
-                    .padding(.top, 8)
             }
             .padding(.horizontal, 16)
             .padding(.top, 16)
@@ -245,10 +257,26 @@ struct LoginGateView: View {
             .frame(maxWidth: .infinity)
         }
         .scrollBounceBehavior(.basedOnSize)
+        .scrollDismissesKeyboard(.interactively)
         .background(palette.page.ignoresSafeArea())
+        .sheet(item: $emailAuth, onDismiss: { auth.refreshAuthState() }) { start in
+            if auth.isClerkConfigured {
+                emailAuthView(start.identifier)
+                    .environment(Clerk.shared)
+            }
+        }
     }
 
-    /// The compact sign-in rail (web .ast-rail-compact).
+    @ViewBuilder
+    private func emailAuthView(_ identifier: String) -> some View {
+        if identifier.isEmpty {
+            AuthView(mode: .signInOrUp)
+        } else {
+            AuthView(mode: .signInOrUp).initialIdentifier(identifier)
+        }
+    }
+
+    /// The compact sign-in rail (web .ast-rail-compact + the stage Clerk form).
     private var rail: some View {
         VStack(alignment: .leading, spacing: 0) {
             Text("Sign in to Allternit")
@@ -265,45 +293,31 @@ struct LoginGateView: View {
                     .padding(.bottom, 10)
             }
 
-            VStack(spacing: 10) {
-                SignInWithAppleRow()
+            VStack(alignment: .leading, spacing: 16) {
+                VStack(spacing: 10) {
+                    ForEach(AuthManager.SocialProvider.allCases) { provider in
+                        SignInSocialButton(provider: provider)
+                    }
+                    SignInWithAppleRow()
 
-                ForEach(AuthManager.SocialProvider.allCases) { provider in
-                    SignInSocialButton(provider: provider)
-                }
-
-                if let error = auth.socialSignInError {
-                    Text(error)
-                        .font(.system(size: 12.5))
-                        .foregroundStyle(colorScheme == .dark ? Color(hex: "#F08A7C") : Color(hex: "#B42318"))
-                        .multilineTextAlignment(.center)
+                    if let error = auth.socialSignInError {
+                        Text(error)
+                            .font(.system(size: 12.5))
+                            .foregroundStyle(colorScheme == .dark ? Color(hex: "#F08A7C") : Color(hex: "#B42318"))
+                            .multilineTextAlignment(.center)
+                    }
                 }
 
                 orDivider
 
-                Button(action: auth.signIn) {
-                    Text("Continue with email")
-                }
-                .buttonStyle(SignInButtonStyle(kind: .ink))
+                emailForm
             }
             .disabled(!auth.isClerkConfigured)
             .opacity(auth.isClerkConfigured ? 1 : 0.5)
 
-            HStack(spacing: 4) {
-                Text("New here?")
-                    .foregroundStyle(palette.sub)
-                Button(action: auth.signUp) {
-                    Text("Create an account")
-                        .fontWeight(.semibold)
-                        .underline()
-                        .foregroundStyle(palette.ink)
-                }
-                .buttonStyle(.plain)
-                .disabled(!auth.isClerkConfigured)
-            }
-            .font(.system(size: 13))
-            .frame(maxWidth: .infinity)
-            .padding(.top, 12)
+            securedBy
+                .frame(maxWidth: .infinity)
+                .padding(.top, 20)
 
             #if DEBUG
             if let onSkipAuth {
@@ -334,16 +348,70 @@ struct LoginGateView: View {
         }
     }
 
+    /// Clerk's identifier step, styled like the web stage form: "Email"
+    /// label, a 44 pt field and the ink Continue button.
+    private var emailForm: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Email")
+                    .font(.system(size: 12.5, weight: .semibold))
+                    .foregroundStyle(palette.ink)
+                TextField("", text: $email, prompt: Text("you@company.com").foregroundStyle(palette.mut))
+                    .font(.system(size: 14))
+                    .foregroundStyle(palette.ink)
+                    .textContentType(.emailAddress)
+                    .keyboardType(.emailAddress)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .submitLabel(.continue)
+                    .focused($emailFocused)
+                    .onSubmit(continueWithEmail)
+                    .padding(.horizontal, 14)
+                    .frame(height: 44)
+                    .background(RoundedRectangle(cornerRadius: 11, style: .continuous).fill(palette.raise))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 11, style: .continuous)
+                            .strokeBorder(emailFocused ? palette.ink : palette.line, lineWidth: emailFocused ? 2 : 1)
+                    )
+                    .accessibilityLabel("Email")
+            }
+
+            Button(action: continueWithEmail) {
+                Text("Continue")
+            }
+            .buttonStyle(SignInButtonStyle(kind: .ink))
+        }
+    }
+
+    private func continueWithEmail() {
+        guard auth.isClerkConfigured else { return }
+        emailFocused = false
+        emailAuth = EmailAuth(identifier: email.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    /// "Secured by Clerk" under the form (Clerk's footer on the web).
+    private var securedBy: some View {
+        HStack(spacing: 4) {
+            Text("Secured by")
+                .foregroundStyle(palette.sub)
+            Text("clerk")
+                .fontWeight(.bold)
+                .foregroundStyle(palette.sub)
+        }
+        .font(.system(size: 13))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Secured by Clerk")
+    }
+
     /// "—— or ——" between the social buttons and email.
     private var orDivider: some View {
         HStack(spacing: 12) {
             Rectangle().fill(palette.line).frame(height: 1)
             Text("or")
-                .font(.system(size: 12))
+                .font(.system(size: 11.5))
                 .foregroundStyle(palette.mut)
             Rectangle().fill(palette.line).frame(height: 1)
         }
-        .padding(.vertical, 2)
         .accessibilityHidden(true)
     }
 }
@@ -424,10 +492,11 @@ private struct SignInSocialButton: View {
     }
 }
 
-/// "Sign in with Apple" on the sign-in screen (App Store 4.8: the web offers
-/// Google, so Apple sits beside it). Apple's HIG look: black in light mode,
-/// white in dark, Apple logo + "Sign in with Apple". Clerk does the exchange
-/// (`AuthManager.signInWithApple`).
+/// "Continue with Apple" on the sign-in screen (App Store 4.8: the web offers
+/// Google, so Apple sits beside it, under GitHub and Google like a third
+/// social button). Apple's HIG look: black in light mode, white in dark,
+/// Apple logo + "Continue with Apple" (one of HIG's allowed titles). Clerk
+/// does the exchange (`AuthManager.signInWithApple`).
 private struct SignInWithAppleRow: View {
     @EnvironmentObject private var auth: AuthManager
     @Environment(\.colorScheme) private var colorScheme
@@ -443,8 +512,8 @@ private struct SignInWithAppleRow: View {
                         Image(systemName: "apple.logo")
                             .font(.system(size: 16, weight: .semibold))
                     }
-                    Text("Sign in with Apple")
-                        .font(.system(size: 15, weight: .semibold))
+                    Text("Continue with Apple")
+                        .font(.system(size: 14, weight: .semibold))
                 }
                 .foregroundColor(colorScheme == .dark ? .black : .white)
                 .frame(maxWidth: .infinity)
@@ -452,7 +521,7 @@ private struct SignInWithAppleRow: View {
                 .background(colorScheme == .dark ? Color.white : Color.black)
                 .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
             }
-            .accessibilityLabel("Sign in with Apple")
+            .accessibilityLabel("Continue with Apple")
 
             if let error = auth.appleSignInError {
                 Text(error)

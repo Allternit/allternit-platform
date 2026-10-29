@@ -145,6 +145,9 @@ struct FirstRunSetupView: View {
         return StepOutcome(status: .waiting, label: label, detail: [plan, "No cloud computer on this account yet", "Check Settings → Computers after setup"])
     }
 
+    /// The provider's app icon on a subscription tile (web SubscriptionLogo).
+    private static let logo: [String: String] = ["chatgpt": "SetupLogoChatGPT", "claude": "SetupLogoClaude", "kimi": "SetupLogoKimi"]
+
     private static let pretty: [String: String] = ["qwen": "Qwen", "kimi": "Kimi", "zai": "Z.ai", "antigravity": "Antigravity",
                                                    "claude-cli": "Claude", "codex-cli": "ChatGPT"]
 
@@ -200,6 +203,8 @@ struct FirstRunSetupView: View {
         let id: String
         var group: String?
         var mono: String
+        /// Subscription brains show the provider's logo instead of a letter.
+        var logo: String?
         var icon: String?
         var swatch: StyleChoice?
         let name: String
@@ -243,7 +248,7 @@ struct FirstRunSetupView: View {
         var tiles: [Tile] = BrainChoice.subscriptions.enumerated().map { i, b in
             let st = signals.subscriptionState(b.subscriptionProvider ?? "")
             return Tile(id: b.rawValue, group: i == 0 ? "Use your subscription" : nil, mono: String(b.shortName.prefix(1)),
-                        name: b.shortName, tag: subsTag(st), tagOk: st == .ready)
+                        logo: Self.logo[b.subscriptionProvider ?? ""], name: b.shortName, tag: subsTag(st), tagOk: st == .ready)
         }
         tiles.append(Tile(id: BrainChoice.phoneApps.rawValue, group: "Use the apps on your devices", mono: "",
                           icon: "iphone", name: "Apps on your phone", tag: "From Desktop"))
@@ -381,6 +386,15 @@ struct FirstRunSetupView: View {
                 Group {
                     if let swatch = t.swatch {
                         SetupSwatch(style: swatch)
+                    } else if let logo = t.logo {
+                        // `.as-logo`: the app icon on white, never inked when picked.
+                        Image(logo)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 16, height: 16)
+                            .frame(width: 26, height: 26)
+                            .background(Color.white, in: RoundedRectangle(cornerRadius: 7))
+                            .overlay(RoundedRectangle(cornerRadius: 7).stroke(Color.black.opacity(0.05)))
                     } else if let icon = t.icon {
                         Image(systemName: icon).font(.system(size: 14, weight: .semibold))
                     } else {
@@ -389,8 +403,8 @@ struct FirstRunSetupView: View {
                 }
                 .foregroundStyle(on ? SetupPalette.bg : SetupPalette.sub)
                 .frame(width: 26, height: 26)
-                .background(t.swatch == nil ? (on ? SetupPalette.ink : SetupPalette.fill) : .clear, in: RoundedRectangle(cornerRadius: 8))
-                Text(t.name).font(.system(size: 13.5, weight: .semibold)).foregroundStyle(SetupPalette.ink).lineLimit(1)
+                .background(t.swatch == nil && t.logo == nil ? (on ? SetupPalette.ink : SetupPalette.fill) : .clear, in: RoundedRectangle(cornerRadius: 9))
+                Text(t.name).font(.system(size: 13.5, weight: .bold)).foregroundStyle(SetupPalette.ink).lineLimit(1)
                 Spacer(minLength: 4)
                 if !t.tag.isEmpty {
                     Text(t.tag)
@@ -449,8 +463,24 @@ struct FirstRunSetupView: View {
         case (.ai, _, let brain?) where brain.isSubscription:
             subscriptionPanel(brain)
         case (.ai, _, .phoneApps?):
+            // PhoneLinkPanel without the Desktop bridge (phone layout and PWA).
             SetupPanel(title: "Apps on your phone") {
-                SetupNote(text: "Phone Link uses the AI apps you’re signed in to on this phone. Set it up from Allternit Desktop on your computer: it needs a cable to your phone once, then works over Wi-Fi.")
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Set up from Allternit Desktop")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(SetupPalette.ink)
+                    SetupNote(text: "The first setup needs a cable between your phone and your computer, so it runs in Allternit Desktop. Open Settings › Connections › Link a phone there. Once it’s linked, your bots use the phone from any device, including this one.")
+                    Link(destination: URL(string: "https://allternit.com/download")!) {
+                        HStack(spacing: 6) {
+                            Text("Get Allternit Desktop")
+                            Image(systemName: "arrow.up.right.square").font(.system(size: 12, weight: .semibold))
+                        }
+                    }
+                    .buttonStyle(SetupInlineButtonStyle(height: 44))
+                    .padding(.top, 4)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 14)
             }
         case (.ai, _, .allternit?) where signals.catalog.count > 1:
             let selected = BrainChoice.forProvider(data.defaultProvider) == .allternit ? data.defaultModelId : nil
