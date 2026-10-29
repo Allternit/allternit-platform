@@ -243,11 +243,15 @@ fn coded_error(status: StatusCode, code: &str, message: &str) -> Response {
     (status, Json(serde_json::json!({ "error": code, "code": code, "message": message }))).into_response()
 }
 
-/// Public ws base for the browser: the optional env override, else the host
-/// the request came in on (`x-forwarded-host` behind the proxy). `ws://` only
-/// for a loopback host.
 fn ws_base(headers: &HeaderMap) -> Option<String> {
-    if let Some(base) = std::env::var(WS_BASE_ENV).ok().filter(|v| !v.trim().is_empty()) {
+    ws_base_from(WS_BASE_ENV, headers)
+}
+
+/// Public ws base for the browser: the optional `env` override, else the host
+/// the request came in on (`x-forwarded-host` behind the proxy). `ws://` only
+/// for a loopback host. Shared with `model_hosts`.
+pub(crate) fn ws_base_from(env: &str, headers: &HeaderMap) -> Option<String> {
+    if let Some(base) = std::env::var(env).ok().filter(|v| !v.trim().is_empty()) {
         return Some(base.trim().trim_end_matches('/').to_string());
     }
     let host = headers

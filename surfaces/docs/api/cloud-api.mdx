@@ -277,6 +277,10 @@ These Cloud API routes authenticate with a Clerk session, resolve the caller's d
 
 HTTP **428** means the account has no healthy node (pair a desktop/VPS or start a provisioned instance). The original `Authorization` header is forwarded. SSE is not buffered.
 
+## Model hosts
+
+A device you own (today an Allternit browser tab with WebGPU) can serve a small model to your agents. It holds a WebSocket at `/api/v1/model-hosts/connect`, and callers use the OpenAI-compatible routes under `/api/v1/model-hosts/v1` (`models`, `chat/completions`) with a Clerk session, an API token or a paired runtime device token. State is in memory only. See [Model host relay](/api/model-host-relay).
+
 ## Artifacts v2
 
 Unlike the relayed namespaces above, artifacts are stored in Cloud API Postgres itself, so every surface sees the same records. That includes the ones made on a cloud computer or by gizzi. Routes are under `/api/v2/artifacts`, plus a no-auth public link route `/api/v2/public/artifacts/{id}` and `/api/v2/org/artifact-settings`. See [Artifacts v2](/api/artifacts-v2).
@@ -657,6 +661,7 @@ X-RateLimit-Reset: 1723575600
 | `STRIPE_WEBHOOK_SECRET` | Billing webhook verification. |
 | `OPEN_LANE_BASE_URL` / `OPEN_LANE_API_KEY` | Optional. Chat Completions-compatible server for the open-lane `-open` models; unset hides them. See [Open lane](/api/open-lane). |
 | `OPEN_LANE_MODEL_MAP` / `OPEN_LANE_MODERATION_MODEL` | Optional. Open-lane upstream model names and the hard-line moderation model. |
+| `ALLTERNIT_MODEL_HOST_WS_BASE` | Optional. Public ws base for model host sockets, e.g. `wss://api.allternit.com`. Default: the request's host. |
 | `ALLTERNIT_VIEWER_WS_BASE` | Optional. Public ws base for the cloud computer viewer, e.g. `wss://api.allternit.com`. Default: the request's host. |
 
 ## Related pages
@@ -665,6 +670,7 @@ X-RateLimit-Reset: 1723575600
 - [Allternit API](/api/allternit-api)
 - [Authentication](/api/authentication)
 - [Open lane and refusal handoff](/api/open-lane)
+- [Model host relay](/api/model-host-relay)
 - [Agent Sessions](/api/agent-sessions)
 - [BYOC Runtime](/byoc/overview)
 - [BYOC Deploy Wizard](/byoc/deploy-wizard)

@@ -45,6 +45,9 @@ export const ProviderRoutes = lazy(() =>
           }
         }
 
+        // Phones serving a model come and go; a stale device list re-scans
+        // here (capped at 1.5 s, skipped after a failed scan).
+        await Provider.refreshAllternitDevices()
         const connected = await Provider.list()
         const providers = Object.assign(
           mapValues(filteredProviders, (x) => Provider.fromModelsDevProvider(x)),

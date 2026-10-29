@@ -1,0 +1,39 @@
+---
+title: 'Run a model on your phone'
+description: 'Let your phone serve a small model to your agents while the Allternit tab is open in front.'
+---
+
+## What it does
+
+Your phone can run a small language model in its browser and serve it to your own agents. Your agent runtime (gizzi) sends each chat request to the phone through Allternit's relay, the phone writes the answer, and the answer streams back. The model shows up in the model picker under **Your devices**, next to your other models.
+
+It is useful for short, simple tasks you want answered on hardware you own. It is not a replacement for the larger cloud models: a 350M-parameter model writes short answers and makes more mistakes.
+
+The model has no tools of its own. Your agent runtime calls it like any other model, so chats keep their tools, memory and handoff; the phone only writes text.
+
+## Turn it on
+
+1. On your phone, open the Allternit app (m.allternit.com) or ai.allternit.com and sign in.
+2. Open **Settings › Models** and turn on **Serve a model from this device**.
+3. The first time, the phone downloads the model, about 255 MB. Later starts load it from the browser's storage in a few seconds.
+4. When the status says **Serving**, pick the model from **Your devices** in the model picker on any of your Allternit surfaces: Desktop, ai.allternit.com or the phone app.
+
+The switch is remembered on that phone and starts serving again the next time you open Allternit there.
+
+## Keep the tab open in front
+
+The phone serves the model only while the Allternit tab is open and in front. Phones pause background tabs, so when you switch apps, lock the screen or close the tab, the model goes offline and disappears from **Your devices**. A request that was running when the phone went away ends with an error. Open the tab again and it reconnects on its own.
+
+## What you need
+
+- A browser with WebGPU: Safari on iOS 26 or later, or a recent version of Chrome. Without WebGPU the switch is turned off and says why.
+- About 255 MB of free storage for the model.
+- Allternit signed in with the same account on the phone and on the device your agents run on.
+
+Allternit offers only the small model (LiquidAI LFM2.5 350M) in the browser. Bigger models need more memory than a phone browser gives one tab, and the tab crashes while loading them.
+
+## Who can use it
+
+Only you. The model is listed and callable only with your own account, your API keys or your own paired runtimes. Requests travel through Allternit's relay to your phone; Allternit does not store the prompts or the answers.
+
+For how the relay works, see [Model host relay](/api/model-host-relay).
