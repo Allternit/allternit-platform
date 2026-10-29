@@ -264,9 +264,11 @@ struct ArtifactV2CreateInput: Encodable, Sendable {
     var bodyFormat: String
     var meta: [String: JSONValue]?
     var origin: ArtifactV2Origin?
+    /// e.g. `{storage: true}` for an image or video kept in cloud storage.
+    var capabilities: [String: JSONValue]? = nil
 
     enum CodingKeys: String, CodingKey {
-        case id, kind, title, body, meta, origin
+        case id, kind, title, body, meta, origin, capabilities
         case bodyFormat = "body_format"
     }
 }

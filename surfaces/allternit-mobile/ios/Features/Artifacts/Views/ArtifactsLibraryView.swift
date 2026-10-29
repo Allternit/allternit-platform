@@ -35,6 +35,8 @@ struct ArtifactsLibraryView: View {
     @State private var importingPDF = false
     @State private var photoItem: PhotosPickerItem?
     @State private var choosingPhoto = false
+    @State private var videoItem: PhotosPickerItem?
+    @State private var choosingVideo = false
     #if DEBUG
     @State private var debugOfficeDocumentId: IdentifiableString? = nil
     #endif
@@ -92,6 +94,12 @@ struct ArtifactsLibraryView: View {
             guard let item else { return }
             photoItem = nil
             Task { await uploadImage(item) }
+        }
+        .photosPicker(isPresented: $choosingVideo, selection: $videoItem, matching: .videos)
+        .onChange(of: videoItem) { _, item in
+            guard let item else { return }
+            videoItem = nil
+            Task { await uploadVideo(item) }
         }
         #if DEBUG
         .sheet(item: $debugOfficeDocumentId) { id in
@@ -300,9 +308,12 @@ struct ArtifactsLibraryView: View {
         }
     }
 
-    // MARK: - Upload (web createPdfArtifact / createImageArtifact)
+    // MARK: - Upload (web createPdfArtifact / createImageArtifact / createVideoArtifact)
 
+    /// Server enforces 16 MiB decoded; leave margin for the base64 transport.
     private static let maxUploadBytes = 15 * 1024 * 1024
+    /// Video footage goes to cloud storage, with a sanity cap.
+    private static let maxVideoUploadBytes = 500 * 1024 * 1024
 
     private func uploadPDF(_ url: URL) async {
         let scoped = url.startAccessingSecurityScopedResource()
@@ -334,10 +345,88 @@ struct ArtifactsLibraryView: View {
         let type = item.supportedContentTypes.first { $0.conforms(to: .image) }
         let mime = type?.preferredMIMEType ?? "image/jpeg"
         let name = "Image.\(type?.preferredFilenameExtension ?? "jpg")"
+        // Small images embed as a data URL; larger ones go to Allternit Cloud
+        // storage, the same place generated image URLs come from.
+        let body: String
+        if await CloudFilesClient.shared.shouldUpload(size: data.count) {
+            notice = "Uploading \(name)…"
+            do {
+                body = try await CloudFilesClient.shared.upload(data, name: name, contentType: mime).url
+            } catch {
+                notice = error.localizedDescription
+                return
+            }
+        } else {
+            body = "data:\(mime);base64,\(data.base64EncodedString())"
+        }
         await upload(name: name, input: ArtifactV2CreateInput(
-            kind: "image", title: "Untitled image", body: "data:\(mime);base64,\(data.base64EncodedString())",
+            kind: "image", title: "Untitled image", body: body,
             bodyFormat: "text/uri-list", meta: ["filename": .string(name)],
-            origin: ArtifactV2Origin(surface: "library")), failure: "Couldn't upload that image.")
+            origin: ArtifactV2Origin(surface: "library"), capabilities: ["storage": .bool(true)]),
+            failure: "Couldn't upload that image.")
+    }
+
+    /// A video becomes a video-kind artifact: the footage goes to Allternit
+    /// Cloud storage and the body is the empty FilmCraft project (meta carries
+    /// the footage ref), the same shape generated videos get.
+    private func uploadVideo(_ item: PhotosPickerItem) async {
+        guard let movie = try? await item.loadTransferable(type: PickedMovie.self) else {
+            notice = "Only video files (MP4, MOV, WebM) can be uploaded as video artifacts."
+            return
+        }
+        defer { try? FileManager.default.removeItem(at: movie.url.deletingLastPathComponent()) }
+        let size = (try? FileManager.default.attributesOfItem(atPath: movie.url.path)[.size] as? Int) ?? 0
+        guard size <= Self.maxVideoUploadBytes else {
+            notice = "That video is over 500 MB. Export a smaller version and try again."
+            return
+        }
+        let name = movie.url.lastPathComponent
+        notice = "Uploading \(name)…"
+        guard await CloudFilesClient.shared.shouldUpload(size: max(size, CloudFilesClient.minCloudBytes)) else {
+            notice = "Sign in to upload videos — the footage is stored in Allternit Cloud."
+            return
+        }
+        let mime = UTType(filenameExtension: movie.url.pathExtension)?.preferredMIMEType ?? "video/mp4"
+        let url: String
+        do {
+            url = try await CloudFilesClient.shared.upload(fileAt: movie.url, name: name, contentType: mime).url
+        } catch {
+            notice = error.localizedDescription
+            return
+        }
+        let base = movie.url.deletingPathExtension().lastPathComponent.trimmingCharacters(in: .whitespaces)
+        let title = base.isEmpty ? "Untitled video" : base
+        await upload(name: name, input: ArtifactV2CreateInput(
+            kind: "video", title: title, body: Self.initialVideoProject(title),
+            bodyFormat: "application/vnd.allternit.video+json",
+            meta: ["filename": .string(name), "media": .object(["url": .string(url), "mime": .string(mime)])],
+            origin: ArtifactV2Origin(surface: "library"), capabilities: ["storage": .bool(true)]),
+            failure: "Couldn't upload that video.")
+    }
+
+    /// web buildInitialVideoProject: the current `.fcproj` envelope with an
+    /// empty project tree (schema 11).
+    static func initialVideoProject(_ title: String) -> String {
+        let project: [String: Any] = [
+            "schema_version": 11,
+            "generator": "Allternit",
+            "project": [
+                "name": title,
+                "settings": [
+                    "renderer": "FilmCraft GPU Acceleration (wgpu)",
+                    "video_display": "Timecode",
+                    "audio_display_samples": true,
+                    "default_still_duration": 1270080000000,
+                    "default_transition_duration_frames": 24,
+                    "default_audio_transition_duration": 254016000000,
+                ] as [String: Any],
+                "root": ["id": 0, "name": title, "children": [Any]()] as [String: Any],
+                "items": [String: Any](),
+                "next_id": 1,
+            ] as [String: Any],
+        ]
+        let data = (try? JSONSerialization.data(withJSONObject: project, options: [.sortedKeys])) ?? Data("{}".utf8)
+        return String(decoding: data, as: UTF8.self)
     }
 
     private func upload(name: String, input: ArtifactV2CreateInput, failure: String) async {
@@ -389,6 +478,7 @@ struct ArtifactsLibraryView: View {
         Section("Upload") {
             Button { importingPDF = true } label: { Label("PDF", systemImage: "square.and.arrow.up") }
             Button { choosingPhoto = true } label: { Label("Image", systemImage: "square.and.arrow.up") }
+            Button { choosingVideo = true } label: { Label("Video", systemImage: "square.and.arrow.up") }
         }
         Section("Start from your connected tools") {
             Button { showingConnectors = true } label: { Label("Connect your tools", systemImage: "powerplug") }
@@ -849,5 +939,26 @@ struct ArtifactLibraryRow: View {
             parts.append(date.formatted(.relative(presentation: .named)))
         }
         return parts.joined(separator: " · ")
+    }
+}
+
+
+/// A picked video copied out of Photos to a temporary file, so the upload
+/// streams from disk instead of holding the footage in memory.
+struct PickedMovie: Transferable {
+    let url: URL
+
+    static var transferRepresentation: some TransferRepresentation {
+        FileRepresentation(contentType: .movie) { movie in
+            SentTransferredFile(movie.url)
+        } importing: { received in
+            // Keep the original file name (it becomes the title) in a
+            // folder of its own.
+            let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            let copy = folder.appendingPathComponent(received.file.lastPathComponent)
+            try FileManager.default.copyItem(at: received.file, to: copy)
+            return PickedMovie(url: copy)
+        }
     }
 }
