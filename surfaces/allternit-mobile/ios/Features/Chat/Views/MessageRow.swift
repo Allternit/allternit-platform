@@ -1,5 +1,6 @@
 import SwiftUI
 import MarkdownView
+import UIKit
 
 struct MessageRow: View {
     let message: MessageRecord
@@ -29,6 +30,9 @@ struct MessageRow: View {
     /// Settings → Capabilities → Artifacts gates the inline artifact cards;
     /// observed so toggling it applies to already-rendered rows.
     @ObservedObject private var settings = SettingsStore.shared
+
+    /// In a bot's chat your bubbles wear the bot's colour (30% over the card).
+    @Environment(\.botTint) private var botTint
 
     var body: some View {
         // Voice-mode summary card (Phase 7b): a centered card row with no
@@ -179,6 +183,20 @@ struct MessageRow: View {
 
     // MARK: - Subviews
 
+    private var userBubbleFill: AnyShapeStyle {
+        guard let botTint else { return AnyShapeStyle(Color("FillNeutral")) }
+        let base = UIColor(named: "BgPanel") ?? .systemBackground
+        let tint = UIColor(Color(hex: botTint))
+        return AnyShapeStyle(Color(UIColor { traits in
+            let a = base.resolvedColor(with: traits), b = tint.resolvedColor(with: traits)
+            var (r1, g1, b1, a1): (CGFloat, CGFloat, CGFloat, CGFloat) = (0, 0, 0, 0)
+            var (r2, g2, b2, a2): (CGFloat, CGFloat, CGFloat, CGFloat) = (0, 0, 0, 0)
+            a.getRed(&r1, green: &g1, blue: &b1, alpha: &a1)
+            b.getRed(&r2, green: &g2, blue: &b2, alpha: &a2)
+            return UIColor(red: r1 + (r2 - r1) * 0.3, green: g1 + (g2 - g1) * 0.3, blue: b1 + (b2 - b1) * 0.3, alpha: 1)
+        }))
+    }
+
     @ViewBuilder
     private var bubble: some View {
         if message.role == "user" {
@@ -188,7 +206,7 @@ struct MessageRow: View {
                 .foregroundColor(Color("TextPrimary"))
                 .padding(.horizontal, 16)
                 .padding(.vertical, 10)
-                .background(Color("FillNeutral"), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .background(userBubbleFill, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                 .textSelection(.enabled)
                 .contextMenu { bubbleContextMenu }
         } else if message.isStreaming, message.content.isEmpty, message.reasoning.isEmpty,

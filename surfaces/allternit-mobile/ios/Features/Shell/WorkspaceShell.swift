@@ -12,6 +12,7 @@ import SwiftUI
 /// mode; it's a composer-level toggle inside Home.
 struct MainWorkspaceView: View {
     @EnvironmentObject private var modeStore: AppModeStore
+    @ObservedObject private var botColors = BotColorStore.shared
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isSidebarOpen = false
     @State private var dragOffset: CGFloat = 0
@@ -80,8 +81,10 @@ struct MainWorkspaceView: View {
                 width: sidebarWidth
             )
             .background(
-                UnevenRoundedRectangle(bottomTrailingRadius: 26, topTrailingRadius: 26, style: .continuous)
-                    .fill(Color("BgPrimary"))
+                // In Bots mode the rail wears the colour of the bot on screen
+                // (picked in To:, or whose chat or page is open).
+                BotWashedBackground(color: .some(modeStore.shellMode == .bots ? botColors.activeHex : nil))
+                    .clipShape(UnevenRoundedRectangle(bottomTrailingRadius: 26, topTrailingRadius: 26, style: .continuous))
                     .ignoresSafeArea()
             )
             .shadow(color: .black.opacity(sidebarProgress > 0 ? 0.12 : 0), radius: 16, x: 4, y: 0)

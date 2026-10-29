@@ -36,6 +36,7 @@ struct BotHomeTabsView: View {
     let bot: AgentRecord
     @State private var tab: BotHomeTab
     @EnvironmentObject private var navigator: BotNavigator
+    @ObservedObject private var colors = BotColorStore.shared
 
     init(bot: AgentRecord, initialTab: BotHomeTab) {
         self.bot = bot
@@ -70,7 +71,8 @@ struct BotHomeTabsView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .background(Color("BgPrimary"))
+        .background { BotWashedBackground(color: .some(colors.hex(for: bot))).ignoresSafeArea() }
+        .claimsBotTint(bot.id)
         .navigationTitle(bot.botDisplayName)
         .navigationBarTitleDisplayMode(.inline)
     }

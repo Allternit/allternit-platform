@@ -49,6 +49,7 @@ struct BotsModeRootView: View {
     @StateObject private var hub = AgentHubStore.shared
     @StateObject private var auth = AuthManager.shared
     @StateObject private var navigator = BotNavigator()
+    @ObservedObject private var colors = BotColorStore.shared
     @State private var isConnectionsPresented = false
     @State private var isThreadsPresented = false
 
@@ -89,6 +90,7 @@ struct BotsModeRootView: View {
                             isConnectionsPresented = true
                         }
                     }
+                    .environment(\.botTint, colors.activeHex)
                 }
                 .navigationDestination(for: BotRoute.self) { route in
                     BotRouteDestination(route: route)

@@ -11,6 +11,7 @@ struct BotLaunchpadView: View {
     @ObservedObject private var store = BotModeStore.shared
     @ObservedObject private var hub = AgentHubStore.shared
     @ObservedObject private var status = BotStatusStore.shared
+    @ObservedObject private var colors = BotColorStore.shared
     @EnvironmentObject private var navigator: BotNavigator
 
     /// The roster layout, kept per scope like the web's useOverviewLayout
@@ -42,7 +43,10 @@ struct BotLaunchpadView: View {
             .padding(.bottom, 24)
         }
         .scrollDismissesKeyboard(.interactively)
-        .background(Color("BgPrimary"))
+        // One bot in To: the top of the page wears its colour (BotColorWash),
+        // and so do the header and the Bots rail.
+        .background { BotWashedBackground(color: .some(colors.hex(for: selectedBot))).ignoresSafeArea() }
+        .claimsBotTint(selectedBotId)
         .safeAreaInset(edge: .bottom, spacing: 0) {
             BotLaunchComposer(
                 draft: $draft,
@@ -664,6 +668,7 @@ struct BotLaunchComposer: View {
 
     @StateObject private var dictation = DictationController()
     @StateObject private var attachments = AttachmentStore()
+    @ObservedObject private var colors = BotColorStore.shared
     @State private var isDictating = false
     @State private var dictationBase = ""
 
@@ -789,7 +794,7 @@ struct BotLaunchComposer: View {
             onStop: {},
             onVoiceMode: toggleDictation,
             placeholderOverride: placeholder,
-            accentBorder: selectedBot?.botAccentColor.map { Color(hex: $0).opacity(0.6) },
+            accentBorder: colors.hex(for: selectedBot).map { Color(hex: $0).opacity(0.6) },
             showsPermission: false
         )
     }

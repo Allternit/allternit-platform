@@ -14,6 +14,8 @@ struct PhoneHeader<Leading: View, Trailing: View>: View {
     var sectionStyle: Bool = false
     @ViewBuilder var leading: () -> Leading
     @ViewBuilder var trailing: () -> Trailing
+    /// A bot's colour on the Bots home: the bar shows its slice of the wash.
+    @Environment(\.botTint) private var botTint
 
     var body: some View {
         let side: CGFloat = wideSides ? 96 : (sectionStyle ? 44 : 52)
@@ -43,7 +45,13 @@ struct PhoneHeader<Leading: View, Trailing: View>: View {
         }
         .frame(height: 52)
         .padding(.horizontal, sectionStyle ? 12 : 6)
-        .background(Color("BgPrimary"))
+        .background {
+            if botTint != nil {
+                BotWashedBackground().ignoresSafeArea(edges: .top)
+            } else {
+                Color("BgPrimary")
+            }
+        }
     }
 }
 
