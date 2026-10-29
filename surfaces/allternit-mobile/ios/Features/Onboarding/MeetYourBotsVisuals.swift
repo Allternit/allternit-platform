@@ -5,7 +5,7 @@ import UIKit
 // -----------------------------------------------------------------------------
 // The top half of the "Meet your bots" card on the phone (web MeetYourBotsCard
 // `.mb-vis`, stacked): the bots network on the first step, the team grid, the
-// main bot's stage, the day calendar of routines and the first-job hand-off.
+// main bot's stage, the routine calendar and the first-job hand-off.
 // Colours are the card's `--bl-*` tokens (white in light, graphite in dark).
 // -----------------------------------------------------------------------------
 
@@ -357,11 +357,14 @@ struct MeetMainStage: View {
     }
 }
 
-// MARK: - Routines: the day calendar
+// MARK: - Routines: the calendar
 
-/// When the team's routines run (web RoutineScheduler, Day view, compact):
-/// tap an empty hour to add a routine there, tap one to change it.
-struct MeetDayCalendar: View {
+/// When the team's routines run (web RoutineScheduler, compact): Day
+/// (default) and Week are 6a–10p hour grids, Month shows dots per day and a
+/// tap lists the day. Tap an empty time to add a routine there, tap one to
+/// change it, drag it up or down to move it (15-minute steps). Frequent
+/// routines ("every 2 h from 8a to 6p") draw as one band.
+struct MeetRoutineCalendar: View {
     struct Item: Identifiable {
         let id: String
         let title: String
@@ -371,135 +374,509 @@ struct MeetDayCalendar: View {
         let avatar: AnyView
     }
 
+    enum Mode: String, CaseIterable { case day, week, month }
+
     let items: [Item]
     var onNew: (_ day: Date, _ minute: Int) -> Void
     var onEdit: (_ id: String) -> Void
+    var onMove: (_ id: String, _ minute: Int) -> Void
 
-    @State private var day = Calendar.current.startOfDay(for: Date())
-    private let rowH: CGFloat = 39
-    private let firstHour = 0
+    @State private var mode: Mode = .day
+    @State private var anchor = Calendar.current.startOfDay(for: Date())
+    @State private var listedDay: ListedDay?
+
+    static let h0 = 6
+    static let h1 = 22
+    private var px: CGFloat { mode == .day ? 44 : 40 }
+    private var cal: Calendar { Calendar.current }
+    private var today: Date { cal.startOfDay(for: Date()) }
+    /// Paused routines don't show (web `live`).
+    private var live: [Item] { items.filter { $0.enabled && $0.rule != nil } }
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(alignment: .leading, spacing: 8) {
             toolbar
-            ScrollViewReader { proxy in
-                ScrollView {
-                    ZStack(alignment: .topLeading) {
-                        VStack(spacing: 0) {
-                            ForEach(0..<24, id: \.self) { hour in
-                                HStack(alignment: .top, spacing: 6) {
-                                    Text(hourLabel(hour))
-                                        .font(.system(size: 10))
-                                        .foregroundStyle(MeetPalette.mut)
-                                        .frame(width: 26, alignment: .trailing)
-                                        .offset(y: -6)
-                                    Rectangle().fill(MeetPalette.line).frame(height: 1)
-                                }
-                                .frame(height: rowH, alignment: .top)
-                                .contentShape(Rectangle())
-                                .onTapGesture { onNew(day, hour * 60) }
-                                .id(hour)
-                                .accessibilityElement()
-                                .accessibilityLabel("Add a routine at \(hourLabel(hour))")
-                                .accessibilityAddTraits(.isButton)
-                            }
-                        }
-                        ForEach(runs, id: \.key) { run in
-                            Button { onEdit(run.item.id) } label: {
-                                HStack(spacing: 6) {
-                                    run.item.avatar
-                                    Text(run.item.title).font(.system(size: 11.5, weight: .medium)).foregroundStyle(MeetPalette.ink).lineLimit(1)
-                                    Spacer(minLength: 4)
-                                    Text(RoutineRuleClock.short(run.minute)).font(.system(size: 10.5)).foregroundStyle(MeetPalette.sub)
-                                }
-                                .padding(.horizontal, 6)
-                                .frame(height: 22)
-                                .background(run.item.color.opacity(run.item.enabled ? 0.18 : 0.08), in: RoundedRectangle(cornerRadius: 6))
-                                .overlay(RoundedRectangle(cornerRadius: 6).stroke(run.item.color.opacity(0.35)))
-                                .opacity(run.item.enabled ? 1 : 0.55)
-                            }
-                            .buttonStyle(.plain)
-                            .padding(.leading, 38)
-                            .padding(.trailing, 4)
-                            .offset(y: CGFloat(run.minute) / 60 * rowH + 2)
-                            .accessibilityLabel("\(run.item.title), \(RoutineRuleClock.short(run.minute))\(run.item.enabled ? "" : ", paused")")
-                        }
-                    }
-                    .padding(.top, 8)
-                }
-                .onAppear { proxy.scrollTo(max(0, firstRunHour - 1), anchor: .top) }
-                .onChange(of: day) { _, _ in proxy.scrollTo(max(0, firstRunHour - 1), anchor: .top) }
-            }
-            .background(MeetPalette.bg, in: RoundedRectangle(cornerRadius: 12))
-            .overlay(RoundedRectangle(cornerRadius: 12).stroke(MeetPalette.line))
-            Text("Tap an empty time to add a routine · tap one to change it")
+            if mode == .month { month } else { grid }
+            Text("Tap an empty time to add a routine · tap one to change it · drag it to move it")
                 .font(.system(size: 11))
-                .foregroundStyle(MeetPalette.coral)
-                .padding(.top, 6)
+                .foregroundStyle(MeetPalette.mut)
         }
         .padding(12)
         .background(MeetPalette.bg)
+        .sheet(item: $listedDay) { listed in
+            MeetDayList(day: listed.day, items: dayItems(listed.day), onEdit: { id in
+                listedDay = nil
+                onEdit(id)
+            }, onOpenDay: {
+                listedDay = nil
+                open(listed.day)
+            })
+            .presentationDetents([.medium])
+        }
     }
+
+    // MARK: Toolbar
 
     private var toolbar: some View {
-        HStack(spacing: 6) {
-            Button { shift(-1) } label: { Image(systemName: "chevron.left").font(.system(size: 11, weight: .semibold)) }
-                .buttonStyle(MeetCalButtonStyle(square: true)).accessibilityLabel("Previous day")
-            Button("Today") { day = Calendar.current.startOfDay(for: Date()) }.buttonStyle(MeetCalButtonStyle())
-            Button { shift(1) } label: { Image(systemName: "chevron.right").font(.system(size: 11, weight: .semibold)) }
-                .buttonStyle(MeetCalButtonStyle(square: true)).accessibilityLabel("Next day")
-            Text(day.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day()))
-                .font(.system(size: 12.5, weight: .semibold))
+        HStack(spacing: 8) {
+            HStack(spacing: 4) {
+                Button { step(-1) } label: { Image(systemName: "chevron.left").font(.system(size: 11, weight: .semibold)) }
+                    .buttonStyle(MeetCalButtonStyle(square: true)).accessibilityLabel("Previous")
+                Button("Today") { anchor = today }.buttonStyle(MeetCalButtonStyle())
+                Button { step(1) } label: { Image(systemName: "chevron.right").font(.system(size: 11, weight: .semibold)) }
+                    .buttonStyle(MeetCalButtonStyle(square: true)).accessibilityLabel("Next")
+            }
+            Text(title)
+                .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(MeetPalette.ink)
-                .padding(.leading, 4)
-            Spacer(minLength: 0)
-            Text("Day")
-                .font(.system(size: 11.5, weight: .medium))
-                .foregroundStyle(MeetPalette.ink)
-                .padding(.horizontal, 10)
-                .frame(height: 26)
-                .background(MeetPalette.bg, in: RoundedRectangle(cornerRadius: 7))
-                .padding(2)
-                .background(MeetPalette.fill, in: RoundedRectangle(cornerRadius: 9))
-        }
-        .padding(.bottom, 8)
-    }
-
-    private func shift(_ n: Int) {
-        day = Calendar.current.date(byAdding: .day, value: n, to: day) ?? day
-    }
-
-    private func hourLabel(_ h: Int) -> String {
-        h == 0 ? "12a" : h < 12 ? "\(h)a" : h == 12 ? "12p" : "\(h - 12)p"
-    }
-
-    private struct Run { let key: String; let item: Item; let minute: Int }
-
-    private var runs: [Run] {
-        let cal = Calendar.current
-        let dow = cal.component(.weekday, from: day) - 1
-        let dom = cal.component(.day, from: day)
-        return items.flatMap { item -> [Run] in
-            guard let r = item.rule else { return [] }
-            var minutes: [Int] = []
-            switch r.repeatKind {
-            case .daily: minutes = [r.at]
-            case .weekdays, .weekly: minutes = r.days.contains(dow) ? [r.at] : []
-            case .monthly: minutes = (r.dom ?? []).contains(dom) ? [r.at] : []
-            case .interval:
-                if r.days.isEmpty || r.days.contains(dow) {
-                    let every = max(15, r.every ?? 60)
-                    minutes = Array(stride(from: r.at, through: r.until ?? r.at, by: every))
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityAddTraits(.updatesFrequently)
+            HStack(spacing: 0) {
+                ForEach(Mode.allCases, id: \.self) { m in
+                    Button { mode = m } label: {
+                        Text(m.rawValue.capitalized)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(mode == m ? MeetPalette.ink : MeetPalette.mut)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 4)
+                            .background(mode == m ? MeetPalette.bg : .clear, in: RoundedRectangle(cornerRadius: 6))
+                            .shadow(color: .black.opacity(mode == m ? 0.06 : 0), radius: 1, y: 1)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityAddTraits(mode == m ? .isSelected : [])
                 }
             }
-            return minutes.map { Run(key: "\(item.id)@\($0)", item: item, minute: $0) }
+            .padding(2)
+            .background(MeetPalette.fill, in: RoundedRectangle(cornerRadius: 8))
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("Calendar view")
         }
     }
 
-    private var firstRunHour: Int { (runs.map(\.minute).min() ?? 8 * 60) / 60 }
+    private var title: String {
+        switch mode {
+        case .day: return anchor.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day())
+        case .month: return anchor.formatted(.dateTime.month(.wide).year())
+        case .week:
+            let d = days
+            return "\(d[0].formatted(.dateTime.month(.abbreviated).day())) – \(d[6].formatted(.dateTime.month(.abbreviated).day()))"
+        }
+    }
+
+    private func step(_ dir: Int) {
+        switch mode {
+        case .day: anchor = cal.date(byAdding: .day, value: dir, to: anchor) ?? anchor
+        case .week: anchor = cal.date(byAdding: .day, value: 7 * dir, to: anchor) ?? anchor
+        case .month:
+            let first = cal.date(from: cal.dateComponents([.year, .month], from: anchor)) ?? anchor
+            anchor = cal.date(byAdding: .month, value: dir, to: first) ?? anchor
+        }
+    }
+
+    private func open(_ day: Date) {
+        anchor = day
+        mode = .day
+    }
+
+    // MARK: Days
+
+    private func startOfWeek(_ d: Date) -> Date {
+        let dow = cal.component(.weekday, from: d) - 1
+        return cal.date(byAdding: .day, value: -((dow + 6) % 7), to: cal.startOfDay(for: d)) ?? d
+    }
+
+    private var days: [Date] {
+        switch mode {
+        case .day: return [anchor]
+        case .week:
+            let s = startOfWeek(anchor)
+            return (0..<7).compactMap { cal.date(byAdding: .day, value: $0, to: s) }
+        case .month:
+            let first = cal.date(from: cal.dateComponents([.year, .month], from: anchor)) ?? anchor
+            let last = cal.date(byAdding: DateComponents(month: 1, day: -1), to: first) ?? first
+            let from = startOfWeek(first)
+            let to = cal.date(byAdding: .day, value: 7, to: startOfWeek(last)) ?? last
+            let n = cal.dateComponents([.day], from: from, to: to).day ?? 35
+            return (0..<n).compactMap { cal.date(byAdding: .day, value: $0, to: from) }
+        }
+    }
+
+    private func runsOn(_ r: RoutineRule, _ d: Date) -> Bool {
+        let dow = cal.component(.weekday, from: d) - 1
+        switch r.repeatKind {
+        case .daily: return true
+        case .weekdays, .weekly, .interval: return r.days.contains(dow)
+        case .monthly: return (r.dom ?? []).contains(cal.component(.day, from: d))
+        }
+    }
+
+    /// A day's items in month order (by time).
+    private func dayItems(_ d: Date) -> [Item] {
+        live.filter { runsOn($0.rule!, d) }.sorted { ($0.rule!.at, $0.title) < ($1.rule!.at, $1.title) }
+    }
+
+    // MARK: Day / Week grid
+
+    private var grid: some View {
+        VStack(spacing: 0) {
+            if mode == .week {
+                HStack(spacing: 0) {
+                    Color.clear.frame(width: 40)
+                    ForEach(days, id: \.self) { d in
+                        Button { open(d) } label: {
+                            Text("\(String(RoutineRule.dayShort[cal.component(.weekday, from: d) - 1].prefix(1))) \(cal.component(.day, from: d))")
+                                .font(.system(size: 11, weight: cal.isDate(d, inSameDayAs: today) ? .semibold : .regular))
+                                .foregroundStyle(cal.isDate(d, inSameDayAs: today) ? Color("AccentPrimary") : MeetPalette.sub)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 4)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Open \(d.formatted(.dateTime.weekday(.wide).month(.wide).day()))")
+                    }
+                }
+                .overlay(alignment: .bottom) { Rectangle().fill(MeetPalette.line).frame(height: 1) }
+            }
+            ScrollViewReader { proxy in
+                ScrollView {
+                    HStack(alignment: .top, spacing: 0) {
+                        hourLabels
+                        ForEach(days, id: \.self) { d in column(d, narrow: mode == .week) }
+                    }
+                }
+                .onAppear { proxy.scrollTo(7, anchor: .top) }
+                .onChange(of: mode) { _, _ in proxy.scrollTo(7, anchor: .top) }
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(MeetPalette.line))
+    }
+
+    private var hourLabels: some View {
+        ZStack(alignment: .topTrailing) {
+            ForEach(Self.h0..<Self.h1, id: \.self) { h in
+                Color.clear.frame(height: 1).offset(y: CGFloat(h - Self.h0) * px).id(h)
+                if h > Self.h0 {
+                    Text(RoutineRuleClock.hour(h * 60))
+                        .font(.system(size: 10).monospacedDigit())
+                        .foregroundStyle(MeetPalette.mut)
+                        .padding(.trailing, 6)
+                        .offset(y: CGFloat(h - Self.h0) * px - 6)
+                }
+            }
+        }
+        .frame(width: 40, height: CGFloat(Self.h1 - Self.h0) * px, alignment: .topTrailing)
+        .accessibilityHidden(true)
+    }
+
+    private func column(_ d: Date, narrow: Bool) -> some View {
+        let list = live.filter { runsOn($0.rule!, d) }
+        let bands = list.filter { $0.rule!.repeatKind == .interval }
+        let singles = list.filter { $0.rule!.repeatKind != .interval }.sorted { $0.rule!.at < $1.rule!.at }
+        // Side-by-side lanes for routines within 30 minutes of each other.
+        var lanes: [[Item]] = []
+        var laneOf: [String: Int] = [:]
+        for r in singles {
+            var k = 0
+            while k < lanes.count, lanes[k].contains(where: { abs($0.rule!.at - r.rule!.at) < 30 }) { k += 1 }
+            if k == lanes.count { lanes.append([]) }
+            lanes[k].append(r)
+            laneOf[r.id] = k
+        }
+        let laneCount = max(1, lanes.count) + (!bands.isEmpty && !narrow ? 1 : 0)
+        let height = CGFloat(Self.h1 - Self.h0) * px
+        let isToday = cal.isDate(d, inSameDayAs: today)
+        let nowMin = cal.component(.hour, from: Date()) * 60 + cal.component(.minute, from: Date())
+
+        return GeometryReader { geo in
+            let w = geo.size.width
+            ZStack(alignment: .topLeading) {
+                // Empty time: tap adds a routine at the half hour.
+                Color.clear
+                    .contentShape(Rectangle())
+                    .onTapGesture { loc in
+                        let raw = Int((loc.y / px * 60 / 30).rounded()) * 30 + Self.h0 * 60
+                        onNew(d, min(Self.h1 * 60 - 30, max(Self.h0 * 60, raw)))
+                    }
+                    .accessibilityElement()
+                    .accessibilityLabel(d.formatted(.dateTime.weekday(.wide).month(.wide).day()))
+                    .accessibilityHint("Adds a routine")
+                ForEach(0..<(Self.h1 - Self.h0), id: \.self) { h in
+                    Rectangle().fill(MeetPalette.line.opacity(0.6)).frame(height: 1)
+                        .offset(y: CGFloat(h) * px)
+                        .allowsHitTesting(false)
+                }
+                if isToday, nowMin > Self.h0 * 60, nowMin < Self.h1 * 60 {
+                    ZStack(alignment: .leading) {
+                        Rectangle().fill(Color("AccentPrimary")).frame(height: 2)
+                        Circle().fill(Color("AccentPrimary")).frame(width: 8, height: 8).offset(x: -4)
+                    }
+                    .offset(y: CGFloat(nowMin - Self.h0 * 60) / 60 * px - 1)
+                    .allowsHitTesting(false)
+                    .zIndex(20)
+                }
+                ForEach(bands) { r in
+                    band(r, width: narrow ? w * 0.34 - 2 : w / CGFloat(laneCount) - 4, narrow: narrow)
+                        .offset(x: w - (narrow ? w * 0.34 - 2 : w / CGFloat(laneCount) - 4) - 2,
+                                y: CGFloat(max(r.rule!.at, Self.h0 * 60) - Self.h0 * 60) / 60 * px)
+                        .zIndex(10)
+                }
+                ForEach(singles) { r in
+                    if r.rule!.at >= Self.h0 * 60, r.rule!.at < Self.h1 * 60 {
+                        let lane = CGFloat(laneOf[r.id] ?? 0)
+                        MeetCalendarChip(item: r, px: px, narrow: narrow,
+                                         width: narrow ? w - 4 : w / CGFloat(laneCount) - 6,
+                                         onEdit: onEdit, onMove: onMove)
+                            .offset(x: narrow ? 2 : lane * w / CGFloat(laneCount) + 3,
+                                    y: CGFloat(r.rule!.at - Self.h0 * 60) / 60 * px)
+                            .zIndex(10)
+                    }
+                }
+            }
+        }
+        .frame(height: height)
+        .frame(maxWidth: .infinity)
+        .overlay(alignment: .leading) { Rectangle().fill(MeetPalette.line).frame(width: 1) }
+    }
+
+    /// One band for a frequent routine: dashed border, a tick per run.
+    private func band(_ r: Item, width: CGFloat, narrow: Bool) -> some View {
+        let rule = r.rule!
+        let every = max(15, rule.every ?? 60)
+        let top = CGFloat(max(rule.at, Self.h0 * 60) - Self.h0 * 60) / 60 * px
+        let bottom = CGFloat(min((rule.until ?? rule.at) + 30, Self.h1 * 60) - Self.h0 * 60) / 60 * px
+        let h = max(px / 2, bottom - top)
+        let tick = CGFloat(every) / 60 * px
+        return Button { onEdit(r.id) } label: {
+            ZStack(alignment: .topLeading) {
+                RoundedRectangle(cornerRadius: 8).fill(r.color.opacity(0.10))
+                VStack(spacing: 0) {
+                    ForEach(0..<max(1, Int(h / max(tick, 1))), id: \.self) { _ in
+                        VStack(spacing: 0) {
+                            Spacer(minLength: 0)
+                            Rectangle().fill(r.color.opacity(0.4)).frame(height: 3)
+                        }
+                        .frame(height: tick)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                RoundedRectangle(cornerRadius: 8)
+                    .strokeBorder(r.color.opacity(0.55), style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                if !narrow {
+                    HStack(alignment: .top, spacing: 4) {
+                        r.avatar.frame(width: 14, height: 14).clipShape(RoundedRectangle(cornerRadius: 3))
+                        VStack(alignment: .leading, spacing: 0) {
+                            Text(r.title).lineLimit(2)
+                            Text("every \(RoutineRuleClock.every(every))").opacity(0.75)
+                        }
+                    }
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(meetTintText(r.color))
+                    .padding(.horizontal, 6)
+                    .padding(.top, 4)
+                }
+            }
+            .frame(width: max(8, width), height: h)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(r.title), every \(RoutineRuleClock.every(every)). Tap to edit.")
+    }
+
+    // MARK: Month
+
+    private var month: some View {
+        let cols = Array(repeating: GridItem(.flexible(), spacing: 4), count: 7)
+        return ScrollView {
+            LazyVGrid(columns: cols, spacing: 4) {
+                ForEach(["M", "T", "W", "T", "F", "S", "S"].indices, id: \.self) { i in
+                    Text(["M", "T", "W", "T", "F", "S", "S"][i])
+                        .font(.system(size: 11))
+                        .foregroundStyle(MeetPalette.mut)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 4)
+                        .accessibilityHidden(true)
+                }
+                ForEach(days, id: \.self) { d in monthCell(d) }
+            }
+        }
+    }
+
+    private func monthCell(_ d: Date) -> some View {
+        let list = dayItems(d)
+        let isToday = cal.isDate(d, inSameDayAs: today)
+        let inMonth = cal.component(.month, from: d) == cal.component(.month, from: anchor)
+        let label = d.formatted(.dateTime.weekday(.wide).month(.wide).day())
+        return Button {
+            if list.isEmpty { open(d) } else { listedDay = ListedDay(day: d) }
+        } label: {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("\(cal.component(.day, from: d))")
+                    .font(.system(size: 12, weight: isToday ? .semibold : .regular).monospacedDigit())
+                    .foregroundStyle(isToday ? Color("AccentPrimary") : MeetPalette.sub)
+                    .padding(.horizontal, 4)
+                if !list.isEmpty {
+                    HStack(spacing: 2) {
+                        ForEach(list.prefix(3)) { r in Circle().fill(r.color).frame(width: 8, height: 8) }
+                        if list.count > 3 {
+                            Text("+\(list.count - 3)").font(.system(size: 10).monospacedDigit()).foregroundStyle(MeetPalette.mut)
+                        }
+                    }
+                    .padding(.horizontal, 4)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(4)
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .topLeading)
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(isToday ? Color("AccentPrimary") : MeetPalette.line))
+            .opacity(inMonth ? 1 : 0.5)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(list.isEmpty
+            ? "\(label), nothing scheduled. Open the day"
+            : "\(label), \(list.count) item\(list.count == 1 ? "" : "s"). Show the list")
+    }
+
+    struct ListedDay: Identifiable {
+        let day: Date
+        var id: Date { day }
+    }
+}
+
+/// A timed block in Day / Week: name and time; drag it up or down to move it.
+private struct MeetCalendarChip: View {
+    let item: MeetRoutineCalendar.Item
+    let px: CGFloat
+    let narrow: Bool
+    let width: CGFloat
+    var onEdit: (String) -> Void
+    var onMove: (String, Int) -> Void
+
+    @State private var drag: CGFloat = 0
+    @State private var dragging = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        let at = item.rule?.at ?? 0
+        HStack(spacing: 4) {
+            if !narrow {
+                item.avatar.frame(width: 16, height: 16).clipShape(RoundedRectangle(cornerRadius: 4))
+            }
+            Text(item.title).font(.system(size: 11, weight: .semibold)).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
+            Text(RoutineRuleClock.short(at)).font(.system(size: 10.5).monospacedDigit()).opacity(0.75)
+        }
+        .foregroundStyle(meetTintText(item.color))
+        .padding(.leading, 4)
+        .padding(.trailing, 6)
+        .frame(width: max(8, width), height: max(22, px / 2 - 2))
+        .background(item.color.opacity(0.18), in: RoundedRectangle(cornerRadius: 6))
+        .overlay(alignment: .leading) {
+            UnevenRoundedRectangle(topLeadingRadius: 6, bottomLeadingRadius: 6).fill(item.color).frame(width: 3)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .scaleEffect(dragging ? 1.03 : 1)
+        .shadow(color: .black.opacity(dragging ? 0.35 : 0), radius: 12, y: 10)
+        .offset(y: drag)
+        .zIndex(dragging ? 30 : 0)
+        .contentShape(Rectangle())
+        .onTapGesture { onEdit(item.id) }
+        .gesture(
+            DragGesture(minimumDistance: 6)
+                .onChanged { v in
+                    dragging = true
+                    drag = v.translation.height
+                }
+                .onEnded { v in
+                    let delta = Int((v.translation.height / px * 60 / 15).rounded()) * 15
+                    withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) {
+                        dragging = false
+                        drag = 0
+                    }
+                    if delta != 0 {
+                        onMove(item.id, max(MeetRoutineCalendar.h0 * 60, min(MeetRoutineCalendar.h1 * 60 - 15, at + delta)))
+                    }
+                }
+        )
+        .accessibilityElement()
+        .accessibilityLabel("\(item.title), \(RoutineRule.time(at)). Tap to edit, drag to move.")
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction(named: "Move 15 minutes earlier") { onMove(item.id, max(MeetRoutineCalendar.h0 * 60, at - 15)) }
+        .accessibilityAction(named: "Move 15 minutes later") { onMove(item.id, min(MeetRoutineCalendar.h1 * 60 - 15, at + 15)) }
+    }
+}
+
+/// One day's routines (a month day tapped): rows open the editor, then "Open the day".
+private struct MeetDayList: View {
+    let day: Date
+    let items: [MeetRoutineCalendar.Item]
+    var onEdit: (String) -> Void
+    var onOpenDay: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(day.formatted(.dateTime.weekday(.wide).month(.wide).day()))
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(MeetPalette.ink)
+                .padding(.horizontal, 6)
+                .padding(.top, 16)
+            ScrollView {
+                VStack(spacing: 2) {
+                    ForEach(items) { r in
+                        Button { onEdit(r.id) } label: {
+                            HStack(spacing: 8) {
+                                Capsule().fill(r.color).frame(width: 4, height: 24)
+                                VStack(alignment: .leading, spacing: 1) {
+                                    Text(r.title).font(.system(size: 12.5, weight: .medium)).foregroundStyle(MeetPalette.ink).lineLimit(1)
+                                    Text(r.rule.map { $0.repeatKind == .interval ? "every \(RoutineRuleClock.every($0.every ?? 60))" : RoutineRuleClock.short($0.at) } ?? "All day")
+                                        .font(.system(size: 11)).foregroundStyle(MeetPalette.mut).lineLimit(1)
+                                }
+                                Spacer(minLength: 0)
+                                r.avatar.frame(width: 18, height: 18).clipShape(RoundedRectangle(cornerRadius: 4))
+                            }
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 6)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            Button(action: onOpenDay) {
+                Label("Open the day", systemImage: "calendar")
+                    .font(.system(size: 12))
+                    .foregroundStyle(MeetPalette.sub)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 4)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 12)
+        .padding(.bottom, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(MeetPalette.bg)
+    }
+}
+
+/// Text in a tinted chip: the colour pulled toward the ink (web tintText).
+private func meetTintText(_ color: Color) -> Color {
+    SignInPalette.blend(MeetPalette.ink, color, 0.62)
 }
 
 enum RoutineRuleClock {
+    /// "7a" (web fmtShort for whole hours in the gutter).
+    static func hour(_ m: Int) -> String {
+        let h = m / 60
+        let h12 = h % 12 == 0 ? 12 : h % 12
+        return "\(h12)\(h < 12 ? "a" : "p")"
+    }
+
+    /// "30 min", "1 h", "2 h" (web everyLabel).
+    static func every(_ m: Int) -> String {
+        m % 60 == 0 ? "\(m / 60) h" : "\(m) min"
+    }
+
     /// "7:30a" (web fmtShort).
     static func short(_ m: Int) -> String {
         let h = m / 60, mm = m % 60
