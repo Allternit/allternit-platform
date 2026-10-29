@@ -23,6 +23,7 @@ import log from 'electron-log';
 import { updateElectronApp } from 'update-electron-app';
 import fixPath from 'fix-path';
 import { installDesktopCompanion } from './desktop-companion.js';
+import type { SystemTab } from './system-summary.js';
 import { readBotCarryContext, type BotCarryContext } from './bot-carry-context.js';
 import { installAgentCursorWindow } from './agent-cursor-window.js';
 import { startPetHookServer, type PetHookServer } from './pet-hook-server.js';
@@ -852,6 +853,8 @@ const desktopCompanion = installDesktopCompanion({
   showMain: () => showOrReopenMainWindow(),
   openHud: (agentId, anchor) => openHudForCompanion(agentId, anchor),
   onPetLanded: (petBounds) => { void sendBotCarryContext(petBounds); },
+  onSystem: () => { void updateTrayMenu(); },
+  openSystem: (tab) => openSystemDrawer(tab),
   closeHud: () => hideHudWindow(),
   moveHudWithPet: (dx, dy) => {
     if (hudCompanionAgentId === undefined || !hudWindow || hudWindow.isDestroyed() || !hudWindow.isVisible()) return false;
@@ -2261,6 +2264,12 @@ function createTray(): void {
   updateTrayMenu();
 }
 
+/** Show the app and open its system drawer (on `tab`, or where it was). */
+function openSystemDrawer(tab?: SystemTab): void {
+  showOrReopenMainWindow();
+  mainWindow?.webContents.send('companion:system-open', tab ?? null);
+}
+
 async function updateTrayMenu(): Promise<void> {
   if (!tray) return;
 
@@ -2291,9 +2300,25 @@ async function updateTrayMenu(): Promise<void> {
     },
   };
 
+  // System drawer (Settings → Developer): what needs you and what broke,
+  // each opening the drawer on its tab. Only while that setting is on.
+  const system = desktopCompanion.system();
+  const systemSection: Electron.MenuItemConstructorOptions[] = system.enabled
+    ? [
+        { label: 'System', enabled: false },
+        ...system.items.map((item): Electron.MenuItemConstructorOptions => ({
+          label: `${item.tone === 'error' ? '🔴' : '🟠'} ${item.text}`,
+          click: () => openSystemDrawer(item.tab),
+        })),
+        { label: 'Open System Drawer', accelerator: 'CmdOrCtrl+J', registerAccelerator: false, click: () => openSystemDrawer() },
+        { type: 'separator' },
+      ]
+    : [];
+
   const template: Electron.MenuItemConstructorOptions[] = [
     { label: 'Allternit Desktop', enabled: false },
     { type: 'separator' },
+    ...systemSection,
     { label: `${statusIcon} ${status.running ? 'Running' : 'Stopped'}`, enabled: false },
     { label: `Mode: ${modeLabel}`, enabled: false },
     { type: 'separator' },

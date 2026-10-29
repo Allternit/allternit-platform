@@ -1,4 +1,5 @@
 import { app, BrowserWindow, ipcMain, Menu, screen, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron';
+import { NO_SYSTEM, bubbleText, dotTab, dotTone, sanitizeSummary, type SystemSummary, type SystemTab } from './system-summary.js';
 import Store from 'electron-store';
 import { watch } from 'node:fs';
 import path from 'node:path';
@@ -21,7 +22,7 @@ export interface CompanionActivity {
   moving: 'left' | 'right' | null;
 }
 
-export function installDesktopCompanion(options: { origin: () => string; main: () => BrowserWindow | null; preload: string; showMain?: () => void; openHud?: (agentId: string | null, anchor?: Electron.Rectangle) => void; closeHud?: () => void; moveHudWithPet?: (dx: number, dy: number) => boolean; onPetLanded?: (petBounds: Electron.Rectangle) => void }) {
+export function installDesktopCompanion(options: { origin: () => string; main: () => BrowserWindow | null; preload: string; showMain?: () => void; openHud?: (agentId: string | null, anchor?: Electron.Rectangle) => void; closeHud?: () => void; moveHudWithPet?: (dx: number, dy: number) => boolean; onPetLanded?: (petBounds: Electron.Rectangle) => void; onSystem?: (summary: SystemSummary) => void; openSystem?: (tab: SystemTab) => void }) {
   const settings = new Store<CompanionState>({ name: 'desktop-companion', defaults: { enabled: true, size: 80, agentId: null, panel: 'chat', roam: true } });
   let pet: BrowserWindow | null = null;
   let chat: BrowserWindow | null = null;
@@ -379,6 +380,32 @@ export function installDesktopCompanion(options: { origin: () => string; main: (
   handle('companion:close', () => { chat?.hide(); options.closeHud?.(); scheduleRoam(); });
   handle('companion:activity-get', () => activity);
   handle('companion:toggle-main', () => toggleMain());
+
+  // ─── System drawer (Settings → Developer): the dot on the pet ─────────────
+  // The app window reports the summary; the pet draws a dot from it. Hovering
+  // the dot shows the summary in the bubble, clicking the dot opens the drawer.
+  // Clicking the pet itself still opens quick chat.
+  let system: SystemSummary = NO_SYSTEM;
+  ipcMain.on('companion:system-report', (event, value: unknown) => {
+    const main = options.main();
+    if (!main || main.isDestroyed() || event.sender !== main.webContents || !owned(event)) return;
+    system = sanitizeSummary(value);
+    if (pet && !pet.isDestroyed()) pet.webContents.send('companion:system', system);
+    if (!dotTone(system)) hideBubble();
+    options.onSystem?.(system);
+  });
+  handle('companion:system-get', () => system);
+  ipcMain.on('companion:system-hover', (event, on: unknown) => {
+    if (!pet || event.sender !== pet.webContents || !owned(event)) return;
+    if (on === true && dotTone(system)) showBubble(bubbleText(system), 30_000);
+    else hideBubble();
+  });
+  handle('companion:system-open', (event) => {
+    if (!pet || event.sender !== pet.webContents || !dotTone(system)) return false;
+    hideBubble();
+    options.openSystem?.(dotTab(system));
+    return true;
+  });
   // Only the app window reports activity: it owns the pet-activity signal.
   ipcMain.on('companion:activity', (event, value: unknown) => {
     const main = options.main();
@@ -443,7 +470,7 @@ export function installDesktopCompanion(options: { origin: () => string; main: (
     screen.on('display-removed', repair); screen.on('display-metrics-changed', repair);
   });
   app.on('before-quit', () => { quitting = true; if (carry) { clearInterval(carry.timer); clearTimeout(carry.expires); carry = null; } stopRoam(true); clearTimeout(expiryTimer); hideBubble(); });
-  return { reportActivity, showBubble, activity: () => activity, start: () => { if (state().enabled) ensurePet(); }, show: () => update({ enabled: true }), settings: () => showPanel('settings'), reset, attachPetToHud, detachPetFromHud };
+  return { reportActivity, showBubble, system: () => system, activity: () => activity, start: () => { if (state().enabled) ensurePet(); }, show: () => update({ enabled: true }), settings: () => showPanel('settings'), reset, attachPetToHud, detachPetFromHud };
 }
 
 /** The bubble page: escaped text only, no scripts, follows the system theme. */
