@@ -402,21 +402,24 @@ final class MeetYourBotsModel: ObservableObject {
 
 // MARK: - View
 
-/// "Meet your bots" for the iPhone — the web card (allternit-ai
-/// `src/components/bots/meet/`) as a phone step flow: start → team → main
-/// bot (first run only) → routines → notifications → first job → done.
-/// Nothing is created until "Start the job"; the done step reports each
-/// item's real result, with Retry for what didn't finish.
+/// "Meet your bots" on the phone, laid out like the web card stacked
+/// full-bleed (MeetYourBotsCard `is-phone`): the step's visual on top, step
+/// dots with Back / Skip, the step's panel, and a pinned footer.
 struct MeetYourBotsView: View {
     /// The bot whose chat should open (thread #1's bot, or the main bot), or nil.
     let onFinish: (_ openBotId: String?) -> Void
+    /// The done step's button ("Open Bot Mode"; first-run setup says what comes next).
+    var doneLabel: String? = nil
 
     @StateObject private var model = MeetYourBotsModel()
     @ObservedObject private var hub = AgentHubStore.shared
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var notificationsOn = false
     @State private var askingNotifications = false
     @State private var leadSheet: LeadSheet?
     @State private var editing: RoutineEditTarget?
+    @State private var discOpen = false
+    @State private var connectionsOpen = false
 
     /// The "who leads" setup paths beyond the looks (useBotSetup modes vendor / new / import).
     private enum LeadSheet: String, Identifiable {
@@ -434,33 +437,35 @@ struct MeetYourBotsView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
-            ScrollViewReader { proxy in
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 16) {
-                        Color.clear.frame(height: 0).id("top")
-                        switch model.step {
-                        case .start: startStep
-                        case .team: teamStep
-                        case .main: mainStep
-                        case .routines: routinesStep
-                        case .notifications: notificationsStep
-                        case .job: jobStep
-                        case .done: doneStep
+        GeometryReader { geo in
+            VStack(spacing: 0) {
+                visual
+                    .frame(height: visualHeight(geo.size.height + geo.safeAreaInsets.top + geo.safeAreaInsets.bottom))
+                    .frame(maxWidth: .infinity)
+                    .clipped()
+                    .animation(reduceMotion ? nil : .timingCurve(0.16, 1, 0.3, 1, duration: 0.4), value: model.stepIndex)
+                header
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 0) {
+                            Color.clear.frame(height: 0).id("top")
+                            stepBody
+                                .id(model.stepIndex)
+                                .transition(reduceMotion ? .opacity : .asymmetric(
+                                    insertion: .opacity.combined(with: .offset(y: 10)),
+                                    removal: .opacity))
                         }
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 12)
                     }
-                    .padding(.horizontal, 20)
-                    .padding(.top, 8)
-                    .padding(.bottom, 24)
+                    .scrollDismissesKeyboard(.interactively)
+                    .onChange(of: model.stepIndex) { _, _ in proxy.scrollTo("top", anchor: .top) }
                 }
-                .scrollDismissesKeyboard(.interactively)
-                .onChange(of: model.stepIndex) { _, _ in proxy.scrollTo("top", anchor: .top) }
+                footer
             }
-            footer
         }
-        .background(Color("BgPrimary").ignoresSafeArea())
-        .animation(.easeOut(duration: 0.22), value: model.stepIndex)
+        .background(MeetPalette.bg.ignoresSafeArea())
+        .animation(reduceMotion ? .easeOut(duration: 0.15) : .timingCurve(0.16, 1, 0.3, 1, duration: 0.3), value: model.stepIndex)
         .sheet(item: $leadSheet) { which in
             switch which {
             case .vendor:
@@ -488,6 +493,12 @@ struct MeetYourBotsView: View {
                 onDelete: target.draftId.map { id in { model.removeRoutine(id); editing = nil } },
                 onCancel: { editing = nil })
         }
+        .sheet(isPresented: $connectionsOpen) {
+            NavigationStack {
+                SettingsWebPage(page: .subscriptions, intro: "How your bots reach the apps, bots and coding tools you already use. Your Allternit plan is under Billing.")
+                    .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { connectionsOpen = false } } }
+            }
+        }
         .task {
             hub.fetchAgentsIfNeeded()
             await model.loadRoster()
@@ -496,47 +507,132 @@ struct MeetYourBotsView: View {
         }
     }
 
+    // MARK: Visual
+
+    /// Web `visualH` for a stacked card: 45% of the card, capped per step.
+    private func visualHeight(_ h: CGFloat) -> CGFloat {
+        let cap: CGFloat
+        switch model.step {
+        case .start: cap = 340
+        case .routines: cap = 380
+        case .main: cap = 260
+        default: cap = 250
+        }
+        return min(h * 0.45, cap)
+    }
+
+    @ViewBuilder
+    private var visual: some View {
+        ZStack {
+            switch model.step {
+            case .start:
+                MeetNetworkView()
+            case .team:
+                let n = model.members.count
+                grid(label: n > 0 ? "\(n) bot\(n > 1 ? "s" : "") · drag to arrange" : "Drag bots here, or tap a card",
+                     locked: model.existingTemplateIds)
+            case .main:
+                MeetMainStage(field: leaderField, tile: AnyView(leaderTile(size: 150, live: true)), label: "\(model.leader) idle")
+            case .routines:
+                MeetDayCalendar(
+                    items: model.routines.map { r in
+                        MeetDayCalendar.Item(id: r.id, title: r.title, rule: r.rule, enabled: r.enabled,
+                                             color: botColor(r.botKey), avatar: AnyView(tile(forKey: r.botKey, size: 16)))
+                    },
+                    onNew: { day, minute in addRoutine(on: day, at: minute) },
+                    onEdit: { id in if let r = model.routines.first(where: { $0.id == id }) { edit(r) } })
+            case .notifications:
+                ZStack {
+                    MeetPalette.soft
+                    MeetBlockPattern()
+                    Image(systemName: notificationsOn ? "bell.badge.fill" : "bell.badge")
+                        .font(.system(size: 44, weight: .medium))
+                        .foregroundStyle(MeetPalette.ink)
+                        .frame(width: 96, height: 96)
+                        .background(MeetPalette.bg, in: RoundedRectangle(cornerRadius: 24))
+                        .overlay(RoundedRectangle(cornerRadius: 24).stroke(MeetPalette.line))
+                        .accessibilityHidden(true)
+                }
+            case .job:
+                let job = model.jobs.first { $0.key == model.jobKey }
+                let handoff = job.map { $0.key != meetMainKey } ?? false
+                MeetFirstJobVisual(
+                    main: AnyView(leaderTile(size: 56, live: true)),
+                    other: handoff ? AnyView(tile(forKey: job!.key, size: 56)) : nil,
+                    caption: job == nil ? "Pick a first job" : handoff ? "\(model.leader.capitalizedFirst) hands it to \(job!.name)" : "\(model.leader.capitalizedFirst) does this one",
+                    expect: job?.expect)
+            case .done:
+                let n = model.members.count
+                grid(label: "\(model.leader.capitalizedFirst) leads \(n) bot\(n == 1 ? "" : "s")",
+                     locked: model.existingTemplateIds.union(model.members.filter { model.isMade($0) }))
+            }
+        }
+        .id(model.step)
+        .transition(reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 1.02)))
+    }
+
+    private func grid(label: String, locked: Set<String>) -> some View {
+        MeetTeamGrid(
+            members: model.members, catalog: model.catalog,
+            center: hasLeader ? AnyView(leaderTile(size: 68, live: true)) : nil,
+            centerName: model.leader, size: 52, label: label, lockedIds: locked,
+            onRemove: { model.toggle($0) })
+    }
+
+    /// The main bot has been chosen (the grid shows it instead of the dashed slot).
+    private var hasLeader: Bool {
+        model.entry == .botmode || model.steps.firstIndex(of: .main).map { model.stepIndex > $0 } ?? true
+    }
+
     // MARK: Chrome
 
     private var header: some View {
-        HStack(spacing: 12) {
-            HStack(spacing: 6) {
+        HStack(spacing: 8) {
+            HStack(spacing: 8) {
                 ForEach(Array(model.steps.enumerated()), id: \.offset) { n, _ in
                     Capsule()
-                        .fill(n <= model.stepIndex ? Color("AccentPrimary") : Color("TextSecondary").opacity(0.25))
-                        .frame(width: n == model.stepIndex ? 22 : 8, height: 6)
+                        .fill(n <= model.stepIndex ? MeetPalette.coral : MeetPalette.line)
+                        .frame(width: n == model.stepIndex ? 18 : 6, height: 6)
                 }
             }
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("Step \(model.stepIndex + 1) of \(model.steps.count)")
             Spacer()
-            if model.stepIndex > 0 && model.step != .done {
-                Button("Back") { model.back() }
-                    .font(.subheadline.weight(.medium))
-                    .foregroundColor(Color("TextSecondary"))
-            }
-            if model.step != .start && model.step != .done {
-                Button("Skip") { onFinish(nil) }
-                    .font(.subheadline.weight(.medium))
-                    .foregroundColor(Color("TextSecondary"))
+            HStack(spacing: 12) {
+                if model.stepIndex > 0 && model.step != .done {
+                    linkButton("Back") { model.back() }
+                }
+                if model.step != .start && model.step != .done {
+                    linkButton("Skip") { onFinish(nil) }
+                }
             }
         }
         .padding(.horizontal, 20)
-        .padding(.vertical, 14)
+        .padding(.top, 16)
+        .frame(minHeight: 40)
+    }
+
+    private func linkButton(_ title: String, action: @escaping () -> Void) -> some View {
+        Button(title, action: action)
+            .font(.system(size: 13))
+            .foregroundStyle(MeetPalette.sub)
+            .padding(.horizontal, 4)
+            .frame(minHeight: 28)
+            .contentShape(Rectangle().inset(by: -8))
     }
 
     @ViewBuilder
     private var footer: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: 4) {
             switch model.step {
             case .start:
                 primaryButton(model.entry == .setup ? "Build my team" : "Let’s go") { model.next() }
-                secondaryButton(model.entry == .setup ? "Skip for now" : "I’ll look around") { onFinish(nil) }
+                ghostButton(model.entry == .setup ? "Skip for now" : "I’ll look around") { onFinish(nil) }
             case .team:
                 let n = model.members.count
                 primaryButton(n == 0 ? "Add at least one bot" : "Continue with \(n) bot\(n > 1 ? "s" : "")", disabled: n == 0) { model.next() }
             case .main:
-                primaryButton("Continue") { model.next() }
+                primaryButton("Make \(model.leader) my main bot") { model.next() }
             case .routines:
                 primaryButton("Looks good") { model.next() }
             case .notifications:
@@ -549,69 +645,75 @@ struct MeetYourBotsView: View {
                         model.next()
                     }
                 }
-                if !notificationsOn { secondaryButton("Not now") { model.next() } }
+                if !notificationsOn { ghostButton("Not now") { model.next() } }
             case .job:
                 primaryButton("Start the job", disabled: !model.canStart) { model.startJob() }
             case .done:
-                primaryButton(model.running ? "Setting up…" : "Open my bots", disabled: model.running) {
+                primaryButton(model.running ? "Setting up…" : doneLabel ?? "Open Bot Mode", disabled: model.running) {
                     onFinish(model.openBotId)
                 }
-                if model.failed { secondaryButton("Retry what didn’t finish") { model.retry() } }
+                if model.failed { ghostButton("Retry what didn’t finish") { model.retry() } }
             }
         }
         .padding(.horizontal, 20)
         .padding(.top, 8)
         .padding(.bottom, 16)
+        .overlay(alignment: .top) { MeetPalette.fill.frame(height: 1) }
     }
 
     private func primaryButton(_ title: String, disabled: Bool = false, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(title)
-                .font(.headline)
-                .foregroundColor(Color("OnAccent"))
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 15)
-                .background(Color("AccentPrimary").opacity(disabled ? 0.45 : 1))
-                .clipShape(RoundedRectangle(cornerRadius: Theme.radiusMD, style: .continuous))
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(MeetPalette.bg)
+                .frame(maxWidth: .infinity, minHeight: 48)
+                .background(MeetPalette.ink, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .opacity(disabled ? 0.35 : 1)
         }
+        .buttonStyle(MeetPressStyle())
         .disabled(disabled)
     }
 
-    private func secondaryButton(_ title: String, action: @escaping () -> Void) -> some View {
-        Button(title, action: action)
-            .font(.subheadline)
-            .foregroundColor(Color("TextSecondary"))
+    private func ghostButton(_ title: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(MeetPalette.sub)
+                .frame(maxWidth: .infinity, minHeight: 48)
+        }
+        .buttonStyle(MeetPressStyle())
     }
 
     // MARK: Pieces
 
-    private func title(_ text: String) -> some View {
+    private func h2(_ text: String) -> some View {
         Text(text)
-            .font(.system(size: 26, weight: .bold))
-            .foregroundColor(Color("TextPrimary"))
+            .font(.system(size: 24, weight: .semibold))
+            .tracking(-0.36)
+            .foregroundStyle(MeetPalette.ink)
             .fixedSize(horizontal: false, vertical: true)
+            .accessibilityAddTraits(.isHeader)
     }
 
     private func sub(_ text: String) -> some View {
         Text(text)
-            .font(.subheadline)
-            .foregroundColor(Color("TextSecondary"))
+            .font(.system(size: 14))
+            .lineSpacing(2.5)
+            .foregroundStyle(MeetPalette.sub)
             .fixedSize(horizontal: false, vertical: true)
+            .padding(.top, 4)
+            .padding(.bottom, 12)
     }
 
-    private func card<Content: View>(selected: Bool = false, @ViewBuilder _ content: () -> Content) -> some View {
-        content()
-            .padding(12)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color("BgSecondary"))
-            .clipShape(RoundedRectangle(cornerRadius: Theme.radiusMD, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: Theme.radiusMD, style: .continuous)
-                    .stroke(selected ? Color("AccentPrimary") : Color.clear, lineWidth: 1.5)
-            )
+    private func monoLabel(_ text: String) -> some View {
+        Text(text.uppercased())
+            .font(MeetPalette.mono(11.5, .semibold))
+            .tracking(0.7)
+            .foregroundStyle(MeetPalette.mut)
+            .padding(.bottom, 8)
     }
 
-    private func templateTile(_ t: MeetBotTemplate, size: CGFloat = 40) -> some View {
+    private func templateTile(_ t: MeetBotTemplate, size: CGFloat = 44) -> some View {
         MeetTemplateTile(color: t.color, spriteURL: t.spriteURL, size: size, label: t.id)
     }
 
@@ -625,23 +727,33 @@ struct MeetYourBotsView: View {
     }
 
     @ViewBuilder
-    private func leaderTile(size: CGFloat = 40) -> some View {
+    private func leaderTile(size: CGFloat = 40, live: Bool = false) -> some View {
         if model.entry == .botmode, let main = model.mainBot {
             botTile(main, size: size)
         } else {
             switch model.mainChoice {
             case .primary:
-                MeetPrimaryTile(size: size)
+                MeetLookTile(id: "a", size: size, live: live)
             case .look(let id, _):
-                if let look = model.catalog.looks.first(where: { $0.id == id }) {
-                    MeetTemplateTile(color: look.field, spriteURL: look.spriteURL, size: size, label: look.id)
-                } else {
-                    MeetPrimaryTile(size: size)
-                }
+                MeetLookTile(id: id, size: size, live: live)
             case .bot(let id):
-                if let bot = model.roster.first(where: { $0.id == id }) { botTile(bot, size: size) } else { MeetPrimaryTile(size: size) }
+                if let bot = model.roster.first(where: { $0.id == id }) { botTile(bot, size: size) } else { MeetLookTile(id: "a", size: size) }
             }
         }
+    }
+
+    /// The main bot's field colour on the stage.
+    private var leaderField: Color {
+        switch model.mainChoice {
+        case .primary: return Color(hex: "#141413")
+        case .look(let id, _): return Color(hex: model.catalog.looks.first { $0.id == id }?.field ?? "#141413")
+        case .bot: return MeetPalette.soft
+        }
+    }
+
+    private func botColor(_ key: String) -> Color {
+        if key == meetMainKey { return model.mainChoice == .primary ? MeetPalette.ink : leaderField }
+        return model.catalog.template(key).map { Color(hex: $0.color) } ?? MeetPalette.ink
     }
 
     @ViewBuilder
@@ -656,180 +768,254 @@ struct MeetYourBotsView: View {
     @ViewBuilder
     private var offlineCard: some View {
         if case .failed(let why) = model.rosterState {
-            card {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Your bots live on your computer")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundColor(Color("TextPrimary"))
-                    Text("We couldn’t reach it right now (\(why)). You can still pick your team; it’s made when your computer is online.")
-                        .font(.caption)
-                        .foregroundColor(Color("TextSecondary"))
-                    Button("Try again") { Task { await model.loadRoster() } }
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundColor(Color("AccentPrimary"))
-                }
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Your bots live on your computer")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(MeetPalette.ink)
+                Text("We couldn’t reach it right now (\(why)). You can still pick your team; it’s made when your computer is online.")
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(MeetPalette.sub)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button("Try again") { Task { await model.loadRoster() } }
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(MeetPalette.ink)
             }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(MeetPalette.fill, in: RoundedRectangle(cornerRadius: 12))
+            .padding(.bottom, 12)
         }
     }
 
     // MARK: Steps
 
+    @ViewBuilder
+    private var stepBody: some View {
+        switch model.step {
+        case .start: startStep
+        case .team: teamStep
+        case .main: mainStep
+        case .routines: routinesStep
+        case .notifications: notificationsStep
+        case .job: jobStep
+        case .done: doneStep
+        }
+    }
+
     private var startStep: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 0) {
             Text(model.entry == .setup ? "BOTS" : "BOT MODE · \(model.leader.uppercased())")
-                .font(.caption.weight(.semibold).monospaced())
-                .foregroundColor(Color("TextSecondary"))
-            Text(model.entry == .setup ? "Your bots hand work to each other." : "Welcome to your team.")
-                .font(.system(size: 30, weight: .bold))
-                .foregroundColor(Color("TextPrimary"))
+                .font(MeetPalette.mono(12, .semibold))
+                .tracking(2.2)
+                .foregroundStyle(MeetPalette.coral)
+                .padding(.top, 8)
+            Text(model.entry == .setup ? "Your bots hand work to each other." : "Welcome to \(model.leader)’s team.")
+                .font(.system(size: 30, weight: .semibold))
+                .tracking(-0.6)
+                .lineSpacing(-2)
+                .foregroundStyle(MeetPalette.ink)
                 .fixedSize(horizontal: false, vertical: true)
-            sub(model.entry == .setup
-                ? "Pick ready-made bots, choose who leads them, and see when they’ll work. You approve what goes out."
-                : "\(model.leader.capitalizedFirst) leads your bots. Add a few, see their week, and give \(model.leader) a first job.")
+                .padding(.top, 12)
+                .accessibilityAddTraits(.isHeader)
+            Text(model.entry == .setup
+                 ? "Pick ready-made bots, choose who leads them, and see when they’ll work. You approve what goes out."
+                 : "\(model.leader.capitalizedFirst) leads your bots. Add a few, see their week, and give \(model.leader) a first job.")
+                .font(.system(size: 15))
+                .lineSpacing(3.5)
+                .foregroundStyle(MeetPalette.sub)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 12)
             if model.rosterState == .loading {
                 HStack(spacing: 8) {
-                    ProgressView()
-                    Text("Loading your bots…").font(.subheadline).foregroundColor(Color("TextSecondary"))
+                    ProgressView().controlSize(.small)
+                    Text("Loading your bots…").font(.system(size: 13)).foregroundStyle(MeetPalette.sub)
                 }
+                .padding(.top, 16)
             }
-            offlineCard
+            offlineCard.padding(.top, 16)
         }
     }
 
     private var teamStep: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            title(model.entry == .setup ? "Who’s on your team?" : "Add bots to \(model.leader)’s team")
-            sub("Tap a bot to add it. Each one is a ready-made template you can change later.")
+        VStack(alignment: .leading, spacing: 0) {
+            h2(model.entry == .setup ? "Who’s on your team?" : "Add bots to \(model.leader)’s team")
+            sub("Drag a bot onto your team or tap to add. Each one is a ready-made template you can change later.")
             offlineCard
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    chip("All", value: "all", count: model.catalog.templates.count)
+                HStack(spacing: 6) {
+                    chip("All \(model.catalog.templates.count)", value: "all")
                     ForEach(model.catalog.categories, id: \.self) { c in
-                        chip(MeetBotCatalog.categoryLabel(c), value: c, count: nil)
+                        chip(MeetBotCatalog.categoryLabel(c), value: c)
                     }
                 }
+                .padding(.bottom, 8)
             }
-            ForEach(model.shownTemplates) { t in
-                let on = model.isOnTeam(t.id)
-                let have = model.existingTemplateIds.contains(t.id)
-                Button { model.toggle(t.id) } label: {
-                    card(selected: on) {
-                        HStack(spacing: 12) {
-                            templateTile(t)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(t.name).font(.subheadline.weight(.semibold)).foregroundColor(Color("TextPrimary"))
-                                Text(have ? "Already on your account" : t.tagline)
-                                    .font(.caption).foregroundColor(Color("TextSecondary")).lineLimit(2)
-                                    .multilineTextAlignment(.leading)
-                            }
-                            Spacer(minLength: 8)
-                            Image(systemName: on ? "checkmark.circle.fill" : "plus.circle")
-                                .font(.system(size: 20))
-                                .foregroundColor(on ? Color("AccentPrimary") : Color("TextSecondary"))
-                        }
-                    }
+            .accessibilityLabel("Filter bots by kind")
+            VStack(spacing: 8) {
+                ForEach(model.shownTemplates) { t in
+                    templateCard(t, on: model.isOnTeam(t.id), have: model.existingTemplateIds.contains(t.id)) { model.toggle(t.id) }
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("\(t.name), \(t.tagline)")
-                .accessibilityValue(on ? "On your team" : "Not on your team")
-                .accessibilityHint(on ? "Removes it from the team" : "Adds it to the team")
             }
         }
     }
 
-    private func chip(_ label: String, value: String, count: Int?) -> some View {
+    private func templateCard(_ t: MeetBotTemplate, on: Bool, have: Bool = false, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                templateTile(t)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(t.name).font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(on ? MeetPalette.bg : MeetPalette.ink)
+                    Text(have ? "Already on your account" : t.tagline)
+                        .font(.system(size: 12))
+                        .lineSpacing(1.5)
+                        .foregroundStyle(on ? MeetPalette.bg.opacity(0.72) : MeetPalette.mut)
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 8)
+                Image(systemName: on ? "checkmark" : "plus")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(on ? .white : MeetPalette.sub)
+                    .frame(width: 26, height: 26)
+                    .background(on ? MeetPalette.coral : MeetPalette.bg, in: Circle())
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(on ? MeetPalette.ink : MeetPalette.fill, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .animation(.easeOut(duration: 0.18), value: on)
+        }
+        .buttonStyle(MeetPressStyle())
+        .accessibilityLabel("\(t.name): \(t.tagline)")
+        .accessibilityValue(on ? "On your team" : "Not on your team")
+        .accessibilityAddTraits(on ? .isSelected : [])
+    }
+
+    private func chip(_ label: String, value: String) -> some View {
         let on = model.category == value
         return Button { model.category = value } label: {
-            Text(count.map { "\(label) \($0)" } ?? label)
-                .font(.footnote.weight(.semibold))
-                .foregroundColor(on ? .white : Color("TextPrimary"))
+            Text(label)
+                .font(.system(size: 12.5))
+                .foregroundStyle(on ? MeetPalette.bg : MeetPalette.sub)
                 .padding(.horizontal, 12)
-                .padding(.vertical, 7)
-                .background(on ? Color("AccentPrimary") : Color("BgSecondary"))
-                .clipShape(Capsule())
+                .frame(minHeight: 34)
+                .background(on ? MeetPalette.ink : MeetPalette.fill, in: Capsule())
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(on ? .isSelected : [])
     }
 
     private var mainStep: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            title("Who leads your team?")
+        VStack(alignment: .leading, spacing: 0) {
+            h2("Who leads your team?")
             sub("Your main bot talks to you and hands each job to the bot that owns it.")
-            card {
-                HStack(alignment: .top, spacing: 10) {
-                    leaderTile(size: 28)
-                    Text(mainBubble)
-                        .font(.subheadline)
-                        .foregroundColor(Color("TextPrimary"))
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+            HStack(alignment: .top, spacing: 8) {
+                leaderTile(size: 28)
+                Text(mainBubble)
+                    .font(.system(size: 13))
+                    .lineSpacing(2)
+                    .foregroundStyle(MeetPalette.ink)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(MeetPalette.fill, in: UnevenRoundedRectangle(topLeadingRadius: 16, bottomLeadingRadius: 6, bottomTrailingRadius: 16, topTrailingRadius: 16))
+                    .accessibilityAddTraits(.updatesFrequently)
             }
-            Text("ALLTERNIT").font(.caption2.weight(.semibold).monospaced()).foregroundColor(Color("TextSecondary"))
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 72), spacing: 10)], spacing: 12) {
+            .padding(.bottom, 12)
+            .id(mainBubble)
+            .transition(.opacity.combined(with: .offset(y: 6)))
+
+            monoLabel("Allternit")
+            picks {
                 pick(label: "A://", selected: model.mainChoice == .primary) {
                     model.mainChoice = .primary
-                } tile: { MeetPrimaryTile(size: 52) }
+                } tile: { MeetLookTile(id: "a", size: 52, live: model.mainChoice == .primary) }
                 ForEach(model.catalog.looks) { look in
                     pick(label: look.label, selected: isLook(look.id)) {
                         if model.lookName.isEmpty || model.catalog.looks.contains(where: { $0.label == model.lookName }) {
                             model.lookName = look.label
                         }
                         model.mainChoice = .look(id: look.id, name: model.lookName)
-                    } tile: { MeetTemplateTile(color: look.field, spriteURL: look.spriteURL, size: 52, live: isLook(look.id), label: look.id) }
+                    } tile: { MeetLookTile(id: look.id, size: 52, live: isLook(look.id)) }
                 }
             }
+            .padding(.bottom, 12)
+
+            monoLabel("Bots you already use")
+            picks {
+                ForEach(model.roster, id: \.id) { bot in
+                    pick(label: bot.displayName, selected: model.mainChoice == .bot(id: bot.id)) {
+                        model.mainChoice = .bot(id: bot.id)
+                    } tile: { botTile(bot, size: 52) }
+                }
+                ForEach(MeetLookTile.vendors, id: \.id) { v in
+                    pick(label: v.label, selected: false) { leadSheet = .vendor } tile: { MeetLookTile(id: v.id, size: 52) }
+                        .disabled(model.rosterState != .loaded)
+                }
+                pick(label: "New bot", selected: false) { leadSheet = .new } tile: { actionTile("plus") }
+                    .disabled(model.rosterState != .loaded)
+                pick(label: "Import", selected: false) { leadSheet = .importBot } tile: { actionTile("square.and.arrow.down") }
+                    .disabled(model.rosterState != .loaded)
+            }
+            .padding(.bottom, 12)
+
             if case .look = model.mainChoice {
-                TextField("Name", text: $model.lookName)
-                    .textInputAutocapitalization(.words)
-                    .padding(12)
-                    .background(Color("BgSecondary"))
-                    .clipShape(RoundedRectangle(cornerRadius: Theme.radiusMD, style: .continuous))
-                    .accessibilityLabel("Main bot name")
-            }
-            if !model.roster.isEmpty {
-                Text("BOTS YOU ALREADY HAVE").font(.caption2.weight(.semibold).monospaced()).foregroundColor(Color("TextSecondary"))
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 72), spacing: 10)], spacing: 12) {
-                    ForEach(model.roster, id: \.id) { bot in
-                        pick(label: bot.displayName, selected: model.mainChoice == .bot(id: bot.id)) {
-                            model.mainChoice = .bot(id: bot.id)
-                        } tile: { botTile(bot, size: 52) }
-                    }
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Name").font(.system(size: 12.5, weight: .semibold)).foregroundStyle(MeetPalette.ink)
+                    TextField("Name", text: $model.lookName)
+                        .textInputAutocapitalization(.words)
+                        .font(.system(size: 14))
+                        .padding(.horizontal, 12)
+                        .frame(height: 44)
+                        .background(MeetPalette.bg, in: RoundedRectangle(cornerRadius: 10))
+                        .overlay(RoundedRectangle(cornerRadius: 10).stroke(MeetPalette.line))
+                        .accessibilityLabel("Main bot name")
+                    Text("Shown in the Bots rail and in every thread.").font(.system(size: 12)).foregroundStyle(MeetPalette.mut)
                 }
+                .padding(.bottom, 12)
             }
-            Text("OR BRING ONE").font(.caption2.weight(.semibold).monospaced()).foregroundColor(Color("TextSecondary"))
-            leadPath("Connect a vendor bot", detail: "ChatGPT, Claude, Gemini, Grok and more — your own subscription, as a bot.",
-                     icon: "link") { leadSheet = .vendor }
-            leadPath("Make a new bot", detail: "Give it a job, a name and a look.", icon: "plus.circle") { leadSheet = .new }
-            leadPath("Import a bot", detail: "Bring in a team file or bot package you already have.", icon: "square.and.arrow.down") { leadSheet = .importBot }
+            DisclosureGroup(isExpanded: $discOpen) {
+                VStack(alignment: .leading, spacing: 10) {
+                    disclosureRow("checkmark.circle", "Answers you directly, or hands a job to the bot that owns it and tells you who has it.")
+                    disclosureRow("eye", "Sees the status of your bots’ threads (titles and progress), not their conversations. Incognito threads stay private.")
+                    disclosureRow("lock", "Never sends, posts, pays, signs or deploys anything without your approval.")
+                    disclosureRow("shuffle", "You can change your main bot any time from a bot’s ⋯ menu.")
+                }
+                .padding(.top, 10)
+            } label: {
+                Text("What your main bot can and can’t do")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(MeetPalette.ink)
+            }
+            .tint(MeetPalette.sub)
             if let note = model.setupNote {
-                Text(note).font(.caption).foregroundColor(Color("TextSecondary")).fixedSize(horizontal: false, vertical: true)
+                Text(note).font(.system(size: 12.5)).foregroundStyle(MeetPalette.sub)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 10)
             }
-            offlineCard
+            offlineCard.padding(.top, 12)
         }
     }
 
-    private func leadPath(_ title: String, detail: String, icon: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            card {
-                HStack(spacing: 12) {
-                    Image(systemName: icon)
-                        .font(.system(size: 17, weight: .medium))
-                        .foregroundColor(Color("AccentPrimary"))
-                        .frame(width: 36, height: 36)
-                        .background(Color("AccentPrimary").opacity(0.12))
-                        .clipShape(RoundedRectangle(cornerRadius: Theme.radiusSM, style: .continuous))
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(title).font(.subheadline.weight(.semibold)).foregroundColor(Color("TextPrimary"))
-                        Text(detail).font(.caption).foregroundColor(Color("TextSecondary")).multilineTextAlignment(.leading)
-                    }
-                    Spacer(minLength: 8)
-                    Image(systemName: "chevron.right").font(.caption).foregroundColor(Color("TextSecondary"))
-                }
-            }
+    private func picks<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 64, maximum: 76), spacing: 8, alignment: .top)], alignment: .leading, spacing: 8) {
+            content()
         }
-        .buttonStyle(.plain)
-        .disabled(model.rosterState != .loaded)
+    }
+
+    private func actionTile(_ icon: String) -> some View {
+        Image(systemName: icon)
+            .font(.system(size: 19))
+            .foregroundStyle(MeetPalette.mut)
+            .frame(width: 52, height: 52)
+            .overlay(RoundedRectangle(cornerRadius: 14).stroke(MeetPalette.lineDash, style: StrokeStyle(lineWidth: 2, dash: [5, 4])))
+    }
+
+    private func disclosureRow(_ icon: String, _ text: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: icon).font(.system(size: 14)).foregroundStyle(MeetPalette.ink).frame(width: 18)
+            Text(text).font(.system(size: 13)).foregroundStyle(MeetPalette.sub).fixedSize(horizontal: false, vertical: true)
+        }
     }
 
     private func isCustom(_ id: String?) -> Bool {
@@ -842,10 +1028,10 @@ struct MeetYourBotsView: View {
                                     botKey: r.botKey)
     }
 
-    /// RoutinesStep "+ Add a routine": the next whole hour, at most 9 PM, weekdays or today.
-    private func addRoutine() {
-        let at = min(21 * 60, (Calendar.current.component(.hour, from: Date()) + 1) * 60)
-        let dow = Calendar.current.component(.weekday, from: Date()) - 1
+    /// A new routine at `minute` on `day`: weekdays on a weekday, that weekday otherwise (web ruleForSlot).
+    private func addRoutine(on day: Date = Date(), at minute: Int? = nil) {
+        let at = minute ?? min(21 * 60, (Calendar.current.component(.hour, from: Date()) + 1) * 60)
+        let dow = Calendar.current.component(.weekday, from: day) - 1
         let rule = (1...5).contains(dow)
             ? RoutineRule(repeatKind: .weekdays, at: at, days: RoutineRule.weekdays)
             : RoutineRule(repeatKind: .weekly, at: at, days: [dow])
@@ -872,113 +1058,115 @@ struct MeetYourBotsView: View {
 
     private func pick<Tile: View>(label: String, selected: Bool, action: @escaping () -> Void, @ViewBuilder tile: () -> Tile) -> some View {
         Button(action: action) {
-            VStack(spacing: 6) {
+            VStack(spacing: 4) {
                 tile()
                     .overlay(
-                        RoundedRectangle(cornerRadius: 15, style: .continuous)
-                            .stroke(selected ? Color("AccentPrimary") : Color.clear, lineWidth: 2)
-                            .padding(-3)
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .stroke(MeetPalette.ink, lineWidth: selected ? 2 : 0)
+                            .padding(-4)
                     )
                 Text(label)
-                    .font(.caption)
-                    .foregroundColor(Color("TextPrimary"))
-                    .lineLimit(1)
+                    .font(.system(size: 11.5, weight: .medium))
+                    .foregroundStyle(MeetPalette.ink)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
             }
+            .padding(4)
+            .opacity(selected ? 1 : 0.78)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(MeetPressStyle(scale: 0.94))
         .accessibilityLabel(label)
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
     private var routinesStep: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            title("When your bots work")
-            sub("Your bots come with these routines. Turn off any you don’t want, or tap one to change its time.")
-            if model.routines.isEmpty {
-                card {
-                    Text("None of your bots run on a schedule yet.")
-                        .font(.subheadline)
-                        .foregroundColor(Color("TextSecondary"))
-                }
-            }
-            ForEach(model.routines) { r in
-                card {
-                    HStack(spacing: 12) {
+        VStack(alignment: .leading, spacing: 0) {
+            h2("When your bots work")
+            sub("Your bots come with these routines. Pick a time on the calendar to add one, or open a routine to change when it runs.")
+            VStack(spacing: 8) {
+                ForEach(model.routines) { r in
+                    HStack(spacing: 8) {
                         Button { edit(r) } label: {
                             HStack(spacing: 12) {
                                 tile(forKey: r.botKey, size: 32)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(r.title).font(.subheadline.weight(.semibold)).foregroundColor(Color("TextPrimary"))
+                                VStack(alignment: .leading, spacing: 1) {
+                                    Text(r.title).font(.system(size: 14, weight: .medium)).foregroundStyle(MeetPalette.ink)
                                         .multilineTextAlignment(.leading)
                                     Text("\(model.routineBotName(r.botKey)) · \(r.scheduleLabel)")
-                                        .font(.caption).foregroundColor(Color("TextSecondary")).lineLimit(2)
+                                        .font(.system(size: 12)).foregroundStyle(MeetPalette.mut).lineLimit(2)
                                 }
                                 Spacer(minLength: 0)
                             }
+                            .padding(.vertical, 10)
+                            .padding(.leading, 12)
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
-                        .accessibilityHint("Change when it runs")
-                        Spacer(minLength: 8)
+                        .accessibilityLabel("Edit \(r.title), \(model.routineBotName(r.botKey)), \(r.scheduleLabel)\(r.enabled ? "" : ", paused")")
                         Toggle("", isOn: Binding(get: { r.enabled }, set: { _ in model.toggleRoutine(r.id) }))
                             .labelsHidden()
-                            .tint(Color("AccentPrimary"))
-                            .accessibilityLabel("\(r.title), \(r.scheduleLabel)")
+                            .tint(MeetPalette.coral)
+                            .accessibilityLabel("\(r.enabled ? "Pause" : "Resume") \(r.title)")
                     }
+                    .padding(.trailing, 12)
+                    .background(MeetPalette.fill, in: RoundedRectangle(cornerRadius: 12))
                 }
-            }
-            Button { addRoutine() } label: {
-                Label("Add a routine", systemImage: "plus")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundColor(Color("AccentPrimary"))
-            }
-            if model.routines.count > 0 {
-                sub("\(model.routinesOn) of \(model.routines.count) on. Tap one to change when it runs. Routines run on your computer, even while your phone is in your pocket.")
+                if model.routines.isEmpty {
+                    Text("None of your bots run on a schedule yet.")
+                        .font(.system(size: 13)).foregroundStyle(MeetPalette.sub)
+                        .padding(12)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(MeetPalette.fill, in: RoundedRectangle(cornerRadius: 12))
+                }
+                Button { addRoutine() } label: {
+                    Text("+ Add a routine")
+                        .font(.system(size: 13.5, weight: .medium))
+                        .foregroundStyle(MeetPalette.sub)
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                        .overlay(RoundedRectangle(cornerRadius: 12).stroke(MeetPalette.lineDash, style: StrokeStyle(lineWidth: 2, dash: [5, 4])))
+                }
+                .buttonStyle(.plain)
             }
         }
     }
 
     private var notificationsStep: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Image(systemName: notificationsOn ? "bell.badge.fill" : "bell.badge")
-                .font(.system(size: 30, weight: .medium))
-                .foregroundColor(Color("AccentPrimary"))
-                .frame(width: 64, height: 64)
-                .background(Color("AccentPrimary").opacity(0.12))
-                .clipShape(RoundedRectangle(cornerRadius: Theme.radiusLG, style: .continuous))
-                .accessibilityHidden(true)
-            title("Know when a bot needs you")
+        VStack(alignment: .leading, spacing: 0) {
+            h2("Know when a bot needs you")
             sub(notificationsOn
                 ? "Notifications are on. You’ll hear when a bot asks for your OK, finishes a job, or messages you. Pick which ones in Settings."
-                : "Bots work while you’re away. We’ll tell you when one asks for your OK, finishes a job, or messages you — nothing else. You choose which ones in Settings.")
+                : "Bots work while you’re away. We’ll tell you when one asks for your OK, finishes a job, or messages you, nothing else. You choose which ones in Settings.")
         }
     }
 
     private var jobStep: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            title("Give \(model.leader) a first job")
+        VStack(alignment: .leading, spacing: 0) {
+            h2("Give \(model.leader) a first job")
             sub("Each bot comes with a first job that proves it works. Pick one and edit it if you like.")
-            ForEach(model.jobs) { job in
-                let on = model.jobKey == job.key
-                card(selected: on) {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Button { model.selectJob(job) } label: {
-                            VStack(alignment: .leading, spacing: 6) {
+            VStack(spacing: 8) {
+                ForEach(model.jobs) { job in
+                    let on = model.jobKey == job.key
+                    VStack(alignment: .leading, spacing: 0) {
+                        Button { if !on { model.selectJob(job) } } label: {
+                            VStack(alignment: .leading, spacing: 4) {
                                 HStack(spacing: 8) {
                                     tile(forKey: job.key, size: 28)
-                                    Text(job.name).font(.subheadline.weight(.semibold)).foregroundColor(Color("TextPrimary"))
+                                    Text(job.name).font(.system(size: 14, weight: .semibold)).foregroundStyle(MeetPalette.ink)
+                                    Spacer(minLength: 0)
                                     if job.key == meetMainKey {
                                         Text("MAIN BOT")
-                                            .font(.caption2.weight(.bold).monospaced())
-                                            .foregroundColor(Color("AccentPrimary"))
+                                            .font(MeetPalette.mono(10.5, .semibold))
+                                            .foregroundStyle(MeetPalette.coral)
+                                            .padding(.horizontal, 6)
+                                            .background(MeetPalette.coral.opacity(0.16), in: RoundedRectangle(cornerRadius: 4))
                                     }
-                                    Spacer(minLength: 0)
                                 }
                                 if !on {
                                     Text(job.prompt)
-                                        .font(.caption)
-                                        .foregroundColor(Color("TextSecondary"))
-                                        .lineLimit(3)
+                                        .font(.system(size: 12.5))
+                                        .lineSpacing(1.5)
+                                        .foregroundStyle(MeetPalette.sub)
+                                        .lineLimit(2)
                                         .multilineTextAlignment(.leading)
                                 }
                             }
@@ -988,37 +1176,38 @@ struct MeetYourBotsView: View {
                         .accessibilityAddTraits(on ? .isSelected : [])
                         if on {
                             TextField("First job", text: $model.jobText, axis: .vertical)
-                                .lineLimit(3...8)
-                                .padding(10)
-                                .background(Color("BgPrimary"))
-                                .clipShape(RoundedRectangle(cornerRadius: Theme.radiusSM, style: .continuous))
+                                .lineLimit(4...8)
+                                .font(.system(size: 14))
+                                .padding(8)
+                                .background(MeetPalette.bg, in: RoundedRectangle(cornerRadius: 8))
+                                .overlay(RoundedRectangle(cornerRadius: 8).stroke(MeetPalette.line))
+                                .padding(.top, 8)
                                 .accessibilityLabel("First job for \(job.name)")
-                            Text("You’ll get: \(job.expect)")
-                                .font(.caption)
-                                .foregroundColor(Color("TextSecondary"))
-                                .fixedSize(horizontal: false, vertical: true)
                             if !job.starters.isEmpty {
-                                Text("OR TRY").font(.caption2.weight(.semibold).monospaced()).foregroundColor(Color("TextSecondary"))
-                                ForEach(job.starters, id: \.self) { s in
-                                    Button { model.jobText = s } label: {
-                                        Text(s)
-                                            .font(.caption)
-                                            .foregroundColor(Color("TextPrimary"))
-                                            .multilineTextAlignment(.leading)
-                                            .padding(.horizontal, 10)
-                                            .padding(.vertical, 6)
-                                            .overlay(Capsule().stroke(Color("TextSecondary").opacity(0.25), lineWidth: 1))
+                                monoLabel("Or try").padding(.top, 8).padding(.bottom, -4)
+                                MeetFlow(spacing: 6) {
+                                    ForEach(job.starters, id: \.self) { s in
+                                        Button { model.jobText = s } label: {
+                                            Text(s)
+                                                .font(.system(size: 12.5))
+                                                .foregroundStyle(MeetPalette.ink)
+                                                .multilineTextAlignment(.leading)
+                                                .padding(.horizontal, 10)
+                                                .padding(.vertical, 4)
+                                                .background(MeetPalette.fill, in: RoundedRectangle(cornerRadius: 8))
+                                        }
+                                        .buttonStyle(.plain)
                                     }
-                                    .buttonStyle(.plain)
                                 }
                             }
                         }
                     }
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(on ? MeetPalette.bg : MeetPalette.fill, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(MeetPalette.ink, lineWidth: on ? 1.5 : 0))
                 }
             }
-            Label("Nothing is sent, posted or paid without your approval.", systemImage: "lock")
-                .font(.caption)
-                .foregroundColor(Color("TextSecondary"))
         }
     }
 
@@ -1041,6 +1230,7 @@ struct MeetYourBotsView: View {
         let main = by("main"), routines = by("routines"), thread = by("thread")
         let jobName = model.jobs.first { $0.key == model.jobKey }?.name
         let n = model.members.count
+        let anyFailed = items.contains { $0.status == .failed }
         return [
             Row(key: "main bot", value: model.leader,
                 detail: main?.status == .failed ? "Not set up: \(main?.detail ?? "")" : nil,
@@ -1052,82 +1242,171 @@ struct MeetYourBotsView: View {
                 detail: routines?.status == .failed ? routines?.detail : nil,
                 bad: routines?.status == .failed, busy: routines?.status == .running),
             Row(key: "thread #1", value: thread == nil ? "—" : (jobName ?? "—"),
-                detail: thread?.status == .failed ? "Didn’t start: \(thread?.detail ?? "")" : (thread?.status == .ok ? "Running" : nil),
+                detail: thread?.status == .failed ? "Didn’t start: \(thread?.detail ?? "")" : nil,
                 bad: thread?.status == .failed, busy: thread?.status == .running),
+            Row(key: "status", value: model.running ? "setting up…" : anyFailed ? "needs attention" : "running",
+                bad: !model.running && anyFailed, busy: model.running),
         ]
     }
 
     private var doneStep: some View {
         let anyBad = rows.contains { $0.bad }
-        return VStack(alignment: .leading, spacing: 14) {
-            title(model.running ? "Setting up your team" : anyBad ? "Your team is mostly ready" : "Your team is ready")
-            card {
-                VStack(alignment: .leading, spacing: 12) {
-                    ForEach(rows) { row in
-                        HStack(alignment: .firstTextBaseline, spacing: 10) {
-                            Text("▸ \(row.key)")
-                                .font(.caption.monospaced())
-                                .foregroundColor(Color("TextSecondary"))
-                                .frame(width: 92, alignment: .leading)
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(row.value)
-                                    .font(.subheadline.weight(.semibold))
-                                    .foregroundColor(row.bad ? Theme.statusError : Color("TextPrimary"))
-                                if let d = row.detail {
-                                    Text(d)
-                                        .font(.caption)
-                                        .foregroundColor(row.bad ? Theme.statusError : Color("TextSecondary"))
-                                        .fixedSize(horizontal: false, vertical: true)
-                                }
-                            }
-                            Spacer(minLength: 0)
-                            if row.busy && model.running {
-                                ProgressView().controlSize(.small)
-                            } else if row.bad {
-                                Image(systemName: "exclamationmark.circle.fill").foregroundColor(Theme.statusError)
-                            } else {
-                                Image(systemName: "checkmark.circle.fill").foregroundColor(Theme.statusSuccess)
-                            }
-                        }
-                        .accessibilityElement(children: .combine)
-                    }
-                }
-            }
-            .accessibilityElement(children: .contain)
-            if !model.running && !anyBad {
-                sub("Tip: connect ChatGPT or Claude in Settings → Subscriptions so your bots use your own subscription instead of credits.")
-            }
+        let clean = !model.running && !anyBad
+        return VStack(alignment: .leading, spacing: 0) {
+            h2(model.running ? "Setting up your team" : anyBad ? "Your team is mostly ready" : "Your team is ready")
+                .padding(.bottom, 12)
+            if clean { checklist } else { summary }
             let suggestions = model.suggestions
             if !suggestions.isEmpty {
                 Text("Works well with your team")
-                    .font(.headline)
-                    .foregroundColor(Color("TextPrimary"))
-                    .padding(.top, 6)
-                sub("Your bots hand work to these.")
-                ForEach(suggestions) { t in
-                    card {
-                        HStack(spacing: 12) {
-                            templateTile(t)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(t.name).font(.subheadline.weight(.semibold)).foregroundColor(Color("TextPrimary"))
-                                Text(t.tagline).font(.caption).foregroundColor(Color("TextSecondary")).lineLimit(2)
-                            }
-                            Spacer(minLength: 8)
-                            if model.adding.contains(t.id) {
-                                ProgressView()
-                            } else if model.isMade(t.id) {
-                                Image(systemName: "checkmark.circle.fill").foregroundColor(Color("AccentPrimary"))
-                                    .accessibilityLabel("Added")
-                            } else {
-                                Button("Add") { model.addLater(t.id) }
-                                    .font(.subheadline.weight(.semibold))
-                                    .foregroundColor(Color("AccentPrimary"))
-                                    .disabled(model.running || model.mainFailed)
-                            }
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(MeetPalette.ink)
+                    .padding(.top, 16)
+                Text("Your bots hand work to these. Tap one to add it.")
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(MeetPalette.mut)
+                    .padding(.bottom, 8)
+                VStack(spacing: 8) {
+                    ForEach(suggestions) { t in
+                        if model.adding.contains(t.id) {
+                            templateCard(t, on: true) {}.overlay(alignment: .trailing) { ProgressView().padding(.trailing, 14) }
+                        } else {
+                            templateCard(t, on: model.isMade(t.id)) { if !model.isMade(t.id) { model.addLater(t.id) } }
+                                .disabled(model.running || model.mainFailed)
                         }
                     }
                 }
             }
+        }
+    }
+
+    /// A mono log of what really happened (web `.mb-sum`).
+    private var summary: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            ForEach(Array(rows.enumerated()), id: \.element.id) { n, row in
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text("▸ \(row.key)").foregroundStyle(Color(hex: "#7C7C86")).frame(width: 96, alignment: .leading)
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text(row.value).foregroundStyle(row.bad ? Color(hex: "#F19A9A") : SetupPalette.termFg)
+                        if let d = row.detail {
+                            Text(d).font(MeetPalette.mono(11.5, .regular)).foregroundStyle(Color(hex: "#7C7C86"))
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    Spacer(minLength: 0)
+                    if row.key == "status" && !row.bad {
+                        Text("●").foregroundStyle(row.busy ? MeetPalette.coral : Color(hex: "#5FD39B"))
+                            .opacity(row.busy && !reduceMotion ? 0.8 : 1)
+                    }
+                }
+                .font(MeetPalette.mono(12.5, .regular))
+                .lineSpacing(3)
+                .accessibilityElement(children: .combine)
+                .transition(.opacity.combined(with: .offset(x: -6)))
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(MeetPalette.term, in: RoundedRectangle(cornerRadius: 16))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Setup summary")
+    }
+
+    /// Once everything finished cleanly: what was made, ticked, then the next useful step (web OnboardingChecklist).
+    private var checklist: some View {
+        let botNames = model.items.filter { $0.key.hasPrefix("bot:") }.map(\.label)
+        let thread = model.items.first { $0.key == "thread" }
+        let jobName = model.jobs.first { $0.key == model.jobKey }?.name
+        let n = model.members.count
+        var steps: [(String, String?)] = [
+            ("Main bot: \(model.leader)", "Answers first and hands work to the team."),
+            ("Team: \(n) bot\(n == 1 ? "" : "s")", botNames.isEmpty ? nil : botNames.joined(separator: ", ")),
+            ("Routines: \(model.routinesOn) on", model.items.first { $0.key == "routines" }?.detail),
+        ]
+        if thread != nil { steps.append(("Thread #1 started\(jobName.map { " with \($0)" } ?? "")", thread?.detail)) }
+        return VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text("Finish setting up your team").font(.system(size: 14, weight: .semibold)).foregroundStyle(MeetPalette.ink)
+                Spacer()
+                Text("\(steps.count)/\(steps.count + 1)").font(MeetPalette.mono(11.5, .semibold)).foregroundStyle(MeetPalette.mut)
+            }
+            .padding(.bottom, 10)
+            ForEach(Array(steps.enumerated()), id: \.offset) { _, step in
+                checkRow(done: true, title: step.0, detail: step.1)
+            }
+            HStack(alignment: .top, spacing: 10) {
+                Circle().stroke(MeetPalette.lineDash, lineWidth: 1.5).frame(width: 18, height: 18).padding(.top, 1)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Connect ChatGPT or Claude").font(.system(size: 13.5, weight: .medium)).foregroundStyle(MeetPalette.ink)
+                    Text("Your bots use your own subscription instead of credits.").font(.system(size: 12)).foregroundStyle(MeetPalette.mut)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button("Open Connections") { connectionsOpen = true }
+                        .font(.system(size: 12.5, weight: .semibold))
+                        .foregroundStyle(MeetPalette.bg)
+                        .padding(.horizontal, 12)
+                        .frame(height: 30)
+                        .background(MeetPalette.ink, in: RoundedRectangle(cornerRadius: 8))
+                        .padding(.top, 6)
+                }
+            }
+            .padding(.vertical, 8)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(MeetPalette.bg, in: RoundedRectangle(cornerRadius: 16))
+        .overlay(RoundedRectangle(cornerRadius: 16).stroke(MeetPalette.line))
+    }
+
+    private func checkRow(done: Bool, title: String, detail: String?) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "checkmark.circle.fill").font(.system(size: 18)).foregroundStyle(SetupPalette.ok)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.system(size: 13.5, weight: .medium)).foregroundStyle(MeetPalette.sub).strikethrough(false)
+                if let detail, !detail.isEmpty {
+                    Text(detail).font(.system(size: 12)).foregroundStyle(MeetPalette.mut).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        .padding(.vertical, 6)
+        .accessibilityElement(children: .combine)
+        .accessibilityValue("Done")
+    }
+}
+
+/// Press feedback for the card's buttons (web `:active { scale(.97) }`).
+private struct MeetPressStyle: ButtonStyle {
+    var scale: CGFloat = 0.97
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? scale : 1)
+            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+    }
+}
+
+/// Wrapping row of chips ("Or try").
+private struct MeetFlow: Layout {
+    var spacing: CGFloat = 6
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = proposal.width ?? .infinity
+        var x: CGFloat = 0, y: CGFloat = 0, row: CGFloat = 0
+        for s in subviews {
+            let size = s.sizeThatFits(ProposedViewSize(width: width, height: nil))
+            if x > 0 && x + size.width > width { x = 0; y += row + spacing; row = 0 }
+            x += size.width + spacing
+            row = max(row, size.height)
+        }
+        return CGSize(width: width == .infinity ? x : width, height: y + row)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var x = bounds.minX, y = bounds.minY, row: CGFloat = 0
+        for s in subviews {
+            let size = s.sizeThatFits(ProposedViewSize(width: bounds.width, height: nil))
+            if x > bounds.minX && x + size.width > bounds.maxX { x = bounds.minX; y += row + spacing; row = 0 }
+            s.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(width: min(size.width, bounds.width), height: size.height))
+            x += size.width + spacing
+            row = max(row, size.height)
         }
     }
 }

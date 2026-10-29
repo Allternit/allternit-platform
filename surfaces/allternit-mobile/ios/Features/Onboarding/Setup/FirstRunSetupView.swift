@@ -69,7 +69,7 @@ struct FirstRunSetupView: View {
                     onOpen: { fix in Task { await open(fix: fix) } })
                 .transition(.opacity)
             case .mainbot:
-                MeetYourBotsView(onFinish: { _ in finishMeetYourBots() })
+                MeetYourBotsView(onFinish: { _ in finishMeetYourBots() }, doneLabel: "See it all")
                     .task { await snapshotMainBot() }
                     .transition(.opacity)
             default:

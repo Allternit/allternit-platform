@@ -138,127 +138,243 @@ struct SetupServerPairPanel: View {
 
 // MARK: - Subscription connect (ChatGPT / Claude / Kimi plans)
 
-/// Connect a web subscription, shaped like the web SubscriptionConnect:
-/// what Allternit will do with the account, the provider-terms notice (D16:
-/// only the person acknowledges), then "Continue to <vendor>". The sign-in
-/// itself opens on the vendor's real site in a browser on the user's
-/// Sessions computer; the phone watches the login until it is ready.
+/// Connect a web subscription during setup (web SubscriptionConnect inside the
+/// setup panel): the vendor's "connect an app" consent, then the sign-in on
+/// the vendor's real site in a browser on the Sessions computer, shown live
+/// here (LoginViewer). Allternit never renders a vendor login form.
 struct SetupSubscriptionConnect: View {
     let brain: BrainChoice
     @ObservedObject var signals: SetupSignals
     var onReady: () -> Void
     var onCancel: () -> Void
 
+    private enum Step: Equatable { case consent, signin(SetupFabricAccount), done(SetupFabricAccount) }
+
+    @State private var step: Step = .consent
     @State private var agreed = false
     @State private var busy = false
     @State private var error: String?
-    @State private var watching: SetupFabricAccount?
-    @State private var poll: Task<Void, Never>?
+    @State private var computer: ComputerRecord?
+    @State private var attempt = 0
 
     private var provider: String { brain.subscriptionProvider ?? "" }
     private var name: String { brain.shortName }
     private var computerName: String { signals.subsStatus?.computerName ?? "your Sessions computer" }
+    private var brand: Color { SetupSubscriptionBrand.color(provider) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            switch signals.subscriptionState(provider) {
-            case .noComputer:
-                SetupNote(text: "\(name) runs on a Sessions computer, one of your cloud or paired computers. Set one up first in Settings → Computers; it takes a minute.")
-                cancelRow
-            case .offline:
-                SetupNote(text: "Your Sessions computer is offline. Start \(computerName) to open \(name)’s sign-in page.")
-                HStack {
-                    Button("Check again") { Task { await signals.loadSubscriptions() } }.buttonStyle(SetupInlineButtonStyle())
-                    Spacer()
-                    Button("Cancel", action: onCancel).buttonStyle(SetupGhostButtonStyle())
-                }
-            case .error:
-                SetupNote(text: signals.subsError ?? "Could not reach your Sessions computer")
-                HStack {
-                    Button("Retry") { Task { await signals.loadSubscriptions() } }.buttonStyle(SetupInlineButtonStyle())
-                    Spacer()
-                    Button("Cancel", action: onCancel).buttonStyle(SetupGhostButtonStyle())
-                }
-            default:
-                if let watching {
-                    signingIn(watching)
-                } else {
-                    consent
-                }
+        VStack(alignment: .leading, spacing: 16) {
+            switch (signals.subscriptionState(provider), step) {
+            case (_, .done(let account)): done(account)
+            case (_, .signin(let account)): signingIn(account)
+            case (.noComputer, _): noComputer
+            case (.offline, _): offline
+            default: consent
             }
         }
-        .onDisappear { poll?.cancel() }
+        .padding(20)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(SetupPalette.card, in: RoundedRectangle(cornerRadius: 16))
+        .overlay(alignment: .top) {
+            UnevenRoundedRectangle(topLeadingRadius: 16, topTrailingRadius: 16).fill(brand).frame(height: 3)
+        }
+        .overlay(RoundedRectangle(cornerRadius: 16).stroke(SetupPalette.line))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Connect \(name)")
+        .task(id: signals.subsStatus?.computerId) { await loadComputer() }
     }
 
-    private var cancelRow: some View {
-        HStack { Spacer(); Button("Not now", action: onCancel).buttonStyle(SetupGhostButtonStyle()) }
+    private func header(_ title: String, _ subtitle: String) -> some View {
+        VStack(spacing: 12) {
+            HStack(spacing: 10) {
+                AllternitOrbView(state: .idle, size: 26)
+                    .frame(width: 44, height: 44)
+                    .background(Color.white, in: RoundedRectangle(cornerRadius: 12))
+                    .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.black.opacity(0.05)))
+                Image(systemName: "arrow.left.arrow.right").font(.system(size: 14)).foregroundStyle(SetupPalette.mut)
+                SetupSubscriptionLogo(provider: provider, size: 44)
+            }
+            .accessibilityHidden(true)
+            VStack(spacing: 4) {
+                Text(title).font(.system(size: 16, weight: .semibold)).foregroundStyle(SetupPalette.ink)
+                Text(subtitle).font(.system(size: 13)).foregroundStyle(SetupPalette.sub)
+            }
+            .multilineTextAlignment(.center)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private var noComputer: some View {
+        VStack(spacing: 16) {
+            header("Connect \(name) to Allternit", "\(name) runs on a Sessions computer, one of your cloud or paired computers. Set one up first; it takes a minute.")
+            SetupNote(text: "Set it up in Settings → Computers after setup.")
+                .multilineTextAlignment(.center)
+            HStack(spacing: 8) {
+                Button("Not now", action: onCancel).buttonStyle(SetupGhostButtonStyle())
+                Button("Check again") { Task { await signals.loadSubscriptions() } }
+                    .buttonStyle(SetupBrandButtonStyle(color: brand))
+            }
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private var offline: some View {
+        VStack(spacing: 16) {
+            header("Sessions computer is offline", "Start \(computerName) to open \(name)’s sign-in page.")
+            if let error { SetupErrorLine(text: error) }
+            HStack(spacing: 8) {
+                Spacer()
+                Button("Cancel", action: onCancel).buttonStyle(SetupGhostButtonStyle())
+                Button("Start Sessions computer") { startComputer() }
+                    .buttonStyle(SetupInlineButtonStyle())
+                    .disabled(busy || computer == nil)
+            }
+        }
     }
 
     private var consent: some View {
         let terms = signals.terms(for: provider)
         let needsTerms = terms.map { !$0.acknowledged } ?? false
-        return VStack(alignment: .leading, spacing: 10) {
-            VStack(alignment: .leading, spacing: 8) {
-                permission("desktopcomputer", "\(name) runs in its own browser on \(computerName), never on this phone.")
-                permission("cursorarrow.click", "A \(name) task starts only when you press send or confirm it, and any question \(name) asks comes to you.")
-                permission("lock", "You sign in on \(name)’s own site. Your login stays on that computer; Allternit never sees your password.")
+        return VStack(alignment: .leading, spacing: 16) {
+            header("Connect \(name) to Allternit", "Use your \(name) subscription as a model in Allternit.")
+            VStack(alignment: .leading, spacing: 10) {
+                permission("desktopcomputer", Text("\(name) runs in its own browser on ") + Text(computerName).foregroundColor(SetupPalette.ink).fontWeight(.medium) + Text(", never on this phone."))
+                permission("cursorarrow.click", Text("A \(name) task starts only when you press send or confirm it, and any question \(name) asks comes to you."))
+                permission("lock", Text("You sign in on \(name)’s own site. Your login stays on that computer; Allternit never sees your password."))
             }
-            .padding(12)
-            .background(SetupPalette.fill, in: RoundedRectangle(cornerRadius: 10))
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(SetupPalette.fill, in: RoundedRectangle(cornerRadius: 12))
 
             if needsTerms, let terms {
-                DisclosureGroup {
-                    Text(terms.text).font(.system(size: 12)).foregroundStyle(SetupPalette.sub)
-                        .fixedSize(horizontal: false, vertical: true)
-                } label: {
-                    Text("About \(name)’s terms").font(.system(size: 12.5, weight: .medium)).foregroundStyle(SetupPalette.ink)
+                VStack(alignment: .leading, spacing: 8) {
+                    DisclosureGroup {
+                        Text(terms.text).font(.system(size: 12)).foregroundStyle(SetupPalette.sub)
+                            .lineSpacing(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.top, 8)
+                    } label: {
+                        Text("About \(name)’s terms").font(.system(size: 12, weight: .medium)).foregroundStyle(SetupPalette.ink)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(SetupPalette.line))
+                    Button { agreed.toggle() } label: {
+                        HStack(alignment: .top, spacing: 8) {
+                            Image(systemName: agreed ? "checkmark.square.fill" : "square")
+                                .font(.system(size: 16)).foregroundStyle(agreed ? SetupPalette.ink : SetupPalette.mut)
+                            Text("I’ve read \(name)’s terms notice and want to connect my account")
+                                .font(.system(size: 13)).foregroundStyle(SetupPalette.ink)
+                                .multilineTextAlignment(.leading)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityAddTraits(agreed ? .isSelected : [])
                 }
-                Toggle(isOn: $agreed) {
-                    Text("I’ve read \(name)’s terms notice and want to connect my account")
-                        .font(.system(size: 13)).foregroundStyle(SetupPalette.ink)
-                }
-                .toggleStyle(.switch)
-                .tint(SetupPalette.ink)
             }
-            if let error { Text(error).font(.system(size: 12.5)).foregroundStyle(SetupPalette.errFg) }
+            if let error {
+                SetupErrorLine(text: error) {
+                    Button("Retry") { Task { await signals.loadSubscriptions() } }.buttonStyle(SetupGhostButtonStyle())
+                }
+            }
             HStack(spacing: 8) {
-                if busy { ProgressView().controlSize(.small) }
-                Spacer()
-                Button("Cancel") { poll?.cancel(); busy = false; onCancel() }.buttonStyle(SetupGhostButtonStyle())
+                if busy { SetupWorking(label: "Opening the sign-in…") }
+                Spacer(minLength: 0)
+                Button("Cancel") { cancel() }.buttonStyle(SetupGhostButtonStyle())
                 Button("Continue to \(name)") { start(needsTerms: needsTerms) }
-                    .buttonStyle(SetupInlineButtonStyle())
+                    .buttonStyle(SetupBrandButtonStyle(color: brand))
                     .disabled(busy || (needsTerms && !agreed))
             }
         }
     }
 
+    @ViewBuilder
     private func signingIn(_ account: SetupFabricAccount) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                AllternitOrbView(state: .searching, size: 18)
+        HStack(spacing: 12) {
+            SetupSubscriptionLogo(provider: provider, size: 32)
+            VStack(alignment: .leading, spacing: 1) {
                 Text("Sign in to \(name)").font(.system(size: 14, weight: .semibold)).foregroundStyle(SetupPalette.ink)
+                Text("On \(name)’s own site, in a browser on \(computerName).").font(.system(size: 12)).foregroundStyle(SetupPalette.sub)
             }
-            SetupNote(text: "The sign-in opened on \(name)’s own site, in a browser on \(computerName). Finish signing in there (Settings → Computers shows that screen). This updates by itself.")
-            if let error { Text(error).font(.system(size: 12.5)).foregroundStyle(SetupPalette.errFg) }
-            HStack {
-                Button("Open the sign-in again") {
-                    Task { try? await SetupAPI.openFabricLogin(account.accountId) }
-                }
-                .buttonStyle(SetupGhostButtonStyle())
-                Spacer()
-                Button("Cancel") { poll?.cancel(); onCancel() }.buttonStyle(SetupGhostButtonStyle())
-            }
+        }
+        if let computer {
+            SetupLoginViewer(computer: computer, account: account, providerName: name,
+                             onChecked: { next in
+                                 signals.upsert(next)
+                                 if next.sessionHealth == "ready" { step = .done(next) }
+                             },
+                             onClose: { cancel() })
+        } else {
+            SetupErrorLine(text: "The \(name) sign-in opened on \(computerName), but that computer can’t be shown here. Open it from Settings → Computers to finish.")
         }
     }
 
-    private func permission(_ icon: String, _ text: String) -> some View {
+    private func done(_ account: SetupFabricAccount) -> some View {
+        let who = account.identity ?? account.label
+        return VStack(spacing: 16) {
+            ZStack(alignment: .bottomTrailing) {
+                SetupSubscriptionLogo(provider: provider, size: 52)
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 22))
+                    .foregroundStyle(SetupPalette.ok)
+                    .background(Circle().fill(Color.white))
+                    .offset(x: 6, y: 6)
+            }
+            VStack(spacing: 4) {
+                Text("\(name) is connected").font(.system(size: 16, weight: .semibold)).foregroundStyle(SetupPalette.ink)
+                Text("\(who.isEmpty ? "" : "Signed in as \(who). ")Pick \(name) in any chat’s model menu.")
+                    .font(.system(size: 13)).foregroundStyle(SetupPalette.sub)
+            }
+            .multilineTextAlignment(.center)
+            Button("Use it as my default brain") {
+                Task { await signals.loadSubscriptions() }
+                if account.isReady { onReady() }
+            }
+            .buttonStyle(SetupBrandButtonStyle(color: brand))
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private func permission(_ icon: String, _ text: Text) -> some View {
         HStack(alignment: .top, spacing: 10) {
-            Image(systemName: icon).font(.system(size: 13)).foregroundStyle(SetupPalette.ink).frame(width: 18)
-            Text(text).font(.system(size: 13)).foregroundStyle(SetupPalette.sub).fixedSize(horizontal: false, vertical: true)
+            Image(systemName: icon).font(.system(size: 14)).foregroundStyle(SetupPalette.ink).frame(width: 18).padding(.top, 1)
+            text.font(.system(size: 13)).foregroundStyle(SetupPalette.sub).lineSpacing(1).fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func loadComputer() async {
+        guard let id = signals.subsStatus?.computerId else { computer = nil; return }
+        computer = (try? await BotModeClient.shared.listComputers())?.first { $0.id == id }
+    }
+
+    /// Cancel always works, even while a request to a stuck computer is in flight.
+    private func cancel() {
+        attempt += 1
+        busy = false
+        onCancel()
+    }
+
+    private func startComputer() {
+        guard let computer else { return }
+        busy = true
+        Task {
+            do {
+                try await BotModeClient.shared.startComputer(id: computer.id)
+                error = nil
+                await signals.loadSubscriptions()
+                await loadComputer()
+            } catch {
+                self.error = SetupSignals.describeSubsError(error)
+            }
+            busy = false
         }
     }
 
     private func start(needsTerms: Bool) {
+        attempt += 1
+        let mine = attempt
         busy = true
         error = nil
         Task {
@@ -277,30 +393,331 @@ struct SetupSubscriptionConnect: View {
                     let id = provider
                     account = try await setupWithTimeout(45) { try await SetupAPI.createFabricAccount(provider: id) }
                 }
+                guard mine == attempt else { return }
                 signals.upsert(account)
-                watching = account
-                watch(account)
+                if computer == nil { await loadComputer() }
+                step = .signin(account)
                 if needsTerms { await signals.loadSubscriptions() }
             } catch {
-                self.error = SetupSignals.describeSubsError(error)
+                if mine == attempt { self.error = SetupSignals.describeSubsError(error) }
             }
-            busy = false
+            if mine == attempt { busy = false }
         }
     }
+}
 
-    /// Re-check the login every 3 s until it can serve chats.
-    private func watch(_ account: SetupFabricAccount) {
-        poll?.cancel()
-        poll = Task {
-            while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 3_000_000_000)
-                if Task.isCancelled { return }
-                if let next = try? await SetupAPI.checkFabricAccount(account.accountId) {
-                    signals.upsert(next)
-                    if next.isReady { onReady(); return }
+/// The login window on the Sessions computer, shown live (web LoginViewer).
+/// The person started it, so it opens with them in control when nobody else
+/// holds the computer. Newer gateways notice the sign-in by themselves
+/// (polled every 2 s); older ones need "I’ve signed in".
+struct SetupLoginViewer: View {
+    let computer: ComputerRecord
+    let account: SetupFabricAccount
+    let providerName: String
+    var onChecked: (SetupFabricAccount) -> Void
+    var onClose: () -> Void
+
+    @State private var lease: ComputerControlLease?
+    @State private var wsPath: String?
+    @State private var autoDetect: Bool?
+    @State private var waitingOn: String?
+    @State private var checking = false
+    @State private var error: String?
+    @State private var finished = false
+    @State private var fullScreen = false
+
+    private var mine: Bool {
+        guard let lease else { return false }
+        return lease.holder.kind == "user" && lease.holder.deviceId == BotModeClient.deviceId
+    }
+
+    private var controlSummary: String {
+        guard let lease else { return "Nobody is controlling it" }
+        return mine ? "You’re in control" : "\(lease.holder.displayLabel) is in control"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Sign in to \(providerName) on \(computer.name)")
+                        .font(.system(size: 13, weight: .medium)).foregroundStyle(SetupPalette.ink)
+                    Text("\(autoDetect == false ? "Sign in below, then choose “I’ve signed in”." : "Sign in below. Allternit notices when you’re done.") You type your password on that computer; Allternit doesn’t see or store it. \(controlSummary).")
+                        .font(.system(size: 12)).foregroundStyle(SetupPalette.sub)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+                Button("Cancel") { close() }.buttonStyle(SetupControlButtonStyle())
+            }
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    if mine {
+                        Button("Release control") { release() }.buttonStyle(SetupControlButtonStyle())
+                    } else {
+                        Button("Take control") { take() }.buttonStyle(SetupControlButtonStyle())
+                    }
+                    Button { fullScreen = true } label: {
+                        Label("Open larger", systemImage: "desktopcomputer")
+                    }
+                    .buttonStyle(SetupControlButtonStyle())
+                    .disabled(wsPath == nil)
+                    if autoDetect == false {
+                        Button("I’ve signed in") { check() }.buttonStyle(SetupControlButtonStyle()).disabled(checking)
+                    }
+                    if autoDetect != false && error == nil {
+                        SetupWorking(label: waitingOn.map { "\($0)…" } ?? "Waiting for you to sign in…")
+                    }
+                    if checking { SetupWorking(label: "Checking the session…") }
+                }
+            }
+            if let error { SetupErrorLine(text: error) }
+            ZStack {
+                Color.black
+                if let wsPath {
+                    ComputerScreenCanvas(wsPath: wsPath, controls: mine).id(wsPath)
+                } else {
+                    ProgressView().tint(.white)
+                }
+            }
+            .aspectRatio(16 / 9, contentMode: .fit)
+            .frame(minHeight: 200)
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+        }
+        .padding(12)
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(SetupPalette.line))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Log in to \(providerName)")
+        .fullScreenCover(isPresented: $fullScreen) {
+            if let wsPath {
+                NavigationStack {
+                    ComputerScreenCanvas(wsPath: wsPath, controls: mine)
+                        .ignoresSafeArea(edges: .bottom)
+                        .navigationTitle(computer.name)
+                        .navigationBarTitleDisplayMode(.inline)
+                        .toolbar { ToolbarItem(placement: .topBarLeading) { Button("Close") { fullScreen = false } } }
                 }
             }
         }
+        .task { await openInControl() }
+        .task(id: account.accountId) { await watchLogin() }
+    }
+
+    /// Open already in control: the person asked for this login.
+    private func openInControl() async {
+        lease = try? await BotModeClient.shared.controlState(computerId: computer.id).control
+        if lease == nil {
+            try? await BotModeClient.shared.takeControl(computerId: computer.id)
+            lease = try? await BotModeClient.shared.controlState(computerId: computer.id).control
+        }
+        await connect()
+    }
+
+    private func connect() async {
+        do {
+            let status = try await BotModeClient.shared.viewStatus(computerId: computer.id)
+            let token: String
+            do {
+                token = try await BotModeClient.shared.vncToken(computerId: computer.id, readOnly: !mine)
+            } catch where mine {
+                token = try await BotModeClient.shared.vncToken(computerId: computer.id, readOnly: true)
+            }
+            let separator = status.ws.vnc.contains("?") ? "&" : "?"
+            wsPath = "\(status.ws.vnc)\(separator)token=\(BotModeClient.query(token))"
+        } catch is CancellationError {
+        } catch {
+            self.error = FriendlyErrorMessage.from(error.localizedDescription)
+        }
+    }
+
+    private func take() {
+        Task {
+            do {
+                try await BotModeClient.shared.takeControl(computerId: computer.id)
+                lease = try? await BotModeClient.shared.controlState(computerId: computer.id).control
+                await connect()
+            } catch {
+                self.error = FriendlyErrorMessage.from(error.localizedDescription)
+            }
+        }
+    }
+
+    private func release() {
+        Task {
+            try? await BotModeClient.shared.releaseControl(computerId: computer.id)
+            lease = try? await BotModeClient.shared.controlState(computerId: computer.id).control
+            await connect()
+        }
+    }
+
+    private func finish(_ next: SetupFabricAccount) {
+        guard !finished else { return }
+        finished = true
+        if mine { Task { try? await BotModeClient.shared.releaseControl(computerId: computer.id) } }
+        onChecked(next)
+    }
+
+    /// signed_in / failed / closed end it. The account itself is also read every
+    /// third tick: after a bot check the login tracker can stay "waiting" although
+    /// the account is already ready.
+    private func watchLogin() async {
+        var ticks = 0
+        while !Task.isCancelled && !finished {
+            ticks += 1
+            if ticks % 3 == 0,
+               let row = (try? await SetupAPI.fabricAccounts())?.first(where: { $0.accountId == account.accountId }),
+               row.sessionHealth == "ready" {
+                finish(row)
+                return
+            }
+            if autoDetect != false {
+                do {
+                    let st = try await SetupAPI.fabricLoginState(account.accountId)
+                    autoDetect = true
+                    waitingOn = st.state == .waiting ? st.detail : nil
+                    switch st.state {
+                    case .signedIn: if let a = st.account { finish(a); return }
+                    case .failed: error = st.detail ?? "Signing in to \(providerName) didn’t finish."
+                    case .closed: onClose(); return
+                    default: break
+                    }
+                } catch let e as ConnectError where e.status == 404 || e.status == 405 || e.code == "not_found" {
+                    // Older gateway: no login-state route. Fall back to the manual check.
+                    autoDetect = false
+                } catch {}
+            }
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+        }
+    }
+
+    private func check() {
+        checking = true
+        error = nil
+        Task {
+            do {
+                if let next = try await SetupAPI.checkFabricAccount(account.accountId) {
+                    if next.sessionHealth == "ready" { finish(next) } else { onChecked(next) }
+                }
+            } catch {
+                self.error = SetupSignals.describeSubsError(error)
+            }
+            checking = false
+        }
+    }
+
+    private func close() {
+        let id = account.accountId
+        Task { try? await SetupAPI.cancelFabricLogin(id) }
+        if mine { Task { try? await BotModeClient.shared.releaseControl(computerId: computer.id) } }
+        onClose()
+    }
+}
+
+/// Vendor brand colours (web provider-registry SUBSCRIPTION_BRANDS).
+enum SetupSubscriptionBrand {
+    static func color(_ provider: String) -> Color {
+        switch provider {
+        case "chatgpt": return Color(hex: "#10A37F")
+        case "claude": return Color(hex: "#D97757")
+        case "kimi": return Color(hex: "#1783FF")
+        case "gemini", "google": return Color(hex: "#1B72E8")
+        case "copilot", "microsoft": return Color(hex: "#0F6CBD")
+        default: return SetupPalette.ink
+        }
+    }
+
+    static let logo: [String: String] = ["chatgpt": "SetupLogoChatGPT", "claude": "SetupLogoClaude", "kimi": "SetupLogoKimi"]
+}
+
+/// The vendor's own logo on a white tile (web SubscriptionLogo).
+struct SetupSubscriptionLogo: View {
+    let provider: String
+    var size: CGFloat = 36
+
+    var body: some View {
+        let radius = max(6, (size / 4).rounded())
+        ZStack {
+            Color.white
+            if let asset = SetupSubscriptionBrand.logo[provider] {
+                Image(asset).resizable().scaledToFit().frame(width: size * 0.62, height: size * 0.62)
+            } else {
+                Text(String((provider.first ?? "?")).uppercased())
+                    .font(.system(size: size * 0.38, weight: .bold))
+                    .foregroundStyle(SetupSubscriptionBrand.color(provider))
+            }
+        }
+        .frame(width: size, height: size)
+        .clipShape(RoundedRectangle(cornerRadius: radius))
+        .overlay(RoundedRectangle(cornerRadius: radius).stroke(Color.black.opacity(0.05)))
+        .accessibilityHidden(true)
+    }
+}
+
+/// Orb + label status line (web `Working`).
+struct SetupWorking: View {
+    var label: String
+    var body: some View {
+        HStack(spacing: 6) {
+            AllternitOrbView(state: .working, size: 14)
+            Text(label).font(.system(size: 12)).foregroundStyle(SetupPalette.sub)
+        }
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// Error line on the neutral fill (web `ErrorLine`).
+struct SetupErrorLine<Trailing: View>: View {
+    var text: String
+    @ViewBuilder var trailing: Trailing
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 13))
+            Text(text).font(.system(size: 12)).fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+            trailing
+        }
+        .foregroundStyle(SetupPalette.errFg)
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(SetupPalette.fill, in: RoundedRectangle(cornerRadius: 8))
+        .accessibilityAddTraits(.isStaticText)
+    }
+}
+
+extension SetupErrorLine where Trailing == EmptyView {
+    init(text: String) { self.init(text: text) { EmptyView() } }
+}
+
+/// Small outlined control button (web CONTROL_BUTTON).
+struct SetupControlButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var enabled
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 12, weight: .medium))
+            .labelStyle(.titleAndIcon)
+            .foregroundStyle(SetupPalette.ink)
+            .padding(.horizontal, 10)
+            .frame(height: 30)
+            .background(configuration.isPressed ? SetupPalette.fill : SetupPalette.card, in: RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(SetupPalette.line))
+            .contentShape(Rectangle().inset(by: -7))
+            .opacity(enabled ? 1 : 0.5)
+    }
+}
+
+/// The vendor-coloured primary button ("Continue to ChatGPT").
+struct SetupBrandButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var enabled
+    var color: Color
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 13, weight: .medium))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 14)
+            .frame(height: 36)
+            .background(color, in: RoundedRectangle(cornerRadius: 8))
+            .contentShape(Rectangle().inset(by: -4))
+            .opacity(enabled ? (configuration.isPressed ? 0.9 : 1) : 0.5)
     }
 }
 
