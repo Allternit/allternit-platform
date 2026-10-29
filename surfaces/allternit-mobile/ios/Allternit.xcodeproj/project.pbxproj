@@ -451,6 +451,7 @@
 		EF83E006F618ED5D837B9A14 /* SubagentFaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFD3099ACF04769B3FDE215B /* SubagentFaceView.swift */; };
 		EFEE69415FF2CD3FBF0058CA /* AppPhoneLink.swift in Sources */ = {isa = PBXBuildFile; fileRef = 32DF0D2473DA44EC0CF41008 /* AppPhoneLink.swift */; };
 		F047EB8C6BDC03144EDF1187 /* ModeTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E7FB6E04286889DF3D4A1A6 /* ModeTheme.swift */; };
+		F14CA18B4E7DEDEDAA44F97C /* MeetVendorPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = C8D3F9547DC368CCA7166367 /* MeetVendorPanel.swift */; };
 		F1A225B56720D12EF63EA3F1 /* ProviderInfo.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC5B4B49803766889533088C /* ProviderInfo.swift */; };
 		F1E2C52CD5929D585E81AB19 /* ReplayKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 08ECCB8B13DE07B27E41D3D2 /* ReplayKit.framework */; };
 		F345B2FB5086CE638D8EED40 /* ArtifactsV2Client.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B6DF79A8DF1C696DDC920B4 /* ArtifactsV2Client.swift */; };
@@ -911,6 +912,7 @@
 		C7897BA4CEED5704C356EB36 /* NativeSessionPickerSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeSessionPickerSheet.swift; sourceTree = "<group>"; };
 		C7A80B2B5F37FDB83D4245C4 /* BotPageView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotPageView.swift; sourceTree = "<group>"; };
 		C7B9F283E2DE6838A4FDF9C4 /* Mesh.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = Mesh.xcframework; path = Frameworks/Mesh.xcframework; sourceTree = "<group>"; };
+		C8D3F9547DC368CCA7166367 /* MeetVendorPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetVendorPanel.swift; sourceTree = "<group>"; };
 		CA46B87B5FA47275E67E693C /* BotCallButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotCallButton.swift; sourceTree = "<group>"; };
 		CC0FCE23EDD7E1E9117E5454 /* ShellSearchView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShellSearchView.swift; sourceTree = "<group>"; };
 		CC5B4B49803766889533088C /* ProviderInfo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderInfo.swift; sourceTree = "<group>"; };
@@ -1425,6 +1427,7 @@
 				1DE9C806F6FCC8DED4968FE8 /* DeepLinkHost.swift */,
 				EBE80E738D829F2E8E018127 /* MeetBotCatalog.swift */,
 				25812590573D6411B08C99AB /* MeetBotCatalogData.swift */,
+				C8D3F9547DC368CCA7166367 /* MeetVendorPanel.swift */,
 				C68F1A4A3E206C787E0D6F9D /* MeetYourBotsFinish.swift */,
 				31906E53E13F148C15E53F18 /* MeetYourBotsView.swift */,
 				436B6969DB4C176B2552F0D0 /* MeetYourBotsVisuals.swift */,
@@ -2587,6 +2590,7 @@
 				FB3DD71568ADD2963E9E92E9 /* McpServersSettingsView.swift in Sources */,
 				B413B477AD207286FBBF3BC0 /* MeetBotCatalog.swift in Sources */,
 				E2AE7FA5AED5C265C9913FB3 /* MeetBotCatalogData.swift in Sources */,
+				F14CA18B4E7DEDEDAA44F97C /* MeetVendorPanel.swift in Sources */,
 				5C24A5A804FADCEF5B2C452A /* MeetYourBotsFinish.swift in Sources */,
 				16FA39F7A6F891652E3E533E /* MeetYourBotsView.swift in Sources */,
 				6AACF4881D0D2E96AD7036E7 /* MeetYourBotsVisuals.swift in Sources */,
