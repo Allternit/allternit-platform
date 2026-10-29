@@ -12,9 +12,16 @@ import UIKit
 struct CodeLaunchComposer: View {
     @Binding var text: String
     let folder: CodeFolderInfo?
+    /// The thread's terminal view: drawn on the dark terminal surface, and
+    /// the status row's last item switches back to the chat view.
+    var terminal: Bool = false
+    /// A turn is running: the run key becomes a stop key.
+    var isRunning: Bool = false
+    var onStop: (() -> Void)? = nil
     let onSend: (String) -> Void
     let onOpenTerminal: () -> Void
-    let onAttach: () -> Void
+    /// nil hides `+` (the terminal view takes text only).
+    var onAttach: (() -> Void)? = nil
 
     @StateObject private var dictation = DictationController()
     @State private var dictationBase = ""
@@ -28,18 +35,20 @@ struct CodeLaunchComposer: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            DashedHairline(strong: isFocused)
+            DashedHairline(strong: isFocused, terminal: terminal)
             HStack(alignment: .bottom, spacing: 4) {
-                Button(action: onAttach) {
-                    Image(systemName: "plus")
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundColor(Color("TextSecondary"))
-                        .frame(width: 40, height: 40)
-                        .contentShape(Rectangle())
+                if let onAttach {
+                    Button(action: onAttach) {
+                        Image(systemName: "plus")
+                            .font(.system(size: 18, weight: .semibold))
+                            .foregroundColor(ink.secondary)
+                            .frame(width: 40, height: 40)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.vertical, 6)
+                    .accessibilityLabel("Attach")
                 }
-                .buttonStyle(.plain)
-                .padding(.vertical, 6)
-                .accessibilityLabel("Attach")
 
                 HStack(alignment: .top, spacing: 8) {
                     Text("❯")
@@ -49,7 +58,8 @@ struct CodeLaunchComposer: View {
                         .accessibilityHidden(true)
                     TextField("Run a command or describe a task...", text: $text, axis: .vertical)
                         .font(Font(Self.textFont))
-                        .foregroundColor(Color("TextPrimary"))
+                        .foregroundColor(ink.primary)
+                        .tint(GizziCodeWordmark.coral)
                         .lineSpacing(Self.line - Self.textFont.lineHeight)
                         .padding(.vertical, (Self.line - Self.textFont.lineHeight) / 2)
                         .lineLimit(1...6)
@@ -61,7 +71,7 @@ struct CodeLaunchComposer: View {
                 }
                 .padding(.top, 9)
                 .padding(.bottom, 9)
-                .padding(.leading, 12)
+                .padding(.leading, onAttach == nil ? 8 : 12)
                 .padding(.trailing, 4)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -69,13 +79,23 @@ struct CodeLaunchComposer: View {
                     Button(action: toggleDictation) {
                         Image(systemName: dictation.isRecording ? "waveform.circle.fill" : "waveform")
                             .font(.system(size: 15, weight: .bold))
-                            .foregroundColor(Color("TextSecondary"))
+                            .foregroundColor(ink.secondary)
                             .frame(width: 40, height: 40)
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel(dictation.isRecording ? "Stop voice input" : "Start voice mode")
-                    if !trimmed.isEmpty {
+                    if isRunning, trimmed.isEmpty, let onStop {
+                        Button(action: onStop) {
+                            Image(systemName: "stop.fill")
+                                .font(.system(size: 12, weight: .bold))
+                                .foregroundColor(.white)
+                                .frame(width: 40, height: 40)
+                                .background(GizziCodeWordmark.coral, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Stop")
+                    } else if !trimmed.isEmpty {
                         Button(action: send) {
                             Image(systemName: "arrow.up")
                                 .font(.system(size: 14, weight: .bold))
@@ -91,8 +111,8 @@ struct CodeLaunchComposer: View {
                 .padding(.vertical, 6)
             }
             .padding(.horizontal, 6)
-            DashedHairline(strong: isFocused)
-            CodeDeckRow(folder: folder, onOpenTerminal: onOpenTerminal)
+            DashedHairline(strong: isFocused, terminal: terminal)
+            CodeDeckRow(folder: folder, terminal: terminal, onOpenTerminal: onOpenTerminal)
         }
         .onChange(of: dictation.transcript) { _, transcript in
             guard dictation.isRecording || !transcript.isEmpty else { return }
@@ -100,9 +120,11 @@ struct CodeLaunchComposer: View {
         }
     }
 
+    private var ink: CodeInk { CodeInk(terminal: terminal) }
+
     private func send() {
         let value = trimmed
-        guard !value.isEmpty else { return }
+        guard !value.isEmpty, !isRunning else { return }
         dictation.stop()
         text = ""
         onSend(value)
@@ -122,6 +144,7 @@ struct CodeLaunchComposer: View {
 struct DashedHairline: View {
     /// The rules step up while the prompt has focus.
     var strong: Bool = false
+    var terminal: Bool = false
 
     var body: some View {
         GeometryReader { geo in
@@ -129,11 +152,27 @@ struct DashedHairline: View {
                 path.move(to: CGPoint(x: 0, y: 0.5))
                 path.addLine(to: CGPoint(x: geo.size.width, y: 0.5))
             }
-            .stroke(strong ? Color("BorderStrong") : Color("BorderSubtle"), style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
+            .stroke(strong ? CodeInk(terminal: terminal).borderStrong : CodeInk(terminal: terminal).border, style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
         }
         .frame(height: 1)
         .accessibilityHidden(true)
     }
+}
+
+// MARK: - Ink
+
+/// The Code prompt's colours: the app's tokens, or the terminal palette on
+/// the thread's terminal view (dark whatever the appearance).
+struct CodeInk {
+    let terminal: Bool
+
+    var primary: Color { terminal ? TerminalPalette.foreground : Color("TextPrimary") }
+    var secondary: Color { terminal ? TerminalPalette.secondary : Color("TextSecondary") }
+    var tertiary: Color { terminal ? TerminalPalette.secondary.opacity(0.7) : Color("TextTertiary") }
+    var accent: Color { terminal ? GizziCodeWordmark.coral : Color("AccentPrimary") }
+    var fill: Color { terminal ? TerminalPalette.key : Color("FillNeutral") }
+    var border: Color { terminal ? TerminalPalette.keyBorder : Color("BorderSubtle") }
+    var borderStrong: Color { terminal ? TerminalPalette.pressedBorder : Color("BorderStrong") }
 }
 
 // MARK: - Deck row
@@ -144,6 +183,8 @@ struct DashedHairline: View {
 /// model · usage · Terminal, one line that scrolls sideways.
 struct CodeDeckRow: View {
     let folder: CodeFolderInfo?
+    /// On the terminal surface the last item is "Chat" (back to the chat view).
+    var terminal: Bool = false
     let onOpenTerminal: () -> Void
 
     @StateObject private var environmentStore = EnvironmentStore.shared
@@ -159,6 +200,8 @@ struct CodeDeckRow: View {
         case environment, folder, permission, model, pairing, usage
         var id: String { rawValue }
     }
+
+    private var ink: CodeInk { CodeInk(terminal: terminal) }
 
     private var permission: CodePermissionMode { CodePermissionMode(rawValue: permissionRaw) ?? .manual }
 
@@ -197,7 +240,7 @@ struct CodeDeckRow: View {
                     if let cloudStatus {
                         Text(cloudStatus)
                             .font(.system(size: 13))
-                            .foregroundColor(Color("TextSecondary"))
+                            .foregroundColor(ink.secondary)
                     }
                     caret
                 }
@@ -216,7 +259,7 @@ struct CodeDeckRow: View {
                     pill(label: "Toggle worktree isolation", action: { worktree.toggle() }) {
                         Image(systemName: worktree ? "checkmark.square.fill" : "square")
                             .font(.system(size: 15))
-                            .foregroundColor(worktree ? Color("AccentPrimary") : Color("TextSecondary"))
+                            .foregroundColor(worktree ? ink.accent : ink.secondary)
                         Text("Worktree")
                     }
                     .accessibilityAddTraits(worktree ? .isSelected : [])
@@ -228,7 +271,7 @@ struct CodeDeckRow: View {
                         Image(systemName: "chevron.down").font(.system(size: 10, weight: .bold)).opacity(0.7)
                     }
                     .font(.system(size: 13, weight: .semibold, design: .monospaced))
-                    .foregroundColor(Color("AccentPrimary"))
+                    .foregroundColor(ink.accent)
                     .padding(.horizontal, 10)
                     .frame(height: 40)
                     .contentShape(Rectangle())
@@ -242,13 +285,13 @@ struct CodeDeckRow: View {
                             .scaledToFit()
                             .frame(width: 14, height: 14)
                             .frame(width: 18, height: 18)
-                            .background(Color("FillNeutral"), in: RoundedRectangle(cornerRadius: 5))
-                            .overlay(RoundedRectangle(cornerRadius: 5).stroke(Color("BorderSubtle"), lineWidth: 1))
+                            .background(ink.fill, in: RoundedRectangle(cornerRadius: 5))
+                            .overlay(RoundedRectangle(cornerRadius: 5).stroke(ink.border, lineWidth: 1))
                         Text(modelLabel).lineLimit(1)
                         Image(systemName: "chevron.down").font(.system(size: 10, weight: .semibold)).opacity(0.8)
                     }
                     .font(.system(size: 13, weight: .medium, design: .monospaced))
-                    .foregroundColor(Color("TextSecondary"))
+                    .foregroundColor(ink.secondary)
                     .padding(.horizontal, 8)
                     .frame(height: 40)
                     .contentShape(Rectangle())
@@ -267,17 +310,17 @@ struct CodeDeckRow: View {
                 }
                 Button(action: onOpenTerminal) {
                     HStack(spacing: 6) {
-                        Image(systemName: "apple.terminal").font(.system(size: 15))
-                        Text("Terminal")
+                        Image(systemName: terminal ? "bubble.left.and.bubble.right" : "apple.terminal").font(.system(size: 15))
+                        Text(terminal ? "Chat" : "Terminal")
                     }
                     .font(.system(size: 13, weight: .semibold, design: .monospaced))
-                    .foregroundColor(Color("TextSecondary"))
+                    .foregroundColor(ink.secondary)
                     .padding(.horizontal, 10)
                     .frame(height: 40)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("Open terminal")
+                .accessibilityLabel(terminal ? "Show chat" : "Open terminal")
             }
             .padding(.top, 6)
             .padding(.bottom, 14)
@@ -321,14 +364,14 @@ struct CodeDeckRow: View {
     private var caret: some View {
         Image(systemName: "chevron.down")
             .font(.system(size: 10, weight: .semibold))
-            .foregroundColor(Color("TextTertiary"))
+            .foregroundColor(ink.tertiary)
     }
 
     @ViewBuilder
     private func pill<Content: View>(label: String, action: (() -> Void)?, @ViewBuilder content: () -> Content) -> some View {
         let chip = HStack(spacing: 6) { content() }
             .font(.system(size: 15))
-            .foregroundColor(Color("TextPrimary"))
+            .foregroundColor(ink.primary)
             .padding(.horizontal, 8)
             .frame(height: 40)
             .contentShape(Rectangle())

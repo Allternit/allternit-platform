@@ -25,6 +25,12 @@ struct CodeThreadChatView: View {
     let onSessionChanged: (String?) -> Void
     let onRename: () -> Void
     let onArchive: () -> Void
+    /// The Terminal choice: this thread drawn as a terminal session.
+    var terminal: Bool = false
+    /// The terminal view's "Chat" item: back to the chat feed.
+    var onLeaveTerminal: () -> Void = {}
+    /// The terminal view's Shell button: the computer's raw shell.
+    var onOpenShell: () -> Void = {}
 
     @StateObject private var viewModel = ChatViewModel()
     @StateObject private var modelStore = ModelStore.shared
@@ -48,13 +54,21 @@ struct CodeThreadChatView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if sessionId != nil || target.initialPrompt != nil {
+            if terminal {
+                terminalHeader
+            } else if sessionId != nil || target.initialPrompt != nil {
                 sessionHeader
             }
             pendingPermissionBanner
-            ChatContentView(sessionId: target.sessionId, viewModel: viewModel)
+            ChatContentView(
+                sessionId: target.sessionId,
+                viewModel: viewModel,
+                terminalLook: terminal,
+                codeFolder: folder,
+                onLeaveTerminal: onLeaveTerminal
+            )
         }
-        .background(Color("BgPrimary"))
+        .background(terminal ? TerminalPalette.background : Color("BgPrimary"))
         .task {
             // The launch prompt's text: send it once the chat has set its
             // session context (its onAppear runs before this task).
@@ -126,6 +140,58 @@ struct CodeThreadChatView: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 6)
         .overlay(alignment: .bottom) { Rectangle().fill(Color("BorderSubtle")).frame(height: 1) }
+    }
+
+    /// The terminal view's top row: the thread's name (its session menu) on
+    /// the dark strip, and Shell — the computer's raw shell — on the right.
+    private var terminalHeader: some View {
+        HStack(spacing: 8) {
+            Menu {
+                Button(action: onRename) { Label("Rename", systemImage: "pencil") }
+                if let sessionId {
+                    Button(action: { UIPasteboard.general.string = sessionId }) {
+                        Label("Copy session ID", systemImage: "doc.on.doc")
+                    }
+                }
+                Divider()
+                Button(role: .destructive, action: onArchive) { Label("Archive", systemImage: "archivebox") }
+            } label: {
+                HStack(spacing: 6) {
+                    Text(displayTitle)
+                        .font(.system(size: 14, weight: .semibold, design: .monospaced))
+                        .foregroundColor(TerminalPalette.foreground)
+                        .lineLimit(1)
+                    if sessionId != nil {
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundColor(TerminalPalette.secondary)
+                    }
+                }
+                .padding(.horizontal, 6)
+                .padding(.vertical, 4)
+            }
+            .disabled(sessionId == nil)
+            Spacer(minLength: 8)
+            Button(action: onOpenShell) {
+                HStack(spacing: 6) {
+                    Image(systemName: "apple.terminal")
+                        .font(.system(size: 12))
+                    Text("Shell")
+                }
+                .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                .foregroundColor(TerminalPalette.foreground)
+                .padding(.horizontal, 10)
+                .frame(height: 30)
+                .background(TerminalPalette.key, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).stroke(TerminalPalette.keyBorder, lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Open a shell on the computer")
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 6)
+        .background(TerminalPalette.strip)
+        .overlay(alignment: .bottom) { Rectangle().fill(TerminalPalette.line).frame(height: 1) }
     }
 
     /// A pending file edit (or other approval) for this session; tapping
