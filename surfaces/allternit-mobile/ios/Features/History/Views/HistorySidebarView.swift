@@ -248,7 +248,7 @@ struct HistorySidebarView: View {
                         if !inbox.items.isEmpty {
                             Text(inbox.items.count > 99 ? "99+" : "\(inbox.items.count)")
                                 .font(.system(size: 10, weight: .bold))
-                                .foregroundColor(.white)
+                                .foregroundColor(Color("OnAccent"))
                                 .padding(.horizontal, 5)
                                 .frame(minWidth: 17, minHeight: 17)
                                 .background(Capsule().fill(Color("AccentPrimary")))
@@ -371,7 +371,7 @@ struct HistorySidebarView: View {
                 if row.badge > 0 {
                     Text(row.badge > 99 ? "99+" : "\(row.badge)")
                         .font(.system(size: 12, weight: .bold))
-                        .foregroundColor(.white)
+                        .foregroundColor(Color("OnAccent"))
                         .padding(.horizontal, 7)
                         .frame(minHeight: 20)
                         .background(Capsule().fill(Color("AccentPrimary")))

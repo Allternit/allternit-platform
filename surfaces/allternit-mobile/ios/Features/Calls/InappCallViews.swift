@@ -290,7 +290,7 @@ struct InappCallScreen: View {
         Button(action: action) {
             Text(title)
                 .font(.headline)
-                .foregroundColor(.white)
+                .foregroundColor(Color("OnAccent"))
                 .frame(maxWidth: 280)
                 .padding(.vertical, 14)
                 .background(Color("AccentPrimary"))

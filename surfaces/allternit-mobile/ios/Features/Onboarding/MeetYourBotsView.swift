@@ -568,7 +568,7 @@ struct MeetYourBotsView: View {
         Button(action: action) {
             Text(title)
                 .font(.headline)
-                .foregroundColor(.white)
+                .foregroundColor(Color("OnAccent"))
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 15)
                 .background(Color("AccentPrimary").opacity(disabled ? 0.45 : 1))
