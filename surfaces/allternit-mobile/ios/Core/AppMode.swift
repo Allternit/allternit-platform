@@ -102,11 +102,11 @@ enum ShellMode: String, CaseIterable, Sendable {
     /// shared sections (Projects, Artifacts, …) that keep the current mode.
     static func owner(of tab: ModeBarItem) -> ShellMode? {
         switch tab {
-        case .chats: return .home
+        case .chats, .tasks: return .home
         case .agents: return .bots
         case .code: return .code
         case .aci: return .aci
-        case .projects, .artifacts, .automation, .models: return nil
+        case .projects, .artifacts, .automation, .customize, .models: return nil
         }
     }
 }
@@ -198,7 +198,7 @@ final class AppModeStore: ObservableObject {
 /// drawer's shared sections. `agents` is the Bots root (the case name stays
 /// for existing callers).
 enum ModeBarItem: String, CaseIterable {
-    case chats, projects, artifacts, agents, automation, models, code, aci
+    case chats, projects, artifacts, agents, automation, customize, tasks, models, code, aci
 
     var label: String {
         switch self {
@@ -207,6 +207,8 @@ enum ModeBarItem: String, CaseIterable {
         case .artifacts: return "Artifacts"
         case .agents: return "Bots"
         case .automation: return "Automation Tasks"
+        case .customize: return "Customize"
+        case .tasks: return "Tasks"
         case .models: return "Models"
         case .code: return "Code"
         case .aci: return "ACI"
@@ -221,6 +223,8 @@ enum ModeBarItem: String, CaseIterable {
         case .artifacts: return "archivebox"
         case .agents: return "cpu"
         case .automation: return "clock.arrow.circlepath"
+        case .customize: return "slider.horizontal.3"
+        case .tasks: return "checklist"
         case .models: return "brain.head.profile"
         case .code: return "terminal"
         case .aci: return "globe"
