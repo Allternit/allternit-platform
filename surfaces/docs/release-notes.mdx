@@ -16,6 +16,14 @@ description: 'Changelog for the Allternit platform, SDKs, and Gizzi Code CLI'
 - **Keyboard and accessibility:** `⌥/Alt+arrow keys` move the HUD by 20 px, `⌥⇧/Alt+Shift+arrow keys` resize it, replies are announced to screen readers, reduce transparency gives solid surfaces, and signed out the HUD offers **Sign in**.
 - **Fixes:** Linux: the HUD no longer becomes impossible to click. Windows and Linux: the HUD no longer covers system menus and notifications. The screenshot button shows an error instead of failing silently. Wayland: drag the top strip to move the HUD. Opening the HUD from the app no longer shows the desktop pet's version of it. See [HUD](/surfaces/desktop#hud).
 
+## 2026-10-29 — Hand-off lanes for Factory teams and bot tasks
+
+The same changes apply on Desktop, on ai.allternit.com (including the phone layout) and in the m.allternit.com app.
+
+- **Factory team view:** a bot project's team now opens on lanes. Bot cards show state, context used and the current node; under them, one lane per team link holds the nodes handed along it. Open a node for its files, **Open node** and **Take over** (a running Terminal bot's pane). **Graph** and **List** are still there. See [Hand-off lanes](/factory/agents#hand-off-lanes).
+- **Bot Tasks tab:** when a thread used subagents, the Tasks tab shows the bot and each subagent type as cards with a lane of the tasks handed to each, above the steps. See [Bot threads](/guides/bot-threads).
+- **System drawer:** the Bots tab has a **Lanes** view next to List and Graph. See [System drawer](/guides/system-drawer).
+
 ## 2026-10-29 — Long HUD drafts and the Gizzi summary show in full
 
 - **HUD drafts:** a long message in the HUD pushed the composer's bottom row (attach, voice, model, send) past the edge of the window. The HUD now grows upward while the draft needs room and shrinks back as it gets shorter. See [HUD](/surfaces/desktop#hud).

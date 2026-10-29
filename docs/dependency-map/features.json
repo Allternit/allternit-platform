@@ -273,6 +273,10 @@
           "note": "Thirteen stage backgrounds (Aurora default, Glass mesh, Constellation, Spotlight, Horizon, Silk, Bokeh, Grid glow, Lava, Prism, Fireflies, Dusk, Plain) behind bot chat, group chat and bot project home; chosen in Settings → Appearance or on the stage (Eoj: build all of them and choose)."
         },
         {
+          "on": "2026-10-29",
+          "note": "Twenty ASCII backgrounds next to the thirteen (now the Classic set): A-block (the A-block mark's breathe, sweep, conveyor and write moves), six moods of other AI apps with no marks, and thirteen scenes. They react to the cursor (characters part and glow; a click on empty space sends a pulse). Settings → Appearance → Background gets ASCII / Classic, Show on (bot chats, group chats, bot project homes, Code mode; Code mode off by default), Movement, Colours, Characters, Character size, Density and Veil. Code mode shows it behind the session view (backdrop/ascii/, useStageBackgroundFor) (Eoj)."
+        },
+        {
           "on": "2026-10-22",
           "note": "Bot colour comes from the avatar art (bot-art-color.ts), so the stage, pill and bubbles match the bot. The thread-top pill shows a status word (live-status.ts); a running thread shows a task card (ThreadTaskCard); Tasks lists subtasks under the running step and an Up next list. Phone gets a Needs you sheet. Project home uses the shared launch layout (BaseProjectView launchLayout). Voice sessions show hand-off chips (ai #732)."
         },
@@ -481,7 +485,8 @@
         "allternit/cmd/allternit-factory",
         "allternit/factory/engine",
         "allternit/factory/pane",
-        "allternit/cmd/gizzi-code/src/cli/factory"
+        "allternit/cmd/gizzi-code/src/cli/factory",
+        "allternit-ai/src/components/handoff-lanes"
       ],
       "decisions": [
         {
@@ -503,6 +508,10 @@
         {
           "on": "2026-10-17",
           "note": "Terminal bots never wait on an approval prompt: Kimi panes start with --auto and Gemini panes with --yolo (ACP mode and kimi subcommands untouched), as Claude, Codex and Qwen already ran auto-approve behind the Gate."
+        },
+        {
+          "on": "2026-10-29",
+          "note": "Team view opens on hand-off lanes (bot cards, one lane per team link, Take over to a running Terminal pane); Graph and List stay as switches. Bot thread Tasks tab shows subagent lanes."
         }
       ],
       "evidence": [
@@ -2806,26 +2815,17 @@
       "label": "System drawer (developer tool: Needs you, Bots, Running, Problems)",
       "product": "product:ai-allternit",
       "status": "building",
-      "description": "A developer tool, off by default (Settings → Developer → System drawer, useDevToolsStore). A bottom drawer (Desktop, beside the rail) or sheet (phone layout and m.allternit.com PWA) showing what is happening across every session and mode. Needs you: agent permission requests from any surface plus Factory approvals, answered in place. Bots: every bot (agent store + useBotStatus, plus Factory Terminal bots) as one line each with Open; a Graph switch draws the Factory campaign flow or, with no campaign, the Terminal bots as a team. Running: sessions replying and dev servers with Open and Stop. Problems: failing routines, failed Terminal bots and parsed check failures from code sessions active in the last day. Opened with Cmd/Ctrl+J, the dot on the Gizzi desktop pet (hover shows a summary bubble, click opens; clicking the pet still opens quick chat), the menu bar menu's System section (right-click; left-click still opens the HUD) or the phone menu footer button; never opens by itself.",
+      "description": "A developer tool, off by default (Settings → Developer → System drawer, useDevToolsStore). A bottom drawer (Desktop, beside the rail) or sheet (phone layout and m.allternit.com PWA) showing what is happening across every session and mode. Needs you: agent permission requests from any surface plus Factory approvals, answered in place. Bots: every bot (agent store + useBotStatus, plus Factory Terminal bots) as one line each with Open; a Lanes switch shows the Terminal bots' hand-off lanes; a Graph switch draws the Factory campaign flow or, with no campaign, the Terminal bots as a team. Running: sessions replying and dev servers with Open and Stop. Problems: failing routines, failed Terminal bots and parsed check failures from code sessions active in the last day. Opened with Cmd/Ctrl+J, the dot on the Gizzi desktop pet (hover shows a summary bubble, click opens; clicking the pet still opens quick chat), the menu bar menu's System section (right-click; left-click still opens the HUD) or the phone menu footer button; never opens by itself.",
       "touches": [
         "allternit-ai/src/components/desktop-companion",
-        "allternit-ai/src/components/factory/views/connected.tsx",
         "allternit-ai/src/drawers",
-        "allternit-ai/src/fabric-session/phone/PhoneDrawer.tsx",
-        "allternit-ai/src/fabric-session/phone/PhoneShell.tsx",
-        "allternit-ai/src/lib/dev-tools.store.ts",
-        "allternit-ai/src/pages/DesktopCompanionPage.tsx",
-        "allternit-ai/src/shell/ShellApp.tsx",
-        "allternit-ai/src/shell/ShellFrame.tsx",
-        "allternit-ai/src/shell/ShellRail.tsx",
-        "allternit-ai/src/views/code/ConsoleDrawer",
-        "allternit-ai/src/views/code/RunsView.tsx",
-        "allternit-ai/src/views/code/console",
-        "allternit-ai/src/views/settings/SettingsView.tsx",
-        "surfaces/allternit-desktop/src/main/desktop-companion.ts",
-        "surfaces/allternit-desktop/src/main/system-summary.ts",
-        "surfaces/allternit-desktop/src/main/unified-main.ts",
-        "surfaces/allternit-desktop/src/preload/index.ts"
+        "allternit-ai/src/fabric-session",
+        "allternit-ai/src/lib",
+        "allternit-ai/src/pages",
+        "allternit-ai/src/shell",
+        "allternit-ai/src/views/code",
+        "allternit-ai/src/views/settings",
+        "allternit/surfaces/allternit-desktop"
       ],
       "decisions": [
         {
@@ -2835,6 +2835,10 @@
         {
           "on": "2026-10-29",
           "note": "Eoj: the drawer had drifted too complex; it is an advanced developer tool, not for regular users. Off by default behind Settings → Developer. Tabs cut to Needs you, Bots, Running, Problems (Runs tab, usage strip and filter toolbars removed); Bots added as a plain list with a Graph switch. The rail indicator is removed. Entry is option E: a dot on the Gizzi pet (hover shows the summary bubble, click the dot opens; Gizzi's own click unchanged, nothing pops up by itself) plus a System section in the menu bar right-click menu (left-click still opens the HUD)."
+        },
+        {
+          "on": "2026-10-29",
+          "note": "Bots tab gained a Lanes view (hand-off lanes) beside List and Graph."
         }
       ],
       "evidence": [
@@ -3211,12 +3215,8 @@
       "status": "live",
       "description": "Allternit Desktop's A:// menu bar icon (click opens the HUD, right-click opens the status menu) and the macOS app menu (Allternit Desktop, File, Edit, View, Window, Help). Workspace commands (New Session, modes, sidebar, Settings, Find, Bot Activity) reach the renderer as window:event:menu-command.",
       "touches": [
-        "allternit/surfaces/allternit-desktop/src/main/app-menu.ts",
-        "allternit/surfaces/allternit-desktop/src/main/unified-main.ts",
-        "allternit/surfaces/allternit-desktop/build",
-        "allternit-ai/src/shell/desktop-menu.ts",
-        "allternit-ai/src/shell/ShellApp.tsx",
-        "allternit-ai/src/shell/ShellRail.tsx",
+        "allternit/surfaces/allternit-desktop",
+        "allternit-ai/src/shell",
         "surface:desktop"
       ],
       "decisions": [
