@@ -158,17 +158,9 @@ struct ShellWordmark: View {
                     .accessibilityLabel("gizzi code")
             } else if let suffix = mode.wordmarkSuffix {
                 // Suffixed marks run smaller so they fit beside the dial and search.
-                HStack(spacing: 5) {
-                    WordmarkView(height: 12)
-                    Text(suffix)
-                        .font(.system(size: 12, weight: .heavy))
-                        .tracking(1.2)
-                        .foregroundColor(Color("TextPrimary"))
-                }
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel("Allternit \(mode.label)")
+                PixelWordmark(height: 12, suffix: suffix)
             } else {
-                WordmarkView(height: 16)
+                PixelWordmark(height: 16)
             }
         }
         .lineLimit(1)
