@@ -639,9 +639,13 @@ struct HistorySidebarView: View {
         .accessibilityAddTraits(.isHeader)
     }
 
-    /// Claude-iOS row body: icon, title, preview line, and time.
+    /// Claude-iOS row body: icon, title, preview line, and time / Working /
+    /// unread dot (PhoneDrawer RecentRowBody).
     private func recentRowBody(_ session: AgentSession) -> some View {
         let isSelected = selectedSessionId == session.id
+        let working = store.isStreaming(session.id)
+        let unread = store.isUnread(session)
+        let time = ShellSessionsStore.relativeTime(ShellSessionsStore.timestamp(of: session))
         return HStack(spacing: 14) {
             Image(systemName: ShellSearchView.icon(for: session))
                 .font(.system(size: 16))
@@ -650,14 +654,21 @@ struct HistorySidebarView: View {
             VStack(alignment: .leading, spacing: 1) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text(session.name ?? "Untitled")
-                        .font(.system(size: 16.5))
+                        .font(.system(size: 16.5, weight: unread ? .semibold : .regular))
                         .foregroundColor(Color("TextPrimary"))
                         .lineLimit(1)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                    Text(ShellSessionsStore.relativeTime(ShellSessionsStore.timestamp(of: session)))
-                        .font(.system(size: 12))
-                        .monospacedDigit()
-                        .foregroundColor(Color("TextSecondary"))
+                    if working {
+                        // .phone-rail-working: 11.5px/500, coral.
+                        Text("Working")
+                            .font(.system(size: 11.5, weight: .medium))
+                            .foregroundColor(Self.workingCoral)
+                    } else if !time.isEmpty {
+                        Text(time)
+                            .font(.system(size: 12))
+                            .monospacedDigit()
+                            .foregroundColor(Color("TextSecondary"))
+                    }
                 }
                 if let preview = session.description?.trimmingCharacters(in: .whitespacesAndNewlines), !preview.isEmpty {
                     Text(preview)
@@ -665,6 +676,13 @@ struct HistorySidebarView: View {
                         .foregroundColor(Color("TextSecondary"))
                         .lineLimit(1)
                 }
+            }
+            if !working && unread {
+                // .phone-rail-dot: 8px, the accent.
+                Circle()
+                    .fill(Color("AccentPrimary"))
+                    .frame(width: 8, height: 8)
+                    .accessibilityLabel("Unread")
             }
         }
         .padding(.horizontal, 12)
@@ -676,6 +694,9 @@ struct HistorySidebarView: View {
         )
         .contentShape(Rectangle())
     }
+
+    /// The web's working accent (#D97757, `.phone-rail-working`).
+    static let workingCoral = Color(red: 0xD9 / 255, green: 0x77 / 255, blue: 0x57 / 255)
 
     /// One recent. Swipe left (a long swipe commits) deletes it; long-press
     /// lifts it to drag into your own order; a tap opens it.
@@ -956,6 +977,7 @@ struct HistorySidebarView: View {
         default: modeStore.selectBarItem(.chats)
         }
         selectedSessionId = session.id
+        store.markSeen(session.id)
         closeDrawer()
     }
 
@@ -1048,9 +1070,10 @@ struct HistorySidebarView: View {
                 if modeStore.shellMode == .home, !typeFilter.isEmpty, !typeFilter.contains(RecentType.of(session)) {
                     return false
                 }
+                let isOpen = session.active && !session.archived
                 switch statusFilter {
-                case .all, .active: if !session.active { return false }
-                case .completed, .archived: if session.active { return false }
+                case .all, .active: if !isOpen { return false }
+                case .completed, .archived: if isOpen { return false }
                 }
                 let date = ShellSessionsStore.timestamp(of: session)
                 switch dateFilter {

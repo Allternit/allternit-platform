@@ -52,11 +52,15 @@ struct ChatView: View {
         // A sent first message names the chat (after its first reply): pick
         // up the new title when a turn settles.
         .task(id: "\(viewModel.currentSessionId ?? "")|\(viewModel.isStreaming)") {
+            // Drawer rows: this chat shows "Working" while it streams and is never unread.
+            sessions.setActive(viewModel.currentSessionId, streaming: viewModel.isStreaming)
             guard !viewModel.isStreaming else { return }
             if sessions.session(id: viewModel.currentSessionId) == nil || viewModel.currentSessionId != nil {
                 await sessions.load()
+                if let id = viewModel.currentSessionId { sessions.markSeen(id) }
             }
         }
+        .onDisappear { sessions.setActive(nil, streaming: viewModel.isStreaming) }
     }
 
     private func startNewChat() {
