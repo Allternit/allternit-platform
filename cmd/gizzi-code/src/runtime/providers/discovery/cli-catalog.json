@@ -99,6 +99,11 @@
       "login": [
         "login"
       ],
+      "loginRemote": [
+        "login",
+        "--device-auth"
+      ],
+      "loginRemoteHint": "If OpenAI rejects the code, turn on \"device code authorization for Codex\" in ChatGPT Settings → Security, then try again.",
       "signInPage": "https://chatgpt.com/",
       "install": {
         "harness": "codex"
@@ -302,6 +307,10 @@
       "login": [
         "login"
       ],
+      "loginRemote": [
+        "login",
+        "--device-auth"
+      ],
       "signInPage": "https://grok.com/",
       "install": {
         "harness": "grok"
@@ -336,7 +345,7 @@
           "output": 64000
         }
       ],
-      "signIn": "api_key",
+      "signIn": "subscription",
       "install": {
         "harness": "opencode"
       },
@@ -346,7 +355,10 @@
       },
       "aliases": [],
       "category": "coding",
-      "login": [],
+      "login": [
+        "auth",
+        "login"
+      ],
       "icon": "opencode"
     },
     {

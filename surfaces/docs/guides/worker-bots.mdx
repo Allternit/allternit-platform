@@ -1,0 +1,35 @@
+---
+title: Worker bots
+description: "A bot that owns kinds of tasks. Make one from chat; your other bots hand it that work."
+---
+
+A worker bot is one of your bots that owns kinds of tasks, such as invoices, code review or expense reports. Your other bots see what it owns and hand that work to it instead of doing it themselves.
+
+## Make one from chat
+
+Ask any of your bots, for example "make a bot that handles our invoices and expense reports". The bot calls its `bot_create` tool and the new bot appears in your Bots rail.
+
+The new bot belongs to you. Allternit takes the owner from the chat the request came from, never from what the model writes, so a bot can only make bots for its own owner.
+
+What a worker bot gets:
+
+| Field | What it is |
+| --- | --- |
+| Name | What you and your bots call it. |
+| Purpose | One or two sentences on what it is for. Without one, Allternit writes "Worker bot that owns ..." from its list. |
+| Owns | The kinds of tasks it owns, as short phrases. Up to 20, duplicates dropped. |
+| Brain | Optional. A vendor from the CLI catalog (Claude Code, Codex, Grok, OpenCode and others) and a model. Without one it follows your default model. If that vendor isn't connected yet, the bot offers to [connect it](/guides/connect-vendor-from-chat). |
+| Computer | Optional: your cloud computer, this computer, or a computer you name. |
+
+Change what a bot owns later in its settings, or through the API (`owns` on `PATCH /agents/:id`).
+
+## How the work moves
+
+Every bot's teammate list (`message_agent` with target "list") shows each bot's owns list, for example `- Ledger, Bookkeeper [owns: invoices, expense reports]`. When a task matches what a teammate owns, the bot hands it to that teammate with `message_agent`. The work runs in the worker bot's own task thread under the asking chat, and the result comes back there. See [Threads and subagents](/guides/bot-threads).
+
+## For developers
+
+- Column: `agents.owns`, a JSON string list (migration V282). Read and written as `owns` on agent create, update and get.
+- `POST /api/v1/bot-routing/roster` returns `owns` for each teammate.
+- `POST /api/v1/bot-routing/bot/create` with `{sessionId, name, purpose?, owns: [], brain?: {provider, model?}, computer?}` returns `{bot: {id, name, owns, brain}}`. An unknown `brain.provider` is refused with 400.
+- Server: `cmd/allternit-api/src/worker_bot_tools.rs`. Gizzi tool: `cmd/gizzi-code/src/runtime/tools/builtins/worker-bot-tools.ts`, only in an app bot's own chat.

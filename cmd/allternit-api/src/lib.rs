@@ -73,6 +73,7 @@ pub mod agent_gateway_routes;
 pub mod thread_routes;
 pub mod thread_closeout;
 pub mod thread_bot_tools;
+pub mod worker_bot_tools;
 pub mod bot_routing;
 pub mod bot_suggestions;
 pub mod gateway_routing;

@@ -67,6 +67,8 @@ pub struct RosterBot {
     pub title: Option<String>,
     pub tagline: Option<String>,
     pub description: Option<String>,
+    /// Worker bots (V282): kinds of tasks this bot owns; others hand those to it.
+    pub owns: Vec<String>,
 }
 
 /// The bot whose chat is calling, and where that chat sits.
@@ -213,7 +215,7 @@ pub fn roster(db: &DbHandle, user_id: &str, exclude: &str) -> Vec<RosterBot> {
     let Ok(mut stmt) = conn.prepare(
         "SELECT id, COALESCE(json_extract(config, '$.botProfile.displayName'), name),
                 json_extract(config, '$.botProfile.handle'), json_extract(config, '$.botProfile.title'),
-                json_extract(config, '$.botProfile.tagline'), description
+                json_extract(config, '$.botProfile.tagline'), description, owns
          FROM agents
          WHERE user_id = ?1 AND id != ?2 AND (is_bot = 1 OR json_extract(config, '$.isBot') = 1)
          ORDER BY created_at, id",
@@ -229,6 +231,10 @@ pub fn roster(db: &DbHandle, user_id: &str, exclude: &str) -> Vec<RosterBot> {
             title: blank(r.get(3)?),
             tagline: blank(r.get(4)?),
             description: blank(r.get(5)?),
+            owns: r
+                .get::<_, Option<String>>(6)?
+                .and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok())
+                .unwrap_or_default(),
         })
     })
     .map(|rows| rows.filter_map(Result::ok).collect())
@@ -286,6 +292,9 @@ pub fn roster_text(bots: &[RosterBot]) -> String {
             let about = [b.tagline.as_deref(), b.description.as_deref()].into_iter().flatten().collect::<Vec<_>>().join(" ");
             if !about.is_empty() {
                 line.push_str(&format!(": {}", truncate(&about, 200)));
+            }
+            if !b.owns.is_empty() {
+                line.push_str(&format!(" [owns: {}]", b.owns.join(", ")));
             }
             line
         })
@@ -1023,6 +1032,7 @@ mod tests {
             title: None,
             tagline: None,
             description: None,
+            owns: vec![],
         };
         let bots = vec![bot("b1", "Scout", Some("scout-v1")), bot("b2", "Ledger", None), bot("b3", "ledger", None)];
         assert_eq!(match_target("scout", &bots).unwrap().id, "b1");
