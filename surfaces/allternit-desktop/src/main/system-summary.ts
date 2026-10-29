@@ -60,7 +60,7 @@ export function dotTab(s: SystemSummary): SystemTab {
   return s.needsYou > 0 ? 'needs-you' : s.problems > 0 ? 'problems' : 'bots';
 }
 
-/** What hovering the dot says, in two short lines at most. */
+/** What hovering the dot says: the counts, the first item, how to open. One line each. */
 export function bubbleText(s: SystemSummary): string {
   const parts = [
     s.needsYou ? `${s.needsYou} need${s.needsYou === 1 ? 's' : ''} you` : '',
@@ -68,6 +68,5 @@ export function bubbleText(s: SystemSummary): string {
     s.running ? `${s.running} running` : '',
   ].filter(Boolean);
   const first = s.items[0]?.text;
-  const head = parts.join(' · ') || 'Nothing waiting';
-  return first ? `${head}: ${first}. Click the dot to open.` : `${head}. Click the dot to open.`;
+  return [parts.join(' · ') || 'Nothing waiting', first, 'Click the dot to open.'].filter(Boolean).join('\n');
 }

@@ -28,7 +28,7 @@ describe('system summary from the app window', () => {
   it('points the dot at what needs you first, then what broke', () => {
     const both = sanitizeSummary({ enabled: true, needsYou: 1, problems: 2, items: [{ tab: 'needs-you', text: 'sub asks to run pnpm add' }] });
     expect([dotTone(both), dotTab(both)]).toEqual(['warning', 'needs-you']);
-    expect(bubbleText(both)).toBe('1 needs you · 2 problems: sub asks to run pnpm add. Click the dot to open.');
+    expect(bubbleText(both)).toBe('1 needs you · 2 problems\nsub asks to run pnpm add\nClick the dot to open.');
     const broken = sanitizeSummary({ enabled: true, problems: 1 });
     expect([dotTone(broken), dotTab(broken)]).toEqual(['error', 'problems']);
   });
