@@ -299,6 +299,12 @@ final class BotModeClient: @unchecked Sendable {
         try await client.post(path: "threads/\(Self.escape(id))/approve", body: EmptyBody())
     }
 
+    /// Closes a task thread as done (web threads.ts `threadApi.resolve`).
+    func resolveThread(id: String) async throws {
+        struct Body: Encodable { let status = "done" }
+        try await client.post(path: "threads/\(Self.escape(id))/resolve", body: Body())
+    }
+
     func declineThread(id: String) async throws {
         try await client.post(path: "threads/\(Self.escape(id))/decline", body: EmptyBody())
     }
@@ -308,6 +314,32 @@ final class BotModeClient: @unchecked Sendable {
     func listBotProjects() async throws -> [BotProjectSummary] {
         let response: BotProjectListResponse = try await client.get(path: "bot-projects")
         return response.projects
+    }
+
+    /// Makes a bot project (a cowork project tagged `kind: bots`; web
+    /// bot-projects.ts `createBotProject`) and returns its id.
+    func createBotProject(title: String) async throws -> String {
+        struct Body: Encodable {
+            let title: String
+            let metadata = #"{"kind":"bots"}"#
+        }
+        struct Created: Decodable {
+            struct Project: Decodable { let id: String }
+            let project: Project?
+            let id: String?
+        }
+        let created: Created = try await client.post(path: "cowork/projects", body: Body(title: title))
+        guard let id = created.project?.id ?? created.id else {
+            throw URLError(.cannotParseResponse)
+        }
+        return id
+    }
+
+    /// Hands the main bot a request in a project (web coordinator.ts
+    /// `sendToCoordinator`: `POST /api/v1/projects/:id/messages`).
+    func sendToCoordinator(projectId: String, text: String) async throws {
+        struct Body: Encodable { let text: String }
+        try await client.post(path: "projects/\(Self.escape(projectId))/messages", body: Body(text: text))
     }
 
     // MARK: Group chats (bot_group_routes.rs)

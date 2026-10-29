@@ -1,23 +1,25 @@
 import SwiftUI
 
 /// A bot's page (allternit-ai src/views/bots/home/PhoneBotPage.tsx): the
-/// banner profile card, then Threads · Tasks · Routines · Artifacts ·
-/// Memory · Computer · Channels. Editing and the full dashboard link to the
-/// existing Features/Agents screens rather than duplicating them.
+/// banner with the big avatar, name, role line and Edit, then one card of
+/// rows with live counts — Threads · Tasks · Routines · Artifacts · Memory ·
+/// Computer · Channels. Each row opens the view that already exists for it:
+/// in a bot thread Threads and Tasks switch the thread's top deck, the rest
+/// push the bot screen on that tab.
 struct BotPageView: View {
     let bot: AgentRecord
+    /// In a thread: switch its top deck instead of pushing.
+    var onOpenThreads: (() -> Void)? = nil
+    var onOpenTasks: (() -> Void)? = nil
 
     @ObservedObject private var store = BotModeStore.shared
-    @ObservedObject private var status = BotStatusStore.shared
     @ObservedObject private var desktop = BotDesktopStore.shared
     @EnvironmentObject private var navigator: BotNavigator
-    @State private var routinesCount: Int? = nil
+    @State private var routinesOn: Int? = nil
     @State private var channelNames: [String]? = nil
-    @State private var connecting = false
 
-    private var accent: Color {
-        if let hex = bot.botAccentColor { return Color(hex: hex) }
-        return Color("AccentPrimary")
+    private var accent: Color? {
+        bot.botAccentColor.map { Color(hex: $0) }
     }
 
     var body: some View {
@@ -25,85 +27,57 @@ struct BotPageView: View {
             VStack(spacing: 16) {
                 banner
                 rows
-                Button {
-                    navigator.open(.chat(botId: bot.id, sessionId: nil))
-                } label: {
-                    Label("Open main chat", systemImage: "bubble.left.and.bubble.right")
-                        .frame(maxWidth: .infinity, minHeight: 44)
-                }
-                .buttonStyle(.borderedProminent)
-                .padding(.horizontal, 14)
             }
-            .padding(.bottom, 24)
+            .padding(.bottom, 32)
         }
         .background(Color("BgPrimary"))
         .navigationBarTitleDisplayMode(.inline)
         .task {
-            status.subscribe(botId: bot.id)
             desktop.fetchStatusIfNeeded(botId: bot.id)
             await loadCounts()
-        }
-        .task { await InappCallStore.shared.loadCallableContacts(botId: bot.id) }
-        .onDisappear { status.unsubscribe(botId: bot.id) }
-        .sheet(isPresented: $connecting, onDismiss: { Task { await loadCounts() } }) {
-            GiveBotPhoneSheet(botId: bot.id)
         }
     }
 
     private var banner: some View {
-        VStack(spacing: 6) {
-            BotStatusAvatar(bot: bot, size: 92,
-                            working: status.isWorking(for: bot.id),
-                            waiting: status.needsAttention(for: bot.id),
-                            live: true)
+        VStack(spacing: 0) {
+            BotAvatarView(bot: bot, size: 92, live: true)
+                .padding(4)
+                .background(Circle().fill((accent ?? .clear).opacity(0.16)))
             Text(bot.botDisplayName)
-                .font(.title2.weight(.semibold))
+                .font(.system(size: 22, weight: .semibold))
                 .foregroundColor(Color("TextPrimary"))
                 .lineLimit(1)
-            Text(roleLine)
-                .font(.footnote)
-                .foregroundColor(Color("TextSecondary"))
-                .multilineTextAlignment(.center)
-                .lineLimit(2)
-                .frame(maxWidth: 320)
-            HStack(spacing: 8) {
-                NavigationLink(value: BotRoute.settings(bot.id)) {
-                    Label("Edit", systemImage: "pencil")
-                        .font(.subheadline.weight(.medium))
-                        .padding(.horizontal, 14)
-                        .frame(minHeight: 36)
-                        .background(Color("BgSecondary"))
-                        .clipShape(Capsule())
-                }
-                NavigationLink(value: BotRoute.stage(bot.id)) {
-                    Label("Stage", systemImage: "sparkles")
-                        .font(.subheadline.weight(.medium))
-                        .padding(.horizontal, 14)
-                        .frame(minHeight: 36)
-                        .background(Color("BgSecondary"))
-                        .clipShape(Capsule())
-                }
-                BotCallButton(botId: bot.id, style: .capsule)
-                Button { connecting = true } label: {
-                    Label("Connect", systemImage: "plus")
-                        .font(.subheadline.weight(.medium))
-                        .padding(.horizontal, 14)
-                        .frame(minHeight: 36)
-                        .background(Color("BgSecondary"))
-                        .clipShape(Capsule())
-                }
-                .buttonStyle(.plain)
-                .accessibilityHint("Give \(bot.botDisplayName) a number, an email address or a messaging channel")
+                .padding(.top, 8)
+            if !roleLine.isEmpty {
+                Text(roleLine)
+                    .font(.system(size: 13))
+                    .foregroundColor(Color("TextSecondary"))
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+                    .frame(maxWidth: 320)
+                    .padding(.top, 2)
             }
-            .padding(.top, 4)
+            Button { navigator.open(.settings(bot.id)) } label: {
+                Label("Edit", systemImage: "pencil")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(Color("TextPrimary"))
+                    .padding(.horizontal, 16)
+                    .frame(minHeight: 36)
+                    .background(Capsule().fill(Color("BgPanel")))
+                    .overlay(Capsule().stroke(Color("BorderSubtle")))
+            }
+            .buttonStyle(.plain)
+            .padding(.top, 10)
         }
-        .padding(.top, 20)
+        .padding(.horizontal, 14)
+        .padding(.top, 16)
         .padding(.bottom, 20)
         .frame(maxWidth: .infinity)
         .background(
-            LinearGradient(colors: [accent.opacity(0.22), accent.opacity(0.04)],
+            LinearGradient(colors: [(accent ?? Color("TextPrimary")).opacity(0.18), (accent ?? Color("TextPrimary")).opacity(0.03)],
                            startPoint: .top, endPoint: .bottom)
         )
+        .overlay(alignment: .bottom) { Rectangle().fill(Color("BorderSubtle")).frame(height: 1) }
     }
 
     private var roleLine: String {
@@ -115,52 +89,65 @@ struct BotPageView: View {
         let working = store.workingCount(for: bot.id)
         let waiting = store.waitingCount(for: bot.id)
         return VStack(spacing: 0) {
-            pageRow("Threads", icon: "bubble.left.and.text.bubble.right",
-                    value: "\(store.openThreadCount(for: bot.id)) open", route: .threads(botId: bot.id))
+            pageRow("Threads", icon: "bubble.left.and.bubble.right", value: "\(store.openThreadCount(for: bot.id)) open") {
+                if let onOpenThreads { onOpenThreads() } else { navigator.open(.botHome(bot.id, .threads)) }
+            }
             pageRow("Tasks", icon: "checklist",
-                    value: waiting > 0 ? "\(working) working · \(waiting) need you" : "\(working) working",
-                    route: .tasks(bot.id))
-            pageRow("Routines", icon: "clock.arrow.circlepath",
-                    value: routinesCount.map { "\($0)" }, route: .routines(bot.id))
-            pageRow("Artifacts", icon: "square.grid.2x2", value: nil, route: .home(bot.id))
-            pageRow("Memory", icon: "brain", value: nil, route: .memory(bot.id))
-            pageRow("Computer", icon: "desktopcomputer", value: computerLabel, route: .botComputer(bot.id))
-            pageRow("Phone", icon: "iphone", value: nil, route: .phone(bot.id))
+                    value: waiting > 0 ? "\(working) working · \(waiting) need you" : "\(working) working") {
+                if let onOpenTasks { onOpenTasks() } else { navigator.open(.tasks(bot.id)) }
+            }
+            pageRow("Routines", icon: "clock.arrow.circlepath", value: routinesOn.map { "\($0) on" }) {
+                navigator.open(.botHome(bot.id, .routines))
+            }
+            pageRow("Artifacts", icon: "square.grid.2x2", value: nil) {
+                navigator.open(.botHome(bot.id, .artifacts))
+            }
+            pageRow("Memory", icon: "brain", value: nil) {
+                navigator.open(.botHome(bot.id, .memory))
+            }
+            pageRow("Computer", icon: "desktopcomputer", value: computerLabel) {
+                navigator.open(.botComputer(bot.id))
+            }
             pageRow("Channels", icon: "dot.radiowaves.left.and.right",
-                    value: channelNames.map { $0.isEmpty ? "None" : $0.joined(separator: ", ") },
-                    route: .channels(bot.id), last: true)
+                    value: channelNames.map { $0.isEmpty ? "None" : $0.joined(separator: ", ") }, last: true) {
+                // Settings holds the channels on the web; here they keep their own screen.
+                navigator.open(.channels(bot.id))
+            }
         }
-        .background(Color("BgSecondary"))
+        .background(Color("BgPanel"))
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Color("BorderSubtle")))
         .padding(.horizontal, 14)
     }
 
+    /// web phoneComputerLabel: Running · Starting · Idle.
     private var computerLabel: String {
         switch desktop.entry(for: bot.id)?.status?.status {
         case .running?: return "Running"
-        case .off?: return "Off"
-        default: return "—"
+        default: return "Idle"
         }
     }
 
-    private func pageRow(_ label: String, icon: String, value: String?, route: BotRoute, last: Bool = false) -> some View {
-        NavigationLink(value: route) {
+    private func pageRow(_ label: String, icon: String, value: String?, last: Bool = false,
+                         action: @escaping () -> Void) -> some View {
+        Button(action: action) {
             HStack(spacing: 12) {
                 Image(systemName: icon)
+                    .font(.system(size: 17))
                     .frame(width: 22)
                     .foregroundColor(Color("TextSecondary"))
                 Text(label)
+                    .font(.system(size: 16))
                     .foregroundColor(Color("TextPrimary"))
                 Spacer(minLength: 8)
                 if let value {
                     Text(value)
-                        .font(.subheadline)
+                        .font(.system(size: 14))
                         .foregroundColor(Color("TextTertiary"))
                         .lineLimit(1)
                 }
                 Image(systemName: "chevron.right")
-                    .font(.caption)
+                    .font(.system(size: 13))
                     .foregroundColor(Color("TextTertiary"))
             }
             .padding(.horizontal, 14)
@@ -169,16 +156,16 @@ struct BotPageView: View {
         }
         .buttonStyle(.plain)
         .overlay(alignment: .bottom) {
-            if !last { Divider().padding(.leading, 48) }
+            if !last { Rectangle().fill(Color("BorderSubtle")).frame(height: 1) }
         }
         .accessibilityLabel(value.map { "\(label), \($0)" } ?? label)
     }
 
     private func loadCounts() async {
-        async let routines = try? RoutinesClient.shared.listRoutines()
+        async let routines = try? AutomationClient.shared.listRoutines(recentRuns: 0)
         async let channels = try? BotModeClient.shared.listChannels(botId: bot.id)
         let (r, c) = await (routines, channels)
-        routinesCount = r?.filter { $0.agentId == bot.id }.count
+        routinesOn = r?.filter { $0.agentId == bot.id && $0.isEnabled }.count
         channelNames = c?.filter(\.enabled).map(\.label)
     }
 }
@@ -566,6 +553,17 @@ enum BotTime {
         if let d = fractional.date(from: iso) ?? plain.date(from: iso) { return d }
         // SQLite CURRENT_TIMESTAMP: "2026-10-27 12:00:00"
         return plain.date(from: iso.replacingOccurrences(of: " ", with: "T") + "Z")
+    }
+
+    /// The overview's short age ("now", "5m", "3h", "2d"; useModeOverview shortAgo).
+    static func short(_ iso: String) -> String {
+        guard let date = date(iso) else { return "" }
+        let seconds = max(0, Date().timeIntervalSince(date))
+        if seconds < 60 { return "now" }
+        if seconds < 3600 { return "\(Int(seconds / 60))m" }
+        if seconds < 86_400 { return "\(Int(seconds / 3600))h" }
+        if seconds < 604_800 { return "\(Int(seconds / 86_400))d" }
+        return "\(Int(seconds / 604_800))w"
     }
 
     static func relative(_ iso: String) -> String {

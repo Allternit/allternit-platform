@@ -20,8 +20,9 @@ struct GroupRowLabel: View {
             GroupAvatarStack(members: group.members, size: 30)
             VStack(alignment: .leading, spacing: 2) {
                 Text(group.name).lineLimit(1)
-                Text(group.log.last.map { "\($0.displayName ?? "You"): \($0.text)" }
-                     ?? group.members.map(\.displayName).joined(separator: ", "))
+                // GroupsListView `said`: a bot's line carries its name, yours is bare.
+                Text(group.log.last.map { $0.from == "bot" ? "\($0.displayName ?? "Bot"): \($0.text)" : $0.text }
+                     ?? "No messages yet.")
                     .font(.caption)
                     .foregroundColor(Color("TextSecondary"))
                     .lineLimit(1)
@@ -64,8 +65,8 @@ struct GroupsListView: View {
                 FriendlyStateView(style: .error, icon: "exclamationmark.triangle", title: "Couldn't load group chats",
                                   message: error, actionTitle: "Retry", action: { Task { await store.refreshGroups() } })
             } else if store.groups.isEmpty {
-                FriendlyStateView(style: .empty, icon: "person.3", title: "No group chats yet",
-                                  message: "Put two or more bots in one room and talk to them together.",
+                FriendlyStateView(style: .empty, icon: "person.3", title: "Group chats",
+                                  message: "No group chats yet.",
                                   actionTitle: "New group chat", action: { isCreating = true })
             } else {
                 ForEach(store.groups) { group in
@@ -78,7 +79,8 @@ struct GroupsListView: View {
                 }
             }
         }
-        .navigationTitle("Groups")
+        .navigationTitle("Group chats")
+        .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button { isCreating = true } label: { Image(systemName: "plus") }
