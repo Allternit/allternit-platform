@@ -25,13 +25,17 @@ struct CustomizeScreen: View {
     @State private var failures: [CustomizeSection: String] = [:]
     @State private var pending: Set<String> = []
     @State private var actionError: String? = nil
-    @State private var path: [MoreSection] = []
+    @State private var path = NavigationPath()
+    @State private var isAddingSource = false
+    @EnvironmentObject private var modeStore: AppModeStore
     @State private var detail: InstalledCapability? = nil
     @State private var isCreatingSkill = false
     @State private var isConnectorsPresented = false
     /// Skill directory ids installed on the computer (id → folder name).
     @State private var installedCatalog: [String: String] = [:]
     @State private var showAll = false
+    /// A built-in plugin's page (web ItemDetail).
+    @State private var featureDetail: CustomizeItem? = nil
 
     enum CustomizeSection: String, CaseIterable {
         case skills, connectors, plugins
@@ -72,6 +76,9 @@ struct CustomizeScreen: View {
         var label: String { self == .mcps ? "MCP servers" : "Webhooks" }
         var icon: String { self == .mcps ? "cpu" : "arrow.triangle.branch" }
     }
+
+    /// The "Build for the Allternit directory" pages (web Sources, Publish).
+    enum DirectoryPage: Hashable { case sources, publish }
 
     enum Scope { case yours, discover }
     enum Sort { case recommended, name }
@@ -135,6 +142,22 @@ struct CustomizeScreen: View {
             }
             .background(Color("BgPrimary").ignoresSafeArea())
             .toolbar(.hidden, for: .navigationBar)
+            .navigationDestination(for: DirectoryPage.self) { page in
+                switch page {
+                case .sources:
+                    CustomizeSourcesView()
+                case .publish:
+                    CustomizePublishView(
+                        onStart: {
+                            // The web opens the plugin manager on Plugins;
+                            // here that is the Plugins tab.
+                            path = NavigationPath()
+                            select(.plugins)
+                        },
+                        onPublished: { modeStore.selectBarItem(.artifacts) }
+                    )
+                }
+            }
             .navigationDestination(for: MoreSection.self) { more in
                 switch more {
                 case .mcps: McpServersSettingsView()
@@ -157,6 +180,16 @@ struct CustomizeScreen: View {
         }
         .sheet(isPresented: $isConnectorsPresented, onDismiss: { Task { await load(.connectors, force: true) } }) {
             ConnectorsListView()
+        }
+        .sheet(isPresented: $isAddingSource) {
+            AddSourceSheet()
+        }
+        .sheet(item: $featureDetail) { item in
+            FeaturePluginDetailView(item: item, enabled: Binding(
+                get: { items[.plugins]?.first { $0.id == item.id }?.enabled ?? item.enabled },
+                set: { value in Task { await setEnabled(item, value) } }
+            ))
+            .presentationDetents([.medium, .large])
         }
         .task(id: section) { await load(section, force: false) }
     }
@@ -274,30 +307,27 @@ struct CustomizeScreen: View {
     }
 
     /// ADD_ACTIONS, the ones iOS can do.
-    @ViewBuilder
     private var addButton: some View {
-        if section != .plugins {
-            Menu {
-                switch section {
-                case .skills:
-                    Button { isCreatingSkill = true } label: { Label("Create skill", systemImage: "plus") }
-                case .connectors:
-                    Button { isConnectorsPresented = true } label: { Label("Browse connectors", systemImage: "plus") }
-                case .plugins:
-                    EmptyView()
-                }
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "plus").font(.system(size: 13, weight: .bold))
-                    Text("Add").font(.system(size: 13, weight: .medium))
-                    Image(systemName: "chevron.down").font(.system(size: 10))
-                }
-                .foregroundColor(Color("OnAccent"))
-                .padding(.horizontal, 12)
-                .frame(height: 36)
-                .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color("AccentPrimary")))
-                .fixedSize()
+        Menu {
+            switch section {
+            case .skills:
+                Button { isCreatingSkill = true } label: { Label("Create skill", systemImage: "plus") }
+            case .connectors:
+                Button { isConnectorsPresented = true } label: { Label("Browse connectors", systemImage: "plus") }
+            case .plugins:
+                Button { isAddingSource = true } label: { Label("Add marketplace", systemImage: "plus") }
             }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "plus").font(.system(size: 13, weight: .bold))
+                Text("Add").font(.system(size: 13, weight: .medium))
+                Image(systemName: "chevron.down").font(.system(size: 10))
+            }
+            .foregroundColor(Color("OnAccent"))
+            .padding(.horizontal, 12)
+            .frame(height: 36)
+            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color("AccentPrimary")))
+            .fixedSize()
         }
     }
 
@@ -461,6 +491,46 @@ struct CustomizeScreen: View {
                 }
             }
         }
+        directoryCard
+    }
+
+    /// Discover's last card: Sources and Publish (web CustomizeView).
+    private var directoryCard: some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Build for the Allternit directory")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(Color("TextPrimary"))
+                Text("List your connector, skill, or plugin and reach everyone using Allternit.")
+                    .font(.system(size: 12))
+                    .foregroundColor(Color("TextSecondary"))
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            VStack(spacing: 6) {
+                Button { path.append(DirectoryPage.sources) } label: {
+                    Text("Sources")
+                        .font(.system(size: 13))
+                        .foregroundColor(Color("TextPrimary"))
+                        .padding(.horizontal, 12)
+                        .frame(height: 32)
+                        .background(RoundedRectangle(cornerRadius: 8).fill(Color("BgPanel")))
+                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color("BorderSubtle"), lineWidth: 1))
+                }
+                Button { path.append(DirectoryPage.publish) } label: {
+                    Text("Publish")
+                        .font(.system(size: 13))
+                        .foregroundColor(Color("OnAccent"))
+                        .padding(.horizontal, 12)
+                        .frame(height: 32)
+                        .background(RoundedRectangle(cornerRadius: 8).fill(Color("TextPrimary")))
+                }
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 16)
+        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color("FillNeutral")))
+        .padding(.top, 32)
     }
 
     static func titleCase(_ value: String) -> String {
@@ -673,7 +743,9 @@ struct CustomizeScreen: View {
     // MARK: - Actions
 
     private func open(_ item: CustomizeItem) {
-        if let capability = item.capability {
+        if item.feature != nil {
+            featureDetail = item
+        } else if let capability = item.capability {
             detail = capability
         } else if item.catalog != nil {
             add(item)
@@ -699,7 +771,9 @@ struct CustomizeScreen: View {
         pending.insert(item.id)
         defer { pending.remove(item.id) }
         do {
-            if let capability = item.capability {
+            if item.feature != nil {
+                FeaturePlugins.setEnabled(item.id, value)
+            } else if let capability = item.capability {
                 try await CapabilitiesClient.shared.setEnabled(capability, enabled: value)
             } else if item.connector != nil {
                 guard !value else { isConnectorsPresented = true; return }
@@ -746,7 +820,17 @@ struct CustomizeScreen: View {
                 }
                 items[which] = try await CapabilitiesClient.shared.scanSkills().map(CustomizeItem.init(capability:))
             case .plugins:
-                items[which] = try await CapabilitiesClient.shared.scanPlugins().map(CustomizeItem.init(capability:))
+                // The built-in plugins first, then plugin folders on the
+                // computer (web useSectionItems('plugins')). The built-ins
+                // list even when the computer can't be scanned.
+                let on = FeaturePlugins.enabledIds()
+                let builtIns = FeaturePlugins.all.map { CustomizeItem(feature: $0, enabled: on.contains($0.id)) }
+                items[which] = builtIns
+                let ids = Set(builtIns.map(\.id))
+                let folders = try await CapabilitiesClient.shared.scanPlugins()
+                    .filter { !ids.contains($0.id) }
+                    .map(CustomizeItem.init(capability:))
+                items[which] = builtIns + folders
             case .connectors:
                 items[which] = try await ConnectorsClient().listConnectors().map(CustomizeItem.init(connector:))
             }
@@ -769,6 +853,20 @@ struct CustomizeItem: Identifiable {
     let connector: Connector?
     /// A skill directory entry not on the computer yet.
     var catalog: SkillCatalogEntry? = nil
+    /// A built-in plugin (on/off kept on this device).
+    var feature: FeaturePlugin? = nil
+
+    init(feature plugin: FeaturePlugin, enabled: Bool) {
+        id = plugin.id
+        name = plugin.name
+        description = plugin.description
+        author = plugin.author
+        category = plugin.category
+        self.enabled = enabled
+        capability = nil
+        connector = nil
+        feature = plugin
+    }
 
     init(capability: InstalledCapability) {
         id = capability.id
