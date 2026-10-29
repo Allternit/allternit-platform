@@ -20,9 +20,11 @@
 import { discoverSubprocessProviders } from "./subprocess"
 import { discoverLocalProviders } from "./local"
 import { discoverAllternitCloud } from "./allternit-cloud"
+import { discoverAllternitDevices } from "./allternit-devices"
 import { discoverSubscriptionFabric } from "../fabric/discovery"
 
 export { getCachedAllternitPlan, refreshAllternitPlan } from "./allternit-cloud"
+export { ALLTERNIT_DEVICES_PROVIDER_ID, scanAllternitDevices } from "./allternit-devices"
 
 export interface DiscoveredProvider {
   /** Unique provider ID — shown in /model list */
@@ -96,6 +98,7 @@ export const Discovery = {
     _running = (async () => {
       const results = await Promise.allSettled([
         discoverAllternitCloud(),
+        discoverAllternitDevices(),
         discoverSubprocessProviders(),
         discoverLocalProviders(),
         discoverSubscriptionFabric(),

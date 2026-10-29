@@ -63,9 +63,11 @@ export class AgentExecutor {
 
     let model: { providerID: string; modelID: string } | undefined;
     if (jobConfig.model) {
-      const parts = jobConfig.model.split("/");
-      if (parts.length === 2) {
-        model = { providerID: parts[0]!, modelID: parts[1]! };
+      // Split on the first slash only: model ids may carry their own
+      // (allternit-devices models are `<host_id>/<model_id>`).
+      const slash = jobConfig.model.indexOf("/");
+      if (slash > 0 && slash < jobConfig.model.length - 1) {
+        model = { providerID: jobConfig.model.slice(0, slash), modelID: jobConfig.model.slice(slash + 1) };
       }
     }
 

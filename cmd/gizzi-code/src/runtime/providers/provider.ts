@@ -25,7 +25,12 @@ import { BUNDLED_PROVIDERS, NoSuchModelError, type SDK, type LanguageModelV2 } f
 // Provider-specific loaders — each provider's config/auth/model logic in its own file
 import { CUSTOM_LOADERS } from "@/runtime/providers/adapters/loaders"
 import type { CustomModelLoader } from "@/runtime/providers/types"
-import { Discovery, type DiscoveredProvider } from "@/runtime/providers/discovery"
+import {
+  ALLTERNIT_DEVICES_PROVIDER_ID,
+  Discovery,
+  scanAllternitDevices,
+  type DiscoveredProvider,
+} from "@/runtime/providers/discovery"
 import { SubprocessLanguageModel } from "@/runtime/providers/adapters/loaders/subprocess"
 import { SubscriptionFabricLanguageModel } from "@/runtime/providers/fabric/language-model"
 import { fabricConfigured, isFabricProviderID } from "@/runtime/providers/fabric/client"
@@ -197,7 +202,7 @@ export namespace Provider {
     token?: string
     authType: "api_key" | "none" | "bearer" | "subprocess"
     extraHeaders: Record<string, string>
-    source: "profile" | "config" | "env" | "auth" | "plugin" | "subprocess" | "none"
+    source: "profile" | "config" | "discovery" | "env" | "auth" | "plugin" | "subprocess" | "none"
     profileId?: string
   }
 
@@ -528,6 +533,7 @@ export namespace Provider {
         }
         if (dp.subprocess_cmd && !existing.subprocess_cmd) existing.subprocess_cmd = dp.subprocess_cmd
         if (dp.auth_type && !existing.auth_type) existing.auth_type = dp.auth_type
+        if (dp.token && !existing.token) existing.token = dp.token
         log.info("discovered-merged", { providerID: dp.id, source: dp.source, models: Object.keys(dpModels).length })
         continue
       }
@@ -538,6 +544,8 @@ export namespace Provider {
         env: dp.id === "allternit" ? ["ALLTERNIT_API_KEY"] : [],
         key: dp.id === "allternit" ? process.env.ALLTERNIT_API_KEY : undefined,
         auth_type: dp.auth_type,
+        // Discovered bearer providers (allternit-devices) carry their own token.
+        token: dp.token,
         subprocess_cmd: dp.subprocess_cmd,
         options: { ...(dp.base_url ? { baseURL: dp.base_url } : {}), ...(dp.options ?? {}) },
         models: dpModels,
@@ -590,12 +598,21 @@ export namespace Provider {
     // catalog in the background and add it to the live provider list.
     if (!Object.keys(providers).some(isFabricProviderID)) watchForFabricProviders(providers, isProviderAllowed)
 
+    // Phones serving a model through the cloud relay come and go while gizzi
+    // runs: re-scan just that hook so `GET /provider` tracks them.
+    const devices = isProviderAllowed(ALLTERNIT_DEVICES_PROVIDER_ID)
+      ? watchAllternitDevices(providers, languages)
+      : undefined
+
     return {
       models: languages,
       providers,
       sdk,
       modelLoaders,
+      devices,
     }
+  }, async (s) => {
+    s.devices?.stop()
   })
 
   const FABRIC_RECHECK_MS = 60_000
@@ -625,6 +642,108 @@ export namespace Provider {
       }
     }, FABRIC_RECHECK_MS)
     timer.unref?.()
+  }
+
+  const DEVICES_RESCAN_MS = 30_000
+  /** `GET /provider` re-scans inline when the last scan is older than this. */
+  const DEVICES_ON_LIST_MAX_AGE_MS = 10_000
+  const DEVICES_ON_LIST_TIMEOUT_MS = 1_500
+
+  type DevicesWatch = {
+    /** Re-scan now (shared with an in-flight scan). */
+    refresh(timeoutMs?: number): Promise<void>
+    /** Re-scan only when the last scan is stale and did not fail (cheap enough for `GET /provider`). */
+    refreshIfStale(): Promise<void>
+    stop(): void
+  }
+
+  /**
+   * Keeps the `allternit-devices` provider's model list current. Online hosts
+   * become models; no hosts (or no/rejected credential) removes the provider so
+   * it drops out of `connected`; a network/server error keeps the last list.
+   */
+  function watchAllternitDevices(
+    providers: Record<string, Info>,
+    languages: Map<string, LanguageModelV2>,
+  ): DevicesWatch {
+    const id = ALLTERNIT_DEVICES_PROVIDER_ID
+    let running: Promise<void> | undefined
+    let lastAt = Date.now()
+    let lastFailed = false
+
+    const apply = (dp: DiscoveredProvider | undefined) => {
+      const models = dp ? discoveredModels(dp) : {}
+      for (const model of Object.values(models)) {
+        model.variants = mapValues(ProviderTransform.variants(model), (v) => v)
+      }
+      const before = providers[id]
+      if (!dp || Object.keys(models).length === 0) {
+        if (before) {
+          delete providers[id]
+          log.info("devices-gone", { providerID: id })
+        }
+      } else if (before) {
+        // Same object so holders of the provider map see the change.
+        before.models = models
+        before.token = dp.token
+        before.options = { ...before.options, baseURL: dp.base_url }
+      } else {
+        providers[id] = {
+          id,
+          name: dp.name,
+          source: "custom",
+          env: [],
+          auth_type: dp.auth_type,
+          token: dp.token,
+          options: { baseURL: dp.base_url },
+          models,
+        }
+        log.info("devices-found", { providerID: id, models: Object.keys(models).length })
+      }
+      // Cached language models hold the old token; drop them.
+      for (const key of languages.keys()) if (key.startsWith(`${id}/`)) languages.delete(key)
+    }
+
+    const refresh = (timeoutMs?: number): Promise<void> => {
+      running ??= scanAllternitDevices(timeoutMs)
+        .then((dp) => {
+          lastFailed = false
+          apply(dp)
+        })
+        .catch(() => {
+          lastFailed = true
+        })
+        .finally(() => {
+          lastAt = Date.now()
+          running = undefined
+        })
+      return running
+    }
+
+    const timer = setInterval(() => void refresh(), DEVICES_RESCAN_MS)
+    timer.unref?.()
+
+    return {
+      refresh,
+      async refreshIfStale() {
+        // Don't hold `GET /provider` on a slow background scan.
+        if (running)
+          return Promise.race([running, new Promise<void>((r) => setTimeout(r, DEVICES_ON_LIST_TIMEOUT_MS).unref?.())])
+        if (lastFailed || Date.now() - lastAt < DEVICES_ON_LIST_MAX_AGE_MS) return
+        await refresh(DEVICES_ON_LIST_TIMEOUT_MS)
+      },
+      stop: () => clearInterval(timer),
+    }
+  }
+
+  /**
+   * Re-scan the user's devices (phones serving a model through the cloud
+   * relay). `force` waits for a fresh scan; otherwise only a stale one runs.
+   */
+  export async function refreshAllternitDevices(opts: { force?: boolean } = {}): Promise<void> {
+    const devices = (await state()).devices
+    if (!devices) return
+    await (opts.force ? devices.refresh() : devices.refreshIfStale())
   }
 
   /** Subscription lanes (web-chat fabric) don't run gizzi's tools or take temperature. */
@@ -714,6 +833,7 @@ export namespace Provider {
         const baseURL = loadBaseURL(model, options)
         if (baseURL !== undefined) options["baseURL"] = baseURL
         if (options["apiKey"] === undefined && provider?.key) options["apiKey"] = provider.key
+        if (options["apiKey"] === undefined && provider?.token) options["apiKey"] = provider.token
       }
       if (model.headers)
         options["headers"] = {
@@ -985,6 +1105,12 @@ export namespace Provider {
       } else if (provider?.auth_type === "none") {
         plan.source = "none"
         plan.authType = "none"
+      } else if (provider?.token) {
+        // A discovered bearer provider (allternit-devices) or a config `token`
+        // merged onto the provider.
+        plan.source = "discovery"
+        plan.authType = "bearer"
+        plan.token = provider.token
       }
     }
 

@@ -1,0 +1,94 @@
+---
+title: 'Model host relay'
+description: 'How a device serves a model to its owner over a WebSocket, and the OpenAI-compatible routes that call it.'
+---
+
+A model host is a device that runs a model and serves it to its owner's agents. Today that is an Allternit browser tab with WebGPU (see [Run a model on your phone](/guides/run-a-model-on-your-phone)). The device keeps one WebSocket open to cloud-api; callers use an OpenAI-compatible surface, and cloud-api forwards each request to the device as a frame.
+
+Source: `cmd/allternit-cloud-api/src/routes/model_hosts.rs`.
+
+## Routes
+
+All routes are on the cloud API (`https://api.allternit.com`).
+
+| Route | Auth | What it does |
+|-------|------|--------------|
+| `POST /api/v1/model-hosts/ws-ticket` | Clerk session or `allternit_*` API token (`inference` scope) | Body `{"host_id", "name"}`. Returns `{"ticket", "ws_url"}`. |
+| `GET /api/v1/model-hosts/connect?ticket=…` | The ticket | The device's WebSocket. |
+| `GET /api/v1/model-hosts` | Clerk session or API token | `{"hosts": [{"host_id", "name", "models", "connected_at"}]}` for the caller's online hosts. |
+| `GET /api/v1/model-hosts/v1/models` | Clerk session, API token, or a paired runtime's device token | OpenAI model list of the caller's online models. |
+| `POST /api/v1/model-hosts/v1/chat/completions` | Same as above | OpenAI chat completion, streamed or not. |
+
+A runtime device token (`allternit_runtime_…`, from `gizzi login` pairing) acts as the device's owner, so gizzi can use it as the bearer token for the last two routes. gizzi registers them as the provider `allternit-devices` ("Your devices") with base URL `<cloud>/api/v1/model-hosts/v1`.
+
+Every route only sees the caller's own hosts. Another user's host id answers exactly like a host that is offline.
+
+### Tickets
+
+- `host_id`: 1 to 64 characters of `A-Z a-z 0-9 _ -`. The web app keeps a stable random id per browser.
+- `name`: up to 80 characters, shown as `owned_by` in the model list. Empty becomes `Device`.
+- A ticket works once and expires after 60 seconds. It is bound to the user, the host id and the name.
+- `ws_url` is `wss://<public host>/api/v1/model-hosts/connect?ticket=…`. The public host is the request's own host, or `ALLTERNIT_MODEL_HOST_WS_BASE` when set.
+- A user can have at most 8 hosts online at once (409 when a ticket would add a ninth). Reconnecting an existing host id does not count.
+
+### Model ids
+
+The model list returns one entry per model of each online host:
+
+```json
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "h_3f9a/lfm2.5-350m",
+      "object": "model",
+      "owned_by": "iPhone",
+      "name": "LFM2.5 350M (on this phone)",
+      "context_length": 8192
+    }
+  ]
+}
+```
+
+The id is `<host_id>/<model_id>`. With nothing online the list is empty, never an error.
+
+### Chat completions
+
+- The body is an OpenAI chat completion request, at most 1 MB. `model` must be `<host_id>/<model_id>` of one of the caller's online hosts, otherwise 404 `{"error": {"message", "type": "model_not_found"}}`.
+- cloud-api rewrites `model` to the bare `<model_id>` and sends the body to the device in a `request` frame.
+- `stream: true`: `text/event-stream`. Each `chunk` frame becomes `data: <chunk json>`, `end` becomes `data: [DONE]`. A device `error`, a disconnect or a 120 s gap becomes `data: {"error": {"message"}}` followed by `data: [DONE]`.
+- `stream` false or absent: the chunks are folded into one `chat.completion`. The content is concatenated, `finish_reason` is the last one sent, and `usage` comes from the last chunk that has it. A device `error` answers 502 `host_error`; a disconnect answers 502 `host_disconnected`.
+- No first frame from the device within 120 seconds: 504 `timeout`.
+- When the caller disconnects before the answer ends, cloud-api sends the device a `cancel` frame.
+
+## WebSocket frames
+
+All frames are JSON text frames with a `type`.
+
+Device to cloud:
+
+| Frame | Meaning |
+|-------|---------|
+| `{"type":"hello","models":[{"id","name","context_length"}]}` | Must be the first frame, within 10 seconds. The list may be empty while the model loads. |
+| `{"type":"models","models":[…]}` | Replaces the model list, for example when loading finishes. |
+| `{"type":"chunk","request_id","data":{…}}` | One OpenAI `chat.completion.chunk`. |
+| `{"type":"end","request_id"}` | The answer is complete. |
+| `{"type":"error","request_id","message"}` | The answer failed. |
+| `{"type":"ping"}` / `{"type":"pong"}` | Keep-alive. |
+
+Cloud to device:
+
+| Frame | Meaning |
+|-------|---------|
+| `{"type":"ready","host_id"}` | Sent after a valid `hello`. |
+| `{"type":"request","request_id","body":{…}}` | A chat request; `body.model` is the bare model id. |
+| `{"type":"cancel","request_id"}` | The caller went away; stop generating. |
+| `{"type":"ping"}` every 25 s / `{"type":"pong"}` | Keep-alive. A device that sends nothing for 75 seconds is dropped. |
+
+Model ids are 1 to 64 characters of `A-Z a-z 0-9 . _ : -` (no `/`); invalid or repeated entries are dropped, and a host can list up to 16 models.
+
+## Connections
+
+- One connection per user and host id. A new connection for the same host replaces the old one: the old socket is closed and its in-flight requests end with an error.
+- When a device disconnects, its in-flight requests end with an error and it leaves the model list.
+- Everything is held in memory on the cloud-api instance, like the runtime relay. Nothing is written to the database, and prompts and answers are not stored.

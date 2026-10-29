@@ -346,6 +346,10 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         .merge(routes::runtime_pairing::routes())
         .merge(routes::runtime_relay::routes())
         .merge(routes::runtime_viewer::routes())
+        // Model hosts (a phone/browser tab serving a small model to its owner's
+        // agents): each handler resolves the caller itself; the device socket
+        // takes a single-use ticket. All state in memory.
+        .merge(routes::model_hosts::routes())
         // Channels hybrid relay: management routes check the Clerk session;
         // /channels/in/:key is public, the unguessable key is the credential.
         .merge(routes::channel_inbound::routes())

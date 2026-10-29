@@ -3188,6 +3188,34 @@
       "evidence": [
         "surfaces/docs/surfaces/desktop.mdx#menu-bar-icon"
       ]
+    },
+    {
+      "id": "feature:phone-model-host",
+      "label": "Run a model on your phone (model host relay)",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "A browser tab with WebGPU (phase 1: m.allternit.com / ai.allternit.com on a phone) runs LiquidAI LFM2.5-350M (q4f16, ~255 MB) with transformers.js and serves it to its owner's agents. The tab mints a single-use 60 s ticket and holds a WebSocket to cloud-api (routes/model_hosts.rs, in-memory hub keyed by user + host id); gizzi's allternit-devices discovery ('Your devices') calls the OpenAI-compatible /api/v1/model-hosts/v1 routes with the user's credential or runtime device token, and requests are forwarded as frames. Settings > Models > 'Serve a model from this device' on Desktop, phone layout and PWA; models show in the picker under Your devices.",
+      "touches": [
+        "allternit/cmd/allternit-cloud-api",
+        "allternit/cmd/gizzi-code/src/runtime/providers",
+        "allternit-ai/src/lib/model-host",
+        "allternit-ai/src/views/settings",
+        "allternit-ai/src/lib/providers",
+        "surface:pwa",
+        "surface:ai",
+        "surface:desktop"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-28",
+          "note": "Eoj chose 'Phone serves Gizzi': the on-phone model is served to gizzi through the cloud relay so chats keep tools, memory and handoff. Phase 1 is the browser (LFM2.5-350M only; models of 760 MB or more crash Safari tabs on iPhone 15); phase 2 is the Phone Link iOS helper with llama.cpp over the same relay."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/run-a-model-on-your-phone.mdx",
+        "allternit/surfaces/docs/api/model-host-relay.mdx",
+        "allternit/cmd/allternit-cloud-api/src/routes/model_hosts.rs"
+      ]
     }
   ],
   "journeys": [
