@@ -88,9 +88,13 @@ final class AgentChatClient: ObservableObject, @unchecked Sendable {
                        agentModeId: String? = nil,
                        projectId: String? = nil,
                        ephemeral: Bool = false,
-                       persona: String? = nil) async throws -> AgentSession {
+                       persona: String? = nil,
+                       permissionMode: String? = nil) async throws -> AgentSession {
         var metadata: [String: String] = [:]
         if let agentModeId { metadata["agentModeId"] = agentModeId }
+        // The composer's Auto · Ask · Read-only pill (web permission-mode.ts),
+        // read by the agent-chat bridge as `permissionMode`.
+        if let permissionMode { metadata["permissionMode"] = permissionMode }
         if let projectId { metadata["projectId"] = projectId }
         if let persona { metadata["persona"] = persona }
         // Incognito chats (Phase 6): carried as `metadata.ephemeral = "true"`
@@ -107,6 +111,13 @@ final class AgentChatClient: ObservableObject, @unchecked Sendable {
             metadata: metadata.isEmpty ? nil : metadata
         )
         return try await client.post(path: "agent-sessions", body: body)
+    }
+
+    /// Merges `metadata` into a session (`PATCH /api/v1/agent-sessions/:id`,
+    /// merge semantics — web native-agent-api.ts updateSession).
+    func updateSessionMetadata(sessionId: String, metadata: [String: String]) async throws {
+        struct Body: Encodable { let metadata: [String: String] }
+        try await client.patch(path: "agent-sessions/\(Self.escape(sessionId))", body: Body(metadata: metadata))
     }
 
     /// Lists all sessions (the production sidebar's history source).

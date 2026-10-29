@@ -4,126 +4,141 @@ import PhotosUI
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// The composer "+" button's sheet (Claude iOS "Add to Chat" parity).
-/// Polished glass modal with a compact icon grid, GitHub fetch, Web search /
-/// Research toggles, a Style submenu, recent photos, project selection, tool
-/// access, permissions, and the Connectors entry. Picks stage into the shared
-/// `AttachmentStore` and render as the thumbnail strip above the composer text
-/// field.
+/// The composer "+" sheet (web ComposerPlusSheet, phone form): an icon grid
+/// (Files · GitHub · Web · Project · Connectors), the GitHub URL field and
+/// project list inline, the Web search / Research toggles, then Capture to
+/// brain · Plugins · Skills · Permission settings. Picks stage into the
+/// shared `AttachmentStore` and show as previews above the composer text.
 struct ComposerPlusSheet: View {
     @ObservedObject var attachmentStore: AttachmentStore
+    /// The chat on screen — Permission settings acts on it (or the pending
+    /// choice for a new chat).
+    var sessionId: String? = nil
 
     @StateObject private var toolOptions = ToolOptionsStore.shared
     @StateObject private var projectStore = ProjectStore.shared
     @StateObject private var brainStore = BrainStore.shared
-    @EnvironmentObject private var agentModeStore: AgentModeStore
     @Environment(\.dismiss) private var dismiss
 
-    /// Recent-library thumbnails (latest 12), loaded once photo access is granted.
-    @State private var recentAssets: [PHAsset] = []
     @State private var selectedPhotoItems: [PhotosPickerItem] = []
     @State private var isPhotosPickerPresented = false
     @State private var isCameraPresented = false
     @State private var isFilePickerPresented = false
+    /// Files: iOS offers the same three sources a web file input does.
+    @State private var isFileSourceDialogPresented = false
     @State private var isConnectorsPresented = false
     @State private var isBrainCapturePresented = false
-    @State private var isCoworkTasksPresented = false
-    @State private var isAgentActivityPresented = false
+    @State private var isNewProjectPresented = false
+    @State private var capabilitiesKind: CapabilitiesClient.Kind? = nil
+    @State private var isPermissionSettingsPresented = false
     /// Set to present the app-owned priming sheet before a system prompt.
     @State private var primingPermission: AppPermission? = nil
-    /// Whether granting photo access from the priming sheet should also open
-    /// the picker (Photos button) or just reveal the recents strip
-    /// ("Show recent photos" row).
-    @State private var openPickerAfterPriming = false
     /// Non-permission failures (camera unavailable, unreadable file).
     @State private var pickerError: String? = nil
 
-    /// GitHub file fetch state (ChatComposer.tsx parity).
     @State private var githubUrl = ""
     @State private var isGitHubInputVisible = false
     @State private var isGitHubLoading = false
-
-    /// Active inline submenu: project list or style list.
-    @State private var activeSubMenu: PlusSubMenu? = nil
-
-    private enum PlusSubMenu: String {
-        case project
-        case style
-    }
-
-    /// DEBUG: `-open-plus-sheet` pins the sheet to .large so screenshot
-    /// verification can see every section (simctl can't scroll sheets).
-    private static var sheetDetents: Set<PresentationDetent> {
-        #if DEBUG
-        if launchArgumentEnabled("open-plus-sheet") { return [.large] }
-        #endif
-        return [.medium, .large]
-    }
+    @State private var isProjectMenuOpen = false
 
     var body: some View {
         VStack(spacing: 0) {
-            // Header — compact, with a drag indicator and close button.
-            HStack {
-                RoundedRectangle(cornerRadius: 2.5)
-                    .fill(Color("TextSecondary").opacity(0.35))
+            ZStack {
+                Capsule()
+                    .fill(Color("BorderStrong"))
                     .frame(width: 36, height: 5)
-                Spacer()
-                Button(action: { dismiss() }) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(Color("TextSecondary"))
-                        .frame(width: 32, height: 32)
-                        .background(.ultraThinMaterial, in: Circle())
-                        .overlay(Circle().stroke(Color("BorderSubtle"), lineWidth: 1))
+                HStack {
+                    Spacer()
+                    Button(action: { dismiss() }) {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundColor(Color("TextSecondary"))
+                            .frame(width: 32, height: 32)
+                            .contentShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Close")
                 }
-                .accessibilityLabel("Close")
             }
-            .padding(.horizontal, 20)
-            .padding(.top, 12)
-            .padding(.bottom, 10)
+            .padding(.horizontal, 16)
+            .padding(.top, 8)
+            .padding(.bottom, 4)
 
             ScrollView {
-                VStack(alignment: .leading, spacing: 22) {
+                VStack(alignment: .leading, spacing: 16) {
                     if let pickerError {
-                        errorBanner(pickerError)
+                        FriendlyInlineStateView(
+                            style: .error,
+                            icon: "exclamationmark.triangle.fill",
+                            title: "Something went wrong",
+                            message: pickerError
+                        )
                     }
 
                     iconGrid
 
                     if isGitHubInputVisible {
-                        githubInputSection
+                        githubPanel
                     }
 
-                    if activeSubMenu == .style {
-                        styleSubMenu
+                    if isProjectMenuOpen {
+                        projectPanel
                     }
 
-                    if activeSubMenu == .project {
-                        projectSubMenu
+                    VStack(spacing: 4) {
+                        toggleRow(
+                            icon: "globe",
+                            title: "Web search",
+                            subtitle: "Let the agent search the web for current information",
+                            isOn: $toolOptions.webSearch
+                        )
+                        Rectangle()
+                            .fill(Color("BorderSubtle"))
+                            .frame(height: 1)
+                            .padding(.leading, 44)
+                        toggleRow(
+                            icon: "pencil.tip",
+                            title: "Research",
+                            subtitle: "Deeper, multi-source research before answering",
+                            isOn: $toolOptions.research
+                        )
                     }
+                    .plusPanel()
 
-                    recentPhotosSection
-                    toolTogglesSection
-                    toolAccessSection
-                    projectRow
-                    permissionsRow
-                    coworkTasksRow
-                    agentActivityRow
-                    connectorsRow
-                    brainCaptureRow
+                    VStack(spacing: 8) {
+                        if brainStore.hasBrain {
+                            listRow(
+                                icon: "brain",
+                                title: "Capture to brain",
+                                subtitle: brainStore.pendingPush
+                                    ? "Waiting to sync — will retry automatically"
+                                    : "Save an idea or pain to your second brain"
+                            ) { isBrainCapturePresented = true }
+                        }
+                        listRow(icon: "puzzlepiece", title: "Plugins", subtitle: "Browse and manage plugins") {
+                            capabilitiesKind = .plugin
+                        }
+                        listRow(icon: "graduationcap", title: "Skills", subtitle: "Browse and manage skills") {
+                            capabilitiesKind = .skill
+                        }
+                        listRow(icon: "checkmark.shield", title: "Permission settings", subtitle: "Review permission defaults") {
+                            isPermissionSettingsPresented = true
+                        }
+                    }
                 }
-                .padding(.horizontal, 20)
-                .padding(.vertical, 20)
+                .padding(.horizontal, 16)
+                .padding(.bottom, 20)
             }
         }
-        .background(
-            ZStack {
-                Color("BgPrimary").opacity(0.72)
-                Rectangle().fill(.ultraThinMaterial)
-            }
-            .edgesIgnoringSafeArea(.all)
-        )
+        .background(Color("BgPrimary").ignoresSafeArea())
         .presentationDetents(Self.sheetDetents)
+        .presentationCornerRadius(28)
+        .presentationDragIndicator(.hidden)
+        .confirmationDialog("Add files", isPresented: $isFileSourceDialogPresented, titleVisibility: .hidden) {
+            Button("Photo Library") { photosTapped() }
+            Button("Take Photo") { cameraTapped() }
+            Button("Choose File") { isFilePickerPresented = true }
+        }
         .photosPicker(
             isPresented: $isPhotosPickerPresented,
             selection: $selectedPhotoItems,
@@ -140,14 +155,31 @@ struct ComposerPlusSheet: View {
         .sheet(isPresented: $isConnectorsPresented) {
             ConnectorsListView()
         }
-        .sheet(isPresented: $isCoworkTasksPresented) {
-            CoworkTasksListView()
-        }
-        .sheet(isPresented: $isAgentActivityPresented) {
-            AgentActivityListView()
-        }
         .sheet(isPresented: $isBrainCapturePresented) {
             BrainCaptureSheet()
+        }
+        .sheet(isPresented: $isNewProjectPresented) {
+            NewProjectSheet { title, description in
+                Task {
+                    if let project = try? await projectStore.createProject(title: title, description: description) {
+                        projectStore.selectedProjectId = project.id
+                    }
+                }
+            }
+        }
+        .sheet(item: $capabilitiesKind) { kind in
+            NavigationStack {
+                CapabilitiesSettingsView(kind: kind)
+                    .toolbar {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            Button("Done") { capabilitiesKind = nil }
+                        }
+                    }
+            }
+            .environmentObject(AuthManager.shared)
+        }
+        .sheet(isPresented: $isPermissionSettingsPresented) {
+            PermissionDefaultsSheet(sessionId: sessionId)
         }
         .sheet(item: $primingPermission) { permission in
             PermissionPrimingSheet(permission: permission) {
@@ -159,86 +191,44 @@ struct ComposerPlusSheet: View {
             stagePickedPhotos(items)
             selectedPhotoItems = []
         }
-        .onAppear { loadRecentPhotos() }
     }
 
-    private func errorBanner(_ message: String) -> some View {
-        FriendlyInlineStateView(
-            style: .error,
-            icon: "exclamationmark.triangle.fill",
-            title: "Something went wrong",
-            message: message
-        )
+    /// DEBUG: `-open-plus-sheet` pins the sheet to .large so screenshot
+    /// verification can see every section (simctl can't scroll sheets).
+    private static var sheetDetents: Set<PresentationDetent> {
+        #if DEBUG
+        if launchArgumentEnabled("open-plus-sheet") { return [.large] }
+        #endif
+        return [.medium, .large]
     }
 
     // MARK: - Icon grid
 
     private var iconGrid: some View {
-        let columns = Array(repeating: GridItem(.flexible(), spacing: 10), count: 4)
-        return LazyVGrid(columns: columns, spacing: 10) {
-            gridButton(icon: "camera", label: "Camera", action: cameraTapped)
-            gridButton(icon: "photo.on.rectangle", label: "Photos", action: photosTapped)
-            gridButton(icon: "folder", label: "Files", action: {
-                hapticLight()
-                isFilePickerPresented = true
-                activeSubMenu = nil
-            })
-            gridButton(
-                icon: "link",
-                label: "GitHub",
-                isActive: isGitHubInputVisible,
-                action: {
-                    hapticLight()
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        isGitHubInputVisible.toggle()
-                        activeSubMenu = nil
-                    }
+        let columns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 4)
+        return LazyVGrid(columns: columns, spacing: 8) {
+            gridButton(icon: "photo", label: "Files") {
+                isFileSourceDialogPresented = true
+            }
+            gridButton(icon: "chevron.left.forwardslash.chevron.right", label: "GitHub", isActive: isGitHubInputVisible) {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    isGitHubInputVisible.toggle()
+                    isProjectMenuOpen = false
                 }
-            )
-            gridButton(
-                icon: "globe",
-                label: "Web",
-                isActive: toolOptions.webSearch,
-                showCheck: toolOptions.webSearch,
-                action: {
-                    hapticLight()
-                    toolOptions.webSearch.toggle()
-                    activeSubMenu = nil
+            }
+            gridButton(icon: "globe", label: "Web", isActive: toolOptions.webSearch, showCheck: toolOptions.webSearch) {
+                toolOptions.webSearch.toggle()
+                isProjectMenuOpen = false
+            }
+            gridButton(icon: "folder", label: "Project", isActive: isProjectMenuOpen || projectStore.selectedProjectId != nil) {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    isProjectMenuOpen.toggle()
+                    isGitHubInputVisible = false
                 }
-            )
-            gridButton(
-                icon: "paintbrush",
-                label: toolOptions.activeStyle?.label ?? "Style",
-                isActive: activeSubMenu == .style || toolOptions.activeStyle != nil,
-                action: {
-                    hapticLight()
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        activeSubMenu = activeSubMenu == .style ? nil : .style
-                        isGitHubInputVisible = false
-                    }
-                }
-            )
-            gridButton(
-                icon: "puzzlepiece.extension",
-                label: "Connectors",
-                action: {
-                    hapticLight()
-                    isConnectorsPresented = true
-                    activeSubMenu = nil
-                }
-            )
-            gridButton(
-                icon: "folder.badge.plus",
-                label: "Project",
-                isActive: activeSubMenu == .project,
-                action: {
-                    hapticLight()
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        activeSubMenu = activeSubMenu == .project ? nil : .project
-                        isGitHubInputVisible = false
-                    }
-                }
-            )
+            }
+            gridButton(icon: "bolt", label: "Connectors") {
+                isConnectorsPresented = true
+            }
         }
     }
 
@@ -249,56 +239,55 @@ struct ComposerPlusSheet: View {
         showCheck: Bool = false,
         action: @escaping () -> Void
     ) -> some View {
-        Button(action: action) {
-            VStack(spacing: 7) {
-                ZStack {
-                    Image(systemName: icon)
-                        .font(.system(size: 20, weight: .medium))
-                        .foregroundColor(isActive ? Color("AccentPrimary") : Color("TextPrimary"))
-                    if showCheck {
-                        VStack {
-                            HStack { Spacer() }
-                            Spacer()
-                            Image(systemName: "checkmark.circle.fill")
-                                .font(.system(size: 10, weight: .bold))
-                                .foregroundColor(Color("AccentPrimary"))
-                                .offset(x: 10, y: 8)
-                        }
-                    }
-                }
-                .frame(width: 44, height: 44)
-                .background(
-                    RoundedRectangle(cornerRadius: Theme.radiusMD)
-                        .fill(isActive ? Color("AccentPrimary").opacity(0.14) : Color("BgPanel").opacity(0.55))
-                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: Theme.radiusMD))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: Theme.radiusMD)
-                        .stroke(isActive ? Color("AccentPrimary").opacity(0.45) : Color("BorderSubtle").opacity(0.55), lineWidth: 1)
-                )
-
+        Button(action: {
+            hapticLight()
+            action()
+        }) {
+            VStack(spacing: 6) {
+                Image(systemName: icon)
+                    .font(.system(size: 18))
+                    .foregroundColor(isActive ? Color("TextPrimary") : Color("TextSecondary"))
+                    .frame(width: 36, height: 36)
+                    .background(isActive ? Color("BorderStrong") : Color("FillNeutral"), in: RoundedRectangle(cornerRadius: 8))
                 Text(label)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(isActive ? Color("AccentPrimary") : Color("TextPrimary"))
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(Color("TextPrimary"))
                     .lineLimit(1)
                     .minimumScaleFactor(0.85)
             }
             .frame(maxWidth: .infinity)
+            .padding(8)
+            .background(isActive ? Color("FillNeutral") : Color("FillNeutral").opacity(0.5), in: RoundedRectangle(cornerRadius: 12))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(isActive ? Color("BorderStrong") : Color.clear, lineWidth: 1)
+            )
+            .overlay(alignment: .topTrailing) {
+                if showCheck {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 7, weight: .bold))
+                        .foregroundColor(Color("OnAccent"))
+                        .frame(width: 14, height: 14)
+                        .background(Color("AccentPrimary"), in: Circle())
+                        .padding(6)
+                }
+            }
         }
         .buttonStyle(.plain)
         .accessibilityLabel(label)
+        .accessibilityAddTraits(isActive ? [.isSelected] : [])
     }
 
-    // MARK: - GitHub fetch
+    // MARK: - GitHub
 
-    private var githubInputSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+    private var githubPanel: some View {
+        VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 Image(systemName: "link")
-                    .font(.system(size: 13, weight: .medium))
+                    .font(.system(size: 13))
                     .foregroundColor(Color("TextSecondary"))
                 TextField("github.com/user/repo/blob/main/file", text: $githubUrl)
-                    .font(.system(size: 13))
+                    .font(.system(size: 16))
                     .foregroundColor(Color("TextPrimary"))
                     .autocorrectionDisabled()
                     .textInputAutocapitalization(.never)
@@ -307,26 +296,23 @@ struct ComposerPlusSheet: View {
                     .onSubmit { fetchGitHubFile() }
                 if isGitHubLoading {
                     ProgressView()
-                        .scaleEffect(0.7)
+                        .controlSize(.small)
                 } else {
+                    let empty = githubUrl.trimmingCharacters(in: .whitespaces).isEmpty
                     Button(action: fetchGitHubFile) {
                         Text("Add")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundColor(Color("AccentPrimary"))
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(Color("TextPrimary"))
                     }
-                    .disabled(githubUrl.trimmingCharacters(in: .whitespaces).isEmpty)
+                    .disabled(empty)
+                    .opacity(empty ? 0.4 : 1)
                 }
             }
-            .padding(.horizontal, 12)
-            .frame(height: 44)
-            .background(Color("BgSecondary").opacity(0.45))
-            .clipShape(RoundedRectangle(cornerRadius: Theme.radiusMD))
-
             Text("Paste a GitHub file URL to fetch its raw contents as an attachment.")
-                .font(.caption)
+                .font(.system(size: 11))
                 .foregroundColor(Color("TextSecondary"))
         }
-        .glassPanel()
+        .plusPanel()
     }
 
     private func fetchGitHubFile() {
@@ -335,473 +321,164 @@ struct ComposerPlusSheet: View {
         isGitHubLoading = true
         Task {
             do {
-                let raw = rawUrl
+                let withScheme = rawUrl.hasPrefix("http") ? rawUrl : "https://" + rawUrl
+                let raw = withScheme
                     .replacingOccurrences(of: "https://github.com/", with: "https://raw.githubusercontent.com/")
                     .replacingOccurrences(of: "/blob/", with: "/")
-                guard let url = URL(string: raw) else {
-                    throw URLError(.badURL)
-                }
+                guard let url = URL(string: raw) else { throw URLError(.badURL) }
                 let (data, response) = try await URLSession.shared.data(from: url)
                 guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
                     throw URLError(.badServerResponse)
                 }
                 let filename = rawUrl.components(separatedBy: "/").last?.components(separatedBy: "?").first ?? "github-file"
-                await MainActor.run {
-                    attachmentStore.add(StagedAttachment(
-                        thumbnail: nil,
-                        data: data,
-                        filename: filename,
-                        mediaType: "text/plain"
-                    ))
-                    githubUrl = ""
-                    isGitHubInputVisible = false
-                }
+                attachmentStore.add(StagedAttachment(thumbnail: nil, data: data, filename: filename, mediaType: "text/plain"))
+                githubUrl = ""
+                isGitHubInputVisible = false
             } catch {
-                await MainActor.run {
-                    pickerError = "Couldn't fetch that GitHub file."
-                }
+                pickerError = "Couldn't fetch that GitHub file."
             }
-            await MainActor.run {
-                isGitHubLoading = false
-            }
+            isGitHubLoading = false
         }
     }
 
-    // MARK: - Style submenu
+    // MARK: - Project
 
-    private var styleSubMenu: some View {
+    private var projectPanel: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Response style")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(Color("TextSecondary"))
+            Text("ADD TO PROJECT")
+                .font(.system(size: 11, weight: .bold))
+                .tracking(0.8)
+                .foregroundColor(Color("TextTertiary"))
             VStack(spacing: 4) {
-                ForEach(ComposerResponseStyle.allCases, id: \.self) { style in
-                    let selected = toolOptions.activeStyle == style
-                    Button(action: {
-                        hapticLight()
-                        toolOptions.activeStyle = selected ? nil : style
-                        activeSubMenu = nil
-                    }) {
-                        HStack(spacing: 10) {
-                            Text(style.label)
-                                .font(.system(size: 14, weight: .medium))
-                                .foregroundColor(Color("TextPrimary"))
-                            Spacer()
-                            if selected {
-                                Image(systemName: "checkmark")
-                                    .font(.system(size: 12, weight: .bold))
-                                    .foregroundColor(Color("AccentPrimary"))
-                            }
-                        }
-                        .padding(.horizontal, 12)
-                        .frame(height: 40)
-                        .background(selected ? Color("AccentPrimary").opacity(0.10) : Color.clear)
-                        .clipShape(RoundedRectangle(cornerRadius: Theme.radiusMD))
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-        }
-        .glassPanel()
-    }
-
-    // MARK: - Project submenu
-
-    private var projectSubMenu: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("Add to project")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(Color("TextSecondary"))
-                Spacer()
-                Button(action: {
-                    projectStore.fetchProjectsIfNeeded(force: true)
-                }) {
-                    Image(systemName: "arrow.clockwise")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(Color("TextSecondary"))
-                }
-                .accessibilityLabel("Refresh")
-            }
-            VStack(spacing: 4) {
-                projectSubMenuRow(nil)
+                projectRow(id: nil, title: "None")
                 if projectStore.isLoading && projectStore.projects.isEmpty {
-                    HStack {
-                        Spacer()
-                        ProgressView()
-                            .scaleEffect(0.8)
-                        Spacer()
-                    }
-                    .padding(.vertical, 8)
-                } else {
-                    ForEach(projectStore.projects) { project in
-                        projectSubMenuRow(project)
-                    }
+                    ProgressView()
+                        .controlSize(.small)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                } else if let loadError = projectStore.loadError, projectStore.projects.isEmpty {
+                    FriendlyInlineStateView(
+                        style: .error,
+                        icon: "exclamationmark.triangle",
+                        title: "Couldn't load projects",
+                        message: FriendlyErrorMessage.from(loadError),
+                        actionTitle: "Retry",
+                        action: { projectStore.fetchProjectsIfNeeded(force: true) }
+                    )
                 }
+                ForEach(projectStore.projects) { project in
+                    projectRow(id: project.id, title: project.title)
+                }
+                Button(action: {
+                    hapticLight()
+                    isProjectMenuOpen = false
+                    isNewProjectPresented = true
+                }) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "plus")
+                            .font(.system(size: 13, weight: .bold))
+                        Text("New project")
+                            .font(.system(size: 14))
+                        Spacer()
+                    }
+                    .foregroundColor(Color("TextPrimary"))
+                    .padding(.horizontal, 12)
+                    .frame(height: 44)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
             }
         }
-        .glassPanel()
+        .plusPanel()
         .onAppear { projectStore.fetchProjectsIfNeeded() }
     }
 
-    private func projectSubMenuRow(_ project: CoworkProject?) -> some View {
-        let selected = projectStore.selectedProjectId == project?.id
+    private func projectRow(id: String?, title: String) -> some View {
+        let selected = projectStore.selectedProjectId == id
         return Button(action: {
             hapticLight()
-            projectStore.selectedProjectId = project?.id
-            activeSubMenu = nil
+            projectStore.selectedProjectId = id
+            isProjectMenuOpen = false
+            dismiss()
         }) {
-            HStack(spacing: 10) {
-                Text(project?.title ?? "None")
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(Color("TextPrimary"))
+            HStack(spacing: 8) {
+                Text(title)
+                    .font(.system(size: 14))
                     .lineLimit(1)
                 Spacer()
                 if selected {
                     Image(systemName: "checkmark")
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundColor(Color("AccentPrimary"))
+                        .font(.system(size: 13, weight: .bold))
                 }
             }
+            .foregroundColor(Color("TextPrimary"))
             .padding(.horizontal, 12)
-            .frame(height: 40)
-            .background(selected ? Color("AccentPrimary").opacity(0.10) : Color.clear)
-            .clipShape(RoundedRectangle(cornerRadius: Theme.radiusMD))
+            .frame(height: 44)
+            .background(selected ? Color("FillNeutral") : Color.clear, in: RoundedRectangle(cornerRadius: 8))
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
 
-    // MARK: - Recent photos
+    // MARK: - Rows
 
-    @ViewBuilder
-    private var recentPhotosSection: some View {
-        if recentAssets.isEmpty {
-            Button(action: showRecentPhotosTapped) {
-                HStack(spacing: 10) {
-                    Image(systemName: "photo.on.rectangle.angled")
-                        .font(.system(size: 15, weight: .medium))
-                        .foregroundColor(Color("AccentPrimary"))
-                    Text("Show recent photos")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(Color("TextPrimary"))
-                    Spacer()
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundColor(Color("TextSecondary"))
-                }
-            }
-            .buttonStyle(.plain)
-            .glassPanel()
-        } else {
-            VStack(alignment: .leading, spacing: 10) {
-                Text("Recent photos")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(Color("TextSecondary"))
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(recentAssets, id: \.localIdentifier) { asset in
-                            Button(action: { stageRecentPhoto(asset) }) {
-                                RecentPhotoThumb(asset: asset)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                }
-            }
-            .glassPanel()
-        }
-    }
-
-    // MARK: - Tool toggles
-
-    private var toolTogglesSection: some View {
-        VStack(spacing: 2) {
-            toolToggleRow(
-                icon: "globe",
-                title: "Web search",
-                subtitle: "Let the agent search the web for current information",
-                isOn: $toolOptions.webSearch
-            )
-            Divider().background(Color("BorderSubtle").opacity(0.55)).padding(.leading, 44)
-            toolToggleRow(
-                icon: "book",
-                title: "Research",
-                subtitle: "Deeper, multi-source research before answering",
-                isOn: $toolOptions.research
-            )
-        }
-        .glassPanel()
-    }
-
-    private func toolToggleRow(icon: String, title: String, subtitle: String, isOn: Binding<Bool>) -> some View {
+    private func toggleRow(icon: String, title: String, subtitle: String, isOn: Binding<Bool>) -> some View {
         HStack(spacing: 12) {
-            Image(systemName: icon)
-                .font(.system(size: 15, weight: .medium))
-                .foregroundColor(Color("AccentPrimary"))
-                .frame(width: 28)
-            VStack(alignment: .leading, spacing: 2) {
+            rowIcon(icon)
+            VStack(alignment: .leading, spacing: 1) {
                 Text(title)
                     .font(.system(size: 14, weight: .medium))
                     .foregroundColor(Color("TextPrimary"))
                 Text(subtitle)
-                    .font(.caption)
+                    .font(.system(size: 11))
                     .foregroundColor(Color("TextSecondary"))
             }
-            Spacer()
-            Toggle("", isOn: isOn)
+            Spacer(minLength: 8)
+            Toggle(title, isOn: isOn)
                 .labelsHidden()
                 .tint(Color("AccentPrimary"))
         }
         .padding(.vertical, 6)
     }
 
-    // MARK: - Tool access
-
-    private var toolAccessSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Tool access")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(Color("TextSecondary"))
-            Menu {
-                ForEach(ToolAccess.allCases, id: \.self) { access in
-                    Button(action: { toolOptions.toolAccess = access }) {
-                        Label(access.label, systemImage: toolOptions.toolAccess == access ? "checkmark" : "")
-                    }
-                }
-            } label: {
-                HStack(spacing: 8) {
-                    Text(toolOptions.toolAccess.label)
-                        .font(.subheadline)
-                        .foregroundColor(Color("TextPrimary"))
-                    Spacer()
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundColor(Color("TextSecondary"))
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
-                .background(Color("BgPanel"))
-                .clipShape(RoundedRectangle(cornerRadius: Theme.radiusMD))
-                .overlay(
-                    RoundedRectangle(cornerRadius: Theme.radiusMD)
-                        .stroke(Theme.borderWarmDefault, lineWidth: 1)
-                )
-            }
-            .buttonStyle(.plain)
-            Text(toolOptions.toolAccess.explainer)
-                .font(.caption)
-                .foregroundColor(Color("TextSecondary"))
-        }
-        .glassPanel()
-    }
-
-    // MARK: - Project & permissions
-
-    private var projectRow: some View {
-        Menu {
-            Button(action: { selectProject(nil) }) {
-                HStack {
-                    if projectStore.selectedProjectId == nil {
-                        Image(systemName: "checkmark")
-                    }
-                    Text("None")
-                }
-            }
-            if projectStore.isLoading && projectStore.projects.isEmpty {
-                FriendlyInlineStateView(
-                    style: .empty,
-                    icon: "arrow.clockwise",
-                    title: "Loading projects",
-                    message: "Hang tight…"
-                )
-            } else if let loadError = projectStore.loadError, projectStore.projects.isEmpty {
-                let isOffline = loadError.lowercased().contains("could not connect")
-                    || loadError.lowercased().contains("failed to connect")
-                FriendlyInlineStateView(
-                    style: isOffline ? .offline : .error,
-                    icon: isOffline ? "wifi.slash" : "exclamationmark.triangle",
-                    title: "Couldn't load projects",
-                    message: FriendlyErrorMessage.from(loadError),
-                    actionTitle: "Retry",
-                    action: { projectStore.fetchProjectsIfNeeded(force: true) }
-                )
-            }
-            ForEach(projectStore.projects) { project in
-                Button(action: { selectProject(project.id) }) {
-                    HStack {
-                        if projectStore.selectedProjectId == project.id {
-                            Image(systemName: "checkmark")
-                        }
-                        Text(project.title)
-                    }
-                }
-            }
-        } label: {
-            menuRow(
-                icon: "folder",
-                iconColor: Theme.accentCowork,
-                title: "Add to project",
-                value: projectStore.selectedProject?.title ?? "None"
-            )
-        }
-        .onAppear { projectStore.fetchProjectsIfNeeded() }
-    }
-
-    private func selectProject(_ id: String?) {
-        hapticLight()
-        projectStore.selectedProjectId = id
-    }
-
-    private var permissionsRow: some View {
-        Menu {
-            ForEach(CoworkPermission.allCases, id: \.self) { permission in
-                Button(action: { agentModeStore.coworkPermission = permission }) {
-                    HStack {
-                        if agentModeStore.coworkPermission == permission {
-                            Image(systemName: "checkmark")
-                        }
-                        Text(permission.label)
-                    }
-                }
-            }
-        } label: {
-            menuRow(
-                icon: "checkmark.shield",
-                iconColor: Theme.statusWarning,
-                title: "Permissions",
-                value: agentModeStore.coworkPermission.label
-            )
-        }
-    }
-
-    private var coworkTasksRow: some View {
+    private func listRow(icon: String, title: String, subtitle: String, action: @escaping () -> Void) -> some View {
         Button(action: {
             hapticLight()
-            isCoworkTasksPresented = true
+            action()
         }) {
-            menuRow(
-                icon: "checklist",
-                iconColor: Theme.accentCowork,
-                title: "Cowork Tasks",
-                value: ""
-            )
-        }
-        .buttonStyle(.plain)
-    }
-
-    private var agentActivityRow: some View {
-        Button(action: {
-            hapticLight()
-            isAgentActivityPresented = true
-        }) {
-            menuRow(
-                icon: "bubble.left.and.bubble.right",
-                iconColor: Theme.accentPrimary,
-                title: "Agent Activity",
-                value: ""
-            )
-        }
-        .buttonStyle(.plain)
-    }
-
-    private func menuRow(icon: String, iconColor: Color, title: String, value: String) -> some View {
-        HStack(spacing: 10) {
-            Image(systemName: icon)
-                .font(.system(size: 15, weight: .medium))
-                .foregroundColor(iconColor)
-            Text(title)
-                .font(.system(size: 14, weight: .medium))
-                .foregroundColor(Color("TextPrimary"))
-            Spacer()
-            Text(value)
-                .font(.system(size: 13))
-                .foregroundColor(Color("TextSecondary"))
-                .lineLimit(1)
-            Image(systemName: "chevron.right")
-                .font(.system(size: 11, weight: .bold))
-                .foregroundColor(Color("TextSecondary"))
-        }
-        .frame(height: 44)
-        .glassPanel()
-    }
-
-    // MARK: - Connectors / Form Surfaces / Brain capture
-
-    private var connectorsRow: some View {
-        Button(action: {
-            hapticLight()
-            isConnectorsPresented = true
-        }) {
-            HStack(spacing: 10) {
-                Image(systemName: "puzzlepiece.extension")
-                    .font(.system(size: 15, weight: .medium))
-                    .foregroundColor(Color("AccentPrimary"))
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Connectors")
+            HStack(spacing: 12) {
+                rowIcon(icon)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title)
                         .font(.system(size: 14, weight: .medium))
                         .foregroundColor(Color("TextPrimary"))
-                    Text("Browse and manage connected services")
-                        .font(.caption)
+                    Text(subtitle)
+                        .font(.system(size: 11))
                         .foregroundColor(Color("TextSecondary"))
                 }
-                Spacer()
+                Spacer(minLength: 8)
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 11, weight: .bold))
+                    .font(.system(size: 11, weight: .semibold))
                     .foregroundColor(Color("TextSecondary"))
+                    .opacity(0.6)
             }
+            .contentShape(Rectangle())
+            .plusPanel()
         }
         .buttonStyle(.plain)
-        .glassPanel()
     }
 
-    @ViewBuilder
-    private var brainCaptureRow: some View {
-        if brainStore.hasBrain {
-            Button(action: {
-                hapticLight()
-                isBrainCapturePresented = true
-            }) {
-                HStack(spacing: 10) {
-                    Image(systemName: "brain.head.profile")
-                        .font(.system(size: 15, weight: .medium))
-                        .foregroundColor(Color("AccentPrimary"))
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Capture to brain")
-                            .font(.system(size: 14, weight: .medium))
-                            .foregroundColor(Color("TextPrimary"))
-                        Text(brainStore.pendingPush
-                             ? "Waiting to sync — will retry automatically"
-                             : "Save an idea or pain to your second brain")
-                            .font(.caption)
-                            .foregroundColor(Color("TextSecondary"))
-                    }
-                    Spacer()
-                    Image(systemName: brainStore.pendingPush
-                          ? "arrow.triangle.2.circlepath" : "chevron.right")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundColor(Color("TextSecondary"))
-                }
-            }
-            .buttonStyle(.plain)
-            .glassPanel()
-        }
+    private func rowIcon(_ name: String) -> some View {
+        Image(systemName: name)
+            .font(.system(size: 15))
+            .foregroundColor(Color("TextPrimary"))
+            .frame(width: 32, height: 32)
+            .background(Color("FillNeutral"), in: RoundedRectangle(cornerRadius: 8))
     }
 
     // MARK: - Permission flows
 
     private func photosTapped() {
-        openPickerAfterPriming = true
-        if PHPhotoLibrary.authorizationStatus(for: .readWrite) == .notDetermined,
-           !AppPermission.photos.hasPrimed {
-            primingPermission = .photos
-            return
-        }
-        requestPhotoAccess()
-    }
-
-    private func showRecentPhotosTapped() {
-        hapticLight()
-        openPickerAfterPriming = false
         if PHPhotoLibrary.authorizationStatus(for: .readWrite) == .notDetermined,
            !AppPermission.photos.hasPrimed {
             primingPermission = .photos
@@ -812,15 +489,11 @@ struct ComposerPlusSheet: View {
 
     private func requestPhotoAccess() {
         guard PHPhotoLibrary.authorizationStatus(for: .readWrite) == .notDetermined else {
-            loadRecentPhotos()
-            if openPickerAfterPriming { isPhotosPickerPresented = true }
+            isPhotosPickerPresented = true
             return
         }
         PHPhotoLibrary.requestAuthorization(for: .readWrite) { _ in
-            Task { @MainActor in
-                loadRecentPhotos()
-                if openPickerAfterPriming { isPhotosPickerPresented = true }
-            }
+            Task { @MainActor in isPhotosPickerPresented = true }
         }
     }
 
@@ -864,22 +537,7 @@ struct ComposerPlusSheet: View {
         }
     }
 
-    // MARK: - Staging
-
-    private func loadRecentPhotos() {
-        let status = PHPhotoLibrary.authorizationStatus(for: .readWrite)
-        guard status == .authorized || status == .limited else {
-            recentAssets = []
-            return
-        }
-        let options = PHFetchOptions()
-        options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
-        options.fetchLimit = 12
-        let result = PHAsset.fetchAssets(with: .image, options: options)
-        var assets: [PHAsset] = []
-        result.enumerateObjects { asset, _, _ in assets.append(asset) }
-        recentAssets = assets
-    }
+    // MARK: - Staging (a pick closes the sheet, as on the web)
 
     private func stagePickedPhotos(_ items: [PhotosPickerItem]) {
         Task {
@@ -895,26 +553,7 @@ struct ComposerPlusSheet: View {
                     mediaType: mediaType
                 ))
             }
-        }
-    }
-
-    private func stageRecentPhoto(_ asset: PHAsset) {
-        let options = PHImageRequestOptions()
-        options.deliveryMode = .highQualityFormat
-        options.isNetworkAccessAllowed = true
-        PHImageManager.default().requestImageDataAndOrientation(for: asset, options: options) { data, dataUTI, _, _ in
-            Task { @MainActor in
-                guard let data else { return }
-                let contentType = dataUTI.flatMap { UTType($0) } ?? .jpeg
-                let mediaType = contentType.preferredMIMEType ?? "image/jpeg"
-                let ext = contentType.preferredFilenameExtension ?? "jpg"
-                attachmentStore.add(StagedAttachment(
-                    thumbnail: UIImage(data: data),
-                    data: data,
-                    filename: "photo.\(ext)",
-                    mediaType: mediaType
-                ))
-            }
+            dismiss()
         }
     }
 
@@ -926,6 +565,7 @@ struct ComposerPlusSheet: View {
             filename: "camera.jpg",
             mediaType: "image/jpeg"
         ))
+        dismiss()
     }
 
     private func stageFile(_ url: URL) {
@@ -941,52 +581,77 @@ struct ComposerPlusSheet: View {
             filename: url.lastPathComponent,
             mediaType: mediaType
         ))
+        dismiss()
     }
 
     private func hapticLight() {
-        let generator = UIImpactFeedbackGenerator(style: .light)
-        generator.impactOccurred()
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
     }
 }
 
-// MARK: - Recent photo thumbnail
+// MARK: - Panels
 
-/// One thumbnail in the recents strip; requests its own image on appear.
-private struct RecentPhotoThumb: View {
-    let asset: PHAsset
-    @State private var image: UIImage? = nil
+private extension View {
+    /// Quiet grouped panel (web GlassPanel / ListRow chrome).
+    func plusPanel() -> some View {
+        self
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color("FillNeutral").opacity(0.6), in: RoundedRectangle(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color("BorderSubtle"), lineWidth: 1))
+    }
+}
+
+extension CapabilitiesClient.Kind: Identifiable {
+    public var id: String { String(describing: self) }
+}
+
+/// "Permission settings": how freely this chat (or the next new one) works —
+/// the same three choices as the composer's pill.
+private struct PermissionDefaultsSheet: View {
+    let sessionId: String?
+    @ObservedObject private var store = ChatPermissionStore.shared
+    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        ZStack {
-            if let image {
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFill()
-            } else {
-                Color("BgSecondary")
+        NavigationStack {
+            List {
+                Section {
+                    ForEach(ChatPermissionMode.allCases, id: \.self) { option in
+                        Button(action: {
+                            store.choose(option, sessionId: sessionId)
+                            dismiss()
+                        }) {
+                            HStack(spacing: 12) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(option.label)
+                                        .font(.system(size: 15))
+                                        .foregroundColor(Color("TextPrimary"))
+                                    Text(option.description)
+                                        .font(.system(size: 12))
+                                        .foregroundColor(Color("TextSecondary"))
+                                }
+                                Spacer()
+                                if store.mode(for: sessionId) == option {
+                                    Image(systemName: "checkmark")
+                                        .foregroundColor(Color("TextPrimary"))
+                                }
+                            }
+                        }
+                    }
+                } footer: {
+                    Text(sessionId == nil ? "Applies when this chat starts." : "Applies to this chat.")
+                }
             }
-        }
-        .frame(width: 72, height: 72)
-        .clipShape(RoundedRectangle(cornerRadius: Theme.radiusSM))
-        .overlay(
-            RoundedRectangle(cornerRadius: Theme.radiusSM)
-                .stroke(Theme.borderWarmSubtle, lineWidth: 1)
-        )
-        .task {
-            let options = PHImageRequestOptions()
-            options.deliveryMode = .opportunistic
-            options.isNetworkAccessAllowed = true
-            PHImageManager.default().requestImage(
-                for: asset,
-                targetSize: CGSize(width: 216, height: 216),
-                contentMode: .aspectFill,
-                options: options
-            ) { result, _ in
-                Task { @MainActor in
-                    if let result { image = result }
+            .navigationTitle("Permissions")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { dismiss() }
                 }
             }
         }
+        .presentationDetents([.medium])
     }
 }
 
@@ -1060,25 +725,3 @@ struct DocumentPicker: UIViewControllerRepresentable {
     }
 }
 
-fileprivate struct GlassPanel: ViewModifier {
-    func body(content: Content) -> some View {
-        content
-            .padding(.horizontal, 14)
-            .padding(.vertical, 12)
-            .background(
-                RoundedRectangle(cornerRadius: Theme.radiusLG)
-                    .fill(Color("BgPanel").opacity(0.55))
-                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: Theme.radiusLG))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: Theme.radiusLG)
-                    .stroke(Color("BorderSubtle").opacity(0.55), lineWidth: 1)
-            )
-    }
-}
-
-fileprivate extension View {
-    func glassPanel() -> some View {
-        modifier(GlassPanel())
-    }
-}
