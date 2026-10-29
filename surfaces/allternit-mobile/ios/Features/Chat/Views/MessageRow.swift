@@ -358,6 +358,8 @@ private struct AssistantMarkdown: View {
     let isStreaming: Bool
 
     @State private var source: StreamingMarkdownSource? = nil
+    /// Settings → General → Chat font.
+    @ObservedObject private var appearance = AppearanceStore.shared
 
     var body: some View {
         Group {
@@ -367,6 +369,7 @@ private struct AssistantMarkdown: View {
                 MarkdownView(content)
             }
         }
+        .modifier(ChatFontModifier(font: appearance.chatFont))
         .onAppear {
             if isStreaming, source == nil { source = StreamingMarkdownSource(content) }
         }
@@ -377,5 +380,31 @@ private struct AssistantMarkdown: View {
         .onChange(of: isStreaming) { _, streaming in
             if !streaming { source?.finishStreaming() }
         }
+    }
+}
+
+/// Settings → General → Chat font on a reply: Serif swaps the prose
+/// (body, quotes, headings) to the system serif; code keeps its mono font.
+private struct ChatFontModifier: ViewModifier {
+    let font: AppearanceStore.ChatFont
+
+    func body(content: Content) -> some View {
+        if font == .serif {
+            content
+                .font(Self.serif(.body), for: .body)
+                .font(Self.serif(.body), for: .blockQuote)
+                .font(Self.serif(.title1), for: .h1)
+                .font(Self.serif(.title2), for: .h2)
+                .font(Self.serif(.title3), for: .h3)
+                .font(Self.serif(.headline), for: .h4)
+        } else {
+            content
+        }
+    }
+
+    private static func serif(_ style: UIFont.TextStyle) -> UIFont {
+        let base = UIFont.preferredFont(forTextStyle: style)
+        guard let descriptor = base.fontDescriptor.withDesign(.serif) else { return base }
+        return UIFont(descriptor: descriptor, size: base.pointSize)
     }
 }

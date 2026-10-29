@@ -214,7 +214,8 @@ struct AccountAvatar: View {
     }
 
     private var initial: some View {
-        Text(authManager.isSignedIn ? authManager.avatarInitial : "A")
+        // The web's avatar letter: the account name's first letter ("A" for "Account").
+        Text(authManager.isSignedIn ? String(authManager.accountName.prefix(1)).uppercased() : "A")
             .font(.system(size: size * 0.4, weight: .semibold))
             .foregroundColor(Color("BgPrimary"))
             .frame(width: size, height: size)
@@ -224,7 +225,10 @@ struct AccountAvatar: View {
 
 extension AuthManager {
     /// "First Last" when Clerk has both names; nil otherwise.
+    /// The sample workspace's person ("You") stands in for Clerk, so a
+    /// Clerk user cached from an earlier real sign-in never shows through.
     var fullName: String? {
+        if SampleWorkspace.isEnabled { return SampleWorkspace.userName }
         guard isClerkConfigured, let user = Clerk.shared.user else { return nil }
         let parts = [user.firstName, user.lastName].compactMap { $0 }.filter { !$0.isEmpty }
         return parts.isEmpty ? nil : parts.joined(separator: " ")
@@ -232,7 +236,20 @@ extension AuthManager {
 
     /// Clerk profile photo, when the user has one.
     var avatarURL: URL? {
+        if SampleWorkspace.isEnabled { return nil }
         guard isClerkConfigured, let user = Clerk.shared.user, user.hasImage else { return nil }
         return URL(string: user.imageUrl)
+    }
+
+    /// The account's email for Settings (the sample workspace's in sample mode).
+    var accountEmail: String? {
+        SampleWorkspace.isEnabled ? SampleWorkspace.userEmail : primaryEmail
+    }
+
+    /// The web's account name: first + last, else the email's local part, else "Account".
+    var accountName: String {
+        if let fullName { return fullName }
+        if let email = accountEmail, let local = email.split(separator: "@").first { return String(local) }
+        return "Account"
     }
 }

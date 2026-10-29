@@ -65,7 +65,7 @@ struct ProfileSettingsPage: View {
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundColor(Color("TextPrimary"))
                         .lineLimit(1)
-                    if let email = authManager.primaryEmail {
+                    if let email = authManager.accountEmail {
                         Text(email)
                             .font(.system(size: 13))
                             .foregroundColor(Color("TextSecondary"))
@@ -353,7 +353,7 @@ struct ResponseStyleSettingsPage: View {
 // MARK: - General
 
 /// Settings → General (SettingsView.tsx renderAppearancePanel, phone):
-/// Appearance (Theme, Reduce motion) and Composer.
+/// Appearance (Theme, Chat font, Reduce motion) and Composer.
 struct GeneralSettingsPage: View {
     @ObservedObject private var appearance = AppearanceStore.shared
     @ObservedObject private var settings = SettingsStore.shared
@@ -363,6 +363,29 @@ struct GeneralSettingsPage: View {
             SettingsSectionHeading(text: "Appearance")
             SettingsLabeledRow(title: "Theme", detail: "Light, dark, or match your system") {
                 ThemeSegment()
+            }
+            SettingsLabeledRow(title: "Chat font", detail: "Font for responses in the transcript") {
+                Menu {
+                    Picker("Chat font", selection: $appearance.chatFont) {
+                        ForEach(AppearanceStore.ChatFont.allCases) { Text($0.label).tag($0) }
+                    }
+                } label: {
+                    HStack(spacing: 6) {
+                        Text(appearance.chatFont.label)
+                            .foregroundColor(Color("TextPrimary"))
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 12))
+                            .foregroundColor(Color("TextSecondary"))
+                    }
+                    .font(.system(size: 15))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 7)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .stroke(Color("BorderStrong"), lineWidth: 1)
+                    )
+                }
+                .accessibilityLabel("Chat font")
             }
             SettingsSwitchRow(title: "Reduce motion",
                               detail: "Turn off animation in streaming responses and other interface elements",
