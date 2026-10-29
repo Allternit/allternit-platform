@@ -2,11 +2,13 @@ import PhotosUI
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// Project detail (Claude iOS project view parity): the project name and
-/// description, "Add files" / "Add instructions" entries, the instructions
-/// editor (Save → PUT …/projects/:id), the attached-files list, and the
-/// "Chats in this project" section (agent sessions stamped with this
-/// project's id).
+/// Project detail in the desktop project page's layout (allternit-ai
+/// ChatProjectDetail → BaseProjectView): a "Projects / name" breadcrumb, the
+/// hero band (folder mark, serif name, description, section tabs), then
+/// Overview (the project intro, "Start a thread" and its threads) or Details
+/// ("Add files" / "Add instructions", the instructions editor → PUT
+/// …/projects/:id, the attached files), and the composer card at the bottom,
+/// which starts a chat in the project.
 ///
 /// The old live backend has no files routes and doesn't persist
 /// `metadata.projectId` on session create, so the files list renders its
@@ -39,6 +41,15 @@ struct ProjectDetailView: View {
     @State private var isRenameAlertPresented = false
     @State private var renameText = ""
     @State private var isDeleteConfirmPresented = false
+    @State private var section: Section = .overview
+
+    /// The hero band's tabs the phone has (desktop: Overview · Delegate ·
+    /// Board · Details · Browser).
+    private enum Section: String, CaseIterable {
+        case overview, details
+        var label: String { self == .overview ? "Overview" : "Details" }
+        var icon: String? { self == .overview ? "list.bullet" : nil }
+    }
 
     private let projectsClient = ProjectsClient()
     private let chatClient = AgentChatClient()
@@ -60,46 +71,35 @@ struct ProjectDetailView: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
-                if let actionError {
-                    Text(actionError)
-                        .font(.caption)
-                        .foregroundColor(Theme.statusWarning)
+        VStack(spacing: 0) {
+            breadcrumb
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    hero
+                    VStack(alignment: .leading, spacing: 24) {
+                        if let actionError {
+                            Text(actionError)
+                                .font(.caption)
+                                .foregroundColor(Theme.statusWarning)
+                        }
+                        if section == .overview {
+                            overviewIntro
+                            chatsSection
+                        } else {
+                            addButtonsRow
+                            instructionsSection
+                            filesSection
+                        }
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.top, 28)
+                    .padding(.bottom, 24)
                 }
-
-                descriptionSection
-                addButtonsRow
-                instructionsSection
-                filesSection
-                chatsSection
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 20)
+            composerCard
         }
         .background(Color("BgPrimary").edgesIgnoringSafeArea(.all))
-        .navigationTitle(liveProject.title)
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Menu {
-                    Button(action: {
-                        renameText = liveProject.title
-                        isRenameAlertPresented = true
-                    }) {
-                        Label("Rename", systemImage: "pencil")
-                    }
-                    Button(role: .destructive, action: { isDeleteConfirmPresented = true }) {
-                        Label("Delete project", systemImage: "trash")
-                    }
-                } label: {
-                    Image(systemName: "ellipsis.circle")
-                        .font(.system(size: 15, weight: .medium))
-                        .foregroundColor(Color("TextSecondary"))
-                }
-                .accessibilityLabel("Project options")
-            }
-        }
+        .toolbar(.hidden, for: .navigationBar)
         .alert("Rename project", isPresented: $isRenameAlertPresented) {
             TextField("Project name", text: $renameText)
             Button("Save") { renameProject() }
@@ -137,16 +137,179 @@ struct ProjectDetailView: View {
         }
     }
 
-    // MARK: - Sections
+    // MARK: - Desktop chrome
 
-    @ViewBuilder
-    private var descriptionSection: some View {
-        if let description = liveProject.description, !description.isEmpty {
-            Text(description)
-                .font(.subheadline)
+    /// "Projects / name", with the project's options on the right.
+    private var breadcrumb: some View {
+        HStack(spacing: 8) {
+            Button { dismiss() } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "chevron.left").font(.system(size: 13, weight: .semibold))
+                    Text("Projects")
+                }
                 .foregroundColor(Color("TextSecondary"))
+                .frame(height: 44)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Back to Projects")
+            Text("/").foregroundColor(Color("TextTertiary"))
+            Text(liveProject.title)
+                .foregroundColor(Color("TextPrimary"))
+                .lineLimit(1)
+            Spacer(minLength: 0)
+            Menu {
+                Button(action: {
+                    renameText = liveProject.title
+                    isRenameAlertPresented = true
+                }) {
+                    Label("Rename", systemImage: "pencil")
+                }
+                Button(role: .destructive, action: { isDeleteConfirmPresented = true }) {
+                    Label("Delete project", systemImage: "trash")
+                }
+            } label: {
+                Image(systemName: "gearshape")
+                    .font(.system(size: 17))
+                    .foregroundColor(Color("TextSecondary"))
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
+            }
+            .accessibilityLabel("Project options")
+        }
+        .font(.system(size: 14))
+        .padding(.horizontal, 16)
+        .background(Color("BgPrimary"))
+    }
+
+    /// The hero band: folder mark, serif name, description, section tabs.
+    private var hero: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(alignment: .top, spacing: 16) {
+                Image(systemName: "folder")
+                    .font(.system(size: 46, weight: .regular))
+                    .foregroundColor(Color("TextPrimary"))
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(liveProject.title)
+                        .font(.system(size: 28, design: .serif))
+                        .foregroundColor(Color("TextPrimary"))
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let description = liveProject.description, !description.isEmpty {
+                        Text(description)
+                            .font(.system(size: 14))
+                            .foregroundColor(Color("TextSecondary"))
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+            HStack(spacing: 6) {
+                ForEach(Section.allCases, id: \.self) { tab in
+                    let on = section == tab
+                    Button { section = tab } label: {
+                        HStack(spacing: 6) {
+                            if let icon = tab.icon { Image(systemName: icon).font(.system(size: 12)) }
+                            Text(tab.label)
+                        }
+                        .font(.system(size: 14, weight: on ? .medium : .regular))
+                        .foregroundColor(on ? Color("TextPrimary") : Color("TextSecondary"))
+                        .padding(.horizontal, 10)
+                        .frame(height: 32)
+                        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(on ? Color("BgPanel").opacity(0.7) : Color.clear))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityAddTraits(on ? .isSelected : [])
+                }
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 24)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            ZStack {
+                Color(hex: "#E6E9ED")
+                RadialGradient(colors: [Color(hex: "#A9B4C2").opacity(0.75), .clear],
+                               center: .init(x: 0.62, y: 0.9), startRadius: 4, endRadius: 260)
+            }
+        )
+        .overlay(alignment: .bottom) { Rectangle().fill(Color("BorderSubtle")).frame(height: 1) }
+        .environment(\.colorScheme, .light)
+    }
+
+    /// The project intro over its threads (BaseProjectView empty header).
+    private var overviewIntro: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Image(systemName: "folder")
+                .font(.system(size: 20))
+                .foregroundColor(Color("TextPrimary"))
+            Text(liveProject.title)
+                .font(.system(size: 26, design: .serif))
+                .foregroundColor(Color("TextPrimary"))
+            if let description = liveProject.description, !description.isEmpty {
+                Text(description)
+                    .font(.system(size: 15))
+                    .foregroundColor(Color("TextSecondary"))
+            }
+            Text("Keep goals, decisions and updates here. Start a thread for a specific task.")
+                .font(.system(size: 15))
+                .foregroundColor(Color("TextSecondary"))
+                .fixedSize(horizontal: false, vertical: true)
+            Button { onNewChat(liveProject) } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "plus").font(.system(size: 13))
+                    Text("Start a thread")
+                }
+                .font(.system(size: 15))
+                .foregroundColor(Color("TextSecondary"))
+                .padding(.leading, 12)
+                .frame(height: 36)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
         }
     }
+
+    /// The composer card at the bottom: starts a chat in this project.
+    private var composerCard: some View {
+        Button { onNewChat(liveProject) } label: {
+            VStack(alignment: .leading, spacing: 0) {
+                Text("Ask a question or start work in this project…")
+                    .font(.system(size: 16))
+                    .foregroundColor(Color("TextTertiary"))
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 14)
+                    .padding(.bottom, 10)
+                HStack {
+                    Image(systemName: "plus")
+                        .font(.system(size: 18, weight: .medium))
+                        .foregroundColor(Color("TextSecondary"))
+                        .frame(width: 40, height: 40)
+                        .background(Circle().fill(Color("FillNeutral")))
+                    Spacer()
+                    Image(systemName: "arrow.up")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(Color("OnAccent"))
+                        .frame(width: 40, height: 40)
+                        .background(Circle().fill(Color("AccentPrimary").opacity(0.35)))
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 8)
+                .overlay(alignment: .top) { Rectangle().fill(Color("BorderSubtle")).frame(height: 1).padding(.horizontal, 8) }
+            }
+            .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Color("BgPanel")))
+            .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(Color("BorderSubtle"), lineWidth: 1))
+            .shadow(color: .black.opacity(0.04), radius: 4, y: 2)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Start a chat in \(liveProject.title)")
+        .padding(.horizontal, 12)
+        .padding(.top, 6)
+        .padding(.bottom, 8)
+        .background(Color("BgPrimary"))
+    }
+
+    // MARK: - Sections
 
     /// Claude's project page leads with these two affordances.
     private var addButtonsRow: some View {
@@ -336,7 +499,7 @@ struct ProjectDetailView: View {
     private var chatsSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("Chats in this project")
+                Text("Threads (\(chats.count))")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(Color("TextSecondary"))
                 Spacer()
@@ -364,8 +527,8 @@ struct ProjectDetailView: View {
                 FriendlyInlineStateView(
                     style: .empty,
                     icon: "bubble.left",
-                    title: "No chats yet",
-                    message: "Start a conversation to see it here."
+                    title: "No threads yet",
+                    message: "Start one from the composer."
                 )
             } else {
                 VStack(spacing: 8) {
