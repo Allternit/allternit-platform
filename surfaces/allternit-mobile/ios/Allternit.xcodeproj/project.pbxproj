@@ -425,6 +425,7 @@
 		DF62B63F124833DDB417BABD /* VoiceSummaryCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E08EFDE05133F76965F508F /* VoiceSummaryCardView.swift */; };
 		DFD61E74AD745777D77785A1 /* LiveKit in Frameworks */ = {isa = PBXBuildFile; productRef = 3BC35ADADF8DFFD314318117 /* LiveKit */; };
 		E011E8E55BE6B106ACF1073F /* FirstRunSetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 52010EB8219766551769D25B /* FirstRunSetupView.swift */; };
+		E0DC0E1E8A05B5F96AD473F6 /* TerminalServiceClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8B1021918E68EBAC25DAEC2 /* TerminalServiceClient.swift */; };
 		E15D6AC20ED39251BB8C14D9 /* CreateCoworkTaskSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B8C42EDBB746B6EC3B2D900 /* CreateCoworkTaskSheet.swift */; };
 		E1AAB3DC491186344008CA51 /* AgentAsksClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1CE35AFE1235DC8E539DDDC5 /* AgentAsksClient.swift */; };
 		E20D76F1CD0C0CD204B1D36D /* RoutineStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6095FF2DECF5CAC8781DB099 /* RoutineStore.swift */; };
@@ -966,6 +967,7 @@
 		E6A6DD2F486807FB808A6E74 /* InappCallViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InappCallViews.swift; sourceTree = "<group>"; };
 		E7640CFD6314328B32B5E74B /* BrainTemplates.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrainTemplates.swift; sourceTree = "<group>"; };
 		E833C0D51467E65C4A3040EC /* BYOCStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BYOCStore.swift; sourceTree = "<group>"; };
+		E8B1021918E68EBAC25DAEC2 /* TerminalServiceClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalServiceClient.swift; sourceTree = "<group>"; };
 		E949D97C5E108AE7428E2C54 /* DiffRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiffRenderer.swift; sourceTree = "<group>"; };
 		EA1555E7A74960CBA7D77549 /* CanvasProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasProtocol.swift; sourceTree = "<group>"; };
 		EB5FC664C55551D4AFE4F68F /* EnvironmentStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnvironmentStore.swift; sourceTree = "<group>"; };
@@ -1360,6 +1362,7 @@
 				66D32A152B8E7658FE8E4F00 /* SessionDiffClient.swift */,
 				50D82FD8AABF7FA6BC2E6191 /* SSHConnectionsClient.swift */,
 				2FD5CC652F9A69791193C138 /* SubagentTypesClient.swift */,
+				E8B1021918E68EBAC25DAEC2 /* TerminalServiceClient.swift */,
 				0A0D9F0B41BC90D8F71BA867 /* ThreadsClient.swift */,
 				7F376799D58D9D63E5B96B1F /* TwinClient.swift */,
 				46CCFABAA5DAC2922F88593D /* WebhookClient.swift */,
@@ -2732,6 +2735,7 @@
 				0485D153515300F0EB63C0F5 /* SubagentTypesClient.swift in Sources */,
 				FC968DAFF1558F8F269CEB4B /* SubagentsSettingsView.swift in Sources */,
 				FB4BF1C7CA40D4942BB1B4CE /* TasksBoardScreen.swift in Sources */,
+				E0DC0E1E8A05B5F96AD473F6 /* TerminalServiceClient.swift in Sources */,
 				FA39A9D1C72C62138B55E2D5 /* TerminalSessionView.swift in Sources */,
 				683F2944F5F17551266D58E1 /* ThinkingOrb.swift in Sources */,
 				5BFD6E36BD1DCA9DFA91016B /* ThreadsClient.swift in Sources */,

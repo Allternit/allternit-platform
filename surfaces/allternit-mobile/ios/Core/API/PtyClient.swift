@@ -354,10 +354,12 @@ final class PtySession: ObservableObject {
     }
 
     private func handleServiceEvent(_ payload: String) {
-        struct Message: Decodable { let type: String; let data: String? }
+        // Like the web: any JSON message is handled by its type (only
+        // `data` prints; keep-alives such as `{}` don't); text that isn't
+        // JSON prints as is.
         if let data = payload.data(using: .utf8),
-           let message = try? JSONDecoder().decode(Message.self, from: data) {
-            if message.type == "data", let text = message.data, !text.isEmpty { onOutput?(text) }
+           let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            if object["type"] as? String == "data", let text = object["data"] as? String, !text.isEmpty { onOutput?(text) }
         } else if !payload.isEmpty {
             onOutput?(payload)
         }
