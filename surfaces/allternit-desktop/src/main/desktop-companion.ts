@@ -90,8 +90,8 @@ export function installDesktopCompanion(options: { origin: () => string; main: (
   // ─── Speech bubbles: a small click-through window above the pet ───────────
   let bubble: BrowserWindow | null = null;
   let bubbleTimer: ReturnType<typeof setTimeout> | undefined;
-  const BUBBLE_WIDTH = 240;
-  const BUBBLE_HEIGHT = 64;
+  const BUBBLE_WIDTH = 280;
+  const BUBBLE_HEIGHT = 84;
   function placeBubble() {
     if (!bubble || bubble.isDestroyed() || !pet || pet.isDestroyed()) return;
     const p = pet.getBounds();
@@ -476,12 +476,18 @@ export function installDesktopCompanion(options: { origin: () => string; main: (
 /** The bubble page: escaped text only, no scripts, follows the system theme. */
 export function bubbleHtml(text: string): string {
   const safe = text.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
+  // One line wraps to two at most. Several lines (the system summary) get a
+  // row each, cut with an ellipsis. The clamp sits on a span inside the
+  // padded box, so a cut line never shows in the padding.
+  const lines = safe.split('\n').filter(Boolean);
   const html = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><style>
 :root{--bg:#fff;--fg:#1c1b1a;--edge:rgba(0,0,0,.12);color-scheme:light}
 @media (prefers-color-scheme:dark){:root{--bg:#26262a;--fg:#f3f3f3;--edge:rgba(255,255,255,.16);color-scheme:dark}}
 html,body{margin:0;height:100%;background:transparent;overflow:hidden}
 body{display:flex;align-items:flex-end;justify-content:center;padding:0 4px 10px;box-sizing:border-box;font:500 12px/1.35 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif}
-p{position:relative;margin:0;max-width:100%;padding:6px 10px;border-radius:12px;background:var(--bg);color:var(--fg);border:1px solid var(--edge);box-shadow:0 2px 8px rgba(0,0,0,.18);overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;word-break:break-word}
-</style></head><body><p role="status">${safe}</p></body></html>`;
+p{position:relative;margin:0;max-width:100%;min-width:0;padding:6px 10px;border-radius:12px;background:var(--bg);color:var(--fg);border:1px solid var(--edge);box-shadow:0 2px 8px rgba(0,0,0,.18);box-sizing:border-box}
+span{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;word-break:break-word}
+p.lines span{display:block;white-space:nowrap;text-overflow:ellipsis}
+</style></head><body><p role="status"${lines.length > 1 ? ' class="lines"' : ''}>${lines.map(line => `<span>${line}</span>`).join('')}</p></body></html>`;
   return `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
 }

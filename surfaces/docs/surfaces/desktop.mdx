@@ -53,6 +53,8 @@ The row above the card has three buttons:
 
 Menus open in full. When you open the model picker, the context meter or a menu in the Agent mode, Plugins and Artifacts row, the HUD window grows on the side with screen space (above the card first) and the card stays where it is. The added space is transparent and clicks go through it. When the menu closes, the window goes back to its size.
 
+Long drafts show in full. When a draft makes the message box taller than the HUD, the window grows upward with its bottom edge fixed, up to the top of the screen. As the draft gets shorter it shrinks back, never below the size it had before. If you resize the HUD by hand, that size becomes the new base. For developers: `useHudComposerFit` (`src/shell/hud/composer-fit.ts`) watches the composer (`[data-hud-composer]` on `ChatBottomBar`) and sets the window with `shell.hud.setBounds`. It pauses while a menu has grown the window or a resize handle is dragged.
+
 Drag the dotted handle to move the HUD, or drag its edges to resize it.
 
 Code: the HUD is `src/shell/hud/HudShell.tsx` and `hud-shell.css` in allternit-ai. The drawing layer is a separate full-screen window (`createAnnotationWindow` in `src/main/unified-main.ts`) that loads `/hud/annotate`. `ShellApp` renders only `AnnotationView` at that path. The window growth for open menus is `useHudOverlayRoom` in `src/shell/hud/overlay-room.ts`, which calls `shell.hud.setBounds`.
