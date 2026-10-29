@@ -11,13 +11,20 @@ import SwiftUI
 ///
 /// Tapping the action opens `ConnectComputerSheet`, the computer picker.
 struct ConnectComputerView: View {
+    /// The shell's own copy, above every section (PhoneShell `phone-main`).
+    /// Section copies stand down while the shell shows it.
+    var isShellBanner = false
+
     @ObservedObject private var relay = RuntimeRelayStore.shared
     @ObservedObject private var instances = InstanceStore.shared
+    @Environment(\.shellShowsNoComputer) private var shellShowsNoComputer
     @State private var isSheetPresented = false
 
     var body: some View {
         Group {
-            if relay.isWaking {
+            if shellShowsNoComputer && !isShellBanner {
+                EmptyView()
+            } else if relay.isWaking {
                 row(text: "Waking your computer…", action: nil, showsProgress: true)
             } else if shouldShow {
                 row(
@@ -52,39 +59,43 @@ struct ConnectComputerView: View {
         }
     }
 
+    /// `phone-no-computer`: a rounded neutral strip, 8pt under the top and
+    /// 16pt in from the sides, 14pt text and a plain semibold action.
     private func row(text: String, action: String?, showsProgress: Bool) -> some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 12) {
             if showsProgress {
                 ProgressView().controlSize(.small)
-            } else {
-                Image(systemName: "desktopcomputer")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(Color("TextSecondary"))
             }
             Text(text)
-                .font(.system(size: 13, weight: .medium))
+                .font(.system(size: 14))
                 .foregroundColor(Color("TextPrimary"))
                 .frame(maxWidth: .infinity, alignment: .leading)
             if let action {
                 Button(action: { isSheetPresented = true }) {
                     Text(action)
-                        .font(.system(size: 13, weight: .semibold))
-                        .padding(.horizontal, 12)
-                        .frame(minHeight: 32)
-                        .background(Color("BgPrimary"))
-                        .clipShape(Capsule())
-                        .overlay(Capsule().stroke(Color("BorderSubtle"), lineWidth: 1))
+                        .font(.system(size: 14, weight: .semibold))
+                        .padding(.horizontal, 14)
+                        .frame(minHeight: 44)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .foregroundColor(Color("TextPrimary"))
             }
         }
-        .padding(.horizontal, 16)
+        .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .background(Color("BgPanel"))
+        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color("FillNeutral")))
+        .padding(.horizontal, 16)
+        .padding(.top, 8)
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isStaticText)
     }
+}
+
+extension EnvironmentValues {
+    /// True under MainWorkspaceView, which shows the one no-computer banner
+    /// above every section, as the web phone shell does.
+    @Entry var shellShowsNoComputer: Bool = false
 }
 
 /// The computer picker behind `ConnectComputerView`: the account's runtime

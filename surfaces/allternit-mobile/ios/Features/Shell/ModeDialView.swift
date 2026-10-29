@@ -11,9 +11,11 @@ import UIKit
 struct ModeDialButton: View {
     @Binding var isExpanded: Bool
     @EnvironmentObject private var modeStore: AppModeStore
+    @ObservedObject private var botStore = BotModeStore.shared
 
     var body: some View {
         let mode = modeStore.shellMode
+        let unread = botStore.waitingCount
         Button {
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
             withAnimation(.spring(response: 0.3, dampingFraction: 0.82)) {
@@ -27,10 +29,14 @@ struct ModeDialButton: View {
                 .background(Circle().fill(Color("TextPrimary")))
                 .scaleEffect(isExpanded ? 0.92 : 1)
                 .frame(width: 44, height: 44)
+                // Bots' unread, as on the desktop dial (`phone-mode-badge`).
+                .overlay(alignment: .topTrailing) {
+                    if unread > 0 { ModeDialBadge(count: unread).offset(x: -1, y: 1) }
+                }
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("\(mode.label) mode. Switch mode")
+        .accessibilityLabel("\(mode.label) mode. Switch mode\(unread > 0 ? ", \(unread) unread in Bots" : "")")
         .accessibilityHint(isExpanded ? "Closes the mode picker" : "Opens the mode picker")
         .accessibilityIdentifier("modeDial")
     }
@@ -41,16 +47,17 @@ struct ModeDialButton: View {
 struct ModeDialMenu: View {
     @Binding var isExpanded: Bool
     @EnvironmentObject private var modeStore: AppModeStore
+    @ObservedObject private var botStore = BotModeStore.shared
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var fanned = false
 
     /// Quarter-moon spots from the dial's centre (PhoneModeWheel SPOTS):
-    /// radius 128, Home straight down, ACI straight right, nudged 24 down.
+    /// radius 158, Home straight down, ACI straight right, nudged 24 down.
     private static let spots: [CGPoint] = {
         let count = ShellMode.allCases.count
         return (0..<count).map { index in
             let angle = (Double.pi / 2) * (1 - Double(index) / Double(count - 1))
-            return CGPoint(x: (cos(angle) * 128).rounded(), y: (sin(angle) * 128 + 24).rounded())
+            return CGPoint(x: (cos(angle) * 158).rounded(), y: (sin(angle) * 158 + 24).rounded())
         }
     }()
 
@@ -107,12 +114,33 @@ struct ModeDialMenu: View {
                     .stroke(Color("BorderSubtle"), lineWidth: 1)
             )
             .shadow(color: Color.black.opacity(0.14), radius: 12, x: 0, y: 8)
+            .overlay(alignment: .topTrailing) {
+                if option == .bots, botStore.waitingCount > 0 {
+                    ModeDialBadge(count: botStore.waitingCount).offset(x: -1, y: 1)
+                }
+            }
             .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         }
         .buttonStyle(.plain)
         .accessibilityLabel(option.label)
         .accessibilityAddTraits(isActive ? [.isSelected] : [])
         .accessibilityIdentifier("modeDialOption\(option.rawValue)")
+    }
+}
+
+/// The red unread count on the dial and the Bots card (`phone-mode-badge`):
+/// 16pt, "9+" past nine.
+struct ModeDialBadge: View {
+    let count: Int
+
+    var body: some View {
+        Text(count > 9 ? "9+" : "\(count)")
+            .font(.system(size: 10, weight: .bold))
+            .foregroundColor(.white)
+            .padding(.horizontal, 4)
+            .frame(minWidth: 16, minHeight: 16)
+            .background(Capsule().fill(Theme.statusError))
+            .accessibilityHidden(true)
     }
 }
 

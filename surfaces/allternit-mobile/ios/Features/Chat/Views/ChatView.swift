@@ -2,18 +2,18 @@ import SwiftUI
 
 // MARK: - Chat surface (Home)
 
-/// Home chrome: the sidebar toggle + new-chat header above the shared chat
-/// content. The Code tab hosts the same `ChatContentView` inside its own
-/// navigation chrome (CodeModeView), so code threads reuse the chat UI
-/// instead of duplicating it.
+/// Home chrome (allternit-ai src/fabric-session/phone/screens/ChatsScreen.tsx):
+/// the phone header — ☰, the open chat's name (else "Allternit"), the
+/// open-chats count button and New chat — above the shared chat content.
+/// The Code tab hosts the same `ChatContentView` inside its own navigation
+/// chrome (CodeModeView), so code threads reuse the chat UI.
 struct ChatView: View {
     @Binding var selectedSessionId: String?
     @Binding var isSidebarOpen: Bool
 
     @EnvironmentObject private var modeStore: AppModeStore
     @StateObject private var viewModel = ChatViewModel()
-    /// Intelli-Schedule panel sheet — opened from the floating chrome in Cowork mode.
-    @State private var isIntelliSchedulePresented = false
+    @ObservedObject private var sessions = ShellSessionsStore.shared
 
     /// Incognito affordance glyph. "ghost" (Claude parity) only exists in
     /// newer SF Symbols — on iOS 18 it renders blank, so fall back to
@@ -21,80 +21,48 @@ struct ChatView: View {
     fileprivate static let incognitoSymbolName: String =
         UIImage(systemName: "ghost") != nil ? "ghost" : "eye.slash"
 
-    /// A conversation is on screen (opened from history or created by
-    /// sending) — the back button returns to the main empty-chat screen.
-    private var isInChat: Bool {
-        selectedSessionId != nil || viewModel.currentSessionId != nil || !viewModel.messages.isEmpty
+    /// The open chat's name, else "Allternit" (ChatsScreen `activeChat?.name`).
+    private var title: String {
+        if viewModel.isIncognito { return "Incognito chat" }
+        let id = viewModel.currentSessionId ?? selectedSessionId
+        if let name = sessions.session(id: id)?.name, !name.isEmpty { return name }
+        return "Allternit"
     }
 
     var body: some View {
-        ZStack(alignment: .top) {
+        VStack(spacing: 0) {
+            PhoneHeader(
+                title: title,
+                wideSides: true,
+                onMenu: { isSidebarOpen = true }
+            ) {
+                PhoneOverviewButton(mode: .home, working: viewModel.isStreaming) {
+                    NotificationCenter.default.post(name: .shellOpenOverview, object: nil)
+                }
+                PhoneIconButton(systemName: "square.and.pencil", label: "New chat") {
+                    startNewChat()
+                }
+            }
+            .zIndex(1)
+
             ChatContentView(
                 sessionId: selectedSessionId,
                 viewModel: viewModel,
-                // Extra room for the "Temporary chat" caption pill under
-                // the icon row while the toggle is on.
-                topContentInset: viewModel.isTemporaryChat ? 88 : 52
+                // Room for the "Temporary chat" caption pill while it's on.
+                topContentInset: viewModel.isTemporaryChat ? 36 : 0
             )
-
-            // Floating chrome: circular icon buttons hovering over the feed —
-            // no header bar, no separator; content scrolls beneath them.
-            VStack(spacing: 8) {
-                HStack(spacing: 8) {
-                    if isInChat {
-                        floatingIcon("chevron.left", accessibilityLabel: "Back") {
-                            selectedSessionId = nil
-                            viewModel.startNewSession()
-                            viewModel.isTemporaryChat = false
-                        }
-                    }
-
-                    floatingIcon("line.3.horizontal", accessibilityLabel: "Open sidebar") {
-                        isSidebarOpen.toggle()
-                    }
-
-                    Spacer()
-
-                    // Incognito chat (Phase 6, Claude parity): starts an
-                    // ephemeral session stamped `metadata.ephemeral` —
-                    // excluded from history, purged on abort server-side.
-                    floatingIcon(Self.incognitoSymbolName, isActive: viewModel.isIncognito, accessibilityLabel: "Incognito chat") {
-                        selectedSessionId = nil
-                        viewModel.startNewSession(ephemeral: true)
-                    }
-
-                    // Intelli-Schedule panel — only offered in Cowork mode.
-                    if modeStore.mode == .cowork {
-                        floatingIcon("calendar.badge.clock", accessibilityLabel: "Open Intelli-Schedule") {
-                            isIntelliSchedulePresented = true
-                        }
-                    }
-                }
-
-            }
-            .padding(.horizontal, 12)
-            .padding(.top, 6)
-
-            // Incognito mode title (Claude parity): small, top-center,
-            // non-interactive — the floating icon row owns the corners.
-            if viewModel.isIncognito {
-                Text("Incognito chat")
-                    .font(.subheadline.weight(.medium))
-                    .foregroundColor(Color("TextSecondary"))
-                    .padding(.top, 18)
-                    .allowsHitTesting(false)
-            }
         }
-        .background(Color("BgSecondary"))
+        .background(Color("BgPrimary"))
         // The drawer's New chat / New pill: start fresh even when the
         // selection was already nil (a just-sent chat has no selection).
         .onReceive(NotificationCenter.default.publisher(for: .shellNewChat)) { _ in
-            selectedSessionId = nil
-            viewModel.startNewSession()
-            viewModel.isTemporaryChat = false
+            startNewChat()
         }
-        .sheet(isPresented: $isIntelliSchedulePresented) {
-            IntelliSchedulePanel()
+        // A sent first message names the chat: pick up the new title.
+        .onChange(of: viewModel.currentSessionId) { _, id in
+            if id != nil, sessions.session(id: id) == nil {
+                Task { await sessions.load() }
+            }
         }
         #if DEBUG
         // `-temporary-chat` (DEBUG only): start in temporary mode for
@@ -112,46 +80,10 @@ struct ChatView: View {
         #endif
     }
 
-    private func floatingIcon(
-        _ systemName: String,
-        isActive: Bool = false,
-        accessibilityLabel: String? = nil,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: {
-            let generator = UIImpactFeedbackGenerator(style: .medium)
-            generator.impactOccurred()
-            action()
-        }) {
-            Image(systemName: systemName)
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundColor(isActive ? Color("AccentPrimary") : Color("TextPrimary"))
-                .frame(width: 40, height: 40)
-                // Apple glass look: frosted blur material with a light
-                // rim catching the "light" on top and a soft drop shadow —
-                // content scrolling beneath blurs through. Active toggles
-                // tint the glyph and rim with the accent.
-                .background(.ultraThinMaterial, in: Circle())
-                .overlay(
-                    Circle()
-                        .strokeBorder(
-                            isActive
-                                ? LinearGradient(
-                                    colors: [Color("AccentPrimary").opacity(0.7), Color("AccentPrimary").opacity(0.25)],
-                                    startPoint: .top,
-                                    endPoint: .bottom
-                                )
-                                : LinearGradient(
-                                    colors: [Color.white.opacity(0.6), Color.white.opacity(0.08)],
-                                    startPoint: .top,
-                                    endPoint: .bottom
-                                ),
-                            lineWidth: 1
-                        )
-                )
-                .shadow(color: isActive ? Color("AccentPrimary").opacity(0.25) : Color.black.opacity(0.10), radius: 10, y: 3)
-        }
-        .accessibilityLabel(accessibilityLabel ?? "")
+    private func startNewChat() {
+        selectedSessionId = nil
+        viewModel.startNewSession()
+        viewModel.isTemporaryChat = false
     }
 }
 
