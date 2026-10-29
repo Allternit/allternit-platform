@@ -273,6 +273,10 @@
           "note": "Thirteen stage backgrounds (Aurora default, Glass mesh, Constellation, Spotlight, Horizon, Silk, Bokeh, Grid glow, Lava, Prism, Fireflies, Dusk, Plain) behind bot chat, group chat and bot project home; chosen in Settings → Appearance or on the stage (Eoj: build all of them and choose)."
         },
         {
+          "on": "2026-10-29",
+          "note": "Twenty ASCII backgrounds next to the thirteen (now the Classic set): A-block (the A-block mark's breathe, sweep, conveyor and write moves), six moods of other AI apps with no marks, and thirteen scenes. They react to the cursor (characters part and glow; a click on empty space sends a pulse). Settings → Appearance → Background gets ASCII / Classic, Show on (bot chats, group chats, bot project homes, Code mode; Code mode off by default), Movement, Colours, Characters, Character size, Density and Veil. Code mode shows it behind the session view (backdrop/ascii/, useStageBackgroundFor) (Eoj)."
+        },
+        {
           "on": "2026-10-22",
           "note": "Bot colour comes from the avatar art (bot-art-color.ts), so the stage, pill and bubbles match the bot. The thread-top pill shows a status word (live-status.ts); a running thread shows a task card (ThreadTaskCard); Tasks lists subtasks under the running step and an Up next list. Phone gets a Needs you sheet. Project home uses the shared launch layout (BaseProjectView launchLayout). Voice sessions show hand-off chips (ai #732)."
         },

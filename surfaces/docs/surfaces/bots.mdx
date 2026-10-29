@@ -224,7 +224,40 @@ The category field in Create and Edit Bot shows your saved category. Open its gl
 
 ## Stage backgrounds
 
-Bot chats, group chats and bot project homes sit on a slow moving background behind frosted glass. There are thirteen to choose from:
+Bot chats, group chats and bot project homes sit on a moving background behind frosted glass. Code mode can show it too. There are two sets: **ASCII** and **Classic**.
+
+### ASCII
+
+Twenty looks drawn in text characters. They react to your cursor: characters near it move aside and brighten, and a click on empty space sends a ring outward. Clicks on buttons, links, text fields and the composer do not.
+
+| Background | What it does |
+|---|---|
+| A-block | The Allternit A-block mark breathes, sweeps, runs and writes. It leans away from your cursor; a click scatters it and it comes back together |
+| Clay Contours | Terracotta contour lines on warm paper |
+| Ink Bloom | A black and white cloud that breathes and follows your cursor |
+| Spectrum | Blue to violet to rose ribbons with twinkling sparks |
+| Event Horizon | A black hole in black and white; it drifts toward your cursor |
+| Lattice | A teal lattice with pulses running along its lines |
+| Ember Blocks | Stacks of warm pixel blocks rise and fall |
+| Sky Drift | Clouds drift across a blue sky at two depths |
+| Glyph Stars | A:// glyphs drift and link up; your cursor joins the links |
+| Rain on Glass | Rain streaks and sliding drops, with city lights behind |
+| Code Rain | Soft streams of code characters |
+| Northern Lights | Curtains of light over a lake that mirrors them |
+| Tide | A sunset over waves; birds and a sailboat pass |
+| Lanterns | Lanterns rise from a lake that reflects them |
+| Snowfall | Snow drifts past pines and distant mountains |
+| Orbit | Planets circle a sun, leaving trails |
+| Garden | Grass sways, flowers open, butterflies wander |
+| Ripple Grid | Drops, your cursor and your clicks send rings across a dot grid |
+| Meteor Night | Shooting stars cross the sky above the hills |
+| Kelp Forest | Kelp sways while small fish swim through |
+
+Clay Contours, Ink Bloom, Spectrum, Event Horizon, Lattice and Ember Blocks borrow the mood of other AI apps. They use no logos, names or marks.
+
+### Classic
+
+Thirteen soft looks drawn in the screen's colours:
 
 | Background | What it does |
 |---|---|
@@ -242,13 +275,29 @@ Bot chats, group chats and bot project homes sit on a slow moving background beh
 | Dusk | A sky gradient that shifts slowly |
 | Plain | A flat colour, no movement |
 
-Choose one in **Settings → Appearance → Background**, or with the brush button at the top right of a bot or group stage. The choice applies to every bot chat, group chat and bot project home, and to the banners on a bot's page and on project pages. It stays behind the whole chat when the bot folds into the top pill, a little softer, so the composer sits on the same background as the rest of the screen. Colours come from the screen: the bot's own colour, the group members' colours, or the project's colour. With **Reduce motion** on, or while the tab is hidden, the background holds still. Phones and the `m.allternit.com` app get the same backgrounds, smaller and with fewer particles.
+### Choosing and adjusting
+
+Choose one in **Settings → Appearance → Background**. Switch between **ASCII** and **Classic** above the tiles. You can also use the brush button at the top right of a bot or group stage, which lists both sets. The choice applies to every bot chat, group chat and bot project home, and to the banners on a bot's page and on project pages. It stays behind the whole chat when the bot folds into the top pill, a little softer, so the composer sits on the same background as the rest of the screen.
+
+Under the tiles:
+
+| Setting | What it does |
+|---|---|
+| Show on | Bot chats, Group chats, Bot project homes and Code mode, each on or off. Off shows the plain app colour. Code mode starts off |
+| Movement | Still, Slow or Normal, for both sets. Still draws one frame |
+| Colours (ASCII) | As designed, Bot's colour (the screen's colour) or Mono |
+| Characters (ASCII) | As designed, Text, or Tiles (each character on its own tile) |
+| Character size (ASCII) | Small, Medium or Large |
+| Density (ASCII) | How much is drawn |
+| Veil behind messages (ASCII) | A fade behind the conversation so text stays easy to read. On phones it covers the whole screen |
+
+Classic colours come from the screen: the bot's own colour, the group members' colours, or the project's colour. With **Reduce motion** on, or while the tab is hidden, the background holds still. Backgrounds that are scrolled off screen stop drawing. Phones and the `m.allternit.com` app get the same backgrounds, smaller. On touch screens, a tap on empty space sends the pulse.
 
 **The rail matches the bot.** In Bot Mode, the shell rail shows the open bot's background in that bot's colour, behind frosted glass, so the rail and the screen read as one. It follows you from bot to bot: a bot's main chat, its threads, its **Threads** and **Tasks** tabs, its **Bot** tab and its bot page each set the rail to that bot. The **Threads** and **Tasks** tabs keep the bot's background behind them too, not only the main chat. On phones (the `ai.allternit.com` phone layout and the `m.allternit.com` app) the Bots menu drawer shows the same background. With **Plain** chosen, the rail stays its usual colour.
 
 **Opening a bot.** A bot in the row of bots on the Bot Mode home, or in a project's team strip, opens its main chat on its stage, like the Bots rail. Its bot page (banner, Artifacts, Routines, Memory, Settings) is one click away from there.
 
-For developers: `src/components/bots/stage/backdrop/` in allternit-ai (`StageBackdrop.tsx`, `stage-backdrop-model.ts`, `StageBackdropPicker.tsx`). Banners use the `stage-backdrop--banner` class; docked chats pass `dim`. The rail's copy lives in `RailBackdrop.tsx`: `BotChatSessionView` and a standalone `BotHomeView` call `usePublishRailBackdrop(color)`, and `ShellRail` (Bot mode) and the phone `PhoneDrawer` render `<RailBackdrop />` under the `.rail-backdrop-veil` glass. The team strip calls `openBotChatImmediately`. The setting is `appearance.stageBackground`. Story: `StageBackdrop.stories.tsx`.
+For developers: `src/components/bots/stage/backdrop/` in allternit-ai (`StageBackdrop.tsx`, `stage-backdrop-model.ts`, `StageBackdropPicker.tsx`). The ASCII set lives in `backdrop/ascii/`: `ascii-engine.ts` (the character grid, the canvas renderer, the cursor push and the click pulse), `ascii-scenes.ts` (the twenty looks; each `make(c, r, rand, density)` returns a per-frame draw) and `AsciiBackdrop.tsx` (one shared ~30 fps loop that skips off-screen looks and hidden tabs). ASCII ids start with `ascii-`. Screens read their look with `useStageBackgroundFor("bot" | "group" | "project" | "code")`, which returns `plain` when that surface is switched off. The options are stored as `appearance.background.on.<surface>`, `appearance.background.motion`, `.colour`, `.chars`, `.charSize`, `.density` and `.veil`. The rail passes `veil={false}` because it has its own glass. Code mode mounts the backdrop in `CodeThreadView` (the session view, not the canvas board, and not while Terminal mode is on) with `stage-backdrop--code`, whose veil covers the whole view at 55% or more because Code has no glass panels. Banners use the `stage-backdrop--banner` class; docked chats pass `dim`. The rail's copy lives in `RailBackdrop.tsx`: `BotChatSessionView` and a standalone `BotHomeView` call `usePublishRailBackdrop(color)`, and `ShellRail` (Bot mode) and the phone `PhoneDrawer` render `<RailBackdrop />` under the `.rail-backdrop-veil` glass. The team strip calls `openBotChatImmediately`. The chosen look is stored as `appearance.stageBackground`. Story: `StageBackdrop.stories.tsx`.
 
 ## Group stage
 

@@ -48,6 +48,10 @@ Before a session starts, the computer and repo open pickers. In a running sessio
 
 The old bottom Console drawer is gone (2026-10-28). Its shell tab is Terminal mode above. In its place is the [system drawer](/guides/system-drawer), a developer tool turned on in **Settings → Developer**: **Needs you**, **Bots**, **Running** and **Problems** across every session and mode, opened with ⌘J, the dot on Gizzi or the menu bar menu. The preview pane's **View session activity** link went with the old drawer.
 
+## Background
+
+Code mode can show the same moving background as bot chats. Turn it on in **Settings → Appearance → Background → Show on → Code mode**; it is off until you do. It plays behind the session view, but not on the canvas board or while Terminal mode is on. ASCII looks sit under a stronger veil here so code and text stay easy to read. See [Stage backgrounds](/surfaces/bots#stage-backgrounds) for the looks and options.
+
 ## For developers
 
 - Terminal mode: `src/views/code/CodeTerminalCanvas.tsx` and `code-terminal.css` (`.code-terminal-dark`, `.code-terminal-session-line`). On Desktop it renders the session line, then one `TerminalSurface` (dark scheme), or `BotSession` (the bot's `PaneMirrorView`) after a `factory-attach-pane` request. CodeCanvas renders it in place of the thread and keeps the session header, prompt and status row; the prompt dock gets `.code-terminal-dark` while it is open. With no runtime (`useRuntimeAvailable`) it shows **Not connected**.
