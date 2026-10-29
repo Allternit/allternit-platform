@@ -198,6 +198,7 @@
 		683F2944F5F17551266D58E1 /* ThinkingOrb.swift in Sources */ = {isa = PBXBuildFile; fileRef = D71E9B45F5D6F57046B40046 /* ThinkingOrb.swift */; };
 		6895810FE9B0E35D84070E39 /* PermissionAskView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0A7117FE7BB64375E70C3D1 /* PermissionAskView.swift */; };
 		69B50D1B3F4A7108263F2A70 /* DiffRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = E949D97C5E108AE7428E2C54 /* DiffRenderer.swift */; };
+		6AACF4881D0D2E96AD7036E7 /* MeetYourBotsVisuals.swift in Sources */ = {isa = PBXBuildFile; fileRef = 436B6969DB4C176B2552F0D0 /* MeetYourBotsVisuals.swift */; };
 		6B4AA4FF10E8DAC05A8BEF9C /* RFBCredentialsForm.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6CE6A73EB3A571195E31C6C /* RFBCredentialsForm.swift */; };
 		6BB3705C203B06F92A5468A4 /* IntelliScheduleStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2379C3D1BE4210564BD1A258 /* IntelliScheduleStore.swift */; };
 		6BB4A917B6F16D659FC4505C /* CodeModeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D011B052E3F3ABA469EBA92 /* CodeModeView.swift */; };
@@ -444,6 +445,7 @@
 		EB48BBB9F3A19ACBDB9E533D /* EnvironmentStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = EB5FC664C55551D4AFE4F68F /* EnvironmentStore.swift */; };
 		EB73BA8CE6020C46DB078486 /* ArtifactPageWebView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D63FEA2F5A4F240A19DFEA95 /* ArtifactPageWebView.swift */; };
 		EBD76249148F2229E7E2D842 /* RuntimeModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD557129AC5FE54BDF7BE1BC /* RuntimeModel.swift */; };
+		EC2E5A23445F91AC26F66304 /* meet-team-network.mp4 in Resources */ = {isa = PBXBuildFile; fileRef = AEF2CB2C50488DAB91C5B998 /* meet-team-network.mp4 */; };
 		EC892755564E2ABBD32A95E7 /* VideoToolbox.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 68A7DF64FF7D38E51B509122 /* VideoToolbox.framework */; };
 		EEEB260D41295012A886CC36 /* BrainSpikeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 548C35B4EA9F99360E661513 /* BrainSpikeView.swift */; };
 		EF83E006F618ED5D837B9A14 /* SubagentFaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFD3099ACF04769B3FDE215B /* SubagentFaceView.swift */; };
@@ -664,6 +666,7 @@
 		404FAB71FF1D75CA3636CDF5 /* LoopsClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoopsClient.swift; sourceTree = "<group>"; };
 		413838BDCD889A927EE99EC9 /* SettingsPageKit.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsPageKit.swift; sourceTree = "<group>"; };
 		41811AE09D34178A111BBC64 /* CodeComposer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodeComposer.swift; sourceTree = "<group>"; };
+		436B6969DB4C176B2552F0D0 /* MeetYourBotsVisuals.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetYourBotsVisuals.swift; sourceTree = "<group>"; };
 		45F44F59BA1C2AB3506C0B8A /* LoopLiveActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoopLiveActivity.swift; sourceTree = "<group>"; };
 		467C3A63EC0099855805319F /* PhoneHeader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhoneHeader.swift; sourceTree = "<group>"; };
 		468304A152B48DA563AF255C /* BotSetupSheets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotSetupSheets.swift; sourceTree = "<group>"; };
@@ -857,6 +860,7 @@
 		AD5B74701E5EA206DE726F35 /* AllternitTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = AllternitTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		ADC22289020633B79A4877ED /* MemoryClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MemoryClient.swift; sourceTree = "<group>"; };
 		AE61B45DBC74809757BE9AEC /* AgentClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentClient.swift; sourceTree = "<group>"; };
+		AEF2CB2C50488DAB91C5B998 /* meet-team-network.mp4 */ = {isa = PBXFileReference; path = "meet-team-network.mp4"; sourceTree = "<group>"; };
 		AF03AC0DA5BECC7DCB26E818 /* VoiceAudioIO.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceAudioIO.swift; sourceTree = "<group>"; };
 		AFA993E3D323D4735226C5F4 /* CoworkTasksClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoworkTasksClient.swift; sourceTree = "<group>"; };
 		B064316232322EDD0056B5DD /* AgentMarketplaceClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentMarketplaceClient.swift; sourceTree = "<group>"; };
@@ -1423,8 +1427,10 @@
 				25812590573D6411B08C99AB /* MeetBotCatalogData.swift */,
 				C68F1A4A3E206C787E0D6F9D /* MeetYourBotsFinish.swift */,
 				31906E53E13F148C15E53F18 /* MeetYourBotsView.swift */,
+				436B6969DB4C176B2552F0D0 /* MeetYourBotsVisuals.swift */,
 				85F5DF368763C37AE6E8833E /* OnboardingStore.swift */,
 				91C770057CDB7F7249B6EE0D /* OnboardingView.swift */,
+				58CC732CC2C4F75D5649873F /* Media */,
 				4FE81FC66F0D8D93AB896EE2 /* Setup */,
 				798AFCD75D3050A22A3EC849 /* SignInStage */,
 			);
@@ -1506,6 +1512,14 @@
 				D71E9B45F5D6F57046B40046 /* ThinkingOrb.swift */,
 			);
 			path = DesignSystem;
+			sourceTree = "<group>";
+		};
+		58CC732CC2C4F75D5649873F /* Media */ = {
+			isa = PBXGroup;
+			children = (
+				AEF2CB2C50488DAB91C5B998 /* meet-team-network.mp4 */,
+			);
+			path = Media;
 			sourceTree = "<group>";
 		};
 		60650EE2A089756331A8E36C /* Tests */ = {
@@ -2278,6 +2292,7 @@
 				3EE0E044F4077F8DB8B11647 /* Assets.xcassets in Resources */,
 				D2757DF1F237E7AACF033950 /* PrivacyInfo.xcprivacy in Resources */,
 				ACEBA10DB133793B777D5B2F /* Secrets.xcconfig.example in Resources */,
+				EC2E5A23445F91AC26F66304 /* meet-team-network.mp4 in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -2574,6 +2589,7 @@
 				E2AE7FA5AED5C265C9913FB3 /* MeetBotCatalogData.swift in Sources */,
 				5C24A5A804FADCEF5B2C452A /* MeetYourBotsFinish.swift in Sources */,
 				16FA39F7A6F891652E3E533E /* MeetYourBotsView.swift in Sources */,
+				6AACF4881D0D2E96AD7036E7 /* MeetYourBotsVisuals.swift in Sources */,
 				65F58948DB57F802D27C2C7B /* MemoryClient.swift in Sources */,
 				32BA6D8AFEFBB6886D8A5FC7 /* MemoryDriveHistoryView.swift in Sources */,
 				3A2939F18A731584F1F4BF3E /* MemoryDriveView.swift in Sources */,
