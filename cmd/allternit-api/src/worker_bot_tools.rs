@@ -141,6 +141,17 @@ async fn create_route(State(state): State<Arc<AppState>>, Extension(user): Exten
     if let Some(comp) = &computer {
         config["computer"] = json!(comp);
     }
+    // Same binding the app's model picker writes (allternit-ai
+    // brainFromModelPick): native harness for the CLIs it drives directly,
+    // otherwise the gizzi CLI driver picks the vendor from modelRef.
+    if !provider.is_empty() {
+        let model_ref = json!({ "providerID": provider, "modelID": model });
+        config["botBrain"] = match native_harness_for(&provider) {
+            Some(h) => json!({ "mode": "native_harness", "harness": h, "modelRef": model_ref }),
+            None => json!({ "mode": "allternit_cloud", "modelRef": model_ref }),
+        };
+        config["runtimeModelId"] = json!(format!("{provider}/{model}"));
+    }
     let create = json!({
         "name": name,
         "description": description,
@@ -208,4 +219,24 @@ mod tests {
         let owns = clean_owns(&[" invoices ".into(), "Invoices".into(), "".into(), "code review".into()]);
         assert_eq!(owns, vec!["invoices", "code review"]);
     }
+}
+
+/// Catalog id → the app's native harness id (allternit-ai
+/// NATIVE_HARNESS_BY_PROVIDER). Keep the two lists in step.
+fn native_harness_for(provider: &str) -> Option<&'static str> {
+    Some(match provider {
+        "claude-cli" => "claude",
+        "codex-cli" => "codex",
+        "kimi-cli" => "kimi",
+        "grok" => "grok",
+        "hermes" => "hermes",
+        "kiro-cli" => "kiro-cli",
+        "mcode" => "mcode",
+        "qodercli" => "qodercli",
+        "qoderclicn" => "qoderclicn",
+        "qwenpaw" => "qwenpaw",
+        "reasonix" => "reasonix",
+        "traecli" => "traecli",
+        _ => return None,
+    })
 }

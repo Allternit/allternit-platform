@@ -3260,6 +3260,32 @@
       "evidence": [
         "allternit/surfaces/docs/surfaces/desktop.mdx#hud"
       ]
+    },
+    {
+      "id": "feature:worker-bots-vendor-connect",
+      "label": "Worker bots and vendor connect from chat",
+      "product": "product:allternit-api",
+      "status": "building",
+      "description": "A bot creates a worker bot from chat (bot_create: name, owns, brain from the CLI catalog, computer); the roster lists each teammate's owns and message_agent hands owned work to the owner. A bot starts signing in any catalog vendor from chat (vendor_connect): the app renders an Allternit system card that runs the existing install/connect flow, so codes come only from the CLI and links only to the vendor's domain. Remote sign-in uses the catalog's loginRemote (device code). OpenCode is a normal vendor.",
+      "touches": [
+        "allternit/cmd/allternit-api",
+        "allternit/cmd/gizzi-code/src/runtime/tools",
+        "allternit/cmd/gizzi-code/src/runtime/bots",
+        "allternit/cmd/gizzi-code/src/runtime/providers",
+        "allternit-ai/src/components/agents",
+        "allternit-ai/src/components/bot-chat"
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/worker-bots.mdx",
+        "allternit/surfaces/docs/guides/connect-vendor-from-chat.mdx",
+        "allternit/cmd/allternit-api/migrations/V282__bot_owns.sql"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-29",
+          "note": "Eoj, from the Grok Bot worker-bot post: build worker bots from chat and connect-from-chat for all vendors; OpenCode is just another vendor, not a free tier."
+        }
+      ]
     }
   ],
   "journeys": [
