@@ -49,11 +49,13 @@ The row above the card has three buttons:
 
 - **Sun or moon:** switches the HUD between light and dark. The HUD keeps its own setting, apart from the main window.
 - **Pen:** opens a drawing layer over the whole screen. Pick a color and a line width, draw, then press **Save** to keep a PNG, **Clear** to start again, or **Done** or `Escape` to close the layer. The HUD stays open.
-- **X:** closes the HUD. `Escape` in the HUD also closes it.
+- **X:** closes the HUD. `Escape` in the HUD also closes it. When a menu is open, `Escape` closes only the menu.
+
+Menus open in full. When you open the model picker, the context meter or a menu in the Agent mode, Plugins and Artifacts row, the HUD window grows on the side with screen space (above the card first) and the card stays where it is. The added space is transparent and clicks go through it. When the menu closes, the window goes back to its size.
 
 Drag the dotted handle to move the HUD, or drag its edges to resize it.
 
-Code: the HUD is `src/shell/hud/HudShell.tsx` and `hud-shell.css` in allternit-ai. The drawing layer is a separate full-screen window (`createAnnotationWindow` in `src/main/unified-main.ts`) that loads `/hud/annotate`. `ShellApp` renders only `AnnotationView` at that path.
+Code: the HUD is `src/shell/hud/HudShell.tsx` and `hud-shell.css` in allternit-ai. The drawing layer is a separate full-screen window (`createAnnotationWindow` in `src/main/unified-main.ts`) that loads `/hud/annotate`. `ShellApp` renders only `AnnotationView` at that path. The window growth for open menus is `useHudOverlayRoom` in `src/shell/hud/overlay-room.ts`, which calls `shell.hud.setBounds`.
 
 ## App menu
 
