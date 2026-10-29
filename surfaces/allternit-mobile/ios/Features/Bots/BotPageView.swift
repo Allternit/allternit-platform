@@ -14,12 +14,14 @@ struct BotPageView: View {
 
     @ObservedObject private var store = BotModeStore.shared
     @ObservedObject private var desktop = BotDesktopStore.shared
+    @ObservedObject private var colors = BotColorStore.shared
     @EnvironmentObject private var navigator: BotNavigator
     @State private var routinesOn: Int? = nil
     @State private var channelNames: [String]? = nil
 
+    /// The bot's own colour (given, or read from its art).
     private var accent: Color? {
-        bot.botAccentColor.map { Color(hex: $0) }
+        colors.hex(for: bot).map { Color(hex: $0) }
     }
 
     var body: some View {
@@ -30,7 +32,10 @@ struct BotPageView: View {
             }
             .padding(.bottom, 32)
         }
-        .background(Color("BgPrimary"))
+        // The page wears the bot's wash (the phone bot page's tint); the
+        // drawer follows while it is open.
+        .background { BotWashedBackground(color: .some(colors.hex(for: bot))).ignoresSafeArea() }
+        .claimsBotTint(bot.id)
         .navigationBarTitleDisplayMode(.inline)
         .task {
             desktop.fetchStatusIfNeeded(botId: bot.id)
@@ -74,7 +79,8 @@ struct BotPageView: View {
         .padding(.bottom, 20)
         .frame(maxWidth: .infinity)
         .background(
-            LinearGradient(colors: [(accent ?? Color("TextPrimary")).opacity(0.18), (accent ?? Color("TextPrimary")).opacity(0.03)],
+            // A bot with a colour already wears it as the page wash.
+            LinearGradient(colors: accent == nil ? [Color("TextPrimary").opacity(0.18), Color("TextPrimary").opacity(0.03)] : [.clear],
                            startPoint: .top, endPoint: .bottom)
         )
         .overlay(alignment: .bottom) { Rectangle().fill(Color("BorderSubtle")).frame(height: 1) }

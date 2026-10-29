@@ -8,6 +8,7 @@ struct BotThreadsView: View {
     let botId: String?
 
     @ObservedObject private var store = BotModeStore.shared
+    @ObservedObject private var colors = BotColorStore.shared
     @EnvironmentObject private var navigator: BotNavigator
 
     var body: some View {
@@ -19,7 +20,9 @@ struct BotThreadsView: View {
             }
             .padding(.vertical, 8)
         }
-        .background(Color("BgPrimary"))
+        // One bot's threads wear its colour; all threads stay neutral.
+        .background { BotWashedBackground(color: .some(colors.hex(for: botId.flatMap { store.bot($0) }))).ignoresSafeArea() }
+        .claimsBotTint(botId)
         .navigationTitle(botId.flatMap { store.bot($0)?.botDisplayName } ?? "Threads")
         .navigationBarTitleDisplayMode(.inline)
         .refreshable { await store.refreshThreads() }

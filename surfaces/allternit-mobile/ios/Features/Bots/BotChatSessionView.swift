@@ -21,6 +21,7 @@ struct BotChatSessionView: View {
     @ObservedObject private var store = BotModeStore.shared
     @ObservedObject private var status = BotStatusStore.shared
     @ObservedObject private var desktop = BotDesktopStore.shared
+    @ObservedObject private var colors = BotColorStore.shared
     @EnvironmentObject private var navigator: BotNavigator
     @State private var sessionId: String? = nil
     @State private var resolveError: String? = nil
@@ -41,7 +42,11 @@ struct BotChatSessionView: View {
             deck
             content
         }
-        .background(Color("BgPrimary"))
+        // The bot's colour: a wash at the top of its chat (and its bar), your
+        // bubbles, and the drawer while this chat is open.
+        .background { BotWashedBackground().ignoresSafeArea() }
+        .environment(\.botTint, colors.hex(for: bot))
+        .claimsBotTint(bot.id)
         // The phone thread header (ThreadHeader, phone): round Back · bot
         // chip · ⋯, drawn by the view instead of the system bar.
         .toolbar(.hidden, for: .navigationBar)
@@ -208,7 +213,7 @@ struct BotChatSessionView: View {
         .padding(.horizontal, 12)
         .padding(.top, 4)
         .padding(.bottom, 6)
-        .background(Color("BgPrimary"))
+        .background { BotWashedBackground(color: .some(colors.hex(for: bot))).ignoresSafeArea(edges: .top) }
     }
 
     private var botChip: some View {

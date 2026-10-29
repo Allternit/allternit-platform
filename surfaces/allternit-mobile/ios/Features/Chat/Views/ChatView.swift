@@ -288,7 +288,7 @@ struct ChatContentView: View {
                 .animation(.easeOut(duration: 0.2), value: inputText.isEmpty)
             }
             .scrollDismissesKeyboard(.interactively)
-            .background(Color("BgPrimary"))
+            .background { BotWashedBackground().ignoresSafeArea() }
         }
     }
 
@@ -365,7 +365,9 @@ struct ChatContentView: View {
                 .padding(.bottom, 8)
                 .background(Color("BgPrimary"))
         }
-        .background(Color("BgPrimary"))
+        // A bot's chat wears its colour wash at the top (BotColorWash);
+        // elsewhere this is the plain page.
+        .background { BotWashedBackground().ignoresSafeArea() }
     }
 
     private func composer(deck: ComposerDeckVariant) -> some View {
