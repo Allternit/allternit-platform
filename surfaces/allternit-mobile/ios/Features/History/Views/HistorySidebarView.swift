@@ -1,18 +1,13 @@
 import SwiftUI
 import UIKit
 
-/// A dated bucket of sessions (Today / Yesterday / Previous 7 Days / Older).
-struct HistoryGroup: Identifiable {
-    let id: String
-    let title: String
-    let sessions: [AgentSession]
-}
-
 /// Recents status filter (PhoneDrawer STATUS_OPTIONS). "All" hides archived
-/// sessions (`active == false`), as on the web.
+/// sessions (`active == false`), as on the web; "Completed" has no wire
+/// signal for chats yet, so it reads like Archived.
 enum RecentsStatusFilter: String, CaseIterable {
     case all = "All"
     case active = "Active"
+    case completed = "Completed"
     case archived = "Archived"
 }
 
@@ -26,40 +21,42 @@ enum RecentsDateFilter: String, CaseIterable {
 
 /// The phone drawer (allternit-ai src/fabric-session/phone/PhoneDrawer.tsx):
 /// the active mode's rail, laid out like Claude iOS. Top line: the mode dial,
-/// the mode's wordmark and a round search button. Then the mode's rail rows
-/// (Projects, Artifacts, Automation Tasks, …), Pinned, and Recents with a
-/// filter — swipe a recent left to delete it, right to pin it. Footer: the
-/// account avatar (opens Settings) and the New pill (tap for the mode's new
-/// item, press and hold for more ways to start).
+/// the mode's wordmark, Inbox and a round search button. Then the mode's rail
+/// rows (Projects, Artifacts, Automation Tasks, Customize, More), Teammates,
+/// Pinned, and Recents with See all + a filter — swipe a recent left to
+/// delete it, long-press to drag it into your own order. The list fades
+/// under a floating footer: the account avatar in its usage ring (opens
+/// Settings), Phones, and the New pill (tap for the mode's new item, press
+/// and hold for more ways to start).
 ///
 /// Bots mode shows the Bots rail (lane L4 owns its contents).
 struct HistorySidebarView: View {
     @Binding var selectedSessionId: String?
     @Binding var isSidebarOpen: Bool
-    /// Drawer width — 92% of the screen, set by MainWorkspaceView.
+    /// Drawer width — min(92% of the screen, 440), set by MainWorkspaceView.
     var width: CGFloat = 320
 
     @EnvironmentObject private var modeStore: AppModeStore
-    @EnvironmentObject private var agentModeStore: AgentModeStore
     @EnvironmentObject private var authManager: AuthManager
     @StateObject private var pinsStore = RailPinsStore.shared
+    @ObservedObject private var store = ShellSessionsStore.shared
+    @ObservedObject private var usage = UsageStore.shared
 
-    @State private var sessions: [AgentSession] = []
-    @State private var hasLoaded = false
-    @State private var isLoading = false
-    @State private var loadError: String? = nil
     @State private var actionError: String? = nil
 
     @State private var statusFilter: RecentsStatusFilter = .all
     @State private var dateFilter: RecentsDateFilter = .all
     /// Home's type filter (PhoneDrawer TYPE_OPTIONS; tasks aren't recents here).
     @State private var typeFilter: Set<RecentType> = []
+    /// Long-press reorder (phone-ui-store manualOrder): session ids first, in
+    /// this order; the rest follow by recency.
+    @AppStorage("allternit-phone-ui-manual-order") private var manualOrderRaw = ""
 
     enum RecentType: String, CaseIterable {
-        case chat = "Chat", cowork = "Cowork", agent = "Agent"
+        case chat = "Chat", task = "Task", agent = "Agent"
 
+        /// Old cowork sessions are chats (Cowork folded into Chat).
         static func of(_ session: AgentSession) -> RecentType {
-            if session.originSurface == "cowork" { return .cowork }
             if let agentId = session.agentId, !agentId.isEmpty { return .agent }
             return .chat
         }
@@ -75,11 +72,12 @@ struct HistorySidebarView: View {
     @State private var isQuickTaskPresented = false
     @State private var isScheduledTaskPresented = false
     @State private var isMiniAppsPresented = false
-    @State private var isDecisionsPresented = false
+    @State private var isComputersPresented = false
+    @State private var isTeachPresented = false
     @State private var isInboxPresented = false
     @State private var isPhonesPresented = false
     @State private var isCustomizePresented = false
-    @State private var isRailTabsPresented = false
+    @State private var isConnectorsPresented = false
     /// "Continue CLI session": the surface the picked-up session opens in.
     @State private var cliPickerSurface: CLIPickerSurface? = nil
     @ObservedObject private var railTabs = RailTabsStore.shared
@@ -96,13 +94,15 @@ struct HistorySidebarView: View {
 
     var body: some View {
         ZStack(alignment: .topLeading) {
-            VStack(alignment: .leading, spacing: 0) {
-                header
+            ZStack(alignment: .bottom) {
+                VStack(alignment: .leading, spacing: 0) {
+                    header
 
-                if modeStore.shellMode == .bots {
-                    botsRail
-                } else {
-                    railList
+                    if modeStore.shellMode == .bots {
+                        botsRail
+                    } else {
+                        railList
+                    }
                 }
 
                 footer
@@ -110,7 +110,7 @@ struct HistorySidebarView: View {
 
             if isDialExpanded {
                 // Tap away closes the quarter-moon.
-                Color.black.opacity(0.06)
+                Color.black.opacity(0.001)
                     .ignoresSafeArea()
                     .onTapGesture {
                         withAnimation(spring) { isDialExpanded = false }
@@ -118,15 +118,13 @@ struct HistorySidebarView: View {
                     .accessibilityHidden(true)
                 ModeDialMenu(isExpanded: $isDialExpanded)
                     .padding(.leading, 12)
-                    .padding(.top, 8)
+                    .padding(.top, 6)
             }
         }
         .frame(width: width)
-        // Only the background bleeds edge-to-edge (behind the status bar /
-        // home indicator); the layout stays safe-area-respecting so header
-        // and footer clear the island and home indicator. The closed drawer
-        // is hidden by the content pane's opaque backdrop (MainWorkspaceView).
-        .background(Color("BgPrimary").edgesIgnoringSafeArea(.vertical))
+        // The layout stays safe-area-respecting so header and footer clear
+        // the island and home indicator; MainWorkspaceView paints the
+        // panel (rounded trailing corners) edge to edge behind it.
         .sheet(isPresented: $isSettingsPresented) {
             SettingsView()
         }
@@ -141,8 +139,11 @@ struct HistorySidebarView: View {
         .sheet(isPresented: $isMiniAppsPresented) {
             MiniAppsStoreView()
         }
-        .sheet(isPresented: $isDecisionsPresented) {
-            DecisionsScreen()
+        .sheet(isPresented: $isComputersPresented) {
+            ConnectComputerSheet()
+        }
+        .sheet(isPresented: $isTeachPresented) {
+            SiteAPIsView()
         }
         .sheet(isPresented: $isInboxPresented) {
             InboxSheet()
@@ -153,8 +154,8 @@ struct HistorySidebarView: View {
         .sheet(isPresented: $isCustomizePresented) {
             CustomizeSheet()
         }
-        .sheet(isPresented: $isRailTabsPresented) {
-            RailTabsSheet(mode: railTabMode)
+        .sheet(isPresented: $isConnectorsPresented) {
+            ConnectorsListView()
         }
         .sheet(item: $cliPickerSurface) { picker in
             NativeSessionPickerSheet(surface: picker.id) { sessionId in
@@ -172,7 +173,7 @@ struct HistorySidebarView: View {
         }
         .fullScreenCover(isPresented: $isSearchPresented) {
             ShellSearchView(
-                sessions: sessions,
+                sessions: store.sessions,
                 onOpenSession: { open($0) },
                 onOpenProject: { project in
                     ProjectStore.shared.selectedProjectId = project.id
@@ -190,7 +191,7 @@ struct HistorySidebarView: View {
             Text(actionError ?? "")
         }
         .task {
-            await loadSessions()
+            await store.load()
             #if DEBUG
             // `-open-settings` / `-open-settings-memory` / `-open-usage`
             // (DEBUG only): jump straight to the settings sheet for UI
@@ -210,7 +211,7 @@ struct HistorySidebarView: View {
             // Refresh each time the drawer is revealed so new chats show up;
             // a closing drawer folds the dial.
             if isOpen {
-                Task { await loadSessions() }
+                Task { await store.load() }
                 Task { await phones.refresh() }
             } else {
                 isDialExpanded = false
@@ -223,60 +224,66 @@ struct HistorySidebarView: View {
             typeFilter = []
         }
         .onReceive(NotificationCenter.default.publisher(for: .historyMutated)) { _ in
-            Task { await loadSessions() }
+            Task { await store.load() }
         }
     }
 
     // MARK: - Header
 
+    /// `phone-drawer-top-modes`: dial · wordmark · Inbox · search.
     private var header: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 8) {
             ModeDialButton(isExpanded: $isDialExpanded)
             ShellWordmark(mode: modeStore.shellMode)
-            Spacer(minLength: 8)
-            Button {
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                .padding(.leading, 6)
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                .clipped()
+            roundButton(
+                systemName: "tray",
+                label: inboxCount == 0 ? "Needs you" : "Needs you, \(inboxCount) waiting",
+                id: "drawerInbox",
+                badge: inboxCount
+            ) {
                 isInboxPresented = true
-            } label: {
-                Image(systemName: "tray")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(Color("TextPrimary"))
-                    .frame(width: 40, height: 40)
-                    .background(Circle().fill(Color("BgPanel")))
-                    .overlay(Circle().stroke(Color("BorderSubtle"), lineWidth: 1))
-                    .overlay(alignment: .topTrailing) {
-                        if !inbox.items.isEmpty {
-                            Text(inbox.items.count > 99 ? "99+" : "\(inbox.items.count)")
-                                .font(.system(size: 10, weight: .bold))
-                                .foregroundColor(Color("OnAccent"))
-                                .padding(.horizontal, 5)
-                                .frame(minWidth: 17, minHeight: 17)
-                                .background(Capsule().fill(Color("AccentPrimary")))
-                                .offset(x: 3, y: -2)
-                        }
-                    }
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel(inbox.items.isEmpty ? "Inbox" : "Inbox, \(inbox.items.count) need you")
-            .accessibilityIdentifier("drawerInbox")
-            Button {
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            roundButton(systemName: "magnifyingglass", label: "Search chats, projects and bots", id: "drawerSearch") {
                 isSearchPresented = true
-            } label: {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(Color("TextPrimary"))
-                    .frame(width: 40, height: 40)
-                    .background(Circle().fill(Color("BgPanel")))
-                    .overlay(Circle().stroke(Color("BorderSubtle"), lineWidth: 1))
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Search chats, projects and bots")
-            .accessibilityIdentifier("drawerSearch")
         }
-        .padding(.horizontal, 12)
-        .padding(.top, 8)
-        .padding(.bottom, 8)
+        .padding(.leading, 12)
+        .padding(.trailing, 14)
+        .padding(.top, 6)
+        .padding(.bottom, 10)
+    }
+
+    private var inboxCount: Int { inbox.items.count }
+
+    /// 40pt neutral circle (`phone-round-btn`), red count top-right.
+    private func roundButton(systemName: String, label: String, id: String, badge: Int = 0, action: @escaping () -> Void) -> some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            action()
+        } label: {
+            Image(systemName: systemName)
+                .font(.system(size: 18, weight: .regular))
+                .foregroundColor(Color("TextPrimary"))
+                .frame(width: 40, height: 40)
+                .background(Circle().fill(Color("FillNeutral")))
+                .overlay(alignment: .topTrailing) {
+                    if badge > 0 {
+                        Text(badge > 99 ? "99+" : "\(badge)")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 4)
+                            .frame(minWidth: 16, minHeight: 16)
+                            .background(Capsule().fill(Theme.statusError))
+                    }
+                }
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+        .accessibilityIdentifier(id)
     }
 
     // MARK: - Rail rows
@@ -285,6 +292,8 @@ struct HistorySidebarView: View {
         let id: String
         let label: String
         let icon: String
+        /// The active row's filled glyph (Phosphor weight="fill").
+        var activeIcon: String? = nil
         let isActive: Bool
         /// A count beside the label (Bots: threads waiting on you).
         var badge: Int = 0
@@ -300,50 +309,43 @@ struct HistorySidebarView: View {
         }
     }
 
-    /// The web's tab id for a drawer row, when "Show in rail" can hide it.
-    private func railTabId(for rowId: String) -> String? {
-        switch rowId {
-        case "projects": return "projects"
-        case "artifacts": return "artifacts-library"
-        case "automation": return modeStore.shellMode == .code ? "code-automations" : "automation-tasks"
-        case "customize": return "customize"
-        case "mcp-apps": return "mini-apps"
-        default: return nil
-        }
-    }
-
-    /// The mode's rows the user chose to show, then More.
+    /// The mode's rows the user chose to show (PhoneDrawer railRows).
     private var visibleRailRows: [RailRow] {
         let mode = railTabMode
-        let shown = railRows.filter { row in
-            guard let tabId = railTabId(for: row.id) else { return true }
-            return railTabs.isVisible(tabId, in: mode)
-        }
-        let more = RailRow(id: "more", label: "More", icon: "ellipsis", isActive: false,
-                           badge: 0) { isRailTabsPresented = true }
-        return shown + [more]
+        return railRows.filter { railTabs.isVisible($0.id, in: mode) }
     }
 
-    /// The mode's rail (PhoneDrawer railRows). Shared sections keep the mode.
+    /// The mode's rail; ids are the web's rail-tab ids. Shared sections keep the mode.
     private var railRows: [RailRow] {
         let tab = modeStore.activeTab
-        let projects = RailRow(id: "projects", label: "Projects", icon: "folder", isActive: tab == .projects) { go(.projects) }
-        let artifacts = RailRow(id: "artifacts", label: "Artifacts", icon: "doc.text", isActive: tab == .artifacts) { go(.artifacts) }
-        let automation = RailRow(id: "automation", label: "Automation Tasks", icon: "clock", isActive: tab == .automation) { go(.automation) }
-        let decisions = RailRow(id: "decisions", label: "Decisions", icon: "checkmark.seal", isActive: false) { isDecisionsPresented = true }
-        let customize = RailRow(id: "customize", label: "Customize", icon: "slider.horizontal.3", isActive: false) { isCustomizePresented = true }
+        let projects = RailRow(id: "projects", label: "Projects", icon: "folder", activeIcon: "folder.fill",
+                               isActive: tab == .projects) { go(.projects) }
+        let artifacts = RailRow(id: "artifacts-library", label: "Artifacts", icon: "doc.text", activeIcon: "doc.text.fill",
+                                isActive: tab == .artifacts) { go(.artifacts) }
         switch modeStore.shellMode {
         case .home:
             return [
-                projects, artifacts, automation, customize, decisions,
-                RailRow(id: "models", label: "Models", icon: "brain.head.profile", isActive: tab == .models) { go(.models) },
+                projects, artifacts,
+                RailRow(id: "automation-tasks", label: "Automation Tasks", icon: "clock", activeIcon: "clock.fill",
+                        isActive: tab == .automation) { go(.automation) },
+                RailRow(id: "customize", label: "Customize", icon: "slider.horizontal.3", isActive: false) {
+                    isCustomizePresented = true
+                },
             ]
         case .code:
-            return [projects, artifacts, automation, decisions]
+            return [
+                projects, artifacts,
+                RailRow(id: "code-automations", label: "Automation Tasks", icon: "clock", activeIcon: "clock.fill",
+                        isActive: tab == .automation) { go(.automation) },
+            ]
         case .aci:
             return [
-                RailRow(id: "mcp-apps", label: "MCP Apps", icon: "square.grid.2x2", isActive: false) {
-                    isMiniAppsPresented = true
+                RailRow(id: "mini-apps", label: "MCP Apps", icon: "macwindow", isActive: false) { isMiniAppsPresented = true },
+                RailRow(id: "computers", label: "Computers", icon: "desktopcomputer", isActive: false) { isComputersPresented = true },
+                // Teach opens over ACI, like the desktop ACI rail's Teach tab.
+                RailRow(id: "site-apis", label: "Teach", icon: "record.circle", isActive: false) {
+                    modeStore.selectBarItem(.aci)
+                    isTeachPresented = true
                 },
             ]
         case .bots:
@@ -351,135 +353,225 @@ struct HistorySidebarView: View {
         }
     }
 
+    /// `phone-nav-row` in the drawer: 46pt, 22pt glyph, 17pt label, 12pt
+    /// rounded fill when it's the open section.
+    private func navRowLabel(_ row: RailRow, trailingDot: Bool = false) -> some View {
+        HStack(spacing: 14) {
+            Image(systemName: row.isActive ? (row.activeIcon ?? row.icon) : row.icon)
+                .font(.system(size: 19, weight: .regular))
+                .frame(width: 24)
+                .overlay(alignment: .topTrailing) {
+                    if trailingDot { PhoneRoundDot().offset(x: 3, y: -1) }
+                }
+            Text(row.label)
+                .font(.system(size: 17))
+            Spacer(minLength: 0)
+            if row.badge > 0 {
+                Text(row.badge > 99 ? "99+" : "\(row.badge)")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 6)
+                    .frame(minHeight: 18)
+                    .background(Capsule().fill(Theme.statusError))
+            }
+        }
+        .foregroundColor(Color("TextPrimary"))
+        .padding(.horizontal, 12)
+        .frame(height: 46)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(row.isActive ? Color("BorderStrong").opacity(0.65) : Color.clear)
+        )
+        .contentShape(Rectangle())
+    }
+
     private func railRowView(_ row: RailRow) -> some View {
         Button {
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
             row.action()
         } label: {
-            HStack(spacing: 14) {
-                Image(systemName: row.icon)
-                    .font(.system(size: 17, weight: row.isActive ? .semibold : .regular))
-                    .frame(width: 24)
-                Text(row.label)
-                    .font(.body)
-                    .fontWeight(row.isActive ? .semibold : .regular)
-                if row.id == "more", railTabs.anyHidden(in: railTabMode) {
-                    Circle().fill(modeStore.shellMode.accent).frame(width: 6, height: 6)
-                        .accessibilityHidden(true)
-                }
-                Spacer()
-                if row.badge > 0 {
-                    Text(row.badge > 99 ? "99+" : "\(row.badge)")
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundColor(Color("OnAccent"))
-                        .padding(.horizontal, 7)
-                        .frame(minHeight: 20)
-                        .background(Capsule().fill(Color("AccentPrimary")))
-                }
-            }
-            .foregroundColor(Color("TextPrimary"))
-            .frame(minHeight: 44)
-            .contentShape(Rectangle())
+            navRowLabel(row)
         }
         .buttonStyle(.plain)
-        .listRowBackground(row.isActive ? modeStore.shellMode.accent.opacity(0.14) : Color.clear)
+        .drawerRow()
         .accessibilityLabel(row.badge > 0 ? "\(row.label), \(row.badge) waiting" : row.label)
         .accessibilityAddTraits(row.isActive ? [.isSelected] : [])
         .accessibilityIdentifier("drawerRow\(row.id)")
+    }
+
+    /// More: choose which tabs show (shared with desktop), Apps & Extensions.
+    private var moreRow: some View {
+        let mode = railTabMode
+        return Menu {
+            Section("Show in rail") {
+                ForEach(RailTabsStore.tabs(for: mode)) { tab in
+                    Button {
+                        railTabs.toggle(tab.id, in: mode)
+                    } label: {
+                        Label(railTabs.isVisible(tab.id, in: mode) ? tab.label : "\(tab.label) · Hidden", systemImage: tab.icon)
+                    }
+                    .accessibilityIdentifier("railTab\(tab.id)")
+                }
+            }
+            Button {
+                isConnectorsPresented = true
+            } label: {
+                Label("Apps & Extensions", systemImage: "arrow.down.circle")
+            }
+        } label: {
+            navRowLabel(
+                RailRow(id: "more", label: "More", icon: "ellipsis", isActive: false) {},
+                trailingDot: railTabs.anyHidden(in: mode)
+            )
+        }
+        .buttonStyle(.plain)
+        .drawerRow()
+        .accessibilityLabel(railTabs.anyHidden(in: mode) ? "More, some tabs hidden" : "More")
+        .accessibilityIdentifier("drawerRowmore")
     }
 
     // MARK: - Home / Code / ACI list
 
     private var railList: some View {
         List {
-            Section {
-                ForEach(visibleRailRows) { railRowView($0) }
-            }
+            ForEach(visibleRailRows) { railRowView($0) }
+            moreRow
 
             if modeStore.shellMode == .home {
                 teammatesSection
             }
 
-            activeBotSection
-
             if !pinnedSessions.isEmpty {
-                Section {
-                    ForEach(pinnedSessions) { recentRow($0) }
-                        .onMove { from, to in
-                            var ids = pinnedSessions.map(\.id)
-                            ids.move(fromOffsets: from, toOffset: to)
-                            pinsStore.reorder(ids)
-                        }
-                } header: {
-                    sectionLabel("Pinned")
+                sectionLabel("Pinned")
+                ForEach(pinnedSessions) { session in
+                    Button {
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        open(session)
+                    } label: {
+                        recentRowBody(session)
+                    }
+                    .buttonStyle(.plain)
+                    .drawerRow()
+                    .accessibilityIdentifier("pinnedRow\(session.id)")
                 }
             }
 
-            Section {
-                recentsContent
-            } header: {
-                HStack {
-                    sectionLabel("Recents")
-                    Spacer()
-                    recentsFilterMenu
-                }
-            }
+            recentsLabel
+            recentsContent
+
+            // Room for the floating footer.
+            Color.clear.frame(height: 84).drawerRow()
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
-        .environment(\.defaultMinListRowHeight, 44)
+        .environment(\.defaultMinListRowHeight, 0)
         .scrollDismissesKeyboard(.interactively)
-        .refreshable { await loadSessions() }
+        .refreshable { await store.load() }
+    }
+
+    /// Recents · See all · filter.
+    private var recentsLabel: some View {
+        HStack(spacing: 2) {
+            Text("Recents")
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Button {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                NotificationCenter.default.post(name: .shellOpenOverview, object: nil)
+            } label: {
+                Text("See all")
+                    .font(.system(size: 13, weight: .medium))
+                    .padding(.horizontal, 8)
+                    .frame(minHeight: 32)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("recentsSeeAll")
+            recentsFilterMenu
+        }
+        .font(.system(size: 14))
+        .foregroundColor(Color("TextSecondary"))
+        .padding(.leading, 20)
+        .padding(.trailing, 14)
+        .padding(.top, 12)
+        .padding(.bottom, 2)
+        .frame(minHeight: 34)
+        .drawerRow(inset: false)
     }
 
     @ViewBuilder
     private var recentsContent: some View {
-        if isLoading && !hasLoaded {
+        if store.isLoading && !store.hasLoaded {
             HStack {
                 Spacer()
                 ProgressView().padding(.vertical, 24)
                 Spacer()
             }
-            .listRowBackground(Color.clear)
-            .listRowSeparator(.hidden)
-        } else if let loadError, sessions.isEmpty {
+            .drawerRow()
+        } else if let loadError = store.loadError, store.sessions.isEmpty {
             FriendlyInlineStateView(
                 style: .offline,
                 icon: "wifi.slash",
                 title: "Couldn't load conversations",
                 message: FriendlyErrorMessage.from(loadError),
                 actionTitle: "Retry",
-                action: { Task { await loadSessions() } }
+                action: { Task { await store.load() } }
             )
             .frame(maxWidth: .infinity)
             .padding(.vertical, 16)
-            .listRowBackground(Color.clear)
-            .listRowSeparator(.hidden)
-        } else if recentSessions.isEmpty {
-            let filtered = isRecentsFiltered
-            FriendlyInlineStateView(
-                style: .empty,
-                icon: Self.emptyIcon(for: modeStore.shellMode),
-                title: filtered ? "Nothing matches" : Self.emptyTitle(for: modeStore.shellMode),
-                message: filtered ? "Try another filter." : Self.emptyMessage(for: modeStore.shellMode),
-                actionTitle: filtered ? "Clear filters" : newLabel,
-                action: {
-                    if filtered {
-                        statusFilter = .all
-                        dateFilter = .all
-                        typeFilter = []
-                    } else {
-                        newItem()
-                    }
-                }
-            )
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 16)
-            .listRowBackground(Color.clear)
-            .listRowSeparator(.hidden)
+            .drawerRow()
+        } else if recentSessions.isEmpty && pinnedSessions.isEmpty {
+            emptyState.drawerRow()
         } else {
             ForEach(recentSessions) { recentRow($0) }
+                .onMove { from, to in
+                    var ids = recentSessions.map(\.id)
+                    ids.move(fromOffsets: from, toOffset: to)
+                    manualOrderRaw = ids.joined(separator: ",")
+                }
         }
+    }
+
+    /// The Arc empty state: icon tile, title, line, and the mode's New button.
+    private var emptyState: some View {
+        let filtered = isRecentsFiltered
+        let mode = modeStore.shellMode
+        return VStack(spacing: 0) {
+            Image(systemName: mode == .aci ? "globe" : "bubble.left.and.text.bubble.right")
+                .font(.system(size: 20))
+                .foregroundColor(Color("TextSecondary"))
+                .frame(width: 48, height: 48)
+                .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color("FillNeutral")))
+                .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Color("BorderSubtle"), lineWidth: 1))
+                .accessibilityHidden(true)
+            Text(filtered ? "Nothing matches" : Self.emptyTitle(for: mode))
+                .font(.system(size: 16, weight: .medium))
+                .foregroundColor(Color("TextPrimary"))
+                .padding(.top, 20)
+            Text(filtered ? "Try another filter." : Self.emptyMessage(for: mode))
+                .font(.system(size: 14))
+                .foregroundColor(Color("TextSecondary"))
+                .multilineTextAlignment(.center)
+                .padding(.top, 8)
+            Button {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                newItem()
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "square.and.pencil").font(.system(size: 13, weight: .medium))
+                    Text(newLabel).font(.system(size: 13, weight: .medium))
+                }
+                .foregroundColor(Color("OnAccent"))
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color("AccentPrimary")))
+            }
+            .buttonStyle(.plain)
+            .padding(.top, 20)
+            .accessibilityIdentifier("drawerEmptyNew")
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 40)
+        .padding(.horizontal, 20)
     }
 
     private var recentsFilterMenu: some View {
@@ -500,142 +592,192 @@ struct HistorySidebarView: View {
             Picker("Status", selection: $statusFilter) {
                 ForEach(RecentsStatusFilter.allCases, id: \.self) { Text($0.rawValue).tag($0) }
             }
+            .pickerStyle(.inline)
             Picker("Last activity", selection: $dateFilter) {
                 ForEach(RecentsDateFilter.allCases, id: \.self) { Text($0.rawValue).tag($0) }
             }
+            .pickerStyle(.inline)
         } label: {
-            ZStack(alignment: .topTrailing) {
-                Image(systemName: "slider.horizontal.3")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(Color("TextSecondary"))
-                    .frame(width: 32, height: 28)
-                if filtered {
-                    Circle().fill(modeStore.shellMode.accent).frame(width: 6, height: 6).offset(x: -4, y: 4)
+            Image(systemName: "slider.horizontal.3")
+                .font(.system(size: 15))
+                .foregroundColor(Color("TextSecondary"))
+                .frame(width: 36, height: 36)
+                .overlay(alignment: .topTrailing) {
+                    if filtered { PhoneRoundDot().offset(x: -6, y: 6) }
                 }
-            }
+                .contentShape(Circle())
         }
         .accessibilityLabel(filtered ? "Filter recents (filtered)" : "Filter recents")
         .accessibilityIdentifier("recentsFilter")
     }
 
-    private func sectionLabel(_ text: String) -> some View {
-        Text(text)
-            .font(.system(size: 13, weight: .semibold))
-            .foregroundColor(Color("TextSecondary"))
-            .textCase(nil)
+    /// Gray section label (`phone-rail-label`).
+    private func sectionLabel(_ text: String, alert: String? = nil) -> some View {
+        HStack(spacing: 6) {
+            Text(text)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            if let alert {
+                Text(alert)
+                    .font(.system(size: 12.5))
+                    .foregroundColor(Color("BrandAccent"))
+            }
+        }
+        .font(.system(size: 14))
+        .foregroundColor(Color("TextSecondary"))
+        .padding(.leading, 20)
+        .padding(.trailing, 14)
+        .padding(.top, 12)
+        .padding(.bottom, 2)
+        .frame(minHeight: 34)
+        .drawerRow(inset: false)
+        .accessibilityAddTraits(.isHeader)
     }
 
-    /// One recent: icon, title, relative time. Swipe left deletes, swipe
-    /// right pins / unpins; a tap opens it.
-    private func recentRow(_ session: AgentSession) -> some View {
+    /// Claude-iOS row body: icon, title, preview line, and time.
+    private func recentRowBody(_ session: AgentSession) -> some View {
         let isSelected = selectedSessionId == session.id
-        let isPinned = pinsStore.isPinned(session.id)
-        return Button {
+        return HStack(spacing: 14) {
+            Image(systemName: ShellSearchView.icon(for: session))
+                .font(.system(size: 16))
+                .foregroundColor(Color("TextSecondary"))
+                .frame(width: 20)
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(session.name ?? "Untitled")
+                        .font(.system(size: 16.5))
+                        .foregroundColor(Color("TextPrimary"))
+                        .lineLimit(1)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Text(ShellSessionsStore.relativeTime(ShellSessionsStore.timestamp(of: session)))
+                        .font(.system(size: 12))
+                        .monospacedDigit()
+                        .foregroundColor(Color("TextSecondary"))
+                }
+                if let preview = session.description?.trimmingCharacters(in: .whitespacesAndNewlines), !preview.isEmpty {
+                    Text(preview)
+                        .font(.system(size: 13))
+                        .foregroundColor(Color("TextSecondary"))
+                        .lineLimit(1)
+                }
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 4)
+        .frame(minHeight: 44)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(isSelected ? Color("BorderStrong").opacity(0.65) : Color.clear)
+        )
+        .contentShape(Rectangle())
+    }
+
+    /// One recent. Swipe left (a long swipe commits) deletes it; long-press
+    /// lifts it to drag into your own order; a tap opens it.
+    private func recentRow(_ session: AgentSession) -> some View {
+        Button {
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
             open(session)
         } label: {
-            HStack(spacing: 12) {
-                Image(systemName: ShellSearchView.icon(for: session))
-                    .font(.subheadline)
-                    .foregroundColor(isSelected ? modeStore.shellMode.accent : Color("TextSecondary"))
-                    .frame(width: 20)
-                Text(session.name ?? "Untitled")
-                    .font(.subheadline)
-                    .fontWeight(isSelected ? .semibold : .regular)
-                    .foregroundColor(Color("TextPrimary"))
-                    .lineLimit(1)
-                Spacer(minLength: 6)
-                if !session.active {
-                    Text("Archived")
-                        .font(.caption2)
-                        .foregroundColor(Color("TextSecondary"))
-                }
-                Text(Self.relativeTime(Self.timestamp(of: session)))
-                    .font(.caption)
-                    .foregroundColor(Color("TextSecondary"))
-            }
-            .frame(minHeight: 40)
-            .contentShape(Rectangle())
+            recentRowBody(session)
         }
         .buttonStyle(.plain)
-        .listRowBackground(isSelected ? Color("BgTertiary").opacity(0.5) : Color.clear)
-        .listRowSeparator(.hidden)
+        .drawerRow()
         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
             Button(role: .destructive) {
                 delete(session)
             } label: {
-                Label("Delete", systemImage: "trash")
+                Label("Delete chat", systemImage: "trash")
             }
-        }
-        .swipeActions(edge: .leading, allowsFullSwipe: true) {
-            Button {
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                pinsStore.toggle(id: session.id, kind: Self.kind(of: session), mode: session.originSurface ?? "chat")
-            } label: {
-                Label(isPinned ? "Unpin" : "Pin", systemImage: isPinned ? "pin.slash" : "pin")
-            }
-            .tint(modeStore.shellMode.accent)
         }
         .accessibilityIdentifier("recentRow\(session.id)")
-        .accessibilityHint("Swipe left to delete, right to \(isPinned ? "unpin" : "pin")")
+        .accessibilityHint("Swipe left to delete")
     }
 
     // MARK: - Bots rail
 
     private var botsRail: some View {
         List {
-            Section {
-                railRowView(RailRow(id: "bots", label: "Bots", icon: "cpu", isActive: modeStore.activeTab == .agents,
-                                    badge: botStore.waitingCount) { go(.agents) })
-                railRowView(RailRow(id: "projects", label: "Projects", icon: "folder", isActive: modeStore.activeTab == .projects) { go(.projects) })
-                railRowView(RailRow(id: "artifacts", label: "Artifacts", icon: "doc.text", isActive: modeStore.activeTab == .artifacts) { go(.artifacts) })
-                railRowView(RailRow(id: "automation", label: "Automation Tasks", icon: "clock", isActive: modeStore.activeTab == .automation) { go(.automation) })
-                railRowView(RailRow(id: "decisions", label: "Decisions", icon: "checkmark.seal", isActive: false) { isDecisionsPresented = true })
-            }
-            activeBotSection
+            railRowView(RailRow(id: "bots", label: "Bots", icon: "cpu", activeIcon: "cpu.fill",
+                                isActive: modeStore.activeTab == .agents, badge: botStore.waitingCount) { go(.agents) })
+            railRowView(RailRow(id: "projects", label: "Projects", icon: "folder", activeIcon: "folder.fill",
+                                isActive: modeStore.activeTab == .projects) { go(.projects) })
+            railRowView(RailRow(id: "artifacts", label: "Artifacts", icon: "doc.text", activeIcon: "doc.text.fill",
+                                isActive: modeStore.activeTab == .artifacts) { go(.artifacts) })
+            railRowView(RailRow(id: "automation", label: "Automation Tasks", icon: "clock", activeIcon: "clock.fill",
+                                isActive: modeStore.activeTab == .automation) { go(.automation) })
             if !recentSessions.isEmpty {
-                Section {
-                    ForEach(recentSessions) { recentRow($0) }
-                } header: {
-                    sectionLabel("Threads")
-                }
+                sectionLabel("Threads")
+                ForEach(recentSessions) { recentRow($0) }
             }
+            Color.clear.frame(height: 84).drawerRow()
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
-        .environment(\.defaultMinListRowHeight, 44)
-        .refreshable { await loadSessions() }
+        .environment(\.defaultMinListRowHeight, 0)
+        .refreshable { await store.load() }
     }
 
     // MARK: - Footer
 
-    /// Account avatar (opens Settings) and the New pill floating over the
-    /// drawer background — no separator bar.
+    /// `phone-rail-foot`: avatar with the usage ring, Phones, and the New
+    /// pill, floating over the list as it fades out underneath.
     private var footer: some View {
         HStack(spacing: 10) {
-            Button {
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                isSettingsPresented = true
-            } label: {
-                Text(authManager.avatarInitial)
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
-                    .foregroundColor(Color("BgPrimary"))
-                    .frame(width: 40, height: 40)
-                    .background(Circle().fill(Color("TextSecondary")))
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Settings, signed in as \(authManager.displayName)")
-            .accessibilityIdentifier("drawerSettings")
-
+            accountAvatar
             PhonesDrawerButton { isPhonesPresented = true }
-
-            Spacer()
-
+            Spacer(minLength: 0)
             newPill
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 14)
+        .padding(.horizontal, 14)
+        .padding(.top, 28)
+        .padding(.bottom, 14)
+        .background(
+            LinearGradient(
+                stops: [
+                    .init(color: Color("BgPrimary").opacity(0), location: 0),
+                    .init(color: Color("BgPrimary"), location: 0.42),
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .ignoresSafeArea(edges: .bottom)
+            .allowsHitTesting(false)
+        )
+    }
+
+    /// The account avatar inside the usage ring (PhoneAccountAvatar): 40pt
+    /// ring, 2.5pt stroke, the plan's weekly use as the arc. Opens Settings.
+    private var accountAvatar: some View {
+        let ratio = min(1, max(0, (usage.percentUsed ?? 0) / 100))
+        let stroke: Color = ratio >= 1 ? Theme.statusError : (ratio >= 0.8 ? Theme.statusWarning : Color("TextPrimary"))
+        let usageText = usage.percentUsed.map { ", Allternit Cloud \(Int(($0).rounded()))% used" } ?? ""
+        return Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            isSettingsPresented = true
+        } label: {
+            ZStack {
+                Circle()
+                    .stroke(Color("BorderSubtle"), lineWidth: 2.5)
+                    .frame(width: 37.5, height: 37.5)
+                if usage.percentUsed != nil, ratio > 0 {
+                    Circle()
+                        .trim(from: 0, to: ratio)
+                        .stroke(stroke, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+                        .rotationEffect(.degrees(-90))
+                        .frame(width: 37.5, height: 37.5)
+                }
+                Text(authManager.avatarInitial)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(Color("TextPrimary"))
+                    .frame(width: 30, height: 30)
+                    .background(Circle().fill(Color("BorderStrong")))
+            }
+            .frame(width: 44, height: 44)
+            .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(authManager.displayName). Settings\(usageText)")
+        .accessibilityIdentifier("drawerSettings")
     }
 
     private struct NewOption: Identifiable {
@@ -665,18 +807,20 @@ struct HistorySidebarView: View {
         }
         switch modeStore.shellMode {
         case .home:
-            return [NewOption(id: "chat", label: "New chat", icon: "square.and.pencil") { newItem() },
+            return [NewOption(id: "chat", label: "New chat", icon: "bubble.left.and.text.bubble.right") { newItem() },
                     continueCLI("chat"), scheduled, quickTask]
         case .code:
-            return [NewOption(id: "thread", label: "New thread", icon: "terminal") { newItem() },
+            return [NewOption(id: "thread", label: "New thread", icon: "chevron.left.forwardslash.chevron.right") { newItem() },
                     continueCLI("code"), scheduled, quickTask]
         case .aci:
             return [NewOption(id: "session", label: "New session", icon: "globe") { newItem() }, quickTask]
         case .bots:
-            return [NewOption(id: "thread", label: "New thread", icon: "bubble.left") { newItem() }, quickTask]
+            return [NewOption(id: "thread", label: "New thread", icon: "bubble.left.and.text.bubble.right") { newItem() }, quickTask]
         }
     }
 
+    /// The floating New pill: 44pt, elevated surface, hairline and soft
+    /// shadow. Tap starts the mode's new item; press and hold opens the menu.
     private var newPill: some View {
         Menu {
             ForEach(newOptions) { option in
@@ -685,61 +829,24 @@ struct HistorySidebarView: View {
                 }
             }
         } label: {
-            HStack(spacing: 6) {
+            HStack(spacing: 8) {
                 Image(systemName: "plus")
-                    .font(.system(size: 14, weight: .bold))
+                    .font(.system(size: 17, weight: .semibold))
                 Text(newLabel)
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.system(size: 16, weight: .medium))
             }
-            .foregroundColor(Color("BgPrimary"))
-            .padding(.horizontal, 16)
-            .frame(height: 40)
-            .background(Capsule().fill(Color("TextPrimary")))
+            .foregroundColor(Color("TextPrimary"))
+            .padding(.horizontal, 18)
+            .frame(height: 44)
+            .background(Capsule().fill(Color("BgPanel")))
+            .overlay(Capsule().stroke(Color("BorderSubtle"), lineWidth: 0.5))
+            .shadow(color: Color.black.opacity(0.14), radius: 8, x: 0, y: 4)
         } primaryAction: {
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
             newItem()
         }
         .accessibilityLabel("\(newLabel). Press and hold for more ways to start")
         .accessibilityIdentifier("drawerNewPill")
-    }
-
-    // MARK: - Active bot
-
-    /// True when agent/bot mode is on for the current surface and a registry
-    /// agent is selected: the drawer surfaces that bot as the mounted session.
-    private var showActiveBot: Bool {
-        agentModeStore.isAgentEnabled(for: modeStore.mode)
-            && agentModeStore.selectedAgent(for: modeStore.mode) != nil
-    }
-
-    @ViewBuilder
-    private var activeBotSection: some View {
-        if showActiveBot, let agent = agentModeStore.selectedAgent(for: modeStore.mode) {
-            Section {
-                Button {
-                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                    selectedSessionId = nil
-                    go(.chats)
-                } label: {
-                    HStack(spacing: 12) {
-                        AgentAvatarView(agent: agent, size: 28)
-                        Text(agent.name)
-                            .font(.subheadline)
-                            .foregroundColor(Color("TextPrimary"))
-                            .lineLimit(1)
-                        Spacer()
-                        Image(systemName: "checkmark.circle.fill")
-                            .font(.system(size: 15))
-                            .foregroundColor(Color("AccentPrimary"))
-                    }
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .listRowBackground(Color.clear)
-            } header: {
-                sectionLabel("Active bot")
-            }
-        }
     }
 
     // MARK: - Actions
@@ -765,7 +872,7 @@ struct HistorySidebarView: View {
         modeStore.selectBarItem(surface == "code" ? .code : .chats)
         selectedSessionId = sessionId
         closeDrawer()
-        Task { await loadSessions() }
+        Task { await store.load() }
     }
 
     // MARK: - Teammates
@@ -793,44 +900,30 @@ struct HistorySidebarView: View {
         let list = teammates
         if !list.isEmpty {
             let needsYou = list.filter(\.needsYou).count
-            Section {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 10) {
-                        ForEach(list, id: \.bot.id) { entry in
-                            Button {
-                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                                openBotChat(entry.bot.id)
-                            } label: {
-                                BotAvatarView(bot: entry.bot, size: 36)
-                                    .overlay(alignment: .bottomTrailing) {
-                                        if entry.needsYou || entry.working {
-                                            Circle()
-                                                .fill(entry.needsYou ? Color.orange : Color.green)
-                                                .frame(width: 10, height: 10)
-                                                .overlay(Circle().stroke(Color("BgPrimary"), lineWidth: 2))
-                                        }
-                                    }
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityLabel(entry.bot.botDisplayName
-                                + (entry.needsYou ? ", needs you" : entry.working ? ", working" : ""))
+            sectionLabel("Teammates", alert: needsYou > 0 ? "\(needsYou) need\(needsYou == 1 ? "s" : "") you" : nil)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 10) {
+                    ForEach(list, id: \.bot.id) { entry in
+                        Button {
+                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            openBotChat(entry.bot.id)
+                        } label: {
+                            BotStatusAvatar(bot: entry.bot, size: 36, working: entry.working && !entry.needsYou, waiting: entry.needsYou)
+                                .frame(width: 44, height: 44)
+                                .contentShape(Circle())
                         }
-                    }
-                    .padding(.horizontal, 4)
-                }
-                .listRowBackground(Color.clear)
-                .listRowSeparator(.hidden)
-            } header: {
-                HStack {
-                    sectionLabel("Teammates")
-                    Spacer()
-                    if needsYou > 0 {
-                        Text("\(needsYou) need\(needsYou == 1 ? "s" : "") you")
-                            .font(.caption.weight(.semibold))
-                            .foregroundColor(.orange)
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(entry.bot.botDisplayName
+                            + (entry.needsYou ? ", needs you" : entry.working ? ", working" : ""))
                     }
                 }
+                .padding(.horizontal, 20)
+                .padding(.top, 4)
+                .padding(.bottom, 2)
             }
+            .drawerRow(inset: false)
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("Teammates")
         }
     }
 
@@ -882,9 +975,9 @@ struct HistorySidebarView: View {
 
     private func delete(_ session: AgentSession) {
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-        let removed = sessions
-        sessions.removeAll { $0.id == session.id }
+        let removed = store.remove(id: session.id)
         pinsStore.remove(id: session.id)
+        manualOrderRaw = manualOrder.filter { $0 != session.id }.joined(separator: ",")
         if selectedSessionId == session.id {
             selectedSessionId = nil
             NotificationCenter.default.post(name: .shellNewChat, object: nil)
@@ -896,7 +989,7 @@ struct HistorySidebarView: View {
                 let escaped = session.id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? session.id
                 try await APIClient.shared.delete(path: "agent-sessions/\(escaped)")
             } catch {
-                sessions = removed
+                store.restore(removed)
                 actionError = "Couldn't delete “\(session.name ?? "Untitled")”: \(FriendlyErrorMessage.from(error.localizedDescription))"
             }
         }
@@ -916,25 +1009,14 @@ struct HistorySidebarView: View {
 
     // MARK: - Filtering
 
-    /// Sessions that belong to the current mode's drawer. Bot sessions (with
-    /// an `agent_id`) live in Bots; Code and ACI keep their own surfaces;
-    /// incognito sessions are excluded server-side.
     private func belongsToMode(_ session: AgentSession) -> Bool {
-        let surface = session.originSurface ?? ""
-        switch modeStore.shellMode {
-        case .bots:
-            return session.agentId != nil
-        case .home:
-            return session.agentId == nil && (surface == "chat" || surface == "cowork" || surface.isEmpty)
-        case .code:
-            return session.agentId == nil && surface == "code"
-        case .aci:
-            return session.agentId == nil && surface == "browser"
-        }
+        ShellSessionsStore.belongs(session, to: modeStore.shellMode)
     }
 
+    /// Home's pins (desktop rail pins), newest first, at most 10.
     private var pinnedSessions: [AgentSession] {
-        let byId = Dictionary(sessions.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        guard modeStore.shellMode == .home else { return [] }
+        let byId = Dictionary(store.sessions.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         return pinsStore.pins
             .sorted { $0.pinnedAt > $1.pinnedAt }
             .compactMap { byId[$0.id] }
@@ -943,13 +1025,17 @@ struct HistorySidebarView: View {
             .map { $0 }
     }
 
+    private var manualOrder: [String] {
+        manualOrderRaw.split(separator: ",").map(String.init)
+    }
+
     private var recentSessions: [AgentSession] {
         let pinnedIds = Set(pinnedSessions.map(\.id))
         let calendar = Calendar.current
         let startOfToday = calendar.startOfDay(for: Date())
         let weekAgo = calendar.date(byAdding: .day, value: -7, to: startOfToday) ?? startOfToday
         let monthAgo = calendar.date(byAdding: .month, value: -1, to: startOfToday) ?? startOfToday
-        return sessions
+        let filtered = store.sessions
             .filter { session in
                 guard belongsToMode(session), !pinnedIds.contains(session.id) else { return false }
                 if modeStore.shellMode == .home, !typeFilter.isEmpty, !typeFilter.contains(RecentType.of(session)) {
@@ -957,9 +1043,9 @@ struct HistorySidebarView: View {
                 }
                 switch statusFilter {
                 case .all, .active: if !session.active { return false }
-                case .archived: if session.active { return false }
+                case .completed, .archived: if session.active { return false }
                 }
-                let date = Self.timestamp(of: session)
+                let date = ShellSessionsStore.timestamp(of: session)
                 switch dateFilter {
                 case .all: return true
                 case .today: return date >= startOfToday
@@ -967,48 +1053,16 @@ struct HistorySidebarView: View {
                 case .month: return date >= monthAgo
                 }
             }
-            .prefix(60)
-            .map { $0 }
-    }
-
-    // MARK: - Loading
-
-    @MainActor
-    private func loadSessions() async {
-        if !hasLoaded { isLoading = true }
-        loadError = nil
-        do {
-            // GET /api/v1/agent-sessions → { sessions: [...], count }
-            let envelope: AgentSessionListResponse = try await APIClient.shared.get(path: "agent-sessions")
-            sessions = envelope.sessions.sorted { Self.timestamp(of: $0) > Self.timestamp(of: $1) }
-            hasLoaded = true
-        } catch is CancellationError {
-            // View disappeared mid-flight — keep the current state.
-        } catch {
-            loadError = error.localizedDescription
-        }
-        isLoading = false
+            .prefix(40)
+        // orderRecents: manual keys first, in that order; the rest by recency.
+        var rank: [String: Int] = [:]
+        for (index, id) in manualOrder.enumerated() where rank[id] == nil { rank[id] = index }
+        let manual = filtered.filter { rank[$0.id] != nil }.sorted { (rank[$0.id] ?? 0) < (rank[$1.id] ?? 0) }
+        let rest = filtered.filter { rank[$0.id] == nil }
+        return manual + rest
     }
 
     // MARK: - Helpers
-
-    private static func kind(of session: AgentSession) -> String {
-        if session.agentId != nil { return "agent" }
-        switch session.originSurface ?? "" {
-        case "code": return "code"
-        case "browser": return "browser"
-        default: return "chat"
-        }
-    }
-
-    private static func emptyIcon(for mode: ShellMode) -> String {
-        switch mode {
-        case .home: return "bubble.left"
-        case .bots: return "cpu"
-        case .code: return "terminal"
-        case .aci: return "globe"
-        }
-    }
 
     private static func emptyTitle(for mode: ShellMode) -> String {
         switch mode {
@@ -1027,30 +1081,16 @@ struct HistorySidebarView: View {
         case .aci: return "Your agent runs show up here."
         }
     }
+}
 
-    private static let relativeFormatter: RelativeDateTimeFormatter = {
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .abbreviated
-        return formatter
-    }()
-
-    private static func relativeTime(_ date: Date) -> String {
-        guard date != .distantPast else { return "" }
-        if Date().timeIntervalSince(date) < 60 { return "now" }
-        return relativeFormatter.localizedString(for: date, relativeTo: Date())
-    }
-
-    static func timestamp(of record: AgentSession) -> Date {
-        parseTimestamp(record.updatedAt) ?? parseTimestamp(record.createdAt) ?? .distantPast
-    }
-
-    /// Backend timestamps are RFC-3339 (chrono `to_rfc3339`), with or without
-    /// fractional seconds.
-    private static func parseTimestamp(_ value: String) -> Date? {
-        if let date = try? Date(value, strategy: Date.ISO8601FormatStyle(includingFractionalSeconds: true)) {
-            return date
-        }
-        return try? Date(value, strategy: Date.ISO8601FormatStyle())
+private extension View {
+    /// A drawer List row: no separator or background, 8pt side margins
+    /// (`phone-nav` / `phone-rail-row`), or edge to edge for labels and strips.
+    func drawerRow(inset: Bool = true) -> some View {
+        self
+            .listRowInsets(EdgeInsets(top: 0, leading: inset ? 8 : 0, bottom: 0, trailing: inset ? 8 : 0))
+            .listRowSeparator(.hidden)
+            .listRowBackground(Color.clear)
     }
 }
 
@@ -1063,6 +1103,11 @@ extension Notification.Name {
     /// The drawer's New chat: ChatView starts a fresh conversation even when
     /// the selection was already nil.
     static let shellNewChat = Notification.Name("com.allternit.shellNewChat")
+    /// The header count button and the drawer's "See all": open the mode's
+    /// session overview (MainWorkspaceView presents it).
+    static let shellOpenOverview = Notification.Name("com.allternit.shellOpenOverview")
+    /// Open the drawer from anywhere (overview ☰, section screens).
+    static let shellOpenDrawer = Notification.Name("com.allternit.shellOpenDrawer")
 }
 
 extension Notification {

@@ -4,18 +4,23 @@ import SwiftUI
 
 /// Top-level shell (the PWA phone shell, allternit-ai
 /// src/fabric-session/phone/PhoneShell.tsx): one section fills the screen,
-/// no bottom bar. The left drawer (HistorySidebarView, 92% wide) carries the
-/// mode dial — Home · Bots · Code · ACI — plus the mode's rail, pins and
-/// recents. Cowork is NOT a mode; it's a composer-level toggle inside Home.
+/// no bottom bar, with the one no-computer banner above it. The menu is the
+/// Arc drawer (HistorySidebarView): min(92% of the screen, 440) wide, it
+/// springs in OVER the screen from the left edge with a 16% scrim on the
+/// strip that stays visible; the screen itself doesn't move. It closes with
+/// a tap on the scrim or a drag/flick back to the edge. Cowork is NOT a
+/// mode; it's a composer-level toggle inside Home.
 struct MainWorkspaceView: View {
     @EnvironmentObject private var modeStore: AppModeStore
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isSidebarOpen = false
     @State private var dragOffset: CGFloat = 0
     @State private var selectedSessionId: String? = nil
     @State private var screenWidth: CGFloat = 390
+    @State private var isOverviewPresented = false
 
-    /// The drawer covers 92% of the screen (PhoneShell's Arc drawer width).
-    private var sidebarWidth: CGFloat { max(screenWidth * 0.92, 260) }
+    /// PhoneShell DRAWER_FRACTION / DRAWER_MAX.
+    private var sidebarWidth: CGFloat { min(screenWidth * 0.92, 440) }
 
     /// Drawer position from 0 (closed) to 1 (open), tracking live drags.
     private var sidebarProgress: CGFloat {
@@ -23,71 +28,68 @@ struct MainWorkspaceView: View {
         return min(max(base + dragOffset, 0), sidebarWidth) / sidebarWidth
     }
 
-    /// Chats paints BgSecondary edge to edge; the other sections lead with
-    /// BgPrimary chrome.
-    private var paneBackground: Color {
-        Color(modeStore.activeTab == .chats ? "BgSecondary" : "BgPrimary")
+    /// Arc spring.smooth: critically damped, never overshoots the edge.
+    private var drawerAnimation: Animation {
+        reduceMotion ? .linear(duration: 0.12) : .spring(response: 0.38, dampingFraction: 1, blendDuration: 0)
     }
 
     var body: some View {
-        ZStack {
+        ZStack(alignment: .leading) {
             // Root backdrop — also the strip behind the status bar / home
             // indicator (the content pane is clipped to the safe area and
             // can't paint up there itself).
-            paneBackground
+            Color("BgPrimary")
                 .edgesIgnoringSafeArea(.all)
 
-            ZStack(alignment: .leading) {
-                // The drawer — full-height, edge-to-edge behind the pane.
-                HistorySidebarView(
-                    selectedSessionId: $selectedSessionId,
-                    isSidebarOpen: $isSidebarOpen,
-                    width: sidebarWidth
-                )
-
+            VStack(spacing: 0) {
+                // `phone-main`: the banner, then the section.
+                ConnectComputerView(isShellBanner: true)
                 activeSection
-                // Opaque backdrop for the whole pane, bleeding edge-to-edge
-                // (it fully hides the drawer behind). Sliding right reveals
-                // the drawer; the pane stays full-size.
-                .background(paneBackground)
-                // Rounded pane while the drawer is showing: a full-screen
-                // mask (NOT .cornerRadius, which clips at the safe-area
-                // bounds) so the corners round from the physical screen edges.
-                .mask(
-                    RoundedRectangle(cornerRadius: 28 * sidebarProgress, style: .continuous)
+                    .environment(\.shellShowsNoComputer, true)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+            .background(Color("BgPrimary"))
+            // Hidden from VoiceOver while the menu is over it (useInert).
+            .accessibilityHidden(isSidebarOpen)
+            // Left-edge pan opens the menu (useDrawerEdgeOpen, 24pt strip).
+            .overlay(alignment: .leading) {
+                if !isSidebarOpen {
+                    Color.clear
+                        .frame(width: 24)
+                        .contentShape(Rectangle())
                         .ignoresSafeArea()
-                )
-                .offset(x: sidebarProgress * sidebarWidth)
-                .shadow(color: Color.black.opacity(0.4 * sidebarProgress), radius: 10, x: -5, y: 0)
-                .animation(.spring(response: 0.35, dampingFraction: 0.86, blendDuration: 0), value: isSidebarOpen)
-                // Pane-wide drag only while the drawer is open (to drag it
-                // closed). When closed, the gesture gets the LOWEST
-                // precedence (.none) so every ScrollView inside wins its
-                // drags — opening is handled by the left-edge strip below.
-                .gesture(drawerGesture, including: isSidebarOpen ? .all : .none)
-                .overlay(alignment: .leading) {
-                    if isSidebarOpen {
-                        // The visible 8% sliver of the pane: tap to close.
-                        Color.clear
-                            .contentShape(Rectangle())
-                            .ignoresSafeArea()
-                            .onTapGesture {
-                                withAnimation(.spring(response: 0.35, dampingFraction: 0.86, blendDuration: 0)) {
-                                    isSidebarOpen = false
-                                }
-                            }
-                            .gesture(drawerGesture)
-                            .accessibilityLabel("Close menu")
-                            .accessibilityAddTraits(.isButton)
-                    } else {
-                        Color.clear
-                            .frame(width: 28)
-                            .contentShape(Rectangle())
-                            .ignoresSafeArea()
-                            .gesture(drawerGesture)
-                    }
+                        .gesture(drawerGesture)
                 }
             }
+
+            // Scrim over the visible strip (Arc contained overlay, 16% black).
+            Color.black
+                .opacity(0.16 * sidebarProgress)
+                .ignoresSafeArea()
+                .allowsHitTesting(isSidebarOpen)
+                .onTapGesture { setSidebar(false) }
+                .gesture(drawerGesture, including: isSidebarOpen ? .all : .none)
+                .accessibilityLabel("Close menu")
+                .accessibilityAddTraits(.isButton)
+                .accessibilityHidden(!isSidebarOpen)
+
+            // The drawer panel: rounded trailing corners, slides from the edge.
+            HistorySidebarView(
+                selectedSessionId: $selectedSessionId,
+                isSidebarOpen: $isSidebarOpen,
+                width: sidebarWidth
+            )
+            .background(
+                UnevenRoundedRectangle(bottomTrailingRadius: 26, topTrailingRadius: 26, style: .continuous)
+                    .fill(Color("BgPrimary"))
+                    .ignoresSafeArea()
+            )
+            .shadow(color: .black.opacity(sidebarProgress > 0 ? 0.12 : 0), radius: 16, x: 4, y: 0)
+            .offset(x: (sidebarProgress - 1) * (sidebarWidth + 24))
+            .simultaneousGesture(drawerGesture, including: isSidebarOpen ? .all : .subviews)
+            .accessibilityHidden(!isSidebarOpen)
+            .accessibilityAddTraits(.isModal)
+            .accessibilityLabel("\(modeStore.shellMode.label) menu")
         }
         .background(
             GeometryReader { proxy in
@@ -96,6 +98,42 @@ struct MainWorkspaceView: View {
                     .onChange(of: proxy.size.width) { _, width in screenWidth = width }
             }
         )
+        .fullScreenCover(isPresented: $isOverviewPresented) {
+            SessionOverviewView(
+                mode: modeStore.shellMode,
+                onOpen: { session in
+                    isOverviewPresented = false
+                    switch session.originSurface ?? "" {
+                    case "code": modeStore.selectBarItem(.code)
+                    case "browser": modeStore.selectBarItem(.aci)
+                    default: modeStore.selectBarItem(.chats)
+                    }
+                    selectedSessionId = session.id
+                    setSidebar(false)
+                },
+                onNew: {
+                    isOverviewPresented = false
+                    selectedSessionId = nil
+                    modeStore.selectBarItem(modeStore.shellMode == .code ? .code : modeStore.shellMode == .aci ? .aci : .chats)
+                    if modeStore.shellMode == .home || modeStore.shellMode == .bots {
+                        NotificationCenter.default.post(name: .shellNewChat, object: nil)
+                    }
+                    setSidebar(false)
+                },
+                onMenu: {
+                    isOverviewPresented = false
+                    setSidebar(true)
+                }
+            )
+            .environmentObject(modeStore)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .shellOpenOverview)) { _ in
+            Task { await ShellSessionsStore.shared.load() }
+            isOverviewPresented = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .shellOpenDrawer)) { _ in
+            setSidebar(true)
+        }
         // Universal Links + push taps (DeepLinkRouter) and the Meet your bots intro.
         .modifier(DeepLinkHost())
         // Allternit calls: ring polling + the incoming / live call screens.
@@ -107,9 +145,7 @@ struct MainWorkspaceView: View {
             guard let sessionId = note.openChatSessionId else { return }
             selectedSessionId = sessionId
             modeStore.selectBarItem(.chats)
-            withAnimation(.spring(response: 0.35, dampingFraction: 0.86, blendDuration: 0)) {
-                isSidebarOpen = false
-            }
+            setSidebar(false)
         }
         .onAppear {
             // Projects feed the cowork top deck and the Projects section;
@@ -190,20 +226,12 @@ struct MainWorkspaceView: View {
                     selectedSessionId = session.id
                     modeStore.selectBarItem(.chats)
                 },
-                onOpenSidebar: {
-                    withAnimation(.spring(response: 0.35, dampingFraction: 0.86, blendDuration: 0)) {
-                        isSidebarOpen = true
-                    }
-                }
+                onOpenSidebar: { setSidebar(true) }
             )
         case .artifacts:
             ArtifactsLibraryView(isSidebarOpen: $isSidebarOpen)
         case .agents:
-            BotsModeRootView(onOpenSidebar: {
-                withAnimation(.spring(response: 0.35, dampingFraction: 0.86, blendDuration: 0)) {
-                    isSidebarOpen = true
-                }
-            })
+            BotsModeRootView(onOpenSidebar: { setSidebar(true) })
         case .automation:
             switch modeStore.automationKind {
             case .overview:
@@ -224,28 +252,36 @@ struct MainWorkspaceView: View {
         }
     }
 
-    /// Drawer drag: swiping right from the left edge opens, dragging left
-    /// on an open drawer closes.
+    private func setSidebar(_ open: Bool) {
+        withAnimation(drawerAnimation) {
+            isSidebarOpen = open
+            dragOffset = 0
+        }
+    }
+
+    /// Drawer drag: a pan from the left edge opens (past a quarter of the
+    /// panel or a quick flick); dragging an open drawer left closes it past
+    /// a third, or on a flick toward the edge, else it springs back.
     private var drawerGesture: some Gesture {
-        DragGesture()
+        DragGesture(minimumDistance: 10)
             .onChanged { gesture in
+                // Horizontal pans only: vertical scrolls stay with the lists.
+                guard abs(gesture.translation.width) > abs(gesture.translation.height) else { return }
                 if isSidebarOpen {
-                    // Dragging left pushes the open drawer closed.
-                    if gesture.translation.width < 0 {
-                        dragOffset = gesture.translation.width
-                    }
-                } else if gesture.startLocation.x < 50 && gesture.translation.width > 0 {
-                    // Swiping right from the left margin exposes the drawer.
+                    dragOffset = min(0, gesture.translation.width)
+                } else if gesture.translation.width > 0 {
                     dragOffset = gesture.translation.width
                 }
             }
             .onEnded { gesture in
-                let base = isSidebarOpen ? sidebarWidth : 0
-                let projected = base + gesture.predictedEndTranslation.width
-                withAnimation(.spring(response: 0.35, dampingFraction: 0.86, blendDuration: 0)) {
-                    isSidebarOpen = projected > sidebarWidth / 2
-                    dragOffset = 0
+                let velocity = gesture.predictedEndTranslation.width - gesture.translation.width
+                let open: Bool
+                if isSidebarOpen {
+                    open = !(-gesture.translation.width > sidebarWidth / 3 || velocity < -120)
+                } else {
+                    open = gesture.translation.width > sidebarWidth * 0.25 || velocity > 120
                 }
+                setSidebar(open)
             }
     }
 }

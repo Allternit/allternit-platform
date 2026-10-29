@@ -44,7 +44,11 @@ final class RailTabsStore: ObservableObject {
                 Tab(id: "code-automations", label: "Automation Tasks", icon: "clock"),
             ]
         case .browser:
-            return [Tab(id: "mini-apps", label: "MCP Apps", icon: "square.grid.2x2")]
+            return [
+                Tab(id: "mini-apps", label: "MCP Apps", icon: "macwindow"),
+                Tab(id: "computers", label: "Computers", icon: "desktopcomputer"),
+                Tab(id: "site-apis", label: "Teach", icon: "record.circle"),
+            ]
         }
     }
 
@@ -77,43 +81,6 @@ final class RailTabsStore: ObservableObject {
 
     func anyHidden(in mode: TabMode) -> Bool {
         Self.tabs(for: mode).contains { !isVisible($0.id, in: mode) }
-    }
-}
-
-/// The drawer's More row (PhoneDrawer MoreRow): choose which tabs show in
-/// this mode's rail. A sheet of switches rather than a menu, so several can
-/// change in one visit.
-struct RailTabsSheet: View {
-    let mode: RailTabsStore.TabMode
-    @ObservedObject private var store = RailTabsStore.shared
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        NavigationStack {
-            List {
-                Section {
-                    ForEach(RailTabsStore.tabs(for: mode)) { tab in
-                        Toggle(isOn: Binding(
-                            get: { store.isVisible(tab.id, in: mode) },
-                            set: { _ in store.toggle(tab.id, in: mode) }
-                        )) {
-                            Label(tab.label, systemImage: tab.icon)
-                        }
-                        .accessibilityIdentifier("railTab\(tab.id)")
-                    }
-                } header: {
-                    Text("Show in rail")
-                } footer: {
-                    Text("Hidden tabs stay one tap away here.")
-                }
-            }
-            .navigationTitle("More")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
-            }
-        }
-        .presentationDetents([.medium, .large])
     }
 }
 
