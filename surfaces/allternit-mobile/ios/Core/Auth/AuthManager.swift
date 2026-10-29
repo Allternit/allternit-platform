@@ -117,6 +117,15 @@ final class AuthManager: ObservableObject {
         return token
     }
 
+    /// The Bearer for cloud-api calls, the same as the web: the Clerk session
+    /// first. The runtime device token is accepted only on device routes, so
+    /// it is the fallback when there is no Clerk session (a paired device
+    /// sending it everywhere got 401 on every call).
+    func apiToken() async throws -> String? {
+        if let clerk = try await getToken(), !clerk.isEmpty { return clerk }
+        return try await effectiveToken()
+    }
+
     /// Returns the runtime device token when paired and valid; otherwise falls
     /// back to the Clerk session token. This is what `APIClient` sends as the
     /// Bearer token, matching desktop's use of `allternit_runtime_…` credentials.

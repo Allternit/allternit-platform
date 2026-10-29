@@ -81,7 +81,7 @@ actor RFBClient {
         // The upgrade goes through the same auth middleware as REST — the
         // Bearer header is exactly why this is a native client and not a
         // WKWebView.
-        if let token = try await AuthManager.shared.effectiveToken(), !token.isEmpty {
+        if let token = try await AuthManager.shared.apiToken(), !token.isEmpty {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
         #if DEBUG
