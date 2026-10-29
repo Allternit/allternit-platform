@@ -8,45 +8,20 @@ struct BotThreadsView: View {
     let botId: String?
 
     @ObservedObject private var store = BotModeStore.shared
-    @ObservedObject private var hub = AgentHubStore.shared
-
-    private var threads: [BotThread] {
-        let all = botId.map { id in store.threads.filter { $0.botId == id } } ?? store.threads
-        return all.sorted(by: BotModeStore.threadOrder)
-    }
+    @EnvironmentObject private var navigator: BotNavigator
 
     var body: some View {
-        let grouped = Dictionary(grouping: threads, by: \.group)
-        List {
-            if store.isLoadingThreads && store.threads.isEmpty {
-                ProgressView().frame(maxWidth: .infinity)
-            } else if let error = store.threadsError, store.threads.isEmpty {
-                FriendlyStateView(style: .error, icon: "exclamationmark.triangle", title: "Couldn't load threads",
-                                  message: error, actionTitle: "Retry", action: { Task { await store.refreshThreads() } })
-            } else if threads.isEmpty {
-                FriendlyStateView(style: .empty, icon: "bubble.left.and.text.bubble.right", title: "No threads yet",
-                                  message: "Threads show up here by status as you start work with your bots.")
-            } else {
-                ForEach(BotThreadGroup.allCases, id: \.self) { group in
-                    if let rows = grouped[group.rawValue], !rows.isEmpty {
-                        Section {
-                            ForEach(rows) { thread in
-                                BotThreadRow(thread: thread, showsBot: botId == nil)
-                            }
-                        } header: {
-                            HStack {
-                                Text(group.title)
-                                if group == .waiting { WaitingBadge(count: rows.count) }
-                            }
-                        }
-                    }
+        ScrollView {
+            BotThreadsPanel(botId: botId, greeting: "Threads") { thread in
+                if let sessionId = thread.currentSessionId {
+                    navigator.open(.chat(botId: thread.botId, sessionId: sessionId))
                 }
             }
+            .padding(.vertical, 8)
         }
-        .listStyle(.insetGrouped)
-        .scrollContentBackground(.hidden)
         .background(Color("BgPrimary"))
-        .navigationTitle(botId.flatMap { store.bot($0)?.botDisplayName }.map { "\($0) threads" } ?? "Threads")
+        .navigationTitle(botId.flatMap { store.bot($0)?.botDisplayName } ?? "Threads")
+        .navigationBarTitleDisplayMode(.inline)
         .refreshable { await store.refreshThreads() }
         .task {
             await store.refreshThreads()
@@ -55,6 +30,113 @@ struct BotThreadsView: View {
                 await store.refreshThreads()
             }
         }
+    }
+}
+
+/// The Threads panel (components/threads/ThreadsPanel.tsx): a serif greeting
+/// with what waits on you, then collapsible groups with counts; Resolved
+/// starts folded. Rows open through `onOpen`.
+struct BotThreadsPanel: View {
+    /// One bot's threads (its avatar is then hidden), or every bot's.
+    let botId: String?
+    var greeting: String? = "Threads"
+    /// Threads to show instead of the store's (a project's).
+    var threadsOverride: [BotThread]? = nil
+    let onOpen: (BotThread) -> Void
+
+    @ObservedObject private var store = BotModeStore.shared
+    @State private var collapsed: Set<String> = ["resolved"]
+
+    private var threads: [BotThread] {
+        let all = threadsOverride ?? (botId.map { id in store.threads.filter { $0.botId == id } } ?? store.threads)
+        return all.filter { !$0.incognito }.sorted(by: BotModeStore.threadOrder)
+    }
+
+    private func waitingLine(_ count: Int) -> String {
+        if count == 0 { return "Nothing is waiting on you." }
+        return count == 1 ? "1 thread is waiting on you." : "\(count) threads are waiting on you."
+    }
+
+    var body: some View {
+        let rows = threads
+        let grouped = Dictionary(grouping: rows, by: \.group)
+        VStack(alignment: .leading, spacing: 0) {
+            if let greeting {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(greeting)
+                        .font(.system(size: 21, weight: .semibold, design: .serif))
+                        .foregroundColor(Color("TextPrimary"))
+                    Text(waitingLine(rows.filter { $0.group == "waiting" }.count))
+                        .font(.system(size: 13))
+                        .foregroundColor(Color("TextSecondary"))
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 16)
+                .padding(.bottom, 8)
+            }
+            if rows.isEmpty {
+                if store.isLoadingThreads && threadsOverride == nil {
+                    ProgressView().frame(maxWidth: .infinity).padding(.vertical, 24)
+                } else if let error = store.threadsError, threadsOverride == nil {
+                    FriendlyStateView(style: .error, icon: "exclamationmark.triangle", title: "Couldn't load threads",
+                                      message: error, actionTitle: "Retry", action: { Task { await store.refreshThreads() } })
+                } else {
+                    Text("No threads yet. Start one from the composer.")
+                        .font(.system(size: 13))
+                        .foregroundColor(Color("TextTertiary"))
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 24)
+                }
+            }
+            ForEach(BotThreadGroup.allCases, id: \.self) { group in
+                if let items = grouped[group.rawValue], !items.isEmpty {
+                    section(group, items)
+                }
+            }
+        }
+    }
+
+    private func section(_ group: BotThreadGroup, _ items: [BotThread]) -> some View {
+        let folded = collapsed.contains(group.rawValue)
+        return VStack(alignment: .leading, spacing: 2) {
+            Button {
+                withAnimation(.easeOut(duration: 0.16)) {
+                    if folded { collapsed.remove(group.rawValue) } else { collapsed.insert(group.rawValue) }
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 10, weight: .semibold))
+                        .rotationEffect(.degrees(folded ? -90 : 0))
+                    Text(group.title)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(Color("TextPrimary"))
+                    Text("\(items.count)")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(Color("TextTertiary"))
+                    Spacer()
+                }
+                .foregroundColor(Color("TextPrimary"))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(RoundedRectangle(cornerRadius: 6).fill(Color("FillNeutral")))
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("\(group.title), \(items.count)")
+            .accessibilityValue(folded ? "Collapsed" : "Expanded")
+            if !folded {
+                ForEach(items) { thread in
+                    Button { onOpen(thread) } label: {
+                        BotThreadRow(thread: thread, showsBot: botId == nil)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.top, 8)
+        .padding(.bottom, 4)
     }
 }
 
@@ -81,79 +163,47 @@ enum BotThreadGroup: String, CaseIterable {
     }
 }
 
-/// One thread: bot avatar, title, status line, progress; waiting threads
-/// carry Approve / Decline (threads/:id/approve|decline).
+/// One thread row (ThreadsPanel): bot avatar, title, the live status line,
+/// the k/n progress and the time.
 struct BotThreadRow: View {
     let thread: BotThread
     var showsBot = true
 
     @ObservedObject private var store = BotModeStore.shared
-    @State private var isActing = false
-    @State private var actionError: String? = nil
 
     var body: some View {
         let bot = store.bot(thread.botId)
         let group = BotThreadGroup(rawValue: thread.group) ?? .idle
-        VStack(alignment: .leading, spacing: 8) {
-            Group {
-                if let sessionId = thread.currentSessionId {
-                    NavigationLink(value: BotRoute.chat(botId: thread.botId, sessionId: sessionId)) { label(bot, group) }
-                } else {
-                    label(bot, group)
-                }
-            }
-            if group == .waiting {
-                HStack(spacing: 10) {
-                    Button("Approve") { act(approve: true) }
-                        .buttonStyle(.borderedProminent)
-                    Button("Decline") { act(approve: false) }
-                        .buttonStyle(.bordered)
-                    if isActing { ProgressView() }
-                }
-                .font(.subheadline)
-                .disabled(isActing)
-                if let actionError {
-                    Text(actionError).font(.caption).foregroundColor(Theme.statusError)
-                }
-            }
-        }
-    }
-
-    private func label(_ bot: AgentRecord?, _ group: BotThreadGroup) -> some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 8) {
             if showsBot, let bot {
-                BotAvatarView(bot: bot, size: 32)
+                BotAvatarView(bot: bot, size: 22)
             } else {
-                Circle().fill(group.color).frame(width: 8, height: 8)
+                Circle().fill(group.color).frame(width: 8, height: 8).frame(width: 22)
             }
             VStack(alignment: .leading, spacing: 2) {
                 Text(thread.title)
+                    .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(Color("TextPrimary"))
                     .lineLimit(1)
-                Text([showsBot ? bot?.botDisplayName : nil, thread.statusLine, thread.progressLabel]
-                    .compactMap { $0 }.joined(separator: " · "))
-                    .font(.caption)
-                    .foregroundColor(group == .waiting ? Theme.statusWarning : Color("TextSecondary"))
-                    .lineLimit(2)
+                if let line = thread.statusLine, !line.isEmpty {
+                    Text(line)
+                        .font(.system(size: 11.5))
+                        .foregroundColor(group == .waiting ? Theme.statusWarning : Color("TextTertiary"))
+                        .lineLimit(1)
+                }
             }
-            Spacer(minLength: 4)
-            Text(BotTime.relative(thread.lastActivityAt))
-                .font(.caption2)
-                .foregroundColor(Color("TextTertiary"))
-        }
-    }
-
-    private func act(approve: Bool) {
-        isActing = true
-        actionError = nil
-        Task {
-            defer { isActing = false }
-            do {
-                if approve { try await store.approve(thread) } else { try await store.decline(thread) }
-            } catch {
-                actionError = FriendlyErrorMessage.from(error.localizedDescription)
+            Spacer(minLength: 6)
+            HStack(spacing: 8) {
+                if let progress = thread.progressLabel { Text(progress) }
+                Text(BotTime.relative(thread.lastActivityAt))
             }
+            .font(.system(size: 11).monospacedDigit())
+            .foregroundColor(Color("TextTertiary"))
         }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 8)
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -197,7 +247,13 @@ struct BotProjectHomeView: View {
                         .foregroundColor(Color("TextSecondary"))
                 } else {
                     ForEach(threads.sorted(by: BotModeStore.threadOrder)) { thread in
-                        BotThreadRow(thread: thread)
+                        if let sessionId = thread.currentSessionId {
+                            NavigationLink(value: BotRoute.chat(botId: thread.botId, sessionId: sessionId)) {
+                                BotThreadRow(thread: thread)
+                            }
+                        } else {
+                            BotThreadRow(thread: thread)
+                        }
                     }
                 }
             }

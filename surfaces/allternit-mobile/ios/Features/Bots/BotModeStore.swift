@@ -32,6 +32,10 @@ final class BotModeStore: ObservableObject {
     /// The drawer's Phones list: a bot whose phone (its channels and the
     /// conversations on them) Bots mode should open next.
     @Published var pendingOpenPhoneBotId: String?
+    /// Any Bot Mode screen the drawer's bots rail opens next (Threads,
+    /// Groups, Computers…, the web rail's rows); `BotsModeRootView` pushes it
+    /// over the Bots home.
+    @Published var pendingRoute: BotRoute?
 
     private let hub = AgentHubStore.shared
     private let client = BotModeClient.shared
@@ -157,6 +161,11 @@ final class BotModeStore: ObservableObject {
 
     func approve(_ thread: BotThread) async throws {
         try await client.approveThread(id: thread.id)
+        await refreshThreads()
+    }
+
+    func resolve(_ thread: BotThread) async throws {
+        try await client.resolveThread(id: thread.id)
         await refreshThreads()
     }
 

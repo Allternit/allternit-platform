@@ -25,6 +25,8 @@ enum BotRoute: Hashable {
     case home(String)
     /// The existing agent editor (Features/Agents/AgentDetailView).
     case settings(String)
+    /// The bot screen on one of its tabs (bot-home-tabs.ts).
+    case botHome(String, BotHomeTab)
 }
 
 /// Bot Mode's navigation path, shared with every pushed screen so async
@@ -39,15 +41,15 @@ final class BotNavigator: ObservableObject {
 }
 
 /// Bot Mode root — public entry, no required init params (lane L3 mounts
-/// it as the Bots mode root). The PWA's FabricBotModeRail on a phone page:
-/// quick bot strip, Threads (waiting badge), Projects, Groups, Computers,
-/// pinned bots, group chats, then every bot with its status dot. Tapping a
-/// bot opens its main chat.
+/// it as the Bots mode root). The PWA's BotsScreen on the hub: header
+/// "Bots" with Connections and Replay intro, and the bots launchpad
+/// (BotLaunchpadView). The drawer is the bots rail while this mode is open.
 struct BotsModeRootView: View {
     @StateObject private var store = BotModeStore.shared
     @StateObject private var hub = AgentHubStore.shared
     @StateObject private var auth = AuthManager.shared
     @StateObject private var navigator = BotNavigator()
+    @State private var isConnectionsPresented = false
 
     /// Opens the shell drawer (the edge swipe also works).
     var onOpenSidebar: (() -> Void)?
@@ -60,6 +62,8 @@ struct BotsModeRootView: View {
         NavigationStack(path: $navigator.path) {
             content
                 .navigationTitle("Bots")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbarBackground(Color("BgPrimary"), for: .navigationBar)
                 .toolbar {
                     if let onOpenSidebar {
                         ToolbarItem(placement: .topBarLeading) {
@@ -70,6 +74,20 @@ struct BotsModeRootView: View {
                             .accessibilityLabel("Open menu")
                         }
                     }
+                    ToolbarItemGroup(placement: .topBarTrailing) {
+                        // Connections: the apps your bots can use.
+                        Button { isConnectionsPresented = true } label: {
+                            Image(systemName: "square.grid.2x2")
+                                .foregroundColor(Color("TextPrimary"))
+                        }
+                        .accessibilityLabel("Connections")
+                        // Meet your bots again (the rail's ⋯ has the same entry).
+                        Button { BotsIntroStore.shared.replay() } label: {
+                            Image(systemName: "arrow.counterclockwise")
+                                .foregroundColor(Color("TextPrimary"))
+                        }
+                        .accessibilityLabel("Replay intro")
+                    }
                 }
                 .navigationDestination(for: BotRoute.self) { route in
                     BotRouteDestination(route: route)
@@ -77,10 +95,14 @@ struct BotsModeRootView: View {
         }
         .environmentObject(navigator)
         .tint(Color("AccentPrimary"))
+        .sheet(isPresented: $isConnectionsPresented) {
+            ConnectorsListView()
+        }
         .onAppear(perform: openPendingBot)
         .onChange(of: store.pendingOpenBotId) { _, _ in openPendingBot() }
         .onChange(of: store.pendingNewThread) { _, _ in openPendingBot() }
         .onChange(of: store.pendingOpenPhoneBotId) { _, _ in openPendingBot() }
+        .onChange(of: store.pendingRoute) { _, _ in openPendingBot() }
     }
 
     private func openPendingBot() {
@@ -91,6 +113,10 @@ struct BotsModeRootView: View {
         if let botId = store.pendingOpenPhoneBotId {
             store.pendingOpenPhoneBotId = nil
             navigator.path = [.phone(botId)]
+        }
+        if let route = store.pendingRoute {
+            store.pendingRoute = nil
+            navigator.path = [route]
         }
         if store.pendingNewThread {
             store.pendingNewThread = false
@@ -117,143 +143,7 @@ struct BotsModeRootView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Color("BgPrimary"))
         } else {
-            BotRailList()
-        }
-    }
-}
-
-/// The rail itself (also usable on its own, e.g. inside a drawer).
-struct BotRailList: View {
-    @ObservedObject private var store = BotModeStore.shared
-    @ObservedObject private var hub = AgentHubStore.shared
-    @ObservedObject private var status = BotStatusStore.shared
-    @EnvironmentObject private var navigator: BotNavigator
-
-    var body: some View {
-        let bots = store.bots
-        List {
-            if !bots.isEmpty {
-                Section {
-                    QuickBotStrip(bots: bots)
-                        .listRowInsets(EdgeInsets())
-                        .listRowBackground(Color.clear)
-                }
-            }
-
-            Section {
-                NavigationLink(value: BotRoute.threads(botId: nil)) {
-                    railLabel("Threads", icon: "checklist", badge: store.waitingCount)
-                }
-                NavigationLink(value: BotRoute.groups) {
-                    railLabel("Groups", icon: "person.3", badge: 0)
-                }
-                NavigationLink(value: BotRoute.computers) {
-                    railLabel("Computers", icon: "desktopcomputer", badge: 0)
-                }
-            }
-
-            if !store.projects.isEmpty {
-                Section("Projects") {
-                    ForEach(store.projects) { project in
-                        NavigationLink(value: BotRoute.project(project)) {
-                            HStack {
-                                Label(project.title, systemImage: project.favorite ? "star.fill" : "folder")
-                                    .lineLimit(1)
-                                Spacer()
-                                if project.counts.waiting > 0 {
-                                    WaitingBadge(count: project.counts.waiting)
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            let pinned = bots.filter { store.isPinned($0.id) }
-            if !pinned.isEmpty {
-                Section("Pinned bots") {
-                    ForEach(pinned) { bot in botRow(bot) }
-                }
-            }
-
-            Section("Group chats") {
-                if store.groups.isEmpty {
-                    Text("No group chats yet")
-                        .font(.footnote)
-                        .foregroundColor(Color("TextSecondary"))
-                } else {
-                    ForEach(store.groups.prefix(6)) { group in
-                        NavigationLink(value: BotRoute.group(group.id)) {
-                            GroupRowLabel(group: group)
-                        }
-                    }
-                }
-            }
-
-            Section("Bots") {
-                if hub.isLoading && bots.isEmpty {
-                    HStack { ProgressView(); Text("Loading your bots…").foregroundColor(Color("TextSecondary")) }
-                } else if let error = hub.loadError, bots.isEmpty {
-                    FriendlyStateView(style: .error, icon: "exclamationmark.triangle",
-                                      title: "Couldn't load your bots", message: error,
-                                      actionTitle: "Retry", action: { hub.fetchAgentsIfNeeded(force: true) })
-                } else if bots.isEmpty {
-                    Text("No bots yet — create one in the bot hub.")
-                        .font(.footnote)
-                        .foregroundColor(Color("TextSecondary"))
-                } else {
-                    ForEach(bots.filter { !store.isPinned($0.id) }) { bot in botRow(bot) }
-                }
-            }
-        }
-        .listStyle(.insetGrouped)
-        .scrollContentBackground(.hidden)
-        .background(Color("BgPrimary"))
-        .refreshable { await store.refreshAll() }
-        .task {
-            await store.refreshAll()
-            // Threads keep the waiting badge fresh while the rail is up
-            // (FabricThreadsPage polls every 15s).
-            while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 15_000_000_000)
-                await store.refreshThreads()
-            }
-        }
-    }
-
-    private func botRow(_ bot: AgentRecord) -> some View {
-        let waiting = store.waitingCount(for: bot.id) > 0 || status.needsAttention(for: bot.id)
-        let working = store.workingCount(for: bot.id) > 0 || status.isWorking(for: bot.id)
-        let line = store.threads(for: bot.id).first(where: { $0.group == "waiting" || $0.group == "working" })?.statusLine
-        return NavigationLink(value: BotRoute.chat(botId: bot.id, sessionId: nil)) {
-            HStack(spacing: 12) {
-                BotStatusAvatar(bot: bot, size: 40, working: working, waiting: waiting)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(bot.botDisplayName)
-                        .font(.body.weight(.medium))
-                        .foregroundColor(Color("TextPrimary"))
-                        .lineLimit(1)
-                    Text(line ?? (waiting ? "Needs you" : working ? "Working…" : bot.botTagline))
-                        .font(.caption)
-                        .foregroundColor(waiting ? Theme.statusWarning : Color("TextSecondary"))
-                        .lineLimit(1)
-                }
-            }
-        }
-        .swipeActions(edge: .trailing) {
-            Button(store.isPinned(bot.id) ? "Unpin" : "Pin") { store.togglePin(bot.id) }
-                .tint(Color("AccentPrimary"))
-        }
-        .swipeActions(edge: .leading) {
-            Button("Profile") { navigator.open(.page(bot.id)) }
-        }
-    }
-
-    private func railLabel(_ title: String, icon: String, badge: Int) -> some View {
-        HStack {
-            Label(title, systemImage: icon)
-            Spacer()
-            if badge > 0 { WaitingBadge(count: badge) }
+            BotLaunchpadView()
         }
     }
 }
@@ -270,42 +160,6 @@ struct WaitingBadge: View {
             .background(Theme.statusWarning.opacity(0.18))
             .clipShape(Capsule())
             .accessibilityLabel("\(count) waiting on you")
-    }
-}
-
-/// Quick bot strip (components/bots/QuickBotStrip.tsx): one tap jumps
-/// straight into a bot's main chat.
-struct QuickBotStrip: View {
-    let bots: [AgentRecord]
-    @ObservedObject private var store = BotModeStore.shared
-    @EnvironmentObject private var navigator: BotNavigator
-
-    var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 14) {
-                ForEach(bots.prefix(12)) { bot in
-                    Button {
-                        navigator.open(.chat(botId: bot.id, sessionId: nil))
-                    } label: {
-                        VStack(spacing: 4) {
-                            BotStatusAvatar(bot: bot, size: 52,
-                                            working: store.workingCount(for: bot.id) > 0,
-                                            waiting: store.waitingCount(for: bot.id) > 0,
-                                            live: true)
-                            Text(bot.botDisplayName)
-                                .font(.caption2)
-                                .foregroundColor(Color("TextSecondary"))
-                                .lineLimit(1)
-                                .frame(width: 60)
-                        }
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Open \(bot.botDisplayName)")
-                }
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
-        }
     }
 }
 
@@ -351,6 +205,8 @@ struct BotRouteDestination: View {
             withBot(botId) { BotHomeView(initialAgent: $0) }
         case .settings(let botId):
             withBot(botId) { AgentDetailView(initialAgent: $0) }
+        case .botHome(let botId, let tab):
+            withBot(botId) { BotHomeTabsView(bot: $0, initialTab: tab) }
         }
     }
 
