@@ -1,11 +1,16 @@
 import SwiftUI
 
-/// Settings, grouped like the PWA's phone Settings (allternit-ai
+/// Settings, the PWA's phone Settings sheet (allternit-ai
 /// src/fabric-session/phone/screens/SettingsScreen.tsx + settings.config.ts
-/// `PHONE_SETTINGS_GROUPS`): an account card, then Account · Assistant ·
-/// Appearance · Bots & agents · Computers · Advanced, and Log out at the
-/// bottom. Operator pages sit behind the collapsed "Advanced" row, as on the
-/// PWA. Every page is native; "Open on the web" opens ai.allternit.com.
+/// `PHONE_SETTINGS_GROUPS`): ✕ and ⓘ, an account card (plan and usage left),
+/// then Account · Assistant · Appearance · Bots & agents · Computers ·
+/// Advanced as grouped cards, and Log out at the bottom. Operator pages sit
+/// behind the collapsed "Advanced" row, as on the PWA. Each row pushes its
+/// page (`SettingsPageID`) with a plain ‹ back.
+///
+/// Native-only, kept for the App Store: "Let your bots use this iPhone"
+/// (Computers), Delete account (Account page), the notifications permission
+/// (Notifications page).
 struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var authManager: AuthManager
@@ -13,60 +18,62 @@ struct SettingsView: View {
     @ObservedObject private var settings = SettingsStore.shared
     @ObservedObject private var usageStore = UsageStore.shared
     @ObservedObject private var plan = AccountPlanStore.shared
-    /// Response style + custom instructions (`GET/PUT /api/v1/agent-preferences`).
-    @ObservedObject private var preferences = PreferencesStore.shared
-    /// Settings → Phones status ("Paired · <computer>").
+    @ObservedObject private var appearance = AppearanceStore.shared
+    /// "Let your bots use this iPhone" status ("Paired · <computer>").
     @ObservedObject private var appPhone = AppPhoneService.shared
 
+    @State private var path = NavigationPath()
     /// Operator pages (models, infrastructure…) behind the Advanced row.
     @State private var showOperator = false
+    @State private var isCustomizePresented = false
     @State private var isConnectorsPresented = false
     @State private var safariURL: IdentifiableURL? = nil
     @State private var signOutError: String? = nil
 
-    // DEBUG deep links (`-open-settings-*`) push these.
-    @State private var isMemoryPresented = false
-    @State private var isPlatformPresented = false
     #if DEBUG
+    @State private var isPlatformPresented = false
     @State private var isBrainSpikePresented = false
     #endif
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             ScrollViewReader { proxy in
-                List {
-                    accountCard
-                    accountSection
-                    assistantSection
-                    appearanceSection
-                    botsSection
-                    computersSection
-                    SettingsIntroSection(onDismissSettings: { dismiss() })
-                    advancedSection
-                        .id("aboutSection")
-                    signOutSection
+                ScrollView {
+                    VStack(spacing: 4) {
+                        accountCard
+                        card(.account, label: "Account")
+                        card(.assistant, label: "Assistant")
+                        appearanceCard
+                        card(.bots, label: "Bots & agents")
+                        card(.computers, label: "Computers")
+                        advancedCard
+                            .id("aboutSection")
+                        signOutButton
+                    }
+                    .padding(EdgeInsets(top: 8, leading: 16, bottom: 32, trailing: 16))
                 }
-                .listStyle(.insetGrouped)
-                .scrollContentBackground(.hidden)
-                .background(Color("BgPrimary"))
+                .background(Color("BgPrimary").ignoresSafeArea())
                 .navigationTitle("Settings")
                 .navigationBarTitleDisplayMode(.inline)
+                // Pushed pages show a bare ‹ like the PWA's CaretLeft, not "‹ Settings".
+                .toolbarRole(.editor)
                 .toolbar {
                     ToolbarItem(placement: .topBarLeading) {
-                        Button(action: { dismiss() }) {
-                            Image(systemName: "xmark")
-                                .font(.system(size: 14, weight: .semibold))
-                                .foregroundColor(Color("TextPrimary"))
-                        }
-                        .accessibilityLabel("Close settings")
+                        roundButton("xmark", label: "Close settings") { dismiss() }
+                    }
+                    ToolbarItem(placement: .topBarTrailing) {
+                        roundButton("info.circle", label: "About Allternit") { path.append(SettingsPageID.about) }
                     }
                 }
-                .navigationDestination(isPresented: $isMemoryPresented) { MemorySettingsView() }
-                .navigationDestination(isPresented: $isPlatformPresented) { PlatformSettingsView() }
+                .navigationDestination(for: SettingsPageID.self) { page in
+                    destination(page)
+                }
                 #if DEBUG
+                .navigationDestination(isPresented: $isPlatformPresented) { PlatformSettingsView() }
                 .navigationDestination(isPresented: $isBrainSpikePresented) { BrainSpikeView() }
                 #endif
                 .sheet(item: $safariURL) { item in SafariView(url: item.url) }
+                .sheet(isPresented: $isCustomizePresented) { CustomizeSheet() }
                 .sheet(isPresented: $isConnectorsPresented) { ConnectorsListView() }
                 .task {
                     PreferencesStore.shared.fetchIfNeeded()
@@ -75,7 +82,7 @@ struct SettingsView: View {
                 }
                 .onAppear {
                     #if DEBUG
-                    if launchArgumentEnabled("open-settings-memory") { isMemoryPresented = true }
+                    if launchArgumentEnabled("open-settings-memory") { path.append(SettingsPageID.memory) }
                     if launchArgumentEnabled("open-settings-platform") { isPlatformPresented = true }
                     if launchArgumentEnabled("open-settings-data") {
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
@@ -89,279 +96,197 @@ struct SettingsView: View {
         }
     }
 
+    // MARK: - Header
+
+    /// `.phone-round-btn`: 40pt filled circle.
+    private func roundButton(_ systemImage: String, label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: 18, weight: .regular))
+                .foregroundColor(Color("TextPrimary"))
+                .frame(width: 40, height: 40)
+                .background(Circle().fill(Color("FillNeutral")))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+    }
+
     // MARK: - Account card
 
-    /// Name, plan and how much is left; opens Account.
+    /// Signed-in person, plan and how much of it is left; opens Profile.
     private var accountCard: some View {
-        Section {
-            NavigationLink {
-                AccountProfileView(onClose: { dismiss() })
-            } label: {
-                HStack(spacing: 12) {
-                    AccountAvatar(size: 46)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(authManager.isSignedIn ? (authManager.fullName ?? authManager.displayName) : "Not signed in")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundColor(Color("TextPrimary"))
-                        Text(accountDetail)
-                            .font(.caption)
-                            .foregroundColor(Color("TextSecondary"))
-                            .lineLimit(1)
-                    }
-                }
-                .padding(.vertical, 4)
-            }
-        }
-    }
-
-    private var accountDetail: String {
-        guard authManager.isSignedIn else { return "Sign in to sync across devices" }
-        var parts: [String] = []
-        if let name = plan.planName ?? usageStore.planLabel { parts.append(name) }
-        if let percent = usageStore.percentUsed {
-            let left = max(0, 100 - Int(percent.rounded()))
-            parts.append("\(left)% left · \(usageStore.periodLabel.lowercased())")
-        }
-        if parts.isEmpty, let email = authManager.primaryEmail { parts.append(email) }
-        return parts.joined(separator: " · ")
-    }
-
-    // MARK: - Account
-
-    private var accountSection: some View {
-        Section {
-            NavigationLink { ComputeBillingView(title: "Billing") } label: {
-                SettingsRowLabel(title: "Billing", systemImage: "creditcard", value: plan.planName)
-            }
-            NavigationLink { ComputeBillingView(title: "Usage") } label: {
-                SettingsRowLabel(title: "Usage", systemImage: "gauge.with.dots.needle.33percent",
-                                 value: usageStore.percentText.map { "\($0) used" })
-            }
-            NavigationLink { NotificationsSettingsView() } label: {
-                SettingsRowLabel(title: "Notifications", systemImage: "bell")
-            }
-            NavigationLink { PrivacySettingsView() } label: {
-                SettingsRowLabel(title: "Privacy", systemImage: "lock")
-            }
-            NavigationLink { OrganizationAccessView() } label: {
-                SettingsRowLabel(title: "Organization & access", systemImage: "building.2")
-            }
-            NavigationLink { AccountProfileView(onClose: { dismiss() }) } label: {
-                SettingsRowLabel(title: "Account", systemImage: "person")
-            }
-        } header: {
-            Text("Account")
-        }
-    }
-
-    // MARK: - Assistant
-
-    private var assistantSection: some View {
-        Section {
-            Picker(selection: responseStyleBinding) {
-                ForEach(ResponseStyle.allCases, id: \.self) { style in
-                    Text(style.label).tag(style)
-                }
-            } label: {
-                SettingsRowLabel(title: "Response style", systemImage: "text.bubble")
-            }
-            NavigationLink { CustomInstructionsView() } label: {
-                SettingsRowLabel(
-                    title: "Custom instructions",
-                    systemImage: "text.quote",
-                    value: preferences.customInstructions.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "None" : "Set"
-                )
-            }
-            NavigationLink { MemorySettingsView() } label: {
-                SettingsRowLabel(title: "Memory", systemImage: "brain")
-            }
-            NavigationLink { MemoryDriveView() } label: {
-                SettingsRowLabel(title: "Memory Drive", systemImage: "externaldrive")
-            }
-            NavigationLink { VoiceSettingsPage() } label: {
-                SettingsRowLabel(title: "Voice", systemImage: "mic")
-            }
-            NavigationLink { GeneralSettingsPage() } label: {
-                SettingsRowLabel(title: "General", systemImage: "gearshape")
-            }
-        } header: {
-            Text("Assistant")
-        } footer: {
-            if let error = preferences.saveError {
-                Text("Couldn't sync preferences. \(FriendlyErrorMessage.from(error))")
-                    .foregroundColor(Theme.statusError)
-            }
-        }
-    }
-
-    private var responseStyleBinding: Binding<ResponseStyle> {
-        Binding(
-            get: { preferences.responseStyle },
-            set: { preferences.save(style: $0, instructions: preferences.customInstructions) }
-        )
-    }
-
-    // MARK: - Appearance
-
-    private var appearanceSection: some View {
-        Section {
-            AppearanceTiles()
-        } header: {
-            Text("Appearance")
-        }
-    }
-
-    // MARK: - Bots & agents
-
-    private var botsSection: some View {
-        Section {
-            Button(action: {
-                dismiss()
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                    modeStore.selectBarItem(.agents)
-                }
-            }) {
-                SettingsRowLabel(title: "Your bots", systemImage: "person.2", chevron: true)
-            }
-            .buttonStyle(.plain)
-            Button(action: { isConnectorsPresented = true }) {
-                SettingsRowLabel(title: "Connectors", systemImage: "point.3.connected.trianglepath.dotted", chevron: true)
-            }
-            .buttonStyle(.plain)
-            NavigationLink { CapabilitiesSettingsView(kind: .skill) } label: {
-                SettingsRowLabel(title: "Skills", systemImage: "sparkles")
-            }
-            NavigationLink { CapabilitiesSettingsView(kind: .plugin) } label: {
-                SettingsRowLabel(title: "Plugins", systemImage: "puzzlepiece.extension")
-            }
-            NavigationLink { McpServersSettingsView() } label: {
-                SettingsRowLabel(title: "MCP servers", systemImage: "cpu")
-            }
-            NavigationLink { SubagentsSettingsView() } label: {
-                SettingsRowLabel(title: "Subagents", systemImage: "point.3.filled.connected.trianglepath.dotted")
-            }
-            NavigationLink { TwinSettingsView() } label: {
-                SettingsRowLabel(title: "Your twin", systemImage: "person.2.wave.2")
-            }
-            NavigationLink { WebhooksSettingsView() } label: {
-                SettingsRowLabel(title: "Webhooks", systemImage: "link")
-            }
-        } header: {
-            Text("Bots & agents")
-        }
-    }
-
-    // MARK: - Computers
-
-    private var computersSection: some View {
-        Section {
-            NavigationLink { DevicePairingView() } label: {
-                SettingsRowLabel(title: "Devices", systemImage: "laptopcomputer.and.iphone")
-            }
-            NavigationLink { CloudInstancesManagerView() } label: {
-                SettingsRowLabel(title: "Cloud computers", systemImage: "cloud")
-            }
-            NavigationLink { CloudComputerBackupsView() } label: {
-                SettingsRowLabel(title: "Backups", systemImage: "clock.arrow.circlepath")
-            }
-            NavigationLink { AllternitMobileSettingsPage() } label: {
-                SettingsRowLabel(title: "Allternit Mobile", systemImage: "iphone")
-            }
-            // Phones ("Let your bots use this iPhone"): screen + ACI browser.
-            NavigationLink { AppPhonesSettingsView() } label: {
-                HStack {
-                    SettingsRowLabel(title: "Let your bots use this iPhone", systemImage: "iphone.gen3")
-                    Spacer()
-                    Text(appPhone.credentials.map { "Paired · \($0.runtimeName)" } ?? "Off")
-                        .font(.caption)
+        NavigationLink(value: SettingsPageID.profile) {
+            HStack(spacing: 12) {
+                AccountAvatar(size: 40)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(accountName)
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(Color("TextPrimary"))
+                        .lineLimit(1)
+                    Text(accountDetail)
+                        .font(.system(size: 13))
                         .foregroundColor(Color("TextSecondary"))
                         .lineLimit(1)
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                PhoneRowChevron()
             }
-        } header: {
-            Text("Computers")
+            .padding(14)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(AccountCardButtonStyle())
+    }
+
+    private var accountName: String {
+        guard authManager.isSignedIn else { return "Account" }
+        return authManager.fullName ?? authManager.displayName
+    }
+
+    private var accountDetail: String {
+        var parts: [String] = []
+        if authManager.isSignedIn {
+            if let name = plan.planName ?? usageStore.planLabel { parts.append(name) }
+            if let percent = usageStore.percentUsed {
+                let left = max(0, 100 - Int(percent.rounded()))
+                parts.append("\(left)% left · \(usageStore.periodLabel.lowercased())")
+            }
+            if parts.isEmpty, let email = authManager.primaryEmail { parts.append(email) }
+        }
+        return parts.isEmpty ? "Sign in to sync across devices" : parts.joined(separator: " · ")
+    }
+
+    // MARK: - Cards
+
+    private func card(_ group: SettingsPageID.Group, label: String) -> some View {
+        VStack(spacing: 0) {
+            PhoneSettingsLabel(text: label)
+            PhoneSettingsCard {
+                if group == .assistant {
+                    // Customize (skills, connectors, plugins) is its own screen on the phone.
+                    actionRow("Customize", systemImage: "slider.horizontal.3") { isCustomizePresented = true }
+                    PhoneCardDivider()
+                }
+                rows(SettingsPageID.items(group))
+                switch group {
+                case .assistant:
+                    PhoneCardDivider()
+                    PhoneToggleRow(title: "Save chat drafts", systemImage: "square.and.arrow.down", isOn: $settings.autoSave)
+                case .computers:
+                    // Native: the iPhone app's own phone link (App Store build).
+                    PhoneCardDivider()
+                    NavigationLink { AppPhonesSettingsView() } label: {
+                        PhoneSettingsRowContent(
+                            title: "Let your bots use this iPhone",
+                            systemImage: "iphone.gen3",
+                            value: appPhone.credentials == nil ? "Off" : "Paired"
+                        ) { PhoneRowChevron() }
+                    }
+                    .buttonStyle(PhoneRowButtonStyle())
+                default:
+                    EmptyView()
+                }
+            }
         }
     }
 
-    // MARK: - Advanced
-
     @ViewBuilder
-    private var advancedSection: some View {
-        Section {
-            NavigationLink { ProductsSettingsView() } label: {
-                SettingsRowLabel(title: "Gizzi Code & Cowork", systemImage: "chevron.left.forwardslash.chevron.right")
-            }
-            NavigationLink { PlatformSettingsView() } label: {
-                SettingsRowLabel(title: "Developer", systemImage: "hammer")
-            }
-            Button(action: { withAnimation(.easeOut(duration: 0.2)) { showOperator.toggle() } }) {
-                HStack(spacing: 12) {
-                    Image(systemName: "wrench.and.screwdriver")
-                        .font(.subheadline)
-                        .frame(width: 22)
-                        .foregroundColor(Color("TextSecondary"))
-                    Text("Advanced")
-                        .font(.subheadline)
-                        .foregroundColor(Color("TextPrimary"))
-                    Spacer()
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundColor(Color("TextSecondary"))
-                        .rotationEffect(.degrees(showOperator ? 90 : 0))
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityValue(showOperator ? "Expanded" : "Collapsed")
+    private func rows(_ pages: [SettingsPageID]) -> some View {
+        ForEach(Array(pages.enumerated()), id: \.element) { index, page in
+            if index > 0 { PhoneCardDivider() }
+            pageRow(page)
+        }
+    }
 
-            if showOperator {
-                NavigationLink { ModelManagementView() } label: {
-                    SettingsRowLabel(title: "Models & engines", systemImage: "cpu")
+    /// `RowButton`: icon, label, value, ›. Connectors opens its sheet.
+    @ViewBuilder
+    private func pageRow(_ page: SettingsPageID) -> some View {
+        if page == .connectors {
+            actionRow(page.label, systemImage: page.systemImage) { isConnectorsPresented = true }
+        } else {
+            NavigationLink(value: page) {
+                PhoneSettingsRowContent(title: page.label, systemImage: page.systemImage, value: value(for: page)) {
+                    PhoneRowChevron()
                 }
-                NavigationLink { InfrastructureSettingsView() } label: {
-                    SettingsRowLabel(title: "Infrastructure", systemImage: "square.stack.3d.up")
-                }
-                NavigationLink { RuntimeOperationsView() } label: {
-                    SettingsRowLabel(title: "Runtime operations", systemImage: "gearshape.2")
-                }
-                NavigationLink { NodesManagerView() } label: {
-                    SettingsRowLabel(title: "Compute nodes", systemImage: "externaldrive.connected.to.line.below")
-                }
-                NavigationLink { CloudDeployManagerView() } label: {
-                    SettingsRowLabel(title: "Cloud deploy", systemImage: "icloud.and.arrow.up")
-                }
-                NavigationLink { VPSServersManagerView() } label: {
-                    SettingsRowLabel(title: "VPS & servers", systemImage: "server.rack")
-                }
-                NavigationLink { EnterpriseBYOCPanelView() } label: {
-                    SettingsRowLabel(title: "Enterprise BYOC", systemImage: "building.columns")
-                }
-                #if DEBUG
-                Button(action: { isBrainSpikePresented = true }) {
-                    SettingsRowLabel(title: "Brain Spike (debug)", systemImage: "arrow.triangle.branch", chevron: true)
-                }
-                .buttonStyle(.plain)
-                #endif
             }
+            .buttonStyle(PhoneRowButtonStyle())
+        }
+    }
 
-            NavigationLink { AboutSettingsPage() } label: {
-                SettingsRowLabel(title: "About", systemImage: "info.circle", value: AboutSettingsPage.versionString)
+    private func actionRow(_ title: String, systemImage: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            PhoneSettingsRowContent(title: title, systemImage: systemImage) { PhoneRowChevron() }
+        }
+        .buttonStyle(PhoneRowButtonStyle())
+    }
+
+    /// Row values: the app version on About, the plan on Billing.
+    private func value(for page: SettingsPageID) -> String? {
+        switch page {
+        case .about:
+            return Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+        case .billing:
+            return plan.planName
+        default:
+            return nil
+        }
+    }
+
+    private var appearanceCard: some View {
+        VStack(spacing: 0) {
+            PhoneSettingsLabel(text: "Appearance")
+            PhoneSettingsCard {
+                AppearanceTiles()
+                PhoneCardDivider()
+                PhoneToggleRow(title: "Reduce motion", systemImage: "pause",
+                               isOn: $appearance.reduceMotion)
             }
-            Button(action: { safariURL = IdentifiableURL(url: URL(string: "https://ai.allternit.com")!) }) {
-                SettingsRowLabel(title: "Open on the web", systemImage: "arrow.up.right.square", chevron: true)
+        }
+    }
+
+    /// Advanced card: the everyday pages, the operator pages behind an
+    /// "Advanced" row, then About and Open on the web.
+    private var advancedCard: some View {
+        let pages = SettingsPageID.items(.advanced)
+        return VStack(spacing: 0) {
+            PhoneSettingsLabel(text: "Advanced")
+            PhoneSettingsCard {
+                rows(pages.filter { $0.phone.order < 9 })
+                PhoneCardDivider()
+                Button(action: { withAnimation(.easeOut(duration: 0.2)) { showOperator.toggle() } }) {
+                    PhoneSettingsRowContent(title: "Advanced", systemImage: "wrench") {
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(Color("TextSecondary"))
+                            .rotationEffect(.degrees(showOperator ? 90 : 0))
+                    }
+                }
+                .buttonStyle(PhoneRowButtonStyle())
+                .accessibilityValue(showOperator ? "Expanded" : "Collapsed")
+                if showOperator {
+                    PhoneCardDivider()
+                    rows(SettingsPageID.items(.operatorPages))
+                    #if DEBUG
+                    PhoneCardDivider()
+                    actionRow("Brain Spike (debug)", systemImage: "arrow.triangle.branch") { isBrainSpikePresented = true }
+                    #endif
+                }
+                PhoneCardDivider()
+                rows(pages.filter { $0.phone.order >= 9 })
+                PhoneCardDivider()
+                actionRow("Open on the web", systemImage: "arrow.up.right.square") {
+                    safariURL = IdentifiableURL(url: URL(string: "https://ai.allternit.com")!)
+                }
             }
-            .buttonStyle(.plain)
-        } header: {
-            Text("Advanced")
         }
     }
 
     // MARK: - Log out
 
-    private var signOutSection: some View {
-        Section {
+    /// `.phone-signout`: a 50pt filled pill; Sign in when signed out.
+    private var signOutButton: some View {
+        VStack(spacing: 8) {
             if authManager.isSignedIn {
-                Button(role: .destructive, action: {
+                Button(action: {
                     Task {
                         do {
                             try await authManager.signOut()
@@ -372,253 +297,127 @@ struct SettingsView: View {
                         }
                     }
                 }) {
-                    HStack {
-                        Spacer()
-                        Label("Log out", systemImage: "rectangle.portrait.and.arrow.right")
-                            .font(.subheadline.weight(.semibold))
-                        Spacer()
+                    HStack(spacing: 10) {
+                        Image(systemName: "rectangle.portrait.and.arrow.right")
+                            .font(.system(size: 18))
+                        Text("Log out")
                     }
+                    .font(.system(size: 16))
+                    .foregroundColor(Theme.statusError)
+                    .frame(maxWidth: .infinity, minHeight: 50)
+                    .background(Color("FillNeutral"))
+                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                 }
+                .buttonStyle(.plain)
             } else {
                 Button(action: {
                     dismiss()
                     authManager.signIn()
                 }) {
-                    HStack {
-                        Spacer()
-                        Text("Sign in").font(.subheadline.weight(.semibold))
-                        Spacer()
-                    }
+                    Text("Sign in")
+                        .font(.system(size: 16))
+                        .foregroundColor(Color("TextPrimary"))
+                        .frame(maxWidth: .infinity, minHeight: 50)
+                        .background(Color("FillNeutral"))
+                        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                 }
+                .buttonStyle(.plain)
             }
-        } footer: {
             if let signOutError {
-                Text("Couldn't log out. \(signOutError)").foregroundColor(Theme.statusError)
+                Text("Couldn't log out. \(signOutError)")
+                    .font(.system(size: 13))
+                    .foregroundColor(Theme.statusError)
             }
+        }
+        .padding(.top, 22)
+    }
+
+    // MARK: - Pages
+
+    @ViewBuilder
+    private func destination(_ page: SettingsPageID) -> some View {
+        switch page {
+        case .profile: ProfileSettingsPage()
+        case .billing: ComputeBillingView(title: "Billing")
+        case .usage: ComputeBillingView(title: "Usage")
+        case .notifications: NotificationsSettingsView()
+        case .privacy: PrivacySettingsView()
+        case .organization: OrganizationAccessView()
+        case .signin: AccountProfileView(onClose: { dismiss() })
+        case .setup:
+            SettingsWebPage(page: page, intro: "What your Allternit depends on. Ready means a live check just passed, not only that something is filled in.")
+        case .responseStyle: ResponseStyleSettingsPage()
+        case .memory: MemorySettingsView()
+        case .voice: VoiceSettingsPage()
+        case .appearance: GeneralSettingsPage()
+        case .openModels:
+            SettingsWebPage(page: page, intro: "Open-weight models with far fewer refusals. They are marked Open in the model picker and use your credits or plan.")
+        case .subscriptions:
+            SettingsWebPage(page: page, intro: "How your bots reach the apps, bots and coding tools you already use. Your Allternit plan is under Billing.")
+        case .agentRules:
+            SettingsWebPage(page: page, intro: "Configure · Observe · Extend. Set how agents work, see their contracts, and add your own rules and pieces.")
+        case .skills: CapabilitiesSettingsView(kind: .skill)
+        case .subagents: SubagentsSettingsView()
+        case .connectors: ConnectorsListView()
+        case .plugins: CapabilitiesSettingsView(kind: .plugin)
+        case .connectedApps:
+            SettingsWebPage(page: page, intro: "AI apps you approved to use your bots' phones or read your agents, and the events each one gets. Stop one event, or revoke the app and its next call is refused.")
+        case .twin: TwinSettingsView()
+        case .lens:
+            SettingsWebPage(page: page, intro: "Lens continuously syncs connected sources into your local knowledge vault and serves it to AI tools via MCP — separate from the Connectors page, which is for one-off tool actions.")
+        case .devices: DevicePairingView()
+        case .computers: CloudInstancesManagerView()
+        case .desktopPet:
+            SettingsNotePage(page: page, heading: "Desktop pet",
+                             note: "The desktop pet is part of Allternit Desktop for Mac and Windows: your bot floats above your other windows and shows what your bots are doing. Open these settings in Allternit Desktop to turn it on or off.")
+        case .extensions: ProductsSettingsView(part: .extensions)
+        case .remoteControl: AllternitMobileSettingsPage()
+        case .gizziCode: ProductsSettingsView(part: .gizziCode)
+        case .cowork: ProductsSettingsView(part: .cowork)
+        case .diagnostics: DeveloperSettingsPage()
+        case .status:
+            SettingsWebPage(page: page, intro: "Whether everything your bots use is working. Subscriptions you sign in with and channels your bots post to appear here.")
+        case .about: AboutSettingsPage()
+        case .models: ModelManagementView()
+        case .imageProviders:
+            SettingsWebPage(page: page, intro: "Connect the image generation backends you want to use. Pollinations is free and works without a key.")
+        case .videoProviders:
+            SettingsWebPage(page: page, intro: "Connect the video generation backends you want to use. Pollinations is free and works without a key.")
+        case .mcp: McpServersSettingsView()
+        case .apiKeys:
+            SettingsWebPage(page: page, intro: "Detected providers and their auth state. Connect a subscription or CLI brain in one click; API-key providers use a key.")
+        case .permissions:
+            SettingsNotePage(page: page, heading: "System permissions",
+                             note: "Permission guide is only available in the Allternit Desktop app.")
+        case .infrastructure: InfrastructureSettingsView()
+        case .security:
+            SettingsWebPage(page: page, intro: "Policies, approvals, purpose binding and compliance for your organization.")
+        case .agents: agentsPage
+        case .webhooks: WebhooksSettingsView()
         }
     }
 
-}
-
-// MARK: - General
-
-/// Assistant → General: the chat capability switches.
-private struct GeneralSettingsPage: View {
-    @ObservedObject private var settings = SettingsStore.shared
-
-    var body: some View {
-        List {
-            Section {
-                toggle("Artifacts", "Show interactive documents and code alongside chat.", $settings.artifactsEnabled)
-                toggle("Code execution and file creation", "Let Allternit run code and create files in chats.", $settings.codeExecutionEnabled)
-                toggle("Web search", "Search the web for up-to-date answers. Sets the default for the composer's Web search toggle.", $settings.webSearchDefault)
-                toggle("Switch models when a message is flagged", "Automatically retry flagged messages with a different model.", $settings.switchModelsOnFlag)
-            } header: {
-                Text("Capabilities")
-            }
-        }
-        .listStyle(.insetGrouped)
-        .scrollContentBackground(.hidden)
-        .background(Color("BgPrimary"))
-        .navigationTitle("General")
-        .navigationBarTitleDisplayMode(.inline)
-    }
-
-    private func toggle(_ title: String, _ explainer: String, _ isOn: Binding<Bool>) -> some View {
-        Toggle(isOn: isOn) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.subheadline).foregroundColor(Color("TextPrimary"))
-                Text(explainer).font(.caption).foregroundColor(Color("TextSecondary"))
-            }
-        }
-        .tint(Color("AccentPrimary"))
-    }
-}
-
-// MARK: - Voice
-
-/// Assistant → Voice: dictation language and reading speed.
-private struct VoiceSettingsPage: View {
-    @ObservedObject private var settings = SettingsStore.shared
-
-    var body: some View {
-        List {
-            Section {
-                // Consumed by DictationController (SFSpeechRecognizer locale);
-                // nil = System default.
-                Picker("Speech language", selection: $settings.speechLanguage) {
-                    Text("System default").tag(SpeechLanguage?.none)
-                    ForEach(SpeechLanguage.allCases, id: \.self) { language in
-                        Text(language.label).tag(SpeechLanguage?.some(language))
-                    }
+    /// Settings → Agents: the web's "My Agents" note and its Open Agent Hub.
+    private var agentsPage: some View {
+        PhoneSettingsPage(title: "Agents") {
+            SettingsSectionHeading(text: "My Agents")
+            SettingsDescription(text: "Agent setup and discovery live in the Agent Hub view — one registry for creating, browsing, and chatting with agents.")
+            Button("Open Agent Hub") {
+                dismiss()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    modeStore.selectBarItem(.agents)
                 }
-                .font(.subheadline)
-                Picker("Speed", selection: $settings.speechSpeed) {
-                    ForEach(SettingsStore.speechSpeeds, id: \.self) { speed in
-                        Text(speed == 1.0 ? "1x" : "\(speed)x").tag(speed)
-                    }
-                }
-                .font(.subheadline)
             }
+            .buttonStyle(SettingsQuietButtonStyle())
         }
-        .listStyle(.insetGrouped)
-        .scrollContentBackground(.hidden)
-        .background(Color("BgPrimary"))
-        .navigationTitle("Voice")
-        .navigationBarTitleDisplayMode(.inline)
-    }
-}
-
-// MARK: - Allternit Mobile (mesh)
-
-/// Computers → Allternit Mobile: this phone's node on the Allternit mesh.
-/// Start enrolls via the platform (`POST /api/v1/mesh/enroll`) and joins the
-/// tailnet; failures show in the Status row.
-private struct AllternitMobileSettingsPage: View {
-    @ObservedObject private var mesh = MeshClient.shared
-    #if DEBUG
-    /// Pre-auth key entry (DEBUG only) — overrides platform enrollment.
-    @AppStorage("mesh-auth-key") private var meshAuthKey = ""
-    #endif
-
-    var body: some View {
-        List {
-            Section {
-                #if DEBUG
-                SecureField("Pre-auth key (debug)", text: $meshAuthKey)
-                    .font(.system(.subheadline, design: .monospaced))
-                    .autocorrectionDisabled()
-                    .textInputAutocapitalization(.never)
-                #endif
-                HStack {
-                    Text("Status").font(.subheadline).foregroundColor(Color("TextPrimary"))
-                    Spacer()
-                    switch mesh.state {
-                    case .idle:
-                        Text("Off").font(.subheadline).foregroundColor(Color("TextSecondary"))
-                    case .starting:
-                        HStack(spacing: 8) {
-                            ProgressView()
-                            Text("Joining…").font(.subheadline).foregroundColor(Color("TextSecondary"))
-                        }
-                    case .up(let meshIP):
-                        Text(meshIP)
-                            .font(.system(.subheadline, design: .monospaced))
-                            .foregroundColor(Color("TextPrimary"))
-                    case .failed(let message):
-                        Text(FriendlyErrorMessage.from(message))
-                            .font(.caption)
-                            .foregroundColor(Theme.statusError)
-                            .lineLimit(2)
-                    }
-                }
-                if case .up = mesh.state {
-                    Button(action: { mesh.stop() }) {
-                        SettingsRowLabel(title: "Disconnect this phone", systemImage: "stop.circle")
-                    }
-                } else {
-                    Button(action: { Task { await mesh.startWithPlatformAuth() } }) {
-                        SettingsRowLabel(title: "Connect this phone", systemImage: "point.3.connected.trianglepath.dotted")
-                    }
-                    .disabled(mesh.state == .starting)
-                }
-            } footer: {
-                Text("Lets this phone reach your own computers directly over the Allternit mesh.")
-            }
-        }
-        .listStyle(.insetGrouped)
-        .scrollContentBackground(.hidden)
-        .background(Color("BgPrimary"))
-        .navigationTitle("Allternit Mobile")
-        .navigationBarTitleDisplayMode(.inline)
     }
 }
 
-// MARK: - About
-
-struct AboutSettingsPage: View {
-    @State private var safariURL: IdentifiableURL? = nil
-
-    static var versionString: String {
-        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—"
-        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "—"
-        return "\(version) (\(build))"
-    }
-
-    var body: some View {
-        List {
-            Section {
-                HStack {
-                    Text("Version").font(.subheadline).foregroundColor(Color("TextPrimary"))
-                    Spacer()
-                    Text(Self.versionString).font(.subheadline).foregroundColor(Color("TextSecondary"))
-                }
-                #if DEBUG
-                HStack {
-                    Text("API").font(.subheadline).foregroundColor(Color("TextPrimary"))
-                    Spacer()
-                    Text(AppConfig.apiBaseURL.absoluteString)
-                        .font(.caption)
-                        .foregroundColor(Color("TextSecondary"))
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
-                #endif
-            }
-            Section {
-                link("Report an issue", "exclamationmark.bubble", "https://allternit.com/support")
-                link("Privacy policy", "hand.raised", "https://allternit.com/privacy")
-                link("Terms of service", "doc.text", "https://allternit.com/terms")
-            }
-        }
-        .listStyle(.insetGrouped)
-        .scrollContentBackground(.hidden)
-        .background(Color("BgPrimary"))
-        .navigationTitle("About")
-        .navigationBarTitleDisplayMode(.inline)
-        .sheet(item: $safariURL) { item in SafariView(url: item.url) }
-    }
-
-    private func link(_ title: String, _ icon: String, _ raw: String) -> some View {
-        Button(action: { if let url = URL(string: raw) { safariURL = IdentifiableURL(url: url) } }) {
-            SettingsRowLabel(title: title, systemImage: icon, chevron: true)
-        }
-        .buttonStyle(.plain)
-    }
-}
-
-// MARK: - Custom instructions editor
-
-/// Pushed editor for the user's custom instructions (Settings → Assistant).
-/// Saved via PreferencesStore on Done — the same PUT that syncs STYLE.md
-/// into every agent workspace (agent_preferences_routes.rs).
-struct CustomInstructionsView: View {
-    @Environment(\.dismiss) private var dismiss
-    @ObservedObject private var preferences = PreferencesStore.shared
-
-    @State private var text: String = ""
-
-    var body: some View {
-        TextEditor(text: $text)
-            .font(.system(.body, design: .monospaced))
-            .padding(12)
-            .scrollContentBackground(.hidden)
-            .background(Color("BgPrimary"))
-            .navigationTitle("Custom Instructions")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") {
-                        preferences.save(
-                            style: preferences.responseStyle,
-                            instructions: text.trimmingCharacters(in: .whitespacesAndNewlines)
-                        )
-                        dismiss()
-                    }
-                }
-            }
-            .onAppear {
-                text = preferences.customInstructions
-            }
+/// `.phone-account-card`: 18pt rounded neutral card, stronger when pressed.
+private struct AccountCardButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .background(configuration.isPressed ? Color("TextPrimary").opacity(0.09) : Color("FillNeutral"))
+            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 }
