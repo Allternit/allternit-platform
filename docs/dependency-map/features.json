@@ -2836,6 +2836,9 @@
           "on": "2026-10-29",
           "note": "Eoj: the drawer had drifted too complex; it is an advanced developer tool, not for regular users. Off by default behind Settings → Developer. Tabs cut to Needs you, Bots, Running, Problems (Runs tab, usage strip and filter toolbars removed); Bots added as a plain list with a Graph switch. The rail indicator is removed. Entry is option E: a dot on the Gizzi pet (hover shows the summary bubble, click the dot opens; Gizzi's own click unchanged, nothing pops up by itself) plus a System section in the menu bar right-click menu (left-click still opens the HUD)."
         }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/system-drawer.mdx"
       ]
     },
     {
@@ -3220,10 +3223,42 @@
         {
           "on": "2026-10-28",
           "note": "Eoj asked for a menu bar icon that opens the HUD (like Claude's opens quick chat) and the standard top-left app menus. The tray code existed but never ran: build/tray-icon.png was never added. Now a trayTemplate.png A:// mark; macOS left-click = HUD, right-click = menu."
+        },
+        {
+          "on": "2026-10-29",
+          "note": "Eoj: fix all 18 HUD audit gaps. The tray menu lists any global HUD/Quick Chat chord that failed to register as \"in use by another app\"."
         }
       ],
       "evidence": [
-        "surfaces/docs/surfaces/desktop.mdx#menu-bar-icon"
+        "allternit/surfaces/docs/surfaces/desktop.mdx#menu-bar-icon"
+      ]
+    },
+    {
+      "id": "feature:desktop-hud",
+      "label": "Desktop HUD (floating quick chat)",
+      "product": "product:ai-allternit",
+      "status": "live",
+      "description": "Allternit Desktop's floating HUD chat (Cmd/Ctrl+Shift+H, tray click). Main process: pre-warmed hidden window, opens on the cursor's display, bounds remembered per display (store key hudBounds) and clamped to the work area, Cmd+W hides, optional hide-on-blur (hudHideOnBlur) with a renderer suppress counter, hotkey registration status, Linux cursor feed for click-through, game-overlay feed, screen capture handler, handoff/goto to the main window. Renderer: HudShell in allternit-ai.",
+      "touches": [
+        "allternit/surfaces/allternit-desktop/src/main/unified-main.ts",
+        "allternit/surfaces/allternit-desktop/src/main/hud-geometry.ts",
+        "allternit/surfaces/allternit-desktop/src/main/hud-cursor.ts",
+        "allternit/surfaces/allternit-desktop/src/main/hud-windowing.ts",
+        "allternit/surfaces/allternit-desktop/src/main/hud-game-overlay.ts",
+        "allternit/surfaces/allternit-desktop/src/preload/index.ts",
+        "allternit-ai/src/shell/hud/HudShell.tsx",
+        "allternit-ai/src/shell/hud/click-through.ts",
+        "allternit-ai/src/shell/hud/handoff.ts",
+        "surface:desktop"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-29",
+          "note": "Eoj: fix all 18 HUD audit gaps. Main half: cursor-display placement with per-display memory and work-area clamping (hud-geometry.ts is the one geometry module), close hides, focus + shell:hud:shown on every show, hide-on-blur pref + hotkey status (shell:hud:get-prefs/set-prefs), pre-warm, pop-up-menu level on Windows/Linux, Linux cursor feed, game-overlay feed, getDisplayMedia handler, handoff/goto, sender checks, frost removed."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/surfaces/desktop.mdx#hud"
       ]
     }
   ],
