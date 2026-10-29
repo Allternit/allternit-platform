@@ -15,6 +15,7 @@ target/
 *.png
 !surfaces/platform.allternit.com/public/favicon.png
 !services/remote-control-push/favicon.png
+!surfaces/allternit-mobile/ios/Assets.xcassets/**/*.png
 !surfaces/platform.allternit.com/public/billing/*.png
 *.mov
 *.zip
