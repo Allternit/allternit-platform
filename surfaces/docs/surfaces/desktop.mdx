@@ -65,7 +65,7 @@ By default the HUD stays up when you click another app (pinned). Turn on **Hide 
 
 ### Replies, keyboard and accessibility
 
-When a reply arrives, the window grows upward so the reply has room, with a minimum height for the reply area, and shrinks back when the chat is cleared. A long draft scrolls inside the message box instead of pushing the reply out of view.
+When a reply arrives, the window grows upward so the reply has room, with a minimum height for the reply area, up to 520 px tall. Past that the replies scroll inside the HUD. The window shrinks back when the chat is cleared, and each time the HUD starts it opens at its normal 220 px height. You can still drag it taller by hand. A long draft scrolls inside the message box instead of pushing the reply out of view.
 
 - **Move with the keyboard:** `Alt+arrow keys` (`⌥+arrow keys` on a Mac) move the HUD by 20 px.
 - **Resize with the keyboard:** `Alt+Shift+arrow keys` (`⌥⇧+arrow keys`) resize it.
@@ -75,7 +75,7 @@ When a reply arrives, the window grows upward so the reply has room, with a mini
 
 Menus open in full. When you open the model picker, the context meter or a menu in the Agent mode, Plugins and Artifacts row, the HUD window grows on the side with screen space (above the card first) and the card stays where it is. The added space is transparent and clicks go through it. When the menu closes, the window goes back to its size.
 
-Long drafts show in full. When a draft makes the message box taller than the HUD, the window grows upward with its bottom edge fixed, up to the top of the screen. As the draft gets shorter it shrinks back, never below the size it had before. If you resize the HUD by hand, that size becomes the new base. For developers: `useHudComposerFit` (`src/shell/hud/composer-fit.ts`) watches the composer (`[data-hud-composer]` on `ChatBottomBar`) and sets the window with `shell.hud.setBounds`. It pauses while a menu has grown the window or a resize handle is dragged.
+Long drafts show in full. When a draft makes the message box taller than the HUD, the window grows upward with its bottom edge fixed, up to the 520 px limit; the message box takes at most 40% of that, and a longer draft scrolls inside it. As the draft gets shorter it shrinks back, never below the size it had before. If you resize the HUD by hand, that size becomes the new base. For developers: `useHudComposerFit` (`src/shell/hud/composer-fit.ts`) watches the composer (`[data-hud-composer]` on `ChatBottomBar`) and sets the window with `shell.hud.setBounds`. It pauses while a menu has grown the window or a resize handle is dragged.
 
 Drag the dotted handle to move the HUD, or drag its edges to resize it. On Linux with native Wayland the compositor places windows, so the HUD opens where the compositor puts it and you move it by dragging its top strip (the compositor does the move). Launch with `--ozone-platform=x11` to get app-placed positions back.
 
