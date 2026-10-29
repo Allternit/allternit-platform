@@ -34,7 +34,8 @@ final class BotLiveActivityManager {
         }
 
         if let activity = activity {
-            Task { await activity.update(using: contentState) }
+            let id = activity.id
+            Task { await Self.live(id)?.update(ActivityContent(state: contentState, staleDate: nil)) }
         } else {
             start(contentState: contentState)
         }
@@ -102,11 +103,17 @@ final class BotLiveActivityManager {
     private func end() {
         guard let activity = activity else { return }
         self.activity = nil
+        let id = activity.id
         Task {
-            await activity.end(
+            await Self.live(id)?.end(
                 nil,
                 dismissalPolicy: .after(.now.addingTimeInterval(30))
             )
         }
+    }
+
+    /// Activity isn't Sendable, so tasks carry its id and look it up here.
+    private nonisolated static func live(_ id: String) -> Activity<BotActivityAttributes>? {
+        Activity<BotActivityAttributes>.activities.first { $0.id == id }
     }
 }

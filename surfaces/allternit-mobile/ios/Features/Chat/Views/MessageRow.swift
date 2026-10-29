@@ -206,11 +206,7 @@ struct MessageRow: View {
                 .cornerRadius(18)
                 .contextMenu { bubbleContextMenu }
         } else {
-            // MarkdownView 2.6.0 (pinned, see project.yml): full re-parse on
-            // each content change — bounded by the view model's ~50ms flush
-            // coalescing. v3's incremental StreamingMarkdownReader returns
-            // with the Xcode upgrade.
-            MarkdownView(message.content)
+            AssistantMarkdown(content: message.content, isStreaming: message.isStreaming)
             .font(.body)
             .foregroundColor(Color("TextPrimary"))
             .padding(.horizontal, 16)
@@ -359,5 +355,35 @@ struct MessageRow: View {
             )
         }
         .transition(.slide)
+    }
+}
+
+/// An assistant reply. While it streams, MarkdownView 3's incremental
+/// StreamingMarkdownReader parses only the new text (in the background) instead
+/// of re-parsing the whole reply on every chunk; a finished reply renders once.
+private struct AssistantMarkdown: View {
+    let content: String
+    let isStreaming: Bool
+
+    @State private var source: StreamingMarkdownSource? = nil
+
+    var body: some View {
+        Group {
+            if let source {
+                StreamingMarkdownReader(source) { MarkdownView($0) }
+            } else {
+                MarkdownView(content)
+            }
+        }
+        .onAppear {
+            if isStreaming, source == nil { source = StreamingMarkdownSource(content) }
+        }
+        .onChange(of: content) { _, text in
+            if isStreaming, source == nil { source = StreamingMarkdownSource(text) }
+            source?.text = text
+        }
+        .onChange(of: isStreaming) { _, streaming in
+            if !streaming { source?.finishStreaming() }
+        }
     }
 }

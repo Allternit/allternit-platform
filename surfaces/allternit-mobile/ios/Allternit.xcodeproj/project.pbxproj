@@ -2942,8 +2942,8 @@
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/migueldeicaza/SwiftTerm";
 			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 1.2.0;
+				kind = exactVersion;
+				version = 1.15.0;
 			};
 		};
 		1D595001E07884544B0D5167 /* XCRemoteSwiftPackageReference "Runestone" */ = {
@@ -2959,7 +2959,7 @@
 			repositoryURL = "https://github.com/clerk/clerk-ios";
 			requirement = {
 				kind = exactVersion;
-				version = 1.1.0;
+				version = 1.6.2;
 			};
 		};
 		B82EC4CE4EE1C80118BB6948 /* XCRemoteSwiftPackageReference "TreeSitterLanguages" */ = {
@@ -2975,7 +2975,7 @@
 			repositoryURL = "https://github.com/LiYanan2004/MarkdownView";
 			requirement = {
 				kind = exactVersion;
-				version = 2.5.2;
+				version = 3.0.0;
 			};
 		};
 		DF231DAE917FEE45CA1A9C56 /* XCRemoteSwiftPackageReference "client-sdk-swift" */ = {
@@ -2983,7 +2983,7 @@
 			repositoryURL = "https://github.com/livekit/client-sdk-swift";
 			requirement = {
 				kind = exactVersion;
-				version = 2.14.1;
+				version = 2.19.0;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */
