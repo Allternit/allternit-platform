@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { bubbleText, dotTab, dotTone, sanitizeSummary } from './system-summary';
+import { bubbleText, dotTab, dotTone, sanitizeSummary } from './system-summary.js';
 
 describe('system summary from the app window', () => {
   it('reads anything malformed or switched off as off: no dot', () => {
