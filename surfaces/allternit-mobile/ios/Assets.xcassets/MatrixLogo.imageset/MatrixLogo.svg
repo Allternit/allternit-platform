@@ -1,0 +1,24 @@
+<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" shape-rendering="geometricPrecision">
+  <!-- Allternit Matrix — construct mark. Same pixel-A letterform as the A://
+       protocol mark: apex, shoulders, crossbar with coral core, legs.
+       Grid: 18-unit pitch, 14-unit blocks. -->
+  <g fill="#D4B08C">
+    <!-- Apex -->
+    <rect x="43" y="7"  width="14" height="14" rx="2"/>
+    <!-- Shoulders -->
+    <rect x="25" y="25" width="14" height="14" rx="2"/>
+    <rect x="61" y="25" width="14" height="14" rx="2"/>
+    <!-- Crossbar row -->
+    <rect x="7"  y="43" width="14" height="14" rx="2"/>
+    <rect x="25" y="43" width="14" height="14" rx="2"/>
+    <rect x="61" y="43" width="14" height="14" rx="2"/>
+    <rect x="79" y="43" width="14" height="14" rx="2"/>
+    <!-- Legs -->
+    <rect x="7"  y="61" width="14" height="14" rx="2"/>
+    <rect x="79" y="61" width="14" height="14" rx="2"/>
+    <rect x="7"  y="79" width="14" height="14" rx="2"/>
+    <rect x="79" y="79" width="14" height="14" rx="2"/>
+  </g>
+  <!-- Core block (accent) -->
+  <rect x="43" y="43" width="14" height="14" rx="2" fill="#D97757"/>
+</svg>
