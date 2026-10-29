@@ -39,6 +39,25 @@ final class AppearanceStore: ObservableObject {
     }
 
     private static let reduceMotionKey = "allternit-appearance-reduce-motion"
+    private static let chatFontKey = "allternit-appearance-chat-font"
+
+    /// Settings → General → Chat font (the PWA's `appearance.chatFont`):
+    /// the typeface of assistant replies in the transcript.
+    enum ChatFont: String, CaseIterable, Identifiable {
+        case `default`, serif, system
+        var id: String { rawValue }
+        var label: String {
+            switch self {
+            case .default: return "Default"
+            case .serif: return "Serif"
+            case .system: return "System"
+            }
+        }
+    }
+
+    @Published var chatFont: ChatFont {
+        didSet { UserDefaults.standard.set(chatFont.rawValue, forKey: Self.chatFontKey) }
+    }
 
     /// Settings → Appearance → Reduce motion (the PWA's
     /// APPEARANCE_PREF_KEYS.reduceMotion): turns off UIKit view animations
@@ -53,6 +72,7 @@ final class AppearanceStore: ObservableObject {
     private init() {
         theme = Mode(rawValue: UserDefaults.standard.string(forKey: Self.key) ?? "") ?? .system
         reduceMotion = UserDefaults.standard.bool(forKey: Self.reduceMotionKey)
+        chatFont = ChatFont(rawValue: UserDefaults.standard.string(forKey: Self.chatFontKey) ?? "") ?? .default
         // Windows created later (new scenes) pick the saved theme up too.
         NotificationCenter.default.addObserver(
             forName: UIScene.didActivateNotification, object: nil, queue: .main
@@ -163,94 +183,3 @@ private struct ThemeTilePicture: View {
     }
 }
 
-// MARK: - Notifications
-
-/// Settings → Account → Notifications: whether iOS lets Allternit notify,
-/// with the one action that fits (ask, or open iOS Settings).
-struct NotificationsSettingsView: View {
-    @Environment(\.openURL) private var openURL
-    @Environment(\.scenePhase) private var scenePhase
-    @State private var status: UNAuthorizationStatus? = nil
-    /// Per device: off = incoming Allternit calls vibrate only (InappCallStore).
-    @AppStorage(InappCallStore.ringSoundKey) private var ringSound = true
-
-    var body: some View {
-        List {
-            Section {
-                HStack {
-                    Text("Notifications")
-                        .font(.subheadline)
-                        .foregroundColor(Color("TextPrimary"))
-                    Spacer()
-                    if let status {
-                        Text(Self.label(status))
-                            .font(.subheadline)
-                            .foregroundColor(Color("TextSecondary"))
-                    } else {
-                        ProgressView()
-                    }
-                }
-                switch status {
-                case .notDetermined:
-                    Button("Turn on notifications") { Task { await request() } }
-                        .font(.subheadline.weight(.semibold))
-                case .denied:
-                    Button("Open iOS Settings") {
-                        if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
-                    }
-                    .font(.subheadline.weight(.semibold))
-                default:
-                    EmptyView()
-                }
-            } footer: {
-                Text("Allternit notifies you when a bot finishes, needs an answer, or a computer goes offline.")
-            }
-            Section {
-                Toggle(isOn: $ringSound) {
-                    Text("Ring sound")
-                        .font(.subheadline)
-                        .foregroundColor(Color("TextPrimary"))
-                }
-            } header: {
-                Text("Incoming calls")
-            } footer: {
-                Text(ringSound
-                     ? "Allternit calls ring and vibrate while the app is open. The silent switch still silences the ring."
-                     : "Allternit calls vibrate only, with no ring sound. This setting is for this iPhone only.")
-            }
-        }
-        .listStyle(.insetGrouped)
-        .scrollContentBackground(.hidden)
-        .background(Color("BgPrimary"))
-        .navigationTitle("Notifications")
-        .navigationBarTitleDisplayMode(.inline)
-        .task { await refresh() }
-        .onChange(of: scenePhase) { _, phase in
-            if phase == .active { Task { await refresh() } }
-        }
-    }
-
-    @MainActor
-    private func refresh() async {
-        status = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
-    }
-
-    @MainActor
-    private func request() async {
-        let granted = (try? await UNUserNotificationCenter.current()
-            .requestAuthorization(options: [.alert, .badge, .sound])) ?? false
-        if granted { PushNotificationManager.shared.registerForRemoteNotifications() }
-        await refresh()
-    }
-
-    private static func label(_ status: UNAuthorizationStatus) -> String {
-        switch status {
-        case .authorized: return "On"
-        case .provisional: return "Quiet"
-        case .ephemeral: return "On"
-        case .denied: return "Off"
-        case .notDetermined: return "Not set"
-        @unknown default: return "Unknown"
-        }
-    }
-}

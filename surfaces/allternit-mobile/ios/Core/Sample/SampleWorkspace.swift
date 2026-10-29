@@ -30,6 +30,7 @@ enum SampleWorkspace {
 
     static let userId = "preview"
     static let userName = "You"
+    static let userEmail = "you@harborbakery.example"
     static let workspaceId = "preview-workspace"
     static let projectId = "preview-project-spring-launch"
     static let cateringProjectId = "preview-project-catering"
@@ -486,7 +487,7 @@ enum SampleWorkspace {
     /// `GET /api/v1/me` (`{ user }`).
     static func me(now: Date = Date()) -> [String: Any] {
         [
-            "id": userId, "clerk_id": NSNull(), "email": "you@harborbakery.example", "name": userName,
+            "id": userId, "clerk_id": NSNull(), "email": userEmail, "name": userName,
             "avatar_url": NSNull(), "role": "owner", "status": "active",
             "created_at": ago(60 * 24 * 9, now: now), "organization_id": NSNull(), "organization_role": NSNull(),
         ]

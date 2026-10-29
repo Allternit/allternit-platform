@@ -55,6 +55,8 @@ struct SettingsView: View {
                 .background(Color("BgPrimary").ignoresSafeArea())
                 .navigationTitle("Settings")
                 .navigationBarTitleDisplayMode(.inline)
+                // The sheet's root has ✕ only, never a ‹ (the PWA's SettingsHome).
+                .navigationBarBackButtonHidden(true)
                 // Pushed pages show a bare ‹ like the PWA's CaretLeft, not "‹ Settings".
                 .toolbarRole(.editor)
                 .toolbar {
@@ -139,7 +141,7 @@ struct SettingsView: View {
 
     private var accountName: String {
         guard authManager.isSignedIn else { return "Account" }
-        return authManager.fullName ?? authManager.displayName
+        return authManager.accountName
     }
 
     private var accountDetail: String {
@@ -150,7 +152,7 @@ struct SettingsView: View {
                 let left = max(0, 100 - Int(percent.rounded()))
                 parts.append("\(left)% left · \(usageStore.periodLabel.lowercased())")
             }
-            if parts.isEmpty, let email = authManager.primaryEmail { parts.append(email) }
+            if parts.isEmpty, let email = authManager.accountEmail { parts.append(email) }
         }
         return parts.isEmpty ? "Sign in to sync across devices" : parts.joined(separator: " · ")
     }
