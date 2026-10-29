@@ -75,6 +75,8 @@ struct MeetFinishInput {
     /// Template ids on the team.
     var members: [String]
     var main: MeetMainChoice
+    /// The name typed for A:// itself (web: the Name field under the A:// pick).
+    var primaryName: String? = nil
     var routines: [MeetRoutineDraft]
     /// The first job: the bot that owns it (`meetMainKey` or a template id) and its text.
     var job: (botKey: String, text: String)?
@@ -251,7 +253,7 @@ enum MeetMainBot {
     /// Set up A:// as the main bot: reuse the A:// bot when there is one,
     /// otherwise create it from the primary template (its main chat opens
     /// with its greeting), dress it when a look was picked, make it main.
-    static func setUpPrimary(name: String?, avatar: JSONValue?, dress: Bool, bots: [MeetRosterBot]) async throws -> String {
+    static func setUpPrimary(name: String?, avatar: JSONValue?, dress: Bool, dropLook: Bool = false, bots: [MeetRosterBot]) async throws -> String {
         let catalog = MeetBotCatalog.shared
         let name = name?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
         var roster = bots
@@ -267,7 +269,7 @@ enum MeetMainBot {
         if dress {
             roster = (try? await MeetAgentsAPI.roster()) ?? roster
             if let bot = roster.first(where: { $0.id == botId }) {
-                try await dressBot(bot, name: name, avatar: avatar)
+                try await dressBot(bot, name: name, avatar: avatar, dropLook: dropLook)
                 roster = (try? await MeetAgentsAPI.roster()) ?? roster
             }
         } else if !roster.contains(where: { $0.id == botId }) {
@@ -278,8 +280,9 @@ enum MeetMainBot {
     }
 
     /// Name a bot and put a picked look on it (`config.avatar`, what Edit
-    /// bot writes and avatars read first). Saves nothing when nothing changes.
-    static func dressBot(_ bot: MeetRosterBot, name: String?, avatar: JSONValue?) async throws {
+    /// bot writes and avatars read first). `dropLook` takes an earlier picked
+    /// look off (back to the A:// mark). Saves nothing when nothing changes.
+    static func dressBot(_ bot: MeetRosterBot, name: String?, avatar: JSONValue?, dropLook: Bool = false) async throws {
         var profile = bot.profile
         var config = bot.config
         var changed = false
@@ -290,6 +293,9 @@ enum MeetMainBot {
         }
         if let avatar {
             config["avatar"] = avatar
+            changed = true
+        } else if dropLook, case .object(let saved)? = config["avatar"], saved["look"] != nil {
+            config.removeValue(forKey: "avatar")
             changed = true
         }
         guard changed else { return }
@@ -443,7 +449,9 @@ enum MeetFinish {
                     let avatar = catalog.looks.first(where: { $0.id == lookId })?.avatar
                     mainId = try await MeetMainBot.setUpPrimary(name: name, avatar: avatar, dress: true, bots: roster)
                 case (.setup, .primary):
-                    mainId = try await MeetMainBot.setUpPrimary(name: nil, avatar: nil, dress: false, bots: roster)
+                    // web setUpPrimaryBot({ name, avatar: lookAvatarConfig('a') }):
+                    // the typed name, and back to the A:// mark.
+                    mainId = try await MeetMainBot.setUpPrimary(name: input.primaryName, avatar: nil, dress: true, dropLook: true, bots: roster)
                 }
                 roster = (try? await MeetAgentsAPI.roster()) ?? roster
                 state.mainBotId = mainId

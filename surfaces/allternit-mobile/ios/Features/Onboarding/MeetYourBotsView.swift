@@ -138,6 +138,8 @@ final class MeetYourBotsModel: ObservableObject {
     @Published var category = "all"
     @Published var mainChoice: MeetMainChoice = .primary
     @Published var lookName = ""
+    /// The name for A:// itself (web names[a]; starts as the existing A:// bot's name).
+    @Published var primaryName = ""
     @Published private(set) var routines: [MeetRoutineDraft] = []
     @Published private(set) var jobKey: String?
     @Published var jobText = ""
@@ -166,6 +168,9 @@ final class MeetYourBotsModel: ObservableObject {
             let bots = try await MeetAgentsAPI.roster()
             roster = bots
             rosterState = .loaded
+            if primaryName.isEmpty, let primary = bots.first(where: { $0.templateId == catalog.primary.id }) {
+                primaryName = primary.displayName
+            }
             // Bot Mode's first visit skips "main" (a main bot already exists).
             // Decided before the person leaves the start step only.
             if stepIndex == 0 { entry = MeetMainBot.find(bots) == nil ? .setup : .botmode }
@@ -189,7 +194,9 @@ final class MeetYourBotsModel: ObservableObject {
     var leader: String {
         if entry == .botmode { return mainBot?.displayName ?? "your main bot" }
         switch mainChoice {
-        case .primary: return catalog.primary.name
+        case .primary:
+            let name = primaryName.trimmingCharacters(in: .whitespacesAndNewlines)
+            return name.isEmpty ? catalog.primary.name : name
         case .look:
             let name = lookName.trimmingCharacters(in: .whitespacesAndNewlines)
             return name.isEmpty ? catalog.primary.name : name
@@ -243,6 +250,21 @@ final class MeetYourBotsModel: ObservableObject {
     func toggleRoutine(_ id: String) {
         guard let i = routines.firstIndex(where: { $0.id == id }) else { return }
         routines[i].enabled.toggle()
+    }
+
+    /// Dragged on the calendar (web moveDraft → moveRule): a new start time,
+    /// an interval keeping its window's length.
+    func moveRoutine(_ id: String, to minute: Int) {
+        guard let i = routines.firstIndex(where: { $0.id == id }), var rule = routines[i].rule else { return }
+        if rule.repeatKind == .interval {
+            let span = (rule.until ?? rule.at) - rule.at
+            rule.at = max(0, min(24 * 60 - 1 - span, minute))
+            rule.until = rule.at + span
+        } else {
+            rule.at = minute
+        }
+        routines[i].cron = rule.cron
+        routines[i].scheduleLabel = rule.label
     }
 
     func removeRoutine(_ id: String) {
@@ -326,7 +348,8 @@ final class MeetYourBotsModel: ObservableObject {
     private func input() -> MeetFinishInput {
         let text = jobText.trimmingCharacters(in: .whitespacesAndNewlines)
         return MeetFinishInput(
-            entry: entry, members: members, main: mainChoice, routines: routines,
+            entry: entry, members: members, main: mainChoice,
+            primaryName: { let n = primaryName.trimmingCharacters(in: .whitespacesAndNewlines); return n.isEmpty ? nil : n }(), routines: routines,
             job: jobKey.flatMap { key -> (botKey: String, text: String)? in text.isEmpty ? nil : (botKey: key, text: text) }
         )
     }
@@ -417,6 +440,8 @@ struct MeetYourBotsView: View {
     @State private var notificationsOn = false
     @State private var askingNotifications = false
     @State private var leadSheet: LeadSheet?
+    /// A vendor look picked in "Who leads": its connect runs in the step.
+    @StateObject private var vendor = MeetVendorSetup()
     @State private var editing: RoutineEditTarget?
     @State private var discOpen = false
     @State private var connectionsOpen = false
@@ -500,6 +525,12 @@ struct MeetYourBotsView: View {
             }
         }
         .task {
+            vendor.onConnected = { first, main, summary in
+                Task {
+                    await model.adoptLeader(BotSetupOutcome(botIds: [main ?? first].compactMap { $0 }, mainBotId: main, summary: summary))
+                    vendor.select(nil)
+                }
+            }
             hub.fetchAgentsIfNeeded()
             await model.loadRoster()
             let status = await PushNotificationManager.shared.authorizationStatus()
@@ -534,13 +565,14 @@ struct MeetYourBotsView: View {
             case .main:
                 MeetMainStage(field: leaderField, tile: AnyView(leaderTile(size: 150, live: true)), label: "\(model.leader) idle")
             case .routines:
-                MeetDayCalendar(
+                MeetRoutineCalendar(
                     items: model.routines.map { r in
-                        MeetDayCalendar.Item(id: r.id, title: r.title, rule: r.rule, enabled: r.enabled,
+                        MeetRoutineCalendar.Item(id: r.id, title: r.title, rule: r.rule, enabled: r.enabled,
                                              color: botColor(r.botKey), avatar: AnyView(tile(forKey: r.botKey, size: 16)))
                     },
                     onNew: { day, minute in addRoutine(on: day, at: minute) },
-                    onEdit: { id in if let r = model.routines.first(where: { $0.id == id }) { edit(r) } })
+                    onEdit: { id in if let r = model.routines.first(where: { $0.id == id }) { edit(r) } },
+                    onMove: { id, minute in model.moveRoutine(id, to: minute) })
             case .notifications:
                 ZStack {
                     MeetPalette.soft
@@ -632,7 +664,14 @@ struct MeetYourBotsView: View {
                 let n = model.members.count
                 primaryButton(n == 0 ? "Add at least one bot" : "Continue with \(n) bot\(n > 1 ? "s" : "")", disabled: n == 0) { model.next() }
             case .main:
-                primaryButton("Make \(model.leader) my main bot") { model.next() }
+                if vendor.lookId != nil {
+                    primaryButton(vendor.primaryLabel, disabled: vendor.busy || vendor.pack == nil) {
+                        if vendor.product == nil { leadSheet = .vendor } else { vendor.primary() }
+                    }
+                    if vendor.canCancel { ghostButton("Cancel") { vendor.cancel() } }
+                } else {
+                    primaryButton("Make \(model.leader) my main bot") { model.next() }
+                }
             case .routines:
                 primaryButton("Looks good") { model.next() }
             case .notifications:
@@ -730,6 +769,8 @@ struct MeetYourBotsView: View {
     private func leaderTile(size: CGFloat = 40, live: Bool = false) -> some View {
         if model.entry == .botmode, let main = model.mainBot {
             botTile(main, size: size)
+        } else if model.step == .main, let id = vendor.lookId {
+            MeetLookTile(id: id, size: size, live: live)
         } else {
             switch model.mainChoice {
             case .primary:
@@ -927,11 +968,13 @@ struct MeetYourBotsView: View {
 
             monoLabel("Allternit")
             picks {
-                pick(label: "A://", selected: model.mainChoice == .primary) {
+                pick(label: "A://", selected: vendor.lookId == nil && model.mainChoice == .primary) {
+                    vendor.select(nil)
                     model.mainChoice = .primary
                 } tile: { MeetLookTile(id: "a", size: 52, live: model.mainChoice == .primary) }
                 ForEach(model.catalog.looks) { look in
-                    pick(label: look.label, selected: isLook(look.id)) {
+                    pick(label: look.label, selected: vendor.lookId == nil && isLook(look.id)) {
+                        vendor.select(nil)
                         if model.lookName.isEmpty || model.catalog.looks.contains(where: { $0.label == model.lookName }) {
                             model.lookName = look.label
                         }
@@ -944,12 +987,13 @@ struct MeetYourBotsView: View {
             monoLabel("Bots you already use")
             picks {
                 ForEach(model.roster, id: \.id) { bot in
-                    pick(label: bot.displayName, selected: model.mainChoice == .bot(id: bot.id)) {
+                    pick(label: bot.displayName, selected: vendor.lookId == nil && model.mainChoice == .bot(id: bot.id)) {
+                        vendor.select(nil)
                         model.mainChoice = .bot(id: bot.id)
                     } tile: { botTile(bot, size: 52) }
                 }
                 ForEach(MeetLookTile.vendors, id: \.id) { v in
-                    pick(label: v.label, selected: false) { leadSheet = .vendor } tile: { MeetLookTile(id: v.id, size: 52) }
+                    pick(label: v.label, selected: vendor.lookId == v.id) { vendor.select(v.id) } tile: { MeetLookTile(id: v.id, size: 52, live: vendor.lookId == v.id) }
                         .disabled(model.rosterState != .loaded)
                 }
                 pick(label: "New bot", selected: false) { leadSheet = .new } tile: { actionTile("plus") }
@@ -959,21 +1003,27 @@ struct MeetYourBotsView: View {
             }
             .padding(.bottom, 12)
 
-            if case .look = model.mainChoice {
+            if let v = MeetLookTile.vendors.first(where: { $0.id == vendor.lookId }) {
+                MeetVendorPanel(setup: vendor, look: v, onStepByStep: { leadSheet = .vendor })
+            } else if model.mainChoice == .primary || isAnyLook {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Name").font(.system(size: 12.5, weight: .semibold)).foregroundStyle(MeetPalette.ink)
-                    TextField("Name", text: $model.lookName)
+                    TextField(model.mainChoice == .primary ? model.catalog.primary.name : "Name",
+                              text: model.mainChoice == .primary ? $model.primaryName : $model.lookName)
                         .textInputAutocapitalization(.words)
                         .font(.system(size: 14))
                         .padding(.horizontal, 12)
                         .frame(height: 44)
                         .background(MeetPalette.bg, in: RoundedRectangle(cornerRadius: 10))
                         .overlay(RoundedRectangle(cornerRadius: 10).stroke(MeetPalette.line))
+                        .onChange(of: model.primaryName) { _, v in if v.count > 24 { model.primaryName = String(v.prefix(24)) } }
+                        .onChange(of: model.lookName) { _, v in if v.count > 24 { model.lookName = String(v.prefix(24)) } }
                         .accessibilityLabel("Main bot name")
                     Text("Shown in the Bots rail and in every thread.").font(.system(size: 12)).foregroundStyle(MeetPalette.mut)
                 }
                 .padding(.bottom, 12)
             }
+            if vendor.lookId == nil || vendor.makeMain {
             DisclosureGroup(isExpanded: $discOpen) {
                 VStack(alignment: .leading, spacing: 10) {
                     disclosureRow("checkmark.circle", "Answers you directly, or hands a job to the bot that owns it and tells you who has it.")
@@ -988,6 +1038,7 @@ struct MeetYourBotsView: View {
                     .foregroundStyle(MeetPalette.ink)
             }
             .tint(MeetPalette.sub)
+            }
             if let note = model.setupNote {
                 Text(note).font(.system(size: 12.5)).foregroundStyle(MeetPalette.sub)
                     .fixedSize(horizontal: false, vertical: true)
@@ -1038,12 +1089,20 @@ struct MeetYourBotsView: View {
         editing = RoutineEditTarget(id: "new", draftId: nil, title: "", rule: rule, botKey: meetMainKey)
     }
 
+    private var isAnyLook: Bool {
+        if case .look = model.mainChoice { return true }
+        return false
+    }
+
     private func isLook(_ id: String) -> Bool {
         if case .look(let picked, _) = model.mainChoice { return picked == id }
         return false
     }
 
     private var mainBubble: String {
+        if let v = MeetLookTile.vendors.first(where: { $0.id == vendor.lookId }) {
+            return vendor.bubble(caption: v.label)
+        }
         switch model.mainChoice {
         case .bot(let id):
             let name = model.roster.first(where: { $0.id == id })?.displayName ?? "This bot"
@@ -1052,7 +1111,7 @@ struct MeetYourBotsView: View {
             let name = model.lookName.trimmingCharacters(in: .whitespaces)
             return (model.catalog.primary.welcome ?? "").replacingOccurrences(of: "{name}", with: name.isEmpty ? "A://" : name)
         case .primary:
-            return (model.catalog.primary.welcome ?? "").replacingOccurrences(of: "{name}", with: "A://")
+            return (model.catalog.primary.welcome ?? "").replacingOccurrences(of: "{name}", with: model.leader)
         }
     }
 
