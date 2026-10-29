@@ -722,26 +722,20 @@ struct HistorySidebarView: View {
 
     // MARK: - Bots rail
 
+    /// The desktop Bots rail, touch-sized (PhoneDrawer BotRail).
     private var botsRail: some View {
-        List {
-            railRowView(RailRow(id: "bots", label: "Bots", icon: "cpu", activeIcon: "cpu.fill",
-                                isActive: modeStore.activeTab == .agents, badge: botStore.waitingCount) { go(.agents) })
-            railRowView(RailRow(id: "projects", label: "Projects", icon: "folder", activeIcon: "folder.fill",
-                                isActive: modeStore.activeTab == .projects) { go(.projects) })
-            railRowView(RailRow(id: "artifacts", label: "Artifacts", icon: "doc.text", activeIcon: "doc.text.fill",
-                                isActive: modeStore.activeTab == .artifacts) { go(.artifacts) })
-            railRowView(RailRow(id: "automation", label: "Automation Tasks", icon: "clock", activeIcon: "clock.fill",
-                                isActive: modeStore.activeTab == .automation) { go(.automation) })
-            if !recentSessions.isEmpty {
-                sectionLabel("Threads")
-                ForEach(recentSessions) { recentRow($0) }
-            }
-            Color.clear.frame(height: 84).drawerRow()
-        }
-        .listStyle(.plain)
-        .scrollContentBackground(.hidden)
-        .environment(\.defaultMinListRowHeight, 0)
-        .refreshable { await store.load() }
+        BotsDrawerRail(
+            onOpen: { route in
+                if let route {
+                    botStore.pendingRoute = route
+                } else {
+                    botStore.pendingHome = true
+                }
+                go(.agents)
+            },
+            onOpenBot: { openBotChat($0) },
+            onOpenProjects: { go(.projects) }
+        )
     }
 
     // MARK: - Footer

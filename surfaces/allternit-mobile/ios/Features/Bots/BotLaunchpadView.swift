@@ -1,11 +1,12 @@
 import SwiftUI
 
 /// The Bots home on a phone (allternit-ai src/views/bots/BotLaunchpadView.tsx
-/// as the phone shell lays it out, phone.css `[data-launch-screen='bots']`):
-/// the Threads quick-view button, "Your team" live roster (List · Grid ·
-/// Deck), "What should the team work on?", the first-run card, templates,
-/// your projects and standing work, with the launch composer resting at the
-/// bottom ("To: A:// · new project", or one bot picked with its @).
+/// as the phone shell lays it out), kept calm on purpose (Eoj, 2026-10-29):
+/// "Your team" live roster (List · Grid · Deck), "What should the team work
+/// on?", and the launch composer resting at the bottom ("To: A:// · new
+/// project", or one bot picked with its @). Threads open from the header;
+/// projects and group chats live in the Bots rail; team templates are in
+/// the New bot sheet and the rail's ⋯ → Marketplace.
 struct BotLaunchpadView: View {
     @ObservedObject private var store = BotModeStore.shared
     @ObservedObject private var hub = AgentHubStore.shared
@@ -20,10 +21,8 @@ struct BotLaunchpadView: View {
     @State private var draft = ""
     @State private var busy = false
     @State private var hint: String?
-    @State private var routines: [AutomationRoutine] = []
     @State private var isNewBotPresented = false
     @State private var isTemplatesPresented = false
-    @State private var isThreadsPresented = false
     @State private var templateError: String?
 
     private var layout: RosterLayout { RosterLayout(rawValue: layoutRaw) ?? .list }
@@ -31,17 +30,12 @@ struct BotLaunchpadView: View {
     private var mainBot: AgentRecord? { bots.first(where: \.isMainBot) }
     private var mainBotName: String { mainBot?.botDisplayName ?? "A://" }
     private var selectedBot: AgentRecord? { selectedBotId.flatMap { id in bots.first { $0.id == id } } }
-    private var firstRun: Bool { bots.count <= 1 }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
                 roster
                 header
-                if firstRun { firstRunCard }
-                templatesLine
-                projectsSection
-                standingWorkSection
             }
             .padding(.horizontal, 14)
             .padding(.top, 8)
@@ -75,27 +69,10 @@ struct BotLaunchpadView: View {
             }
         }
         .sheet(isPresented: $isNewBotPresented) {
-            NewBotSheet { _ in Task { await refresh() } }
+            NewBotSheet(onBrowseTemplates: { isTemplatesPresented = true }) { _ in Task { await refresh() } }
         }
         .sheet(isPresented: $isTemplatesPresented) {
             AgentTemplateSheet(onConfirm: createFromTemplate)
-        }
-        .sheet(isPresented: $isThreadsPresented) {
-            NavigationStack {
-                ScrollView {
-                    BotThreadsPanel(botId: nil, greeting: "Welcome back.") { thread in
-                        isThreadsPresented = false
-                        if let sessionId = thread.currentSessionId {
-                            navigator.open(.chat(botId: thread.botId, sessionId: sessionId))
-                        }
-                    }
-                }
-                .background(Color("BgPanel"))
-                .toolbar {
-                    ToolbarItem(placement: .confirmationAction) { Button("Done") { isThreadsPresented = false } }
-                }
-            }
-            .presentationDetents([.medium, .large])
         }
         .alert("Couldn't create the bot", isPresented: Binding(
             get: { templateError != nil }, set: { if !$0 { templateError = nil } }
@@ -108,10 +85,6 @@ struct BotLaunchpadView: View {
 
     private var roster: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Spacer()
-                threadsButton
-            }
             HStack {
                 Text("YOUR TEAM")
                     .font(.system(size: 12, weight: .semibold))
@@ -136,33 +109,6 @@ struct BotLaunchpadView: View {
                     .foregroundColor(Color("TextTertiary"))
             }
         }
-    }
-
-    /// The floating Threads button (ThreadsQuickView), badged with what waits on you.
-    private var threadsButton: some View {
-        let waiting = store.waitingCount
-        return Button { isThreadsPresented = true } label: {
-            Image(systemName: "checklist")
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundColor(Color("TextSecondary"))
-                .frame(width: 36, height: 36)
-                .background(Circle().fill(Color("BgPanel").opacity(0.88)))
-                .overlay(Circle().stroke(Color("BorderSubtle")))
-                .shadow(color: .black.opacity(0.06), radius: 3, y: 1)
-                .overlay(alignment: .topTrailing) {
-                    if waiting > 0 {
-                        Text("\(waiting)")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 4)
-                            .frame(minWidth: 16, minHeight: 16)
-                            .background(Capsule().fill(Theme.statusWarning))
-                            .offset(x: 2, y: -2)
-                    }
-                }
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(waiting > 0 ? "Threads · \(waiting) waiting on you" : "Threads")
     }
 
     private var entries: [RosterEntry] {
@@ -410,187 +356,6 @@ struct BotLaunchpadView: View {
         .padding(.top, 8)
     }
 
-    // MARK: - First run, templates
-
-    private var firstRunCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Create your first bot")
-                    .font(.system(size: 13.5, weight: .bold))
-                    .foregroundColor(Color("TextPrimary"))
-                Text("A bot is a teammate with its own job, tools and computer. Start with a role:")
-                    .font(.system(size: 12.5))
-                    .foregroundColor(Color("TextSecondary"))
-            }
-            HStack(spacing: 6) {
-                ForEach(["Researcher", "Finance analyst", "Chief of staff"], id: \.self) { role in
-                    Button { isNewBotPresented = true } label: {
-                        Text(role)
-                            .font(.system(size: 12))
-                            .foregroundColor(Color("TextSecondary"))
-                            .lineLimit(1)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 4)
-                            .overlay(Capsule().stroke(Color("BorderStrong")))
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-        }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
-            .stroke(Color("BorderStrong"), style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
-    }
-
-    private var templatesLine: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(alignment: .firstTextBaseline, spacing: 10) {
-                sectionLabel("Start from a team")
-                Text("A project with its bots and plan already laid out")
-                    .font(.system(size: 12))
-                    .foregroundColor(Color("TextTertiary"))
-            }
-            HStack {
-                Spacer()
-                Button("Browse templates") { isTemplatesPresented = true }
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(Color("TextPrimary"))
-            }
-        }
-    }
-
-    // MARK: - Projects, standing work
-
-    private var projectsSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            sectionLabel("Your projects")
-            if store.projects.isEmpty {
-                emptyBox("No projects yet. Start one from a team template.")
-            } else {
-                card {
-                    ForEach(Array(store.projects.enumerated()), id: \.element.id) { index, project in
-                        Button { navigator.open(.project(project)) } label: {
-                            HStack(spacing: 8) {
-                                VStack(alignment: .leading, spacing: 1) {
-                                    Text(project.title)
-                                        .font(.system(size: 13, weight: .semibold))
-                                        .foregroundColor(Color("TextPrimary"))
-                                        .lineLimit(1)
-                                    Text(project.botIds.count == 1 ? "1 bot" : "\(project.botIds.count) bots")
-                                        .font(.system(size: 11.5))
-                                        .foregroundColor(Color("TextTertiary"))
-                                }
-                                Spacer(minLength: 8)
-                                countPill(project.counts.waiting, "waiting", Theme.statusWarning)
-                                countPill(project.counts.working, "working", Theme.statusInfo)
-                                if project.counts.waiting + project.counts.working == 0 {
-                                    Text("idle").font(.system(size: 11)).foregroundColor(Color("TextTertiary"))
-                                }
-                            }
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 10)
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        if index < store.projects.count - 1 { Divider().overlay(Color("BorderSubtle")) }
-                    }
-                }
-            }
-        }
-    }
-
-    private var standingRows: [(AutomationRoutine, AgentRecord)] {
-        let byId = Dictionary(bots.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
-        return routines
-            .filter { $0.isEnabled }
-            .compactMap { r in r.agentId.flatMap { byId[$0] }.map { (r, $0) } }
-            .sorted { ($0.0.nextRunAt ?? "~") < ($1.0.nextRunAt ?? "~") }
-            .prefix(5)
-            .map { $0 }
-    }
-
-    private var standingWorkSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            sectionLabel("Standing work")
-            let rows = standingRows
-            if rows.isEmpty {
-                emptyBox("No routines yet. A bot's routines run on their own and post in its main thread.")
-            } else {
-                card {
-                    ForEach(Array(rows.enumerated()), id: \.offset) { index, row in
-                        HStack(spacing: 8) {
-                            VStack(alignment: .leading, spacing: 1) {
-                                Text(Self.routineTitle(row.0.name))
-                                    .font(.system(size: 13, weight: .semibold))
-                                    .foregroundColor(Color("TextPrimary"))
-                                    .lineLimit(1)
-                                Text("\(row.1.botDisplayName) · routine")
-                                    .font(.system(size: 11.5))
-                                    .foregroundColor(Color("TextTertiary"))
-                            }
-                            Spacer(minLength: 8)
-                            Text(Self.nextRunLabel(row.0.nextRunAt))
-                                .font(.system(size: 11, design: .monospaced))
-                                .foregroundColor(Color("TextTertiary"))
-                        }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 10)
-                        if index < rows.count - 1 { Divider().overlay(Color("BorderSubtle")) }
-                    }
-                }
-            }
-        }
-    }
-
-    private static func routineTitle(_ name: String) -> String {
-        if name.hasPrefix("[bot:"), let end = name.firstIndex(of: "]") {
-            return String(name[name.index(after: end)...]).trimmingCharacters(in: .whitespaces)
-        }
-        return name
-    }
-
-    private static func nextRunLabel(_ iso: String?) -> String {
-        guard let iso, let date = BotTime.date(iso) else { return "not scheduled" }
-        let f = DateFormatter()
-        f.setLocalizedDateFormatFromTemplate("MMM d h:mm a")
-        return f.string(from: date)
-    }
-
-    private func sectionLabel(_ text: String) -> some View {
-        Text(text.uppercased())
-            .font(.system(size: 10.5, weight: .semibold))
-            .tracking(0.84)
-            .foregroundColor(Color("TextTertiary"))
-    }
-
-    private func emptyBox(_ text: String) -> some View {
-        Text(text)
-            .font(.system(size: 12.5))
-            .foregroundColor(Color("TextTertiary"))
-            .padding(12)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Color("BorderSubtle")))
-    }
-
-    private func card<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
-        VStack(spacing: 0, content: content)
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Color("BorderSubtle")))
-    }
-
-    @ViewBuilder
-    private func countPill(_ n: Int, _ label: String, _ tone: Color) -> some View {
-        if n > 0 {
-            Text("\(n) \(label)")
-                .font(.system(size: 10.5, weight: .semibold))
-                .foregroundColor(tone)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 1)
-                .background(Capsule().fill(tone.opacity(0.13)))
-        }
-    }
-
     // MARK: - Actions
 
     private var ownBots: [AgentRecord] {
@@ -619,9 +384,6 @@ struct BotLaunchpadView: View {
 
     private func refresh() async {
         await store.refreshAll()
-        if let rows = try? await AutomationClient.shared.listRoutines(recentRuns: 0) {
-            routines = rows.filter { $0.scheduleType == "cron" }
-        }
     }
 
     private func createFromTemplate(_ template: AgentTemplate) {

@@ -50,6 +50,7 @@ struct BotsModeRootView: View {
     @StateObject private var auth = AuthManager.shared
     @StateObject private var navigator = BotNavigator()
     @State private var isConnectionsPresented = false
+    @State private var isThreadsPresented = false
 
     /// Opens the shell drawer (the edge swipe also works).
     var onOpenSidebar: (() -> Void)?
@@ -66,13 +67,26 @@ struct BotsModeRootView: View {
                 .toolbar(.hidden, for: .navigationBar)
                 .safeAreaInset(edge: .top, spacing: 0) {
                     PhoneHeader(title: "Bots", wideSides: true, onMenu: { onOpenSidebar?() }) {
+                        // Threads (ThreadsQuickView), badged with what waits on you.
+                        PhoneIconButton(systemName: "checklist",
+                                        label: store.waitingCount > 0 ? "Threads · \(store.waitingCount) waiting on you" : "Threads") {
+                            isThreadsPresented = true
+                        }
+                        .overlay(alignment: .topTrailing) {
+                            if store.waitingCount > 0 {
+                                Text("\(store.waitingCount)")
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .foregroundColor(.white)
+                                    .padding(.horizontal, 4)
+                                    .frame(minWidth: 16, minHeight: 16)
+                                    .background(Capsule().fill(Theme.statusWarning))
+                                    .offset(x: -4, y: 4)
+                                    .allowsHitTesting(false)
+                            }
+                        }
                         // Connections: the apps your bots can use.
                         PhoneIconButton(systemName: "square.grid.2x2", label: "Connections") {
                             isConnectionsPresented = true
-                        }
-                        // Meet your bots again (the rail's ⋯ has the same entry).
-                        PhoneIconButton(systemName: "arrow.counterclockwise", label: "Replay intro") {
-                            BotsIntroStore.shared.replay()
                         }
                     }
                 }
@@ -85,11 +99,29 @@ struct BotsModeRootView: View {
         .sheet(isPresented: $isConnectionsPresented) {
             ConnectorsListView()
         }
+        .sheet(isPresented: $isThreadsPresented) {
+            NavigationStack {
+                ScrollView {
+                    BotThreadsPanel(botId: nil, greeting: "Welcome back.") { thread in
+                        isThreadsPresented = false
+                        if let sessionId = thread.currentSessionId {
+                            navigator.open(.chat(botId: thread.botId, sessionId: sessionId))
+                        }
+                    }
+                }
+                .background(Color("BgPanel"))
+                .toolbar {
+                    ToolbarItem(placement: .confirmationAction) { Button("Done") { isThreadsPresented = false } }
+                }
+            }
+            .presentationDetents([.medium, .large])
+        }
         .onAppear(perform: openPendingBot)
         .onChange(of: store.pendingOpenBotId) { _, _ in openPendingBot() }
         .onChange(of: store.pendingNewThread) { _, _ in openPendingBot() }
         .onChange(of: store.pendingOpenPhoneBotId) { _, _ in openPendingBot() }
         .onChange(of: store.pendingRoute) { _, _ in openPendingBot() }
+        .onChange(of: store.pendingHome) { _, _ in openPendingBot() }
     }
 
     private func openPendingBot() {
@@ -100,6 +132,10 @@ struct BotsModeRootView: View {
         if let botId = store.pendingOpenPhoneBotId {
             store.pendingOpenPhoneBotId = nil
             navigator.path = [.phone(botId)]
+        }
+        if store.pendingHome {
+            store.pendingHome = false
+            navigator.path = []
         }
         if let route = store.pendingRoute {
             store.pendingRoute = nil

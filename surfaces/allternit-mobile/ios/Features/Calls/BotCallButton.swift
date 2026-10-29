@@ -8,7 +8,7 @@ import SwiftUI
 /// A tap opens the list of people to call; the call screen takes over from
 /// there ("Calling…" with Cancel).
 struct BotCallButton: View {
-    enum Style { case toolbar, capsule }
+    enum Style { case toolbar, capsule, round }
 
     let botId: String
     var style: Style = .toolbar
@@ -26,6 +26,10 @@ struct BotCallButton: View {
                 switch style {
                 case .toolbar:
                     Image(systemName: "phone")
+                case .round:
+                    Image(systemName: "phone")
+                        .font(.system(size: 15, weight: .semibold))
+                        .modifier(ThreadRoundButton())
                 case .capsule:
                     Label("Call", systemImage: "phone")
                         .font(.subheadline.weight(.medium))

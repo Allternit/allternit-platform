@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// A bot chat (allternit-ai src/views/bots/BotChatSessionView.tsx), hosted
 /// on the shared chat stack: `ChatContentView` + `ChatViewModel` (agent
@@ -26,6 +27,7 @@ struct BotChatSessionView: View {
     @State private var deckTab: DeckTab = .thread
     @State private var actionError: String? = nil
     @State private var isActing = false
+    @Environment(\.dismiss) private var dismiss
 
     private var isMainChat: Bool { explicitSessionId == nil }
 
@@ -40,8 +42,11 @@ struct BotChatSessionView: View {
             content
         }
         .background(Color("BgPrimary"))
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar { toolbar }
+        // The phone thread header (ThreadHeader, phone): round Back · bot
+        // chip · ⋯, drawn by the view instead of the system bar.
+        .toolbar(.hidden, for: .navigationBar)
+        .safeAreaInset(edge: .top, spacing: 0) { threadTop }
+        .background(KeepsSwipeBack())
         .task {
             status.subscribe(botId: bot.id)
             desktop.fetchStatusIfNeeded(botId: bot.id)
@@ -180,53 +185,73 @@ struct BotChatSessionView: View {
         return ("Ready", false, false)
     }
 
-    @ToolbarContentBuilder
-    private var toolbar: some ToolbarContent {
-        ToolbarItem(placement: .principal) {
-            let live = liveText
-            Button {
-                deckTab = .bot
-            } label: {
-                HStack(spacing: 8) {
-                    BotAvatarView(bot: bot, size: 24)
-                        .overlay(alignment: .bottomTrailing) {
-                            Circle()
-                                .fill(live.waiting ? Theme.statusWarning : live.live ? Theme.statusInfo : Color("TextTertiary"))
-                                .frame(width: 8, height: 8)
-                                .overlay(Circle().stroke(Color("BgPanel"), lineWidth: 2))
-                                .offset(x: 2, y: 2)
-                        }
-                    VStack(alignment: .leading, spacing: 0) {
-                        Text(bot.botDisplayName)
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundColor(Color("TextPrimary"))
-                            .lineLimit(1)
-                        HStack(spacing: 4) {
-                            if live.live {
-                                Circle()
-                                    .fill(live.waiting ? Theme.statusWarning : Theme.statusInfo)
-                                    .frame(width: 6, height: 6)
-                            }
-                            Text(live.text).lineLimit(1)
-                        }
-                        .font(.system(size: 11))
-                        .foregroundColor(live.waiting ? Theme.statusWarning : Color("TextTertiary"))
-                    }
-                }
-                .padding(.leading, 6)
-                .padding(.trailing, 14)
-                .padding(.vertical, 4)
-                .frame(minHeight: 40)
-                .background(Capsule().fill(Color("BgPanel").opacity(0.88)))
-                .overlay(Capsule().stroke(Color("BorderSubtle")))
+    /// Round Back, the bot chip in the middle (avatar, name, what it is
+    /// doing; a tap opens the Bot tab), and ⋯ with everything else.
+    private var threadTop: some View {
+        HStack(spacing: 8) {
+            Button { dismiss() } label: {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 16, weight: .bold))
+                    .modifier(ThreadRoundButton())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Open \(bot.botDisplayName), \(live.text)")
+            .accessibilityLabel("Back")
+            Spacer(minLength: 0)
+            botChip
+            Spacer(minLength: 0)
+            HStack(spacing: 6) {
+                BotCallButton(botId: bot.id, style: .round)
+                threadMenu
+            }
+            .frame(minWidth: 40, alignment: .trailing)
         }
-        ToolbarItemGroup(placement: .topBarTrailing) {
-            BotCallButton(botId: bot.id)
-            threadMenu
+        .padding(.horizontal, 12)
+        .padding(.top, 4)
+        .padding(.bottom, 6)
+        .background(Color("BgPrimary"))
+    }
+
+    private var botChip: some View {
+        let live = liveText
+        return Button {
+            deckTab = .bot
+        } label: {
+            HStack(spacing: 8) {
+                BotAvatarView(bot: bot, size: 28)
+                    .overlay(alignment: .bottomTrailing) {
+                        Circle()
+                            .fill(live.waiting ? Theme.statusWarning : live.live ? Theme.statusInfo : Color("TextTertiary"))
+                            .frame(width: 8, height: 8)
+                            .overlay(Circle().stroke(Color("BgPanel"), lineWidth: 2))
+                            .offset(x: 2, y: 2)
+                    }
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(bot.botDisplayName)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(Color("TextPrimary"))
+                        .lineLimit(1)
+                    HStack(spacing: 4) {
+                        if live.live {
+                            Circle()
+                                .fill(live.waiting ? Theme.statusWarning : Theme.statusInfo)
+                                .frame(width: 6, height: 6)
+                        }
+                        Text(live.text).lineLimit(1)
+                    }
+                    .font(.system(size: 11))
+                    .foregroundColor(live.waiting ? Theme.statusWarning : Color("TextTertiary"))
+                }
+            }
+            .padding(.leading, 6)
+            .padding(.trailing, 14)
+            .padding(.vertical, 4)
+            .frame(minHeight: 40)
+            .background(Capsule().fill(Color("BgPanel").opacity(0.88)))
+            .overlay(Capsule().stroke(Color("BorderSubtle")))
+            .shadow(color: .black.opacity(0.06), radius: 4, y: 1)
         }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Open \(bot.botDisplayName), \(live.text)")
     }
 
     /// ⋯: everything else — computer, switch thread, the stage, Go ahead /
@@ -256,6 +281,8 @@ struct BotChatSessionView: View {
             }
         } label: {
             Image(systemName: "ellipsis")
+                .font(.system(size: 16, weight: .bold))
+                .modifier(ThreadRoundButton())
         }
         .disabled(isActing)
         .accessibilityLabel("Thread actions")
@@ -306,6 +333,41 @@ struct BotChatSessionView: View {
         } catch is CancellationError {
         } catch {
             resolveError = FriendlyErrorMessage.from(error.localizedDescription)
+        }
+    }
+}
+
+/// The phone thread header's round buttons (PHONE_ROUND_BUTTON): 40pt,
+/// hairline, the panel at 88%, a soft shadow.
+struct ThreadRoundButton: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .foregroundColor(Color("TextPrimary"))
+            .frame(width: 40, height: 40)
+            .background(Circle().fill(Color("BgPanel").opacity(0.88)))
+            .overlay(Circle().stroke(Color("BorderSubtle")))
+            .shadow(color: .black.opacity(0.06), radius: 4, y: 1)
+            .frame(width: 44, height: 44)
+            .contentShape(Circle())
+    }
+}
+
+/// Keeps the edge swipe back working on a pushed screen that hides the
+/// system bar (SwiftUI turns it off with the bar). Only pops when there is
+/// somewhere to go back to.
+struct KeepsSwipeBack: UIViewControllerRepresentable {
+    func makeUIViewController(context: Context) -> Controller { Controller() }
+    func updateUIViewController(_ controller: Controller, context: Context) {}
+
+    final class Controller: UIViewController, UIGestureRecognizerDelegate {
+        override func viewWillAppear(_ animated: Bool) {
+            super.viewWillAppear(animated)
+            navigationController?.interactivePopGestureRecognizer?.isEnabled = true
+            navigationController?.interactivePopGestureRecognizer?.delegate = self
+        }
+
+        func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+            (navigationController?.viewControllers.count ?? 0) > 1
         }
     }
 }

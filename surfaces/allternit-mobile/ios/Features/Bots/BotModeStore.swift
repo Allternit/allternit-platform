@@ -36,6 +36,8 @@ final class BotModeStore: ObservableObject {
     /// Groups, Computers…, the web rail's rows); `BotsModeRootView` pushes it
     /// over the Bots home.
     @Published var pendingRoute: BotRoute?
+    /// Set by the drawer's Home: back to the Bots home (root of the stack).
+    @Published var pendingHome = false
 
     private let hub = AgentHubStore.shared
     private let client = BotModeClient.shared

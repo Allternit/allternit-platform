@@ -59,6 +59,9 @@ enum BotSetupMaker {
 // MARK: - New bot
 
 struct NewBotSheet: View {
+    /// Shows "Start from a team": a project with its bots and plan laid out
+    /// (the Bots home moved its templates row here).
+    var onBrowseTemplates: (() -> Void)? = nil
     var onCreated: (BotSetupOutcome) -> Void
 
     @Environment(\.dismiss) private var dismiss
@@ -126,6 +129,26 @@ struct NewBotSheet: View {
                 }
                 if let error {
                     Section { Text(error).font(.footnote).foregroundColor(Theme.statusError) }
+                }
+                if let onBrowseTemplates {
+                    Section {
+                        Button {
+                            dismiss()
+                            // After this sheet is gone, so the next one can present.
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { onBrowseTemplates() }
+                        } label: {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Browse team templates")
+                                    .foregroundColor(Color("TextPrimary"))
+                                Text("A project with its bots and plan already laid out")
+                                    .font(.footnote)
+                                    .foregroundColor(Color("TextSecondary"))
+                            }
+                        }
+                        .disabled(busy)
+                    } header: {
+                        Text("Or start from a team")
+                    }
                 }
                 Section {
                     Label("Nothing is sent, posted or paid without your approval.", systemImage: "lock")
