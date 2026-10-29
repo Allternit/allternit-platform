@@ -14,8 +14,12 @@ import SwiftUI
 ///   greeting, "Run a command or describe a task to start coding.", the
 ///   Show usage pill / usage card, and the terminal-style prompt with its
 ///   deck row on the bottom edge.
-/// - A thread: the session row and the shared chat feed (CodeThreadChatView).
-/// - The terminal (PhoneCodeTerminal): one dark surface, header included.
+/// - A thread: the session row and the shared chat feed (CodeThreadChatView),
+///   or, with Terminal on, the same thread drawn as a terminal session (dark,
+///   `❯` prompts, `●` tool lines) with the Code prompt under it. The choice
+///   is kept per thread.
+/// - The shell (PhoneCodeTerminal, the terminal view's Shell button and the
+///   panes menu): the computer's raw shell, one dark surface, header included.
 ///
 /// Threads are tagged `origin_surface='code'` on create because the app
 /// mode is `.code` here (ChatViewModel's session context).
@@ -31,7 +35,11 @@ struct CodeModeView: View {
     @State private var thread: CodeThreadTarget? = nil
     /// The backend session of the thread on screen (set once it exists).
     @State private var activeSessionId: String? = nil
-    @State private var terminalOpen = false
+    /// The computer's raw shell is on screen.
+    @State private var shellOpen = false
+    /// Threads shown as a terminal session: session ids, or a fresh thread's
+    /// key until its session exists.
+    @State private var terminalKeys = Set(UserDefaults.standard.stringArray(forKey: CodeModeView.terminalKeysKey) ?? [])
     @State private var overviewKind: CodeOverviewKind? = nil
     @State private var paneSheet: PaneSheet? = nil
     @State private var isRenamePresented = false
@@ -69,6 +77,17 @@ struct CodeModeView: View {
 
     private var inThread: Bool { thread != nil }
 
+    static let terminalKeysKey = "allternit:code:terminal-threads"
+
+    /// The thread on screen's key in `terminalKeys`.
+    private var threadKey: String? { thread.map { activeSessionId ?? $0.id.uuidString } }
+
+    /// The thread on screen is drawn as a terminal session.
+    private var terminalLook: Bool { threadKey.map(terminalKeys.contains) ?? false }
+
+    /// Dark chrome: the shell, or a thread in its terminal look.
+    private var darkChrome: Bool { shellOpen || terminalLook }
+
     var body: some View {
         VStack(spacing: 0) {
             ConnectComputerView()
@@ -82,21 +101,24 @@ struct CodeModeView: View {
                             folder: folder,
                             onSessionChanged: sessionChanged,
                             onRename: beginRename,
-                            onArchive: archiveActive
+                            onArchive: archiveActive,
+                            terminal: terminalLook,
+                            onLeaveTerminal: { setTerminalLook(false) },
+                            onOpenShell: { shellOpen = true }
                         )
                         .id(thread.id)
                     } else {
                         launchpad
                     }
                 }
-                .opacity(terminalOpen ? 0 : 1)
-                .allowsHitTesting(!terminalOpen)
-                if terminalOpen {
+                .opacity(shellOpen ? 0 : 1)
+                .allowsHitTesting(!shellOpen)
+                if shellOpen {
                     PhoneCodeTerminal(store: terminalStore)
                 }
             }
         }
-        .background((terminalOpen ? TerminalPalette.background : Color("BgPrimary")).ignoresSafeArea())
+        .background((darkChrome ? TerminalPalette.background : Color("BgPrimary")).ignoresSafeArea())
         .task {
             await instanceStore.refreshIfNeeded()
             await loadSessions()
@@ -121,7 +143,7 @@ struct CodeModeView: View {
                 sessions: codeSessions,
                 terminals: terminalStore,
                 onOpenSession: { session in
-                    terminalOpen = false
+                    shellOpen = false
                     open(sessionId: session.id)
                 },
                 onNew: newThread,
@@ -159,7 +181,7 @@ struct CodeModeView: View {
     // MARK: - Header
 
     private var header: some View {
-        let ink = terminalOpen ? TerminalPalette.foreground : Color("TextPrimary")
+        let ink = darkChrome ? TerminalPalette.foreground : Color("TextPrimary")
         return HStack(spacing: 0) {
             Button(action: openDrawer) {
                 Image(systemName: "line.3.horizontal")
@@ -171,17 +193,17 @@ struct CodeModeView: View {
 
             Spacer()
 
-            if inThread && !terminalOpen {
+            if inThread && !shellOpen {
                 panesMenu(ink: ink)
             }
             CodeOverviewCountButton(
-                count: terminalOpen ? terminalStore.tiles.count : codeSessions.count,
-                noun: terminalOpen ? "terminal sessions" : "code threads",
+                count: shellOpen ? terminalStore.tiles.count : codeSessions.count,
+                noun: shellOpen ? "terminal sessions" : "code threads",
                 tint: ink
             ) {
-                overviewKind = terminalOpen ? .terminals : .threads
+                overviewKind = shellOpen ? .terminals : .threads
             }
-            if !terminalOpen && !inThread {
+            if !shellOpen && !inThread {
                 Button(action: newThread) {
                     Image(systemName: "square.and.pencil")
                         .font(.system(size: 19))
@@ -190,18 +212,26 @@ struct CodeModeView: View {
                 }
                 .accessibilityLabel("New code thread")
             }
-            Button(action: { terminalOpen.toggle() }) {
-                Image(systemName: terminalOpen ? "xmark" : "apple.terminal")
+            Button(action: {
+                if shellOpen {
+                    shellOpen = false
+                } else if terminalLook {
+                    setTerminalLook(false)
+                } else {
+                    openTerminal()
+                }
+            }) {
+                Image(systemName: shellOpen ? "xmark" : (terminalLook ? "bubble.left.and.bubble.right" : "apple.terminal"))
                     .font(.system(size: 18))
                     .foregroundColor(ink)
                     .frame(width: 44, height: 44)
             }
-            .accessibilityLabel(terminalOpen ? "Close terminal" : "Open terminal")
-            .accessibilityAddTraits(terminalOpen ? .isSelected : [])
+            .accessibilityLabel(shellOpen ? "Close shell" : (terminalLook ? "Show chat" : "Open terminal"))
+            .accessibilityAddTraits(terminalLook ? .isSelected : [])
         }
         .overlay {
-            if terminalOpen {
-                Text("Terminal")
+            if shellOpen {
+                Text("Shell")
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundColor(ink)
                     .allowsHitTesting(false)
@@ -209,7 +239,7 @@ struct CodeModeView: View {
         }
         .padding(.horizontal, 6)
         .frame(height: 52)
-        .background(terminalOpen ? TerminalPalette.background : Color("BgPrimary"))
+        .background(darkChrome ? TerminalPalette.background : Color("BgPrimary"))
     }
 
     /// The session's panes and actions as one header button
@@ -218,7 +248,10 @@ struct CodeModeView: View {
         Menu {
             Section("Panes") {
                 Button(action: {}) { Label("Session", systemImage: "sidebar.left") }
-                Button(action: { terminalOpen = true }) { Label("Terminal", systemImage: "apple.terminal") }
+                Button(action: { setTerminalLook(!terminalLook) }) {
+                    Label(terminalLook ? "Chat" : "Terminal", systemImage: terminalLook ? "bubble.left.and.bubble.right" : "apple.terminal")
+                }
+                Button(action: { shellOpen = true }) { Label("Shell", systemImage: "chevron.left.forwardslash.chevron.right") }
                 if activeSessionId != nil {
                     Button(action: { paneSheet = .changes }) { Label("Changes", systemImage: "plus.forwardslash.minus") }
                 }
@@ -309,7 +342,7 @@ struct CodeModeView: View {
                     thread = CodeThreadTarget(sessionId: nil, initialPrompt: prompt)
                     activeSessionId = nil
                 },
-                onOpenTerminal: { terminalOpen = true },
+                onOpenTerminal: openTerminal,
                 onAttach: {
                     // Attachments live in the thread composer: carry the
                     // draft there and open a fresh thread.
@@ -338,6 +371,27 @@ struct CodeModeView: View {
         }
     }
 
+    /// Terminal from the launchpad opens a fresh thread in its terminal
+    /// look; in a thread it flips that thread.
+    private func openTerminal() {
+        if thread == nil {
+            thread = CodeThreadTarget(sessionId: nil)
+            activeSessionId = nil
+        }
+        setTerminalLook(true)
+    }
+
+    private func setTerminalLook(_ on: Bool) {
+        guard let key = threadKey else { return }
+        if on { terminalKeys.insert(key) } else { terminalKeys.remove(key) }
+        saveTerminalKeys()
+    }
+
+    private func saveTerminalKeys() {
+        // Fresh-thread keys (UUIDs) don't outlive the launch; session ids do.
+        UserDefaults.standard.set(terminalKeys.filter { UUID(uuidString: $0) == nil }.sorted(), forKey: Self.terminalKeysKey)
+    }
+
     /// New code thread: back to the launchpad (the web's `setActiveSession(null)`).
     private func newThread() {
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
@@ -354,6 +408,11 @@ struct CodeModeView: View {
     private func sessionChanged(_ id: String?) {
         guard let id, id != activeSessionId else { return }
         let isNew = activeSessionId == nil
+        if isNew, let fresh = thread?.id.uuidString, terminalKeys.remove(fresh) != nil {
+            // The fresh thread's terminal look moves to its new session.
+            terminalKeys.insert(id)
+            saveTerminalKeys()
+        }
         activeSessionId = id
         if isNew, CodePermissionMode(rawValue: permissionRaw) != .manual {
             applyPermission(to: id)
@@ -450,7 +509,7 @@ struct CodeModeView: View {
     }
 
     #if DEBUG
-    /// `-open-code-thread`, `-open-code-thread-id <id>`, `-open-code-terminal`,
+    /// `-open-code-thread`, `-open-code-thread-id <id>`, `-open-code-terminal`, `-open-code-shell`,
     /// `-open-code-overview`, `-open-code-usage`, `-mesh-proxy-selfcheck`
     /// (DEBUG only): land on a state for screenshot verification. One-shot.
     private func applyDebugArgs() {
@@ -463,7 +522,10 @@ struct CodeModeView: View {
             open(sessionId: threadId)
         }
         if launchArgumentEnabled("open-code-terminal") {
-            terminalOpen = true
+            openTerminal()
+        }
+        if launchArgumentEnabled("open-code-shell") {
+            shellOpen = true
         }
         if launchArgumentEnabled("open-code-overview") {
             overviewKind = .threads

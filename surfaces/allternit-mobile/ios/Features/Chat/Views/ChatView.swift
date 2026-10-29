@@ -83,6 +83,14 @@ struct ChatContentView: View {
     /// deck, the template gallery) and the compact deck in a session. Other
     /// hosts get the plain composer.
     var launchStyle: Bool = false
+    /// Code's Terminal choice: this same thread drawn as a terminal session
+    /// (dark surface, `❯` prompts, `●` tool lines) with the Code prompt and
+    /// its status row in place of the chat composer.
+    var terminalLook: Bool = false
+    /// The working folder and branch for the terminal's header and status row.
+    var codeFolder: CodeFolderInfo? = nil
+    /// The status row's "Chat" item on the terminal view.
+    var onLeaveTerminal: (() -> Void)? = nil
 
     @EnvironmentObject private var modeStore: AppModeStore
     @EnvironmentObject private var agentModeStore: AgentModeStore
@@ -133,9 +141,9 @@ struct ChatContentView: View {
         return sessionContext.agentId == nil ? modelStore.selectedModelId : nil
     }
 
-    /// Code threads render as a terminal session (dark, monospace, `❯`
-    /// prompts) instead of chat messages.
-    private var isTerminal: Bool { modeStore.mode == .code }
+    /// Code's terminal view renders the thread as a terminal session (dark,
+    /// monospace, `❯` prompts) instead of chat messages.
+    private var isTerminal: Bool { terminalLook }
 
     private var showsLaunch: Bool {
         launchStyle && viewModel.messages.isEmpty && !isTerminal
@@ -309,8 +317,8 @@ struct ChatContentView: View {
                         if viewModel.messages.isEmpty {
                             if isTerminal {
                                 // Code thread empty state: terminal boot header.
-                                TerminalEmptyState()
-                                    .padding(.top, 48)
+                                TerminalEmptyState(folder: codeFolder)
+                                    .padding(.top, 24)
                             } else {
                                 ChatLaunchGreeting()
                                     .padding(.top, 60)
@@ -359,13 +367,35 @@ struct ChatContentView: View {
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
 
-            composer(deck: launchStyle ? .compact : .none)
-                .padding(.horizontal, 14)
-                .padding(.top, 6)
-                .padding(.bottom, 8)
-                .background(Color("BgPrimary"))
+            if isTerminal {
+                terminalComposer
+            } else {
+                composer(deck: launchStyle ? .compact : .none)
+                    .padding(.horizontal, 14)
+                    .padding(.top, 6)
+                    .padding(.bottom, 8)
+                    .background(Color("BgPrimary"))
+            }
         }
-        .background(Color("BgPrimary"))
+        .background(isTerminal ? TerminalPalette.background : Color("BgPrimary"))
+    }
+
+    /// The terminal view's prompt: the Code `❯` line and its status row on
+    /// the dark surface, sending into this thread; Stop while a turn runs.
+    private var terminalComposer: some View {
+        CodeLaunchComposer(
+            text: $inputText,
+            folder: codeFolder,
+            terminal: true,
+            isRunning: viewModel.isStreaming,
+            onStop: { viewModel.stopStreaming() },
+            onSend: { text in
+                viewModel.sendMessage(text, runtimeModelId: modelForSend, effort: modelStore.effortForSend)
+            },
+            onOpenTerminal: { onLeaveTerminal?() }
+        )
+        .padding(.bottom, 4)
+        .background(TerminalPalette.background)
     }
 
     private func composer(deck: ComposerDeckVariant) -> some View {
@@ -615,110 +645,309 @@ struct TransientErrorBanner: View {
 
 // MARK: - Terminal session (code threads)
 
-/// Terminal-styled feed row for code threads: `❯` prompt line for the user;
-/// for the assistant a dim thought stream (`✻ thinking`), `$`-prefixed
-/// tool-call status lines, then the streamed output with a blinking block
-/// cursor on the tail. No bubbles — a terminal session, not a chat.
+/// Colours of the thread's terminal view: Terminal.app's dark profile (the
+/// shell's palette) with the gizzi coral for prompts and live work.
+@MainActor
+private enum TerminalInk {
+    static let text = TerminalPalette.foreground
+    static let dim = TerminalPalette.secondary
+    static let coral = GizziCodeWordmark.coral
+    static let ok = Color(hex: "#7EC699")
+    static let error = Color(hex: "#F2777A")
+    static let font = Font.system(size: 15, design: .monospaced)
+    static let small = Font.system(size: 13, design: .monospaced)
+    /// 15pt text on an 18pt line (line height 1.2, like the shell).
+    static let lineSpacing: CGFloat = 3
+}
+
+/// One turn of a code thread drawn the way gizzi code (and Claude Code)
+/// prints it: `❯ prompt` for the user; for the agent a dim `✻ Thinking`
+/// block, each tool call as `● Tool(arg)` with a `⎿` result line, the reply
+/// text behind `●`, code fences indented and dimmed, errors in red, and a
+/// `✻ Working… 12s` line while the turn runs.
 private struct TerminalMessageRow: View {
     let message: MessageRecord
     let isStreamingTail: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
             if message.role == "user" {
-                HStack(alignment: .top, spacing: 8) {
-                    Text("❯")
-                        .foregroundColor(TerminalTheme.accent)
+                bullet("❯", color: TerminalInk.coral, weight: .bold) {
                     Text(message.content)
-                        .foregroundColor(TerminalTheme.text)
+                        .foregroundColor(TerminalInk.text)
                 }
             } else {
-                // Thought stream — the agent's reasoning, dimmed like
-                // commented terminal output.
                 if !message.reasoning.isEmpty {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("✻ thinking")
-                            .foregroundColor(TerminalTheme.dim)
-                        Text(message.reasoning)
-                            .font(.system(size: 12, design: .monospaced))
-                            .foregroundColor(TerminalTheme.dim)
+                    bullet("✻", color: TerminalInk.dim) {
+                        Text(message.reasoning.trimmingCharacters(in: .whitespacesAndNewlines))
+                            .italic()
+                            .foregroundColor(TerminalInk.dim)
+                            .lineLimit(isStreamingTail && message.content.isEmpty ? nil : 4)
                     }
                 }
 
-                // Tool-call status, shell-command style.
-                if let tool = message.toolStatus {
-                    HStack(spacing: 6) {
-                        Text("$")
-                            .foregroundColor(TerminalTheme.accent)
-                        Text(tool.text)
-                            .foregroundColor(TerminalTheme.text.opacity(0.85))
-                            .lineLimit(2)
-                        Spacer(minLength: 4)
-                        Text(toolGlyph(tool.state))
-                            .foregroundColor(tool.state == .failed ? Theme.statusWarning : TerminalTheme.accent)
-                    }
-                    .font(.system(size: 12, design: .monospaced))
+                ForEach(message.toolCalls.filter { !$0.isTodo }) { call in
+                    TerminalToolLines(call: call)
+                }
+                if message.toolCalls.isEmpty, let status = message.toolStatus {
+                    TerminalToolLines(status: status)
                 }
 
                 if !message.content.isEmpty {
-                    Text(message.content)
-                        .foregroundColor(TerminalTheme.text.opacity(0.85))
+                    bullet("●", color: TerminalInk.text) {
+                        TerminalReplyText(text: message.content)
+                    }
                 }
+
+                if let error = message.error {
+                    bullet("●", color: TerminalInk.error) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(error.title)
+                                .foregroundColor(TerminalInk.error)
+                            if !error.detail.isEmpty {
+                                Text("⎿  \(error.detail)")
+                                    .font(TerminalInk.small)
+                                    .foregroundColor(TerminalInk.dim)
+                            }
+                        }
+                    }
+                }
+
                 if isStreamingTail {
-                    TerminalCursor()
+                    TerminalWorkingLine(since: message.toolCalls.first?.startedAt)
                 }
             }
         }
-        .font(.system(size: 14, design: .monospaced))
+        .font(TerminalInk.font)
+        .lineSpacing(TerminalInk.lineSpacing)
         .textSelection(.enabled)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 16)
+        .padding(.horizontal, 14)
     }
 
-    private func toolGlyph(_ state: MessageRecord.ToolStatus.State) -> String {
-        switch state {
-        case .running: return "…"
-        case .done: return "✓"
-        case .failed: return "✗"
+    private func bullet<Content: View>(_ glyph: String, color: Color, weight: Font.Weight = .regular, @ViewBuilder content: () -> Content) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(glyph)
+                .font(.system(size: 15, weight: weight, design: .monospaced))
+                .foregroundColor(color)
+                .accessibilityHidden(true)
+            content()
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 }
 
-/// Boot-style empty state for code threads — a terminal session header in
-/// place of the Home greeting. Read-only output lines: no dangling prompt,
-/// so it never looks like a field waiting for input.
-private struct TerminalEmptyState: View {
+/// `● Tool(arg)` and its `⎿` result line: coral dot while it runs, green
+/// when done, red when it failed (with the error).
+private struct TerminalToolLines: View {
+    let name: String
+    let arg: String
+    let state: ToolCallRecord.State
+    let result: String
+    let startedAt: Date?
+
+    init(call: ToolCallRecord) {
+        let summary = call.summary
+        name = Self.cliName(call)
+        let detail = summary.detail.isEmpty ? summary.verb : summary.detail
+        arg = detail
+        state = call.state
+        startedAt = call.startedAt
+        switch call.state {
+        case .failed:
+            result = call.error.flatMap { $0.split(separator: "\n").first.map(String.init) } ?? "Failed"
+        case .done:
+            let elapsed = call.elapsed().map { " · \(Self.duration($0))" } ?? ""
+            result = (summary.detail.isEmpty ? "Done" : summary.verb) + elapsed
+        case .running:
+            result = summary.verb
+        }
+    }
+
+    init(status: MessageRecord.ToolStatus) {
+        name = status.toolName.isEmpty ? "Tool" : status.toolName
+        arg = status.text
+        switch status.state {
+        case .running: state = .running
+        case .done: state = .done
+        case .failed: state = .failed
+        }
+        result = status.state == .failed ? "Failed" : (status.elapsed.map { "Done · \(Self.duration($0))" } ?? (status.state == .running ? "Running" : "Done"))
+        startedAt = status.startedAt
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-                Image(systemName: "terminal")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(TerminalTheme.accent)
-                Text("allternit code — agent terminal")
-                    .foregroundColor(TerminalTheme.accent)
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text("●")
+                    .foregroundColor(dotColor)
+                    .accessibilityHidden(true)
+                (Text(name).bold().foregroundColor(TerminalInk.text)
+                 + Text(arg.isEmpty ? "" : "(\(arg))").foregroundColor(TerminalInk.text.opacity(0.85)))
+                    .lineLimit(3)
             }
-            Text("session ready. describe the task below and the agent gets to work.")
-                .foregroundColor(TerminalTheme.dim)
-        }
-        .font(.system(size: 14, design: .monospaced))
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 16)
-    }
-}
-
-/// Blinking block cursor (terminal `_`-at-rest feel, block style).
-private struct TerminalCursor: View {
-    @State private var lit = true
-
-    var body: some View {
-        Text("▌")
-            .foregroundColor(TerminalTheme.text)
-            .opacity(lit ? 1 : 0)
-            .onAppear {
-                withAnimation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true)) {
-                    lit = false
+            HStack(alignment: .firstTextBaseline, spacing: 0) {
+                Text("  ⎿  ")
+                    .foregroundColor(TerminalInk.dim)
+                if state == .running {
+                    TimelineView(.periodic(from: .now, by: 1)) { context in
+                        Text(runningText(now: context.date))
+                            .foregroundColor(TerminalInk.dim)
+                    }
+                } else {
+                    Text(result)
+                        .foregroundColor(state == .failed ? TerminalInk.error : TerminalInk.dim)
+                        .lineLimit(2)
                 }
             }
+            .font(TerminalInk.small)
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private var dotColor: Color {
+        switch state {
+        case .running: return TerminalInk.coral
+        case .done: return TerminalInk.ok
+        case .failed: return TerminalInk.error
+        }
+    }
+
+    private func runningText(now: Date) -> String {
+        guard let startedAt else { return "\(result)…" }
+        return "\(result)… \(Self.duration(now.timeIntervalSince(startedAt)))"
+    }
+
+    /// The CLI's tool names (Bash, Read, Edit, …) from the runtime's name.
+    static func cliName(_ call: ToolCallRecord) -> String {
+        let name = ToolDescriber.normalized(call.toolName)
+        if call.isAgentStep { return "Task" }
+        if name.contains("bash") || name.contains("shell") || name.contains("exec") || name.contains("terminal") { return "Bash" }
+        if name.contains("multiedit") || name.contains("strreplace") || name.contains("editfile") || name == "edit" || name == "patch" { return "Edit" }
+        if name.contains("writefile") || name.contains("createfile") || name == "write" { return "Write" }
+        if name.contains("readfile") || name == "read" || name == "view" { return "Read" }
+        if name.contains("grep") || name.contains("searchcode") { return "Grep" }
+        if name.contains("glob") || name.contains("findfiles") || name.contains("listfiles") || name == "ls" || name == "list" { return "Glob" }
+        if name.contains("websearch") || name.contains("googlesearch") || name == "search" { return "WebSearch" }
+        if name.contains("fetch") || name.contains("readurl") || name.contains("webpage") { return "WebFetch" }
+        var raw = call.toolName
+        if raw.lowercased().hasPrefix("tool-") { raw.removeFirst(5) }
+        if let range = raw.range(of: "__", options: .backwards) { raw = String(raw[range.upperBound...]) }
+        return raw.isEmpty ? "Tool" : raw
+    }
+
+    static func duration(_ seconds: TimeInterval) -> String {
+        if seconds < 10 { return String(format: "%.1fs", seconds) }
+        if seconds < 60 { return "\(Int(seconds))s" }
+        return "\(Int(seconds) / 60)m \(Int(seconds) % 60)s"
+    }
+}
+
+/// The reply as terminal output: prose with inline markdown (bold, `code`),
+/// fenced code blocks indented and dimmed behind a rule.
+private struct TerminalReplyText: View {
+    let text: String
+
+    private struct Block: Identifiable {
+        let id: Int
+        let code: Bool
+        let text: String
+    }
+
+    private var blocks: [Block] {
+        var result: [Block] = []
+        var current: [Substring] = []
+        var inCode = false
+        func flush() {
+            let joined = current.joined(separator: "\n").trimmingCharacters(in: .newlines)
+            if !joined.isEmpty { result.append(Block(id: result.count, code: inCode, text: joined)) }
+            current = []
+        }
+        for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
+            if line.trimmingCharacters(in: .whitespaces).hasPrefix("```") {
+                flush()
+                inCode.toggle()
+            } else {
+                current.append(line)
+            }
+        }
+        flush()
+        return result
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(blocks) { block in
+                if block.code {
+                    Text(block.text)
+                        .font(TerminalInk.small)
+                        .foregroundColor(TerminalInk.dim)
+                        .padding(.leading, 10)
+                        .overlay(alignment: .leading) {
+                            Rectangle().fill(TerminalPalette.line).frame(width: 2)
+                        }
+                } else {
+                    Text(Self.inline(block.text))
+                        .foregroundColor(TerminalInk.text)
+                }
+            }
+        }
+    }
+
+    private static func inline(_ text: String) -> AttributedString {
+        let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+        return (try? AttributedString(markdown: text, options: options)) ?? AttributedString(text)
+    }
+}
+
+/// `✻ Working… 12s` while the turn runs, the star pulsing (still under
+/// Reduce Motion).
+private struct TerminalWorkingLine: View {
+    let since: Date?
+    @State private var start = Date()
+    @State private var lit = true
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            HStack(spacing: 8) {
+                Text("✻")
+                    .foregroundColor(TerminalInk.coral)
+                    .opacity(lit ? 1 : 0.35)
+                Text("Working… \(TerminalToolLines.duration(context.date.timeIntervalSince(since ?? start)))")
+                    .foregroundColor(TerminalInk.coral)
+            }
+        }
+        .accessibilityLabel("Working")
+        .onAppear {
+            guard !reduceMotion else { return }
+            withAnimation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true)) { lit = false }
+        }
+    }
+}
+
+/// The terminal view of a thread with no turns yet: the GIZZI CODE mark, the
+/// working folder and branch, and a hint, like the gizzi TUI's boot screen.
+private struct TerminalEmptyState: View {
+    let folder: CodeFolderInfo?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            GizziCodeWordmark(height: 15)
+                .environment(\.colorScheme, .dark)
+                .accessibilityLabel("Gizzi Code")
+            if let folder {
+                Text(folder.branch.map { "\(folder.directory) · \($0)" } ?? folder.directory)
+                    .foregroundColor(TerminalInk.dim)
+                    .lineLimit(2)
+                    .truncationMode(.head)
+            }
+            Text("Describe a task or ask about the code. The agent works in this thread.")
+                .foregroundColor(TerminalInk.dim)
+        }
+        .font(TerminalInk.small)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 14)
     }
 }
 
