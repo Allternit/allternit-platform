@@ -171,6 +171,20 @@ struct SetupFabricAccount: Sendable, Equatable, Identifiable {
     }
 }
 
+/// A login window's state (web `FabricLoginState`).
+struct SetupLoginState: Sendable, Equatable {
+    enum State: String, Sendable { case none, waiting, signedIn = "signed_in", failed, closed }
+    let state: State
+    let detail: String?
+    let account: SetupFabricAccount?
+
+    init(_ v: JSONValue) {
+        state = State(rawValue: v.at("state")?.jString ?? "") ?? .none
+        detail = v.at("detail")?.jString
+        account = v.at("account").flatMap(SetupFabricAccount.init)
+    }
+}
+
 struct SetupSubscriptionStatus: Sendable, Equatable {
     struct Terms: Sendable, Equatable {
         let provider: String
@@ -180,6 +194,7 @@ struct SetupSubscriptionStatus: Sendable, Equatable {
     }
     let bound: Bool
     let running: Bool
+    let computerId: String?
     let computerName: String?
     let disclosureVersion: Int?
     let terms: [Terms]
@@ -189,6 +204,7 @@ struct SetupSubscriptionStatus: Sendable, Equatable {
         let present = ref?.jObject != nil && ref?.at("missing")?.jBool != true
         bound = v.at("bound")?.jBool == true && present
         running = bound && ref?.at("running")?.jBool == true
+        computerId = present ? ref?.at("id")?.jString : nil
         computerName = present ? ref?.at("name")?.jString : nil
         disclosureVersion = v.at("disclosure")?.at("version")?.setupNumber.map { Int($0) }
         terms = (v.at("disclosure")?.at("providers")?.jArray ?? []).compactMap { p in
@@ -374,6 +390,16 @@ enum SetupAPI {
 
     static func openFabricLogin(_ accountId: String) async throws {
         _ = try await SetupHTTP.v1("POST", "\(gateway)/accounts/\(ConnectHTTP.escape(accountId))/login")
+    }
+
+    /// Where a login window stands (gateways from 2026-10; older ones answer 404).
+    static func fabricLoginState(_ accountId: String) async throws -> SetupLoginState {
+        SetupLoginState(try await SetupHTTP.v1("GET", "\(gateway)/accounts/\(ConnectHTTP.escape(accountId))/login"))
+    }
+
+    /// Closes an unfinished login window; the account stays auth_required.
+    static func cancelFabricLogin(_ accountId: String) async throws {
+        _ = try await SetupHTTP.v1("DELETE", "\(gateway)/accounts/\(ConnectHTTP.escape(accountId))/login")
     }
 
     /// Re-runs the non-spending session probe after a sign-in.
