@@ -18,7 +18,8 @@ import Foundation
 /// One agent session (`ses_*` id), as listed/created by the backend.
 struct AgentSession: Decodable, Sendable, Identifiable {
     let id: String
-    let name: String?
+    /// `var` only so a rename can update the list optimistically (`renamed`).
+    var name: String?
     let description: String?
     let createdAt: String
     let updatedAt: String
@@ -51,6 +52,10 @@ struct AgentSession: Decodable, Sendable, Identifiable {
     /// `metadata.agentName` — the agent or bot the session runs as (web
     /// DecisionsDeck "<agent> asks").
     let agentName: String?
+    /// `metadata.archived` — closed from the session overview on the web
+    /// (useModeOverview `archiveOverviewItem`). Archived sessions leave the
+    /// open lists even while `active` is still true.
+    let archived: Bool
     // The rest of `metadata` (directory, version, permission, …) stays
     // skipped — not rendered anywhere on iOS.
 
@@ -73,6 +78,7 @@ struct AgentSession: Decodable, Sendable, Identifiable {
         case projectId = "project_id"
         case ephemeral
         case agentName
+        case archived
     }
 
     /// Tolerant decode mirroring the web's `normalizeSessionPayload`: only
@@ -96,6 +102,7 @@ struct AgentSession: Decodable, Sendable, Identifiable {
             agentId = try metadata.decodeIfPresent(String.self, forKey: .agentId)
             projectId = try metadata.decodeIfPresent(String.self, forKey: .projectId)
             agentName = (try? metadata.decodeIfPresent(String.self, forKey: .agentName)) ?? nil
+            archived = ((try? metadata.decodeIfPresent(Bool.self, forKey: .archived)) ?? nil) ?? false
             // The backend emits a bool; the create path carries the flag as
             // the string "true" inside the metadata bag.
             if let flag = try metadata.decodeIfPresent(Bool.self, forKey: .ephemeral) {
@@ -108,8 +115,18 @@ struct AgentSession: Decodable, Sendable, Identifiable {
             agentId = nil
             projectId = nil
             agentName = nil
+            archived = false
             ephemeral = false
         }
+    }
+}
+
+extension AgentSession {
+    /// A copy with a new name (optimistic rename in ShellSessionsStore).
+    func renamed(_ newName: String) -> AgentSession {
+        var copy = self
+        copy.name = newName
+        return copy
     }
 }
 
