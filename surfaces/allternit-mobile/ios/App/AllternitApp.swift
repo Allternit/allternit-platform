@@ -217,72 +217,93 @@ struct AllternitApp: App {
     }
 }
 
+/// The sign-in screen: the native port of m.allternit.com's phone sign-in
+/// (allternit-ai SignInLayout with the phone SignInStage and compact rail).
+/// Top to bottom: A://TERNIT lockup and counter, the self-building preview
+/// of Home / Bots / Code / ACI, its caption, then "Sign in to Allternit",
+/// the sign-in buttons and the legal line. The page scrolls on small phones.
 struct LoginGateView: View {
     @EnvironmentObject var auth: AuthManager
+    @Environment(\.colorScheme) private var colorScheme
 
     var onSkipAuth: (() -> Void)? = nil
 
-    @State private var logoGlowing = false
+    private var palette: SignInPalette { SignInPalette(colorScheme) }
 
     var body: some View {
-        VStack(spacing: 32) {
-            Spacer()
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                SignInStageView()
 
-            // Logo with ambient glow matching LaunchHeader
-            ZStack {
-                Circle()
-                    .fill(Color("AccentPrimary").opacity(logoGlowing ? 0.12 : 0.04))
-                    .frame(width: 140, height: 140)
-                    .blur(radius: 35)
-                    .animation(.easeInOut(duration: 2.5).repeatForever(autoreverses: true), value: logoGlowing)
-
-                WordmarkView(height: 28)
+                rail
+                    .padding(.top, 8)
             }
+            .padding(.horizontal, 16)
+            .padding(.top, 16)
+            .padding(.bottom, 24)
+            .frame(maxWidth: 480)
+            .frame(maxWidth: .infinity)
+        }
+        .scrollBounceBehavior(.basedOnSize)
+        .background(palette.page.ignoresSafeArea())
+    }
 
-            Text("Your native workspace for autonomous AI execution.")
-                .font(.subheadline)
-                .foregroundColor(Color("TextSecondary"))
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 40)
-
-            Spacer()
+    /// The compact sign-in rail (web .ast-rail-compact).
+    private var rail: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("Sign in to Allternit")
+                .font(.system(size: 21, weight: .bold))
+                .tracking(-0.42)
+                .foregroundStyle(palette.ink)
+                .padding(.bottom, 12)
+                .accessibilityAddTraits(.isHeader)
 
             if !auth.isClerkConfigured {
                 Text("Set CLERK_PUBLISHABLE_KEY in Info.plist to enable sign-in.")
                     .font(.caption)
-                    .foregroundColor(Color("TextSecondary"))
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 24)
+                    .foregroundStyle(palette.sub)
+                    .padding(.bottom, 10)
             }
 
-            VStack(spacing: 12) {
+            VStack(spacing: 10) {
                 SignInWithAppleRow()
 
-                Button(action: auth.signIn) {
-                    Text("Sign In")
-                        .font(.headline)
-                        .foregroundColor(.white)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 16)
-                        .background(Color("AccentPrimary"))
-                        .cornerRadius(12)
+                ForEach(AuthManager.SocialProvider.allCases) { provider in
+                    SignInSocialButton(provider: provider)
                 }
 
-                Button(action: auth.signUp) {
-                    Text("Create Account")
-                        .font(.headline)
-                        .foregroundColor(Color("AccentPrimary"))
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 16)
-                        .background(
-                            RoundedRectangle(cornerRadius: 12)
-                                .stroke(Color("AccentPrimary"), lineWidth: 1)
-                        )
+                if let error = auth.socialSignInError {
+                    Text(error)
+                        .font(.system(size: 12.5))
+                        .foregroundStyle(colorScheme == .dark ? Color(hex: "#F08A7C") : Color(hex: "#B42318"))
+                        .multilineTextAlignment(.center)
                 }
+
+                orDivider
+
+                Button(action: auth.signIn) {
+                    Text("Continue with email")
+                }
+                .buttonStyle(SignInButtonStyle(kind: .ink))
             }
             .disabled(!auth.isClerkConfigured)
             .opacity(auth.isClerkConfigured ? 1 : 0.5)
-            .padding(.horizontal, 32)
+
+            HStack(spacing: 4) {
+                Text("New here?")
+                    .foregroundStyle(palette.sub)
+                Button(action: auth.signUp) {
+                    Text("Create an account")
+                        .fontWeight(.semibold)
+                        .underline()
+                        .foregroundStyle(palette.ink)
+                }
+                .buttonStyle(.plain)
+                .disabled(!auth.isClerkConfigured)
+            }
+            .font(.system(size: 13))
+            .frame(maxWidth: .infinity)
+            .padding(.top, 12)
 
             #if DEBUG
             if let onSkipAuth {
@@ -294,17 +315,112 @@ struct LoginGateView: View {
                     Text("Continue without signing in")
                         .font(.subheadline)
                         .fontWeight(.medium)
-                        .foregroundColor(Color("TextSecondary"))
+                        .foregroundStyle(palette.sub)
                         .frame(maxWidth: .infinity)
-                        .padding(.vertical, 14)
+                        .padding(.vertical, 12)
                 }
-                .padding(.horizontal, 32)
-                .padding(.bottom, 64)
+                .padding(.top, 4)
             }
             #endif
+
+            Text("By continuing you agree to the [Terms](https://allternit.com/terms) and [Privacy Policy](https://allternit.com/privacy).")
+                .font(.system(size: 11.5))
+                .lineSpacing(2)
+                .foregroundStyle(palette.mut)
+                .tint(palette.ink)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: .infinity)
+                .padding(.top, 18)
         }
-        .background(Color("BgPrimary").edgesIgnoringSafeArea(.all))
-        .onAppear { logoGlowing = true }
+    }
+
+    /// "—— or ——" between the social buttons and email.
+    private var orDivider: some View {
+        HStack(spacing: 12) {
+            Rectangle().fill(palette.line).frame(height: 1)
+            Text("or")
+                .font(.system(size: 12))
+                .foregroundStyle(palette.mut)
+            Rectangle().fill(palette.line).frame(height: 1)
+        }
+        .padding(.vertical, 2)
+        .accessibilityHidden(true)
+    }
+}
+
+/// The sign-in buttons' look (web .ast-btn): 44 pt, 11 pt corners, 14 pt
+/// semibold. `outline` is the raised white button, `ink` the black one.
+struct SignInButtonStyle: ButtonStyle {
+    enum Kind { case outline, ink }
+    let kind: Kind
+
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        let palette = SignInPalette(colorScheme)
+        let pressed = configuration.isPressed
+        let background: Color = switch kind {
+        case .outline: pressed ? palette.fill : palette.raise
+        case .ink: pressed ? palette.ink.opacity(0.88) : palette.ink
+        }
+        return configuration.label
+            .font(.system(size: 14, weight: .semibold))
+            .foregroundStyle(kind == .ink ? palette.page : palette.ink)
+            .frame(maxWidth: .infinity)
+            .frame(height: 44)
+            .background(RoundedRectangle(cornerRadius: 11, style: .continuous).fill(background))
+            .overlay(
+                RoundedRectangle(cornerRadius: 11, style: .continuous)
+                    .strokeBorder(kind == .ink ? palette.ink : palette.line, lineWidth: 1)
+            )
+            .scaleEffect(pressed ? 0.985 : 1)
+            .contentShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+    }
+}
+
+/// "Continue with GitHub" / "Continue with Google" through Clerk OAuth
+/// (`AuthManager.signIn(with:)`).
+private struct SignInSocialButton: View {
+    let provider: AuthManager.SocialProvider
+    @EnvironmentObject private var auth: AuthManager
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        Button {
+            auth.signIn(with: provider)
+        } label: {
+            HStack(spacing: 10) {
+                if auth.signingInWith == provider {
+                    ProgressView()
+                        .controlSize(.small)
+                } else {
+                    logo
+                }
+                Text("Continue with \(provider.title)")
+            }
+        }
+        .buttonStyle(SignInButtonStyle(kind: .outline))
+        .disabled(auth.signingInWith != nil)
+        .accessibilityLabel("Continue with \(provider.title)")
+    }
+
+    @ViewBuilder
+    private var logo: some View {
+        switch provider {
+        case .github:
+            Image("LogoGitHub")
+                .renderingMode(.template)
+                .resizable()
+                .scaledToFit()
+                .frame(width: 18, height: 18)
+                .foregroundStyle(SignInPalette(colorScheme).ink)
+        case .google:
+            Image("LogoGoogle")
+                .resizable()
+                .scaledToFit()
+                .frame(width: 18, height: 18)
+        }
     }
 }
 
@@ -325,16 +441,16 @@ private struct SignInWithAppleRow: View {
                             .tint(colorScheme == .dark ? .black : .white)
                     } else {
                         Image(systemName: "apple.logo")
-                            .font(.system(size: 17, weight: .semibold))
+                            .font(.system(size: 16, weight: .semibold))
                     }
                     Text("Sign in with Apple")
-                        .font(.headline)
+                        .font(.system(size: 15, weight: .semibold))
                 }
                 .foregroundColor(colorScheme == .dark ? .black : .white)
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 16)
+                .frame(height: 44)
                 .background(colorScheme == .dark ? Color.white : Color.black)
-                .cornerRadius(12)
+                .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
             }
             .accessibilityLabel("Sign in with Apple")
 

@@ -1,0 +1,12 @@
+{
+  "images" : [
+    {
+      "filename" : "StageAvatarMuse.png",
+      "idiom" : "universal"
+    }
+  ],
+  "info" : {
+    "author" : "xcode",
+    "version" : 1
+  }
+}

@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import AuthenticationServices
 import ClerkKit
 
 /// Thin wrapper over the official Clerk iOS SDK v1.3.x (ClerkKit / ClerkKitUI).
@@ -178,6 +179,60 @@ final class AuthManager: ObservableObject {
                     return // cancelled
                 }
                 appleSignInError = error.localizedDescription
+            }
+        }
+    }
+
+    /// Social providers offered under Apple on the sign-in screen, matching
+    /// the web sign-in (GitHub, then Google).
+    enum SocialProvider: String, CaseIterable, Identifiable {
+        case github
+        case google
+
+        var id: String { rawValue }
+
+        var title: String {
+            switch self {
+            case .github: return "GitHub"
+            case .google: return "Google"
+            }
+        }
+
+        fileprivate var clerkProvider: OAuthProvider {
+            switch self {
+            case .github: return .github
+            case .google: return .google
+            }
+        }
+    }
+
+    /// Last GitHub / Google sign-in failure, shown under those buttons. Nil
+    /// when the person closed the browser sheet (not an error).
+    @Published var socialSignInError: String?
+    @Published private(set) var signingInWith: SocialProvider?
+
+    /// GitHub / Google through Clerk's native OAuth (ClerkKit
+    /// `Auth.signInWithOAuth`, an ASWebAuthenticationSession that signs up a
+    /// new account too). Needs the provider enabled as a social connection in
+    /// the Clerk dashboard and the app's redirect URL allowed for native.
+    func signIn(with provider: SocialProvider) {
+        guard isClerkConfigured, signingInWith == nil else { return }
+        signingInWith = provider
+        socialSignInError = nil
+        Task {
+            defer { signingInWith = nil }
+            do {
+                try await Clerk.shared.auth.signInWithOAuth(provider: provider.clerkProvider)
+                refreshAuthState()
+                // A sign-up missing fields, or a session still pending a step,
+                // finishes in Clerk's own sheet.
+                if !isSignedIn {
+                    authEntryMode = .signIn
+                    isPresentingAuth = true
+                }
+            } catch {
+                if case ASWebAuthenticationSessionError.canceledLogin = error { return }
+                socialSignInError = error.localizedDescription
             }
         }
     }
