@@ -157,6 +157,7 @@
 		52D2F4EE34EB386E78AE8546 /* AutomationTasksListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A88A96EE967DEFAB910C51A6 /* AutomationTasksListView.swift */; };
 		52FD37453399E2E4EAB18151 /* AccountPlanStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 470CC175B241BBABE5192CEF /* AccountPlanStore.swift */; };
 		53507A35FFCB366B0E017695 /* WebhookClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 46CCFABAA5DAC2922F88593D /* WebhookClient.swift */; };
+		54B6D47537BB93375A5F1D43 /* BotsDrawerRail.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34429F16AC2D1219E4E8CE9C /* BotsDrawerRail.swift */; };
 		554F846E9556C106AED8763C /* MiniAppsStoreView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E2BAB5F3A60F36AC7814ADD /* MiniAppsStoreView.swift */; };
 		558B0BF10D531EBF53070B1C /* DevicePairingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 94097F5735D2AD25C0218820 /* DevicePairingView.swift */; };
 		5688B76740E94B1F0608B2FB /* libgit2.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = DA805C4BABCE1FA5CE5E38E1 /* libgit2.xcframework */; };
@@ -647,6 +648,7 @@
 		33BE9B2F87B3C05A37CF52AF /* BrainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrainStore.swift; sourceTree = "<group>"; };
 		33E0C5EA6F4839A5B350ADFE /* CodeRuntimePairingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodeRuntimePairingView.swift; sourceTree = "<group>"; };
 		34216CDEED200BADB31814B3 /* SetupHandoff.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SetupHandoff.swift; sourceTree = "<group>"; };
+		34429F16AC2D1219E4E8CE9C /* BotsDrawerRail.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotsDrawerRail.swift; sourceTree = "<group>"; };
 		351C0F604FE6B5B8BCB29BEC /* CoworkSessionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoworkSessionStore.swift; sourceTree = "<group>"; };
 		37B3CA075AC3FDEFF151B299 /* PhonesSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhonesSheet.swift; sourceTree = "<group>"; };
 		384E354DC0746B0247176A44 /* ArtifactsLibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArtifactsLibraryView.swift; sourceTree = "<group>"; };
@@ -1369,6 +1371,7 @@
 		4431FD8EF1C83643023BBA51 /* Shell */ = {
 			isa = PBXGroup;
 			children = (
+				34429F16AC2D1219E4E8CE9C /* BotsDrawerRail.swift */,
 				E44332C83123F7464F36D69E /* CustomizeViews.swift */,
 				66FD35F18B3062FF97F7BF10 /* InboxSheet.swift */,
 				27642817A931BCF276282C67 /* ModeDialView.swift */,
@@ -2445,6 +2448,7 @@
 				C27AD896B04987D756914E14 /* BotWebhooksSheet.swift in Sources */,
 				CA99EF2AA35388EAAA43E977 /* BotWorkspaceFilesSheet.swift in Sources */,
 				77B8E1A9B22F80555576C8E0 /* BotZipImport.swift in Sources */,
+				54B6D47537BB93375A5F1D43 /* BotsDrawerRail.swift in Sources */,
 				6E43CA779C06635F41676FB0 /* BotsModeRootView.swift in Sources */,
 				6FABE8767B5DDB768BE24B43 /* BrainCaptureSheet.swift in Sources */,
 				7F2FA20199B56C9B95025210 /* BrainGit.swift in Sources */,
