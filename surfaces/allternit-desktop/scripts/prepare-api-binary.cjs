@@ -31,17 +31,24 @@ function errorAndExit(message) {
   process.exit(1);
 }
 
+// The newest candidate wins, not the first found. build-desktop.sh stages a
+// fresh binary in resources/bin (bin-cache gives a reused one a fresh mtime);
+// taking target/release first packed a leftover from an older checkout over it
+// (b6507 shipped an API without the bot brief routes: 405 on every bot open).
 function findLocalBinary() {
   const candidates = [
     ...cargoBinaryCandidates(repoRoot, binaryName),
     path.join(resourcesBin, binaryName),
   ];
+  let newest = null;
   for (const candidate of candidates) {
-    if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
-      return candidate;
+    if (!fs.existsSync(candidate)) continue;
+    const stat = fs.statSync(candidate);
+    if (stat.isFile() && (!newest || stat.mtimeMs > newest.mtimeMs)) {
+      newest = { path: candidate, mtimeMs: stat.mtimeMs };
     }
   }
-  return null;
+  return newest ? newest.path : null;
 }
 
 function copyLocalBinary(source) {

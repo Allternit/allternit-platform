@@ -64,7 +64,10 @@ npm run prepare:api-binary
 This is also called automatically by `npm run build:electron`, `npm run dist`,
 etc. In practice the binary **must be built locally and staged** — the script
 (`scripts/prepare-api-binary.cjs`) only copies from a local cargo build
-(`target/release` or `target/debug` at the repo root). Its manifest-download
+(`target/release` or `target/debug` at the repo root, or the binary already
+staged in `resources/bin`). When several exist it takes the **newest** one, so
+a binary `build-desktop.sh` just staged wins over an old `target/release`
+leftover. Its manifest-download
 fallback (`src/main/manifest.ts`) points at `github.com/allternit/platform`
 release assets that do not exist yet (and most manifest checksums are empty
 placeholders), so the download path will fail:
