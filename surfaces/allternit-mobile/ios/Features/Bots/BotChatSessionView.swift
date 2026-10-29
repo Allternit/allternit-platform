@@ -226,7 +226,7 @@ struct BotChatSessionView: View {
                             .offset(x: 2, y: 2)
                     }
                 VStack(alignment: .leading, spacing: 0) {
-                    Text(bot.botDisplayName)
+                    BotNameText(bot.botDisplayName, size: 14)
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundColor(Color("TextPrimary"))
                         .lineLimit(1)

@@ -188,7 +188,7 @@ struct BotsDrawerRail: View {
                                 .overlay(Circle().stroke(Color("BgPrimary"), lineWidth: 2))
                                 .offset(x: 2, y: 2)
                         }
-                    Text(mainBot.botDisplayName)
+                    BotNameText(mainBot.botDisplayName, size: 13)
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundColor(Color("TextPrimary"))
                         .lineLimit(1)
@@ -249,7 +249,7 @@ struct BotsDrawerRail: View {
                         }
                         .buttonStyle(.plain)
                         .accessibilityLabel("Open \(bot.botDisplayName)")
-                        Text(bot.botDisplayName)
+                        BotNameText(bot.botDisplayName, size: 11)
                             .font(.system(size: 11, weight: .medium))
                             .foregroundColor(Color("TextPrimary"))
                             .lineLimit(1)
@@ -423,7 +423,7 @@ struct BotsDrawerRail: View {
                 LiveBotStatusAvatar(bot: bot, size: 46)
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 4) {
-                        Text(bot.botDisplayName)
+                        BotNameText(bot.botDisplayName, size: 15)
                             .font(.system(size: 15, weight: .medium))
                             .foregroundColor(Color("TextPrimary"))
                             .lineLimit(1)

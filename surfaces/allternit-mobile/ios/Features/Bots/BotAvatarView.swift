@@ -16,8 +16,28 @@ struct BotAvatarView: View {
     var size: CGFloat = 40
     /// Animates sprite avatars (the web's `live` prop).
     var live: Bool = false
+    /// Working: the A:// orb runs its working choreography.
+    var working: Bool = false
+    /// The web's framed tile (rounded square, hairline, card fill) for the A:// orb.
+    var framed: Bool = false
 
     var body: some View {
+        if bot.isPrimaryTemplateBot {
+            // web PrimaryBotOrb: the A:// main bot is the Allternit orb, 62% of the box.
+            AllternitOrbView(state: working ? .working : .idle, size: (size * 0.62).rounded(), label: bot.botDisplayName)
+                .frame(width: size, height: size)
+                .background {
+                    if framed {
+                        RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color("BgPanel"))
+                            .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Color("BorderSubtle"), lineWidth: 1))
+                    }
+                }
+        } else {
+            resolved
+        }
+    }
+
+    @ViewBuilder private var resolved: some View {
         switch BotAvatarSource.resolve(bot) {
         case .sprite(let url):
             SpriteAvatar(url: url, size: size, live: live)
@@ -57,7 +77,7 @@ struct BotStatusAvatar: View {
     var live = false
 
     var body: some View {
-        BotAvatarView(bot: bot, size: size, live: live)
+        BotAvatarView(bot: bot, size: size, live: live, working: working)
             .overlay(alignment: .bottomTrailing) {
                 if waiting || working {
                     Circle()
@@ -67,6 +87,16 @@ struct BotStatusAvatar: View {
                         .accessibilityLabel(waiting ? "Needs you" : "Working")
                 }
             }
+    }
+}
+
+extension AgentRecord {
+    /// The A:// main bot: made from the main bot template (web isPrimaryTemplateBot),
+    /// or a bot still named A://.
+    var isPrimaryTemplateBot: Bool {
+        if case .string(let id)? = config?["templateId"], id == "primary-a" { return true }
+        if case .string(let id)? = config?["template_id"], id == "primary-a" { return true }
+        return botDisplayName == "A://"
     }
 }
 

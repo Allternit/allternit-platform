@@ -138,7 +138,7 @@ struct BotLaunchpadView: View {
                         Image(systemName: "plus")
                             .font(.system(size: 16))
                             .foregroundColor(Color("TextTertiary"))
-                            .frame(width: 48, height: 48)
+                            .frame(width: 52, height: 52)
                             .overlay(Circle().stroke(Color("BorderStrong"), style: StrokeStyle(lineWidth: 1, dash: [3, 3])))
                             .padding(4)
                     }
@@ -149,7 +149,7 @@ struct BotLaunchpadView: View {
                         .foregroundColor(Color("TextTertiary"))
                         .accessibilityHidden(true)
                 }
-                .frame(width: 72)
+                .frame(width: 76)
             }
             .padding(.horizontal, 14)
             .padding(.top, 8)
@@ -160,7 +160,7 @@ struct BotLaunchpadView: View {
 
     private func rosterTile(_ entry: RosterEntry) -> some View {
         let main = entry.rank == .main
-        let size: CGFloat = main ? 60 : 48
+        let size: CGFloat = 52
         let selected = entry.botId != nil && entry.botId == selectedBotId
         return VStack(spacing: 2) {
             Button { open(entry) } label: {
@@ -169,7 +169,7 @@ struct BotLaunchpadView: View {
             .buttonStyle(.plain)
             .accessibilityLabel("Open \(entry.name), \(entry.status.word)")
             HStack(spacing: 2) {
-                Text(entry.name)
+                BotNameText(entry.name, size: 12.5, ink: main ? "TextPrimary" : "TextSecondary")
                     .font(.system(size: 12.5, weight: main ? .semibold : .regular))
                     .foregroundColor(main ? Color("TextPrimary") : Color("TextSecondary"))
                     .underline(selected)
@@ -180,7 +180,7 @@ struct BotLaunchpadView: View {
             }
             RosterStatusWord(status: entry.status, size: 11)
         }
-        .frame(width: main ? 84 : 72)
+        .frame(width: 76)
     }
 
     private var rosterGrid: some View {
@@ -232,7 +232,7 @@ struct BotLaunchpadView: View {
                 if deck {
                     VStack(spacing: 8) {
                         RosterFace(entry: entry, size: entry.botId == nil ? 64 : 72)
-                        Text(entry.name)
+                        BotNameText(entry.name, size: 15)
                             .font(.system(size: 15, weight: .semibold))
                             .foregroundColor(Color("TextPrimary"))
                             .lineLimit(1)
@@ -265,7 +265,7 @@ struct BotLaunchpadView: View {
                     HStack(spacing: 10) {
                         RosterFace(entry: entry, size: 40)
                         VStack(alignment: .leading, spacing: 1) {
-                            Text(entry.name)
+                            BotNameText(entry.name, size: 14)
                                 .font(.system(size: 13.5, weight: .semibold))
                                 .foregroundColor(Color("TextPrimary"))
                                 .lineLimit(1)
@@ -347,8 +347,9 @@ struct BotLaunchpadView: View {
                 .lineSpacing(2)
                 .foregroundColor(Color("TextPrimary"))
                 .fixedSize(horizontal: false, vertical: true)
-            Text(selectedBot.map { "\($0.botDisplayName) starts a thread for it and keeps going when you close the app." }
-                 ?? "Describe it once. \(mainBotName) splits it into threads, picks the bots, and keeps going when you close the app.")
+            BotNameText(selectedBot.map { "\($0.botDisplayName) starts a thread for it and keeps going when you close the app." }
+                 ?? "Describe it once. \(mainBotName) splits it into threads, picks the bots, and keeps going when you close the app.",
+                 size: 16, ink: "TextSecondary")
                 .font(.system(size: 16))
                 .foregroundColor(Color("TextSecondary"))
                 .fixedSize(horizontal: false, vertical: true)
@@ -717,7 +718,7 @@ struct BotLaunchComposer: View {
                 Button { onPick(nil) } label: {
                     HStack(spacing: 4) {
                         BotAvatarView(bot: bot, size: 18)
-                        Text(bot.botDisplayName).foregroundColor(Color("TextSecondary")).lineLimit(1)
+                        BotNameText(bot.botDisplayName, size: 12.5, ink: "TextSecondary").foregroundColor(Color("TextSecondary")).lineLimit(1)
                         if let selectedStatus {
                             Text("· \(selectedStatus.word)")
                                 .font(.system(size: 11, weight: .medium))
@@ -732,7 +733,7 @@ struct BotLaunchComposer: View {
                 .buttonStyle(.plain)
                 .accessibilityLabel("Sending to \(bot.botDisplayName). Switch to \(mainBotName) as a new project")
             } else {
-                Text("\(mainBotName) · new project")
+                BotNameText("\(mainBotName) · new project", size: 12.5, ink: "TextSecondary")
                     .foregroundColor(Color("TextSecondary"))
                     .lineLimit(1)
                     .padding(.horizontal, 8)

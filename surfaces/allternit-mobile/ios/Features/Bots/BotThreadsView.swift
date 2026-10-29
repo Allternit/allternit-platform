@@ -229,7 +229,7 @@ struct BotProjectHomeView: View {
                         NavigationLink(value: BotRoute.chat(botId: bot.id, sessionId: nil)) {
                             HStack(spacing: 10) {
                                 BotAvatarView(bot: bot, size: 30)
-                                Text(bot.botDisplayName)
+                                BotNameText(bot.botDisplayName, size: 15)
                             }
                         }
                     }

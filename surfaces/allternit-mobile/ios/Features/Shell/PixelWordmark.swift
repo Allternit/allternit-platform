@@ -15,13 +15,13 @@ struct PixelWordmark: View {
     private static let pitch = 6
     private static let spaceCols = 3
 
-    private static let markCells: [(Int, Int)] = [
+    nonisolated static let markCells: [(Int, Int)] = [
         (2, 0), (1, 1), (3, 1), (0, 2), (1, 2), (3, 2), (4, 2), (0, 3), (4, 3), (0, 4), (4, 4),
         (6, 1), (6, 3),
         (8, 3), (8, 4), (9, 2), (10, 0), (10, 1),
         (12, 3), (12, 4), (13, 2), (14, 0), (14, 1),
     ]
-    private static let coreCell = (2, 2)
+    nonisolated static let coreCell = (2, 2)
 
     private static let glyphs: [Character: [(Int, Int)]] = [
         "T": [(0, 0), (1, 0), (2, 0), (3, 0), (4, 0), (2, 1), (2, 2), (2, 3), (2, 4)],
@@ -74,5 +74,88 @@ struct PixelWordmark: View {
         .frame(width: width, height: height)
         .accessibilityElement()
         .accessibilityLabel("Allternit \(suffix)".trimmingCharacters(in: .whitespaces))
+    }
+}
+
+/// The condensed A:// protocol mark (web AProtocolMark): the pixel A:// of the
+/// wordmark with its coral core, 3:1. Ink follows the foreground style.
+struct AProtocolMark: View {
+    var height: CGFloat = 14
+    var label = "A://"
+
+    var body: some View {
+        ZStack {
+            AProtocolCells(core: false)
+            AProtocolCells(core: true).fill(Color(red: 0xD9 / 255, green: 0x77 / 255, blue: 0x57 / 255))
+        }
+        .frame(width: height * 3, height: height)
+        .accessibilityElement()
+        .accessibilityLabel(label)
+    }
+
+    /// The mark drawn once, for inlining in Text (BotNameText).
+    @MainActor
+    static func image(height: CGFloat, ink: UIColor) -> UIImage {
+        let key = "\(height)-\(ink.description)" as NSString
+        if let cached = imageCache.object(forKey: key) { return cached }
+        let size = CGSize(width: height * 3, height: height)
+        let image = UIGraphicsImageRenderer(size: size).image { _ in
+            ink.setFill()
+            AProtocolCells.path(in: CGRect(origin: .zero, size: size), core: false).fill()
+            UIColor(red: 0xD9 / 255, green: 0x77 / 255, blue: 0x57 / 255, alpha: 1).setFill()
+            AProtocolCells.path(in: CGRect(origin: .zero, size: size), core: true).fill()
+        }
+        imageCache.setObject(image, forKey: key)
+        return image
+    }
+
+    @MainActor private static let imageCache = NSCache<NSString, UIImage>()
+}
+
+private struct AProtocolCells: Shape {
+    let core: Bool
+
+    func path(in rect: CGRect) -> Path { Path(Self.path(in: rect, core: core).cgPath) }
+
+    static func path(in rect: CGRect, core: Bool) -> UIBezierPath {
+        let cell: CGFloat = 10, block: CGFloat = 8.5
+        let scale = rect.height / 50
+        let off = (cell - block) / 2
+        let path = UIBezierPath()
+        for c in core ? [PixelWordmark.coreCell] : PixelWordmark.markCells {
+            path.append(UIBezierPath(roundedRect: CGRect(x: rect.minX + (CGFloat(c.0) * cell + off) * scale,
+                                                         y: rect.minY + (CGFloat(c.1) * cell + off) * scale,
+                                                         width: block * scale, height: block * scale),
+                                     cornerRadius: 1.5 * scale))
+        }
+        return path
+    }
+}
+
+/// A bot name or sentence with every "A://" drawn as the pixel mark (web
+/// BotName / BotNameText). `size` is the font size the text runs at; `ink`
+/// names the colour asset the mark is drawn in.
+struct BotNameText: View {
+    let text: String
+    var size: CGFloat = 15
+    var ink = "TextPrimary"
+    @Environment(\.colorScheme) private var scheme
+
+    init(_ text: String, size: CGFloat = 15, ink: String = "TextPrimary") {
+        self.text = text
+        self.size = size
+        self.ink = ink
+    }
+
+    var body: some View {
+        let color = (UIColor(named: ink) ?? .label)
+            .resolvedColor(with: UITraitCollection(userInterfaceStyle: scheme == .dark ? .dark : .light))
+        let parts = text.components(separatedBy: "A://")
+        var out = Text(parts[0])
+        for part in parts.dropFirst() {
+            let mark = Image(uiImage: AProtocolMark.image(height: (size * 0.78).rounded(), ink: color))
+            out = out + Text(mark).baselineOffset(-size * 0.04) + Text(part)
+        }
+        return out.accessibilityLabel(text)
     }
 }

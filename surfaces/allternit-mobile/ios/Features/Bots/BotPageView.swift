@@ -43,7 +43,7 @@ struct BotPageView: View {
             BotAvatarView(bot: bot, size: 92, live: true)
                 .padding(4)
                 .background(Circle().fill((accent ?? .clear).opacity(0.16)))
-            Text(bot.botDisplayName)
+            BotNameText(bot.botDisplayName, size: 22)
                 .font(.system(size: 22, weight: .semibold))
                 .foregroundColor(Color("TextPrimary"))
                 .lineLimit(1)
