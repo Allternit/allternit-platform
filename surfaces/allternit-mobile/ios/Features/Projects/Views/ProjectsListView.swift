@@ -1,10 +1,10 @@
 import SwiftUI
 
-/// The Projects section as the phone opens it from the drawer (allternit-ai
-/// ProjectsScreen → ProjectView `phoneChrome` → ProjectsOverview): ☰ ·
-/// "Projects" · layout/filter menu on top, "N open" under it, the projects
-/// as List · Grid · Deck cards, and a floating search + "New project" bar.
-/// Each card's ⋯ menu has Open, Pin, Edit details, Archive and Delete.
+/// The Projects section in the desktop layout (allternit-ai ProjectView →
+/// ProjectsOverview, not `phoneChrome`), at phone width: "Projects" with
+/// "N open · N needs you", the controls (kind · search · Sort by · Archived ·
+/// List / Grid / Deck), the project cards, and the floating "New project"
+/// pill. Each card's ⋯ menu has Open, Pin, Edit details, Archive and Delete.
 ///
 /// Data: chat projects from `ProjectStore` (`/api/v1/cowork/projects`) and
 /// bot projects from `/api/v1/bot-projects` (ProjectsLibraryStore).
@@ -101,26 +101,16 @@ struct ProjectsListView: View {
         allProjects.filter { category == .all || $0.mode.rawValue == category.rawValue }.count
     }
 
-    private var filtersOn: Bool { category != .all || sortBy != .recent || showArchived }
 
     var body: some View {
         NavigationStack(path: $navigator.path) {
             ZStack(alignment: .bottom) {
                 VStack(spacing: 0) {
-                    LibrarySectionHeader(title: "Projects", onMenu: openMenu) { filterMenu }
-                    countsLine
+                    LibraryPlainHeader(onMenu: openMenu)
+                    overviewHeader
                     content
                 }
-                LibraryFloatingBar(
-                    query: $searchText,
-                    placeholder: "Search projects",
-                    newLabel: "New project",
-                    wide: .new,
-                    onNew: {
-                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                        isCreateSheetPresented = true
-                    }
-                )
+                newProjectPill
             }
             .background(Color("BgPrimary").ignoresSafeArea())
             .toolbar(.hidden, for: .navigationBar)
@@ -180,38 +170,155 @@ struct ProjectsListView: View {
         }
     }
 
-    // MARK: - Filter menu (Layout · Show · Sort by · Show archived)
+    // MARK: - Overview header (title · counts · controls)
 
-    private var filterMenu: some View {
+    private var overviewHeader: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Projects")
+                    .font(.system(size: 20, weight: .semibold))
+                    .tracking(-0.2)
+                    .foregroundColor(Color("TextPrimary"))
+                countsLine
+            }
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    categoryMenu
+                    sortMenu
+                    archivedToggle
+                }
+            }
+            HStack(spacing: 8) {
+                searchField
+                layoutToggle
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 4)
+        .padding(.bottom, 12)
+    }
+
+    /// The kind menu: every kind, with counts.
+    private var categoryMenu: some View {
         Menu {
-            Section("Layout") {
-                ForEach(LibraryLayout.allCases) { option in
-                    LibraryMenuCheck(title: option.label, icon: option.icon, checked: layout == option) {
-                        layoutRaw = option.rawValue
-                    }
-                }
-            }
-            Section("Show") {
-                ForEach(Category.allCases, id: \.self) { cat in
-                    LibraryMenuCheck(title: cat.label, icon: cat.icon, hint: String(count(cat)), checked: category == cat) {
-                        category = cat
-                    }
-                }
-            }
-            Section("Sort by") {
-                ForEach(Sort.allCases, id: \.self) { sort in
-                    LibraryMenuCheck(title: sort.label, checked: sortBy == sort) { sortBy = sort }
-                }
-            }
-            Section {
-                LibraryMenuCheck(title: "Show archived", hint: String(allProjects.filter(\.isArchived).count), checked: showArchived) {
-                    showArchived.toggle()
+            ForEach(Category.allCases, id: \.self) { cat in
+                LibraryMenuCheck(title: cat.label, icon: cat.icon, hint: String(count(cat)), checked: category == cat) {
+                    category = cat
                 }
             }
         } label: {
-            LibraryRoundLabel(icon: layout.icon, dot: filtersOn)
+            controlFace {
+                Image(systemName: category.icon).font(.system(size: 12))
+                Text(category.label).fontWeight(.medium).foregroundColor(Color("TextPrimary"))
+                Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold))
+            }
         }
-        .accessibilityLabel("Layout: \(layout.label). Change layout, filter and sort")
+        .accessibilityLabel("Show: \(category.label)")
+    }
+
+    private var sortMenu: some View {
+        Menu {
+            ForEach(Sort.allCases, id: \.self) { sort in
+                LibraryMenuCheck(title: sort.label, checked: sortBy == sort) { sortBy = sort }
+            }
+        } label: {
+            controlFace {
+                Text("Sort by")
+                Text(sortBy.label).fontWeight(.medium).foregroundColor(Color("TextPrimary"))
+                Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold))
+            }
+        }
+        .accessibilityLabel("Sort by \(sortBy.label)")
+    }
+
+    /// ArchivedToggle: "Archived N", pressed while archived projects show.
+    private var archivedToggle: some View {
+        Button { showArchived.toggle() } label: {
+            controlFace(pressed: showArchived) {
+                Image(systemName: "archivebox").font(.system(size: 12))
+                Text("Archived").foregroundColor(Color("TextPrimary"))
+                Text(String(allProjects.filter(\.isArchived).count)).foregroundColor(Color("TextTertiary"))
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(showArchived ? .isSelected : [])
+    }
+
+    private func controlFace<Content: View>(pressed: Bool = false, @ViewBuilder _ content: () -> Content) -> some View {
+        HStack(spacing: 5) { content() }
+            .font(.system(size: 13))
+            .foregroundColor(Color("TextSecondary"))
+            .lineLimit(1)
+            .padding(.horizontal, 10)
+            .frame(height: 32)
+            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(pressed ? Color("FillNeutral") : Color("BgPanel")))
+            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(Color("BorderStrong"), lineWidth: 1))
+            .fixedSize()
+    }
+
+    private var searchField: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 13))
+                .foregroundColor(Color("TextTertiary"))
+            TextField("Search projects…", text: $searchText)
+                .font(.system(size: 15))
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+            if !searchText.isEmpty {
+                Button { searchText = "" } label: {
+                    Image(systemName: "xmark.circle.fill").foregroundColor(Color("TextTertiary"))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Clear search")
+            }
+        }
+        .padding(.horizontal, 10)
+        .frame(height: 34)
+        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color("BgPanel")))
+        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(Color("BorderStrong"), lineWidth: 1))
+    }
+
+    /// List · Grid · Deck, a filled track with the picked one raised.
+    private var layoutToggle: some View {
+        HStack(spacing: 2) {
+            ForEach(LibraryLayout.allCases) { option in
+                let on = layout == option
+                Button { layoutRaw = option.rawValue } label: {
+                    Image(systemName: option.icon)
+                        .font(.system(size: 13, weight: on ? .semibold : .regular))
+                        .foregroundColor(on ? Color("TextPrimary") : Color("TextTertiary"))
+                        .frame(width: 32, height: 28)
+                        .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(on ? Color("BgPanel") : Color.clear))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(option.label)
+                .accessibilityAddTraits(on ? .isSelected : [])
+            }
+        }
+        .padding(3)
+        .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Color("FillNeutral")))
+    }
+
+    /// The floating "New project" pill, centered at the bottom.
+    private var newProjectPill: some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            isCreateSheetPresented = true
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "plus").font(.system(size: 14, weight: .medium))
+                Text("New project").font(.system(size: 15, weight: .medium))
+            }
+            .foregroundColor(Color("TextPrimary"))
+            .padding(.horizontal, 18)
+            .frame(height: 44)
+            .background(Capsule().fill(Color("BgPanel")))
+            .overlay(Capsule().stroke(Color("BorderSubtle"), lineWidth: 1))
+            .shadow(color: .black.opacity(0.10), radius: 12, y: 4)
+        }
+        .buttonStyle(.plain)
+        .padding(.bottom, 12)
     }
 
     // MARK: - Content
@@ -225,12 +332,10 @@ struct ProjectsListView: View {
                      working > 0 ? "\(working) working" : nil,
                      waiting > 0 ? "\(waiting) need\(waiting == 1 ? "s" : "") you" : nil].compactMap { $0 }
         return Text(parts.joined(separator: " · "))
-            .font(.system(size: 12))
+            .font(.system(size: 12.5))
             .foregroundColor(Color("TextTertiary"))
             .lineLimit(1)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 16)
-            .padding(.bottom, 4)
     }
 
     /// Errors lead the list (a failed bot load must not blank the rest).
@@ -274,24 +379,24 @@ struct ProjectsListView: View {
                 ScrollView {
                     VStack(spacing: 0) {
                         errors
-                        LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], spacing: 8) {
+                        LazyVStack(spacing: 16) {
                             ForEach(projects) { project in card(project, variant: .grid) }
                         }
                         .padding(.top, 4)
                     }
-                    .padding(.horizontal, 10)
-                    .padding(.bottom, 112)
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 84)
                 }
                 .refreshable { await reload() }
             case .list:
                 ScrollView {
-                    LazyVStack(spacing: 6) {
+                    LazyVStack(spacing: 8) {
                         errors
                         ForEach(projects) { project in card(project, variant: .list) }
                     }
-                    .padding(.horizontal, 10)
+                    .padding(.horizontal, 16)
                     .padding(.top, 4)
-                    .padding(.bottom, 112)
+                    .padding(.bottom, 84)
                 }
                 .refreshable { await reload() }
             case .deck:
@@ -302,7 +407,7 @@ struct ProjectsListView: View {
                     .scrollTargetLayout()
                     .padding(.horizontal, 24)
                     .padding(.top, 8)
-                    .padding(.bottom, 112)
+                    .padding(.bottom, 84)
                 }
                 .scrollTargetBehavior(.viewAligned)
             }
@@ -417,9 +522,9 @@ private struct ProjectOverviewCard<Menu: View>: View {
                 if variant == .list { row } else { tile }
             }
             .background(Color("BgPanel"))
-            .clipShape(RoundedRectangle(cornerRadius: variant == .list ? 12 : 16, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: variant == .list ? 12 : 14, style: .continuous))
             .overlay(
-                RoundedRectangle(cornerRadius: variant == .list ? 12 : 16, style: .continuous)
+                RoundedRectangle(cornerRadius: variant == .list ? 12 : 14, style: .continuous)
                     .stroke(ring, lineWidth: 1)
             )
             .shadow(color: variant == .deck ? .black.opacity(0.10) : .clear, radius: 15, x: 0, y: 10)
@@ -461,7 +566,7 @@ private struct ProjectOverviewCard<Menu: View>: View {
             Text(project.countLine.prefix(1).uppercased() + project.countLine.dropFirst())
                 .lineLimit(1)
         }
-        .font(.system(size: 10.5))
+        .font(.system(size: 12.5))
         .foregroundColor(Color("TextTertiary"))
     }
 
@@ -474,7 +579,7 @@ private struct ProjectOverviewCard<Menu: View>: View {
                 }
                 Text(tone.label).lineLimit(1)
             }
-            .font(.system(size: 10.5, weight: .semibold))
+            .font(.system(size: 11.5, weight: .semibold))
             .foregroundColor(tone.color)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
@@ -484,7 +589,7 @@ private struct ProjectOverviewCard<Menu: View>: View {
 
     private var meta: some View {
         Text(libraryShortAgo(project.updatedAt))
-            .font(.system(size: 10.5).monospacedDigit())
+            .font(.system(size: 12).monospacedDigit())
             .foregroundColor(Color("TextTertiary"))
     }
 
@@ -523,7 +628,7 @@ private struct ProjectOverviewCard<Menu: View>: View {
             HStack(alignment: .center, spacing: 4) {
                 iconView
                 Text(project.title)
-                    .font(.system(size: deck ? 15.5 : 12.5, weight: .semibold))
+                    .font(.system(size: 15, weight: .semibold))
                     .foregroundColor(Color("TextPrimary"))
                     .lineLimit(2)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -531,8 +636,8 @@ private struct ProjectOverviewCard<Menu: View>: View {
             }
             note.padding(.top, 2)
             Text(preview)
-                .font(.system(size: deck ? 13 : 11))
-                .lineSpacing(deck ? 6 : 4)
+                .font(.system(size: 14))
+                .lineSpacing(5)
                 .foregroundColor(Color("TextSecondary"))
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 .clipped()
@@ -544,8 +649,8 @@ private struct ProjectOverviewCard<Menu: View>: View {
             }
             .padding(.top, 4)
         }
-        .padding(deck ? 14 : 10)
-        .frame(width: deck ? 226 : nil, height: deck ? 420 : 196)
+        .padding(16)
+        .frame(width: deck ? 260 : nil, height: deck ? 420 : 200)
     }
 }
 

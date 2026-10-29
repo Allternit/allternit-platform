@@ -1,11 +1,12 @@
 import SwiftUI
 import UIKit
 
-/// Automation Tasks as the phone opens it from the drawer (allternit-ai
-/// src/views/tasks/AutomationTasksView.tsx `phoneChrome`): ☰ · "Automation
-/// Tasks" · filter (Type · Sort by · View) on top, the keep-awake card, then
-/// Goals, Routines, Loops and Agent Heartbeats as one list of task cards;
-/// a floating search + "New task" menu at the bottom.
+/// Automation Tasks in the desktop layout (allternit-ai
+/// src/views/tasks/AutomationTasksView.tsx without `phoneChrome`), at phone
+/// width: serif title and subtitle, Type · Sort and the dark "New task" menu,
+/// the type tab strip with List · Graph · Calendar, the search field, the
+/// keep-awake card, then Goals, Routines, Loops and Agent Heartbeats as one
+/// list of task cards.
 ///
 /// Data: goals, routines and loops from allternit-api `/api/v1/automation/*`
 /// (AutomationClient); heartbeats are the scheduler's cron jobs
@@ -42,6 +43,17 @@ struct AutomationTasksPhoneView: View {
             case .routine: return "Routines"
             case .loop: return "Loops"
             case .heartbeat: return "Agent Heartbeats"
+            }
+        }
+
+        /// Phosphor CalendarCheck / Target / Clock / Repeat / Robot.
+        var icon: String {
+            switch self {
+            case .all: return "calendar.badge.checkmark"
+            case .goal: return "target"
+            case .routine: return "clock"
+            case .loop: return "repeat"
+            case .heartbeat: return "cpu"
             }
         }
     }
@@ -147,33 +159,31 @@ struct AutomationTasksPhoneView: View {
     // MARK: - Body
 
     var body: some View {
-        ZStack(alignment: .bottom) {
-            VStack(spacing: 0) {
-                LibrarySectionHeader(title: "Automation Tasks", onMenu: { openLibraryDrawer($isSidebarOpen) }) {
-                    filterMenu
-                }
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 0) {
-                        if let error { errorBanner(error) }
-                        if let actionError = store.actionError { errorBanner(actionError) }
-                        keepAwakeBanner.padding(.top, 8)
-                        mainContent.padding(.top, 20)
+        VStack(spacing: 0) {
+            LibraryPlainHeader(onMenu: { openLibraryDrawer($isSidebarOpen) })
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    pageTitle
+                    controls.padding(.top, 20)
+                    tabStrip.padding(.top, 24)
+                    if showRoutineViews {
+                        HStack {
+                            Spacer()
+                            viewToggle
+                        }
+                        .padding(.top, 8)
                     }
-                    .padding(.horizontal, 16)
-                    .padding(.top, 4)
-                    .padding(.bottom, 112)
+                    searchField.padding(.top, 24)
+                    keepAwakeBanner.padding(.top, 24)
+                    if let error { errorBanner(error) }
+                    if let actionError = store.actionError { errorBanner(actionError) }
+                    mainContent.padding(.top, 32)
                 }
-                .refreshable { await loadAll() }
+                .padding(.horizontal, 20)
+                .padding(.top, 8)
+                .padding(.bottom, 48)
             }
-            LibraryFloatingBar(
-                query: $searchQuery,
-                placeholder: "Search automation tasks",
-                newLabel: "New task",
-                wide: .new
-            ) {
-                Button { isTypeChoicePresented = true } label: { Label("Set up manually", systemImage: "plus") }
-                Button(action: startWithAssistant) { Label("Create with Assistant", systemImage: "cpu") }
-            }
+            .refreshable { await loadAll() }
         }
         .background(Color("BgPrimary").ignoresSafeArea())
         .confirmationDialog("New task", isPresented: $isTypeChoicePresented, titleVisibility: .visible) {
@@ -211,37 +221,157 @@ struct AutomationTasksPhoneView: View {
 
     // MARK: - Chrome
 
-    private var filtersOn: Bool { activeTab != .all || sortBy != .date || routinesView != .list }
+    /// The web hides List · Graph · Calendar on the Routines tab, which has
+    /// its own run list.
+    private var showRoutineViews: Bool { activeTab != .routine }
 
-    private var filterMenu: some View {
-        Menu {
-            Section("Type") {
+    private var pageTitle: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Automation Tasks")
+                .font(.system(size: 32, design: .serif))
+                .tracking(-0.4)
+                .foregroundColor(Color("TextPrimary"))
+            Text("Manage workflows, persistent schedules, and continuous execution loops")
+                .font(.system(size: 15))
+                .foregroundColor(Color("TextSecondary"))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var controls: some View {
+        HStack(spacing: 8) {
+            Menu {
                 ForEach(TaskTab.allCases, id: \.self) { tab in
                     LibraryMenuCheck(title: tab.label, checked: activeTab == tab) { activeTab = tab }
                 }
+            } label: {
+                dropLabel("Type:", activeTab.label == "Agent Heartbeats" ? "Heartbeats" : activeTab.label)
             }
-            Section("Sort by") {
+            .accessibilityLabel("Type: \(activeTab.label)")
+            Menu {
                 ForEach(TaskSort.allCases, id: \.self) { sort in
                     LibraryMenuCheck(title: sort.label, checked: sortBy == sort) { sortBy = sort }
                 }
+            } label: {
+                dropLabel("Sort:", sortBy.label)
             }
-            Section("View") {
-                ForEach(RoutinesView.allCases, id: \.self) { view in
-                    LibraryMenuCheck(title: view.label, checked: routinesView == view) { routinesViewRaw = view.rawValue }
+            .accessibilityLabel("Sort: \(sortBy.label)")
+            Spacer(minLength: 0)
+            Menu {
+                Button { isTypeChoicePresented = true } label: { Label("Set up manually", systemImage: "plus") }
+                Button(action: startWithAssistant) { Label("Create with Assistant", systemImage: "cpu") }
+            } label: {
+                HStack(spacing: 6) {
+                    Text("New task").font(.system(size: 14, weight: .medium))
+                    Image(systemName: "chevron.down").font(.system(size: 10, weight: .semibold))
+                }
+                .foregroundColor(Color("OnAccent"))
+                .padding(.horizontal, 14)
+                .frame(height: 36)
+                .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color("AccentPrimary")))
+                .fixedSize()
+            }
+            .accessibilityLabel("New task")
+        }
+    }
+
+    private func dropLabel(_ key: String, _ value: String) -> some View {
+        HStack(spacing: 5) {
+            Text(key).foregroundColor(Color("TextSecondary"))
+            Text(value).fontWeight(.medium).foregroundColor(Color("TextPrimary"))
+            Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold)).foregroundColor(Color("TextSecondary"))
+        }
+        .font(.system(size: 14))
+        .lineLimit(1)
+        .padding(.horizontal, 12)
+        .frame(height: 36)
+        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color("BgPanel")))
+        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(Color("BorderStrong"), lineWidth: 1))
+        .fixedSize()
+    }
+
+    /// TabsList: a filled track, the picked tab as a raised white pill.
+    private var tabStrip: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 2) {
+                ForEach(TaskTab.allCases, id: \.self) { tab in
+                    let on = activeTab == tab
+                    Button { activeTab = tab } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: tab.icon).font(.system(size: 13))
+                            Text(tab.label).font(.system(size: 14, weight: on ? .medium : .regular))
+                        }
+                        .foregroundColor(on ? Color("TextPrimary") : Color("TextTertiary"))
+                        .padding(.horizontal, 14)
+                        .frame(height: 32)
+                        .background(
+                            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                .fill(on ? Color("BgPanel") : Color.clear)
+                                .shadow(color: .black.opacity(on ? 0.06 : 0), radius: 2, y: 1)
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityAddTraits(on ? .isSelected : [])
                 }
             }
-        } label: {
-            LibraryRoundLabel(icon: "slider.horizontal.3", dot: filtersOn)
+            .padding(4)
+            .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color("FillNeutral")))
+            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Color("BorderSubtle"), lineWidth: 1))
         }
-        .accessibilityLabel("Filter and sort")
+    }
+
+    /// ViewToggle "View": List · Graph · Calendar.
+    private var viewToggle: some View {
+        HStack(spacing: 2) {
+            ForEach(RoutinesView.allCases, id: \.self) { view in
+                let on = routinesView == view
+                Button { routinesViewRaw = view.rawValue } label: {
+                    Text(view.label)
+                        .font(.system(size: 13, weight: on ? .medium : .regular))
+                        .foregroundColor(on ? Color("TextPrimary") : Color("TextSecondary"))
+                        .padding(.horizontal, 10)
+                        .frame(height: 28)
+                        .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(on ? Color("BgPanel") : Color.clear))
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(on ? .isSelected : [])
+            }
+        }
+        .padding(3)
+        .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Color("FillNeutral")))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("View")
+    }
+
+    private var searchField: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 15))
+                .foregroundColor(Color("TextTertiary"))
+            TextField("Search automation tasks…", text: $searchQuery)
+                .font(.system(size: 16))
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+            if !searchQuery.isEmpty {
+                Button { searchQuery = "" } label: {
+                    Image(systemName: "xmark.circle.fill").foregroundColor(Color("TextTertiary"))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Clear search")
+            }
+        }
+        .padding(.horizontal, 16)
+        .frame(height: 44)
+        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color("BgPanel")))
+        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Color("BorderStrong"), lineWidth: 1))
     }
 
     private var keepAwakeBanner: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Image(systemName: "calendar.badge.checkmark")
-                    .font(.system(size: 13))
-                    .foregroundColor(Color("TextSecondary"))
+                    .font(.system(size: 15))
+                    .foregroundColor(Color("AccentPrimary"))
                 Text("Automation tasks only run while your computer is awake and online.")
                     .font(.system(size: 13))
                     .foregroundColor(Color("TextSecondary"))
@@ -287,7 +417,7 @@ struct AutomationTasksPhoneView: View {
 
     @ViewBuilder
     private var mainContent: some View {
-        if routinesView != .list {
+        if routinesView != .list, showRoutineViews {
             let routines = activeTab == .all || activeTab == .routine ? visibleRoutines : []
             if routinesView == .graph {
                 AutomationGraphView(routines: routines).frame(minHeight: 360)
@@ -318,7 +448,7 @@ struct AutomationTasksPhoneView: View {
                     if visibleRoutines.isEmpty {
                         emptyState(
                             title: searchQuery.isEmpty ? "No routines yet" : "No routines match your search",
-                            message: "Tap 'New task' to add a routine."
+                            message: "Tap 'New task' above to add a routine."
                         )
                         .padding(.vertical, 40)
                     } else {
@@ -366,7 +496,7 @@ struct AutomationTasksPhoneView: View {
             emptyState(
                 title: searchQuery.isEmpty ? "No automation tasks yet" : "No tasks match your search",
                 message: searchQuery.isEmpty
-                    ? "Tap 'New task' to configure your first Goal, Routine, or Loop."
+                    ? "Tap 'New task' above to configure your first Goal, Routine, or Loop."
                     : "Try another search or type."
             )
             .padding(.vertical, 80)
