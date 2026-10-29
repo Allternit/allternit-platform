@@ -155,6 +155,9 @@ final class PtySession: ObservableObject {
     var onOutput: (@MainActor (String) -> Void)?
 
     private let client: PtyClient
+    /// Set for a relayed computer: the shell lives in its terminal service
+    /// (`/terminal/*`, streamed over SSE) instead of a gizzi-code pty.
+    private let service: TerminalServiceClient?
     private(set) var ptyId: String?
     private var readyForInput = false
     private var intentionalClose = false
@@ -169,14 +172,25 @@ final class PtySession: ObservableObject {
     // the connection down; both are only mutated on the main actor otherwise.
     nonisolated(unsafe) private var webSocket: URLSessionWebSocketTask?
     nonisolated(unsafe) private var receiveTask: Task<Void, Never>?
+    nonisolated(unsafe) private var streamTask: Task<Void, Never>?
+    /// Keystrokes go out one POST at a time, in order (queueTerminalInput).
+    private var inputChain: Task<Void, Never>?
 
     init(client: PtyClient = .shared, attachedInstanceName: String? = nil) {
         self.client = client
+        self.service = nil
+        self.attachedInstanceName = attachedInstanceName
+    }
+
+    init(service: TerminalServiceClient, attachedInstanceName: String? = nil) {
+        self.client = .shared
+        self.service = service
         self.attachedInstanceName = attachedInstanceName
     }
 
     deinit {
         receiveTask?.cancel()
+        streamTask?.cancel()
         webSocket?.cancel(with: .goingAway, reason: nil)
     }
 
@@ -185,6 +199,10 @@ final class PtySession: ObservableObject {
     /// re-attached and the server replays the full scrollback, restoring
     /// the terminal screen (protocol: reconnecting to a live ptyID replays).
     func start() async {
+        if let service {
+            await startService(service)
+            return
+        }
         guard webSocket == nil else { return }
         state = .connecting
         intentionalClose = false
@@ -217,6 +235,20 @@ final class PtySession: ObservableObject {
     /// the meta frame per protocol — input is only hooked up server-side once
     /// the replay completed, so keystrokes arriving earlier are dropped here.
     func send(_ text: String) {
+        if let service {
+            guard readyForInput, let ptyId else { return }
+            let previous = inputChain
+            inputChain = Task { [weak self] in
+                await previous?.value
+                do {
+                    try await service.input(sessionId: ptyId, text)
+                } catch {
+                    guard !Task.isCancelled else { return }
+                    self?.state = .failed(error.localizedDescription)
+                }
+            }
+            return
+        }
         guard readyForInput, let webSocket else { return }
         webSocket.send(.string(text)) { _ in }
     }
@@ -236,9 +268,13 @@ final class PtySession: ObservableObject {
         let key = "\(cols)x\(rows)"
         guard key != lastResize else { return }
         lastResize = key
-        Task { [client, weak self] in
+        Task { [client, service, weak self] in
             do {
-                try await client.resize(id: ptyId, cols: cols, rows: rows)
+                if let service {
+                    try await service.resize(sessionId: ptyId, cols: cols, rows: rows)
+                } else {
+                    try await client.resize(id: ptyId, cols: cols, rows: rows)
+                }
             } catch {
                 if self?.lastResize == key { self?.lastResize = nil }
             }
@@ -251,9 +287,80 @@ final class PtySession: ObservableObject {
         intentionalClose = true
         receiveTask?.cancel()
         receiveTask = nil
+        streamTask?.cancel()
+        streamTask = nil
         webSocket?.cancel(with: .normalClosure, reason: nil)
         webSocket = nil
         onOutput = nil
+    }
+
+    /// Ends the shell on the computer (closing a terminal tab).
+    func close() {
+        stop()
+        guard let ptyId else { return }
+        Task { [client, service] in
+            if let service {
+                try? await service.close(sessionId: ptyId)
+            } else {
+                try? await client.deletePty(id: ptyId)
+            }
+        }
+    }
+
+    // MARK: Terminal service (relayed computer)
+
+    /// Creates the shell (sized to the view when known) and reads its SSE
+    /// stream; input opens once the stream does (UnifiedTerminal onOpen).
+    private func startService(_ service: TerminalServiceClient) async {
+        guard streamTask == nil else { return }
+        state = .connecting
+        intentionalClose = false
+        readyForInput = false
+        lastResize = nil
+        do {
+            if ptyId == nil {
+                ptyId = try await service.create(cols: pendingSize?.cols ?? 80, rows: pendingSize?.rows ?? 24)
+            }
+        } catch {
+            guard !Task.isCancelled else { return }
+            state = .failed(error.localizedDescription)
+            return
+        }
+        guard let ptyId else { return }
+        streamTask = Task { [weak self] in
+            do {
+                let bytes = try await service.stream(sessionId: ptyId)
+                guard let self else { return }
+                self.readyForInput = true
+                self.state = .live
+                if let pendingSize = self.pendingSize {
+                    self.lastResize = nil
+                    self.sendResize(cols: pendingSize.cols, rows: pendingSize.rows)
+                }
+                for try await line in bytes.lines {
+                    guard line.hasPrefix("data:") else { continue }
+                    var payload = String(line.dropFirst(5))
+                    if payload.hasPrefix(" ") { payload.removeFirst() }
+                    self.handleServiceEvent(payload)
+                }
+                guard !Task.isCancelled, !self.intentionalClose else { return }
+                self.state = .failed("Terminal stream ended")
+            } catch {
+                guard !Task.isCancelled, let self, !self.intentionalClose else { return }
+                self.state = .failed(error.localizedDescription)
+            }
+            self?.streamTask = nil
+        }
+    }
+
+    private func handleServiceEvent(_ payload: String) {
+        struct Message: Decodable { let type: String; let data: String? }
+        if let data = payload.data(using: .utf8),
+           let message = try? JSONDecoder().decode(Message.self, from: data) {
+            if message.type == "data", let text = message.data, !text.isEmpty { onOutput?(text) }
+        } else if !payload.isEmpty {
+            onOutput?(payload)
+        }
     }
 
     private func startReceiveLoop(_ socket: URLSessionWebSocketTask) {

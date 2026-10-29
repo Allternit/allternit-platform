@@ -1,12 +1,14 @@
 import SwiftUI
+import UIKit
 
 // MARK: - Launch composer
 
-/// The Code launch prompt on the phone (phone.css "Terminal-style composer:
-/// one square line, prompt and keys side by side"): a dashed hairline, `+`,
-/// the coral `❯` prompt with a mono field, the voice key, then the deck row
-/// under it (computer · folder · branch · permission mode · model ·
-/// Terminal). Sending starts a code thread with the text.
+/// The Code launch prompt on the phone (ChatComposer's Code terminal line,
+/// phone.css "Terminal-style composer: one square line, prompt and keys side
+/// by side"): one line between dashed rules — `+`, the coral `❯` on the
+/// text's first line, voice and the coral run key — then the status row
+/// under it (computer · folder · branch · worktree · permission mode ·
+/// model · usage · Terminal). Sending starts a code thread with the text.
 struct CodeLaunchComposer: View {
     @Binding var text: String
     let folder: CodeFolderInfo?
@@ -20,27 +22,36 @@ struct CodeLaunchComposer: View {
 
     private var trimmed: String { text.trimmingCharacters(in: .whitespacesAndNewlines) }
 
+    /// phone.css: prompt 15px and text 16px, both on a 22px line.
+    private static let line: CGFloat = 22
+    private static let textFont = UIFont.monospacedSystemFont(ofSize: 16, weight: .regular)
+
     var body: some View {
         VStack(spacing: 0) {
-            DashedHairline()
-            HStack(alignment: .center, spacing: 2) {
+            DashedHairline(strong: isFocused)
+            HStack(alignment: .bottom, spacing: 4) {
                 Button(action: onAttach) {
                     Image(systemName: "plus")
-                        .font(.system(size: 18, weight: .regular))
-                        .foregroundColor(Color("TextPrimary"))
-                        .frame(width: 36, height: 36)
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundColor(Color("TextSecondary"))
+                        .frame(width: 40, height: 40)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .padding(.vertical, 6)
                 .accessibilityLabel("Attach")
 
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                HStack(alignment: .top, spacing: 8) {
                     Text("❯")
-                        .font(.system(size: 15, weight: .semibold, design: .monospaced))
+                        .font(.system(size: 15, weight: .bold, design: .monospaced))
                         .foregroundColor(GizziCodeWordmark.coral)
+                        .frame(height: Self.line)
                         .accessibilityHidden(true)
                     TextField("Run a command or describe a task...", text: $text, axis: .vertical)
-                        .font(.system(size: 16, design: .monospaced))
+                        .font(Font(Self.textFont))
                         .foregroundColor(Color("TextPrimary"))
+                        .lineSpacing(Self.line - Self.textFont.lineHeight)
+                        .padding(.vertical, (Self.line - Self.textFont.lineHeight) / 2)
                         .lineLimit(1...6)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
@@ -48,35 +59,39 @@ struct CodeLaunchComposer: View {
                         .focused($isFocused)
                         .onSubmit(send)
                 }
+                .padding(.top, 9)
+                .padding(.bottom, 9)
                 .padding(.leading, 12)
-                .padding(.vertical, 9)
+                .padding(.trailing, 4)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-                if trimmed.isEmpty {
+                HStack(spacing: 4) {
                     Button(action: toggleDictation) {
                         Image(systemName: dictation.isRecording ? "waveform.circle.fill" : "waveform")
-                            .font(.system(size: 17))
-                            .foregroundColor(Color("TextPrimary"))
-                            .frame(width: 36, height: 36)
+                            .font(.system(size: 15, weight: .bold))
+                            .foregroundColor(Color("TextSecondary"))
+                            .frame(width: 40, height: 40)
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel(dictation.isRecording ? "Stop voice input" : "Start voice mode")
-                } else {
-                    Button(action: send) {
-                        Image(systemName: "arrow.up")
-                            .font(.system(size: 14, weight: .bold))
-                            .foregroundColor(Color("OnAccent"))
-                            .frame(width: 30, height: 30)
-                            .background(Color("AccentPrimary"))
-                            .clipShape(Circle())
-                            .frame(width: 36, height: 36)
+                    if !trimmed.isEmpty {
+                        Button(action: send) {
+                            Image(systemName: "arrow.up")
+                                .font(.system(size: 14, weight: .bold))
+                                .foregroundColor(.white)
+                                .frame(width: 40, height: 40)
+                                .background(GizziCodeWordmark.coral, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Send")
+                        .accessibilityHint("Run (Enter)")
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Send")
                 }
+                .padding(.vertical, 6)
             }
-            .padding(.trailing, 6)
-            DashedHairline()
+            .padding(.horizontal, 6)
+            DashedHairline(strong: isFocused)
             CodeDeckRow(folder: folder, onOpenTerminal: onOpenTerminal)
         }
         .onChange(of: dictation.transcript) { _, transcript in
@@ -105,13 +120,16 @@ struct CodeLaunchComposer: View {
 
 /// The dashed top/bottom edge of the terminal prompt.
 struct DashedHairline: View {
+    /// The rules step up while the prompt has focus.
+    var strong: Bool = false
+
     var body: some View {
         GeometryReader { geo in
             Path { path in
                 path.move(to: CGPoint(x: 0, y: 0.5))
                 path.addLine(to: CGPoint(x: geo.size.width, y: 0.5))
             }
-            .stroke(Color("BorderStrong"), style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
+            .stroke(strong ? Color("BorderStrong") : Color("BorderSubtle"), style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
         }
         .frame(height: 1)
         .accessibilityHidden(true)
@@ -120,9 +138,10 @@ struct DashedHairline: View {
 
 // MARK: - Deck row
 
-/// The quiet row under the Code prompt (CodeWorkspaceBar + CodeBottomStatusBar
-/// on the phone): one line that scrolls sideways — Environment, Working
-/// folder, branch, permission mode, model, and the Terminal key.
+/// The status row under the Code prompt (CodeBottomStatusBar with
+/// CodeWorkspaceBar leading, then the model, usage and CodeTerminalButton):
+/// Environment · Working folder · branch · Worktree · permission mode ·
+/// model · usage · Terminal, one line that scrolls sideways.
 struct CodeDeckRow: View {
     let folder: CodeFolderInfo?
     let onOpenTerminal: () -> Void
@@ -130,12 +149,14 @@ struct CodeDeckRow: View {
     @StateObject private var environmentStore = EnvironmentStore.shared
     @ObservedObject private var relay = RuntimeRelayStore.shared
     @StateObject private var modelStore = ModelStore.shared
+    @ObservedObject private var usage = UsageStore.shared
     @AppStorage(CodePermissionMode.storageKey) private var permissionRaw = CodePermissionMode.manual.rawValue
+    @AppStorage(CodeWorktree.storageKey) private var worktree = false
 
     @State private var sheet: Sheet? = nil
 
     enum Sheet: String, Identifiable {
-        case environment, folder, permission, model, pairing
+        case environment, folder, permission, model, pairing, usage
         var id: String { rawValue }
     }
 
@@ -152,9 +173,18 @@ struct CodeDeckRow: View {
         return relay.activeDevice?.isOnline == true ? nil : "Connecting"
     }
 
+    /// ChatComposer `modelPillLabel`: "Allternit Cloud · Kimi K3".
     private var modelLabel: String {
-        guard let model = modelStore.selectedModel else { return modelStore.pillLabel }
-        return "\(model.provider) · \(model.name)"
+        let name = ComposerModelLabel.label(modelStore)
+        guard let provider = modelStore.selectedModel?.provider, !provider.isEmpty else { return name }
+        let providerName = CodeProviderName.name(provider)
+        return name.lowercased().hasPrefix(providerName.lowercased()) ? name : "\(providerName) · \(name)"
+    }
+
+    /// The worktree pill only shows on the default branch (isDefaultCodeBranch).
+    private var worktreeVisible: Bool {
+        guard let branch = folder?.branch?.lowercased() else { return false }
+        return branch == "main" || branch == "master"
     }
 
     var body: some View {
@@ -162,51 +192,89 @@ struct CodeDeckRow: View {
             HStack(spacing: 2) {
                 pill(label: "Environment", action: { sheet = .environment }) {
                     Image(systemName: environmentStore.environment == .cloud ? "cloud" : "desktopcomputer")
-                        .font(.system(size: 13))
+                        .font(.system(size: 15))
                     Text(environmentLabel).lineLimit(1)
                     if let cloudStatus {
                         Text(cloudStatus)
-                            .font(.system(size: 11))
-                            .foregroundColor(Color("BrandAccent"))
+                            .font(.system(size: 13))
+                            .foregroundColor(Color("TextSecondary"))
                     }
                     caret
                 }
                 pill(label: "Working folder", action: { sheet = .folder }) {
-                    Image(systemName: "folder").font(.system(size: 13))
-                    Text(folder?.name ?? "Select folder").lineLimit(1).frame(maxWidth: 150, alignment: .leading)
+                    Image(systemName: "folder").font(.system(size: 15))
+                    Text(folder?.name ?? "Select folder").lineLimit(1).frame(maxWidth: 170, alignment: .leading)
                     caret
                 }
                 if let branch = folder?.branch, !branch.isEmpty {
                     pill(label: "Branch \(branch)", action: nil) {
-                        Image(systemName: "arrow.triangle.branch").font(.system(size: 12))
-                        Text(branch).lineLimit(1).frame(maxWidth: 150, alignment: .leading)
+                        Image(systemName: "arrow.triangle.branch").font(.system(size: 14))
+                        Text(branch).lineLimit(1).frame(maxWidth: 170, alignment: .leading)
                     }
+                }
+                if worktreeVisible {
+                    pill(label: "Toggle worktree isolation", action: { worktree.toggle() }) {
+                        Image(systemName: worktree ? "checkmark.square.fill" : "square")
+                            .font(.system(size: 15))
+                            .foregroundColor(worktree ? Color("AccentPrimary") : Color("TextSecondary"))
+                        Text("Worktree")
+                    }
+                    .accessibilityAddTraits(worktree ? .isSelected : [])
                 }
                 Button(action: { sheet = .permission }) {
-                    HStack(spacing: 5) {
-                        Image(systemName: permission.icon).font(.system(size: 12)).opacity(0.85)
+                    HStack(spacing: 6) {
+                        Image(systemName: permission.icon).font(.system(size: 14)).opacity(0.85)
                         Text(permission.label)
+                        Image(systemName: "chevron.down").font(.system(size: 10, weight: .bold)).opacity(0.7)
                     }
-                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                    .font(.system(size: 13, weight: .semibold, design: .monospaced))
                     .foregroundColor(Color("AccentPrimary"))
-                    .padding(.horizontal, 8)
-                    .frame(height: 30)
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                    .padding(.horizontal, 10)
+                    .frame(height: 40)
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("Code permission mode")
-                pill(label: "Model", action: { sheet = .model }) {
-                    Text(modelLabel).lineLimit(1)
-                }
-                Button(action: onOpenTerminal) {
-                    HStack(spacing: 5) {
-                        Image(systemName: "apple.terminal").font(.system(size: 13))
-                        Text("Terminal")
+                .accessibilityLabel("Code permission mode: \(permission.label)")
+                Button(action: { sheet = .model }) {
+                    HStack(spacing: 6) {
+                        Image("MatrixLogo")
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 14, height: 14)
+                            .frame(width: 18, height: 18)
+                            .background(Color("FillNeutral"), in: RoundedRectangle(cornerRadius: 5))
+                            .overlay(RoundedRectangle(cornerRadius: 5).stroke(Color("BorderSubtle"), lineWidth: 1))
+                        Text(modelLabel).lineLimit(1)
+                        Image(systemName: "chevron.down").font(.system(size: 10, weight: .semibold)).opacity(0.8)
                     }
-                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                    .font(.system(size: 13, weight: .medium, design: .monospaced))
                     .foregroundColor(Color("TextSecondary"))
                     .padding(.horizontal, 8)
-                    .frame(height: 30)
+                    .frame(height: 40)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Model: \(modelLabel)")
+                if let percent = usage.percentUsed {
+                    Button(action: { sheet = .usage }) {
+                        CodeUsageBlocks(fraction: percent / 100)
+                            .padding(.horizontal, 8)
+                            .frame(height: 40)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Usage: \(usage.percentText ?? "") used. Open details.")
+                }
+                Button(action: onOpenTerminal) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "apple.terminal").font(.system(size: 15))
+                        Text("Terminal")
+                    }
+                    .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                    .foregroundColor(Color("TextSecondary"))
+                    .padding(.horizontal, 10)
+                    .frame(height: 40)
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Open terminal")
@@ -215,7 +283,11 @@ struct CodeDeckRow: View {
             .padding(.bottom, 14)
             .padding(.horizontal, 6)
         }
-        .task { await relay.refresh() }
+        .task {
+            await relay.refresh()
+            modelStore.fetchModelsIfNeeded()
+            usage.fetchUsageIfNeeded()
+        }
         .sheet(item: $sheet) { sheet in
             switch sheet {
             case .environment:
@@ -234,23 +306,32 @@ struct CodeDeckRow: View {
                 ModelPickerSheet(modelStore: modelStore)
             case .pairing:
                 RuntimePairingView()
+            case .usage:
+                NavigationStack {
+                    List { PlanUsageRows() }
+                        .navigationTitle("Usage")
+                        .navigationBarTitleDisplayMode(.inline)
+                }
+                .presentationDetents([.medium])
+                .presentationDragIndicator(.visible)
             }
         }
     }
 
     private var caret: some View {
         Image(systemName: "chevron.down")
-            .font(.system(size: 9, weight: .semibold))
+            .font(.system(size: 10, weight: .semibold))
             .foregroundColor(Color("TextTertiary"))
     }
 
     @ViewBuilder
     private func pill<Content: View>(label: String, action: (() -> Void)?, @ViewBuilder content: () -> Content) -> some View {
         let chip = HStack(spacing: 6) { content() }
-            .font(.system(size: 13))
+            .font(.system(size: 15))
             .foregroundColor(Color("TextPrimary"))
             .padding(.horizontal, 8)
-            .frame(height: 36)
+            .frame(height: 40)
+            .contentShape(Rectangle())
         if let action {
             Button(action: action) { chip }
                 .buttonStyle(.plain)
@@ -259,6 +340,61 @@ struct CodeDeckRow: View {
             chip.accessibilityElement(children: .combine).accessibilityLabel(label)
         }
     }
+}
+
+/// The composer usage meter's five HUD blocks (ComposerUsageMeter
+/// `HudBlocks count=5`): filled by the plan window used, amber from 80%,
+/// red at the limit.
+struct CodeUsageBlocks: View {
+    let fraction: Double
+
+    private var tone: Color {
+        if fraction >= 1 { return Theme.statusError }
+        if fraction >= 0.8 { return Theme.statusWarning }
+        return Color("TextSecondary")
+    }
+
+    var body: some View {
+        let filled = Int((min(max(fraction, 0), 1) * 5).rounded(.up))
+        HStack(spacing: 2) {
+            ForEach(0..<5, id: \.self) { index in
+                RoundedRectangle(cornerRadius: 1)
+                    .fill(index < filled ? tone : Color("BorderStrong"))
+                    .frame(width: 5, height: 10)
+            }
+        }
+        .accessibilityHidden(true)
+    }
+}
+
+/// Provider display names (provider-registry.ts `name`).
+enum CodeProviderName {
+    static func name(_ provider: String) -> String {
+        switch provider.lowercased() {
+        case "allternit": return "Allternit Cloud"
+        case "anthropic": return "Anthropic"
+        case "claude": return "Claude"
+        case "openai": return "OpenAI"
+        case "codex": return "Codex"
+        case "google": return "Google Gemini"
+        case "gemini": return "Gemini"
+        case "kimi": return "Kimi"
+        case "xai": return "xAI"
+        case "grok": return "Grok"
+        case "deepseek": return "DeepSeek"
+        case "mistral": return "Mistral"
+        case "openrouter": return "OpenRouter"
+        case "ollama": return "Ollama"
+        case "qwen": return "Qwen"
+        default: return provider.prefix(1).uppercased() + provider.dropFirst()
+        }
+    }
+}
+
+/// Worktree isolation for the next code thread (CodeCanvas pendingWorktree):
+/// a new thread is stamped `metadata.isolation = "worktree"`.
+enum CodeWorktree {
+    static let storageKey = "allternit-code-pending-worktree"
 }
 
 // MARK: - Deck sheets
