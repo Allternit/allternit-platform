@@ -2802,6 +2802,31 @@
       ]
     },
     {
+      "id": "feature:system-drawer",
+      "label": "System drawer (Needs you, Running, Runs, Problems)",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "A bottom drawer (Desktop, beside the rail) or sheet (phone layout and m.allternit.com PWA) showing what is happening across every session and mode. Needs you: agent permission requests from any surface (usePermissionStore) plus Factory pending approvals, answered in place. Running: streaming chats and code sessions, Terminal bots and dev servers with Open and Stop, a List / Graph switch (the Factory campaign flow, CampaignFlowView) and a Next up strip of the next routine runs. Runs and Problems: runs and parsed failures from code sessions active in the last day, plus failing routines and failed bots. Header: plan usage and Terminal bots working. Opened from the rail indicator (need you / running / problems, each opens its tab), the phone menu footer's pulse button or Cmd/Ctrl+J; never opens by itself. Replaces the Code-only Console drawer.",
+      "touches": [
+        "allternit-ai/src/drawers",
+        "allternit-ai/src/views/code/ConsoleDrawer",
+        "allternit-ai/src/views/code/console",
+        "allternit-ai/src/views/code/RunsView.tsx",
+        "allternit-ai/src/components/factory/views/connected.tsx",
+        "allternit-ai/src/shell/ShellRail.tsx",
+        "allternit-ai/src/shell/ShellFrame.tsx",
+        "allternit-ai/src/shell/ShellApp.tsx",
+        "allternit-ai/src/fabric-session/phone/PhoneDrawer.tsx",
+        "allternit-ai/src/fabric-session/phone/PhoneShell.tsx"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-28",
+          "note": "Eoj: the Factory graph moves out of Canvas mode into a system-level drawer, the live view of what is running. After research across ~30 agent and IDE products (no product approves across sessions, ships a spawn graph or lists problems across sessions), Eoj asked to add the recommended set: Needs you, Running (List / Graph, Next up), Runs, Problems, a usage strip and a segmented rail indicator; phone gets the same tabs as a sheet. The old Console's Output, Plan, Terminals, Ports, Changes, Factory, Tasks, Usage and Artifacts tabs are retired. Daily spend against a cap is not shown: the usage API reports the period's spend only. Canvas mode stays for now."
+        }
+      ]
+    },
+    {
       "id": "feature:deck-pinned-artifacts",
       "label": "Pinned artifacts in the composer deck",
       "product": "product:ai-allternit",
