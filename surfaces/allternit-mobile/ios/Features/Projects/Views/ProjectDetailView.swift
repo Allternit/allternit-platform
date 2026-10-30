@@ -26,7 +26,6 @@ struct ProjectDetailView: View {
 
     @StateObject private var projectStore = ProjectStore.shared
     @ObservedObject private var library = ProjectsLibraryStore.shared
-    @ObservedObject private var backdrops = StageBackdropStore.shared
     @EnvironmentObject private var navigator: BotNavigator
     @Environment(\.dismiss) private var dismiss
     @StateObject private var dictation = DictationController()
@@ -48,6 +47,9 @@ struct ProjectDetailView: View {
     @State private var isDeleteConfirmPresented = false
     @State private var section: Section = .overview
     @State private var sheet: DetailSheet? = nil
+    @State private var statusRecord: ProjectStatusRecord? = nil
+    @StateObject private var looks: ProjectLookStore
+    @ObservedObject private var backdrops = StageBackdropStore.shared
 
     // The project's coordinator (project-workspaces): registered on first use.
     @State private var coordinatorId: String? = nil
@@ -75,7 +77,7 @@ struct ProjectDetailView: View {
     }
 
     private enum DetailSheet: String, Identifiable {
-        case appearance, settings, edit, memory, status
+        case customize, settings, edit, memory, status
         var id: String { rawValue }
     }
 
@@ -86,6 +88,7 @@ struct ProjectDetailView: View {
          onNewChat: @escaping (CoworkProject) -> Void,
          onOpenChat: @escaping (AgentSession) -> Void) {
         self.project = project
+        _looks = StateObject(wrappedValue: ProjectLookStore(scope: "project:chat:\(project.id)"))
         self.onNewChat = onNewChat
         self.onOpenChat = onOpenChat
         _instructions = State(initialValue: project.instructions ?? "")
@@ -120,7 +123,8 @@ struct ProjectDetailView: View {
                                 .foregroundColor(Theme.statusWarning)
                         }
                         if section == .overview {
-                            overviewIntro
+                            ProjectDashboardView(layout: looks.look.layout, look: looks.look, data: boardData, title: liveProject.title) { sheet = .status }
+                            if chats.isEmpty && serverThreads.isEmpty { overviewIntro }
                             if !messages.isEmpty {
                                 ProjectConversationView(
                                     messages: messages,
@@ -154,7 +158,16 @@ struct ProjectDetailView: View {
             }
             composerCard
         }
-        .background(Color("BgPrimary").edgesIgnoringSafeArea(.all))
+        .background {
+            let variant = backdrops.variant(for: .project, scope: scope)
+            if variant == "plain" {
+                Color("BgPrimary").edgesIgnoringSafeArea(.all)
+            } else {
+                StageBackdropView(variant: variant, colors: StageBackdrops.sampleColors)
+                    .ignoresSafeArea()
+                    .allowsHitTesting(false)
+            }
+        }
         .toolbar(.hidden, for: .navigationBar)
         .sheet(item: $sheet) { which in
             sheetContent(which)
@@ -199,6 +212,7 @@ struct ProjectDetailView: View {
             coordinatorId = try? await BotProjectClient.shared.workspaceProjectId(key: workspaceKey)
             while !Task.isCancelled {
                 await refreshCoordinator()
+                statusRecord = try? await BotProjectClient.shared.status(projectId: coordinatorId ?? project.id)
                 try? await Task.sleep(nanoseconds: 5_000_000_000)
             }
         }
@@ -209,8 +223,17 @@ struct ProjectDetailView: View {
     @ViewBuilder
     private func sheetContent(_ which: DetailSheet) -> some View {
         switch which {
-        case .appearance:
-            StageBackdropScopeSheet(scope: scope, title: "Customize appearance")
+        case .customize:
+            ProjectCustomizeSheet(store: looks, data: boardData, title: liveProject.title, scope: scope,
+                                  backdropColors: StageBackdrops.sampleColors) {
+                Button("Project settings") { sheet = .settings }.frame(minHeight: 44)
+            } manage: {
+                Button("Edit details") { sheet = .edit }.frame(minHeight: 44)
+                if let libraryRow {
+                    Button(libraryRow.isArchived ? "Unarchive" : "Archive") { library.toggleArchive(libraryRow) }.frame(minHeight: 44)
+                }
+                Button("Delete", role: .destructive) { sheet = nil; isDeleteConfirmPresented = true }.frame(minHeight: 44)
+            }
         case .settings:
             ProjectSettingsSheet(projectId: project.id, scope: scope, colors: StageBackdrops.sampleColors,
                                  note: "Appearance is saved on this device. Instructions are saved with the project.",
@@ -324,45 +347,38 @@ struct ProjectDetailView: View {
     /// Customize appearance · settings · pin · ⋮ (BaseProjectView headerActions).
     private var actionsRow: some View {
         HStack(spacing: 2) {
-            Button { sheet = .appearance } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "paintpalette").font(.system(size: 14))
-                    Text("Customize appearance").font(.system(size: 13))
-                }
-                .foregroundColor(Color("TextSecondary"))
-                .frame(minHeight: 44)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
             Spacer(minLength: 4)
-            ProjectIconButton(systemName: "gearshape", label: "Project settings") { sheet = .settings }
             if let libraryRow {
                 ProjectIconButton(systemName: libraryRow.isFavorite ? "pin.fill" : "pin",
                                   label: libraryRow.isFavorite ? "Unpin project" : "Pin project") {
                     library.toggleFavorite(libraryRow)
                 }
             }
-            Menu {
-                Button { sheet = .edit } label: { Label("Edit details", systemImage: "pencil") }
-                Button { sheet = .settings } label: { Label("Project settings", systemImage: "gearshape") }
-                if let libraryRow {
-                    Button { library.toggleArchive(libraryRow) } label: {
-                        Label(libraryRow.isArchived ? "Unarchive" : "Archive", systemImage: "archivebox")
-                    }
-                }
-                Button(role: .destructive) { isDeleteConfirmPresented = true } label: {
-                    Label("Delete", systemImage: "trash")
-                }
-            } label: {
-                Image(systemName: "ellipsis")
-                    .rotationEffect(.degrees(90))
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(Color("TextSecondary"))
+            Button { sheet = .customize } label: {
+                Image(systemName: "slider.horizontal.3")
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundColor(Color("TextPrimary"))
                     .frame(width: 44, height: 44)
-                    .contentShape(Rectangle())
+                    .background(Circle().fill(Color("BgPanel")))
+                    .contentShape(Circle())
             }
-            .accessibilityLabel("Project options")
+            .buttonStyle(.plain)
+            .accessibilityLabel("Customize")
         }
+    }
+
+    private var boardData: ProjectBoardData {
+        let columns: [String: ProjectBoardWork.Column] = ["waiting": .needsYou, "working": .working, "queued": .queued, "idle": .queued, "resolved": .done]
+        var work = chats.map { chat in
+            ProjectBoardWork(id: chat.id, title: chat.name ?? "Chat", column: .working, owner: nil,
+                             at: ProjectBoardData.date(chat.updatedAt), open: { onOpenChat(chat) })
+        }
+        work += serverThreads.filter { !$0.incognito }.map { t in
+            ProjectBoardWork(id: t.id, title: t.title, column: columns[t.group] ?? .queued, owner: nil,
+                             at: ProjectBoardData.date(t.lastActivityAt), open: { navigator.openThread(t) })
+        }
+        let made = files.map { ProjectBoardMade(id: $0.id, name: $0.name, kind: "File", open: nil) }
+        return ProjectBoardData(status: statusRecord, work: work, people: [], made: made)
     }
 
     private func select(_ tab: Section) {

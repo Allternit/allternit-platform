@@ -265,6 +265,7 @@
 		846E1D7AFD7DD8DB41B8B8E6 /* PushTokenClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11D19CEB46890DEEEBAD7A10 /* PushTokenClient.swift */; };
 		84BEBEA84392FEA3E5352F95 /* AllternitScreen.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 51C046B0ECE7F5E01CB26059 /* AllternitScreen.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		851D6ED0A055BAAA7E5DF0F2 /* CodeCanvasStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 122C28A0CEDC1D5563AA57F7 /* CodeCanvasStore.swift */; };
+		85E30D388DC19F88041D1530 /* ProjectDashboard.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE35C8560B69A64D1A4CE0C3 /* ProjectDashboard.swift */; };
 		86B74F65A86145316E5D21B1 /* OrganizationAccessView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD73566138019C8E36A7C3E3 /* OrganizationAccessView.swift */; };
 		8740F93D84AD89D54CF62186 /* V2ArtifactEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B9BE54FA8D5553D022653635 /* V2ArtifactEditorView.swift */; };
 		87500E6DD24BB08CCBC9EA33 /* LocalVoiceBackends.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27522796D66DD8598AF0E758 /* LocalVoiceBackends.swift */; };
@@ -996,6 +997,7 @@
 		DCCA48BADEE0C298C8F3F832 /* ModelStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelStore.swift; sourceTree = "<group>"; };
 		DD574C98131DFBECE1E91F54 /* CloudInstancesClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudInstancesClient.swift; sourceTree = "<group>"; };
 		DDBA97DC0D00F97CA30AFA29 /* MarketplaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarketplaceView.swift; sourceTree = "<group>"; };
+		DE35C8560B69A64D1A4CE0C3 /* ProjectDashboard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectDashboard.swift; sourceTree = "<group>"; };
 		DF7B74CD03BCD43CEFF3B203 /* ProjectStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectStore.swift; sourceTree = "<group>"; };
 		E10652B6A3C4031AC35E7A7D /* ToolOptionsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolOptionsStore.swift; sourceTree = "<group>"; };
 		E40323844DABB3650485AEC0 /* CloudDeployStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudDeployStore.swift; sourceTree = "<group>"; };
@@ -1641,6 +1643,14 @@
 			path = Composer;
 			sourceTree = "<group>";
 		};
+		6FC691C4570AB2D7499DE6A4 /* Board */ = {
+			isa = PBXGroup;
+			children = (
+				DE35C8560B69A64D1A4CE0C3 /* ProjectDashboard.swift */,
+			);
+			path = Board;
+			sourceTree = "<group>";
+		};
 		7645B32763124DE8324DD282 /* CodeEditor */ = {
 			isa = PBXGroup;
 			children = (
@@ -2121,6 +2131,7 @@
 			isa = PBXGroup;
 			children = (
 				F9BFA89B2B0BDE51BCBFEB30 /* ProjectsLibraryStore.swift */,
+				6FC691C4570AB2D7499DE6A4 /* Board */,
 				2EE49961CE68434D0D593ECB /* Views */,
 			);
 			path = Projects;
@@ -2769,6 +2780,7 @@
 				0D37C59E18600EC7F741B2E3 /* PrewarmManagerView.swift in Sources */,
 				B66780F00E4C6BF61717C4F4 /* PrivacySettingsView.swift in Sources */,
 				7736F9534238046DA13B14B9 /* ProductsSettingsView.swift in Sources */,
+				85E30D388DC19F88041D1530 /* ProjectDashboard.swift in Sources */,
 				37461B42AB20995C665DD296 /* ProjectDetailView.swift in Sources */,
 				A462907889B0CB124DE22969 /* ProjectStore.swift in Sources */,
 				6247F7EC99AC623F8DECFA5D /* ProjectsClient.swift in Sources */,
