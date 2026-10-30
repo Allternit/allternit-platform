@@ -481,10 +481,16 @@ struct AutomationRoutinesCalendar: View {
     private var upcoming: [Occurrence] {
         let now = Date()
         let end = now.addingTimeInterval(14 * 86_400)
-        return Array(routines
-            .flatMap { r in RoutineOccurrences.routineOccurrences(r, from: now, to: end).map { Occurrence(routine: r, at: $0) } }
-            .sorted { $0.at != $1.at ? $0.at < $1.at : $0.routine.name < $1.routine.name }
-            .prefix(6))
+        var all: [Occurrence] = []
+        for r in routines {
+            for at in RoutineOccurrences.routineOccurrences(r, from: now, to: end) {
+                all.append(Occurrence(routine: r, at: at))
+            }
+        }
+        all.sort { (l: Occurrence, r: Occurrence) -> Bool in
+            l.at != r.at ? l.at < r.at : l.routine.name < r.routine.name
+        }
+        return Array(all.prefix(6))
     }
 
     private func color(for botId: String) -> Color {
