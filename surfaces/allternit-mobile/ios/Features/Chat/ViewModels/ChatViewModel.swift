@@ -498,7 +498,7 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
                     // failure): roll back the optimistic pair, hand the draft
                     // back to the composer, and surface one banner.
                     self.messages.removeAll { $0.id == assistantId || $0.id == userMessageId }
-                    self.draftToRestore = trimmed
+                    self.draftToRestore = ToolOptionsStore.shared.strippedText(trimmed)
                     self.transientError = "Couldn't send the message: \(FriendlyErrorMessage.from(error.localizedDescription))"
                     self.finishStreaming(messageId: assistantId)
                     let generator = UINotificationFeedbackGenerator()
