@@ -16,6 +16,11 @@ import SwiftUI
 ///   doesn't draw → `ArtifactLiveWebView`: the web's own viewer, signed in
 ///   as the user, with the page runtime bridge.
 ///
+/// Stored artifacts open in the web's real `ArtifactWindow` (the kind's editor,
+/// or its viewer without edit access), the same window Desktop and
+/// m.allternit.com use, with its own toolbar for versions, share and export.
+/// The native renderers below remain for records it doesn't serve.
+///
 /// Docs (including docs with several tabs), sheets and decks the user can
 /// edit get an Edit button (V2ArtifactEditorView), which saves a new v2
 /// version. PDFs, images and videos get Save or share (the share sheet:
@@ -50,6 +55,7 @@ struct V2ArtifactView: View {
             .navigationTitle(artifact?.title ?? initialTitle ?? "Artifact")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { toolbar }
+            .toolbar(usesWebWindow ? .hidden : .automatic, for: .navigationBar)
             .navigationDestination(isPresented: $showingLegacyEditor) {
                 if let legacyId = artifact?.origin?.legacyId {
                     OfficeDocumentView(artifactId: legacyId)
@@ -89,6 +95,12 @@ struct V2ArtifactView: View {
             }
         }
         .task { await load() }
+    }
+
+    /// Whether this record opens in the web's artifact window.
+    private var usesWebWindow: Bool {
+        guard let artifact else { return false }
+        return artifact.id.hasPrefix("art_") || SampleWorkspace.isEnabled
     }
 
     // MARK: - Toolbar
@@ -159,6 +171,9 @@ struct V2ArtifactView: View {
                 actionTitle: "Retry",
                 action: { Task { await load() } }
             )
+        } else if let artifact, usesWebWindow {
+            ArtifactLiveWebView(route: .window(id: artifact.id), onClose: { dismiss() })
+                .ignoresSafeArea()
         } else if let artifact {
             VStack(spacing: 0) {
                 if artifact.origin?.legacySource == "sectioned", artifact.origin?.legacyId != nil,

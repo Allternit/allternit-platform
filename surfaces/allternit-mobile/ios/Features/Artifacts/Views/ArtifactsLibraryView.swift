@@ -72,7 +72,7 @@ struct ArtifactsLibraryView: View {
             }
         }
         .background(Color("BgPrimary").ignoresSafeArea())
-        .sheet(item: $openArtifact) { summary in
+        .fullScreenCover(item: $openArtifact) { summary in
             V2ArtifactView(artifactId: summary.id, initialTitle: summary.title)
         }
         .fullScreenCover(item: $studio, onDismiss: { Task { await store.reload() } }) { session in
@@ -102,7 +102,7 @@ struct ArtifactsLibraryView: View {
             Task { await uploadVideo(item) }
         }
         #if DEBUG
-        .sheet(item: $debugOfficeDocumentId) { id in
+        .fullScreenCover(item: $debugOfficeDocumentId) { id in
             V2ArtifactView(artifactId: id.wrappedValue)
         }
         .task {

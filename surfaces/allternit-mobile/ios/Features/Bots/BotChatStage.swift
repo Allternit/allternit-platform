@@ -89,7 +89,7 @@ struct BotChatStage: View {
         }
         .onAppear { live.open(botId: bot.id) }
         .task(id: sessionKey) { await live.load(botId: bot.id, sessions: botSessions) }
-        .sheet(item: $openArtifact) { artifact in
+        .fullScreenCover(item: $openArtifact) { artifact in
             V2ArtifactView(artifactId: artifact.id, initialTitle: artifact.title)
         }
     }

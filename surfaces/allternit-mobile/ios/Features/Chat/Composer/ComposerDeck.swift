@@ -370,7 +370,7 @@ struct DeckArtifactsSheet: View {
         .presentationCornerRadius(28)
         .presentationDragIndicator(.hidden)
         .task { await load() }
-        .sheet(item: $openArtifact) { summary in
+        .fullScreenCover(item: $openArtifact) { summary in
             V2ArtifactView(artifactId: summary.id, initialTitle: summary.title)
         }
     }
