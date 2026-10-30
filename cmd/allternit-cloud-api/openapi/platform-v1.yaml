@@ -1908,6 +1908,7 @@ paths:
       tags: [Phones]
       parameters:
         - { name: run_id, in: query, schema: { type: string }, description: "Only this run's steps." }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 500, default: 100 }, description: "At most this many newest steps." }
       responses:
         "200":
           description: Steps and runs.

@@ -151,6 +151,10 @@ impl PhoneHost for ProdPhoneHost {
             .await
             .map_err(|e| {
                 tracing::warn!("platform phones: relay failed: {e}");
+                // Reached the Desktop, but its answer was over the relay's limit.
+                if e.to_string().contains("length limit") {
+                    return PlatformError::api_error("phone_response_too_large", "The Desktop's answer was too large to relay. Ask for less (a smaller limit, or one run_id).");
+                }
                 desktop_offline()
             })?;
         Ok((status, serde_json::from_slice(&out).unwrap_or(Value::Null)))
@@ -457,7 +461,13 @@ async fn list_phones(State(state): State<Arc<ApiState>>, caller: PlatformCaller,
 #[derive(Debug, Default, Deserialize)]
 struct HistoryQuery {
     run_id: Option<String>,
+    limit: Option<u32>,
 }
+
+/// Newest steps a history answer carries unless asked otherwise. The relay
+/// refuses answers over 4 MiB, and a phone's full 500 steps can pass that.
+const HISTORY_DEFAULT_LIMIT: u32 = 100;
+const HISTORY_MAX_LIMIT: u32 = 500;
 
 /// One history step as the API shows it: no frame, no screen text, no
 /// thumbnail (those stay on the Desktop).
@@ -492,12 +502,13 @@ fn run_object(r: &Value) -> Value {
     })
 }
 
-pub(crate) async fn op_history(host: &dyn PhoneHost, caller: &PlatformCaller, serial: &str, run_id: Option<&str>) -> Result<Value, PlatformError> {
+pub(crate) async fn op_history(host: &dyn PhoneHost, caller: &PlatformCaller, serial: &str, run_id: Option<&str>, limit: Option<u32>) -> Result<Value, PlatformError> {
     gate(caller)?;
     let serial = check_serial(serial)?;
-    let mut path = format!("/api/v1/phones/{}/history", enc(&serial));
+    let limit = limit.unwrap_or(HISTORY_DEFAULT_LIMIT).clamp(1, HISTORY_MAX_LIMIT);
+    let mut path = format!("/api/v1/phones/{}/history?limit={limit}", enc(&serial));
     if let Some(run) = run_id.map(str::trim).filter(|r| !r.is_empty()) {
-        path.push_str(&format!("?run_id={}", enc(run)));
+        path.push_str(&format!("&run_id={}", enc(run)));
     }
     let (_, out) = relay_ok(host, caller, Some(&serial), "GET", &path, Value::Null).await?;
     let list = |k: &str| out.get(k).and_then(Value::as_array).cloned().unwrap_or_default();
@@ -519,7 +530,7 @@ async fn history(
     ApiQuery(q): ApiQuery<HistoryQuery>,
 ) -> Result<Json<Value>, PlatformError> {
     let host = host_for(&state, layered);
-    Ok(Json(op_history(&*host, &caller, &serial, q.run_id.as_deref()).await?))
+    Ok(Json(op_history(&*host, &caller, &serial, q.run_id.as_deref(), q.limit).await?))
 }
 
 #[derive(Debug, Deserialize)]
@@ -789,7 +800,7 @@ pub(crate) async fn op_run_status(db: &PgPool, host: &dyn PhoneHost, caller: &Pl
             .bind(run_id)
             .fetch_optional(db)
             .await?;
-    let history = op_history(host, caller, serial, Some(run_id)).await?;
+    let history = op_history(host, caller, serial, Some(run_id), None).await?;
     let run = history["runs"].as_array().and_then(|r| r.first()).cloned().unwrap_or(Value::Null);
     if ours.is_none() && run.is_null() {
         return Err(PlatformError::not_found("phone_run_not_found", "No phone run with that id on this phone."));
@@ -1018,7 +1029,7 @@ pub async fn mcp_call(db: &PgPool, host: &dyn PhoneHost, caller: &PlatformCaller
             let run = SkillRunBody { serial: s("serial"), inputs: args.get("inputs").cloned(), bot_id: s("bot_id"), brain: s("brain") };
             op_skill(db, host, caller, &need("skill")?, &run, None).await
         }
-        "phone_history" => op_history(host, caller, &serial, s("run_id").as_deref()).await,
+        "phone_history" => op_history(host, caller, &serial, s("run_id").as_deref(), None).await,
         "phone_live_url" => op_live(host, caller, &serial).await,
         _ => Err(PlatformError::not_found("unknown_tool", format!("{name} is not a phone tool."))),
     }

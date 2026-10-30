@@ -448,6 +448,16 @@ pub fn record_run_completed(db: &crate::db::DbHandle, report: &Value, source: &s
 #[derive(Deserialize)]
 struct HistoryQuery {
     run_id: Option<String>,
+    /// At most this many newest steps (the whole history when absent).
+    limit: Option<usize>,
+}
+
+/// The newest `limit` steps, newest first.
+fn newest(mut shown: Vec<Step>, limit: Option<usize>) -> Vec<Step> {
+    let Some(limit) = limit else { return shown };
+    shown.sort_by(|a, b| b.at.cmp(&a.at));
+    shown.truncate(limit);
+    shown
 }
 
 fn bad(status: StatusCode, message: impl Into<String>) -> Response {
@@ -486,6 +496,7 @@ async fn get_history(
             Some(r) => all.into_iter().filter(|s| s.run_id == r).collect(),
             None => all,
         };
+        let shown = newest(shown, q.limit);
         json!({ "serial": serial, "steps": shown, "runs": runs, "retention_days": RETENTION_DAYS, "max_steps": MAX_STEPS })
     })
     .await
