@@ -138,16 +138,12 @@ struct BotChatSessionView: View {
             chat
         case .threads:
             VStack(spacing: 0) {
-                ScrollView {
-                    BotThreadsPanel(botId: bot.id, greeting: nil) { open($0) }
-                        .padding(.vertical, 4)
-                }
-                .refreshable { await store.refreshThreads() }
+                BotThreadsOverview(botId: bot.id) { open($0) }
                 BotTabComposer(placeholder: placeholder, topDeck: AnyView(deck), onSend: startThread)
             }
         case .tasks:
             VStack(spacing: 0) {
-                BotTasksView(bot: bot)
+                BotThreadTasksView(bot: bot, currentSessionId: sessionId) { open($0) }
                 BotTabComposer(placeholder: placeholder, topDeck: AnyView(deck)) { text in
                     // A task asked for here goes into this thread's chat.
                     deckTab = .thread
@@ -479,7 +475,8 @@ struct BotChatSessionView: View {
 
     /// A thread picked from the Threads tab opens in its own chat.
     private func open(_ thread: BotThread) {
-        guard let id = thread.currentSessionId else { return }
+        // A thread with no chat yet opens its waiting page.
+        guard let id = thread.currentSessionId else { return navigator.openThread(thread) }
         if id == sessionId {
             deckTab = .thread
         } else {

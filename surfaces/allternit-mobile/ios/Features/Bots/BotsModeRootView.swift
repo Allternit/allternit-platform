@@ -69,6 +69,7 @@ struct BotsModeRootView: View {
     @ObservedObject private var colors = BotColorStore.shared
     @State private var isConnectionsPresented = false
     @State private var isThreadsPresented = false
+    @State private var threadToOpen: BotThread?
 
     /// Opens the shell drawer (the edge swipe also works).
     var onOpenSidebar: (() -> Void)?
@@ -118,13 +119,18 @@ struct BotsModeRootView: View {
         .sheet(isPresented: $isConnectionsPresented) {
             ConnectorsListView()
         }
-        .sheet(isPresented: $isThreadsPresented) {
+        // The thread opens once the sheet is gone: pushing while it closes
+        // is dropped on a device.
+        .sheet(isPresented: $isThreadsPresented, onDismiss: {
+            if let thread = threadToOpen {
+                threadToOpen = nil
+                navigator.openThread(thread)
+            }
+        }) {
             NavigationStack {
-                ScrollView {
-                    BotThreadsPanel(botId: nil, greeting: "Welcome back.") { thread in
-                        isThreadsPresented = false
-                        navigator.openThread(thread)
-                    }
+                BotThreadsOverview(botId: nil, title: "Welcome back.") { thread in
+                    threadToOpen = thread
+                    isThreadsPresented = false
                 }
                 .background(Color("BgPanel"))
                 .toolbar {
@@ -256,7 +262,12 @@ struct BotRouteDestination: View {
         case .botComputer(let botId):
             withBot(botId) { BotComputerView(bot: $0) }
         case .tasks(let botId):
-            withBot(botId) { BotTasksView(bot: $0) }
+            withBot(botId) { bot in
+                BotThreadTasksView(bot: bot)
+                    .background { BotWashedBackground(color: .some(BotColorStore.shared.hex(for: bot))).ignoresSafeArea() }
+                    .navigationTitle("Tasks")
+                    .navigationBarTitleDisplayMode(.inline)
+            }
         case .routines(let botId):
             withBot(botId) { BotRoutinesView(bot: $0) }
         case .memory(let botId):

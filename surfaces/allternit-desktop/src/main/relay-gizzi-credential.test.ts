@@ -41,10 +41,11 @@ describe('isGizziProviderListPath', () => {
 });
 
 describe('isGizziOwnedRelayPath', () => {
-  it('sends the phone app\'s terminal, files, automations and events to gizzi', () => {
+  it('sends the phone app\'s terminal, files, automations, events, MCP, path and VCS to gizzi', () => {
     for (const path of [
       '/v1/pty/create', '/v1/pty/p1/connect', '/v1/file/tree?path=src', '/v1/cron/jobs',
       '/v1/automations/routines', '/v1/automations/loops/l1/run', '/v1/event',
+      '/v1/mcp', '/v1/mcp/tools/catalog', '/v1/vcs', '/v1/path',
     ]) {
       expect(isGizziOwnedRelayPath(path)).toBe(true);
     }

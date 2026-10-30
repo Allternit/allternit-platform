@@ -55,11 +55,9 @@ struct BotHomeTabsView: View {
             Group {
                 switch tab {
                 case .threads:
-                    ScrollView {
+                    VStack(spacing: 0) {
                         mainChatCard
-                        BotThreadsPanel(botId: bot.id, greeting: nil) { thread in
-                            navigator.openThread(thread)
-                        }
+                        BotThreadsOverview(botId: bot.id)
                     }
                 case .artifacts: BotArtifactsList(bot: bot)
                 case .routines: BotRoutinesView(bot: bot)
