@@ -101,12 +101,15 @@ You record a site in Allternit Desktop or the Allternit browser extension: click
 
 - **See your skills.** The **Skills** list shows each skill's site and number of steps, and whether it is saved as a skill file or scheduled. Recordings that have no skill yet show **Not analyzed**.
 - **Edit a skill.** Tap one to open it. You can rename it and change its goal. Tap a step to rewrite it or change its type (Page, API, Shell or Note); the arrows move it and the bin deletes it. **Add step** adds one at the end. Under **Inputs**, change each input's name, label, example and type, or add and delete inputs. A **Secret** input never keeps an example. Edits stay on the phone until **Save changes**; **Undo changes** puts them back. **Run on a schedule** saves your edits first.
-- **Replay it.** **Replay** asks for the input values, then the agent runs the skill in the Agent browser. It asks before any step that submits, pays, sends or deletes.
+- **Set how an input is used.** Each input has **Required**, plus the setting its type needs: **Format** for a date, a date and time or a number (how it's typed into the page, like MM/DD/YYYY or de-DE), **Root** for a file or folder (where it may come from; it can be `{{profile.key}}`), **Saved login** for a secret (a credential id), and **Choices**, one per line, for a choice.
+- **Run or Replay it.** A skill with recorded steps shows **Run**, which plays those steps back exactly, without the model. Run needs Allternit Desktop, because it drives Desktop's own browser. On the iPhone, **Run** lists the recorded steps it would play and offers Replay instead. **Replay** asks for the input values, then the agent runs the skill in the Agent browser. Both ask before any step that submits, pays, sends or deletes.
 - **Run it on a schedule.** Pick the bot it runs as, how often (hourly, daily at 9:00, weekdays at 9:00, or your own cron line) and the input values. It shows up in Automation Tasks.
-- **Import a recording.** **Teach**, or the button on the empty screen, imports a recording (.har). Add a note for the agent, then **Analyze** turns it into a skill.
+- **Save the skill file.** **Save skill** shows the exact SKILL.md for the skill. Allternit Desktop writes it into `~/.allternit/skills/`; on the iPhone, **Copy SKILL.md** or **Share** it (to Files, AirDrop or a message).
+- **Edit your business profile.** **Business profile** holds values you set once, like your ERP address or reports folder. Each has a key, a label, a value and a type (Text, Web address, Email, Folder or Number), and any skill uses it as `{{profile.key}}`.
+- **Import a recording.** **Teach**, or the button on the empty screen, imports a recording (.har). Review shows what will be sent and the recording's **Actions**: a recording from Allternit Desktop lists each click, page and typed value with its time, and × leaves one out. A .har has network traffic only, so its list is empty. Add a note for the agent, then **Analyze** turns it into a skill.
 - **Delete a skill.**
 
-Exact playback of recorded steps (**Run**), the recording timeline and the business profile are in Allternit Desktop.
+Recording itself happens in Allternit Desktop or the browser extension.
 
 ## Your computer
 
