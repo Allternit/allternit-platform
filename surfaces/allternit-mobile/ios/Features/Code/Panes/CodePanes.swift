@@ -56,11 +56,13 @@ struct CodePaneSheet: View {
     let folder: CodeFolderInfo?
     @ObservedObject var instanceStore: InstanceStore
     @ObservedObject var terminals: CodeTerminalStore
+    /// The Artifacts library's stores, passed in so the sheet never depends
+    /// on what its presenter's environment hands down.
+    @ObservedObject var modeStore: AppModeStore
+    @ObservedObject var agentModeStore: AgentModeStore
     /// The Artifacts library's ☰: close the pane, open the drawer.
     let onOpenMenu: () -> Void
 
-    @EnvironmentObject private var modeStore: AppModeStore
-    @EnvironmentObject private var agentModeStore: AgentModeStore
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -410,11 +412,42 @@ struct CodeSessionPanel: View {
     @State private var context: SessionContextBreakdown? = nil
     @State private var prs: [LinkedPullRequest] = []
     @State private var tasks: [SessionTask] = []
+    @State private var steps: [CodeProgress.Step] = []
+    @State private var outputs: [CodeOutputs.Row] = []
+    @State private var showAllOutputs = false
+    @State private var trees: FactoryTreesList? = nil
+    @State private var treesError: String? = nil
+    @State private var checkpoints: [FactoryTreeCheckpoint] = []
 
     private var permission: CodePermissionMode { CodePermissionMode(rawValue: permissionRaw) ?? .manual }
 
+    /// The tree this session's folder sits in: the deepest tree path that
+    /// contains it.
+    private var tree: FactoryTree? {
+        guard let directory = folder?.directory else { return trees?.trees.first }
+        return trees?.trees
+            .filter { directory == $0.path || directory.hasPrefix($0.path.hasSuffix("/") ? $0.path : $0.path + "/") }
+            .max { $0.path.count < $1.path.count }
+    }
+
     var body: some View {
         List {
+            if !steps.isEmpty {
+                Section {
+                    ForEach(steps) { step in
+                        HStack(alignment: .firstTextBaseline, spacing: 10) {
+                            stepIcon(step.status)
+                            Text(step.status == .inProgress ? (step.activeForm ?? step.content) : step.content)
+                                .font(.system(size: 13, weight: step.status == .inProgress ? .semibold : .regular))
+                                .foregroundColor(step.status == .completed ? Color("TextSecondary") : Color("TextPrimary"))
+                                .strikethrough(step.status == .completed, color: Color("TextTertiary"))
+                        }
+                    }
+                } header: {
+                    let done = CodeProgress.done(steps)
+                    Text(done == steps.count ? "Progress · All \(steps.count) done" : "Progress · Step \(min(done + 1, steps.count)) of \(steps.count)")
+                }
+            }
             Section("Environment") {
                 row("Computer", environmentStore.environment == .cloud ? (relay.activeDevice?.name ?? "Cloud") : "This computer")
                 row("Folder", folder?.directory ?? "No folder")
@@ -442,11 +475,27 @@ struct CodeSessionPanel: View {
                     }
                 }
             }
+            Section {
+                if outputs.isEmpty {
+                    Text("Nothing yet. Artifacts, pages and files the session makes show up here.")
+                        .font(.system(size: 13))
+                        .foregroundColor(Color("TextTertiary"))
+                } else {
+                    ForEach(showAllOutputs ? outputs : Array(outputs.prefix(8))) { output in outputRow(output) }
+                    if outputs.count > 8 {
+                        Button(showAllOutputs ? "Show fewer" : "Show all \(outputs.count)") { showAllOutputs.toggle() }
+                            .font(.system(size: 13))
+                    }
+                }
+            } header: {
+                Text(outputs.isEmpty ? "Outputs" : "Outputs · \(outputs.count)")
+            }
             Section("Background tasks") {
                 let running = tasks.filter(\.isActive).count
                 row("Running", "\(running)")
                 row("All", "\(tasks.count)")
             }
+            treeSection
             if let tools = context?.mcpTools, !tools.isEmpty {
                 Section("Connectors") {
                     ForEach(Dictionary(grouping: tools, by: \.server).sorted { $0.key < $1.key }, id: \.key) { entry in
@@ -458,6 +507,99 @@ struct CodeSessionPanel: View {
         .listStyle(.insetGrouped)
         .task(id: sessionId) { await load() }
         .refreshable { await load() }
+    }
+
+    /// TreeCard: the agent tree this folder sits in — branch, state, behind
+    /// main, size, owner — its processes (dev servers flagged), overlaps,
+    /// the machine's disk warnings, then checkpoints newest first.
+    @ViewBuilder
+    private var treeSection: some View {
+        Section("Tree") {
+            if let tree {
+                row("Branch", tree.branch ?? "detached")
+                row("State", tree.state.capitalized)
+                if let behind = tree.behindMain { row("Behind main", "\(behind)") }
+                if let dirty = tree.dirtyFiles, dirty > 0 { row("Uncommitted files", "\(dirty)") }
+                if let size = tree.sizeBytes {
+                    row("Size", ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file))
+                }
+                if let owner = tree.owner { row("Owner", owner.label) }
+                ForEach(tree.processes ?? [], id: \.pid) { process in
+                    row(process.devServer ? "Dev server" : "Process", process.command)
+                }
+                ForEach(Array((trees?.overlaps ?? []).filter { $0.a == tree.id || $0.b == tree.id }.enumerated()), id: \.offset) { _, overlap in
+                    Label("Another tree changed \(overlap.files.count) of the same files", systemImage: "exclamationmark.triangle")
+                        .font(.system(size: 12))
+                        .foregroundColor(Theme.statusWarning)
+                }
+                ForEach(checkpoints) { checkpoint in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(checkpoint.summary.isEmpty ? "Checkpoint \(checkpoint.n)" : checkpoint.summary)
+                            .font(.system(size: 13))
+                            .lineLimit(2)
+                        Text("#\(checkpoint.n) · \(checkpoint.files) files · \(checkpoint.tool ?? "edit")")
+                            .font(.system(size: 11))
+                            .foregroundColor(Color("TextSecondary"))
+                    }
+                }
+            } else {
+                Text(treesError.map { "Couldn't read agent trees: \($0)" } ?? "This folder isn't in an agent tree.")
+                    .font(.system(size: 13))
+                    .foregroundColor(Color("TextTertiary"))
+            }
+            ForEach(trees?.machine?.warnings ?? [], id: \.self) { warning in
+                Label(warning, systemImage: "externaldrive.badge.exclamationmark")
+                    .font(.system(size: 12))
+                    .foregroundColor(Theme.statusWarning)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func outputRow(_ output: CodeOutputs.Row) -> some View {
+        let label = HStack(spacing: 10) {
+            Image(systemName: outputIcon(output.kind))
+            .font(.system(size: 13))
+            .foregroundColor(Color("TextSecondary"))
+            .frame(width: 18)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(output.title).font(.system(size: 13, weight: .medium)).lineLimit(1)
+                Text(output.subtitle)
+                    .font(.system(size: 11))
+                    .foregroundColor(Color("TextSecondary"))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+        }
+        switch output.kind {
+        case .artifact(let id, _):
+            NavigationLink { V2ArtifactView(artifactId: id, initialTitle: output.title) } label: { label }
+        case .page(let url):
+            Link(destination: url) { label }
+        case .file:
+            // Written files open from the Files pane.
+            label
+        }
+    }
+
+    private func outputIcon(_ kind: CodeOutputs.Kind) -> String {
+        switch kind {
+        case .artifact: return "shippingbox"
+        case .page: return "globe"
+        case .file: return "doc.text"
+        }
+    }
+
+    private func stepIcon(_ status: CodeProgress.Status) -> some View {
+        Group {
+            switch status {
+            case .completed: Image(systemName: "checkmark.circle.fill").foregroundColor(Theme.statusSuccess)
+            case .inProgress: Image(systemName: "circle.dotted.circle").foregroundColor(Color("AccentPrimary"))
+            case .failed: Image(systemName: "xmark.circle.fill").foregroundColor(Theme.statusError)
+            case .pending: Image(systemName: "circle").foregroundColor(Color("TextTertiary"))
+            }
+        }
+        .font(.system(size: 13))
     }
 
     private func row(_ title: String, _ value: String) -> some View {
@@ -484,13 +626,35 @@ struct CodeSessionPanel: View {
     }
 
     private func load() async {
+        await loadTrees()
         guard let sessionId else { return }
         let client = AgentChatClient()
         async let contextResult = try? client.sessionContext(sessionId: sessionId)
         async let prsResult = try? client.sessionPullRequests(sessionId: sessionId)
         async let tasksResult = try? client.sessionTasks(sessionId: sessionId)
+        async let messagesResult = try? client.listMessages(sessionId: sessionId)
         if let value = await contextResult { context = value }
         prs = await prsResult ?? prs
         tasks = await tasksResult ?? tasks
+        if let messages = await messagesResult {
+            steps = CodeProgress.steps(from: messages)
+            outputs = CodeOutputs.rows(from: messages)
+        }
+    }
+
+    private func loadTrees() async {
+        let factory = FactoryPaneClient()
+        do {
+            trees = try await factory.trees(path: folder?.directory)
+            treesError = nil
+            if let tree {
+                checkpoints = (try? await factory.treeCheckpoints(id: tree.id)) ?? []
+            }
+        } catch let error as FactoryError where error.engineMissing {
+            // Nothing serves the Factory here: no trees to show.
+            trees = nil
+        } catch {
+            treesError = (error as? FactoryError)?.fact ?? FriendlyErrorMessage.from(error.localizedDescription)
+        }
     }
 }

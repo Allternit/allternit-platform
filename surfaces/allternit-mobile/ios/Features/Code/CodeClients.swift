@@ -195,6 +195,46 @@ struct TerminalBotsResult: Sendable {
     let engineRunning: Bool
 }
 
+/// An agent tree (lib/factory/types.ts `AgentTree`): a leased git worktree.
+struct FactoryTree: Decodable, Sendable, Identifiable, Equatable {
+    struct Owner: Decodable, Sendable, Equatable { let kind: String; let id: String; let label: String }
+    struct Process: Decodable, Sendable, Equatable { let pid: Int; let command: String; let devServer: Bool }
+
+    let id: String
+    let repo: String
+    let path: String
+    let branch: String?
+    let owner: Owner?
+    /// active | paused | done
+    let state: String
+    let behindMain: Int?
+    let aheadMain: Int?
+    let dirtyFiles: Int?
+    let sizeBytes: Double?
+    let processes: [Process]?
+    let checkpointCount: Int?
+}
+
+struct FactoryTreeCheckpoint: Decodable, Sendable, Identifiable, Equatable {
+    let n: Int
+    let sha: String
+    let at: String
+    let tool: String?
+    let files: Int
+    let summary: String
+
+    var id: Int { n }
+}
+
+struct FactoryTreesList: Decodable, Sendable {
+    struct Machine: Decodable, Sendable { let freeBytes: Double?; let warnings: [String]? }
+    struct Overlap: Decodable, Sendable { let a: String; let b: String; let files: [String] }
+
+    let trees: [FactoryTree]
+    let machine: Machine?
+    let overlaps: [Overlap]?
+}
+
 /// The Factory routes the phone terminal uses (lib/factory/panes.ts):
 /// the bot list, a bot's pane screen (SSE `screen` events), and keystrokes.
 struct FactoryPaneClient: Sendable {
@@ -291,6 +331,25 @@ struct FactoryPaneClient: Sendable {
                 continuation.yield(.screen(screen.ansi))
             }
         }
+    }
+
+    /// `GET /trees?path=` — the agent trees (leased worktrees) under a folder,
+    /// with the machine's disk warnings and trees that changed the same files.
+    func trees(path: String?) async throws -> FactoryTreesList {
+        var url = baseURL.appendingPathComponent("trees")
+        if let path, var components = URLComponents(url: url, resolvingAgainstBaseURL: false) {
+            components.queryItems = [URLQueryItem(name: "path", value: path)]
+            url = components.url ?? url
+        }
+        let data = try await perform(try await client.authorizedRequest(url: url))
+        return try JSONDecoder().decode(FactoryTreesList.self, from: data)
+    }
+
+    /// `GET /trees/:id/checkpoints`, newest first.
+    func treeCheckpoints(id: String) async throws -> [FactoryTreeCheckpoint] {
+        struct Body: Decodable { let checkpoints: [FactoryTreeCheckpoint] }
+        let data = try await send(path: "trees/\(Self.escape(id))/checkpoints")
+        return try JSONDecoder().decode(Body.self, from: data).checkpoints
     }
 
     private func send<B: Encodable>(path: String, method: String = "GET", body: B) async throws -> Data {

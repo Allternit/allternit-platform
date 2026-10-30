@@ -28,6 +28,7 @@ struct CodeModeView: View {
     @Binding var selectedSessionId: String?
 
     @EnvironmentObject private var modeStore: AppModeStore
+    @EnvironmentObject private var agentModeStore: AgentModeStore
     @StateObject private var terminalStore = CodeTerminalStore()
     @StateObject private var instanceStore = InstanceStore.shared
 
@@ -159,6 +160,8 @@ struct CodeModeView: View {
                 folder: folder,
                 instanceStore: instanceStore,
                 terminals: terminalStore,
+                modeStore: modeStore,
+                agentModeStore: agentModeStore,
                 onOpenMenu: openDrawer
             )
         }

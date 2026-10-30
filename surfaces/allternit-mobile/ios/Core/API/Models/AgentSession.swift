@@ -317,8 +317,13 @@ struct AgentSessionMessage: Decodable, Sendable, Identifiable {
             let error: String?
             let startedAt: Date?
             let finishedAt: Date?
+            /// The input as sent (lists and objects kept), for the todo
+            /// tools' task list (CodeProgress).
+            let rawInput: [String: AnyCodable]?
+            /// The tool's result (gizzi `state.output`).
+            let output: AnyCodable?
 
-            private enum CodingKeys: String, CodingKey { case status, input, title, error, time }
+            private enum CodingKeys: String, CodingKey { case status, input, title, error, time, output }
             private struct Time: Decodable { let start: Double?; let end: Double? }
 
             init(from decoder: Decoder) throws {
@@ -327,6 +332,8 @@ struct AgentSessionMessage: Decodable, Sendable, Identifiable {
                 title = (try? c?.decodeIfPresent(String.self, forKey: .title)) ?? nil
                 error = (try? c?.decodeIfPresent(String.self, forKey: .error)) ?? nil
                 let raw = (try? c?.decodeIfPresent([String: AnyCodable].self, forKey: .input)) ?? nil
+                rawInput = raw
+                output = (try? c?.decodeIfPresent(AnyCodable.self, forKey: .output)) ?? nil
                 input = SessionWorkerEvent.PartInfo.PartState.flatten(raw)
                 let time = (try? c?.decodeIfPresent(Time.self, forKey: .time)) ?? nil
                 startedAt = time?.start.map { Date(timeIntervalSince1970: $0 / 1000) }
