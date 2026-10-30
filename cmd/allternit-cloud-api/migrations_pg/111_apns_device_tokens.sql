@@ -1,4 +1,4 @@
--- 110_apns_device_tokens.sql
+-- 111_apns_device_tokens.sql
 --
 -- Native iOS push (APNs) for the Allternit iPhone app (routes/apns.rs). Inert until APNS_KEY_P8 /
 -- APNS_KEY_ID / APNS_TEAM_ID are set on cloud-api. Every Web Push sender also delivers here, so the
