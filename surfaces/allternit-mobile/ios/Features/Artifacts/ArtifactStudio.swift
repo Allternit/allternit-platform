@@ -112,6 +112,24 @@ enum ArtifactStudioKind: String, CaseIterable, Identifiable, Sendable {
         }
     }
 
+    /// The custom kind tile (DeckIcons), as the web's ArtifactKindIcon.
+    var iconAsset: String {
+        switch self {
+        case .docs: return "deck-docs"
+        case .sheets: return "deck-sheets"
+        case .slides: return "deck-slides"
+        case .design: return "deck-design"
+        case .ops: return "deck-ops"
+        case .dashboard: return "deck-dashboard"
+        case .motion: return "deck-motion"
+        case .page: return "deck-page"
+        case .build: return "deck-build"
+        case .image: return "deck-image"
+        case .video: return "deck-video"
+        case .research: return "deck-research"
+        }
+    }
+
     var systemImage: String {
         switch self {
         case .docs: return "doc.text"

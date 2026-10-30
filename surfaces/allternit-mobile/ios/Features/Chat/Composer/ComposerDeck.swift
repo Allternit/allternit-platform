@@ -8,20 +8,21 @@ import SwiftUI
 struct ChatDeckMode: Identifiable, Equatable {
     let tile: AgentModeTile
     let label: String
-    let icon: String
     let color: Color
 
     var id: String { tile.rawValue }
+    /// The Allternit icon family tile (deck-<kind> in Assets.xcassets).
+    var icon: String { tile.deckIcon ?? "deck-auto" }
 
     static let chat: [ChatDeckMode] = [
-        ChatDeckMode(tile: .swarms, label: "Agent Swarm", icon: "person.3", color: Color(hex: "#14B8A6")),
-        ChatDeckMode(tile: .research, label: "Deep Research", icon: "book", color: Theme.statusInfo),
-        ChatDeckMode(tile: .website, label: "Build", icon: "hammer", color: Color("TextPrimary")),
-        ChatDeckMode(tile: .docs, label: "Docs", icon: "doc.text", color: Color(hex: "#3B82F6")),
-        ChatDeckMode(tile: .data, label: "Sheets", icon: "cylinder.split.1x2", color: Theme.statusSuccess),
-        ChatDeckMode(tile: .slides, label: "Slides", icon: "chart.bar.doc.horizontal", color: Theme.statusWarning),
-        ChatDeckMode(tile: .image, label: "Image", icon: "photo", color: Color("TextPrimary")),
-        ChatDeckMode(tile: .video, label: "Video", icon: "video", color: Color(hex: "#EC4899")),
+        ChatDeckMode(tile: .swarms, label: "Agent Swarm", color: Color(hex: "#14B8A6")),
+        ChatDeckMode(tile: .research, label: "Deep Research", color: Theme.statusInfo),
+        ChatDeckMode(tile: .website, label: "Build", color: Color("TextPrimary")),
+        ChatDeckMode(tile: .docs, label: "Docs", color: Color(hex: "#3B82F6")),
+        ChatDeckMode(tile: .data, label: "Sheets", color: Theme.statusSuccess),
+        ChatDeckMode(tile: .slides, label: "Slides", color: Theme.statusWarning),
+        ChatDeckMode(tile: .image, label: "Image", color: Color("TextPrimary")),
+        ChatDeckMode(tile: .video, label: "Video", color: Color(hex: "#EC4899")),
     ]
 
     static func forTile(_ tile: AgentModeTile) -> ChatDeckMode? {
@@ -29,25 +30,25 @@ struct ChatDeckMode: Identifiable, Equatable {
     }
 }
 
-/// Plugins the deck lists (web deckPlugins.ts). Picking one puts it in the
-/// message as an @-mention.
+/// Plugins the deck lists (web deckPlugins.ts), each with its OfficeAppLogo
+/// tile. Picking one puts it in the message as an @-mention.
 private struct DeckPlugin: Identifiable {
     let id: String
     let name: String
     let icon: String
 
     static let suite: [DeckPlugin] = [
-        DeckPlugin(id: "allternit-docs", name: "Allternit Docs", icon: "doc.text"),
-        DeckPlugin(id: "allternit-sheets", name: "Allternit Sheets", icon: "tablecells"),
-        DeckPlugin(id: "allternit-slides", name: "Allternit Slides", icon: "rectangle.on.rectangle"),
-        DeckPlugin(id: "allternit-pdf", name: "Allternit PDF", icon: "doc.richtext"),
-        DeckPlugin(id: "allternit-sign", name: "Allternit Sign", icon: "signature"),
+        DeckPlugin(id: "allternit-docs", name: "Allternit Docs", icon: "deck-docs"),
+        DeckPlugin(id: "allternit-sheets", name: "Allternit Sheets", icon: "deck-sheets"),
+        DeckPlugin(id: "allternit-slides", name: "Allternit Slides", icon: "deck-slides"),
+        DeckPlugin(id: "allternit-pdf", name: "Allternit PDF", icon: "deck-pdf"),
+        DeckPlugin(id: "allternit-sign", name: "Allternit Sign", icon: "deck-sign"),
     ]
 
     static let extensions: [DeckPlugin] = [
-        DeckPlugin(id: "office-word", name: "Allternit for Word", icon: "w.square"),
-        DeckPlugin(id: "office-excel", name: "Allternit for Excel", icon: "x.square"),
-        DeckPlugin(id: "office-powerpoint", name: "Allternit for PowerPoint", icon: "p.square"),
+        DeckPlugin(id: "office-word", name: "Allternit for Word", icon: "deck-word"),
+        DeckPlugin(id: "office-excel", name: "Allternit for Excel", icon: "deck-excel"),
+        DeckPlugin(id: "office-powerpoint", name: "Allternit for PowerPoint", icon: "deck-powerpoint"),
     ]
 }
 
@@ -153,7 +154,7 @@ struct ComposerDeckBand: View {
                         if current == mode {
                             Label(mode.label, systemImage: "checkmark")
                         } else {
-                            Label(mode.label, systemImage: mode.icon)
+                            Label { Text(mode.label) } icon: { Image(mode.icon) }
                         }
                     }
                 }
@@ -168,8 +169,9 @@ struct ComposerDeckBand: View {
             if let current {
                 // Picking a mode turns the trigger into that mode's chip.
                 HStack(spacing: 6) {
-                    Image(systemName: current.icon)
-                        .font(.system(size: 13, weight: .semibold))
+                    Image(current.icon)
+                        .resizable()
+                        .frame(width: 14, height: 14)
                     Text(current.label)
                         .font(.system(size: 12, weight: .bold))
                     Image(systemName: "chevron.up")
@@ -208,14 +210,14 @@ struct ComposerDeckBand: View {
             Section("Allternit Office") {
                 ForEach(DeckPlugin.suite) { plugin in
                     Button(action: { mention(plugin) }) {
-                        Label(plugin.name, systemImage: plugin.icon)
+                        Label { Text(plugin.name) } icon: { Image(plugin.icon) }
                     }
                 }
             }
             Section("Extensions") {
                 ForEach(DeckPlugin.extensions) { plugin in
                     Button(action: { mention(plugin) }) {
-                        Label(plugin.name, systemImage: plugin.icon)
+                        Label { Text(plugin.name) } icon: { Image(plugin.icon) }
                     }
                 }
             }
@@ -399,9 +401,9 @@ struct DeckArtifactsSheet: View {
         VStack(alignment: .leading, spacing: 0) {
             ZStack {
                 Color("FillNeutral")
-                Image(systemName: ArtifactV2Kind.systemImage(for: artifact.kind))
-                    .font(.system(size: 16))
-                    .foregroundColor(Color("TextTertiary"))
+                Image(ArtifactV2Kind.iconAsset(for: artifact.kind))
+                    .resizable()
+                    .frame(width: 16, height: 16)
             }
             .aspectRatio(16 / 9, contentMode: .fit)
 

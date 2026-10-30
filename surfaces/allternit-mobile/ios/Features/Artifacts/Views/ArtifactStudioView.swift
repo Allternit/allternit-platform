@@ -85,9 +85,9 @@ struct ArtifactStudioView: View {
         Group {
             if results.isEmpty {
                 VStack(spacing: 14) {
-                    Image(systemName: studio.kind.systemImage)
-                        .font(.system(size: 28, weight: .medium))
-                        .foregroundColor(Color("TextSecondary"))
+                    Image(studio.kind.iconAsset)
+                        .resizable()
+                        .frame(width: 40, height: 40)
                     Text(studio.kind.emptyTitle)
                         .font(.system(.title3, design: .serif))
                         .foregroundColor(Color("TextPrimary"))

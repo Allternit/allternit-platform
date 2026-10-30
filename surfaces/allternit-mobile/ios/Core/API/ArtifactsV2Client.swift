@@ -76,6 +76,27 @@ enum ArtifactV2Kind: String, CaseIterable, Sendable, Identifiable {
         }
     }
 
+    /// The kind's Allternit icon family tile (web ArtifactKindIcon KIND_ICON,
+    /// Assets.xcassets/DeckIcons); unknown kinds use Docs, as on the web.
+    static func iconAsset(for kind: String) -> String {
+        switch ArtifactV2Kind(rawValue: kind) {
+        case .doc, nil: return "deck-docs"
+        case .sheet: return "deck-sheets"
+        case .slides: return "deck-slides"
+        case .design: return "deck-design"
+        case .dashboard: return "deck-dashboard"
+        case .ops: return "deck-ops"
+        case .motion: return "deck-motion"
+        case .page: return "deck-page"
+        case .card: return "deck-card"
+        case .diagram: return "deck-diagram"
+        case .image: return "deck-image"
+        case .code: return "deck-code"
+        case .pdf: return "deck-pdf"
+        case .video: return "deck-video"
+        }
+    }
+
     /// SF Symbol for any kind string, known or not.
     static func systemImage(for kind: String) -> String {
         ArtifactV2Kind(rawValue: kind)?.systemImage ?? "doc"

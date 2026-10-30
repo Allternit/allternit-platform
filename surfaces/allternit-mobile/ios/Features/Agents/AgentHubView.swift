@@ -392,8 +392,14 @@ struct AgentHubView: View {
                         agentModeStore.selectTile(mode, for: .chat)
                     }) {
                         HStack(spacing: 4) {
-                            Image(systemName: mode.icon)
-                                .font(.system(size: 10, weight: .semibold))
+                            if let deckIcon = mode.deckIcon {
+                                Image(deckIcon)
+                                    .resizable()
+                                    .frame(width: 14, height: 14)
+                            } else {
+                                Image(systemName: mode.icon)
+                                    .font(.system(size: 10, weight: .semibold))
+                            }
                             Text(mode.label)
                                 .font(.system(size: 12, weight: selected == mode ? .semibold : .medium))
                         }

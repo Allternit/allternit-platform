@@ -28,9 +28,6 @@ struct ChatView: View {
                 wideSides: true,
                 onMenu: { isSidebarOpen = true }
             ) {
-                PhoneOverviewButton(mode: .home, working: viewModel.isStreaming) {
-                    NotificationCenter.default.post(name: .shellOpenOverview, object: nil)
-                }
                 PhoneIconButton(systemName: "square.and.pencil", label: "New chat") {
                     startNewChat()
                 }

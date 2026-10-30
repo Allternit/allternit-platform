@@ -97,6 +97,23 @@ enum AgentModeTile: String, CaseIterable, Sendable {
         }
     }
 
+    /// The Allternit icon family tile for this mode (web ModeDock
+    /// AgentModeIcon → ArtifactKindIcon, Assets.xcassets/DeckIcons). Code
+    /// has none on the web and keeps its SF Symbol.
+    var deckIcon: String? {
+        switch self {
+        case .swarms: return "deck-swarms"
+        case .research: return "deck-research"
+        case .website: return "deck-build"
+        case .docs: return "deck-docs"
+        case .data: return "deck-sheets"
+        case .slides: return "deck-slides"
+        case .image: return "deck-image"
+        case .video: return "deck-video"
+        case .code: return nil
+        }
+    }
+
     /// Default prompt that populates the composer when the tile is selected
     /// (the web fills a starter task for each mode).
     var taskPrompt: String {

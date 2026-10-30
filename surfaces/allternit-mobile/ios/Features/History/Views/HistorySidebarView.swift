@@ -471,23 +471,23 @@ struct HistorySidebarView: View {
         .refreshable { await store.load() }
     }
 
-    /// Recents · See all · filter.
+    /// Recents (a tap opens every Home session as List · Grid · Deck) · filter.
     private var recentsLabel: some View {
         HStack(spacing: 2) {
-            Text("Recents")
-                .frame(maxWidth: .infinity, alignment: .leading)
             Button {
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
                 NotificationCenter.default.post(name: .shellOpenOverview, object: nil)
             } label: {
-                Text("See all")
-                    .font(.system(size: 13, weight: .medium))
-                    .padding(.horizontal, 8)
-                    .frame(minHeight: 32)
-                    .contentShape(Rectangle())
+                HStack(spacing: 4) {
+                    Text("Recents")
+                    Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold))
+                }
+                .frame(maxWidth: .infinity, minHeight: 32, alignment: .leading)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .accessibilityIdentifier("recentsSeeAll")
+            .accessibilityHint("Shows all your chats")
             recentsFilterMenu
         }
         .font(.system(size: 14))

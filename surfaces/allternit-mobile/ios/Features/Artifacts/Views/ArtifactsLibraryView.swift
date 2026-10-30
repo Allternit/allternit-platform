@@ -809,9 +809,9 @@ private struct ArtifactLibraryCard: View {
     }
 
     private var kindGlyph: some View {
-        Image(systemName: ArtifactV2Kind.systemImage(for: summary.kind))
-            .font(.system(size: 24, weight: .light))
-            .foregroundColor(Color("TextSecondary"))
+        Image(ArtifactV2Kind.iconAsset(for: summary.kind))
+            .resizable()
+            .frame(width: 32, height: 32)
     }
 
     private var badge: some View {
@@ -896,9 +896,9 @@ struct ArtifactLibraryRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: ArtifactV2Kind.systemImage(for: summary.kind))
-                .font(.system(size: 15, weight: .medium))
-                .foregroundColor(Color("TextPrimary"))
+            Image(ArtifactV2Kind.iconAsset(for: summary.kind))
+                .resizable()
+                .frame(width: 22, height: 22)
                 .frame(width: 34, height: 34)
                 .background(Color("FillNeutral"))
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
