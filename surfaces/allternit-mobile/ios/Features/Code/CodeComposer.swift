@@ -41,8 +41,6 @@ struct CodeLaunchComposer: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            CodeDeckRow(folder: folder, terminal: terminal, placement: .above, sessionId: sessionId,
-                        contextRefresh: contextRefresh, onOpenTerminal: onOpenTerminal)
             DashedHairline(strong: isFocused, terminal: terminal)
             HStack(alignment: .bottom, spacing: 4) {
                 if let onAttach {
@@ -120,7 +118,7 @@ struct CodeLaunchComposer: View {
             }
             .padding(.horizontal, 6)
             DashedHairline(strong: isFocused, terminal: terminal)
-            CodeDeckRow(folder: folder, terminal: terminal, placement: .below, sessionId: sessionId,
+            CodeDeckRow(folder: folder, terminal: terminal, sessionId: sessionId,
                         contextRefresh: contextRefresh, onOpenTerminal: onOpenTerminal)
         }
         .onChange(of: dictation.transcript) { _, transcript in
@@ -187,18 +185,14 @@ struct CodeInk {
 // MARK: - Deck row
 
 /// The Code prompt's controls (CodeBottomStatusBar with CodeWorkspaceBar
-/// leading), icons only so all eight fit a phone; each keeps its words as
-/// its accessibility label. `.above` the prompt: the computer on the left,
-/// the context meter on the right. `.below`: working folder · branch ·
-/// worktree · permission mode on the left, the model and the Chat/Terminal
-/// switch on the right.
+/// leading), icons only so all eight fit one row under the prompt; each
+/// keeps its words as its accessibility label. Computer · working folder ·
+/// branch · worktree · permission mode on the left; the model, the context
+/// meter and the Chat/Terminal toggle on the right.
 struct CodeDeckRow: View {
-    enum Placement { case above, below }
-
     let folder: CodeFolderInfo?
-    /// On the terminal surface the switch reads "Chat" (back to the chat view).
+    /// On the terminal surface the toggle flips back to the chat view.
     var terminal: Bool = false
-    var placement: Placement = .below
     var sessionId: String? = nil
     var contextRefresh: Int = 0
     let onOpenTerminal: () -> Void
@@ -251,47 +245,37 @@ struct CodeDeckRow: View {
 
     var body: some View {
         HStack(spacing: 2) {
-            switch placement {
-            case .above:
-                environmentButton
-                Spacer(minLength: 8)
-                contextMeter
-            case .below:
-                icon("folder", label: "Working folder: \(folder?.name ?? "Select folder")") { sheet = .folder }
-                if let branch = folder?.branch, !branch.isEmpty {
-                    Image(systemName: "arrow.triangle.branch")
-                        .font(.system(size: 15))
-                        .foregroundColor(ink.primary)
-                        .frame(width: 36, height: 40)
-                        .accessibilityElement()
-                        .accessibilityLabel("Branch \(branch)")
-                }
-                if worktreeVisible {
-                    icon(worktree ? "square.split.diagonal.2x2.fill" : "square.split.diagonal.2x2",
-                         label: "Worktree isolation", tint: worktree ? ink.accent : ink.primary) { worktree.toggle() }
-                        .accessibilityValue(worktree ? "On" : "Off")
-                }
-                icon(permission.icon, label: "Code permission mode: \(permission.label)", tint: ink.accent) { sheet = .permission }
-                Spacer(minLength: 8)
-                modelButton
-                modeSwitch
+            environmentButton
+            icon("folder", label: "Working folder: \(folder?.name ?? "Select folder")") { sheet = .folder }
+            if let branch = folder?.branch, !branch.isEmpty {
+                Image(systemName: "arrow.triangle.branch")
+                    .font(.system(size: 15))
+                    .foregroundColor(ink.primary)
+                    .frame(width: 36, height: 40)
+                    .accessibilityElement()
+                    .accessibilityLabel("Branch \(branch)")
             }
+            if worktreeVisible {
+                icon(worktree ? "square.split.diagonal.2x2.fill" : "square.split.diagonal.2x2",
+                     label: "Worktree isolation", tint: worktree ? ink.accent : ink.primary) { worktree.toggle() }
+                    .accessibilityValue(worktree ? "On" : "Off")
+            }
+            icon(permission.icon, label: "Code permission mode: \(permission.label)", tint: ink.accent) { sheet = .permission }
+            Spacer(minLength: 4)
+            modelButton
+            contextMeter
+            modeToggle
         }
-        .padding(.top, placement == .above ? 2 : 4)
-        .padding(.bottom, placement == .above ? 2 : 12)
+        .padding(.top, 4)
+        .padding(.bottom, 12)
         .padding(.horizontal, 6)
         .frame(maxWidth: .infinity)
         .task {
-            switch placement {
-            case .above:
-                await relay.refresh()
-                usage.fetchUsageIfNeeded()
-            case .below:
-                modelStore.fetchModelsIfNeeded()
-            }
+            modelStore.fetchModelsIfNeeded()
+            usage.fetchUsageIfNeeded()
+            await relay.refresh()
         }
         .task(id: "\(sessionId ?? "")-\(contextRefresh)") {
-            guard placement == .above else { return }
             await loadContext()
         }
         .sheet(item: $sheet) { sheet in
@@ -342,33 +326,33 @@ struct CodeDeckRow: View {
     }
 
     /// ComposerUsageMeter: the session's context fill as HUD blocks and a
-    /// percent; with no session yet, the plan window's blocks. Hidden when
-    /// neither has a figure.
+    /// percent; with no session yet, the plan window's blocks; before either
+    /// has a figure, empty blocks (a tap still opens the usage sheet).
     @ViewBuilder
     private var contextMeter: some View {
         if let context {
             Button(action: { sheet = .usage }) {
-                HStack(spacing: 6) {
-                    CodeUsageBlocks(fraction: context.utilization, tone: tone(context.level))
+                HStack(spacing: 4) {
+                    CodeUsageBlocks(fraction: context.utilization, tone: tone(context.level), terminal: terminal)
                     Text("\(Int((context.utilization * 100).rounded()))%")
                         .font(.system(size: 12, weight: .semibold, design: .monospaced))
                         .foregroundColor(context.level == .ok ? ink.secondary : tone(context.level))
                 }
-                .padding(.horizontal, 8)
-                .frame(height: 32)
+                .padding(.horizontal, 4)
+                .frame(height: 40)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Context: \(Int((context.utilization * 100).rounded()))% used (\(SessionContextBreakdown.format(context.usedTokens)) of \(SessionContextBreakdown.format(context.contextWindow))). Open details.")
-        } else if let percent = usage.percentUsed {
+        } else {
             Button(action: { sheet = .usage }) {
-                CodeUsageBlocks(fraction: percent / 100)
-                    .padding(.horizontal, 8)
-                    .frame(height: 32)
+                CodeUsageBlocks(fraction: (usage.percentUsed ?? 0) / 100, terminal: terminal)
+                    .padding(.horizontal, 6)
+                    .frame(height: 40)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Usage: \(usage.percentText ?? "") used. Open details.")
+            .accessibilityLabel(usage.percentText.map { "Usage: \($0) used. Open details." } ?? "Usage. Open details.")
         }
     }
 
@@ -397,31 +381,11 @@ struct CodeDeckRow: View {
         .accessibilityLabel("Model: \(modelLabel)")
     }
 
-    /// Chat · Terminal: this thread as a chat or in its terminal look. The
-    /// one view switch in Code mode (the shell sits in the sessions sheet).
-    private var modeSwitch: some View {
-        HStack(spacing: 0) {
-            ForEach([false, true], id: \.self) { isTerminal in
-                let on = isTerminal == terminal
-                Button(action: { if !on { onOpenTerminal() } }) {
-                    Image(systemName: isTerminal ? "apple.terminal" : "bubble.left")
-                        .font(.system(size: 13, weight: on ? .bold : .regular))
-                        .foregroundColor(on ? ink.primary : ink.tertiary)
-                        .frame(width: 32, height: 28)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                .fill(on ? (terminal ? TerminalPalette.pressedBorder : Color("BgPanel")) : .clear)
-                                .shadow(color: .black.opacity(on && !terminal ? 0.08 : 0), radius: 1, y: 1)
-                        )
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(isTerminal ? "Terminal" : "Chat")
-                .accessibilityAddTraits(on ? .isSelected : [])
-            }
-        }
-        .padding(2)
-        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(terminal ? TerminalPalette.key : Color("BorderStrong")))
-        .padding(.leading, 2)
+    /// Chat ↔ Terminal: one tap flips this thread between its chat and its
+    /// terminal look (the icon shows where a tap goes).
+    private var modeToggle: some View {
+        icon(terminal ? "bubble.left" : "apple.terminal",
+             label: terminal ? "Show as chat" : "Show as terminal") { onOpenTerminal() }
     }
 
     private func icon(_ systemName: String, label: String, tint: Color? = nil, action: @escaping () -> Void) -> some View {
@@ -459,12 +423,14 @@ struct CodeUsageBlocks: View {
     let fraction: Double
     /// The context meter passes its own level colour.
     var tone: Color? = nil
+    /// Drawn on the terminal surface (dark empty blocks).
+    var terminal: Bool = false
 
     private var fill: Color {
         if let tone { return tone }
         if fraction >= 1 { return Theme.statusError }
         if fraction >= 0.8 { return Theme.statusWarning }
-        return Color("TextSecondary")
+        return terminal ? TerminalPalette.secondary : Color("TextSecondary")
     }
 
     var body: some View {
@@ -472,7 +438,7 @@ struct CodeUsageBlocks: View {
         HStack(spacing: 2) {
             ForEach(0..<5, id: \.self) { index in
                 RoundedRectangle(cornerRadius: 1)
-                    .fill(index < filled ? fill : Color("BorderStrong"))
+                    .fill(index < filled ? fill : (terminal ? TerminalPalette.keyBorder : Color("BorderStrong")))
                     .frame(width: 5, height: 10)
             }
         }

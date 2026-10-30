@@ -6,20 +6,21 @@ import SwiftUI
 /// (fabric-session/phone/screens/LazyScreen.tsx with CodeRoot under it):
 ///
 /// - The "Connect a computer" notice, then the phone header: ☰ on the left,
-///   the sessions button (a task list) on the right, and between them the
-///   gizzi code lockup on the launchpad, the session's name (its menu) in a
-///   thread, or "Shell". A thread adds the Panes menu (every desktop pane,
-///   the session panel and background tasks) beside the sessions button.
+///   the view button (Code · Terminal · Shell picker) and the sessions
+///   button (a task list) on the right, and between them the gizzi code
+///   lockup on the launchpad, the session's name (its menu) in a thread, or
+///   "Shell". A thread adds the Panes menu (every desktop pane, the session
+///   panel and background tasks) before them.
 /// - The launchpad (CodeCanvas `LaunchStage`): What's new under the sessions
 ///   button, the greeting, "Run a command or describe a task to start
 ///   coding.", the Show usage pill / usage card, and the Code prompt.
 /// - A thread: the shared chat feed (CodeThreadChatView), or, with Terminal
-///   on (the composer's Chat/Terminal switch, the one view switch here), the
-///   same thread drawn as a terminal session (dark, `❯` prompts, `●` tool
-///   lines). The choice is kept per thread.
-/// - The shell (PhoneCodeTerminal, from the sessions sheet's Shell or the
-///   Terminal pane): the computer's raw shell, one dark surface, header
-///   included; the sessions sheet leads back to a thread.
+///   on (the view picker, or the composer's one-tap Chat/Terminal toggle),
+///   the same thread drawn as a terminal session (dark, `❯` prompts, `●`
+///   tool lines). The choice is kept per thread.
+/// - The shell (PhoneCodeTerminal, from the view picker or the Terminal
+///   pane): the computer's raw shell, one dark surface, header included;
+///   the view picker leads back to Code or Terminal.
 ///
 /// Threads are tagged `origin_surface='code'` on create because the app
 /// mode is `.code` here (ChatViewModel's session context).
@@ -43,6 +44,7 @@ struct CodeModeView: View {
     @State private var terminalKeys = Set(UserDefaults.standard.stringArray(forKey: CodeModeView.terminalKeysKey) ?? [])
     @State private var overviewKind: CodeOverviewKind? = nil
     @State private var pane: CodePaneKind? = nil
+    @State private var isViewPickerPresented = false
     @State private var isRenamePresented = false
     @State private var renameText = ""
     @State private var actionError: String? = nil
@@ -144,12 +146,7 @@ struct CodeModeView: View {
                     newThread()
                 },
                 onArchive: { session in archive(session.id) },
-                onOpenMenu: openDrawer,
-                onOpenTerminal: {
-                    shellOpen = false
-                    openTerminal()
-                },
-                onOpenShell: { shellOpen = true }
+                onOpenMenu: openDrawer
             )
             .presentationDragIndicator(.visible)
         }
@@ -195,13 +192,22 @@ struct CodeModeView: View {
             if inThread && !shellOpen {
                 panesMenu(ink: ink)
             }
+            CodeViewButton(view: viewKind, tint: ink) { isViewPickerPresented = true }
             CodeSessionsButton(tint: ink) { overviewKind = .threads }
         }
         .padding(.horizontal, 6)
         .frame(height: 52)
         .overlay {
             headerTitle(ink: ink)
-                .padding(.horizontal, inThread && !shellOpen ? 100 : 56)
+                .padding(.horizontal, inThread && !shellOpen ? 144 : 100)
+        }
+        .sheet(isPresented: $isViewPickerPresented) {
+            CodeViewPicker(selection: viewKind) { picked in
+                isViewPickerPresented = false
+                selectView(picked)
+            }
+            .presentationDetents([.height(260)])
+            .presentationDragIndicator(.visible)
         }
         .background(darkChrome ? TerminalPalette.background : Color("BgPrimary"))
     }
@@ -372,6 +378,27 @@ struct CodeModeView: View {
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         withAnimation(.spring(response: 0.35, dampingFraction: 0.86, blendDuration: 0)) {
             isSidebarOpen = true
+        }
+    }
+
+    /// What's on screen: the chat, a thread's terminal look, or the shell.
+    private var viewKind: CodeViewKind {
+        shellOpen ? .shell : (terminalLook ? .terminal : .code)
+    }
+
+    /// The view picker's choice. Code closes the shell and leaves the
+    /// terminal look; Terminal closes the shell and opens the terminal look;
+    /// Shell opens the computer's raw shell.
+    private func selectView(_ kind: CodeViewKind) {
+        switch kind {
+        case .code:
+            shellOpen = false
+            if terminalLook { setTerminalLook(false) }
+        case .terminal:
+            shellOpen = false
+            openTerminal()
+        case .shell:
+            shellOpen = true
         }
     }
 
@@ -548,4 +575,107 @@ struct CodeModeView: View {
         }
     }
     #endif
+}
+
+// MARK: - View picker
+
+/// Code mode's three views: the thread as a chat, the thread in its
+/// terminal look, or the computer's raw shell.
+enum CodeViewKind: CaseIterable {
+    case code, terminal, shell
+
+    var label: String {
+        switch self {
+        case .code: return "Code"
+        case .terminal: return "Terminal"
+        case .shell: return "Shell"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .code: return "The session as a chat"
+        case .terminal: return "The same session, drawn as a terminal"
+        case .shell: return "The computer's own command line"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .code: return "bubble.left"
+        case .terminal: return "apple.terminal"
+        case .shell: return "chevron.left.forwardslash.chevron.right"
+        }
+    }
+}
+
+/// The header's view button: shows the view on screen, opens the picker.
+struct CodeViewButton: View {
+    let view: CodeViewKind
+    var tint: Color = Color("TextPrimary")
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: view.icon)
+                .font(.system(size: 17))
+                .foregroundColor(tint)
+                .frame(width: 44, height: 44)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("View: \(view.label)")
+        .accessibilityHint("Switch between Code, Terminal and Shell")
+    }
+}
+
+/// The view picker: Code · Terminal · Shell, the current one checked.
+struct CodeViewPicker: View {
+    let selection: CodeViewKind
+    let onPick: (CodeViewKind) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("View")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(Color("TextSecondary"))
+                .padding(.horizontal, 20)
+                .padding(.top, 20)
+                .padding(.bottom, 6)
+            ForEach(CodeViewKind.allCases, id: \.self) { kind in
+                Button {
+                    UISelectionFeedbackGenerator().selectionChanged()
+                    onPick(kind)
+                } label: {
+                    HStack(spacing: 14) {
+                        Image(systemName: kind.icon)
+                            .font(.system(size: 16))
+                            .foregroundColor(Color("TextPrimary"))
+                            .frame(width: 24)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(kind.label)
+                                .font(.system(size: 16, weight: .medium))
+                                .foregroundColor(Color("TextPrimary"))
+                            Text(kind.detail)
+                                .font(.system(size: 12))
+                                .foregroundColor(Color("TextSecondary"))
+                        }
+                        Spacer(minLength: 8)
+                        if kind == selection {
+                            Image(systemName: "checkmark")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundColor(Color("AccentPrimary"))
+                        }
+                    }
+                    .padding(.horizontal, 20)
+                    .frame(minHeight: 56)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(kind == selection ? .isSelected : [])
+            }
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color("BgPanel").ignoresSafeArea())
+    }
 }
