@@ -381,11 +381,10 @@ struct CodeDeckRow: View {
         .accessibilityLabel("Model: \(modelLabel)")
     }
 
-    /// Chat ↔ Terminal: one tap flips this thread between its chat and its
-    /// terminal look (the icon shows where a tap goes).
+    /// The view switch: Code · Terminal · Shell. Its icon is the current
+    /// view; the pick goes to Code mode (`.codePickView`).
     private var modeToggle: some View {
-        icon(terminal ? "bubble.left" : "apple.terminal",
-             label: terminal ? "Show as chat" : "Show as terminal") { onOpenTerminal() }
+        CodeViewMenu(current: terminal ? .terminal : .code, tint: ink.primary)
     }
 
     private func icon(_ systemName: String, label: String, tint: Color? = nil, action: @escaping () -> Void) -> some View {

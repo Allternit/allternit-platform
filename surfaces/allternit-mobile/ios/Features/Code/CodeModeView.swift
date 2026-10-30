@@ -44,7 +44,6 @@ struct CodeModeView: View {
     @State private var terminalKeys = Set(UserDefaults.standard.stringArray(forKey: CodeModeView.terminalKeysKey) ?? [])
     @State private var overviewKind: CodeOverviewKind? = nil
     @State private var pane: CodePaneKind? = nil
-    @State private var isViewPickerPresented = false
     @State private var isRenamePresented = false
     @State private var renameText = ""
     @State private var actionError: String? = nil
@@ -110,6 +109,14 @@ struct CodeModeView: View {
                 .allowsHitTesting(!shellOpen)
                 if shellOpen {
                     PhoneCodeTerminal(store: terminalStore)
+                        // The shell has no composer: the view switch sits
+                        // bottom right, over the terminal.
+                        .overlay(alignment: .bottomTrailing) {
+                            CodeViewMenu(current: .shell, tint: TerminalPalette.foreground)
+                                .background(TerminalPalette.key, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                .padding(.trailing, 12)
+                                .padding(.bottom, 64)
+                        }
                 }
             }
         }
@@ -121,6 +128,9 @@ struct CodeModeView: View {
             #if DEBUG
             applyDebugArgs()
             #endif
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .codePickView)) { note in
+            if let kind = note.object as? CodeViewKind { selectView(kind) }
         }
         .onChange(of: selectedSessionId) { _, id in
             // A code session picked in the drawer opens here.
@@ -189,25 +199,17 @@ struct CodeModeView: View {
 
             Spacer(minLength: 4)
 
-            if inThread && !shellOpen {
+            // Panes belong to a session: only once the thread has one.
+            if inThread && activeSessionId != nil && !shellOpen {
                 panesMenu(ink: ink)
             }
-            CodeViewButton(view: viewKind, tint: ink) { isViewPickerPresented = true }
             CodeSessionsButton(tint: ink) { overviewKind = .threads }
         }
         .padding(.horizontal, 6)
         .frame(height: 52)
         .overlay {
             headerTitle(ink: ink)
-                .padding(.horizontal, inThread && !shellOpen ? 144 : 100)
-        }
-        .sheet(isPresented: $isViewPickerPresented) {
-            CodeViewPicker(selection: viewKind) { picked in
-                isViewPickerPresented = false
-                selectView(picked)
-            }
-            .presentationDetents([.height(260)])
-            .presentationDragIndicator(.visible)
+                .padding(.horizontal, inThread && activeSessionId != nil && !shellOpen ? 100 : 56)
         }
         .background(darkChrome ? TerminalPalette.background : Color("BgPrimary"))
     }
@@ -610,72 +612,39 @@ enum CodeViewKind: CaseIterable {
 }
 
 /// The header's view button: shows the view on screen, opens the picker.
-struct CodeViewButton: View {
-    let view: CodeViewKind
+extension Notification.Name {
+    /// A view picked in the Code composer's view switch (object: CodeViewKind).
+    static let codePickView = Notification.Name("allternit.code.pick-view")
+}
+
+/// The Code view switch (bottom right of the composer, or of the shell): one
+/// tap opens Code · Terminal · Shell with the current one checked.
+struct CodeViewMenu: View {
+    let current: CodeViewKind
     var tint: Color = Color("TextPrimary")
-    let action: () -> Void
 
     var body: some View {
-        Button(action: action) {
-            Image(systemName: view.icon)
-                .font(.system(size: 17))
+        Menu {
+            ForEach(CodeViewKind.allCases, id: \.self) { kind in
+                Button {
+                    NotificationCenter.default.post(name: .codePickView, object: kind)
+                } label: {
+                    if kind == current {
+                        Label(kind.label, systemImage: "checkmark")
+                    } else {
+                        Label(kind.label, systemImage: kind.icon)
+                    }
+                }
+            }
+        } label: {
+            Image(systemName: current.icon)
+                .font(.system(size: 15))
                 .foregroundColor(tint)
-                .frame(width: 44, height: 44)
+                .frame(width: 40, height: 40)
+                .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel("View: \(view.label)")
+        .accessibilityLabel("View: \(current.label)")
         .accessibilityHint("Switch between Code, Terminal and Shell")
     }
 }
 
-/// The view picker: Code · Terminal · Shell, the current one checked.
-struct CodeViewPicker: View {
-    let selection: CodeViewKind
-    let onPick: (CodeViewKind) -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text("View")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(Color("TextSecondary"))
-                .padding(.horizontal, 20)
-                .padding(.top, 20)
-                .padding(.bottom, 6)
-            ForEach(CodeViewKind.allCases, id: \.self) { kind in
-                Button {
-                    UISelectionFeedbackGenerator().selectionChanged()
-                    onPick(kind)
-                } label: {
-                    HStack(spacing: 14) {
-                        Image(systemName: kind.icon)
-                            .font(.system(size: 16))
-                            .foregroundColor(Color("TextPrimary"))
-                            .frame(width: 24)
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(kind.label)
-                                .font(.system(size: 16, weight: .medium))
-                                .foregroundColor(Color("TextPrimary"))
-                            Text(kind.detail)
-                                .font(.system(size: 12))
-                                .foregroundColor(Color("TextSecondary"))
-                        }
-                        Spacer(minLength: 8)
-                        if kind == selection {
-                            Image(systemName: "checkmark")
-                                .font(.system(size: 14, weight: .semibold))
-                                .foregroundColor(Color("AccentPrimary"))
-                        }
-                    }
-                    .padding(.horizontal, 20)
-                    .frame(minHeight: 56)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityAddTraits(kind == selection ? .isSelected : [])
-            }
-            Spacer(minLength: 0)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color("BgPanel").ignoresSafeArea())
-    }
-}
