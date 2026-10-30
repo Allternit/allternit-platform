@@ -195,9 +195,35 @@ enum SampleWorkspaceAPI {
             // Teach: `/api/har-derived-api/*` sits under `/api`, not `/api/v1`.
             switch parts {
             case ["api", "har-derived-api", "teach", "skills"]:
-                return ["skills": SampleWorkspace.teachSkills(now: now)]
+                // The flour order's recorded steps in full, so Run lists them.
+                let skills = SampleWorkspace.teachSkills(now: now).map { skill -> [String: Any] in
+                    guard skill["id"] as? String == "teach-sample-order" else { return skill }
+                    var next = skill
+                    next["workflow"] = [
+                        "version": 1,
+                        "start_url": "https://orders.millsupply.example/reorder",
+                        "steps": [
+                            ["id": "w1", "kind": "goto", "url": "{{profile.supplier_url}}/reorder"],
+                            ["id": "w2", "kind": "select", "target": ["label": "Delivery week"], "value": "{{week}}"],
+                            ["id": "w3", "kind": "fill", "target": ["label": "Bread flour 25 kg"], "value": "{{bags}}"],
+                            ["id": "w4", "kind": "click", "target": ["label": "Place order"], "unsafe_to_repeat": true],
+                        ],
+                    ]
+                    return next
+                }
+                return ["skills": skills]
             case ["api", "har-derived-api", "contracts"]:
                 return ["contracts": SampleWorkspace.teachContracts(now: now)]
+            case ["api", "har-derived-api", "teach", "profile"]:
+                // The bakery's business profile ({{profile.key}} values).
+                return [
+                    "values": [
+                        "supplier_url": ["value": "https://orders.millsupply.example", "label": "Mill supply orders", "type": "url"],
+                        "reports_root": ["value": "/Users/harbor/Reports", "label": "Reports folder", "type": "folder"],
+                        "store_email": ["value": "orders@harborbakery.example", "label": "Store email", "type": "email"],
+                    ],
+                    "updated_at": SampleWorkspace.ago(1_440),
+                ]
             default:
                 return nil
             }
