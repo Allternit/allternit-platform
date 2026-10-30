@@ -222,6 +222,9 @@ for (const mdxPath of collectMdxFiles(DOCS_DIR)) {
       if (['guides/live-sessions.mdx', 'guides/live-session-delivery.mdx', 'guides/team-roster.mdx'].some((p) => mdxPath.endsWith(p))) continue;
       // Connecting a vendor from chat and picking a worker bot's brain name the catalog vendors and their sign-in flows.
       if (['guides/connect-vendor-from-chat.mdx', 'guides/worker-bots.mdx'].some((p) => mdxPath.endsWith(p))) continue;
+      // The phone add-ons ship as a Claude Code plugin and a Codex skill, and the MCP servers page
+      // points to them; both have to name those clients and their install commands.
+      if (['api/platform/sdks/claude-code-codex.mdx', 'api/mcp-servers.mdx'].some((p) => mdxPath.endsWith(p))) continue;
       fail(
         `competitor mention in ${path.relative(ROOT, mdxPath)}:${i + 1}: ${line.trim()}`
       );
