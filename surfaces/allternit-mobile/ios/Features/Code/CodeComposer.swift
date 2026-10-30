@@ -3,12 +3,13 @@ import UIKit
 
 // MARK: - Launch composer
 
-/// The Code launch prompt on the phone (ChatComposer's Code terminal line,
-/// phone.css "Terminal-style composer: one square line, prompt and keys side
-/// by side"): one line between dashed rules — `+`, the coral `❯` on the
-/// text's first line, voice and the coral run key — then the status row
-/// under it (computer · folder · branch · worktree · permission mode ·
-/// model · usage · Terminal). Sending starts a code thread with the text.
+/// The Code prompt on the phone (ChatComposer's Code terminal line, phone.css
+/// "Terminal-style composer: one square line, prompt and keys side by
+/// side"): the computer on the left and the context meter on the right
+/// above it, one line between dashed rules — `+`, the coral `❯` on the
+/// text's first line, voice and the coral run key — then one icon row under
+/// it (folder · branch · worktree · permission mode, then the model and the
+/// Chat/Terminal switch on the right). Sending starts a code thread.
 struct CodeLaunchComposer: View {
     @Binding var text: String
     let folder: CodeFolderInfo?
@@ -22,6 +23,11 @@ struct CodeLaunchComposer: View {
     let onOpenTerminal: () -> Void
     /// nil hides `+` (the terminal view takes text only).
     var onAttach: (() -> Void)? = nil
+    /// The thread's backend session, for the context meter (nil on the
+    /// launchpad: the meter then shows the plan window).
+    var sessionId: String? = nil
+    /// Moves when a turn lands, so the context meter follows the thread.
+    var contextRefresh: Int = 0
 
     @StateObject private var dictation = DictationController()
     @State private var dictationBase = ""
@@ -35,6 +41,8 @@ struct CodeLaunchComposer: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            CodeDeckRow(folder: folder, terminal: terminal, placement: .above, sessionId: sessionId,
+                        contextRefresh: contextRefresh, onOpenTerminal: onOpenTerminal)
             DashedHairline(strong: isFocused, terminal: terminal)
             HStack(alignment: .bottom, spacing: 4) {
                 if let onAttach {
@@ -112,7 +120,8 @@ struct CodeLaunchComposer: View {
             }
             .padding(.horizontal, 6)
             DashedHairline(strong: isFocused, terminal: terminal)
-            CodeDeckRow(folder: folder, terminal: terminal, onOpenTerminal: onOpenTerminal)
+            CodeDeckRow(folder: folder, terminal: terminal, placement: .below, sessionId: sessionId,
+                        contextRefresh: contextRefresh, onOpenTerminal: onOpenTerminal)
         }
         .onChange(of: dictation.transcript) { _, transcript in
             guard dictation.isRecording || !transcript.isEmpty else { return }
@@ -175,63 +184,23 @@ struct CodeInk {
     var borderStrong: Color { terminal ? TerminalPalette.pressedBorder : Color("BorderStrong") }
 }
 
-// MARK: - Deck flow
-
-/// Lays the status items left to right and starts a new line when the next
-/// one doesn't fit.
-struct CodeDeckFlow: Layout {
-    var spacing: CGFloat = 2
-    var lineSpacing: CGFloat = 0
-
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let rows = arrange(width: proposal.width ?? .infinity, subviews: subviews)
-        let width = rows.map(\.width).max() ?? 0
-        let height = rows.map(\.height).reduce(0, +) + lineSpacing * CGFloat(max(rows.count - 1, 0))
-        return CGSize(width: proposal.width ?? width, height: height)
-    }
-
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        var y = bounds.minY
-        for row in arrange(width: bounds.width, subviews: subviews) {
-            var x = bounds.minX
-            for index in row.indices {
-                let size = subviews[index].sizeThatFits(.unspecified)
-                subviews[index].place(at: CGPoint(x: x, y: y + (row.height - size.height) / 2), proposal: ProposedViewSize(size))
-                x += size.width + spacing
-            }
-            y += row.height + lineSpacing
-        }
-    }
-
-    private struct Row { var indices: [Int] = []; var width: CGFloat = 0; var height: CGFloat = 0 }
-
-    private func arrange(width: CGFloat, subviews: Subviews) -> [Row] {
-        var rows: [Row] = [Row()]
-        for index in subviews.indices {
-            let size = subviews[index].sizeThatFits(.unspecified)
-            let extra = rows[rows.count - 1].indices.isEmpty ? size.width : size.width + spacing
-            if !rows[rows.count - 1].indices.isEmpty, rows[rows.count - 1].width + extra > width {
-                rows.append(Row())
-            }
-            let added = rows[rows.count - 1].indices.isEmpty ? size.width : size.width + spacing
-            rows[rows.count - 1].indices.append(index)
-            rows[rows.count - 1].width += added
-            rows[rows.count - 1].height = max(rows[rows.count - 1].height, size.height)
-        }
-        return rows
-    }
-}
-
 // MARK: - Deck row
 
-/// The status row under the Code prompt (CodeBottomStatusBar with
-/// CodeWorkspaceBar leading, then the model, usage and CodeTerminalButton):
-/// Environment · Working folder · branch · Worktree · permission mode ·
-/// model · usage · Terminal, one line that scrolls sideways.
+/// The Code prompt's controls (CodeBottomStatusBar with CodeWorkspaceBar
+/// leading), icons only so all eight fit a phone; each keeps its words as
+/// its accessibility label. `.above` the prompt: the computer on the left,
+/// the context meter on the right. `.below`: working folder · branch ·
+/// worktree · permission mode on the left, the model and the Chat/Terminal
+/// switch on the right.
 struct CodeDeckRow: View {
+    enum Placement { case above, below }
+
     let folder: CodeFolderInfo?
-    /// On the terminal surface the last item is "Chat" (back to the chat view).
+    /// On the terminal surface the switch reads "Chat" (back to the chat view).
     var terminal: Bool = false
+    var placement: Placement = .below
+    var sessionId: String? = nil
+    var contextRefresh: Int = 0
     let onOpenTerminal: () -> Void
 
     @StateObject private var environmentStore = EnvironmentStore.shared
@@ -242,6 +211,9 @@ struct CodeDeckRow: View {
     @AppStorage(CodeWorktree.storageKey) private var worktree = false
 
     @State private var sheet: Sheet? = nil
+    /// The session's context window (gizzi `/session/:id/context`).
+    @State private var context: SessionContextBreakdown? = nil
+    @State private var contextSessionId: String? = nil
 
     enum Sheet: String, Identifiable {
         case environment, folder, permission, model, pairing, usage
@@ -278,106 +250,49 @@ struct CodeDeckRow: View {
     }
 
     var body: some View {
-        // Wraps onto a second line instead of scrolling, so every item
-        // (permission, model, usage, Terminal) stays in view on a phone.
-        CodeDeckFlow(spacing: 2, lineSpacing: 0) {
-                pill(label: "Environment", action: { sheet = .environment }) {
-                    Image(systemName: environmentStore.environment == .cloud ? "cloud" : "desktopcomputer")
-                        .font(.system(size: 15))
-                    Text(environmentLabel).lineLimit(1)
-                    if let cloudStatus {
-                        Text(cloudStatus)
-                            .font(.system(size: 13))
-                            .foregroundColor(ink.secondary)
-                    }
-                    caret
-                }
-                pill(label: "Working folder", action: { sheet = .folder }) {
-                    Image(systemName: "folder").font(.system(size: 15))
-                    Text(folder?.name ?? "Select folder").lineLimit(1).frame(maxWidth: 170, alignment: .leading)
-                    caret
-                }
+        HStack(spacing: 2) {
+            switch placement {
+            case .above:
+                environmentButton
+                Spacer(minLength: 8)
+                contextMeter
+            case .below:
+                icon("folder", label: "Working folder: \(folder?.name ?? "Select folder")") { sheet = .folder }
                 if let branch = folder?.branch, !branch.isEmpty {
-                    pill(label: "Branch \(branch)", action: nil) {
-                        Image(systemName: "arrow.triangle.branch").font(.system(size: 14))
-                        Text(branch).lineLimit(1).frame(maxWidth: 170, alignment: .leading)
-                    }
+                    Image(systemName: "arrow.triangle.branch")
+                        .font(.system(size: 15))
+                        .foregroundColor(ink.primary)
+                        .frame(width: 36, height: 40)
+                        .accessibilityElement()
+                        .accessibilityLabel("Branch \(branch)")
                 }
                 if worktreeVisible {
-                    pill(label: "Toggle worktree isolation", action: { worktree.toggle() }) {
-                        Image(systemName: worktree ? "checkmark.square.fill" : "square")
-                            .font(.system(size: 15))
-                            .foregroundColor(worktree ? ink.accent : ink.secondary)
-                        Text("Worktree")
-                    }
-                    .accessibilityAddTraits(worktree ? .isSelected : [])
+                    icon(worktree ? "square.split.diagonal.2x2.fill" : "square.split.diagonal.2x2",
+                         label: "Worktree isolation", tint: worktree ? ink.accent : ink.primary) { worktree.toggle() }
+                        .accessibilityValue(worktree ? "On" : "Off")
                 }
-                Button(action: { sheet = .permission }) {
-                    HStack(spacing: 6) {
-                        Image(systemName: permission.icon).font(.system(size: 14)).opacity(0.85)
-                        Text(permission.label)
-                        Image(systemName: "chevron.down").font(.system(size: 10, weight: .bold)).opacity(0.7)
-                    }
-                    .font(.system(size: 13, weight: .semibold, design: .monospaced))
-                    .foregroundColor(ink.accent)
-                    .padding(.horizontal, 10)
-                    .frame(height: 40)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Code permission mode: \(permission.label)")
-                Button(action: { sheet = .model }) {
-                    HStack(spacing: 6) {
-                        Image("MatrixLogo")
-                            .resizable()
-                            .scaledToFit()
-                            .frame(width: 14, height: 14)
-                            .frame(width: 18, height: 18)
-                            .background(ink.fill, in: RoundedRectangle(cornerRadius: 5))
-                            .overlay(RoundedRectangle(cornerRadius: 5).stroke(ink.border, lineWidth: 1))
-                        Text(modelLabel).lineLimit(1)
-                        Image(systemName: "chevron.down").font(.system(size: 10, weight: .semibold)).opacity(0.8)
-                    }
-                    .font(.system(size: 13, weight: .medium, design: .monospaced))
-                    .foregroundColor(ink.secondary)
-                    .padding(.horizontal, 8)
-                    .frame(height: 40)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Model: \(modelLabel)")
-                if let percent = usage.percentUsed {
-                    Button(action: { sheet = .usage }) {
-                        CodeUsageBlocks(fraction: percent / 100)
-                            .padding(.horizontal, 8)
-                            .frame(height: 40)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Usage: \(usage.percentText ?? "") used. Open details.")
-                }
-                Button(action: onOpenTerminal) {
-                    HStack(spacing: 6) {
-                        Image(systemName: terminal ? "bubble.left.and.bubble.right" : "apple.terminal").font(.system(size: 15))
-                        Text(terminal ? "Chat" : "Terminal")
-                    }
-                    .font(.system(size: 13, weight: .semibold, design: .monospaced))
-                    .foregroundColor(ink.secondary)
-                    .padding(.horizontal, 10)
-                    .frame(height: 40)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(terminal ? "Show chat" : "Open terminal")
+                icon(permission.icon, label: "Code permission mode: \(permission.label)", tint: ink.accent) { sheet = .permission }
+                Spacer(minLength: 8)
+                modelButton
+                modeSwitch
+            }
         }
-        .padding(.top, 6)
-        .padding(.bottom, 14)
+        .padding(.top, placement == .above ? 2 : 4)
+        .padding(.bottom, placement == .above ? 2 : 12)
         .padding(.horizontal, 6)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity)
         .task {
-            await relay.refresh()
-            modelStore.fetchModelsIfNeeded()
-            usage.fetchUsageIfNeeded()
+            switch placement {
+            case .above:
+                await relay.refresh()
+                usage.fetchUsageIfNeeded()
+            case .below:
+                modelStore.fetchModelsIfNeeded()
+            }
+        }
+        .task(id: "\(sessionId ?? "")-\(contextRefresh)") {
+            guard placement == .above else { return }
+            await loadContext()
         }
         .sheet(item: $sheet) { sheet in
             switch sheet {
@@ -399,36 +314,140 @@ struct CodeDeckRow: View {
                 RuntimePairingView()
             case .usage:
                 NavigationStack {
-                    List { PlanUsageRows() }
-                        .navigationTitle("Usage")
+                    List {
+                        if let context { CodeContextRows(breakdown: context) }
+                        PlanUsageRows()
+                    }
+                        .navigationTitle(context == nil ? "Usage" : "Context and usage")
                         .navigationBarTitleDisplayMode(.inline)
                 }
-                .presentationDetents([.medium])
+                .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
             }
         }
     }
 
-    private var caret: some View {
-        Image(systemName: "chevron.down")
-            .font(.system(size: 10, weight: .semibold))
-            .foregroundColor(ink.tertiary)
+    // MARK: Items
+
+    /// The computer the thread runs on; a dot while a cloud runtime wakes.
+    private var environmentButton: some View {
+        icon(environmentStore.environment == .cloud ? "cloud" : "desktopcomputer",
+             label: "Environment: \(environmentLabel)\(cloudStatus.map { ", \($0)" } ?? "")") { sheet = .environment }
+            .overlay(alignment: .topTrailing) {
+                if cloudStatus != nil {
+                    Circle().fill(Theme.statusWarning).frame(width: 6, height: 6).offset(x: -8, y: 10)
+                        .allowsHitTesting(false)
+                }
+            }
     }
 
+    /// ComposerUsageMeter: the session's context fill as HUD blocks and a
+    /// percent; with no session yet, the plan window's blocks. Hidden when
+    /// neither has a figure.
     @ViewBuilder
-    private func pill<Content: View>(label: String, action: (() -> Void)?, @ViewBuilder content: () -> Content) -> some View {
-        let chip = HStack(spacing: 6) { content() }
-            .font(.system(size: 15))
-            .foregroundColor(ink.primary)
-            .padding(.horizontal, 8)
-            .frame(height: 40)
-            .contentShape(Rectangle())
-        if let action {
-            Button(action: action) { chip }
+    private var contextMeter: some View {
+        if let context {
+            Button(action: { sheet = .usage }) {
+                HStack(spacing: 6) {
+                    CodeUsageBlocks(fraction: context.utilization, tone: tone(context.level))
+                    Text("\(Int((context.utilization * 100).rounded()))%")
+                        .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                        .foregroundColor(context.level == .ok ? ink.secondary : tone(context.level))
+                }
+                .padding(.horizontal, 8)
+                .frame(height: 32)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Context: \(Int((context.utilization * 100).rounded()))% used (\(SessionContextBreakdown.format(context.usedTokens)) of \(SessionContextBreakdown.format(context.contextWindow))). Open details.")
+        } else if let percent = usage.percentUsed {
+            Button(action: { sheet = .usage }) {
+                CodeUsageBlocks(fraction: percent / 100)
+                    .padding(.horizontal, 8)
+                    .frame(height: 32)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Usage: \(usage.percentText ?? "") used. Open details.")
+        }
+    }
+
+    private func tone(_ level: SessionContextBreakdown.Level) -> Color {
+        switch level {
+        case .ok: return ink.secondary
+        case .approaching: return Theme.statusWarning
+        case .reached: return Theme.statusError
+        }
+    }
+
+    /// The model, as its provider mark.
+    private var modelButton: some View {
+        Button(action: { sheet = .model }) {
+            Image("MatrixLogo")
+                .resizable()
+                .scaledToFit()
+                .frame(width: 16, height: 16)
+                .frame(width: 24, height: 24)
+                .background(ink.fill, in: RoundedRectangle(cornerRadius: 6))
+                .overlay(RoundedRectangle(cornerRadius: 6).stroke(ink.border, lineWidth: 1))
+                .frame(width: 40, height: 40)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Model: \(modelLabel)")
+    }
+
+    /// Chat · Terminal: this thread as a chat or in its terminal look. The
+    /// one view switch in Code mode (the shell sits in the sessions sheet).
+    private var modeSwitch: some View {
+        HStack(spacing: 0) {
+            ForEach([false, true], id: \.self) { isTerminal in
+                let on = isTerminal == terminal
+                Button(action: { if !on { onOpenTerminal() } }) {
+                    Image(systemName: isTerminal ? "apple.terminal" : "bubble.left")
+                        .font(.system(size: 13, weight: on ? .bold : .regular))
+                        .foregroundColor(on ? ink.primary : ink.tertiary)
+                        .frame(width: 32, height: 28)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .fill(on ? (terminal ? TerminalPalette.pressedBorder : Color("BgPanel")) : .clear)
+                                .shadow(color: .black.opacity(on && !terminal ? 0.08 : 0), radius: 1, y: 1)
+                        )
+                }
                 .buttonStyle(.plain)
-                .accessibilityLabel(label)
-        } else {
-            chip.accessibilityElement(children: .combine).accessibilityLabel(label)
+                .accessibilityLabel(isTerminal ? "Terminal" : "Chat")
+                .accessibilityAddTraits(on ? .isSelected : [])
+            }
+        }
+        .padding(2)
+        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(terminal ? TerminalPalette.key : Color("BorderStrong")))
+        .padding(.leading, 2)
+    }
+
+    private func icon(_ systemName: String, label: String, tint: Color? = nil, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 15))
+                .foregroundColor(tint ?? ink.primary)
+                .frame(width: 36, height: 40)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+    }
+
+    /// The thread's context window; a failed read keeps the last figure
+    /// for the same session.
+    private func loadContext() async {
+        guard let sessionId, !sessionId.hasPrefix("temp-") else {
+            context = nil
+            contextSessionId = nil
+            return
+        }
+        if contextSessionId != sessionId { context = nil }
+        if let breakdown = try? await AgentChatClient().sessionContext(sessionId: sessionId) {
+            context = breakdown
+            contextSessionId = sessionId
         }
     }
 }
@@ -438,8 +457,11 @@ struct CodeDeckRow: View {
 /// red at the limit.
 struct CodeUsageBlocks: View {
     let fraction: Double
+    /// The context meter passes its own level colour.
+    var tone: Color? = nil
 
-    private var tone: Color {
+    private var fill: Color {
+        if let tone { return tone }
         if fraction >= 1 { return Theme.statusError }
         if fraction >= 0.8 { return Theme.statusWarning }
         return Color("TextSecondary")
@@ -450,11 +472,49 @@ struct CodeUsageBlocks: View {
         HStack(spacing: 2) {
             ForEach(0..<5, id: \.self) { index in
                 RoundedRectangle(cornerRadius: 1)
-                    .fill(index < filled ? tone : Color("BorderStrong"))
+                    .fill(index < filled ? fill : Color("BorderStrong"))
                     .frame(width: 5, height: 10)
             }
         }
         .accessibilityHidden(true)
+    }
+}
+
+/// The context panel's section (ContextUsagePanel): the window's fill, then
+/// what fills it, row by row, and who measured it.
+struct CodeContextRows: View {
+    let breakdown: SessionContextBreakdown
+
+    var body: some View {
+        Section {
+            HStack {
+                Text("\(SessionContextBreakdown.format(breakdown.usedTokens)) of \(SessionContextBreakdown.format(breakdown.contextWindow))")
+                    .font(.system(size: 14, weight: .semibold))
+                Spacer()
+                Text("\(Int((breakdown.utilization * 100).rounded()))%")
+                    .font(.system(size: 13, design: .monospaced))
+                    .foregroundColor(Color("TextSecondary"))
+            }
+            ForEach(breakdown.categories.filter { $0.deferred != true }, id: \.id) { row in
+                HStack {
+                    Text(row.name).font(.system(size: 13))
+                    Spacer()
+                    Text(SessionContextBreakdown.format(row.tokens))
+                        .font(.system(size: 12, design: .monospaced))
+                        .foregroundColor(Color("TextSecondary"))
+                }
+            }
+        } header: {
+            Text("Context window")
+        } footer: {
+            Text(measuredBy)
+        }
+    }
+
+    /// ContextUsage.tsx `measuredLabel`, short form.
+    private var measuredBy: String {
+        if breakdown.source == "brain" { return "Reported by \(breakdown.brainName ?? "the brain")" }
+        return breakdown.basis == "estimated" ? "Estimated" : "Measured by the provider"
     }
 }
 

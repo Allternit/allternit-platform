@@ -7,33 +7,29 @@ enum CodeOverviewKind: String, Identifiable {
     var id: String { rawValue }
 }
 
-/// The header count button (PhoneOverviewButton.tsx): the number of open
-/// sessions of the kind on screen in a rounded square, Safari-tabs style.
-struct CodeOverviewCountButton: View {
-    let count: Int
-    let noun: String
+/// The Code header's sessions button: a task list, opening the sessions
+/// overview (open threads, and the way to Terminal and Shell).
+struct CodeSessionsButton: View {
     var tint: Color = Color("TextPrimary")
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            Text(count > 99 ? "99+" : "\(count)")
-                .font(.system(size: 12, weight: .bold))
+            Image(systemName: "checklist")
+                .font(.system(size: 18))
                 .foregroundColor(tint)
-                .padding(.horizontal, 5)
-                .frame(minWidth: 22, minHeight: 22)
-                .overlay(RoundedRectangle(cornerRadius: 6).stroke(tint, lineWidth: 1.6))
                 .frame(width: 44, height: 44)
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("All \(noun): \(count) open")
+        .accessibilityLabel("Code sessions")
     }
 }
 
 /// The Code sessions overview (PhoneOverviewOverlay / SessionOverview on the
-/// phone): ☰ · "Code sessions" · "N open" · the grid/list switch on top,
-/// every open session as a card, and a floating "Search code" pill with New
-/// at the bottom. Closing a card archives the session.
+/// phone): ☰ · "Code sessions" · "N open", then Terminal, Shell and the
+/// layout switch on the right; every open session as a card, and a floating
+/// "Search code" pill with New at the bottom. Closing a card archives the
+/// session.
 struct CodeOverviewSheet: View {
     let kind: CodeOverviewKind
     let sessions: [AgentSession]
@@ -42,6 +38,10 @@ struct CodeOverviewSheet: View {
     let onNew: () -> Void
     let onArchive: (AgentSession) -> Void
     let onOpenMenu: () -> Void
+    /// A thread in its terminal look (a fresh one from the launchpad).
+    var onOpenTerminal: (() -> Void)? = nil
+    /// The computer's raw shell.
+    var onOpenShell: (() -> Void)? = nil
 
     @Environment(\.dismiss) private var dismiss
     @AppStorage("allternit.code.overview-layout") private var layout = "grid"
@@ -109,6 +109,18 @@ struct CodeOverviewSheet: View {
             }
             .padding(.top, 4)
             Spacer()
+            if let onOpenTerminal {
+                viewButton("Terminal", icon: "apple.terminal") {
+                    dismiss()
+                    onOpenTerminal()
+                }
+            }
+            if let onOpenShell {
+                viewButton("Shell", icon: "chevron.left.forwardslash.chevron.right") {
+                    dismiss()
+                    onOpenShell()
+                }
+            }
             if kind == .threads {
                 roundButton(layout == "grid" ? "square.grid.2x2" : "list.bullet", label: layout == "grid" ? "Show as list" : "Show as grid") {
                     layout = layout == "grid" ? "list" : "grid"
@@ -118,6 +130,24 @@ struct CodeOverviewSheet: View {
         .padding(.horizontal, 12)
         .padding(.top, 12)
         .padding(.bottom, 8)
+    }
+
+    /// Terminal / Shell: a labelled pill, so the two ways out read at a glance.
+    private func viewButton(_ title: String, icon: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                Image(systemName: icon).font(.system(size: 12, weight: .semibold))
+                Text(title).font(.system(size: 13, weight: .semibold))
+            }
+            .foregroundColor(Color("TextPrimary"))
+            .padding(.horizontal, 10)
+            .frame(height: 32)
+            .background(Color("BgTertiary"))
+            .clipShape(Capsule())
+            .frame(height: 44)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Open \(title)")
     }
 
     private func roundButton(_ icon: String, label: String, action: @escaping () -> Void) -> some View {

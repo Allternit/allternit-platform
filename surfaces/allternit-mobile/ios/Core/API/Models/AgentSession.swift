@@ -137,6 +137,118 @@ struct AgentSessionListResponse: Decodable, Sendable {
     let count: Int
 }
 
+// MARK: - Context window
+
+/// `GET /api/v1/agent-sessions/:id/context` envelope (native-agent-api.ts
+/// `SessionContextUsage`); `breakdown` is null before the first turn.
+struct SessionContextResponse: Decodable, Sendable {
+    let breakdown: SessionContextBreakdown?
+}
+
+/// What fills a session's context window (gizzi `ContextBreakdown.Snapshot`):
+/// the totals the composer meter shows, and the rows its panel lists.
+struct SessionContextBreakdown: Decodable, Sendable, Equatable {
+    struct Category: Decodable, Sendable, Equatable {
+        let id: String
+        let name: String
+        let tokens: Double
+        let deferred: Bool?
+    }
+
+    let contextWindow: Double
+    let usedTokens: Double
+    /// 0–1
+    let utilization: Double
+    let basis: String?
+    let source: String?
+    let brainName: String?
+    let categories: [Category]
+    /// The MCP tools the runtime loaded, by server (the Connectors card).
+    let mcpTools: [McpTool]?
+
+    struct McpTool: Decodable, Sendable, Equatable {
+        let name: String
+        let server: String
+        let tokens: Double
+    }
+
+    /// ContextUsage.tsx `contextLevel`: amber from 75%, red from 90%.
+    var level: Level {
+        utilization >= 0.9 ? .reached : utilization >= 0.75 ? .approaching : .ok
+    }
+
+    enum Level { case ok, approaching, reached }
+
+    /// 144600 → "144.6k", 1000000 → "1M" (ContextUsage.tsx `formatTokens`).
+    static func format(_ tokens: Double) -> String {
+        let n = max(0, tokens.rounded())
+        func trim(_ value: Double) -> String {
+            let text = String(format: "%.1f", value)
+            return text.hasSuffix(".0") ? String(text.dropLast(2)) : text
+        }
+        if n >= 1_000_000 { return "\(trim(n / 1_000_000))M" }
+        if n >= 1_000 { return "\(trim(n / 1_000))k" }
+        return String(Int(n))
+    }
+}
+
+// MARK: - Background tasks
+
+/// One piece of work a session delegated (gizzi `SessionTasks.Item`): a
+/// background shell, or a subagent. `childSessionID` is the subagent's
+/// transcript.
+struct SessionTask: Decodable, Sendable, Identifiable, Equatable {
+    struct Time: Decodable, Sendable, Equatable {
+        let created: Double
+        let updated: Double?
+        let finished: Double?
+    }
+
+    let id: String
+    /// "shell" | "subagent" | …
+    let kind: String
+    /// queued | running | completed | failed | cancelled | interrupted
+    let status: String
+    let background: Bool?
+    let description: String
+    let agent: String?
+    let childSessionID: String?
+    let output: String?
+    let error: String?
+    let time: Time
+
+    var isActive: Bool { status == "queued" || status == "running" }
+
+    /// CodeTasksPane `kindLabel`: "Shell", "Agent · explore".
+    var kindLabel: String {
+        switch kind {
+        case "shell": return "Shell"
+        case "subagent": return agent.map { "Agent · \($0)" } ?? "Agent"
+        default: return kind.prefix(1).uppercased() + kind.dropFirst()
+        }
+    }
+}
+
+// MARK: - Pull requests
+
+/// A pull request linked to a session (code-session-prs.ts `LinkedPR`).
+struct LinkedPullRequest: Decodable, Sendable, Identifiable, Equatable {
+    let url: String
+    let repo: String
+    let number: Int
+    let title: String
+    /// merged | conflict | open | draft | closed
+    let state: String
+    let additions: Int?
+    let deletions: Int?
+
+    var id: String { url }
+}
+
+struct SessionPullRequestsResponse: Decodable, Sendable {
+    let bySession: [String: [LinkedPullRequest]]?
+}
+
 // MARK: - Create request
 
 /// Body of `POST /api/v1/agent-sessions`, matching the web's

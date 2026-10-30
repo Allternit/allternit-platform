@@ -49,9 +49,33 @@ Home's composer is the same as the web's: **+** to add files, the **Auto** pill 
 
 On the Bots home, **Your team** shows each bot in the same round tile, with a ring while it works and an amber dot when it needs you. Your main bot, A://, shows as the Allternit orb, and its name is drawn as the pixel A:// mark wherever it appears. When you pick one bot in **To:**, or open a bot's chat, the screen and the drawer take on that bot's colour, and your messages in its chat do too. The colour is the one set for the bot, or else the main colour of its picture. Bots with a black-and-white picture keep the plain screen. In a bot's own chat, its picture stands in for Gizzi over the greeting.
 
-### Code mode's terminal look
+### Code mode
 
-Code mode has a **Chat · Terminal · Shell** switcher at the top. **Chat** shows the thread as messages. **Terminal** shows the same thread as a terminal: a dark screen, your messages as `❯` lines, each tool step as `●` with its result under it, and a **Working…** line with a timer while the agent runs. **Shell** opens a plain command shell on your computer. Both Chat and Terminal keep the Code composer: the `❯` line and its bottom bar, which wraps onto a second line so every item stays in view. **+** on it adds files. **Terminal** or **Chat** on the bar also switches views, and the app remembers the choice for each thread.
+The Code header has ☰ on the left and the sessions button (a task list) on the right. On the Code home, the gizzi code logo sits between them and **What's new** sits under the sessions button. In a session, the session's name takes the middle: tap it to rename the session, copy its ID or archive it.
+
+The sessions button opens your code sessions. Tap one to open it. **Terminal** and **Shell** at the top right of that sheet open a thread in its terminal look and a plain command shell on your computer. To leave the shell, open the sessions sheet again and pick a session.
+
+The Code composer shows its controls as icons so all of them fit:
+
+- **Above the `❯` line:** the computer it runs on, on the left. On the right is the context meter: five blocks and a percent that show how full the session's context window is. Tap the meter to see what fills the window (messages, system prompt, tools, MCP tools, memory files and skills) and your plan's limits. Before a session has its first reply, the meter shows your plan's usage instead. It is hidden when there is no figure yet.
+- **Under the `❯` line:** the working folder, the branch, the worktree switch (on the main branch only) and the permission mode on the left. The model and the **Chat · Terminal** switch are on the right.
+
+**+** adds files. The **Chat · Terminal** switch is the one way to change how a thread looks. **Chat** shows it as messages. **Terminal** shows the same thread as a terminal: a dark screen, your messages as `❯` lines, each tool step as `●` with its result under it, and a **Working…** line with a timer while the agent runs. The app remembers the choice for each thread.
+
+In a session, the **Panes** button beside the sessions button lists the same panes as Allternit Desktop. Each opens as a sheet:
+
+| Pane | What it shows |
+|---|---|
+| Session panel | The computer, folder, branch and permission mode; the context window; the session's pull requests; how many background tasks run; and the connectors the session loaded |
+| Terminal | The computer's shell |
+| Changes | The files the session changed, with their diffs |
+| Browser | The dev server running in the terminal |
+| Computer | Your computers, to watch or drive one |
+| Files | The project's files |
+| Artifacts | Your artifacts library |
+| Transcript | Every message in the session, as plain text |
+| Background tasks | The shells and subagents the session started, with their output. **Stop** ends a running one |
+| Code map | The project's most important files, with how many files import each one |
 
 ## Your computer
 

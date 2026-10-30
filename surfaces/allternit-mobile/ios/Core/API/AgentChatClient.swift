@@ -146,6 +146,33 @@ final class AgentChatClient: ObservableObject, @unchecked Sendable {
         try await client.get(path: "agent-sessions/\(Self.escape(sessionId))/messages")
     }
 
+    /// The session's context window (`GET agent-sessions/:id/context`, gizzi
+    /// `/session/:id/context`; plan limits left out). nil before the
+    /// session's first turn.
+    func sessionContext(sessionId: String) async throws -> SessionContextBreakdown? {
+        let response: SessionContextResponse = try await client.get(path: "agent-sessions/\(Self.escape(sessionId))/context?limits=false")
+        return response.breakdown
+    }
+
+    /// Everything the session delegated, newest first: background shells and
+    /// subagents (`GET agent-sessions/:id/tasks`, gizzi `SessionTasks.Item`).
+    func sessionTasks(sessionId: String) async throws -> [SessionTask] {
+        try await client.get(path: "agent-sessions/\(Self.escape(sessionId))/tasks")
+    }
+
+    /// Stops a running background task (kills a shell, aborts a subagent).
+    func cancelBackgroundTask(sessionId: String, taskId: String) async throws {
+        try await client.post(path: "agent-sessions/\(Self.escape(sessionId))/background-tasks/\(Self.escape(taskId))/cancel")
+    }
+
+    /// The pull requests the session opened or pushed to
+    /// (`GET agent-sessions/prs?ids=<id>` → `{ bySession: { id: [pr] } }`).
+    func sessionPullRequests(sessionId: String) async throws -> [LinkedPullRequest] {
+        let ids = sessionId.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? sessionId
+        let response: SessionPullRequestsResponse = try await client.get(path: "agent-sessions/prs?ids=\(ids)")
+        return response.bySession?[sessionId] ?? []
+    }
+
     /// Aborts an in-flight generation server-side.
     func abort(sessionId: String) async throws {
         try await client.post(path: "agent-sessions/\(Self.escape(sessionId))/abort")
