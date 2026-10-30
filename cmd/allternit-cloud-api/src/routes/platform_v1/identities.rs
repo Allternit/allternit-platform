@@ -51,7 +51,7 @@ fn require(caller: &PlatformCaller) -> Result<(), PlatformError> {
     caller.require(mailboxes::SCOPE)
 }
 
-#[derive(Debug, Clone, FromRow)]
+#[derive(Debug, Clone, FromRow, serde::Serialize)]
 struct IdentityRow {
     id: String,
     account_id: String,

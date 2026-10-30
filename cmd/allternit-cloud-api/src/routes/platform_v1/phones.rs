@@ -836,6 +836,23 @@ pub(crate) struct FleetBody {
     pub brain: Option<String>,
 }
 
+/// Start one phone's run of a fleet run: a task (`goal`) or a saved skill.
+#[allow(clippy::too_many_arguments)]
+async fn fleet_start(db: &PgPool, host: &dyn PhoneHost, caller: &PlatformCaller, body: &FleetBody, id: &str, serial: &String, goal: Option<String>, skill: Option<String>) -> (String, Result<Value, PlatformError>) {
+    let out = match (goal, skill) {
+        (Some(goal), _) => {
+            let task = TaskBody { goal, max_steps: body.max_steps, bot_id: body.bot_id.clone(), brain: body.brain.clone() };
+            op_task(db, host, caller, serial, &task, Some(id)).await
+        }
+        (_, Some(skill)) => {
+            let run = SkillRunBody { serial: Some(serial.clone()), inputs: body.inputs.clone(), bot_id: body.bot_id.clone(), brain: body.brain.clone() };
+            op_skill(db, host, caller, &skill, &run, Some(id)).await
+        }
+        _ => Err(PlatformError::invalid_request("missing_goal", "Send goal or skill.")),
+    };
+    (serial.clone(), out)
+}
+
 pub(crate) async fn op_fleet_start(db: &PgPool, host: &dyn PhoneHost, caller: &PlatformCaller, body: &FleetBody) -> Result<Value, PlatformError> {
     gate(caller)?;
     if body.serials.is_empty() || body.serials.len() > MAX_FLEET {
@@ -874,27 +891,12 @@ pub(crate) async fn op_fleet_start(db: &PgPool, host: &dyn PhoneHost, caller: &P
         .bind(&skill)
         .execute(db)
         .await?;
-    let starts = serials.iter().map(|serial| {
-        let id = id.as_str();
-        let goal = goal.clone();
-        let skill = skill.clone();
-        async move {
-            let out = match (goal, skill) {
-                (Some(goal), _) => {
-                    let task = TaskBody { goal, max_steps: body.max_steps, bot_id: body.bot_id.clone(), brain: body.brain.clone() };
-                    op_task(db, host, caller, serial, &task, Some(id)).await
-                }
-                (_, Some(skill)) => {
-                    let run = SkillRunBody { serial: Some(serial.clone()), inputs: body.inputs.clone(), bot_id: body.bot_id.clone(), brain: body.brain.clone() };
-                    op_skill(db, host, caller, &skill, &run, Some(id)).await
-                }
-                _ => unreachable!("kind checked above"),
-            };
-            (serial.clone(), out)
-        }
-    });
+    let mut results: Vec<(String, Result<Value, PlatformError>)> = Vec::with_capacity(serials.len());
     // A handful at a time: each start is one relayed call to the same Desktop.
-    let results: Vec<(String, Result<Value, PlatformError>)> = futures::stream::iter(starts).buffered(8).collect().await;
+    for chunk in serials.chunks(8) {
+        let starts: Vec<_> = chunk.iter().map(|serial| fleet_start(db, host, caller, body, id.as_str(), serial, goal.clone(), skill.clone())).collect();
+        results.extend(futures::future::join_all(starts).await);
+    }
     let failures: Vec<Value> = results
         .iter()
         .filter_map(|(serial, r)| r.as_ref().err().map(|e| json!({ "serial": serial, "code": e.code, "message": e.message })))

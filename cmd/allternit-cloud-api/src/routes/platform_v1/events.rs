@@ -49,7 +49,7 @@ use super::{new_id, PlatformError};
 
 /// Event types a webhook can subscribe to. `*` subscribes to all of them.
 /// Defined by the one registry (`routes::allternit_events`).
-pub const EVENT_TYPES: [&str; 12] = crate::routes::allternit_events::PLATFORM_EVENTS;
+pub const EVENT_TYPES: [&str; 13] = crate::routes::allternit_events::PLATFORM_EVENTS;
 
 /// Endpoint kinds (`platform_webhooks.kind`).
 pub const KIND_PLATFORM: &str = "platform_webhook";

@@ -215,7 +215,7 @@ pub fn host_for(layered: MailExt) -> Arc<dyn MailHost> {
 // Rows
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, FromRow)]
+#[derive(Debug, Clone, FromRow, serde::Serialize)]
 pub struct MailboxRow {
     pub id: String,
     pub account_id: String,

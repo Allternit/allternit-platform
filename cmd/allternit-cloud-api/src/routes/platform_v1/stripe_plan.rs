@@ -79,6 +79,10 @@ pub struct PendingMeter {
 
 pub const PENDING_METERS: &[PendingMeter] = &[];
 
+/// Meters recorded at $0 and never sent to Stripe: phone minutes an agent
+/// identity's bundle covers (its `identity_month` row is the charge).
+pub const FREE_METERS: &[&str] = &["phone_minutes_included"];
+
 pub const METER_PLANS: &[MeterPlan] = &[
     MeterPlan { meters: &["voice_min_allternit"], event_name: "allternit_voice_seconds_allternit", display_name: "Voice agent seconds (Allternit model)", unit: "second", value: MeterValue::Seconds, payg_cents: "0.15", growth_cents: "0.135", free_units: 0 },
     MeterPlan { meters: &["voice_min_byok"], event_name: "allternit_voice_seconds_byok", display_name: "Voice agent seconds (own model key)", unit: "second", value: MeterValue::Seconds, payg_cents: "0.1", growth_cents: "0.09", free_units: 0 },
@@ -450,7 +454,7 @@ mod tests {
 
     #[test]
     fn every_usage_meter_has_a_stripe_meter_and_prices_match_spec() {
-        for meter in METERS {
+        for meter in METERS.into_iter().filter(|m| !FREE_METERS.contains(m)) {
             let pending = PENDING_METERS.iter().any(|p| p.meter == meter);
             // A priced meter has a Stripe meter; a pending (price TBD) one must not yet.
             assert_eq!(meter_plan(meter).is_some(), !pending, "{meter}: Stripe meter vs pending list");
