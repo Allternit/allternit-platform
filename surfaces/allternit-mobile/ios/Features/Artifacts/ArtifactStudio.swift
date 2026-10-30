@@ -297,6 +297,15 @@ final class ArtifactStudioLauncher: ObservableObject {
                                      artifactId: s.artifactId, designProjectId: s.designProjectId)
     }
 
+    /// Sessions with an editor (Docs, Sheets, Slides, Design), newest first.
+    /// Their records aren't in the Artifacts v2 library, so this is how the
+    /// person gets back to one.
+    var editorSessions: [ArtifactStudioSession] {
+        stored.keys.compactMap { session(for: $0) }
+            .filter { $0.editorRoute != nil }
+            .sorted { $0.startedAt > $1.startedAt }
+    }
+
     /// Creates the agent session (`POST /api/v1/agent-sessions`, Cowork
     /// surface, agent mode, the kind's mode contract) and records its prompt.
     /// One launch at a time, like the web's `launchArtifactType`.

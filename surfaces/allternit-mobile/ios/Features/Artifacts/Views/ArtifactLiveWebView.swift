@@ -423,9 +423,26 @@ private struct ArtifactLiveWebContainer: UIViewRepresentable {
       if (!h) return;
       var MAX = \(ArtifactFileShare.maxBytes);
       function post(m) { try { h.postMessage(m); } catch (e) {} }
+      // The site's CSP has no blob: in connect-src, so fetch(blobURL) fails
+      // there; keep each blob as its URL is made and read that instead.
+      var blobs = new Map();
+      var createURL = URL.createObjectURL;
+      URL.createObjectURL = function (b) {
+        var url = createURL.call(URL, b);
+        if (b instanceof Blob) {
+          blobs.set(url, b);
+          if (blobs.size > 20) blobs.delete(blobs.keys().next().value);
+        }
+        return url;
+      };
+      function read(href) {
+        var b = blobs.get(href);
+        if (b) { blobs.delete(href); return Promise.resolve(b); }
+        return fetch(href).then(function (r) { return r.blob(); });
+      }
       function save(href, name) {
         post({ stage: 'start' });
-        fetch(href).then(function (r) { return r.blob(); }).then(function (b) {
+        read(href).then(function (b) {
           if (b.size > MAX) { post({ error: 'tooLarge' }); return; }
           var fr = new FileReader();
           fr.onload = function () {

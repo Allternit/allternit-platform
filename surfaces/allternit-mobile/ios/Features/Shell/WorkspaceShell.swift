@@ -20,6 +20,7 @@ struct MainWorkspaceView: View {
     @State private var selectedSessionId: String? = nil
     @State private var screenWidth: CGFloat = 390
     @State private var isOverviewPresented = false
+    @State private var artifactSession: ArtifactStudioSession?
 
     /// PhoneShell DRAWER_FRACTION / DRAWER_MAX.
     private var sidebarWidth: CGFloat { min(screenWidth * 0.92, 440) }
@@ -110,6 +111,16 @@ struct MainWorkspaceView: View {
         )
         // The waiting games window, over every mode (WaitingGamesLayer).
         .overlay { WaitingGamesLayer() }
+        // Recents and the overviews open a Docs, Sheets, Slides or Design
+        // session on its editor, not as a plain chat.
+        .onChange(of: selectedSessionId) { _, id in
+            guard let id, let session = ArtifactStudioLauncher.shared.session(for: id), session.editorRoute != nil else { return }
+            selectedSessionId = nil
+            artifactSession = session
+        }
+        .fullScreenCover(item: $artifactSession) { session in
+            ArtifactStudioView(studio: session)
+        }
         .fullScreenCover(isPresented: $isOverviewPresented) {
             SessionOverviewView(
                 mode: modeStore.shellMode,
