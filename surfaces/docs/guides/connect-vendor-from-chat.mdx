@@ -11,7 +11,9 @@ The card runs the same install and sign-in as Settings → Connections › Codin
 
 1. **Install** the CLI if it isn't there yet.
 2. **Sign in**, one of three ways, depending on the tool:
-   - **Device code.** On a remote computer, tools with a headless sign-in (Codex and Grok, `login --device-auth`) show a link and a short code. Open the link on any device and enter the code. It finishes by itself.
+   - **Device code.** On a remote computer, tools with a headless sign-in show a link and a short code: Codex and Grok (`login --device-auth`), GitHub Copilot CLI (`login --device-code`) and Kiro (`login --use-device-flow`). Open the link on any device and enter the code. It finishes by itself.
+   - **Link only.** Cursor Agent and Qoder CLI sign in with `login` and don't open a browser on the remote computer. Open the link they show on any device. Augment's `login --headless` asks you to paste back the sign-in details its page shows.
+   - **Vendor's own sign-in.** Qwen Code and Continue have no sign-in command now. Qwen Code takes an API key in its settings; the card links to the vendor's sign-in page.
    - **Link and paste.** Other tools show a link. Sign in there; if the vendor's page shows a code afterwards (Claude Code does), paste it into the box on the card.
    - **Key.** Key-only tools ask for an API key on the card, never in chat.
 3. When the card says **Connected**, the tool is a brain in the model picker and for [worker bots](/guides/worker-bots).
@@ -34,4 +36,4 @@ OpenCode is a vendor like the others. Its sign-in runs `opencode auth login`, wh
 
 `signIn` is `subscription`, `api_key` or `none`; `computer` is null when not given. An unknown provider is refused with 400. The app renders the card and calls the install and connect endpoints in [Providers](/api/providers) itself.
 
-Remote sign-in commands live in the CLI catalog (`cmd/gizzi-code/src/runtime/providers/discovery/cli-catalog.json`): `loginRemote` is the headless argv used when `remote: true`, and `loginRemoteHint` is shown with it. Tools without `loginRemote` use `login` everywhere.
+Remote sign-in commands live in the CLI catalog (`cmd/gizzi-code/src/runtime/providers/discovery/cli-catalog.json`): `loginRemote` is the headless argv used when `remote: true`, and `loginRemoteHint` is shown with it, and `loginRemoteEnv` sets env on that remote sign-in only, for CLIs that go headless by env (`NO_BROWSER=1`, `NO_OPEN_BROWSER=1`). Tools without `loginRemote` use `login` everywhere. Add a `loginRemote` only after you confirm the flag in the CLI's own help or docs.

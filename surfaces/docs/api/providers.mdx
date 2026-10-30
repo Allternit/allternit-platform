@@ -264,7 +264,7 @@ For CLI brains, connect starts the CLI's own sign-in on that computer and keeps 
 }
 ```
 
-- Send `remote: true` when the user isn't at that computer, for example a cloud computer reached through the relay. Tools with a `loginRemote` command in the CLI catalog (today Codex and Grok, `login --device-auth`) then use device-code sign-in: open the link, enter the code, and it finishes by itself. Other tools run their normal `login` command; `loginRemoteHint`, when set, comes back as `hint`. Without `remote`, the CLI also opens a browser on that computer.
+- Send `remote: true` when the user isn't at that computer, for example a cloud computer reached through the relay. Tools with a `loginRemote` command in the CLI catalog then use their headless sign-in. Codex and Grok (`login --device-auth`), Copilot (`login --device-code`) and Kiro (`login --use-device-flow`) use a device code: open the link, enter the code, and it finishes by itself. Cursor Agent and Qoder run `login` with `loginRemoteEnv` (`NO_OPEN_BROWSER=1` / `NO_BROWSER=1`), and Augment runs `login --headless`. Other tools run their normal `login` command; `loginRemoteHint`, when set, comes back as `hint`. Without `remote`, the CLI also opens a browser on that computer.
 - Claude Code works the same either way. The user opens the link and signs in, and the page shows a code. When `login.needsCode` is `true`, send that code to `/connect/code`.
 - `login.url` and `login.code` can be `null` for the first few seconds. Keep polling `/connect/status`.
 - A sign-in is stopped after 15 minutes. Starting a new one replaces any earlier one for the same provider.
