@@ -1,10 +1,10 @@
 import SwiftUI
 
 /// The Projects section as on m.allternit.com (allternit-ai ProjectView with
-/// `phoneChrome`): ☰ · "Projects" · filter menu (Layout, Show, Sort by, Show
-/// archived), "N open · N needs you", the project cards in two columns, and
-/// the floating search and "New project". Each card's ⋯ menu has Open, Pin,
-/// Edit details, Archive and Delete.
+/// `phoneChrome`): ☰ · "Projects" · filter menu (Show, Sort by, Show archived),
+/// "N open · N needs you" beside the List · Grid · Deck switch, the project
+/// cards, and the floating search and "New project". Each card's ⋯ menu has
+/// Open, Pin, Edit details, Archive and Delete.
 ///
 /// Data: chat projects from `ProjectStore` (`/api/v1/cowork/projects`) and
 /// bot projects from `/api/v1/bot-projects` (ProjectsLibraryStore).
@@ -107,9 +107,12 @@ struct ProjectsListView: View {
             ZStack(alignment: .bottom) {
                 VStack(spacing: 0) {
                     LibrarySectionHeader(title: "Projects", onMenu: openMenu) { filterMenu }
-                    countsLine
-                        .padding(.horizontal, 16)
-                        .padding(.bottom, 6)
+                    HStack(spacing: 8) {
+                        countsLine
+                        OverviewLayoutSwitch(raw: $layoutRaw, fallback: .grid)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 6)
                     content
                 }
                 LibraryFloatingBar(
@@ -181,17 +184,12 @@ struct ProjectsListView: View {
         }
     }
 
-    // MARK: - Filter menu (Layout · Show · Sort by · Show archived)
+    // MARK: - Filter menu (Show · Sort by · Show archived)
 
     private var filtersOn: Bool { category != .all || sortBy != .recent || showArchived }
 
     private var filterMenu: some View {
         Menu {
-            Section("Layout") {
-                ForEach(LibraryLayout.allCases, id: \.self) { option in
-                    checked(option.rawValue.capitalized, on: layout == option) { layoutRaw = option.rawValue }
-                }
-            }
             Section("Show") {
                 ForEach(Category.allCases, id: \.self) { option in
                     checked("\(option.label)  \(count(option))", on: category == option) { category = option }
@@ -204,9 +202,9 @@ struct ProjectsListView: View {
             }
             checked("Show archived  \(allProjects.filter(\.isArchived).count)", on: showArchived) { showArchived.toggle() }
         } label: {
-            PhoneFilterButtonLabel(active: filtersOn, systemName: layout == .list ? "list.bullet" : layout == .deck ? "rectangle.split.2x1" : "square.grid.2x2")
+            PhoneFilterButtonLabel(active: filtersOn)
         }
-        .accessibilityLabel("Layout: \(layout.rawValue.capitalized). Change layout, filter and sort")
+        .accessibilityLabel("Filter and sort")
     }
 
     private func checked(_ title: String, on: Bool, action: @escaping () -> Void) -> some View {
