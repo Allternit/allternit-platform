@@ -297,6 +297,11 @@ pub trait EdgeBackend: Send + Sync {
     async fn verify_project_key(&self, _token: &str) -> Result<Option<crate::routes::platform_v1::PlatformCaller>, String> {
         Ok(None)
     }
+    // ─── mail tools (scope `mail`) ───
+    /// Run one `/v1/mailboxes` MCP tool as a project key.
+    async fn mail_tool(&self, _key: &crate::routes::platform_v1::PlatformCaller, _name: &str, _args: &Value) -> Result<Value, String> {
+        Err("Mail tools are not available.".into())
+    }
 }
 
 /// A Platform API project key on the agents server (spec §4 MCP): the project's
@@ -422,11 +427,22 @@ async fn serve(backend: &dyn EdgeBackend, base: &str, target: Target, method: &M
     let Some(token) = headers.get(header::AUTHORIZATION).and_then(|v| v.to_str().ok()).and_then(|v| v.strip_prefix("Bearer ")).map(str::trim).filter(|t| !t.is_empty()) else {
         return refusal(&resource, StatusCode::UNAUTHORIZED, json!({ "error": "unauthorized" }), None);
     };
+    let mut mail_key: Option<crate::routes::platform_v1::PlatformCaller> = None;
     let caller = if crate::routes::platform_v1::caller::is_project_key_token(token) {
         match backend.verify_project_key(token).await {
             Ok(Some(key)) => match project_key_caller(&target, &resource, &key) {
-                Ok(c) => c,
-                Err(resp) => return resp,
+                Ok(c) => {
+                    mail_key = Some(key);
+                    c
+                }
+                // ─── mail tools: a `mail`-scoped key without `agents` gets the mail tools only.
+                Err(resp) => match mail_only_caller(&target, &key) {
+                    Some(c) => {
+                        mail_key = Some(key);
+                        c
+                    }
+                    None => return resp,
+                },
             },
             Ok(None) => return refusal(&resource, StatusCode::UNAUTHORIZED, json!({ "error": "invalid_token", "message": "Invalid or revoked API key" }), Some(("invalid_token", "The key is invalid"))),
             Err(error) => {
@@ -503,6 +519,13 @@ async fn serve(backend: &dyn EdgeBackend, base: &str, target: Target, method: &M
         return rpc_reply(&era, mcp_protocol::finish(&spec, &era, rpc_method, reply));
     }
 
+    // ─── mail tools: answered here for a `mail`-scoped project key, never relayed.
+    if let Some(key) = mail_key.as_ref().filter(|k| k.has_scope("mail")) {
+        if let Some(resp) = mail_tools_rpc(backend, key, &era, &id, rpc_method, &request["params"]).await {
+            return resp;
+        }
+    }
+
     let outcome = match tokio::time::timeout(BUDGET, deliver(backend, &target, &caller, &body)).await {
         Ok(o) => o,
         Err(_) => Outcome::Unreachable,
@@ -512,6 +535,7 @@ async fn serve(backend: &dyn EdgeBackend, base: &str, target: Target, method: &M
         Outcome::NotFound => (StatusCode::NOT_FOUND, Json(json!({ "error": "not_found" }))).into_response(),
         Outcome::Answer(status, reply) => {
             let reply = if rpc_method == "initialize" && status == 200 { advertise_events(reply) } else { reply };
+            let reply = if rpc_method == "tools/list" && status == 200 && mail_key.as_ref().is_some_and(|k| k.has_scope("mail")) { with_mail_tools(reply) } else { reply };
             let status = StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY);
             let mut resp = Response::new(axum::body::Body::from(reply));
             *resp.status_mut() = status;
@@ -546,6 +570,66 @@ fn advertise_events(reply: Vec<u8>) -> Vec<u8> {
         None => reply,
     }
 }
+
+// ─── mail tools (scope `mail`) ─── BEGIN
+// `/v1/mailboxes` as MCP tools for Platform API project keys on `/mcp`. A key
+// with `agents` gets them next to the runtime's tools; a key with `mail` but
+// not `agents` gets only these (initialize, tools/list, tools/call, ping are
+// answered here and nothing reaches a runtime).
+
+fn mail_only_caller(target: &Target, key: &crate::routes::platform_v1::PlatformCaller) -> Option<Caller> {
+    (*target == Target::Agents && key.has_scope("mail") && !key.has_scope("agents"))
+        .then(|| Caller { user_id: crate::routes::platform_v1::hosting::runtime_owner(&key.project_id), client: format!("platform-key:{}", key.key_id), needs_approval: false })
+}
+
+fn mail_tool_result(out: Result<Value, String>) -> Value {
+    match out {
+        Ok(v) => json!({ "content": [{ "type": "text", "text": v.to_string() }], "structuredContent": v, "isError": false }),
+        Err(msg) => json!({ "content": [{ "type": "text", "text": msg }], "isError": true }),
+    }
+}
+
+async fn mail_tools_rpc(backend: &dyn EdgeBackend, key: &crate::routes::platform_v1::PlatformCaller, era: &mcp_protocol::Era, id: &Value, method: &str, params: &Value) -> Option<Response> {
+    use crate::routes::platform_v1::mailboxes::{mcp_tool_defs, MCP_TOOLS};
+    if method == "tools/call" {
+        let name = params["name"].as_str().unwrap_or_default();
+        if MCP_TOOLS.contains(&name) {
+            let out = backend.mail_tool(key, name, &params["arguments"]).await;
+            return Some(rpc_reply(era, mcp_protocol::rpc_ok(id, mail_tool_result(out))));
+        }
+    }
+    if key.has_scope("agents") {
+        return None;
+    }
+    let reply = match method {
+        "initialize" => mcp_protocol::rpc_ok(
+            id,
+            json!({
+                "protocolVersion": params["protocolVersion"].as_str().unwrap_or("2025-06-18"),
+                "capabilities": { "tools": { "listChanged": false } },
+                "serverInfo": { "name": "allternit-mail", "version": env!("CARGO_PKG_VERSION") },
+            }),
+        ),
+        "tools/list" => mcp_protocol::rpc_ok(id, json!({ "tools": mcp_tool_defs() })),
+        "ping" => mcp_protocol::rpc_ok(id, json!({})),
+        m if m.starts_with("notifications/") => return Some(StatusCode::ACCEPTED.into_response()),
+        _ => mcp_protocol::rpc_err(id, mcp_protocol::codes::METHOD_NOT_FOUND, "This API key opens the mail tools only (add the 'agents' scope for the rest)."),
+    };
+    Some(rpc_reply(era, reply))
+}
+
+/// A relayed `tools/list` answer plus the mail tools.
+fn with_mail_tools(reply: Vec<u8>) -> Vec<u8> {
+    let Ok(mut v) = serde_json::from_slice::<Value>(&reply) else { return reply };
+    match v.pointer_mut("/result/tools").and_then(Value::as_array_mut) {
+        Some(tools) => {
+            tools.extend(crate::routes::platform_v1::mailboxes::mcp_tool_defs());
+            serde_json::to_vec(&v).unwrap_or(reply)
+        }
+        None => reply,
+    }
+}
+// ─── mail tools (scope `mail`) ─── END
 
 // ─── human page ───────────────────────────────────────────────────────────────
 
@@ -706,6 +790,12 @@ impl EdgeBackend for ProdBackend<'_> {
             Err(e) if e.status == StatusCode::UNAUTHORIZED => Ok(None),
             Err(e) => Err(e.message),
         }
+    }
+
+    // ─── mail tools (scope `mail`) ───
+    async fn mail_tool(&self, key: &crate::routes::platform_v1::PlatformCaller, name: &str, args: &Value) -> Result<Value, String> {
+        use crate::routes::platform_v1::mailboxes;
+        mailboxes::mcp_call(self.state, key, &mailboxes::ProdMailHost, name, args).await.map_err(|e| format!("{}: {}", e.code, e.message))
     }
 
     async fn is_approved(&self, user_id: &str, client: &str, target: &str) -> Result<bool, String> {

@@ -68,6 +68,9 @@ pub fn unit_price_microusd(meter: &str) -> Option<i64> {
         // toolset actions 0.05¢ each after the first 10,000 a month.
         "computer_minute" => 8_000,
         "computer_action" => 500,
+        // Platform mail and the agent identity bundle (Eoj 2026-10-29).
+        "mailbox_month" => 2_000_000,
+        "identity_month" => 9_000_000,
         _ => return None,
     })
 }

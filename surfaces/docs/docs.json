@@ -694,6 +694,8 @@
               "api/platform/ag-ui",
               "api/platform/numbers",
               "api/platform/messaging",
+              "api/platform/mailboxes",
+              "api/platform/identities",
               "api/platform/voice",
               "api/platform/channels",
               "api/platform/twin",

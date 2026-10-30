@@ -6,7 +6,7 @@
 //! and who may see it:
 //!
 //! * **Platform API webhooks** (`platform`): what a project endpoint may
-//!   subscribe to. [`PLATFORM_EVENTS`] is the 051 list plus the P3 `call.*` events, `usage.threshold` and `phone.*`.
+//!   subscribe to. [`PLATFORM_EVENTS`] is the 051 list plus the P3 `call.*` events, `usage.threshold`, `phone.*` and `mail.received`.
 //! * **MCP agents server** (`agents`, scope `agents:read`, `/mcp`): agent,
 //!   approval, thread, inbox, message, call, subscription and usage events.
 //! * **MCP vendor-bot connector** (`bot`, scope `bots:act`, `/mcp/bots/:id`):
@@ -310,13 +310,25 @@ pub static REGISTRY: &[EventType] = &[
         payload: &[("run_id", "Run id."), ("serial", "Phone serial, when one was named."), ("ok", "Whether it reached its goal (boolean)."), ("status", "Task: done, failed, max_steps or timeout. Skill: succeeded, diverged or failed."), ("skill", "Skill name, for a skill run."), ("source", "task, skill or routine."), ("steps", "Steps run (number)."), ("failed", "Steps that failed (number)."), ("model_calls", "Model calls made (number)."), ("duration_ms", "Milliseconds (number).")],
         runtime_aliases: &["phone.run.completed"],
     },
+    EventType {
+        name: "mail.received",
+        title: "Mail received",
+        description: "An email arrived at one of the project's mailboxes (/v1/mailboxes). Carries any one-time codes and sign-in links found in it; the full body is in GET /v1/mailboxes/{id}/messages/{message_id}.",
+        platform: true,
+        agents: false,
+        bot: false,
+        filters: &[],
+        payload: &[("message", "The mail message object (id, mailbox_id, from, to, subject, snippet, codes, links, is_verification, received_at).")],
+        runtime_aliases: &[],
+    },
 ];
 
 /// Event types a Platform API webhook can subscribe to: the 051 list, the P3
 /// `call.*` events, `usage.threshold` (P5 spend caps), and P4's `approval.requested`
 /// and `inbox.item.created` (from the project's hosted runtime, per account),
-/// and `phone.*` (the project owner's own phones, from their Desktop).
-pub const PLATFORM_EVENTS: [&str; 11] = ["approval.requested", "message.received", "message.status", "registration.updated", "call.started", "call.ended", "call.transcript.ready", "inbox.item.created", "usage.threshold", "phone.step", "phone.run.completed"];
+/// and `phone.*` (the project owner's own phones, from their Desktop), and
+/// `mail.received` (the project's mailboxes).
+pub const PLATFORM_EVENTS: [&str; 12] = ["approval.requested", "message.received", "message.status", "registration.updated", "call.started", "call.ended", "call.transcript.ready", "inbox.item.created", "usage.threshold", "phone.step", "phone.run.completed", "mail.received"];
 
 pub fn find(name: &str) -> Option<&'static EventType> {
     REGISTRY.iter().find(|e| e.name == name)
