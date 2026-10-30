@@ -610,16 +610,14 @@ struct ArtifactsLibraryView: View {
                 ForEach(artifacts) { tile($0) }
             }
         case .deck:
-            GeometryReader { proxy in
-                ScrollView(.horizontal, showsIndicators: false) {
-                    LazyHStack(spacing: 12) {
-                        ForEach(artifacts) { tile($0).frame(width: proxy.size.width * 0.78) }
-                    }
-                    .scrollTargetLayout()
+            ScrollView(.horizontal, showsIndicators: false) {
+                LazyHStack(spacing: 12) {
+                    ForEach(artifacts) { tile($0).frame(width: OverviewDeck.width, height: OverviewDeck.height) }
                 }
-                .scrollTargetBehavior(.viewAligned)
+                .scrollTargetLayout()
             }
-            .frame(height: 300)
+            .scrollTargetBehavior(.viewAligned)
+            .frame(height: OverviewDeck.height)
         }
     }
 
@@ -865,7 +863,7 @@ private struct ArtifactLibraryCard: View {
         VStack(alignment: .leading, spacing: 0) {
             ZStack(alignment: .topLeading) {
                 thumbnail
-                    .frame(height: layout == .deck ? 180 : 110)
+                    .frame(height: layout == .deck ? OverviewDeck.height * 0.6 : 110)
                 HStack {
                     badge
                     Spacer()

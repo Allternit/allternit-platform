@@ -629,7 +629,7 @@ private struct ProjectOverviewCard<Menu: View>: View {
             .padding(.top, 4)
         }
         .padding(16)
-        .frame(width: deck ? 260 : nil, height: deck ? 420 : 200)
+        .frame(width: deck ? OverviewDeck.width : nil, height: deck ? OverviewDeck.height : 200)
     }
 }
 

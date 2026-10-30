@@ -204,19 +204,23 @@ struct SessionOverviewView: View {
                     .padding(.bottom, 96)
                 }
             case .deck:
-                TabView {
-                    ForEach(shown) { session in
-                        card(session, tall: true)
-                            .onTapGesture { if editingId != session.id { open(session) } }
-                            .offset(y: swipeId == session.id ? swipeOffset : 0)
-                            .opacity(swipeId == session.id ? Double(1 + swipeOffset / 400) : 1)
-                            .simultaneousGesture(swipeUpToClose(session))
-                            .padding(.horizontal, 28)
-                            .padding(.top, 8)
-                            .padding(.bottom, 96)
+                ScrollView(.horizontal, showsIndicators: false) {
+                    LazyHStack(spacing: 12) {
+                        ForEach(shown) { session in
+                            card(session, tall: true)
+                                .frame(width: OverviewDeck.width, height: OverviewDeck.height)
+                                .onTapGesture { if editingId != session.id { open(session) } }
+                                .offset(y: swipeId == session.id ? swipeOffset : 0)
+                                .opacity(swipeId == session.id ? Double(1 + swipeOffset / 400) : 1)
+                                .simultaneousGesture(swipeUpToClose(session))
+                        }
                     }
+                    .scrollTargetLayout()
+                    .padding(.horizontal, 24)
+                    .padding(.top, 8)
+                    .padding(.bottom, 96)
                 }
-                .tabViewStyle(.page(indexDisplayMode: .never))
+                .scrollTargetBehavior(.viewAligned)
             }
         }
     }

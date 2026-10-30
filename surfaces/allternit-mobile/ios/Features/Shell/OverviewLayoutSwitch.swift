@@ -97,6 +97,13 @@ struct OverviewCardItem: Identifiable {
     var footer: String? = nil
 }
 
+/// Deck cards are tall portrait cards in a sideways row, as on the web
+/// (SessionOverview SIZE.deck.phone: 226 wide, the full height).
+enum OverviewDeck {
+    static let width: CGFloat = 226
+    static var height: CGFloat { min(540, max(360, UIScreen.main.bounds.height * 0.56)) }
+}
+
 /// The same three layouts every overview has: one-line rows, a two-column
 /// grid of cards, or a sideways deck of tall cards.
 struct OverviewCards<Leading: View>: View {
@@ -127,11 +134,11 @@ struct OverviewCards<Leading: View>: View {
             .padding(.horizontal, 16)
         case .deck:
             ScrollView(.horizontal, showsIndicators: false) {
-                LazyHStack(spacing: 14) {
+                LazyHStack(spacing: 12) {
                     ForEach(items) { item in
                         Button { onOpen(item) } label: { card(item, tall: true) }
                             .buttonStyle(.plain)
-                            .frame(width: 226, height: 360)
+                            .frame(width: OverviewDeck.width, height: OverviewDeck.height)
                     }
                 }
                 .padding(.horizontal, 16)

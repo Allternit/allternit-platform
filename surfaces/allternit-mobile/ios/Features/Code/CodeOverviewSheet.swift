@@ -81,7 +81,7 @@ struct CodeOverviewSheet: View {
                 } else if layout == "deck" {
                     ScrollView(.horizontal, showsIndicators: false) {
                         LazyHStack(spacing: 12) {
-                            ForEach(filtered) { card($0).frame(width: 260, height: 340, alignment: .top) }
+                            ForEach(filtered) { card($0).frame(width: OverviewDeck.width, height: OverviewDeck.height, alignment: .top) }
                         }
                         .padding(.horizontal, 12)
                         .padding(.top, 8)

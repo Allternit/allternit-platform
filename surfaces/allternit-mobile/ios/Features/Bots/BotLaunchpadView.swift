@@ -212,7 +212,7 @@ struct BotLaunchpadView: View {
             LazyHStack(spacing: 12) {
                 ForEach(entries) { entry in
                     rosterCard(entry, deck: true)
-                        .frame(width: min(UIScreen.main.bounds.width * 0.78, 300))
+                        .frame(width: OverviewDeck.width, height: OverviewDeck.height - 110)
                 }
             }
             .scrollTargetLayout()
@@ -222,7 +222,7 @@ struct BotLaunchpadView: View {
         }
         .scrollTargetBehavior(.viewAligned)
         .padding(.horizontal, -14)
-        .frame(height: 312)
+        .frame(height: OverviewDeck.height - 90)
     }
 
     private func rosterCard(_ entry: RosterEntry, deck: Bool) -> some View {
@@ -289,7 +289,7 @@ struct BotLaunchpadView: View {
                 }
             }
             .padding(deck ? 16 : 12)
-            .frame(maxWidth: .infinity, minHeight: deck ? 300 : 124, maxHeight: deck ? 300 : nil, alignment: .top)
+            .frame(maxWidth: .infinity, minHeight: deck ? nil : 124, maxHeight: deck ? .infinity : nil, alignment: .top)
             .background(
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .fill(Color("BgPanel"))
