@@ -144,3 +144,7 @@ Subscribe an endpoint ([Webhooks](/api/platform/webhooks)) to these events. They
 | `phone.run.completed` | A phone task or skill run ended | `run_id`, `serial`, `ok`, `status` (task: `done`, `failed`, `max_steps`, `timeout`; skill: `succeeded`, `diverged`, `failed`), `skill`, `source`, `steps`, `failed`, `model_calls`, `duration_ms` |
 
 Events come from the Desktop's event forwarder, so they arrive a few seconds after the step. If the Desktop was offline, they arrive when it reconnects.
+
+## In the console
+
+The console's **Phones** page (Platform → Phones) lists the project owner's linked phones, whether each is online, and each phone's recent runs and steps from the history endpoint. Pick a run to see only its steps. **Start live view** opens the phone's screen in the page through a short-lived viewer link; it needs the phone online and your Desktop open. To send phone runs to Langfuse or Phoenix, see [Tracing](/api/platform/tracing).
