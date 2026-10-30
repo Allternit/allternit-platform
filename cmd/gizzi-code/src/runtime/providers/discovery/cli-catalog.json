@@ -1244,7 +1244,10 @@
       },
       "aliases": [],
       "category": "coding",
-      "login": [],
+      "login": [
+        "auth",
+        "cline"
+      ],
       "icon": "cline"
     },
     {
@@ -1293,7 +1296,12 @@
         "expect": "\\d"
       },
       "category": "coding",
-      "login": [],
+      "login": [
+        "auth",
+        "login",
+        "-p",
+        "kilo"
+      ],
       "icon": "kilo"
     },
     {
