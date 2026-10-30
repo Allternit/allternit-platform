@@ -58,8 +58,70 @@ struct GroupsListView: View {
     @ObservedObject private var store = BotModeStore.shared
     @EnvironmentObject private var navigator: BotNavigator
     @State private var isCreating = false
+    @AppStorage("allternit-overview-layout:phone:groups") private var layoutRaw = OverviewLayout.list.rawValue
+
+    private var layout: OverviewLayout { OverviewLayout(stored: layoutRaw) ?? .list }
 
     var body: some View {
+        VStack(spacing: 0) {
+            if !store.groups.isEmpty {
+                HStack {
+                    Text("\(store.groups.count) OPEN")
+                        .font(.system(size: 11, weight: .semibold))
+                        .tracking(0.6)
+                        .foregroundColor(Color("TextTertiary"))
+                    Spacer()
+                    OverviewLayoutSwitch(raw: $layoutRaw, fallback: .list)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+            }
+            if layout != .list && !store.groups.isEmpty {
+                ScrollView {
+                    OverviewCards(items: cards, layout: layout) { item in
+                        if let group = store.groups.first(where: { $0.id == item.id }) {
+                            GroupAvatarStack(members: group.members, size: 18)
+                        }
+                    } onOpen: { item in
+                        navigator.open(.group(item.id))
+                    }
+                    .padding(.vertical, 8)
+                }
+                .refreshable { await store.refreshGroups() }
+            } else {
+                groupList
+            }
+        }
+        .background(Color("BgPrimary"))
+        .navigationTitle("Group chats")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button { isCreating = true } label: { Image(systemName: "plus") }
+                    .accessibilityLabel("New group chat")
+            }
+        }
+        .task { await store.refreshGroups() }
+        .sheet(isPresented: $isCreating) {
+            NewGroupChatSheet { group in
+                navigator.open(.group(group.id))
+            }
+        }
+    }
+
+    private var cards: [OverviewCardItem] {
+        store.groups.map { group in
+            OverviewCardItem(
+                id: group.id,
+                title: group.name,
+                group: "\(group.members.count) bots",
+                preview: group.log.last.map { $0.from == "bot" ? "\($0.displayName ?? "Bot"): \($0.text)" : $0.text } ?? "No messages yet.",
+                footer: "\(group.log.count) messages"
+            )
+        }
+    }
+
+    private var groupList: some View {
         List {
             if let error = store.groupsError, store.groups.isEmpty {
                 FriendlyStateView(style: .error, icon: "exclamationmark.triangle", title: "Couldn't load group chats",
@@ -79,21 +141,7 @@ struct GroupsListView: View {
                 }
             }
         }
-        .navigationTitle("Group chats")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button { isCreating = true } label: { Image(systemName: "plus") }
-                    .accessibilityLabel("New group chat")
-            }
-        }
         .refreshable { await store.refreshGroups() }
-        .task { await store.refreshGroups() }
-        .sheet(isPresented: $isCreating) {
-            NewGroupChatSheet { group in
-                navigator.open(.group(group.id))
-            }
-        }
     }
 }
 

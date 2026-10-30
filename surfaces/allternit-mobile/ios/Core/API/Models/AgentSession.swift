@@ -147,8 +147,8 @@ struct SessionContextResponse: Decodable, Sendable {
 
 /// What fills a session's context window (gizzi `ContextBreakdown.Snapshot`):
 /// the totals the composer meter shows, and the rows its panel lists.
-struct SessionContextBreakdown: Decodable, Sendable, Equatable {
-    struct Category: Decodable, Sendable, Equatable {
+struct SessionContextBreakdown: Decodable, Sendable, Hashable {
+    struct Category: Decodable, Sendable, Hashable {
         let id: String
         let name: String
         let tokens: Double
@@ -166,7 +166,7 @@ struct SessionContextBreakdown: Decodable, Sendable, Equatable {
     /// The MCP tools the runtime loaded, by server (the Connectors card).
     let mcpTools: [McpTool]?
 
-    struct McpTool: Decodable, Sendable, Equatable {
+    struct McpTool: Decodable, Sendable, Hashable {
         let name: String
         let server: String
         let tokens: Double
@@ -194,29 +194,9 @@ struct SessionContextBreakdown: Decodable, Sendable, Equatable {
 
 // MARK: - Background tasks
 
-/// One piece of work a session delegated (gizzi `SessionTasks.Item`): a
-/// background shell, or a subagent. `childSessionID` is the subagent's
-/// transcript.
-struct SessionTask: Decodable, Sendable, Identifiable, Equatable {
-    struct Time: Decodable, Sendable, Equatable {
-        let created: Double
-        let updated: Double?
-        let finished: Double?
-    }
-
-    let id: String
-    /// "shell" | "subagent" | …
-    let kind: String
-    /// queued | running | completed | failed | cancelled | interrupted
-    let status: String
-    let background: Bool?
-    let description: String
-    let agent: String?
-    let childSessionID: String?
-    let output: String?
-    let error: String?
-    let time: Time
-
+/// The Tasks pane's view of a session's delegated work (`SessionTask`,
+/// RunTreeModel.swift).
+extension SessionTask {
     var isActive: Bool { status == "queued" || status == "running" }
 
     /// CodeTasksPane `kindLabel`: "Shell", "Agent · explore".

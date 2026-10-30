@@ -3,34 +3,13 @@ import SwiftUI
 // MARK: - Session context
 
 /// One row of the context window (gizzi `/session/:id/context` categories).
-struct SessionContextCategory: Decodable, Hashable, Sendable {
-    let id: String
-    let name: String?
-    let tokens: Double
-}
-
-/// The session's context window by category (native-agent-api.ts
-/// `SessionContextBreakdown`, the fields the phone shows).
-struct SessionContextBreakdown: Decodable, Hashable, Sendable {
-    let contextWindow: Double
-    let usedTokens: Double
-    /// 0–1.
-    let utilization: Double
-    let basis: String?
-    let source: String?
-    let brainName: String?
-    let categories: [SessionContextCategory]?
-}
-
-private struct SessionContextUsage: Decodable {
-    let breakdown: SessionContextBreakdown?
-}
+typealias SessionContextCategory = SessionContextBreakdown.Category
 
 /// `GET /api/v1/agent-sessions/:id/context?limits=false` (fetchSessionContext).
 enum SessionContextClient {
     static func fetch(sessionId: String) async throws -> SessionContextBreakdown? {
         let escaped = sessionId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? sessionId
-        let usage: SessionContextUsage = try await APIClient.shared.get(path: "agent-sessions/\(escaped)/context?limits=false")
+        let usage: SessionContextResponse = try await APIClient.shared.get(path: "agent-sessions/\(escaped)/context?limits=false")
         return usage.breakdown
     }
 

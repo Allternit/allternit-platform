@@ -60,6 +60,14 @@ struct CodeOverviewSheet: View {
     var body: some View {
         VStack(spacing: 0) {
             header
+            if kind == .threads {
+                HStack {
+                    Spacer()
+                    OverviewLayoutSwitch(raw: $layout, fallback: .grid)
+                }
+                .padding(.horizontal, 12)
+                .padding(.bottom, 4)
+            }
             ScrollView {
                 if kind == .terminals {
                     terminalCards
@@ -70,6 +78,15 @@ struct CodeOverviewSheet: View {
                         .frame(maxWidth: .infinity)
                         .padding(.top, 40)
                         .padding(.horizontal, 24)
+                } else if layout == "deck" {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        LazyHStack(spacing: 12) {
+                            ForEach(filtered) { card($0).frame(width: 260, height: 340, alignment: .top) }
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.top, 8)
+                    }
+                    .padding(.bottom, 96)
                 } else if layout == "grid" {
                     LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
                         ForEach(filtered) { card($0) }
@@ -121,11 +138,6 @@ struct CodeOverviewSheet: View {
                     onOpenShell()
                 }
             }
-            if kind == .threads {
-                roundButton(layout == "grid" ? "square.grid.2x2" : "list.bullet", label: layout == "grid" ? "Show as list" : "Show as grid") {
-                    layout = layout == "grid" ? "list" : "grid"
-                }
-            }
         }
         .padding(.horizontal, 12)
         .padding(.top, 12)
@@ -137,7 +149,7 @@ struct CodeOverviewSheet: View {
         Button(action: action) {
             HStack(spacing: 5) {
                 Image(systemName: icon).font(.system(size: 12, weight: .semibold))
-                Text(title).font(.system(size: 13, weight: .semibold))
+                Text(title).font(.system(size: 13, weight: .semibold)).lineLimit(1).fixedSize()
             }
             .foregroundColor(Color("TextPrimary"))
             .padding(.horizontal, 10)
@@ -202,7 +214,7 @@ struct CodeOverviewSheet: View {
                     .accessibilityLabel("Close \(title)")
                 }
                 preview(for: session)
-                    .frame(maxWidth: .infinity, minHeight: layout == "grid" ? 100 : 0, alignment: .topLeading)
+                    .frame(maxWidth: .infinity, minHeight: layout == "list" ? 0 : 100, alignment: .topLeading)
                 HStack {
                     Spacer()
                     Text(CodeSessionDates.age(session))
@@ -241,7 +253,7 @@ struct CodeOverviewSheet: View {
                     Text(line.text)
                         .font(.system(size: 10))
                         .foregroundColor(Color("TextSecondary"))
-                        .lineLimit(layout == "grid" ? 5 : 2)
+                        .lineLimit(layout == "list" ? 2 : (layout == "deck" ? 12 : 5))
                 }
             }
         }

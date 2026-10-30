@@ -183,6 +183,8 @@ struct SessionTask: Decodable, Sendable, Equatable, Identifiable {
     let agent: String?
     let childSessionID: String?
     let error: String?
+    /// A finished shell's output (the Tasks pane).
+    let output: String?
     let time: Time
     let model: String?
     let cost: Double?
@@ -190,7 +192,7 @@ struct SessionTask: Decodable, Sendable, Equatable, Identifiable {
     let children: [SessionTask]
 
     private enum CodingKeys: String, CodingKey {
-        case id, kind, status, description, agent, childSessionID, error, time, model, cost, tokens, children
+        case id, kind, status, description, agent, childSessionID, error, output, time, model, cost, tokens, children
     }
 
     init(from decoder: Decoder) throws {
@@ -202,6 +204,7 @@ struct SessionTask: Decodable, Sendable, Equatable, Identifiable {
         agent = (try? c.decodeIfPresent(String.self, forKey: .agent)) ?? nil
         childSessionID = (try? c.decodeIfPresent(String.self, forKey: .childSessionID)) ?? nil
         error = (try? c.decodeIfPresent(String.self, forKey: .error)) ?? nil
+        output = (try? c.decodeIfPresent(String.self, forKey: .output)) ?? nil
         time = ((try? c.decodeIfPresent(Time.self, forKey: .time)) ?? nil) ?? Time(created: 0, finished: nil)
         model = (try? c.decodeIfPresent(String.self, forKey: .model)) ?? nil
         cost = (try? c.decodeIfPresent(Double.self, forKey: .cost)) ?? nil
