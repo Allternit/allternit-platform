@@ -52,6 +52,12 @@ final class CronClient: @unchecked Sendable {
         )
     }
 
+    /// `PUT v1/cron/jobs/:id` (routes/cron.ts `cron.update`): a dragged
+    /// heartbeat's new schedule, parsed on the server like create's.
+    func updateSchedule(id: String, schedule: String) async throws {
+        try await client().put(path: "v1/cron/jobs/\(Self.escape(id))", body: ["schedule": schedule])
+    }
+
     /// `POST v1/cron/jobs/:id/pause` (routes/cron.ts:178-208).
     func pause(id: String) async throws {
         try await client().post(path: "v1/cron/jobs/\(Self.escape(id))/pause")

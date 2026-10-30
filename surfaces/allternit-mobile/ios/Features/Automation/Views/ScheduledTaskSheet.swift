@@ -113,6 +113,10 @@ enum CronWords {
 /// `config.prompt` as a turn in the bot's chat.
 struct ScheduledTaskSheet: View {
     @ObservedObject var store: AutomationStore
+    /// What it saves as: a routine (default), a loop or an agent heartbeat.
+    var kind: AutomationTaskItem.Kind = .routine
+    /// The cron of the calendar slot it was opened from ("30 9 * * 1-5").
+    var slotCron: String? = nil
     @ObservedObject private var bots = AgentHubStore.shared
     @Environment(\.dismiss) private var dismiss
 
@@ -133,7 +137,28 @@ struct ScheduledTaskSheet: View {
     private var canSave: Bool {
         !name.trimmingCharacters(in: .whitespaces).isEmpty
             && !instruction.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && botId != nil && !isSaving
+            && (botId != nil || kind != .routine) && !isSaving
+    }
+
+    private var title: String {
+        switch kind {
+        case .loop: return "New loop"
+        case .heartbeat: return "New heartbeat"
+        case .goal, .routine: return "Scheduled task"
+        }
+    }
+
+    /// Starts on the slot the calendar was tapped at (ruleForSlot's cron).
+    private func applySlot() {
+        let f = (slotCron ?? "").split(separator: " ").map(String.init)
+        guard f.count == 5, let minute = Int(f[0]), let hour = Int(f[1]) else { return }
+        time = Calendar.current.date(bySettingHour: hour, minute: minute, second: 0, of: Date()) ?? time
+        if f[4] == "1-5" {
+            frequency = .weekdays
+        } else if let day = Int(f[4]) {
+            frequency = .weekly
+            weekday = day
+        }
     }
 
     var body: some View {
@@ -144,6 +169,7 @@ struct ScheduledTaskSheet: View {
                     TextField("What should the bot do?", text: $instruction, axis: .vertical)
                         .lineLimit(3...8)
                 }
+                if kind != .heartbeat {
                 Section {
                     if bots.isLoading && bots.agents.isEmpty {
                         ProgressView()
@@ -157,6 +183,7 @@ struct ScheduledTaskSheet: View {
                             ForEach(bots.agents) { Text($0.name).tag(String?.some($0.id)) }
                         }
                     }
+                }
                 }
                 Section {
                     Picker("Repeats", selection: $frequency) {
@@ -175,7 +202,7 @@ struct ScheduledTaskSheet: View {
                     Text(error).font(.caption).foregroundColor(Theme.statusError)
                 }
             }
-            .navigationTitle("Scheduled task")
+            .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
@@ -184,27 +211,47 @@ struct ScheduledTaskSheet: View {
                         .disabled(!canSave)
                 }
             }
-            .task { bots.fetchAgentsIfNeeded() }
+            .task {
+                applySlot()
+                bots.fetchAgentsIfNeeded()
+            }
         }
     }
 
     @MainActor
     private func save() async {
-        guard let botId else { return }
         isSaving = true
         error = nil
         defer { isSaving = false }
+        let trimmedName = name.trimmingCharacters(in: .whitespaces)
+        let prompt = instruction.trimmingCharacters(in: .whitespacesAndNewlines)
         do {
-            try await store.create(CreateAutomationRoutineRequest(
-                name: name.trimmingCharacters(in: .whitespaces),
-                description: nil,
-                agentId: botId,
-                scheduleType: "cron",
-                scheduleExpression: cron,
-                timezone: TimeZone.current.identifier,
-                executionDomain: "local",
-                config: ["jobType": "agent", "prompt": instruction.trimmingCharacters(in: .whitespacesAndNewlines)]
-            ))
+            switch kind {
+            case .loop:
+                try await AutomationClient.shared.createLoop(CreateAutomationLoopRequest(
+                    name: trimmedName,
+                    description: prompt,
+                    agentId: botId,
+                    scheduleType: "cron",
+                    scheduleExpression: cron,
+                    executionDomain: "local",
+                    config: ["jobType": "agent", "prompt": prompt]
+                ))
+            case .heartbeat:
+                try await CronJobStore.shared.createAgentJob(name: trimmedName, prompt: prompt, schedule: cron)
+            case .goal, .routine:
+                guard let botId else { return }
+                try await store.create(CreateAutomationRoutineRequest(
+                    name: trimmedName,
+                    description: nil,
+                    agentId: botId,
+                    scheduleType: "cron",
+                    scheduleExpression: cron,
+                    timezone: TimeZone.current.identifier,
+                    executionDomain: "local",
+                    config: ["jobType": "agent", "prompt": prompt]
+                ))
+            }
             UINotificationFeedbackGenerator().notificationOccurred(.success)
             dismiss()
         } catch {
