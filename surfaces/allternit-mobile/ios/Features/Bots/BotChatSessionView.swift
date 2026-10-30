@@ -77,6 +77,7 @@ struct BotChatSessionView: View {
             // chip · ⋯, drawn by the view instead of the system bar.
             .toolbar(.hidden, for: .navigationBar)
             .safeAreaInset(edge: .top, spacing: 0) { threadTop }
+            .backdropTouches(backdropVariant != "plain")
             .environment(\.backdropUnderneath, backdropVariant != "plain")
             .publishesRailBackdrop(backdropVariant == "plain" ? nil : RailBackdropStore.Look(
                 colors: [colors.hex(for: bot)].compactMap { $0 }, variant: backdropVariant, mode: .bots))

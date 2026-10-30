@@ -99,6 +99,11 @@
       "login": [
         "login"
       ],
+      "loginRemote": [
+        "login",
+        "--device-auth"
+      ],
+      "loginRemoteHint": "If OpenAI rejects the code, turn on \"device code authorization for Codex\" in ChatGPT Settings → Security, then try again.",
       "signInPage": "https://chatgpt.com/",
       "install": {
         "harness": "codex"
@@ -142,10 +147,8 @@
         }
       ],
       "signIn": "subscription",
-      "login": [
-        "auth"
-      ],
-      "signInPage": "https://qwen.ai/",
+      "login": [],
+      "signInPage": "https://qwenlm.github.io/qwen-code-docs/en/users/configuration/auth/",
       "install": {
         "harness": "qwen"
       },
@@ -273,7 +276,15 @@
       },
       "aliases": [],
       "category": "coding",
-      "login": [],
+      "login": [
+        "login"
+      ],
+      "loginRemote": [
+        "login"
+      ],
+      "loginRemoteEnv": {
+        "NO_OPEN_BROWSER": "1"
+      },
       "icon": "cursor"
     },
     {
@@ -301,6 +312,10 @@
       "signIn": "subscription",
       "login": [
         "login"
+      ],
+      "loginRemote": [
+        "login",
+        "--device-auth"
       ],
       "signInPage": "https://grok.com/",
       "install": {
@@ -336,7 +351,7 @@
           "output": 64000
         }
       ],
-      "signIn": "api_key",
+      "signIn": "subscription",
       "install": {
         "harness": "opencode"
       },
@@ -346,7 +361,10 @@
       },
       "aliases": [],
       "category": "coding",
-      "login": [],
+      "login": [
+        "auth",
+        "login"
+      ],
       "icon": "opencode"
     },
     {
@@ -416,7 +434,15 @@
       },
       "aliases": [],
       "category": "coding",
-      "login": [],
+      "login": [
+        "login"
+      ],
+      "loginRemote": [
+        "login"
+      ],
+      "loginRemoteEnv": {
+        "NO_BROWSER": "1"
+      },
       "icon": "qoder"
     },
     {
@@ -448,7 +474,15 @@
       },
       "aliases": [],
       "category": "coding",
-      "login": [],
+      "login": [
+        "login"
+      ],
+      "loginRemote": [
+        "login"
+      ],
+      "loginRemoteEnv": {
+        "NO_BROWSER": "1"
+      },
       "icon": "qoder-cn",
       "install": null
     },
@@ -477,6 +511,10 @@
       "signIn": "subscription",
       "login": [
         "login"
+      ],
+      "loginRemote": [
+        "login",
+        "--use-device-flow"
       ],
       "signInPage": "https://kiro.dev/",
       "install": {
@@ -955,7 +993,13 @@
         "expect": "\\d"
       },
       "category": "coding",
-      "login": [],
+      "login": [
+        "login"
+      ],
+      "loginRemote": [
+        "login",
+        "--device-code"
+      ],
       "icon": "copilot"
     },
     {
@@ -1200,7 +1244,10 @@
       },
       "aliases": [],
       "category": "coding",
-      "login": [],
+      "login": [
+        "auth",
+        "cline"
+      ],
       "icon": "cline"
     },
     {
@@ -1249,7 +1296,12 @@
         "expect": "\\d"
       },
       "category": "coding",
-      "login": [],
+      "login": [
+        "auth",
+        "login",
+        "-p",
+        "kilo"
+      ],
       "icon": "kilo"
     },
     {
@@ -1335,6 +1387,11 @@
       "login": [
         "login"
       ],
+      "loginRemote": [
+        "login",
+        "--headless"
+      ],
+      "loginRemoteHint": "After signing in, copy the sign-in details the page shows and paste them here.",
       "signInPage": "https://augmentcode.com",
       "install": {
         "method": "npm",
@@ -1429,9 +1486,7 @@
         }
       ],
       "signIn": "subscription",
-      "login": [
-        "login"
-      ],
+      "login": [],
       "signInPage": "https://hub.continue.dev",
       "install": {
         "method": "npm",

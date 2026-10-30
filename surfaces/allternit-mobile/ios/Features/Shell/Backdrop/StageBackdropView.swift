@@ -82,15 +82,34 @@ private struct AsciiBackdropCanvas: View {
     /// Holds the renderer across frames without invalidating the view.
     private final class Cache {
         var renderer: AsciiRenderer?
+        var lastTap: Date?
     }
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: still)) { timeline in
-            let t = still ? 3 : 3 + timeline.date.timeIntervalSince(start) * rate
-            Canvas { context, size in
-                current.paint(&context, size: size, t: t)
+        GeometryReader { geo in
+            let origin = geo.frame(in: .global).origin
+            TimelineView(.animation(minimumInterval: 1.0 / 30, paused: still)) { timeline in
+                let t = still ? 3 : 3 + timeline.date.timeIntervalSince(start) * rate
+                Canvas { context, size in
+                    let renderer = current
+                    // Still (Reduce Motion, Movement: Still) ignores the finger.
+                    if !still { feedTouch(renderer, origin: origin, t: t) }
+                    renderer.paint(&context, size: size, t: t)
+                }
             }
         }
+    }
+
+    /// The finger from BackdropTouch, in this canvas's points.
+    private func feedTouch(_ renderer: AsciiRenderer, origin: CGPoint, t: Double) {
+        let touch = BackdropTouch.shared
+        func local(_ p: CGPoint) -> CGPoint { CGPoint(x: p.x - origin.x, y: p.y - origin.y) }
+        if let tap = touch.tap, tap.at != cache.lastTap {
+            cache.lastTap = tap.at
+            renderer.pulse(local(tap.point), t: t)
+        }
+        renderer.pointerAt(touch.point.map(local))
+        renderer.stepPointer()
     }
 
     private var current: AsciiRenderer {
@@ -289,5 +308,48 @@ struct RailBackdropView: View {
         }
         .allowsHitTesting(false)
         .accessibilityHidden(true)
+    }
+}
+
+/// Where the finger is on a screen with a background (the web backdrop's
+/// pointer and click, on touch): read by the ASCII canvas every frame.
+@MainActor
+final class BackdropTouch {
+    static let shared = BackdropTouch()
+
+    #if DEBUG
+    /// `-backdrop-touch x,y`: holds a finger there (screenshots of the push).
+    private init() {
+        if let raw = UserDefaults.standard.string(forKey: "backdrop-touch") {
+            let n = raw.split(separator: ",").compactMap { Double($0) }
+            if n.count == 2 { point = CGPoint(x: n[0], y: n[1]) }
+        }
+    }
+    #endif
+    /// The finger in global points while it's down.
+    var point: CGPoint?
+    /// The last tap, in global points.
+    var tap: (point: CGPoint, at: Date)?
+}
+
+extension View {
+    /// Feeds touches on this screen to its background: a drag pushes the
+    /// characters, a tap sends the ring. Taps and scrolls still reach the
+    /// screen.
+    func backdropTouches(_ enabled: Bool = true) -> some View {
+        simultaneousGesture(
+            DragGesture(minimumDistance: 0, coordinateSpace: .global)
+                .onChanged { value in
+                    guard enabled else { return }
+                    BackdropTouch.shared.point = value.location
+                }
+                .onEnded { value in
+                    guard enabled else { return }
+                    BackdropTouch.shared.point = nil
+                    if hypot(value.translation.width, value.translation.height) < 10 {
+                        BackdropTouch.shared.tap = (value.location, Date())
+                    }
+                }
+        )
     }
 }

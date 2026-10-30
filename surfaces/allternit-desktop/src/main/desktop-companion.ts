@@ -1,4 +1,5 @@
 import { app, BrowserWindow, ipcMain, Menu, screen, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron';
+import { NO_SYSTEM, bubbleText, dotTab, dotTone, sanitizeSummary, type SystemSummary, type SystemTab } from './system-summary.js';
 import Store from 'electron-store';
 import { watch } from 'node:fs';
 import path from 'node:path';
@@ -21,7 +22,7 @@ export interface CompanionActivity {
   moving: 'left' | 'right' | null;
 }
 
-export function installDesktopCompanion(options: { origin: () => string; main: () => BrowserWindow | null; preload: string; showMain?: () => void; openHud?: (agentId: string | null, anchor?: Electron.Rectangle) => void; closeHud?: () => void; moveHudWithPet?: (dx: number, dy: number) => boolean; onPetLanded?: (petBounds: Electron.Rectangle) => void }) {
+export function installDesktopCompanion(options: { origin: () => string; main: () => BrowserWindow | null; preload: string; showMain?: () => void; openHud?: (agentId: string | null, anchor?: Electron.Rectangle) => void; closeHud?: () => void; moveHudWithPet?: (dx: number, dy: number) => boolean; onPetLanded?: (petBounds: Electron.Rectangle) => void; onSystem?: (summary: SystemSummary) => void; openSystem?: (tab: SystemTab) => void }) {
   const settings = new Store<CompanionState>({ name: 'desktop-companion', defaults: { enabled: true, size: 80, agentId: null, panel: 'chat', roam: true } });
   let pet: BrowserWindow | null = null;
   let chat: BrowserWindow | null = null;
@@ -89,8 +90,8 @@ export function installDesktopCompanion(options: { origin: () => string; main: (
   // ─── Speech bubbles: a small click-through window above the pet ───────────
   let bubble: BrowserWindow | null = null;
   let bubbleTimer: ReturnType<typeof setTimeout> | undefined;
-  const BUBBLE_WIDTH = 240;
-  const BUBBLE_HEIGHT = 64;
+  const BUBBLE_WIDTH = 280;
+  const BUBBLE_HEIGHT = 84;
   function placeBubble() {
     if (!bubble || bubble.isDestroyed() || !pet || pet.isDestroyed()) return;
     const p = pet.getBounds();
@@ -379,6 +380,32 @@ export function installDesktopCompanion(options: { origin: () => string; main: (
   handle('companion:close', () => { chat?.hide(); options.closeHud?.(); scheduleRoam(); });
   handle('companion:activity-get', () => activity);
   handle('companion:toggle-main', () => toggleMain());
+
+  // ─── System drawer (Settings → Developer): the dot on the pet ─────────────
+  // The app window reports the summary; the pet draws a dot from it. Hovering
+  // the dot shows the summary in the bubble, clicking the dot opens the drawer.
+  // Clicking the pet itself still opens quick chat.
+  let system: SystemSummary = NO_SYSTEM;
+  ipcMain.on('companion:system-report', (event, value: unknown) => {
+    const main = options.main();
+    if (!main || main.isDestroyed() || event.sender !== main.webContents || !owned(event)) return;
+    system = sanitizeSummary(value);
+    if (pet && !pet.isDestroyed()) pet.webContents.send('companion:system', system);
+    if (!dotTone(system)) hideBubble();
+    options.onSystem?.(system);
+  });
+  handle('companion:system-get', () => system);
+  ipcMain.on('companion:system-hover', (event, on: unknown) => {
+    if (!pet || event.sender !== pet.webContents || !owned(event)) return;
+    if (on === true && dotTone(system)) showBubble(bubbleText(system), 30_000);
+    else hideBubble();
+  });
+  handle('companion:system-open', (event) => {
+    if (!pet || event.sender !== pet.webContents || !dotTone(system)) return false;
+    hideBubble();
+    options.openSystem?.(dotTab(system));
+    return true;
+  });
   // Only the app window reports activity: it owns the pet-activity signal.
   ipcMain.on('companion:activity', (event, value: unknown) => {
     const main = options.main();
@@ -443,18 +470,24 @@ export function installDesktopCompanion(options: { origin: () => string; main: (
     screen.on('display-removed', repair); screen.on('display-metrics-changed', repair);
   });
   app.on('before-quit', () => { quitting = true; if (carry) { clearInterval(carry.timer); clearTimeout(carry.expires); carry = null; } stopRoam(true); clearTimeout(expiryTimer); hideBubble(); });
-  return { reportActivity, showBubble, activity: () => activity, start: () => { if (state().enabled) ensurePet(); }, show: () => update({ enabled: true }), settings: () => showPanel('settings'), reset, attachPetToHud, detachPetFromHud };
+  return { reportActivity, showBubble, system: () => system, activity: () => activity, start: () => { if (state().enabled) ensurePet(); }, show: () => update({ enabled: true }), settings: () => showPanel('settings'), reset, attachPetToHud, detachPetFromHud };
 }
 
 /** The bubble page: escaped text only, no scripts, follows the system theme. */
 export function bubbleHtml(text: string): string {
   const safe = text.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
+  // One line wraps to two at most. Several lines (the system summary) get a
+  // row each, cut with an ellipsis. The clamp sits on a span inside the
+  // padded box, so a cut line never shows in the padding.
+  const lines = safe.split('\n').filter(Boolean);
   const html = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><style>
 :root{--bg:#fff;--fg:#1c1b1a;--edge:rgba(0,0,0,.12);color-scheme:light}
 @media (prefers-color-scheme:dark){:root{--bg:#26262a;--fg:#f3f3f3;--edge:rgba(255,255,255,.16);color-scheme:dark}}
 html,body{margin:0;height:100%;background:transparent;overflow:hidden}
 body{display:flex;align-items:flex-end;justify-content:center;padding:0 4px 10px;box-sizing:border-box;font:500 12px/1.35 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif}
-p{position:relative;margin:0;max-width:100%;padding:6px 10px;border-radius:12px;background:var(--bg);color:var(--fg);border:1px solid var(--edge);box-shadow:0 2px 8px rgba(0,0,0,.18);overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;word-break:break-word}
-</style></head><body><p role="status">${safe}</p></body></html>`;
+p{position:relative;margin:0;max-width:100%;min-width:0;padding:6px 10px;border-radius:12px;background:var(--bg);color:var(--fg);border:1px solid var(--edge);box-shadow:0 2px 8px rgba(0,0,0,.18);box-sizing:border-box}
+span{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;word-break:break-word}
+p.lines span{display:block;white-space:nowrap;text-overflow:ellipsis}
+</style></head><body><p role="status"${lines.length > 1 ? ' class="lines"' : ''}>${lines.map(line => `<span>${line}</span>`).join('')}</p></body></html>`;
   return `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
 }

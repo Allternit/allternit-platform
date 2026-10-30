@@ -4,8 +4,8 @@ import UIKit
 /// The ASCII backgrounds' engine (allternit-ai
 /// src/components/bots/stage/backdrop/ascii/ascii-engine.ts): each look
 /// draws characters into a grid every frame, and one Canvas paints the grid.
-/// The phone has no hovering cursor, so the pointer stays at rest (the web
-/// ignores touch moves too); looks that follow it sit centred.
+/// A finger stands in for the cursor: a drag pushes nearby characters aside
+/// and brightens them, a tap sends a ring outward (BackdropTouch).
 enum Ascii {
     static let tau = Double.pi * 2
 
@@ -125,7 +125,8 @@ final class AsciiGrid {
     }
 }
 
-/// The pointer in grid cells. The phone keeps it at rest (s = 0).
+/// The finger in grid cells: s fades 0..1 as it lands and lifts; wt/wx/wy
+/// are the last tap.
 struct AsciiPointer {
     var x: Double = -99
     var y: Double = -99
@@ -147,6 +148,8 @@ struct AsciiScene: Sendable {
     var tile = false
     /// Spaces draw as seamless blocks (the A-block mark).
     var solid = false
+    /// Handles the pointer itself; skip the shared push and pulse.
+    var own = false
     let make: @Sendable (_ c: Int, _ r: Int, _ rand: @escaping () -> Double, _ density: Double) -> AsciiDraw
 }
 
@@ -221,6 +224,9 @@ final class AsciiRenderer {
     private let accentHSL: AsciiHSL
     private let flip: Bool
     var pointer = AsciiPointer()
+    private var target = (x: -99.0, y: -99.0, inside: false)
+    private static let pulseSeconds = 1.6
+    private static let pushRadius = 12.0
 
     init(scene: AsciiScene, options: AsciiRenderOptions) {
         self.scene = scene
@@ -262,6 +268,32 @@ final class AsciiRenderer {
         return value
     }
 
+    /// The finger in points relative to the canvas, or nil when it lifts.
+    func pointerAt(_ point: CGPoint?) {
+        guard let point else { target.inside = false; return }
+        target.x = Double(point.x) / cw
+        target.y = Double(point.y) / chh
+        if !target.inside && pointer.s < 0.01 {
+            pointer.x = target.x
+            pointer.y = target.y
+        }
+        target.inside = true
+    }
+
+    func pulse(_ point: CGPoint, t: Double) {
+        pointerAt(point)
+        pointer.wt = t
+        pointer.wx = Double(point.x) / cw
+        pointer.wy = Double(point.y) / chh
+    }
+
+    /// Eases the pointer toward the finger.
+    func stepPointer() {
+        pointer.x += (target.x - pointer.x) * 0.3
+        pointer.y += (target.y - pointer.y) * 0.3
+        pointer.s += ((target.inside ? 1 : 0) - pointer.s) * 0.18
+    }
+
     func paint(_ context: inout GraphicsContext, size next: CGSize, t: Double) {
         fit(next)
         guard let g = grid, let draw else { return }
@@ -276,13 +308,38 @@ final class AsciiRenderer {
         let font = Font.system(size: options.fontPx, design: .monospaced)
         let ink: Color = flip ? .white : .black
         var resolved: [String: GraphicsContext.ResolvedText] = [:]
+        let P = pointer
+        let push = P.s > 0.01 && !scene.own
+        let age = t - P.wt
+        let wave = age >= 0 && age < Self.pulseSeconds && !scene.own
+        let asp = chh / cw
         for y in 0..<g.r {
             for x in 0..<g.c {
                 let i = y * g.c + x
                 guard let char = g.ch[i] else { continue }
-                let a = g.a[i]
+                var a = g.a[i]
                 let colKey = g.col[i]
-                let px = Double(x) * cw, py = Double(y) * chh
+                var px = Double(x) * cw, py = Double(y) * chh
+                if push {
+                    let dx = Double(x) - P.x, dy = (Double(y) - P.y) * asp
+                    let d = (dx * dx + dy * dy).squareRoot() + 0.001
+                    if d < Self.pushRadius {
+                        let f = pow(1 - d / Self.pushRadius, 2) * P.s * 2.4
+                        px += dx / d * f * cw
+                        py += dy / d * f * cw
+                        a = min(1, a + 0.35 * f)
+                    }
+                }
+                if wave {
+                    let dx = Double(x) - P.wx, dy = (Double(y) - P.wy) * asp
+                    let d = (dx * dx + dy * dy).squareRoot() + 0.001
+                    let k = exp(-pow(d - age * 45, 2) / 30) * (1 - age / Self.pulseSeconds)
+                    if k > 0.01 {
+                        px += dx / d * k * cw * 2.2
+                        py += dy / d * k * cw * 2.2
+                        a = min(1, a + 0.5 * k)
+                    }
+                }
                 if tiles && a >= 0.8 {
                     let fill = tc(colKey)
                     if scene.solid && char == " " {

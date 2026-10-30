@@ -1,0 +1,39 @@
+---
+title: Connect a vendor from chat
+description: "A bot brings up the setup card for any coding CLI, and the CLI's own sign-in runs on the card."
+---
+
+Ask a bot to connect a vendor ("connect Codex", "sign in to OpenCode on my cloud computer"), or let it offer when a brain it needs isn't connected. The bot calls its `vendor_connect` tool and a setup card appears in the chat. Every tool in the CLI catalog works this way, not only Codex, plus key-only providers such as Z.ai.
+
+## What the card does
+
+The card runs the same install and sign-in as Settings → Connections › Coding tools (see [Subscriptions](/guides/subscriptions)), on the computer the bot named or the one you're using:
+
+1. **Install** the CLI if it isn't there yet.
+2. **Sign in**, one of three ways, depending on the tool:
+   - **Device code.** On a remote computer, tools with a headless sign-in show a link and a short code: Codex and Grok (`login --device-auth`), GitHub Copilot CLI (`login --device-code`) and Kiro (`login --use-device-flow`). Cline (`auth cline`), Kilo Code (`auth login -p kilo`) and Amp (`login`) use a device code on every computer. Open the link on any device and enter the code. It finishes by itself.
+   - **Link only.** Cursor Agent and Qoder CLI sign in with `login` and don't open a browser on the remote computer. Open the link they show on any device. Augment's `login --headless` asks you to paste back the sign-in details its page shows.
+   - **Vendor's own sign-in.** Qwen Code and Continue have no sign-in command now. Antigravity signs in only inside its own interactive screen, so sign in there once. Qwen Code takes an API key in its settings; the card links to the vendor's sign-in page.
+   - **Link and paste.** Other tools show a link. Sign in there; if the vendor's page shows a code afterwards (Claude Code does), paste it into the box on the card.
+   - **Key.** Key-only tools ask for an API key on the card, never in chat.
+3. When the card says **Connected**, the tool is a brain in the model picker and for [worker bots](/guides/worker-bots).
+
+OpenCode is a vendor like the others. Its sign-in runs `opencode auth login`, which signs OpenCode in to the model providers you pick, and OpenCode runs as a brain through `opencode run`.
+
+## Safety
+
+- **Codes come only from the CLI.** The tool returns no link and no code. The card reads them from the vendor CLI's own output, so a model can't invent or swap one.
+- **Links go only to the vendor's own sign-in page**, the one the CLI prints.
+- A bot never pastes a sign-in link or a code into chat and never asks you for a code or a key there. If one does, don't use it.
+
+## For developers
+
+`POST /api/v1/bot-routing/vendor/connect` with `{sessionId, provider, computer?}` checks the caller's session and the provider (catalog id, alias or binary name), starts nothing, and returns exactly:
+
+```json
+{ "allternit_card": "vendor_connect", "provider": "codex-cli", "label": "Codex", "signIn": "subscription", "computer": "cloud" }
+```
+
+`signIn` is `subscription`, `api_key` or `none`; `computer` is null when not given. An unknown provider is refused with 400. The app renders the card and calls the install and connect endpoints in [Providers](/api/providers) itself.
+
+Remote sign-in commands live in the CLI catalog (`cmd/gizzi-code/src/runtime/providers/discovery/cli-catalog.json`): `loginRemote` is the headless argv used when `remote: true`, and `loginRemoteHint` is shown with it, and `loginRemoteEnv` sets env on that remote sign-in only, for CLIs that go headless by env (`NO_BROWSER=1`, `NO_OPEN_BROWSER=1`). Tools without `loginRemote` use `login` everywhere. Add a `loginRemote` only after you confirm the flag in the CLI's own help or docs.

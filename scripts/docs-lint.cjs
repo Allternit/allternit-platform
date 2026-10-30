@@ -218,6 +218,8 @@ for (const mdxPath of collectMdxFiles(DOCS_DIR)) {
       if (['guides/progress-pane.mdx', 'guides/response-parts.mdx'].some((p) => mdxPath.endsWith(p))) continue;
       // Live sessions, delivery and the team roster list the CLI sessions they reach by name and their session addresses.
       if (['guides/live-sessions.mdx', 'guides/live-session-delivery.mdx', 'guides/team-roster.mdx'].some((p) => mdxPath.endsWith(p))) continue;
+      // Connecting a vendor from chat and picking a worker bot's brain name the catalog vendors and their sign-in flows.
+      if (['guides/connect-vendor-from-chat.mdx', 'guides/worker-bots.mdx'].some((p) => mdxPath.endsWith(p))) continue;
       fail(
         `competitor mention in ${path.relative(ROOT, mdxPath)}:${i + 1}: ${line.trim()}`
       );

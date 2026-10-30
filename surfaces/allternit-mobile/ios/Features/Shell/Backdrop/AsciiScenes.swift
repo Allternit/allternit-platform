@@ -10,8 +10,8 @@ enum AsciiScenes {
 
     static let aBlock = AsciiScene(
         id: "ascii-a-block", name: "A-block",
-        note: "The A-block mark breathes, sweeps, runs and writes",
-        bg: ["#111214", "#1b1c20"], tile: true, solid: true
+        note: "The A-block mark breathes, sweeps, runs and writes; it leans away from your finger",
+        bg: ["#111214", "#1b1c20"], tile: true, solid: true, own: true
     ) { c, r, R, D in
         let cd = Double(c), rd = Double(r)
         // x, y on the 5 × 5 grid, outline order, stroke order.
@@ -24,6 +24,7 @@ enum AsciiScenes {
         let bw = max(2, Int((UC * 0.82).rounded()))
         let ox = cd / 2 - 2.5 * UC
         let oy = rd * 0.48 - 2.5 * U
+        let scatter = B.map { _ in [(R() - 0.5) * 2, (R() - 0.5) * 2] }
         let parts = (0..<Ascii.count(cd * rd / 80, D, 6)).map { _ in (a: R() * tau, d: 0.35 + R() * 0.65, v: 0.05 + R() * 0.08, p: R(), coral: R() < 0.25) }
         let INK = "#d8d4cc", CORE = "#D97757"
         func block(_ g: G, _ gx: Double, _ gy: Double, _ col: String) {
@@ -31,12 +32,14 @@ enum AsciiScenes {
             let y0 = (oy + gy * U + (U - Double(bh)) / 2).rounded()
             for j in 0..<bh { for i in 0..<bw { g.put(x0 + Double(i), y0 + Double(j), " ", col, 1) } }
         }
-        return { g, t, _ in
+        return { g, t, P in
             for gy in -12..<16 {
                 for gx in -24..<28 {
                     let x = (ox + Double(gx) * UC + UC / 2).rounded(), y = (oy + Double(gy) * U + U / 2).rounded()
                     if x < 0 || x >= cd || y < 0 || y >= rd { continue }
-                    g.put(x, y, "·", "#8a8f98", 0.16)
+                    var al = 0.16
+                    if P.s > 0.01 { al += max(0, 1 - hypot(x - P.x, (y - P.y) * 2) / 18) * 0.5 * P.s }
+                    g.put(x, y, "·", "#8a8f98", al)
                 }
             }
             let ccx = ox + 2.5 * UC, ccy = oy + 2.5 * U
@@ -50,7 +53,7 @@ enum AsciiScenes {
             let ph = Ascii.mod(t, 20) / 5
             let st = Int(ph)
             let u = ph - Double(st)
-            for b in B {
+            for (i, b) in B.enumerated() {
                 var gx = b.x, gy = b.y
                 var col = INK
                 var show = true
@@ -79,16 +82,35 @@ enum AsciiScenes {
                     gx = 2 + (b.x - 2) * Ascii.smooth(k)
                     gy = 2 + (b.y - 2) * Ascii.smooth(k)
                 }
+                if P.s > 0.01 {
+                    let dx = gx - ((P.x - ox) / UC - 0.5)
+                    let dy = gy - ((P.y - oy) / U - 0.5)
+                    let d = hypot(dx, dy) + 0.01
+                    let f = P.s * pow(max(0, 1 - d / 3.4), 2) * 1.3
+                    gx += dx / d * f
+                    gy += dy / d * f
+                }
+                let age = t - P.wt
+                if age >= 0 && age < 2.4 {
+                    let e = age < 0.3 ? Ascii.smooth(age / 0.3) : max(0, 1 - Ascii.smooth((age - 0.3) / 2.1))
+                    gx += scatter[i][0] * 5 * e
+                    gy += scatter[i][1] * 3.5 * e
+                }
                 if show { block(g, gx, gy, col) }
             }
-            let hx = ox + 2.5 * UC, hy = oy + 2.5 * U
+            var cx2 = 2.0, cy2 = 2.0
+            if P.s > 0.01 {
+                cx2 += max(-0.7, min(0.7, ((P.x - ox) / UC - 2.5) * 0.15)) * P.s
+                cy2 += max(-0.7, min(0.7, ((P.y - oy) / U - 2.5) * 0.15)) * P.s
+            }
+            let hx = ox + (cx2 + 0.5) * UC, hy = oy + (cy2 + 0.5) * U
             let rr = U * 1.1 + sin(t * 2) * 0.3
             var a = 0.0
             while a < tau {
                 g.put(hx + cos(a) * rr * 2, hy + sin(a) * rr, "·", CORE, 0.35)
                 a += 0.18
             }
-            block(g, 2, 2, st == 2 && Int(u * 11) % 2 == 1 ? "#e8906f" : CORE)
+            block(g, cx2, cy2, st == 2 && Int(u * 11) % 2 == 1 ? "#e8906f" : CORE)
         }
     }
 

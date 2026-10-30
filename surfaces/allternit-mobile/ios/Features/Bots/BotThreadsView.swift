@@ -341,6 +341,7 @@ struct BotProjectHomeView: View {
                     .ignoresSafeArea()
             }
         }
+        .backdropTouches(backdropVariant != "plain")
         .navigationTitle(project.title)
         .refreshable { await load() }
         .task { await load() }

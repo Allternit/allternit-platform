@@ -1090,6 +1090,7 @@ async fn main() {
         .merge(allternit_api::bot_routing::bot_routing_router())
         .merge(allternit_api::bot_suggestions::bot_suggestions_router())
         .merge(allternit_api::thread_bot_tools::thread_bot_tools_router())
+        .merge(allternit_api::worker_bot_tools::worker_bot_tools_router())
         .merge(allternit_api::events_feed::events_feed_router())
         .merge(allternit_api::agent_gateway_routes::agent_gateway_router())
         .merge(allternit_api::gateway_runner::gateway_runner_router())

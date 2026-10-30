@@ -1,9 +1,13 @@
 ---
 title: "System drawer"
-description: "See what needs you, what is running and what broke across every session and mode, and approve requests without opening each session."
+description: "A developer tool: see what needs you, your bots, what is running and what broke across every session, and approve requests without opening each one."
 ---
 
-The system drawer shows what is happening across the whole app: every session, every mode, this computer and the cloud. Use it when several agents or bots work at once. You can answer their requests, see what is running, and find what broke without opening each session.
+The system drawer is a developer tool. It shows what is happening across the whole app: every session, every mode, this computer and the cloud. It is off unless you turn it on, so most people never see it.
+
+## Turn it on
+
+Go to **Settings → Developer → System drawer** and turn it on. Turning it off closes the drawer and removes every way into it.
 
 The drawer never opens by itself. You open it.
 
@@ -11,9 +15,10 @@ The drawer never opens by itself. You open it.
 
 | Where | How |
 | --- | --- |
-| Desktop | The indicator at the bottom of the left rail, above the usage meter. It reads like **2 need you · 5 running · 1 problem**. Each part opens the drawer on its own tab. Click the part again to close it. With nothing going on it reads **Nothing running**. |
-| Desktop, any mode | **⌘J** (Ctrl+J on Windows and Linux) opens and closes it. |
-| Phone and PWA | The round pulse button in the menu's footer, next to Phones. Its badge shows the most urgent count. The drawer opens as a sheet; tap outside it to close. |
+| Any mode | **⌘J** (Ctrl+J on Windows and Linux) opens and closes it. |
+| Gizzi, on Desktop | When something needs you or broke, a small dot appears on the Gizzi desktop pet: amber for needs you, red for problems. Hover the dot to see a short summary above Gizzi: the counts, the first waiting item, and how to open the drawer, one line each. Click the dot to open the drawer on that tab. Clicking Gizzi itself still opens quick chat. |
+| Menu bar, on Desktop | Right-click the A:// icon. The menu starts with a **System** section that lists what is waiting, and **Open System Drawer**. Pick an item to open the drawer on it. A left-click still opens the HUD. |
+| Phone and PWA | The round pulse button in the menu's footer, next to Phones. Its badge shows what needs you, or else what broke. The drawer opens as a sheet; tap outside it to close. |
 
 On Desktop the drawer sits along the bottom, beside the rail. Drag its tab row to make it taller or shorter.
 
@@ -21,24 +26,20 @@ On Desktop the drawer sits along the bottom, beside the rail. Drag its tab row t
 
 | Tab | What it holds |
 | --- | --- |
-| **Needs you** | Every approval and question waiting on you: agent permission requests from any chat, code session or bot, and Factory approvals. Each one shows where it came from and how long it has waited, with **Approve** and **Deny**. Agent requests also have **Open session**. The longest wait is first. |
-| **Running** | Sessions with a reply streaming, Terminal bots, and dev servers on this computer, each with **Open** and **Stop**. **Stop** ends a session's reply. For a Terminal bot, it sends Ctrl-C to its terminal. For a dev server, it ends the process (Desktop app only). **List / Graph** switches to the Factory graph. It shows a campaign's steps and the bot working each one. With no campaign, it draws the Terminal bots as a team. **Next up** at the bottom shows the next run of the three routines due soonest this week, each routine once. |
-| **Runs** | Agent turns, commands (tests, builds, checks, dev servers, shell) and Factory runs from the code sessions active in the last day. Each run shows its session, status, time and facts such as the model and tokens. Select a run to see its output, its tool calls and a replay. |
-| **Problems** | Typecheck, lint, test and build failures from the code sessions active in the last day, grouped by session and then file. A row opens the file at that line. Above them, **Stuck and failed** lists routines that keep failing and Terminal bots that stopped with an error. |
+| **Needs you** | Every approval and question waiting on you, from any chat, code session, bot or the Factory. Each shows where it came from and how long it has waited, with **Approve** and **Deny**. Agent requests also have **Open session**. |
+| **Bots** | Every bot, one line each: its face, its name, what it is doing or why it stopped, and **Open**. **Lanes** shows the Terminal bots' [hand-offs](/factory/agents#hand-off-lanes): a card per bot and a lane per team link holding the newest campaign's nodes. **Graph** draws who works on what: a Factory campaign's steps and the bot on each, or, with no campaign, the Terminal bots as a team. |
+| **Workspace** | Your bots at their desks on the bots' floor of the [3D facility](https://3dfacility.allternit.com): a flat **2D** plan, a **2.5D** room or the full **3D** building, each bot drawn as its own avatar. Status rings show who is working, waiting on you, talking or idle, with an activity feed beside the floor (under it on a phone). Click a bot to open its chat; a bot waiting on you opens on its question. The floor is drawn by 3dfacility.allternit.com, so this tab needs an internet connection; if it doesn't load in 25 seconds it says so, with **Try again** and **Open in a tab**. |
+| **Running** | Sessions that are replying right now, and dev servers on this computer, each with **Open** and **Stop**. |
+| **Problems** | What broke: routines that keep failing, Terminal bots that stopped with an error, and failed typechecks, lint, tests or builds from the code sessions active in the last day. A row with a file opens it at that line. |
 
-The tab row also shows your plan usage (Allternit Cloud, or your model's account when it nears its limit) and how many Terminal bots are working. Click the usage to open **Settings → Usage**.
-
-## On a phone
-
-The phone and the PWA have the same four tabs in a sheet. **Graph** draws as an indented list, because a wide graph does not fit. Approve and Deny are full-width buttons. Dev servers show **Preview** and **Stop** only.
-
-Approval notifications still arrive as push notifications when they are turned on in **Settings → Notifications**.
+On a phone the same four tabs open in a sheet, and the graph draws as an indented list.
 
 ## For developers
 
-- **Mount:** `ConsoleDrawer` (`src/drawers/ConsoleDrawer.tsx`) wraps `DrawerRoot` and binds ⌘J. `ShellApp` mounts it in every mode, and `PhoneShell` mounts it lazily inside `.phone-root`. Open state, height and tab live in `useDrawerStore` (`allternit-drawer-storage`). `toggleConsole(tab)` opens it on a tab, or closes it when it is already open on that tab.
-- **Placement:** `ShellFrame` writes the rail column width to `--shell-rail-col` on the document root. The drawer uses it as its left inset.
-- **Tabs:** the console registry (`src/views/code/console/console-registry.ts`) holds them. The built-ins are `needs-you`, `running`, `runs` and `problems` (`builtin-tabs.tsx`). An unknown saved id, such as one from the retired console, falls back to the first tab.
-- **Data:** `system-model.ts` reads it. `useNeedsYou` merges `usePermissionStore` pending requests with Factory pending approvals. `useSystemCodeSessions` derives runs, problems and ports for code sessions that are streaming or updated in the last 24 hours, up to 12. Each is derived again only when its messages change. `useSystemCounts` feeds the rail indicator and the phone button.
-- **Graph:** `CampaignFlowView` in `src/components/factory/views/connected.tsx` draws one campaign's flow. `ProjectFlowView` now uses it too. With no campaign, Running's Graph falls back to `ProjectTeamGraph` over the Terminal bots.
-- **Retired with the old Console:** the Output, Plan, Terminals, Ports, Changes, Factory (Mission Control), Tasks, Usage and Artifacts tabs. Dev servers moved into Running (`DevServers` in `PortsTab.tsx`). The Terminals tab's workspace (`TerminalWorkspace`, `terminal-workspace.store`) was removed. Code's shell is [Terminal mode](/code/terminal-and-prompt).
+- **Setting:** `useDevToolsStore` (`src/lib/dev-tools.store.ts`, stored as `allternit-dev-tools`) holds `systemDrawer`, off by default. `ConsoleDrawer` renders nothing while it is off. ⌘J and the phone button exist only while it is on.
+- **Mount:** `ConsoleDrawer` (`src/drawers/ConsoleDrawer.tsx`) wraps `DrawerRoot`. `ShellApp` mounts it in every mode, and `PhoneShell` mounts it lazily inside `.phone-root`. Open state, height and tab live in `useDrawerStore`.
+- **Tabs:** the console registry holds them. The built-ins are `needs-you`, `bots`, `running` and `problems` (`builtin-tabs.tsx`). An unknown saved id falls back to the first tab.
+- **Data:** `system-model.ts`. `useNeedsYou` merges `usePermissionStore` requests with Factory approvals. `useSystemCodeSessions` derives problems and ports for code sessions that are streaming or updated in the last 24 hours. Bots read `useAgentStore` with `useBotStatus`, plus Factory Terminal bots.
+- **Workspace:** `WorkspaceTab.tsx` frames `https://3dfacility.allternit.com/?embed=workspace` (`&theme=dark` in dark mode). After the frame posts `allternit:workspace:ready`, the tab posts `{ type: "allternit:workspace", bots }` to that origin, and posts again when the roster changes. Each bot has `id`, `name`, `role`, `color`, `status` (from `useRosterLive`), `task`, `question`, `chief` and `avatar` (`sheet` is the pet sprite sheet as an absolute `https://ai.allternit.com/avatar-packs/…` URL, or an image avatar with `layout: "still"`). The frame's `allternit:workspace:action` (`answer` or `open`) opens that bot's chat; messages from any other origin or window are ignored. `public/_headers` allows the frame (`frame-src`) and lets the facility load `/avatar-packs/*` as WebGL textures (`Access-Control-Allow-Origin`).
+- **Desktop bridge:** the app window sends a summary with `allternitCompanion.system.report` (`companion:system-report`): counts and up to five waiting items. The main process checks it (`system-summary.ts`) and passes it to the pet (`companion:system`) and the menu bar menu. The pet's dot calls `system.hover` (bubble on and off) and `system.open`. The main process then shows the window and sends `companion:system-open` with the tab.
+- **Placement:** `ShellFrame` writes the rail column width to `--shell-rail-col` on the document root, and the drawer uses it as its left inset.

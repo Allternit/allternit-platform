@@ -25,6 +25,8 @@ export interface AppRosterBot {
   title?: string | null
   tagline?: string | null
   description?: string | null
+  /** Worker bots: kinds of tasks this bot owns; hand those to it. */
+  owns?: string[]
 }
 
 export interface AppRoster {
@@ -143,6 +145,33 @@ export async function suggestAppTask(
   input: { title: string; objective: string; why?: string },
 ): Promise<AppSuggestResult> {
   return post<AppSuggestResult>("/bot-routing/suggest", { sessionId: sessionID, ...input }, 15_000)
+}
+
+/* Worker bots + vendor connect. Server: allternit-api worker_bot_tools.rs. */
+
+export interface AppCreatedBot {
+  bot: { id: string; name: string; owns: string[]; brain: { provider: string; model?: string | null } | null }
+}
+
+/** Create a worker bot for the calling bot's owner (owner comes from the session, server side). */
+export async function createAppBot(
+  sessionID: string,
+  input: { name: string; purpose?: string; owns: string[]; brain?: { provider: string; model?: string }; computer?: string },
+): Promise<AppCreatedBot> {
+  return post("/bot-routing/bot/create", { sessionId: sessionID, ...input }, 20_000)
+}
+
+/** The card the app renders to connect a vendor CLI. Never carries a link or a code. */
+export interface VendorConnectCard {
+  allternit_card: "vendor_connect"
+  provider: string
+  label: string
+  signIn: "subscription" | "api_key" | "none"
+  computer: string | null
+}
+
+export async function vendorConnectCard(sessionID: string, input: { provider: string; computer?: string }): Promise<VendorConnectCard> {
+  return post("/bot-routing/vendor/connect", { sessionId: sessionID, ...input }, 10_000)
 }
 
 /* Thread tools (W3): the calling session's own thread. Server: allternit-api thread_bot_tools.rs. */

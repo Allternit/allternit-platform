@@ -398,6 +398,8 @@ struct AgentRow {
     tool_permissions: Option<serde_json::Value>,
     /// MCP connector ids bound to the agent's toolset (JSON array).
     mcp_connector_ids: Option<serde_json::Value>,
+    /// Worker bots (V282): kinds of tasks this bot owns. Always a JSON array.
+    owns: serde_json::Value,
 }
 
 fn parse_json_column(value: Option<String>) -> Option<serde_json::Value> {
@@ -411,7 +413,7 @@ const AGENT_SELECT: &str = "SELECT id, user_id, name, description, type, parent_
         status, workspace_id, avatar, identity_key, trust_tier, harness_config,
         enabled_modes, character_json, allowed_skills, allowed_tools, category, tags,
         data_classification, write_scope, created_at, updated_at, last_run_at,
-        mode, is_primary, delegates, version, is_bot, tool_permissions, mcp_connector_ids
+        mode, is_primary, delegates, version, is_bot, tool_permissions, mcp_connector_ids, owns
      FROM agents";
 
 fn read_agent_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<AgentRow> {
@@ -455,6 +457,7 @@ fn read_agent_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<AgentRow> {
         is_bot: row.get::<_, i64>(35)? != 0,
         tool_permissions: parse_json_column(row.get(36)?),
         mcp_connector_ids: parse_json_column(row.get(37)?),
+        owns: parse_json_column(row.get(38)?).unwrap_or_else(|| json!([])),
     })
 }
 
@@ -638,6 +641,9 @@ struct CreateAgentBody {
     identity_channels: Option<serde_json::Value>,
     #[serde(default)]
     vm_operator: Option<serde_json::Value>,
+    /// Worker bots (V282): kinds of tasks this bot owns.
+    #[serde(default)]
+    owns: Option<Vec<String>>,
 }
 
 fn json_to_string(value: Option<serde_json::Value>) -> Option<String> {
@@ -1027,9 +1033,9 @@ async fn create_agent(
                                 capabilities, system_prompt, tools, max_iterations, temperature, config,
                                 status, workspace_id, avatar, identity_key, trust_tier, harness_config,
                                 enabled_modes, character_json, allowed_skills, allowed_tools, category,
-                                tags, data_classification, write_scope, mode, is_bot)
+                                tags, data_classification, write_scope, mode, is_bot, owns)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18,
-                     ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30)",
+                     ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31)",
             params![
                 final_id,
                 user_id_for_db,
@@ -1061,6 +1067,7 @@ async fn create_agent(
                 body.write_scope,
                 body.mode.unwrap_or_else(|| "primary".to_string()),
                 body.is_bot.unwrap_or(false) as i32,
+                json!(body.owns.unwrap_or_default()).to_string(),
             ],
         )?;
         persist_agent_secrets(&conn, &final_id, &user_id_for_db, secret_refs.as_ref())?;
@@ -1351,6 +1358,7 @@ async fn create_prototype_agent(
                     messaging_config: None,
                     identity_channels: None,
                     vm_operator: None,
+                    owns: None,
                 };
                 persist_agent(&conn, &user_id_for_db, body)?
             }
@@ -2278,6 +2286,9 @@ struct UpdateAgentBody {
     identity_channels: Option<serde_json::Value>,
     #[serde(default)]
     vm_operator: Option<serde_json::Value>,
+    /// Worker bots (V282): kinds of tasks this bot owns.
+    #[serde(default)]
+    owns: Option<Vec<String>>,
 }
 
 /// Shared merge-semantics UPDATE for PUT and PATCH on `/agents/:id`: only
@@ -2371,6 +2382,7 @@ fn apply_agent_update(
             data_classification = COALESCE(?25, data_classification),
             write_scope = COALESCE(?26, write_scope),
             is_bot = COALESCE(?27, is_bot),
+            owns = COALESCE(?30, owns),
             version = version + 1,
             updated_at = CURRENT_TIMESTAMP
          WHERE id = ?28 AND user_id = ?29",
@@ -2404,6 +2416,7 @@ fn apply_agent_update(
             body.is_bot.map(|b| b as i32),
             id,
             user_id,
+            body.owns.as_ref().map(|o| json!(o).to_string()),
         ],
     )
 }

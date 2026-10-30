@@ -273,6 +273,14 @@
           "note": "Thirteen stage backgrounds (Aurora default, Glass mesh, Constellation, Spotlight, Horizon, Silk, Bokeh, Grid glow, Lava, Prism, Fireflies, Dusk, Plain) behind bot chat, group chat and bot project home; chosen in Settings → Appearance or on the stage (Eoj: build all of them and choose)."
         },
         {
+          "on": "2026-10-29",
+          "note": "Twenty ASCII backgrounds next to the thirteen (now the Classic set): A-block (the A-block mark's breathe, sweep, conveyor and write moves), six moods of other AI apps with no marks, and thirteen scenes. They react to the cursor (characters part and glow; a click on empty space sends a pulse). Settings → Appearance → Background gets ASCII / Classic, Show on (bot chats, group chats, bot project homes, Code mode; Code mode off by default), Movement, Colours, Characters, Character size, Density and Veil. Code mode shows it behind the session view (backdrop/ascii/, useStageBackgroundFor) (Eoj)."
+        },
+        {
+          "on": "2026-10-29",
+          "note": "Eoj: a look picked in Settings overrode every bot; some users want a look per bot. Settings is now the default, and the brush switch on a bot stage, a group stage or Code's session toolbar (phone: pane menu → Background) saves a look for that bot, group chat or Code workspace only (BackdropScope, appearance.stageBackground.for.<scope>), with Same as Settings to undo. The rail carries the screen's own look, in Code mode too. Eoj also found text hard to read on some looks: an ASCII look whose sky is the other tone from the app theme is drawn with its lightness flipped, and the veil never goes below 20% (default 35%)."
+        },
+        {
           "on": "2026-10-22",
           "note": "Bot colour comes from the avatar art (bot-art-color.ts), so the stage, pill and bubbles match the bot. The thread-top pill shows a status word (live-status.ts); a running thread shows a task card (ThreadTaskCard); Tasks lists subtasks under the running step and an Up next list. Phone gets a Needs you sheet. Project home uses the shared launch layout (BaseProjectView launchLayout). Voice sessions show hand-off chips (ai #732)."
         },
@@ -481,7 +489,8 @@
         "allternit/cmd/allternit-factory",
         "allternit/factory/engine",
         "allternit/factory/pane",
-        "allternit/cmd/gizzi-code/src/cli/factory"
+        "allternit/cmd/gizzi-code/src/cli/factory",
+        "allternit-ai/src/components/handoff-lanes"
       ],
       "decisions": [
         {
@@ -503,6 +512,10 @@
         {
           "on": "2026-10-17",
           "note": "Terminal bots never wait on an approval prompt: Kimi panes start with --auto and Gemini panes with --yolo (ACP mode and kimi subcommands untouched), as Claude, Codex and Qwen already ran auto-approve behind the Gate."
+        },
+        {
+          "on": "2026-10-29",
+          "note": "Team view opens on hand-off lanes (bot cards, one lane per team link, Take over to a running Terminal pane); Graph and List stay as switches. Bot thread Tasks tab shows subagent lanes."
         }
       ],
       "evidence": [
@@ -2803,27 +2816,65 @@
     },
     {
       "id": "feature:system-drawer",
-      "label": "System drawer (Needs you, Running, Runs, Problems)",
+      "label": "System drawer (developer tool: Needs you, Bots, Workspace, Running, Problems)",
       "product": "product:ai-allternit",
       "status": "building",
-      "description": "A bottom drawer (Desktop, beside the rail) or sheet (phone layout and m.allternit.com PWA) showing what is happening across every session and mode. Needs you: agent permission requests from any surface (usePermissionStore) plus Factory pending approvals, answered in place. Running: streaming chats and code sessions, Terminal bots and dev servers with Open and Stop, a List / Graph switch (the Factory campaign flow, CampaignFlowView) and a Next up strip of the next routine runs. Runs and Problems: runs and parsed failures from code sessions active in the last day, plus failing routines and failed bots. Header: plan usage and Terminal bots working. Opened from the rail indicator (need you / running / problems, each opens its tab), the phone menu footer's pulse button or Cmd/Ctrl+J; never opens by itself. Replaces the Code-only Console drawer.",
+      "description": "A developer tool, off by default (Settings → Developer → System drawer, useDevToolsStore). A bottom drawer (Desktop, beside the rail) or sheet (phone layout and m.allternit.com PWA) showing what is happening across every session and mode. Needs you: agent permission requests from any surface plus Factory approvals, answered in place. Bots: every bot (agent store + useBotStatus, plus Factory Terminal bots) as one line each with Open; a Lanes switch shows the Terminal bots' hand-off lanes; a Graph switch draws the Factory campaign flow or, with no campaign, the Terminal bots as a team. Workspace: frames 3dfacility.allternit.com/?embed=workspace (the bots' floor in 2D, 2.5D or 3D, each bot as its own avatar) and feeds it the live roster over postMessage (allternit:workspace); clicking a bot there opens its chat. Running: sessions replying and dev servers with Open and Stop. Problems: failing routines, failed Terminal bots and parsed check failures from code sessions active in the last day. Opened with Cmd/Ctrl+J, the dot on the Gizzi desktop pet (hover shows a summary bubble, click opens; clicking the pet still opens quick chat), the menu bar menu's System section (right-click; left-click still opens the HUD) or the phone menu footer button; never opens by itself.",
       "touches": [
+        "allternit-ai/src/components/desktop-companion",
         "allternit-ai/src/drawers",
-        "allternit-ai/src/views/code/ConsoleDrawer",
-        "allternit-ai/src/views/code/console",
-        "allternit-ai/src/views/code/RunsView.tsx",
-        "allternit-ai/src/components/factory/views/connected.tsx",
-        "allternit-ai/src/shell/ShellRail.tsx",
-        "allternit-ai/src/shell/ShellFrame.tsx",
-        "allternit-ai/src/shell/ShellApp.tsx",
-        "allternit-ai/src/fabric-session/phone/PhoneDrawer.tsx",
-        "allternit-ai/src/fabric-session/phone/PhoneShell.tsx"
+        "allternit-ai/src/fabric-session",
+        "allternit-ai/src/lib",
+        "allternit-ai/src/pages",
+        "allternit-ai/src/shell",
+        "allternit-ai/src/views/code",
+        "allternit-ai/src/views/settings",
+        "allternit/surfaces/allternit-desktop"
       ],
       "decisions": [
         {
           "on": "2026-10-28",
           "note": "Eoj: the Factory graph moves out of Canvas mode into a system-level drawer, the live view of what is running. After research across ~30 agent and IDE products (no product approves across sessions, ships a spawn graph or lists problems across sessions), Eoj asked to add the recommended set: Needs you, Running (List / Graph, Next up), Runs, Problems, a usage strip and a segmented rail indicator; phone gets the same tabs as a sheet. The old Console's Output, Plan, Terminals, Ports, Changes, Factory, Tasks, Usage and Artifacts tabs are retired. Daily spend against a cap is not shown: the usage API reports the period's spend only. Canvas mode stays for now."
+        },
+        {
+          "on": "2026-10-29",
+          "note": "Eoj: the drawer had drifted too complex; it is an advanced developer tool, not for regular users. Off by default behind Settings → Developer. Tabs cut to Needs you, Bots, Running, Problems (Runs tab, usage strip and filter toolbars removed); Bots added as a plain list with a Graph switch. The rail indicator is removed. Entry is option E: a dot on the Gizzi pet (hover shows the summary bubble, click the dot opens; Gizzi's own click unchanged, nothing pops up by itself) plus a System section in the menu bar right-click menu (left-click still opens the HUD)."
+        },
+        {
+          "on": "2026-10-29",
+          "note": "Bots tab gained a Lanes view (hand-off lanes) beside List and Graph."
+        },
+        {
+          "on": "2026-10-29",
+          "note": "Eoj: the bot workspace being built on 3dfacility (2D plan, 2.5D room, 3D facility) goes inside the system drawer as a Workspace tab. The facility draws; the app feeds the roster and handles answer/open. Hand-off lanes redrawn to match Flo's (affectui) reference: lanes centred under their two agents, rounded lines with dots, role line on agent cards."
         }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/system-drawer.mdx"
+      ]
+    },
+    {
+      "id": "feature:waiting-games",
+      "label": "Waiting games (play while a bot works)",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "A Play button beside Stop in every message box (ThreadComposer, ChatComposer) after about 5 s of work opens a floating game window (Desktop: bottom right, draggable; phone layout and m.allternit.com PWA: above the message box) with a Full screen button. Eight ASCII games on one canvas: Big Fish, Bot Race (your bots, ~200 dev words), Token Catch, Meteor Dodge, Bug Bash, Stack Deploy, Context Snake, Bot Memory. When the bot that opened it finishes, the game pauses and says the reply is ready. Settings → Appearance → Background → Waiting games (on by default).",
+      "touches": [
+        "allternit-ai/src/components/waiting-games",
+        "allternit-ai/src/components/threads/ThreadComposer.tsx",
+        "allternit-ai/src/views/chat/ChatComposer.tsx",
+        "allternit-ai/src/shell/ShellApp.tsx",
+        "allternit-ai/src/fabric-session/PhoneProviders.tsx",
+        "allternit-ai/src/components/bots/stage/backdrop/StageBackdropPicker.tsx"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-29",
+          "note": "Eoj asked for mini games while waiting (an ocean fish game and a typing race against bots). After three prototype rounds he kept Big Fish, Bot Race (more dev words), Token Catch, Meteor Dodge, Context Snake and Bot Memory; Bug Squash and Chain Pop were replaced by Bug Bash and Stack Deploy. Placement: a hybrid. The game opens as a floating window and can expand to full screen."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/surfaces/waiting-games.mdx"
       ]
     },
     {
@@ -3216,22 +3267,69 @@
       "status": "live",
       "description": "Allternit Desktop's A:// menu bar icon (click opens the HUD, right-click opens the status menu) and the macOS app menu (Allternit Desktop, File, Edit, View, Window, Help). Workspace commands (New Session, modes, sidebar, Settings, Find, Bot Activity) reach the renderer as window:event:menu-command.",
       "touches": [
-        "allternit/surfaces/allternit-desktop/src/main/app-menu.ts",
-        "allternit/surfaces/allternit-desktop/src/main/unified-main.ts",
-        "allternit/surfaces/allternit-desktop/build",
-        "allternit-ai/src/shell/desktop-menu.ts",
-        "allternit-ai/src/shell/ShellApp.tsx",
-        "allternit-ai/src/shell/ShellRail.tsx",
+        "allternit/surfaces/allternit-desktop",
+        "allternit-ai/src/shell",
         "surface:desktop"
       ],
       "decisions": [
         {
           "on": "2026-10-28",
           "note": "Eoj asked for a menu bar icon that opens the HUD (like Claude's opens quick chat) and the standard top-left app menus. The tray code existed but never ran: build/tray-icon.png was never added. Now a trayTemplate.png A:// mark; macOS left-click = HUD, right-click = menu."
+        },
+        {
+          "on": "2026-10-29",
+          "note": "Eoj: fix all 18 HUD audit gaps. The tray menu lists any global HUD/Quick Chat chord that failed to register as \"in use by another app\"."
         }
       ],
       "evidence": [
-        "surfaces/docs/surfaces/desktop.mdx#menu-bar-icon"
+        "allternit/surfaces/docs/surfaces/desktop.mdx"
+      ]
+    },
+    {
+      "id": "feature:desktop-hud",
+      "label": "Desktop HUD (floating quick chat)",
+      "product": "product:ai-allternit",
+      "status": "live",
+      "description": "Allternit Desktop's floating HUD chat (Cmd/Ctrl+Shift+H, tray click). Main process: pre-warmed hidden window, opens on the cursor's display, bounds remembered per display (store key hudBounds) and clamped to the work area, Cmd+W hides, optional hide-on-blur (hudHideOnBlur) with a renderer suppress counter, hotkey registration status, Linux cursor feed for click-through, game-overlay feed, screen capture handler, handoff/goto to the main window. Renderer: HudShell in allternit-ai.",
+      "touches": [
+        "allternit/surfaces/allternit-desktop",
+        "allternit-ai/src/shell",
+        "surface:desktop"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-29",
+          "note": "Eoj: fix all 18 HUD audit gaps. Main half: cursor-display placement with per-display memory and work-area clamping (hud-geometry.ts is the one geometry module), close hides, focus + shell:hud:shown on every show, hide-on-blur pref + hotkey status (shell:hud:get-prefs/set-prefs), pre-warm, pop-up-menu level on Windows/Linux, Linux cursor feed, game-overlay feed, getDisplayMedia handler, handoff/goto, sender checks, frost removed."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/surfaces/desktop.mdx"
+      ]
+    },
+    {
+      "id": "feature:worker-bots-vendor-connect",
+      "label": "Worker bots and vendor connect from chat",
+      "product": "product:allternit-api",
+      "status": "building",
+      "description": "A bot creates a worker bot from chat (bot_create: name, owns, brain from the CLI catalog, computer); the roster lists each teammate's owns and message_agent hands owned work to the owner. A bot starts signing in any catalog vendor from chat (vendor_connect): the app renders an Allternit system card that runs the existing install/connect flow, so codes come only from the CLI and links only to the vendor's domain. Remote sign-in uses the catalog's loginRemote (device code). OpenCode is a normal vendor.",
+      "touches": [
+        "allternit/cmd/allternit-api",
+        "allternit/cmd/gizzi-code/src/runtime/tools",
+        "allternit/cmd/gizzi-code/src/runtime/bots",
+        "allternit/cmd/gizzi-code/src/runtime/providers",
+        "allternit-ai/src/components/agents",
+        "allternit-ai/src/components/bot-chat"
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/worker-bots.mdx",
+        "allternit/surfaces/docs/guides/connect-vendor-from-chat.mdx",
+        "allternit/cmd/allternit-api/migrations/V282__bot_owns.sql"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-29",
+          "note": "Eoj, from the Grok Bot worker-bot post: build worker bots from chat and connect-from-chat for all vendors; OpenCode is just another vendor, not a free tier."
+        }
       ]
     }
   ],

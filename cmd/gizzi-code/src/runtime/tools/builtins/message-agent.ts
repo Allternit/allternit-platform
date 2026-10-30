@@ -99,7 +99,9 @@ const DESCRIPTION = `Hand work to another of your user's bots, or message a team
 - target: the bot's name, @handle or id. Lookup is case-insensitive; unknown
   targets error with the list of bots, ambiguous targets list the choices.
   Call with target "list" (no message) to see your teammates and what each
-  one does, then route the work to the bot that owns it.
+  one does, then route the work to the bot that owns it. When a teammate
+  owns a kind of task (its "owns" list), hand that task to it instead of
+  doing it yourself.
 - message: the plain-text task or message. It travels as a tool parameter —
   never shell-interpreted, never forwarded into a running turn.
 

@@ -113,6 +113,17 @@ pub(crate) struct CliTool {
     pub sign_in: String,
     #[serde(default)]
     pub login: Vec<String>,
+    /// Headless / device-code sign-in argv for a remote computer (no browser on
+    /// the machine running the CLI). Absent = `login` is used everywhere.
+    #[serde(default)]
+    pub login_remote: Vec<String>,
+    /// Shown beside the remote sign-in (e.g. a vendor setting to turn on first).
+    #[serde(default)]
+    pub login_remote_hint: Option<String>,
+    /// Env set on the remote sign-in only, for CLIs that go headless by env
+    /// (`NO_BROWSER=1`, `NO_OPEN_BROWSER=1`) rather than by a flag.
+    #[serde(default)]
+    pub login_remote_env: std::collections::BTreeMap<String, String>,
     #[serde(default)]
     pub sign_in_page: Option<String>,
     #[serde(default)]

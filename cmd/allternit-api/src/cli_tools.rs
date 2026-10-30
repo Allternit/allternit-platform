@@ -484,23 +484,15 @@ fn session(key: &str) -> Option<Shared> {
 
 /// Start (or restart) a CLI's own sign-in for `key`, keeping its output.
 /// Waits up to 3 s for the link so the first response usually carries it.
-pub(crate) async fn start_login(
-    key: &str,
-    binary: &std::path::Path,
-    argv: &[&str],
-    hint: Option<String>,
-) -> Result<Value, String> {
-    start_login_with_env(key, binary, argv, hint, &[]).await
-}
-
-/// `start_login` with extra env on the CLI: an added account's config dir
-/// (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`), so its sign-in lands in that home.
+/// `env` goes on the CLI: an added account's config dir
+/// (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`), so its sign-in lands in that home, or
+/// the catalog's `loginRemoteEnv` (`NO_BROWSER=1`).
 pub(crate) async fn start_login_with_env(
     key: &str,
     binary: &std::path::Path,
     argv: &[&str],
     hint: Option<String>,
-    env: &[(&str, &std::path::Path)],
+    env: &[(&str, &std::ffi::OsStr)],
 ) -> Result<Value, String> {
     if let Some(old) = LOGINS.lock().unwrap().remove(key) {
         if let Ok(mut old) = old.try_lock() {

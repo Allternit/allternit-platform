@@ -7,7 +7,7 @@
  * - Version-locked: Desktop 1.2.3 = Backend 1.2.3
  */
 
-import { app, autoUpdater, BrowserWindow, ipcMain, nativeTheme, Notification, safeStorage, session, Tray, Menu, dialog, globalShortcut, screen, protocol, nativeImage, type WebContents } from 'electron';
+import { app, autoUpdater, BrowserWindow, desktopCapturer, ipcMain, nativeTheme, Notification, safeStorage, session, Tray, webContents, Menu, dialog, globalShortcut, screen, protocol, nativeImage, type WebContents } from 'electron';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve, basename } from 'node:path';
 import * as fs from 'node:fs';
@@ -23,7 +23,17 @@ import log from 'electron-log';
 import { updateElectronApp } from 'update-electron-app';
 import fixPath from 'fix-path';
 import { installDesktopCompanion } from './desktop-companion.js';
+import type { SystemTab } from './system-summary.js';
 import { readBotCarryContext, type BotCarryContext } from './bot-carry-context.js';
+import {
+  HUD_MAX_HEIGHT, HUD_MAX_WIDTH, HUD_MIN_HEIGHT, HUD_MIN_WIDTH,
+  applyHudBounds, clampHudBounds, debounce, defaultHudBounds, hudBoundsForDisplay, keepHudReachable,
+  mergeHudBounds, parseHudBoundsByDisplay, resizeHudFromBottom, type HudBoundsByDisplay, type HudRect,
+} from './hud-geometry.js';
+import { cursorPointInWindow } from './hud-cursor.js';
+import { hudWindowingView, resolveHudWindowing } from './hud-windowing.js';
+import { INACTIVE_GAME_OVERLAY, startHudGameOverlayWatch } from './hud-game-overlay.js';
+import { enumerateWindowsFrontToBack, enumerationFailed } from './window-below.js';
 import { installAgentCursorWindow } from './agent-cursor-window.js';
 import { startPetHookServer, type PetHookServer } from './pet-hook-server.js';
 import { isPairingLink, pairingCodeFromUrl } from './pairing-link.js';
@@ -490,8 +500,6 @@ const QUICK_CHAT_HOTKEY = 'CommandOrControl+Shift+A';
 // muscle memory expects it.
 const HUD_HOTKEY = 'CommandOrControl+Shift+H';
 const HUD_HOTKEY_FALLBACK = 'Alt+Shift+H';
-const HUD_DEFAULT_WIDTH = 720;
-const HUD_DEFAULT_HEIGHT = 72;
 const MINI_WINDOW_WIDTH = 520;
 const MINI_WINDOW_HEIGHT = 600;
 /** Resolved backend URL — set once the app initializes. Used by sdk:get-backend-url IPC. */
@@ -764,7 +772,10 @@ async function getOfficeAddinManager(): Promise<OfficeAddinManager> {
 
 interface StoreSchema {
   windowBounds: { width: number; height: number; x?: number; y?: number };
-  hudBounds: { width: number; height: number; x?: number; y?: number };
+  /** HUD bounds per display id (hud-geometry.ts). Older builds stored one { width, height } here; it is ignored. */
+  hudBounds: HudBoundsByDisplay;
+  /** Settings → HUD: hide the HUD when it loses focus. Off by default (pinned). */
+  hudHideOnBlur?: boolean;
   theme: 'light' | 'dark' | 'system';
   backend: {
     mode: 'bundled' | 'remote' | 'development';
@@ -793,7 +804,7 @@ interface StoreSchema {
 const store = new Store<StoreSchema>({
   defaults: {
     windowBounds: { width: 1400, height: 900 },
-    hudBounds: { width: HUD_DEFAULT_WIDTH, height: HUD_DEFAULT_HEIGHT },
+    hudBounds: {},
     theme: 'system',
     backend: {
       // Dev builds should default to development mode so a fresh profile opens
@@ -852,6 +863,8 @@ const desktopCompanion = installDesktopCompanion({
   showMain: () => showOrReopenMainWindow(),
   openHud: (agentId, anchor) => openHudForCompanion(agentId, anchor),
   onPetLanded: (petBounds) => { void sendBotCarryContext(petBounds); },
+  onSystem: () => { void updateTrayMenu(); },
+  openSystem: (tab) => openSystemDrawer(tab),
   closeHud: () => hideHudWindow(),
   moveHudWithPet: (dx, dy) => {
     if (hudCompanionAgentId === undefined || !hudWindow || hudWindow.isDestroyed() || !hudWindow.isVisible()) return false;
@@ -1691,6 +1704,7 @@ async function initializeBundledMode(): Promise<void> {
       log.info('[Main] Window started loading');
     });
     mainWindow.webContents.on('did-finish-load', () => {
+      prewarmHudWindowSoon();
       mainWindowLoaded = true;
       log.info('[Main] Window finished loading');
       mainWindow?.show();
@@ -2261,6 +2275,12 @@ function createTray(): void {
   updateTrayMenu();
 }
 
+/** Show the app and open its system drawer (on `tab`, or where it was). */
+function openSystemDrawer(tab?: SystemTab): void {
+  showOrReopenMainWindow();
+  mainWindow?.webContents.send('companion:system-open', tab ?? null);
+}
+
 async function updateTrayMenu(): Promise<void> {
   if (!tray) return;
 
@@ -2291,9 +2311,25 @@ async function updateTrayMenu(): Promise<void> {
     },
   };
 
+  // System drawer (Settings → Developer): what needs you and what broke,
+  // each opening the drawer on its tab. Only while that setting is on.
+  const system = desktopCompanion.system();
+  const systemSection: Electron.MenuItemConstructorOptions[] = system.enabled
+    ? [
+        { label: 'System', enabled: false },
+        ...system.items.map((item): Electron.MenuItemConstructorOptions => ({
+          label: `${item.tone === 'error' ? '🔴' : '🟠'} ${item.text}`,
+          click: () => openSystemDrawer(item.tab),
+        })),
+        { label: 'Open System Drawer', accelerator: 'CmdOrCtrl+J', registerAccelerator: false, click: () => openSystemDrawer() },
+        { type: 'separator' },
+      ]
+    : [];
+
   const template: Electron.MenuItemConstructorOptions[] = [
     { label: 'Allternit Desktop', enabled: false },
     { type: 'separator' },
+    ...systemSection,
     { label: `${statusIcon} ${status.running ? 'Running' : 'Stopped'}`, enabled: false },
     { label: `Mode: ${modeLabel}`, enabled: false },
     { type: 'separator' },
@@ -2316,6 +2352,12 @@ async function updateTrayMenu(): Promise<void> {
     },
     { label: 'Quick Chat', accelerator: QUICK_CHAT_HOTKEY, click: () => toggleMiniWindow() },
     { label: 'Toggle HUD', accelerator: HUD_HOTKEY, click: () => toggleHudWindow() },
+    // A global chord another app already owns never fires; say so here
+    // instead of leaving the shortcut silently dead (Settings shows it too).
+    ...hudHotkeyConflicts().map((accelerator) => ({
+      label: `${accelerator.replace('CommandOrControl', isMac ? 'Cmd' : 'Ctrl')} is in use by another app`,
+      enabled: false,
+    })),
     { type: 'separator' },
     { label: 'Quit', click: () => app.quit() },
   ];
@@ -2715,12 +2757,14 @@ app.whenReady().then(async () => {
 
   // Global hotkey: Cmd+Shift+A → Quick Chat floating window
   const hotkeyRegistered = globalShortcut.register(QUICK_CHAT_HOTKEY, toggleMiniWindow);
+  hudHotkeyStatus.set(QUICK_CHAT_HOTKEY, hotkeyRegistered);
   if (!hotkeyRegistered) {
     log.warn(`[Main] Failed to register global hotkey: ${QUICK_CHAT_HOTKEY}`);
   }
 
   // Global hotkey: ⌘/Ctrl+Shift+H (Hermes-style) → toggle floating HUD window
-  const hudHotkeyRegistered = globalShortcut.register(HUD_HOTKEY, toggleHudWindow);
+  const hudHotkeyRegistered = globalShortcut.register(HUD_HOTKEY, onHudHotkey);
+  hudHotkeyStatus.set(HUD_HOTKEY, hudHotkeyRegistered);
   if (hudHotkeyRegistered) {
     log.info(`[Main] Registered global HUD hotkey: ${HUD_HOTKEY}`);
   } else {
@@ -2731,10 +2775,15 @@ app.whenReady().then(async () => {
   registerTeachHotkey();
 
   // Fallback global hotkey for users who expect the earlier Alt+Shift+H binding.
-  const hudHotkeyFallbackRegistered = globalShortcut.register(HUD_HOTKEY_FALLBACK, toggleHudWindow);
+  const hudHotkeyFallbackRegistered = globalShortcut.register(HUD_HOTKEY_FALLBACK, onHudHotkey);
+  hudHotkeyStatus.set(HUD_HOTKEY_FALLBACK, hudHotkeyFallbackRegistered);
   if (hudHotkeyFallbackRegistered) {
     log.info(`[Main] Registered fallback global HUD hotkey: ${HUD_HOTKEY_FALLBACK}`);
+  } else {
+    log.warn(`[Main] Failed to register fallback global HUD hotkey: ${HUD_HOTKEY_FALLBACK} (another app may own it)`);
   }
+  // Settings and the tray show which chords are taken by another app.
+  void updateTrayMenu();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -3075,6 +3124,10 @@ handleGuarded('app:install-update', async () => {
     app.exit(0);
     return;
   }
+  // quitAndInstall closes every window BEFORE before-quit runs, so the windows
+  // that hide on close (HUD, Quick Chat) must already see a quit or they
+  // cancel the close and the install never happens.
+  (app as unknown as { isQuitting?: boolean }).isQuitting = true;
   autoUpdater.quitAndInstall();
 });
 // Preload uses sendSync at module load; handle() only answers invoke().
@@ -3272,25 +3325,161 @@ ipcMain.handle('shell:open-main-window', () => {
   mainWindow.focus();
 });
 
-// HUD mode defaults — a chrome-free floating panel anchored near the bottom
-// of the primary display, inspired by Hermes Desktop's HUD windowing profile.
-// The default shape is a wide, short bar so the composer dominates, matching
-// Hermes' 620×320 bottom-band layout.
-const HUD_WIDTH = 620;
-const HUD_HEIGHT = 220;
-const HUD_BOTTOM_MARGIN = 72;
+// HUD — a chrome-free floating panel. Geometry (default 620×220, 72 px above
+// the bottom of the work area, clamping, per-display memory) lives in
+// hud-geometry.ts; this section applies it to the window.
 let hudCompanionAgentId: string | null | undefined;
-function showHudWindow(): void {
-  if (!hudWindow || hudWindow.isDestroyed()) return;
-  hudWindow.show();
-  hudWindow.focus();
-  hudWindow.moveTop();
-  if (hudCompanionAgentId !== undefined) desktopCompanion.attachPetToHud(hudWindow.getBounds());
+/** OS/compositor profile: Wayland can't self-place, X11 can't restore ignore-mouse. */
+const hudWindowing = resolveHudWindowing(process.platform, process.env, process.argv);
+/** Global chord → whether registering it succeeded (Settings + tray show conflicts). */
+const hudHotkeyStatus = new Map<string, boolean>();
+function hudHotkeyConflicts(): string[] {
+  return [...hudHotkeyStatus].filter(([, ok]) => !ok).map(([accelerator]) => accelerator);
+}
+/** Menus, pickers and dialogs open in the HUD (renderer counts them in). Blur-hide waits for 0. */
+let hudSuppressBlur = 0;
+let hudShownAt = 0;
+/** Hotkey timestamp for the hotkey→shown timing log. */
+let hudHotkeyAt: number | null = null;
+
+function isHudAlive(win: BrowserWindow | null = hudWindow): win is BrowserWindow {
+  return win !== null && !win.isDestroyed();
+}
+
+function fromHud(event: Electron.IpcMainEvent | Electron.IpcMainInvokeEvent): boolean {
+  return isHudAlive() && event.sender === hudWindow!.webContents;
+}
+
+/** Send to the HUD renderer, after it has loaded if it is still loading. */
+function sendToHud(channel: string, ...args: unknown[]): void {
+  if (!isHudAlive()) return;
+  const wc = hudWindow!.webContents;
+  if (wc.isLoading()) wc.once('did-finish-load', () => { if (!wc.isDestroyed()) wc.send(channel, ...args); });
+  else wc.send(channel, ...args);
+}
+
+// ── Geometry: cursor display on open, memory per display, clamping ─────────
+function loadHudBoundsByDisplay(): HudBoundsByDisplay {
+  return parseHudBoundsByDisplay(store.get('hudBounds'));
+}
+
+function workAreaFor(bounds: HudRect): HudRect {
+  return screen.getDisplayMatching(bounds).workArea;
+}
+
+/** Where the HUD opens on the display under the cursor. */
+function hudBoundsAtCursor(): HudRect {
+  const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+  return hudBoundsForDisplay(display.workArea, loadHudBoundsByDisplay()[String(display.id)]);
+}
+
+const persistHudBounds = debounce(() => {
+  if (!isHudAlive()) return;
+  const bounds = hudWindow!.getBounds();
+  const display = screen.getDisplayMatching(bounds);
+  store.set('hudBounds', { ...loadHudBoundsByDisplay(), [String(display.id)]: bounds });
+}, 400);
+
+function setHudBounds(bounds: HudRect): void {
+  if (isHudAlive()) applyHudBounds(hudWindow!, bounds);
+}
+
+/** Put the HUD on the cursor's display unless it is already sitting there. */
+function placeHudOnCursorDisplay(): void {
+  if (!isHudAlive() || !hudWindowing.clientPlacement) return;
+  const cursorDisplay = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+  const current = hudWindow!.getBounds();
+  if (screen.getDisplayMatching(current).id === cursorDisplay.id) {
+    setHudBounds(clampHudBounds(current, cursorDisplay.workArea));
+    return;
+  }
+  setHudBounds(hudBoundsAtCursor());
+}
+
+/** Displays changed: pull the HUD back onto whatever screen it now overlaps most. */
+function reclampHud(): void {
+  if (!isHudAlive()) return;
+  const current = hudWindow!.getBounds();
+  const next = clampHudBounds(current, workAreaFor(current));
+  if (next.x !== current.x || next.y !== current.y || next.width !== current.width || next.height !== current.height) setHudBounds(next);
+}
+app.whenReady().then(() => {
+  screen.on('display-removed', reclampHud);
+  screen.on('display-metrics-changed', reclampHud);
+}).catch(() => {});
+
+// ── Linux cursor feed (click-through) and game-overlay watch ────────────────
+// `setIgnoreMouseEvents(…, { forward: true })` is macOS/Windows only; on
+// Linux mousemove stops while the window ignores the mouse, so main polls the
+// cursor and pushes it in (`shell:hud:cursor`, CSS px or null when outside).
+let stopHudCursorFeed: (() => void) | null = null;
+function startHudCursorFeed(): void {
+  if (process.platform !== 'linux' || stopHudCursorFeed || !isHudAlive()) return;
+  let last: string | null = null;
+  const timer = setInterval(() => {
+    if (!isHudAlive() || !hudWindow!.isVisible()) return;
+    const point = cursorPointInWindow(screen.getCursorScreenPoint(), hudWindow!.getBounds(), hudWindow!.webContents.getZoomFactor());
+    const key = point ? `${Math.round(point.x)},${Math.round(point.y)}` : 'null';
+    if (key === last) return;
+    last = key;
+    hudWindow!.webContents.send('shell:hud:cursor', point);
+  }, 33);
+  stopHudCursorFeed = () => { clearInterval(timer); stopHudCursorFeed = null; };
+}
+
+let stopHudGameOverlay: (() => void) | null = null;
+function startHudGameOverlay(): void {
+  if (stopHudGameOverlay || !isHudAlive()) return;
+  stopHudGameOverlay = startHudGameOverlayWatch({
+    enumerate: async () => {
+      const windows = await enumerateWindowsFrontToBack(process.pid, false);
+      return enumerationFailed(windows) ? null : windows;
+    },
+    displayBounds: () => (isHudAlive() ? screen.getDisplayMatching(hudWindow!.getBounds()).bounds : screen.getPrimaryDisplay().bounds),
+    selfPid: process.pid,
+    send: (state) => sendToHud('shell:hud:game-overlay', state),
+  });
+}
+function stopHudWatches(): void {
+  stopHudCursorFeed?.();
+  if (stopHudGameOverlay) {
+    stopHudGameOverlay();
+    stopHudGameOverlay = null;
+    sendToHud('shell:hud:game-overlay', INACTIVE_GAME_OVERLAY);
+  }
+}
+
+// ── Show / hide ─────────────────────────────────────────────────────────────
+function showHudWindow({ place = true }: { place?: boolean } = {}): void {
+  if (!isHudAlive()) return;
+  const wasVisible = hudWindow!.isVisible();
+  if (place && !wasVisible) placeHudOnCursorDisplay();
+  hudWindow!.show();
+  hudWindow!.focus();
+  hudWindow!.moveTop();
+  // Window focus alone leaves the page without keyboard focus on a reopened
+  // panel; focus the webContents and tell the renderer to put the caret back.
+  hudWindow!.webContents.focus();
+  hudWindow!.webContents.send('shell:hud:shown');
+  hudShownAt = Date.now();
+  if (hudHotkeyAt !== null) {
+    log.debug(`[HUD] hotkey→shown ${(performance.now() - hudHotkeyAt).toFixed(1)} ms`);
+    hudHotkeyAt = null;
+  }
+  if (hudCompanionAgentId !== undefined) desktopCompanion.attachPetToHud(hudWindow!.getBounds());
+  startHudCursorFeed();
+  startHudGameOverlay();
   pushHudState();
 }
 
 function hideHudWindow(): void {
-  if (hudWindow && !hudWindow.isDestroyed()) hudWindow.hide();
+  if (isHudAlive()) {
+    persistHudBounds.flush();
+    hudWindow!.hide();
+  }
+  hudSuppressBlur = 0;
+  hudMoveOrigin = null;
+  stopHudWatches();
   desktopCompanion.detachPetFromHud();
   pushHudState();
 }
@@ -3307,21 +3496,21 @@ function hudUrl(): string {
  * (attachPetToHud puts the pet at the HUD's top-right corner).
  */
 function openHudForCompanion(agentId: string | null, anchor?: Electron.Rectangle): void {
-  if (!anchor && hudCompanionAgentId === agentId && hudWindow && !hudWindow.isDestroyed() && hudWindow.isVisible()) {
+  if (!anchor && hudCompanionAgentId === agentId && isHudAlive() && hudWindow!.isVisible()) {
     hideHudWindow();
     return;
   }
   const changed = hudCompanionAgentId !== agentId;
   hudCompanionAgentId = agentId;
   if (changed) botCarryContext = null;
-  if (changed && hudWindow && !hudWindow.isDestroyed()) void hudWindow.loadURL(hudUrl());
+  if (changed && isHudAlive()) void hudWindow!.loadURL(hudUrl());
   if (anchor) placeHudUnderPet(anchor);
-  openHudWindow();
+  openHudWindow({ place: !anchor });
 }
 
 function placeHudUnderPet(pet: Electron.Rectangle): void {
-  const size = hudWindow && !hudWindow.isDestroyed() ? hudWindow.getBounds() : computeHudBounds();
   const area = screen.getDisplayMatching(pet).workArea;
+  const size = isHudAlive() ? hudWindow!.getBounds() : defaultHudBounds(area);
   const width = Math.min(size.width, area.width);
   const height = Math.min(size.height, area.height);
   const bounds = {
@@ -3329,7 +3518,7 @@ function placeHudUnderPet(pet: Electron.Rectangle): void {
     x: Math.round(Math.max(area.x, Math.min(pet.x + pet.width + 24 - width, area.x + area.width - width))),
     y: Math.round(Math.max(area.y, Math.min(pet.y + pet.height - 20, area.y + area.height - height))),
   };
-  if (hudWindow && !hudWindow.isDestroyed()) hudWindow.setBounds(bounds);
+  if (isHudAlive()) setHudBounds(bounds);
   else hudInitialBounds = bounds;
 }
 
@@ -3340,48 +3529,38 @@ async function sendBotCarryContext(petBounds: Electron.Rectangle): Promise<void>
   const context = await readBotCarryContext(petBounds).catch(() => null);
   if (!context) return;
   botCarryContext = context;
-  if (hudWindow && !hudWindow.isDestroyed()) hudWindow.webContents.send('shell:hud:carry-context', context);
+  if (isHudAlive()) hudWindow!.webContents.send('shell:hud:carry-context', context);
 }
 ipcMain.handle('shell:hud:carry-context', (event) => {
-  if (!hudWindow || hudWindow.isDestroyed() || event.sender !== hudWindow.webContents) return null;
+  if (!fromHud(event)) return null;
   return botCarryContext;
 });
 
-function computeHudBounds() {
-  const { width: screenW, height: screenH } = screen.getPrimaryDisplay().workAreaSize;
-  return {
-    width: Math.min(HUD_WIDTH, screenW),
-    height: Math.min(HUD_HEIGHT, screenH),
-    x: Math.round((screenW - Math.min(HUD_WIDTH, screenW)) / 2),
-    y: Math.round(Math.max(0, screenH - Math.min(HUD_HEIGHT, screenH) - HUD_BOTTOM_MARGIN)),
-  };
-}
-
 /** Broadcast the HUD's open/closed state and active session to the main window. */
 function pushHudState() {
-  const open = hudWindow !== null && !hudWindow.isDestroyed() && hudWindow.isVisible();
+  const open = isHudAlive() && hudWindow!.isVisible();
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('shell:hud:state', { open, sessionId: hudSessionId });
   }
 }
 
 let hudInitialBounds: Electron.Rectangle | null = null;
-function createHudWindow(): BrowserWindow {
-  const initial = hudInitialBounds ?? computeHudBounds();
+function createHudWindow({ show }: { show: boolean }): BrowserWindow {
+  const initial = hudInitialBounds ?? hudBoundsAtCursor();
   hudInitialBounds = null;
   const win = new BrowserWindow({
     ...initial,
-    minWidth: 380,
-    minHeight: 160,
-    maxWidth: 1600,
-    maxHeight: 1000,
+    minWidth: HUD_MIN_WIDTH,
+    minHeight: HUD_MIN_HEIGHT,
+    maxWidth: HUD_MAX_WIDTH,
+    maxHeight: HUD_MAX_HEIGHT,
     title: 'Allternit HUD',
     frame: false,
     transparent: true,
     // Keep resizable false so a transparent frameless window does not expose a
     // system-level edge-resize hot-zone (Windows grows a few px per drag when
-    // this is true).  Resizing is done by the renderer's corner handles if we
-    // add them later; dragging is handled by the renderer drag handle + IPC.
+    // this is true). Resizing is the renderer's handles over set-hud-bounds;
+    // dragging is the renderer drag handle + IPC.
     resizable: false,
     movable: true,
     minimizable: false,
@@ -3391,16 +3570,15 @@ function createHudWindow(): BrowserWindow {
     hasShadow: false,
     alwaysOnTop: true,
     // NSPanel on macOS keeps the HUD out of the cmd-tab anchor and lets it
-    // float above fullscreen apps like Hermes' HUD.
+    // float above fullscreen apps.
     type: isMac ? 'panel' : undefined,
     roundedCorners: true,
     visualEffectState: 'active',
     hiddenInMissionControl: isMac,
-    // Show immediately so the panel gains a rendering surface. When hidden,
-    // ready-to-show can be delayed (especially under Playwright), leaving the
-    // HUD inaccessible to automation. The transparent background keeps any
-    // pre-content flash invisible.
-    show: true,
+    // The pre-warmed window is created hidden; an on-demand one shows at once
+    // so it gets a rendering surface (a hidden panel can delay ready-to-show,
+    // e.g. under Playwright). The transparent background hides the pre-paint.
+    show,
     backgroundColor: '#00000000',
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
@@ -3412,9 +3590,10 @@ function createHudWindow(): BrowserWindow {
 
   installWillNavigateGuard(win.webContents);
 
-  // Ensure the panel floats above normal windows and appears on all macOS
-  // Spaces while fullscreen apps are running.
-  win.setAlwaysOnTop(true, isMac ? 'floating' : 'screen-saver');
+  // Float above normal windows on every Space, fullscreen apps included. macOS
+  // keeps the panel at 'floating'; Windows/Linux use 'pop-up-menu' rather than
+  // 'screen-saver', which also covered system UI (Start, notifications, UAC).
+  win.setAlwaysOnTop(true, isMac ? 'floating' : 'pop-up-menu');
   try {
     win.setVisibleOnAllWorkspaces?.(true, { visibleOnFullScreen: true, skipTransformProcessType: true });
   } catch {
@@ -3424,204 +3603,266 @@ function createHudWindow(): BrowserWindow {
   return win;
 }
 
-function openHudWindow(): void {
-  log.info('[HUD] openHudWindow called', { activePlatformUrl });
-  if (hudWindow && !hudWindow.isDestroyed()) {
-    log.info('[HUD] Reusing existing HUD window:', hudWindow.webContents.getURL());
-    showHudWindow();
-    return;
-  }
-
-  log.info('[HUD] Creating new floating HUD window');
-  hudWindow = createHudWindow();
-  showHudWindow();
-
-  log.info('[HUD] HUD window created', { id: hudWindow.id, bounds: hudWindow.getBounds(), visible: hudWindow.isVisible() });
-  hudWindow.webContents.setWindowOpenHandler(({ url }) => {
+/** Create the HUD window and wire its handlers. `show:false` pre-warms it. */
+function ensureHudWindow({ show }: { show: boolean }): BrowserWindow {
+  if (isHudAlive()) return hudWindow!;
+  log.info('[HUD] Creating floating HUD window', { show });
+  const win = createHudWindow({ show });
+  hudWindow = win;
+  win.webContents.setWindowOpenHandler(({ url }) => {
     void openExternalAllowlisted(url);
     return { action: 'deny' };
   });
-  hudWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription) => {
+  win.webContents.on('did-fail-load', (_event, errorCode, errorDescription) => {
     log.error('[HUD] Failed to load HUD window:', errorCode, errorDescription);
   });
-  hudWindow.webContents.on('did-finish-load', () => {
-    log.info('[HUD] HUD window finished loading', { url: hudWindow?.webContents.getURL(), title: hudWindow?.getTitle() });
+  win.webContents.on('did-finish-load', () => {
+    log.info('[HUD] HUD window finished loading', { url: win.webContents.getURL() });
   });
-  hudWindow.webContents.on('did-navigate', (_event, url) => {
-    log.info('[HUD] HUD window did-navigate:', url);
+  win.once('ready-to-show', () => {
+    if (hudWindow === win && win.isVisible()) showHudWindow({ place: false });
   });
-  hudWindow.once('ready-to-show', () => {
-    log.info('[HUD] HUD window ready-to-show');
-    if (hudWindow?.isVisible()) showHudWindow();
-  });
-  hudWindow.on('closed', () => {
-    log.info('[HUD] HUD window closed');
-    if (annotationWindow && !annotationWindow.isDestroyed()) {
-      annotationWindow.close();
-    }
-    hudWindow = null;
+  // ⌘W / Alt+F4 hide the HUD like Escape does; destroying it would lose the
+  // draft. Only a real quit closes it.
+  win.on('close', (event) => {
+    if ((app as unknown as { isQuitting?: boolean }).isQuitting) return;
+    event.preventDefault();
     hideHudWindow();
   });
-  hudWindow.on('move', () => { if (hudCompanionAgentId !== undefined && hudWindow) desktopCompanion.attachPetToHud(hudWindow.getBounds()); });
-  hudWindow.on('resize', () => { if (hudCompanionAgentId !== undefined && hudWindow) desktopCompanion.attachPetToHud(hudWindow.getBounds()); });
-  log.info('[HUD] Loading HUD window URL:', hudUrl());
-  void hudWindow.loadURL(hudUrl());
+  win.on('closed', () => {
+    log.info('[HUD] HUD window closed');
+    if (annotationWindow && !annotationWindow.isDestroyed()) annotationWindow.close();
+    persistHudBounds.cancel();
+    if (hudWindow === win) hudWindow = null;
+    hudSessionId = null;
+    hideHudWindow();
+  });
+  win.on('blur', () => {
+    if (store.get('hudHideOnBlur') !== true || hudSuppressBlur > 0 || hudMoveOrigin) return;
+    // A blur right after show is the OS settling focus, not the user leaving.
+    if (Date.now() - hudShownAt < 200) return;
+    if (annotationWindow && !annotationWindow.isDestroyed() && annotationWindow.isVisible()) return;
+    if (win.webContents.isDevToolsFocused()) return;
+    hideHudWindow();
+  });
+  const onGeometry = () => {
+    if (hudCompanionAgentId !== undefined) desktopCompanion.attachPetToHud(win.getBounds());
+    if (win.isVisible()) persistHudBounds();
+  };
+  win.on('move', onGeometry);
+  win.on('resize', onGeometry);
+  void win.loadURL(hudUrl());
+  return win;
+}
+
+function openHudWindow({ place = true }: { place?: boolean } = {}): void {
+  if (isHudAlive()) {
+    showHudWindow({ place });
+    return;
+  }
+  ensureHudWindow({ show: true });
+  showHudWindow({ place: false });
+}
+
+/** Pre-create the HUD hidden once the main window is up, so the first summon is instant. */
+let hudPrewarmTimer: ReturnType<typeof setTimeout> | null = null;
+function prewarmHudWindowSoon(): void {
+  if (HEADLESS || hudPrewarmTimer || isHudAlive()) return;
+  hudPrewarmTimer = setTimeout(() => {
+    if (isHudAlive() || (app as unknown as { isQuitting?: boolean }).isQuitting) return;
+    try {
+      ensureHudWindow({ show: false });
+    } catch (error) {
+      log.warn('[HUD] Pre-warm failed; the HUD will be created on first open:', error);
+    }
+  }, 1500);
 }
 
 function toggleHudWindow(): void {
-  log.info('[HUD] toggleHudWindow called');
-  if (hudWindow && !hudWindow.isDestroyed()) {
-    if (hudWindow.isVisible() && hudWindow.isFocused()) {
-      log.info('[HUD] HUD is visible and focused — hiding');
+  if (isHudAlive()) {
+    if (hudWindow!.isVisible() && hudWindow!.isFocused()) {
       hideHudWindow();
       return;
     }
-    log.info('[HUD] HUD exists — showing and focusing');
-    showHudWindow();
-    return;
   }
   openHudWindow();
 }
 
-ipcMain.handle('shell:open-hud', () => { hudCompanionAgentId = undefined; openHudWindow(); });
+/** Global chord handler: synchronous show+focus, timed for the debug log. */
+function onHudHotkey(): void {
+  hudHotkeyAt = performance.now();
+  toggleHudWindow();
+  if (!isHudAlive() || !hudWindow!.isVisible()) hudHotkeyAt = null;
+}
+
+/**
+ * Plain open (not the pet's companion HUD). If the window still has a
+ * `?companion=` URL loaded, reload the plain HUD. `sessionId` retargets the
+ * HUD to that chat (`shell:hud:goto`).
+ */
+ipcMain.handle('shell:open-hud', (_event, options?: { sessionId?: unknown }) => {
+  hudCompanionAgentId = undefined;
+  if (isHudAlive() && new URL(hudWindow!.webContents.getURL() || 'about:blank').searchParams.has('companion')) {
+    botCarryContext = null;
+    void hudWindow!.loadURL(hudUrl());
+  }
+  openHudWindow();
+  const sessionId = typeof options?.sessionId === 'string' && options.sessionId ? options.sessionId : null;
+  if (sessionId) sendToHud('shell:hud:goto', sessionId);
+});
 ipcMain.handle('shell:close-hud', () => {
-  // Hide, not close: the HUD is a persistent panel and closing it would tear
-  // down its webContents and lose composer state.
-  if (hudWindow && !hudWindow.isDestroyed()) {
-    hideHudWindow();
-  }
+  // Hide, not close: closing would tear down its webContents and lose composer state.
+  if (isHudAlive()) hideHudWindow();
 });
-ipcMain.handle('shell:toggle-hud', toggleHudWindow);
-ipcMain.handle('shell:show-hud', () => {
-  if (hudWindow && !hudWindow.isDestroyed()) {
-    showHudWindow();
-  } else {
-    openHudWindow();
-  }
+/** "Open in app": hide the HUD (which hands its session to the main window) and bring the app forward. */
+ipcMain.handle('shell:hud:handoff', () => {
+  if (isHudAlive() && hudWindow!.isVisible()) hideHudWindow();
+  showOrReopenMainWindow();
 });
+ipcMain.handle('shell:toggle-hud', () => toggleHudWindow());
+ipcMain.handle('shell:show-hud', () => openHudWindow());
+
 let hudMoveOrigin: { cursorX: number; cursorY: number; x: number; y: number; width: number; height: number } | null = null;
-ipcMain.handle('shell:hud:begin-move', () => {
-  if (!hudWindow || hudWindow.isDestroyed()) return;
+ipcMain.handle('shell:hud:begin-move', (event) => {
+  if (!fromHud(event)) return;
   const cursor = screen.getCursorScreenPoint();
-  const bounds = hudWindow.getBounds();
-  hudMoveOrigin = { cursorX: cursor.x, cursorY: cursor.y, ...bounds };
-  hudWindow.setIgnoreMouseEvents(false);
+  hudMoveOrigin = { cursorX: cursor.x, cursorY: cursor.y, ...hudWindow!.getBounds() };
+  hudWindow!.setIgnoreMouseEvents(false);
 });
-ipcMain.handle('shell:hud:end-move', () => { hudMoveOrigin = null; });
-ipcMain.handle('shell:move-hud', (_event, delta: { dx?: number; dy?: number; x?: number; y?: number; width?: number; height?: number }) => {
+ipcMain.handle('shell:hud:end-move', (event) => {
+  if (!fromHud(event)) return;
+  hudMoveOrigin = null;
+  // Mid-drag the bar may hang off an edge; settle it fully on one screen.
+  const current = hudWindow!.getBounds();
+  setHudBounds(clampHudBounds(current, workAreaFor(current)));
+});
+ipcMain.handle('shell:move-hud', (event, delta: { dx?: number; dy?: number; x?: number; y?: number; width?: number; height?: number }) => {
   // Two renderer call sites send different shapes: HudApp's drag handler
   // sends {dx, dy}; composer-drag sends {x, y, width, height} deltas. Accept
   // both, and only apply a size change when width/height are provided.
-  if (!hudWindow || hudWindow.isDestroyed()) return;
+  if (!fromHud(event)) return;
   const cursor = hudMoveOrigin ? screen.getCursorScreenPoint() : null;
   const dx = cursor && hudMoveOrigin ? cursor.x - hudMoveOrigin.cursorX : Number(delta?.dx ?? delta?.x ?? 0);
   const dy = cursor && hudMoveOrigin ? cursor.y - hudMoveOrigin.cursorY : Number(delta?.dy ?? delta?.y ?? 0);
-  const [currentWidth, currentHeight] = hudWindow.getSize();
+  const [currentWidth, currentHeight] = hudWindow!.getSize();
   const width = delta?.width !== undefined ? Number(delta.width) : currentWidth;
   const height = delta?.height !== undefined ? Number(delta.height) : currentHeight;
   if (![dx, dy, width, height].every(Number.isFinite)) return;
-  const [x, y] = hudMoveOrigin ? [hudMoveOrigin.x, hudMoveOrigin.y] : hudWindow.getPosition();
-  // setBounds (not setPosition) keeps a transparent frameless window from
-  // drifting on Windows per Electron frameless-transparent quirks.
-  const wasResizable = hudWindow.isResizable();
-  if (!wasResizable) hudWindow.setResizable(true);
-  try {
-    hudWindow.setBounds({
-      x: Math.round(x + dx),
-      y: Math.round(y + dy),
-      width: Math.max(380, Math.round(width)),
-      height: Math.max(160, Math.round(height)),
-    });
-  } finally {
-    if (!wasResizable && !hudWindow.isDestroyed()) hudWindow.setResizable(false);
-  }
+  const [x, y] = hudMoveOrigin ? [hudMoveOrigin.x, hudMoveOrigin.y] : hudWindow!.getPosition();
+  const target = { x: Math.round(x + dx), y: Math.round(y + dy), width: Math.round(width), height: Math.round(height) };
+  // During a drag stay lenient (cross displays, hang off an edge) against the
+  // display under the cursor; end-move settles it. A one-shot move is strict.
+  setHudBounds(cursor
+    ? keepHudReachable(target, screen.getDisplayNearestPoint(cursor).workArea)
+    : clampHudBounds(target, workAreaFor(target)));
 });
-ipcMain.handle('shell:resize-hud', (_event, bounds: { height: number }) => {
-  if (!hudWindow || hudWindow.isDestroyed()) return;
-  const requestedHeight = Math.max(160, Math.round(Number(bounds?.height ?? HUD_HEIGHT)));
-  const [x, y] = hudWindow.getPosition();
-  const [width] = hudWindow.getSize();
-  const currentBottom = y + hudWindow.getSize()[1];
-  // Keep the window's bottom edge anchored so it grows/collapses upward,
-  // mirroring the Hermes HUD expansion behavior.
-  const newY = Math.max(0, Math.round(currentBottom - requestedHeight));
-  const newHeight = Math.min(1000, Math.max(160, Math.round(currentBottom - newY)));
-  const wasResizable = hudWindow.isResizable();
-  if (!wasResizable) hudWindow.setResizable(true);
-  try {
-    hudWindow.setBounds({ x, y: newY, width, height: newHeight });
-  } finally {
-    if (!wasResizable && !hudWindow.isDestroyed()) hudWindow.setResizable(false);
-  }
+ipcMain.handle('shell:resize-hud', (event, bounds: { height: number }) => {
+  if (!fromHud(event)) return;
+  const current = hudWindow!.getBounds();
+  const requested = Number(bounds?.height);
+  if (!Number.isFinite(requested)) return;
+  // Bottom edge stays put so the bar grows/collapses upward, stopping at the
+  // top of its own display's work area (not y=0 of the primary).
+  setHudBounds(resizeHudFromBottom(current, requested, workAreaFor(current)));
+});
+ipcMain.handle('shell:set-hud-bounds', (event, bounds: { x?: number; y?: number; width?: number; height?: number }) => {
+  if (!fromHud(event)) return;
+  const next = mergeHudBounds(hudWindow!.getBounds(), bounds);
+  setHudBounds(clampHudBounds(next, workAreaFor(next)));
 });
 
-ipcMain.handle('shell:set-hud-bounds', (_event, bounds: { x?: number; y?: number; width?: number; height?: number }) => {
-  if (!hudWindow || hudWindow.isDestroyed()) return;
-  const current = hudWindow.getBounds();
-  const next = {
-    x: Number.isFinite(bounds?.x) ? Math.round(bounds.x!) : current.x,
-    y: Number.isFinite(bounds?.y) ? Math.round(bounds.y!) : current.y,
-    width: Number.isFinite(bounds?.width) ? Math.max(380, Math.round(bounds.width!)) : current.width,
-    height: Number.isFinite(bounds?.height) ? Math.max(160, Math.min(1000, Math.round(bounds.height!))) : current.height,
-  };
-  const wasResizable = hudWindow.isResizable();
-  if (!wasResizable) hudWindow.setResizable(true);
-  try {
-    hudWindow.setBounds(next);
-  } finally {
-    if (!wasResizable && !hudWindow.isDestroyed()) hudWindow.setResizable(false);
-  }
-});
-
-ipcMain.handle('shell:hud:frost', (_event, showing: boolean) => {
-  if (!hudWindow || hudWindow.isDestroyed()) return { ok: true };
-  try {
-    if (process.platform === 'darwin') {
-      hudWindow.setVibrancy(showing ? 'hud' : null);
-    }
-    // Windows/Linux: no native vibrancy equivalent exposed here; the CSS scrim
-    // in the renderer still provides the visual treatment.
-    return { ok: true };
-  } catch (error) {
-    log.warn('[HUD] Failed to set frost:', error);
-    return { ok: false };
-  }
-});
-
+/** Reset to the default size and spot on the display under the cursor. */
 ipcMain.handle('shell:hud:reset-layout', () => {
-  if (!hudWindow || hudWindow.isDestroyed()) return { ok: true };
-  const wasResizable = hudWindow.isResizable();
-  if (!wasResizable) hudWindow.setResizable(true);
-  try {
-    hudWindow.setBounds(computeHudBounds());
-  } finally {
-    if (!wasResizable && !hudWindow.isDestroyed()) hudWindow.setResizable(false);
-  }
+  if (!isHudAlive()) return { ok: true };
+  const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+  const { [String(display.id)]: _dropped, ...rest } = loadHudBoundsByDisplay();
+  store.set('hudBounds', rest);
+  setHudBounds(defaultHudBounds(display.workArea));
   return { ok: true };
 });
 
-ipcMain.on('shell:hud:ignore-mouse', (_event, ignore: boolean) => {
-  if (!hudWindow || hudWindow.isDestroyed()) return;
+ipcMain.on('shell:hud:ignore-mouse', (event, ignore: boolean) => {
+  if (!fromHud(event)) return;
   try {
-    hudWindow.setIgnoreMouseEvents(Boolean(ignore), { forward: true });
+    // X11 cannot reliably restore from ignore-mouse, so the HUD stays solid there.
+    hudWindow!.setIgnoreMouseEvents(Boolean(ignore) && hudWindowing.ignoreMouse, { forward: true });
   } catch (error) {
     log.warn('[HUD] Failed to set ignore mouse events:', error);
   }
 });
 
-ipcMain.on('shell:hud:workspace-transfer', (_event, transferring: boolean) => {
-  if (!hudWindow || hudWindow.isDestroyed()) return;
+ipcMain.on('shell:hud:workspace-transfer', (event, transferring: boolean) => {
+  if (!fromHud(event)) return;
   try {
-    hudWindow.setVisibleOnAllWorkspaces?.(Boolean(transferring), { visibleOnFullScreen: true, skipTransformProcessType: true });
+    // The HUD lives on every workspace from creation. A drag may raise it
+    // there again (transferring) but the end of the drag must restore that
+    // baseline, not turn it off — turning it off stranded the HUD on one Space.
+    void transferring;
+    hudWindow!.setVisibleOnAllWorkspaces?.(true, { visibleOnFullScreen: true, skipTransformProcessType: true });
   } catch (error) {
     log.warn('[HUD] Failed to set workspace transfer:', error);
   }
 });
 
-ipcMain.on('shell:hud:session', (_event, sessionId: string | null) => {
+ipcMain.on('shell:hud:session', (event, sessionId: string | null) => {
+  if (!fromHud(event)) return;
   hudSessionId = typeof sessionId === 'string' ? sessionId : null;
   pushHudState();
 });
+
+/** Renderer counts menus/pickers/dialogs in and out so hide-on-blur leaves them alone. */
+ipcMain.on('shell:hud:suppress-blur', (event, on: unknown) => {
+  if (!fromHud(event)) return;
+  hudSuppressBlur = Math.max(0, hudSuppressBlur + (on === true ? 1 : -1));
+});
+
+interface HudPrefs {
+  hideOnBlur: boolean;
+  hotkeys: Array<{ accelerator: string; registered: boolean }>;
+}
+function hudPrefs(): HudPrefs {
+  return {
+    hideOnBlur: store.get('hudHideOnBlur') === true,
+    hotkeys: [...hudHotkeyStatus].map(([accelerator, registered]) => ({ accelerator, registered })),
+  };
+}
+ipcMain.handle('shell:hud:get-prefs', () => hudPrefs());
+ipcMain.handle('shell:hud:set-prefs', (_event, prefs: { hideOnBlur?: unknown }) => {
+  if (typeof prefs?.hideOnBlur === 'boolean') store.set('hudHideOnBlur', prefs.hideOnBlur);
+  return hudPrefs();
+});
+
+/**
+ * The HUD's screenshot button uses getDisplayMedia, which Electron rejects
+ * unless main answers the request. Grant the HUD the screen it sits on; deny
+ * every other frame (unchanged behavior). Failures answer with no source, so
+ * the renderer's promise rejects and it can show the error instead of
+ * silently doing nothing.
+ */
+app.whenReady().then(() => {
+  session.defaultSession.setDisplayMediaRequestHandler((request, callback) => {
+    const requester = request.frame ? webContents.fromFrame(request.frame) : undefined;
+    if (!isHudAlive() || !requester || requester !== hudWindow!.webContents || !request.videoRequested) {
+      callback({});
+      return;
+    }
+    const displayId = String(screen.getDisplayMatching(hudWindow!.getBounds()).id);
+    desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 0, height: 0 } })
+      .then((sources) => {
+        const source = sources.find((s) => s.display_id === displayId) ?? sources[0];
+        if (!source) {
+          log.warn('[HUD] Screenshot: no screen source (Screen Recording permission?)');
+          callback({});
+          return;
+        }
+        callback({ video: source });
+      })
+      .catch((error) => {
+        log.warn('[HUD] Screenshot: capture source lookup failed:', error);
+        callback({});
+      });
+  });
+}).catch(() => {});
 
 ipcMain.on('device:info', (event) => {
   // Sync IPC must always set returnValue or the renderer blocks.
@@ -3681,13 +3922,11 @@ handleGuarded('links:set-open-in-app', (_event, enabled: unknown) => {
   store.set('openLinksInApp', openLinksInApp);
 });
 
+// The slice of the HUD windowing profile the renderer may see. nativeDrag is
+// true on Wayland: the compositor ignores setBounds positions there, so the
+// renderer declares an app-region drag strip and the compositor moves it.
 ipcMain.on('shell:hud:windowing', (event) => {
-  event.returnValue = {
-    clientPlacement: true,
-    controlDrag: false,
-    nativeDrag: false,
-    workspaceTransfer: false,
-  };
+  event.returnValue = hudWindowingView(hudWindowing);
 });
 
 /** Broadcast the annotation overlay's open/closed state to the HUD window. */

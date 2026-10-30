@@ -1707,6 +1707,19 @@ fn subscription_provider(id: &str) -> Option<(&'static str, SubscriptionProvider
     }
 }
 
+/// What a chat's vendor-connect card needs for `id` (catalog id, alias or
+/// binary, or a key-only provider): (canonical id, label, `signIn`).
+pub(crate) fn connect_card_meta(id: &str) -> Option<(String, String, String)> {
+    let id = id.trim();
+    if let Some(tool) = crate::cli_catalog::find(id).or_else(|| crate::cli_catalog::tools().iter().find(|t| t.bin == id)) {
+        return Some((tool.id.clone(), tool.name.clone(), tool.sign_in.clone()));
+    }
+    subscription_provider(id).map(|(_, p)| {
+        let sign_in = if p.api_key_only { "api_key" } else { "subscription" };
+        (p.id.to_string(), p.label.to_string(), sign_in.to_string())
+    })
+}
+
 fn home_file(parts: &[&str]) -> std::path::PathBuf {
     let mut p = std::path::PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".to_string()));
     for part in parts {
@@ -1854,18 +1867,29 @@ struct ConnectBody {
     remote: bool,
 }
 
-/// The sign-in argv for a provider: device-code variants when the user is
-/// remote and the CLI has one (Codex, Grok); Claude's own flow already works
-/// remotely (link, then paste the code the page shows).
-fn login_argv(provider: &str, default: &'static [String], remote: bool) -> (Vec<&'static str>, Option<String>) {
-    match (provider, remote) {
-        ("codex-cli", true) => (
-            vec!["login", "--device-auth"],
-            Some("If OpenAI rejects the code, turn on \"device code authorization for Codex\" in ChatGPT Settings → Security, then try again.".to_string()),
-        ),
-        ("grok", true) => (vec!["login", "--device-auth"], None),
-        _ => (default.iter().map(String::as_str).collect(), None),
+/// How to run a provider's sign-in: argv, a hint shown beside it, and env.
+struct LoginCmd {
+    argv: Vec<&'static str>,
+    hint: Option<String>,
+    env: Vec<(&'static str, &'static std::ffi::OsStr)>,
+}
+
+/// The sign-in for a provider: the catalog's headless variant when the user is
+/// remote and the CLI has one (`loginRemote` + `loginRemoteEnv`); Claude's own
+/// flow already works remotely (link, then paste the code the page shows).
+fn login_argv(provider: &str, default: &'static [String], remote: bool) -> LoginCmd {
+    // A remote computer has no browser next to the CLI: use the catalog's
+    // headless / device-code sign-in (`loginRemote`) when the tool has one.
+    if remote {
+        if let Some(tool) = crate::cli_catalog::find(provider).filter(|t| !t.login_remote.is_empty()) {
+            return LoginCmd {
+                argv: tool.login_remote.iter().map(String::as_str).collect(),
+                hint: tool.login_remote_hint.clone(),
+                env: tool.login_remote_env.iter().map(|(k, v)| (k.as_str(), std::ffi::OsStr::new(v.as_str()))).collect(),
+            };
+        }
     }
+    LoginCmd { argv: default.iter().map(String::as_str).collect(), hint: None, env: Vec::new() }
 }
 
 async fn connect_provider(
@@ -2010,8 +2034,8 @@ async fn connect_provider(
 
     // Keep the CLI's own sign-in running with its output captured, so the
     // link / device code / paste prompt reach the UI on any device.
-    let (argv, hint) = login_argv(meta.id, meta.login, remote);
-    match crate::cli_tools::start_login(meta.id, &binary_path, &argv, hint).await {
+    let login = login_argv(meta.id, meta.login, remote);
+    match crate::cli_tools::start_login_with_env(meta.id, &binary_path, &login.argv, login.hint, &login.env).await {
         Ok(login) => Json(json!({
             "status": "started",
             "provider": id,
@@ -2364,9 +2388,11 @@ async fn add_cli_account(
         }))
         .into_response();
     }
-    let (argv, hint) = login_argv(meta.id, meta.login, body.remote);
+    let mut login = login_argv(meta.id, meta.login, body.remote);
     let key = format!("{}:{}", meta.id, acc_id);
-    match crate::cli_tools::start_login_with_env(&key, &binary_path, &argv, hint, &[(env_name, home.as_path())]).await {
+    let mut env: Vec<(&str, &std::ffi::OsStr)> = std::mem::take(&mut login.env);
+    env.push((env_name, home.as_os_str()));
+    match crate::cli_tools::start_login_with_env(&key, &binary_path, &login.argv, login.hint, &env).await {
         Ok(login) => Json(json!({
             "status": "started",
             "provider": id,
@@ -2773,8 +2799,22 @@ mod auth_status_kind_tests {
     #[test]
     fn remote_sign_in_prefers_device_codes() {
         let (_, codex) = subscription_provider("codex-cli").unwrap();
-        assert_eq!(login_argv("codex-cli", codex.login, true).0, vec!["login", "--device-auth"]);
-        assert_eq!(login_argv("codex-cli", codex.login, false).0, vec!["login"]);
+        assert_eq!(login_argv("codex-cli", codex.login, true).argv, vec!["login", "--device-auth"]);
+        assert_eq!(login_argv("codex-cli", codex.login, false).argv, vec!["login"]);
+        assert!(login_argv("codex-cli", codex.login, true).hint.is_some(), "codex keeps its device-code hint");
+        let (_, grok) = subscription_provider("grok").unwrap();
+        assert_eq!(login_argv("grok", grok.login, true).argv, vec!["login", "--device-auth"]);
+        let (_, copilot) = subscription_provider("copilot").unwrap();
+        assert_eq!(login_argv("copilot", copilot.login, true).argv, vec!["login", "--device-code"]);
+        // Env-driven headless sign-in applies only when remote.
+        let (_, qoder) = subscription_provider("qodercli").unwrap();
+        assert_eq!(login_argv("qodercli", qoder.login, true).env, vec![("NO_BROWSER", std::ffi::OsStr::new("1"))]);
+        assert!(login_argv("qodercli", qoder.login, false).env.is_empty());
+        // Cline and Kilo sign in by device code everywhere, so `login` is enough.
+        let (_, cline) = subscription_provider("cline").unwrap();
+        assert_eq!(login_argv("cline", cline.login, true).argv, vec!["auth", "cline"]);
+        let (_, kilo) = subscription_provider("kilo").unwrap();
+        assert_eq!(login_argv("kilo", kilo.login, true).argv, vec!["auth", "login", "-p", "kilo"]);
     }
 
     #[test]

@@ -79,6 +79,7 @@ import { isMessageAgentSession, MessageAgentTool } from "@/runtime/tools/builtin
 import { SuggestTaskTool } from "@/runtime/tools/builtins/suggest-task"
 import { GrantTaskPermissionTool } from "@/runtime/tools/builtins/grant-task-permission"
 import { THREAD_TOOL_IDS } from "@/runtime/tools/builtins/thread-tools"
+import { WORKER_BOT_TOOL_IDS } from "@/runtime/tools/builtins/worker-bot-tools"
 import { isAppBotSession } from "@/runtime/bots/app-bot-routing"
 import { SessionHandoff } from "@/runtime/session/handoff"
 import { SessionPause } from "@/runtime/session/pause"
@@ -1926,6 +1927,12 @@ const message = await createUserMessage(input)
     if (THREAD_TOOL_IDS.some((id) => id in tools)) {
       const allowed = await isAppBotSession(input.session.id).catch(() => false)
       if (!allowed) for (const id of THREAD_TOOL_IDS) delete tools[id]
+    }
+
+    // bot_create / vendor_connect: only an app bot's chat has an owner to act for.
+    if (WORKER_BOT_TOOL_IDS.some((id) => id in tools)) {
+      const allowed = await isAppBotSession(input.session.id).catch(() => false)
+      if (!allowed) for (const id of WORKER_BOT_TOOL_IDS) delete tools[id]
     }
 
     return tools

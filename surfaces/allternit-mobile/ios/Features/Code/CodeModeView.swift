@@ -91,7 +91,7 @@ struct CodeModeView: View {
     /// off there until switched on). The shell keeps its plain terminal.
     private var backdropScope: BackdropScope { .code(folder?.directory) }
     private var codeBackdrop: String { backdrops.variant(for: .code, scope: backdropScope) }
-    private var showsBackdrop: Bool { codeBackdrop != "plain" && !shellOpen }
+    private var showsBackdrop: Bool { codeBackdrop != "plain" && !shellOpen && !terminalLook }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -139,6 +139,7 @@ struct CodeModeView: View {
                 (darkChrome ? TerminalPalette.background : Color("BgPrimary")).ignoresSafeArea()
             }
         }
+        .backdropTouches(showsBackdrop)
         .environment(\.backdropUnderneath, showsBackdrop)
         .publishesRailBackdrop(showsBackdrop ? RailBackdropStore.Look(colors: [], variant: codeBackdrop, mode: .code) : nil)
         .sheet(isPresented: $isBackgroundPresented) {

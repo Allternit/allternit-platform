@@ -276,6 +276,7 @@ struct GroupChatView: View {
             .background {
                 StageBackdropView(variant: backdropVariant, colors: memberColors(group)).ignoresSafeArea()
             }
+            .backdropTouches(backdropVariant != "plain")
             .environment(\.backdropUnderneath, backdropVariant != "plain")
             .publishesRailBackdrop(backdropVariant == "plain" ? nil : RailBackdropStore.Look(
                 colors: memberColors(group).compactMap { $0 }, variant: backdropVariant, mode: .bots))
