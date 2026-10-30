@@ -29,7 +29,11 @@
 		<string>com.apple.broadcast-services-upload</string>
 		<key>NSExtensionPrincipalClass</key>
 		<string>$(PRODUCT_MODULE_NAME).SampleHandler</string>
-		<!-- Must sit in NSExtensionAttributes: at the top of NSExtension iOS
+		<!-- App Store upload validation reads it here; iOS reads it from
+		     NSExtensionAttributes below (without that copy only Photos shows). -->
+		<key>RPBroadcastProcessMode</key>
+		<string>RPBroadcastProcessModeSampleBuffer</string>
+		<!-- Must also sit in NSExtensionAttributes: at the top of NSExtension iOS
 		     doesn't list the extension as a broadcast target (only Photos shows). -->
 		<key>NSExtensionAttributes</key>
 		<dict>
