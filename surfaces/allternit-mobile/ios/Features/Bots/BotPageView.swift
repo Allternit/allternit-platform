@@ -243,7 +243,7 @@ struct BotTasksView: View {
                     .padding(.vertical, 24)
             } else {
                 OverviewCards(items: cards, layout: layout,
-                              accent: colors.hex(for: bot).map { Color(hex: $0) } ?? Color.accentChat) { _ in
+                              accent: colors.hex(for: bot).map { Color(hex: $0) } ?? Theme.accentChat) { _ in
                     Image(systemName: "checklist")
                         .font(.system(size: 13))
                         .foregroundColor(Color("TextSecondary"))

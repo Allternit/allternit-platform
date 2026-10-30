@@ -103,7 +103,7 @@ struct OverviewCards<Leading: View>: View {
     let items: [OverviewCardItem]
     let layout: OverviewLayout
     /// The working accent (a bot's colour; coral otherwise).
-    var accent: Color = Color.accentChat
+    var accent: Color = Theme.accentChat
     /// The face or icon before a row's / card's title.
     @ViewBuilder var leading: (OverviewCardItem) -> Leading
     let onOpen: (OverviewCardItem) -> Void

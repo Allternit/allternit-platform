@@ -76,7 +76,7 @@ struct BotThreadsView: View {
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 24)
             } else {
-                let accent = colors.hex(for: botId.flatMap { store.bot($0) }).map { Color(hex: $0) } ?? Color.accentChat
+                let accent = colors.hex(for: botId.flatMap { store.bot($0) }).map { Color(hex: $0) } ?? Theme.accentChat
                 OverviewCards(items: cards, layout: layout, accent: accent) { item in
                     if let thread = store.threads.first(where: { $0.id == item.id }), let bot = store.bot(thread.botId), botId == nil {
                         BotAvatarView(bot: bot, size: 18)
