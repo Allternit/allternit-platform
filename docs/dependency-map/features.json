@@ -2869,6 +2869,27 @@
       ]
     },
     {
+      "id": "feature:office-view",
+      "label": "Office view (bots at desks, replay, live link)",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "A rail view (Desktop, ai.allternit.com phone layout, m.allternit.com PWA) that frames 3dfacility.allternit.com: 2D by default with 2.5D and 3D, select a bot to see its chat, apps, routines and computer in a side panel, desk screens, a Needs you line, meetings, real hand-offs walking, hire from a FREE desk, replay of past events and a share picture. Runtime routes GET /api/v1/floor/state, GET /api/v1/floor/events and GET/PUT /api/v1/floor/share (allternit-api floor_routes.rs, migration V283). The optional live link pushes only a public projection (id, name, role, colour, avatar sheet, status, time) to cloud-api (POST /api/v1/runtime/floor-share, relay-signed; table floor_shares, migration 115), served without auth at GET /api/v2/public/floors/:token for the facility's read-only public page. Task text, questions, titles and screens never leave the runtime.",
+      "touches": [
+        "allternit/cmd/allternit-api/src/floor_routes.rs",
+        "allternit/cmd/allternit-cloud-api/src/routes/floor_shares.rs",
+        "allternit/surfaces/docs/guides/office-view.mdx"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-30",
+          "note": "Eoj: build facility ideas 1-9; 2D leads with a 3D switch; the public map comes after real floors and share links and is not in this build."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/office-view.mdx"
+      ]
+    },
+    {
       "id": "feature:waiting-games",
       "label": "Waiting games (play while a bot works)",
       "product": "product:ai-allternit",

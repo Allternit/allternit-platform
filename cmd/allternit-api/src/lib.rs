@@ -67,6 +67,7 @@ pub mod bot_desktop_admin;
 pub mod bot_desktop_stream;
 pub mod bot_event_routes;
 pub mod events_feed;
+pub mod floor_routes;
 pub mod netops;
 pub mod routine_local_scheduler;
 pub mod agent_gateway_routes;
