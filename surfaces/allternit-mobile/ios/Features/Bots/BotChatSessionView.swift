@@ -9,8 +9,11 @@ import UIKit
 ///
 /// The phone thread header (ThreadHeader.tsx, phone): Back, the bot chip in
 /// the middle (avatar with its status dot, name, what it is doing; a tap
-/// opens the bot page) and ⋯ with the rest. Under it, the thread's deck
-/// (BotThreadTopDeck): the open thread · Threads · Tasks · Bot.
+/// opens the bot page) and ⋯ with the rest. The chat opens on the bot's live
+/// stage (BotChatStage); a swipe up or a send flies it into the chip's
+/// avatar. The composer is the thread composer: the thread's tabs in the
+/// tray above the card (BotThreadTopDeck: the open thread · Threads · Tasks
+/// · Bot) and the compact deck (Agent mode · Plugins · Artifacts) under it.
 struct BotChatSessionView: View {
     let bot: AgentRecord
     let explicitSessionId: String?
@@ -28,7 +31,10 @@ struct BotChatSessionView: View {
     @State private var deckTab: DeckTab = .thread
     @State private var actionError: String? = nil
     @State private var isActing = false
+    /// The bot has flown off its stage into the thread top.
+    @State private var docked = false
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var isMainChat: Bool { explicitSessionId == nil }
 
@@ -37,40 +43,70 @@ struct BotChatSessionView: View {
         return store.threads.first { $0.currentSessionId == sessionId }
     }
 
+    /// The bot stands on its stage (the thread tab, not yet docked).
+    private var onStage: Bool { deckTab == .thread && !docked && sessionId != nil }
+
+    private var placeholder: String {
+        switch deckTab {
+        case .threads: return "Start a new thread…"
+        case .tasks: return "Ask for a task in this thread…"
+        default: return thread != nil && !isMainChat ? "Steer this thread…" : "Message \(bot.botDisplayName)…"
+        }
+    }
+
     var body: some View {
-        VStack(spacing: 0) {
-            deck
-            content
-        }
-        // The bot's colour: a wash at the top of its chat (and its bar), your
-        // bubbles, and the drawer while this chat is open.
-        .background { BotWashedBackground().ignoresSafeArea() }
-        .environment(\.botTint, colors.hex(for: bot))
-        .claimsBotTint(bot.id)
-        // The phone thread header (ThreadHeader, phone): round Back · bot
-        // chip · ⋯, drawn by the view instead of the system bar.
-        .toolbar(.hidden, for: .navigationBar)
-        .safeAreaInset(edge: .top, spacing: 0) { threadTop }
-        .background(KeepsSwipeBack())
-        .task {
-            status.subscribe(botId: bot.id)
-            desktop.fetchStatusIfNeeded(botId: bot.id)
-            await resolve()
-        }
-        .task { await InappCallStore.shared.loadCallableContacts(botId: bot.id) }
-        .onDisappear { status.unsubscribe(botId: bot.id) }
-        .onChange(of: viewModel.transientError) { _, error in
-            // A main-chat pin whose session is gone: drop it so the next
-            // open recovers or recreates (web resolveCanonicalChatSession).
-            if isMainChat, let error, error.hasPrefix("Couldn't load the conversation") {
-                store.forgetMainChat(for: bot.id)
+        content
+            // The bot's colour: a wash at the top of its chat (and its bar), your
+            // bubbles, and the drawer while this chat is open.
+            .background { BotWashedBackground().ignoresSafeArea() }
+            .environment(\.botTint, colors.hex(for: bot))
+            .claimsBotTint(bot.id)
+            // The phone thread header (ThreadHeader, phone): round Back · bot
+            // chip · ⋯, drawn by the view instead of the system bar.
+            .toolbar(.hidden, for: .navigationBar)
+            .safeAreaInset(edge: .top, spacing: 0) { threadTop }
+            .background(KeepsSwipeBack())
+            .task {
+                status.subscribe(botId: bot.id)
+                desktop.fetchStatusIfNeeded(botId: bot.id)
+                await resolve()
             }
+            .task { await InappCallStore.shared.loadCallableContacts(botId: bot.id) }
+            .onDisappear { status.unsubscribe(botId: bot.id) }
+            .onChange(of: viewModel.transientError) { _, error in
+                // A main-chat pin whose session is gone: drop it so the next
+                // open recovers or recreates (web resolveCanonicalChatSession).
+                if isMainChat, let error, error.hasPrefix("Couldn't load the conversation") {
+                    store.forgetMainChat(for: bot.id)
+                }
+            }
+            // Sending (a prompt, a suggestion, a hand-off) flies the bot up.
+            .onChange(of: viewModel.isStreaming) { _, streaming in
+                if streaming { dock() }
+            }
+            .onChange(of: sessionId) { _, _ in docked = false }
+            .alert("Something went wrong", isPresented: Binding(
+                get: { actionError != nil }, set: { if !$0 { actionError = nil } }
+            )) {
+                Button("OK", role: .cancel) { actionError = nil }
+            } message: { Text(actionError ?? "") }
+    }
+
+    /// The flight between the stage and the thread top (FLIGHT: 0.44s).
+    private var flight: Animation? {
+        reduceMotion ? nil : .timingCurve(0.65, 0, 0.35, 1, duration: 0.44)
+    }
+
+    private func dock() {
+        guard !docked else { return }
+        withAnimation(flight) { docked = true }
+    }
+
+    private func undock() {
+        withAnimation(flight) {
+            deckTab = .thread
+            docked = false
         }
-        .alert("Something went wrong", isPresented: Binding(
-            get: { actionError != nil }, set: { if !$0 { actionError = nil } }
-        )) {
-            Button("OK", role: .cancel) { actionError = nil }
-        } message: { Text(actionError ?? "") }
     }
 
     // MARK: - Content
@@ -81,25 +117,70 @@ struct BotChatSessionView: View {
         case .thread:
             chat
         case .threads:
-            ScrollView {
-                BotThreadsPanel(botId: bot.id, greeting: nil) { open($0) }
-                    .padding(.vertical, 4)
+            VStack(spacing: 0) {
+                ScrollView {
+                    BotThreadsPanel(botId: bot.id, greeting: nil) { open($0) }
+                        .padding(.vertical, 4)
+                }
+                .refreshable { await store.refreshThreads() }
+                BotTabComposer(placeholder: placeholder, topDeck: AnyView(deck), onSend: startThread)
             }
-            .refreshable { await store.refreshThreads() }
         case .tasks:
-            BotTasksView(bot: bot)
+            VStack(spacing: 0) {
+                BotTasksView(bot: bot)
+                BotTabComposer(placeholder: placeholder, topDeck: AnyView(deck)) { text in
+                    // A task asked for here goes into this thread's chat.
+                    deckTab = .thread
+                    viewModel.sendMessage(text)
+                }
+            }
         case .bot:
-            BotPageView(bot: bot,
-                        onOpenThreads: { deckTab = .threads },
-                        onOpenTasks: { deckTab = .tasks })
+            VStack(spacing: 0) {
+                BotPageView(bot: bot,
+                            onOpenThreads: { deckTab = .threads },
+                            onOpenTasks: { deckTab = .tasks })
+                // The Bot tab is the bot's own page, not a chat: only the
+                // deck stays, to switch back.
+                ScrollView(.horizontal, showsIndicators: false) {
+                    deck.padding(.horizontal, 8)
+                }
+                .frame(maxWidth: .infinity, minHeight: 46, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: 16).fill(Color("BgPanel")))
+                .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color("BorderSubtle")))
+                .padding(.horizontal, 14)
+                .padding(.top, 6)
+                .padding(.bottom, 8)
+            }
         }
     }
 
     @ViewBuilder
     private var chat: some View {
         if let sessionId {
-            ChatContentView(sessionId: sessionId, viewModel: viewModel)
-                .environment(\.chatBot, bot)
+            VStack(spacing: 0) {
+                if onStage {
+                    BotChatStage(
+                        bot: bot,
+                        statusLine: stageStatus,
+                        working: status.isWorking(for: bot.id) || viewModel.isStreaming,
+                        needs: store.threads(for: bot.id).filter { $0.group == "waiting" && $0.currentSessionId != sessionId },
+                        suggestions: store.threads(for: bot.id).filter { $0.status == "proposed" },
+                        onOpen: { open($0) },
+                        onApprove: { act($0, .approve) },
+                        onDecline: { act($0, .decline) },
+                        onHandoff: { text, files in viewModel.sendMessage(text, attachments: files) },
+                        onDock: dock
+                    )
+                    .transition(.asymmetric(
+                        insertion: .scale(scale: 0.2, anchor: .top).combined(with: .opacity),
+                        removal: .scale(scale: 0.15, anchor: .top).combined(with: .opacity)
+                    ))
+                }
+                ChatContentView(sessionId: sessionId, viewModel: viewModel,
+                                composerTopDeck: AnyView(deck), composerPlaceholder: placeholder)
+                    .environment(\.chatBot, bot)
+                    .environment(\.chatBotOnStage, onStage)
+            }
         } else if let resolveError {
             FriendlyStateView(
                 style: .error,
@@ -122,6 +203,12 @@ struct BotChatSessionView: View {
         }
     }
 
+    /// Under the bot on its stage: what it is doing, or nothing when idle.
+    private var stageStatus: String? {
+        let live = liveText
+        return live.live ? live.text : nil
+    }
+
     // MARK: - Deck
 
     private var deckThreadName: String {
@@ -130,18 +217,15 @@ struct BotChatSessionView: View {
         return "Thread"
     }
 
-    /// The thread's tabs (BotThreadTopDeck, phone: labels only).
+    /// The thread's tabs (BotThreadTopDeck, phone: labels only), in the
+    /// tray above the composer card.
     private var deck: some View {
         let waiting = store.waitingCount(for: bot.id)
-        return ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 2) {
-                deckButton(.thread, label: deckThreadName, truncates: true)
-                deckButton(.threads, label: "Threads", dot: waiting > 0 ? waiting : nil)
-                deckButton(.tasks, label: "Tasks", meta: thread?.progressLabel)
-                deckButton(.bot, label: "Bot")
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
+        return HStack(spacing: 2) {
+            deckButton(.thread, label: deckThreadName, truncates: true)
+            deckButton(.threads, label: "Threads", dot: waiting > 0 ? waiting : nil)
+            deckButton(.tasks, label: "Tasks", meta: thread?.progressLabel)
+            deckButton(.bot, label: "Bot")
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Bot thread")
@@ -170,7 +254,9 @@ struct BotChatSessionView: View {
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
+            .frame(minHeight: 32)
             .background(RoundedRectangle(cornerRadius: 8).fill(on ? Color("BorderStrong") : .clear))
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(on ? [.isSelected] : [])
@@ -219,10 +305,10 @@ struct BotChatSessionView: View {
 
     private var botChip: some View {
         let live = liveText
-        return Button {
-            deckTab = .bot
-        } label: {
-            HStack(spacing: 8) {
+        return HStack(spacing: 8) {
+            // The bot's spot in the thread top: empty while it stands on its
+            // stage; once docked, a tap brings it back out.
+            Button { undock() } label: {
                 BotAvatarView(bot: bot, size: 28)
                     .overlay(alignment: .bottomTrailing) {
                         Circle()
@@ -231,6 +317,14 @@ struct BotChatSessionView: View {
                             .overlay(Circle().stroke(Color("BgPanel"), lineWidth: 2))
                             .offset(x: 2, y: 2)
                     }
+                    .opacity(onStage ? 0 : 1)
+                    .scaleEffect(onStage ? 0.4 : 1)
+            }
+            .buttonStyle(.plain)
+            .disabled(onStage)
+            .accessibilityLabel("Show \(bot.botDisplayName)")
+            .accessibilityHidden(onStage)
+            Button { deckTab = .bot } label: {
                 VStack(alignment: .leading, spacing: 0) {
                     BotNameText(bot.botDisplayName, size: 14)
                         .font(.system(size: 14, weight: .semibold))
@@ -247,17 +341,18 @@ struct BotChatSessionView: View {
                     .font(.system(size: 11))
                     .foregroundColor(live.waiting ? Theme.statusWarning : Color("TextTertiary"))
                 }
+                .contentShape(Rectangle())
             }
-            .padding(.leading, 6)
-            .padding(.trailing, 14)
-            .padding(.vertical, 4)
-            .frame(minHeight: 40)
-            .background(Capsule().fill(Color("BgPanel").opacity(0.88)))
-            .overlay(Capsule().stroke(Color("BorderSubtle")))
-            .shadow(color: .black.opacity(0.06), radius: 4, y: 1)
+            .buttonStyle(.plain)
+            .accessibilityLabel("Open \(bot.botDisplayName), \(live.text)")
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Open \(bot.botDisplayName), \(live.text)")
+        .padding(.leading, 6)
+        .padding(.trailing, 14)
+        .padding(.vertical, 4)
+        .frame(minHeight: 40)
+        .background(Capsule().fill(Color("BgPanel").opacity(0.88)))
+        .overlay(Capsule().stroke(Color("BorderSubtle")))
+        .shadow(color: .black.opacity(0.06), radius: 4, y: 1)
     }
 
     /// ⋯: everything else — computer, switch thread, the stage, Go ahead /
@@ -271,7 +366,7 @@ struct BotChatSessionView: View {
             Button { deckTab = .threads } label: {
                 Label("Switch thread", systemImage: "list.bullet")
             }
-            Button { navigator.open(.stage(bot.id)) } label: {
+            Button { undock() } label: {
                 Label("Show \(bot.botDisplayName)", systemImage: "sparkles")
             }
             if let thread {
@@ -317,6 +412,14 @@ struct BotChatSessionView: View {
     }
 
     // MARK: - Actions
+
+    /// From the Threads tab, what you type starts a new thread.
+    private func startThread(_ text: String) async throws {
+        let id = try await store.newThreadSession(for: bot, title: BotLaunchpadView.projectTitle(from: text))
+        try await BotModeClient.shared.sendUserMessage(sessionId: id, text: text)
+        navigator.open(.chat(botId: bot.id, sessionId: id))
+        await store.refreshThreads()
+    }
 
     /// A thread picked from the Threads tab opens in its own chat.
     private func open(_ thread: BotThread) {

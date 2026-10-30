@@ -534,4 +534,26 @@ enum SampleWorkspace {
     static var models: [[String: Any]] { [
         ["id": "allternit/kimi-k3", "name": "Kimi K3", "provider": "allternit", "tier": "flagship", "supports_effort": true],
     ] }
+
+    /// `GET /api/v1/bot-groups` row (bot_group_routes.rs): the launch room
+    /// with three of the team and a short log; members and log ride as JSON.
+    static func launchRoom(now: Date = Date()) -> [String: Any] {
+        let members: [[String: Any]] = botSeeds.dropFirst().map { seed in
+            ["botId": seed.id, "displayName": seed.name, "handle": seed.name.lowercased(), "source": "allternit"]
+        }
+        let log: [[String: Any]] = [
+            ["id": "preview-room-1", "from": "user", "displayName": "You",
+             "text": "Monday is the pricing page launch. Who has what?", "timestamp": ago(42, now: now)],
+            ["id": "preview-room-2", "from": "bot", "botId": "preview-bot-researcher", "displayName": "Goldie",
+             "text": "I have the competitor prices. Lambda is still 8% above us on H100s.", "timestamp": ago(40, now: now)],
+            ["id": "preview-room-3", "from": "bot", "botId": "preview-bot-designer", "displayName": "Rimraf",
+             "text": "Hero and the comparison table are drafted. Need the final numbers by Friday.", "timestamp": ago(38, now: now)],
+        ]
+        func json(_ value: Any) -> String {
+            (try? JSONSerialization.data(withJSONObject: value)).flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
+        }
+        return ["id": "preview-room-launch", "name": "launch", "image": NSNull(),
+                "members_json": json(members), "log_json": json(log),
+                "created_at": ago(60 * 24, now: now), "updated_at": ago(38, now: now)]
+    }
 }

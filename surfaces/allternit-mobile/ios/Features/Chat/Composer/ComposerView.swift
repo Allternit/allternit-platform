@@ -57,6 +57,14 @@ struct ComposerView: View {
     var accentBorder: Color? = nil
     /// The Auto / Ask / Read-only pill (chat only; the Bots home has none).
     var showsPermission: Bool = true
+    /// The tray above the card (ThreadComposer `topDeck`): a bot thread's
+    /// tabs — the open thread · Threads · Tasks · Bot.
+    var topDeck: AnyView? = nil
+    /// Voice mode in the send slot when there's no draft; off, the slot is
+    /// always Send (group rooms).
+    var showsVoice: Bool = true
+    /// The + (files and photos); off where a send can't carry files.
+    var showsAttach: Bool = true
 
     @EnvironmentObject private var modeStore: AppModeStore
     @EnvironmentObject private var agentModeStore: AgentModeStore
@@ -99,6 +107,11 @@ struct ComposerView: View {
     var body: some View {
         VStack(spacing: 0) {
             limitStrip
+
+            if let topDeck {
+                ComposerTopDeckTray { topDeck }
+                    .zIndex(0)
+            }
 
             card
                 .zIndex(1)
@@ -212,19 +225,21 @@ struct ComposerView: View {
     private var controlsRow: some View {
         HStack(spacing: 6) {
             HStack(spacing: 4) {
-                Button(action: {
-                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                    isPlusSheetPresented = true
-                }) {
-                    Image(systemName: "plus")
-                        .font(.system(size: 20, weight: .medium))
-                        .foregroundColor(Color("TextSecondary"))
-                        .rotationEffect(.degrees(isPlusSheetPresented ? 45 : 0))
-                        .frame(width: 44, height: 44)
-                        .background(Color("FillNeutral"), in: Circle())
+                if showsAttach {
+                    Button(action: {
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        isPlusSheetPresented = true
+                    }) {
+                        Image(systemName: "plus")
+                            .font(.system(size: 20, weight: .medium))
+                            .foregroundColor(Color("TextSecondary"))
+                            .rotationEffect(.degrees(isPlusSheetPresented ? 45 : 0))
+                            .frame(width: 44, height: 44)
+                            .background(Color("FillNeutral"), in: Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Add files")
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Add files")
 
                 // How freely this chat works: Auto · Ask · Read-only (chat only).
                 if showsPermission, mode == .chat || mode == .cowork {
@@ -237,6 +252,8 @@ struct ComposerView: View {
 
             HStack(spacing: 8) {
                 modelChip
+                // How full this chat's context is, and the plan's usage.
+                ComposerUsageMeter(sessionId: sessionId, refreshKey: isStreaming ? "streaming" : "idle")
                 sendSlot
             }
         }
@@ -295,7 +312,7 @@ struct ComposerView: View {
                 .buttonStyle(.plain)
                 .accessibilityLabel("Stop")
             }
-        } else if hasDraft {
+        } else if hasDraft || !showsVoice {
             Button(action: sendTapped) {
                 Group {
                     if isTerminal {

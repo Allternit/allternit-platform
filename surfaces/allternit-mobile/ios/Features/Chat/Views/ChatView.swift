@@ -93,9 +93,15 @@ struct ChatContentView: View {
     var onLeaveTerminal: (() -> Void)? = nil
     /// The status row's "Terminal" item in a Code thread's chat view.
     var onEnterTerminal: (() -> Void)? = nil
+    /// A bot thread's tabs, in the tray above the composer card
+    /// (BotChatSessionView's BotThreadTopDeck); the compact deck rides under it.
+    var composerTopDeck: AnyView? = nil
+    /// The composer's hint in place of "Reply…" ("Message Goldie…").
+    var composerPlaceholder: String? = nil
 
     @EnvironmentObject private var modeStore: AppModeStore
     @EnvironmentObject private var agentModeStore: AgentModeStore
+    @Environment(\.chatBot) private var chatBot
     @StateObject private var modelStore = ModelStore.shared
     /// Selected project — stamped into the next session's create metadata
     /// (`metadata.projectId`) so the Projects feature can group it.
@@ -380,7 +386,7 @@ struct ChatContentView: View {
                 // home: `❯` line, dashed rules, the full status row).
                 codeComposer(terminal: false)
             } else {
-                composer(deck: launchStyle ? .compact : .none)
+                composer(deck: launchStyle || composerTopDeck != nil ? .compact : .none)
                     .padding(.horizontal, 14)
                     .padding(.top, 6)
                     .padding(.bottom, 8)
@@ -458,7 +464,11 @@ struct ChatContentView: View {
                     // session under the picked mode.
                     viewModel.startNewSession()
                 }
-            }
+            },
+            placeholderOverride: composerPlaceholder,
+            // A bot thread's composer (ThreadComposer) has no permission pill.
+            showsPermission: chatBot == nil,
+            topDeck: composerTopDeck
         )
     }
 
@@ -573,6 +583,8 @@ struct ChatLaunchGreeting: View {
     /// In a bot's own chat the bot's face stands in for Gizzi (web
     /// ActiveAgentMascot on the launch header).
     @Environment(\.chatBot) private var bot
+    /// The bot stands on its stage above this chat: no second face here.
+    @Environment(\.chatBotOnStage) private var botOnStage
     @State private var revealed = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -603,6 +615,25 @@ struct ChatLaunchGreeting: View {
     }
 
     var body: some View {
+        if botOnStage, let bot {
+            // On the stage the bot is already big above: a quiet line only
+            // (BotChatSessionView's empty state, onStage).
+            VStack(spacing: 4) {
+                Text("Chat with \(bot.botDisplayName)")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(Color("TextPrimary"))
+                Text("Ask anything, or hand it a file.")
+                    .font(.system(size: 12))
+                    .foregroundColor(Color("TextSecondary"))
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.top, -44)
+        } else {
+            greeting
+        }
+    }
+
+    private var greeting: some View {
         VStack(spacing: 10) {
             Group {
                 if let bot {
@@ -645,11 +676,21 @@ private struct ChatBotKey: EnvironmentKey {
     static let defaultValue: AgentRecord? = nil
 }
 
+private struct ChatBotOnStageKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
 extension EnvironmentValues {
     /// The bot whose chat this is (nil outside Bots).
     var chatBot: AgentRecord? {
         get { self[ChatBotKey.self] }
         set { self[ChatBotKey.self] = newValue }
+    }
+
+    /// True while the bot stands on its live stage over its chat.
+    var chatBotOnStage: Bool {
+        get { self[ChatBotOnStageKey.self] }
+        set { self[ChatBotOnStageKey.self] = newValue }
     }
 }
 

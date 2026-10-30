@@ -128,6 +128,14 @@ struct BotsModeRootView: View {
             UserDefaults.standard.removeObject(forKey: "open-bot-chat")
             navigator.path = [.chat(botId: bot.id, sessionId: nil)]
         }
+        // `-open-group-chat <name>`: opens that room once groups load.
+        .onChange(of: store.groups.count) { _, _ in
+            guard let name = UserDefaults.standard.string(forKey: "open-group-chat"),
+                  navigator.path.isEmpty,
+                  let group = store.groups.first(where: { $0.name == name }) ?? store.groups.first else { return }
+            UserDefaults.standard.removeObject(forKey: "open-group-chat")
+            navigator.path = [.group(group.id)]
+        }
         #endif
         .onChange(of: store.pendingOpenBotId) { _, _ in openPendingBot() }
         .onChange(of: store.pendingNewThread) { _, _ in openPendingBot() }

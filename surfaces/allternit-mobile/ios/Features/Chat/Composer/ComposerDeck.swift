@@ -255,6 +255,33 @@ private struct DeckOutline: Shape {
     }
 }
 
+// MARK: - Top deck tray
+
+/// The tray above the composer card (ThreadComposer `thread-top-deck`):
+/// tucked 8pt under the card's top edge, one line that scrolls sideways.
+struct ComposerTopDeckTray<Content: View>: View {
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            content().padding(.horizontal, 8)
+        }
+        .padding(.top, 6)
+        .padding(.bottom, 6 + 8)
+        .frame(minHeight: 46 + 8)
+        .background(
+            UnevenRoundedRectangle(topLeadingRadius: 16, topTrailingRadius: 16)
+                .fill(Color("BgPanel"))
+        )
+        .overlay(
+            DeckOutline()
+                .rotation(.degrees(180))
+                .stroke(Color("BorderSubtle"), lineWidth: 1)
+        )
+        .padding(.bottom, -8)
+    }
+}
+
 // MARK: - Artifacts ▾
 
 /// Artifacts ▾ in the deck (web DeckArtifactsMenu): pinned artifacts, the
