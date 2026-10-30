@@ -2151,7 +2151,7 @@ paths:
     post:
       operationId: sendMail
       summary: Send an email from a mailbox
-      description: Live projects only. Allternit Mail may hold the message for review before delivery (`status` = `pending_approval`).
+      description: Live projects only. The call is the approval, so the send is queued at once; `pending_approval` only when Allternit Mail held it and could not release it.
       tags: [Mailboxes]
       parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
       requestBody:

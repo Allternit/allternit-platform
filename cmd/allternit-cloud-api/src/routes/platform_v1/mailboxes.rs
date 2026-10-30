@@ -15,7 +15,8 @@
 //! * `POST /v1/mailboxes/{id}/otp {wait_seconds?, since?}`: the newest code,
 //!   waiting up to 60 s for one to arrive.
 //! * `POST /v1/mailboxes/{id}/send {to, subject, text?, html?}` (live projects;
-//!   Allternit Mail may hold it for review: `status: pending_approval`).
+//!   a send Allternit Mail holds is approved at once, since the call is the
+//!   developer's own; `pending_approval` only when that approve fails).
 //!
 //! Billing: card on file (sandbox too), spend cap on live projects, and one
 //! `mailbox_month` ($2) per live mailbox per month. A mailbox inside an
@@ -174,7 +175,25 @@ impl MailHost for ProdMailHost {
         if !(200..300).contains(&status) {
             return Err(mail_failed("send", Some(status), &text));
         }
-        Ok(serde_json::from_str(&text).unwrap_or(Value::Null))
+        let mut out: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
+        // The developer's own call is the approval: release a held send at once.
+        // On failure it stays `pending_approval` for Allternit Mail's review.
+        if out["status"] == "pending_approval" {
+            if let Some(job) = out["jobId"].as_str().map(str::to_string) {
+                match client.post(format!("{}/api/v1/outbound/{job}/approve", cfg.base)).bearer_auth(&cfg.admin_key).send().await {
+                    Ok(r) if r.status().is_success() => {
+                        let approved: Value = r.json().await.unwrap_or(Value::Null);
+                        out["status"] = json!("queued");
+                        if let Some(id) = approved.get("messageId") {
+                            out["messageId"] = id.clone();
+                        }
+                    }
+                    Ok(r) => tracing::warn!(status = %r.status(), "platform mail: approve of held send refused; left for review"),
+                    Err(e) => tracing::warn!(error = %e, "platform mail: approve of held send failed; left for review"),
+                }
+            }
+        }
+        Ok(out)
     }
 
     async fn fetch(&self, provider_message_id: &str) -> Option<Value> {

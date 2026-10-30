@@ -266,7 +266,36 @@ fn page(data: Vec<Value>) -> Page<Value> {
 // ---------------------------------------------------------------------------
 
 pub const METER_MINUTES: &str = "phone_minutes";
+pub const METER_MINUTES_INCLUDED: &str = "phone_minutes_included";
 pub const METER_LINKED: &str = "linked_phone";
+
+/// Phone minutes this month's agent identities still cover: the bundle's
+/// minutes per `identity_month` row, less what was already covered.
+async fn bundle_minutes_left(db: &PgPool, project_id: &str) -> f64 {
+    let left: Result<f64, sqlx::Error> = sqlx::query_scalar(
+        "SELECT (COALESCE(SUM(quantity) FILTER (WHERE meter = 'identity_month'), 0) * $2 \
+                - COALESCE(SUM(quantity) FILTER (WHERE meter = $3), 0))::float8 \
+         FROM platform_usage_events WHERE project_id = $1 AND created_at >= date_trunc('month', now())",
+    )
+    .bind(project_id)
+    .bind(super::stripe_plan::AGENT_IDENTITY.phone_minutes as f64)
+    .bind(METER_MINUTES_INCLUDED)
+    .fetch_one(db)
+    .await;
+    left.unwrap_or(0.0).max(0.0)
+}
+
+/// Phone minutes, split into what agent identities cover and what is billed.
+#[allow(clippy::too_many_arguments)]
+async fn meter_minutes(db: &PgPool, project_id: &str, key_id: Option<&str>, minutes: f64, ref_id: &str, idempotency: String) {
+    let covered = bundle_minutes_left(db, project_id).await.min(minutes);
+    if covered > 0.0 {
+        meter(db, project_id, key_id, METER_MINUTES_INCLUDED, covered, "minute", ref_id, format!("{idempotency}:included")).await;
+    }
+    if minutes - covered > 0.0 {
+        meter(db, project_id, key_id, METER_MINUTES, minutes - covered, "minute", ref_id, idempotency).await;
+    }
+}
 
 /// Billing never fails a phone call: a usage row that can't be written is logged.
 #[allow(clippy::too_many_arguments)]
@@ -299,7 +328,7 @@ async fn meter_linked(db: &PgPool, caller: &PlatformCaller, serial: &str) {
 /// phone per clock minute with calls in it, however many calls that minute had.
 async fn meter_tool_minute(db: &PgPool, caller: &PlatformCaller, serial: &str) {
     let minute = Utc::now().format("%Y%m%d%H%M");
-    meter(db, &caller.project_id, Some(&caller.key_id), METER_MINUTES, 1.0, "minute", serial, format!("pmin:{serial}:{minute}")).await;
+    meter_minutes(db, &caller.project_id, Some(&caller.key_id), 1.0, serial, format!("pmin:{serial}:{minute}")).await;
     meter_linked(db, caller, serial).await;
 }
 
@@ -351,7 +380,7 @@ pub(crate) async fn on_run_completed(db: &PgPool, owner: &str, data: &Value) -> 
     let now = Utc::now();
     for (project, key, fleet, started_at) in rows {
         let minutes = run_minutes(data.get("duration_ms").and_then(Value::as_f64), started_at, now);
-        meter(db, &project, key.as_deref(), METER_MINUTES, minutes, "minute", run_id, format!("prun:{run_id}")).await;
+        meter_minutes(db, &project, key.as_deref(), minutes, run_id, format!("prun:{run_id}")).await;
         if let Some(fleet) = fleet {
             finish_fleet(db, &fleet).await?;
         }

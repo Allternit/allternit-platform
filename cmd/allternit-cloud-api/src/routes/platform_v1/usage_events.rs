@@ -5,7 +5,7 @@ use sqlx::PgPool;
 use super::PlatformError;
 
 /// Exact meter strings (spec §7 / CONTRACTS).
-pub const METERS: [&str; 17] = [
+pub const METERS: [&str; 18] = [
     "voice_min_allternit",
     "voice_min_byok",
     "agent_month",
@@ -24,6 +24,8 @@ pub const METERS: [&str; 17] = [
     // the owner's phones (runs and tool calls, rounded up per minute), and one
     // `linked_phone` per phone a live project drives in a month.
     "phone_minutes",
+    // Phone minutes an agent identity's bundle covers: recorded at $0, never sent to Stripe.
+    "phone_minutes_included",
     "linked_phone",
     // Platform mail (`/v1/mailboxes`): one per live mailbox per month.
     "mailbox_month",

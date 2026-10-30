@@ -54,7 +54,7 @@ curl https://api.allternit.com/v1/mailboxes/mbx_51c…/otp \
 
 ## Send
 
-`POST /v1/mailboxes/{id}/send` answers `202` with `status` `queued` or `pending_approval`: Allternit Mail can hold outbound mail for review before it is delivered. Sandbox projects receive mail but don't send it (`400 sandbox_project`). One plain recipient address per send.
+`POST /v1/mailboxes/{id}/send` answers `202` with `status` `queued`. Your call counts as the approval, so mail is not held for review. `pending_approval` means Allternit Mail held it and could not release it; it is then reviewed before delivery. Sandbox projects receive mail but don't send it (`400 sandbox_project`). One plain recipient address per send.
 
 ## MCP tools
 

@@ -219,6 +219,7 @@ export const USAGE_METER_LABELS: Record<string, string> = {
   computer_minute: "Hosted computer minutes",
   computer_action: "Hosted computer actions",
   phone_minutes: "Phone minutes",
+  phone_minutes_included: "Phone minutes (in agent identities)",
   linked_phone: "Linked phones",
 };
 
