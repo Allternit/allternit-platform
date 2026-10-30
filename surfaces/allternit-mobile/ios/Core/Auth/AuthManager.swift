@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import AuthenticationServices
 import ClerkKit
 
 /// Thin wrapper over the official Clerk iOS SDK v1.3.x (ClerkKit / ClerkKitUI).
@@ -46,6 +47,13 @@ final class AuthManager: ObservableObject {
 
     /// Configures the Clerk SDK. Call once at app start.
     func configure(publishableKey: String) {
+        // `-sample-workspace` (DEBUG): signed in on the web preview's sample
+        // workspace, past onboarding, with its API answered locally.
+        if SampleWorkspace.isEnabled {
+            SampleWorkspace.activate()
+            isSignedIn = true
+            OnboardingStore.shared.skipThisLaunch()
+        }
         guard !publishableKey.isEmpty else {
             #if DEBUG
             debugLog("CLERK_PUBLISHABLE_KEY is empty — Clerk SDK not configured.")
@@ -63,12 +71,14 @@ final class AuthManager: ObservableObject {
     /// so API calls can upgrade from a short-lived Clerk JWT to a long-lived
     /// cloud-issued device token.
     func refreshAuthState() {
-        guard isClerkConfigured else { return }
+        guard isClerkConfigured, !SampleWorkspace.isEnabled else { return }
         currentSession = Clerk.shared.session
         let wasSignedIn = isSignedIn
         isSignedIn = currentSession != nil
 
         if isSignedIn, !wasSignedIn {
+            // Push: send this phone's APNs token for the account now signed in.
+            Task { await PushNotificationManager.shared.didSignIn() }
             Task {
                 do {
                     _ = try await RuntimePairing.shared.ensurePaired()
@@ -83,6 +93,7 @@ final class AuthManager: ObservableObject {
 
     /// Clerk session token for the API layer (the SDK caches and refreshes it).
     func getToken() async throws -> String? {
+        if SampleWorkspace.isEnabled { return "sample-workspace" }
         guard isClerkConfigured else { return nil }
         let token = try await Clerk.shared.session?.getToken(.init(skipCache: true))
         #if DEBUG
@@ -106,10 +117,20 @@ final class AuthManager: ObservableObject {
         return token
     }
 
+    /// The Bearer for cloud-api calls, the same as the web: the Clerk session
+    /// first. The runtime device token is accepted only on device routes, so
+    /// it is the fallback when there is no Clerk session (a paired device
+    /// sending it everywhere got 401 on every call).
+    func apiToken() async throws -> String? {
+        if let clerk = try await getToken(), !clerk.isEmpty { return clerk }
+        return try await effectiveToken()
+    }
+
     /// Returns the runtime device token when paired and valid; otherwise falls
     /// back to the Clerk session token. This is what `APIClient` sends as the
     /// Bearer token, matching desktop's use of `allternit_runtime_…` credentials.
     func effectiveToken() async throws -> String? {
+        if SampleWorkspace.isEnabled { return "sample-workspace" }
         if RuntimePairing.shared.isPaired {
             await RuntimePairing.shared.rotateIfNeeded()
         }
@@ -142,6 +163,96 @@ final class AuthManager: ObservableObject {
         guard isClerkConfigured else { return }
         authEntryMode = .signIn
         isPresentingAuth = true
+    }
+
+    /// Last Sign in with Apple failure, shown under the button. Nil when the
+    /// person cancelled the Apple sheet (not an error).
+    @Published var appleSignInError: String?
+    @Published private(set) var isSigningInWithApple = false
+
+    /// Native Sign in with Apple through Clerk (ClerkKit 1.1.0
+    /// `Auth.signInWithApple`, which signs up a new Apple ID too). App Store
+    /// guideline 4.8: offered next to Google on the sign-in screen. Needs the
+    /// Sign in with Apple capability on the App ID and Apple enabled as a
+    /// social connection in the Clerk dashboard (native, bundle id
+    /// com.allternit.mobile).
+    func signInWithApple() {
+        guard isClerkConfigured, !isSigningInWithApple else { return }
+        isSigningInWithApple = true
+        appleSignInError = nil
+        Task {
+            defer { isSigningInWithApple = false }
+            do {
+                try await Clerk.shared.auth.signInWithApple()
+                refreshAuthState()
+                // A session still pending a step (e.g. choose an organization)
+                // finishes in Clerk's own sheet.
+                if !isSignedIn {
+                    authEntryMode = .signIn
+                    isPresentingAuth = true
+                }
+            } catch {
+                if (error as NSError).domain == "com.apple.AuthenticationServices.AuthorizationError",
+                   (error as NSError).code == 1001 {
+                    return // cancelled
+                }
+                appleSignInError = error.localizedDescription
+            }
+        }
+    }
+
+    /// Social providers offered under Apple on the sign-in screen, matching
+    /// the web sign-in (GitHub, then Google).
+    enum SocialProvider: String, CaseIterable, Identifiable {
+        case github
+        case google
+
+        var id: String { rawValue }
+
+        var title: String {
+            switch self {
+            case .github: return "GitHub"
+            case .google: return "Google"
+            }
+        }
+
+        fileprivate var clerkProvider: OAuthProvider {
+            switch self {
+            case .github: return .github
+            case .google: return .google
+            }
+        }
+    }
+
+    /// Last GitHub / Google sign-in failure, shown under those buttons. Nil
+    /// when the person closed the browser sheet (not an error).
+    @Published var socialSignInError: String?
+    @Published private(set) var signingInWith: SocialProvider?
+
+    /// GitHub / Google through Clerk's native OAuth (ClerkKit
+    /// `Auth.signInWithOAuth`, an ASWebAuthenticationSession that signs up a
+    /// new account too). Needs the provider enabled as a social connection in
+    /// the Clerk dashboard and the app's redirect URL allowed for native.
+    func signIn(with provider: SocialProvider) {
+        guard isClerkConfigured, signingInWith == nil else { return }
+        signingInWith = provider
+        socialSignInError = nil
+        Task {
+            defer { signingInWith = nil }
+            do {
+                try await Clerk.shared.auth.signInWithOAuth(provider: provider.clerkProvider)
+                refreshAuthState()
+                // A sign-up missing fields, or a session still pending a step,
+                // finishes in Clerk's own sheet.
+                if !isSignedIn {
+                    authEntryMode = .signIn
+                    isPresentingAuth = true
+                }
+            } catch {
+                if case ASWebAuthenticationSessionError.canceledLogin = error { return }
+                socialSignInError = error.localizedDescription
+            }
+        }
     }
 
     #if DEBUG
@@ -231,10 +342,13 @@ final class AuthManager: ObservableObject {
     }
 
     func signOut() async throws {
+        if SampleWorkspace.isEnabled { return }
         guard isClerkConfigured else {
             isSkippingAuth = false
             return
         }
+        // Stop pushes to this phone for the account leaving (needs its Bearer).
+        await PushNotificationManager.shared.willSignOut()
         // Revoke the iOS runtime device credential before signing out of Clerk.
         // The revoke call needs the current device token, so it must run first.
         await RuntimePairing.shared.revoke()
@@ -246,6 +360,7 @@ final class AuthManager: ObservableObject {
     /// ("Hey, Joe!"); nil when signed out / skip-auth / no first name, so
     /// the caller falls back to "Hey there!".
     var firstName: String? {
+        if SampleWorkspace.isEnabled { return nil }
         guard isClerkConfigured else { return nil }
         guard let firstName = Clerk.shared.user?.firstName,
               !firstName.isEmpty else { return nil }
@@ -255,6 +370,7 @@ final class AuthManager: ObservableObject {
     /// Display name for the sidebar footer: first name, full name, or the
     /// primary email's local part — whichever resolves first.
     var displayName: String {
+        if SampleWorkspace.isEnabled { return SampleWorkspace.userName }
         guard isClerkConfigured, let user = Clerk.shared.user else { return "Guest" }
         if let firstName = user.firstName, !firstName.isEmpty {
             return firstName
@@ -268,6 +384,8 @@ final class AuthManager: ObservableObject {
     /// Sidebar avatar initial — the first character of `displayName`,
     /// uppercased (matches the reference app's single-letter avatar).
     var avatarInitial: String {
+        // The web preview's account avatar reads "A".
+        if SampleWorkspace.isEnabled { return "A" }
         guard isClerkConfigured else { return "A" }
         return displayName.first.map { String($0).uppercased() } ?? "?"
     }
@@ -275,6 +393,7 @@ final class AuthManager: ObservableObject {
     /// The signed-in user's primary email address (Settings account row);
     /// nil when signed out or the account has no email.
     var primaryEmail: String? {
+        if SampleWorkspace.isEnabled { return nil }
         guard isClerkConfigured else { return nil }
         return Clerk.shared.user?.emailAddresses.first?.emailAddress
     }
@@ -282,6 +401,7 @@ final class AuthManager: ObservableObject {
     /// Clerk user id for ownership filtering (e.g., Projects "Created by you").
     /// nil when signed out / skip-auth.
     var currentUserId: String? {
-        Clerk.shared.user?.id
+        if SampleWorkspace.isEnabled { return SampleWorkspace.userId }
+        return Clerk.shared.user?.id
     }
 }

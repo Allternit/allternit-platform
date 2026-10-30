@@ -139,6 +139,7 @@ curl -X POST https://api.allternit.com/api/v1/agent-sessions/ses_abc123/abort \
 
 - **Chat** — streaming conversations with agents, markdown rendering, syntax highlighting, and artifact cards.
 - **Agent Hub** — browse, create, edit, and template agents; switch agents from the composer.
+- **Artifacts** — your Artifacts v2 library (see [Artifacts in the iOS app](#artifacts-in-the-ios-app)).
 - **Tasks** — view and manage projects and tasks.
 - **Cloud instances** — monitor and operate cloud and BYOC deployments.
 - **IntelliSchedule** — time-aware agent scheduling from the device.
@@ -228,6 +229,18 @@ Read them live with `wrangler pages deployment tail <deployment-id> --project-na
 
 Artifacts made before Artifacts v2 are copied into the cloud once per device. Desktop copies the stores that live on the computer. The web app and the phone copy only what is in their own browser storage. Before this, a phone read every record from the paired computer and re-sent it on every launch.
 
+## Artifacts in the iOS app
+
+The native app's Artifacts tab reads the same Artifacts v2 library as Desktop, ai.allternit.com and m.allternit.com (`GET /api/v2/artifacts`, sent straight to the cloud API with the Clerk token).
+
+- **Filters.** **Everything**, **Mine** and **Shared with me**, a kind filter, and a search box that searches titles on the server. Pull down to refresh; more rows load as you scroll.
+- **Opening an artifact.** Tap a row. Pages, docs, HTML designs and diagrams render in a web view that can load the page's own scripts and fonts but can't navigate away (links open in Safari). Sheets show as a grid, decks as slide cards, code as text, PDFs in a PDF view with **Sign this PDF**, and images and videos play in place. Cards, dashboards, ops sheets, motion and canvas designs run only in the web app, so the phone offers **Open Allternit on the web**. Office files copied from the old document store also show **Open in editor**.
+- **Archive and delete.** **Archive** moves an artifact out of your saved work (it's per person, like the web's Archive). **Delete** is for the owner and removes it for everyone.
+- **Make something new.** Dashboards, Motion, Page, Build, Image, Video and Deep Research start an artifact session: a new Cowork agent session whose standing instructions say what to make. The studio opens full screen with **Chat** and the kind's pane; the pane lists what the session saved (artifacts whose `origin.session_id` is the session) and refreshes every few seconds. Templates your organization turned off aren't shown.
+- **Artifacts from chats.** An artifact that arrives in a chat stream (HTML, a document, a diagram, a sheet, code or an image) is saved to Artifacts v2 with the same id the web gives it (`art_t` + a stable hash of the session, kind, title and body), so it shows in the library on every surface and replaying a chat never makes a copy.
+
+Developer notes: the client is `Core/API/ArtifactsV2Client.swift`; the library store is `Features/Artifacts/ArtifactLibraryStore.swift` (no local file; the old canvas mirror is gone). Studio sessions keep their instructions in `ArtifactStudioLauncher` and send them as the agent-chat `systemPrompt` on every turn. The Office editor web view signs the page's own `fetch` and XHR calls to its origin and the cloud API with a fresh token from the app (`AuthenticatedWebBridge`).
+
 ## Related links
 
 - [Allternit Factory](/factory/overview)
@@ -251,6 +264,20 @@ On ai.allternit.com on a phone and in the m.allternit.com app, the menu (tap **�
 - **Bottom of the menu.** Your avatar with a ring that shows your cloud usage (tap it for Settings), **Phones**, and a floating **New** button: New chat in Home, New thread in Code and Bots, New session in ACI. Press and hold **New** for the other ways to start and **Quick task**.
 
 Developer notes: the mode list is shared with Desktop through `src/shell/mode-buttons.ts`. The phone keeps the active mode in `usePhoneNav().mode`. Opening a mode's own section (Chats, Bots, Code or ACI) sets the mode. Shared sections (Projects, Artifacts, Automation Tasks, Settings) keep the current mode. `setMode` switches modes from the dial (`PhoneModeWheel.tsx`). The drawer has no visible title bar; its title stays for screen readers. The Bots rail is the Desktop one: `PhoneDrawer` renders `ShellRail` with `embedded` and `mode="bot"` (`BotModeRail` reads `usePhoneSurface()` for touch sizes and turns off drag-to-promote). `phone.css` `.phone-bot-rail` scales its type and keeps **Group chats** above the floating footer.
+
+## Bot Mode in the iOS app
+
+The native iPhone app (`surfaces/allternit-mobile/ios`, `Features/Bots/`) has the same Bot Mode as the PWA.
+
+- **Rail.** The quick bot strip across the top (tap a bot to open its main chat), then **Threads** with the count of threads waiting on you, **Groups**, **Computers**, your bot **Projects**, pinned bots, group chats and every bot. A green dot means the bot is working and an amber dot means it needs you. Swipe a bot to pin it or open its profile.
+- **Main chat.** Tapping a bot opens its main chat. The app finds the existing one first (this phone's pin, then the bot's `canonicalThreadId`, then its newest Main chat thread) and only creates a new one when there is none.
+- **Bot page.** Tap the bot's name in a chat. The page shows the profile card with **Edit** and **Stage**, then rows for Threads, Tasks, Routines, Artifacts, Memory, Computer and Channels.
+- **Threads.** Threads are grouped into Waiting on you, Working, Queued, Idle and Resolved, and the list refreshes every 15 seconds. Waiting threads have **Approve** and **Decline** buttons.
+- **Group chats.** Make a room with 2 to 6 bots. Every member answers, or only the members you @mention. A bot can @mention another bot to bring it into the next round. The stage strip shows who is talking.
+- **Live stage.** Give the bot files, photos or links, then choose **Plan first**, **Do it** or **Ask me first**. The bot's main chat stays open under the stage.
+- **Computers.** Open any computer to see its screen. **Take control** gets the control lease for this phone. The screen reconnects with full control, and with view-only access when someone else takes over. A bot's own desktop uses the bot desktop routes: observe, take over and hand back.
+
+Developer notes: endpoints are `/api/v1/agents`, `/api/v1/threads` (with `approve` and `decline`), `/api/v1/bot-projects`, `/api/v1/bot-groups`, `/api/v1/cowork/memory?bot=`, `/api/v1/gateway/bots/:id/channels`, `/api/v1/computers` (`status`, `control`, `control/take`, `control/release`, `ws-token`) and `/ws/computers/:id/vnc`. Group chat turns run on the device the same way as the web's `group-chat-turn-runner.ts`: each bot answers in an ephemeral agent session. The VNC client supports only the RFB "None" security type, so a computer that asks for a VNC password shows the connection error.
 
 ## Quick bot strip
 

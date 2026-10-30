@@ -2,98 +2,24 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>CFBundleDevelopmentRegion</key>
-	<string>$(DEVELOPMENT_LANGUAGE)</string>
-	<key>CFBundleDisplayName</key>
-	<string>Allternit</string>
-	<key>CFBundleExecutable</key>
-	<string>$(EXECUTABLE_NAME)</string>
-	<key>CFBundleIdentifier</key>
-	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
-	<key>CFBundleInfoDictionaryVersion</key>
-	<string>6.0</string>
-	<key>CFBundleName</key>
-	<string>$(PRODUCT_NAME)</string>
-	<key>CFBundlePackageType</key>
-	<string>APPL</string>
-	<key>CFBundleShortVersionString</key>
-	<string>$(MARKETING_VERSION)</string>
-	<key>CFBundleVersion</key>
-	<string>$(CURRENT_PROJECT_VERSION)</string>
-	<!-- Full name of the keychain group shared with the AllternitScreen
-	     broadcast extension (Shared/AppPhone/AppPhoneLink.swift). -->
-	<key>AllternitSharedKeychainGroup</key>
-	<string>$(AppIdentifierPrefix)com.allternit.mobile.shared</string>
-	<key>LSRequiresIPhoneOS</key>
-	<true/>
-	<key>UILaunchScreen</key>
-	<dict/>
-	<key>UISupportedInterfaceOrientations</key>
-	<array>
-		<string>UIInterfaceOrientationPortrait</string>
-		<string>UIInterfaceOrientationLandscapeLeft</string>
-		<string>UIInterfaceOrientationLandscapeRight</string>
-	</array>
-	<key>UISupportedInterfaceOrientations~ipad</key>
-	<array>
-		<string>UIInterfaceOrientationPortrait</string>
-		<string>UIInterfaceOrientationPortraitUpsideDown</string>
-		<string>UIInterfaceOrientationLandscapeLeft</string>
-		<string>UIInterfaceOrientationLandscapeRight</string>
-	</array>
-	<key>NSAppTransportSecurity</key>
-	<dict>
-		<!-- Dev-only: allow the plain-HTTP local gateway (127.0.0.1:8013). -->
-		<key>NSAllowsLocalNetworking</key>
-		<true/>
-	</dict>
-	<!-- Composer dictation mic: system permission prompts. -->
-	<key>NSMicrophoneUsageDescription</key>
-	<string>Allternit uses the microphone so you can talk to your agent (voice chat) and dictate messages in chat. Audio is sent to Allternit Cloud Voice only when you choose it; "This device" keeps your speech on the phone.</string>
-	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>Allternit uses speech recognition to transcribe your dictation into chat text.</string>
-	<!-- Composer "+" sheet: camera capture + photo library attach/recents. -->
-	<key>NSCameraUsageDescription</key>
-	<string>Allternit uses the camera so you can take photos and attach them to your chat.</string>
-	<key>NSPhotoLibraryUsageDescription</key>
-	<string>Allternit accesses your photo library so you can attach photos and see recent ones in the composer.</string>
-	<!-- Runtime configuration (read by AppConfig). Injected per build config
-	     via the ALLTERNIT_API_BASE_URL build setting; Debug/Release values live
-	     in project.yml so the production host is never hardcoded here. -->
 	<key>ALLTERNIT_API_BASE_URL</key>
 	<string>$(ALLTERNIT_API_BASE_URL)</string>
-	<!-- Standalone gizzi-code server (pty terminal) base URL. Injected per
-	     build config via project.yml; NSAllowsLocalNetworking above already
-	     covers the plain-HTTP/WS dev default (127.0.0.1:4096). -->
+	<key>ALLTERNIT_CLOUD_API_URL</key>
+	<string>https://api.allternit.com</string>
 	<key>ALLTERNIT_GIZZI_CODE_URL</key>
 	<string>$(ALLTERNIT_GIZZI_CODE_URL)</string>
-	<key>CLERK_PUBLISHABLE_KEY</key>
-	<string>$(CLERK_PUBLISHABLE_KEY)</string>
-	<!-- Cloud API host (runtime-device registry + relay entry point). The
-	     Code tab's environment selector relays through this when cloud is
-	     active; AppConfig falls back to this value when the key is absent. -->
-	<key>ALLTERNIT_CLOUD_API_URL</key>
-	<string>https://allternit-cloud-api.fly.dev</string>
-	<!-- Headscale control plane for the embedded mesh (tsnet) node; AppConfig
-	     falls back to this URL when the key is absent. -->
 	<key>ALLTERNIT_MESH_CONTROL_URL</key>
 	<string>$(ALLTERNIT_MESH_CONTROL_URL)</string>
-	<!-- Gap 2 (background stream liveness): periodic permission-queue poll
-	     while backgrounded, since the pty/permission SSE streams themselves
-	     can't stay open once suspended. See BackgroundRefreshManager.swift. -->
-	<key>UIBackgroundModes</key>
-	<array>
-		<string>fetch</string>
-	</array>
+	<key>AllternitSharedKeychainGroup</key>
+	<string>$(AppIdentifierPrefix)com.allternit.mobile.shared</string>
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>
 		<string>com.allternit.mobile.refresh</string>
 	</array>
-	<!-- Gap 4: Lock Screen / Dynamic Island Live Activity for running loops
-	     (LoopLiveActivityManager.swift + the AllternitWidgets extension). -->
-	<key>NSSupportsLiveActivities</key>
-	<true/>
-	<!-- Document type associations: open office files into the platform viewer. -->
+	<key>CFBundleDevelopmentRegion</key>
+	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<key>CFBundleDisplayName</key>
+	<string>Allternit</string>
 	<key>CFBundleDocumentTypes</key>
 	<array>
 		<dict>
@@ -147,6 +73,60 @@
 				<string>com.microsoft.excel.xls</string>
 			</array>
 		</dict>
+	</array>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>$(MARKETING_VERSION)</string>
+	<key>CFBundleVersion</key>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>CLERK_PUBLISHABLE_KEY</key>
+	<string>$(CLERK_PUBLISHABLE_KEY)</string>
+	<key>LSRequiresIPhoneOS</key>
+	<true/>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+	<key>NSCameraUsageDescription</key>
+	<string>Allternit uses the camera so you can take photos and attach them to your chat.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Allternit uses the microphone so you can talk to your agent (voice chat) and dictate messages in chat. Audio is sent to Allternit Cloud Voice only when you choose it; "This device" keeps your speech on the phone.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Allternit accesses your photo library so you can attach photos and see recent ones in the composer.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Allternit uses speech recognition to transcribe your dictation into chat text.</string>
+	<key>NSSupportsLiveActivities</key>
+	<true/>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>audio</string>
+		<string>fetch</string>
+		<string>remote-notification</string>
+	</array>
+	<key>UILaunchScreen</key>
+	<dict/>
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+	<key>UISupportedInterfaceOrientations~ipad</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationPortraitUpsideDown</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
 </dict>
 </plist>

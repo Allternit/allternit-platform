@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { dropRuntimeCredentialForGizzi, isGizziProviderListPath } from './relay-gizzi-credential.js';
+import { dropRuntimeCredentialForGizzi, isGizziOwnedRelayPath, isGizziProviderListPath } from './relay-gizzi-credential.js';
 import { URLS } from './config.js';
 
 describe('dropRuntimeCredentialForGizzi', () => {
@@ -36,6 +36,23 @@ describe('isGizziProviderListPath', () => {
     }
     for (const p of ['/api/v1/providers/auth/status', '/api/v1/providers/kimi', '/api/v1/providers-x']) {
       expect(isGizziProviderListPath(p)).toBe(false);
+    }
+  });
+});
+
+describe('isGizziOwnedRelayPath', () => {
+  it('sends the phone app\'s terminal, files, automations and events to gizzi', () => {
+    for (const path of [
+      '/v1/pty/create', '/v1/pty/p1/connect', '/v1/file/tree?path=src', '/v1/cron/jobs',
+      '/v1/automations/routines', '/v1/automations/loops/l1/run', '/v1/event',
+    ]) {
+      expect(isGizziOwnedRelayPath(path)).toBe(true);
+    }
+  });
+
+  it('leaves allternit-api and look-alike paths alone', () => {
+    for (const path of ['/api/v1/cowork/sessions', '/v1/filesystem', '/v1/events', '/v1/ptyx', '/terminal/create']) {
+      expect(isGizziOwnedRelayPath(path)).toBe(false);
     }
   });
 });

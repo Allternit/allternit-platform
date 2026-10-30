@@ -4,13 +4,10 @@ import SwiftUI
 /// (surfaces/ai.allternit.com/src/shell/ModeSwitcher.tsx:24-70).
 ///
 /// `design` is skipped on iOS — on the web it opens an external window.
-/// Cowork is NOT a switcher destination: the platform's primary surface
-/// control is the sidebar tab list in the header (HistorySidebarView — no
-/// persistent bottom bar, matching ChatGPT/Claude's iOS apps), and cowork is a
-/// composer-level toggle inside Chats (BottomDock.tsx ChatCoworkToggle).
-/// Projects, the artifacts library, the Agent Hub, Automation Tasks, and
-/// Models are iOS-only tab surfaces layered over the same modes (they don't
-/// stamp an `origin_surface` of their own).
+/// This is the session-stamping / theme mode. The visible switcher is the
+/// drawer's mode dial over `ShellMode` (Home · Bots · Code · ACI), which
+/// maps onto these. Cowork is a composer-level toggle inside Chats
+/// (BottomDock.tsx ChatCoworkToggle), not a dial mode.
 enum AppMode: String, CaseIterable, Sendable {
     case chat
     case cowork
@@ -34,6 +31,86 @@ enum AppMode: String, CaseIterable, Sendable {
     var theme: ModeTheme { ModeTheme(mode: self) }
 }
 
+/// The phone shell's four modes — the PWA mode dial's Home · Bots · Code ·
+/// ACI (allternit-ai src/shell/mode-buttons.ts MODE_BUTTONS, phone-nav.ts
+/// `PhoneMode`). Each picks the drawer's rail, wordmark and recents and opens
+/// its root surface. `AppMode` stays the session-stamping / theme enum
+/// underneath (Bots stamps no surface of its own).
+enum ShellMode: String, CaseIterable, Sendable {
+    case home, bots, code, aci
+
+    var label: String {
+        switch self {
+        case .home: return "Home"
+        case .bots: return "Bots"
+        case .code: return "Code"
+        case .aci: return "ACI"
+        }
+    }
+
+    /// SF Symbols for the web's Phosphor House / Robot / TerminalWindow / Globe.
+    var icon: String {
+        switch self {
+        case .home: return "house.fill"
+        case .bots: return "cpu.fill"
+        case .code: return "terminal.fill"
+        case .aci: return "globe"
+        }
+    }
+
+    /// The root section a mode opens on (phone-nav.ts MODE_SECTION).
+    var rootTab: ModeBarItem {
+        switch self {
+        case .home: return .chats
+        case .bots: return .agents
+        case .code: return .code
+        case .aci: return .aci
+        }
+    }
+
+    /// The session-stamping mode underneath. Bots keeps chat (bot threads
+    /// are chats with an `agent_id`).
+    var appMode: AppMode {
+        switch self {
+        case .home, .bots: return .chat
+        case .code: return .code
+        case .aci: return .browser
+        }
+    }
+
+    /// The wordmark suffix beside A://TERNIT (PhoneDrawer WORDMARK_SUFFIX);
+    /// Code shows the gizzi code mark instead.
+    var wordmarkSuffix: String? {
+        switch self {
+        case .home, .code: return nil
+        case .bots: return "BOTS"
+        case .aci: return "ACI"
+        }
+    }
+
+    /// Accent used for the active dial and highlights.
+    var accent: Color {
+        switch self {
+        case .home: return Theme.accentChat
+        case .bots: return Theme.accentCowork
+        case .code: return Theme.accentCode
+        case .aci: return Theme.accentBrowser
+        }
+    }
+
+    /// The mode a section belongs to (phone-nav.ts SECTION_MODE); nil for
+    /// shared sections (Projects, Artifacts, …) that keep the current mode.
+    static func owner(of tab: ModeBarItem) -> ShellMode? {
+        switch tab {
+        case .chats, .tasks: return .home
+        case .agents: return .bots
+        case .code: return .code
+        case .aci: return .aci
+        case .projects, .artifacts, .automation, .customize, .models: return nil
+        }
+    }
+}
+
 /// App-wide mode state, injected from AllternitApp as an @EnvironmentObject.
 ///
 /// Persists to UserDefaults under the same key the web uses in localStorage
@@ -42,6 +119,7 @@ enum AppMode: String, CaseIterable, Sendable {
 @MainActor
 final class AppModeStore: ObservableObject {
     static let storageKey = "allternit-platform-mode"
+    static let shellStorageKey = "allternit-phone-mode"
 
     @Published var mode: AppMode {
         didSet {
@@ -49,10 +127,19 @@ final class AppModeStore: ObservableObject {
         }
     }
 
-    /// The sidebar tab whose surface fills the content pane. Chats/Code/ACI
-    /// track `mode`; Projects, Artifacts Library, agent | bot hub, Automation
-    /// Tasks, and Models are iOS-only surfaces layered on top (the mode —
-    /// and so history filtering, theme accent, and session stamping — stays
+    /// The mode dial's mode (Home · Bots · Code · ACI). Picks the drawer's
+    /// rail and recents; changed via `setShellMode` or by opening a section
+    /// that belongs to a mode.
+    @Published private(set) var shellMode: ShellMode {
+        didSet {
+            UserDefaults.standard.set(shellMode.rawValue, forKey: Self.shellStorageKey)
+        }
+    }
+
+    /// The section whose surface fills the content pane. Mode roots
+    /// (Chats / Bots / Code / ACI) track `shellMode`; Projects, Artifacts,
+    /// Automation Tasks and Models are shared drawer sections layered on
+    /// top (the mode — and so recents, accent and session stamping — stays
     /// wherever it was).
     @Published var activeTab: ModeBarItem
 
@@ -61,50 +148,67 @@ final class AppModeStore: ObservableObject {
     /// or loops (`/v1/automations/loops`, Phase 3). All three list views
     /// read/write this via a shared segmented control so any one is
     /// reachable from the same tab rather than needing a separate nav item.
-    @Published var automationKind: AutomationKind = .cron
+    @Published var automationKind: AutomationKind = .overview
 
     init(defaults: UserDefaults = .standard) {
-        let mode: AppMode
+        let shell: ShellMode
         if launchArgumentEnabled("chat") {
-            mode = .chat
+            shell = .home
         } else if launchArgumentEnabled("code") {
-            mode = .code
-        } else if launchArgumentEnabled("browser") {
-            mode = .browser
+            shell = .code
+        } else if launchArgumentEnabled("browser") || launchArgumentEnabled("open-aci") {
+            shell = .aci
+        } else if launchArgumentEnabled("bots") || launchArgumentEnabled("open-bots") {
+            shell = .bots
+        } else if let saved = defaults.string(forKey: Self.shellStorageKey).flatMap(ShellMode.init(rawValue:)) {
+            shell = saved
         } else {
-            let saved = defaults.string(forKey: Self.storageKey)
-            mode = saved.flatMap(AppMode.init(rawValue:)) ?? .chat
+            // Pre-shell installs saved only the AppMode; map it across.
+            switch defaults.string(forKey: Self.storageKey).flatMap(AppMode.init(rawValue:)) {
+            case .code: shell = .code
+            case .browser: shell = .aci
+            default: shell = .home
+            }
         }
-        self.mode = mode
-        self.activeTab = ModeBarItem.tab(for: mode)
+        self.shellMode = shell
+        self.mode = shell.appMode
+        self.activeTab = shell.rootTab
     }
 
-    /// Both Home surfaces (chat + cowork) live under the Chats tab; selecting
-    /// it always lands on plain chat. Projects / Artifacts Library / Agents /
-    /// Automation Tasks switch the surface without touching the mode.
+    /// Mode dial: switch modes and open the mode's root section.
+    func setShellMode(_ next: ShellMode) {
+        shellMode = next
+        activeTab = next.rootTab
+        if mode != next.appMode { mode = next.appMode }
+    }
+
+    /// Open a section. A mode's own section (Chats, Bots, Code, ACI) moves
+    /// the dial to that mode; shared sections keep the current mode. Chats
+    /// always lands on plain chat (cowork is a composer toggle inside it).
     func selectBarItem(_ item: ModeBarItem) {
         activeTab = item
-        switch item {
-        case .chats: mode = .chat
-        case .code: mode = .code
-        case .aci: mode = .browser
-        case .projects, .artifacts, .agents, .automation, .models:
-            break
+        if let owner = ShellMode.owner(of: item) {
+            shellMode = owner
+            if mode != owner.appMode { mode = owner.appMode }
         }
     }
 }
 
-/// The destinations of the sidebar's tab list.
+/// The sections the content pane can show: the four mode roots plus the
+/// drawer's shared sections. `agents` is the Bots root (the case name stays
+/// for existing callers).
 enum ModeBarItem: String, CaseIterable {
-    case chats, projects, artifacts, agents, automation, models, code, aci
+    case chats, projects, artifacts, agents, automation, customize, tasks, models, code, aci
 
     var label: String {
         switch self {
         case .chats: return "Chats"
         case .projects: return "Projects"
-        case .artifacts: return "Artifacts Library"
-        case .agents: return "agent | bot hub"
+        case .artifacts: return "Artifacts"
+        case .agents: return "Bots"
         case .automation: return "Automation Tasks"
+        case .customize: return "Customize"
+        case .tasks: return "Tasks"
         case .models: return "Models"
         case .code: return "Code"
         case .aci: return "ACI"
@@ -119,14 +223,16 @@ enum ModeBarItem: String, CaseIterable {
         case .artifacts: return "archivebox"
         case .agents: return "cpu"
         case .automation: return "clock.arrow.circlepath"
+        case .customize: return "slider.horizontal.3"
+        case .tasks: return "checklist"
         case .models: return "brain.head.profile"
         case .code: return "terminal"
         case .aci: return "globe"
         }
     }
 
-    /// The tab a launch-time mode lands on: cowork lives inside Chats;
-    /// code/ACI map to themselves.
+    /// The section a launch-time `AppMode` lands on: cowork lives inside
+    /// Chats; code/ACI map to themselves.
     static func tab(for mode: AppMode) -> ModeBarItem {
         switch mode {
         case .chat, .cowork: return .chats
@@ -138,6 +244,7 @@ enum ModeBarItem: String, CaseIterable {
 
 /// The sub-surfaces of the Automation Tasks tab (`ModeBarItem.automation`).
 enum AutomationKind: String, CaseIterable {
+    case overview = "Overview"
     case cron = "Cron"
     case routines = "Routines"
     case loops = "Loops"

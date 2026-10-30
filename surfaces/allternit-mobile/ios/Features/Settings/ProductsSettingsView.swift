@@ -5,20 +5,35 @@ import SwiftUI
 /// Phase 1 surfaces the user-facing toggles that map to the web's products
 /// group. Most are local preference flags.
 struct ProductsSettingsView: View {
+    /// Which page the phone Settings list opened (Gizzi Code, Files & devices,
+    /// Extensions); nil shows all three.
+    enum Part { case gizziCode, cowork, extensions }
+
+    var part: Part? = nil
+
     @EnvironmentObject private var modeStore: AppModeStore
     @ObservedObject private var settings = SettingsStore.shared
 
     var body: some View {
         List {
-            gizziioCodeSection
-            coworkSection
-            extensionsSection
+            if part == nil || part == .gizziCode { gizziioCodeSection }
+            if part == nil || part == .cowork { coworkSection }
+            if part == nil || part == .extensions { extensionsSection }
         }
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
         .background(Color("BgPrimary"))
-        .navigationTitle("Products")
+        .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private var title: String {
+        switch part {
+        case .gizziCode: return "Gizzi Code"
+        case .cowork: return "Files & devices"
+        case .extensions: return "Extensions"
+        case nil: return "Products"
+        }
     }
 
     // MARK: - Gizzi Code

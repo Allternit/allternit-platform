@@ -72,10 +72,9 @@ Because the same artifact section contract drives routes, shell views, desktop w
 
 Editing on iOS is deferred until the web editor fully stabilizes; the current mobile surface is a **read-only viewer**. The iOS feature lives in `surfaces/allternit-mobile/ios/Features/Office/` and includes:
 
-- `OfficeArtifactClient` — artifact-service client for fetching documents.
-- `OfficeDocumentsView` — list presented from the Artifacts library toolbar.
-- `OfficeDocumentView` — native read-only rendering of every editor's section mapping (doc blocks, slide cards, sheet TSV grid, and PDF pages).
-- `OfficeEditorWebView` — `WKWebView` to the platform editor route with a Bearer-signed initial navigation.
+- `OfficeDocumentsView` — your Docs, Sheets, Slides and PDFs from Artifacts v2, presented from the Artifacts library toolbar, with **Sign PDF**.
+- `OfficeArtifactClient` and `OfficeDocumentView` — native read-only rendering of a record in the sectioned artifact service (doc blocks, slide cards, sheet TSV grid, and PDF pages). An Office artifact copied into Artifacts v2 from that store opens it through **Open in editor** (its `origin.legacy_id`).
+- `OfficeEditorWebView` — `WKWebView` to the platform editor route. The first navigation carries the Bearer, and a document-start script signs the page's own `fetch` and XHR calls to its origin and the cloud API with a token it asks the app for, so the editor's API calls are authenticated too.
 
 DEBUG builds support `-open-office-documents` and `-open-office-document-id <id>` regression arguments. The flow is verified end-to-end in the iPhone simulator: a live artifact from the gateway is listed, and the native read-only view renders its heading and paragraphs.
 

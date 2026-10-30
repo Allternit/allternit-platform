@@ -1,0 +1,32 @@
+---
+title: Delete your account
+description: Close your Allternit account from Settings on ai.allternit.com, m.allternit.com or the iPhone app, and what happens when you do.
+---
+
+You can delete your Allternit account yourself.
+
+## Where
+
+| Where | Steps |
+|---|---|
+| ai.allternit.com and m.allternit.com | **Settings → Account**, scroll to **Delete account**, then **Delete account…** |
+| Allternit for iPhone | **Settings → Account → Delete account** |
+| Allternit Desktop | **Settings → Account → Delete account** links to the same page on ai.allternit.com, because Desktop signs in through the app |
+
+Read what happens, type `DELETE` in capitals and choose **Delete my account**.
+
+## What happens
+
+- Your Allternit account is closed and you're signed out on every device.
+- You can't sign back in to it. Signing up again with the same email starts a new, empty account.
+- Allternit closes the account on its servers and stops using its data. To have stored chats, bots, memory and files erased right away, email privacy@allternit.com.
+- Deleting your account doesn't cancel a paid plan. Cancel it in **Settings → Billing** first so you aren't charged again.
+- Credits left on the account are not refunded. This can't be undone.
+
+Want a copy first? Export your data from **Settings → Privacy** before you delete.
+
+If the delete doesn't go through, email privacy@allternit.com and we'll delete the account for you.
+
+## For developers
+
+The web section is `src/views/settings/DeleteAccountSection.tsx` in allternit-ai, shown at the end of the Account panel (`ClerkAuthPanel`), which Desktop, ai.allternit.com and the phone layout all use. It calls Clerk's `user.delete()` and signs out. The iPhone app does the same in `Features/Settings/DeleteAccountView.swift`. Clerk must allow users to delete their own account. cloud-api closes the account when Clerk sends the `user.deleted` webhook (`clerk_webhooks.rs`).

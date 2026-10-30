@@ -53,7 +53,7 @@ enum VoiceCloudError: Error, Equatable, LocalizedError {
         let message = object?["message"] as? String
         switch (status, code) {
         case (402, _), (_, "no-cloud-minutes"?):
-            return .noCloudMinutes(message ?? "Your plan has no Cloud Voice minutes. Upgrade to use Cloud Voice.")
+            return .noCloudMinutes(message ?? "Your plan has no Cloud Voice minutes.")
         case (503, _), (_, "cloud-unavailable"?):
             return .cloudUnavailable(message ?? "Cloud Voice is not available right now.")
         case (401, _):

@@ -50,6 +50,9 @@ enum AgentModeTile: String, CaseIterable, Sendable {
     case slides
     case image
     case video
+    /// The agent picks the format (web ModeDock `artifact`): a doc, deck,
+    /// sheet, site, image or video, whichever serves the request.
+    case artifact
     case code
 
     var label: String {
@@ -62,6 +65,7 @@ enum AgentModeTile: String, CaseIterable, Sendable {
         case .slides: return "Slides"
         case .image: return "Image"
         case .video: return "Video"
+        case .artifact: return "Artifact"
         case .code: return "Code"
         }
     }
@@ -76,6 +80,7 @@ enum AgentModeTile: String, CaseIterable, Sendable {
         case .slides: return Theme.statusWarning
         case .image: return Color(hex: "#8B5CF6")
         case .video: return Color(hex: "#EC4899")
+        case .artifact: return Color("TextPrimary")
         case .code: return Theme.statusWarning
         }
     }
@@ -93,7 +98,26 @@ enum AgentModeTile: String, CaseIterable, Sendable {
         case .slides: return "chart.bar.doc.horizontal"
         case .image: return "photo"
         case .video: return "video"
+        case .artifact: return "sparkle"
         case .code: return "chevron.left.forwardslash.chevron.right"
+        }
+    }
+
+    /// The Allternit icon family tile for this mode (web ModeDock
+    /// AgentModeIcon → ArtifactKindIcon, Assets.xcassets/DeckIcons). Code
+    /// has none on the web and keeps its SF Symbol.
+    var deckIcon: String? {
+        switch self {
+        case .swarms: return "deck-swarms"
+        case .research: return "deck-research"
+        case .website: return "deck-build"
+        case .docs: return "deck-docs"
+        case .data: return "deck-sheets"
+        case .slides: return "deck-slides"
+        case .image: return "deck-image"
+        case .video: return "deck-video"
+        case .artifact: return "deck-artifact"
+        case .code: return nil
         }
     }
 
@@ -109,6 +133,7 @@ enum AgentModeTile: String, CaseIterable, Sendable {
         case .slides: return "Create a presentation about:"
         case .image: return "Generate or describe an image for:"
         case .video: return "Plan or describe a video about:"
+        case .artifact: return "Make whatever fits best for:"
         case .code: return "Write or review code for:"
         }
     }
@@ -133,6 +158,8 @@ enum AgentModeTile: String, CaseIterable, Sendable {
             return "Create, edit, or analyze images."
         case .video:
             return "Plan scripts, storyboards, and video content."
+        case .artifact:
+            return "Let Allternit pick the format: a doc, deck, sheet, site, image or video."
         case .code:
             return "Write, review, and debug code in any language."
         }
@@ -200,6 +227,13 @@ enum AgentModeTile: String, CaseIterable, Sendable {
                 "Outline a short-form video about",
                 "Plan a product demo video for",
             ]
+        case .artifact:
+            return [
+                "Make something for Friday's review about",
+                "Turn these notes into whatever works best:",
+                "Show this data the clearest way:",
+                "Make a launch piece for",
+            ]
         case .code:
             return [
                 "Write a function that",
@@ -215,7 +249,7 @@ enum AgentModeTile: String, CaseIterable, Sendable {
     static func visibleTiles(for surface: AppMode) -> [AgentModeTile] {
         switch surface {
         case .chat, .cowork:
-            return [.swarms, .research, .website, .docs, .data, .slides, .image, .video, .code]
+            return [.swarms, .research, .website, .docs, .data, .slides, .image, .video, .artifact]
         case .code:
             return [.swarms, .website, .docs]
         case .browser:

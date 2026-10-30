@@ -88,9 +88,13 @@ final class AgentChatClient: ObservableObject, @unchecked Sendable {
                        agentModeId: String? = nil,
                        projectId: String? = nil,
                        ephemeral: Bool = false,
-                       persona: String? = nil) async throws -> AgentSession {
+                       persona: String? = nil,
+                       permissionMode: String? = nil) async throws -> AgentSession {
         var metadata: [String: String] = [:]
         if let agentModeId { metadata["agentModeId"] = agentModeId }
+        // The composer's Auto · Ask · Read-only pill (web permission-mode.ts),
+        // read by the agent-chat bridge as `permissionMode`.
+        if let permissionMode { metadata["permissionMode"] = permissionMode }
         if let projectId { metadata["projectId"] = projectId }
         if let persona { metadata["persona"] = persona }
         // Incognito chats (Phase 6): carried as `metadata.ephemeral = "true"`
@@ -107,6 +111,13 @@ final class AgentChatClient: ObservableObject, @unchecked Sendable {
             metadata: metadata.isEmpty ? nil : metadata
         )
         return try await client.post(path: "agent-sessions", body: body)
+    }
+
+    /// Merges `metadata` into a session (`PATCH /api/v1/agent-sessions/:id`,
+    /// merge semantics — web native-agent-api.ts updateSession).
+    func updateSessionMetadata(sessionId: String, metadata: [String: String]) async throws {
+        struct Body: Encodable { let metadata: [String: String] }
+        try await client.patch(path: "agent-sessions/\(Self.escape(sessionId))", body: Body(metadata: metadata))
     }
 
     /// Lists all sessions (the production sidebar's history source).
@@ -133,6 +144,33 @@ final class AgentChatClient: ObservableObject, @unchecked Sendable {
     /// Lists all messages of a session (history view + foreground reconcile).
     func listMessages(sessionId: String) async throws -> [AgentSessionMessage] {
         try await client.get(path: "agent-sessions/\(Self.escape(sessionId))/messages")
+    }
+
+    /// The session's context window (`GET agent-sessions/:id/context`, gizzi
+    /// `/session/:id/context`; plan limits left out). nil before the
+    /// session's first turn.
+    func sessionContext(sessionId: String) async throws -> SessionContextBreakdown? {
+        let response: SessionContextResponse = try await client.get(path: "agent-sessions/\(Self.escape(sessionId))/context?limits=false")
+        return response.breakdown
+    }
+
+    /// Everything the session delegated, newest first: background shells and
+    /// subagents (`GET agent-sessions/:id/tasks`, gizzi `SessionTasks.Item`).
+    func sessionTasks(sessionId: String) async throws -> [SessionTask] {
+        try await client.get(path: "agent-sessions/\(Self.escape(sessionId))/tasks")
+    }
+
+    /// Stops a running background task (kills a shell, aborts a subagent).
+    func cancelBackgroundTask(sessionId: String, taskId: String) async throws {
+        try await client.post(path: "agent-sessions/\(Self.escape(sessionId))/background-tasks/\(Self.escape(taskId))/cancel")
+    }
+
+    /// The pull requests the session opened or pushed to
+    /// (`GET agent-sessions/prs?ids=<id>` → `{ bySession: { id: [pr] } }`).
+    func sessionPullRequests(sessionId: String) async throws -> [LinkedPullRequest] {
+        let ids = sessionId.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? sessionId
+        let response: SessionPullRequestsResponse = try await client.get(path: "agent-sessions/prs?ids=\(ids)")
+        return response.bySession?[sessionId] ?? []
     }
 
     /// Aborts an in-flight generation server-side.

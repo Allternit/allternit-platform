@@ -1,22 +1,22 @@
 {
-  "originHash" : "ba8c9f9feb02870ebf83e4a86308602e60b172e697a3e881010f0bf9241a7d19",
+  "originHash" : "4867b95707a5b21cf2943f8183427541a1ba2773c4c85af93bc877372cd09a73",
   "pins" : [
     {
       "identity" : "clerk-ios",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/clerk/clerk-ios",
       "state" : {
-        "revision" : "74b48c126a0de46d519ef87b74fc5b2f61dfc46d",
-        "version" : "1.1.0"
+        "revision" : "7ca663a635d552082b30c31024611b6c6065ecc3",
+        "version" : "1.6.2"
       }
     },
     {
-      "identity" : "gzipswift",
+      "identity" : "client-sdk-swift",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/1024jp/GzipSwift",
+      "location" : "https://github.com/livekit/client-sdk-swift",
       "state" : {
-        "revision" : "731037f6cc2be2ec01562f6597c1d0aa3fe6fd05",
-        "version" : "6.0.1"
+        "revision" : "43c1c0870e51eedbfd95b20b1b5c43a767886786",
+        "version" : "2.19.0"
       }
     },
     {
@@ -29,12 +29,12 @@
       }
     },
     {
-      "identity" : "latexswiftui",
+      "identity" : "livekit-ffi-xcframework",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/colinc86/LaTeXSwiftUI.git",
+      "location" : "https://github.com/livekit/livekit-ffi-xcframework.git",
       "state" : {
-        "revision" : "c45e0fd45f64923c49c5904a9f9626bc8939f05f",
-        "version" : "1.5.0"
+        "revision" : "685cfd95e23edf734450125eb58bb3bb21b4133b",
+        "version" : "0.13.1"
       }
     },
     {
@@ -42,53 +42,35 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/LiYanan2004/MarkdownView",
       "state" : {
-        "revision" : "32a31bdb2a4307893dc1edfe5aac06fde3fb3477",
-        "version" : "2.5.2"
-      }
-    },
-    {
-      "identity" : "mathjaxswift",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/colinc86/MathJaxSwift",
-      "state" : {
-        "revision" : "00e9c3df6b1c82031c7fe3785028f3d21c0d73ba",
-        "version" : "3.5.0"
-      }
-    },
-    {
-      "identity" : "mlx-swift",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/ml-explore/mlx-swift",
-      "state" : {
-        "revision" : "072b684acaae80b6a463abab3a103732f33774bf",
-        "version" : "0.29.1"
-      }
-    },
-    {
-      "identity" : "mlx-swift-examples",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/ml-explore/mlx-swift-examples",
-      "state" : {
-        "revision" : "9bff95ca5f0b9e8c021acc4d71a2bbe4a7441631",
-        "version" : "2.29.1"
+        "revision" : "6f452b55635246224a3329362e4e11cd3d592a30",
+        "version" : "3.0.0"
       }
     },
     {
       "identity" : "nuke",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/kean/Nuke.git",
+      "location" : "https://github.com/kean/Nuke",
       "state" : {
-        "revision" : "83e19143355b02e9261edb2323b3e1e93287ebb9",
-        "version" : "12.9.0"
+        "revision" : "30f7a7e72e0607d304fbf69c799474bd5fb6d1ce",
+        "version" : "13.2.0"
       }
     },
     {
       "identity" : "phonenumberkit",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/marmelroy/PhoneNumberKit",
+      "location" : "https://github.com/PhoneNumberKit/PhoneNumberKit",
       "state" : {
-        "revision" : "169ab10234347fb19b37441f2867ace896a284b0",
-        "version" : "4.3.0"
+        "revision" : "eae725a2e62eb2f291d8188dd457e2a7b28d5003",
+        "version" : "5.0.13"
+      }
+    },
+    {
+      "identity" : "richtext",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/LiYanan2004/RichText.git",
+      "state" : {
+        "revision" : "a2fb191988f6f2ce60574962c96a0e1846c36dae",
+        "version" : "1.0.0"
       }
     },
     {
@@ -114,35 +96,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/swiftlang/swift-cmark.git",
       "state" : {
-        "revision" : "924936d0427cb25a61169739a7660230bffa6ea6",
-        "version" : "0.8.0"
-      }
-    },
-    {
-      "identity" : "swift-collections",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/apple/swift-collections.git",
-      "state" : {
-        "revision" : "a0cb0954ecb21e4e31b0070e6ed5674e8556685a",
-        "version" : "1.6.0"
-      }
-    },
-    {
-      "identity" : "swift-html-entities",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/Kitura/swift-html-entities",
-      "state" : {
-        "revision" : "d8ca73197f59ce260c71bd6d7f6eb8bbdccf508b",
-        "version" : "4.0.1"
-      }
-    },
-    {
-      "identity" : "swift-jinja",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/huggingface/swift-jinja.git",
-      "state" : {
-        "revision" : "7d0b8880ef8e567dd4e0089f8b99fb354129017c",
-        "version" : "2.4.2"
+        "revision" : "08ddb528923cc1a6527e02b7a1aee9e516ca749a",
+        "version" : "0.9.0"
       }
     },
     {
@@ -150,35 +105,17 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/swiftlang/swift-markdown.git",
       "state" : {
-        "revision" : "3c6f9523da3a1ec2fd829673e472d95b8097a3b8",
-        "version" : "0.8.0"
+        "revision" : "25cb61d3482054b09ae76ca4f281b1bfe7fe5a43",
+        "version" : "0.9.0"
       }
     },
     {
-      "identity" : "swift-numerics",
+      "identity" : "swiftmath",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/apple/swift-numerics",
+      "location" : "https://github.com/mgriebling/SwiftMath.git",
       "state" : {
-        "revision" : "0c0290ff6b24942dadb83a929ffaaa1481df04a2",
-        "version" : "1.1.1"
-      }
-    },
-    {
-      "identity" : "swift-transformers",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/huggingface/swift-transformers",
-      "state" : {
-        "revision" : "a2e184dddb4757bc943e77fbe99ac6786c53f0b2",
-        "version" : "1.0.0"
-      }
-    },
-    {
-      "identity" : "swiftdraw",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/swhitty/SwiftDraw",
-      "state" : {
-        "revision" : "82699f4bdf2f075793cfa0d392eb27c59b41a3fe",
-        "version" : "0.29.0"
+        "revision" : "fa8244ed032f4a1ade4cb0571bf87d2f1a9fd2d7",
+        "version" : "1.7.3"
       }
     },
     {
@@ -206,6 +143,15 @@
       "state" : {
         "revision" : "15cf3a9ec3ab95e0d058b7df9f35619123c9e02d",
         "version" : "0.1.10"
+      }
+    },
+    {
+      "identity" : "webrtc-xcframework",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/livekit/webrtc-xcframework.git",
+      "state" : {
+        "revision" : "f843fb1c12017bd17fde38e7293649c204548467",
+        "version" : "150.7871.4"
       }
     }
   ],

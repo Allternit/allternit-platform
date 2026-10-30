@@ -207,6 +207,17 @@ Connect to the ticketed WebSocket:
 wscat -c "wss://api.allternit.com/api/v1/runtime-devices/rt_xyz789/socket?ticket=ticket_uuid"
 ```
 
+The first frame on the socket is the text frame `{"type":"allternit_socket_ready"}`, sent once the runtime has opened its end. Wait for it before sending; every frame after it belongs to the runtime.
+
+### What the runtime does with relayed paths
+
+Allternit Desktop sends most relayed paths to its local allternit-api. These gizzi-code paths go to its local gizzi-code instead, over HTTP and as sockets:
+
+- `/v1/provider`, `/v1/agent`, `/v1/permission`, `/v1/question`, `/v1/session`
+- `/v1/pty` (terminal REST, the `/v1/pty/:id/connect` attach socket, dev-server ports), `/v1/file`, `/v1/cron`, `/v1/automations` (routines and loops), and the `/v1/event` stream
+
+The native phone app (Allternit Mobile) uses the relay the same way the web app does. It lists `/api/v1/runtime-devices` and picks a computer: the account's default computer first, then the computer you picked, then the first one online, then a sleeping cloud computer (the first request wakes it). It then sends terminal, file, diff, permission, automation, Cowork session, Factory activity and ACI calls through `/proxy` and the socket ticket. When no computer answers, the Code and Automation screens show **Connect a computer or Allternit Cloud**, or **Can't reach your computer** when a paired computer is offline. A Desktop build older than this change answers the gizzi-code paths in the second list with `501`.
+
 ### Live desktop viewer token
 
 "Sign in on the cloud computer" opens the computer's desktop in the browser. The desktop is served by the cloud computer itself and tunnelled through its outbound relay connection, so no Sessions computer record and no shared secret are involved. The viewer token uses the same signed format as the Sessions `computers` ws-token (purpose `vnc`, `computer_id` set to the runtime id), is signed with that runtime's own relay key (the digest cloud-api already stores for it, `credential_hash`), and lives 300 seconds. The runtime's allternit-api checks it at `GET /api/v1/runtime-viewer/vnc?token=…` and proxies to its local VNC server (`ALLTERNIT_RUNTIME_VNC_ADDR`, default `127.0.0.1:5900`). `wsUrl` carries a 30-second relay socket ticket: connect right away, and ask again to reconnect.

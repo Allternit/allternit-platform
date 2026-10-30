@@ -1,0 +1,151 @@
+import SwiftUI
+
+/// "Show in rail" choices per mode (allternit-ai src/shell/rail/rail-tabs.ts):
+/// which of the mode's rail tabs the drawer shows. Same keys and tab ids as
+/// the web (there in localStorage, here in UserDefaults), so the contract
+/// reads the same; choices are per device on both.
+@MainActor
+final class RailTabsStore: ObservableObject {
+    static let shared = RailTabsStore()
+
+    enum TabMode: String {
+        case home, code, browser
+
+        var storageKey: String {
+            switch self {
+            case .home: return "allternit-home-rail-tabs"
+            case .code: return "allternit-code-rail-tabs"
+            case .browser: return "allternit-browser-rail-tabs"
+            }
+        }
+    }
+
+    struct Tab: Identifiable, Hashable {
+        let id: String
+        let label: String
+        let icon: String
+    }
+
+    /// The tabs the phone drawer can show per mode (PhoneDrawer PHONE_TABS,
+    /// limited to the rows iOS has).
+    static func tabs(for mode: TabMode) -> [Tab] {
+        switch mode {
+        case .home:
+            return [
+                Tab(id: "projects", label: "Projects", icon: "folder"),
+                Tab(id: "artifacts-library", label: "Artifacts", icon: "doc.text"),
+                Tab(id: "automation-tasks", label: "Automation Tasks", icon: "clock"),
+                Tab(id: "customize", label: "Customize", icon: "slider.horizontal.3"),
+            ]
+        case .code:
+            return [
+                Tab(id: "projects", label: "Projects", icon: "folder"),
+                Tab(id: "artifacts-library", label: "Artifacts", icon: "doc.text"),
+                Tab(id: "code-automations", label: "Automation Tasks", icon: "clock"),
+            ]
+        case .browser:
+            return [
+                Tab(id: "mini-apps", label: "MCP Apps", icon: "macwindow"),
+                Tab(id: "computers", label: "Computers", icon: "desktopcomputer"),
+                Tab(id: "site-apis", label: "Teach", icon: "record.circle"),
+            ]
+        }
+    }
+
+    @Published private var saved: [TabMode: [String: Bool]] = [:]
+    private let defaults: UserDefaults
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        for mode in [TabMode.home, .code, .browser] {
+            if let data = defaults.string(forKey: mode.storageKey)?.data(using: .utf8),
+               let decoded = try? JSONDecoder().decode([String: Bool].self, from: data) {
+                saved[mode] = decoded
+            }
+        }
+    }
+
+    /// Default: every tab shows (rail-tabs DEFAULTS for the phone's tabs).
+    func isVisible(_ id: String, in mode: TabMode) -> Bool {
+        saved[mode]?[id] ?? true
+    }
+
+    func toggle(_ id: String, in mode: TabMode) {
+        var map = saved[mode] ?? [:]
+        map[id] = !isVisible(id, in: mode)
+        saved[mode] = map
+        if let data = try? JSONEncoder().encode(map), let json = String(data: data, encoding: .utf8) {
+            defaults.set(json, forKey: mode.storageKey)
+        }
+    }
+
+    func anyHidden(in mode: TabMode) -> Bool {
+        Self.tabs(for: mode).contains { !isVisible($0.id, in: mode) }
+    }
+}
+
+/// Customize (allternit-ai src/views/customize/CustomizeView.tsx): what the
+/// assistant can use. Skills, Plugins (CapabilitiesSettingsView), Connectors
+/// Webhooks and MCP servers are native screens.
+struct CustomizeSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @ObservedObject private var auth = AuthManager.shared
+    @State private var isConnectorsPresented = false
+
+    var body: some View {
+        NavigationStack {
+            List {
+                if !auth.isSignedIn && !auth.isSkippingAuth {
+                    FriendlyStateView(style: .empty, icon: "person.crop.circle", title: "Sign in to customize",
+                                      message: "Skills, connectors and plugins belong to your account.",
+                                      actionTitle: "Sign in", action: {
+                                          dismiss()
+                                          auth.isPresentingAuth = true
+                                      })
+                        .listRowBackground(Color.clear)
+                } else {
+                    Section {
+                        NavigationLink { CapabilitiesSettingsView(kind: .skill) } label: {
+                            Label("Skills", systemImage: "book")
+                        }
+                        Button { isConnectorsPresented = true } label: {
+                            row("Connectors", icon: "powerplug", trailing: "chevron.right")
+                        }
+                        .buttonStyle(.plain)
+                        NavigationLink { CapabilitiesSettingsView(kind: .plugin) } label: {
+                            Label("Plugins", systemImage: "puzzlepiece.extension")
+                        }
+                    }
+                    Section("More") {
+                        NavigationLink { McpServersSettingsView() } label: {
+                            Label("MCP servers", systemImage: "cpu")
+                        }
+                        NavigationLink { WebhooksSettingsView() } label: {
+                            Label("Webhooks", systemImage: "arrow.triangle.branch")
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Customize")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
+            }
+            .sheet(isPresented: $isConnectorsPresented) { ConnectorsListView() }
+        }
+    }
+
+    private func row(_ title: String, icon: String, trailing: String) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .frame(width: 22)
+                .foregroundColor(Color("TextSecondary"))
+            Text(title).foregroundColor(Color("TextPrimary"))
+            Spacer()
+            Image(systemName: trailing)
+                .font(.caption)
+                .foregroundColor(Color("TextSecondary"))
+        }
+        .contentShape(Rectangle())
+    }
+}

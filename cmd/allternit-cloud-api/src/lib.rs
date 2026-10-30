@@ -379,6 +379,8 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         .merge(routes::inapp_calls::routes())
         // Web Push for rings and messages when the app is closed; 503 push_not_configured until the VAPID env is set.
         .merge(routes::web_push::routes())
+        // Native iOS push tokens (APNs); 503 apns_not_configured until APNS_KEY_P8 / APNS_KEY_ID / APNS_TEAM_ID are set.
+        .merge(routes::apns::routes())
         // Notification preferences per event type (Clerk session or compute key); the push sink reads them.
         .merge(routes::notifications::routes())
         // WhatsApp Embedded Signup + 24h-window send; each handler resolves the user itself.

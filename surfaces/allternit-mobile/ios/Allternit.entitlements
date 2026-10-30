@@ -2,16 +2,18 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>aps-environment</key>
+	<string>development</string>
+	<key>com.apple.developer.applesignin</key>
+	<array>
+		<string>Default</string>
+	</array>
 	<key>com.apple.developer.associated-domains</key>
 	<array>
-		<!-- Clerk iOS SDK requires the Frontend API URL as a webcredentials
-		     associated domain for seamless OAuth / Sign in with Apple hand-off.
-		     https://clerk.com/docs/ios/getting-started/quickstart -->
 		<string>webcredentials:clerk.allternit.com</string>
+		<string>applinks:m.allternit.com</string>
+		<string>applinks:ai.allternit.com</string>
 	</array>
-	<!-- Clerk iOS SDK persists client/session state in the keychain; without
-	     this group the writes fail with errSecMissingEntitlement (-34018) and
-	     every subsequent API call goes out unauthenticated ("signed_out" 401). -->
 	<key>keychain-access-groups</key>
 	<array>
 		<string>$(AppIdentifierPrefix)com.allternit.mobile</string>

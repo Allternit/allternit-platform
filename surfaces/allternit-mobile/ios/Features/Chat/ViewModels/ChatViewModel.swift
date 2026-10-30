@@ -53,6 +53,14 @@ struct MessageRecord: Identifiable, Equatable, Sendable {
     var reasoning: String = ""
     var isStreaming: Bool = false
     var toolStatus: ToolStatus? = nil
+    /// Every tool call of the reply, for the tool calls rail and the agent
+    /// run tree (Features/RunTree).
+    var toolCalls: [ToolCallRecord] = []
+    /// Questions the agent asked during this reply, answered in place
+    /// (Features/Decisions QuestionCardView).
+    var questions: [AgentQuestionRequest] = []
+    /// Permissions the agent waited on during this reply.
+    var permissions: [AgentPermissionAsk] = []
     var artifacts: [ArtifactRecord] = []
     /// Structured stream/transport failure rendered as an inline error card
     /// (ChatErrorCardView) instead of raw backend text in the bubble.
@@ -95,6 +103,9 @@ struct SessionContext: Equatable, Sendable {
     /// Onboarding work-profile answer (Phase 10), sent as
     /// `metadata.persona` — mirrors how projectId/agentModeId are carried.
     var persona: String? = nil
+    /// The composer's permission pill (ChatPermissionMode raw value), sent as
+    /// `metadata.permissionMode`.
+    var permissionMode: String? = nil
 }
 
 /// Send-path failures with user-meaningful messages (surfaced via the
@@ -256,6 +267,7 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
             role: record.role,
             content: record.content,
             reasoning: record.thinking ?? "",
+            toolCalls: ToolCallRecord.fromHistory(parts),
             artifacts: artifacts
         )
     }
@@ -285,7 +297,8 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
             agentModeId: sessionContext.agentModeId,
             projectId: sessionContext.projectId,
             ephemeral: sessionContext.ephemeral,
-            persona: sessionContext.persona
+            persona: sessionContext.persona,
+            permissionMode: sessionContext.permissionMode
         )
         currentSessionId = session.id
         return session.id
@@ -451,6 +464,9 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
                     sessionId: sessionId,
                     text: trimmed,
                     agentId: self.sessionContext.agentId,
+                    // Artifact studio sessions ("Make something new") carry
+                    // their standing instructions on every turn, as the web does.
+                    systemPrompt: ArtifactStudioLauncher.shared.systemPrompt(for: sessionId),
                     runtimeModelId: runtimeModelId,
                     effort: effort,
                     attachments: attachmentRefs.isEmpty ? nil : attachmentRefs,
@@ -518,10 +534,12 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
                     state: .running,
                     startedAt: Date()
                 )
+                message.upsertToolCall(id: payload.toolCallId, name: payload.toolName, state: .running, detail: payload.detail)
             }
 
-        case .toolResult:
+        case .toolResult(let payload):
             updateMessage(messageId) { message in
+                message.upsertToolCall(id: payload.toolCallId, name: payload.toolName, state: .done, detail: payload.detail)
                 message.toolStatus?.state = .done
                 if let startedAt = message.toolStatus?.startedAt {
                     message.toolStatus?.elapsed = Date().timeIntervalSince(startedAt)
@@ -530,6 +548,9 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
 
         case .toolError(let payload):
             updateMessage(messageId) { message in
+                var detail = payload.detail ?? AgentChatEvent.ToolDetail()
+                detail.error = detail.error ?? payload.error
+                message.upsertToolCall(id: payload.toolCallId, name: payload.toolName ?? message.toolStatus?.toolName ?? "Tool", state: .failed, detail: detail)
                 message.toolStatus?.state = .failed
                 message.toolStatus?.text = payload.error
                 if let startedAt = message.toolStatus?.startedAt {
@@ -544,8 +565,8 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
             updateMessage(messageId) { message in
                 message.artifacts.append(record)
             }
-            // Streams are the only artifact source (no backend list
-            // endpoint), so the library collects them as they arrive.
+            // Saved to Artifacts v2 (idempotent draft id) so the library
+            // and every other surface see it.
             ArtifactLibraryStore.shared.record(record, sessionId: currentSessionId)
 
         case .finish(let payload):
@@ -568,6 +589,20 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
                 message.error = ChatError(name: nil, message: reason, raw: reason)
             }
             return true
+
+        case .question(let request):
+            updateMessage(messageId) { message in
+                if !message.questions.contains(where: { $0.id == request.id }) {
+                    message.questions.append(request)
+                }
+            }
+
+        case .permissionAsked(let ask):
+            updateMessage(messageId) { message in
+                if !message.permissions.contains(where: { $0.id == ask.id }) {
+                    message.permissions.append(ask)
+                }
+            }
 
         case .messageStart, .done, .ignored:
             // messageStart carries only model labels (not rendered); done is
@@ -753,6 +788,7 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
         guard pendingText.isEmpty, pendingReasoning.isEmpty,
               let message = messages.first(where: { $0.id == messageId }) else { return false }
         return message.content.isEmpty && message.toolStatus == nil && message.artifacts.isEmpty
+            && message.toolCalls.isEmpty && message.questions.isEmpty
     }
 
     private func updateMessage(_ id: String, _ mutate: (inout MessageRecord) -> Void) {

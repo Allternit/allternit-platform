@@ -5,7 +5,7 @@ import Foundation
 /// gizzi-code's own server — `server.ts:367,455`).
 ///
 /// Like `RoutinesClient`/`CronClient`/`PtyClient`/`PermissionClient` this
-/// always connects DIRECTLY to `AppConfig.gizziCodeBaseURL` — loops live on
+/// talks to gizzi-code (resolved per call by `InstanceConnection`) — loops live on
 /// the gizzi-code server itself, not on `allternit-api` (unlike
 /// `ProjectsClient`, which goes through `APIClient.shared`'s relay-aware
 /// routing to a different backend).
@@ -16,19 +16,23 @@ import Foundation
 final class LoopsClient: @unchecked Sendable {
     static let shared = LoopsClient()
 
-    private let client: APIClient
+    private let endpointBaseURL: URL
 
     init(baseURL: URL = AppConfig.gizziCodeBaseURL) {
-        self.client = APIClient(
-            baseURL: baseURL,
-            tokenProvider: { try await AuthManager.shared.getToken() }
-        )
+        self.endpointBaseURL = baseURL
+    }
+
+    /// Per-call target: the given base URL, or — for the static default —
+    /// whatever `InstanceConnection.resolve()` picks now (explicit URL →
+    /// mesh → the relay to the user's computer).
+    private func client() async throws -> APIClient {
+        try await InstanceConnection.gizziClient(for: endpointBaseURL)
     }
 
     /// `GET v1/automations/loops` (automations.ts:228-242) — bare `Loop[]`,
     /// no envelope.
     func listLoops() async throws -> [Loop] {
-        try await client.get(path: "v1/automations/loops")
+        try await client().get(path: "v1/automations/loops")
     }
 
     /// `POST v1/automations/loops` (automations.ts:243-272), body validated
@@ -41,7 +45,7 @@ final class LoopsClient: @unchecked Sendable {
         exitCondition: String?,
         maxIterations: Int
     ) async throws -> Loop {
-        try await client.post(
+        try await client().post(
             path: "v1/automations/loops",
             body: CreateLoopRequest(command: command, exitCondition: exitCondition, maxIterations: maxIterations)
         )
@@ -53,12 +57,12 @@ final class LoopsClient: @unchecked Sendable {
     /// `{success: true, state: "running"}`; discarded here since callers
     /// refresh the list to pick up the new `state`.
     func runLoop(id: String) async throws {
-        try await client.post(path: "v1/automations/loops/\(Self.escape(id))/run")
+        try await client().post(path: "v1/automations/loops/\(Self.escape(id))/run")
     }
 
     /// `DELETE v1/automations/loops/:id` (automations.ts:302-319).
     func deleteLoop(id: String) async throws {
-        try await client.delete(path: "v1/automations/loops/\(Self.escape(id))")
+        try await client().delete(path: "v1/automations/loops/\(Self.escape(id))")
     }
 
     /// Web uses `encodeURIComponent` on path ids (parity with

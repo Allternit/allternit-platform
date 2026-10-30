@@ -3241,6 +3241,26 @@
       ]
     },
     {
+      "id": "feature:delete-account",
+      "label": "Delete your account",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "Settings → Account → Delete account on Desktop, ai.allternit.com, the PWA and the iPhone app: type DELETE, Clerk user.delete(), sign out; cloud-api closes the account on Clerk's user.deleted webhook. Required by App Store guideline 5.1.1(v).",
+      "touches": [
+        "allternit-ai/src/views/settings/DeleteAccountSection.tsx",
+        "allternit-ai/src/views/settings/SettingsView.tsx",
+        "allternit/surfaces/allternit-mobile/ios/Features/Settings/DeleteAccountView.swift",
+        "allternit/surfaces/allternit-mobile/ios/Core/Auth/AuthManager+DeleteAccount.swift",
+        "allternit/cmd/allternit-cloud-api/src/routes/clerk_webhooks.rs"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-28",
+          "note": "Built for the iPhone App Store submission (platform #1942, ai #881). Open: server cleanup after delete (data erase, Stripe cancel) waits on Eoj; today the account is only marked inactive and the copy says so."
+        }
+      ]
+    },
+    {
       "id": "feature:desktop-menu-bar",
       "label": "Desktop menu bar icon and app menu",
       "product": "product:ai-allternit",

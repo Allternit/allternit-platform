@@ -29,7 +29,8 @@ final class LoopLiveActivityManager {
 
         for loop in loops where loop.state == "running" {
             if let activity = activities[loop.id] {
-                Task { await activity.update(using: Self.contentState(for: loop)) }
+                let id = activity.id, state = Self.contentState(for: loop)
+                Task { await Self.live(id)?.update(ActivityContent(state: state, staleDate: nil)) }
             } else {
                 start(for: loop)
             }
@@ -62,12 +63,18 @@ final class LoopLiveActivityManager {
 
     private func end(loopId: String, activity: Activity<LoopActivityAttributes>, finalState: LoopActivityAttributes.ContentState?) {
         activities.removeValue(forKey: loopId)
+        let id = activity.id
         Task {
-            await activity.end(
+            await Self.live(id)?.end(
                 finalState.map { ActivityContent(state: $0, staleDate: nil) },
                 dismissalPolicy: .after(.now.addingTimeInterval(30))
             )
         }
+    }
+
+    /// Activity isn't Sendable, so tasks carry its id and look it up here.
+    private nonisolated static func live(_ id: String) -> Activity<LoopActivityAttributes>? {
+        Activity<LoopActivityAttributes>.activities.first { $0.id == id }
     }
 
     static func contentState(for loop: Loop) -> LoopActivityAttributes.ContentState {

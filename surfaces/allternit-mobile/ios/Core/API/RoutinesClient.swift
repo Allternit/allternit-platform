@@ -5,7 +5,7 @@ import Foundation
 /// gizzi-code's own server — `server.ts:367,455`).
 ///
 /// Like `CronClient`/`PtyClient`/`PermissionClient` this always connects
-/// DIRECTLY to `AppConfig.gizziCodeBaseURL` — routines live on the gizzi-code
+/// to gizzi-code, resolved per call by `InstanceConnection`, — routines live on the gizzi-code
 /// server itself, not on `allternit-api` (unlike `ProjectsClient`, which goes
 /// through `APIClient.shared`'s relay-aware routing to a different backend).
 ///
@@ -15,19 +15,23 @@ import Foundation
 final class RoutinesClient: @unchecked Sendable {
     static let shared = RoutinesClient()
 
-    private let client: APIClient
+    private let endpointBaseURL: URL
 
     init(baseURL: URL = AppConfig.gizziCodeBaseURL) {
-        self.client = APIClient(
-            baseURL: baseURL,
-            tokenProvider: { try await AuthManager.shared.getToken() }
-        )
+        self.endpointBaseURL = baseURL
+    }
+
+    /// Per-call target: the given base URL, or — for the static default —
+    /// whatever `InstanceConnection.resolve()` picks now (explicit URL →
+    /// mesh → the relay to the user's computer).
+    private func client() async throws -> APIClient {
+        try await InstanceConnection.gizziClient(for: endpointBaseURL)
     }
 
     /// `GET v1/automations/routines` (automations.ts:104-121) — bare
     /// `Routine[]`, no envelope.
     func listRoutines() async throws -> [Routine] {
-        try await client.get(path: "v1/automations/routines")
+        try await client().get(path: "v1/automations/routines")
     }
 
     /// `POST v1/automations/routines` (automations.ts:122-153), body
@@ -39,7 +43,7 @@ final class RoutinesClient: @unchecked Sendable {
         trigger: String?,
         schedule: String?
     ) async throws -> Routine {
-        try await client.post(
+        try await client().post(
             path: "v1/automations/routines",
             body: CreateRoutineRequest(name: name, steps: steps, trigger: trigger, schedule: schedule)
         )
@@ -51,12 +55,12 @@ final class RoutinesClient: @unchecked Sendable {
     /// discarded here since callers refresh the list to pick up the new
     /// `state`.
     func runRoutine(id: String) async throws {
-        try await client.post(path: "v1/automations/routines/\(Self.escape(id))/run")
+        try await client().post(path: "v1/automations/routines/\(Self.escape(id))/run")
     }
 
     /// `DELETE v1/automations/routines/:id` (automations.ts:183-200).
     func deleteRoutine(id: String) async throws {
-        try await client.delete(path: "v1/automations/routines/\(Self.escape(id))")
+        try await client().delete(path: "v1/automations/routines/\(Self.escape(id))")
     }
 
     /// Web uses `encodeURIComponent` on path ids (parity with

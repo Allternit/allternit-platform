@@ -55,6 +55,12 @@
       "path": "allternit-ai"
     },
     {
+      "id": "surface:ios",
+      "label": "Allternit iPhone app (App Store)",
+      "kind": "surface",
+      "path": "allternit/surfaces/allternit-mobile"
+    },
+    {
       "id": "surface:platform",
       "label": "platform.allternit.com",
       "kind": "surface",

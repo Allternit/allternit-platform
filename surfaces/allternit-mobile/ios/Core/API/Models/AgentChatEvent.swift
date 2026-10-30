@@ -66,6 +66,14 @@ enum AgentChatEvent: Decodable, Sendable {
     /// Done signal (`{"type":"message_stop"}` or `chunk_type:"done"`).
     case done
 
+    /// The agent asked the person a question (session-worker `question.asked`).
+    /// Answered in place from the message's question card.
+    case question(AgentQuestionRequest)
+
+    /// The agent is waiting on a permission (session-worker `permission.asked`).
+    /// The tool calls rail draws Deny / Allow on the matching tool row.
+    case permissionAsked(AgentPermissionAsk)
+
     /// Known-but-unrendered or unknown frame — parser tolerance.
     case ignored
 
@@ -81,22 +89,34 @@ enum AgentChatEvent: Decodable, Sendable {
         let text: String
     }
 
+    /// What the session-worker's tool part says beyond its name: the input
+    /// (string-valued fields only — enough to describe the step and join a
+    /// subagent call to its task), its title, error and timing.
+    struct ToolDetail: Sendable, Equatable {
+        var input: [String: String] = [:]
+        var title: String? = nil
+        var error: String? = nil
+        var startedAt: Date? = nil
+        var finishedAt: Date? = nil
+    }
+
     struct ToolCall: Sendable {
         let toolCallId: String
         let toolName: String
-        // `input`/`args` (`Record<string, unknown>`) — skipped (see TS parser).
+        var detail: ToolDetail? = nil
     }
 
     struct ToolResult: Sendable {
         let toolCallId: String
         let toolName: String
-        // `result`/`output` (`unknown`) — skipped (see TS parser).
+        var detail: ToolDetail? = nil
     }
 
     struct ToolError: Sendable {
         let toolCallId: String
         let toolName: String?
         let error: String
+        var detail: ToolDetail? = nil
     }
 
     struct Finish: Decodable, Sendable {

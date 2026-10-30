@@ -19,8 +19,10 @@ enum SessionWorkerEvent: Decodable, Sendable {
     case partRemoved(sessionID: String, messageID: String, partID: String)
     /// Session status changed (busy/idle/error).
     case statusChanged(StatusInfo)
-    /// Permission/question asked by the agent.
+    /// Permission asked by the agent (`permission.asked`).
     case asked(AskedInfo)
+    /// Question asked by the agent (`question.asked`, gizzi `Question.Request`).
+    case questionAsked(AgentQuestionRequest)
     /// Unknown or irrelevant event — parser tolerance.
     case unknown(type: String, properties: AnyCodable?)
 
@@ -48,12 +50,63 @@ enum SessionWorkerEvent: Decodable, Sendable {
         let name: String?
         let state: PartState?
 
+        /// gizzi `MessageV2.ToolPart.state`: `{ status, input, title?, error?,
+        /// time: { start, end? } }`. Decoded tolerantly — a tool state this
+        /// client doesn't know must not drop the frame.
         struct PartState: Decodable, Sendable {
             let status: String
+            let input: [String: String]
+            let title: String?
+            let error: String?
+            let startedAt: Date?
+            let finishedAt: Date?
+
+            private enum CodingKeys: String, CodingKey { case status, input, title, error, time }
+            private struct Time: Decodable { let start: Double?; let end: Double? }
+
+            init(from decoder: Decoder) throws {
+                let c = try decoder.container(keyedBy: CodingKeys.self)
+                status = ((try? c.decodeIfPresent(String.self, forKey: .status)) ?? nil) ?? "pending"
+                title = (try? c.decodeIfPresent(String.self, forKey: .title)) ?? nil
+                error = (try? c.decodeIfPresent(String.self, forKey: .error)) ?? nil
+                let raw = (try? c.decodeIfPresent([String: AnyCodable].self, forKey: .input)) ?? nil
+                input = PartState.flatten(raw)
+                let time = (try? c.decodeIfPresent(Time.self, forKey: .time)) ?? nil
+                startedAt = time?.start.map { Date(timeIntervalSince1970: $0 / 1000) }
+                finishedAt = time?.end.map { Date(timeIntervalSince1970: $0 / 1000) }
+            }
+
+            /// String-valued input fields (numbers/bools stringified; nested
+            /// objects dropped) — what the rail needs to describe a step.
+            static func flatten(_ raw: [String: AnyCodable]?) -> [String: String] {
+                var out: [String: String] = [:]
+                for (key, value) in raw ?? [:] {
+                    switch value.value {
+                    case let s as String: out[key] = s
+                    case let b as Bool: out[key] = b ? "true" : "false"
+                    case let i as Int: out[key] = String(i)
+                    case let d as Double: out[key] = String(d)
+                    default: break
+                    }
+                }
+                return out
+            }
         }
 
         /// Flattened tool-state status, if this part is a tool part.
         var toolStatus: String? { state?.status }
+
+        /// The tool detail the chat's tool calls rail draws.
+        var toolDetail: AgentChatEvent.ToolDetail? {
+            guard let state else { return nil }
+            return AgentChatEvent.ToolDetail(
+                input: state.input,
+                title: state.title,
+                error: state.error,
+                startedAt: state.startedAt,
+                finishedAt: state.finishedAt
+            )
+        }
     }
 
     struct PartDelta: Decodable, Sendable {
@@ -66,8 +119,27 @@ enum SessionWorkerEvent: Decodable, Sendable {
 
     struct StatusInfo: Decodable, Sendable {
         let sessionID: String
+        /// "idle" | "busy" | "retry" | "error". gizzi sends `status` as
+        /// `{ type, … }` (SessionStatus.Info); older shims send a string.
         let status: String
         let error: String?
+
+        private enum CodingKeys: String, CodingKey { case sessionID, status, error }
+        private struct Info: Decodable { let type: String?; let message: String? }
+
+        init(sessionID: String, status: String, error: String?) {
+            self.sessionID = sessionID
+            self.status = status
+            self.error = error
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            sessionID = ((try? c.decodeIfPresent(String.self, forKey: .sessionID)) ?? nil) ?? ""
+            let info = (try? c.decodeIfPresent(Info.self, forKey: .status)) ?? nil
+            status = ((try? c.decodeIfPresent(String.self, forKey: .status)) ?? nil) ?? info?.type ?? "busy"
+            error = ((try? c.decodeIfPresent(String.self, forKey: .error)) ?? nil) ?? info?.message
+        }
     }
 
     struct AskedInfo: Decodable, Sendable {
@@ -75,6 +147,22 @@ enum SessionWorkerEvent: Decodable, Sendable {
         let id: String
         let title: String?
         let description: String?
+        /// gizzi `PermissionNext.Request` fields (absent on older shims).
+        let permission: String?
+        let patterns: [String]?
+        let tool: ToolRef?
+
+        struct ToolRef: Decodable, Sendable { let messageID: String?; let callID: String? }
+
+        /// The same payload as the shared permission model the rail and the
+        /// permission card use. Nil when the frame isn't a gizzi permission.
+        var permissionAsk: AgentPermissionAsk? {
+            guard permission != nil else { return nil }
+            var obj: [String: Any] = ["id": id, "sessionID": sessionID, "permission": permission ?? "tool", "patterns": patterns ?? []]
+            if let callID = tool?.callID { obj["tool"] = ["callID": callID] }
+            guard let data = try? JSONSerialization.data(withJSONObject: obj) else { return nil }
+            return try? JSONDecoder().decode(AgentPermissionAsk.self, from: data)
+        }
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -89,14 +177,19 @@ enum SessionWorkerEvent: Decodable, Sendable {
 
     private static func decode(type: String, container: KeyedDecodingContainer<CodingKeys>) throws -> SessionWorkerEvent {
         switch type {
-        case "session-worker.connected":
+        case "session-worker.connected", "remote.connected":
             return .connected(try container.decode(ConnectedProperties.self, forKey: .properties))
-        case "session-worker.heartbeat":
+        case "session-worker.heartbeat", "remote.heartbeat":
             struct HeartbeatProps: Decodable { let sessionID: String }
             return .heartbeat(sessionID: try container.decode(HeartbeatProps.self, forKey: .properties).sessionID)
         case "message.updated":
             return .messageUpdated(try container.decode(MessageInfo.self, forKey: .properties))
         case "message.part.updated":
+            // gizzi's bus sends `{ part, delta? }`; older shims sent the part flat.
+            struct PartEnvelope: Decodable { let part: PartInfo }
+            if let envelope = try? container.decode(PartEnvelope.self, forKey: .properties) {
+                return .partUpdated(envelope.part)
+            }
             return .partUpdated(try container.decode(PartInfo.self, forKey: .properties))
         case "message.part.delta":
             return .partDelta(try container.decode(PartDelta.self, forKey: .properties))
@@ -110,8 +203,14 @@ enum SessionWorkerEvent: Decodable, Sendable {
             return .partRemoved(sessionID: props.sessionID, messageID: props.messageID, partID: props.partID)
         case "session.status":
             return .statusChanged(try container.decode(StatusInfo.self, forKey: .properties))
-        case "permission.asked", "question.asked":
+        case "session.idle":
+            struct IdleProps: Decodable { let sessionID: String }
+            let props = try container.decode(IdleProps.self, forKey: .properties)
+            return .statusChanged(StatusInfo(sessionID: props.sessionID, status: "idle", error: nil))
+        case "permission.asked":
             return .asked(try container.decode(AskedInfo.self, forKey: .properties))
+        case "question.asked":
+            return .questionAsked(try container.decode(AgentQuestionRequest.self, forKey: .properties))
         default:
             return .unknown(type: type, properties: try container.decodeIfPresent(AnyCodable.self, forKey: .properties))
         }
@@ -140,13 +239,14 @@ extension SessionWorkerEvent {
 
         case .partUpdated(let part):
             if part.type == "tool", let name = part.tool ?? part.name, let callID = part.callID {
+                let detail = part.toolDetail
                 switch part.toolStatus {
                 case "pending", "running":
-                    return .toolCall(.init(toolCallId: callID, toolName: name))
+                    return .toolCall(.init(toolCallId: callID, toolName: name, detail: detail))
                 case "completed":
-                    return .toolResult(.init(toolCallId: callID, toolName: name))
+                    return .toolResult(.init(toolCallId: callID, toolName: name, detail: detail))
                 case "error":
-                    return .toolError(.init(toolCallId: callID, toolName: name, error: "Tool execution failed"))
+                    return .toolError(.init(toolCallId: callID, toolName: name, error: detail?.error ?? "Tool execution failed", detail: detail))
                 default:
                     return .ignored
                 }
@@ -163,7 +263,11 @@ extension SessionWorkerEvent {
             return .ignored
 
         case .asked(let info):
+            if let ask = info.permissionAsk { return .permissionAsked(ask) }
             return .toolCall(.init(toolCallId: info.id, toolName: info.title ?? "Permission"))
+
+        case .questionAsked(let request):
+            return request.questions.isEmpty ? .ignored : .question(request)
 
         case .connected, .heartbeat, .messageUpdated, .partRemoved, .unknown:
             return .ignored
@@ -192,7 +296,7 @@ final class SessionWorkerClient: @unchecked Sendable {
 
     /// `GET /v1/fabric/peers` — returns nodes matching the optional query.
     func fetchPeers(query: CapabilityQuery? = nil) async throws -> [NodeIdentity] {
-        var components = URLComponents(url: baseURL.appendingPathComponent("v1/fabric/peers"),
+        var components = URLComponents(url: baseURL.appendingPathComponent(Self.routed("v1/fabric/peers", base: baseURL)),
                                        resolvingAgainstBaseURL: false)
         if let query {
             var items: [URLQueryItem] = []
@@ -241,7 +345,7 @@ final class SessionWorkerClient: @unchecked Sendable {
             request.setValue(lease.signature, forHTTPHeaderField: "X-Allternit-Lease")
         }
         request.httpBody = try JSONEncoder().encode(CapabilityInvocationRequest(capability: capability, inputs: inputs))
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await InstanceConnection.data(for: request, session: session)
         try validate(response, data: data)
         return try JSONDecoder().decode(InvocationResult.self, from: data)
     }
@@ -315,7 +419,7 @@ final class SessionWorkerClient: @unchecked Sendable {
                     if let lease {
                         request.setValue(lease.signature, forHTTPHeaderField: "X-Allternit-Lease")
                     }
-                    let (bytes, response) = try await self.session.bytes(for: request)
+                    let (bytes, response) = try await InstanceConnection.bytes(for: request, session: self.session)
                     try self.validate(response, data: nil)
 
                     let decoder = JSONDecoder()
@@ -370,14 +474,14 @@ final class SessionWorkerClient: @unchecked Sendable {
 
     private func get<T: Decodable>(path: String) async throws -> T {
         let request = try await authorizedRequest(path: path)
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await InstanceConnection.data(for: request, session: session)
         try validate(response, data: data)
         return try JSONDecoder().decode(T.self, from: data)
     }
 
     private func get<T: Decodable>(url: URL) async throws -> T {
         let request = try await authorizedRequest(url: url)
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await InstanceConnection.data(for: request, session: session)
         try validate(response, data: data)
         return try JSONDecoder().decode(T.self, from: data)
     }
@@ -385,13 +489,13 @@ final class SessionWorkerClient: @unchecked Sendable {
     private func post<T: Decodable, B: Encodable>(path: String, body: B) async throws -> T {
         var request = try await authorizedRequest(path: path, method: "POST")
         request.httpBody = try JSONEncoder().encode(body)
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await InstanceConnection.data(for: request, session: session)
         try validate(response, data: data)
         return try JSONDecoder().decode(T.self, from: data)
     }
 
     private func authorizedRequest(path: String, method: String = "GET") async throws -> URLRequest {
-        let url = baseURL.appendingPathComponent(path)
+        let url = baseURL.appendingPathComponent(Self.routed(path, base: baseURL))
         return try await authorizedRequest(url: url, method: method)
     }
 
@@ -423,6 +527,14 @@ final class SessionWorkerClient: @unchecked Sendable {
         guard (200...299).contains(httpResponse.statusCode) else {
             throw APIError.httpError(statusCode: httpResponse.statusCode, message: nil)
         }
+    }
+
+    /// Over the runtime relay the computer's allternit-api answers, and it
+    /// mirrors gizzi's `/v1/fabric/*` and `/v1/session-worker/*` under
+    /// `/api/v1/...` (allternit-api fabric_routes.rs; Allternit Desktop
+    /// serves the same `/api/v1/fabric/*` paths from its relay).
+    private static func routed(_ path: String, base: URL) -> String {
+        RuntimeRelayClient.isRelayURL(base) ? "api/\(path)" : path
     }
 
     private static func escape(_ sessionID: String) -> String {

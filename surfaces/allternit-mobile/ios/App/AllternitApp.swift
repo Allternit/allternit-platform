@@ -25,6 +25,9 @@ struct AllternitApp: App {
         // Must register before this initializer returns — BGTaskScheduler
         // requires the handler in place before app launch completes.
         BackgroundRefreshManager.register()
+        // Registers the scene observer that applies the saved Light/Dark/System
+        // choice as soon as the first window activates.
+        _ = AppearanceStore.shared
         #if DEBUG
         // `-reset-onboarding` (DEBUG only): also clears the Phase-10
         // onboarding gate (the ChatView site clears the dictation/priming
@@ -77,12 +80,21 @@ struct AllternitApp: App {
             .onChange(of: scenePhase) { _, newPhase in
                 if newPhase == .active {
                     authManager.refreshAuthState()
+                    PushNotificationManager.shared.clearBadge()
                 } else if newPhase == .background {
                     BackgroundRefreshManager.scheduleNextRefresh()
                 }
             }
             .onOpenURL { url in
+                // Universal Links (ai./m.allternit.com) and allternit:// open
+                // in the workspace; anything else is a document to view.
+                if DeepLinkRouter.shared.open(url: url) { return }
                 openedDocumentURL = url
+            }
+            .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { activity in
+                if let url = activity.webpageURL {
+                    DeepLinkRouter.shared.open(url: url)
+                }
             }
             .sheet(isPresented: Binding(
                 get: { openedDocumentURL != nil },
@@ -205,70 +217,107 @@ struct AllternitApp: App {
     }
 }
 
+/// The sign-in screen: the native port of m.allternit.com's phone sign-in
+/// (allternit-ai fabric-session `SignInScreen`: the phone SignInStage, then
+/// the compact SignInRail around Clerk's stage form). Top to bottom: the
+/// A://TERNIT lockup and counter, the self-building preview of Home / Bots /
+/// Code / ACI, its caption, then "Sign in to Allternit", the social buttons,
+/// "or", the Email field and Continue, "Secured by Clerk" and the legal line.
+/// Like the PWA there is no separate sign-up link: an email Clerk doesn't
+/// know continues into sign-up. Sign in with Apple sits with the social
+/// buttons (App Store 4.8). The page scrolls on small phones.
 struct LoginGateView: View {
     @EnvironmentObject var auth: AuthManager
+    @Environment(\.colorScheme) private var colorScheme
 
     var onSkipAuth: (() -> Void)? = nil
 
-    @State private var logoGlowing = false
+    @State private var email = ""
+    /// Clerk's own sheet for the email steps (password or code), started from the Email field.
+    @State private var emailAuth: EmailAuth?
+    @FocusState private var emailFocused: Bool
+
+    private struct EmailAuth: Identifiable {
+        let id = UUID()
+        let identifier: String
+    }
+
+    private var palette: SignInPalette { SignInPalette(colorScheme) }
 
     var body: some View {
-        VStack(spacing: 32) {
-            Spacer()
-
-            // Logo with ambient glow matching LaunchHeader
-            ZStack {
-                Circle()
-                    .fill(Color("AccentPrimary").opacity(logoGlowing ? 0.12 : 0.04))
-                    .frame(width: 140, height: 140)
-                    .blur(radius: 35)
-                    .animation(.easeInOut(duration: 2.5).repeatForever(autoreverses: true), value: logoGlowing)
-
-                WordmarkView(height: 28)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                SignInStageView()
+                rail
             }
+            .padding(.horizontal, 16)
+            .padding(.top, 16)
+            .padding(.bottom, 24)
+            .frame(maxWidth: 480)
+            .frame(maxWidth: .infinity)
+        }
+        .scrollBounceBehavior(.basedOnSize)
+        .scrollDismissesKeyboard(.interactively)
+        .background(palette.page.ignoresSafeArea())
+        .sheet(item: $emailAuth, onDismiss: { auth.refreshAuthState() }) { start in
+            if auth.isClerkConfigured {
+                emailAuthView(start.identifier)
+                    .environment(Clerk.shared)
+            }
+        }
+    }
 
-            Text("Your native workspace for autonomous AI execution.")
-                .font(.subheadline)
-                .foregroundColor(Color("TextSecondary"))
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 40)
+    @ViewBuilder
+    private func emailAuthView(_ identifier: String) -> some View {
+        if identifier.isEmpty {
+            AuthView(mode: .signInOrUp)
+        } else {
+            AuthView(mode: .signInOrUp).initialIdentifier(identifier)
+        }
+    }
 
-            Spacer()
+    /// The compact sign-in rail (web .ast-rail-compact + the stage Clerk form).
+    private var rail: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("Sign in to Allternit")
+                .font(.system(size: 21, weight: .bold))
+                .tracking(-0.42)
+                .foregroundStyle(palette.ink)
+                .padding(.bottom, 12)
+                .accessibilityAddTraits(.isHeader)
 
             if !auth.isClerkConfigured {
                 Text("Set CLERK_PUBLISHABLE_KEY in Info.plist to enable sign-in.")
                     .font(.caption)
-                    .foregroundColor(Color("TextSecondary"))
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 24)
+                    .foregroundStyle(palette.sub)
+                    .padding(.bottom, 10)
             }
 
-            VStack(spacing: 12) {
-                Button(action: auth.signIn) {
-                    Text("Sign In")
-                        .font(.headline)
-                        .foregroundColor(.white)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 16)
-                        .background(Color("AccentPrimary"))
-                        .cornerRadius(12)
+            VStack(alignment: .leading, spacing: 16) {
+                VStack(spacing: 10) {
+                    ForEach(AuthManager.SocialProvider.allCases) { provider in
+                        SignInSocialButton(provider: provider)
+                    }
+                    SignInWithAppleRow()
+
+                    if let error = auth.socialSignInError {
+                        Text(error)
+                            .font(.system(size: 12.5))
+                            .foregroundStyle(colorScheme == .dark ? Color(hex: "#F08A7C") : Color(hex: "#B42318"))
+                            .multilineTextAlignment(.center)
+                    }
                 }
 
-                Button(action: auth.signUp) {
-                    Text("Create Account")
-                        .font(.headline)
-                        .foregroundColor(Color("AccentPrimary"))
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 16)
-                        .background(
-                            RoundedRectangle(cornerRadius: 12)
-                                .stroke(Color("AccentPrimary"), lineWidth: 1)
-                        )
-                }
+                orDivider
+
+                emailForm
             }
             .disabled(!auth.isClerkConfigured)
             .opacity(auth.isClerkConfigured ? 1 : 0.5)
-            .padding(.horizontal, 32)
+
+            securedBy
+                .frame(maxWidth: .infinity)
+                .padding(.top, 20)
 
             #if DEBUG
             if let onSkipAuth {
@@ -280,16 +329,206 @@ struct LoginGateView: View {
                     Text("Continue without signing in")
                         .font(.subheadline)
                         .fontWeight(.medium)
-                        .foregroundColor(Color("TextSecondary"))
+                        .foregroundStyle(palette.sub)
                         .frame(maxWidth: .infinity)
-                        .padding(.vertical, 14)
+                        .padding(.vertical, 12)
                 }
-                .padding(.horizontal, 32)
-                .padding(.bottom, 64)
+                .padding(.top, 4)
             }
             #endif
+
+            Text("By continuing you agree to the [Terms](https://allternit.com/terms) and [Privacy Policy](https://allternit.com/privacy).")
+                .font(.system(size: 11.5))
+                .lineSpacing(2)
+                .foregroundStyle(palette.mut)
+                .tint(palette.ink)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: .infinity)
+                .padding(.top, 18)
         }
-        .background(Color("BgPrimary").edgesIgnoringSafeArea(.all))
-        .onAppear { logoGlowing = true }
+    }
+
+    /// Clerk's identifier step, styled like the web stage form: "Email"
+    /// label, a 44 pt field and the ink Continue button.
+    private var emailForm: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Email")
+                    .font(.system(size: 12.5, weight: .semibold))
+                    .foregroundStyle(palette.ink)
+                TextField("", text: $email, prompt: Text("you@company.com").foregroundStyle(palette.mut))
+                    .font(.system(size: 14))
+                    .foregroundStyle(palette.ink)
+                    .textContentType(.emailAddress)
+                    .keyboardType(.emailAddress)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .submitLabel(.continue)
+                    .focused($emailFocused)
+                    .onSubmit(continueWithEmail)
+                    .padding(.horizontal, 14)
+                    .frame(height: 44)
+                    .background(RoundedRectangle(cornerRadius: 11, style: .continuous).fill(palette.raise))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 11, style: .continuous)
+                            .strokeBorder(emailFocused ? palette.ink : palette.line, lineWidth: emailFocused ? 2 : 1)
+                    )
+                    .accessibilityLabel("Email")
+            }
+
+            Button(action: continueWithEmail) {
+                Text("Continue")
+            }
+            .buttonStyle(SignInButtonStyle(kind: .ink))
+        }
+    }
+
+    private func continueWithEmail() {
+        guard auth.isClerkConfigured else { return }
+        emailFocused = false
+        emailAuth = EmailAuth(identifier: email.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    /// "Secured by Clerk" under the form (Clerk's footer on the web).
+    private var securedBy: some View {
+        HStack(spacing: 4) {
+            Text("Secured by")
+                .foregroundStyle(palette.sub)
+            Text("clerk")
+                .fontWeight(.bold)
+                .foregroundStyle(palette.sub)
+        }
+        .font(.system(size: 13))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Secured by Clerk")
+    }
+
+    /// "—— or ——" between the social buttons and email.
+    private var orDivider: some View {
+        HStack(spacing: 12) {
+            Rectangle().fill(palette.line).frame(height: 1)
+            Text("or")
+                .font(.system(size: 11.5))
+                .foregroundStyle(palette.mut)
+            Rectangle().fill(palette.line).frame(height: 1)
+        }
+        .accessibilityHidden(true)
+    }
+}
+
+/// The sign-in buttons' look (web .ast-btn): 44 pt, 11 pt corners, 14 pt
+/// semibold. `outline` is the raised white button, `ink` the black one.
+struct SignInButtonStyle: ButtonStyle {
+    enum Kind { case outline, ink }
+    let kind: Kind
+
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        let palette = SignInPalette(colorScheme)
+        let pressed = configuration.isPressed
+        let background: Color = switch kind {
+        case .outline: pressed ? palette.fill : palette.raise
+        case .ink: pressed ? palette.ink.opacity(0.88) : palette.ink
+        }
+        return configuration.label
+            .font(.system(size: 14, weight: .semibold))
+            .foregroundStyle(kind == .ink ? palette.page : palette.ink)
+            .frame(maxWidth: .infinity)
+            .frame(height: 44)
+            .background(RoundedRectangle(cornerRadius: 11, style: .continuous).fill(background))
+            .overlay(
+                RoundedRectangle(cornerRadius: 11, style: .continuous)
+                    .strokeBorder(kind == .ink ? palette.ink : palette.line, lineWidth: 1)
+            )
+            .scaleEffect(pressed ? 0.985 : 1)
+            .contentShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+    }
+}
+
+/// "Continue with GitHub" / "Continue with Google" through Clerk OAuth
+/// (`AuthManager.signIn(with:)`).
+private struct SignInSocialButton: View {
+    let provider: AuthManager.SocialProvider
+    @EnvironmentObject private var auth: AuthManager
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        Button {
+            auth.signIn(with: provider)
+        } label: {
+            HStack(spacing: 10) {
+                if auth.signingInWith == provider {
+                    ProgressView()
+                        .controlSize(.small)
+                } else {
+                    logo
+                }
+                Text("Continue with \(provider.title)")
+            }
+        }
+        .buttonStyle(SignInButtonStyle(kind: .outline))
+        .disabled(auth.signingInWith != nil)
+        .accessibilityLabel("Continue with \(provider.title)")
+    }
+
+    @ViewBuilder
+    private var logo: some View {
+        switch provider {
+        case .github:
+            Image("LogoGitHub")
+                .renderingMode(.template)
+                .resizable()
+                .scaledToFit()
+                .frame(width: 18, height: 18)
+                .foregroundStyle(SignInPalette(colorScheme).ink)
+        case .google:
+            Image("LogoGoogle")
+                .resizable()
+                .scaledToFit()
+                .frame(width: 18, height: 18)
+        }
+    }
+}
+
+/// "Continue with Apple" on the sign-in screen (App Store 4.8: the web offers
+/// Google, so Apple sits beside it, under GitHub and Google like a third
+/// social button). Apple's HIG look: black in light mode, white in dark,
+/// Apple logo + "Continue with Apple" (one of HIG's allowed titles). Clerk
+/// does the exchange (`AuthManager.signInWithApple`).
+private struct SignInWithAppleRow: View {
+    @EnvironmentObject private var auth: AuthManager
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        VStack(spacing: 6) {
+            Button(action: auth.signInWithApple) {
+                HStack(spacing: 8) {
+                    if auth.isSigningInWithApple {
+                        ProgressView()
+                            .tint(colorScheme == .dark ? .black : .white)
+                    } else {
+                        Image(systemName: "apple.logo")
+                            .font(.system(size: 16, weight: .semibold))
+                    }
+                    Text("Continue with Apple")
+                        .font(.system(size: 14, weight: .semibold))
+                }
+                .foregroundColor(colorScheme == .dark ? .black : .white)
+                .frame(maxWidth: .infinity)
+                .frame(height: 44)
+                .background(colorScheme == .dark ? Color.white : Color.black)
+                .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+            }
+            .accessibilityLabel("Continue with Apple")
+
+            if let error = auth.appleSignInError {
+                Text(error)
+                    .font(.caption)
+                    .foregroundColor(Color("TextSecondary"))
+                    .multilineTextAlignment(.center)
+            }
+        }
     }
 }

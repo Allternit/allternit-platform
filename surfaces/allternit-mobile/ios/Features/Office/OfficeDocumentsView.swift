@@ -1,16 +1,17 @@
 import SwiftUI
 
-/// Office documents list — artifact-service documents browsable on iOS,
-/// each opening the read-only `OfficeDocumentView`.
-///
-/// Presented from the Artifacts library toolbar; kept separate from the
-/// stream-frame artifact library (SavedArtifact) because office artifacts
-/// live in the artifact service (`/api/v1/artifacts`), not the reply stream.
+/// Office documents — the account's Docs, Sheets, Slides and PDFs from
+/// Artifacts v2 (`GET /api/v2/artifacts?kind=…`, one request per kind,
+/// merged newest first). Each opens `V2ArtifactView`; Office records
+/// imported from the old sectioned store also offer the interactive editor.
 struct OfficeDocumentsView: View {
-    @State private var artifacts: [OfficeArtifactSummary] = []
+    private static let kinds = ["doc", "sheet", "slides", "pdf"]
+
+    @State private var artifacts: [ArtifactV2Summary] = []
     @State private var error: String?
     @State private var isLoading = true
     @State private var isSignPDFPresented = false
+    @State private var openArtifact: ArtifactV2Summary?
 
     var body: some View {
         NavigationStack {
@@ -32,32 +33,25 @@ struct OfficeDocumentsView: View {
                         style: .empty,
                         icon: "doc",
                         title: "No documents yet",
-                        message: "Documents saved from the Docs, Sheets, Slides, or PDF editors appear here."
+                        message: "Docs, sheets, decks and PDFs you make or are shared appear here."
                     )
                 } else {
-                    List(artifacts) { artifact in
-                        NavigationLink(destination: OfficeDocumentView(artifactId: artifact.id)) {
-                            Label {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(artifact.title)
-                                        .font(.body.bold())
-                                        .foregroundColor(Color("TextPrimary"))
-                                    if let updatedAt = artifact.updatedAt {
-                                        Text(updatedAt)
-                                            .font(.caption2)
-                                            .foregroundColor(Color("TextSecondary"))
-                                    }
+                    ScrollView {
+                        LazyVStack(spacing: 8) {
+                            ForEach(artifacts) { summary in
+                                Button { openArtifact = summary } label: {
+                                    ArtifactLibraryRow(summary: summary)
                                 }
-                            } icon: {
-                                Image(systemName: "doc.text")
-                                    .foregroundColor(Color("AccentPrimary"))
+                                .buttonStyle(.plain)
                             }
                         }
+                        .padding(16)
                     }
-                    .listStyle(.plain)
+                    .refreshable { await loadArtifacts() }
                 }
             }
             .navigationTitle("Office documents")
+            .navigationBarTitleDisplayMode(.inline)
             .background(Color("BgPrimary").ignoresSafeArea())
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -69,6 +63,11 @@ struct OfficeDocumentsView: View {
             .sheet(isPresented: $isSignPDFPresented) {
                 PDFSignView(sourceURL: nil)
             }
+            .sheet(item: $openArtifact) { summary in
+                V2ArtifactView(artifactId: summary.id, initialTitle: summary.title) {
+                    artifacts.removeAll { $0.id == summary.id }
+                }
+            }
             .task {
                 await loadArtifacts()
             }
@@ -77,8 +76,20 @@ struct OfficeDocumentsView: View {
 
     private func loadArtifacts() async {
         do {
-            artifacts = try await OfficeArtifactClient.shared.listArtifacts()
+            let pages = try await withThrowingTaskGroup(of: [ArtifactV2Summary].self) { group in
+                for kind in Self.kinds {
+                    group.addTask {
+                        try await ArtifactsV2Client.shared.list(ArtifactV2ListQuery(scope: "all", kind: kind, limit: 50)).items
+                    }
+                }
+                var all: [ArtifactV2Summary] = []
+                for try await items in group { all.append(contentsOf: items) }
+                return all
+            }
+            artifacts = pages.sorted { ($0.updatedDate ?? .distantPast) > ($1.updatedDate ?? .distantPast) }
             error = nil
+        } catch is CancellationError {
+            return
         } catch {
             self.error = error.localizedDescription
         }

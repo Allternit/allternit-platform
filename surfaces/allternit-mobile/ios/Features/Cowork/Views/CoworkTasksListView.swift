@@ -90,6 +90,12 @@ struct CoworkTasksListView: View {
 
                 Divider().background(Color("BorderSubtle"))
 
+                // Decisions waiting for you (web TasksBoardScreen →
+                // DecisionsDeck); takes no room when nothing waits.
+                DecisionsDeckView()
+                    .padding(.horizontal, 16)
+                    .padding(.top, 12)
+
                 content
             }
             .background(Color("BgPrimary").edgesIgnoringSafeArea(.all))
