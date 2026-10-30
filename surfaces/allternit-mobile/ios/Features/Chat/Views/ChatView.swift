@@ -99,6 +99,8 @@ struct ChatContentView: View {
     @EnvironmentObject private var modeStore: AppModeStore
     @EnvironmentObject private var agentModeStore: AgentModeStore
     @Environment(\.chatBot) private var chatBot
+    /// A background (StageBackdropView) is drawn behind this chat: the page fills step aside.
+    @Environment(\.backdropUnderneath) private var backdropUnderneath
     @StateObject private var modelStore = ModelStore.shared
     /// Selected project — stamped into the next session's create metadata
     /// (`metadata.projectId`) so the Projects feature can group it.
@@ -394,13 +396,13 @@ struct ChatContentView: View {
                     .padding(.horizontal, 14)
                     .padding(.top, 6)
                     .padding(.bottom, 8)
-                    .background(Color("BgPrimary"))
+                    .background(backdropUnderneath ? Color.clear : Color("BgPrimary"))
             }
         }
         // A bot's chat wears its colour wash at the top (BotColorWash);
         // elsewhere this is the plain page.
         .background {
-            if isTerminal { TerminalPalette.background.ignoresSafeArea() } else { BotWashedBackground().ignoresSafeArea() }
+            if isTerminal { (backdropUnderneath ? Color.clear : TerminalPalette.background).ignoresSafeArea() } else { BotWashedBackground().ignoresSafeArea() }
         }
     }
 
@@ -430,7 +432,7 @@ struct ChatContentView: View {
             )
         }
         .padding(.bottom, 4)
-        .background(terminal ? TerminalPalette.background : Color("BgPrimary"))
+        .background(backdropUnderneath ? Color.clear : (terminal ? TerminalPalette.background : Color("BgPrimary")))
         .sheet(isPresented: $isCodePlusSheetPresented) {
             ComposerPlusSheet(attachmentStore: attachmentStore, sessionId: viewModel.currentSessionId)
         }

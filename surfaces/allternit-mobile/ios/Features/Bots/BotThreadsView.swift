@@ -286,6 +286,11 @@ struct BotProjectHomeView: View {
     @State private var threads: [BotThread] = []
     @State private var isLoading = true
     @State private var error: String? = nil
+    @ObservedObject private var backdrops = StageBackdropStore.shared
+    @ObservedObject private var botColors = BotColorStore.shared
+
+    /// Bot project homes show the Settings background in the team's colours.
+    private var backdropVariant: String { backdrops.variant(for: .project, scope: nil) }
 
     var body: some View {
         List {
@@ -326,6 +331,14 @@ struct BotProjectHomeView: View {
                         }
                     }
                 }
+            }
+        }
+        .scrollContentBackground(backdropVariant == "plain" ? .automatic : .hidden)
+        .background {
+            if backdropVariant != "plain" {
+                StageBackdropView(variant: backdropVariant,
+                                  colors: project.botIds.map { botColors.hex(for: store.bot($0)) })
+                    .ignoresSafeArea()
             }
         }
         .navigationTitle(project.title)
