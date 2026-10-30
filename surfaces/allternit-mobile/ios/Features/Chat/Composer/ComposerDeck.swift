@@ -23,7 +23,18 @@ struct ChatDeckMode: Identifiable, Equatable {
         ChatDeckMode(tile: .slides, label: "Slides", color: Theme.statusWarning),
         ChatDeckMode(tile: .image, label: "Image", color: Color("TextPrimary")),
         ChatDeckMode(tile: .video, label: "Video", color: Color(hex: "#EC4899")),
+        // Last, as on the web: the agent picks the format.
+        ChatDeckMode(tile: .artifact, label: "Artifact", color: Color("TextPrimary")),
     ]
+
+    /// A bot's chat (ModeDock `bot`): no Docs/Sheets/Slides, since bot
+    /// threads have no editor pane.
+    static let bot: [ChatDeckMode] = chat.filter {
+        [.swarms, .research, .website, .image, .video, .artifact].contains($0.tile)
+    }
+
+    /// The menu's second line (DeckSelectors: only Artifact has one).
+    var detail: String? { tile == .artifact ? "Let Allternit pick the format" : nil }
 
     static func forTile(_ tile: AgentModeTile) -> ChatDeckMode? {
         chat.first { $0.tile == tile }
@@ -63,6 +74,7 @@ struct ComposerDeckBand: View {
 
     @EnvironmentObject private var modeStore: AppModeStore
     @EnvironmentObject private var agentModeStore: AgentModeStore
+    @Environment(\.chatBot) private var chatBot
     @State private var isManagePluginsPresented = false
     @State private var isArtifactsPresented = false
 
@@ -149,12 +161,15 @@ struct ComposerDeckBand: View {
     private var modeMenu: some View {
         Menu {
             Section("Agent mode") {
-                ForEach(ChatDeckMode.chat) { mode in
+                ForEach(chatBot == nil ? ChatDeckMode.chat : ChatDeckMode.bot) { mode in
                     Button(action: { select(mode) }) {
                         if current == mode {
                             Label(mode.label, systemImage: "checkmark")
                         } else {
-                            Label { Text(mode.label) } icon: { Image(mode.icon) }
+                            Label {
+                                Text(mode.label)
+                                if let detail = mode.detail { Text(detail) }
+                            } icon: { Image(mode.icon) }
                         }
                     }
                 }

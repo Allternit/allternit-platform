@@ -498,6 +498,8 @@ enum ComposerPlaceholders {
         case .swarms: return ["Describe the outcome. A team of agents will split it up"]
         case .image: return ["Describe the image. Subject, style, format"]
         case .video: return ["Describe the clip. Length, shots, mood"]
+        // No placeholders of its own on the web: the no-mode hints.
+        case .artifact: return agentNoMode
         case .code: return ["Describe what to build or fix", "Paste the error and the code around it"]
         }
     }
