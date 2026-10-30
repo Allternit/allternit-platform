@@ -95,6 +95,7 @@
 		2F052263BFBB1DCC5B6BBDD0 /* DeepLinkRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 18789248497BB4F707A0D89F /* DeepLinkRouter.swift */; };
 		2F99615BC8D08B59611589C5 /* ToolCallsRail.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24F987DB1BCE922271B59F3A /* ToolCallsRail.swift */; };
 		30284AD93DE741661CFE2A5B /* AgentActivityListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49127E0CD8EAED365F17FDD6 /* AgentActivityListView.swift */; };
+		304A5A8AE672F19A13C08B90 /* TeachSheets.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F1FD05BF40A89E1456E0339 /* TeachSheets.swift */; };
 		309D5604E84F1F42FA592285 /* InboxSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66FD35F18B3062FF97F7BF10 /* InboxSheet.swift */; };
 		31275AC29D1A1EC75BAA0CE3 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C637C387DDA155982E1068D /* AppDelegate.swift */; };
 		322C7445E8A92C06DD2058D2 /* OrganizationClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B0D034CA579C089C9E885F9 /* OrganizationClient.swift */; };
@@ -421,6 +422,7 @@
 		D731DA00E2ABCAC5EA9A1FF6 /* ACIComputersPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B32E0565DA7953C599388DC /* ACIComputersPane.swift */; };
 		D793BAB2C6CA36C8B5B8D4FC /* CodeEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5933541AB5CBF27334FF2068 /* CodeEditorView.swift */; };
 		D7CB3ECC567DA0E6372C1DBF /* AgentSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5ABE98CBC903A69C89BB489 /* AgentSession.swift */; };
+		D8A42A315CBFD1B7439A82C9 /* BotStageLive.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3805BD78B0431F98B8FC1399 /* BotStageLive.swift */; };
 		D8D1C920A1F1D21C0D0AA0ED /* ConnectedView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C280E603BD4FF49299D97648 /* ConnectedView.swift */; };
 		D9794CED8248EA9A17185B68 /* BotHomeTabsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B88709AC7BC1F72F5AB364B7 /* BotHomeTabsView.swift */; };
 		D9D78136CBFDD48F55F9A8A1 /* CreateRoutineSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A1D492DEAC057BC4E97EC51 /* CreateRoutineSheet.swift */; };
@@ -669,6 +671,7 @@
 		34429F16AC2D1219E4E8CE9C /* BotsDrawerRail.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotsDrawerRail.swift; sourceTree = "<group>"; };
 		351C0F604FE6B5B8BCB29BEC /* CoworkSessionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoworkSessionStore.swift; sourceTree = "<group>"; };
 		37B3CA075AC3FDEFF151B299 /* PhonesSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhonesSheet.swift; sourceTree = "<group>"; };
+		3805BD78B0431F98B8FC1399 /* BotStageLive.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotStageLive.swift; sourceTree = "<group>"; };
 		384E354DC0746B0247176A44 /* ArtifactsLibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArtifactsLibraryView.swift; sourceTree = "<group>"; };
 		3924CEA01BDCC8043A376D4E /* AgentChatEvent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentChatEvent.swift; sourceTree = "<group>"; };
 		3947942D47C0776E5DC9028C /* CoworkTaskDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoworkTaskDetailView.swift; sourceTree = "<group>"; };
@@ -707,6 +710,7 @@
 		4E7FB6E04286889DF3D4A1A6 /* ModeTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModeTheme.swift; sourceTree = "<group>"; };
 		4ED7FBA627C84176C6F9933C /* SessionWorkerClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionWorkerClient.swift; sourceTree = "<group>"; };
 		4EF8244489CC0664EF5D30B3 /* BrainGitClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrainGitClient.swift; sourceTree = "<group>"; };
+		4F1FD05BF40A89E1456E0339 /* TeachSheets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TeachSheets.swift; sourceTree = "<group>"; };
 		4F4E6B5D0968F3BE9B8526CB /* QuestionCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuestionCardView.swift; sourceTree = "<group>"; };
 		4FF5A433FAC2C691A9F790AD /* CodeWorkspace.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodeWorkspace.swift; sourceTree = "<group>"; };
 		50C8CA810B01E6533AB8A789 /* AgentSelectionSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentSelectionSheet.swift; sourceTree = "<group>"; };
@@ -1117,6 +1121,7 @@
 				C7A80B2B5F37FDB83D4245C4 /* BotPageView.swift */,
 				227D078094066BC9426B6B6D /* BotPhoneViews.swift */,
 				958A7E90552280201977CBEE /* BotsModeRootView.swift */,
+				3805BD78B0431F98B8FC1399 /* BotStageLive.swift */,
 				7A793554DC89DC569DC63D16 /* BotThreadsView.swift */,
 				478E03D6A6E59FBC0AF664FE /* ComputerDriveViews.swift */,
 				7E5FAEBCB7DE380608EE0AAA /* GroupChatViews.swift */,
@@ -1338,6 +1343,7 @@
 				15E60D739E1ED3BAF445214F /* BrowserChatView.swift */,
 				AC93B5FE19CEF060633CAC6B /* MiniAppRuntimeView.swift */,
 				7E2BAB5F3A60F36AC7814ADD /* MiniAppsStoreView.swift */,
+				4F1FD05BF40A89E1456E0339 /* TeachSheets.swift */,
 				EB0E0A17C865B6B591899C47 /* TeachView.swift */,
 			);
 			path = Views;
@@ -2519,6 +2525,7 @@
 				7C9097E9539D8BF985F03A35 /* BotPhoneViews.swift in Sources */,
 				20C7054DEC625347DE9E978D /* BotProfile.swift in Sources */,
 				B8B37987DF7D3622C177BE2A /* BotSetupSheets.swift in Sources */,
+				D8A42A315CBFD1B7439A82C9 /* BotStageLive.swift in Sources */,
 				3C1EAE3F3A746236C6DBCE54 /* BotStatusStore.swift in Sources */,
 				DCD6906AD1F04688967808A0 /* BotThreadsView.swift in Sources */,
 				C27AD896B04987D756914E14 /* BotWebhooksSheet.swift in Sources */,
@@ -2812,6 +2819,7 @@
 				FC968DAFF1558F8F269CEB4B /* SubagentsSettingsView.swift in Sources */,
 				FB4BF1C7CA40D4942BB1B4CE /* TasksBoardScreen.swift in Sources */,
 				58815317DBF05A8151B4F557 /* TeachClient.swift in Sources */,
+				304A5A8AE672F19A13C08B90 /* TeachSheets.swift in Sources */,
 				06823A6D2CACD3A6E45C480B /* TeachView.swift in Sources */,
 				E0DC0E1E8A05B5F96AD473F6 /* TerminalServiceClient.swift in Sources */,
 				FA39A9D1C72C62138B55E2D5 /* TerminalSessionView.swift in Sources */,

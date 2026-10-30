@@ -179,25 +179,51 @@ struct BotChatSessionView: View {
         if let sessionId {
             VStack(spacing: 0) {
                 if onStage {
-                    BotChatStage(
-                        bot: bot,
-                        statusLine: stageStatus,
-                        working: status.isWorking(for: bot.id) || viewModel.isStreaming,
-                        needs: store.threads(for: bot.id).filter { $0.group == "waiting" && $0.currentSessionId != sessionId },
-                        suggestions: store.threads(for: bot.id).filter { $0.status == "proposed" },
-                        onOpen: { open($0) },
-                        onApprove: { act($0, .approve) },
-                        onDecline: { act($0, .decline) },
-                        onHandoff: { text, files in viewModel.sendMessage(text, attachments: files) },
-                        onDock: dock,
-                        sessionId: sessionId,
-                        liveSteps: viewModel.isStreaming
-                            ? BotStageLiveModel.liveSteps(viewModel.messages.last { $0.role == "assistant" })
-                            : [],
-                        onStop: viewModel.isStreaming ? { viewModel.stopStreaming() } : nil,
-                        // Take over: the bot's computer, as the web opens its computer pane.
-                        onTakeOver: { navigator.open(.botComputer(bot.id)) }
-                    )
+                    // Many cards: the stage scrolls on its own and leaves room
+                    // for the chat, instead of pushing the header off screen.
+                    ViewThatFits(in: .vertical) {
+                        BotChatStage(
+                            bot: bot,
+                            statusLine: stageStatus,
+                            working: status.isWorking(for: bot.id) || viewModel.isStreaming,
+                            needs: store.threads(for: bot.id).filter { $0.group == "waiting" && $0.currentSessionId != sessionId },
+                            suggestions: store.threads(for: bot.id).filter { $0.status == "proposed" },
+                            onOpen: { open($0) },
+                            onApprove: { act($0, .approve) },
+                            onDecline: { act($0, .decline) },
+                            onHandoff: { text, files in viewModel.sendMessage(text, attachments: files) },
+                            onDock: dock,
+                            sessionId: sessionId,
+                            liveSteps: viewModel.isStreaming
+                                ? BotStageLiveModel.liveSteps(viewModel.messages.last { $0.role == "assistant" })
+                                : [],
+                            onStop: viewModel.isStreaming ? { viewModel.stopStreaming() } : nil,
+                            // Take over: the bot's computer, as the web opens its computer pane.
+                            onTakeOver: { navigator.open(.botComputer(bot.id)) }
+                        )
+                        ScrollView(showsIndicators: false) {
+                            BotChatStage(
+                                bot: bot,
+                                statusLine: stageStatus,
+                                working: status.isWorking(for: bot.id) || viewModel.isStreaming,
+                                needs: store.threads(for: bot.id).filter { $0.group == "waiting" && $0.currentSessionId != sessionId },
+                                suggestions: store.threads(for: bot.id).filter { $0.status == "proposed" },
+                                onOpen: { open($0) },
+                                onApprove: { act($0, .approve) },
+                                onDecline: { act($0, .decline) },
+                                onHandoff: { text, files in viewModel.sendMessage(text, attachments: files) },
+                                onDock: dock,
+                                sessionId: sessionId,
+                                liveSteps: viewModel.isStreaming
+                                    ? BotStageLiveModel.liveSteps(viewModel.messages.last { $0.role == "assistant" })
+                                    : [],
+                                onStop: viewModel.isStreaming ? { viewModel.stopStreaming() } : nil,
+                                // Take over: the bot's computer, as the web opens its computer pane.
+                                onTakeOver: { navigator.open(.botComputer(bot.id)) }
+                            )
+                        }
+                    }
+                    .frame(maxHeight: UIScreen.main.bounds.height * 0.58)
                     .transition(.asymmetric(
                         insertion: .scale(scale: 0.2, anchor: .top).combined(with: .opacity),
                         removal: .scale(scale: 0.15, anchor: .top).combined(with: .opacity)
