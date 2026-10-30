@@ -12,6 +12,15 @@ struct AutomationRunTick: Decodable, Identifiable, Equatable, Sendable {
     let model: String?
 }
 
+/// A JSON object that never fails its row's decode (a routine's `config`).
+struct AutomationLooseObject: Decodable, Equatable, Sendable {
+    let value: [String: JSONValue]
+
+    init(from decoder: Decoder) throws {
+        value = (try? decoder.singleValueContainer().decode([String: JSONValue].self)) ?? [:]
+    }
+}
+
 /// `/api/v1/automation/routines` row (allternit-api automation_routes.rs) —
 /// the routines bots run (the PWA's automation-api.ts `Routine`).
 struct AutomationRoutine: Decodable, Identifiable, Equatable, Sendable {
@@ -28,9 +37,10 @@ struct AutomationRoutine: Decodable, Identifiable, Equatable, Sendable {
     let lastRunAt: String?
     let createdAt: String
     let recentRuns: [AutomationRunTick]?
+    let config: AutomationLooseObject?
 
     enum CodingKeys: String, CodingKey {
-        case id, name, description, status, timezone, recentRuns
+        case id, name, description, status, timezone, recentRuns, config
         case agentId = "agent_id"
         case goalId = "goal_id"
         case scheduleType = "schedule_type"
@@ -41,6 +51,12 @@ struct AutomationRoutine: Decodable, Identifiable, Equatable, Sendable {
     }
 
     var isEnabled: Bool { status == "active" }
+
+    /// What the bot is told to do: `config.prompt`, else the description.
+    var instruction: String {
+        if case .string(let prompt)? = config?.value["prompt"], !prompt.isEmpty { return prompt }
+        return description ?? ""
+    }
 }
 
 /// `GET …/routines/:id/live`: the run in progress.
@@ -146,6 +162,33 @@ struct CreateAutomationRoutineRequest: Encodable, Sendable {
     }
 }
 
+/// `POST /api/v1/automation/loops` (automation-api.ts createLoop).
+struct CreateAutomationLoopRequest: Encodable, Sendable {
+    let name: String
+    let description: String?
+    let agentId: String?
+    let scheduleType: String
+    let scheduleExpression: String
+    let executionDomain: String
+    let config: [String: String]
+
+    enum CodingKeys: String, CodingKey {
+        case name, description, config
+        case agentId = "agent_id"
+        case scheduleType = "schedule_type"
+        case scheduleExpression = "schedule_expression"
+        case executionDomain = "execution_domain"
+    }
+}
+
+private struct UpdateLoopScheduleRequest: Encodable, Sendable {
+    let scheduleExpression: String
+
+    enum CodingKeys: String, CodingKey {
+        case scheduleExpression = "schedule_expression"
+    }
+}
+
 private struct UpdateRoutineStatusRequest: Encodable, Sendable {
     let status: String
 }
@@ -235,6 +278,16 @@ final class AutomationClient: @unchecked Sendable {
     func setLoopEnabled(id: String, enabled: Bool) async throws {
         try await client.put(path: "automation/loops/\(Self.escape(id))",
                              body: UpdateRoutineStatusRequest(status: enabled ? "active" : "paused"))
+    }
+
+    /// A dragged loop's new cron (`updateLoop`, same route as the web).
+    func updateLoopSchedule(id: String, cron: String) async throws {
+        try await client.put(path: "automation/loops/\(Self.escape(id))",
+                             body: UpdateLoopScheduleRequest(scheduleExpression: cron))
+    }
+
+    func createLoop(_ request: CreateAutomationLoopRequest) async throws {
+        try await client.post(path: "automation/loops", body: request)
     }
 
     func runLoop(id: String) async throws {
