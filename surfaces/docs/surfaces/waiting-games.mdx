@@ -1,0 +1,50 @@
+---
+title: "Waiting games"
+description: "Eight small games to play while a bot works, in a floating window you can make full screen."
+---
+
+While a bot or agent works on a reply, you can play a small game. Nothing starts by itself.
+
+## Playing
+
+A **Play** button (a game controller) appears beside **Stop** in the message box after about five seconds of work. Quick replies never show it. It is in bot chats, group chats, Chat and Code threads.
+
+The game opens in a small window over the app. On Desktop it sits at the bottom right, and you can drag it by its top bar. On phones (the `ai.allternit.com` phone layout and the `m.allternit.com` app) it sits just above the message box. The message box stays usable, so you can still steer or queue a message.
+
+The top bar of the window has:
+
+| Control | What it does |
+|---|---|
+| Working… / Reply ready | What the bot that opened the game is doing |
+| Game list | Switch to another game. Your last game opens next time |
+| Full screen | Make the game fill the whole window. Press it again, or Esc, to make it small |
+| Close | Close the game. Esc also closes it |
+
+When the reply is ready, the game pauses and says so. **Back to chat** closes the game. **Keep playing** goes on. Best scores are kept on this device.
+
+## The games
+
+| Game | You do |
+|---|---|
+| Big Fish | Your cursor (or finger) is a fish. Eat smaller fish to grow and stay away from bigger ones. When you're eaten you start small again |
+| Bot Race | Type the dev words on screen to race your own bots to the finish line. On phones, tap the game to bring up the keyboard |
+| Token Catch | Slide the catcher to catch falling code tokens. Let the red bugs fall past. You have three lives |
+| Meteor Dodge | Fly a ship through a meteor shower that gets thicker the longer you last |
+| Bug Bash | Bugs pop out of nine code files for a moment. Click one before it hides. Gold bugs are worth 3. Rounds last 30 seconds |
+| Stack Deploy | Click or press Space to drop each release on the stack. Only the part that lands stays. Three perfect drops in a row widen it again |
+| Context Snake | Steer a thread with the arrow keys or WASD (on phones, tap the side to turn to). Each token makes it longer. Hit the edge or yourself and the context is full |
+| Bot Memory | Flip cards to match eight pairs of bot faces in as few moves as you can |
+
+## Turning it off
+
+**Settings → Appearance → Background → Waiting games** turns the Play button on or off. It is on by default.
+
+## For developers
+
+- `src/components/waiting-games/` in allternit-ai:
+  - `waiting-games-engine.ts`: the eight games on one canvas. `createWaitingGames(canvas, ui, racers)` returns `pick`, `pointer`, `click`, `key`, `setPlaying`, `resize` and `destroy`. Best scores are stored in `allternit.waitingGames.best`.
+  - `waiting-games.store.ts`: `useWaitingGames` (open, expanded, game, work, owner) and `useWaitingGamesEnabled` (`appearance.waitingGames`).
+  - `WaitingGamesPlayButton.tsx`: the Play button. It stays mounted and calls `report(id, busy)`. Only the button that opened the game can mark the reply ready.
+  - `WaitingGamesLayer.tsx`: the window, portalled to `document.body`. It is mounted beside `BotCarryLayer` in `ShellApp` and `PhoneProviders`. Esc is handled in the capture phase, because app-wide shortcuts take it first.
+- The Play button is placed in `ThreadComposer` (bot and group chats) and `ChatComposer` (Chat and Code; full, compact and terminal layouts).
+- Bot Race uses the first four of your bots (`isBot` agents) as racers. With none, it uses four stand-in names.

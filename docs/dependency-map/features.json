@@ -277,6 +277,10 @@
           "note": "Twenty ASCII backgrounds next to the thirteen (now the Classic set): A-block (the A-block mark's breathe, sweep, conveyor and write moves), six moods of other AI apps with no marks, and thirteen scenes. They react to the cursor (characters part and glow; a click on empty space sends a pulse). Settings → Appearance → Background gets ASCII / Classic, Show on (bot chats, group chats, bot project homes, Code mode; Code mode off by default), Movement, Colours, Characters, Character size, Density and Veil. Code mode shows it behind the session view (backdrop/ascii/, useStageBackgroundFor) (Eoj)."
         },
         {
+          "on": "2026-10-29",
+          "note": "Eoj: a look picked in Settings overrode every bot; some users want a look per bot. Settings is now the default, and the brush switch on a bot stage, a group stage or Code's session toolbar (phone: pane menu → Background) saves a look for that bot, group chat or Code workspace only (BackdropScope, appearance.stageBackground.for.<scope>), with Same as Settings to undo. The rail carries the screen's own look, in Code mode too. Eoj also found text hard to read on some looks: an ASCII look whose sky is the other tone from the app theme is drawn with its lightness flipped, and the veil never goes below 20% (default 35%)."
+        },
+        {
           "on": "2026-10-22",
           "note": "Bot colour comes from the avatar art (bot-art-color.ts), so the stage, pill and bubbles match the bot. The thread-top pill shows a status word (live-status.ts); a running thread shows a task card (ThreadTaskCard); Tasks lists subtasks under the running step and an Up next list. Phone gets a Needs you sheet. Project home uses the shared launch layout (BaseProjectView launchLayout). Voice sessions show hand-off chips (ai #732)."
         },
@@ -2846,6 +2850,30 @@
       ]
     },
     {
+      "id": "feature:waiting-games",
+      "label": "Waiting games (play while a bot works)",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "A Play button beside Stop in every message box (ThreadComposer, ChatComposer) after about 5 s of work opens a floating game window (Desktop: bottom right, draggable; phone layout and m.allternit.com PWA: above the message box) with a Full screen button. Eight ASCII games on one canvas: Big Fish, Bot Race (your bots, ~200 dev words), Token Catch, Meteor Dodge, Bug Bash, Stack Deploy, Context Snake, Bot Memory. When the bot that opened it finishes, the game pauses and says the reply is ready. Settings → Appearance → Background → Waiting games (on by default).",
+      "touches": [
+        "allternit-ai/src/components/waiting-games",
+        "allternit-ai/src/components/threads/ThreadComposer.tsx",
+        "allternit-ai/src/views/chat/ChatComposer.tsx",
+        "allternit-ai/src/shell/ShellApp.tsx",
+        "allternit-ai/src/fabric-session/PhoneProviders.tsx",
+        "allternit-ai/src/components/bots/stage/backdrop/StageBackdropPicker.tsx"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-29",
+          "note": "Eoj asked for mini games while waiting (an ocean fish game and a typing race against bots). After three prototype rounds he kept Big Fish, Bot Race (more dev words), Token Catch, Meteor Dodge, Context Snake and Bot Memory; Bug Squash and Chain Pop were replaced by Bug Bash and Stack Deploy. Placement: a hybrid. The game opens as a floating window and can expand to full screen."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/surfaces/waiting-games.mdx"
+      ]
+    },
+    {
       "id": "feature:deck-pinned-artifacts",
       "label": "Pinned artifacts in the composer deck",
       "product": "product:ai-allternit",
@@ -3230,7 +3258,7 @@
         }
       ],
       "evidence": [
-        "allternit/surfaces/docs/surfaces/desktop.mdx#menu-bar-icon"
+        "allternit/surfaces/docs/surfaces/desktop.mdx"
       ]
     },
     {
@@ -3258,7 +3286,7 @@
         }
       ],
       "evidence": [
-        "allternit/surfaces/docs/surfaces/desktop.mdx#hud"
+        "allternit/surfaces/docs/surfaces/desktop.mdx"
       ]
     },
     {
