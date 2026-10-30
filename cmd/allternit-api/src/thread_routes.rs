@@ -1092,6 +1092,29 @@ pub(crate) fn is_canonical(db: &DbHandle, t: &ThreadView) -> bool {
 }
 
 /// Close the current generation with its checkpoint and open `session` as the next.
+/// A hand-off can finish while its caller is gone. `sync_user_threads` then sees
+/// the new session with no thread and imports it as its own "Thread", and gizzi
+/// keeps returning that session for every later hand-off. The import is the same
+/// conversation, so it folds back into the thread being advanced.
+fn fold_imported_copy(conn: &rusqlite::Connection, t: &ThreadView, session: &str) -> rusqlite::Result<()> {
+    let copy: Option<String> = conn
+        .query_row(
+            "SELECT b.id FROM bot_threads b
+             JOIN bot_thread_sessions s ON s.thread_id = b.id
+             WHERE s.session_id = ?1 AND b.id != ?2 AND b.bot_id = ?3 AND b.created_by = 'import'
+               AND (SELECT COUNT(*) FROM bot_thread_sessions o WHERE o.thread_id = b.id) = 1",
+            params![session, t.id, t.bot_id],
+            |r| r.get(0),
+        )
+        .optional()?;
+    if let Some(copy) = copy {
+        conn.execute("UPDATE bot_events SET thread_id = ?2 WHERE thread_id = ?1", params![copy, t.id])?;
+        conn.execute("DELETE FROM bot_thread_sessions WHERE thread_id = ?1", params![copy])?;
+        conn.execute("DELETE FROM bot_threads WHERE id = ?1", params![copy])?;
+    }
+    Ok(())
+}
+
 fn advance(db: &DbHandle, actor: (&str, &str), t: &ThreadView, session: &str, body: &HandoffBody) -> Result<(), String> {
     let canonical = is_canonical(db, t);
     let next_gen = t.generation.max(1) + 1;
@@ -1105,15 +1128,16 @@ fn advance(db: &DbHandle, actor: (&str, &str), t: &ThreadView, session: &str, bo
     });
     {
         let conn = db.connect().map_err(|e| e.to_string())?;
-        conn.execute(
-            "UPDATE bot_thread_sessions SET ended_at = ?3, checkpoint_summary = ?4 WHERE thread_id = ?1 AND generation = ?2",
-            params![t.id, next_gen - 1, ts, body.summary.trim()],
-        )
-        .map_err(|e| e.to_string())?;
+        fold_imported_copy(&conn, t, session).map_err(|e| e.to_string())?;
         conn.execute(
             "INSERT INTO bot_thread_sessions (thread_id, generation, session_id, model, context_window, reason, started_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![t.id, next_gen, session, body.model, body.context_window, body.reason, ts],
+        )
+        .map_err(|e| e.to_string())?;
+        conn.execute(
+            "UPDATE bot_thread_sessions SET ended_at = ?3, checkpoint_summary = ?4 WHERE thread_id = ?1 AND generation = ?2",
+            params![t.id, next_gen - 1, ts, body.summary.trim()],
         )
         .map_err(|e| e.to_string())?;
         conn.execute(
@@ -1931,6 +1955,45 @@ mod tests {
         let status = resp.status();
         let bytes = resp.into_body().collect().await.unwrap().to_bytes();
         (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+    }
+
+    /// Morning briefing paused itself on `UNIQUE constraint failed: bot_thread_sessions.session_id`:
+    /// a hand-off finished while its caller was gone, the chat import made the
+    /// new session its own "Thread", and every later run got that session back.
+    #[tokio::test]
+    async fn handoff_folds_back_a_session_the_import_took() {
+        let state = setup("fold-import").await;
+        let rt = FakeRt::default();
+        let t = create(&state.db, &rt, "user-a", body("Morning briefing")).await.unwrap();
+        {
+            let conn = state.db.connect().unwrap();
+            conn.execute(
+                "INSERT INTO bot_threads (id, user_id, bot_id, kind, title, status, current_session_id, created_by, last_activity_at, created_at, updated_at)
+                 VALUES ('dup', 'user-a', 'bot-1', 'task', 'Thread', 'idle', 'next-1', 'import', 't', 't', 't')",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO bot_thread_sessions (thread_id, generation, session_id, reason, started_at) VALUES ('dup', 1, 'next-1', 'start', 't')",
+                [],
+            )
+            .unwrap();
+        }
+        let handoff: HandoffBody = serde_json::from_value(json!({ "reason": "routine_run" })).unwrap();
+        let moved = do_handoff(&state.db, &rt, "user-a", &t.id, handoff).await.unwrap();
+        assert_eq!(moved.current_session_id.as_deref(), Some("next-1"));
+        assert_eq!(moved.generation, t.generation + 1);
+        assert!(load(&state.db, "dup").unwrap().is_none(), "the imported copy is gone");
+
+        // A session that belongs to a thread the user really has stays an error.
+        let other = create(&state.db, &rt, "user-a", body("Other")).await.unwrap();
+        let taken = other.current_session_id.clone().unwrap();
+        let conn = state.db.connect().unwrap();
+        conn.execute("UPDATE bot_thread_sessions SET session_id = 'next-2' WHERE session_id = ?1", params![taken]).unwrap();
+        drop(conn);
+        let handoff: HandoffBody = serde_json::from_value(json!({ "reason": "routine_run" })).unwrap();
+        assert!(do_handoff(&state.db, &rt, "user-a", &t.id, handoff).await.is_err());
+        assert!(load(&state.db, &other.id).unwrap().is_some());
     }
 
     #[test]
