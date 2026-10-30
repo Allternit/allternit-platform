@@ -75,6 +75,7 @@ final class AuthManager: ObservableObject {
         currentSession = Clerk.shared.session
         let wasSignedIn = isSignedIn
         isSignedIn = currentSession != nil
+        Task { await finishOrganizationTaskIfNeeded() }
 
         if isSignedIn, !wasSignedIn {
             // Push: send this phone's APNs token for the account now signed in.
@@ -89,6 +90,37 @@ final class AuthManager: ObservableObject {
                 }
             }
         }
+    }
+
+    private var isFinishingOrganizationTask = false
+
+    /// The production Clerk instance requires an organization, so a new
+    /// account's session stays pending on "choose-organization" and ClerkKitUI
+    /// shows a Create organization screen. Finish that step here instead: use
+    /// the first membership, or create "<first name>'s Organization" (Clerk's
+    /// own default name).
+    func finishOrganizationTaskIfNeeded() async {
+        guard isClerkConfigured, !isFinishingOrganizationTask,
+              let session = Clerk.shared.session, session.status == .pending,
+              session.tasks?.contains(.chooseOrganization) == true else { return }
+        isFinishingOrganizationTask = true
+        defer { isFinishingOrganizationTask = false }
+        do {
+            var orgId = session.user?.organizationMemberships?.first?.organization.id
+            if orgId == nil {
+                let first = session.user?.firstName?.trimmingCharacters(in: .whitespaces) ?? ""
+                orgId = try await Clerk.shared.organizations.create(
+                    name: first.isEmpty ? "My Organization" : "\(first)'s Organization"
+                ).id
+            }
+            try await Clerk.shared.auth.setActive(sessionId: session.id, organizationId: orgId)
+            isPresentingAuth = false
+        } catch {
+            #if DEBUG
+            debugLog("Finishing the organization step failed: \(error.localizedDescription)")
+            #endif
+        }
+        refreshAuthState()
     }
 
     /// Clerk session token for the API layer (the SDK caches and refreshes it).

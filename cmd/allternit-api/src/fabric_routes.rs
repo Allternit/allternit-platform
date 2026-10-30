@@ -13,7 +13,7 @@
 
 use axum::{
     body::Body,
-    extract::{Path, Query, State},
+    extract::{Query, State},
     http::{HeaderMap, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -36,10 +36,6 @@ pub fn fabric_router() -> Router<Arc<AppState>> {
         .route("/fabric/workers/self", get(get_worker_manifest))
         .route("/fabric/leases", post(issue_lease))
         .route("/session-worker/invoke", post(invoke_capability))
-        .route(
-            "/session-worker/sessions/:id/events",
-            get(stream_session_events),
-        )
 }
 
 /// Resolve the base URL of the runtime backend for this user.
@@ -563,41 +559,3 @@ async fn invoke_via_gizzi_sessions(
     }
 }
 
-async fn stream_session_events(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    Path(id): Path<String>,
-) -> impl IntoResponse {
-    let user_id = user_id_from_headers(&headers);
-    let base = resolve_runtime_base(&state, &user_id).await;
-    let client = gizzi_client(&headers);
-    let url = upstream_url(&base, &format!("/v1/session-worker/sessions/{}/events", id));
-
-    let upstream = match client.get(url).send().await {
-        Ok(r) => r,
-        Err(error) => {
-            warn!("fabric session events upstream request failed: {}", error);
-            return (
-                StatusCode::BAD_GATEWAY,
-                Json(json!({ "error": format!("Upstream request failed: {}", error) })),
-            )
-                .into_response();
-        }
-    };
-
-    let status = StatusCode::from_u16(upstream.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
-    let stream = upstream.bytes_stream();
-    let body = Body::from_stream(stream);
-
-    let mut response = Response::new(body);
-    *response.status_mut() = status;
-    response.headers_mut().insert(
-        axum::http::header::CONTENT_TYPE,
-        HeaderValue::from_static("text/event-stream"),
-    );
-    response.headers_mut().insert(
-        axum::http::header::CACHE_CONTROL,
-        HeaderValue::from_static("no-cache"),
-    );
-    response
-}

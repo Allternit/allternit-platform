@@ -289,7 +289,10 @@ const sessionEventsExecutor: CapabilityExecutor<{ sessionID: string }, unknown> 
   async execute(input) {
     const sessionID = String(input.sessionID)
     await Session.get(sessionID)
-    return { streamEndpoint: `/v1/session-worker/sessions/${sessionID}/events` }
+    // The bus SSE stream carries every session's events; callers filter on
+    // sessionID. (There is no per-session events route; the old
+    // /v1/session-worker/sessions/:id/events was never served.)
+    return { streamEndpoint: "/v1/event", sessionID }
   },
 }
 
