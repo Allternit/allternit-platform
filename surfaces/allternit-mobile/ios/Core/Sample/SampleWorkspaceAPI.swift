@@ -212,6 +212,31 @@ enum SampleWorkspaceAPI {
            let result = SampleDelegateBoards.shared.write(method: method, projectId: parts[1], rest: Array(parts.dropFirst(3)), body: payload) {
             return result.map { json($0) } ?? json(["error": "preview"], status: 400)
         }
+        // Teach Analyze: an imported .har becomes a contract, and distill
+        // answers the model's draft skill for it.
+        if namespace == .other, method == "POST", parts == ["api", "har-derived-api", "ingest"] {
+            return json(["contract_id": "contract-sample-import", "domain": "orders.millsupply.example"])
+        }
+        if namespace == .other, method == "POST", parts == ["api", "har-derived-api", "teach", "distill"] {
+            let contractId = payload["contract_id"] as? String
+            let domain = SampleWorkspace.teachContracts().first { $0["id"] as? String == contractId }?["domain"] as? String
+                ?? "orders.millsupply.example"
+            let note = (payload["note"] as? String).map { " \($0)" } ?? ""
+            return json([
+                "title": domain == "pos.squarely.example" ? "Close out the day's sales" : "Reorder supplies",
+                "intent": "Pull today's totals from \(domain) and log them for {{date}}.\(note)",
+                "source": "model",
+                "redactions": 1,
+                "domain": domain,
+                "steps": [
+                    ["kind": "ui", "text": "Open https://\(domain) and sign in"],
+                    ["kind": "api", "text": "Read the totals for {{date}}", "target": "GET \(domain)/api/reports/daily?date={{date}}"],
+                    ["kind": "ui", "text": "Check the totals match the register"],
+                    ["kind": "note", "text": "Stop before anything is submitted: ask first."],
+                ],
+                "inputs": [["name": "date", "label": "Date", "example": "2026-10-29", "type": "date"]],
+            ])
+        }
         // A new chat opens on a sample session row (AgentSession decodes it).
         if namespace == .v1, method == "POST", parts == ["agent-sessions"] {
             let at = SampleWorkspace.ago(0)

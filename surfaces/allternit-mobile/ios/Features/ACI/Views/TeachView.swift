@@ -344,196 +344,22 @@ struct TeachView: View {
         }
     }
 
-    // MARK: - Skill (TeachRunBar + TeachEditor, read on the phone)
+    // MARK: - Skill (TeachRunBar + TeachEditor)
 
     private func skillDetail(_ skill: TeachSkill) -> some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                if skill.workflowStepCount > 0 {
-                    HStack(alignment: .center, spacing: 10) {
-                        Text("\(skill.workflowStepCount) recorded step\(skill.workflowStepCount == 1 ? "" : "s"). Run plays them back exactly in Allternit Desktop; here the agent replays the skill.")
-                            .font(.system(size: 12))
-                            .foregroundColor(Color("TextSecondary"))
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 10)
-                    .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color("FillNeutral")))
-                    .padding(.bottom, 14)
-                }
-
-                Text(skill.title)
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundColor(Color("TextPrimary"))
-                meta(skill)
-                    .padding(.top, 4)
-                actions(skill)
-                    .padding(.top, 12)
-
-                Rectangle().fill(Color("BorderSubtle")).frame(height: 1).padding(.vertical, 16)
-
-                section("Goal") {
-                    Text(skill.intent.isEmpty ? "No goal written yet." : skill.intent)
-                        .font(.system(size: 14))
-                        .foregroundColor(skill.intent.isEmpty ? Color("TextTertiary") : Color("TextPrimary"))
-                }
-                section("Steps") {
-                    if skill.steps.isEmpty {
-                        Text("No steps yet.")
-                            .font(.system(size: 12))
-                            .foregroundColor(Color("TextTertiary"))
-                    } else {
-                        VStack(alignment: .leading, spacing: 8) {
-                            ForEach(Array(skill.steps.enumerated()), id: \.element.id) { index, step in
-                                stepRow(step, number: index + 1)
-                            }
-                        }
-                    }
-                }
-                section("Inputs") {
-                    if skill.inputs.isEmpty {
-                        Text("This skill doesn't ask for anything.")
-                            .font(.system(size: 12))
-                            .foregroundColor(Color("TextTertiary"))
-                    } else {
-                        VStack(alignment: .leading, spacing: 8) {
-                            ForEach(skill.inputs) { input in inputRow(input) }
-                        }
-                    }
-                }
-            }
-            .padding(16)
-            .padding(.bottom, 24)
-        }
+        TeachSkillEditor(
+            skill: skill,
+            blocked: signedOut,
+            onSave: { draft in await save(draft) },
+            onReplay: { draft in
+                if draft.inputs.isEmpty { replay(draft, values: [:]) } else { sheet = .replay(draft) }
+            },
+            onSchedule: { saved in sheet = .schedule(saved) },
+            onTeachAgain: { isImporting = true },
+            onDelete: { isDeleteConfirming = true }
+        )
+        .id(skill.id)
     }
-
-    private func meta(_ skill: TeachSkill) -> some View {
-        var parts: [String] = []
-        if let domain = skill.domain { parts.append(domain) }
-        parts.append("\(skill.steps.count) step\(skill.steps.count == 1 ? "" : "s")")
-        parts.append(skill.source == "model" ? "Written by a model" : "Built from the recording")
-        if skill.redactions > 0 { parts.append("\(skill.redactions) redacted") }
-        return VStack(alignment: .leading, spacing: 6) {
-            Text(parts.joined(separator: " · "))
-                .font(.system(size: 12))
-                .foregroundColor(Color("TextTertiary"))
-            if skill.skillPath != nil || skill.routineId != nil {
-                HStack(spacing: 4) {
-                    if skill.skillPath != nil { TeachBadge(icon: "checkmark.circle.fill", text: "Skill saved") }
-                    if skill.routineId != nil { TeachBadge(icon: "calendar", text: "Scheduled") }
-                }
-            }
-        }
-    }
-
-    private func actions(_ skill: TeachSkill) -> some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                Button {
-                    if skill.inputs.isEmpty { replay(skill, values: [:]) } else { sheet = .replay(skill) }
-                } label: {
-                    Label("Replay", systemImage: "play.fill")
-                }
-                .buttonStyle(TeachPrimaryButton())
-                Button { sheet = .schedule(skill) } label: {
-                    Label(skill.routineId == nil ? "Run on a schedule" : "Schedule again", systemImage: "calendar")
-                }
-                .buttonStyle(TeachSecondaryButton())
-                Button { isImporting = true } label: {
-                    Label("Teach again", systemImage: "record.circle")
-                }
-                .buttonStyle(TeachSecondaryButton())
-                Button { isDeleteConfirming = true } label: {
-                    Image(systemName: "trash")
-                        .font(.system(size: 14))
-                        .foregroundColor(Color("TextSecondary"))
-                        .frame(width: 40, height: 40)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Delete skill")
-            }
-        }
-    }
-
-    private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(title)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundColor(Color("TextPrimary"))
-            content()
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.bottom, 22)
-    }
-
-    private func stepRow(_ step: TeachStep, number: Int) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 10) {
-            Text("\(number)")
-                .font(.system(size: 12, weight: .semibold).monospacedDigit())
-                .foregroundColor(Color("TextTertiary"))
-                .frame(width: 18, alignment: .trailing)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(step.text.isEmpty ? "Empty step." : step.text)
-                    .font(.system(size: 14))
-                    .foregroundColor(Color("TextPrimary"))
-                    .fixedSize(horizontal: false, vertical: true)
-                HStack(spacing: 6) {
-                    Text(Self.kindLabel(step.kind))
-                        .font(.system(size: 10.5, weight: .semibold))
-                        .foregroundColor(Color("TextSecondary"))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Capsule().fill(Color("FillNeutral")))
-                    if let target = step.target, !target.isEmpty {
-                        Text(target)
-                            .font(.system(size: 11, design: .monospaced))
-                            .foregroundColor(Color("TextTertiary"))
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                    }
-                }
-            }
-        }
-        .padding(10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color("BgPanel")))
-        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Color("BorderSubtle")))
-    }
-
-    private func inputRow(_ input: TeachInput) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 6) {
-                Text(input.label.isEmpty ? input.name : input.label)
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(Color("TextPrimary"))
-                Text("{{\(input.name)}}")
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundColor(Color("TextTertiary"))
-                Spacer(minLength: 0)
-                Text((input.type ?? "text").capitalized)
-                    .font(.system(size: 11))
-                    .foregroundColor(Color("TextTertiary"))
-            }
-            Text(input.isSecret ? "No example for secrets" : (input.example.isEmpty ? "No example" : input.example))
-                .font(.system(size: 12))
-                .foregroundColor(Color("TextSecondary"))
-                .lineLimit(2)
-        }
-        .padding(10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color("FillNeutral")))
-    }
-
-    static func kindLabel(_ kind: String) -> String {
-        switch kind {
-        case "api": return "API call"
-        case "ui": return "On the page"
-        case "shell": return "Command"
-        default: return "Note"
-        }
-    }
-
-    // MARK: - Actions
 
     private func load() async {
         loading = true
@@ -592,17 +418,20 @@ struct TeachView: View {
         }
     }
 
-    private func save(_ skill: TeachSkill) async {
-        if let index = skills.firstIndex(where: { $0.id == skill.id }) { skills[index] = skill }
+    /// Saves a skill (PUT); the saved row, or nil with the reason in `notice`.
+    @discardableResult
+    private func save(_ skill: TeachSkill) async -> TeachSkill? {
         do {
             let saved = try await TeachClient.shared.saveSkill(skill)
             if let index = skills.firstIndex(where: { $0.id == saved.id }) { skills[index] = saved }
+            return saved
         } catch {
             if case APIError.httpError(let status, _) = error, status == 401 {
                 notice = TeachClient.signInToSave
             } else {
                 notice = "Couldn’t save the skill. \(FriendlyErrorMessage.from(error.localizedDescription))"
             }
+            return nil
         }
     }
 
@@ -627,6 +456,416 @@ struct TeachView: View {
         let prompt = TeachPrompt.render(skill, values: values) + "\n\n" + where_ + " Do every step in the browser, so the person watching sees each page."
         dismiss()
         onRun(prompt)
+    }
+}
+
+// MARK: - Editor (TeachEditor on the phone)
+
+/// A skill's page: run bar, name, meta and actions, then Goal, Steps and
+/// Inputs, all editable. Edits stay local until "Save changes"; Schedule
+/// saves first, Replay runs the draft as it stands.
+private struct TeachSkillEditor: View {
+    let skill: TeachSkill
+    /// Signed out: nothing saves (SIGN_IN_TO_SAVE).
+    let blocked: Bool
+    let onSave: (TeachSkill) async -> TeachSkill?
+    let onReplay: (TeachSkill) -> Void
+    let onSchedule: (TeachSkill) -> Void
+    let onTeachAgain: () -> Void
+    let onDelete: () -> Void
+
+    @State private var draft: TeachDraft
+    @State private var baseline: TeachDraft
+    @State private var base: TeachSkill
+    @State private var editingStep: String? = nil
+    @State private var saving = false
+    @State private var saveFailed = false
+
+    init(skill: TeachSkill, blocked: Bool,
+         onSave: @escaping (TeachSkill) async -> TeachSkill?,
+         onReplay: @escaping (TeachSkill) -> Void,
+         onSchedule: @escaping (TeachSkill) -> Void,
+         onTeachAgain: @escaping () -> Void,
+         onDelete: @escaping () -> Void) {
+        self.skill = skill
+        self.blocked = blocked
+        self.onSave = onSave
+        self.onReplay = onReplay
+        self.onSchedule = onSchedule
+        self.onTeachAgain = onTeachAgain
+        self.onDelete = onDelete
+        let start = TeachDraft(skill)
+        _draft = State(initialValue: start)
+        _baseline = State(initialValue: start)
+        _base = State(initialValue: skill)
+    }
+
+    private var dirty: Bool { draft != baseline }
+    private var problem: String? { draft.blockingProblem }
+    private var current: TeachSkill { draft.apply(to: base) ?? base }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                if base.workflowStepCount > 0 {
+                    Text("\(base.workflowStepCount) recorded step\(base.workflowStepCount == 1 ? "" : "s"). Run plays them back exactly in Allternit Desktop; here the agent replays the skill.")
+                        .font(.system(size: 12))
+                        .foregroundColor(Color("TextSecondary"))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 10)
+                        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color("FillNeutral")))
+                        .padding(.bottom, 14)
+                }
+
+                TextField("Skill name", text: $draft.title)
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundColor(Color("TextPrimary"))
+                    .accessibilityLabel("Skill name")
+                meta
+                    .padding(.top, 4)
+                actions
+                    .padding(.top, 12)
+
+                Rectangle().fill(Color("BorderSubtle")).frame(height: 1).padding(.vertical, 16)
+
+                section("Goal") {
+                    TextField("What this skill does and when to use it.", text: $draft.intent, axis: .vertical)
+                        .lineLimit(2...6)
+                        .font(.system(size: 14))
+                        .padding(10)
+                        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Color("BorderSubtle")))
+                }
+                section("Steps") { steps }
+                section("Inputs") { inputs }
+            }
+            .padding(16)
+            .padding(.bottom, 24)
+        }
+        .scrollDismissesKeyboard(.interactively)
+        .safeAreaInset(edge: .bottom, spacing: 0) { footer }
+        .onChange(of: skill) { _, next in
+            // A save elsewhere (schedule) changed the row: take it unless
+            // there are edits in flight.
+            base = next
+            if !dirty {
+                draft = TeachDraft(next)
+                baseline = draft
+            }
+        }
+    }
+
+    // MARK: Header
+
+    private var meta: some View {
+        var parts: [String] = []
+        if let domain = base.domain { parts.append(domain) }
+        parts.append("\(draft.steps.count) step\(draft.steps.count == 1 ? "" : "s")")
+        parts.append(base.source == "model" ? "Written by a model" : "Built from the recording")
+        if base.redactions > 0 { parts.append("\(base.redactions) redacted") }
+        return VStack(alignment: .leading, spacing: 6) {
+            Text(parts.joined(separator: " · "))
+                .font(.system(size: 12))
+                .foregroundColor(Color("TextTertiary"))
+            if base.skillPath != nil || base.routineId != nil {
+                HStack(spacing: 4) {
+                    if base.skillPath != nil { TeachBadge(icon: "checkmark.circle.fill", text: "Skill saved") }
+                    if base.routineId != nil { TeachBadge(icon: "calendar", text: "Scheduled") }
+                }
+            }
+        }
+    }
+
+    private var actions: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                Button { onReplay(current) } label: {
+                    Label("Replay", systemImage: "play.fill")
+                }
+                .buttonStyle(TeachPrimaryButton())
+                .disabled(problem != nil)
+                Button {
+                    Task {
+                        // withSaved: Schedule saves pending edits first.
+                        if dirty { if let saved = await saveDraft() { onSchedule(saved) } } else { onSchedule(base) }
+                    }
+                } label: {
+                    Label(base.routineId == nil ? "Run on a schedule" : "Schedule again", systemImage: "calendar")
+                }
+                .buttonStyle(TeachSecondaryButton())
+                .disabled(saving || blocked || problem != nil)
+                Button(action: onTeachAgain) {
+                    Label("Teach again", systemImage: "record.circle")
+                }
+                .buttonStyle(TeachSecondaryButton())
+                Button(action: onDelete) {
+                    Image(systemName: "trash")
+                        .font(.system(size: 14))
+                        .foregroundColor(Color("TextSecondary"))
+                        .frame(width: 40, height: 40)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Delete skill")
+            }
+        }
+    }
+
+    private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundColor(Color("TextPrimary"))
+            content()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.bottom, 22)
+    }
+
+    // MARK: Steps
+
+    @ViewBuilder
+    private var steps: some View {
+        if draft.steps.isEmpty {
+            Text("No steps yet. Add the first one.")
+                .font(.system(size: 12))
+                .foregroundColor(Color("TextTertiary"))
+        }
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(Array(draft.steps.enumerated()), id: \.element.id) { index, step in
+                stepRow(index: index, step: step)
+            }
+        }
+        Button {
+            editingStep = draft.addStep()
+        } label: {
+            Label("Add step", systemImage: "plus")
+        }
+        .buttonStyle(TeachSecondaryButton())
+    }
+
+    private func stepRow(index: Int, step: TeachDraft.Step) -> some View {
+        let binding = Binding<TeachDraft.Step>(
+            get: { draft.steps.first { $0.id == step.id } ?? step },
+            set: { next in if let i = draft.steps.firstIndex(where: { $0.id == step.id }) { draft.steps[i] = next } }
+        )
+        return HStack(alignment: .top, spacing: 8) {
+            Text("\(index + 1)")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundColor(Color("TextSecondary"))
+                .frame(width: 22, height: 22)
+                .background(Circle().fill(Color("FillNeutral")))
+                .padding(.top, 6)
+            VStack(alignment: .leading, spacing: 8) {
+                if editingStep == step.id {
+                    TextField("Step \(index + 1)", text: binding.text, axis: .vertical)
+                        .lineLimit(2...6)
+                        .font(.system(size: 14))
+                        .padding(8)
+                        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(Color("BorderStrong")))
+                        .accessibilityLabel("Step \(index + 1)")
+                    HStack(spacing: 8) {
+                        Menu {
+                            ForEach(TeachDraft.stepKinds, id: \.self) { kind in
+                                Button(TeachDraft.stepKindLabel(kind)) { binding.wrappedValue.kind = kind }
+                            }
+                        } label: {
+                            HStack(spacing: 4) {
+                                Text(TeachDraft.stepKindLabel(step.kind))
+                                Image(systemName: "chevron.up.chevron.down").font(.system(size: 9))
+                            }
+                            .font(.system(size: 13))
+                            .foregroundColor(Color("TextPrimary"))
+                            .padding(.horizontal, 10)
+                            .frame(height: 36)
+                            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(Color("BorderStrong")))
+                        }
+                        .accessibilityLabel("Step type")
+                        if step.kind == "api" {
+                            TextField("GET host/path", text: binding.target)
+                                .font(.system(size: 12, design: .monospaced))
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
+                                .padding(.horizontal, 8)
+                                .frame(height: 36)
+                                .background(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(Color("BorderStrong")))
+                                .accessibilityLabel("API call")
+                        }
+                        Spacer(minLength: 0)
+                        Button("Done") { editingStep = nil }
+                            .buttonStyle(TeachSecondaryButton())
+                    }
+                } else {
+                    Button { editingStep = step.id } label: {
+                        VStack(alignment: .leading, spacing: 2) {
+                            (Text(TeachDraft.stepKindLabel(step.kind).uppercased() + "  ")
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundColor(Color("TextTertiary"))
+                             + Text(step.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Empty step. Write it here." : step.text)
+                                .font(.system(size: 13))
+                                .foregroundColor(step.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? Color("TextTertiary") : Color("TextPrimary")))
+                                .multilineTextAlignment(.leading)
+                                .fixedSize(horizontal: false, vertical: true)
+                            if step.kind == "api", !step.target.isEmpty {
+                                Text(step.target)
+                                    .font(.system(size: 11, design: .monospaced))
+                                    .foregroundColor(Color("TextTertiary"))
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 32, alignment: .leading)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Edit step \(index + 1)")
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            HStack(spacing: 0) {
+                iconButton("arrow.up", label: "Move up", disabled: index == 0) { draft.moveStep(at: index, by: -1) }
+                iconButton("arrow.down", label: "Move down", disabled: index == draft.steps.count - 1) { draft.moveStep(at: index, by: 1) }
+                iconButton("trash", label: "Delete step") {
+                    draft.steps.removeAll { $0.id == step.id }
+                    if editingStep == step.id { editingStep = nil }
+                }
+            }
+        }
+        .padding(8)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color("BgPanel")))
+        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Color("BorderSubtle")))
+    }
+
+    private func iconButton(_ systemName: String, label: String, disabled: Bool = false, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 13))
+                .foregroundColor(Color("TextTertiary"))
+                .frame(width: 36, height: 36)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(disabled)
+        .opacity(disabled ? 0.35 : 1)
+        .accessibilityLabel(label)
+    }
+
+    // MARK: Inputs
+
+    @ViewBuilder
+    private var inputs: some View {
+        if draft.inputs.isEmpty {
+            Text("No inputs. Add one for a value that changes each run, then use {{name}} in a step.")
+                .font(.system(size: 12))
+                .foregroundColor(Color("TextTertiary"))
+        }
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach($draft.inputs) { $input in
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 8) {
+                        TextField("name", text: $input.name)
+                            .font(.system(size: 13, design: .monospaced))
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .accessibilityLabel("Input name")
+                        Menu {
+                            ForEach(TeachDraft.inputTypes, id: \.type) { option in
+                                Button(option.label) { input.type = option.type }
+                            }
+                        } label: {
+                            HStack(spacing: 4) {
+                                Text(TeachDraft.inputTypeLabel(input.type))
+                                Image(systemName: "chevron.up.chevron.down").font(.system(size: 9))
+                            }
+                            .font(.system(size: 12))
+                            .foregroundColor(Color("TextSecondary"))
+                        }
+                        .accessibilityLabel("Input type")
+                        iconButton("trash", label: "Delete input") {
+                            draft.inputs.removeAll { $0.id == input.id }
+                        }
+                    }
+                    TextField("Label", text: $input.label)
+                        .font(.system(size: 13))
+                        .accessibilityLabel("Input label")
+                    if input.isSecret {
+                        Text("No example for secrets")
+                            .font(.system(size: 12))
+                            .foregroundColor(Color("TextTertiary"))
+                    } else {
+                        TextField("Example", text: $input.example)
+                            .font(.system(size: 13))
+                            .accessibilityLabel("Input example")
+                    }
+                }
+                .padding(10)
+                .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color("FillNeutral")))
+            }
+        }
+        Button { draft.addInput() } label: {
+            Label("Add input", systemImage: "plus")
+        }
+        .buttonStyle(TeachSecondaryButton())
+    }
+
+    // MARK: Footer
+
+    private var status: String {
+        if blocked { return TeachClient.signInToSave }
+        if let problem { return problem }
+        if saveFailed { return "Couldn’t save the skill." }
+        if saving { return "Saving…" }
+        return dirty ? "Unsaved changes" : "All changes saved"
+    }
+
+    private var footer: some View {
+        HStack(spacing: 10) {
+            Text(status)
+                .font(.system(size: 12))
+                .foregroundColor(blocked || problem != nil || saveFailed ? Theme.statusError : Color("TextTertiary"))
+                .lineLimit(2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            if dirty {
+                Button("Undo changes") {
+                    draft = baseline
+                    editingStep = nil
+                }
+                .buttonStyle(TeachSecondaryButton())
+                .disabled(saving)
+            }
+            Button {
+                Task { await saveDraft() }
+            } label: {
+                HStack(spacing: 6) {
+                    if saving { ProgressView().controlSize(.mini).tint(Color("BgPrimary")) }
+                    Text("Save changes")
+                }
+            }
+            .buttonStyle(TeachPrimaryButton())
+            .disabled(!dirty || saving || blocked || problem != nil)
+            .opacity(!dirty || saving || blocked || problem != nil ? 0.4 : 1)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(Color("BgPrimary"))
+        .overlay(alignment: .top) { Rectangle().fill(Color("BorderSubtle")).frame(height: 1) }
+    }
+
+    @discardableResult
+    private func saveDraft() async -> TeachSkill? {
+        guard let next = draft.apply(to: base) else { return nil }
+        saving = true
+        saveFailed = false
+        let saved = await onSave(next)
+        saving = false
+        guard let saved else {
+            saveFailed = true
+            return nil
+        }
+        base = saved
+        draft = TeachDraft(saved)
+        baseline = draft
+        editingStep = nil
+        return saved
     }
 }
 

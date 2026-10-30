@@ -119,6 +119,156 @@ struct TeachSkill: Identifiable, Sendable, Equatable {
     }
 }
 
+// MARK: - Editing (TeachEditor)
+
+/// A skill being edited on the phone (TeachEditor's local draft). Edits stay
+/// here until "Save changes"; `apply` writes them back into the skill's raw
+/// row, keeping every field the phone doesn't edit (a step's or input's own
+/// extra fields included).
+struct TeachDraft: Equatable {
+    struct Step: Identifiable, Equatable {
+        var id: String
+        /// api | ui | shell | note
+        var kind: String
+        var text: String
+        var target: String
+        var raw: [String: JSONValue]
+    }
+
+    struct Input: Identifiable, Equatable {
+        /// Row identity only; renaming an input keeps its row.
+        let id: UUID
+        var name: String
+        var label: String
+        var example: String
+        /// text | number | … | secret (TEACH_INPUT_TYPES)
+        var type: String
+        var raw: [String: JSONValue]
+
+        var isSecret: Bool { type == "secret" }
+    }
+
+    var title: String
+    var intent: String
+    var steps: [Step]
+    var inputs: [Input]
+
+    static let stepKinds = ["api", "ui", "shell", "note"]
+    /// TeachEditor KIND_LABEL.
+    static func stepKindLabel(_ kind: String) -> String {
+        switch kind {
+        case "api": return "API"
+        case "ui": return "Page"
+        case "shell": return "Shell"
+        default: return "Note"
+        }
+    }
+
+    /// TeachEditor TYPE_LABEL, in its order.
+    static let inputTypes: [(type: String, label: String)] = [
+        ("text", "Text"), ("number", "Number"), ("date", "Date"), ("datetime", "Date and time"),
+        ("email", "Email"), ("url", "Web address"), ("choice", "Choice"), ("file", "File"),
+        ("folder", "Folder"), ("list", "List"), ("secret", "Secret"),
+    ]
+
+    static func inputTypeLabel(_ type: String) -> String {
+        inputTypes.first { $0.type == type }?.label ?? "Text"
+    }
+
+    init(_ skill: TeachSkill) {
+        if case .string(let t)? = skill.raw["title"] { title = t } else { title = "" }
+        intent = skill.intent
+        let rawSteps: [[String: JSONValue]] = {
+            guard case .array(let items)? = skill.raw["steps"] else { return [] }
+            return items.compactMap { item -> [String: JSONValue]? in
+                if case .object(let o) = item { return o }
+                return nil
+            }
+        }()
+        steps = skill.steps.enumerated().map { index, step in
+            let raw = rawSteps.first { $0["id"] == .string(step.id) } ?? (index < rawSteps.count ? rawSteps[index] : [:])
+            return Step(id: step.id, kind: step.kind, text: step.text, target: step.target ?? "", raw: raw)
+        }
+        let rawInputs: [[String: JSONValue]] = {
+            guard case .array(let items)? = skill.raw["inputs"] else { return [] }
+            return items.compactMap { item -> [String: JSONValue]? in
+                if case .object(let o) = item { return o }
+                return nil
+            }
+        }()
+        inputs = skill.inputs.map { input in
+            Input(id: UUID(), name: input.name, label: input.label, example: input.example,
+                  type: input.type ?? "text", raw: rawInputs.first { $0["name"] == .string(input.name) } ?? [:])
+        }
+    }
+
+    /// A new, empty step on the page (TeachEditor "Add step").
+    mutating func addStep() -> String {
+        let id = TeachClient.newId("step")
+        steps.append(Step(id: id, kind: "ui", text: "", target: "", raw: [:]))
+        return id
+    }
+
+    /// `input_N`, the first free N (InputsTable "Add input").
+    mutating func addInput() {
+        var n = inputs.count + 1
+        while inputs.contains(where: { $0.name == "input_\(n)" }) { n += 1 }
+        inputs.append(Input(id: UUID(), name: "input_\(n)", label: "", example: "", type: "text", raw: [:]))
+    }
+
+    mutating func moveStep(at index: Int, by delta: Int) {
+        let to = index + delta
+        guard steps.indices.contains(index), steps.indices.contains(to) else { return }
+        steps.swapAt(index, to)
+    }
+
+    /// The skill with this draft written in. Touching an input clears its
+    /// `needs_review`, as on the web.
+    func apply(to skill: TeachSkill) -> TeachSkill? {
+        let stepValues: [JSONValue] = steps.map { step in
+            var o = step.raw
+            o["id"] = .string(step.id)
+            o["kind"] = .string(step.kind)
+            o["text"] = .string(step.text)
+            let target = step.target.trimmingCharacters(in: .whitespacesAndNewlines)
+            if step.kind == "api", !target.isEmpty { o["target"] = .string(target) } else { o.removeValue(forKey: "target") }
+            return .object(o)
+        }
+        let inputValues: [JSONValue] = inputs.map { input in
+            var o = input.raw
+            o["name"] = .string(input.name.trimmingCharacters(in: .whitespacesAndNewlines))
+            o["label"] = .string(input.label)
+            // Secrets never carry an example (they're never saved in the skill).
+            o["example"] = .string(input.isSecret ? "" : input.example)
+            if input.type == "text" && o["type"] == nil { o.removeValue(forKey: "type") } else { o["type"] = .string(input.type) }
+            o.removeValue(forKey: "needs_review")
+            return .object(o)
+        }
+        return skill.with([
+            "title": .string(title),
+            "intent": .string(intent),
+            "steps": .array(stepValues),
+            "inputs": .array(inputValues),
+        ])
+    }
+
+    /// The first problem that blocks a save (teach-validate, the parts the
+    /// phone edits): an empty skill name is fine, but inputs need a unique,
+    /// valid name.
+    var blockingProblem: String? {
+        var seen = Set<String>()
+        for input in inputs {
+            let name = input.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            if name.isEmpty { return "Every input needs a name." }
+            if name.range(of: #"^[a-zA-Z0-9_.-]+$"#, options: .regularExpression) == nil {
+                return "Input names use letters, numbers, _ . and - only (\(name))."
+            }
+            if !seen.insert(name).inserted { return "Two inputs are named \(name)." }
+        }
+        return nil
+    }
+}
+
 /// A recording not analyzed into a skill yet (`SiteApiContract`).
 struct TeachContract: Decodable, Sendable, Identifiable, Equatable {
     struct Endpoint: Decodable, Sendable, Equatable { let id: String }
