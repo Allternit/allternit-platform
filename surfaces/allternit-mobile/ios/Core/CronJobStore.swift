@@ -94,6 +94,12 @@ final class CronJobStore: ObservableObject {
         await refresh()
     }
 
+    /// Saves a new schedule (drag on the calendar), then resyncs `nextRunAt`.
+    func updateSchedule(id: String, schedule: String) async throws {
+        try await client.updateSchedule(id: id, schedule: schedule)
+        await refresh()
+    }
+
     /// Deletes a job and removes it locally.
     func deleteJob(id: String) async throws {
         try await client.deleteJob(id: id)

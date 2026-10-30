@@ -147,6 +147,14 @@ enum ArtifactStudioKind: String, CaseIterable, Identifiable, Sendable {
         }
     }
 
+    /// The Office editor this kind opens in (`ARTIFACT_SESSION_KINDS[…].office`).
+    var officeProduct: String? {
+        switch self {
+        case .docs, .sheets, .slides: return rawValue
+        default: return nil
+        }
+    }
+
     /// Agent mode contract id (`metadata.agentModeId`), nil for none.
     var modeId: String? {
         switch self {
@@ -229,7 +237,20 @@ struct ArtifactStudioSession: Identifiable, Hashable, Sendable {
     let kind: ArtifactStudioKind
     let title: String
     let startedAt: Date
+    /// The blank Docs/Sheets/Slides record the session's editor is bound to.
+    var artifactId: String? = nil
+    /// The Design canvas the session's editor is bound to.
+    var designProjectId: String? = nil
     var id: String { sessionId }
+
+    /// The editor the web opens with this session (hasEditor), if any.
+    var editorRoute: ArtifactWebRoute? {
+        if let artifactId, let product = kind.officeProduct {
+            return .office(product: product, artifactId: artifactId)
+        }
+        if let designProjectId { return .design(projectId: designProjectId, title: title) }
+        return nil
+    }
 }
 
 /// Starts studio sessions and remembers each one's standing instructions,
@@ -244,7 +265,14 @@ final class ArtifactStudioLauncher: ObservableObject {
     @Published private(set) var launching: ArtifactStudioKind?
 
     private static let defaultsKey = "artifactStudio.sessions.v1"
-    private struct Stored: Codable { let kind: String; let title: String; let prompt: String; let startedAt: Date }
+    private struct Stored: Codable {
+        let kind: String
+        let title: String
+        let prompt: String
+        let startedAt: Date
+        var artifactId: String? = nil
+        var designProjectId: String? = nil
+    }
     private var stored: [String: Stored]
 
     private init() {
@@ -265,7 +293,17 @@ final class ArtifactStudioLauncher: ObservableObject {
     /// The studio session record for a session id, if it is one.
     func session(for sessionId: String) -> ArtifactStudioSession? {
         guard let s = stored[sessionId], let kind = ArtifactStudioKind(rawValue: s.kind) else { return nil }
-        return ArtifactStudioSession(sessionId: sessionId, kind: kind, title: s.title, startedAt: s.startedAt)
+        return ArtifactStudioSession(sessionId: sessionId, kind: kind, title: s.title, startedAt: s.startedAt,
+                                     artifactId: s.artifactId, designProjectId: s.designProjectId)
+    }
+
+    /// Sessions with an editor (Docs, Sheets, Slides, Design), newest first.
+    /// Their records aren't in the Artifacts v2 library, so this is how the
+    /// person gets back to one.
+    var editorSessions: [ArtifactStudioSession] {
+        stored.keys.compactMap { session(for: $0) }
+            .filter { $0.editorRoute != nil }
+            .sorted { $0.startedAt > $1.startedAt }
     }
 
     /// Creates the agent session (`POST /api/v1/agent-sessions`, Cowork
@@ -276,14 +314,24 @@ final class ArtifactStudioLauncher: ObservableObject {
         launching = kind
         defer { launching = nil }
         let title = kind.newTitle
+        // Docs/Sheets/Slides start on a blank record and Design on a new canvas,
+        // as `startArtifactSession` does. If the record can't be made the session
+        // still opens, unbound, so the person isn't stranded.
+        var artifactId: String?
+        if let product = kind.officeProduct {
+            artifactId = try? await OfficeArtifactClient.shared.createBlank(title: title, product: product).id
+        }
+        let designProjectId = kind == .design ? UUID().uuidString.lowercased() : nil
         let session = try await AgentChatClient().createSession(
             name: title,
             originSurface: "cowork",
             sessionMode: "agent",
             agentModeId: kind.modeId
         )
-        let started = ArtifactStudioSession(sessionId: session.id, kind: kind, title: title, startedAt: Date())
-        stored[session.id] = Stored(kind: kind.rawValue, title: title, prompt: kind.systemPrompt(title: title), startedAt: started.startedAt)
+        let started = ArtifactStudioSession(sessionId: session.id, kind: kind, title: title, startedAt: Date(),
+                                            artifactId: artifactId, designProjectId: designProjectId)
+        stored[session.id] = Stored(kind: kind.rawValue, title: title, prompt: kind.systemPrompt(title: title), startedAt: started.startedAt,
+                                    artifactId: artifactId, designProjectId: designProjectId)
         // Keep the newest 200 so the map can't grow without bound.
         if stored.count > 200 {
             for key in stored.sorted(by: { $0.value.startedAt < $1.value.startedAt }).prefix(stored.count - 200).map(\.key) {

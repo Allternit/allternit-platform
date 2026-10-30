@@ -2131,12 +2131,19 @@
         "allternit-ai/src/components/computers",
         "allternit-ai/src/lib/phone-stream",
         "allternit-ai/src/fabric-session",
-        "allternit-ai/src/lib/notifications"
+        "allternit-ai/src/lib/notifications",
+        "allternit-ai/src/pages/AppEditorPage.tsx",
+        "allternit/surfaces/allternit-mobile/ios/Features/Bots/BotProjectPage.swift",
+        "allternit/surfaces/allternit-mobile/ios/Features/Automation/Views/AutomationSchedulerView.swift"
       ],
       "decisions": [
         {
           "on": "2026-10-27",
           "note": "Eoj approved the plan (SPEC-iphone-app-screen-2026-10-27.md): no XCTest, no Apple ID signing, no Developer Mode; the phone only dials out. Desktop is one more viewer of the node's app:<id> stream and reuses IosVideoPacketParser; phone.screenshot decodes the last keyframe with Chromium WebCodecs in a hidden window. phone.tap/swipe answer not_supported (\"Taps on native apps need the Bluetooth board\"); phone.web.* go to POST /api/v1/phones/app/:id/rpc. Pair approval is a Desktop card fed by phone_app.pair_request on the runtime events feed."
+        },
+        {
+          "on": "2026-10-30",
+          "note": "Eoj: iOS Artifacts, Projects and Automation must match Desktop and m.allternit.com, with verification per fix. Artifacts host the web's real editors in a signed-in web view (AppEditorPage routes on ai.allternit.com); Projects and Automation are native ports."
         }
       ],
       "evidence": [

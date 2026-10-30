@@ -145,6 +145,10 @@ final class APIClient: @unchecked Sendable {
             #if DEBUG
             let snippet = data.flatMap { String(data: $0.prefix(200), encoding: .utf8) } ?? ""
             NSLog("[APIClient] %d %@ %@", httpResponse.statusCode, httpResponse.url?.absoluteString ?? "-", snippet)
+            #else
+            // Status and path only (no body), so a failing screen shows in
+            // the device log.
+            NSLog("[APIClient] %d %@", httpResponse.statusCode, httpResponse.url?.path ?? "-")
             #endif
             throw APIError.httpError(
                 statusCode: httpResponse.statusCode,

@@ -324,6 +324,16 @@ final class BackdropTouch {
             let n = raw.split(separator: ",").compactMap { Double($0) }
             if n.count == 2 { point = CGPoint(x: n[0], y: n[1]) }
         }
+        // `-backdrop-tap x,y`: a tap there every 3 s (screenshots of the ring).
+        if let raw = UserDefaults.standard.string(forKey: "backdrop-tap") {
+            let n = raw.split(separator: ",").compactMap { Double($0) }
+            if n.count == 2 {
+                let spot = CGPoint(x: n[0], y: n[1])
+                Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { _ in
+                    Task { @MainActor in BackdropTouch.shared.tap = (spot, Date()) }
+                }
+            }
+        }
     }
     #endif
     /// The finger in global points while it's down.

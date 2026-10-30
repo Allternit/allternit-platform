@@ -106,7 +106,8 @@ struct CodeModeView: View {
                             onSessionChanged: sessionChanged,
                             terminal: terminalLook,
                             onLeaveTerminal: { setTerminalLook(false) },
-                            onEnterTerminal: { setTerminalLook(true) }
+                            onEnterTerminal: { setTerminalLook(true) },
+                            paused: shellOpen
                         )
                         .id(thread.id)
                     } else {

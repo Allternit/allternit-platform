@@ -73,4 +73,19 @@ final class OfficeArtifactClient: @unchecked Sendable {
         let envelope: Envelope = try await client.get(path: "artifacts/\(escaped)")
         return envelope.artifact
     }
+
+    /// `POST {apiBaseURL}/artifacts`: the blank record an Office editor opens on
+    /// (web `startArtifactSession`).
+    func createBlank(title: String, product: String) async throws -> OfficeArtifact {
+        struct Body: Encodable {
+            let workspace_id = "default"
+            let title: String
+            let type = "document"
+            let tags: [String]
+            let sections: [String] = []
+        }
+        struct Envelope: Decodable { let artifact: OfficeArtifact }
+        let envelope: Envelope = try await client.post(path: "artifacts", body: Body(title: title, tags: ["office:\(product)"]))
+        return envelope.artifact
+    }
 }

@@ -95,7 +95,7 @@ enum SampleWorkspaceAPI {
                     ],
                 ] as [String: Any], "limits": NSNull()]
             case let p where p.count == 3 && p[0] == "projects" && p[2] == "messages":
-                return SampleWorkspace.projectMessages(projectId: p[1], now: now).map { ["messages": $0] }
+                return SampleProjectState.shared.messages(projectId: p[1], now: now).map { ["messages": $0] }
             case let p where p.count == 3 && p[0] == "projects" && p[2] == "delegate":
                 return SampleDelegateBoards.shared.board(projectId: p[1])
             case ["threads"]:
@@ -113,7 +113,7 @@ enum SampleWorkspaceAPI {
             case ["automation", "goals"]:
                 return SampleWorkspace.goals(now: now)
             case ["automation", "routines"]:
-                return SampleWorkspace.routines(now: now)
+                return SampleWorkspace.routines(now: now) + SampleProjectState.shared.addedRoutines()
             case ["automation", "loops"]:
                 return SampleWorkspace.loops(now: now)
             case ["gateway", "execution-bindings"]:
@@ -123,7 +123,17 @@ enum SampleWorkspaceAPI {
             case ["cowork", "projects"]:
                 return ["projects": SampleWorkspace.coworkProjects(now: now)]
             case let p where p.count == 4 && p[0] == "cowork" && p[1] == "projects" && p[3] == "files":
-                return ["files": [Any]()]
+                return ["files": SampleProjectState.shared.files(projectId: p[2])]
+            case let p where p.count == 4 && p[0] == "cowork" && p[1] == "projects" && p[3] == "status":
+                return ["status": SampleProjectState.shared.status(projectId: p[2], now: now)]
+            case let p where p.count == 3 && p[0] == "cowork" && p[1] == "projects":
+                return SampleProjectState.shared.project(id: p[2], now: now).map { ["project": $0] }
+            case let p where p.count == 2 && p[0] == "project-workspaces":
+                return SampleProjectState.shared.workspace(key: p[1])
+            case ["memory", "v2", "observations"]:
+                return ["observations": [Any]()]
+            case ["memory", "v2", "facts"]:
+                return ["facts": [Any]()]
             case ["me"]:
                 return ["user": SampleWorkspace.me(now: now)]
             case ["workspaces"]:
@@ -169,8 +179,12 @@ enum SampleWorkspaceAPI {
             }
         case .factory:
             switch parts {
-            case ["agents"]: return ["agents": [Any]()]
-            case ["teams"]: return ["teams": [Any]()]
+            case ["agents"]: return ["agents": SampleFactory.agents]
+            case ["teams"]: return ["teams": SampleFactory.teams]
+            case ["campaigns"]: return ["campaigns": SampleFactory.campaigns]
+            case let p where p.count == 3 && p[0] == "campaigns" && p[2] == "board": return SampleFactory.board
+            case let p where p.count == 2 && p[0] == "dags": return SampleFactory.flow
+            case let p where p.count == 3 && p[0] == "nodes": return SampleFactory.node(nodeId: p[2])
             case ["mail", "threads"]: return ["threads": [Any]()]
             default: return nil
             }
@@ -195,9 +209,35 @@ enum SampleWorkspaceAPI {
             // Teach: `/api/har-derived-api/*` sits under `/api`, not `/api/v1`.
             switch parts {
             case ["api", "har-derived-api", "teach", "skills"]:
-                return ["skills": SampleWorkspace.teachSkills(now: now)]
+                // The flour order's recorded steps in full, so Run lists them.
+                let skills = SampleWorkspace.teachSkills(now: now).map { skill -> [String: Any] in
+                    guard skill["id"] as? String == "teach-sample-order" else { return skill }
+                    var next = skill
+                    next["workflow"] = [
+                        "version": 1,
+                        "start_url": "https://orders.millsupply.example/reorder",
+                        "steps": [
+                            ["id": "w1", "kind": "goto", "url": "{{profile.supplier_url}}/reorder"],
+                            ["id": "w2", "kind": "select", "target": ["label": "Delivery week"], "value": "{{week}}"],
+                            ["id": "w3", "kind": "fill", "target": ["label": "Bread flour 25 kg"], "value": "{{bags}}"],
+                            ["id": "w4", "kind": "click", "target": ["label": "Place order"], "unsafe_to_repeat": true],
+                        ],
+                    ]
+                    return next
+                }
+                return ["skills": skills]
             case ["api", "har-derived-api", "contracts"]:
                 return ["contracts": SampleWorkspace.teachContracts(now: now)]
+            case ["api", "har-derived-api", "teach", "profile"]:
+                // The bakery's business profile ({{profile.key}} values).
+                return [
+                    "values": [
+                        "supplier_url": ["value": "https://orders.millsupply.example", "label": "Mill supply orders", "type": "url"],
+                        "reports_root": ["value": "/Users/harbor/Reports", "label": "Reports folder", "type": "folder"],
+                        "store_email": ["value": "orders@harborbakery.example", "label": "Store email", "type": "email"],
+                    ],
+                    "updated_at": SampleWorkspace.ago(1_440),
+                ]
             default:
                 return nil
             }
@@ -211,6 +251,9 @@ enum SampleWorkspaceAPI {
         if namespace == .v1, parts.count >= 3, parts[0] == "projects", parts[2] == "delegate",
            let result = SampleDelegateBoards.shared.write(method: method, projectId: parts[1], rest: Array(parts.dropFirst(3)), body: payload) {
             return result.map { json($0) } ?? json(["error": "preview"], status: 400)
+        }
+        if namespace == .v1, let answer = SampleProjectState.shared.write(method: method, parts: parts, body: payload) {
+            return json(answer)
         }
         // Teach Analyze: an imported .har becomes a contract, and distill
         // answers the model's draft skill for it.
@@ -236,6 +279,10 @@ enum SampleWorkspaceAPI {
                 ],
                 "inputs": [["name": "date", "label": "Date", "example": "2026-10-29", "type": "date"]],
             ])
+        }
+        // A new Docs/Sheets/Slides session's blank record (the editor page answers its own reads).
+        if namespace == .v1, method == "POST", parts == ["artifacts"] {
+            return json(["artifact": ["id": "preview-artifact-new", "title": payload["title"] as? String ?? "Untitled", "sections": [Any]()]])
         }
         // A new chat opens on a sample session row (AgentSession decodes it).
         if namespace == .v1, method == "POST", parts == ["agent-sessions"] {
@@ -361,7 +408,7 @@ final class SampleDelegateBoards: @unchecked Sendable {
     }
 
     private static func sample(projectId: String, now: Date = Date()) -> [String: Any]? {
-        if projectId == SampleWorkspace.cateringProjectId {
+        if projectId == SampleWorkspace.cateringProjectId || projectId.hasPrefix("preview-workspace-") {
             return ["projectId": projectId, "auto": false, "tasks": [Any](), "bots": [Any](),
                     "queuedCostCents": NSNull(), "now": SampleWorkspace.iso(now)]
         }
@@ -369,7 +416,7 @@ final class SampleDelegateBoards: @unchecked Sendable {
         let threads = SampleWorkspace.threads(now: now)
         let bots: [[String: Any]] = SampleWorkspace.botSeeds.map { seed in
             let lane = lanes[seed.id]!
-            let queue: [[String: Any]] = threads.filter { $0["botId"] as? String == seed.id }.map { thread in
+            let queue: [[String: Any]] = threads.filter { $0["botId"] as? String == seed.id && $0["projectId"] as? String == projectId }.map { thread in
                 ["threadId": thread["id"] ?? "", "taskId": NSNull(), "title": thread["title"] ?? "",
                  "status": thread["status"] ?? "", "estimateMin": lane.estimateMin]
             }
@@ -463,3 +510,224 @@ final class SampleDelegateBoards: @unchecked Sendable {
 
 /// A JSON value, or JSON null for nil.
 func orNull(_ value: Any?) -> Any { value ?? NSNull() }
+
+// MARK: - Project page state
+
+/// What the visitor does on a sample project page, for this launch only: what
+/// they tell Al, the context files they add, their status page edits.
+final class SampleProjectState: @unchecked Sendable {
+    static let shared = SampleProjectState()
+
+    private let lock = NSLock()
+    private var sent: [String: [[String: Any]]] = [:]
+    private var attached: [String: [[String: Any]]] = [:]
+    private var statuses: [String: [String: Any]] = [:]
+    private var details: [String: [String: Any]] = [:]
+    private var routines: [[String: Any]] = []
+
+    func addedRoutines() -> [[String: Any]] {
+        lock.lock()
+        defer { lock.unlock() }
+        return routines
+    }
+
+    func messages(projectId: String, now: Date) -> [[String: Any]]? {
+        lock.lock()
+        defer { lock.unlock() }
+        let extra = sent[projectId] ?? []
+        guard let base = SampleWorkspace.projectMessages(projectId: projectId, now: now) else {
+            // A Chat project's coordinator (registered below).
+            return sent[projectId] == nil && !projectId.hasPrefix("preview-workspace-") ? nil : extra
+        }
+        return base + extra
+    }
+
+    func files(projectId: String) -> [[String: Any]] {
+        lock.lock()
+        defer { lock.unlock() }
+        return attached[projectId] ?? []
+    }
+
+    /// The launch's status page, the same on the card and the full view.
+    func status(projectId: String, now: Date) -> [String: Any] {
+        lock.lock()
+        defer { lock.unlock() }
+        if let edited = statuses[projectId] { return edited }
+        guard projectId == SampleWorkspace.projectId else {
+            return ["version": 1, "lifecycle": "active", "state": "on_track", "next_action": "", "sections": [String: Any](),
+                    "log": [Any](), "archive": [Any](), "revision": 0, "closed_at": NSNull()]
+        }
+        let section: (String) -> [String: Any] = { text in
+            ["text": text, "updated_by": "Al", "updated_at": SampleWorkspace.ago(20, now: now)]
+        }
+        return [
+            "version": 1, "lifecycle": "active", "state": "needs_decision",
+            "next_action": "Pick a hero for the launch page, then the email and posts can start.",
+            "sections": [
+                "goal": section("Launch the spring menu by Friday: a price check, a launch page, then the email and posts."),
+                "status": section("Price check is under way. The launch page is drafted and waiting on a hero pick."),
+                "next_actions": section("Pick a hero. Yessir starts the email and three posts after that."),
+                "owners": section("Goldie: prices. Rimraf: page. Yessir: email and posts."),
+            ] as [String: Any],
+            "log": [["at": SampleWorkspace.ago(18, now: now), "by": "Rimraf", "section": "status",
+                     "note": "Launch page draft is ready with two hero options.", "proof_url": NSNull()]],
+            "archive": [Any](), "revision": 3, "closed_at": NSNull(),
+        ]
+    }
+
+    func project(id: String, now: Date) -> [String: Any]? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard var row = SampleWorkspace.coworkProjects(now: now).first(where: { $0["id"] as? String == id }) else { return nil }
+        for (key, value) in details[id] ?? [:] { row[key] = value }
+        return row
+    }
+
+    func workspace(key: String) -> [String: Any]? {
+        guard key.hasPrefix("chat-") else { return nil }
+        return ["projectId": "preview-workspace-\(key)", "workerId": "preview", "settings": [String: Any]()]
+    }
+
+    /// nil: not one of these routes.
+    func write(method: String, parts: [String], body: [String: Any]) -> [String: Any]? {
+        lock.lock()
+        defer { lock.unlock() }
+        switch (method, parts.count) {
+        case ("POST", 3) where parts[0] == "projects" && parts[2] == "messages":
+            let at = SampleWorkspace.iso(Date())
+            let text = body["text"] as? String ?? ""
+            let user: [String: Any] = ["id": "preview-sent-\(UUID().uuidString)", "role": "user", "text": text,
+                                       "payload": NSNull(), "createdAt": at]
+            let reply: [String: Any] = ["id": "preview-sent-\(UUID().uuidString)", "role": "coordinator",
+                                        "text": "This is a sample project, so nothing runs. Signed in, I would split that into threads for the team.",
+                                        "payload": ["kind": "answer"], "createdAt": at]
+            sent[parts[1], default: []] += [user, reply]
+            return ["message": user]
+        case ("POST", 1) where parts[0] == "uploads":
+            let id = "preview-upload-\(UUID().uuidString.prefix(8))"
+            return ["uploadId": id, "url": "/api/v1/uploads/\(id)"]
+        case ("POST", 4) where parts[0] == "cowork" && parts[1] == "projects" && parts[3] == "files":
+            let id = "preview-file-\(UUID().uuidString.prefix(8))"
+            let row: [String: Any] = [
+                "id": id, "project_id": parts[2], "name": body["name"] as? String ?? "File",
+                "url": orNull(body["url"]), "upload_id": orNull(body["upload_id"]),
+                "media_type": orNull(body["media_type"]), "created_at": SampleWorkspace.iso(Date()),
+            ]
+            attached[parts[2], default: []].append(row)
+            return ["file": ["id": id]]
+        case ("DELETE", 5) where parts[0] == "cowork" && parts[3] == "files":
+            attached[parts[2]]?.removeAll { $0["id"] as? String == parts[4] }
+            return ["ok": true]
+        case ("PATCH", 4) where parts[0] == "cowork" && parts[3] == "status":
+            lock.unlock()
+            var next = status(projectId: parts[2], now: Date())
+            lock.lock()
+            if let state = body["state"] { next["state"] = state }
+            if let key = body["section"] as? String, let text = body["text"] as? String {
+                var sections = next["sections"] as? [String: Any] ?? [:]
+                sections[key] = ["text": text, "updated_by": "you", "updated_at": SampleWorkspace.iso(Date())]
+                next["sections"] = sections
+            }
+            statuses[parts[2]] = next
+            return ["status": next]
+        case ("PATCH", 3) where parts[0] == "cowork" && parts[1] == "projects":
+            details[parts[2], default: [:]].merge(body) { _, new in new }
+            return ["ok": true]
+        case ("POST", 2) where parts == ["automation", "routines"]:
+            let at = SampleWorkspace.iso(Date())
+            var row = body
+            row["id"] = "preview-routine-\(UUID().uuidString.prefix(8))"
+            row["status"] = "active"
+            row["created_at"] = at
+            row["updated_at"] = at
+            routines.append(row)
+            return row
+        case ("PUT", 2) where parts[0] == "project-workspaces":
+            return workspace(key: parts[1])
+        default:
+            return nil
+        }
+    }
+}
+
+// MARK: - Factory
+
+/// The launch as a Factory campaign, so the Team lanes, Board and Flow have
+/// something to show. The ids match the sample bots and the spring project.
+enum SampleFactory {
+    private static let dagId = "preview-dag-spring"
+
+    private static func card(_ id: String, _ title: String, _ status: String, _ assignee: String, _ proven: Int, _ total: Int,
+                             depth: Int, blockedBy: [String] = [], needsYou: Bool = false) -> [String: Any] {
+        ["dagId": dagId, "nodeId": id, "title": title, "status": status, "assignee": assignee,
+         "bindingType": NSNull(), "proof": ["proven": proven, "total": total], "blockedBy": blockedBy,
+         "needsYou": needsYou, "depth": depth]
+    }
+
+    private static var cards: [[String: Any]] {
+        [
+            card("prices", "Price check: spring menu", "working", "goldie", 1, 3, depth: 0),
+            card("page", "Launch page", "needs_you", "rimraf", 2, 3, depth: 0, needsYou: true),
+            card("email", "Announcement email and three posts", "blocked", "yessir", 0, 2, depth: 1, blockedBy: ["page"]),
+        ]
+    }
+
+    static var campaigns: [[String: Any]] {
+        [["id": "preview-campaign-spring", "projectId": SampleWorkspace.projectId, "title": "Harbor Bakery spring launch",
+          "intent": "Launch the spring menu", "status": "active", "proven": 3, "total": 8, "needsYou": 1]]
+    }
+
+    static var board: [String: Any] {
+        let all = cards
+        return [
+            "campaign": ["id": "preview-campaign-spring", "title": "Harbor Bakery spring launch", "intent": "Launch the spring menu"],
+            "summary": ["now": [all[0]], "next": [all[2]], "proven": ["k": 3, "n": 8], "needsYou": [all[1]]] as [String: Any],
+            "waves": [["depth": 0, "nodes": [all[0], all[1]]], ["depth": 1, "nodes": [all[2]]]],
+        ]
+    }
+
+    static var flow: [String: Any] {
+        ["dagId": dagId, "title": "Harbor Bakery spring launch", "nodes": cards,
+         "edges": [["from": "page", "to": "email", "type": "blocked_by"]]]
+    }
+
+    static func node(nodeId: String) -> [String: Any]? {
+        guard let found = cards.first(where: { $0["nodeId"] as? String == nodeId }) else { return nil }
+        return [
+            "card": found,
+            "spec": ["intent": found["title"] ?? "", "miniRequirements": ["Follows the brief", "Ready for you to check"],
+                     "proofContract": [["line": "Draft saved in the project", "checkedBy": "Al", "evidence": [Any]()]]] as [String: Any],
+            "progressMd": "Started from the project's brief.",
+        ]
+    }
+
+    static var agents: [[String: Any]] {
+        [
+            agent("preview-bot-a", "A://", role: "Coordinates the launch", state: "working", node: nil),
+            agent("preview-bot-researcher", "Goldie", role: "Researcher", state: "working", node: ("prices", "Price check: spring menu")),
+            agent("preview-bot-designer", "Rimraf", role: "Designer", state: "waiting", node: ("page", "Launch page")),
+            agent("preview-bot-writer", "Yessir", role: "Writer", state: "idle", node: nil),
+        ]
+    }
+
+    private static func agent(_ id: String, _ name: String, role: String, state: String, node: (String, String)?) -> [String: Any] {
+        [
+            "id": id, "slug": name.lowercased(), "name": name, "team": "spring", "address": "\(name.lowercased())@spring",
+            "avatar": NSNull(), "role": role, "binding": ["type": "native"], "state": state, "machine": NSNull(), "pane": NSNull(),
+            "currentNode": orNull(node.map { ["dagId": dagId, "nodeId": $0.0, "title": $0.1] }),
+            "proof": NSNull(), "context": ["usedPct": NSNull(), "tokens": NSNull()], "reach": [Any](), "fields": [String: Any](),
+        ]
+    }
+
+    static var teams: [[String: Any]] {
+        [[
+            "name": "spring", "preset": NSNull(), "presets": [Any](),
+            "agents": ["preview-bot-a", "preview-bot-researcher", "preview-bot-designer", "preview-bot-writer"],
+            "edges": [
+                ["kind": "directs", "from": "preview-bot-a", "to": "preview-bot-researcher"],
+                ["kind": "directs", "from": "preview-bot-a", "to": "preview-bot-designer"],
+                ["kind": "delegates_to", "from": "preview-bot-designer", "to": "preview-bot-writer"],
+            ],
+        ]]
+    }
+}

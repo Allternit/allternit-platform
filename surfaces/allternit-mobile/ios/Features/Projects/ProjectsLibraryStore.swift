@@ -117,7 +117,7 @@ final class ProjectsLibraryStore: ObservableObject {
                 isArchived: pending?.archived ?? project.archived,
                 updatedAt: libraryParseDate(project.lastActivityAt),
                 createdAt: created,
-                countLine: Self.count(sessions, "session"),
+                countLine: "\(Self.count(project.botIds.count, "bot")) · Al coordinates",
                 waiting: project.counts.waiting,
                 working: project.counts.working,
                 cowork: nil,

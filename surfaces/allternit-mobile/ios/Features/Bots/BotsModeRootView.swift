@@ -27,6 +27,13 @@ enum BotRoute: Hashable {
     case settings(String)
     /// The bot screen on one of its tabs (bot-home-tabs.ts).
     case botHome(String, BotHomeTab)
+    /// A project's pane, full screen (openPhonePane on the web).
+    case projectPane(ProjectPaneContext, ProjectPaneKind)
+    /// A project thread with no chat yet (ProjectSidePanel's waiting state);
+    /// it becomes the chat as soon as the thread has a session.
+    case projectThread(BotThread)
+    /// A Factory node (factoryNodePane).
+    case projectNode(dagId: String, nodeId: String, title: String)
 }
 
 /// Bot Mode's navigation path, shared with every pushed screen so async
@@ -37,6 +44,16 @@ final class BotNavigator: ObservableObject {
 
     func open(_ route: BotRoute) {
         path.append(route)
+    }
+
+    /// Every thread row opens: its chat, or its waiting page when the thread
+    /// has no session yet.
+    func openThread(_ thread: BotThread) {
+        if let sessionId = thread.currentSessionId {
+            open(.chat(botId: thread.botId, sessionId: sessionId))
+        } else {
+            open(.projectThread(thread))
+        }
     }
 }
 
@@ -52,6 +69,7 @@ struct BotsModeRootView: View {
     @ObservedObject private var colors = BotColorStore.shared
     @State private var isConnectionsPresented = false
     @State private var isThreadsPresented = false
+    @State private var threadToOpen: BotThread?
 
     /// Opens the shell drawer (the edge swipe also works).
     var onOpenSidebar: (() -> Void)?
@@ -101,15 +119,18 @@ struct BotsModeRootView: View {
         .sheet(isPresented: $isConnectionsPresented) {
             ConnectorsListView()
         }
-        .sheet(isPresented: $isThreadsPresented) {
+        // The thread opens once the sheet is gone: pushing while it closes
+        // is dropped on a device.
+        .sheet(isPresented: $isThreadsPresented, onDismiss: {
+            if let thread = threadToOpen {
+                threadToOpen = nil
+                navigator.openThread(thread)
+            }
+        }) {
             NavigationStack {
-                ScrollView {
-                    BotThreadsPanel(botId: nil, greeting: "Welcome back.") { thread in
-                        isThreadsPresented = false
-                        if let sessionId = thread.currentSessionId {
-                            navigator.open(.chat(botId: thread.botId, sessionId: sessionId))
-                        }
-                    }
+                BotThreadsOverview(botId: nil, title: "Welcome back.") { thread in
+                    threadToOpen = thread
+                    isThreadsPresented = false
                 }
                 .background(Color("BgPanel"))
                 .toolbar {
@@ -127,6 +148,14 @@ struct BotsModeRootView: View {
                   let bot = store.bots.first(where: { $0.botDisplayName == name }) else { return }
             UserDefaults.standard.removeObject(forKey: "open-bot-chat")
             navigator.path = [.chat(botId: bot.id, sessionId: nil)]
+        }
+        // `-open-bot-project <title>`: opens that project once projects load.
+        .onChange(of: store.projects.count) { _, _ in
+            guard let title = UserDefaults.standard.string(forKey: "open-bot-project"),
+                  navigator.path.isEmpty,
+                  let project = store.projects.first(where: { $0.title == title }) else { return }
+            UserDefaults.standard.removeObject(forKey: "open-bot-project")
+            navigator.path = [.project(project)]
         }
         // `-open-group-chat <name>`: opens that room once groups load.
         .onChange(of: store.groups.count) { _, _ in
@@ -221,7 +250,7 @@ struct BotRouteDestination: View {
         case .threads(let botId):
             BotThreadsView(botId: botId)
         case .project(let project):
-            BotProjectHomeView(project: project)
+            BotProjectPage(project: project)
         case .groups:
             GroupsListView()
         case .group(let id):
@@ -233,7 +262,12 @@ struct BotRouteDestination: View {
         case .botComputer(let botId):
             withBot(botId) { BotComputerView(bot: $0) }
         case .tasks(let botId):
-            withBot(botId) { BotTasksView(bot: $0) }
+            withBot(botId) { bot in
+                BotThreadTasksView(bot: bot)
+                    .background { BotWashedBackground(color: .some(BotColorStore.shared.hex(for: bot))).ignoresSafeArea() }
+                    .navigationTitle("Tasks")
+                    .navigationBarTitleDisplayMode(.inline)
+            }
         case .routines(let botId):
             withBot(botId) { BotRoutinesView(bot: $0) }
         case .memory(let botId):
@@ -250,6 +284,12 @@ struct BotRouteDestination: View {
             withBot(botId) { AgentDetailView(initialAgent: $0) }
         case .botHome(let botId, let tab):
             withBot(botId) { BotHomeTabsView(bot: $0, initialTab: tab) }
+        case .projectPane(let context, let kind):
+            ProjectPaneScreen(context: context, initialKind: kind)
+        case .projectThread(let thread):
+            BotProjectThreadPage(thread: thread)
+        case .projectNode(let dagId, let nodeId, let title):
+            ProjectNodePageView(dagId: dagId, nodeId: nodeId, title: title)
         }
     }
 

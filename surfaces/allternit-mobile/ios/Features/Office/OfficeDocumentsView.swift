@@ -63,7 +63,7 @@ struct OfficeDocumentsView: View {
             .sheet(isPresented: $isSignPDFPresented) {
                 PDFSignView(sourceURL: nil)
             }
-            .sheet(item: $openArtifact) { summary in
+            .fullScreenCover(item: $openArtifact) { summary in
                 V2ArtifactView(artifactId: summary.id, initialTitle: summary.title) {
                     artifacts.removeAll { $0.id == summary.id }
                 }

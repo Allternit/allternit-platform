@@ -31,17 +31,25 @@ struct TeachView: View {
         var har: String?
         var fileName: String?
         var contract: TeachContract?
+        /// The recording's actions (a Desktop recording); a .har or a
+        /// server recording has none, only network traffic.
+        var events: [JSONValue] = []
+        /// Actions struck out in Review: not sent.
+        var struck: Set<Int> = []
         var note = ""
         var analyzing = false
         var error: String? = nil
     }
 
     enum Sheet: Identifiable {
-        case replay(TeachSkill), schedule(TeachSkill)
+        case replay(TeachSkill), schedule(TeachSkill), run(TeachSkill), skillFile(TeachSkill), profile
         var id: String {
             switch self {
             case .replay(let skill): return "replay-\(skill.id)"
             case .schedule(let skill): return "schedule-\(skill.id)"
+            case .run(let skill): return "run-\(skill.id)"
+            case .skillFile(let skill): return "file-\(skill.id)"
+            case .profile: return "profile"
             }
         }
     }
@@ -91,6 +99,23 @@ struct TeachView: View {
                     notice = "“\(skill.title)” is scheduled. It’s in Automation Tasks."
                     if let next = skill.with(["routine_id": .string(routineId)]) { Task { await save(next) } }
                 }
+            case .run(let skill):
+                TeachRunSheet(skill: skill) {
+                    self.sheet = nil
+                    if skill.inputs.isEmpty {
+                        replay(skill, values: [:])
+                    } else {
+                        // The sheet closes first; the inputs sheet follows.
+                        Task {
+                            try? await Task.sleep(nanoseconds: 350_000_000)
+                            self.sheet = .replay(skill)
+                        }
+                    }
+                }
+            case .skillFile(let skill):
+                TeachSkillFileSheet(skill: skill)
+            case .profile:
+                TeachProfileSheet()
             }
         }
         .confirmationDialog("Delete this skill?", isPresented: $isDeleteConfirming, titleVisibility: .visible) {
@@ -308,6 +333,25 @@ struct TeachView: View {
                 .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color("BgPanel")))
                 .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Color("BorderSubtle")))
 
+                // TeachReview "Actions": the recording's timeline; × leaves one out.
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Actions")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(Color("TextPrimary"))
+                    if !(review?.events.isEmpty ?? true) {
+                        Text("Use × to leave an action out.")
+                            .font(.system(size: 12))
+                            .foregroundColor(Color("TextTertiary"))
+                    }
+                    TeachTimeline(
+                        events: TeachEvent.list(review?.events ?? []),
+                        struck: review?.struck ?? [],
+                        onToggleStrike: { index in
+                            if review?.struck.contains(index) == true { review?.struck.remove(index) } else { review?.struck.insert(index) }
+                        }
+                    )
+                }
+
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Your note")
                         .font(.system(size: 13, weight: .medium))
@@ -355,6 +399,9 @@ struct TeachView: View {
                 if draft.inputs.isEmpty { replay(draft, values: [:]) } else { sheet = .replay(draft) }
             },
             onSchedule: { saved in sheet = .schedule(saved) },
+            onRun: { draft in sheet = .run(draft) },
+            onSaveSkill: { draft in sheet = .skillFile(draft) },
+            onOpenProfile: { sheet = .profile },
             onTeachAgain: { isImporting = true },
             onDelete: { isDeleteConfirming = true }
         )
@@ -405,7 +452,9 @@ struct TeachView: View {
         review?.error = nil
         Task {
             do {
-                let skill = try await TeachClient.shared.analyze(har: current.har, contractId: current.contract?.id, note: current.note)
+                let events = current.events.enumerated().filter { !current.struck.contains($0.offset) }.map(\.element)
+                let skill = try await TeachClient.shared.analyze(har: current.har, contractId: current.contract?.id,
+                                                                 events: events, note: current.note)
                 skills.insert(skill, at: 0)
                 selectedId = skill.id
                 review = nil
@@ -471,6 +520,11 @@ private struct TeachSkillEditor: View {
     let onSave: (TeachSkill) async -> TeachSkill?
     let onReplay: (TeachSkill) -> Void
     let onSchedule: (TeachSkill) -> Void
+    /// Run (the recorded steps, model-free): its sheet.
+    let onRun: (TeachSkill) -> Void
+    /// Save skill / Update skill file: the SKILL.md sheet.
+    let onSaveSkill: (TeachSkill) -> Void
+    let onOpenProfile: () -> Void
     let onTeachAgain: () -> Void
     let onDelete: () -> Void
 
@@ -485,6 +539,9 @@ private struct TeachSkillEditor: View {
          onSave: @escaping (TeachSkill) async -> TeachSkill?,
          onReplay: @escaping (TeachSkill) -> Void,
          onSchedule: @escaping (TeachSkill) -> Void,
+         onRun: @escaping (TeachSkill) -> Void,
+         onSaveSkill: @escaping (TeachSkill) -> Void,
+         onOpenProfile: @escaping () -> Void,
          onTeachAgain: @escaping () -> Void,
          onDelete: @escaping () -> Void) {
         self.skill = skill
@@ -492,6 +549,9 @@ private struct TeachSkillEditor: View {
         self.onSave = onSave
         self.onReplay = onReplay
         self.onSchedule = onSchedule
+        self.onRun = onRun
+        self.onSaveSkill = onSaveSkill
+        self.onOpenProfile = onOpenProfile
         self.onTeachAgain = onTeachAgain
         self.onDelete = onDelete
         let start = TeachDraft(skill)
@@ -508,14 +568,23 @@ private struct TeachSkillEditor: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 if base.workflowStepCount > 0 {
-                    Text("\(base.workflowStepCount) recorded step\(base.workflowStepCount == 1 ? "" : "s"). Run plays them back exactly in Allternit Desktop; here the agent replays the skill.")
-                        .font(.system(size: 12))
-                        .foregroundColor(Color("TextSecondary"))
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 10)
-                        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color("FillNeutral")))
-                        .padding(.bottom, 14)
+                    // TeachRunBar: Run is primary when the skill has recorded steps.
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("\(base.workflowStepCount) recorded step\(base.workflowStepCount == 1 ? "" : "s"). Run plays them back exactly, without the model; if a step doesn’t match, the agent takes over in the session.")
+                            .font(.system(size: 12))
+                            .foregroundColor(Color("TextSecondary"))
+                            .fixedSize(horizontal: false, vertical: true)
+                        Button { onRun(current) } label: {
+                            Label("Run", systemImage: "play.fill")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(TeachPrimaryButton())
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color("FillNeutral")))
+                    .padding(.bottom, 14)
                 }
 
                 TextField("Skill name", text: $draft.title)
@@ -584,6 +653,11 @@ private struct TeachSkillEditor: View {
                 }
                 .buttonStyle(TeachPrimaryButton())
                 .disabled(problem != nil)
+                Button { onSaveSkill(current) } label: {
+                    Label(base.skillPath == nil ? "Save skill" : "Update skill file", systemImage: "square.and.arrow.down")
+                }
+                .buttonStyle(TeachSecondaryButton())
+                .disabled(saving)
                 Button {
                     Task {
                         // withSaved: Schedule saves pending edits first.
@@ -596,6 +670,10 @@ private struct TeachSkillEditor: View {
                 .disabled(saving || blocked || problem != nil)
                 Button(action: onTeachAgain) {
                     Label("Teach again", systemImage: "record.circle")
+                }
+                .buttonStyle(TeachSecondaryButton())
+                Button(action: onOpenProfile) {
+                    Label("Business profile", systemImage: "person.text.rectangle")
                 }
                 .buttonStyle(TeachSecondaryButton())
                 Button(action: onDelete) {
@@ -769,7 +847,7 @@ private struct TeachSkillEditor: View {
                             .accessibilityLabel("Input name")
                         Menu {
                             ForEach(TeachDraft.inputTypes, id: \.type) { option in
-                                Button(option.label) { input.type = option.type }
+                                Button(option.label) { input.setType(option.type) }
                             }
                         } label: {
                             HStack(spacing: 4) {
@@ -796,6 +874,7 @@ private struct TeachSkillEditor: View {
                             .font(.system(size: 13))
                             .accessibilityLabel("Input example")
                     }
+                    inputSettings($input)
                 }
                 .padding(10)
                 .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color("FillNeutral")))
@@ -805,6 +884,99 @@ private struct TeachSkillEditor: View {
             Label("Add input", systemImage: "plus")
         }
         .buttonStyle(TeachSecondaryButton())
+    }
+
+    /// TeachEditor InputRow's second line: Required, then the type's own
+    /// setting (Format, Root, Saved login or the choices) and its help.
+    @ViewBuilder
+    private func inputSettings(_ input: Binding<TeachDraft.Input>) -> some View {
+        let value = input.wrappedValue
+        Toggle("Required", isOn: input.required)
+            .font(.system(size: 12))
+            .foregroundColor(Color("TextSecondary"))
+            .tint(Color("TextPrimary"))
+        if value.hasFormat {
+            HStack(spacing: 8) {
+                Text("Format").font(.system(size: 12)).foregroundColor(Color("TextSecondary"))
+                TextField(value.type == "number" ? "en-US" : "MM/DD/YYYY", text: input.format)
+                    .font(.system(size: 12, design: .monospaced))
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .accessibilityLabel("Format")
+                Menu {
+                    ForEach(Self.formats(for: value.type), id: \.self) { format in
+                        Button(format) { input.wrappedValue.format = format }
+                    }
+                } label: {
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.system(size: 11))
+                        .foregroundColor(Color("TextSecondary"))
+                        .frame(width: 32, height: 32)
+                }
+                .accessibilityLabel("Pick a format")
+            }
+        }
+        if value.hasRoot {
+            HStack(spacing: 8) {
+                Text("Root").font(.system(size: 12)).foregroundColor(Color("TextSecondary"))
+                TextField("{{profile.reports_root}} or /Users/me/Reports", text: input.root)
+                    .font(.system(size: 12, design: .monospaced))
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .accessibilityLabel("Allowed root folder")
+            }
+        }
+        if value.isSecret {
+            HStack(spacing: 8) {
+                Text("Saved login").font(.system(size: 12)).foregroundColor(Color("TextSecondary"))
+                TextField("Credential id (optional)", text: input.secretRef)
+                    .font(.system(size: 12, design: .monospaced))
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .accessibilityLabel("Credential id")
+            }
+        }
+        if value.type == "choice" {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Choices (one per line)").font(.system(size: 12)).foregroundColor(Color("TextSecondary"))
+                TextField("", text: input.choices, axis: .vertical)
+                    .lineLimit(3...8)
+                    .font(.system(size: 13))
+                    .padding(8)
+                    .background(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(Color("BorderStrong")))
+                    .accessibilityLabel("Choices")
+            }
+        }
+        Text(Self.typeHelp(value.type))
+            .font(.system(size: 11))
+            .foregroundColor(Color("TextTertiary"))
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    /// TeachEditor DATE_FORMATS / DATETIME_FORMATS / NUMBER_FORMATS.
+    private static func formats(for type: String) -> [String] {
+        switch type {
+        case "date": return ["YYYY-MM-DD", "MM/DD/YYYY", "DD/MM/YYYY", "DD.MM.YYYY", "D MMM YYYY", "MMM D, YYYY"]
+        case "datetime": return ["YYYY-MM-DDTHH:mm", "MM/DD/YYYY HH:mm", "DD/MM/YYYY HH:mm", "DD.MM.YYYY HH:mm"]
+        default: return ["en-US", "en-US+group", "de-DE", "de-DE+group", "fr-FR", "en-GB"]
+        }
+    }
+
+    /// TeachEditor TYPE_HELP.
+    private static func typeHelp(_ type: String) -> String {
+        switch type {
+        case "number": return "Entered as a plain number (1234.5). The format sets how it's typed into the page, like de-DE for 1234,5."
+        case "date": return "Picked from a calendar. The format sets how it's typed into the page."
+        case "datetime": return "A date and a time. The format sets how it's typed into the page."
+        case "email": return "An email address."
+        case "url": return "A web address."
+        case "choice": return "One of a fixed set of values. Write one choice per line."
+        case "file": return "A file on this computer. Root limits where it may come from; it can be {{profile.key}}."
+        case "folder": return "A folder on this computer. Root limits where it may come from; it can be {{profile.key}}."
+        case "list": return "One item per line, or CSV with a header row. A “for each” step goes through it."
+        case "secret": return "Never saved in the skill or typed into a prompt. The run stops and asks you when a step needs it."
+        default: return "Any text, typed as is."
+        }
     }
 
     // MARK: Footer

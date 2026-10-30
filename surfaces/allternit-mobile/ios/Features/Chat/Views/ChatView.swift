@@ -585,11 +585,11 @@ struct ChatContentView: View {
 
 // MARK: - Launch greeting
 
-/// The launch greeting (web LaunchHeader on the phone): the Gizzi mark over
+/// The launch greeting (web LaunchHeader on the phone): the A:// mark over
 /// a serif title, centered. One greeting per app session, from the web's
 /// chat pool (launchGreeting.ts), with the signed-in first name.
 struct ChatLaunchGreeting: View {
-    /// In a bot's own chat the bot's face stands in for Gizzi (web
+    /// In a bot's own chat the bot's face stands in for the mark (web
     /// ActiveAgentMascot on the launch header).
     @Environment(\.chatBot) private var bot
     /// The bot stands on its stage above this chat: no second face here.
@@ -648,10 +648,9 @@ struct ChatLaunchGreeting: View {
                 if let bot {
                     BotAvatarView(bot: bot, size: 64, live: true)
                 } else {
-                    Image("GizziMascot")
-                        .resizable()
-                        .scaledToFit()
-                        .frame(width: 44, height: 44)
+                    // The A:// mark, not Gizzi, on the main chat (Eoj).
+                    AProtocolMark(height: 22)
+                        .foregroundColor(Color("TextPrimary"))
                 }
             }
             .accessibilityHidden(true)
