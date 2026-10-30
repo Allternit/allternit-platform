@@ -101,6 +101,8 @@ struct MainWorkspaceView: View {
                     .onChange(of: proxy.size.width) { _, width in screenWidth = width }
             }
         )
+        // The waiting games window, over every mode (WaitingGamesLayer).
+        .overlay { WaitingGamesLayer() }
         .fullScreenCover(isPresented: $isOverviewPresented) {
             SessionOverviewView(
                 mode: modeStore.shellMode,

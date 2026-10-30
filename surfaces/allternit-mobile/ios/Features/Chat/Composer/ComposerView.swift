@@ -296,8 +296,17 @@ struct ComposerView: View {
     }
 
     /// Phone: voice and send share one slot (ChatComposer phoneSendSlotTaken).
-    @ViewBuilder
+    /// Play (the waiting games) sits beside Stop; it stays mounted so it can
+    /// tell an open game the reply is ready.
     private var sendSlot: some View {
+        HStack(spacing: 8) {
+            WaitingGamesPlayButton(busy: isStreaming)
+            sendButton
+        }
+    }
+
+    @ViewBuilder
+    private var sendButton: some View {
         if isStreaming {
             HStack(spacing: 8) {
                 StreamingBars()

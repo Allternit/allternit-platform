@@ -19,6 +19,7 @@ struct SettingsView: View {
     @ObservedObject private var usageStore = UsageStore.shared
     @ObservedObject private var plan = AccountPlanStore.shared
     @ObservedObject private var appearance = AppearanceStore.shared
+    @AppStorage(WaitingGamesStore.enabledKey) private var waitingGames = true
     /// "Let your bots use this iPhone" status ("Paired · <computer>").
     @ObservedObject private var appPhone = AppPhoneService.shared
 
@@ -241,6 +242,9 @@ struct SettingsView: View {
                 PhoneCardDivider()
                 PhoneToggleRow(title: "Reduce motion", systemImage: "pause",
                                isOn: $appearance.reduceMotion)
+                PhoneCardDivider()
+                PhoneToggleRow(title: "Waiting games", systemImage: "gamecontroller",
+                               isOn: $waitingGames)
             }
         }
     }
