@@ -79,6 +79,10 @@ pub struct PendingMeter {
 
 pub const PENDING_METERS: &[PendingMeter] = &[];
 
+/// Meters recorded at $0 and never sent to Stripe: phone minutes an agent
+/// identity's bundle covers (its `identity_month` row is the charge).
+pub const FREE_METERS: &[&str] = &["phone_minutes_included"];
+
 pub const METER_PLANS: &[MeterPlan] = &[
     MeterPlan { meters: &["voice_min_allternit"], event_name: "allternit_voice_seconds_allternit", display_name: "Voice agent seconds (Allternit model)", unit: "second", value: MeterValue::Seconds, payg_cents: "0.15", growth_cents: "0.135", free_units: 0 },
     MeterPlan { meters: &["voice_min_byok"], event_name: "allternit_voice_seconds_byok", display_name: "Voice agent seconds (own model key)", unit: "second", value: MeterValue::Seconds, payg_cents: "0.1", growth_cents: "0.09", free_units: 0 },
@@ -91,8 +95,47 @@ pub const METER_PLANS: &[MeterPlan] = &[
     MeterPlan { meters: &["registration_passthrough_cents"], event_name: "allternit_registration_passthrough_cents", display_name: "Carrier registration (at cost)", unit: "cent", value: MeterValue::Quantity, payg_cents: "1", growth_cents: "1", free_units: 0 },
     MeterPlan { meters: &["computer_minute"], event_name: "allternit_computer_minutes", display_name: "Hosted computer minutes", unit: "minute", value: MeterValue::CeilQuantity, payg_cents: "0.8", growth_cents: "0.72", free_units: 0 },
     MeterPlan { meters: &["computer_action"], event_name: "allternit_computer_actions", display_name: "Hosted computer toolset actions", unit: "action", value: MeterValue::Quantity, payg_cents: "0.05", growth_cents: "0.045", free_units: 10_000 },
+    MeterPlan { meters: &["phone_minutes"], event_name: "allternit_phone_minutes", display_name: "Phone minutes (an agent driving a linked phone)", unit: "minute", value: MeterValue::CeilQuantity, payg_cents: "2", growth_cents: "1.8", free_units: 0 },
+    MeterPlan { meters: &["linked_phone"], event_name: "allternit_linked_phones", display_name: "Linked phones", unit: "phone-month", value: MeterValue::Quantity, payg_cents: "500", growth_cents: "450", free_units: 0 },
+    MeterPlan { meters: &["mailbox_month"], event_name: "allternit_mailbox_months", display_name: "Mailboxes", unit: "mailbox-month", value: MeterValue::Quantity, payg_cents: "200", growth_cents: "180", free_units: 0 },
+    MeterPlan { meters: &["identity_month"], event_name: "allternit_identity_months", display_name: "Agent identities (number + mailbox + linked-phone slot + 200 phone minutes)", unit: "identity-month", value: MeterValue::Quantity, payg_cents: "900", growth_cents: "810", free_units: 0 },
     MeterPlan { meters: &["recording_min_month"], event_name: "allternit_recording_minute_months", display_name: "Recording storage after 90 days", unit: "minute-month", value: MeterValue::CeilQuantity, payg_cents: "0.2", growth_cents: "0.18", free_units: 0 },
 ];
+
+/// Units the Growth plan includes each month on top of `free_units`, by Stripe
+/// event name: 3,000 phone minutes and 25 linked phones (Eoj 2026-10-29).
+pub const GROWTH_INCLUDED: &[(&str, u32)] = &[("allternit_phone_minutes", 3_000), ("allternit_linked_phones", 25)];
+
+/// Free units of a meter's price on a plan (`payg` / `growth`).
+pub fn included_units(plan: &str, m: &MeterPlan) -> u32 {
+    let extra = if plan == "growth" { GROWTH_INCLUDED.iter().find(|(e, _)| *e == m.event_name).map_or(0, |(_, n)| *n) } else { 0 };
+    m.free_units + extra
+}
+
+/// A monthly bundle: several things for one price, billed as one meter row a
+/// month. What it includes is not metered again while the bundle exists.
+#[derive(Debug, Clone, Serialize)]
+pub struct Bundle {
+    pub meter: &'static str,
+    pub display_name: &'static str,
+    /// Pay as you go, cents per month (Growth gets 10% off like any meter).
+    pub cents: i64,
+    pub numbers: u32,
+    pub mailboxes: u32,
+    pub linked_phone_slots: u32,
+    pub phone_minutes: u32,
+}
+
+/// "Agent identity": `POST /v1/identities` (Eoj 2026-10-29). Nothing live in Stripe.
+pub const AGENT_IDENTITY: Bundle = Bundle {
+    meter: "identity_month",
+    display_name: "Agent identity",
+    cents: 900,
+    numbers: 1,
+    mailboxes: 1,
+    linked_phone_slots: 1,
+    phone_minutes: 200,
+};
 
 /// Growth base fee, cents per month.
 pub const GROWTH_BASE_CENTS: i64 = 24_900;
@@ -147,11 +190,12 @@ fn price_step(key: String, product: &str, m: &MeterPlan, plan: &str, cents: &str
         f("metadata[allternit_plan]", plan),
         f("metadata[allternit_version]", PLAN_VERSION),
     ];
-    if m.free_units > 0 {
+    let free = included_units(plan, m);
+    if free > 0 {
         form.extend([
             f("billing_scheme", "tiered"),
             f("tiers_mode", "graduated"),
-            f("tiers[0][up_to]", m.free_units.to_string()),
+            f("tiers[0][up_to]", free.to_string()),
             f("tiers[0][unit_amount]", "0"),
             f("tiers[1][up_to]", "inf"),
             f("tiers[1][unit_amount_decimal]", cents),
@@ -410,7 +454,7 @@ mod tests {
 
     #[test]
     fn every_usage_meter_has_a_stripe_meter_and_prices_match_spec() {
-        for meter in METERS {
+        for meter in METERS.into_iter().filter(|m| !FREE_METERS.contains(m)) {
             let pending = PENDING_METERS.iter().any(|p| p.meter == meter);
             // A priced meter has a Stripe meter; a pending (price TBD) one must not yet.
             assert_eq!(meter_plan(meter).is_some(), !pending, "{meter}: Stripe meter vs pending list");
@@ -449,6 +493,12 @@ mod tests {
         assert!(text.contains("DRY RUN") && text.contains("unit_amount = 24900"));
         let agents = steps.iter().find(|s| s.key == "price:payg:hosted_agent_months").unwrap();
         assert!(agents.form.contains(&("tiers[0][up_to]".into(), "3".into())) && agents.form.contains(&("tiers[1][unit_amount_decimal]".into(), "400".into())));
+        // Growth includes 3,000 phone minutes and 25 phones; Pay as you go pays from the first.
+        let price = |k: &str| steps.iter().find(|s| s.key == k).unwrap().form.clone();
+        assert!(price("price:growth:phone_minutes").contains(&("tiers[0][up_to]".into(), "3000".into())));
+        assert!(price("price:growth:linked_phones").contains(&("tiers[0][up_to]".into(), "25".into())));
+        assert!(price("price:payg:phone_minutes").contains(&("unit_amount_decimal".into(), "2".into())));
+        assert!(price("price:payg:linked_phones").contains(&("unit_amount_decimal".into(), "500".into())));
     }
 
     #[test]
@@ -461,6 +511,15 @@ mod tests {
         let row = PendingRow { id: "use_1".into(), meter: "sms_segment".into(), quantity: 3.0, amount_microusd: None, created_at: chrono::Utc::now(), stripe_customer_id: "cus_1".into() };
         let form = meter_event_form(&row).unwrap();
         assert!(form.contains(&("identifier".into(), "use_1".into())) && form.contains(&("payload[value]".into(), "3".into())));
+    }
+
+    #[test]
+    fn agent_identity_bundle_matches_its_meter() {
+        let m = meter_plan(AGENT_IDENTITY.meter).expect("identity meter");
+        assert_eq!(m.payg_cents, AGENT_IDENTITY.cents.to_string());
+        assert_eq!(super::super::billing::unit_price_microusd("identity_month"), Some(AGENT_IDENTITY.cents * 10_000));
+        assert_eq!((AGENT_IDENTITY.numbers, AGENT_IDENTITY.mailboxes, AGENT_IDENTITY.linked_phone_slots, AGENT_IDENTITY.phone_minutes), (1, 1, 1, 200));
+        assert_eq!(meter_plan("mailbox_month").unwrap().payg_cents, "200");
     }
 
     #[test]

@@ -16,15 +16,15 @@ pub const TEST_PREFIX: &str = "alt_test_";
 
 /// Scopes a project key may carry. `compute` is the pre-existing scope; the
 /// rest are the Platform API areas (spec §3).
-pub const PLATFORM_SCOPES: [&str; 12] = [
+pub const PLATFORM_SCOPES: [&str; 13] = [
     "agents", "voice", "messaging", "numbers", "channels", "twin", "webhooks", "usage",
-    "inference", "compute", "computers", "phones",
+    "inference", "compute", "computers", "phones", "mail",
 ];
 
 /// Scopes that grant access to a resource area (everything except usage
 /// reporting, model inference and the legacy compute scope).
-pub const RESOURCE_SCOPES: [&str; 9] = [
-    "agents", "voice", "messaging", "numbers", "channels", "twin", "webhooks", "computers", "phones",
+pub const RESOURCE_SCOPES: [&str; 10] = [
+    "agents", "voice", "messaging", "numbers", "channels", "twin", "webhooks", "computers", "phones", "mail",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -141,7 +141,7 @@ impl PlatformCaller {
         } else {
             Err(PlatformError::permission(
                 "insufficient_scope",
-                "This API key has no resource scope (agents, voice, messaging, numbers, channels, twin, webhooks, computers or phones).",
+                "This API key has no resource scope (agents, voice, messaging, numbers, channels, twin, webhooks, computers, phones or mail).",
             ))
         }
     }

@@ -1,6 +1,6 @@
 ---
 title: 'Phones'
-description: 'The /v1/phones routes: list the project owner''s linked phones, read their run history, run one phone tool, give a phone a goal, and replay saved phone skills.'
+description: 'The /v1/phones routes: list the project owner''s linked phones, read their run history, run one phone tool, give a phone a goal, replay saved phone skills, watch a phone live, run many phones at once, and use the same tools over MCP.'
 ---
 
 Scope `phones`. These routes drive the **project owner's own phones**: the Android phones and iPhones linked to their Allternit Desktop (Phone Link, adb or a USB Agent). Nothing about a phone is stored in the cloud. Each call is relayed, signed as the owner, to the Desktop that serves the phone, and runs through the same phone gateway a bot uses.
@@ -85,6 +85,105 @@ The task runs on the Desktop: it reads the screen, takes one action, and repeats
 
 Follow it with the `phone.step` and `phone.run.completed` webhooks, or read its steps with `GET /v1/phones/{serial}/history?run_id=`.
 
+## Run many phones at once
+
+```http
+POST /v1/phones/runs
+GET  /v1/phones/runs/{id}
+```
+
+A fleet run starts one background run per phone: the same task on every phone (`goal`), or the same saved skill (`skill`, with `inputs`).
+
+```json
+{ "serials": ["link:7f3a", "usb:R5C1"], "goal": "Open the store app and check today's orders", "max_steps": 20 }
+```
+
+It answers `202` with the fleet run:
+
+```json
+{
+  "object": "phone.fleet_run",
+  "id": "pfr_3b1c…",
+  "kind": "task",
+  "status": "running",
+  "counts": { "runs": 2, "running": 2, "succeeded": 0, "failed": 0, "not_started": 0 },
+  "runs": [{ "object": "phone.run", "run_id": "task-9c2e…", "serial": "link:7f3a", "status": "running", "ok": null }],
+  "not_started": []
+}
+```
+
+- List 1 to 100 phones by serial (not `-`), each once. Give `goal` or `skill`, not both.
+- A phone whose run can't start (offline, unknown skill) is listed in `not_started` with its error code; the others still run.
+- Each run ends with `phone.run.completed`. When the last one ends, the project gets `phone.fleet_run.completed`, and `GET /v1/phones/runs/{id}` shows `status: "completed"`.
+
+## Concurrent run limits
+
+Task and skill runs started through the API (single, fleet or MCP) count against the plan's limit while they run:
+
+| Plan | Phone runs at once |
+|---|---|
+| Sandbox | 1 |
+| Pay as you go | 5 |
+| Growth | 25 |
+| Enterprise | Set in the contract |
+
+A run that would go over the limit gets `429 phone_run_limit` and nothing starts (a fleet run is checked as a whole). A run frees its slot when `phone.run.completed` arrives. Single tool calls are not limited by this, only by the [rate limit](/api/platform/idempotency-and-limits).
+
+## Watch a phone live
+
+```http
+POST /v1/phones/{serial}/live
+```
+
+Returns a **view-only** live view of the phone's screen for 10 minutes:
+
+```json
+{
+  "object": "phone.live_view",
+  "id": "4c1f…",
+  "serial": "link:7f3a",
+  "view_only": true,
+  "expires_in": 600,
+  "expires_at": "2026-10-29T15:10:00Z",
+  "viewer_url": "https://api.allternit.com/phone-live/4c1f…",
+  "stream_url": "wss://api.allternit.com/phone-live/4c1f…/socket"
+}
+```
+
+- Open `viewer_url` in a browser or put it in an `iframe`. It needs a browser with WebCodecs (current Chrome, Edge, Safari or Firefox).
+- `stream_url` is the raw stream for your own player: a JSON `{ "type": "meta", "width", "height", "codec": "h264" }` frame, then one H.264 Annex-B access unit per binary frame. iPhones on the Allternit app send their own framing; use `viewer_url` for those.
+- The stream is relayed from the owner's Desktop and can't send taps or typing. After 10 minutes both URLs stop working (`404 live_view_expired`, or a close with code `4401` mid-stream); ask for a new live view.
+- `409 phone_offline` means the phone isn't connected to the Desktop. Treat both URLs like a password while they're valid: anyone with one can watch the screen until it expires.
+
+## MCP tools
+
+The same operations are MCP tools on the Allternit MCP server (`https://mcp.allternit.com/mcp`). Connect with a project key that has the `phones` scope as the bearer token. A key with only `phones` gets just the phone tools; a key with `agents` and `phones` gets the agent tools as well.
+
+| Tool | Does |
+|---|---|
+| `phones_list` | The owner's linked phones |
+| `phone_screenshot` | A screenshot (returned as an image) |
+| `phone_tap` | Tap at `x`, `y` |
+| `phone_type` | Type `text` |
+| `phone_open_app` | Open `app` |
+| `phone_tool` | Any phone tool by `name`, with `arguments` |
+| `phone_task` | Start a task (`goal`); returns the `run_id` |
+| `phone_run_status` | A run's status and latest steps (`serial`, `run_id`) |
+| `phone_skill_run` | Replay a saved `skill`; returns the `run_id` |
+| `phone_history` | A phone's recent steps and runs |
+| `phone_live_url` | A view-only live view, as above |
+
+Each tool takes `serial` (or `-` for the only connected phone). `phone.sms.send`, `phone.sms.read` and `phone.call.dial` through `phone_tool` behave exactly as on `/v1`: texts and calls wait for the owner to approve on their Desktop. Tool calls and runs are metered the same way.
+
+## Metering
+
+| Meter | Counts | Price |
+|---|---|---|
+| `phone_minutes` | Time an agent drives a phone. A task or skill run counts its length, rounded up to the minute. Tool calls count one minute for each phone and clock minute that has calls in it. | $0.02 a minute |
+| `linked_phone` | Each phone a live project drives in a calendar month | $5 a phone a month |
+
+Growth includes 3,000 phone minutes and 25 linked phones each month. See [Pricing](/api/platform/pricing) and [Usage](/api/platform/usage).
+
 ## Phone skills
 
 A skill is a phone run that was saved once and replays with no model. Typed text is never stored, so each run passes it as `inputs`. Skills are saved in Allternit Desktop.
@@ -142,5 +241,10 @@ Subscribe an endpoint ([Webhooks](/api/platform/webhooks)) to these events. They
 |---|---|---|
 | `phone.step` | A phone tool call finished, from any source | `step_id`, `run_id`, `serial`, `tool`, `label`, `ok`, `error`, `duration_ms`, `source` (`bot`, `skill`, `task`, `routine` or `api`), `snapshot` |
 | `phone.run.completed` | A phone task or skill run ended | `run_id`, `serial`, `ok`, `status` (task: `done`, `failed`, `max_steps`, `timeout`; skill: `succeeded`, `diverged`, `failed`), `skill`, `source`, `steps`, `failed`, `model_calls`, `duration_ms` |
+| `phone.fleet_run.completed` | Every run of a fleet run ended, or none could start. Sent only to the project that started it | `fleet_run_id`, `kind`, `runs`, `succeeded`, `failed`, `not_started` |
 
 Events come from the Desktop's event forwarder, so they arrive a few seconds after the step. If the Desktop was offline, they arrive when it reconnects.
+
+## In the console
+
+The console's **Phones** page (Platform → Phones) lists the project owner's linked phones, whether each is online, and each phone's recent runs and steps from the history endpoint. Pick a run to see only its steps. **Start live view** opens the phone's screen in the page through a short-lived viewer link; it needs the phone online and your Desktop open. To send phone runs to Langfuse or Phoenix, see [Tracing](/api/platform/tracing).

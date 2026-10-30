@@ -11,7 +11,7 @@ There is no free tier. Every project, sandbox included, needs a card on file and
 |---|---|---|
 | **Sandbox** | $0, card required | A `sandbox` project on Pay as you go: simulated numbers, 3 agents, 60 requests per minute, 1 concurrent call. Sandbox usage is not charged, but the project needs a card on file like any other |
 | **Pay as you go** | $0 a month plus usage | Card required, $100 default monthly spend cap (you can raise it in the console), 300 requests per minute, 5 concurrent calls, email support |
-| **Growth** | $249 a month | $300 of usage credit each month, 10% off usage above the credit, 1,000 requests per minute, 25 concurrent calls, priority support, 99.5% monthly uptime target |
+| **Growth** | $249 a month | $300 of usage credit each month, 10% off usage above the credit, 1,000 requests per minute, 25 concurrent calls, 25 linked phones and 3,000 phone minutes a month, 25 phone runs at once, priority support, 99.5% monthly uptime target |
 | **Enterprise** | Quoted after an audit | Contracted SLA, dedicated voice capacity, custom concurrency, invoicing, security review |
 
 The Growth uptime figure is a target, not a service level agreement. Only an Enterprise contract carries an SLA.
@@ -25,10 +25,14 @@ The Growth uptime figure is a target, not a service level agreement. Only an Ent
 | Hosted agent | First 3 free, then $4 an agent a month | Always on, with memory, channels and inbox |
 | Text conversation (agent replies) | Model tokens at the provider's list price plus 15% | With your own model key there is no token charge |
 | Phone number | $2 a month local, $3 a month toll-free | |
+| [Mailbox](/api/platform/mailboxes) | $2 a mailbox a month | Inbound mail, one-time code reading and sending. Sandbox mailboxes are not charged |
+| [Agent identity](/api/platform/identities) | $9 a month | One bundle: a number, a mailbox, one linked-phone slot and 200 phone minutes. Its number and mailbox are not billed separately |
 | SMS, in or out | $0.012 a segment | Includes carrier surcharges |
 | MMS | $0.03 a message | |
 | Carrier registration (10DLC brand and campaign) | Passed through at cost | About $20 to $25 once plus about $2 to $10 a month in carrier fees. Shown before filing |
 | Call recording and transcript storage | Included for 90 days, then $0.002 a minute per month | |
+| Phone minute (an agent driving a linked phone) | $0.02 a minute | Task and skill runs rounded up to the minute; tool calls count each phone's clock minutes with calls. Growth includes 3,000 a month. See [Phones](/api/platform/phones#metering) |
+| Linked phone | $5 a phone a month | Each phone a live project drives in the month. Growth includes 25 |
 | Channels, webhooks, the twin layer and MCP | Included | |
 
 Each meter matches a `meter` value in [Usage](/api/platform/usage), so `GET /v1/usage` shows the quantities a bill is built from.
@@ -39,5 +43,6 @@ Each meter matches a `meter` value in [Usage](/api/platform/usage), so `GET /v1/
 - A card on file is required before any billable work: agents, conversations, calls, texts, numbers and computers.
 - International calling is off by default.
 - Concurrent calls are capped per plan (see the table above).
+- Phone task and skill runs at once are capped per plan: Sandbox 1, Pay as you go 5, Growth 25, Enterprise by contract.
 
 Prices do not include taxes. No plan promises call answer rates, text deliverability, or business results.

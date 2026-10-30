@@ -1102,14 +1102,20 @@
       "label": "Platform API v1",
       "product": "product:platform-api",
       "status": "building",
-      "description": "Public developer API for accounts, messaging, numbers, channels, usage and webhooks.",
+      "description": "Public developer API for accounts, messaging, numbers, mailboxes, agent identities, channels, usage and webhooks.",
       "touches": [
         "allternit/cmd/allternit-cloud-api/src/routes/platform_v1",
+        "allternit/cmd/allternit-cloud-api/src/routes/bot_email.rs",
+        "allternit/cmd/allternit-api/src/email_otp.rs",
         "allternit/sdk/platform-ts",
         "allternit/surfaces/platform.allternit.com",
         "allternit/cmd/allternit-api/src/platform_agents.rs"
       ],
       "decisions": [
+        {
+          "on": "2026-10-29",
+          "note": "Mailboxes (/v1/mailboxes, scope mail, $2/month meter mailbox_month) on Allternit Mail via bot_email's admin calls; inbound arrives on a platform_mail relay route, is kept with codes from allternit-api's email_otp.rs (shared by #[path]) and sent as mail.received. /v1/identities bundles a number + mailbox + linked phone serial as identity_month ($9). Mail MCP tools for project keys are answered by mcp_edge."
+        },
         {
           "on": "2026-10-13",
           "note": "Managed sessions now execute: an in-process session worker in allternit-api (session_worker.rs) leases queued /beta/work session and deployment tasks, runs them as Gizzi turns with the agent's model, system prompt and effective permissions, appends tool_calls/agent_message events (budget and approval gating apply), honors interrupt/stop and fails retryably when Gizzi is down. ALLTERNIT_SESSION_WORKER=0 disables it; tasks with a sandbox_image are left for external workers."
@@ -1132,13 +1138,17 @@
         },
         {
           "on": "2026-10-27",
-          "note": "AG-UI out: POST /v1/agents/{id}/ag-ui streams a conversation turn as AG-UI events (RUN_STARTED, TEXT_MESSAGE_*, TOOL_CALL_*, RUN_FINISHED/RUN_ERROR) so CopilotKit and other AG-UI frontends can drive an agent. threadId maps to a conversation id or platform_conversations.external_thread_id (pg 108); the last user message is the input, client tools/state unused. The runtime turn stream (platform_agents.rs) now also passes tool.started/completed/failed with bounded input/output, and the conversation SSE gains matching tool.* events (old clients skip them)."
+          "note": "AG-UI out: POST /v1/agents/{id}/ag-ui streams a conversation turn as AG-UI events (RUN_STARTED, TEXT_MESSAGE_*, TOOL_CALL_*, RUN_FINISHED/RUN_ERROR) so CopilotKit and other AG-UI frontends can drive an agent. threadId maps to a conversation id or platform_conversations.external_thread_id (pg 108); the last user message is the input, client tools/state unused. The runtime turn stream (platform_agents.rs) now also passes tool.started/completed/failed with bounded input/output, and the conversation SSE gains matching tool.* events (old clients skip them)."        },
+        {
+          "on": "2026-10-29",
+          "note": "Per-project trace export: GET/PUT/DELETE /v1/projects/{id}/tracing + POST .../tracing/test (scope usage; pg 113 platform_project_tracing, headers encrypted with the credential cipher). project_tracing.rs exports OTLP/HTTP protobuf GenAI spans (invoke_agent per conversation/AG-UI turn via meter_turn, call spans in calls::finish, phone run/step spans in runtime_events phone_fan_out) on a spawned task through events::post_vetted (SSRF-checked); failures only set last_error. Console: Platform → Phones page (list, history, live view iframe from POST /v1/phones/{serial}/live) and Projects → Tracing; mail added to the key scope picker."
         }
       ],
       "evidence": [
         "allternit/surfaces/docs/api/platform/billing.mdx",
         "allternit/surfaces/docs/api/platform/phones.mdx",
-        "allternit/surfaces/docs/api/platform/ag-ui.mdx"
+        "allternit/surfaces/docs/api/platform/ag-ui.mdx",
+        "allternit/surfaces/docs/api/platform/tracing.mdx"
       ]
     },
     {

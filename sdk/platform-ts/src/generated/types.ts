@@ -163,12 +163,31 @@ export type ModelKey = {
   updated_at: string;
 };
 
+export type ProjectTracing = {
+  object: "project.tracing";
+  project_id: string;
+  endpoint: string;
+  /**
+   * Names of the stored headers; values are never returned.
+   */
+  header_names: Array<string>;
+  service_name: string;
+  enabled: boolean;
+  last_export_at?: (string | null);
+  /**
+   * Why the last export failed; null after a success.
+   */
+  last_error?: (string | null);
+  created_at: string;
+  updated_at: string;
+};
+
 export type UsageRow = {
   /**
    * The meter, key id or account id, per `group_by`. Null for usage with no account.
    */
   group: (string | null);
-  meter: "voice_min_allternit" | "voice_min_byok" | "agent_month" | "tokens_in" | "tokens_out" | "number_local_month" | "number_tollfree_month" | "sms_segment" | "mms" | "registration_passthrough_cents" | "recording_min_month";
+  meter: "voice_min_allternit" | "voice_min_byok" | "agent_month" | "tokens_in" | "tokens_out" | "number_local_month" | "number_tollfree_month" | "sms_segment" | "mms" | "registration_passthrough_cents" | "recording_min_month" | "computer_minute" | "computer_action" | "mailbox_month" | "identity_month";
   unit: (string | null);
   quantity: number;
   events: number;
@@ -228,7 +247,7 @@ export type WebhookEndpoint = {
 export type Event = {
   id: string;
   object: "event";
-  type: "approval.requested" | "message.received" | "message.status" | "registration.updated" | "inbox.item.created" | "call.started" | "call.ended" | "call.transcript.ready" | "usage.threshold" | "phone.step" | "phone.run.completed" | "webhook.test";
+  type: "approval.requested" | "message.received" | "message.status" | "registration.updated" | "inbox.item.created" | "call.started" | "call.ended" | "call.transcript.ready" | "usage.threshold" | "phone.step" | "phone.run.completed" | "phone.fleet_run.completed" | "mail.received" | "webhook.test";
   /**
    * Unix seconds.
    */
@@ -377,6 +396,76 @@ export type ToolsetApprovalRequired = {
   result?: ToolsetResult;
 };
 
+export type Mailbox = {
+  id: string;
+  object: "mailbox";
+  account_id: string;
+  agent_id?: (string | null);
+  address: string;
+  display_name?: (string | null);
+  created_at: string;
+};
+
+export type MailboxList = {
+  data?: Array<Mailbox>;
+  has_more?: boolean;
+  next_cursor?: (string | null);
+};
+
+export type MailMessage = {
+  id: string;
+  object: "mail_message";
+  mailbox_id: string;
+  from: string;
+  to: string;
+  subject?: (string | null);
+  snippet?: (string | null);
+  /**
+   * One-time codes found
+   */
+  codes: Array<string>;
+  /**
+   * Sign-in and confirm links found.
+   */
+  links: Array<string>;
+  is_verification: boolean;
+  received_at: string;
+};
+
+export type MailMessageList = {
+  data?: Array<MailMessage>;
+  has_more?: boolean;
+  next_cursor?: (string | null);
+};
+
+export type Identity = {
+  id: string;
+  object: "identity";
+  account_id: string;
+  agent_id?: (string | null);
+  number?: (PhoneNumber | (unknown | null));
+  mailbox?: (Mailbox | (unknown | null));
+  phone_serial?: (string | null);
+  bundle: {
+    name?: string;
+    meter?: "identity_month";
+    monthly_price_cents?: number;
+    includes?: {
+      numbers?: number;
+      mailboxes?: number;
+      linked_phone_slots?: number;
+      phone_minutes?: number;
+    };
+  };
+  created_at: string;
+};
+
+export type IdentityList = {
+  data?: Array<Identity>;
+  has_more?: boolean;
+  next_cursor?: (string | null);
+};
+
 export type Phone = {
   object?: "phone";
   serial?: string;
@@ -452,6 +541,58 @@ export type PhoneHistory = {
   }>;
   retention_days?: number;
   max_steps?: number;
+};
+
+export type PhoneLiveView = {
+  object?: "phone.live_view";
+  /**
+   * The live view id; it is the credential in both URLs.
+   */
+  id?: string;
+  serial?: string;
+  view_only?: true;
+  /**
+   * Seconds.
+   */
+  expires_in?: number;
+  expires_at?: string;
+  viewer_url?: string;
+  stream_url?: string;
+};
+
+export type PhoneFleetRun = {
+  object?: "phone.fleet_run";
+  id?: string;
+  kind?: "task" | "skill";
+  goal?: (string | null);
+  skill?: (string | null);
+  status?: "running" | "completed";
+  created_at?: string;
+  completed_at?: (string | null);
+  counts?: {
+    runs?: number;
+    running?: number;
+    succeeded?: number;
+    failed?: number;
+    not_started?: number;
+  };
+  runs?: Array<{
+    object?: "phone.run";
+    run_id?: string;
+    serial?: (string | null);
+    /**
+     * running, or the end status (done, failed, max_steps, timeout, succeeded, diverged).
+     */
+    status?: string;
+    ok?: (boolean | null);
+    started_at?: string;
+    ended_at?: (string | null);
+  }>;
+  not_started?: Array<{
+    serial?: string;
+    code?: string;
+    message?: string;
+  }>;
 };
 
 export type PhoneRunStarted = {
@@ -689,6 +830,33 @@ export type DeleteModelKeyResponse = {
   deleted?: true;
 };
 
+export type GetProjectTracingResponse = ProjectTracing;
+
+export type PutProjectTracingRequest = {
+  endpoint: string;
+  headers?: Record<string, string>;
+  service_name?: string;
+  enabled?: boolean;
+};
+
+export type PutProjectTracingResponse = ProjectTracing;
+
+export type DeleteProjectTracingResponse = {
+  object?: "project.tracing";
+  project_id?: string;
+  deleted?: true;
+};
+
+export type TestProjectTracingResponse = {
+  object: "project.tracing.test";
+  ok: boolean;
+  /**
+   * The collector's HTTP status
+   */
+  status?: (number | null);
+  message: string;
+};
+
 export type GetSpendCapResponse = SpendCap;
 
 export type PutSpendCapRequest = {
@@ -859,7 +1027,7 @@ export type ListWebhooksResponse = {
 
 export type CreateWebhookRequest = {
   url: string;
-  events: Array<"*" | "approval.requested" | "message.received" | "message.status" | "registration.updated" | "inbox.item.created" | "call.started" | "call.ended" | "call.transcript.ready" | "usage.threshold" | "phone.step" | "phone.run.completed">;
+  events: Array<"*" | "approval.requested" | "message.received" | "message.status" | "registration.updated" | "inbox.item.created" | "call.started" | "call.ended" | "call.transcript.ready" | "usage.threshold" | "phone.step" | "phone.run.completed" | "phone.fleet_run.completed" | "mail.received">;
   description?: string;
 };
 
@@ -1114,3 +1282,149 @@ export type RunPhoneTaskRequest = {
 };
 
 export type RunPhoneTaskResponse = PhoneRunStarted;
+
+export type GetPhoneLiveViewResponse = PhoneLiveView;
+
+export type StartPhoneFleetRunResponse = unknown;
+
+export type ListMailboxesQuery = {
+  /**
+   * Page size, 1 to 100 (default 20).
+   */
+  limit?: number;
+  /**
+   * Opaque cursor from `next_cursor` of the previous page.
+   */
+  after?: string;
+  account_id?: string;
+  agent_id?: string;
+};
+
+export type ListMailboxesResponse = MailboxList;
+
+export type CreateMailboxRequest = {
+  account_id?: string;
+  agent_id?: string;
+  /**
+   * The part before @. Lower-cased; letters, digits and dashes. Default: the agent's name.
+   */
+  local_part?: string;
+  display_name?: string;
+};
+
+export type CreateMailboxResponse = Mailbox;
+
+export type GetMailboxResponse = Mailbox;
+
+export type DeleteMailboxResponse = {
+  id?: string;
+  object?: "mailbox";
+  deleted?: boolean;
+};
+
+export type ListMailMessagesQuery = {
+  /**
+   * Page size, 1 to 100 (default 20).
+   */
+  limit?: number;
+  /**
+   * Opaque cursor from `next_cursor` of the previous page.
+   */
+  after?: string;
+  /**
+   * Only messages that look like verification email.
+   */
+  verification?: boolean;
+};
+
+export type ListMailMessagesResponse = MailMessageList;
+
+export type GetMailMessageResponse = (MailMessage & {
+  text?: (string | null);
+  html?: (string | null);
+});
+
+export type ReadMailOtpRequest = {
+  wait_seconds?: number;
+  since?: string;
+};
+
+export type ReadMailOtpResponse = {
+  object: "mail_otp";
+  found: boolean;
+  code?: (string | null);
+  codes?: Array<string>;
+  links?: Array<string>;
+  message?: (MailMessage | (unknown | null));
+};
+
+export type SendMailRequest = {
+  serials: Array<string>;
+  /**
+   * A task for every phone. Give this or skill.
+   */
+  goal?: string;
+  /**
+   * A saved phone skill to replay on every phone.
+   */
+  skill?: string;
+  /**
+   * Skill inputs.
+   */
+  inputs?: Record<string, string>;
+  max_steps?: number;
+  bot_id?: string;
+  /**
+   * provider/model
+   */
+  brain?: string;
+};
+
+export type SendMailResponse = PhoneFleetRun;
+
+export type GetPhoneFleetRunResponse = {
+  object?: "mail_send";
+  mailbox_id?: string;
+  from?: string;
+  to?: string;
+  message_id?: (string | null);
+  /**
+   * queued or pending_approval
+   */
+  status?: string;
+};
+
+export type ListIdentitiesQuery = {
+  /**
+   * Page size, 1 to 100 (default 20).
+   */
+  limit?: number;
+  /**
+   * Opaque cursor from `next_cursor` of the previous page.
+   */
+  after?: string;
+  account_id?: string;
+  agent_id?: string;
+};
+
+export type ListIdentitiesResponse = IdentityList;
+
+export type CreateIdentityRequest = {
+  account_id?: string;
+  agent_id?: string;
+  area_code?: string;
+  number_type?: "local" | "toll_free";
+  phone_serial?: string;
+  local_part?: string;
+  display_name?: string;
+};
+
+export type CreateIdentityResponse = Identity;
+
+export type GetIdentityResponse = Identity;
+
+export type DeleteIdentityResponse = {
+  id?: string;
+  object?: "identity";
+  deleted?: boolean;
+};

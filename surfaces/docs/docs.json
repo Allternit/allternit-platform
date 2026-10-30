@@ -694,6 +694,8 @@
               "api/platform/ag-ui",
               "api/platform/numbers",
               "api/platform/messaging",
+              "api/platform/mailboxes",
+              "api/platform/identities",
               "api/platform/voice",
               "api/platform/channels",
               "api/platform/twin",
@@ -702,9 +704,11 @@
               "api/platform/phones",
               "api/platform/webhooks",
               "api/platform/usage",
+              "api/platform/tracing",
               "api/platform/pricing",
               "api/platform/sdks/typescript",
               "api/platform/sdks/python",
+              "api/platform/sdks/claude-code-codex",
               "api/platform/billing"
             ]
           },

@@ -1,0 +1,105 @@
+---
+title: 'Claude Code and Codex add-ons'
+description: 'Ready-made add-ons that let coding agents drive your phones, numbers and mailboxes through the Allternit MCP server with a project API key.'
+---
+
+The `allternit-phones` add-on gives a coding agent the Allternit phone, number and mailbox tools: take a screenshot and tap, run a goal on a phone, replay a saved phone skill, run one job on several phones, give an agent its own number and mailbox, and read one-time codes. It ships as a Claude Code plugin and a Codex skill, and any MCP client can use the same server.
+
+Source: [`plugins/allternit-phones`](https://github.com/Allternit/allternit-platform/tree/main/plugins/allternit-phones) in the platform repository.
+
+| | |
+|---|---|
+| Server | `https://mcp.allternit.com/mcp` (streamable HTTP, JSON-RPC over `POST`) |
+| Auth | `Authorization: Bearer alt_live_…`, a [project API key](/api/platform/authentication) |
+| Scopes | `phones`, `numbers`, `messaging`, `mail`: grant only the ones the agent needs |
+
+## Before you start
+
+1. Create a project key at **platform.allternit.com → API Keys → Platform API**. Leave the account empty: [phones](/api/platform/phones) belong to the project owner, so an account-bound key gets `403 account_bound_key`. A sandbox key (`alt_test_…`) gets simulated `+1 555` numbers that never reach a carrier.
+2. Keep the key in your environment, not in a repository:
+
+```bash
+export ALLTERNIT_API_KEY=alt_live_...
+```
+
+3. Link your phones to Allternit Desktop (Phone Link, adb or a USB Agent) and keep Desktop open and signed in. Every phone call is relayed to it.
+
+<Warning>
+Texts, calls and reading texts (`phone.sms.send`, `phone.call.dial`, `phone.sms.read`) open an approval dialog on your Desktop every time. An agent can't skip it. The add-on's skill also tells the agent never to sign into accounts you did not authorize.
+</Warning>
+
+## Claude Code
+
+```text
+/plugin marketplace add Allternit/allternit-platform
+/plugin install allternit-phones@allternit
+```
+
+Restart Claude Code with `ALLTERNIT_API_KEY` set. The plugin adds:
+
+- the `allternit` MCP server, with the header `Authorization: Bearer ${ALLTERNIT_API_KEY}` read from your environment
+- the `allternit-phones` skill, which loads when a task involves a phone, an app on a device, a text, or a one-time code
+- `/allternit-phones:phone [goal]` and `/allternit-phones:phone-otp [mailbox or number]`
+
+To add only the server:
+
+```bash
+claude mcp add --transport http allternit https://mcp.allternit.com/mcp \
+  --header "Authorization: Bearer $ALLTERNIT_API_KEY"
+```
+
+## Codex
+
+Add the server to `~/.codex/config.toml`. Codex reads the bearer token from the named environment variable, so the key isn't stored in the file:
+
+```toml
+[mcp_servers.allternit]
+url = "https://mcp.allternit.com/mcp"
+bearer_token_env_var = "ALLTERNIT_API_KEY"
+```
+
+Or: `codex mcp add allternit --url https://mcp.allternit.com/mcp --bearer-token-env-var ALLTERNIT_API_KEY`. Then copy the skill folder `plugins/allternit-phones/codex/allternit-phones` into `~/.codex/skills/`.
+
+## Cursor and other MCP clients
+
+Any client that speaks streamable HTTP with custom headers can connect. For Cursor, in `~/.cursor/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "allternit": {
+      "url": "https://mcp.allternit.com/mcp",
+      "headers": { "Authorization": "Bearer ${env:ALLTERNIT_API_KEY}" }
+    }
+  }
+}
+```
+
+A stdio-only client can bridge with `npx -y mcp-remote https://mcp.allternit.com/mcp --header "Authorization: Bearer …"`. See the add-on README for the full entry.
+
+## Tools
+
+| Tool | What it does |
+|---|---|
+| `phones_list` | Linked phones, with `online` and `desktop_online` |
+| `phone_screenshot` | The current screen |
+| `phone_tap`, `phone_type`, `phone_open_app` | One action on the phone |
+| `phone_task` | Give the phone a goal; returns a `run_id` |
+| `phone_run_status` | Status and steps of a task or skill run |
+| `phone_skill_run` | Replay a saved phone skill with its inputs |
+| `phone_history` | Recent steps on a phone (text, numbers and message bodies redacted) |
+| `phone_live_url` | A link that shows the phone screen live |
+| `mailbox_create`, `mailbox_list` | Agent mailboxes |
+| `mail_list`, `mail_read`, `mail_read_otp` | Read a mailbox, or just its newest one-time code |
+
+The same key works on the REST API at `https://api.allternit.com/v1`: [`/v1/phones`](/api/platform/phones) (including `/v1/phones/runs` for fleet runs), [`/v1/numbers`](/api/platform/numbers), [`/v1/messages`](/api/platform/messaging), `/v1/mailboxes`, and `/v1/identities`, which creates a number and mailbox (and attaches a phone) in one call.
+
+## What the skill teaches the agent
+
+- **Screenshot, then tap:** one action, then a fresh screenshot to check it, never several blind taps.
+- **Run a task:** for longer goals, start `phone_task`, share the live view link, and poll `phone_run_status`. Tasks and skill replays never text or call.
+- **Fleet run:** the same goal or skill on several phones, reported per phone.
+- **Give an agent an identity:** a number and mailbox for one agent or test persona; live numbers are billed monthly, so the agent confirms first.
+- **Read a one-time code:** `mail_read_otp` for email, inbound `/v1/messages` for an Allternit number, and `phone.sms.read` on your own phone only with your approval.
+
+For phone errors such as `phone_desktop_offline` or `phone_required`, see [Phones](/api/platform/phones).

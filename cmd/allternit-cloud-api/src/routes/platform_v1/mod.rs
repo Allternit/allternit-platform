@@ -1,7 +1,7 @@
 //! Allternit Platform API (`/v1`): the developer-facing surface.
 //!
 //! One module per area (`accounts`, `agents`, `conversations`, `ag_ui` (AG-UI frontends), `numbers`, `messages`, `calls` (voice and realtime), `webhooks`,
-//! `channels`, `twin`, `computers`, `phones` (the owner's own phones, relayed to their Desktop), `usage`). Also `billing` (spend caps) and `stripe_plan` (Stripe meters, dry run by default).
+//! `channels`, `twin`, `computers`, `phones` (the owner's own phones, relayed to their Desktop), `mailboxes` (email on Allternit Mail), `identities` (number + mailbox + phone in one call), `project_tracing` (OTLP trace export to the developer's collector), `usage`). Also `billing` (spend caps) and `stripe_plan` (Stripe meters, dry run by default).
 //! Hosted agents run on a per-project runtime (`hosting`).
 //! Each area exposes `register(RouteTable) -> RouteTable`; `build_table` below
 //! is the single list. The route table records every `(method, path)` it
@@ -38,14 +38,17 @@ pub mod conversations;
 pub mod error;
 pub mod events;
 pub mod hosting;
+pub mod identities;
 pub mod knowledge;
 pub mod limits;
+pub mod mailboxes;
 pub mod messages;
 pub mod model_keys;
 pub mod numbers;
 pub mod page;
 pub mod phones;
 pub mod project_billing;
+pub mod project_tracing;
 pub mod projects;
 pub mod slots;
 pub mod spend;
@@ -222,6 +225,9 @@ fn build_table() -> RouteTable {
     let table = twin::register(table);
     let table = computers::register(table);
     let table = phones::register(table);
+    let table = mailboxes::register(table);
+    let table = identities::register(table);
+    let table = project_tracing::register(table);
     usage::register(table)
 }
 
@@ -249,6 +255,9 @@ pub fn router_gated(state: &Arc<ApiState>, gate: Gate) -> Router<Arc<ApiState>> 
 }
 
 pub fn router_with_agency(state: &Arc<ApiState>, gate: Gate, agency: Arc<crate::routes::agency_forward::AgencyForward>) -> Router<Arc<ApiState>> {
+    if let Some(c) = &state.credential_cipher {
+        project_tracing::set_cipher(c.clone());
+    }
     let ps = PlatformState { api: state.clone(), gate, agency };
 
     let v1 = build_table()
@@ -414,3 +423,7 @@ mod tests_p5;
 mod tests_p4;
 #[cfg(test)]
 mod tests_p6_computers;
+#[cfg(test)]
+mod tests_p7_phones;
+#[cfg(test)]
+mod tests_p7_mail;

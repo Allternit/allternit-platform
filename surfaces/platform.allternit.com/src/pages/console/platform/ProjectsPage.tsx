@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { Link } from "react-router-dom";
-import { Archive, CircleNotch, Cube, Key, PencilSimple, Plus, X, CreditCard } from "@phosphor-icons/react";
+import { Archive, CircleNotch, Cube, Key, PencilSimple, Plus, Pulse, X, CreditCard } from "@phosphor-icons/react";
 import { formatApiError } from "@/lib/api-client";
 import { createProject, updateProject, type PlatformProject, type ProjectEnv } from "@/lib/platform-projects";
 import { Badge, EmptyState, MonoChip, SkeletonCard } from "@/components/console-ui";
@@ -15,6 +15,7 @@ import {
   formatDate,
   usePlatformProjects,
 } from "./shared";
+import { TracingSection } from "./TracingSection";
 
 const PLAN_LABELS: Record<string, string> = {
   sandbox: "Sandbox (free)",
@@ -148,6 +149,7 @@ function ProjectRow({
   onError: (msg: string | null) => void;
 }) {
   const [editing, setEditing] = useState(false);
+  const [tracing, setTracing] = useState(false);
   const [name, setName] = useState(project.name);
   const [cap, setCap] = useState(String(project.spend_cap_cents / 100));
   const [busy, setBusy] = useState(false);
@@ -214,6 +216,9 @@ function ProjectRow({
           <Link to={`/platform/billing?project=${encodeURIComponent(project.id)}`} onClick={onSelect} className={QUIET_BUTTON_CLASS}>
             <CreditCard size={14} aria-hidden /> Billing
           </Link>
+          <button type="button" className={QUIET_BUTTON_CLASS} onClick={() => setTracing((v) => !v)} aria-expanded={tracing}>
+            <Pulse size={14} aria-hidden /> Tracing
+          </button>
           <button type="button" className={QUIET_BUTTON_CLASS} onClick={() => setEditing((v) => !v)} aria-expanded={editing}>
             <PencilSimple size={14} aria-hidden /> Edit
           </button>
@@ -252,6 +257,7 @@ function ProjectRow({
           </div>
         </div>
       )}
+      {tracing && <TracingSection projectId={project.id} />}
     </li>
   );
 }

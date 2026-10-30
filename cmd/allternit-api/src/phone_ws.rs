@@ -21,6 +21,10 @@
 //!   `readOnly` defaults to TRUE; a full-control token injects input into a
 //!   personal phone, so `readOnly: false` goes through the same ACI
 //!   confirmation grant as a full-control VNC token (`computer_ws`).
+//! * `POST /api/v1/phones/:serial/viewer-token` → `{ "token", "expiresInSec": 600,
+//!   "readOnly": true }`: a view-only token (purpose `phone_view`) for the
+//!   Platform API live view (cloud-api `POST /v1/phones/:serial/live`). The
+//!   stream route forces it read-only whatever its claim says.
 //! * `/ws/phones/:serial/stream?token=…` (PUBLIC mount — the HMAC token is the
 //!   credential, exactly like the computer VNC route): validates the token,
 //!   then proxies frames bidirectionally between the browser and the account's
@@ -101,6 +105,11 @@ use crate::computer_routes::{error_response, ApprovalQuery};
 use crate::AppState;
 
 const PHONE_STREAM_TOKEN_TTL_SECONDS: u64 = 300;
+/// Viewer tokens (`POST /api/v1/phones/:serial/viewer-token`, minted for the
+/// Platform API's `POST /v1/phones/:serial/live`): always view-only, 10 min.
+pub const PHONE_VIEW_TOKEN_TTL_SECONDS: u64 = 600;
+/// Purpose of a viewer token: accepted by the stream route, always read-only.
+pub const PHONE_VIEW_PURPOSE: &str = "phone_view";
 /// Contract: 4401 closes the stream when the token crosses expiry.
 const PHONE_TOKEN_EXPIRED_CLOSE_CODE: u16 = 4401;
 const HELLO_TIMEOUT: Duration = Duration::from_secs(10);
@@ -160,12 +169,23 @@ fn phone_token_with_exp(
     exp: u64,
     read_only: bool,
 ) -> String {
+    phone_token_with_purpose(secret, sub, serial, exp, read_only, "phone_stream")
+}
+
+fn phone_token_with_purpose(
+    secret: &str,
+    sub: &str,
+    serial: &str,
+    exp: u64,
+    read_only: bool,
+    purpose: &str,
+) -> String {
     use crate::bot_desktop_stream::{b64_encode, hmac_sign};
     let header = json!({"alg": "HS256", "typ": "PT"});
     let claims = PhoneStreamClaims {
         sub: sub.to_string(),
         serial: serial.to_string(),
-        purpose: "phone_stream".to_string(),
+        purpose: purpose.to_string(),
         read_only,
         exp,
     };
@@ -185,6 +205,11 @@ pub fn sign_phone_stream_token(
     read_only: bool,
 ) -> String {
     phone_token_with_exp(secret, sub, serial, now_secs() + expires_in_seconds, read_only)
+}
+
+/// Sign a view-only phone viewer token (purpose `phone_view`, TTL seconds).
+pub fn sign_phone_view_token(secret: &str, sub: &str, serial: &str, expires_in_seconds: u64) -> String {
+    phone_token_with_purpose(secret, sub, serial, now_secs() + expires_in_seconds, true, PHONE_VIEW_PURPOSE)
 }
 
 /// Verify a phone-stream ws token: signature + expiry, then scope it to this
@@ -222,12 +247,15 @@ fn validate_phone_stream_token(
     token: &str,
     serial: &str,
 ) -> Result<PhoneStreamClaims, PhoneTokenError> {
-    let claims = verify_phone_stream_token(secret, token)?;
+    let mut claims = verify_phone_stream_token(secret, token)?;
     if claims.serial != serial {
         return Err(PhoneTokenError::SerialMismatch);
     }
-    if claims.purpose != "phone_stream" {
-        return Err(PhoneTokenError::PurposeMismatch);
+    match claims.purpose.as_str() {
+        "phone_stream" => {}
+        // A viewer token never carries input, whatever its claim says.
+        PHONE_VIEW_PURPOSE => claims.read_only = true,
+        _ => return Err(PhoneTokenError::PurposeMismatch),
     }
     Ok(claims)
 }
@@ -1182,6 +1210,7 @@ pub fn phone_api_router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/phones", get(list_phones))
         .route("/phones/:serial/ws-token", post(issue_phone_ws_token))
+        .route("/phones/:serial/viewer-token", post(issue_phone_viewer_token))
 }
 
 #[derive(Debug, Deserialize)]
@@ -1295,6 +1324,33 @@ async fn issue_phone_ws_token(
         "expiresInSec": PHONE_STREAM_TOKEN_TTL_SECONDS,
     }))
     .into_response()
+}
+
+/// POST /api/v1/phones/:serial/viewer-token — a view-only viewer token
+/// (purpose `phone_view`, 10 min) for `/ws/phones/:serial/stream`. cloud-api
+/// asks for it on behalf of a Platform API key with the `phones` scope
+/// (`POST /v1/phones/:serial/live`, relayed and signed as the owner) and
+/// tunnels its viewer page's socket here; no ACI grant is needed because the
+/// token can never carry input.
+async fn issue_phone_viewer_token(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Path(serial): Path<String>,
+) -> impl IntoResponse {
+    let Some(secret) = crate::bot_desktop_stream::desktop_ws_secret(&state) else {
+        return error_response(StatusCode::SERVICE_UNAVAILABLE, "desktop ws not configured");
+    };
+    let Some(rows) = state.phone_link.cloud_list_phones().await else {
+        return error_response(StatusCode::SERVICE_UNAVAILABLE, "phone registry is unavailable");
+    };
+    if !rows.iter().any(|row| row.serial == serial) {
+        return error_response(StatusCode::NOT_FOUND, "phone not found");
+    }
+    if !state.phone_link.is_online(&user.user_id, &serial).await {
+        return error_response(StatusCode::SERVICE_UNAVAILABLE, "desktop_offline");
+    }
+    let token = sign_phone_view_token(&secret, &user.user_id, &serial, PHONE_VIEW_TOKEN_TTL_SECONDS);
+    Json(json!({ "token": token, "expiresInSec": PHONE_VIEW_TOKEN_TTL_SECONDS, "readOnly": true })).into_response()
 }
 
 // ── WebSocket routes ─────────────────────────────────────────────────────────
@@ -1591,6 +1647,18 @@ pub(crate) mod tests {
 
         let claims = validate_phone_stream_token(TEST_SECRET, &token, "serial-1").unwrap();
         assert_eq!(claims.sub, "user-1");
+    }
+
+    #[test]
+    fn viewer_tokens_are_always_view_only() {
+        let token = sign_phone_view_token(TEST_SECRET, "user-1", "serial-1", PHONE_VIEW_TOKEN_TTL_SECONDS);
+        let claims = validate_phone_stream_token(TEST_SECRET, &token, "serial-1").unwrap();
+        assert_eq!((claims.purpose.as_str(), claims.read_only), (PHONE_VIEW_PURPOSE, true));
+        assert!(claims.exp >= now_secs() + PHONE_VIEW_TOKEN_TTL_SECONDS - 1);
+        // A forged-looking viewer token claiming input is still read-only at the pipe.
+        let writable = phone_token_with_purpose(TEST_SECRET, "user-1", "serial-1", now_secs() + 60, false, PHONE_VIEW_PURPOSE);
+        assert!(validate_phone_stream_token(TEST_SECRET, &writable, "serial-1").unwrap().read_only);
+        assert!(matches!(validate_phone_stream_token(TEST_SECRET, &token, "serial-2"), Err(PhoneTokenError::SerialMismatch)));
     }
 
     #[test]
