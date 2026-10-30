@@ -83,6 +83,7 @@
 		29DDF11806D1C8177F37906D /* TreeSitterJavaScriptRunestone in Frameworks */ = {isa = PBXBuildFile; productRef = 560BA522F857E46293FFC897 /* TreeSitterJavaScriptRunestone */; };
 		2A9E86E6D57F54104F2A5385 /* NodesClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = A30ED6FB8687860800A24AA0 /* NodesClient.swift */; };
 		2AF88D8EAD207BC7586A817D /* ArtifactContentLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 03E34A99F6B335FE86510DB1 /* ArtifactContentLoader.swift */; };
+		2C98DA31B0A438A0DEE45756 /* WaitingGamesViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C8611909BEA72D6C4B40E84 /* WaitingGamesViews.swift */; };
 		2CEE9C83C47EEEAFDCE4ED2B /* MarkdownView in Frameworks */ = {isa = PBXBuildFile; productRef = D405AC10DE427A173D4FA3C2 /* MarkdownView */; };
 		2D077F61DE244D2647368A2E /* FileDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A26B7329C927D6E08A93D1BA /* FileDetailView.swift */; };
 		2D1337256108FD734CA46EAE /* InfrastructureSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6E79642FCCC464D9E8C120AB /* InfrastructureSettingsView.swift */; };
@@ -249,6 +250,7 @@
 		819AC1D939BC82773FF58BE4 /* libiconv.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = 155758E1014D4AE63687BCED /* libiconv.tbd */; };
 		825015DB4BD850AD5C79B299 /* SherpaOnnxC.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 6073B8B9BAD568B603F34A49 /* SherpaOnnxC.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		83E13B7D88BF568B72C061E2 /* CoworkSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 62812584F5287A455C87B152 /* CoworkSession.swift */; };
+		83F2A5B19E3C963ADDB5AEB3 /* WaitingGamesEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 935537B322E18F002DBD5E9C /* WaitingGamesEngine.swift */; };
 		846E1D7AFD7DD8DB41B8B8E6 /* PushTokenClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11D19CEB46890DEEEBAD7A10 /* PushTokenClient.swift */; };
 		84BEBEA84392FEA3E5352F95 /* AllternitScreen.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 51C046B0ECE7F5E01CB26059 /* AllternitScreen.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		851D6ED0A055BAAA7E5DF0F2 /* CodeCanvasStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 122C28A0CEDC1D5563AA57F7 /* CodeCanvasStore.swift */; };
@@ -605,6 +607,7 @@
 		1B63E4941E0E65A3079EB5B0 /* Voice-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "Voice-Bridging-Header.h"; sourceTree = "<group>"; };
 		1BBC678E465D3B17E1016460 /* PlanUsageViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlanUsageViews.swift; sourceTree = "<group>"; };
 		1BBD80F6F20C67C0DDB49E2D /* CloudComputerBackupsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudComputerBackupsView.swift; sourceTree = "<group>"; };
+		1C8611909BEA72D6C4B40E84 /* WaitingGamesViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WaitingGamesViews.swift; sourceTree = "<group>"; };
 		1C8B054DE7A97A50E230D1A0 /* TerminalSessionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalSessionView.swift; sourceTree = "<group>"; };
 		1CE35AFE1235DC8E539DDDC5 /* AgentAsksClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentAsksClient.swift; sourceTree = "<group>"; };
 		1CF7108EB91B4916B1C1C99E /* AllternitApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AllternitApp.swift; sourceTree = "<group>"; };
@@ -826,6 +829,7 @@
 		91C770057CDB7F7249B6EE0D /* OnboardingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingView.swift; sourceTree = "<group>"; };
 		91DA83B808ADF24C16AA47C5 /* CreateLoopSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CreateLoopSheet.swift; sourceTree = "<group>"; };
 		92576416EF984EB91D9A016E /* WorkspaceFileEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceFileEditorView.swift; sourceTree = "<group>"; };
+		935537B322E18F002DBD5E9C /* WaitingGamesEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WaitingGamesEngine.swift; sourceTree = "<group>"; };
 		93E956710126053EB031C4BB /* CoworkProject.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoworkProject.swift; sourceTree = "<group>"; };
 		94097F5735D2AD25C0218820 /* DevicePairingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DevicePairingView.swift; sourceTree = "<group>"; };
 		95325D38D6EC9F2414F24509 /* AutomationClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutomationClient.swift; sourceTree = "<group>"; };
@@ -1803,6 +1807,7 @@
 				DDFF322C789AF15F6EA00CA3 /* Settings */,
 				E2BF9C779B009F5AE04D3BF5 /* Shared */,
 				4431FD8EF1C83643023BBA51 /* Shell */,
+				ACB20C52F9852C15C306DD96 /* WaitingGames */,
 			);
 			path = Features;
 			sourceTree = "<group>";
@@ -1881,6 +1886,15 @@
 				4CE8641A6D93531264C8D2E2 /* Views */,
 			);
 			path = RunTree;
+			sourceTree = "<group>";
+		};
+		ACB20C52F9852C15C306DD96 /* WaitingGames */ = {
+			isa = PBXGroup;
+			children = (
+				935537B322E18F002DBD5E9C /* WaitingGamesEngine.swift */,
+				1C8611909BEA72D6C4B40E84 /* WaitingGamesViews.swift */,
+			);
+			path = WaitingGames;
 			sourceTree = "<group>";
 		};
 		B4F56EF5294C836106AEF8DB /* Sample */ = {
@@ -2799,6 +2813,8 @@
 				BD043C18DB50D10AB1D01779 /* VoiceSettingsSheet.swift in Sources */,
 				DF62B63F124833DDB417BABD /* VoiceSummaryCardView.swift in Sources */,
 				BC8E695A111084DB388885FE /* VoiceTransport.swift in Sources */,
+				83F2A5B19E3C963ADDB5AEB3 /* WaitingGamesEngine.swift in Sources */,
+				2C98DA31B0A438A0DEE45756 /* WaitingGamesViews.swift in Sources */,
 				53507A35FFCB366B0E017695 /* WebhookClient.swift in Sources */,
 				6F7B6994F23BE28BEE7DBEC2 /* WebhookSubscription.swift in Sources */,
 				9318ED9B6A5A6B72F1240BF6 /* WebhookTrigger.swift in Sources */,

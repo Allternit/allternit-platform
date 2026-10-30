@@ -45,7 +45,8 @@ private func jmod(_ a: Double, _ b: Double) -> Double { fmod(a, b) }
 
 /// Colours by hex, cached: the games draw hundreds of glyphs a frame.
 private enum Ink {
-    static var cache: [String: Color] = [:]
+    // Only touched from Canvas drawing on the main thread.
+    nonisolated(unsafe) static var cache: [String: Color] = [:]
     static func color(_ hex: String) -> Color {
         if let c = cache[hex] { return c }
         let c = Color(hex: hex)

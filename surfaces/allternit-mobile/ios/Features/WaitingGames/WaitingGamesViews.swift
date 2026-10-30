@@ -169,7 +169,7 @@ private struct WaitingGamesWindow: View {
                 .shadow(color: .black.opacity(expanded ? 0 : 0.35), radius: 24, y: 10)
                 .padding(.horizontal, expanded ? 0 : 8)
                 // Docked above the message box on a phone.
-                .padding(.bottom, expanded ? 0 : 128)
+                .padding(.bottom, expanded ? 0 : 168)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
         }
         .ignoresSafeArea(store.expanded ? .all : [], edges: .all)
