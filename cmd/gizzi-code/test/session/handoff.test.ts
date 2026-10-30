@@ -130,7 +130,7 @@ describe("session context handoff", () => {
           expect(stream).toHaveBeenCalled()
           expect(Date.now() - started).toBeLessThan(5_000)
           expect(session.id).not.toBe(first.id)
-          expect((await Session.get(first.id)).handoff?.baton.written).toBe("fallback")
+          expect(((await Session.get(first.id)).handoff?.baton as { written?: string } | undefined)?.written).toBe("fallback")
         },
       })
     } finally {

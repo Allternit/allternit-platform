@@ -3282,6 +3282,9 @@
       "product": "product:ai-allternit",
       "status": "building",
       "description": "Settings → Account → Delete account on Desktop, ai.allternit.com, the PWA and the iPhone app: type DELETE, Clerk user.delete(), sign out; cloud-api closes the account on Clerk's user.deleted webhook. Required by App Store guideline 5.1.1(v).",
+      "evidence": [
+        "allternit/surfaces/docs/guides/delete-account.mdx"
+      ],
       "touches": [
         "allternit-ai/src/views/settings/DeleteAccountSection.tsx",
         "allternit-ai/src/views/settings/SettingsView.tsx",
