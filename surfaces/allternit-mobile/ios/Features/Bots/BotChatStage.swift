@@ -27,6 +27,10 @@ struct BotChatStage: View {
     let onDock: () -> Void
     /// The session on screen; nil is the bot's main chat.
     var sessionId: String? = nil
+    /// This turn's tool calls as steps, used when the thread keeps no checklist.
+    var liveSteps: [ThreadTodo] = []
+    var onStop: (() -> Void)? = nil
+    var onTakeOver: (() -> Void)? = nil
 
     @ObservedObject private var colors = BotColorStore.shared
     @ObservedObject private var store = BotModeStore.shared
@@ -96,9 +100,11 @@ struct BotChatStage: View {
 
     /// The thread on screen: the one on this session, else the bot's main chat.
     private var currentThread: BotThread? {
-        let session = sessionId ?? store.canonicalChatIds[bot.id]
+        let main = store.canonicalChatIds[bot.id]
+        let session = sessionId ?? main
+        let isMainChat = sessionId == nil || sessionId == main
         return botThreads.first { session != nil && $0.currentSessionId == session }
-            ?? (sessionId == nil ? botThreads.first(where: \.isMainChat) : nil)
+            ?? (isMainChat ? botThreads.first(where: \.isMainChat) : nil)
     }
 
     /// Every session of this bot → its thread's title (nil for the one on screen).
@@ -113,7 +119,11 @@ struct BotChatStage: View {
 
     private var sessionKey: String { botSessions.keys.sorted().joined(separator: ",") }
 
-    private var steps: [ThreadTodo] { BotStageLiveModel.visibleSteps(currentThread?.todo) }
+    /// The checklist; with none, this turn's tool calls while it works.
+    private var steps: [ThreadTodo] {
+        let listed = BotStageLiveModel.visibleSteps(currentThread?.todo)
+        return listed.isEmpty && working ? liveSteps : listed
+    }
 
     // MARK: Face
 
@@ -191,7 +201,7 @@ struct BotChatStage: View {
             }
         }
         if !steps.isEmpty {
-            StageStepsCard(steps: steps, working: working, accent: accent)
+            StageStepsCard(steps: steps, working: working, accent: accent, onStop: onStop, onTakeOver: onTakeOver)
         }
         if let briefing = BotStageLiveModel.briefing(threads: botThreads, routines: live.routines,
                                                      since: live.seenAt, currentThreadId: currentThread?.id) {

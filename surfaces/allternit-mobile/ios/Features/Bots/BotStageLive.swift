@@ -55,6 +55,22 @@ enum BotStageLiveModel {
         return steps.contains { $0.state != "done" } ? steps : []
     }
 
+    /// `liveSteps`: with no checklist, what the bot is doing this turn — its
+    /// tool calls (the last five), else the one tool it's running.
+    static func liveSteps(_ turn: MessageRecord?, max: Int = 5) -> [ThreadTodo] {
+        guard let turn else { return [] }
+        var steps = turn.toolCalls.filter { !$0.isTodo }.map { call -> ThreadTodo in
+            let d = call.summary
+            let text = String([d.verb, d.detail].filter { !$0.isEmpty }.joined(separator: " · ").prefix(120))
+            return ThreadTodo(text: text, state: call.state == .running ? "active" : "done")
+        }
+        if steps.isEmpty, let status = turn.toolStatus, status.state == .running {
+            let text = [status.toolName, status.text].filter { !$0.isEmpty }.joined(separator: " · ")
+            steps.append(ThreadTodo(text: String(text.prefix(120)), state: "active"))
+        }
+        return Array(steps.suffix(max))
+    }
+
     /// `briefing`: threads (not this one) active after `since`, and routines that ran.
     static func briefing(threads: [BotThread], routines: [AutomationRoutine], since: Double?, currentThreadId: String?) -> StageBriefing? {
         guard let since else { return nil }
@@ -157,6 +173,10 @@ struct StageStepsCard: View {
     let steps: [ThreadTodo]
     let working: Bool
     let accent: Color
+    /// Stops the running turn (the composer's Stop).
+    var onStop: (() -> Void)? = nil
+    /// Opens the bot's computer to take over.
+    var onTakeOver: (() -> Void)? = nil
 
     private var label: String {
         guard working else { return "Plan" }
@@ -184,8 +204,15 @@ struct StageStepsCard: View {
                     }
                 }
             }
+            .accessibilityElement(children: .combine)
+            if working && (onStop != nil || onTakeOver != nil) {
+                HStack(spacing: 6) {
+                    if let onStop { StageChip(title: "Stop", action: onStop) }
+                    if let onTakeOver { StageChip(title: "Take over", action: onTakeOver) }
+                }
+                .padding(.top, 2)
+            }
         }
-        .accessibilityElement(children: .combine)
     }
 }
 

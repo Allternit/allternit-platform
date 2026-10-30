@@ -189,7 +189,14 @@ struct BotChatSessionView: View {
                         onApprove: { act($0, .approve) },
                         onDecline: { act($0, .decline) },
                         onHandoff: { text, files in viewModel.sendMessage(text, attachments: files) },
-                        onDock: dock
+                        onDock: dock,
+                        sessionId: sessionId,
+                        liveSteps: viewModel.isStreaming
+                            ? BotStageLiveModel.liveSteps(viewModel.messages.last { $0.role == "assistant" })
+                            : [],
+                        onStop: viewModel.isStreaming ? { viewModel.stopStreaming() } : nil,
+                        // Take over: the bot's computer, as the web opens its computer pane.
+                        onTakeOver: { navigator.open(.botComputer(bot.id)) }
                     )
                     .transition(.asymmetric(
                         insertion: .scale(scale: 0.2, anchor: .top).combined(with: .opacity),
