@@ -418,6 +418,17 @@ struct CodeSessionPanel: View {
     @State private var trees: FactoryTreesList? = nil
     @State private var treesError: String? = nil
     @State private var checkpoints: [FactoryTreeCheckpoint] = []
+    @State private var showAllCheckpoints = false
+    /// The checkpoint waiting on "Rewind to #n?".
+    @State private var confirmCheckpoint: FactoryTreeCheckpoint? = nil
+    @State private var rewinding: Int? = nil
+    @State private var rewound: Rewound? = nil
+    @State private var rewindError: String? = nil
+
+    private struct Rewound: Equatable { let to: Int; let savedAs: Int }
+
+    /// Checkpoints shown before "Show all" (TREE_CHECKPOINTS_VISIBLE).
+    private static let checkpointsVisible = 20
 
     private var permission: CodePermissionMode { CodePermissionMode(rawValue: permissionRaw) ?? .manual }
 
@@ -532,16 +543,7 @@ struct CodeSessionPanel: View {
                         .font(.system(size: 12))
                         .foregroundColor(Theme.statusWarning)
                 }
-                ForEach(checkpoints) { checkpoint in
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(checkpoint.summary.isEmpty ? "Checkpoint \(checkpoint.n)" : checkpoint.summary)
-                            .font(.system(size: 13))
-                            .lineLimit(2)
-                        Text("#\(checkpoint.n) · \(checkpoint.files) files · \(checkpoint.tool ?? "edit")")
-                            .font(.system(size: 11))
-                            .foregroundColor(Color("TextSecondary"))
-                    }
-                }
+                checkpointRows(tree)
             } else {
                 Text(treesError.map { "Couldn't read agent trees: \($0)" } ?? "This folder isn't in an agent tree.")
                     .font(.system(size: 13))
@@ -553,6 +555,117 @@ struct CodeSessionPanel: View {
                     .foregroundColor(Theme.statusWarning)
             }
         }
+    }
+
+    /// TreeCard Checkpoints: each one rewinds, confirmed first; the engine
+    /// saves the current state, so a rewind shows Undo.
+    @ViewBuilder
+    private func checkpointRows(_ tree: FactoryTree) -> some View {
+        Text("Checkpoints")
+            .font(.system(size: 11.5, weight: .medium))
+            .foregroundColor(Color("TextTertiary"))
+        if let rewound {
+            HStack(spacing: 8) {
+                Text("Rewound to #\(rewound.to) — saved the previous state as #\(rewound.savedAs)")
+                    .font(.system(size: 12.5))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Button("Undo") { Task { await undoRewind(tree) } }
+                    .font(.system(size: 12.5, weight: .medium))
+                    .buttonStyle(.bordered)
+                    .disabled(rewinding != nil)
+            }
+        }
+        if let rewindError {
+            Text(rewindError)
+                .font(.system(size: 12))
+                .foregroundColor(Theme.statusError)
+        }
+        if checkpoints.isEmpty {
+            Text("Checkpoints show up here as the agent works.")
+                .font(.system(size: 13))
+                .foregroundColor(Color("TextTertiary"))
+        } else {
+            let visible = showAllCheckpoints ? checkpoints : Array(checkpoints.prefix(Self.checkpointsVisible))
+            ForEach(visible) { checkpoint in
+                checkpointRow(checkpoint, tree: tree)
+            }
+            if checkpoints.count > Self.checkpointsVisible {
+                Button(showAllCheckpoints ? "Show fewer" : "Show all \(checkpoints.count)") {
+                    showAllCheckpoints.toggle()
+                }
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(Color("TextSecondary"))
+            }
+        }
+    }
+
+    private func checkpointRow(_ checkpoint: FactoryTreeCheckpoint, tree: FactoryTree) -> some View {
+        let facts = [BotTime.relative(checkpoint.at), checkpoint.tool ?? "",
+                     "\(checkpoint.files) \(checkpoint.files == 1 ? "file" : "files")"]
+            .filter { !$0.isEmpty }.joined(separator: " · ")
+        return HStack(spacing: 10) {
+            Image(systemName: "clock.arrow.circlepath")
+                .font(.system(size: 14))
+                .foregroundColor(Color("TextSecondary"))
+            VStack(alignment: .leading, spacing: 2) {
+                (Text("#\(checkpoint.n) ").foregroundColor(Color("TextTertiary"))
+                 + Text(checkpoint.summary.isEmpty ? "Checkpoint" : checkpoint.summary))
+                    .font(.system(size: 13))
+                    .lineLimit(1)
+                Text(facts)
+                    .font(.system(size: 11.5))
+                    .foregroundColor(Color("TextTertiary"))
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            Group {
+                if rewinding == checkpoint.n {
+                    HStack(spacing: 4) {
+                        ProgressView().controlSize(.mini)
+                        Text("Rewinding")
+                    }
+                } else if rewound?.to == checkpoint.n {
+                    Text("Rewound").foregroundColor(Color("TextSecondary"))
+                } else {
+                    Button("Rewind") { confirmCheckpoint = checkpoint }
+                        .buttonStyle(.bordered)
+                        .disabled(rewinding != nil)
+                        .accessibilityLabel("Rewind to #\(checkpoint.n)")
+                }
+            }
+            .font(.system(size: 12.5, weight: .medium))
+        }
+        .confirmationDialog("Rewind to #\(checkpoint.n)?",
+                            isPresented: Binding(get: { confirmCheckpoint?.n == checkpoint.n },
+                                                 set: { if !$0 { confirmCheckpoint = nil } }),
+                            titleVisibility: .visible) {
+            Button("Rewind", role: .destructive) {
+                confirmCheckpoint = nil
+                Task { await rewind(tree, to: checkpoint.n) }
+            }
+            Button("Cancel", role: .cancel) { confirmCheckpoint = nil }
+        } message: {
+            Text("The tree's files go back to this checkpoint. The current state is saved first, so you can undo.")
+        }
+    }
+
+    private func rewind(_ tree: FactoryTree, to n: Int) async {
+        rewindError = nil
+        rewinding = n
+        do {
+            let savedAs = try await FactoryPaneClient().rewindTree(id: tree.id, checkpoint: n)
+            rewound = Rewound(to: n, savedAs: savedAs)
+        } catch {
+            rewindError = (error as? FactoryError)?.fact ?? "Rewinding the tree failed."
+        }
+        rewinding = nil
+        await loadTrees()
+    }
+
+    private func undoRewind(_ tree: FactoryTree) async {
+        guard let back = rewound?.savedAs else { return }
+        rewound = nil
+        await rewind(tree, to: back)
     }
 
     @ViewBuilder
