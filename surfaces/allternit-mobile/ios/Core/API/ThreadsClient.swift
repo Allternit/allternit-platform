@@ -20,6 +20,12 @@ final class ThreadsClient: @unchecked Sendable {
     }
 }
 
+/// One step of a thread's checklist: done, active (the one it's on) or pending.
+struct ThreadTodo: Decodable, Hashable {
+    let text: String
+    let state: String
+}
+
 struct BotThreadListResponse: Decodable {
     let threads: [BotThread]
 }
@@ -41,6 +47,9 @@ struct BotThread: Decodable, Identifiable, Hashable {
     /// `import` + "Main chat" (web lib/bots/threads.ts isMainChatThread).
     var createdBy: String? = nil
     var projectId: String? = nil
+    /// The bot's checklist for this thread (lib/bots/threads.ts ThreadTodo).
+    var todo: [ThreadTodo]? = nil
+    var summary: String? = nil
 
     var isMainChat: Bool {
         kind == "standing" && createdBy == "import" && title == "Main chat"
