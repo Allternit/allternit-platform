@@ -55,6 +55,11 @@ pub fn cowork_router() -> Router<Arc<AppState>> {
                 .delete(delete_project),
         )
         .route(
+            "/cowork/projects/:id/status",
+            get(get_project_status).patch(patch_project_status),
+        )
+        .route("/cowork/projects/:id/close", post(close_project_status))
+        .route(
             "/cowork/projects/:id/files",
             get(list_project_files).post(create_project_file),
         )
@@ -1387,6 +1392,125 @@ async fn update_project(
             )
                 .into_response()
         }
+        Err(e) => {
+            warn!("DB task panicked: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "internal error"})),
+            )
+                .into_response()
+        }
+    }
+}
+
+// ─── Project status pages ─────────────────────────────────────────────────────
+
+fn status_error_response(e: crate::project_status::StatusError) -> axum::response::Response {
+    use crate::project_status::StatusError;
+    match e {
+        StatusError::NotFound => {
+            (StatusCode::NOT_FOUND, Json(json!({"error": "not_found"}))).into_response()
+        }
+        StatusError::ProofRequired => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "proof_required"})),
+        )
+            .into_response(),
+        StatusError::Closed => (
+            StatusCode::CONFLICT,
+            Json(json!({"error": "project_closed"})),
+        )
+            .into_response(),
+        StatusError::BadRequest(msg) => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "bad_request", "message": msg})),
+        )
+            .into_response(),
+        StatusError::Db(e) => {
+            warn!("DB error on project status: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "internal error"})),
+            )
+                .into_response()
+        }
+    }
+}
+
+async fn get_project_status(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    _headers: HeaderMap,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let db = state.db.clone();
+    let user_id = user.user_id;
+    let result = tokio::task::spawn_blocking(move || {
+        let conn = db.connect().map_err(crate::project_status::StatusError::Db)?;
+        crate::project_status::get_status(&conn, &id, &user_id)
+    })
+    .await;
+    match result {
+        Ok(Ok(status)) => Json(json!({ "status": status })).into_response(),
+        Ok(Err(e)) => status_error_response(e),
+        Err(e) => {
+            warn!("DB task panicked: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "internal error"})),
+            )
+                .into_response()
+        }
+    }
+}
+
+async fn patch_project_status(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    _headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(body): Json<crate::project_status::PatchBody>,
+) -> impl IntoResponse {
+    let db = state.db.clone();
+    let user_id = user.user_id;
+    let result = tokio::task::spawn_blocking(move || {
+        let conn = db.connect().map_err(crate::project_status::StatusError::Db)?;
+        crate::project_status::patch_status(&conn, &id, &user_id, &body)
+    })
+    .await;
+    match result {
+        Ok(Ok(status)) => Json(json!({ "status": status })).into_response(),
+        Ok(Err(e)) => status_error_response(e),
+        Err(e) => {
+            warn!("DB task panicked: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "internal error"})),
+            )
+                .into_response()
+        }
+    }
+}
+
+async fn close_project_status(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    _headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(body): Json<crate::project_status::CloseBody>,
+) -> impl IntoResponse {
+    let db = state.db.clone();
+    let user_id = user.user_id;
+    let result = tokio::task::spawn_blocking(move || {
+        let conn = db.connect().map_err(crate::project_status::StatusError::Db)?;
+        crate::project_status::close_project(&conn, &id, &user_id, &body)
+    })
+    .await;
+    match result {
+        Ok(Ok((status, paused))) => {
+            Json(json!({ "status": status, "paused_routines": paused })).into_response()
+        }
+        Ok(Err(e)) => status_error_response(e),
         Err(e) => {
             warn!("DB task panicked: {}", e);
             (
