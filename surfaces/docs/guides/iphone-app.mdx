@@ -51,18 +51,28 @@ On the Bots home, **Your team** shows each bot in the same round tile, with a ri
 
 ### Code mode
 
-The Code header has ☰ on the left and the sessions button (a task list) on the right. On the Code home, the gizzi code logo sits between them and **What's new** sits under the sessions button. In a session, the session's name takes the middle: tap it to rename the session, copy its ID or archive it.
+The Code header has ☰ on the left. On the right are the view button and the sessions button (a task list). On the Code home, the gizzi code logo sits between them and **What's new** sits under the sessions button. In a session, the session's name takes the middle: tap it to rename the session, copy its ID or archive it.
 
-The sessions button opens your code sessions. Tap one to open it. **Terminal** and **Shell** at the top right of that sheet open a thread in its terminal look and a plain command shell on your computer. To leave the shell, open the sessions sheet again and pick a session.
+The view button shows which view you are in and opens a short list of three:
 
-The Code composer shows its controls as icons so all of them fit:
+- **Code:** the session as a chat.
+- **Terminal:** the same session drawn as a terminal: a dark screen, your messages as `❯` lines, each tool step as `●` with its result under it, and a **Working…** line with a timer while the agent runs.
+- **Shell:** a plain command shell on your computer.
 
-- **Above the `❯` line:** the computer it runs on, on the left. On the right is the context meter: five blocks and a percent that show how full the session's context window is. Tap the meter to see what fills the window (messages, system prompt, tools, MCP tools, memory files and skills) and your plan's limits. Before a session has its first reply, the meter shows your plan's usage instead. It is hidden when there is no figure yet.
-- **Under the `❯` line:** the working folder, the branch, the worktree switch (on the main branch only) and the permission mode on the left. The model and the **Chat · Terminal** switch are on the right.
+The view button is in the shell's header too, so you can go from the shell back to Code or Terminal in two taps. The app remembers Code or Terminal for each session.
 
-**+** adds files. The **Chat · Terminal** switch is the one way to change how a thread looks. **Chat** shows it as messages. **Terminal** shows the same thread as a terminal: a dark screen, your messages as `❯` lines, each tool step as `●` with its result under it, and a **Working…** line with a timer while the agent runs. The app remembers the choice for each thread.
+The sessions button opens your code sessions. Tap one to open it.
 
-In a session, the **Panes** button beside the sessions button lists the same panes as Allternit Desktop. Each opens as a sheet:
+The Code composer shows its controls as icons in one row under the `❯` line, so all of them fit:
+
+- **On the left:** the computer it runs on, the working folder, the branch, the worktree switch (on the main branch only) and the permission mode.
+- **On the right:** the model, the context meter and the Chat/Terminal button.
+
+The context meter is five blocks and a percent that show how full the session's context window is. Tap it to see what fills the window (messages, system prompt, tools, MCP tools, memory files and skills) and your plan's limits. Before a session has its first reply, the blocks show your plan's usage instead. It shows in the terminal look too.
+
+The Chat/Terminal button flips the session between Code and Terminal with one tap. **+** adds files.
+
+In a session, the **Panes** button, left of the view button, lists the same panes as Allternit Desktop. Each opens as a sheet:
 
 | Pane | What it shows |
 |---|---|
