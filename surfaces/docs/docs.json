@@ -704,6 +704,7 @@
               "api/platform/phones",
               "api/platform/webhooks",
               "api/platform/usage",
+              "api/platform/tracing",
               "api/platform/pricing",
               "api/platform/sdks/typescript",
               "api/platform/sdks/python",

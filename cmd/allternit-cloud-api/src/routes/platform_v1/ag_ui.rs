@@ -238,7 +238,7 @@ async fn run_agent(
     let lock = TurnLock::take(&conv.id).ok_or_else(|| PlatformError::conflict("conversation_busy", "The agent is still answering the previous message in this conversation."))?;
     let host = host_for(&state, layered);
     let (rt, session, own_key) = conversations::prepare(&state, host.as_ref(), &caller, &conv).await?;
-    let meter = TurnMeter { project_id: caller.project_id.clone(), account_id: conv.account_id.clone(), key_id: caller.key_id.clone(), own_key };
+    let meter = TurnMeter::new(&caller, &conv, own_key);
     let path = format!("/api/v1/platform/agents/{}/sessions/{}/turn", conv.agent_id, session);
     let mut upstream = host.stream(&rt, &path, &json!({ "text": content })).await?;
     conversations::insert_message(&state.db, &conv.id, "user", &content, "completed", None).await?;
@@ -288,7 +288,7 @@ async fn run_agent(
             None => conversations::insert_message(&db, &conv.id, "assistant", &text, "completed", None).await,
         };
         if let Ok(m) = &stored {
-            conversations::meter_turn(&db, &meter, &m.id, &usage).await;
+            conversations::meter_turn(&db, &meter, &m.id, &usage, failure.as_deref()).await;
         }
         let mut out = Vec::new();
         match (stored, &failure) {

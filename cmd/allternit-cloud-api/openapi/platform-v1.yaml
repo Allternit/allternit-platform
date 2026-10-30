@@ -598,6 +598,103 @@ paths:
                   object: { type: string, const: model_key }
                   deleted: { type: boolean, const: true }
         default: { $ref: "#/components/responses/Error" }
+  /v1/projects/{id}/tracing:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: The project's id, or `current` for the API key's project.
+        schema: { type: string, examples: ["current"] }
+    get:
+      operationId: getProjectTracing
+      summary: The project's trace export settings
+      description: >-
+        Where the project's spans go. Header values are never returned, only their names.
+        `404 tracing_not_configured` when none is set. Requires the `usage` scope.
+      tags: [Usage]
+      responses:
+        "200":
+          description: The trace export settings.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProjectTracing" }
+        default: { $ref: "#/components/responses/Error" }
+    put:
+      operationId: putProjectTracing
+      summary: Set the project's trace export
+      description: >-
+        Send a span for every agent turn, phone run and call of this project to an OTLP/HTTP
+        collector (Langfuse, Arize Phoenix, any OpenTelemetry collector), as OTLP protobuf
+        following the OpenTelemetry GenAI conventions. `endpoint` is the collector's OTLP base
+        URL (`/v1/traces` is appended) or its full traces URL; it must be a public https URL.
+        `headers` are encrypted at rest; leave them out to keep the stored ones. Export runs in
+        the background and never fails or slows a request. Not available to account-bound keys.
+      tags: [Usage]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [endpoint]
+              additionalProperties: false
+              properties:
+                endpoint: { type: string, format: uri, maxLength: 2048, examples: ["https://cloud.langfuse.com/api/public/otel"] }
+                headers:
+                  type: object
+                  maxProperties: 20
+                  additionalProperties: { type: string, maxLength: 4096 }
+                  examples: [{ Authorization: "Basic cGstbGYtLi4uOnNrLWxmLS4uLg==" }]
+                service_name: { type: string, maxLength: 120, default: allternit-platform }
+                enabled: { type: boolean, default: true }
+      responses:
+        "200":
+          description: The stored settings.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProjectTracing" }
+        default: { $ref: "#/components/responses/Error" }
+    delete:
+      operationId: deleteProjectTracing
+      summary: Turn off and forget the project's trace export
+      tags: [Usage]
+      responses:
+        "200":
+          description: Deleted.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  object: { type: string, const: project.tracing }
+                  project_id: { type: string }
+                  deleted: { type: boolean, const: true }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/projects/{id}/tracing/test:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, examples: ["current"] }
+    post:
+      operationId: testProjectTracing
+      summary: Send one test span
+      description: Sends one `allternit.tracing.test` span to the collector now and reports its answer.
+      tags: [Usage]
+      responses:
+        "200":
+          description: What the collector answered.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [object, ok, message]
+                properties:
+                  object: { type: string, const: project.tracing.test }
+                  ok: { type: boolean }
+                  status: { type: [integer, "null"], description: The collector's HTTP status, or null when it couldn't be reached. }
+                  message: { type: string }
+        default: { $ref: "#/components/responses/Error" }
   /v1/projects/current/spend_cap:
     get:
       operationId: getSpendCap
@@ -2385,6 +2482,20 @@ components:
         provider: { type: string, enum: [anthropic, openai, xai] }
         object: { type: string, const: model_key }
         masked: { type: string, description: "Last four characters, e.g. \"…7890\"." }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    ProjectTracing:
+      type: object
+      required: [object, project_id, endpoint, header_names, service_name, enabled, created_at, updated_at]
+      properties:
+        object: { type: string, const: project.tracing }
+        project_id: { type: string }
+        endpoint: { type: string }
+        header_names: { type: array, items: { type: string }, description: Names of the stored headers; values are never returned. }
+        service_name: { type: string }
+        enabled: { type: boolean }
+        last_export_at: { type: [string, "null"], format: date-time }
+        last_error: { type: [string, "null"], description: Why the last export failed; null after a success. }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
     UsageRow:

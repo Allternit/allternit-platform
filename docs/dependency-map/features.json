@@ -1138,13 +1138,17 @@
         },
         {
           "on": "2026-10-27",
-          "note": "AG-UI out: POST /v1/agents/{id}/ag-ui streams a conversation turn as AG-UI events (RUN_STARTED, TEXT_MESSAGE_*, TOOL_CALL_*, RUN_FINISHED/RUN_ERROR) so CopilotKit and other AG-UI frontends can drive an agent. threadId maps to a conversation id or platform_conversations.external_thread_id (pg 108); the last user message is the input, client tools/state unused. The runtime turn stream (platform_agents.rs) now also passes tool.started/completed/failed with bounded input/output, and the conversation SSE gains matching tool.* events (old clients skip them)."
+          "note": "AG-UI out: POST /v1/agents/{id}/ag-ui streams a conversation turn as AG-UI events (RUN_STARTED, TEXT_MESSAGE_*, TOOL_CALL_*, RUN_FINISHED/RUN_ERROR) so CopilotKit and other AG-UI frontends can drive an agent. threadId maps to a conversation id or platform_conversations.external_thread_id (pg 108); the last user message is the input, client tools/state unused. The runtime turn stream (platform_agents.rs) now also passes tool.started/completed/failed with bounded input/output, and the conversation SSE gains matching tool.* events (old clients skip them)."        },
+        {
+          "on": "2026-10-29",
+          "note": "Per-project trace export: GET/PUT/DELETE /v1/projects/{id}/tracing + POST .../tracing/test (scope usage; pg 113 platform_project_tracing, headers encrypted with the credential cipher). project_tracing.rs exports OTLP/HTTP protobuf GenAI spans (invoke_agent per conversation/AG-UI turn via meter_turn, call spans in calls::finish, phone run/step spans in runtime_events phone_fan_out) on a spawned task through events::post_vetted (SSRF-checked); failures only set last_error. Console: Platform → Phones page (list, history, live view iframe from POST /v1/phones/{serial}/live) and Projects → Tracing; mail added to the key scope picker."
         }
       ],
       "evidence": [
         "allternit/surfaces/docs/api/platform/billing.mdx",
         "allternit/surfaces/docs/api/platform/phones.mdx",
-        "allternit/surfaces/docs/api/platform/ag-ui.mdx"
+        "allternit/surfaces/docs/api/platform/ag-ui.mdx",
+        "allternit/surfaces/docs/api/platform/tracing.mdx"
       ]
     },
     {

@@ -244,3 +244,7 @@ Subscribe an endpoint ([Webhooks](/api/platform/webhooks)) to these events. They
 | `phone.fleet_run.completed` | Every run of a fleet run ended, or none could start. Sent only to the project that started it | `fleet_run_id`, `kind`, `runs`, `succeeded`, `failed`, `not_started` |
 
 Events come from the Desktop's event forwarder, so they arrive a few seconds after the step. If the Desktop was offline, they arrive when it reconnects.
+
+## In the console
+
+The console's **Phones** page (Platform → Phones) lists the project owner's linked phones, whether each is online, and each phone's recent runs and steps from the history endpoint. Pick a run to see only its steps. **Start live view** opens the phone's screen in the page through a short-lived viewer link; it needs the phone online and your Desktop open. To send phone runs to Langfuse or Phoenix, see [Tracing](/api/platform/tracing).

@@ -627,6 +627,21 @@ pub(crate) async fn finish(db: &PgPool, call_id: &str, status: &str, reason: &st
         )
         .await;
     }
+    let span = super::project_tracing::SpanOut::new(format!("call {}", row.direction), row.created_at, row.ended_at.unwrap_or_else(Utc::now))
+        .kind(if row.direction == "inbound" { 2 } else { 3 })
+        .attr("gen_ai.operation.name", "invoke_agent")
+        .attr("gen_ai.agent.id", row.agent_id.as_str())
+        .attr_opt("gen_ai.conversation.id", row.conversation_id.as_deref())
+        .attr("allternit.call.id", row.id.as_str())
+        .attr("allternit.call.direction", row.direction.as_str())
+        .attr("allternit.call.status", row.status.as_str())
+        .attr_opt("allternit.call.end_reason", row.end_reason.as_deref())
+        .attr("allternit.call.duration_seconds", i64::from(secs))
+        .attr("allternit.call.simulated", row.simulated)
+        .attr("allternit.account.id", row.account_id.as_str())
+        .error((row.status == "failed").then(|| row.end_reason.as_deref().unwrap_or("call failed")))
+        .trace(row.conversation_id.as_deref().unwrap_or(&row.id));
+    super::project_tracing::emit(db, &row.project_id, span);
     let _ = emit_event(db, &row.project_id, Some(&row.account_id), "call.ended", call_event_data(&row)).await;
     let lines = transcript_lines(db, &row.id).await?;
     let _ = emit_event(

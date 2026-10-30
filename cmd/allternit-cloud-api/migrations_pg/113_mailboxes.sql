@@ -1,4 +1,4 @@
--- 112_mailboxes.sql
+-- 113_mailboxes.sql
 --
 -- Platform API mailboxes and agent identities (`/v1/mailboxes`, `/v1/identities`).
 --
