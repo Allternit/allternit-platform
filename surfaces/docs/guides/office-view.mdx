@@ -39,7 +39,7 @@ What a public floor shows, and only this:
 
 What it never shows: task text, questions, thread titles, chat messages, desk screens, files, or who you talk to. The public page has no answer, open, hire or chat controls.
 
-Turn the link off and it stops working at once. Turning it on again makes a new address, so an old link stays dead. Anyone with the address can see the floor while it is on, so share it like a link to a page, not like a password.
+Turn the link off and it stops working at once. If Allternit can't reach the cloud at that moment, the app tells you the link is still turning off and keeps trying until it stops. Turning it on again makes a new address, so an old link stays dead. Anyone with the address can see the floor while it is on, so share it like a link to a page, not like a password.
 
 ## For developers
 
@@ -51,7 +51,7 @@ Turn the link off and it stops working at once. Turning it on again makes a new 
 | --- | --- |
 | `GET /floor/state` | `{ bots: FloorBotState[] }` for every bot you own. `status` comes from the bot's non-incognito threads: `needs_you` is `waiting`, `working` or `planning` is `working`, otherwise `idle`. `lastKind`, `lastText` and `updatedAt` come from the newest thread event. `meeting` is not set by the runtime. |
 | `GET /floor/events?since=&until=&limit=` | `{ events: FloorEvent[] }`, oldest first, times in milliseconds, `limit` up to 2000 (default 500, window default last 24 hours). `thread.started`, `thread.completed`, `thread.failed` and `thread.needs_user` become `started`, `finished`, `failed` and `needs_you`. Bot-to-bot hops from `agent_hops` become `handoff` with `toBotId`. Incognito threads are left out. Event ids are `be:<id>` and `hop:<id>`. |
-| `GET /floor/share` and `PUT /floor/share` | `{ enabled, url }`. `PUT { enabled }` turns the live link on or off. The runtime must be paired; otherwise `409 runtime_not_paired`. |
+| `GET /floor/share` and `PUT /floor/share` | `{ enabled, url, revokePending }`. `PUT { enabled }` turns the live link on or off. The runtime must be paired; otherwise `409 runtime_not_paired`. If the cloud can't confirm an off, `PUT` answers `502 revoke_pending`, `revokePending` stays true, and the runtime retries every 60 seconds. |
 
 Migration `V283__floor_share.sql` adds an index on `bot_events(event_type, occurred_at)` and the `floor_share` table (whether the link is on, its token, and a pending revoke).
 

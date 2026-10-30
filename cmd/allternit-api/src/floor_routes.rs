@@ -266,7 +266,7 @@ pub fn public_url(token: &str) -> String {
 
 fn share_json(s: &Share) -> Value {
     let url = s.token.as_deref().filter(|_| s.enabled).map(public_url);
-    json!({ "enabled": s.enabled, "url": url })
+    json!({ "enabled": s.enabled, "url": url, "revokePending": s.revoke_pending })
 }
 
 /// POST one signed body to the cloud; the parsed JSON answer.
@@ -291,8 +291,17 @@ async fn blocking<T: Send + 'static>(db: &DbHandle, f: impl FnOnce(&Connection) 
     tokio::task::spawn_blocking(move || db.connect().and_then(|c| f(&c))).await.map_err(|e| e.to_string())?.map_err(|e| e.to_string())
 }
 
-/// One push: the projection while enabled, or the pending revoke. Returns the token the cloud answered with.
+/// Pushes and toggles run one at a time, so a push already on the wire can't land
+/// after an Off and turn the link back on.
+static SHARE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// One push: the projection while enabled, or the pending revoke.
 pub async fn push_once(db: &DbHandle, secret: &dyn RelaySecret, cloud: &str) -> Result<(), String> {
+    let _turn = SHARE_LOCK.lock().await;
+    push_locked(db, secret, cloud).await
+}
+
+async fn push_locked(db: &DbHandle, secret: &dyn RelaySecret, cloud: &str) -> Result<(), String> {
     let Some(owner) = secret.paired_owner() else { return Ok(()) };
     let o = owner.clone();
     let share = blocking(db, move |c| read_share(c, &o)).await?;
@@ -329,36 +338,46 @@ async fn share_put(State(state): State<Arc<AppState>>, Extension(user): Extensio
     if secret.paired_owner().as_deref() != Some(user.user_id.as_str()) || secret.runtime_id().is_none() {
         return err(StatusCode::CONFLICT, "runtime_not_paired");
     }
-    let (db, owner) = (state.db.clone(), user.user_id.clone());
-    let cloud = crate::phone_sync::cloud_base();
-    if body.enabled {
-        let o = owner.clone();
-        let projection = match blocking(&db, move |c| build_projection(c, &o, chrono::Utc::now().timestamp_millis())).await {
-            Ok(p) => p,
-            Err(_) => return err(StatusCode::INTERNAL_SERVER_ERROR, "floor_share_failed"),
-        };
-        let ans = match post_cloud(secret.as_ref(), &cloud, &json!({ "enabled": true, "projection": projection })).await {
-            Ok(a) => a,
-            Err(_) => return err(StatusCode::BAD_GATEWAY, "cloud_unreachable"),
-        };
-        let Some(token) = ans["token"].as_str().map(str::to_string) else { return err(StatusCode::BAD_GATEWAY, "cloud_no_token") };
-        let share = Share { enabled: true, token: Some(token), revoke_pending: false };
-        let (o, s2) = (owner, share.clone());
-        if blocking(&db, move |c| write_share(c, &o, &s2)).await.is_err() {
-            return err(StatusCode::INTERNAL_SERVER_ERROR, "floor_share_failed");
+    match set_share(&state.db, secret.as_ref(), &crate::phone_sync::cloud_base(), &user.user_id, body.enabled).await {
+        Ok(share) => Json(share_json(&share)).into_response(),
+        Err(ShareFail::RevokePending) => (StatusCode::BAD_GATEWAY, Json(json!({ "error": "revoke_pending", "enabled": false, "url": null, "revokePending": true }))).into_response(),
+        Err(ShareFail::Cloud) => err(StatusCode::BAD_GATEWAY, "cloud_unreachable"),
+        Err(ShareFail::NoToken) => err(StatusCode::BAD_GATEWAY, "cloud_no_token"),
+        Err(ShareFail::Db) => err(StatusCode::INTERNAL_SERVER_ERROR, "floor_share_failed"),
+    }
+}
+
+#[derive(Debug, PartialEq)]
+enum ShareFail {
+    RevokePending,
+    Cloud,
+    NoToken,
+    Db,
+}
+
+async fn set_share(db: &DbHandle, secret: &dyn RelaySecret, cloud: &str, owner: &str, enabled: bool) -> Result<Share, ShareFail> {
+    let _turn = SHARE_LOCK.lock().await;
+    let o = owner.to_string();
+    if enabled {
+        // An Off the cloud never confirmed lands first, so the old address can't come back.
+        let was = blocking(db, move |c| read_share(c, &o)).await.map_err(|_| ShareFail::Db)?;
+        if was.revoke_pending {
+            post_cloud(secret, cloud, &json!({ "enabled": false })).await.map_err(|_| ShareFail::Cloud)?;
         }
-        return Json(share_json(&share)).into_response();
+        let o = owner.to_string();
+        let projection = blocking(db, move |c| build_projection(c, &o, chrono::Utc::now().timestamp_millis())).await.map_err(|_| ShareFail::Db)?;
+        let ans = post_cloud(secret, cloud, &json!({ "enabled": true, "projection": projection })).await.map_err(|_| ShareFail::Cloud)?;
+        let token = ans["token"].as_str().map(str::to_string).ok_or(ShareFail::NoToken)?;
+        let share = Share { enabled: true, token: Some(token), revoke_pending: false };
+        let (o, s2) = (owner.to_string(), share.clone());
+        blocking(db, move |c| write_share(c, &o, &s2)).await.map_err(|_| ShareFail::Db)?;
+        return Ok(share);
     }
     // Off locally first so the loop stops pushing; the cloud revoke retries until it lands.
     let pending = Share { enabled: false, token: None, revoke_pending: true };
-    let (o, s2) = (owner.clone(), pending.clone());
-    if blocking(&db, move |c| write_share(c, &o, &s2)).await.is_err() {
-        return err(StatusCode::INTERNAL_SERVER_ERROR, "floor_share_failed");
-    }
-    if push_once(&db, secret.as_ref(), &cloud).await.is_err() {
-        return (StatusCode::BAD_GATEWAY, Json(json!({ "error": "revoke_pending", "enabled": false, "url": null }))).into_response();
-    }
-    Json(share_json(&Share { enabled: false, token: None, revoke_pending: false })).into_response()
+    blocking(db, move |c| write_share(c, &o, &pending)).await.map_err(|_| ShareFail::Db)?;
+    push_locked(db, secret, cloud).await.map_err(|_| ShareFail::RevokePending)?;
+    Ok(Share { enabled: false, token: None, revoke_pending: false })
 }
 
 /// Background push every 60 s while the live link is on (inert until paired).
@@ -431,5 +450,80 @@ mod tests {
         assert!(p["bots"][0].get("avatarSheet").is_none());
         assert_eq!(safe_sheet("/sprites/a.png").unwrap(), "https://ai.allternit.com/sprites/a.png");
         assert!(safe_sheet("//evil.example/x").is_none());
+    }
+
+    /// A fake cloud with the real upsert rule: a new token whenever the share was off.
+    async fn fake_cloud(delay: Duration) -> (String, Arc<std::sync::Mutex<Option<String>>>) {
+        let live = Arc::new(std::sync::Mutex::new(None::<String>));
+        let (l, n) = (live.clone(), Arc::new(std::sync::atomic::AtomicU32::new(0)));
+        let app = Router::new().route(
+            PUSH_PATH,
+            axum::routing::post(move |Json(b): Json<Value>| {
+                let (l, n) = (l.clone(), n.clone());
+                async move {
+                    if b["enabled"] == true {
+                        tokio::time::sleep(delay).await;
+                        let mut live = l.lock().unwrap();
+                        let t = live.clone().unwrap_or_else(|| format!("tok{}", n.fetch_add(1, std::sync::atomic::Ordering::SeqCst)));
+                        *live = Some(t.clone());
+                        Json(json!({ "enabled": true, "token": t }))
+                    } else {
+                        *l.lock().unwrap() = None;
+                        Json(json!({ "enabled": false, "token": null }))
+                    }
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        (url, live)
+    }
+
+    struct TestSecret;
+    impl RelaySecret for TestSecret {
+        fn device_token(&self) -> Option<String> {
+            Some("t".into())
+        }
+        fn paired_owner(&self) -> Option<String> {
+            Some("u".into())
+        }
+        fn runtime_id(&self) -> Option<String> {
+            Some("r".into())
+        }
+    }
+
+    #[tokio::test]
+    async fn off_during_a_push_stays_off() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = DbHandle::new(temp.path().join("t.db")).unwrap();
+        let (cloud, live) = fake_cloud(Duration::from_millis(300)).await;
+        set_share(&db, &TestSecret, &cloud, "u", true).await.unwrap();
+
+        let (db2, cloud2) = (db.clone(), cloud.clone());
+        let push = tokio::spawn(async move { push_once(&db2, &TestSecret, &cloud2).await });
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        set_share(&db, &TestSecret, &cloud, "u", false).await.unwrap();
+        push.await.unwrap().unwrap();
+        push_once(&db, &TestSecret, &cloud).await.unwrap();
+
+        assert_eq!(*live.lock().unwrap(), None, "the cloud must not serve the floor after Off");
+        assert!(!read_share(&db.connect().unwrap(), "u").unwrap().enabled);
+    }
+
+    #[tokio::test]
+    async fn on_after_a_failed_off_makes_a_new_address() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = DbHandle::new(temp.path().join("t.db")).unwrap();
+        let (cloud, _) = fake_cloud(Duration::ZERO).await;
+        let old = set_share(&db, &TestSecret, &cloud, "u", true).await.unwrap().token;
+
+        assert_eq!(set_share(&db, &TestSecret, "http://127.0.0.1:9", "u", false).await.unwrap_err(), ShareFail::RevokePending);
+        let s = read_share(&db.connect().unwrap(), "u").unwrap();
+        assert!(!s.enabled && s.revoke_pending);
+
+        assert_eq!(set_share(&db, &TestSecret, "http://127.0.0.1:9", "u", true).await.unwrap_err(), ShareFail::Cloud);
+        let new = set_share(&db, &TestSecret, &cloud, "u", true).await.unwrap().token;
+        assert_ne!(old, new);
     }
 }
