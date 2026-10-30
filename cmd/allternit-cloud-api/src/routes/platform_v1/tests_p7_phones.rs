@@ -40,6 +40,13 @@ impl PhoneHost for FakeDesktop {
             calls.len()
         };
         let serial = path.split('/').nth(4).unwrap_or_default().to_string();
+        // A phone whose full history is over the relay's cap past 100 steps.
+        if serial == "BIG" {
+            let asked: u32 = path.split("limit=").nth(1).and_then(|l| l.split('&').next()).and_then(|l| l.parse().ok()).unwrap_or(0);
+            if asked > 100 {
+                return Err(PlatformError::api_error("phone_response_too_large", "too large"));
+            }
+        }
         Ok(if path.ends_with("/viewer-token") {
             if serial == "OFF" {
                 (503, json!({ "error": "desktop_offline" }))
@@ -115,6 +122,20 @@ async fn minutes(c: &Ctx, project: &str) -> f64 {
         .fetch_one(&c.state.db)
         .await
         .unwrap()
+}
+
+#[tokio::test]
+async fn history_shrinks_to_fit_the_relay_and_says_it_was_cut() {
+    let c = ctx().await;
+    let (_, key) = project(&c, "dev_ph_hist").await;
+    let (s, v) = call(&c.app, "GET", "/v1/phones/BIG/history?limit=500", &key, None).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["limit"], 62);
+    assert_eq!(v["truncated"], true);
+    let (s, v) = call(&c.app, "GET", "/v1/phones/BIG/history?limit=50", &key, None).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["limit"], 50);
+    assert_eq!(v["truncated"], false);
 }
 
 #[tokio::test]
