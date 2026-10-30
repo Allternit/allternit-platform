@@ -396,7 +396,7 @@ mod tests {
         }
         c.execute("INSERT INTO bot_threads VALUES ('t1','a',0,'working'), ('t2','a',1,'working')", []).unwrap();
         let ev = |id: &str, bot: &str, ty: &str, at: &str, th: &str| {
-            c.execute("INSERT INTO bot_events VALUES (?1,?2,?3,?4,'{\"statusLine\":\"Ship the report\"}',?5)", params![id, bot, ty, at, th]).unwrap();
+            c.execute("INSERT INTO bot_events (id, bot_id, event_type, occurred_at, payload, thread_id) VALUES (?1,?2,?3,?4,'{\"statusLine\":\"Ship the report\"}',?5)", params![id, bot, ty, at, th]).unwrap();
         };
         ev("e1", "a", "thread.started", "2026-10-30T10:00:00Z", "t1");
         ev("e2", "a", "thread.started", "2026-10-30T10:01:00Z", "t2"); // incognito
@@ -422,7 +422,7 @@ mod tests {
         let c = conn();
         c.execute("INSERT INTO agents VALUES ('a','u','Ada','Support','{\"botProfile\":{\"accentColor\":\"#112233\"},\"avatar\":{\"pet\":{\"spriteUrl\":\"https://evil.example/x.png\"}}}',1,NULL)", []).unwrap();
         c.execute("INSERT INTO bot_threads VALUES ('t1','a',0,'needs_you')", []).unwrap();
-        c.execute("INSERT INTO bot_events VALUES ('e1','a','thread.needs_user','2026-10-30T10:00:00Z','{\"statusLine\":\"Pay Acme invoice 4411?\"}','t1')", []).unwrap();
+        c.execute("INSERT INTO bot_events (id, bot_id, event_type, occurred_at, payload, thread_id) VALUES ('e1','a','thread.needs_user','2026-10-30T10:00:00Z','{\"statusLine\":\"Pay Acme invoice 4411?\"}','t1')", []).unwrap();
         let p = build_projection(&c, "u", 5).unwrap();
         let text = p.to_string();
         assert!(!text.contains("Acme"));
