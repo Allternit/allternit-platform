@@ -947,6 +947,18 @@ async fn main() {
         });
     }
 
+    // Office view: pushes the public floor projection to the cloud every 60 s while the live link is on.
+    {
+        let state = Arc::clone(&state);
+        let mut shutdown_rx = shutdown_tx.subscribe();
+        tokio::spawn(async move {
+            tokio::select! {
+                _ = shutdown_rx.recv() => {}
+                _ = allternit_api::floor_routes::run(state) => {}
+            }
+        });
+    }
+
     // MCP Events client lifecycle: refresh subscriptions before they lapse, resume after
     // re-auth, unsubscribe when a connector is removed or its OAuth grant revoked.
     {
@@ -1086,6 +1098,7 @@ async fn main() {
         .merge(allternit_api::tag_routes::tag_router())
         .merge(inference_router_router())
         .merge(bot_event_router())
+        .merge(allternit_api::floor_routes::floor_router())
         .merge(allternit_api::thread_routes::thread_router())
         .merge(allternit_api::bot_routing::bot_routing_router())
         .merge(allternit_api::bot_suggestions::bot_suggestions_router())

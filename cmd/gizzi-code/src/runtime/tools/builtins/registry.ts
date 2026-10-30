@@ -41,6 +41,7 @@ import { PlanExitTool, PlanEnterTool } from "@/runtime/tools/builtins/plan"
 import { ApplyPatchTool } from "@/runtime/tools/builtins/apply_patch"
 import { NotebookEditTool } from "@/runtime/tools/builtins/notebook"
 import { MemoryWriteTool } from "@/runtime/tools/builtins/memory-write"
+import { ProjectStatusTool } from "@/runtime/tools/builtins/project-status"
 import { MemoryRecallTool } from "@/runtime/tools/builtins/memory-recall"
 import { VaultQueryTool } from "@/runtime/tools/builtins/vault-query"
 import { VaultWriteTool } from "@/runtime/tools/builtins/vault-write"
@@ -197,6 +198,7 @@ export namespace ToolRegistry {
       NotebookEditTool,
       MdxGraphTool,
       MemoryWriteTool,
+      ProjectStatusTool,
       MemoryRecallTool,
       VaultQueryTool,
       VaultWriteTool,

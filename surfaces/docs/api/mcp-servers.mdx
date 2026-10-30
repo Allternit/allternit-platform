@@ -239,6 +239,10 @@ The internal endpoint uses the same JSON-RPC contract but is intended for peer s
 | `x-allternit-user-id` | User id the request is running as. |
 | `x-allternit-organization-id` | Optional organization id. |
 
+## Phones, numbers and mailboxes from coding agents
+
+With a Platform API project key (`Authorization: Bearer alt_live_…`, scopes `phones`, `numbers`, `messaging`, `mail`), `https://mcp.allternit.com/mcp` also serves the phone, number and mailbox tools. The ready-made Claude Code plugin and Codex skill are in [Claude Code and Codex add-ons](/api/platform/sdks/claude-code-codex).
+
 ## MCP Events (mcp.allternit.com)
 
 The public edge at `https://mcp.allternit.com/mcp` (agents server, scope `agents:read`) and `https://mcp.allternit.com/mcp/bots/<bot id>` (vendor bot connector, scope `bots:act`) supports the MCP Events extension with webhook delivery. Both advertise it in `server/discover` (and in a legacy `initialize` answer):
@@ -265,6 +269,10 @@ The edge answers these itself; your computer doesn't need to be awake. Subscript
 | `-32015` | CallbackEndpointError | Your callback didn't pass verification; `data.reason` is `connection_refused`, `timeout`, `tls_error`, `http_4xx`, `http_5xx` or `challenge_failed`. |
 
 Owners see and end subscriptions through the cloud API: `GET /api/v1/mcp/approvals` lists each approved app's `subscriptions`, `DELETE /api/v1/mcp/events/subscriptions/:id` ends one (the callback gets a signed `terminated` message, `reason: "ended_by_owner"`), and `GET /api/v1/events/catalog` returns every event with a plain-words title and the servers that offer it. Fields and errors are in [Seeing and ending subscriptions](/guides/mcp-events#seeing-and-ending-subscriptions).
+
+## Mail tools for project keys (mcp.allternit.com)
+
+A Platform API project key (`alt_live_…` / `alt_test_…`) with the `mail` scope gets five tools on `https://mcp.allternit.com/mcp`, answered by the edge itself: `mailbox_create`, `mailbox_list`, `mail_list`, `mail_read` and `mail_read_otp`. With the `agents` scope too, `tools/list` shows them next to the agents server's tools. With `mail` alone, the edge answers `initialize`, `tools/list`, `tools/call` and `ping` and nothing reaches a computer. Fields and errors are those of [Mailboxes](/api/platform/mailboxes); a refused call comes back as a tool result with `isError: true` and the `/v1` error code in the text.
 
 Opening `https://mcp.allternit.com/` (or the server URL in a browser) shows a short page with the server URLs, protocol versions and event catalog.
 

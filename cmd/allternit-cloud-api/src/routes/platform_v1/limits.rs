@@ -302,3 +302,53 @@ async fn release(db: &PgPool, key_id: &str, idem_key: &str) -> Result<(), sqlx::
         .await
         .map(|_| ())
 }
+
+// ─── Concurrent phone runs ──────────────────────────────────────────────────
+
+/// Phone task / skill runs a project may have running at once: Sandbox 1,
+/// Pay as you go 5, Growth 25; Enterprise is contracted (100 until the
+/// project's `phone_run_cap_override` is set, which wins on any plan).
+pub fn phone_run_cap(plan: super::caller::Plan, override_cap: Option<i32>) -> i64 {
+    use super::caller::Plan;
+    match override_cap {
+        Some(n) if n > 0 => n as i64,
+        _ => match plan {
+            Plan::Sandbox => 1,
+            Plan::Payg => 5,
+            Plan::Growth => 25,
+            Plan::Enterprise => 100,
+        },
+    }
+}
+
+/// An open run stops counting after this long (a lost `phone.run.completed`
+/// must not pin capacity; tasks end in 5 minutes).
+pub const PHONE_RUN_STALE_HOURS: i32 = 2;
+
+/// Room for `wanted` more phone runs, or a 429 `phone_run_limit`.
+pub async fn check_phone_runs(db: &PgPool, caller: &PlatformCaller, wanted: i64) -> Result<(), PlatformError> {
+    let override_cap: Option<i32> = sqlx::query_scalar("SELECT phone_run_cap_override FROM platform_projects WHERE id = $1")
+        .bind(&caller.project_id)
+        .fetch_optional(db)
+        .await?
+        .flatten();
+    let cap = phone_run_cap(caller.plan, override_cap);
+    let running: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM platform_phone_runs WHERE project_id = $1 AND ended_at IS NULL \
+         AND started_at > NOW() - make_interval(hours => $2)",
+    )
+    .bind(&caller.project_id)
+    .bind(PHONE_RUN_STALE_HOURS)
+    .fetch_one(db)
+    .await?;
+    if running + wanted > cap {
+        return Err(PlatformError::rate_limit(
+            "phone_run_limit",
+            format!(
+                "Your plan runs at most {cap} phone task or skill runs at once ({running} running, {wanted} asked). \
+                 Wait for a run to finish (phone.run.completed) or move to a bigger plan."
+            ),
+        ));
+    }
+    Ok(())
+}

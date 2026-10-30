@@ -1,0 +1,68 @@
+---
+title: "Office view"
+description: "Your bots at their desks on one floor: who is working, who needs you, hand-offs as they happen, a replay of the day, and an optional live link you can share."
+---
+
+The Office view draws your bots on a floor plan. Each bot sits at a desk as its own avatar. You see who is working, who is waiting on you, who is talking, and who is idle, and you can answer, chat and set up work without leaving the floor.
+
+It is the same floor as the Workspace tab in the [System drawer](/guides/system-drawer), now a view of its own. Desktop, ai.allternit.com, the phone layout and the m.allternit.com app all have it.
+
+## What you can do
+
+| Feature | What it does |
+| --- | --- |
+| **2D, 2.5D and 3D** | The floor opens flat in 2D on every device. The switch gives the 2.5D room and the full 3D building. The app remembers your choice on this device. |
+| **Select a bot** | Click a bot or its desk in any view. The camera moves to it and the side panel shows that bot. Click empty floor to go back to the team. |
+| **Team and Activity** | With nothing selected, the side panel lists your team and the recent activity from your bots' real events. On a phone the panel is a sheet over the floor. |
+| **Bot panel** | A selected bot shows its chat, its Apps, its Routines and a button to its Computer. These open the same screens as the rest of Allternit. |
+| **Desk screens** | A bot's desk shows what it is doing: its latest status line, or, when the bot has a computer, a small picture of its screen (at most six bots, refreshed every 15 seconds, only while the Office is on screen). |
+| **Needs you** | A bot waiting on you walks to the YOU desk and joins the line. Its real question shows on the desk, never the thread title. Answer it from the panel with the same approve, deny or reply actions as anywhere else. The bot goes back to its desk once you answer. |
+| **Meetings** | Bots in the same group chat gather at the meeting board. |
+| **Hand-offs** | When one bot passes work to another, you see it walk over. Only real hand-offs walk. |
+| **Hire** | Click a FREE desk and pick a role (Support, Finance, Research, Sales, Code, or a vendor bot). The create-bot screen opens set up for it. |
+| **Replay** | The timeline button replays a day of events on the floor with a scrub bar, speeds of 1x, 8x, 32x and 120x, and Exit. Replay never changes live state. |
+| **While you were out** | Open the Office after eight or more hours away, with three or more events, and a row says what happened with a **Watch** button that replays it. |
+| **Share** | The Share button makes a 1200 by 630 picture of the floor (copy, download or post) and offers the live link. |
+
+An older runtime without the floor routes still shows your team and their live status. Replay and activity history say they need an update.
+
+## Sharing and privacy
+
+The picture is made on your device and shows bot avatars, names and the A:// mark. Nothing is uploaded to make it.
+
+The **live link** is off by default. Turn it on and Allternit gives you a public address that shows your floor read-only, refreshed about every 30 seconds.
+
+What a public floor shows, and only this:
+
+- each bot's name, role line, colour and avatar
+- whether it is working, waiting, talking or idle, and when it last changed
+
+What it never shows: task text, questions, thread titles, chat messages, desk screens, files, or who you talk to. The public page has no answer, open, hire or chat controls.
+
+Turn the link off and it stops working at once. If Allternit can't reach the cloud at that moment, the app tells you the link is still turning off and keeps trying until it stops. Turning it on again makes a new address, so an old link stays dead. Anyone with the address can see the floor while it is on, so share it like a link to a page, not like a password.
+
+## For developers
+
+### Floor routes on the runtime
+
+`allternit-api` serves four routes under `/api/v1/floor` (`cmd/allternit-api/src/floor_routes.rs`). Field names are camelCase and match `src/lib/office/floor-types.ts` in allternit-ai.
+
+| Route | Answer |
+| --- | --- |
+| `GET /floor/state` | `{ bots: FloorBotState[] }` for every bot you own. `status` comes from the bot's non-incognito threads: `needs_you` is `waiting`, `working` or `planning` is `working`, otherwise `idle`. `lastKind`, `lastText` and `updatedAt` come from the newest thread event. `meeting` is not set by the runtime. |
+| `GET /floor/events?since=&until=&limit=` | `{ events: FloorEvent[] }`, oldest first, times in milliseconds, `limit` up to 2000 (default 500, window default last 24 hours). `thread.started`, `thread.completed`, `thread.failed` and `thread.needs_user` become `started`, `finished`, `failed` and `needs_you`. Bot-to-bot hops from `agent_hops` become `handoff` with `toBotId`. Incognito threads are left out. Event ids are `be:<id>` and `hop:<id>`. |
+| `GET /floor/share` and `PUT /floor/share` | `{ enabled, url, revokePending }`. `PUT { enabled }` turns the live link on or off. The runtime must be paired; otherwise `409 runtime_not_paired`. If the cloud can't confirm an off, `PUT` answers `502 revoke_pending`, `revokePending` stays true, and the runtime retries every 60 seconds. |
+
+Migration `V283__floor_share.sql` adds an index on `bot_events(event_type, occurred_at)` and the `floor_share` table (whether the link is on, its token, and a pending revoke).
+
+### Live link
+
+1. `PUT /floor/share { enabled: true }` posts the projection to the cloud at `POST /api/v1/runtime/floor-share`, signed with the same runtime relay signature as `/api/v1/runtime/events`. The cloud answers with a random token (192 bits). The runtime stores it and returns `https://3dfacility.allternit.com/?embed=public&t=<token>`.
+2. While the link is on, the runtime pushes the projection every 60 seconds.
+3. The cloud (`routes/floor_shares.rs`, table `floor_shares`, migration `115_floor_shares.sql`) rebuilds the projection from an allowlist when it writes, so a runtime cannot store task text even by mistake.
+4. `GET /api/v2/public/floors/:token` on the cloud API host (`https://api.allternit.com`) returns the floor with no auth. It is rate limited with the other public routes, answers `404` for an unknown or disabled token, and sends `Cache-Control: private, no-store`, `X-Robots-Tag: noindex` and CORS for `https://3dfacility.allternit.com` only.
+5. Turning the link off sets it off locally first, then tells the cloud. If the cloud cannot be reached the call returns `502 revoke_pending` and the runtime retries every 60 seconds until the cloud confirms.
+
+### Frame messages
+
+The app talks to the facility frame by `postMessage`, always checking the origin. App to facility: `allternit:workspace` (bots, with optional `desk` and `meeting`, and `handoffs` deduplicated by id), `allternit:workspace:select`, `allternit:workspace:replay` (events with `from` and `to`, or `stop: true`) and `allternit:workspace:snapshot`. Facility to app: `ready`, `action` (`answer`, `open`, `select`, `hire`) and `allternit:workspace:snapshot` with a PNG data URL. The query `?embed=workspace&chrome=none` hides the facility's own Team and Activity rail, and `?embed=public&t=<token>` is the read-only public floor.

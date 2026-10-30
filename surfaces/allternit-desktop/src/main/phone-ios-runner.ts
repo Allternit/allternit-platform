@@ -50,8 +50,10 @@ export const PINNED_RUNNER_MANIFESTS: Record<string, string> = {
   '1.98.12-allternit.5': '1c7c2c3ee695474fa225280e541db2844ada869bf434dc6fb20e5deb9d2c6041',
   // .6: mesh_restart RPC + mesh watchdog (tsnet Health()).
   '1.98.12-allternit.6': '43a796f27a2b752a911b7c724db99b14a23340aa78ded88c287e2391cf67e5ba',
+  // .7: presses the broadcast sheet's Start Sharing button (iOS 27 label).
+  '1.98.12-allternit.7': '587a2de7bd4e3dc46d9ab3a9cf19156069022d07c962c1d1fc271b8b4f1a2f65',
 };
-export const RUNNER_VERSION: string | null = '1.98.12-allternit.6';
+export const RUNNER_VERSION: string | null = '1.98.12-allternit.7';
 
 export interface RunnerPackage {
   file: string;

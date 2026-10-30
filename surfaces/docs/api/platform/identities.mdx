@@ -1,0 +1,44 @@
+---
+title: 'Identities'
+description: 'Give an agent a phone number, a mailbox and a linked phone in one call.'
+---
+
+An identity is everything an agent needs to act in the world under its own name: a [number](/api/platform/numbers), a [mailbox](/api/platform/mailboxes) and, optionally, one of your [linked phones](/api/platform/phones). Scopes `numbers` and `mail`; `phones` too when you bind a phone.
+
+| Method | Path | |
+|---|---|---|
+| `POST` | `/v1/identities` | Create: `{ "account_id"?, "agent_id"?, "area_code"?, "number_type"?, "phone_serial"?, "local_part"?, "display_name"? }` |
+| `GET` | `/v1/identities` | List (cursor pagination; `account_id`, `agent_id` filters) |
+| `GET` | `/v1/identities/{id}` | Retrieve, with the number and mailbox |
+| `DELETE` | `/v1/identities/{id}` | Release the number and remove the mailbox |
+
+## Create one
+
+```bash
+curl https://api.allternit.com/v1/identities \
+  -H "Authorization: Bearer $ALLTERNIT_KEY" -H "Content-Type: application/json" \
+  -H "Idempotency-Key: onboard-agent-7f2" \
+  -d '{ "agent_id": "agent_7f2…", "area_code": "415", "local_part": "front-desk" }'
+```
+
+```json
+{ "id": "idn_2e9…", "object": "identity", "account_id": "acct_9a…", "agent_id": "agent_7f2…",
+  "number": { "id": "…", "object": "phone_number", "e164": "+14155550123", "type": "local", "…": "…" },
+  "mailbox": { "id": "mbx_51c…", "object": "mailbox", "address": "front-desk@bots.allternit.com", "…": "…" },
+  "phone_serial": null,
+  "bundle": { "name": "Agent identity", "meter": "identity_month", "monthly_price_cents": 900,
+    "includes": { "numbers": 1, "mailboxes": 1, "linked_phone_slots": 1, "phone_minutes": 200 } },
+  "created_at": "2026-10-29T15:04:05Z" }
+```
+
+- **Number.** Sandbox projects get a simulated number. Live projects get the first available number, in `area_code` when you give one (`409 no_numbers_available` when there is none). `number_type` is `local` (default) or `toll_free`. Buying real numbers needs a paid plan with a card on file, like `POST /v1/numbers`. With `agent_id`, the number answers calls with that agent (see [Voice](/api/platform/voice)).
+- **Mailbox.** Made as in `POST /v1/mailboxes`, on the same account.
+- **Phone.** `phone_serial` binds one of the project owner's linked phones (a serial from `GET /v1/phones`). It needs the `phones` scope and a key that isn't bound to one account (`403 account_bound_key`). A phone belongs to at most one identity (`409 phone_in_identity`).
+
+If the mailbox can't be made after the number is bought, the number is released again and the error is returned. Send an `Idempotency-Key` so a retry never buys a second number.
+
+While the identity exists its number and mailbox can't be deleted on their own (`409 number_in_identity`, `409 mailbox_in_identity`).
+
+## Pricing
+
+The **Agent identity** bundle is $9 a month on live projects (meter `identity_month`): one number, one mailbox, one linked-phone slot and 200 phone minutes. The bundle's number and mailbox are not billed separately. Simulated (sandbox) identities are not charged. See [Pricing](/api/platform/pricing).

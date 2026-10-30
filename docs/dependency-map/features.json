@@ -1102,14 +1102,20 @@
       "label": "Platform API v1",
       "product": "product:platform-api",
       "status": "building",
-      "description": "Public developer API for accounts, messaging, numbers, channels, usage and webhooks.",
+      "description": "Public developer API for accounts, messaging, numbers, mailboxes, agent identities, channels, usage and webhooks.",
       "touches": [
         "allternit/cmd/allternit-cloud-api/src/routes/platform_v1",
+        "allternit/cmd/allternit-cloud-api/src/routes/bot_email.rs",
+        "allternit/cmd/allternit-api/src/email_otp.rs",
         "allternit/sdk/platform-ts",
         "allternit/surfaces/platform.allternit.com",
         "allternit/cmd/allternit-api/src/platform_agents.rs"
       ],
       "decisions": [
+        {
+          "on": "2026-10-29",
+          "note": "Mailboxes (/v1/mailboxes, scope mail, $2/month meter mailbox_month) on Allternit Mail via bot_email's admin calls; inbound arrives on a platform_mail relay route, is kept with codes from allternit-api's email_otp.rs (shared by #[path]) and sent as mail.received. /v1/identities bundles a number + mailbox + linked phone serial as identity_month ($9). Mail MCP tools for project keys are answered by mcp_edge."
+        },
         {
           "on": "2026-10-13",
           "note": "Managed sessions now execute: an in-process session worker in allternit-api (session_worker.rs) leases queued /beta/work session and deployment tasks, runs them as Gizzi turns with the agent's model, system prompt and effective permissions, appends tool_calls/agent_message events (budget and approval gating apply), honors interrupt/stop and fails retryably when Gizzi is down. ALLTERNIT_SESSION_WORKER=0 disables it; tasks with a sandbox_image are left for external workers."
@@ -1133,12 +1139,17 @@
         {
           "on": "2026-10-27",
           "note": "AG-UI out: POST /v1/agents/{id}/ag-ui streams a conversation turn as AG-UI events (RUN_STARTED, TEXT_MESSAGE_*, TOOL_CALL_*, RUN_FINISHED/RUN_ERROR) so CopilotKit and other AG-UI frontends can drive an agent. threadId maps to a conversation id or platform_conversations.external_thread_id (pg 108); the last user message is the input, client tools/state unused. The runtime turn stream (platform_agents.rs) now also passes tool.started/completed/failed with bounded input/output, and the conversation SSE gains matching tool.* events (old clients skip them)."
+        },
+        {
+          "on": "2026-10-29",
+          "note": "Per-project trace export: GET/PUT/DELETE /v1/projects/{id}/tracing + POST .../tracing/test (scope usage; pg 113 platform_project_tracing, headers encrypted with the credential cipher). project_tracing.rs exports OTLP/HTTP protobuf GenAI spans (invoke_agent per conversation/AG-UI turn via meter_turn, call spans in calls::finish, phone run/step spans in runtime_events phone_fan_out) on a spawned task through events::post_vetted (SSRF-checked); failures only set last_error. Console: Platform → Phones page (list, history, live view iframe from POST /v1/phones/{serial}/live) and Projects → Tracing; mail added to the key scope picker."
         }
       ],
       "evidence": [
         "allternit/surfaces/docs/api/platform/billing.mdx",
         "allternit/surfaces/docs/api/platform/phones.mdx",
-        "allternit/surfaces/docs/api/platform/ag-ui.mdx"
+        "allternit/surfaces/docs/api/platform/ag-ui.mdx",
+        "allternit/surfaces/docs/api/platform/tracing.mdx"
       ]
     },
     {
@@ -1373,6 +1384,10 @@
         {
           "on": "2026-10-22",
           "note": "Eoj approved a lighter Duet-style editor: preview, Symbols/Brands/Text/Image, one 20-colour row (folder + banner), the rest under More options; New project is one sheet (icon, colour, Name, Purpose = description bots read) at every create entry point incl. Bot mode; phone = full-height sheet."
+        },
+        {
+          "on": "2026-10-30",
+          "note": "Eoj: a project's background is changed from the Customize appearance icon. The dialog has a Background section (Same as Settings, ASCII / Classic tiles) that saves one look per project on Save (BackdropScope project:<mode>:<id>); the banner and the bot project home show it. Cancel discards the pick."
         }
       ],
       "evidence": [
@@ -2861,6 +2876,27 @@
       ]
     },
     {
+      "id": "feature:office-view",
+      "label": "Office view (bots at desks, replay, live link)",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "A rail view (Desktop, ai.allternit.com phone layout, m.allternit.com PWA) that frames 3dfacility.allternit.com: 2D by default with 2.5D and 3D, select a bot to see its chat, apps, routines and computer in a side panel, desk screens, a Needs you line, meetings, real hand-offs walking, hire from a FREE desk, replay of past events and a share picture. Runtime routes GET /api/v1/floor/state, GET /api/v1/floor/events and GET/PUT /api/v1/floor/share (allternit-api floor_routes.rs, migration V283). The optional live link pushes only a public projection (id, name, role, colour, avatar sheet, status, time) to cloud-api (POST /api/v1/runtime/floor-share, relay-signed; table floor_shares, migration 115), served without auth at GET /api/v2/public/floors/:token for the facility's read-only public page. Task text, questions, titles and screens never leave the runtime.",
+      "touches": [
+        "allternit/cmd/allternit-api/src/floor_routes.rs",
+        "allternit/cmd/allternit-cloud-api/src/routes/floor_shares.rs",
+        "allternit/surfaces/docs/guides/office-view.mdx"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-30",
+          "note": "Eoj: build facility ideas 1-9; 2D leads with a 3D switch; the public map comes after real floors and share links and is not in this build."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/office-view.mdx"
+      ]
+    },
+    {
       "id": "feature:waiting-games",
       "label": "Waiting games (play while a bot works)",
       "product": "product:ai-allternit",
@@ -3253,6 +3289,9 @@
       "product": "product:ai-allternit",
       "status": "building",
       "description": "Settings → Account → Delete account on Desktop, ai.allternit.com, the PWA and the iPhone app: type DELETE, Clerk user.delete(), sign out; cloud-api closes the account on Clerk's user.deleted webhook. Required by App Store guideline 5.1.1(v).",
+      "evidence": [
+        "allternit/surfaces/docs/guides/delete-account.mdx"
+      ],
       "touches": [
         "allternit-ai/src/views/settings/DeleteAccountSection.tsx",
         "allternit-ai/src/views/settings/SettingsView.tsx",
@@ -3337,6 +3376,55 @@
           "on": "2026-10-29",
           "note": "Eoj, from the Grok Bot worker-bot post: build worker bots from chat and connect-from-chat for all vendors; OpenCode is just another vendor, not a free tier."
         }
+      ]
+    },
+    {
+      "id": "feature:project-status-pages",
+      "label": "Project status pages",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "Every project (Projects tab and Bot Mode, both cowork_projects rows) has one living status page in metadata.status: state, next action, nine sections, a 10-entry log plus archive. GET/PATCH /cowork/projects/:id/status merge one section at a time in one transaction; done requires a proof link; blocked, needs_decision and overdue raise one de-duped Needs you item. POST /cowork/projects/:id/close records outcome and lessons and pauses linked routines (and their gizzi cron jobs); reopen resumes them. The page is injected into coordinator and worker prompts with the project instructions; bots write it with the gizzi project_status tool. The Chief of Staff template runs a weekday Project sweep. The Projects hub shows state, next action and a Closed filter, using GET /project-workspaces for chat, code and design projects.",
+      "touches": [
+        "allternit/cmd/allternit-api/src/project_status.rs",
+        "allternit/cmd/allternit-api/src/cowork_routes.rs",
+        "allternit/cmd/allternit-api/src/coordinator_routes.rs",
+        "allternit/cmd/gizzi-code/src/runtime/tools/builtins/project-status.ts",
+        "allternit-ai/src/components/projects",
+        "allternit-ai/src/views/project",
+        "allternit-ai/src/lib/bots/templates"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-30",
+          "note": "Eoj picked: any bot on the project writes the page, section by section; build all six steps. Stored in project metadata, so no migration."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/project-status.mdx",
+        "allternit/surfaces/docs/tools/project-status.mdx"
+      ]
+    },
+    {
+      "id": "feature:project-layouts",
+      "label": "Project dashboards and layouts",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "A project opens as a dashboard of real data in one of ten layouts (Pulse by default), on the project's full-page background. One Customize button holds layout, colors, background, tiles, details and manage. Per project.",
+      "touches": [
+        "allternit-ai/src/components/projects/board",
+        "allternit-ai/src/lib/projects/project-look.ts",
+        "allternit-ai/src/lib/projects/project-board-data.ts",
+        "allternit-ai/src/views/BaseProjectView.tsx",
+        "allternit-ai/src/views/project/workspace/ProjectCoordinatorWorkspace.tsx"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-30",
+          "note": "Eoj rejected two flat columns, the long status pane and three settings buttons. Picked a Customize gallery over a tab list, quiet colors, Pulse as the default, and the background filling the page."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/project-layouts.mdx"
       ]
     }
   ],

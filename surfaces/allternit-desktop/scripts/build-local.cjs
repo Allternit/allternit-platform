@@ -87,6 +87,19 @@ if (
 }
 
 let command = process.execPath;
+// A Developer ID in the keychain signs and notarizes this build. Without one,
+// the package.json identity "-" (ad-hoc) stands.
+if (process.platform === 'darwin' && !process.env.CSC_IDENTITY_AUTO_DISCOVERY) {
+  const { execFileSync } = require('child_process');
+  const identities = execFileSync('security', ['find-identity', '-v', '-p', 'codesigning'], { encoding: 'utf8' });
+  const developerId = identities.match(/"Developer ID Application: ([^"]+)"/);
+  if (developerId) {
+    extraArgs.push(`-c.mac.identity=${developerId[1]}`);
+    process.env.APPLE_KEYCHAIN_PROFILE = process.env.APPLE_KEYCHAIN_PROFILE || 'allternit';
+    console.log(`[build-local] Signing with Developer ID: ${developerId[1]}`);
+  }
+}
+
 let args;
 let shell = false;
 try {

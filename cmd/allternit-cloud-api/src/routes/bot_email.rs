@@ -87,7 +87,7 @@ fn mail_error(what: &str, status: Option<u16>, detail: &str) -> Response {
 }
 
 /// One call to Allternit Mail with the admin key. `Err((status, body))`.
-async fn call(cfg: &MailConfig, method: reqwest::Method, path: &str, body: Option<Value>) -> Result<Value, (Option<u16>, String)> {
+pub(crate) async fn call(cfg: &MailConfig, method: reqwest::Method, path: &str, body: Option<Value>) -> Result<Value, (Option<u16>, String)> {
     let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(15)).build().map_err(|e| (None, e.to_string()))?;
     let mut req = client.request(method, format!("{}{}", cfg.base, path)).bearer_auth(&cfg.admin_key);
     if let Some(b) = body {

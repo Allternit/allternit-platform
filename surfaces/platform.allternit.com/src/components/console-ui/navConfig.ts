@@ -48,6 +48,7 @@ import {
   Key02Icon,
   CubeIcon,
   BubbleChatIcon,
+  SmartPhone01Icon,
 } from "@hugeicons/core-free-icons";
 
 export type ConsoleNavIcon = typeof LayoutDashboardIcon;
@@ -98,6 +99,7 @@ export const consoleNav: ConsoleNavConfig = {
         { to: "/platform/agents", label: "Agents", icon: BotIcon },
         { to: "/platform/conversations", label: "Conversations", icon: BubbleChatIcon },
         { to: "/platform/computers", label: "Computers", icon: ComputerIcon },
+        { to: "/platform/phones", label: "Phones", icon: SmartPhone01Icon },
         { to: "/platform/usage", label: "Usage", icon: Analytics01Icon },
         { to: "/platform/billing", label: "Billing", icon: Dollar01Icon },
         { to: "/platform/webhooks", label: "Webhooks", icon: WebhookIcon },

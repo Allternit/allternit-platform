@@ -289,11 +289,30 @@ async fn phone_fan_out(db: &PgPool, user_id: &str, name: &str, data: &Value) -> 
     if user_id.starts_with("platform:") || user_id.starts_with(crate::services::provisioning::HOSTED_DRIVER_OWNER_PREFIX) {
         return Ok(());
     }
+    if name == "phone.run.completed" {
+        // Runs a project started: close, meter minutes, finish fleet runs.
+        // Bookkeeping must never stop the event itself from being delivered.
+        if let Err(e) = crate::routes::platform_v1::phones::on_run_completed(db, user_id, data).await {
+            tracing::warn!("platform phones: run completion not recorded: {e}");
+        }
+    }
     let keys: &[&str] = match name {
         "phone.step" => &["step_id", "run_id", "serial", "tool", "label", "ok", "error", "duration_ms", "source", "snapshot"],
         "phone.run.completed" => &["run_id", "serial", "ok", "status", "skill", "source", "steps", "failed", "model_calls", "duration_ms"],
         _ => return Ok(()),
     };
+    // Trace export: every live project of the owner that has it on (best effort).
+    let traced: Vec<String> = sqlx::query_scalar(
+        "SELECT p.id FROM platform_projects p JOIN platform_project_tracing t ON t.project_id = p.id \
+         WHERE p.owner_user_id = $1 AND p.archived_at IS NULL AND t.enabled",
+    )
+    .bind(user_id)
+    .fetch_all(db)
+    .await
+    .unwrap_or_default();
+    for project in traced {
+        crate::routes::platform_v1::project_tracing::emit(db, &project, crate::routes::platform_v1::project_tracing::phone_span(name, data));
+    }
     // Only projects with an endpoint that wants it: a phone step is frequent,
     // and an event nobody subscribed to would only be stored.
     let projects: Vec<String> = sqlx::query_scalar(
