@@ -192,7 +192,15 @@ enum SampleWorkspaceAPI {
                 return nil
             }
         case .other:
-            return nil
+            // Teach: `/api/har-derived-api/*` sits under `/api`, not `/api/v1`.
+            switch parts {
+            case ["api", "har-derived-api", "teach", "skills"]:
+                return ["skills": SampleWorkspace.teachSkills(now: now)]
+            case ["api", "har-derived-api", "contracts"]:
+                return ["contracts": SampleWorkspace.teachContracts(now: now)]
+            default:
+                return nil
+            }
         }
     }
 

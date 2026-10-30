@@ -73,7 +73,6 @@ struct HistorySidebarView: View {
     @State private var isScheduledTaskPresented = false
     @State private var isMiniAppsPresented = false
     @State private var isComputersPresented = false
-    @State private var isTeachPresented = false
     @State private var isInboxPresented = false
     @State private var isPhonesPresented = false
     @State private var isCustomizePresented = false
@@ -141,9 +140,6 @@ struct HistorySidebarView: View {
         }
         .sheet(isPresented: $isComputersPresented) {
             ConnectComputerSheet()
-        }
-        .sheet(isPresented: $isTeachPresented) {
-            SiteAPIsView()
         }
         .sheet(isPresented: $isInboxPresented) {
             InboxSheet()

@@ -203,6 +203,11 @@ struct MainWorkspaceView: View {
             if launchArgumentEnabled("open-aci") {
                 modeStore.selectBarItem(.aci)
             }
+            // `-open-aci-teach`: ACI with Teach open over the Agent.
+            if launchArgumentEnabled("open-aci-teach") {
+                modeStore.selectBarItem(.aci)
+                ACINavStore.shared.openTeach()
+            }
             // `-open-code-filter` (DEBUG only): land on Code — CodeModeView
             // presents the Phase-8 status filter sheet itself.
             if launchArgumentEnabled("open-code-filter") {

@@ -165,7 +165,11 @@ struct ACITabView: View {
             }
         }
         .fullScreenCover(isPresented: $nav.isTeachOpen) {
-            SiteAPIsView()
+            // Replay: the agent runs the skill in the Agent browser.
+            TeachView(onRun: { prompt in
+                nav.open(.agent)
+                destination = .agent(prompt)
+            })
         }
     }
 

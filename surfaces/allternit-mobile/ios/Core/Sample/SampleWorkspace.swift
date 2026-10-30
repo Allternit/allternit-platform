@@ -556,4 +556,53 @@ enum SampleWorkspace {
                 "members_json": json(members), "log_json": json(log),
                 "created_at": ago(60 * 24, now: now), "updated_at": ago(38, now: now)]
     }
+
+    // MARK: - Teach
+
+    /// `GET /api/har-derived-api/teach/skills` rows (TeachSkill).
+    static func teachSkills(now: Date = Date()) -> [[String: Any]] {
+        [
+            [
+                "id": "teach-sample-order", "title": "Place the weekly flour order",
+                "intent": "Order flour from the mill's site for {{week}}, checking the price first.",
+                "source": "model", "redactions": 1, "domain": "orders.millsupply.example",
+                "routine_id": "routine-sample-flour",
+                "steps": [
+                    ["id": "step-1", "kind": "ui", "text": "Open orders.millsupply.example/reorder and sign in", "target": "https://orders.millsupply.example/reorder"],
+                    ["id": "step-2", "kind": "ui", "text": "Set the delivery week to {{week}}"],
+                    ["id": "step-3", "kind": "api", "text": "Check the price of 25 kg bread flour", "target": "GET /api/products/bread-flour-25kg"],
+                    ["id": "step-4", "kind": "ui", "text": "Add {{bags}} bags to the cart and review the order"],
+                    ["id": "step-5", "kind": "note", "text": "Stop before Pay: ask first."],
+                ],
+                "inputs": [
+                    ["name": "week", "label": "Delivery week", "example": "2026-11-02", "type": "date"],
+                    ["name": "bags", "label": "Bags of flour", "example": "12", "type": "number"],
+                ],
+                "workflow": ["steps": [["kind": "goto"], ["kind": "click"], ["kind": "fill"], ["kind": "click"]]],
+                "created_at": ago(60 * 24 * 3, now: now), "updated_at": ago(60 * 26, now: now),
+            ],
+            [
+                "id": "teach-sample-reviews", "title": "Reply to new reviews",
+                "intent": "Read new reviews on the bakery's listing and draft a short thank-you for each.",
+                "source": "rules", "redactions": 0, "domain": "listings.example",
+                "steps": [
+                    ["id": "step-1", "kind": "ui", "text": "Open the Reviews tab on listings.example"],
+                    ["id": "step-2", "kind": "ui", "text": "Filter to reviews without a reply"],
+                    ["id": "step-3", "kind": "ui", "text": "Draft a reply for each one and leave it unsent"],
+                ],
+                "inputs": [[String: Any]](),
+                "created_at": ago(60 * 24 * 6, now: now), "updated_at": ago(60 * 24 * 6, now: now),
+            ],
+        ]
+    }
+
+    /// `GET /api/har-derived-api/contracts`: one recording not analyzed yet.
+    static func teachContracts(now: Date = Date()) -> [[String: Any]] {
+        [[
+            "id": "contract-sample-pos", "domain": "pos.squarely.example", "source": "upload",
+            "derived_at": ago(90, now: now),
+            "endpoints": [["id": "ep-1"], ["id": "ep-2"], ["id": "ep-3"]],
+        ]]
+    }
 }
+

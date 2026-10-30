@@ -17,7 +17,7 @@ final class ACINavStore: ObservableObject {
     static let shared = ACINavStore()
 
     @Published var tab: ACITab = .agent
-    /// Teach (site APIs) open full screen over ACI.
+    /// Teach open full screen over ACI.
     @Published var isTeachOpen = false
 
     func open(_ tab: ACITab) {
