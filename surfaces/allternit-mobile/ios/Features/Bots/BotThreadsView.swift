@@ -42,9 +42,7 @@ struct BotThreadsView: View {
     }
 
     private func open(_ thread: BotThread) {
-        if let sessionId = thread.currentSessionId {
-            navigator.open(.chat(botId: thread.botId, sessionId: sessionId))
-        }
+        navigator.openThread(thread)
     }
 
     var body: some View {
@@ -113,6 +111,8 @@ struct BotThreadsPanel: View {
     /// Threads to show instead of the store's (a project's).
     var threadsOverride: [BotThread]? = nil
     let onOpen: (BotThread) -> Void
+    /// Resolved rows get a Reopen (ThreadsPanel `onReopen`).
+    var onReopen: ((BotThread) -> Void)? = nil
 
     @ObservedObject private var store = BotModeStore.shared
     @State private var collapsed: Set<String> = ["resolved"]
@@ -197,10 +197,20 @@ struct BotThreadsPanel: View {
             .accessibilityValue(folded ? "Collapsed" : "Expanded")
             if !folded {
                 ForEach(items) { thread in
-                    Button { onOpen(thread) } label: {
-                        BotThreadRow(thread: thread, showsBot: botId == nil)
+                    HStack(spacing: 4) {
+                        Button { onOpen(thread) } label: {
+                            BotThreadRow(thread: thread, showsBot: botId == nil)
+                        }
+                        .buttonStyle(.plain)
+                        if group == .resolved, let onReopen {
+                            Button("Reopen") { onReopen(thread) }
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundColor(Color("TextPrimary"))
+                                .frame(minHeight: 44)
+                                .contentShape(Rectangle())
+                                .buttonStyle(.plain)
+                        }
                     }
-                    .buttonStyle(.plain)
                 }
             }
         }
@@ -251,10 +261,20 @@ struct BotThreadRow: View {
                 Circle().fill(group.color).frame(width: 8, height: 8).frame(width: 22)
             }
             VStack(alignment: .leading, spacing: 2) {
-                Text(thread.title)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(Color("TextPrimary"))
-                    .lineLimit(1)
+                HStack(spacing: 6) {
+                    if thread.kind == "task" {
+                        Text("TASK")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundColor(Theme.statusInfo)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 1)
+                            .background(RoundedRectangle(cornerRadius: 3).fill(Theme.statusInfo.opacity(0.14)))
+                    }
+                    Text(thread.title)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(Color("TextPrimary"))
+                        .lineLimit(1)
+                }
                 if let line = thread.statusLine, !line.isEmpty {
                     Text(line)
                         .font(.system(size: 11.5))
@@ -264,7 +284,20 @@ struct BotThreadRow: View {
             }
             Spacer(minLength: 6)
             HStack(spacing: 8) {
-                if let progress = thread.progressLabel { Text(progress) }
+                if let progress = thread.progressLabel {
+                    HStack(spacing: 4) {
+                        // The thread's progress ring (ThreadProgressRing).
+                        ZStack {
+                            Circle().stroke(Color("FillNeutral"), lineWidth: 2)
+                            Circle()
+                                .trim(from: 0, to: CGFloat(thread.progress[0]) / CGFloat(max(thread.progress[1], 1)))
+                                .stroke(group.color, style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                                .rotationEffect(.degrees(-90))
+                        }
+                        .frame(width: 13, height: 13)
+                        Text(progress)
+                    }
+                }
                 Text(BotTime.relative(thread.lastActivityAt))
             }
             .font(.system(size: 11).monospacedDigit())
@@ -272,90 +305,8 @@ struct BotThreadRow: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 8)
+        .frame(minHeight: 44)
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
-    }
-}
-
-/// A bot project's home (views/bots/ProjectHomeView.tsx, phone subset): its
-/// team and its threads by status.
-struct BotProjectHomeView: View {
-    let project: BotProjectSummary
-
-    @ObservedObject private var store = BotModeStore.shared
-    @State private var threads: [BotThread] = []
-    @State private var isLoading = true
-    @State private var error: String? = nil
-    @ObservedObject private var backdrops = StageBackdropStore.shared
-    @ObservedObject private var botColors = BotColorStore.shared
-
-    /// Bot project homes show the Settings background in the team's colours.
-    private var backdropVariant: String { backdrops.variant(for: .project, scope: nil) }
-
-    var body: some View {
-        List {
-            if let description = project.description, !description.isEmpty {
-                Section { Text(description).foregroundColor(Color("TextSecondary")) }
-            }
-            let team = project.botIds.compactMap { store.bot($0) }
-            if !team.isEmpty {
-                Section("Team") {
-                    ForEach(team) { bot in
-                        NavigationLink(value: BotRoute.chat(botId: bot.id, sessionId: nil)) {
-                            HStack(spacing: 10) {
-                                BotAvatarView(bot: bot, size: 30)
-                                BotNameText(bot.botDisplayName, size: 15)
-                            }
-                        }
-                    }
-                }
-            }
-            Section("Threads") {
-                if isLoading && threads.isEmpty {
-                    ProgressView().frame(maxWidth: .infinity)
-                } else if let error {
-                    FriendlyStateView(style: .error, icon: "exclamationmark.triangle", title: "Couldn't load threads",
-                                      message: error, actionTitle: "Retry", action: { Task { await load() } })
-                } else if threads.isEmpty {
-                    Text("No threads in this project yet.")
-                        .font(.footnote)
-                        .foregroundColor(Color("TextSecondary"))
-                } else {
-                    ForEach(threads.sorted(by: BotModeStore.threadOrder)) { thread in
-                        if let sessionId = thread.currentSessionId {
-                            NavigationLink(value: BotRoute.chat(botId: thread.botId, sessionId: sessionId)) {
-                                BotThreadRow(thread: thread)
-                            }
-                        } else {
-                            BotThreadRow(thread: thread)
-                        }
-                    }
-                }
-            }
-        }
-        .scrollContentBackground(backdropVariant == "plain" ? .automatic : .hidden)
-        .background {
-            if backdropVariant != "plain" {
-                StageBackdropView(variant: backdropVariant,
-                                  colors: project.botIds.map { botColors.hex(for: store.bot($0)) })
-                    .ignoresSafeArea()
-            }
-        }
-        .backdropTouches(backdropVariant != "plain")
-        .navigationTitle(project.title)
-        .refreshable { await load() }
-        .task { await load() }
-    }
-
-    private func load() async {
-        isLoading = true
-        defer { isLoading = false }
-        do {
-            threads = try await BotModeClient.shared.listProjectThreads(projectId: project.id)
-            error = nil
-        } catch is CancellationError {
-        } catch {
-            self.error = FriendlyErrorMessage.from(error.localizedDescription)
-        }
     }
 }

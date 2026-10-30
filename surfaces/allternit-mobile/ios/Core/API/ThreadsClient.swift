@@ -50,6 +50,10 @@ struct BotThread: Decodable, Identifiable, Hashable {
     /// The bot's checklist for this thread (lib/bots/threads.ts ThreadTodo).
     var todo: [ThreadTodo]? = nil
     var summary: String? = nil
+    /// Thread ids this one waits on (the plan graph, ThreadGraph.tsx).
+    var dependsOn: [String]? = nil
+    var archived: Bool? = nil
+    var archivedAt: String? = nil
 
     var isMainChat: Bool {
         kind == "standing" && createdBy == "import" && title == "Main chat"

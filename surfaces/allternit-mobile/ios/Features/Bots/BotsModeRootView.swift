@@ -27,6 +27,13 @@ enum BotRoute: Hashable {
     case settings(String)
     /// The bot screen on one of its tabs (bot-home-tabs.ts).
     case botHome(String, BotHomeTab)
+    /// A project's pane, full screen (openPhonePane on the web).
+    case projectPane(ProjectPaneContext, ProjectPaneKind)
+    /// A project thread with no chat yet (ProjectSidePanel's waiting state);
+    /// it becomes the chat as soon as the thread has a session.
+    case projectThread(BotThread)
+    /// A Factory node (factoryNodePane).
+    case projectNode(dagId: String, nodeId: String, title: String)
 }
 
 /// Bot Mode's navigation path, shared with every pushed screen so async
@@ -37,6 +44,16 @@ final class BotNavigator: ObservableObject {
 
     func open(_ route: BotRoute) {
         path.append(route)
+    }
+
+    /// Every thread row opens: its chat, or its waiting page when the thread
+    /// has no session yet.
+    func openThread(_ thread: BotThread) {
+        if let sessionId = thread.currentSessionId {
+            open(.chat(botId: thread.botId, sessionId: sessionId))
+        } else {
+            open(.projectThread(thread))
+        }
     }
 }
 
@@ -106,9 +123,7 @@ struct BotsModeRootView: View {
                 ScrollView {
                     BotThreadsPanel(botId: nil, greeting: "Welcome back.") { thread in
                         isThreadsPresented = false
-                        if let sessionId = thread.currentSessionId {
-                            navigator.open(.chat(botId: thread.botId, sessionId: sessionId))
-                        }
+                        navigator.openThread(thread)
                     }
                 }
                 .background(Color("BgPanel"))
@@ -221,7 +236,7 @@ struct BotRouteDestination: View {
         case .threads(let botId):
             BotThreadsView(botId: botId)
         case .project(let project):
-            BotProjectHomeView(project: project)
+            BotProjectPage(project: project)
         case .groups:
             GroupsListView()
         case .group(let id):
@@ -250,6 +265,12 @@ struct BotRouteDestination: View {
             withBot(botId) { AgentDetailView(initialAgent: $0) }
         case .botHome(let botId, let tab):
             withBot(botId) { BotHomeTabsView(bot: $0, initialTab: tab) }
+        case .projectPane(let context, let kind):
+            ProjectPaneScreen(context: context, initialKind: kind)
+        case .projectThread(let thread):
+            BotProjectThreadPage(thread: thread)
+        case .projectNode(let dagId, let nodeId, let title):
+            ProjectNodePageView(dagId: dagId, nodeId: nodeId, title: title)
         }
     }
 

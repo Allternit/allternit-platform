@@ -58,9 +58,7 @@ struct BotHomeTabsView: View {
                     ScrollView {
                         mainChatCard
                         BotThreadsPanel(botId: bot.id, greeting: nil) { thread in
-                            if let sessionId = thread.currentSessionId {
-                                navigator.open(.chat(botId: bot.id, sessionId: sessionId))
-                            }
+                            navigator.openThread(thread)
                         }
                     }
                 case .artifacts: BotArtifactsList(bot: bot)
