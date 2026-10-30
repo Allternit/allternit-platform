@@ -1356,7 +1356,16 @@ async fn update_project(
             vals.push(v);
         }
         if let Some(v) = body.metadata {
-            sets.push("metadata = ?");
+            // `status` belongs to the status-page endpoints: keep the stored
+            // page so a client writing back a stale metadata copy can't undo
+            // a bot's newer update.
+            sets.push(
+                "metadata = CASE WHEN json_valid(?)
+                       AND json_type(CASE WHEN json_valid(metadata) THEN metadata ELSE '{}' END, '$.status') IS NOT NULL
+                     THEN json_set(?, '$.status', json(json_extract(metadata, '$.status'))) ELSE ? END",
+            );
+            vals.push(v.clone());
+            vals.push(v.clone());
             vals.push(v);
         }
         if let Some(v) = body.git_remote {
@@ -1501,14 +1510,31 @@ async fn close_project_status(
 ) -> impl IntoResponse {
     let db = state.db.clone();
     let user_id = user.user_id;
+    let reopen = body.reopen == Some(true);
+    let pid = id.clone();
     let result = tokio::task::spawn_blocking(move || {
         let conn = db.connect().map_err(crate::project_status::StatusError::Db)?;
         crate::project_status::close_project(&conn, &id, &user_id, &body)
     })
     .await;
     match result {
-        Ok(Ok((status, paused))) => {
-            Json(json!({ "status": status, "paused_routines": paused })).into_response()
+        Ok(Ok((status, jobs))) => {
+            // Cloud-scheduled routines run from gizzi's cron store; stop or
+            // restart those jobs too. The local scheduler already skips paused rows.
+            if !jobs.job_ids.is_empty() {
+                use crate::thread_closeout::{CloseKind, CronControl, GizziCron, Stopped};
+                let tag = format!("project-{pid}");
+                let res = if reopen {
+                    GizziCron.reopen(&tag, &jobs.job_ids).await
+                } else {
+                    let stopped = Stopped { job_ids: jobs.job_ids.clone(), ..Default::default() };
+                    GizziCron.close(&tag, &stopped, CloseKind::Paused).await
+                };
+                if let Err(e) = res {
+                    warn!(project = %pid, error = %e, "project close: gizzi cron update failed");
+                }
+            }
+            Json(json!({ "status": status, "paused_routines": jobs.paused })).into_response()
         }
         Ok(Err(e)) => status_error_response(e),
         Err(e) => {

@@ -308,13 +308,14 @@ fn sync_attention(conn: &Connection, id: &str, user_id: &str, status: &Value) {
 }
 
 /// Close (or reopen) a project. Closing pauses routines linked to it.
-/// Returns the status and how many routines were paused.
+/// Reopening resumes the routines that the close paused.
+/// Returns the status and the routines touched.
 pub fn close_project(
     conn: &Connection,
     id: &str,
     user_id: &str,
     body: &CloseBody,
-) -> Result<(Value, usize), StatusError> {
+) -> Result<(Value, ProjectJobs), StatusError> {
     let by = body.by.clone().filter(|b| !b.trim().is_empty()).unwrap_or_else(|| "you".into());
     let reopen = body.reopen == Some(true);
     let (status, ()) = with_status(conn, id, user_id, |status| {
@@ -349,15 +350,35 @@ pub fn close_project(
         status["revision"] = json!(rev);
         Ok(())
     })?;
-    let mut paused = 0usize;
+    let meta = "CASE WHEN json_valid(metadata) THEN metadata ELSE '{}' END";
+    let mut jobs = ProjectJobs::default();
     if !reopen {
-        paused += conn.execute(
-            "UPDATE routines SET status = 'paused', updated_at = datetime('now')
-             WHERE user_id = ?1 AND status != 'paused'
-               AND (workspace_id = ?2 OR CASE WHEN json_valid(metadata) THEN json_extract(metadata, '$.projectId') END = ?2)",
-            params![user_id, id],
-        )?;
-        paused += conn.execute(
+        // Routines tied to the project, plus their gizzi cron job ids so the
+        // caller can stop cloud-scheduled runs too.
+        let mut stmt = conn.prepare(&format!(
+            "SELECT id, gizzi_job_id FROM routines
+             WHERE user_id = ?1 AND status = 'active'
+               AND (workspace_id = ?2 OR json_extract({meta}, '$.projectId') = ?2)"
+        ))?;
+        let rows: Vec<(String, Option<String>)> = stmt
+            .query_map(params![user_id, id], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .filter_map(Result::ok)
+            .collect();
+        for (rid, job) in rows {
+            conn.execute(
+                &format!(
+                    "UPDATE routines SET status = 'paused', updated_at = datetime('now'),
+                         metadata = json_set({meta}, '$.closedWithProject', ?2)
+                     WHERE id = ?1"
+                ),
+                params![rid, id],
+            )?;
+            jobs.paused += 1;
+            if let Some(j) = job.filter(|j| !j.is_empty()) {
+                jobs.job_ids.push(j);
+            }
+        }
+        jobs.paused += conn.execute(
             "UPDATE cowork_routines SET enabled = 0
              WHERE user_id = ?1 AND enabled = 1 AND workspace = ?2",
             params![user_id, id],
@@ -365,8 +386,40 @@ pub fn close_project(
         for key in ATTENTION_KEYS {
             alerts::resolve(conn, user_id, &format!("project_status:{id}:{key}"), "dismissed");
         }
+    } else {
+        // Reopen brings back only what the close paused.
+        let mut stmt = conn.prepare(&format!(
+            "SELECT id, gizzi_job_id FROM routines
+             WHERE user_id = ?1 AND status = 'paused' AND json_extract({meta}, '$.closedWithProject') = ?2"
+        ))?;
+        let rows: Vec<(String, Option<String>)> = stmt
+            .query_map(params![user_id, id], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .filter_map(Result::ok)
+            .collect();
+        for (rid, job) in rows {
+            conn.execute(
+                &format!(
+                    "UPDATE routines SET status = 'active', updated_at = datetime('now'),
+                         metadata = json_remove({meta}, '$.closedWithProject')
+                     WHERE id = ?1"
+                ),
+                params![rid],
+            )?;
+            if let Some(j) = job.filter(|j| !j.is_empty()) {
+                jobs.job_ids.push(j);
+            }
+        }
     }
-    Ok((status, paused))
+    Ok((status, jobs))
+}
+
+/// What a close (or reopen) touched in the routine scheduler.
+#[derive(Debug, Default)]
+pub struct ProjectJobs {
+    /// Routines paused by a close.
+    pub paused: usize,
+    /// gizzi cron job ids to disable (close) or re-enable (reopen).
+    pub job_ids: Vec<String>,
 }
 
 fn clip(s: &str, max: usize) -> String {
@@ -464,5 +517,102 @@ fn clip_keep_lines(s: &str, max: usize) -> String {
         s.to_string()
     } else {
         format!("{}…", s.chars().take(max).collect::<String>())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn db() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE cowork_projects (id TEXT PRIMARY KEY, user_id TEXT, title TEXT, metadata TEXT,
+                 updated_at TEXT DEFAULT CURRENT_TIMESTAMP);
+             INSERT INTO cowork_projects (id, user_id, title, metadata) VALUES ('p1', 'u1', 'Launch', '{\"favorite\":true}');",
+        )
+        .unwrap();
+        // V258 also alters routine_runs; give it that table so the real schema loads.
+        conn.execute_batch("CREATE TABLE routine_runs (id TEXT);").unwrap();
+        conn.execute_batch(include_str!("../migrations/V258__attention_items.sql")).unwrap();
+        conn
+    }
+
+    fn patch(conn: &Connection, body: PatchBody) -> Result<Value, StatusError> {
+        patch_status(conn, "p1", "u1", &body)
+    }
+
+    fn section(by: &str, sec: &str, text: &str) -> PatchBody {
+        PatchBody { by: Some(by.into()), section: Some(sec.into()), text: Some(text.into()), ..Default::default() }
+    }
+
+    fn open_items(conn: &Connection) -> i64 {
+        conn.query_row("SELECT COUNT(*) FROM attention_items WHERE resolved_at IS NULL", [], |r| r.get(0)).unwrap()
+    }
+
+    #[test]
+    fn bots_writing_different_sections_keep_each_other() {
+        let conn = db();
+        patch(&conn, section("Scout", "goal", "Ship pricing page")).unwrap();
+        let s = patch(&conn, section("Writer", "blockers", "Waiting on copy")).unwrap();
+        assert_eq!(s["sections"]["goal"]["text"], "Ship pricing page");
+        assert_eq!(s["sections"]["blockers"]["updated_by"], "Writer");
+        assert_eq!(s["revision"], 2);
+        // Other metadata survives a status write.
+        let raw: String = conn.query_row("SELECT metadata FROM cowork_projects WHERE id = 'p1'", [], |r| r.get(0)).unwrap();
+        assert_eq!(serde_json::from_str::<Value>(&raw).unwrap()["favorite"], true);
+    }
+
+    #[test]
+    fn log_keeps_newest_ten_and_archives_the_rest() {
+        let conn = db();
+        for i in 0..12 {
+            patch(&conn, PatchBody { note: Some(format!("step {i}")), ..Default::default() }).unwrap();
+        }
+        let s = get_status(&conn, "p1", "u1").unwrap();
+        assert_eq!(s["log"].as_array().unwrap().len(), 10);
+        assert_eq!(s["log"][0]["note"], "step 11");
+        assert_eq!(s["archive"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn done_needs_a_proof_link() {
+        let conn = db();
+        let no_proof = patch(&conn, PatchBody { done: Some(true), ..Default::default() });
+        assert!(matches!(no_proof, Err(StatusError::ProofRequired)));
+        let s = patch(&conn, PatchBody { done: Some(true), proof_url: Some("https://github.com/x/pull/1".into()), ..Default::default() }).unwrap();
+        assert_eq!(s["state"], "done");
+        assert_eq!(s["log"][0]["proof_url"], "https://github.com/x/pull/1");
+    }
+
+    #[test]
+    fn blocked_opens_one_needs_you_item_and_clears_when_resolved() {
+        let conn = db();
+        patch(&conn, PatchBody { state: Some("blocked".into()), ..Default::default() }).unwrap();
+        patch(&conn, PatchBody { state: Some("blocked".into()), note: Some("still blocked".into()), ..Default::default() }).unwrap();
+        assert_eq!(open_items(&conn), 1);
+        patch(&conn, PatchBody { state: Some("on_track".into()), ..Default::default() }).unwrap();
+        assert_eq!(open_items(&conn), 0);
+    }
+
+    #[test]
+    fn closed_project_rejects_edits() {
+        let conn = db();
+        conn.execute_batch(
+            "CREATE TABLE routines (id TEXT, user_id TEXT, status TEXT, workspace_id TEXT, metadata TEXT, gizzi_job_id TEXT, updated_at TEXT);
+             CREATE TABLE cowork_routines (id TEXT, user_id TEXT, enabled INTEGER, workspace TEXT);
+             INSERT INTO routines VALUES ('r1', 'u1', 'active', NULL, '{\"projectId\":\"p1\"}', 'job-1', NULL);",
+        )
+        .unwrap();
+        let body = CloseBody { by: Some("you".into()), outcome: Some("Shipped".into()), ..Default::default() };
+        let (s, jobs) = close_project(&conn, "p1", "u1", &body).unwrap();
+        assert_eq!(s["lifecycle"], "closed");
+        assert_eq!((jobs.paused, jobs.job_ids.clone()), (1, vec!["job-1".to_string()]));
+        assert!(matches!(patch(&conn, section("Scout", "goal", "x")), Err(StatusError::Closed)));
+        let reopen = CloseBody { reopen: Some(true), ..Default::default() };
+        let (_, jobs) = close_project(&conn, "p1", "u1", &reopen).unwrap();
+        assert_eq!(jobs.job_ids, vec!["job-1".to_string()]);
+        let st: String = conn.query_row("SELECT status FROM routines WHERE id = 'r1'", [], |r| r.get(0)).unwrap();
+        assert_eq!(st, "active");
     }
 }

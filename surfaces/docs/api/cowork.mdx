@@ -271,7 +271,7 @@ Every call appends a log entry and bumps `revision`. It returns `{ "status": ...
 - A closed project returns 409 `{ "error": "project_closed" }`.
 - When the state becomes `blocked` or `needs_decision`, or becomes `at_risk` with a note starting with `overdue`, the owner gets one open item in Needs you. There is at most one open item per project and state, and it resolves when the state moves on.
 
-`POST /cowork/projects/:id/close` takes `{ "by", "outcome", "lessons", "reopen"? }`. It sets the lifecycle to `closed`, writes the outcome and lessons sections, sets `closed_at`, logs the change, and pauses every routine linked to the project (routines whose `metadata.projectId` or `workspace_id` equals the project id). It returns `{ "status": ..., "paused_routines": 2 }`. With `reopen: true` it sets the lifecycle back to `active`; paused routines stay paused until you turn them on.
+`POST /cowork/projects/:id/close` takes `{ "by", "outcome", "lessons", "reopen"? }`. It sets the lifecycle to `closed`, writes the outcome and lessons sections, sets `closed_at`, logs the change, and pauses every routine linked to the project (routines whose `metadata.projectId` or `workspace_id` equals the project id). It returns `{ "status": ..., "paused_routines": 2 }`. With `reopen: true` it sets the lifecycle back to `active` and turns back on the routines that the close paused. Cloud-scheduled routines are stopped and restarted in the gizzi cron store too.
 
 ## Memory
 

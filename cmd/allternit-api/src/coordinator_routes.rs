@@ -49,6 +49,7 @@ const REPLY_CAP: usize = 600;
 
 pub fn coordinator_router() -> Router<Arc<AppState>> {
     Router::new()
+        .route("/project-workspaces", get(list_workspaces))
         .route("/project-workspaces/:project_key", get(get_workspace).put(register_workspace))
         .route("/project-workspaces/:project_key/threads", post(create_workspace_thread))
         .route("/projects/:project_id/messages", get(list_messages).post(post_message))
@@ -1005,6 +1006,24 @@ async fn get_workspace(State(state): State<Arc<AppState>>, Extension(user): Exte
         Ok(Ok(Some(workspace))) => Json(workspace).into_response(),
         Ok(Ok(None)) => err(StatusCode::NOT_FOUND, "project workspace not found"),
         _ => err(StatusCode::INTERNAL_SERVER_ERROR, "could not load project workspace"),
+    }
+}
+
+/// Status summaries of the user's registered chat/code/design workspaces, so the
+/// Projects hub can show each one's status page state without a call per project.
+async fn list_workspaces(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>) -> Response {
+    let db = state.db.clone();
+    match tokio::task::spawn_blocking(move || -> rusqlite::Result<Vec<Value>> {
+        let conn = db.connect()?;
+        let mut stmt = conn.prepare("SELECT id, metadata FROM cowork_projects WHERE user_id = ?1 AND json_extract(metadata, '$.workspace.key') IS NOT NULL")?;
+        let rows = stmt.query_map(params![user.user_id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+        Ok(rows.filter_map(Result::ok).map(|(id, raw)| {
+            let meta = serde_json::from_str::<Value>(&raw).unwrap_or_default();
+            json!({ "projectId": id, "key": meta["workspace"]["key"], "status": meta.get("status").cloned().unwrap_or(Value::Null) })
+        }).collect())
+    }).await {
+        Ok(Ok(workspaces)) => Json(json!({ "workspaces": workspaces })).into_response(),
+        _ => err(StatusCode::INTERNAL_SERVER_ERROR, "could not list project workspaces"),
     }
 }
 

@@ -1,14 +1,14 @@
 import z from "zod/v4"
 import { Tool } from "@/runtime/tools/builtins/tool"
-import { Artifacts } from "@/runtime/integrations/artifacts"
-import { Pairing } from "@/runtime/services/pairing/pairing"
+import { apiFetch, getAllternitApiConfigWithDeviceToken } from "@/runtime/services/api/allternitApi"
 import { agentName } from "@/runtime/tools/builtins/artifact"
 import DESCRIPTION from "@/runtime/tools/builtins/project-status.txt"
 
 /**
  * Project status pages. Talks to allternit-api's
- * GET/PATCH /api/v1/cowork/projects/:id/status and POST .../close, with the
- * same credentials the artifact tools use (env key, else the paired device token).
+ * GET/PATCH /api/v1/cowork/projects/:id/status and POST .../close on the API
+ * that runs this session (ALLTERNIT_API_URL: the local API on Desktop, the
+ * cloud API on hosted runtimes), with the shared allternitApi credentials.
  */
 
 const SECTIONS = [
@@ -25,49 +25,29 @@ const SECTIONS = [
 
 const TIMEOUT_MS = 15_000
 
-async function tokens(): Promise<string[]> {
-  const env = [process.env.ALLTERNIT_API_KEY?.trim(), process.env.ALLTERNIT_API_TOKEN?.trim()]
-  const stored = await Pairing.load().catch(() => undefined)
-  const device = Pairing.tokenUsable(stored) ? stored.deviceToken : undefined
-  return [...new Set([...env, device].filter((t): t is string => !!t))]
-}
-
 async function call(method: "GET" | "PATCH" | "POST", path: string, body?: unknown): Promise<any> {
-  const list = await tokens()
-  if (list.length === 0) throw new Error("Not signed in to Allternit, so the project status page is unreachable.")
-  let last = "no response"
-  for (const token of list) {
-    const response = await fetch(`${Artifacts.cloudBase()}${path}`, {
-      method,
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: "application/json",
-        ...(body === undefined ? {} : { "Content-Type": "application/json" }),
-      },
-      body: body === undefined ? undefined : JSON.stringify(body),
-      signal: AbortSignal.timeout(TIMEOUT_MS),
-    })
-    if (response.status === 401 || response.status === 403) {
-      last = `HTTP ${response.status}`
-      continue
-    }
-    const text = await response.text().catch(() => "")
-    let json: any
-    try {
-      json = text ? JSON.parse(text) : undefined
-    } catch {
-      json = { message: text }
-    }
-    if (!response.ok) {
-      const code = json?.error ?? `HTTP ${response.status}`
-      if (code === "proof_required") throw new Error("proof_required: a done state needs a proof_url (a link to the evidence).")
-      if (code === "project_closed") throw new Error("project_closed: this project is closed. Reopen it first (close with reopen: true).")
-      if (code === "not_found") throw new Error("not_found: no such project for this account. Check project_id.")
-      throw new Error(`${code}${json?.message ? `: ${json.message}` : ""}`)
-    }
-    return json
+  const config = await getAllternitApiConfigWithDeviceToken()
+  const response = await apiFetch(config, path, {
+    method,
+    body: body === undefined ? undefined : JSON.stringify(body),
+    signal: AbortSignal.timeout(TIMEOUT_MS),
+  })
+  const text = await response.text().catch(() => "")
+  let json: any
+  try {
+    json = text ? JSON.parse(text) : undefined
+  } catch {
+    json = { message: text }
   }
-  throw new Error(`Allternit rejected the credentials (${last}).`)
+  if (!response.ok) {
+    const code = json?.error ?? `HTTP ${response.status}`
+    if (code === "proof_required") throw new Error("proof_required: a done state needs a proof_url (a link to the evidence).")
+    if (code === "project_closed") throw new Error("project_closed: this project is closed. Reopen it first (close with reopen: true).")
+    if (code === "not_found") throw new Error("not_found: no such project for this account. Check project_id.")
+    if (response.status === 401 || response.status === 403) throw new Error(`Allternit rejected the credentials (HTTP ${response.status}).`)
+    throw new Error(`${code}${json?.message ? `: ${json.message}` : ""}`)
+  }
+  return json
 }
 
 function render(status: any): string {

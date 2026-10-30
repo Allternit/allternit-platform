@@ -1712,6 +1712,7 @@ pub fn bot_project_overview(db: &DbHandle, user_id: &str) -> rusqlite::Result<Ve
             "lastActivityAt": activity,
             "archived": meta.get("archived").and_then(Value::as_bool).unwrap_or(false),
             "favorite": meta.get("favorite").and_then(Value::as_bool).unwrap_or(false),
+            "status": meta.get("status").cloned().unwrap_or(Value::Null),
         }));
     }
     out.sort_by(|a, b| b["lastActivityAt"].as_str().cmp(&a["lastActivityAt"].as_str()));
