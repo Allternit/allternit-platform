@@ -17,7 +17,7 @@ struct GroupRowLabel: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            GroupAvatarStack(members: group.members, size: 30)
+            GroupAvatarStack(members: group.members, size: 36)
             VStack(alignment: .leading, spacing: 2) {
                 Text(group.name).lineLimit(1)
                 // GroupsListView `said`: a bot's line carries its name, yours is bare.
@@ -42,7 +42,7 @@ struct GroupAvatarStack: View {
             ForEach(members.prefix(3)) { member in
                 Group {
                     if let bot = store.bot(member.botId) {
-                        BotAvatarView(bot: bot, size: size)
+                        BotStatusAvatar(bot: bot, size: size, tiled: true)
                     } else {
                         AgentIdenticonView(seed: member.botId, size: size)
                     }
@@ -80,7 +80,7 @@ struct GroupsListView: View {
                 ScrollView {
                     OverviewCards(items: cards, layout: layout) { item in
                         if let group = store.groups.first(where: { $0.id == item.id }) {
-                            GroupAvatarStack(members: group.members, size: 18)
+                            GroupAvatarStack(members: group.members, size: layout.faceSize)
                         }
                     } onOpen: { item in
                         navigator.open(.group(item.id))

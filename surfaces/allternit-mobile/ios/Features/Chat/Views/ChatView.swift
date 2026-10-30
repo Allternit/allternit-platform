@@ -287,10 +287,16 @@ struct ChatContentView: View {
                     ChatLaunchGreeting()
                     Spacer(minLength: 16)
                     composer(deck: .full)
-                    if inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    // Templates stay hidden until a Docs, Slides, Sites or
+                    // Sheets mode is picked in Agent mode; then that mode's
+                    // templates show.
+                    if inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                       agentModeStore.isAgentEnabled(for: modeStore.mode),
+                       let tile = agentModeStore.selectedTile(for: modeStore.mode) as AgentModeTile?,
+                       ArtifactModeGallery.tabs.contains(where: { $0.mode == tile }) {
                         ArtifactModeGallery(
-                            preferredMode: agentModeStore.isAgentEnabled(for: modeStore.mode)
-                                ? agentModeStore.selectedTile(for: modeStore.mode) : nil,
+                            preferredMode: tile,
+                            showsTabs: false,
                             onSelectTemplate: { template in
                                 agentModeStore.selectTile(template.mode, for: modeStore.mode)
                                 agentModeStore.setAgentEnabled(true, for: modeStore.mode)
@@ -306,6 +312,7 @@ struct ChatContentView: View {
                 .padding(.bottom, 8)
                 .frame(minHeight: proxy.size.height)
                 .animation(.easeOut(duration: 0.2), value: inputText.isEmpty)
+                .animation(.easeOut(duration: 0.2), value: agentModeStore.isAgentEnabled(for: modeStore.mode))
             }
             .scrollDismissesKeyboard(.interactively)
             .background { BotWashedBackground().ignoresSafeArea() }

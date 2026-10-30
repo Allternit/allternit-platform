@@ -22,6 +22,16 @@ enum OverviewLayout: String, CaseIterable, Identifiable {
         }
     }
 
+    /// A face on a row or card grows with the layout: small on a list row,
+    /// bigger on a grid card, biggest on a tall deck card.
+    var faceSize: CGFloat {
+        switch self {
+        case .list: return 32
+        case .grid: return 36
+        case .deck: return 56
+        }
+    }
+
     /// Phosphor List / SquaresFour / Columns.
     var icon: String {
         switch self {
@@ -151,7 +161,7 @@ struct OverviewCards<Leading: View>: View {
 
     private func row(_ item: OverviewCardItem) -> some View {
         HStack(spacing: 12) {
-            leading(item).frame(width: 24)
+            leading(item).frame(minWidth: 24)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text(item.title)

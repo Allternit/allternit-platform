@@ -178,7 +178,7 @@ struct BotsDrawerRail: View {
         if let mainBot {
             Button { onOpenBot(mainBot.id) } label: {
                 VStack(spacing: 6) {
-                    LiveBotStatusAvatar(bot: mainBot, size: 72)
+                    LiveBotStatusAvatar(bot: mainBot, size: 92)
                         .overlay(alignment: .bottomTrailing) {
                             Image(systemName: "crown.fill")
                                 .font(.system(size: 11))
@@ -196,7 +196,7 @@ struct BotsDrawerRail: View {
                 .padding(.horizontal, 8)
                 .padding(.top, 10)
                 .padding(.bottom, 8)
-                .frame(width: 116)
+                .frame(width: 136)
                 .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
             }
             .buttonStyle(.plain)
@@ -245,7 +245,7 @@ struct BotsDrawerRail: View {
                 ForEach(promoted) { bot in
                     VStack(spacing: 4) {
                         Button { onOpenBot(bot.id) } label: {
-                            LiveBotStatusAvatar(bot: bot, size: 40)
+                            LiveBotStatusAvatar(bot: bot, size: 60, tiled: true)
                         }
                         .buttonStyle(.plain)
                         .accessibilityLabel("Open \(bot.botDisplayName)")
@@ -254,7 +254,7 @@ struct BotsDrawerRail: View {
                             .foregroundColor(Color("TextPrimary"))
                             .lineLimit(1)
                     }
-                    .frame(width: 76)
+                    .frame(width: 84)
                     .overlay(alignment: .topTrailing) {
                         Menu {
                             Button { store.togglePin(bot.id) } label: { Label("Unpromote", systemImage: "pin.slash") }
@@ -288,13 +288,13 @@ struct BotsDrawerRail: View {
                             Image(systemName: "plus")
                                 .font(.system(size: 13))
                                 .foregroundColor(Color("TextTertiary"))
-                                .frame(width: 40, height: 40)
+                                .frame(width: 60, height: 60)
                                 .overlay(Circle().stroke(Color("BorderStrong"), style: StrokeStyle(lineWidth: 1, dash: [3, 3])))
                             Text("Promote")
                                 .font(.system(size: 11, weight: .medium))
                                 .foregroundColor(Color("TextTertiary"))
                         }
-                        .frame(width: 76)
+                        .frame(width: 84)
                     }
                     .accessibilityLabel("Promote a bot")
                 }
@@ -420,7 +420,7 @@ struct BotsDrawerRail: View {
         let line = latest.map { $0.statusLine?.nilIfBlank ?? $0.title } ?? bot.botTagline
         return Button { onOpenBot(bot.id) } label: {
             HStack(spacing: 12) {
-                LiveBotStatusAvatar(bot: bot, size: 46)
+                LiveBotStatusAvatar(bot: bot, size: 60, tiled: true)
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 4) {
                         BotNameText(bot.botDisplayName, size: 15)
@@ -471,11 +471,7 @@ struct BotsDrawerRail: View {
                         ForEach(groups) { group in
                             Button { onOpen(.group(group.id)) } label: {
                                 HStack(spacing: 10) {
-                                    Image(systemName: "person.3")
-                                        .font(.system(size: 13))
-                                        .foregroundColor(Color("TextSecondary"))
-                                        .frame(width: 30, height: 30)
-                                        .background(Circle().fill(Color("FillNeutral")))
+                                    GroupAvatarStack(members: group.members, size: 34)
                                     Text(group.name)
                                         .font(.system(size: 14))
                                         .foregroundColor(Color("TextPrimary"))
@@ -594,7 +590,7 @@ struct MainBotSetupSheet: View {
         } label: {
             HStack(spacing: 12) {
                 if let bot {
-                    BotAvatarView(bot: bot, size: 36)
+                    BotAvatarView(bot: bot, size: 44)
                 } else {
                     Image(systemName: "crown")
                         .frame(width: 36, height: 36)

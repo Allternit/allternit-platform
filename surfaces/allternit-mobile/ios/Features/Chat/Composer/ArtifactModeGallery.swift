@@ -34,6 +34,9 @@ struct ArtifactTemplate: Identifiable, Sendable {
 struct ArtifactModeGallery: View {
     /// The deck's selected mode, when agent mode is on.
     let preferredMode: AgentModeTile?
+    /// Off on the Home launch, where the gallery only opens for the mode
+    /// picked in Agent mode.
+    var showsTabs = true
     let onSelectTemplate: (ArtifactTemplate) -> Void
 
     @State private var picked: AgentModeTile? = nil
@@ -59,25 +62,27 @@ struct ArtifactModeGallery: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 4) {
-                ForEach(Self.tabs) { tab in
-                    let selected = tab.mode == active
-                    Button(action: { picked = tab.mode }) {
-                        HStack(spacing: 6) {
-                            Text(tab.label)
-                                .font(.system(size: 13))
-                                .foregroundColor(selected ? Color("TextPrimary") : Color("TextSecondary"))
-                            Text("\(ArtifactTemplate.templates(for: tab.mode).count)")
-                                .font(.system(size: 11).monospacedDigit())
-                                .foregroundColor(Color("TextTertiary"))
-                                .opacity(0.7)
+            if showsTabs {
+                HStack(spacing: 4) {
+                    ForEach(Self.tabs) { tab in
+                        let selected = tab.mode == active
+                        Button(action: { picked = tab.mode }) {
+                            HStack(spacing: 6) {
+                                Text(tab.label)
+                                    .font(.system(size: 13))
+                                    .foregroundColor(selected ? Color("TextPrimary") : Color("TextSecondary"))
+                                Text("\(ArtifactTemplate.templates(for: tab.mode).count)")
+                                    .font(.system(size: 11).monospacedDigit())
+                                    .foregroundColor(Color("TextTertiary"))
+                                    .opacity(0.7)
+                            }
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(selected ? Color("FillNeutral") : Color.clear, in: RoundedRectangle(cornerRadius: 6))
                         }
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(selected ? Color("FillNeutral") : Color.clear, in: RoundedRectangle(cornerRadius: 6))
+                        .buttonStyle(.plain)
+                        .accessibilityAddTraits(selected ? [.isSelected] : [])
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityAddTraits(selected ? [.isSelected] : [])
                 }
             }
 

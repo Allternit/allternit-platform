@@ -218,13 +218,14 @@ struct PhoneMenuButton: View {
 struct LiveBotStatusAvatar: View {
     let bot: AgentRecord
     let size: CGFloat
+    var tiled = false
     @ObservedObject private var botStore = BotModeStore.shared
     @ObservedObject private var botStatus = BotStatusStore.shared
 
     var body: some View {
         let waiting = botStore.waitingCount(for: bot.id) > 0 || botStatus.needsAttention(for: bot.id)
         let working = !waiting && (botStore.workingCount(for: bot.id) > 0 || botStatus.isWorking(for: bot.id))
-        BotStatusAvatar(bot: bot, size: size, working: working, waiting: waiting)
+        BotStatusAvatar(bot: bot, size: size, working: working, waiting: waiting, tiled: tiled)
             .frame(width: size, height: size)
     }
 

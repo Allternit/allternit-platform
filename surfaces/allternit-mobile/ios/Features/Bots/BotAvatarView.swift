@@ -75,9 +75,12 @@ struct BotStatusAvatar: View {
     var working = false
     var waiting = false
     var live = false
+    /// Every bot the same size: sprite art (which has empty margins) is
+    /// drawn larger so it fills its frame like a photo does.
+    var tiled = false
 
     var body: some View {
-        BotAvatarView(bot: bot, size: size, live: live, working: working)
+        face
             .overlay(alignment: .bottomTrailing) {
                 if waiting || working {
                     Circle()
@@ -87,6 +90,18 @@ struct BotStatusAvatar: View {
                         .accessibilityLabel(waiting ? "Needs you" : "Working")
                 }
             }
+    }
+
+    @ViewBuilder
+    private var face: some View {
+        if tiled {
+            let sprite: Bool = { if case .sprite = BotAvatarSource.resolve(bot) { return true }; return false }()
+            // No bubble: sprite art is drawn larger so it fills the frame.
+            BotAvatarView(bot: bot, size: size * (sprite ? 1.25 : 1), live: live, working: working)
+                .frame(width: size, height: size)
+        } else {
+            BotAvatarView(bot: bot, size: size, live: live, working: working)
+        }
     }
 }
 
