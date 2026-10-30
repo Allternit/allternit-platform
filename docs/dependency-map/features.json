@@ -2850,6 +2850,30 @@
       ]
     },
     {
+      "id": "feature:waiting-games",
+      "label": "Waiting games (play while a bot works)",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "A Play button beside Stop in every message box (ThreadComposer, ChatComposer) after about 5 s of work opens a floating game window (Desktop: bottom right, draggable; phone layout and m.allternit.com PWA: above the message box) with a Full screen button. Eight ASCII games on one canvas: Big Fish, Bot Race (your bots, ~200 dev words), Token Catch, Meteor Dodge, Bug Bash, Stack Deploy, Context Snake, Bot Memory. When the bot that opened it finishes, the game pauses and says the reply is ready. Settings → Appearance → Background → Waiting games (on by default).",
+      "touches": [
+        "allternit-ai/src/components/waiting-games",
+        "allternit-ai/src/components/threads/ThreadComposer.tsx",
+        "allternit-ai/src/views/chat/ChatComposer.tsx",
+        "allternit-ai/src/shell/ShellApp.tsx",
+        "allternit-ai/src/fabric-session/PhoneProviders.tsx",
+        "allternit-ai/src/components/bots/stage/backdrop/StageBackdropPicker.tsx"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-29",
+          "note": "Eoj asked for mini games while waiting (an ocean fish game and a typing race against bots). After three prototype rounds he kept Big Fish, Bot Race (more dev words), Token Catch, Meteor Dodge, Context Snake and Bot Memory; Bug Squash and Chain Pop were replaced by Bug Bash and Stack Deploy. Placement: a hybrid. The game opens as a floating window and can expand to full screen."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/surfaces/waiting-games.mdx"
+      ]
+    },
+    {
       "id": "feature:deck-pinned-artifacts",
       "label": "Pinned artifacts in the composer deck",
       "product": "product:ai-allternit",

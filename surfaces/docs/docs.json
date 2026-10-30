@@ -517,6 +517,7 @@
               "surfaces/agent-studio",
               "surfaces/agent-hub",
               "surfaces/bots",
+              "surfaces/waiting-games",
               "surfaces/subscriptions",
               "surfaces/canvas",
               "surfaces/operator-browser",
