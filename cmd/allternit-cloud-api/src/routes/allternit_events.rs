@@ -310,13 +310,24 @@ pub static REGISTRY: &[EventType] = &[
         payload: &[("run_id", "Run id."), ("serial", "Phone serial, when one was named."), ("ok", "Whether it reached its goal (boolean)."), ("status", "Task: done, failed, max_steps or timeout. Skill: succeeded, diverged or failed."), ("skill", "Skill name, for a skill run."), ("source", "task, skill or routine."), ("steps", "Steps run (number)."), ("failed", "Steps that failed (number)."), ("model_calls", "Model calls made (number)."), ("duration_ms", "Milliseconds (number).")],
         runtime_aliases: &["phone.run.completed"],
     },
+    EventType {
+        name: "phone.fleet_run.completed",
+        title: "Phone fleet runs finished",
+        description: "Every run of a fleet run (POST /v1/phones/runs) ended, or none could start. Each run's own end is phone.run.completed; the whole fleet run is GET /v1/phones/runs/{id}.",
+        platform: true,
+        agents: false,
+        bot: false,
+        filters: &[],
+        payload: &[("fleet_run_id", "Fleet run id (pfr_)."), ("kind", "task or skill."), ("runs", "Runs started (number)."), ("succeeded", "Runs that reached their goal (number)."), ("failed", "Runs that ended without it (number)."), ("not_started", "Phones whose run could not start (number).")],
+        runtime_aliases: &[],
+    },
 ];
 
 /// Event types a Platform API webhook can subscribe to: the 051 list, the P3
 /// `call.*` events, `usage.threshold` (P5 spend caps), and P4's `approval.requested`
 /// and `inbox.item.created` (from the project's hosted runtime, per account),
 /// and `phone.*` (the project owner's own phones, from their Desktop).
-pub const PLATFORM_EVENTS: [&str; 11] = ["approval.requested", "message.received", "message.status", "registration.updated", "call.started", "call.ended", "call.transcript.ready", "inbox.item.created", "usage.threshold", "phone.step", "phone.run.completed"];
+pub const PLATFORM_EVENTS: [&str; 12] = ["approval.requested", "message.received", "message.status", "registration.updated", "call.started", "call.ended", "call.transcript.ready", "inbox.item.created", "usage.threshold", "phone.step", "phone.run.completed", "phone.fleet_run.completed"];
 
 pub fn find(name: &str) -> Option<&'static EventType> {
     REGISTRY.iter().find(|e| e.name == name)

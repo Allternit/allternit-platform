@@ -947,7 +947,7 @@ paths:
               required: [url, events]
               properties:
                 url: { type: string, format: uri }
-                events: { type: array, items: { type: string, enum: ["*", approval.requested, message.received, message.status, registration.updated, inbox.item.created, call.started, call.ended, call.transcript.ready, usage.threshold, phone.step, phone.run.completed] } }
+                events: { type: array, items: { type: string, enum: ["*", approval.requested, message.received, message.status, registration.updated, inbox.item.created, call.started, call.ended, call.transcript.ready, usage.threshold, phone.step, phone.run.completed, phone.fleet_run.completed] } }
                 description: { type: string, maxLength: 200 }
       responses:
         "201":
@@ -1879,6 +1879,69 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/PhoneRunStarted" }
         default: { $ref: "#/components/responses/Error" }
+  /v1/phones/{serial}/live:
+    parameters:
+      - { name: serial, in: path, required: true, schema: { type: string }, description: "From GET /v1/phones (not `-`)." }
+    post:
+      operationId: getPhoneLiveView
+      summary: Watch a phone live
+      description: |
+        A view-only live view of the phone's screen for 10 minutes: `viewer_url` is a page you can open or put in an iframe, and `stream_url` is the raw stream (`{type:"meta"}` JSON, then H.264 Annex-B frames) for your own player. Both URLs carry the live view id as their only credential and stop working after `expires_in` seconds; neither can send input. A new view needs a new call. 409 `phone_offline` when the phone isn't connected to the Desktop.
+      tags: [Phones]
+      responses:
+        "200":
+          description: The live view.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PhoneLiveView" }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/phones/runs:
+    post:
+      operationId: startPhoneFleetRun
+      summary: Run one task or skill on many phones
+      description: |
+        Starts one background run per listed phone: a task (`goal`) or a saved skill (`skill`). Answers 202 with the fleet run; phones whose run could not start are in `not_started` with the error. Every run counts against the plan's concurrent phone-run limit (Sandbox 1, Pay as you go 5, Growth 25, Enterprise by contract); asking for more than the room left is 429 `phone_run_limit` and starts nothing. Each run ends with `phone.run.completed`; the whole fleet run with `phone.fleet_run.completed`.
+      tags: [Phones]
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [serials]
+              additionalProperties: false
+              properties:
+                serials: { type: array, minItems: 1, maxItems: 100, uniqueItems: true, items: { type: string } }
+                goal: { type: string, maxLength: 2000, description: "A task for every phone. Give this or skill." }
+                skill: { type: string, maxLength: 80, description: "A saved phone skill to replay on every phone." }
+                inputs: { type: object, additionalProperties: { type: string }, description: "Skill inputs." }
+                max_steps: { type: integer, minimum: 1, maximum: 40 }
+                bot_id: { type: string }
+                brain: { type: string, description: "provider/model" }
+      responses:
+        "202":
+          description: Started.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PhoneFleetRun" }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/phones/runs/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: getPhoneFleetRun
+      summary: A fleet run
+      description: The fleet run and each phone's run (status, ok, start and end).
+      tags: [Phones]
+      responses:
+        "200":
+          description: The fleet run.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PhoneFleetRun" }
+        default: { $ref: "#/components/responses/Error" }
 components:
   securitySchemes:
     bearerAuth:
@@ -2351,6 +2414,56 @@ components:
               source: { type: [string, "null"] }
         retention_days: { type: integer }
         max_steps: { type: integer }
+    PhoneLiveView:
+      type: object
+      properties:
+        object: { type: string, const: phone.live_view }
+        id: { type: string, description: "The live view id; it is the credential in both URLs." }
+        serial: { type: string }
+        view_only: { type: boolean, const: true }
+        expires_in: { type: integer, description: Seconds. }
+        expires_at: { type: string, format: date-time }
+        viewer_url: { type: string, format: uri }
+        stream_url: { type: string, format: uri }
+    PhoneFleetRun:
+      type: object
+      properties:
+        object: { type: string, const: phone.fleet_run }
+        id: { type: string }
+        kind: { type: string, enum: [task, skill] }
+        goal: { type: [string, "null"] }
+        skill: { type: [string, "null"] }
+        status: { type: string, enum: [running, completed] }
+        created_at: { type: string, format: date-time }
+        completed_at: { type: [string, "null"], format: date-time }
+        counts:
+          type: object
+          properties:
+            runs: { type: integer }
+            running: { type: integer }
+            succeeded: { type: integer }
+            failed: { type: integer }
+            not_started: { type: integer }
+        runs:
+          type: array
+          items:
+            type: object
+            properties:
+              object: { type: string, const: phone.run }
+              run_id: { type: string }
+              serial: { type: [string, "null"] }
+              status: { type: string, description: "running, or the end status (done, failed, max_steps, timeout, succeeded, diverged)." }
+              ok: { type: [boolean, "null"] }
+              started_at: { type: string, format: date-time }
+              ended_at: { type: [string, "null"], format: date-time }
+        not_started:
+          type: array
+          items:
+            type: object
+            properties:
+              serial: { type: string }
+              code: { type: string }
+              message: { type: string }
     PhoneRunStarted:
       type: object
       properties:
