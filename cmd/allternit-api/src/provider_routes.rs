@@ -2810,6 +2810,11 @@ mod auth_status_kind_tests {
         let (_, qoder) = subscription_provider("qodercli").unwrap();
         assert_eq!(login_argv("qodercli", qoder.login, true).env, vec![("NO_BROWSER", std::ffi::OsStr::new("1"))]);
         assert!(login_argv("qodercli", qoder.login, false).env.is_empty());
+        // Cline and Kilo sign in by device code everywhere, so `login` is enough.
+        let (_, cline) = subscription_provider("cline").unwrap();
+        assert_eq!(login_argv("cline", cline.login, true).argv, vec!["auth", "cline"]);
+        let (_, kilo) = subscription_provider("kilo").unwrap();
+        assert_eq!(login_argv("kilo", kilo.login, true).argv, vec!["auth", "login", "-p", "kilo"]);
     }
 
     #[test]
