@@ -419,7 +419,10 @@ struct ChatContentView: View {
                     attachmentStore.clear()
                 },
                 onOpenTerminal: { terminal ? onLeaveTerminal?() : onEnterTerminal?() },
-                onAttach: { isCodePlusSheetPresented = true }
+                onAttach: { isCodePlusSheetPresented = true },
+                sessionId: viewModel.currentSessionId,
+                // A landed turn (count moves, streaming stops) refreshes the meter.
+                contextRefresh: viewModel.messages.count * 2 + (viewModel.isStreaming ? 1 : 0)
             )
         }
         .padding(.bottom, 4)

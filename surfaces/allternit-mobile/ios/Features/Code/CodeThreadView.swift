@@ -12,27 +12,21 @@ struct CodeThreadTarget: Hashable, Identifiable {
     var id: UUID { key }
 }
 
-/// A code thread on the phone (CodeSessionHeader with `phone`, then the
-/// thread): one top row with the session menu (title ⌄) and one folder ·
-/// branch chip, the pending-changes banner, then the shared chat feed and
-/// composer. Panes and session actions live in the Code header's panes
-/// menu (CodeModeView).
+/// A code thread on the phone: the pending-changes banner, then the shared
+/// chat feed and the Code composer. The session's name (its menu: rename,
+/// copy ID, archive), the panes and the sessions button sit in the Code
+/// header (CodeModeView).
 struct CodeThreadChatView: View {
     let target: CodeThreadTarget
-    let title: String?
     let folder: CodeFolderInfo?
     /// The backend session this thread is on (nil until the first send).
     let onSessionChanged: (String?) -> Void
-    let onRename: () -> Void
-    let onArchive: () -> Void
     /// The Terminal choice: this thread drawn as a terminal session.
     var terminal: Bool = false
-    /// The terminal view's "Chat" item: back to the chat feed.
+    /// The composer switch's "Chat": back to the chat feed.
     var onLeaveTerminal: () -> Void = {}
-    /// The chat view's "Terminal" item: this thread in its terminal look.
+    /// The composer switch's "Terminal": this thread in its terminal look.
     var onEnterTerminal: () -> Void = {}
-    /// The terminal view's Shell button: the computer's raw shell.
-    var onOpenShell: () -> Void = {}
 
     @StateObject private var viewModel = ChatViewModel()
     @StateObject private var modelStore = ModelStore.shared
@@ -46,21 +40,8 @@ struct CodeThreadChatView: View {
 
     private var sessionId: String? { viewModel.currentSessionId ?? target.sessionId }
 
-    private var displayTitle: String {
-        if let title, !title.isEmpty { return title }
-        if let prompt = target.initialPrompt, !prompt.isEmpty {
-            return prompt.prefix(1).uppercased() + prompt.dropFirst()
-        }
-        return "New thread"
-    }
-
     var body: some View {
         VStack(spacing: 0) {
-            if terminal {
-                terminalHeader
-            } else if sessionId != nil || target.initialPrompt != nil {
-                sessionHeader
-            }
             pendingPermissionBanner
             ChatContentView(
                 sessionId: target.sessionId,
@@ -91,95 +72,6 @@ struct CodeThreadChatView: View {
                 pendingPermissions.removeAll { $0.id == resolved.id }
             }
         }
-    }
-
-    /// Title ⌄ (the session menu) on the left, the folder · branch chip on
-    /// the right; 6pt × 14pt padding, a hairline under it.
-    private var sessionHeader: some View {
-        HStack(spacing: 8) {
-            Menu {
-                Button(action: onRename) { Label("Rename", systemImage: "pencil") }
-                if let sessionId {
-                    Button(action: { UIPasteboard.general.string = sessionId }) {
-                        Label("Copy session ID", systemImage: "doc.on.doc")
-                    }
-                }
-                Divider()
-                Button(role: .destructive, action: onArchive) { Label("Archive", systemImage: "archivebox") }
-            } label: {
-                HStack(spacing: 6) {
-                    Text(displayTitle)
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundColor(Color("TextPrimary"))
-                        .lineLimit(1)
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundColor(Color("TextPrimary").opacity(0.6))
-                }
-                .padding(.horizontal, 6)
-                .padding(.vertical, 4)
-            }
-            .disabled(sessionId == nil)
-            Spacer(minLength: 8)
-            if let folder {
-                HStack(spacing: 6) {
-                    Image(systemName: "arrow.triangle.branch")
-                        .font(.system(size: 11))
-                    Text(folder.branch.map { "\(folder.name) · \($0)" } ?? folder.name)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                }
-                .font(.system(size: 11, weight: .bold))
-                .foregroundColor(Color("TextSecondary"))
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(Color("FillNeutral"))
-                .clipShape(Capsule())
-                .overlay(Capsule().stroke(Color("BorderSubtle"), lineWidth: 1))
-                .frame(maxWidth: UIScreen.main.bounds.width * 0.48, alignment: .trailing)
-                .accessibilityLabel("\(folder.directory) · \(folder.branch ?? "")")
-            }
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 6)
-        .overlay(alignment: .bottom) { Rectangle().fill(Color("BorderSubtle")).frame(height: 1) }
-    }
-
-    /// The terminal view's top row: the thread's name (its session menu) on
-    /// the dark strip, and Shell — the computer's raw shell — on the right.
-    private var terminalHeader: some View {
-        HStack(spacing: 8) {
-            Menu {
-                Button(action: onRename) { Label("Rename", systemImage: "pencil") }
-                if let sessionId {
-                    Button(action: { UIPasteboard.general.string = sessionId }) {
-                        Label("Copy session ID", systemImage: "doc.on.doc")
-                    }
-                }
-                Divider()
-                Button(role: .destructive, action: onArchive) { Label("Archive", systemImage: "archivebox") }
-            } label: {
-                HStack(spacing: 6) {
-                    Text(displayTitle)
-                        .font(.system(size: 14, weight: .semibold, design: .monospaced))
-                        .foregroundColor(TerminalPalette.foreground)
-                        .lineLimit(1)
-                    if sessionId != nil {
-                        Image(systemName: "chevron.down")
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundColor(TerminalPalette.secondary)
-                    }
-                }
-                .padding(.horizontal, 6)
-                .padding(.vertical, 4)
-            }
-            .disabled(sessionId == nil)
-            Spacer(minLength: 8)
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 6)
-        .background(TerminalPalette.strip)
-        .overlay(alignment: .bottom) { Rectangle().fill(TerminalPalette.line).frame(height: 1) }
     }
 
     /// A pending file edit (or other approval) for this session; tapping

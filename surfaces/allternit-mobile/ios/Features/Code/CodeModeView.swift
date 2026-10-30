@@ -5,21 +5,21 @@ import SwiftUI
 /// Code mode, laid out like the m.allternit.com phone Code screen
 /// (fabric-session/phone/screens/LazyScreen.tsx with CodeRoot under it):
 ///
-/// - The "Connect a computer" notice, then the phone header: ☰ on the left;
-///   no title on the launchpad (the gizzi code lockup names it), "Terminal"
-///   in the terminal. Trailing: the panes menu (in a thread), the open-count
-///   button (the sessions overview), New code thread (launchpad only), and
-///   Open / Close terminal.
-/// - The launchpad (CodeCanvas `LaunchStage`): lockup + What's new, the
-///   greeting, "Run a command or describe a task to start coding.", the
-///   Show usage pill / usage card, and the terminal-style prompt with its
-///   deck row on the bottom edge.
-/// - A thread: the session row and the shared chat feed (CodeThreadChatView),
-///   or, with Terminal on, the same thread drawn as a terminal session (dark,
-///   `❯` prompts, `●` tool lines) with the Code prompt under it. The choice
-///   is kept per thread.
-/// - The shell (PhoneCodeTerminal, the terminal view's Shell button and the
-///   panes menu): the computer's raw shell, one dark surface, header included.
+/// - The "Connect a computer" notice, then the phone header: ☰ on the left,
+///   the sessions button (a task list) on the right, and between them the
+///   gizzi code lockup on the launchpad, the session's name (its menu) in a
+///   thread, or "Shell". A thread adds the Panes menu (every desktop pane,
+///   the session panel and background tasks) beside the sessions button.
+/// - The launchpad (CodeCanvas `LaunchStage`): What's new under the sessions
+///   button, the greeting, "Run a command or describe a task to start
+///   coding.", the Show usage pill / usage card, and the Code prompt.
+/// - A thread: the shared chat feed (CodeThreadChatView), or, with Terminal
+///   on (the composer's Chat/Terminal switch, the one view switch here), the
+///   same thread drawn as a terminal session (dark, `❯` prompts, `●` tool
+///   lines). The choice is kept per thread.
+/// - The shell (PhoneCodeTerminal, from the sessions sheet's Shell or the
+///   Terminal pane): the computer's raw shell, one dark surface, header
+///   included; the sessions sheet leads back to a thread.
 ///
 /// Threads are tagged `origin_surface='code'` on create because the app
 /// mode is `.code` here (ChatViewModel's session context).
@@ -28,6 +28,7 @@ struct CodeModeView: View {
     @Binding var selectedSessionId: String?
 
     @EnvironmentObject private var modeStore: AppModeStore
+    @EnvironmentObject private var agentModeStore: AgentModeStore
     @StateObject private var terminalStore = CodeTerminalStore()
     @StateObject private var instanceStore = InstanceStore.shared
 
@@ -41,7 +42,7 @@ struct CodeModeView: View {
     /// key until its session exists.
     @State private var terminalKeys = Set(UserDefaults.standard.stringArray(forKey: CodeModeView.terminalKeysKey) ?? [])
     @State private var overviewKind: CodeOverviewKind? = nil
-    @State private var paneSheet: PaneSheet? = nil
+    @State private var pane: CodePaneKind? = nil
     @State private var isRenamePresented = false
     @State private var renameText = ""
     @State private var actionError: String? = nil
@@ -62,11 +63,6 @@ struct CodeModeView: View {
         "Pick a task and let's run it.",
         "Need a hand with the codebase?",
     ]
-
-    enum PaneSheet: String, Identifiable {
-        case changes, browser, files
-        var id: String { rawValue }
-    }
 
     /// Open code threads: code-surface sessions that aren't archived.
     private var codeSessions: [AgentSession] {
@@ -97,15 +93,11 @@ struct CodeModeView: View {
                     if let thread {
                         CodeThreadChatView(
                             target: thread,
-                            title: activeSessionId.flatMap { id in sessions.first { $0.id == id }?.name },
                             folder: folder,
                             onSessionChanged: sessionChanged,
-                            onRename: beginRename,
-                            onArchive: archiveActive,
                             terminal: terminalLook,
                             onLeaveTerminal: { setTerminalLook(false) },
-                            onEnterTerminal: { setTerminalLook(true) },
-                            onOpenShell: { shellOpen = true }
+                            onEnterTerminal: { setTerminalLook(true) }
                         )
                         .id(thread.id)
                     } else {
@@ -147,25 +139,31 @@ struct CodeModeView: View {
                     shellOpen = false
                     open(sessionId: session.id)
                 },
-                onNew: newThread,
+                onNew: {
+                    shellOpen = false
+                    newThread()
+                },
                 onArchive: { session in archive(session.id) },
-                onOpenMenu: openDrawer
+                onOpenMenu: openDrawer,
+                onOpenTerminal: {
+                    shellOpen = false
+                    openTerminal()
+                },
+                onOpenShell: { shellOpen = true }
             )
             .presentationDragIndicator(.visible)
         }
-        .sheet(item: $paneSheet) { sheet in
-            switch sheet {
-            case .files:
-                FileBrowserView(instanceStore: instanceStore)
-            case .changes:
-                if let activeSessionId {
-                    SessionDiffListView(sessionId: activeSessionId, instanceStore: instanceStore)
-                }
-            case .browser:
-                if let ptyId = terminalStore.livePtyId {
-                    DevServerPortsView(ptyID: ptyId, instanceStore: instanceStore)
-                }
-            }
+        .sheet(item: $pane) { kind in
+            CodePaneSheet(
+                kind: kind,
+                sessionId: activeSessionId,
+                folder: folder,
+                instanceStore: instanceStore,
+                terminals: terminalStore,
+                modeStore: modeStore,
+                agentModeStore: agentModeStore,
+                onOpenMenu: openDrawer
+            )
         }
         .alert("Rename", isPresented: $isRenamePresented) {
             TextField("Session name", text: $renameText)
@@ -192,74 +190,96 @@ struct CodeModeView: View {
             }
             .accessibilityLabel("Open menu")
 
-            // One switcher for the three ways to work here: the thread as a
-            // chat, the same thread in its terminal look, or the computer's shell.
-            CodeViewSwitcher(selection: viewKind, dark: darkChrome, onSelect: selectView)
-                .padding(.leading, 2)
-
             Spacer(minLength: 4)
 
             if inThread && !shellOpen {
                 panesMenu(ink: ink)
             }
-            CodeOverviewCountButton(
-                count: shellOpen ? terminalStore.tiles.count : codeSessions.count,
-                noun: shellOpen ? "terminal sessions" : "code threads",
-                tint: ink
-            ) {
-                overviewKind = shellOpen ? .terminals : .threads
-            }
-            if !shellOpen && !inThread {
-                Button(action: newThread) {
-                    Image(systemName: "square.and.pencil")
-                        .font(.system(size: 19))
-                        .foregroundColor(ink)
-                        .frame(width: 44, height: 44)
-                }
-                .accessibilityLabel("New code thread")
-            }
+            CodeSessionsButton(tint: ink) { overviewKind = .threads }
         }
         .padding(.horizontal, 6)
         .frame(height: 52)
+        .overlay {
+            headerTitle(ink: ink)
+                .padding(.horizontal, inThread && !shellOpen ? 100 : 56)
+        }
         .background(darkChrome ? TerminalPalette.background : Color("BgPrimary"))
     }
 
-    /// The session's panes and actions as one header button
-    /// (PhonePanesButton): Panes, then the session actions.
+    /// Between ☰ and the right icons: the gizzi code lockup on the launchpad,
+    /// the session's name (its menu) in a thread, "Shell" in the shell.
+    @ViewBuilder
+    private func headerTitle(ink: Color) -> some View {
+        if shellOpen {
+            Text("Shell")
+                .font(.system(size: 15, weight: .semibold, design: .monospaced))
+                .foregroundColor(ink)
+        } else if inThread {
+            Menu {
+                Button(action: beginRename) { Label("Rename", systemImage: "pencil") }
+                if let activeSessionId {
+                    Button(action: { UIPasteboard.general.string = activeSessionId }) {
+                        Label("Copy session ID", systemImage: "doc.on.doc")
+                    }
+                }
+                Divider()
+                Button(role: .destructive, action: archiveActive) { Label("Archive", systemImage: "archivebox") }
+            } label: {
+                HStack(spacing: 5) {
+                    Text(threadTitle)
+                        .font(.system(size: 15, weight: .semibold, design: terminalLook ? .monospaced : .default))
+                        .foregroundColor(ink)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    if activeSessionId != nil {
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundColor(ink.opacity(0.6))
+                    }
+                }
+            }
+            .disabled(activeSessionId == nil)
+            .accessibilityLabel("Session: \(threadTitle)")
+        } else {
+            GizziCodeWordmark(height: 15)
+                .accessibilityAddTraits(.isHeader)
+        }
+    }
+
+    /// The thread's name; a fresh thread shows its launch prompt until the
+    /// session names itself.
+    private var threadTitle: String {
+        if let activeSessionId, let name = sessions.first(where: { $0.id == activeSessionId })?.name, !name.isEmpty {
+            return name
+        }
+        if let prompt = thread?.initialPrompt, !prompt.isEmpty {
+            return prompt.prefix(1).uppercased() + prompt.dropFirst()
+        }
+        return "New thread"
+    }
+
+    /// The session's panes (pane-manager `CODE_PANE_STRIP` plus the session
+    /// panel and background tasks), as one drop-down.
     private func panesMenu(ink: Color) -> some View {
         Menu {
-            Section("Panes") {
-                Button(action: {}) { Label("Session", systemImage: "sidebar.left") }
-                Button(action: { setTerminalLook(!terminalLook) }) {
-                    Label(terminalLook ? "Chat" : "Terminal", systemImage: terminalLook ? "bubble.left.and.bubble.right" : "apple.terminal")
-                }
-                Button(action: { shellOpen = true }) { Label("Shell", systemImage: "chevron.left.forwardslash.chevron.right") }
-                if activeSessionId != nil {
-                    Button(action: { paneSheet = .changes }) { Label("Changes", systemImage: "plus.forwardslash.minus") }
-                }
-                if terminalStore.livePtyId != nil {
-                    Button(action: { paneSheet = .browser }) { Label("Browser", systemImage: "globe") }
-                }
-                Button(action: { paneSheet = .files }) { Label("Files", systemImage: "folder") }
-            }
-            if activeSessionId != nil {
-                Section {
-                    Button(action: beginRename) { Label("Rename", systemImage: "pencil") }
-                    if let activeSessionId {
-                        Button(action: { UIPasteboard.general.string = activeSessionId }) {
-                            Label("Copy session ID", systemImage: "doc.on.doc")
-                        }
-                    }
-                    Button(role: .destructive, action: archiveActive) { Label("Archive", systemImage: "archivebox") }
-                }
+            ForEach(CodePaneKind.allCases) { kind in
+                Button(action: { openPane(kind) }) { Label(kind.label, systemImage: kind.icon) }
             }
         } label: {
-            Image(systemName: "square.grid.2x2")
-                .font(.system(size: 18))
+            Image(systemName: "rectangle.split.3x1")
+                .font(.system(size: 17))
                 .foregroundColor(ink)
                 .frame(width: 44, height: 44)
         }
-        .accessibilityLabel("Session panes")
+        .accessibilityLabel("Panes")
+    }
+
+    private func openPane(_ kind: CodePaneKind) {
+        if kind == .terminal {
+            shellOpen = true
+        } else {
+            pane = kind
+        }
     }
 
     // MARK: - Launchpad
@@ -268,13 +288,6 @@ struct CodeModeView: View {
         VStack(spacing: 0) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    HStack(spacing: 12) {
-                        GizziCodeWordmark(height: 15)
-                        Spacer(minLength: 8)
-                        CodeWhatsNewButton()
-                    }
-                    .padding(.bottom, 20)
-
                     Text(greetingText)
                         .font(.system(size: 28, weight: .semibold, design: .serif))
                         .tracking(-0.56)
@@ -310,9 +323,18 @@ struct CodeModeView: View {
                     }
                 }
                 .padding(.horizontal, 14)
-                .padding(.top, 48)
+                .padding(.top, 28)
                 .padding(.bottom, 24)
                 .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            // What's new sits right under the sessions button.
+            .safeAreaInset(edge: .top, spacing: 0) {
+                HStack {
+                    Spacer()
+                    CodeWhatsNewButton()
+                }
+                .padding(.horizontal, 10)
+                .padding(.top, 2)
             }
             .scrollDismissesKeyboard(.interactively)
             .refreshable { await loadSessions() }
@@ -355,24 +377,6 @@ struct CodeModeView: View {
 
     /// Terminal from the launchpad opens a fresh thread in its terminal
     /// look; in a thread it flips that thread.
-    private var viewKind: CodeViewKind {
-        shellOpen ? .shell : (terminalLook ? .terminal : .chat)
-    }
-
-    private func selectView(_ kind: CodeViewKind) {
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        switch kind {
-        case .chat:
-            shellOpen = false
-            if terminalLook { setTerminalLook(false) }
-        case .terminal:
-            shellOpen = false
-            openTerminal()
-        case .shell:
-            shellOpen = true
-        }
-    }
-
     private func openTerminal() {
         if thread == nil {
             thread = CodeThreadTarget(sessionId: nil)
@@ -510,7 +514,7 @@ struct CodeModeView: View {
 
     #if DEBUG
     /// `-open-code-thread`, `-open-code-thread-id <id>`, `-open-code-terminal`, `-open-code-shell`,
-    /// `-open-code-overview`, `-open-code-usage`, `-mesh-proxy-selfcheck`
+    /// `-open-code-overview`, `-open-code-usage`, `-open-code-pane <kind>`, `-mesh-proxy-selfcheck`
     /// (DEBUG only): land on a state for screenshot verification. One-shot.
     private func applyDebugArgs() {
         guard !didApplyDebugArgs else { return }
@@ -533,64 +537,15 @@ struct CodeModeView: View {
         if launchArgumentEnabled("open-code-usage") {
             showUsage = true
         }
+        // `-open-code-pane <kind>` (session, changes, browser, computer, files,
+        // artifacts, transcript, tasks, codemap): opens a thread, then the pane.
+        if let raw = UserDefaults.standard.string(forKey: "open-code-pane"), let kind = CodePaneKind(rawValue: raw) {
+            if thread == nil { thread = CodeThreadTarget(sessionId: nil) }
+            openPane(kind)
+        }
         if launchArgumentEnabled("mesh-proxy-selfcheck") {
             MeshClient.runProxySelfCheck()
         }
     }
     #endif
-}
-
-// MARK: - View switcher
-
-enum CodeViewKind: String, CaseIterable, Identifiable {
-    case chat, terminal, shell
-    var id: String { rawValue }
-    var title: String {
-        switch self {
-        case .chat: return "Chat"
-        case .terminal: return "Terminal"
-        case .shell: return "Shell"
-        }
-    }
-}
-
-/// Chat · Terminal · Shell as one segmented pill in the Code header, on the
-/// light page and on the dark terminal surface alike.
-struct CodeViewSwitcher: View {
-    let selection: CodeViewKind
-    var dark: Bool = false
-    let onSelect: (CodeViewKind) -> Void
-
-    var body: some View {
-        let track = dark ? TerminalPalette.key : Color("FillNeutral")
-        let thumb = dark ? TerminalPalette.pressedBorder : Color("BgPanel")
-        let on = dark ? TerminalPalette.foreground : Color("TextPrimary")
-        let off = dark ? TerminalPalette.secondary : Color("TextSecondary")
-        HStack(spacing: 2) {
-            ForEach(CodeViewKind.allCases) { kind in
-                let selected = kind == selection
-                Button(action: { if !selected { onSelect(kind) } }) {
-                    Text(kind.title)
-                        .font(.system(size: 13, weight: selected ? .semibold : .medium))
-                        .foregroundColor(selected ? on : off)
-                        .padding(.horizontal, 10)
-                        .frame(height: 30)
-                        .background {
-                            if selected {
-                                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                    .fill(thumb)
-                                    .shadow(color: .black.opacity(dark ? 0 : 0.08), radius: 2, y: 1)
-                            }
-                        }
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(kind.title)
-                .accessibilityAddTraits(selected ? .isSelected : [])
-            }
-        }
-        .padding(2)
-        .background(track, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .animation(.easeOut(duration: 0.18), value: selection)
-    }
 }
