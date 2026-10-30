@@ -519,8 +519,50 @@ struct ArtifactsLibraryView: View {
                 }
             }
             sectionLabel("Your artifacts").padding(.bottom, -4)
-            libraryBody
+            if !store.archived && !filtered {
+                ForEach(launcher.editorSessions) { session in
+                    editorSessionRow(session)
+                }
+            }
+            if !(items.isEmpty && store.phase == .loaded && !filtered && !store.archived && !launcher.editorSessions.isEmpty) {
+                libraryBody
+            }
         }
+    }
+
+    /// A Docs, Sheets, Slides or Design session: reopens its chat and editor.
+    private func editorSessionRow(_ session: ArtifactStudioSession) -> some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            studio = session
+        } label: {
+            HStack(spacing: 10) {
+                Image(session.kind.iconAsset)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 24, height: 24)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(session.title)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(Color("TextPrimary"))
+                        .lineLimit(1)
+                    Text(session.kind.label)
+                        .font(.system(size: 12.5))
+                        .foregroundColor(Color("TextTertiary"))
+                }
+                Spacer(minLength: 0)
+                Text(libraryShortAgo(session.startedAt))
+                    .font(.system(size: 12).monospacedDigit())
+                    .foregroundColor(Color("TextTertiary"))
+            }
+            .padding(.horizontal, 12)
+            .frame(minHeight: 60)
+            .background(Color("BgPanel"))
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Color("BorderSubtle"), lineWidth: 1))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     @ViewBuilder
