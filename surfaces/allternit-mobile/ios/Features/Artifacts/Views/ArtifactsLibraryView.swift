@@ -140,7 +140,7 @@ struct ArtifactsLibraryView: View {
                 .tracking(-0.3)
                 .foregroundColor(Color("TextPrimary"))
             Spacer()
-            LibraryLayoutSwitch(layout: Binding(get: { layout }, set: { layoutRaw = $0.rawValue }))
+            OverviewLayoutSwitch(raw: $layoutRaw, fallback: .grid)
         }
         .padding(.top, 4)
     }

@@ -4,7 +4,7 @@ import UIKit
 /// The current mode's open sessions as a list, grid or deck of cards, full
 /// screen (allternit-ai src/fabric-session/phone/screens/PhoneOverviewOverlay.tsx).
 /// Opened from the chat header's count button or "See all" over Recents in
-/// the drawer. Section-screen chrome: ☰ · title · layout/filter, floating
+/// the drawer. Section-screen chrome: ☰ · title · filter, the List · Grid · Deck switch, floating
 /// search + New. Bots have their own (a bot's Threads tab).
 struct SessionOverviewView: View {
     let mode: ShellMode
@@ -13,17 +13,7 @@ struct SessionOverviewView: View {
     /// ☰ leaves the overview for the drawer.
     let onMenu: () -> Void
 
-    enum Layout: String, CaseIterable {
-        case list = "List", grid = "Grid", deck = "Deck"
-
-        var icon: String {
-            switch self {
-            case .list: return "list.bullet"
-            case .grid: return "square.grid.2x2"
-            case .deck: return "rectangle.split.3x1"
-            }
-        }
-    }
+    typealias Layout = OverviewLayout
 
     @ObservedObject private var store = ShellSessionsStore.shared
     @ObservedObject private var projects = ProjectStore.shared
@@ -41,7 +31,7 @@ struct SessionOverviewView: View {
     @State private var swipeId: String? = nil
     @State private var swipeOffset: CGFloat = 0
 
-    private var layout: Layout { Layout(rawValue: layoutRaw) ?? .grid }
+    private var layout: Layout { Layout(stored: layoutRaw) ?? .grid }
 
     private var title: String {
         switch mode {
@@ -110,8 +100,19 @@ struct SessionOverviewView: View {
     var body: some View {
         VStack(spacing: 0) {
             PhoneSectionHeader(title: title, onMenu: onMenu) {
-                filterMenu
+                if groups.count > 1 { filterMenu }
             }
+            // The Bots home's List · Grid · Deck switch, on every mode's overview.
+            HStack {
+                Text("\(shown.count) OPEN")
+                    .font(.system(size: 12, weight: .semibold))
+                    .tracking(0.72)
+                    .foregroundColor(Color("TextTertiary"))
+                Spacer()
+                OverviewLayoutSwitch(raw: $layoutRaw, fallback: .grid)
+            }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 8)
             ZStack(alignment: .bottom) {
                 content
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -137,15 +138,6 @@ struct SessionOverviewView: View {
     private var filterMenu: some View {
         let groupNoun = mode == .code ? "repos" : "projects"
         return Menu {
-            Section("Layout") {
-                ForEach(Layout.allCases, id: \.self) { option in
-                    Button {
-                        layoutRaw = option.rawValue
-                    } label: {
-                        Label(option.rawValue, systemImage: layout == option ? "checkmark" : option.icon)
-                    }
-                }
-            }
             if groups.count > 1 {
                 Section("Show") {
                     Button {
@@ -163,9 +155,9 @@ struct SessionOverviewView: View {
                 }
             }
         } label: {
-            PhoneFilterButtonLabel(active: group != nil, systemName: layout.icon)
+            PhoneFilterButtonLabel(active: group != nil)
         }
-        .accessibilityLabel("Layout: \(layout.rawValue). Change layout, filter and sort")
+        .accessibilityLabel("Filter")
     }
 
     @ViewBuilder

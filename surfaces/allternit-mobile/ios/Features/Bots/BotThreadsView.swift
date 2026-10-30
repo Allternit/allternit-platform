@@ -10,15 +10,82 @@ struct BotThreadsView: View {
     @ObservedObject private var store = BotModeStore.shared
     @ObservedObject private var colors = BotColorStore.shared
     @EnvironmentObject private var navigator: BotNavigator
+    /// List · Grid · Deck, like the web's Threads tab (BotThreadsOverview).
+    @AppStorage("allternit.session-overview.layout.bot-threads") private var layoutRaw = OverviewLayout.list.rawValue
+
+    private var layout: OverviewLayout { OverviewLayout(stored: layoutRaw) ?? .list }
+
+    /// The open threads as cards; resolved ones stay out (BotThreadsOverview).
+    private var cards: [OverviewCardItem] {
+        let all = botId.map { id in store.threads.filter { $0.botId == id } } ?? store.threads
+        return all.filter { !$0.incognito && $0.group != "resolved" }
+            .sorted(by: BotModeStore.threadOrder)
+            .map { thread in
+                let tone: OverviewCardItem.Tone = {
+                    switch thread.group {
+                    case "waiting": return .waiting
+                    case "working": return .working
+                    default: return .idle
+                    }
+                }()
+                return OverviewCardItem(
+                    id: thread.id,
+                    title: thread.title,
+                    group: botId == nil ? store.bot(thread.botId)?.botDisplayName : nil,
+                    status: tone == .idle ? (thread.group == "queued" ? "Queued" : nil) : BotThreadGroup(rawValue: thread.group)?.title,
+                    tone: tone,
+                    preview: thread.statusLine,
+                    meta: BotTime.relative(thread.lastActivityAt),
+                    footer: thread.progressLabel
+                )
+            }
+    }
+
+    private func open(_ thread: BotThread) {
+        if let sessionId = thread.currentSessionId {
+            navigator.open(.chat(botId: thread.botId, sessionId: sessionId))
+        }
+    }
 
     var body: some View {
         ScrollView {
-            BotThreadsPanel(botId: botId, greeting: "Threads") { thread in
-                if let sessionId = thread.currentSessionId {
-                    navigator.open(.chat(botId: thread.botId, sessionId: sessionId))
+            let waiting = botId.map { store.waitingCount(for: $0) } ?? store.waitingCount
+            HStack(alignment: .bottom) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Threads")
+                        .font(.system(size: 21, weight: .semibold, design: .serif))
+                        .foregroundColor(Color("TextPrimary"))
+                    Text(waiting == 0 ? "Nothing is waiting on you."
+                         : waiting == 1 ? "1 thread is waiting on you." : "\(waiting) threads are waiting on you.")
+                        .font(.system(size: 13))
+                        .foregroundColor(Color("TextSecondary"))
                 }
+                Spacer()
+                OverviewLayoutSwitch(raw: $layoutRaw, fallback: .list)
             }
-            .padding(.vertical, 8)
+            .padding(.horizontal, 16)
+            .padding(.top, 16)
+            .padding(.bottom, 4)
+            if layout == .list {
+                BotThreadsPanel(botId: botId, greeting: nil, onOpen: open)
+                    .padding(.bottom, 8)
+            } else if cards.isEmpty {
+                Text(store.isLoadingThreads ? "Loading threads…" : "No open threads. Start one from the composer.")
+                    .font(.system(size: 13))
+                    .foregroundColor(Color("TextTertiary"))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 24)
+            } else {
+                let accent = colors.hex(for: botId.flatMap { store.bot($0) }).map { Color(hex: $0) } ?? Color.accentChat
+                OverviewCards(items: cards, layout: layout, accent: accent) { item in
+                    if let thread = store.threads.first(where: { $0.id == item.id }), let bot = store.bot(thread.botId), botId == nil {
+                        BotAvatarView(bot: bot, size: 18)
+                    }
+                } onOpen: { item in
+                    if let thread = store.threads.first(where: { $0.id == item.id }) { open(thread) }
+                }
+                .padding(.vertical, 8)
+            }
         }
         // One bot's threads wear its colour; all threads stay neutral.
         .background { BotWashedBackground(color: .some(colors.hex(for: botId.flatMap { store.bot($0) }))).ignoresSafeArea() }

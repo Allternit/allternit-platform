@@ -190,7 +190,7 @@ struct ProjectsListView: View {
             }
             HStack(spacing: 8) {
                 searchField
-                layoutToggle
+                OverviewLayoutSwitch(raw: $layoutRaw, fallback: .grid)
             }
         }
         .padding(.horizontal, 16)
@@ -277,27 +277,6 @@ struct ProjectsListView: View {
         .frame(height: 34)
         .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color("BgPanel")))
         .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(Color("BorderStrong"), lineWidth: 1))
-    }
-
-    /// List · Grid · Deck, a filled track with the picked one raised.
-    private var layoutToggle: some View {
-        HStack(spacing: 2) {
-            ForEach(LibraryLayout.allCases) { option in
-                let on = layout == option
-                Button { layoutRaw = option.rawValue } label: {
-                    Image(systemName: option.icon)
-                        .font(.system(size: 13, weight: on ? .semibold : .regular))
-                        .foregroundColor(on ? Color("TextPrimary") : Color("TextTertiary"))
-                        .frame(width: 32, height: 28)
-                        .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(on ? Color("BgPanel") : Color.clear))
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(option.label)
-                .accessibilityAddTraits(on ? .isSelected : [])
-            }
-        }
-        .padding(3)
-        .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Color("FillNeutral")))
     }
 
     /// The floating "New project" pill, centered at the bottom.

@@ -8,29 +8,7 @@ import UIKit
 /// Projects, Artifacts and Automation Tasks use it; each screen keeps its own
 /// data, filters and menus.
 
-/// List · Grid · Deck (SessionOverview OVERVIEW_LAYOUT_OPTIONS), saved per
-/// screen like the web's `useOverviewLayout(scope)`.
-enum LibraryLayout: String, CaseIterable, Identifiable {
-    case list, grid, deck
-    var id: String { rawValue }
-
-    var label: String {
-        switch self {
-        case .list: return "List"
-        case .grid: return "Grid"
-        case .deck: return "Deck"
-        }
-    }
-
-    /// Phosphor List / SquaresFour / Columns.
-    var icon: String {
-        switch self {
-        case .list: return "list.bullet"
-        case .grid: return "square.grid.2x2"
-        case .deck: return "rectangle.split.2x1"
-        }
-    }
-}
+typealias LibraryLayout = OverviewLayout
 
 /// Opens the shell drawer with the shell's spring.
 @MainActor
@@ -288,37 +266,6 @@ private struct FloatSurface<S: Shape>: ViewModifier {
             .overlay(shape.stroke(Color("BorderStrong"), lineWidth: 0.5))
             .shadow(color: .black.opacity(scheme == .dark ? 0.45 : 0.14), radius: 8, x: 0, y: 4)
             .contentShape(shape)
-    }
-}
-
-/// The List · Grid · Deck switch (OverviewLayoutSwitch, phone size): a
-/// rounded neutral track with the active option raised.
-struct LibraryLayoutSwitch: View {
-    @Binding var layout: LibraryLayout
-
-    var body: some View {
-        HStack(spacing: 2) {
-            ForEach(LibraryLayout.allCases) { option in
-                Button(action: {
-                    UISelectionFeedbackGenerator().selectionChanged()
-                    layout = option
-                }) {
-                    Image(systemName: option.icon)
-                        .font(.system(size: 15, weight: option == layout ? .semibold : .regular))
-                        .foregroundColor(option == layout ? Color("TextPrimary") : Color("TextSecondary"))
-                        .frame(width: 36, height: 32)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .fill(option == layout ? Color("BgPanel") : Color.clear)
-                        )
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(option.label)
-                .accessibilityAddTraits(option == layout ? .isSelected : [])
-            }
-        }
-        .padding(4)
-        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color("FillNeutral")))
     }
 }
 

@@ -95,9 +95,7 @@ struct BotLaunchpadView: View {
                     .tracking(0.72)
                     .foregroundColor(Color("TextTertiary"))
                 Spacer()
-                RosterLayoutSwitch(value: Binding(get: { layout }, set: { next in
-                    withAnimation(.easeOut(duration: 0.16)) { layoutRaw = next.rawValue }
-                }))
+                OverviewLayoutSwitch(raw: $layoutRaw, fallback: .list)
             }
             Group {
                 switch layout {
@@ -450,56 +448,7 @@ struct BotLaunchpadView: View {
 
 // MARK: - Roster pieces
 
-enum RosterLayout: String, CaseIterable {
-    case list, grid, deck
-
-    var icon: String {
-        switch self {
-        case .list: return "list.bullet"
-        case .grid: return "square.grid.2x2"
-        case .deck: return "rectangle.split.2x1"
-        }
-    }
-
-    var label: String {
-        switch self {
-        case .list: return "List"
-        case .grid: return "Grid"
-        case .deck: return "Deck"
-        }
-    }
-}
-
-/// The overview standard's List · Grid · Deck switch (OverviewLayoutSwitch).
-struct RosterLayoutSwitch: View {
-    @Binding var value: RosterLayout
-
-    var body: some View {
-        HStack(spacing: 0) {
-            ForEach(RosterLayout.allCases, id: \.self) { layout in
-                let on = value == layout
-                Button { value = layout } label: {
-                    Image(systemName: layout.icon)
-                        .font(.system(size: 14, weight: on ? .bold : .regular))
-                        .foregroundColor(on ? Color("TextPrimary") : Color("TextTertiary"))
-                        .frame(width: 36, height: 32)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                .fill(on ? Color("BgPanel") : .clear)
-                                .shadow(color: .black.opacity(on ? 0.08 : 0), radius: 1, y: 1)
-                        )
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(layout.label)
-                .accessibilityAddTraits(on ? .isSelected : [])
-            }
-        }
-        .padding(2)
-        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color("BorderStrong")))
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("Layout")
-    }
-}
+typealias RosterLayout = OverviewLayout
 
 /// Working · Needs you · Talking · Idle (roster-status.ts).
 enum RosterStatus: Equatable {
