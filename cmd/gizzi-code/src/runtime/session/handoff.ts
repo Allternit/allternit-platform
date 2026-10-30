@@ -27,6 +27,8 @@ export namespace SessionHandoff {
 
   export const DEFAULT_THRESHOLD = 0.7
   const MAX_LINEAGE = 200
+  /** How long a checkpoint call may run. A stuck model must not hold the hand-off. */
+  const batonLimitMs = () => Number(process.env.GIZZI_HANDOFF_BATON_MS) || 120_000
 
   export const Reason = z.enum(["threshold", "model_switch", "manual", "quota"])
   export type Reason = z.infer<typeof Reason>
@@ -261,19 +263,30 @@ Keep facts, numbers, names and paths exactly as they appear. No advice, no fille
       ]
         .filter(Boolean)
         .join("\n\n")
-      const result = await LLM.stream({
-        agent: agent!,
-        user: input.user,
-        system: [SYSTEM],
-        tools: {},
-        callType: "extraction",
-        model,
-        abort: new AbortController().signal,
-        sessionID: input.session.id,
-        retries: 2,
-        messages: [...MessageV2.toModelMessages(input.messages, model), { role: "user", content: ask }],
-      })
-      const parsed = parse(await Promise.resolve(result.text))
+      const limit = AbortSignal.timeout(batonLimitMs())
+      const answer = (async () => {
+        const result = await LLM.stream({
+          agent: agent!,
+          user: input.user!,
+          system: [SYSTEM],
+          tools: {},
+          callType: "extraction",
+          model,
+          abort: limit,
+          sessionID: input.session.id,
+          retries: 2,
+          messages: [...MessageV2.toModelMessages(input.messages, model), { role: "user", content: ask }],
+        })
+        return result.text
+      })()
+      // The race ends the wait even if a brain ignores the abort signal.
+      const text = await Promise.race([
+        answer,
+        new Promise<never>((_, reject) => {
+          limit.addEventListener("abort", () => reject(limit.reason), { once: true })
+        }),
+      ])
+      const parsed = parse(text)
       return parsed ? { ...parsed, written: "model" } : fallback()
     } catch (error) {
       log.warn("baton write failed; carrying the last reply", { sessionID: input.session.id, error })
