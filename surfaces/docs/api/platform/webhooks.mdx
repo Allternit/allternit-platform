@@ -30,6 +30,7 @@ Scope `webhooks`. Endpoints are project-wide, so account-bound keys can't manage
 | `phone.step` | A phone tool call on one of the project owner's linked phones finished (`data.step_id`, `data.run_id`, `data.serial`, `data.tool`, `data.label`, `data.ok`, `data.duration_ms`, `data.source`). No screenshots or typed text. See [Phones](/api/platform/phones). |
 | `phone.run.completed` | A phone task or skill run ended (`data.run_id`, `data.ok`, `data.status`, `data.steps`, `data.failed`). |
 | `phone.fleet_run.completed` | Every run of a fleet run (`POST /v1/phones/runs`) ended (`data.fleet_run_id`, `data.runs`, `data.succeeded`, `data.failed`, `data.not_started`). |
+| `mail.received` | An email arrived at one of your [mailboxes](/api/platform/mailboxes) (`data.message`, with `codes` and `links` found in it). |
 
 ```json
 { "id": "evt_3b1…", "object": "event", "type": "message.received", "created": 1759601822,

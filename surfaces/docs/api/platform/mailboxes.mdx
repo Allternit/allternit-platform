@@ -1,0 +1,69 @@
+---
+title: 'Mailboxes'
+description: 'Email addresses for your accounts and agents: inbound mail as webhooks, one-time codes read for you, and sending.'
+---
+
+A mailbox is an email address on Allternit Mail (`name@bots.allternit.com`, served by `mx.allternit.com`). It belongs to one [account](/api/platform/accounts) and, optionally, one [agent](/api/platform/agents). Scope `mail`.
+
+| Method | Path | |
+|---|---|---|
+| `POST` | `/v1/mailboxes` | Create: `{ "account_id"?, "agent_id"?, "local_part"?, "display_name"? }` |
+| `GET` | `/v1/mailboxes` | List (cursor pagination; `account_id`, `agent_id` filters) |
+| `GET` | `/v1/mailboxes/{id}` | Retrieve |
+| `DELETE` | `/v1/mailboxes/{id}` | Delete the address |
+| `GET` | `/v1/mailboxes/{id}/messages` | Messages, newest first, with the codes and links found in each (`verification=true` for verification email only) |
+| `GET` | `/v1/mailboxes/{id}/messages/{message_id}` | One message with its `text` and `html` body |
+| `POST` | `/v1/mailboxes/{id}/otp` | The newest one-time code, waiting up to 60 seconds for it: `{ "wait_seconds"?, "since"? }` |
+| `POST` | `/v1/mailboxes/{id}/send` | Send: `{ "to", "subject", "text"?, "html"? }` (live projects) |
+
+## Create a mailbox
+
+```bash
+curl https://api.allternit.com/v1/mailboxes \
+  -H "Authorization: Bearer $ALLTERNIT_KEY" -H "Content-Type: application/json" \
+  -d '{ "agent_id": "agent_7f2…", "local_part": "front-desk" }'
+```
+
+```json
+{ "id": "mbx_51c…", "object": "mailbox", "account_id": "acct_9a…", "agent_id": "agent_7f2…",
+  "address": "front-desk@bots.allternit.com", "display_name": null, "created_at": "2026-10-29T15:04:05Z" }
+```
+
+With `agent_id` the mailbox joins the agent's account (`account_id` may be left out; if given it must match). `local_part` is lower-cased to letters, digits and dashes; it defaults to the agent's name. If the address is taken you get the next free `-2`, `-3`… variant, or `409 address_taken` after ten tries.
+
+A card on file is required, sandbox included (`402 payment_method_required`). Live projects also need to be under their [spend cap](/api/platform/billing).
+
+## Read mail and one-time codes
+
+Every inbound message is kept and sent as the `mail.received` [webhook](/api/platform/webhooks) (`data.message`). Allternit reads each message for verification codes (4 to 8 digits, or letters and digits next to words like "code") and sign-in links, skipping years, prices, phone numbers and unsubscribe links. They are in `codes` and `links`.
+
+To sign an agent up for a service and finish the email check, start the sign-up, then wait for the code:
+
+```bash
+curl https://api.allternit.com/v1/mailboxes/mbx_51c…/otp \
+  -H "Authorization: Bearer $ALLTERNIT_KEY" -H "Content-Type: application/json" \
+  -d '{ "wait_seconds": 30 }'
+```
+
+```json
+{ "object": "mail_otp", "found": true, "code": "482913", "codes": ["482913"], "links": [],
+  "message": { "id": "mail_0d4…", "object": "mail_message", "from": "no-reply@acme.com", "subject": "Your verification code", "…": "…" } }
+```
+
+`since` limits the search to mail after a time (default: the last 10 minutes). When nothing arrives in time the answer is `found: false`, not an error. `wait_seconds` above 60 is `400 invalid_wait`.
+
+## Send
+
+`POST /v1/mailboxes/{id}/send` answers `202` with `status` `queued` or `pending_approval`: Allternit Mail can hold outbound mail for review before it is delivered. Sandbox projects receive mail but don't send it (`400 sandbox_project`). One plain recipient address per send.
+
+## MCP tools
+
+A project key with the `mail` scope gets these tools on the [MCP agents server](/api/mcp-servers#mail-tools-for-project-keys-mcpallternitcom) (`https://mcp.allternit.com/mcp`): `mailbox_create`, `mailbox_list`, `mail_list`, `mail_read` and `mail_read_otp`. They take the same fields as the routes above. A key with `mail` but not `agents` sees only these tools.
+
+## Identities
+
+A mailbox made as part of an [identity](/api/platform/identities) can't be deleted on its own (`409 mailbox_in_identity`); delete the identity.
+
+## Pricing
+
+$2 a mailbox a month on live projects (meter `mailbox_month`), recorded when it is created and once in each later month it exists. Sandbox mailboxes are not charged. A mailbox inside an identity is covered by the identity's bundle. See [Pricing](/api/platform/pricing).

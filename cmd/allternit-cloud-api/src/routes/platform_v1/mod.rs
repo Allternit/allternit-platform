@@ -1,7 +1,7 @@
 //! Allternit Platform API (`/v1`): the developer-facing surface.
 //!
 //! One module per area (`accounts`, `agents`, `conversations`, `ag_ui` (AG-UI frontends), `numbers`, `messages`, `calls` (voice and realtime), `webhooks`,
-//! `channels`, `twin`, `computers`, `phones` (the owner's own phones, relayed to their Desktop), `usage`). Also `billing` (spend caps) and `stripe_plan` (Stripe meters, dry run by default).
+//! `channels`, `twin`, `computers`, `phones` (the owner's own phones, relayed to their Desktop), `mailboxes` (email on Allternit Mail), `identities` (number + mailbox + phone in one call), `usage`). Also `billing` (spend caps) and `stripe_plan` (Stripe meters, dry run by default).
 //! Hosted agents run on a per-project runtime (`hosting`).
 //! Each area exposes `register(RouteTable) -> RouteTable`; `build_table` below
 //! is the single list. The route table records every `(method, path)` it
@@ -38,8 +38,10 @@ pub mod conversations;
 pub mod error;
 pub mod events;
 pub mod hosting;
+pub mod identities;
 pub mod knowledge;
 pub mod limits;
+pub mod mailboxes;
 pub mod messages;
 pub mod model_keys;
 pub mod numbers;
@@ -222,6 +224,8 @@ fn build_table() -> RouteTable {
     let table = twin::register(table);
     let table = computers::register(table);
     let table = phones::register(table);
+    let table = mailboxes::register(table);
+    let table = identities::register(table);
     usage::register(table)
 }
 
@@ -416,3 +420,5 @@ mod tests_p4;
 mod tests_p6_computers;
 #[cfg(test)]
 mod tests_p7_phones;
+#[cfg(test)]
+mod tests_p7_mail;

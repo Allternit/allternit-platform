@@ -2,7 +2,7 @@ openapi: 3.1.0
 info:
   title: Allternit Platform API
   version: "1.0.0"
-  summary: Agents, voice, messaging, numbers, channels, the twin layer, computers and phones, for developers.
+  summary: Agents, voice, messaging, numbers, mailboxes, channels, the twin layer, computers and phones, for developers.
   description: |
     The Allternit Platform API. Base URL `https://api.allternit.com`.
 
@@ -947,7 +947,7 @@ paths:
               required: [url, events]
               properties:
                 url: { type: string, format: uri }
-                events: { type: array, items: { type: string, enum: ["*", approval.requested, message.received, message.status, registration.updated, inbox.item.created, call.started, call.ended, call.transcript.ready, usage.threshold, phone.step, phone.run.completed, phone.fleet_run.completed] } }
+                events: { type: array, items: { type: string, enum: ["*", approval.requested, message.received, message.status, registration.updated, inbox.item.created, call.started, call.ended, call.transcript.ready, usage.threshold, phone.step, phone.run.completed, phone.fleet_run.completed, mail.received] } }
                 description: { type: string, maxLength: 200 }
       responses:
         "201":
@@ -1904,6 +1904,159 @@ paths:
       tags: [Phones]
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
+  /v1/mailboxes:
+    get:
+      operationId: listMailboxes
+      summary: List mailboxes
+      tags: [Mailboxes]
+      parameters:
+        - { $ref: "#/components/parameters/Limit" }
+        - { $ref: "#/components/parameters/After" }
+        - { name: account_id, in: query, schema: { type: string } }
+        - { name: agent_id, in: query, schema: { type: string } }
+      responses:
+        "200":
+          description: A page of mailboxes, oldest first.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MailboxList" }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      operationId: createMailbox
+      summary: Create a mailbox for an account or agent
+      description: An address on Allternit Mail (`local_part@bots.allternit.com`; `-2`, `-3`… when taken). With `agent_id`, the account is the agent's. Needs a card on file; live projects are billed `mailbox_month` ($2 a month). Requires the `mail` scope.
+      tags: [Mailboxes]
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                account_id: { type: string }
+                agent_id: { type: string }
+                local_part: { type: string, description: "The part before @. Lower-cased; letters, digits and dashes. Default: the agent's name." }
+                display_name: { type: string, maxLength: 100 }
+      responses:
+        "201":
+          description: The mailbox.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Mailbox" }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/mailboxes/{id}:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    get:
+      operationId: getMailbox
+      summary: Retrieve a mailbox
+      tags: [Mailboxes]
+      responses:
+        "200":
+          description: The mailbox.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Mailbox" }
+        default: { $ref: "#/components/responses/Error" }
+    delete:
+      operationId: deleteMailbox
+      summary: Delete a mailbox
+      description: Removes the address. A mailbox inside an identity answers `409 mailbox_in_identity`; delete the identity instead.
+      tags: [Mailboxes]
+      responses:
+        "200":
+          description: Deleted.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string }
+                  object: { type: string, enum: [mailbox] }
+                  deleted: { type: boolean }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/mailboxes/{id}/messages:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    get:
+      operationId: listMailMessages
+      summary: List a mailbox's messages
+      description: Newest first. Each carries the one-time codes and sign-in links found in it.
+      tags: [Mailboxes]
+      parameters:
+        - { $ref: "#/components/parameters/Limit" }
+        - { $ref: "#/components/parameters/After" }
+        - { name: verification, in: query, description: Only messages that look like verification email., schema: { type: boolean } }
+      responses:
+        "200":
+          description: A page of messages.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MailMessageList" }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/mailboxes/{id}/messages/{mid}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+      - { name: mid, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: getMailMessage
+      summary: Read one message
+      tags: [Mailboxes]
+      responses:
+        "200":
+          description: The message with its `text` and `html` bodies.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: "#/components/schemas/MailMessage" }
+                  - type: object
+                    properties:
+                      text: { type: [string, "null"] }
+                      html: { type: [string, "null"] }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/mailboxes/{id}/otp:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    post:
+      operationId: readMailOtp
+      summary: Wait for the newest one-time code
+      description: The newest message with a code or sign-in link received after `since` (default the last 10 minutes), waiting up to `wait_seconds` for one to arrive. `found` is false when none came.
+      tags: [Mailboxes]
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                wait_seconds: { type: integer, minimum: 0, maximum: 60, default: 0 }
+                since: { type: string, format: date-time }
+      responses:
+        "200":
+          description: The code, if one arrived.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [object, found]
+                properties:
+                  object: { type: string, enum: [mail_otp] }
+                  found: { type: boolean }
+                  code: { type: [string, "null"] }
+                  codes: { type: array, items: { type: string } }
+                  links: { type: array, items: { type: string } }
+                  message: { oneOf: [{ $ref: "#/components/schemas/MailMessage" }, { type: "null" }] }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/mailboxes/{id}/send:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    post:
+      operationId: sendMail
+      summary: Send an email from a mailbox
+      description: Live projects only. Allternit Mail may hold the message for review before delivery (`status` = `pending_approval`).
+      tags: [Mailboxes]
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
       requestBody:
         required: true
         content:
@@ -1941,6 +2094,102 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/PhoneFleetRun" }
+              required: [to, subject]
+              additionalProperties: false
+              properties:
+                to: { type: string, format: email }
+                subject: { type: string, maxLength: 998 }
+                text: { type: string }
+                html: { type: string }
+      responses:
+        "202":
+          description: Accepted.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  object: { type: string, enum: [mail_send] }
+                  mailbox_id: { type: string }
+                  from: { type: string }
+                  to: { type: string }
+                  message_id: { type: [string, "null"] }
+                  status: { type: string, description: "queued or pending_approval" }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/identities:
+    get:
+      operationId: listIdentities
+      summary: List agent identities
+      tags: [Identities]
+      parameters:
+        - { $ref: "#/components/parameters/Limit" }
+        - { $ref: "#/components/parameters/After" }
+        - { name: account_id, in: query, schema: { type: string } }
+        - { name: agent_id, in: query, schema: { type: string } }
+      responses:
+        "200":
+          description: A page of identities.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IdentityList" }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      operationId: createIdentity
+      summary: Give an agent a number, a mailbox and a phone in one call
+      description: Gets a number (simulated in sandbox; in live the first available, in `area_code` when given), a mailbox and, with `phone_serial`, binds one of the owner's linked phones. Requires the `numbers` and `mail` scopes, plus `phones` (and an unbound key) with `phone_serial`. Billed as the Agent identity bundle ($9 a month, meter `identity_month`).
+      tags: [Identities]
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                account_id: { type: string }
+                agent_id: { type: string }
+                area_code: { type: string, pattern: "^[0-9]{3}$" }
+                number_type: { type: string, enum: [local, toll_free] }
+                phone_serial: { type: string }
+                local_part: { type: string }
+                display_name: { type: string, maxLength: 100 }
+      responses:
+        "201":
+          description: The identity.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Identity" }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/identities/{id}:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    get:
+      operationId: getIdentity
+      summary: Retrieve an identity
+      tags: [Identities]
+      responses:
+        "200":
+          description: The identity.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Identity" }
+        default: { $ref: "#/components/responses/Error" }
+    delete:
+      operationId: deleteIdentity
+      summary: Delete an identity
+      description: Releases the number and removes the mailbox.
+      tags: [Identities]
+      responses:
+        "200":
+          description: Deleted.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string }
+                  object: { type: string, enum: [identity] }
+                  deleted: { type: boolean }
         default: { $ref: "#/components/responses/Error" }
 components:
   securitySchemes:
@@ -2159,6 +2408,10 @@ components:
             - mms
             - registration_passthrough_cents
             - recording_min_month
+            - computer_minute
+            - computer_action
+            - mailbox_month
+            - identity_month
         unit: { type: [string, "null"] }
         quantity: { type: number }
         events: { type: integer }
@@ -2220,7 +2473,7 @@ components:
       properties:
         id: { type: string }
         object: { type: string, const: event }
-        type: { type: string, enum: [approval.requested, message.received, message.status, registration.updated, inbox.item.created, call.started, call.ended, call.transcript.ready, usage.threshold, phone.step, phone.run.completed, webhook.test] }
+        type: { type: string, enum: [approval.requested, message.received, message.status, registration.updated, inbox.item.created, call.started, call.ended, call.transcript.ready, usage.threshold, phone.step, phone.run.completed, phone.fleet_run.completed, mail.received, webhook.test] }
         created: { type: integer, description: Unix seconds. }
         project_id: { type: string }
         account_id: { type: [string, "null"] }
@@ -2346,6 +2599,75 @@ components:
             approve_url: { type: string }
             approver: { type: string, enum: [owner, api_key] }
         result: { $ref: "#/components/schemas/ToolsetResult" }
+    Mailbox:
+      type: object
+      required: [id, object, account_id, address, created_at]
+      properties:
+        id: { type: string }
+        object: { type: string, enum: [mailbox] }
+        account_id: { type: string }
+        agent_id: { type: [string, "null"] }
+        address: { type: string, format: email }
+        display_name: { type: [string, "null"] }
+        created_at: { type: string, format: date-time }
+    MailboxList:
+      type: object
+      properties:
+        data: { type: array, items: { $ref: "#/components/schemas/Mailbox" } }
+        has_more: { type: boolean }
+        next_cursor: { type: [string, "null"] }
+    MailMessage:
+      type: object
+      required: [id, object, mailbox_id, from, to, codes, links, is_verification, received_at]
+      properties:
+        id: { type: string }
+        object: { type: string, enum: [mail_message] }
+        mailbox_id: { type: string }
+        from: { type: string }
+        to: { type: string }
+        subject: { type: [string, "null"] }
+        snippet: { type: [string, "null"] }
+        codes: { type: array, items: { type: string }, description: One-time codes found, best first. }
+        links: { type: array, items: { type: string }, description: Sign-in and confirm links found. }
+        is_verification: { type: boolean }
+        received_at: { type: string, format: date-time }
+    MailMessageList:
+      type: object
+      properties:
+        data: { type: array, items: { $ref: "#/components/schemas/MailMessage" } }
+        has_more: { type: boolean }
+        next_cursor: { type: [string, "null"] }
+    Identity:
+      type: object
+      required: [id, object, account_id, bundle, created_at]
+      properties:
+        id: { type: string }
+        object: { type: string, enum: [identity] }
+        account_id: { type: string }
+        agent_id: { type: [string, "null"] }
+        number: { oneOf: [{ $ref: "#/components/schemas/PhoneNumber" }, { type: "null" }] }
+        mailbox: { oneOf: [{ $ref: "#/components/schemas/Mailbox" }, { type: "null" }] }
+        phone_serial: { type: [string, "null"] }
+        bundle:
+          type: object
+          properties:
+            name: { type: string }
+            meter: { type: string, enum: [identity_month] }
+            monthly_price_cents: { type: integer }
+            includes:
+              type: object
+              properties:
+                numbers: { type: integer }
+                mailboxes: { type: integer }
+                linked_phone_slots: { type: integer }
+                phone_minutes: { type: integer }
+        created_at: { type: string, format: date-time }
+    IdentityList:
+      type: object
+      properties:
+        data: { type: array, items: { $ref: "#/components/schemas/Identity" } }
+        has_more: { type: boolean }
+        next_cursor: { type: [string, "null"] }
     Phone:
       type: object
       properties:

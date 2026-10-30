@@ -71,6 +71,9 @@ pub fn unit_price_microusd(meter: &str) -> Option<i64> {
         // Phones (Eoj 2026-10-29): 2¢ per phone-minute, $5 per linked phone a month.
         "phone_minutes" => 20_000,
         "linked_phone" => 5_000_000,
+        // Platform mail and the agent identity bundle (Eoj 2026-10-29).
+        "mailbox_month" => 2_000_000,
+        "identity_month" => 9_000_000,
         _ => return None,
     })
 }

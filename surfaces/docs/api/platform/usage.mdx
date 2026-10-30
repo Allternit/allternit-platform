@@ -32,6 +32,8 @@ Under `group_by=account`, a row with `group: null` is project-level usage that b
 | `computer_action` | executed toolset call | First 10,000 each month free, then $0.0005 |
 | `phone_minutes` | minute an agent drives a linked phone (runs rounded up; tool calls per phone per clock minute) | $0.02 / min; Growth includes 3,000 a month |
 | `linked_phone` | phone a live project drives, per month | $5; Growth includes 25 |
+| `mailbox_month` | mailbox per month (live projects) | $2 |
+| `identity_month` | agent identity per month (live projects) | $9 (number, mailbox, linked-phone slot and 200 phone minutes) |
 
 Channels, webhooks, the twin layer and MCP have no meter. Simulated (sandbox) numbers and their texts record no usage.
 

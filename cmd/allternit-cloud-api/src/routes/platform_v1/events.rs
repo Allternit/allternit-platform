@@ -453,10 +453,12 @@ pub async fn deliver_due_with(db: &PgPool, poster: &dyn Poster) -> Result<usize,
 
 /// Monthly number fees: one `number_*_month` usage row per live API number per
 /// calendar month (idempotent per number and month, so re-runs are free).
+/// A number inside an identity is covered by its `identity_month` instead.
 pub async fn record_number_months(db: &PgPool) -> Result<u64, sqlx::Error> {
     let month = Utc::now().format("%Y-%m").to_string();
     let rows: Vec<(String, String, Option<String>, String)> = sqlx::query_as(
-        "SELECT id, project_id, account_id, type FROM phone_numbers WHERE project_id IS NOT NULL AND released_at IS NULL AND simulated = false",
+        "SELECT id, project_id, account_id, type FROM phone_numbers n WHERE project_id IS NOT NULL AND released_at IS NULL AND simulated = false \
+         AND NOT EXISTS (SELECT 1 FROM platform_identities i WHERE i.number_id = n.id AND i.deleted_at IS NULL)",
     )
     .fetch_all(db)
     .await?;
@@ -510,7 +512,7 @@ pub async fn record_agent_months(db: &PgPool) -> Result<u64, sqlx::Error> {
     Ok(n)
 }
 
-/// Background worker: webhook deliveries every 5 s; number and agent months
+/// Background worker: webhook deliveries every 5 s; number, agent, mailbox and identity months
 /// every 6 h; usage to Stripe every 5 min, only when that is switched on
 /// (`stripe_plan::report_if_enabled`).
 /// Started when the Platform API is switched on.
@@ -535,6 +537,12 @@ fn spawn_worker_with(db: PgPool, number_months: bool) {
                 }
                 if let Err(e) = record_agent_months(&db).await {
                     tracing::warn!("platform agent months: {e}");
+                }
+                if let Err(e) = super::mailboxes::record_mailbox_months(&db).await {
+                    tracing::warn!("platform mailbox months: {e}");
+                }
+                if let Err(e) = super::identities::record_identity_months(&db).await {
+                    tracing::warn!("platform identity months: {e}");
                 }
             }
             if number_months && ticks % (5 * 12) == 0 {

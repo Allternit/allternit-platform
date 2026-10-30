@@ -5,7 +5,7 @@ use sqlx::PgPool;
 use super::PlatformError;
 
 /// Exact meter strings (spec §7 / CONTRACTS).
-pub const METERS: [&str; 15] = [
+pub const METERS: [&str; 17] = [
     "voice_min_allternit",
     "voice_min_byok",
     "agent_month",
@@ -25,6 +25,10 @@ pub const METERS: [&str; 15] = [
     // `linked_phone` per phone a live project drives in a month.
     "phone_minutes",
     "linked_phone",
+    // Platform mail (`/v1/mailboxes`): one per live mailbox per month.
+    "mailbox_month",
+    // Agent identity bundle (`/v1/identities`): number + mailbox + phone slot.
+    "identity_month",
 ];
 
 #[derive(Debug, Clone)]

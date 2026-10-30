@@ -301,12 +301,19 @@ pub trait EdgeBackend: Send + Sync {
     async fn phone_call(&self, _key: &crate::routes::platform_v1::PlatformCaller, _name: &str, _args: &Value) -> Value {
         crate::routes::platform_v1::phones::mcp_result(Err(crate::routes::platform_v1::PlatformError::service_unavailable("phones_unavailable", "Phones are not available here.")))
     }
+    // ─── mail tools (scope `mail`) ───
+    /// Run one `/v1/mailboxes` MCP tool as a project key.
+    async fn mail_tool(&self, _key: &crate::routes::platform_v1::PlatformCaller, _name: &str, _args: &Value) -> Result<Value, String> {
+        Err("Mail tools are not available.".into())
+    }
 }
 
 /// A project key with this scope also gets the phone tools on `/mcp`
 /// (`platform_v1::phones::mcp_tools`), answered here through the same
 /// operations as `/v1/phones`, never relayed to the hosted runtime.
 const PHONES_SCOPE: &str = crate::routes::platform_v1::phones::SCOPE;
+/// Same for the mail tools (`platform_v1::mailboxes::MCP_TOOLS`).
+const MAIL_SCOPE: &str = "mail";
 
 /// A Platform API project key on the agents server (spec §4 MCP): the project's
 /// hosted runtime answers, as the project's runtime owner. Needs the `agents`
@@ -317,14 +324,14 @@ fn project_key_caller(target: &Target, resource: &str, key: &crate::routes::plat
     if *target != Target::Agents {
         return Err(refuse(StatusCode::FORBIDDEN, "insufficient_scope", "A project API key opens the agents server (/mcp) only."));
     }
-    if !key.has_scope("agents") && !key.has_scope(PHONES_SCOPE) {
-        return Err(refuse(StatusCode::FORBIDDEN, "insufficient_scope", "This API key lacks the 'agents' (or 'phones') scope."));
+    if !key.has_scope("agents") && !key.has_scope(PHONES_SCOPE) && !key.has_scope(MAIL_SCOPE) {
+        return Err(refuse(StatusCode::FORBIDDEN, "insufficient_scope", "This API key lacks the 'agents' (or 'phones' or 'mail') scope."));
     }
     if key.account_id.is_some() {
         return Err(refuse(
             StatusCode::FORBIDDEN,
             "account_bound_key",
-            "This API key is bound to one account; the MCP agents server needs a project-wide key with the 'agents' or 'phones' scope.",
+            "This API key is bound to one account; the MCP agents server needs a project-wide key with the 'agents', 'phones' or 'mail' scope.",
         ));
     }
     Ok(Caller { user_id: crate::routes::platform_v1::hosting::runtime_owner(&key.project_id), client: format!("platform-key:{}", key.key_id), needs_approval: false })
@@ -433,10 +440,12 @@ async fn serve(backend: &dyn EdgeBackend, base: &str, target: Target, method: &M
     };
     // A project key with `phones` also gets the phone tools (answered here).
     let mut phone_key: Option<crate::routes::platform_v1::PlatformCaller> = None;
+    let mut mail_key: Option<crate::routes::platform_v1::PlatformCaller> = None;
     let caller = if crate::routes::platform_v1::caller::is_project_key_token(token) {
         match backend.verify_project_key(token).await {
             Ok(Some(key)) => match project_key_caller(&target, &resource, &key) {
                 Ok(c) => {
+                    mail_key = key.has_scope(MAIL_SCOPE).then(|| key.clone());
                     phone_key = key.has_scope(PHONES_SCOPE).then_some(key);
                     c
                 }
@@ -517,13 +526,21 @@ async fn serve(backend: &dyn EdgeBackend, base: &str, target: Target, method: &M
         return rpc_reply(&era, mcp_protocol::finish(&spec, &era, rpc_method, reply));
     }
 
-    if let Some(key) = &phone_key {
+    // Phone and mail tools are answered here for a project key, never relayed.
+    let edge_key = phone_key.as_ref().or(mail_key.as_ref());
+    if let Some(key) = edge_key {
         let tool = request["params"]["name"].as_str().unwrap_or_default();
-        if rpc_method == "tools/call" && crate::routes::platform_v1::phones::is_mcp_tool(tool) {
-            let result = backend.phone_call(key, tool, &request["params"]["arguments"]).await;
-            return rpc_reply(&era, mcp_protocol::finish(&spec, &era, rpc_method, mcp_protocol::rpc_ok(&id, result)));
+        if rpc_method == "tools/call" {
+            if let Some(pk) = phone_key.as_ref().filter(|_| crate::routes::platform_v1::phones::is_mcp_tool(tool)) {
+                let result = backend.phone_call(pk, tool, &request["params"]["arguments"]).await;
+                return rpc_reply(&era, mcp_protocol::finish(&spec, &era, rpc_method, mcp_protocol::rpc_ok(&id, result)));
+            }
+            if let Some(mk) = mail_key.as_ref().filter(|_| crate::routes::platform_v1::mailboxes::MCP_TOOLS.contains(&tool)) {
+                let result = mail_tool_result(backend.mail_tool(mk, tool, &request["params"]["arguments"]).await);
+                return rpc_reply(&era, mcp_protocol::finish(&spec, &era, rpc_method, mcp_protocol::rpc_ok(&id, result)));
+            }
         }
-        // A phones-only key never reaches the hosted runtime: the edge is its whole server.
+        // A key without `agents` never reaches the hosted runtime: the edge is its whole server.
         if !key.has_scope("agents") {
             if let Some(reply) = mcp_protocol::preflight(&spec, &era, &id, rpc_method) {
                 if reply.is_null() {
@@ -532,7 +549,7 @@ async fn serve(backend: &dyn EdgeBackend, base: &str, target: Target, method: &M
                 return rpc_reply(&era, reply);
             }
             let reply = match rpc_method {
-                "tools/list" => mcp_protocol::rpc_ok(&id, json!({ "tools": crate::routes::platform_v1::phones::mcp_tools() })),
+                "tools/list" => mcp_protocol::rpc_ok(&id, json!({ "tools": edge_tools(phone_key.is_some(), mail_key.is_some()) })),
                 "tools/call" => mcp_protocol::rpc_err(&id, mcp_protocol::codes::INVALID_PARAMS, format!("Unknown tool: {tool}")),
                 _ => mcp_protocol::rpc_err(&id, mcp_protocol::codes::METHOD_NOT_FOUND, format!("Method not found: {rpc_method}")),
             };
@@ -550,6 +567,7 @@ async fn serve(backend: &dyn EdgeBackend, base: &str, target: Target, method: &M
         Outcome::Answer(status, reply) => {
             let reply = if rpc_method == "initialize" && status == 200 { advertise_events(reply) } else { reply };
             let reply = if rpc_method == "tools/list" && status == 200 && phone_key.is_some() { with_phone_tools(reply) } else { reply };
+            let reply = if rpc_method == "tools/list" && status == 200 && mail_key.is_some() { with_mail_tools(reply) } else { reply };
             let status = StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY);
             let mut resp = Response::new(axum::body::Body::from(reply));
             *resp.status_mut() = status;
@@ -592,6 +610,44 @@ fn advertise_events(reply: Vec<u8>) -> Vec<u8> {
         None => reply,
     }
 }
+
+// ─── mail tools (scope `mail`) ─── BEGIN
+// `/v1/mailboxes` as MCP tools for Platform API project keys on `/mcp`. A key
+// with `agents` gets them next to the runtime's tools; a key with `mail` but
+// not `agents` gets only these (initialize, tools/list, tools/call, ping are
+// answered here and nothing reaches a runtime).
+
+fn mail_tool_result(out: Result<Value, String>) -> Value {
+    match out {
+        Ok(v) => json!({ "content": [{ "type": "text", "text": v.to_string() }], "structuredContent": v, "isError": false }),
+        Err(msg) => json!({ "content": [{ "type": "text", "text": msg }], "isError": true }),
+    }
+}
+
+/// The tools a project key without `agents` sees: phone and/or mail tools.
+fn edge_tools(phones: bool, mail: bool) -> Vec<Value> {
+    let mut tools: Vec<Value> = Vec::new();
+    if phones {
+        tools.extend(crate::routes::platform_v1::phones::mcp_tools());
+    }
+    if mail {
+        tools.extend(crate::routes::platform_v1::mailboxes::mcp_tool_defs());
+    }
+    tools
+}
+
+/// A relayed `tools/list` answer plus the mail tools.
+fn with_mail_tools(reply: Vec<u8>) -> Vec<u8> {
+    let Ok(mut v) = serde_json::from_slice::<Value>(&reply) else { return reply };
+    match v.pointer_mut("/result/tools").and_then(Value::as_array_mut) {
+        Some(tools) => {
+            tools.extend(crate::routes::platform_v1::mailboxes::mcp_tool_defs());
+            serde_json::to_vec(&v).unwrap_or(reply)
+        }
+        None => reply,
+    }
+}
+// ─── mail tools (scope `mail`) ─── END
 
 // ─── human page ───────────────────────────────────────────────────────────────
 
@@ -758,6 +814,11 @@ impl EdgeBackend for ProdBackend<'_> {
         use crate::routes::platform_v1::phones;
         let host = phones::ProdPhoneHost(self.state.clone());
         phones::mcp_result(phones::mcp_call(&self.state.db, &host, key, name, args).await)
+    }
+    // ─── mail tools (scope `mail`) ───
+    async fn mail_tool(&self, key: &crate::routes::platform_v1::PlatformCaller, name: &str, args: &Value) -> Result<Value, String> {
+        use crate::routes::platform_v1::mailboxes;
+        mailboxes::mcp_call(self.state, key, &mailboxes::ProdMailHost, name, args).await.map_err(|e| format!("{}: {}", e.code, e.message))
     }
 
     async fn is_approved(&self, user_id: &str, client: &str, target: &str) -> Result<bool, String> {
