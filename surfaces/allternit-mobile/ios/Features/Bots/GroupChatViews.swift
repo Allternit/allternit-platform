@@ -245,7 +245,18 @@ struct GroupChatView: View {
     @State private var isAddingMembers = false
     /// The members have flown off the stage into the header pill.
     @State private var docked = false
+    @State private var isBackgroundPresented = false
+    @ObservedObject private var backdrops = StageBackdropStore.shared
+    @ObservedObject private var botColors = BotColorStore.shared
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    /// The room's background: its own look, else Settings (Plain when off).
+    private var backdropVariant: String { backdrops.variant(for: .group, scope: .group(groupId)) }
+
+    /// The members' colours (a group's backdrop uses them all).
+    private func memberColors(_ group: BotGroupChat) -> [String?] {
+        group.members.map { botColors.hex(for: store.bot($0.botId)) }
+    }
 
     var body: some View {
         if let group = store.group(groupId) {
@@ -262,18 +273,31 @@ struct GroupChatView: View {
                 log(group)
                 composer(group)
             }
-            .background(Color("BgPrimary"))
+            .background {
+                StageBackdropView(variant: backdropVariant, colors: memberColors(group)).ignoresSafeArea()
+            }
+            .environment(\.backdropUnderneath, backdropVariant != "plain")
+            .publishesRailBackdrop(backdropVariant == "plain" ? nil : RailBackdropStore.Look(
+                colors: memberColors(group).compactMap { $0 }, variant: backdropVariant, mode: .bots))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .principal) { header(group) }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button { isAddingMembers = true } label: { Image(systemName: "person.badge.plus") }
-                        .disabled(isRunning)
-                        .accessibilityLabel("Add members")
+                    HStack(spacing: 4) {
+                        Button { isBackgroundPresented = true } label: { Image(systemName: "paintbrush") }
+                            .accessibilityLabel("Background")
+                        Button { isAddingMembers = true } label: { Image(systemName: "person.badge.plus") }
+                            .disabled(isRunning)
+                            .accessibilityLabel("Add members")
+                    }
                 }
             }
             .sheet(isPresented: $isAddingMembers) {
                 AddGroupMembersSheet(group: group)
+            }
+            .sheet(isPresented: $isBackgroundPresented) {
+                StageBackdropScopeSheet(scope: .group(groupId), title: "# \(group.name) background",
+                                        colors: memberColors(group))
             }
             .onChange(of: groupId) { _, _ in docked = false }
         } else {

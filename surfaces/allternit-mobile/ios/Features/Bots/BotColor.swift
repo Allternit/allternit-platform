@@ -216,13 +216,15 @@ struct BotWashedBackground: View {
     /// nil reads the screen's `botTint`.
     var color: String??
     @Environment(\.botTint) private var tint
+    /// A stage background is drawn behind: only the wash, no page fill.
+    @Environment(\.backdropUnderneath) private var backdropUnderneath
 
     init(color: String?? = nil) {
         self.color = color
     }
 
     var body: some View {
-        Color("BgPrimary")
+        (backdropUnderneath ? Color.clear : Color("BgPrimary"))
             .overlay(alignment: .top) { BotColorWash(color: color ?? tint) }
             .clipped()
     }

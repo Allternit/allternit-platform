@@ -48,6 +48,8 @@ struct CodeModeView: View {
     @State private var renameText = ""
     @State private var actionError: String? = nil
     @State private var folder: CodeFolderInfo? = nil
+    @ObservedObject private var backdrops = StageBackdropStore.shared
+    @State private var isBackgroundPresented = false
     @State private var draft = ""
     @State private var greeting = CodeModeView.greetings.randomElement() ?? "What's up next?"
     @AppStorage("allternit:code:show-usage") private var showUsage = false
@@ -85,6 +87,12 @@ struct CodeModeView: View {
     /// Dark chrome: the shell, or a thread in its terminal look.
     private var darkChrome: Bool { shellOpen || terminalLook }
 
+    /// This workspace's background: its own look, else Settings (Code mode is
+    /// off there until switched on). The shell keeps its plain terminal.
+    private var backdropScope: BackdropScope { .code(folder?.directory) }
+    private var codeBackdrop: String { backdrops.variant(for: .code, scope: backdropScope) }
+    private var showsBackdrop: Bool { codeBackdrop != "plain" && !shellOpen }
+
     var body: some View {
         VStack(spacing: 0) {
             ConnectComputerView()
@@ -120,7 +128,22 @@ struct CodeModeView: View {
                 }
             }
         }
-        .background((darkChrome ? TerminalPalette.background : Color("BgPrimary")).ignoresSafeArea())
+        .background {
+            if showsBackdrop {
+                // No glass panels in Code: the veil covers the whole view, at least 55%.
+                StageBackdropView(variant: codeBackdrop, minVeil: 55,
+                                  veilColor: terminalLook ? TerminalPalette.background : Color("BgPrimary"),
+                                  darkOverride: terminalLook ? true : nil)
+                    .ignoresSafeArea()
+            } else {
+                (darkChrome ? TerminalPalette.background : Color("BgPrimary")).ignoresSafeArea()
+            }
+        }
+        .environment(\.backdropUnderneath, showsBackdrop)
+        .publishesRailBackdrop(showsBackdrop ? RailBackdropStore.Look(colors: [], variant: codeBackdrop, mode: .code) : nil)
+        .sheet(isPresented: $isBackgroundPresented) {
+            StageBackdropScopeSheet(scope: backdropScope, title: "\(folder?.name ?? "Code") background")
+        }
         .task {
             await instanceStore.refreshIfNeeded()
             await loadSessions()
@@ -230,6 +253,7 @@ struct CodeModeView: View {
                         Label("Copy session ID", systemImage: "doc.on.doc")
                     }
                 }
+                Button { isBackgroundPresented = true } label: { Label("Background", systemImage: "paintbrush") }
                 Divider()
                 Button(role: .destructive, action: archiveActive) { Label("Archive", systemImage: "archivebox") }
             } label: {

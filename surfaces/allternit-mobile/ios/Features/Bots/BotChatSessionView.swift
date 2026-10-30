@@ -25,7 +25,9 @@ struct BotChatSessionView: View {
     @ObservedObject private var status = BotStatusStore.shared
     @ObservedObject private var desktop = BotDesktopStore.shared
     @ObservedObject private var colors = BotColorStore.shared
+    @ObservedObject private var backdrops = StageBackdropStore.shared
     @EnvironmentObject private var navigator: BotNavigator
+    @State private var isBackgroundPresented = false
     @State private var sessionId: String? = nil
     @State private var resolveError: String? = nil
     @State private var deckTab: DeckTab = .thread
@@ -54,17 +56,34 @@ struct BotChatSessionView: View {
         }
     }
 
+    /// This bot's background: its own look, else Settings (Plain when off).
+    private var backdropVariant: String { backdrops.variant(for: .bot, scope: .bot(bot.id)) }
+
     var body: some View {
         content
             // The bot's colour: a wash at the top of its chat (and its bar), your
-            // bubbles, and the drawer while this chat is open.
-            .background { BotWashedBackground().ignoresSafeArea() }
+            // bubbles, and the drawer while this chat is open. With a stage
+            // background the screens above draw only the wash over it.
+            .background {
+                if backdropVariant == "plain" {
+                    BotWashedBackground().ignoresSafeArea()
+                } else {
+                    StageBackdropView(variant: backdropVariant, colors: [colors.hex(for: bot)]).ignoresSafeArea()
+                }
+            }
             .environment(\.botTint, colors.hex(for: bot))
             .claimsBotTint(bot.id)
             // The phone thread header (ThreadHeader, phone): round Back · bot
             // chip · ⋯, drawn by the view instead of the system bar.
             .toolbar(.hidden, for: .navigationBar)
             .safeAreaInset(edge: .top, spacing: 0) { threadTop }
+            .environment(\.backdropUnderneath, backdropVariant != "plain")
+            .publishesRailBackdrop(backdropVariant == "plain" ? nil : RailBackdropStore.Look(
+                colors: [colors.hex(for: bot)].compactMap { $0 }, variant: backdropVariant, mode: .bots))
+            .sheet(isPresented: $isBackgroundPresented) {
+                StageBackdropScopeSheet(scope: .bot(bot.id), title: "\(bot.botDisplayName)'s background",
+                                        colors: [colors.hex(for: bot)])
+            }
             .background(KeepsSwipeBack())
             .task {
                 status.subscribe(botId: bot.id)
@@ -376,6 +395,9 @@ struct BotChatSessionView: View {
                 } else if thread.kind == "task" && thread.group != "resolved" {
                     Button { act(thread, .resolve) } label: { Label("Resolve", systemImage: "checkmark.circle") }
                 }
+            }
+            Button { isBackgroundPresented = true } label: {
+                Label("Background", systemImage: "paintbrush")
             }
             Button { navigator.open(.botHome(bot.id, .config)) } label: {
                 Label("Bot settings", systemImage: "gearshape")

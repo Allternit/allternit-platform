@@ -391,6 +391,13 @@ struct GeneralSettingsPage: View {
                               detail: "Turn off animation in streaming responses and other interface elements",
                               isOn: $appearance.reduceMotion)
 
+            // Behind bot chats, group chats and (when on) Code mode. A look
+            // picked on a bot, a room or a Code workspace stays there.
+            SettingsSectionHeading(text: "Background")
+                .padding(.top, 16)
+            StageBackgroundSettingsSection()
+                .padding(.bottom, 8)
+
             SettingsSectionHeading(text: "Composer")
                 .padding(.top, 16)
             SettingsSwitchRow(title: "Auto-save chat drafts",

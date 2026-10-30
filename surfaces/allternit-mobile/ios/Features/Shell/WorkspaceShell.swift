@@ -13,6 +13,7 @@ import SwiftUI
 struct MainWorkspaceView: View {
     @EnvironmentObject private var modeStore: AppModeStore
     @ObservedObject private var botColors = BotColorStore.shared
+    @ObservedObject private var railBackdrop = RailBackdropStore.shared
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isSidebarOpen = false
     @State private var dragOffset: CGFloat = 0
@@ -82,10 +83,16 @@ struct MainWorkspaceView: View {
             )
             .background(
                 // In Bots mode the rail wears the colour of the bot on screen
-                // (picked in To:, or whose chat or page is open).
-                BotWashedBackground(color: .some(modeStore.shellMode == .bots ? botColors.activeHex : nil))
-                    .clipShape(UnevenRoundedRectangle(bottomTrailingRadius: 26, topTrailingRadius: 26, style: .continuous))
-                    .ignoresSafeArea()
+                // (picked in To:, or whose chat or page is open); in Bots and
+                // Code it also carries the open screen's background, frosted.
+                ZStack {
+                    BotWashedBackground(color: .some(modeStore.shellMode == .bots ? botColors.activeHex : nil))
+                    if let look = railBackdrop.look, look.mode == modeStore.shellMode {
+                        RailBackdropView(look: look)
+                    }
+                }
+                .clipShape(UnevenRoundedRectangle(bottomTrailingRadius: 26, topTrailingRadius: 26, style: .continuous))
+                .ignoresSafeArea()
             )
             .shadow(color: .black.opacity(sidebarProgress > 0 ? 0.12 : 0), radius: 16, x: 4, y: 0)
             .offset(x: (sidebarProgress - 1) * (sidebarWidth + 24))

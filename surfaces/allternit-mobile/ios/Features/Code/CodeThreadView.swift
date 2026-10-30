@@ -39,6 +39,8 @@ struct CodeThreadChatView: View {
     @State private var reviewingPermission: PermissionRequest? = nil
 
     private var sessionId: String? { viewModel.currentSessionId ?? target.sessionId }
+    /// Code mode draws a stage background behind the thread.
+    @Environment(\.backdropUnderneath) private var backdropUnderneath
 
     var body: some View {
         VStack(spacing: 0) {
@@ -52,7 +54,7 @@ struct CodeThreadChatView: View {
                 onEnterTerminal: onEnterTerminal
             )
         }
-        .background(terminal ? TerminalPalette.background : Color("BgPrimary"))
+        .background(backdropUnderneath ? Color.clear : (terminal ? TerminalPalette.background : Color("BgPrimary")))
         .task {
             // The launch prompt's text: send it once the chat has set its
             // session context (its onAppear runs before this task).
