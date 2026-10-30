@@ -135,7 +135,14 @@ enum SampleWorkspace {
         let line: String
         let todo: [(String, String)]
         let minutes: Double
+        var session: String? = nil
+        /// A bot's main chat thread (standing, made by the import).
+        var mainChat = false
     }
+
+    /// Rimraf's sessions, so its stage can show what it made.
+    static let rimrafMainSession = "preview-session-rimraf-main"
+    static let launchPageSession = "preview-session-launch-page"
 
     private static let threadSeeds: [ThreadSeed] = [
         ThreadSeed(bot: "preview-bot-researcher", title: "Price check: spring menu vs. three nearby bakeries",
@@ -145,7 +152,7 @@ enum SampleWorkspace {
         ThreadSeed(bot: "preview-bot-designer", title: "Launch page for the spring menu",
                    status: "review", group: "waiting", line: "Draft ready. Two hero options for you to pick",
                    todo: [("Layout", "done"), ("Photos and captions", "done"), ("Pick a hero", "active")],
-                   minutes: 18),
+                   minutes: 18, session: launchPageSession),
         ThreadSeed(bot: "preview-bot-writer", title: "Announcement email and three posts",
                    status: "queued", group: "queued", line: "Starts when the launch page is approved",
                    todo: [("Email", "pending"), ("Posts", "pending")],
@@ -154,6 +161,10 @@ enum SampleWorkspace {
                    status: "working", group: "working", line: "Tracking 3 threads; next check-in at 4 pm",
                    todo: [("Split the work", "done"), ("Research and page", "active"), ("Email and posts", "pending")],
                    minutes: 1),
+        ThreadSeed(bot: "preview-bot-designer", title: "Main chat",
+                   status: "working", group: "working", line: "Building the menu cards",
+                   todo: [("Pick the hero photo", "done"), ("Build the menu cards", "active"), ("Export for print", "pending")],
+                   minutes: 2, session: rimrafMainSession, mainChat: true),
     ]
 
     /// `GET /api/v1/threads` rows (lib/bots/threads.ts Thread, camelCase).
@@ -163,9 +174,9 @@ enum SampleWorkspace {
             return [
                 "id": "preview-thread-\(index + 1)",
                 "botId": seed.bot,
-                "projectId": projectId,
-                "parentThreadId": orNull(seed.bot == "preview-bot-a" ? nil : "preview-thread-4"),
-                "kind": "task",
+                "projectId": orNull(seed.mainChat ? nil : projectId),
+                "parentThreadId": orNull(seed.bot == "preview-bot-a" || seed.mainChat ? nil : "preview-thread-4"),
+                "kind": seed.mainChat ? "standing" : "task",
                 "incognito": false,
                 "title": seed.title,
                 "objective": seed.title,
@@ -177,11 +188,11 @@ enum SampleWorkspace {
                 "progress": [done, seed.todo.count],
                 "summary": NSNull(),
                 "checkpoint": NSNull(),
-                "currentSessionId": NSNull(),
+                "currentSessionId": orNull(seed.session),
                 "generation": 1,
                 "contextUsed": 0.2 + Double(index) * 0.1,
                 "dependsOn": seed.status == "queued" ? ["preview-thread-2"] : [],
-                "createdBy": userId,
+                "createdBy": seed.mainChat ? "import" : userId,
                 "lastActivityAt": ago(seed.minutes, now: now),
                 "resolvedAt": NSNull(),
                 "createdAt": ago(Double(60 * 5 + index), now: now),
@@ -326,7 +337,8 @@ enum SampleWorkspace {
                 "shared_version": NSNull(),
                 "visibility": "private",
                 "my_access": "view",
-                "origin": ["surface": "bot"],
+                // The launch page came from Rimraf's thread (its stage montage).
+                "origin": design ? ["surface": "bot", "session_id": launchPageSession] : ["surface": "bot"],
                 "runtime_version": 1,
                 "capabilities": [String: Any](),
                 "version": [
@@ -381,6 +393,9 @@ enum SampleWorkspace {
         RoutineSeed(id: "preview-routine-2", bot: "preview-bot-writer", name: "Weekly reviews digest",
                     description: "New reviews from the week, with suggested replies.", cron: "0 9 * * 1",
                     createdMinutes: 60 * 24 * 9, updatedMinutes: 60 * 24 * 3, nextInMinutes: 60 * 50, lastMinutes: 60 * 24 * 6),
+        RoutineSeed(id: "preview-routine-3", bot: "preview-bot-designer", name: "Menu board refresh",
+                    description: "Updates the shop's menu board image with today's specials.", cron: "0 6 * * *",
+                    createdMinutes: 60 * 24 * 5, updatedMinutes: 60 * 24, nextInMinutes: 60 * 3, lastMinutes: 50),
     ]
 
     static let timezone = "America/Chicago"

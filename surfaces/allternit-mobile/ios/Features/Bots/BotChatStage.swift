@@ -4,8 +4,9 @@ import UniformTypeIdentifiers
 
 /// A bot chat's live stage, phone layout (allternit-ai src/components/bots/
 /// stage/live/BotLiveStage.tsx): the chat opens on the bot itself, big and
-/// alive above its conversation, with what needs you, what it suggests, and
-/// "Hand it a file". Swiping up (or sending) flies the bot up into the
+/// alive above its conversation, with what needs you, what it suggests, its
+/// steps while it works, "Since you were last here", a montage of what it
+/// made, the next routine, and "Hand it a file". Swiping up (or sending) flies the bot up into the
 /// thread top's avatar and the conversation takes the screen; a tap on that
 /// avatar brings it back (BotChatSessionView owns the docked state).
 struct BotChatStage: View {
@@ -24,8 +25,13 @@ struct BotChatStage: View {
     let onHandoff: (String, [StagedAttachment]) -> Void
     /// The swipe up that docks the bot.
     let onDock: () -> Void
+    /// The session on screen; nil is the bot's main chat.
+    var sessionId: String? = nil
 
     @ObservedObject private var colors = BotColorStore.shared
+    @ObservedObject private var store = BotModeStore.shared
+    @StateObject private var live = BotStageLiveStore()
+    @State private var openArtifact: ArtifactV2Summary? = nil
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var floating = false
     @State private var files: [StagedAttachment] = []
@@ -77,7 +83,37 @@ struct BotChatStage: View {
             guard !items.isEmpty else { return }
             Task { await importPhotos(items) }
         }
+        .onAppear { live.open(botId: bot.id) }
+        .task(id: sessionKey) { await live.load(botId: bot.id, sessions: botSessions) }
+        .sheet(item: $openArtifact) { artifact in
+            V2ArtifactView(artifactId: artifact.id, initialTitle: artifact.title)
+        }
     }
+
+    // MARK: Live
+
+    private var botThreads: [BotThread] { store.threads(for: bot.id) }
+
+    /// The thread on screen: the one on this session, else the bot's main chat.
+    private var currentThread: BotThread? {
+        let session = sessionId ?? store.canonicalChatIds[bot.id]
+        return botThreads.first { session != nil && $0.currentSessionId == session }
+            ?? (sessionId == nil ? botThreads.first(where: \.isMainChat) : nil)
+    }
+
+    /// Every session of this bot → its thread's title (nil for the one on screen).
+    private var botSessions: [String: String?] {
+        var sessions: [String: String?] = [:]
+        for thread in botThreads {
+            if let id = thread.currentSessionId { sessions[id] = thread.id == currentThread?.id ? .some(nil) : .some(thread.title) }
+        }
+        if let id = sessionId ?? store.canonicalChatIds[bot.id] { sessions[id] = .some(nil) }
+        return sessions
+    }
+
+    private var sessionKey: String { botSessions.keys.sorted().joined(separator: ",") }
+
+    private var steps: [ThreadTodo] { BotStageLiveModel.visibleSteps(currentThread?.todo) }
 
     // MARK: Face
 
@@ -128,7 +164,7 @@ struct BotChatStage: View {
             }
         }
         if !files.isEmpty {
-            StageCard(label: "Hand to \(bot.botDisplayName)", accent: accent) {
+            StageCard(label: "Before I start", accent: accent) {
                 ForEach(files) { file in
                     HStack(spacing: 8) {
                         Image(systemName: file.fileIcon).foregroundColor(Color("TextSecondary"))
@@ -153,7 +189,22 @@ struct BotChatStage: View {
                 }
                 .padding(.top, 4)
             }
-        } else {
+        }
+        if !steps.isEmpty {
+            StageStepsCard(steps: steps, working: working, accent: accent)
+        }
+        if let briefing = BotStageLiveModel.briefing(threads: botThreads, routines: live.routines,
+                                                     since: live.seenAt, currentThreadId: currentThread?.id) {
+            StageBriefingCard(briefing: briefing, onOpen: onOpen)
+        }
+        let frames = BotStageLiveModel.montage(saved: live.saved, todo: currentThread?.todo)
+        if !frames.isEmpty {
+            StageMontageCard(frames: frames, working: working) { openArtifact = $0 }
+        }
+        if let next = BotStageLiveModel.nextUp(live.routines) {
+            StageNextUpCard(text: next)
+        }
+        if files.isEmpty {
             Menu {
                 Button { isImporting = true } label: { Label("Choose files", systemImage: "doc.badge.plus") }
                 PhotosPicker(selection: $photoItems, maxSelectionCount: 6, matching: .images) {
