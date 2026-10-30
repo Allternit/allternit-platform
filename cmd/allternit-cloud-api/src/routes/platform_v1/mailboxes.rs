@@ -102,6 +102,15 @@ fn mail_failed(what: &str, status: Option<u16>, detail: &str) -> PlatformError {
     PlatformError::api_error("mail_service_error", format!("Allternit Mail refused to {what}."))
 }
 
+/// `POST /api/mailboxes`: Allternit Mail refuses a null `displayName`, so it's left out when unset.
+fn create_body(domain_id: &str, name: &str, display_name: Option<&str>) -> Value {
+    let mut body = json!({ "domainId": domain_id, "localPart": name });
+    if let Some(display_name) = display_name {
+        body["displayName"] = json!(display_name);
+    }
+    body
+}
+
 pub struct ProdMailHost;
 
 #[async_trait]
@@ -119,7 +128,7 @@ impl MailHost for ProdMailHost {
         let mut made: Option<Value> = None;
         for n in 0..10 {
             let name = if n == 0 { local.to_string() } else { format!("{local}-{}", n + 1) };
-            match bot_email::call(&cfg, reqwest::Method::POST, "/api/mailboxes", Some(json!({ "domainId": domain_id, "localPart": name, "displayName": display_name }))).await {
+            match bot_email::call(&cfg, reqwest::Method::POST, "/api/mailboxes", Some(create_body(&domain_id, &name, display_name))).await {
                 Ok(v) => {
                     made = Some(v);
                     break;
@@ -828,5 +837,16 @@ pub async fn mcp_call(state: &ApiState, caller: &PlatformCaller, host: &dyn Mail
             read_otp(&state.db, &m.id, &OtpBody { wait_seconds: args.get("wait_seconds").and_then(Value::as_u64), since }).await
         }
         _ => Err(PlatformError::not_found("unknown_tool", format!("No tool named '{name}'."))),
+    }
+}
+
+#[cfg(test)]
+mod create_body_tests {
+    use super::*;
+
+    #[test]
+    fn an_unset_display_name_is_left_out() {
+        assert!(create_body("d", "n", None).get("displayName").is_none());
+        assert_eq!(create_body("d", "n", Some("Bot"))["displayName"], "Bot");
     }
 }

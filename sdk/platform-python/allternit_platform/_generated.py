@@ -1376,7 +1376,7 @@ class PhonesResource:
             _body['brain'] = brain
         return self._client.request("POST", f"/v1/phones/skills/{_q(name)}/run", body=_body, idempotency_key=idempotency_key, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
 
-    def get_history(self, serial: str, *, run_id: str = NOT_GIVEN, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "PhoneHistory":
+    def get_history(self, serial: str, *, run_id: str = NOT_GIVEN, limit: int = NOT_GIVEN, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "PhoneHistory":
         """A phone's run history
 
         Every phone tool call on this phone (500 steps / 30 days), newest run first. Typed text, numbers and message bodies are redacted on the Desktop; frames and screen text stay there.
@@ -1386,6 +1386,8 @@ class PhonesResource:
         _query: Dict[str, Any] = {}
         if run_id is not NOT_GIVEN:
             _query['run_id'] = run_id
+        if limit is not NOT_GIVEN:
+            _query['limit'] = limit
         return self._client.request("GET", f"/v1/phones/{_q(serial)}/history", query=_query, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
 
     def call_tool(self, serial: str, *, name: str, arguments: Dict[str, Any] = NOT_GIVEN, run_id: str = NOT_GIVEN, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "PhoneToolResult":

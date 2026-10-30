@@ -1253,6 +1253,10 @@ export type GetPhoneHistoryQuery = {
    * Only this run's steps.
    */
   run_id?: string;
+  /**
+   * At most this many newest steps.
+   */
+  limit?: number;
 };
 
 export type GetPhoneHistoryResponse = PhoneHistory;

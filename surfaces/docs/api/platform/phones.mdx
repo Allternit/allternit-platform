@@ -150,6 +150,7 @@ Returns a **view-only** live view of the phone's screen for 10 minutes:
 }
 ```
 
+- An iPhone on Phone Link must start its screen share first. Allternit tries to press the start button for you; if it can't, the viewer waits until someone taps **Start live screen** on the iPhone, then the start button.
 - Open `viewer_url` in a browser or put it in an `iframe`. It needs a browser with WebCodecs (current Chrome, Edge, Safari or Firefox).
 - `stream_url` is the raw stream for your own player: a JSON `{ "type": "meta", "width", "height", "codec": "h264" }` frame, then one H.264 Annex-B access unit per binary frame. iPhones on the Allternit app send their own framing; use `viewer_url` for those.
 - The stream is relayed from the owner's Desktop and can't send taps or typing. After 10 minutes both URLs stop working (`404 live_view_expired`, or a close with code `4401` mid-stream); ask for a new live view.
@@ -198,10 +199,10 @@ A run needs a value for each of the skill's `inputs` (`400` otherwise). If a ste
 ## History
 
 ```http
-GET /v1/phones/{serial}/history?run_id=
+GET /v1/phones/{serial}/history?run_id=&limit=
 ```
 
-Every phone tool call on this phone, from bots, skills, tasks, routines and this API. History keeps 500 steps or 30 days per phone.
+Every phone tool call on this phone, from bots, skills, tasks, routines and this API. History keeps 500 steps or 30 days per phone. `limit` sets how many of the newest steps come back (default 100, at most 500).
 
 ```json
 {
