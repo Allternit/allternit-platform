@@ -708,6 +708,7 @@
               "api/platform/pricing",
               "api/platform/sdks/typescript",
               "api/platform/sdks/python",
+              "api/platform/sdks/claude-code-codex",
               "api/platform/billing"
             ]
           },

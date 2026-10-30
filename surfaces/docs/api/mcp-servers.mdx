@@ -239,6 +239,10 @@ The internal endpoint uses the same JSON-RPC contract but is intended for peer s
 | `x-allternit-user-id` | User id the request is running as. |
 | `x-allternit-organization-id` | Optional organization id. |
 
+## Phones, numbers and mailboxes from coding agents
+
+With a Platform API project key (`Authorization: Bearer alt_live_…`, scopes `phones`, `numbers`, `messaging`, `mail`), `https://mcp.allternit.com/mcp` also serves the phone, number and mailbox tools. The ready-made Claude Code plugin and Codex skill are in [Claude Code and Codex add-ons](/api/platform/sdks/claude-code-codex).
+
 ## MCP Events (mcp.allternit.com)
 
 The public edge at `https://mcp.allternit.com/mcp` (agents server, scope `agents:read`) and `https://mcp.allternit.com/mcp/bots/<bot id>` (vendor bot connector, scope `bots:act`) supports the MCP Events extension with webhook delivery. Both advertise it in `server/discover` (and in a legacy `initialize` answer):
