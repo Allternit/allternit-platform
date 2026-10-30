@@ -80,7 +80,20 @@ enum SampleWorkspaceAPI {
             case ["bot-projects"]:
                 return ["projects": SampleWorkspace.projects(now: now)]
             case ["bot-groups"]:
-                return [Any]()
+                return [SampleWorkspace.launchRoom(now: now)]
+            case let p where p.count == 3 && p[0] == "agent-sessions" && p[2] == "context":
+                // A chat a third full: the composer meter's context reading.
+                return ["breakdown": [
+                    "contextWindow": 200_000, "usedTokens": 61_400, "utilization": 0.307,
+                    "basis": "provider", "source": "gizzi",
+                    "categories": [
+                        ["id": "messages", "name": "Messages", "tokens": 38_200],
+                        ["id": "system_tools", "name": "System tools", "tokens": 14_600],
+                        ["id": "system_prompt", "name": "System prompt", "tokens": 3_100],
+                        ["id": "memory_files", "name": "Memory files", "tokens": 5_500],
+                        ["id": "free_space", "name": "Free space", "tokens": 138_600],
+                    ],
+                ] as [String: Any], "limits": NSNull()]
             case let p where p.count == 3 && p[0] == "projects" && p[2] == "messages":
                 return SampleWorkspace.projectMessages(projectId: p[1], now: now).map { ["messages": $0] }
             case let p where p.count == 3 && p[0] == "projects" && p[2] == "delegate":

@@ -178,62 +178,46 @@ struct NewGroupChatSheet: View {
     }
 }
 
-/// One room: the group stage (who's in, who's talking) over the log, and a
-/// composer. `@name` targets members; `@everyone` asks all.
+/// One room (GroupChatView.tsx, phone): it opens on the group stage — the
+/// members on a strip over the room's brief and the conversation — and a
+/// swipe up or a send flies them into the header's members pill; a tap on
+/// the pill brings them back. The composer is the single-bot chat's
+/// (ThreadComposer, compact deck). `@name` targets members; `@everyone`
+/// asks all.
 struct GroupChatView: View {
     let groupId: String
 
     @ObservedObject private var store = BotModeStore.shared
+    @StateObject private var attachments = AttachmentStore()
     @State private var draft = ""
     @State private var runner = GroupTurnRunner()
     @State private var speakingBotId: String? = nil
     @State private var isRunning = false
     @State private var runError: String? = nil
     @State private var isAddingMembers = false
+    /// The members have flown off the stage into the header pill.
+    @State private var docked = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         if let group = store.group(groupId) {
             VStack(spacing: 0) {
-                GroupStageView(group: group, speakingBotId: speakingBotId)
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 10) {
-                            if group.log.isEmpty {
-                                Text("Say hi. Everyone answers, or @mention one of them.")
-                                    .font(.footnote)
-                                    .foregroundColor(Color("TextSecondary"))
-                                    .frame(maxWidth: .infinity)
-                                    .padding(.top, 24)
-                            }
-                            ForEach(group.log) { message in
-                                GroupMessageRow(message: message).id(message.id)
-                            }
-                            if let speakingBotId, let bot = store.bot(speakingBotId) {
-                                HStack(spacing: 8) {
-                                    BotAvatarView(bot: bot, size: 22, live: true)
-                                    Text("\(bot.botDisplayName) is typing…")
-                                        .font(.caption)
-                                        .foregroundColor(Color("TextSecondary"))
-                                }
-                            }
-                            if let runError {
-                                Text(runError).font(.caption).foregroundColor(Theme.statusError)
-                            }
-                        }
-                        .padding(14)
-                    }
-                    .onChange(of: group.log.count) { _, _ in
-                        if let last = group.log.last?.id {
-                            withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(last, anchor: .bottom) }
-                        }
-                    }
+                if !docked {
+                    GroupStageView(group: group, speakingBotId: speakingBotId,
+                                   onSuggestion: { send(group, text: $0) },
+                                   onDock: dock)
+                        .transition(.asymmetric(
+                            insertion: .scale(scale: 0.2, anchor: .top).combined(with: .opacity),
+                            removal: .scale(scale: 0.15, anchor: .top).combined(with: .opacity)
+                        ))
                 }
+                log(group)
                 composer(group)
             }
             .background(Color("BgPrimary"))
-            .navigationTitle(group.name)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .principal) { header(group) }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { isAddingMembers = true } label: { Image(systemName: "person.badge.plus") }
                         .disabled(isRunning)
@@ -243,6 +227,7 @@ struct GroupChatView: View {
             .sheet(isPresented: $isAddingMembers) {
                 AddGroupMembersSheet(group: group)
             }
+            .onChange(of: groupId) { _, _ in docked = false }
         } else {
             FriendlyStateView(style: .empty, icon: "person.3", title: "Group not found",
                               message: "This room was deleted on another device.")
@@ -251,39 +236,120 @@ struct GroupChatView: View {
         }
     }
 
-    private func composer(_ group: BotGroupChat) -> some View {
-        HStack(alignment: .bottom, spacing: 8) {
-            TextField("Message \(group.name)", text: $draft, axis: .vertical)
-                .lineLimit(1...5)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 9)
-                .background(Color("BgSecondary"))
-                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-            Button {
-                send(group)
-            } label: {
-                Image(systemName: isRunning ? "stop.circle.fill" : "arrow.up.circle.fill")
-                    .font(.system(size: 32))
-                    .foregroundColor(Color("AccentPrimary"))
-            }
-            .disabled(!isRunning && draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            .accessibilityLabel(isRunning ? "Stop" : "Send")
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(Color("BgPrimary"))
+    /// The flight between the stage and the members pill (FLIGHT: 0.44s).
+    private var flight: Animation? {
+        reduceMotion ? nil : .timingCurve(0.65, 0, 0.35, 1, duration: 0.44)
     }
 
-    private func send(_ group: BotGroupChat) {
-        if isRunning {
-            runner.cancel()
-            return
+    private func dock() {
+        guard !docked else { return }
+        withAnimation(flight) { docked = true }
+    }
+
+    /// `# room` and the members pill (N bots · you); docked, the pill shows
+    /// their faces and a tap brings them back onto the stage.
+    private func header(_ group: BotGroupChat) -> some View {
+        let count = group.members.count
+        return VStack(spacing: 1) {
+            Text("# \(group.name)")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundColor(Color("TextPrimary"))
+                .lineLimit(1)
+            Button { withAnimation(flight) { docked = false } } label: {
+                HStack(spacing: 5) {
+                    if docked {
+                        HStack(spacing: -4) {
+                            ForEach(group.members.prefix(4)) { member in
+                                if let bot = store.bot(member.botId) {
+                                    BotAvatarView(bot: bot, size: 16)
+                                } else {
+                                    AgentIdenticonView(seed: member.botId, size: 16)
+                                }
+                            }
+                        }
+                        .transition(.scale.combined(with: .opacity))
+                    }
+                    Text("\(count) \(count == 1 ? "bot" : "bots") · you")
+                        .font(.system(size: 11.5))
+                        .foregroundColor(Color("TextSecondary"))
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 2)
+                .overlay(Capsule().stroke(Color("BorderSubtle")))
+            }
+            .buttonStyle(.plain)
+            .disabled(!docked)
+            .accessibilityLabel(docked ? "Show the \(count) bots" : "\(count) bots and you")
         }
-        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
+    }
+
+    private func log(_ group: BotGroupChat) -> some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 10) {
+                    if group.log.isEmpty && docked {
+                        Text("Say hi. Everyone answers, or @mention one of them.")
+                            .font(.footnote)
+                            .foregroundColor(Color("TextSecondary"))
+                            .frame(maxWidth: .infinity)
+                            .padding(.top, 24)
+                    }
+                    ForEach(group.log) { message in
+                        GroupMessageRow(message: message).id(message.id)
+                    }
+                    if let speakingBotId, let bot = store.bot(speakingBotId) {
+                        HStack(spacing: 8) {
+                            BotAvatarView(bot: bot, size: 22, live: true)
+                            Text("\(bot.botDisplayName) is typing…")
+                                .font(.caption)
+                                .foregroundColor(Color("TextSecondary"))
+                        }
+                    }
+                    if let runError {
+                        Text(runError).font(.caption).foregroundColor(Theme.statusError)
+                    }
+                }
+                .padding(14)
+            }
+            .scrollDismissesKeyboard(.interactively)
+            .onChange(of: group.log.count) { _, _ in
+                if let last = group.log.last?.id {
+                    withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(last, anchor: .bottom) }
+                }
+            }
+        }
+    }
+
+    /// GroupChatComposer: the thread composer with the compact deck.
+    private func composer(_ group: BotGroupChat) -> some View {
+        ComposerView(
+            inputText: $draft,
+            attachmentStore: attachments,
+            isStreaming: isRunning,
+            isSendDisabled: false,
+            hasActiveSession: true,
+            deck: .compact,
+            onSend: { _ in send(group, text: draft) },
+            onStop: { runner.cancel() },
+            onVoiceMode: {},
+            placeholderOverride: "Message #\(group.name) · @ a bot to start a thread",
+            showsPermission: false,
+            showsVoice: false,
+            showsAttach: false
+        )
+        .padding(.horizontal, 14)
+        .padding(.top, 6)
+        .padding(.bottom, 8)
+    }
+
+    private func send(_ group: BotGroupChat, text raw: String) {
+        let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, !isRunning else { return }
         draft = ""
         runError = nil
         isRunning = true
+        // Sending flies the members up into the pill.
+        dock()
         var room = group
         room.log.append(GroupChatMessage(id: UUID().uuidString, from: "user", botId: nil, displayName: "You",
                                          text: text, timestamp: ISO8601DateFormatter().string(from: Date()), threadId: nil))
@@ -346,41 +412,107 @@ struct GroupMessageRow: View {
     }
 }
 
-/// The group stage: every member on a strip, the one talking lifted and
-/// animated (GroupStage.tsx, phone size).
+/// The group stage, phone layout (GroupStage.tsx): the cast on one strip
+/// (the one talking lifted), then the room's brief — who spoke last and
+/// two suggestions to send. A swipe up docks it into the header pill.
 struct GroupStageView: View {
     let group: BotGroupChat
     let speakingBotId: String?
+    let onSuggestion: (String) -> Void
+    let onDock: () -> Void
     @ObservedObject private var store = BotModeStore.shared
+    @ObservedObject private var colors = BotColorStore.shared
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var floating = false
+
+    /// The members' colours, each bot's own (the web palette for the rest).
+    private static let palette = ["#a78bfa", "#f472b6", "#fb923c", "#4ade80", "#60a5fa", "#facc15", "#2dd4bf", "#f87171"]
+
+    private func color(_ index: Int, _ botId: String) -> Color {
+        Color(hex: colors.hex(for: store.bot(botId)) ?? Self.palette[index % Self.palette.count])
+    }
+
+    private var lastLine: (name: String, text: String)? {
+        guard let last = group.log.last(where: { $0.from != "user" && !$0.text.trimmingCharacters(in: .whitespaces).isEmpty }) else { return nil }
+        let text = last.text.split(whereSeparator: \.isNewline).joined(separator: " ")
+        return (last.displayName ?? "A bot", String(text.prefix(140)))
+    }
 
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 16) {
-                ForEach(group.members) { member in
-                    let speaking = member.botId == speakingBotId
-                    VStack(spacing: 4) {
+        VStack(spacing: 12) {
+            cast
+            brief
+        }
+        .padding(.horizontal, 14)
+        .padding(.top, 8)
+        .padding(.bottom, 6)
+        .frame(maxWidth: .infinity)
+        .background {
+            RadialGradient(colors: [color(0, group.members.first?.botId ?? "").opacity(0.16), .clear],
+                           center: UnitPoint(x: 0.5, y: 0.24), startRadius: 0, endRadius: 300)
+                .allowsHitTesting(false)
+        }
+        .contentShape(Rectangle())
+        .gesture(DragGesture(minimumDistance: 16).onEnded { value in
+            if value.translation.height < -40 { onDock() }
+        })
+        .onAppear {
+            guard !reduceMotion else { return }
+            withAnimation(.easeInOut(duration: 1.4).repeatForever(autoreverses: true)) { floating = true }
+        }
+    }
+
+    private var cast: some View {
+        HStack(alignment: .bottom, spacing: 0) {
+            ForEach(Array(group.members.enumerated()), id: \.element.id) { index, member in
+                let speaking = member.botId == speakingBotId
+                let size = min(48, (UIScreen.main.bounds.width - 28) / CGFloat(max(1, group.members.count)) - 8)
+                VStack(spacing: 4) {
+                    Group {
                         if let bot = store.bot(member.botId) {
-                            BotAvatarView(bot: bot, size: speaking ? 56 : 44, live: speaking)
+                            BotAvatarView(bot: bot, size: size, live: speaking)
                         } else {
-                            AgentIdenticonView(seed: member.botId, size: 44)
+                            AgentIdenticonView(seed: member.botId, size: size)
                         }
-                        Text(member.displayName)
-                            .font(.caption2.weight(speaking ? .semibold : .regular))
-                            .foregroundColor(speaking ? Color("TextPrimary") : Color("TextSecondary"))
-                            .lineLimit(1)
                     }
-                    .offset(y: speaking && !reduceMotion ? -4 : 0)
-                    .animation(reduceMotion ? nil : .spring(response: 0.35, dampingFraction: 0.8), value: speakingBotId)
-                    .accessibilityElement(children: .combine)
-                    .accessibilityLabel(speaking ? "\(member.displayName), talking" : member.displayName)
+                    .offset(y: reduceMotion ? 0 : speaking ? (floating ? -12 : -4) : (floating ? -3 : 0))
+                    Capsule().fill(color(index, member.botId).opacity(0.35)).frame(width: size * 0.5, height: 3)
+                    Text(member.displayName)
+                        .font(.system(size: 11, weight: speaking ? .semibold : .regular))
+                        .foregroundColor(speaking ? Color("TextPrimary") : Color("TextSecondary"))
+                        .lineLimit(1)
+                }
+                .frame(maxWidth: .infinity)
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(speaking ? "\(member.displayName), speaking" : member.displayName)
+            }
+        }
+        .padding(.top, 6)
+    }
+
+    private var brief: some View {
+        StageCard(label: "# \(group.name)") {
+            if let speakingBotId, let name = group.members.first(where: { $0.botId == speakingBotId })?.displayName {
+                Text("\(name) is speaking…")
+                    .font(.system(size: 13.5))
+                    .foregroundColor(Color("TextPrimary"))
+            } else if let last = lastLine {
+                (Text(last.name).fontWeight(.semibold) + Text(": “\(last.text)”"))
+                    .font(.system(size: 13.5))
+                    .foregroundColor(Color("TextPrimary"))
+                    .lineLimit(3)
+            } else {
+                Text("Everyone answers, or @mention one of them.")
+                    .font(.system(size: 13.5))
+                    .foregroundColor(Color("TextSecondary"))
+            }
+            HStack(spacing: 6) {
+                ForEach(group.log.isEmpty ? ["Introduce yourselves", "What can this room do?"] : ["Catch me up", "What's next?"], id: \.self) { text in
+                    StageChip(title: text) { onSuggestion(text) }
                 }
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
+            .disabled(speakingBotId != nil)
         }
-        .frame(height: 96)
-        .background(Color("BgSecondary"))
     }
 }
 
