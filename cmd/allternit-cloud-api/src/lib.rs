@@ -362,6 +362,8 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         .merge(routes::allternit_events::routes())
         // Runtimes forward their bot_events ledger into the event backbone (relay-signature auth in the handler).
         .merge(routes::runtime_events::routes())
+        // Office view live link: the runtime pushes the public floor (relay-signed); GET /api/v2/public/floors/:token is public, 404 when off.
+        .merge(routes::floor_shares::routes())
         // Runtime heartbeats (relay-signed) and the owner's presence list (agent network WP4).
         .merge(routes::runtime_presence::routes())
         // Team roster + send (agent network phase 2, WP13).
