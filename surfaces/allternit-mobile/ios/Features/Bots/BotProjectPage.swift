@@ -41,14 +41,17 @@ struct BotProjectPage: View {
     @State private var startingBotId: String?
     @State private var sheet: PageSheet?
     @State private var confirmDelete = false
+    @State private var statusRecord: ProjectStatusRecord?
+    @State private var showMore = false
+    @StateObject private var looks: ProjectLookStore
 
     private enum PageSheet: Identifiable {
-        case appearance, settings, edit, template, graph, memory, needsYou, addBot, statusPage
+        case customize, settings, edit, template, graph, memory, needsYou, addBot, statusPage
         case artifact(ArtifactV2Summary)
 
         var id: String {
             switch self {
-            case .appearance: return "appearance"
+            case .customize: return "customize"
             case .settings: return "settings"
             case .edit: return "edit"
             case .template: return "template"
@@ -64,6 +67,7 @@ struct BotProjectPage: View {
 
     init(project: BotProjectSummary) {
         projectId = project.id
+        _looks = StateObject(wrappedValue: ProjectLookStore(scope: "project:bot:\(project.id)"))
         _title = State(initialValue: project.title)
         _details = State(initialValue: project.description)
         _favorite = State(initialValue: project.favorite)
@@ -89,10 +93,25 @@ struct BotProjectPage: View {
                 VStack(alignment: .leading, spacing: 16) {
                     breadcrumb
                     header
-                    launchComposer
-                    cards
+                    ProjectDashboardView(layout: looks.look.layout, look: looks.look, data: boardData, title: title) { sheet = .statusPage }
+                    threadsCard
                     conversation
                         .id("conversation")
+                    Button { withAnimation(.easeOut(duration: 0.2)) { showMore.toggle() } } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: showMore ? "chevron.up" : "chevron.down").font(.system(size: 12))
+                            Text("Memory, files and more").font(.system(size: 13, weight: .medium))
+                        }
+                        .foregroundColor(Color("TextPrimary"))
+                        .padding(.horizontal, 14)
+                        .frame(minHeight: 44)
+                        .background(Capsule().fill(Color("BgPanel")))
+                    }
+                    .buttonStyle(.plain)
+                    if showMore {
+                        launcher
+                        cards
+                    }
                 }
                 .padding(.horizontal, 16)
                 .padding(.bottom, 32)
@@ -112,10 +131,18 @@ struct BotProjectPage: View {
             }
         }
         .backdropTouches(backdropVariant != "plain")
+        .safeAreaInset(edge: .bottom) { launchComposer.padding(.horizontal, 12).padding(.bottom, 6) }
         .navigationTitle("Project")
         .navigationBarTitleDisplayMode(.inline)
         .refreshable { await refreshAll() }
         .task { await pollLoop() }
+        #if DEBUG
+        // `-open-project-customize`: opens Customize, for simulator checks (no tap injection in simctl).
+        .task {
+            if UserDefaults.standard.bool(forKey: "open-project-customize") { sheet = .customize }
+        }
+        #endif
+        .task(id: sheet?.id) { await loadStatus() }
         .task(id: sessionKey) { await loadArtifacts() }
         .onChange(of: dictation.transcript) { _, transcript in
             if isDictating { draft = dictationBase + transcript }
@@ -158,23 +185,25 @@ struct BotProjectPage: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Button { sheet = .edit } label: {
-                Text(title)
-                    .font(.system(size: 28, design: .serif))
-                    .foregroundColor(Color("TextPrimary"))
-                    .multilineTextAlignment(.leading)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+            HStack(alignment: .top, spacing: 4) {
+                Button { sheet = .edit } label: {
+                    Text(title)
+                        .font(.system(size: 26, design: .serif))
+                        .foregroundColor(Color("TextPrimary"))
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .buttonStyle(.plain)
+                .accessibilityHint("Rename project")
+                actionsRow
             }
-            .buttonStyle(.plain)
-            .accessibilityHint("Rename project")
             if let details, !details.isEmpty {
                 Text(details)
                     .font(.system(size: 13.5))
                     .foregroundColor(Color("TextSecondary"))
                     .fixedSize(horizontal: false, vertical: true)
             }
-            actionsRow
             chips
             if let loadError {
                 ProjectInlineError(text: loadError) { Task { await refreshAll() } }
@@ -184,38 +213,39 @@ struct BotProjectPage: View {
 
     private var actionsRow: some View {
         HStack(spacing: 2) {
-            Button { sheet = .appearance } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "paintpalette").font(.system(size: 14))
-                    Text("Customize appearance").font(.system(size: 13))
-                }
-                .foregroundColor(Color("TextSecondary"))
-                .frame(minHeight: 44)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            Spacer(minLength: 4)
-            ProjectIconButton(systemName: "gearshape", label: "Project settings") { sheet = .settings }
             ProjectIconButton(systemName: favorite ? "pin.fill" : "pin",
                               label: favorite ? "Unpin project" : "Pin project") { toggleFavorite() }
-            Menu {
-                Button { sheet = .edit } label: { Label("Edit details", systemImage: "pencil") }
-                Button { sheet = .settings } label: { Label("Project settings", systemImage: "gearshape") }
-                Button { toggleArchived() } label: {
-                    Label(archived ? "Unarchive" : "Archive", systemImage: "archivebox")
-                }
-                Button { sheet = .template } label: { Label("Save as template", systemImage: "square.grid.2x2") }
-                Button(role: .destructive) { confirmDelete = true } label: { Label("Delete", systemImage: "trash") }
-            } label: {
-                Image(systemName: "ellipsis")
-                    .rotationEffect(.degrees(90))
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(Color("TextSecondary"))
+            Button { sheet = .customize } label: {
+                Image(systemName: "slider.horizontal.3")
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundColor(Color("TextPrimary"))
                     .frame(width: 44, height: 44)
-                    .contentShape(Rectangle())
+                    .background(Circle().fill(Color("BgPanel")))
+                    .contentShape(Circle())
             }
-            .accessibilityLabel("Project options")
+            .buttonStyle(.plain)
+            .accessibilityLabel("Customize")
         }
+    }
+
+    private var boardData: ProjectBoardData {
+        let columns: [String: ProjectBoardWork.Column] = ["waiting": .needsYou, "working": .working, "queued": .queued, "idle": .queued, "resolved": .done]
+        let visible = threads.filter { !$0.incognito }
+        let work = visible.map { t in
+            ProjectBoardWork(id: t.id, title: t.title, column: columns[t.group] ?? .queued, owner: store.bot(t.botId)?.botDisplayName,
+                             at: ProjectBoardData.date(t.lastActivityAt), open: { navigator.openThread(t) })
+        }
+        let people = team.map { bot -> ProjectBoardPerson in
+            let own = visible.filter { $0.botId == bot.id }
+            let needs = own.first { $0.group == "waiting" }
+            let busy = own.first { $0.group == "working" }
+            let now = needs ?? busy
+            return ProjectBoardPerson(id: bot.id, name: bot.botDisplayName, doing: now.map { $0.statusLine ?? $0.title },
+                                      state: needs != nil ? "needs_you" : busy != nil ? "working" : "idle", bot: bot,
+                                      open: now.map { thread in { navigator.openThread(thread) } })
+        }
+        let made = artifacts.map { item in ProjectBoardMade(id: item.id, name: item.title, kind: item.kind.capitalized, open: { sheet = .artifact(item) }) }
+        return ProjectBoardData(status: statusRecord, work: work, people: people, made: made)
     }
 
     private var chips: some View {
@@ -251,30 +281,19 @@ struct BotProjectPage: View {
     // MARK: - Composer + launcher
 
     private var launchComposer: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Text("To:")
-                HStack(spacing: 4) {
-                    AProtocolMark(height: 5.5, label: "Al")
-                    Text("Al · \(title)").lineLimit(1)
-                }
-                .foregroundColor(Color("TextSecondary"))
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(RoundedRectangle(cornerRadius: 6).fill(Color("FillNeutral")))
+        VStack(alignment: .leading, spacing: 4) {
+            if let status {
+                Text(status)
+                    .font(.system(size: 12))
+                    .foregroundColor(Theme.statusError)
             }
-            .font(.system(size: 12.5))
-            .foregroundColor(Color("TextTertiary"))
-            Text("or use @ on a bot below to send it directly")
-                .font(.system(size: 12.5))
-                .foregroundColor(Color("TextTertiary"))
             ComposerView(
                 inputText: $draft,
                 attachmentStore: attachments,
                 isStreaming: false,
                 isSendDisabled: sending,
                 hasActiveSession: false,
-                deck: .full,
+                deck: .none,
                 onSend: { _ in attachments.clear(); send() },
                 onStop: {},
                 onVoiceMode: toggleDictation,
@@ -282,12 +301,6 @@ struct BotProjectPage: View {
                 showsPermission: false,
                 showsAttach: false
             )
-            if let status {
-                Text(status)
-                    .font(.system(size: 12))
-                    .foregroundColor(Theme.statusError)
-            }
-            launcher
         }
     }
 
@@ -412,9 +425,16 @@ struct BotProjectPage: View {
     @ViewBuilder
     private func sheetContent(_ which: PageSheet) -> some View {
         switch which {
-        case .appearance:
-            StageBackdropScopeSheet(scope: scope, title: "Customize appearance",
-                                    colors: botIds.map { botColors.hex(for: store.bot($0)) })
+        case .customize:
+            ProjectCustomizeSheet(store: looks, data: boardData, title: title, scope: scope,
+                                  backdropColors: botIds.map { botColors.hex(for: store.bot($0)) }) {
+                Button("Project settings") { sheet = .settings }.frame(minHeight: 44)
+            } manage: {
+                Button("Edit details") { sheet = .edit }.frame(minHeight: 44)
+                Button(archived ? "Unarchive" : "Archive") { toggleArchived() }.frame(minHeight: 44)
+                Button("Save as template") { sheet = .template }.frame(minHeight: 44)
+                Button("Delete", role: .destructive) { sheet = nil; confirmDelete = true }.frame(minHeight: 44)
+            }
         case .settings:
             ProjectSettingsSheet(projectId: projectId, scope: scope,
                                  colors: botIds.map { botColors.hex(for: store.bot($0)) },
@@ -476,6 +496,10 @@ struct BotProjectPage: View {
 
     /// The project's own row, as the web reads it on mount (not every poll,
     /// so a flag just written isn't overwritten mid-flight).
+    private func loadStatus() async {
+        if let record = try? await BotProjectClient.shared.status(projectId: projectId) { statusRecord = record }
+    }
+
     private func loadSummary() async {
         guard let all = try? await BotModeClient.shared.listBotProjects(),
               let row = all.first(where: { $0.id == projectId }) else { return }
