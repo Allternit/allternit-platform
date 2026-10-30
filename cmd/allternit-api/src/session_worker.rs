@@ -1048,12 +1048,19 @@ async fn stopped(
                     if let Some(run_id) = run_id {
                         finish_deployment_run(conn, &run_id, "cancelled", None, Some("interrupted"))?;
                     }
+                    return Ok(true);
                 }
-                Ok(affected)
+                // A public `user.interrupt` writes its event, then cancels the
+                // task itself; if we saw the event first, the task is already
+                // cancelled (with its terminal events) by the time we get here.
+                let status: Option<String> = conn
+                    .query_row("SELECT status FROM beta_work_tasks WHERE id = ?1", params![task_id], |row| row.get(0))
+                    .optional()?;
+                Ok(status.as_deref() == Some("cancelled"))
             })
             .await;
             match ended {
-                Ok(n) if n > 0 => TaskOutcome::Cancelled,
+                Ok(true) => TaskOutcome::Cancelled,
                 _ => TaskOutcome::LostLease,
             }
         }
