@@ -49,6 +49,7 @@ const REPLY_CAP: usize = 600;
 
 pub fn coordinator_router() -> Router<Arc<AppState>> {
     Router::new()
+        .route("/project-workspaces", get(list_workspaces))
         .route("/project-workspaces/:project_key", get(get_workspace).put(register_workspace))
         .route("/project-workspaces/:project_key/threads", post(create_workspace_thread))
         .route("/projects/:project_id/messages", get(list_messages).post(post_message))
@@ -555,8 +556,13 @@ pub async fn coordinate<R: CoordinatorRuntime>(db: &DbHandle, rt: &R, user_id: &
     let model = selection_model(&settings["coordinatorModel"]).or_else(|| team_model(db, &team));
     let mut prompt = planner_prompt(&title, &team, &open, message);
     prompt.push_str(&project_history(db, project_id));
-    let system = format!("{PLANNER_SYSTEM}\n\nProject instructions:\n{}\n\nProject context (data):\n{}",
+    let mut system = format!("{PLANNER_SYSTEM}\n\nProject instructions:\n{}\n\nProject context (data):\n{}",
         settings["instructions"].as_str().unwrap_or_default(), settings["context"].as_str().unwrap_or_default());
+    // Read first: the project's saved instructions column and its status page.
+    if let Ok(conn) = db.connect() {
+        let page = crate::project_status::prompt_context(&conn, project_id);
+        if !page.is_empty() { system.push_str("\n\n"); system.push_str(&page); }
+    }
     let proposal = rt
         .plan(&system, &prompt, model)
         .await
@@ -676,6 +682,7 @@ pub fn kickoff_text(project_title: &str, t: &ThreadView) -> String {
         }
     }
     s.push_str("\n\nWork on this now and report what you did and what's left.");
+    s.push_str("\n\nRead the project status page in your instructions first. When you finish, update the section you changed with the project_status tool; a done state needs a proof link.");
     if !t.todo.is_empty() {
         s.push_str("\n\nEnd your report with this checklist, marking [x] only for steps you actually finished:\nChecklist:");
         for (n, i) in t.todo.iter().enumerate() {
@@ -926,7 +933,8 @@ fn apply_worker_settings(db: &DbHandle, worker_id: &str, session_id: &str) -> Re
     bag["backendProjectId"] = workspace["id"].clone();
     bag["originSurface"] = workspace["mode"].clone();
     if let Some(directory) = workspace["directory"].as_str() { bag["directory"] = json!(directory); }
-    bag["systemPrompt"] = json!(format!("You work on one task in this project. Report the result and evidence honestly.\n\n{}", workspace["context"].as_str().unwrap_or_default()));
+    let page = workspace["id"].as_str().and_then(|id| db.connect().ok().map(|conn| crate::project_status::prompt_context(&conn, id))).unwrap_or_default();
+    bag["systemPrompt"] = json!(format!("You work on one task in this project. Report the result and evidence honestly.\n\n{}\n\n{}", workspace["context"].as_str().unwrap_or_default(), page));
     bag["codePermissionMode"] = workspace["threadPermissionMode"].as_str().map(|v| json!(v)).unwrap_or(json!("default"));
     if workspace["mode"] == "code" { bag["workspaceId"] = workspace["nativeId"].clone(); }
     if let Some((provider, model)) = selection_model(&workspace["threadModel"]) {
@@ -970,7 +978,7 @@ fn save_workspace(db: &DbHandle, user_id: &str, key: &str, body: WorkspaceBody) 
     workspace["nativeId"] = json!(body.native_id);
     workspace["mode"] = json!(body.mode);
     let metadata = json!({ "workspace": workspace });
-    tx.execute("INSERT INTO cowork_projects (id, user_id, title, description, metadata) VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT(id) DO UPDATE SET title = excluded.title, description = excluded.description, metadata = excluded.metadata, updated_at = CURRENT_TIMESTAMP", params![id, user_id, body.title, body.description, metadata.to_string()]).map_err(|e| e.to_string())?;
+    tx.execute("INSERT INTO cowork_projects (id, user_id, title, description, metadata) VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT(id) DO UPDATE SET title = excluded.title, description = excluded.description, metadata = json_set(CASE WHEN json_valid(cowork_projects.metadata) THEN cowork_projects.metadata ELSE '{}' END, '$.workspace', json(json_extract(excluded.metadata, '$.workspace'))), updated_at = CURRENT_TIMESTAMP", params![id, user_id, body.title, body.description, metadata.to_string()]).map_err(|e| e.to_string())?;
     let (provider, model) = selection_model(&workspace["threadModel"]).unwrap_or_else(crate::default_model);
     let config = json!({ "internal": true, "projectWorkspace": workspace });
     tx.execute("INSERT INTO agents (id, user_id, name, type, provider, model, config, is_bot, enabled_modes) VALUES (?1, ?2, 'Project worker', 'project-worker', ?3, ?4, ?5, 0, '[\"chat\",\"cowork\",\"code\",\"design\"]') ON CONFLICT(id) DO UPDATE SET provider = excluded.provider, model = excluded.model, config = excluded.config", params![worker_id, user_id, provider, model, config.to_string()]).map_err(|e| e.to_string())?;
@@ -998,6 +1006,24 @@ async fn get_workspace(State(state): State<Arc<AppState>>, Extension(user): Exte
         Ok(Ok(Some(workspace))) => Json(workspace).into_response(),
         Ok(Ok(None)) => err(StatusCode::NOT_FOUND, "project workspace not found"),
         _ => err(StatusCode::INTERNAL_SERVER_ERROR, "could not load project workspace"),
+    }
+}
+
+/// Status summaries of the user's registered chat/code/design workspaces, so the
+/// Projects hub can show each one's status page state without a call per project.
+async fn list_workspaces(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>) -> Response {
+    let db = state.db.clone();
+    match tokio::task::spawn_blocking(move || -> rusqlite::Result<Vec<Value>> {
+        let conn = db.connect()?;
+        let mut stmt = conn.prepare("SELECT id, metadata FROM cowork_projects WHERE user_id = ?1 AND json_extract(metadata, '$.workspace.key') IS NOT NULL")?;
+        let rows = stmt.query_map(params![user.user_id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+        Ok(rows.filter_map(Result::ok).map(|(id, raw)| {
+            let meta = serde_json::from_str::<Value>(&raw).unwrap_or_default();
+            json!({ "projectId": id, "key": meta["workspace"]["key"], "status": meta.get("status").cloned().unwrap_or(Value::Null) })
+        }).collect())
+    }).await {
+        Ok(Ok(workspaces)) => Json(json!({ "workspaces": workspaces })).into_response(),
+        _ => err(StatusCode::INTERNAL_SERVER_ERROR, "could not list project workspaces"),
     }
 }
 

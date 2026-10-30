@@ -1,0 +1,25 @@
+---
+title: project_status
+description: "The Gizzi tool bots use to read and update a project's status page."
+---
+
+`project_status` lets a bot read a project's [status page](/guides/project-status), update the section it changed, or close the project. It calls the [Cowork API](/api/cowork) with the same sign-in the artifact tools use.
+
+## Actions
+
+| Action | What it does |
+| --- | --- |
+| `read` | Returns the state, next action, filled sections and the last log lines. |
+| `update` | Merges only the fields you pass: `section` with `text`, `state`, `next_action`, `note`, `proof_url`, `done`. |
+| `close` | Closes the project with `outcome` and `lessons` and pauses its routines. Pass `reopen: true` to reopen. |
+
+`project_id` is optional when the session knows its project. The status block in the bot's prompt also lists the id.
+
+## Rules the tool tells the bot
+
+- Read the page before starting work.
+- When finished, update the section you changed.
+- Never invent progress, and flag anything unverified.
+- State `done` needs a `proof_url`; without it the call fails with `proof_required`.
+- A closed project returns `project_closed` until it is reopened.
+- Close a project only when the user asks.

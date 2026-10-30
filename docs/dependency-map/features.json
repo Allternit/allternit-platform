@@ -3341,6 +3341,32 @@
           "note": "Eoj, from the Grok Bot worker-bot post: build worker bots from chat and connect-from-chat for all vendors; OpenCode is just another vendor, not a free tier."
         }
       ]
+    },
+    {
+      "id": "feature:project-status-pages",
+      "label": "Project status pages",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "Every project (Projects tab and Bot Mode, both cowork_projects rows) has one living status page in metadata.status: state, next action, nine sections, a 10-entry log plus archive. GET/PATCH /cowork/projects/:id/status merge one section at a time in one transaction; done requires a proof link; blocked, needs_decision and overdue raise one de-duped Needs you item. POST /cowork/projects/:id/close records outcome and lessons and pauses linked routines (and their gizzi cron jobs); reopen resumes them. The page is injected into coordinator and worker prompts with the project instructions; bots write it with the gizzi project_status tool. The Chief of Staff template runs a weekday Project sweep. The Projects hub shows state, next action and a Closed filter, using GET /project-workspaces for chat, code and design projects.",
+      "touches": [
+        "allternit/cmd/allternit-api/src/project_status.rs",
+        "allternit/cmd/allternit-api/src/cowork_routes.rs",
+        "allternit/cmd/allternit-api/src/coordinator_routes.rs",
+        "allternit/cmd/gizzi-code/src/runtime/tools/builtins/project-status.ts",
+        "allternit-ai/src/components/projects",
+        "allternit-ai/src/views/project",
+        "allternit-ai/src/lib/bots/templates"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-30",
+          "note": "Eoj picked: any bot on the project writes the page, section by section; build all six steps. Stored in project metadata, so no migration."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/project-status.mdx",
+        "allternit/surfaces/docs/tools/project-status.mdx"
+      ]
     }
   ],
   "journeys": [

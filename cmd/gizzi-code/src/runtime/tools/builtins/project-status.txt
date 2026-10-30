@@ -1,0 +1,14 @@
+Read or update a project's status page: the one living record of where the project stands (goal, status, next actions, owners, deadlines, decisions, blockers, outcome, lessons).
+
+Rules:
+- Read the page before you start work on a project (the prompt block "Project status page" shows the same data and the project id).
+- Update the section you changed when you finish. Only write what you did or verified; never invent progress. Mark anything you could not verify as unverified.
+- Setting state "done" (or done: true) needs a proof_url, a link to the evidence. Without it the call fails with proof_required.
+- A closed project cannot be updated; reopen it first.
+
+Actions:
+- read: returns the status page.
+- update: merges only the fields you pass. section is one of goal, status, next_actions, owners, deadlines, decisions, blockers, outcome, lessons, with text. state is on_track, at_risk, blocked, needs_decision or done. next_action is the one-line next step. note is the log line. blocked and needs_decision tell the owner in Needs you, so use them only when a person must act.
+- close: closes the project with outcome and lessons and pauses its routines. Pass reopen: true to reopen. Close only when the user asks.
+
+project_id is optional when the session knows its project; otherwise pass the id from the status block.
