@@ -104,6 +104,7 @@ struct CodeModeView: View {
                             onArchive: archiveActive,
                             terminal: terminalLook,
                             onLeaveTerminal: { setTerminalLook(false) },
+                            onEnterTerminal: { setTerminalLook(true) },
                             onOpenShell: { shellOpen = true }
                         )
                         .id(thread.id)
@@ -191,7 +192,12 @@ struct CodeModeView: View {
             }
             .accessibilityLabel("Open menu")
 
-            Spacer()
+            // One switcher for the three ways to work here: the thread as a
+            // chat, the same thread in its terminal look, or the computer's shell.
+            CodeViewSwitcher(selection: viewKind, dark: darkChrome, onSelect: selectView)
+                .padding(.leading, 2)
+
+            Spacer(minLength: 4)
 
             if inThread && !shellOpen {
                 panesMenu(ink: ink)
@@ -211,30 +217,6 @@ struct CodeModeView: View {
                         .frame(width: 44, height: 44)
                 }
                 .accessibilityLabel("New code thread")
-            }
-            Button(action: {
-                if shellOpen {
-                    shellOpen = false
-                } else if terminalLook {
-                    setTerminalLook(false)
-                } else {
-                    openTerminal()
-                }
-            }) {
-                Image(systemName: shellOpen ? "xmark" : (terminalLook ? "bubble.left.and.bubble.right" : "apple.terminal"))
-                    .font(.system(size: 18))
-                    .foregroundColor(ink)
-                    .frame(width: 44, height: 44)
-            }
-            .accessibilityLabel(shellOpen ? "Close shell" : (terminalLook ? "Show chat" : "Open terminal"))
-            .accessibilityAddTraits(terminalLook ? .isSelected : [])
-        }
-        .overlay {
-            if shellOpen {
-                Text("Shell")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(ink)
-                    .allowsHitTesting(false)
             }
         }
         .padding(.horizontal, 6)
@@ -373,6 +355,24 @@ struct CodeModeView: View {
 
     /// Terminal from the launchpad opens a fresh thread in its terminal
     /// look; in a thread it flips that thread.
+    private var viewKind: CodeViewKind {
+        shellOpen ? .shell : (terminalLook ? .terminal : .chat)
+    }
+
+    private func selectView(_ kind: CodeViewKind) {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        switch kind {
+        case .chat:
+            shellOpen = false
+            if terminalLook { setTerminalLook(false) }
+        case .terminal:
+            shellOpen = false
+            openTerminal()
+        case .shell:
+            shellOpen = true
+        }
+    }
+
     private func openTerminal() {
         if thread == nil {
             thread = CodeThreadTarget(sessionId: nil)
@@ -538,4 +538,59 @@ struct CodeModeView: View {
         }
     }
     #endif
+}
+
+// MARK: - View switcher
+
+enum CodeViewKind: String, CaseIterable, Identifiable {
+    case chat, terminal, shell
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .chat: return "Chat"
+        case .terminal: return "Terminal"
+        case .shell: return "Shell"
+        }
+    }
+}
+
+/// Chat · Terminal · Shell as one segmented pill in the Code header, on the
+/// light page and on the dark terminal surface alike.
+struct CodeViewSwitcher: View {
+    let selection: CodeViewKind
+    var dark: Bool = false
+    let onSelect: (CodeViewKind) -> Void
+
+    var body: some View {
+        let track = dark ? TerminalPalette.key : Color("FillNeutral")
+        let thumb = dark ? TerminalPalette.pressedBorder : Color("BgPanel")
+        let on = dark ? TerminalPalette.foreground : Color("TextPrimary")
+        let off = dark ? TerminalPalette.secondary : Color("TextSecondary")
+        HStack(spacing: 2) {
+            ForEach(CodeViewKind.allCases) { kind in
+                let selected = kind == selection
+                Button(action: { if !selected { onSelect(kind) } }) {
+                    Text(kind.title)
+                        .font(.system(size: 13, weight: selected ? .semibold : .medium))
+                        .foregroundColor(selected ? on : off)
+                        .padding(.horizontal, 10)
+                        .frame(height: 30)
+                        .background {
+                            if selected {
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .fill(thumb)
+                                    .shadow(color: .black.opacity(dark ? 0 : 0.08), radius: 2, y: 1)
+                            }
+                        }
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(kind.title)
+                .accessibilityAddTraits(selected ? .isSelected : [])
+            }
+        }
+        .padding(2)
+        .background(track, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .animation(.easeOut(duration: 0.18), value: selection)
+    }
 }

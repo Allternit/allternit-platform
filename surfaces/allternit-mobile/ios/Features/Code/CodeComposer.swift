@@ -175,6 +175,53 @@ struct CodeInk {
     var borderStrong: Color { terminal ? TerminalPalette.pressedBorder : Color("BorderStrong") }
 }
 
+// MARK: - Deck flow
+
+/// Lays the status items left to right and starts a new line when the next
+/// one doesn't fit.
+struct CodeDeckFlow: Layout {
+    var spacing: CGFloat = 2
+    var lineSpacing: CGFloat = 0
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let rows = arrange(width: proposal.width ?? .infinity, subviews: subviews)
+        let width = rows.map(\.width).max() ?? 0
+        let height = rows.map(\.height).reduce(0, +) + lineSpacing * CGFloat(max(rows.count - 1, 0))
+        return CGSize(width: proposal.width ?? width, height: height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var y = bounds.minY
+        for row in arrange(width: bounds.width, subviews: subviews) {
+            var x = bounds.minX
+            for index in row.indices {
+                let size = subviews[index].sizeThatFits(.unspecified)
+                subviews[index].place(at: CGPoint(x: x, y: y + (row.height - size.height) / 2), proposal: ProposedViewSize(size))
+                x += size.width + spacing
+            }
+            y += row.height + lineSpacing
+        }
+    }
+
+    private struct Row { var indices: [Int] = []; var width: CGFloat = 0; var height: CGFloat = 0 }
+
+    private func arrange(width: CGFloat, subviews: Subviews) -> [Row] {
+        var rows: [Row] = [Row()]
+        for index in subviews.indices {
+            let size = subviews[index].sizeThatFits(.unspecified)
+            let extra = rows[rows.count - 1].indices.isEmpty ? size.width : size.width + spacing
+            if !rows[rows.count - 1].indices.isEmpty, rows[rows.count - 1].width + extra > width {
+                rows.append(Row())
+            }
+            let added = rows[rows.count - 1].indices.isEmpty ? size.width : size.width + spacing
+            rows[rows.count - 1].indices.append(index)
+            rows[rows.count - 1].width += added
+            rows[rows.count - 1].height = max(rows[rows.count - 1].height, size.height)
+        }
+        return rows
+    }
+}
+
 // MARK: - Deck row
 
 /// The status row under the Code prompt (CodeBottomStatusBar with
@@ -231,8 +278,9 @@ struct CodeDeckRow: View {
     }
 
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 2) {
+        // Wraps onto a second line instead of scrolling, so every item
+        // (permission, model, usage, Terminal) stays in view on a phone.
+        CodeDeckFlow(spacing: 2, lineSpacing: 0) {
                 pill(label: "Environment", action: { sheet = .environment }) {
                     Image(systemName: environmentStore.environment == .cloud ? "cloud" : "desktopcomputer")
                         .font(.system(size: 15))
@@ -321,11 +369,11 @@ struct CodeDeckRow: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(terminal ? "Show chat" : "Open terminal")
-            }
-            .padding(.top, 6)
-            .padding(.bottom, 14)
-            .padding(.horizontal, 6)
         }
+        .padding(.top, 6)
+        .padding(.bottom, 14)
+        .padding(.horizontal, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .task {
             await relay.refresh()
             modelStore.fetchModelsIfNeeded()

@@ -29,6 +29,8 @@ struct CodeThreadChatView: View {
     var terminal: Bool = false
     /// The terminal view's "Chat" item: back to the chat feed.
     var onLeaveTerminal: () -> Void = {}
+    /// The chat view's "Terminal" item: this thread in its terminal look.
+    var onEnterTerminal: () -> Void = {}
     /// The terminal view's Shell button: the computer's raw shell.
     var onOpenShell: () -> Void = {}
 
@@ -65,7 +67,8 @@ struct CodeThreadChatView: View {
                 viewModel: viewModel,
                 terminalLook: terminal,
                 codeFolder: folder,
-                onLeaveTerminal: onLeaveTerminal
+                onLeaveTerminal: onLeaveTerminal,
+                onEnterTerminal: onEnterTerminal
             )
         }
         .background(terminal ? TerminalPalette.background : Color("BgPrimary"))
@@ -172,21 +175,6 @@ struct CodeThreadChatView: View {
             }
             .disabled(sessionId == nil)
             Spacer(minLength: 8)
-            Button(action: onOpenShell) {
-                HStack(spacing: 6) {
-                    Image(systemName: "apple.terminal")
-                        .font(.system(size: 12))
-                    Text("Shell")
-                }
-                .font(.system(size: 13, weight: .semibold, design: .monospaced))
-                .foregroundColor(TerminalPalette.foreground)
-                .padding(.horizontal, 10)
-                .frame(height: 30)
-                .background(TerminalPalette.key, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).stroke(TerminalPalette.keyBorder, lineWidth: 1))
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Open a shell on the computer")
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 6)

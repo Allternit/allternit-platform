@@ -91,6 +91,8 @@ struct ChatContentView: View {
     var codeFolder: CodeFolderInfo? = nil
     /// The status row's "Chat" item on the terminal view.
     var onLeaveTerminal: (() -> Void)? = nil
+    /// The status row's "Terminal" item in a Code thread's chat view.
+    var onEnterTerminal: (() -> Void)? = nil
 
     @EnvironmentObject private var modeStore: AppModeStore
     @EnvironmentObject private var agentModeStore: AgentModeStore
@@ -109,6 +111,7 @@ struct ChatContentView: View {
     /// composer; non-nil routes the next send through
     /// `ChatViewModel.resendEditedMessage` (truncate + re-send).
     @State private var editingMessageId: String? = nil
+    @State private var isCodePlusSheetPresented = false
     @State private var activeArtifact: ArtifactRecord? = nil
     @State private var isModelPickerPresented = false
     @Environment(\.scenePhase) private var scenePhase
@@ -144,6 +147,9 @@ struct ChatContentView: View {
     /// Code's terminal view renders the thread as a terminal session (dark,
     /// monospace, `❯` prompts) instead of chat messages.
     private var isTerminal: Bool { terminalLook }
+
+    /// A Code thread (chat view): it keeps the Code prompt.
+    private var isCodeThread: Bool { modeStore.mode == .code && onEnterTerminal != nil }
 
     private var showsLaunch: Bool {
         launchStyle && viewModel.messages.isEmpty && !isTerminal
@@ -368,7 +374,11 @@ struct ChatContentView: View {
             }
 
             if isTerminal {
-                terminalComposer
+                codeComposer(terminal: true)
+            } else if isCodeThread {
+                // Code threads keep the Code prompt (the same one as the Code
+                // home: `❯` line, dashed rules, the full status row).
+                codeComposer(terminal: false)
             } else {
                 composer(deck: launchStyle ? .compact : .none)
                     .padding(.horizontal, 14)
@@ -384,22 +394,33 @@ struct ChatContentView: View {
         }
     }
 
-    /// The terminal view's prompt: the Code `❯` line and its status row on
-    /// the dark surface, sending into this thread; Stop while a turn runs.
-    private var terminalComposer: some View {
-        CodeLaunchComposer(
-            text: $inputText,
-            folder: codeFolder,
-            terminal: true,
-            isRunning: viewModel.isStreaming,
-            onStop: { viewModel.stopStreaming() },
-            onSend: { text in
-                viewModel.sendMessage(text, runtimeModelId: modelForSend, effort: modelStore.effortForSend)
-            },
-            onOpenTerminal: { onLeaveTerminal?() }
-        )
+    /// The Code prompt: the `❯` line and its status row, sending into this
+    /// thread with any staged files; Stop while a turn runs. On the terminal
+    /// view it is drawn on the dark surface.
+    private func codeComposer(terminal: Bool) -> some View {
+        VStack(spacing: 0) {
+            if !attachmentStore.attachments.isEmpty {
+                CodeStagedFiles(store: attachmentStore, terminal: terminal)
+            }
+            CodeLaunchComposer(
+                text: $inputText,
+                folder: codeFolder,
+                terminal: terminal,
+                isRunning: viewModel.isStreaming,
+                onStop: { viewModel.stopStreaming() },
+                onSend: { text in
+                    viewModel.sendMessage(text, attachments: attachmentStore.attachments, runtimeModelId: modelForSend, effort: modelStore.effortForSend)
+                    attachmentStore.clear()
+                },
+                onOpenTerminal: { terminal ? onLeaveTerminal?() : onEnterTerminal?() },
+                onAttach: { isCodePlusSheetPresented = true }
+            )
+        }
         .padding(.bottom, 4)
-        .background(TerminalPalette.background)
+        .background(terminal ? TerminalPalette.background : Color("BgPrimary"))
+        .sheet(isPresented: $isCodePlusSheetPresented) {
+            ComposerPlusSheet(attachmentStore: attachmentStore, sessionId: viewModel.currentSessionId)
+        }
     }
 
     private func composer(deck: ComposerDeckVariant) -> some View {
@@ -629,6 +650,38 @@ extension EnvironmentValues {
     var chatBot: AgentRecord? {
         get { self[ChatBotKey.self] }
         set { self[ChatBotKey.self] = newValue }
+    }
+}
+
+/// Files staged for the next Code prompt: one line each, X to drop it.
+struct CodeStagedFiles: View {
+    @ObservedObject var store: AttachmentStore
+    var terminal: Bool = false
+
+    var body: some View {
+        let ink = CodeInk(terminal: terminal)
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(store.attachments) { file in
+                    HStack(spacing: 6) {
+                        Image(systemName: file.thumbnail == nil ? "doc" : "photo").font(.system(size: 12))
+                        Text(file.filename).lineLimit(1).frame(maxWidth: 160, alignment: .leading)
+                        Button(action: { store.remove(id: file.id) }) {
+                            Image(systemName: "xmark").font(.system(size: 10, weight: .bold))
+                                .frame(width: 22, height: 22)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Remove \(file.filename)")
+                    }
+                    .font(.system(size: 13, design: .monospaced))
+                    .foregroundColor(ink.secondary)
+                    .padding(.leading, 8)
+                    .background(ink.fill, in: RoundedRectangle(cornerRadius: 6))
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 6)
+        }
     }
 }
 
