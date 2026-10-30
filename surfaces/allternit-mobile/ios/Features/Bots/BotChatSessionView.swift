@@ -99,6 +99,7 @@ struct BotChatSessionView: View {
     private var chat: some View {
         if let sessionId {
             ChatContentView(sessionId: sessionId, viewModel: viewModel)
+                .environment(\.chatBot, bot)
         } else if let resolveError {
             FriendlyStateView(
                 style: .error,

@@ -72,6 +72,9 @@ enum SampleWorkspaceAPI {
                 return ["templates": [Any]()]
             case ["agent-sessions"]:
                 return ["sessions": [Any](), "count": 0]
+            case let p where p.count == 3 && p[0] == "agent-sessions" && p[2] == "messages":
+                // A chat the sample just made has no history yet.
+                return [Any]()
             case ["cowork", "sessions"]:
                 return ["sessions": [Any]()]
             case ["bot-projects"]:

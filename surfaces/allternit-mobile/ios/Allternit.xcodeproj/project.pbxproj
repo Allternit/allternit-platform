@@ -179,6 +179,7 @@
 		5D60BD476841749B0DF50904 /* ComposerDeck.swift in Sources */ = {isa = PBXBuildFile; fileRef = F26BA25BCB1FBB8065F987CF /* ComposerDeck.swift */; };
 		5DC5E2B00685DA941532809A /* CanvasClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC42714771756864D08FB907 /* CanvasClient.swift */; };
 		5E95134CE10DBA2F545693AC /* CustomizeScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA7A05D633BDBBDC4BBE5803 /* CustomizeScreen.swift */; };
+		60A3805DE133AB358A79B223 /* BotColor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9B3E58874D9684D848731F76 /* BotColor.swift */; };
 		61A4B355B448275D7CCACC9A /* CoworkProgressPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCCC9FE82C1228FE61E88612 /* CoworkProgressPanel.swift */; };
 		6247F7EC99AC623F8DECFA5D /* ProjectsClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = F7DD389A8BFF1E5E0EF97F81 /* ProjectsClient.swift */; };
 		62E613F976EBF3A0E64F7CF5 /* ConnectedInventory.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3DB2E3DF6A2107EAB522AD10 /* ConnectedInventory.swift */; };
@@ -831,6 +832,7 @@
 		9A74DE104DF5047BE4DB96CD /* SkillCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SkillCatalog.swift; sourceTree = "<group>"; };
 		9A76F7DDB4CCEAE71BB5D3CB /* LoopLiveActivityManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoopLiveActivityManager.swift; sourceTree = "<group>"; };
 		9AC5DA69A46A6B20CD3FB8BF /* MessageRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageRow.swift; sourceTree = "<group>"; };
+		9B3E58874D9684D848731F76 /* BotColor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotColor.swift; sourceTree = "<group>"; };
 		9C637C387DDA155982E1068D /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		9C83FD048AB3AC76FF81D4F0 /* PixelWordmark.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PixelWordmark.swift; sourceTree = "<group>"; };
 		9CA4613D0E815C28D17425E7 /* PhoneCodeTerminal.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhoneCodeTerminal.swift; sourceTree = "<group>"; };
@@ -1079,6 +1081,7 @@
 			children = (
 				E4C4F8A32CF772AD236093C7 /* BotAvatarView.swift */,
 				C016226CB6869693C4B2F472 /* BotChatSessionView.swift */,
+				9B3E58874D9684D848731F76 /* BotColor.swift */,
 				B88709AC7BC1F72F5AB364B7 /* BotHomeTabsView.swift */,
 				0D5638BF5764B6C95167828D /* BotLaunchpadView.swift */,
 				782BFEC21911C78EC0D20C81 /* BotLiveStageView.swift */,
@@ -2431,6 +2434,7 @@
 				A090D4B8B38519F6EDE6E4A7 /* BotBrainPickerSheet.swift in Sources */,
 				2D620AD53CC5BC6F2AA1CDA9 /* BotCallButton.swift in Sources */,
 				DEF472FF19D7BA3549DA9FE6 /* BotChatSessionView.swift in Sources */,
+				60A3805DE133AB358A79B223 /* BotColor.swift in Sources */,
 				9A77C24973D4626B29002595 /* BotDesktop.swift in Sources */,
 				8CB3086625EE546687479195 /* BotDesktopClient.swift in Sources */,
 				4674951FBBC363018718581A /* BotDesktopStore.swift in Sources */,

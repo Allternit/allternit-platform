@@ -119,6 +119,16 @@ struct BotsModeRootView: View {
             .presentationDetents([.medium, .large])
         }
         .onAppear(perform: openPendingBot)
+        #if DEBUG
+        // `-open-bot-chat <name>`: opens that bot's chat once bots load (screenshots).
+        .onChange(of: store.bots.count) { _, _ in
+            guard let name = UserDefaults.standard.string(forKey: "open-bot-chat"),
+                  navigator.path.isEmpty,
+                  let bot = store.bots.first(where: { $0.botDisplayName == name }) else { return }
+            UserDefaults.standard.removeObject(forKey: "open-bot-chat")
+            navigator.path = [.chat(botId: bot.id, sessionId: nil)]
+        }
+        #endif
         .onChange(of: store.pendingOpenBotId) { _, _ in openPendingBot() }
         .onChange(of: store.pendingNewThread) { _, _ in openPendingBot() }
         .onChange(of: store.pendingOpenPhoneBotId) { _, _ in openPendingBot() }

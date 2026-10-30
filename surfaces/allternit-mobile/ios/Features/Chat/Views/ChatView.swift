@@ -549,6 +549,9 @@ struct ChatContentView: View {
 /// a serif title, centered. One greeting per app session, from the web's
 /// chat pool (launchGreeting.ts), with the signed-in first name.
 struct ChatLaunchGreeting: View {
+    /// In a bot's own chat the bot's face stands in for Gizzi (web
+    /// ActiveAgentMascot on the launch header).
+    @Environment(\.chatBot) private var bot
     @State private var revealed = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -580,11 +583,17 @@ struct ChatLaunchGreeting: View {
 
     var body: some View {
         VStack(spacing: 10) {
-            Image("GizziMascot")
-                .resizable()
-                .scaledToFit()
-                .frame(width: 44, height: 44)
-                .accessibilityHidden(true)
+            Group {
+                if let bot {
+                    BotAvatarView(bot: bot, size: 64, live: true)
+                } else {
+                    Image("GizziMascot")
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 44, height: 44)
+                }
+            }
+            .accessibilityHidden(true)
             Text(Self.sessionTitle())
                 .font(.system(size: 32, design: .serif))
                 .tracking(-0.64)
@@ -608,6 +617,18 @@ struct ChatLaunchGreeting: View {
                 withAnimation(.easeOut(duration: 0.6)) { revealed = true }
             }
         }
+    }
+}
+
+private struct ChatBotKey: EnvironmentKey {
+    static let defaultValue: AgentRecord? = nil
+}
+
+extension EnvironmentValues {
+    /// The bot whose chat this is (nil outside Bots).
+    var chatBot: AgentRecord? {
+        get { self[ChatBotKey.self] }
+        set { self[ChatBotKey.self] = newValue }
     }
 }
 

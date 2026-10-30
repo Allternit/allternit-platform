@@ -584,11 +584,26 @@ struct RosterFace: View {
     let entry: RosterEntry
     let size: CGFloat
 
+    private func isSprite(_ bot: AgentRecord) -> Bool {
+        if case .sprite = BotAvatarSource.resolve(bot) { return true }
+        return false
+    }
+
     var body: some View {
         ZStack {
             switch entry {
             case .bot(let bot, _, _):
-                BotAvatarView(bot: bot, size: size, live: false)
+                // Every bot sits in the same round tile, whatever its art
+                // (orb, sprite, photo, identicon), so the row reads even.
+                ZStack {
+                    Circle().fill(Color("BgSecondary"))
+                    // Sprite frames carry wide margins; draw them larger so the
+                    // figure fills the tile like the other faces.
+                    BotAvatarView(bot: bot, size: size * (isSprite(bot) ? 1.2 : 0.8), live: false)
+                }
+                .frame(width: size, height: size)
+                .clipShape(Circle())
+                .overlay(Circle().stroke(Color("BorderSubtle"), lineWidth: 1))
             case .group(let group, _):
                 GroupAvatarStack(members: group.members, size: size * (group.members.count == 1 ? 0.86 : 0.68))
                     .frame(height: size)
