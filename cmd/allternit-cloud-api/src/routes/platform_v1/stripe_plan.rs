@@ -83,6 +83,9 @@ pub const PENDING_METERS: &[PendingMeter] = &[];
 /// identity's bundle covers (its `identity_month` row is the charge).
 pub const FREE_METERS: &[&str] = &["phone_minutes_included"];
 
+/// Checkout refuses a plan unless every price here exists in Stripe, so create a
+/// new row's meter, product and prices before merging it. `--apply` is for an
+/// empty account: on this one it would try to create the existing meters again.
 pub const METER_PLANS: &[MeterPlan] = &[
     MeterPlan { meters: &["voice_min_allternit"], event_name: "allternit_voice_seconds_allternit", display_name: "Voice agent seconds (Allternit model)", unit: "second", value: MeterValue::Seconds, payg_cents: "0.15", growth_cents: "0.135", free_units: 0 },
     MeterPlan { meters: &["voice_min_byok"], event_name: "allternit_voice_seconds_byok", display_name: "Voice agent seconds (own model key)", unit: "second", value: MeterValue::Seconds, payg_cents: "0.1", growth_cents: "0.09", free_units: 0 },
@@ -97,8 +100,8 @@ pub const METER_PLANS: &[MeterPlan] = &[
     MeterPlan { meters: &["computer_action"], event_name: "allternit_computer_actions", display_name: "Hosted computer toolset actions", unit: "action", value: MeterValue::Quantity, payg_cents: "0.05", growth_cents: "0.045", free_units: 10_000 },
     MeterPlan { meters: &["phone_minutes"], event_name: "allternit_phone_minutes", display_name: "Phone minutes (an agent driving a linked phone)", unit: "minute", value: MeterValue::CeilQuantity, payg_cents: "2", growth_cents: "1.8", free_units: 0 },
     MeterPlan { meters: &["linked_phone"], event_name: "allternit_linked_phones", display_name: "Linked phones", unit: "phone-month", value: MeterValue::Quantity, payg_cents: "500", growth_cents: "450", free_units: 0 },
-    MeterPlan { meters: &["mailbox_month"], event_name: "allternit_mailbox_months", display_name: "Mailboxes", unit: "mailbox-month", value: MeterValue::Quantity, payg_cents: "200", growth_cents: "180", free_units: 0 },
-    MeterPlan { meters: &["identity_month"], event_name: "allternit_identity_months", display_name: "Agent identities (number + mailbox + linked-phone slot + 200 phone minutes)", unit: "identity-month", value: MeterValue::Quantity, payg_cents: "900", growth_cents: "810", free_units: 0 },
+    MeterPlan { meters: &["mailbox_month"], event_name: "allternit_mailbox_months", display_name: "Mailboxes", unit: "mailbox", value: MeterValue::Quantity, payg_cents: "200", growth_cents: "180", free_units: 0 },
+    MeterPlan { meters: &["identity_month"], event_name: "allternit_identity_months", display_name: "Agent identities (number + mailbox + linked-phone slot + 200 phone minutes)", unit: "identity", value: MeterValue::Quantity, payg_cents: "900", growth_cents: "810", free_units: 0 },
     MeterPlan { meters: &["recording_min_month"], event_name: "allternit_recording_minute_months", display_name: "Recording storage after 90 days", unit: "minute-month", value: MeterValue::CeilQuantity, payg_cents: "0.2", growth_cents: "0.18", free_units: 0 },
 ];
 
@@ -511,6 +514,14 @@ mod tests {
         let row = PendingRow { id: "use_1".into(), meter: "sms_segment".into(), quantity: 3.0, amount_microusd: None, created_at: chrono::Utc::now(), stripe_customer_id: "cus_1".into() };
         let form = meter_event_form(&row).unwrap();
         assert!(form.contains(&("identifier".into(), "use_1".into())) && form.contains(&("payload[value]".into(), "3".into())));
+    }
+
+    #[test]
+    fn unit_labels_fit_stripe() {
+        // Stripe refuses a product `unit_label` over 12 characters.
+        for m in METER_PLANS {
+            assert!(m.unit.len() <= 12, "{}: {}", m.event_name, m.unit);
+        }
     }
 
     #[test]
