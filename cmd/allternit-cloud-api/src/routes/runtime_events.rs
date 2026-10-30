@@ -289,6 +289,13 @@ async fn phone_fan_out(db: &PgPool, user_id: &str, name: &str, data: &Value) -> 
     if user_id.starts_with("platform:") || user_id.starts_with(crate::services::provisioning::HOSTED_DRIVER_OWNER_PREFIX) {
         return Ok(());
     }
+    if name == "phone.run.completed" {
+        // Runs a project started: close, meter minutes, finish fleet runs.
+        // Bookkeeping must never stop the event itself from being delivered.
+        if let Err(e) = crate::routes::platform_v1::phones::on_run_completed(db, user_id, data).await {
+            tracing::warn!("platform phones: run completion not recorded: {e}");
+        }
+    }
     let keys: &[&str] = match name {
         "phone.step" => &["step_id", "run_id", "serial", "tool", "label", "ok", "error", "duration_ms", "source", "snapshot"],
         "phone.run.completed" => &["run_id", "serial", "ok", "status", "skill", "source", "steps", "failed", "model_calls", "duration_ms"],

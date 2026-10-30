@@ -67,6 +67,7 @@ pub mod mail_triage;
 pub mod notifications;
 pub mod channel_onboarding;
 pub mod paired_computers;
+pub mod phone_live;
 pub mod registered_phones;
 pub mod app_phones;
 pub mod mirror;

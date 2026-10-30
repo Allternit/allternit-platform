@@ -414,3 +414,5 @@ mod tests_p5;
 mod tests_p4;
 #[cfg(test)]
 mod tests_p6_computers;
+#[cfg(test)]
+mod tests_p7_phones;

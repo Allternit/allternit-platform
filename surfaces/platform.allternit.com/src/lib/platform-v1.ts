@@ -218,6 +218,8 @@ export const USAGE_METER_LABELS: Record<string, string> = {
   recording_min_month: "Recording storage (minute-months)",
   computer_minute: "Hosted computer minutes",
   computer_action: "Hosted computer actions",
+  phone_minutes: "Phone minutes",
+  linked_phone: "Linked phones",
 };
 
 /** A `/v1` client bound to one project. */

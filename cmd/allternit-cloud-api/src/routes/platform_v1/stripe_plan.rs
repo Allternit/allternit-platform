@@ -91,8 +91,20 @@ pub const METER_PLANS: &[MeterPlan] = &[
     MeterPlan { meters: &["registration_passthrough_cents"], event_name: "allternit_registration_passthrough_cents", display_name: "Carrier registration (at cost)", unit: "cent", value: MeterValue::Quantity, payg_cents: "1", growth_cents: "1", free_units: 0 },
     MeterPlan { meters: &["computer_minute"], event_name: "allternit_computer_minutes", display_name: "Hosted computer minutes", unit: "minute", value: MeterValue::CeilQuantity, payg_cents: "0.8", growth_cents: "0.72", free_units: 0 },
     MeterPlan { meters: &["computer_action"], event_name: "allternit_computer_actions", display_name: "Hosted computer toolset actions", unit: "action", value: MeterValue::Quantity, payg_cents: "0.05", growth_cents: "0.045", free_units: 10_000 },
+    MeterPlan { meters: &["phone_minutes"], event_name: "allternit_phone_minutes", display_name: "Phone minutes (an agent driving a linked phone)", unit: "minute", value: MeterValue::CeilQuantity, payg_cents: "2", growth_cents: "1.8", free_units: 0 },
+    MeterPlan { meters: &["linked_phone"], event_name: "allternit_linked_phones", display_name: "Linked phones", unit: "phone-month", value: MeterValue::Quantity, payg_cents: "500", growth_cents: "450", free_units: 0 },
     MeterPlan { meters: &["recording_min_month"], event_name: "allternit_recording_minute_months", display_name: "Recording storage after 90 days", unit: "minute-month", value: MeterValue::CeilQuantity, payg_cents: "0.2", growth_cents: "0.18", free_units: 0 },
 ];
+
+/// Units the Growth plan includes each month on top of `free_units`, by Stripe
+/// event name: 3,000 phone minutes and 25 linked phones (Eoj 2026-10-29).
+pub const GROWTH_INCLUDED: &[(&str, u32)] = &[("allternit_phone_minutes", 3_000), ("allternit_linked_phones", 25)];
+
+/// Free units of a meter's price on a plan (`payg` / `growth`).
+pub fn included_units(plan: &str, m: &MeterPlan) -> u32 {
+    let extra = if plan == "growth" { GROWTH_INCLUDED.iter().find(|(e, _)| *e == m.event_name).map_or(0, |(_, n)| *n) } else { 0 };
+    m.free_units + extra
+}
 
 /// Growth base fee, cents per month.
 pub const GROWTH_BASE_CENTS: i64 = 24_900;
@@ -147,11 +159,12 @@ fn price_step(key: String, product: &str, m: &MeterPlan, plan: &str, cents: &str
         f("metadata[allternit_plan]", plan),
         f("metadata[allternit_version]", PLAN_VERSION),
     ];
-    if m.free_units > 0 {
+    let free = included_units(plan, m);
+    if free > 0 {
         form.extend([
             f("billing_scheme", "tiered"),
             f("tiers_mode", "graduated"),
-            f("tiers[0][up_to]", m.free_units.to_string()),
+            f("tiers[0][up_to]", free.to_string()),
             f("tiers[0][unit_amount]", "0"),
             f("tiers[1][up_to]", "inf"),
             f("tiers[1][unit_amount_decimal]", cents),
@@ -449,6 +462,12 @@ mod tests {
         assert!(text.contains("DRY RUN") && text.contains("unit_amount = 24900"));
         let agents = steps.iter().find(|s| s.key == "price:payg:hosted_agent_months").unwrap();
         assert!(agents.form.contains(&("tiers[0][up_to]".into(), "3".into())) && agents.form.contains(&("tiers[1][unit_amount_decimal]".into(), "400".into())));
+        // Growth includes 3,000 phone minutes and 25 phones; Pay as you go pays from the first.
+        let price = |k: &str| steps.iter().find(|s| s.key == k).unwrap().form.clone();
+        assert!(price("price:growth:phone_minutes").contains(&("tiers[0][up_to]".into(), "3000".into())));
+        assert!(price("price:growth:linked_phones").contains(&("tiers[0][up_to]".into(), "25".into())));
+        assert!(price("price:payg:phone_minutes").contains(&("unit_amount_decimal".into(), "2".into())));
+        assert!(price("price:payg:linked_phones").contains(&("unit_amount_decimal".into(), "500".into())));
     }
 
     #[test]
