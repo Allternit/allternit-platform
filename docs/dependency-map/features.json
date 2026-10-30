@@ -2812,10 +2812,10 @@
     },
     {
       "id": "feature:system-drawer",
-      "label": "System drawer (developer tool: Needs you, Bots, Running, Problems)",
+      "label": "System drawer (developer tool: Needs you, Bots, Workspace, Running, Problems)",
       "product": "product:ai-allternit",
       "status": "building",
-      "description": "A developer tool, off by default (Settings → Developer → System drawer, useDevToolsStore). A bottom drawer (Desktop, beside the rail) or sheet (phone layout and m.allternit.com PWA) showing what is happening across every session and mode. Needs you: agent permission requests from any surface plus Factory approvals, answered in place. Bots: every bot (agent store + useBotStatus, plus Factory Terminal bots) as one line each with Open; a Lanes switch shows the Terminal bots' hand-off lanes; a Graph switch draws the Factory campaign flow or, with no campaign, the Terminal bots as a team. Running: sessions replying and dev servers with Open and Stop. Problems: failing routines, failed Terminal bots and parsed check failures from code sessions active in the last day. Opened with Cmd/Ctrl+J, the dot on the Gizzi desktop pet (hover shows a summary bubble, click opens; clicking the pet still opens quick chat), the menu bar menu's System section (right-click; left-click still opens the HUD) or the phone menu footer button; never opens by itself.",
+      "description": "A developer tool, off by default (Settings → Developer → System drawer, useDevToolsStore). A bottom drawer (Desktop, beside the rail) or sheet (phone layout and m.allternit.com PWA) showing what is happening across every session and mode. Needs you: agent permission requests from any surface plus Factory approvals, answered in place. Bots: every bot (agent store + useBotStatus, plus Factory Terminal bots) as one line each with Open; a Lanes switch shows the Terminal bots' hand-off lanes; a Graph switch draws the Factory campaign flow or, with no campaign, the Terminal bots as a team. Workspace: frames 3dfacility.allternit.com/?embed=workspace (the bots' floor in 2D, 2.5D or 3D, each bot as its own avatar) and feeds it the live roster over postMessage (allternit:workspace); clicking a bot there opens its chat. Running: sessions replying and dev servers with Open and Stop. Problems: failing routines, failed Terminal bots and parsed check failures from code sessions active in the last day. Opened with Cmd/Ctrl+J, the dot on the Gizzi desktop pet (hover shows a summary bubble, click opens; clicking the pet still opens quick chat), the menu bar menu's System section (right-click; left-click still opens the HUD) or the phone menu footer button; never opens by itself.",
       "touches": [
         "allternit-ai/src/components/desktop-companion",
         "allternit-ai/src/drawers",
@@ -2839,6 +2839,10 @@
         {
           "on": "2026-10-29",
           "note": "Bots tab gained a Lanes view (hand-off lanes) beside List and Graph."
+        },
+        {
+          "on": "2026-10-29",
+          "note": "Eoj: the bot workspace being built on 3dfacility (2D plan, 2.5D room, 3D facility) goes inside the system drawer as a Workspace tab. The facility draws; the app feeds the roster and handles answer/open. Hand-off lanes redrawn to match Flo's (affectui) reference: lanes centred under their two agents, rounded lines with dots, role line on agent cards."
         }
       ],
       "evidence": [
@@ -3230,7 +3234,7 @@
         }
       ],
       "evidence": [
-        "allternit/surfaces/docs/surfaces/desktop.mdx#menu-bar-icon"
+        "allternit/surfaces/docs/surfaces/desktop.mdx"
       ]
     },
     {
@@ -3240,15 +3244,8 @@
       "status": "live",
       "description": "Allternit Desktop's floating HUD chat (Cmd/Ctrl+Shift+H, tray click). Main process: pre-warmed hidden window, opens on the cursor's display, bounds remembered per display (store key hudBounds) and clamped to the work area, Cmd+W hides, optional hide-on-blur (hudHideOnBlur) with a renderer suppress counter, hotkey registration status, Linux cursor feed for click-through, game-overlay feed, screen capture handler, handoff/goto to the main window. Renderer: HudShell in allternit-ai.",
       "touches": [
-        "allternit/surfaces/allternit-desktop/src/main/unified-main.ts",
-        "allternit/surfaces/allternit-desktop/src/main/hud-geometry.ts",
-        "allternit/surfaces/allternit-desktop/src/main/hud-cursor.ts",
-        "allternit/surfaces/allternit-desktop/src/main/hud-windowing.ts",
-        "allternit/surfaces/allternit-desktop/src/main/hud-game-overlay.ts",
-        "allternit/surfaces/allternit-desktop/src/preload/index.ts",
-        "allternit-ai/src/shell/hud/HudShell.tsx",
-        "allternit-ai/src/shell/hud/click-through.ts",
-        "allternit-ai/src/shell/hud/handoff.ts",
+        "allternit/surfaces/allternit-desktop",
+        "allternit-ai/src/shell",
         "surface:desktop"
       ],
       "decisions": [
@@ -3258,7 +3255,7 @@
         }
       ],
       "evidence": [
-        "allternit/surfaces/docs/surfaces/desktop.mdx#hud"
+        "allternit/surfaces/docs/surfaces/desktop.mdx"
       ]
     },
     {
