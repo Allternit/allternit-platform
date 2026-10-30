@@ -54,7 +54,6 @@ export class GizziManager {
   private lastConfig: GizziStartConfig | null = null;
   private usingExternalRuntime = false;
   private stopping = false;
-  private resolvedBinaryPath: string | null | undefined;
   /** Ring buffer of recent stderr lines for crash diagnostics (startup fail-fast). */
   private stderrLines: string[] = [];
 
@@ -363,11 +362,9 @@ export class GizziManager {
     }
   }
 
+  // Not cached: callers can run before the runtime package is chosen at launch,
+  // and a cached bundled path would keep the app on the bundled binary.
   private resolveBinaryPath(): string | null {
-    if (this.resolvedBinaryPath !== undefined) {
-      return this.resolvedBinaryPath;
-    }
-
     const binaryName = process.platform === 'win32' ? 'gizzi-code.exe' : 'gizzi-code';
 
     const candidates = app.isPackaged
@@ -382,14 +379,12 @@ export class GizziManager {
 
     for (const p of candidates) {
       if (fs.existsSync(p)) {
-        this.resolvedBinaryPath = p;
         log.info(`[GizziManager] Found binary at: ${p}`);
         return p;
       }
     }
 
     log.error('[GizziManager] gizzi-code binary not found. Searched:', candidates);
-    this.resolvedBinaryPath = null;
     return null;
   }
 }

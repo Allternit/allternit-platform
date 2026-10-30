@@ -151,7 +151,6 @@ export class BackendManager {
    */
   private humanProofSecret: string | null = null;
   private lastConfig: BackendLaunchConfig | null = null;
-  private resolvedBinaryPath: string | null | undefined;
   /**
    * Crash-respawn state. Respawns use capped exponential backoff with jitter
    * so a binary that fails instantly on startup cannot hot-loop the machine.
@@ -608,11 +607,9 @@ export class BackendManager {
     return this.stderrLines.slice(-5);
   }
 
+  // Not cached: callers can run before the runtime package is chosen at launch,
+  // and a cached bundled path would keep the app on the bundled binary.
   private resolveBinaryPath(logDiscovery = true): string | null {
-    if (this.resolvedBinaryPath !== undefined) {
-      return this.resolvedBinaryPath;
-    }
-
     const binaryName = process.platform === 'win32' ? 'allternit-api.exe' : 'allternit-api';
 
     // __dirname is dist/main; go up four levels to reach the repo root.
@@ -630,7 +627,6 @@ export class BackendManager {
 
     for (const candidate of candidates) {
       if (fs.existsSync(candidate)) {
-        this.resolvedBinaryPath = candidate;
         if (logDiscovery) {
           log.info(`[BackendManager] Found binary at: ${candidate}`);
         }
@@ -639,7 +635,6 @@ export class BackendManager {
     }
 
     log.error('[BackendManager] allternit-api binary not found. Searched:', candidates);
-    this.resolvedBinaryPath = null;
     return null;
   }
 
