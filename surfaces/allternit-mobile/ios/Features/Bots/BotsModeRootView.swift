@@ -143,6 +143,14 @@ struct BotsModeRootView: View {
             UserDefaults.standard.removeObject(forKey: "open-bot-chat")
             navigator.path = [.chat(botId: bot.id, sessionId: nil)]
         }
+        // `-open-bot-project <title>`: opens that project once projects load.
+        .onChange(of: store.projects.count) { _, _ in
+            guard let title = UserDefaults.standard.string(forKey: "open-bot-project"),
+                  navigator.path.isEmpty,
+                  let project = store.projects.first(where: { $0.title == title }) else { return }
+            UserDefaults.standard.removeObject(forKey: "open-bot-project")
+            navigator.path = [.project(project)]
+        }
         // `-open-group-chat <name>`: opens that room once groups load.
         .onChange(of: store.groups.count) { _, _ in
             guard let name = UserDefaults.standard.string(forKey: "open-group-chat"),

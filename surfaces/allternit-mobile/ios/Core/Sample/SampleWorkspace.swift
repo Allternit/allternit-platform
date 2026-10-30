@@ -393,9 +393,6 @@ enum SampleWorkspace {
         RoutineSeed(id: "preview-routine-2", bot: "preview-bot-writer", name: "Weekly reviews digest",
                     description: "New reviews from the week, with suggested replies.", cron: "0 9 * * 1",
                     createdMinutes: 60 * 24 * 9, updatedMinutes: 60 * 24 * 3, nextInMinutes: 60 * 50, lastMinutes: 60 * 24 * 6),
-        RoutineSeed(id: "preview-routine-3", bot: "preview-bot-designer", name: "Menu board refresh",
-                    description: "Updates the shop's menu board image with today's specials.", cron: "0 6 * * *",
-                    createdMinutes: 60 * 24 * 5, updatedMinutes: 60 * 24, nextInMinutes: 60 * 3, lastMinutes: 50),
     ]
 
     static let timezone = "America/Chicago"
@@ -433,20 +430,8 @@ enum SampleWorkspace {
     /// The routines as the computer's scheduler lists them
     /// (`GET v1/cron/jobs`, gizzi-code cron/types.ts, camelCase) — the
     /// Automation Tasks list's source on the phone.
-    static func cronJobs(now: Date = Date()) -> [[String: Any]] {
-        routineSeeds.map { seed in
-            [
-                "id": seed.id, "name": seed.name, "description": seed.description,
-                "type": "agent", "status": "active",
-                "schedule": ["type": "cron", "expression": seed.cron, "timezone": timezone],
-                "createdAt": ago(seed.createdMinutes, now: now), "updatedAt": ago(seed.updatedMinutes, now: now),
-                "lastRunAt": ago(seed.lastMinutes, now: now),
-                "nextRunAt": iso(now.addingTimeInterval(seed.nextInMinutes * 60)),
-                "runCount": 9, "failCount": 0, "tags": [String](),
-                "config": ["prompt": seed.description, "agentId": seed.bot],
-            ]
-        }
-    }
+    /// The web's preview has no heartbeats: its routines aren't cron jobs.
+    static func cronJobs(now: Date = Date()) -> [[String: Any]] { [] }
 
     /// `GET v1/automations/routines` (gizzi-code automations.ts, ms epochs).
     static func gizziRoutines(now: Date = Date()) -> [[String: Any]] {
@@ -483,7 +468,7 @@ enum SampleWorkspace {
     /// `GET /api/v1/projects/:id/messages` (nil → 404 for unknown projects).
     static func projectMessages(projectId id: String, now: Date = Date()) -> [[String: Any]]? {
         guard id == projectId else { return id == cateringProjectId ? [] : nil }
-        let fanout = threads(now: now).filter { ($0["botId"] as? String) != "preview-bot-a" }.map { thread in
+        let fanout = threads(now: now).filter { ($0["botId"] as? String) != "preview-bot-a" && ($0["kind"] as? String) == "task" }.map { thread in
             ["id": thread["id"] ?? "", "title": thread["title"] ?? "", "botId": thread["botId"] ?? "", "status": thread["status"] ?? ""]
         }
         return [

@@ -133,16 +133,25 @@ struct AutomationTasksPhoneView: View {
 
     private var filteredTasks: [AutomationTaskItem] {
         let query = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return tasks
+        // Ties keep their order (goals first), as the web's stable sort does.
+        let rows = tasks
             .filter { activeTab == .all || $0.type.rawValue == activeTab.rawValue }
             .filter { query.isEmpty || $0.name.lowercased().contains(query) || $0.description.lowercased().contains(query) }
-            .sorted { a, b in
+        return rows.enumerated()
+            .sorted { left, right in
+                let a = left.element, b = right.element
                 switch sortBy {
-                case .name: return a.name.localizedCompare(b.name) == .orderedAscending
-                case .type: return a.type.rawValue < b.type.rawValue
-                case .date: return (a.createdAt ?? .distantPast) > (b.createdAt ?? .distantPast)
+                case .name:
+                    let order = a.name.localizedCompare(b.name)
+                    return order == .orderedSame ? left.offset < right.offset : order == .orderedAscending
+                case .type:
+                    return a.type.rawValue == b.type.rawValue ? left.offset < right.offset : a.type.rawValue < b.type.rawValue
+                case .date:
+                    let l = a.createdAt ?? .distantPast, r = b.createdAt ?? .distantPast
+                    return l == r ? left.offset < right.offset : l > r
                 }
             }
+            .map(\.element)
     }
 
     /// The Routines tab's rows, filtered by the search.
@@ -260,8 +269,8 @@ struct AutomationTasksPhoneView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Image(systemName: "calendar.badge.checkmark")
-                    .font(.system(size: 15))
-                    .foregroundColor(Color("AccentPrimary"))
+                    .font(.system(size: 14))
+                    .foregroundColor(Color("TextSecondary"))
                 Text("Automation tasks only run while your computer is awake and online.")
                     .font(.system(size: 13))
                     .foregroundColor(Color("TextSecondary"))
@@ -271,10 +280,23 @@ struct AutomationTasksPhoneView: View {
                 Text("Keep awake")
                     .font(.system(size: 12))
                     .foregroundColor(Color("TextTertiary"))
-                Toggle("Keep awake", isOn: $keepAwake)
-                    .labelsHidden()
-                    .tint(Color(hex: "#059669"))
-                    .scaleEffect(0.8, anchor: .leading)
+                Button { keepAwake.toggle() } label: {
+                    Capsule()
+                        .fill(keepAwake ? Color(hex: "#059669").opacity(0.2) : Color("FillNeutral"))
+                        .frame(width: 40, height: 22)
+                        .overlay(alignment: keepAwake ? .trailing : .leading) {
+                            Circle()
+                                .fill(keepAwake ? Color(hex: "#059669") : Color("TextTertiary"))
+                                .frame(width: 16, height: 16)
+                                .padding(.horizontal, 3)
+                        }
+                        .animation(.easeOut(duration: 0.15), value: keepAwake)
+                        .frame(height: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Keep awake")
+                .accessibilityValue(keepAwake ? "On" : "Off")
             }
         }
         .padding(16)

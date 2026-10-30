@@ -673,8 +673,8 @@ private struct ArtifactLiveWebContainer: UIViewRepresentable {
         }
 
         private func isAppPage(_ url: URL) -> Bool {
-            url.scheme?.lowercased() == "https" && url.host == ArtifactLiveWebView.webOrigin.host
-                && url.path.hasPrefix("/a/")
+            url.scheme?.lowercased() == ArtifactLiveWebView.webOrigin.scheme && url.host == ArtifactLiveWebView.webOrigin.host
+                && ["/a/", "/editor/", "/embed/editor/"].contains { url.path.hasPrefix($0) }
         }
 
         func webView(_ webView: WKWebView,

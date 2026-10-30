@@ -280,6 +280,10 @@ enum SampleWorkspaceAPI {
                 "inputs": [["name": "date", "label": "Date", "example": "2026-10-29", "type": "date"]],
             ])
         }
+        // A new Docs/Sheets/Slides session's blank record (the editor page answers its own reads).
+        if namespace == .v1, method == "POST", parts == ["artifacts"] {
+            return json(["artifact": ["id": "preview-artifact-new", "title": payload["title"] as? String ?? "Untitled", "sections": [Any]()]])
+        }
         // A new chat opens on a sample session row (AgentSession decodes it).
         if namespace == .v1, method == "POST", parts == ["agent-sessions"] {
             let at = SampleWorkspace.ago(0)

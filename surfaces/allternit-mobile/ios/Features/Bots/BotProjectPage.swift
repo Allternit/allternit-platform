@@ -106,7 +106,7 @@ struct BotProjectPage: View {
             if backdropVariant == "plain" {
                 Color("BgPrimary").ignoresSafeArea()
             } else {
-                StageBackdropView(variant: backdropVariant, colors: botIds.map { botColors.hex(for: store.bot($0)) })
+                StageBackdropView(variant: backdropVariant)
                     .ignoresSafeArea()
                     .allowsHitTesting(false)
             }

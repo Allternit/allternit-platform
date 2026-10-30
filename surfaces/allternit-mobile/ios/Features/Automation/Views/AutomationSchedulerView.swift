@@ -194,6 +194,8 @@ struct AutomationScheduler: View {
                     Button { mode = value } label: {
                         Text(value.rawValue.capitalized)
                             .font(.system(size: 12, weight: .medium))
+                            .lineLimit(1)
+                            .fixedSize()
                             .foregroundColor(on ? Color("TextPrimary") : Color("TextTertiary"))
                             .padding(.horizontal, 10)
                             .padding(.vertical, 4)
