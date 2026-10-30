@@ -70,7 +70,7 @@ targets:
         # plug in their own Clerk instance.
         CLERK_PUBLISHABLE_KEY: $(CLERK_PUBLISHABLE_KEY)
         # Placeholder — set your team for device builds.
-        DEVELOPMENT_TEAM: ""
+        DEVELOPMENT_TEAM: MQ85968PQP
         CODE_SIGN_STYLE: Automatic
         # Headscale control plane for the embedded mesh (tsnet) node. Same
         # value in debug+release; AppConfig falls back to this URL when the
@@ -173,7 +173,7 @@ targets:
         MARKETING_VERSION: "1.0"
         CURRENT_PROJECT_VERSION: "1"
         # Same placeholder as the main app — set your team for device builds.
-        DEVELOPMENT_TEAM: ""
+        DEVELOPMENT_TEAM: MQ85968PQP
         CODE_SIGN_STYLE: Automatic
         SKIP_INSTALL: true
   # Live screen for the owner's bots: a ReplayKit broadcast upload extension
@@ -205,7 +205,7 @@ targets:
         CURRENT_PROJECT_VERSION: "1"
         CODE_SIGN_ENTITLEMENTS: AllternitScreen/AllternitScreen.entitlements
         # Same placeholder as the main app — set your team for device builds.
-        DEVELOPMENT_TEAM: ""
+        DEVELOPMENT_TEAM: MQ85968PQP
         CODE_SIGN_STYLE: Automatic
         SKIP_INSTALL: true
   # Unit tests for the iOS app. Hosts the app so tests can `@testable import Allternit`.
@@ -226,6 +226,6 @@ targets:
         TARGETED_DEVICE_FAMILY: "1,2"
         MARKETING_VERSION: "1.0"
         CURRENT_PROJECT_VERSION: "1"
-        DEVELOPMENT_TEAM: ""
+        DEVELOPMENT_TEAM: MQ85968PQP
         CODE_SIGN_STYLE: Automatic
         GENERATE_INFOPLIST_FILE: YES
