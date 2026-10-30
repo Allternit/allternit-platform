@@ -1383,6 +1383,10 @@
         {
           "on": "2026-10-22",
           "note": "Eoj approved a lighter Duet-style editor: preview, Symbols/Brands/Text/Image, one 20-colour row (folder + banner), the rest under More options; New project is one sheet (icon, colour, Name, Purpose = description bots read) at every create entry point incl. Bot mode; phone = full-height sheet."
+        },
+        {
+          "on": "2026-10-30",
+          "note": "Eoj: a project's background is changed from the Customize appearance icon. The dialog has a Background section (Same as Settings, ASCII / Classic tiles) that saves one look per project on Save (BackdropScope project:<mode>:<id>); the banner and the bot project home show it. Cancel discards the pick."
         }
       ],
       "evidence": [
