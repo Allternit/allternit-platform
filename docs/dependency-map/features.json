@@ -3393,6 +3393,29 @@
         "allternit/surfaces/docs/guides/project-status.mdx",
         "allternit/surfaces/docs/tools/project-status.mdx"
       ]
+    },
+    {
+      "id": "feature:project-layouts",
+      "label": "Project dashboards and layouts",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "A project opens as a dashboard of real data in one of ten layouts (Pulse by default), on the project's full-page background. One Customize button holds layout, colors, background, tiles, details and manage. Per project.",
+      "touches": [
+        "allternit-ai/src/components/projects/board",
+        "allternit-ai/src/lib/projects/project-look.ts",
+        "allternit-ai/src/lib/projects/project-board-data.ts",
+        "allternit-ai/src/views/BaseProjectView.tsx",
+        "allternit-ai/src/views/project/workspace/ProjectCoordinatorWorkspace.tsx"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-30",
+          "note": "Eoj rejected two flat columns, the long status pane and three settings buttons. Picked a Customize gallery over a tab list, quiet colors, Pulse as the default, and the background filling the page."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/project-layouts.mdx"
+      ]
     }
   ],
   "journeys": [
