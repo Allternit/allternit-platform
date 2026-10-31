@@ -681,7 +681,7 @@ fn bot_name(db: &DbHandle, bot_id: &str) -> String {
 /// Tools that write or send. A tainted thread (or a bot below `act_within_scope`) gets these
 /// set to `ask`, so a hijacked model can only propose an action; the proposal becomes an
 /// approval card. A `read_only` bot gets `deny`.
-const WRITE_SEND_TOOLS: [&str; 9] = ["bash", "write", "edit", "send_agent_email", "message_agent", "channel_*", "phone_*", "send_text", "send_email"];
+const WRITE_SEND_TOOLS: [&str; 10] = ["bash", "write", "edit", "send_agent_email", "message_agent", "project_send", "channel_*", "phone_*", "send_text", "send_email"];
 
 /// The gizzi permission ruleset for a thread session: the bot's channel rules, then the
 /// envelope and taint restrictions.

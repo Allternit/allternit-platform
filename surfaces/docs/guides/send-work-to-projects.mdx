@@ -1,0 +1,33 @@
+---
+title: Send work to a project from chat
+description: "Ask any bot's main chat to start work in one of your projects. You approve every send."
+---
+
+You can work across your projects from one chat. Ask a bot in its main chat, for example "have my website project draft a blog post from this brief". The work runs inside that project, in its own threads.
+
+## What happens
+
+1. The bot finds the project with its `project_list` tool and writes a complete brief.
+2. A card shows the project name and the full message. Press **Send**, or **Don't send**.
+3. The project's coordinator plans the work with the project's own bots, instructions and permissions. The project chat shows which bot asked.
+4. When the threads finish, a report comes back to the chat you asked in.
+
+## Approval
+
+You approve every send. No permission mode skips the card, and the card has no "always allow" or "allow for this task" option. In plan mode, or a mode with nobody to ask, the send is refused.
+
+Only a bot's main chat has these tools. Task threads and subagents do not. A bot with a read-only autonomy setting cannot send.
+
+## Which projects a bot can see
+
+- Bot projects.
+- Chat, Code and Design projects that this account has shown in the Projects list or opened.
+
+Closed and deleted projects are left out. A project that exists only on another device appears after that device opens the Projects list.
+
+## For developers
+
+- `POST /api/v1/bot-routing/project/list` with `{sessionId}` returns `{projects: [{id, title, description, mode}]}`.
+- `POST /api/v1/bot-routing/project/send` with `{sessionId, projectId, message}` returns `{project, message, threads}`. Both routes return 403 unless the session is a main chat.
+- The permission class is `project_send`, listed in `PermissionNext.ALWAYS_ASK` and `task_grants::RUNTIME_ALWAYS_ASK`.
+- Server: `cmd/allternit-api/src/project_send_tools.rs`. Gizzi tools: `cmd/gizzi-code/src/runtime/tools/builtins/project-send.ts`.

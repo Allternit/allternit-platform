@@ -209,6 +209,13 @@ pub fn caller_for_session(db: &DbHandle, session_id: &str) -> Option<Caller> {
     Some(Caller { bot_id, user_id, name, session_id: session_id.to_string(), thread_id, project_id })
 }
 
+/// Whether `session_id` is a bot's main chat (or a person's chat running as
+/// their main bot), not a task thread or subagent.
+pub fn is_main_chat(db: &DbHandle, session_id: &str) -> bool {
+    let Ok(Some(bag)) = db.get_session_metadata(session_id) else { return false };
+    bag["botCanonicalFor"].as_str().is_some_and(|v| !v.is_empty()) || bag["mainBotChat"].as_bool() == Some(true)
+}
+
 /// The user's bots other than `exclude`, oldest first.
 pub fn roster(db: &DbHandle, user_id: &str, exclude: &str) -> Vec<RosterBot> {
     let Ok(conn) = db.connect() else { return vec![] };
@@ -615,7 +622,7 @@ async fn roster_route(State(state): State<Arc<AppState>>, Extension(user): Exten
         let caller = authorize(&db, &user.user_id, &body.session_id)?;
         let bots = roster(&db, &caller.user_id, &caller.bot_id);
         Ok::<_, RouteError>(json!({
-            "caller": { "id": caller.bot_id, "name": caller.name, "threadId": caller.thread_id, "projectId": caller.project_id },
+            "caller": { "id": caller.bot_id, "name": caller.name, "threadId": caller.thread_id, "projectId": caller.project_id, "mainChat": is_main_chat(&db, &caller.session_id) },
             "bots": bots,
             "text": roster_text(&bots),
         }))

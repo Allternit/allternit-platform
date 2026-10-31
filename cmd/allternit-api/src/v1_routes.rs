@@ -252,6 +252,9 @@ pub(crate) fn gizzi_permission_approval_content(props: &serde_json::Value) -> se
     if permission == crate::subscription_routes::SUBSCRIPTION_PERMISSION {
         return subscription_approval_content(request_id, session_id, &patterns, &message_id, &metadata);
     }
+    if permission == crate::project_send_tools::PROJECT_SEND_PERMISSION {
+        return crate::project_send_tools::approval_content(request_id, session_id, &patterns, &message_id, &metadata);
+    }
 
     json!({
         "actionId": request_id,
@@ -2553,6 +2556,15 @@ async fn agent_chat_bridge(
                                     // D16 cards (send / provider question) render from this.
                                     "subscription": props
                                         .pointer("/metadata/subscription")
+                                        .cloned()
+                                        .unwrap_or(serde_json::Value::Null),
+                                    // Bot-to-project sends: the card shows the project and message.
+                                    "projectSend": props
+                                        .pointer("/metadata/projectSend")
+                                        .cloned()
+                                        .unwrap_or(serde_json::Value::Null),
+                                    "summary": props
+                                        .pointer("/metadata/summary")
                                         .cloned()
                                         .unwrap_or(serde_json::Value::Null),
                                 },

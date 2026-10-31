@@ -304,7 +304,7 @@ fn clear_runtime_rules(db: &DbHandle, thread_id: &str) {
 }
 
 /// Gizzi permission classes that always ask a person (`PermissionNext.ALWAYS_ASK`).
-const RUNTIME_ALWAYS_ASK: [&str; 2] = ["subscription", "mcp_app"];
+const RUNTIME_ALWAYS_ASK: [&str; 3] = ["subscription", "mcp_app", "project_send"];
 
 /// The `grantKey` an approval card for gizzi permission `permission` carries, so the
 /// card can offer "Allow for this task". `None` when no grant may cover it.
