@@ -398,3 +398,66 @@ async fn write_workspace_file(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn write(p: &std::path::Path, s: &str) {
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, s).unwrap();
+    }
+
+    #[test]
+    fn legacy_paths_map_to_root_only_for_persona_files() {
+        assert_eq!(canonical_path(".allternit/bot/SOUL.md"), "SOUL.md");
+        assert_eq!(canonical_path(".allternit/bot/USER.md"), "USER.md");
+        assert_eq!(canonical_path(".allternit/bot/notes.md"), ".allternit/bot/notes.md");
+        assert_eq!(canonical_path("SOUL.md"), "SOUL.md");
+    }
+
+    #[test]
+    fn legacy_only_moves_to_root_and_is_idempotent() {
+        let d = tempfile::tempdir().unwrap();
+        write(&d.path().join(".allternit/bot/SOUL.md"), "old soul");
+        unify_legacy_files(d.path());
+        unify_legacy_files(d.path());
+        assert_eq!(std::fs::read_to_string(d.path().join("SOUL.md")).unwrap(), "old soul");
+        assert!(!d.path().join(".allternit/bot/SOUL.md").exists());
+        assert!(!d.path().join(".allternit/bot/SOUL.md.pre-unify").exists());
+    }
+
+    #[test]
+    fn both_files_newer_wins_and_the_loser_is_kept() {
+        let d = tempfile::tempdir().unwrap();
+        write(&d.path().join("SOUL.md"), "root soul");
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        write(&d.path().join(".allternit/bot/SOUL.md"), "newer legacy");
+        unify_legacy_files(d.path());
+        assert_eq!(std::fs::read_to_string(d.path().join("SOUL.md")).unwrap(), "newer legacy");
+        assert_eq!(
+            std::fs::read_to_string(d.path().join(".allternit/bot/SOUL.md.pre-unify")).unwrap(),
+            "root soul"
+        );
+
+        let e = tempfile::tempdir().unwrap();
+        write(&e.path().join(".allternit/bot/USER.md"), "older legacy");
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        write(&e.path().join("USER.md"), "newer root");
+        unify_legacy_files(e.path());
+        assert_eq!(std::fs::read_to_string(e.path().join("USER.md")).unwrap(), "newer root");
+        assert_eq!(
+            std::fs::read_to_string(e.path().join(".allternit/bot/USER.md.pre-unify")).unwrap(),
+            "older legacy"
+        );
+        assert!(!e.path().join(".allternit/bot/USER.md").exists());
+    }
+
+    #[test]
+    fn hash_is_sha256_hex_of_the_content() {
+        assert_eq!(
+            sha256_hex(b"abc"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+    }
+}
