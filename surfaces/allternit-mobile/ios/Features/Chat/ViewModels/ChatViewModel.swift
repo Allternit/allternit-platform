@@ -319,6 +319,92 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
         return session.id
     }
 
+    // MARK: - The open editor (the agent's pane_artifact tool)
+
+    /// Standing instructions while this chat sits beside an open editor. They
+    /// replace the studio session's stored ones, which predate the editor.
+    var editorSystemPrompt: String? = nil
+
+    /// The bot project this thread belongs to. Its folder and project block
+    /// go on every send, read live so a folder change reaches the next
+    /// message (mode-session-store `workdir` + resolveProjectContext).
+    var threadProjectId: String? = nil
+
+    /// Matches gizzi's PaneArtifact.TIMEOUT_MS: older requests have already failed there.
+    private static let paneArtifactTimeout: TimeInterval = 120
+
+    /// Runs the session agent's pane_artifact requests through `run` and sends
+    /// each answer back, until the task is cancelled. Same contract as the web's
+    /// pane-artifact-bridge: a request runs at most once, and never once the
+    /// agent has stopped waiting. `onProblem` is told what the model can't tell
+    /// the person itself, when the answer can't get back or the stream is down.
+    func servePaneArtifactRequests(
+        sessionId: String,
+        run: @escaping @MainActor (PaneArtifactRequest) async -> PaneArtifactResult,
+        onProblem: @escaping @MainActor (String) -> Void
+    ) async {
+        var sessions: Set<String> = [sessionId]
+        var handled: Set<String> = []
+        var cursor: String? = nil
+        var failures = 0
+        var warned = false
+        while !Task.isCancelled {
+            do {
+                for try await event in chatClient.sessionSyncEvents(since: cursor) {
+                    switch event {
+                    case .connected:
+                        failures = 0
+                        warned = false
+                    case .cursor(let id):
+                        cursor = id
+                    case .handedOff(let from, let to):
+                        if sessions.contains(from) { sessions.insert(to) }
+                    case .paneArtifact(let request):
+                        guard sessions.contains(request.sessionId), handled.insert(request.requestId).inserted else { continue }
+                        if let time = request.time, Date().timeIntervalSince1970 - time / 1000 > Self.paneArtifactTimeout { continue }
+                        Task { [chatClient] in
+                            let result = await run(request)
+                            await Self.sendPaneArtifactReply(request, result: result, client: chatClient, onProblem: onProblem)
+                        }
+                    }
+                }
+            } catch is CancellationError {
+                return
+            } catch let error as URLError where error.code == .cancelled {
+                return
+            } catch {
+                failures += 1
+                // Between turns a dropped stream goes unnoticed; during one, the
+                // agent is about to wait out its timeout on a file it can't reach.
+                if failures >= 3, isStreaming, !warned {
+                    warned = true
+                    onProblem("The agent can't reach the open file right now. Check your connection.")
+                }
+            }
+            try? await Task.sleep(for: .seconds(min(2 * (failures + 1), 15)))
+        }
+    }
+
+    private static func sendPaneArtifactReply(
+        _ request: PaneArtifactRequest,
+        result: PaneArtifactResult,
+        client: AgentChatClient,
+        onProblem: @MainActor (String) -> Void
+    ) async {
+        for attempt in 1...3 {
+            do {
+                try await client.replyPaneArtifact(requestId: request.requestId, result: result)
+                return
+            } catch {
+                if attempt == 3 {
+                    onProblem("The agent didn't get the editor's answer: \(FriendlyErrorMessage.from(error.localizedDescription))")
+                    return
+                }
+                try? await Task.sleep(for: .seconds(attempt))
+            }
+        }
+    }
+
     // MARK: - Sending & streaming
 
     /// `runtimeModelId` is the composer pill's catalog id ("provider/model");
@@ -481,11 +567,15 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
                     agentId: self.sessionContext.agentId,
                     // Artifact studio sessions ("Make something new") carry
                     // their standing instructions on every turn, as the web does.
-                    systemPrompt: ArtifactStudioLauncher.shared.systemPrompt(for: sessionId),
+                    systemPrompt: [
+                        self.editorSystemPrompt ?? ArtifactStudioLauncher.shared.systemPrompt(for: sessionId),
+                        self.threadProjectId.flatMap { ProjectFolderStore.shared.contextBlock(projectId: $0) },
+                    ].compactMap { $0 }.joined(separator: "\n\n").nilIfBlankForChat,
                     runtimeModelId: runtimeModelId,
                     effort: effort,
                     attachments: attachmentRefs.isEmpty ? nil : attachmentRefs,
-                    tools: ToolOptionsStore.shared.optionsForSend
+                    tools: ToolOptionsStore.shared.optionsForSend,
+                    workdir: self.threadProjectId.map { ProjectFolderStore.shared.folder(for: $0)?.path ?? "" }
                 ) {
                     try Task.checkCancellation()
                     if self.apply(event, to: assistantId) {
@@ -813,4 +903,9 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
         guard let index = messages.firstIndex(where: { $0.id == id }) else { return }
         mutate(&messages[index])
     }
+}
+
+private extension String {
+    /// No standing instructions: the field stays off the request.
+    var nilIfBlankForChat: String? { isEmpty ? nil : self }
 }

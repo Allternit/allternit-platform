@@ -956,6 +956,10 @@
           "note": "Eoj: BoardUI look pass — calendar month chips with time and type tint (goals blue, routines green, loops purple, heartbeats amber), +N more day list, block names and times in Week/Day, and an anchored TaskDetailsCard on Automation Tasks with Run now / Edit / Pause; phones keep dots plus a day list and the same card as a sheet (ai #806)."
         },
         {
+          "on": "2026-10-31",
+          "note": "Local loops get a real scheduler in routine_local_scheduler.rs (loop_runs table, V284), rather than moving to the cloud domain. Web heartbeats call gizzi v1/cron/jobs directly; /api/agent-control and /allternit-api/cron had no handler."
+        },
+        {
           "on": "2026-10-27",
           "note": "Routine rows expose exact next-run time in the saved timezone, bot and execution location, explicit last result, failed-run review and Run history. Scheduler mutations are serialized and disable conflicting controls. Shared row covers Desktop, web phone and PWA."
         }

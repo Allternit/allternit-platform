@@ -151,7 +151,7 @@ struct ProjectTeamCard: View {
                 Button { onOpenPane(.team) } label: {
                     HStack(spacing: 4) {
                         Image(systemName: "point.3.connected.trianglepath.dotted").font(.system(size: 12))
-                        Text("Open team lanes").font(.system(size: 12.5))
+                        Text("Open team").font(.system(size: 12.5))
                     }
                     .foregroundColor(Color("TextPrimary"))
                     .frame(minHeight: 44)
@@ -480,7 +480,7 @@ struct ProjectStateChip: View {
 
     private var color: Color {
         switch state {
-        case "on_track", "done": return Theme.statusSuccess
+        case "done": return Theme.statusSuccess
         case "at_risk", "needs_decision": return Theme.statusWarning
         case "blocked": return Theme.statusError
         default: return Color("TextTertiary")

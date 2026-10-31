@@ -26,6 +26,7 @@ struct BotChatSessionView: View {
     @ObservedObject private var desktop = BotDesktopStore.shared
     @ObservedObject private var colors = BotColorStore.shared
     @ObservedObject private var backdrops = StageBackdropStore.shared
+    @ObservedObject private var folders = ProjectFolderStore.shared
     @EnvironmentObject private var navigator: BotNavigator
     @State private var isBackgroundPresented = false
     @State private var sessionId: String? = nil
@@ -43,6 +44,29 @@ struct BotChatSessionView: View {
     private var thread: BotThread? {
         guard let sessionId else { return nil }
         return store.threads.first { $0.currentSessionId == sessionId }
+    }
+
+    /// The bot project this thread belongs to.
+    private var threadProjectId: String? {
+        thread?.projectId ?? sessionId.flatMap { ProjectFolderStore.shared.project(forSession: $0) }
+    }
+
+    /// The project's folder, shown in the thread as Code threads show theirs.
+    private var folderLabel: some View {
+        Group {
+            if let threadProjectId, let folder = folders.folder(for: threadProjectId) {
+                HStack(spacing: 4) {
+                    Image(systemName: "folder").font(.system(size: 10.5))
+                    Text(folder.name).font(.system(size: 11.5)).lineLimit(1)
+                }
+                .foregroundColor(Color("TextSecondary"))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 2)
+                .background(Capsule().fill(Color("BgPanel")))
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Working folder: \(folder.path)")
+            }
+        }
     }
 
     /// The bot stands on its stage (the thread tab, not yet docked).
@@ -92,6 +116,7 @@ struct BotChatSessionView: View {
                 await resolve()
             }
             .task { await InappCallStore.shared.loadCallableContacts(botId: bot.id) }
+            .onChange(of: threadProjectId, initial: true) { _, projectId in viewModel.threadProjectId = projectId }
             .onDisappear { status.unsubscribe(botId: bot.id) }
             .onChange(of: viewModel.transientError) { _, error in
                 // A main-chat pin whose session is gone: drop it so the next
@@ -349,6 +374,7 @@ struct BotChatSessionView: View {
         .padding(.horizontal, 12)
         .padding(.top, 4)
         .padding(.bottom, 6)
+        .overlay(alignment: .bottom) { folderLabel.offset(y: 14).allowsHitTesting(false) }
         .background { BotWashedBackground(color: .some(colors.hex(for: bot))).ignoresSafeArea(edges: .top) }
     }
 

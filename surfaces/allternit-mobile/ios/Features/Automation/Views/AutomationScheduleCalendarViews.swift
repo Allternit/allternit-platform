@@ -12,6 +12,8 @@ struct AutomationTaskActions {
     let delete: (AutomationTaskItem) -> Void
     let new: (_ cron: String, _ day: Date) -> Void
     let move: (AutomationTaskItem, _ cron: String) -> Void
+    /// What the task's Edit form starts from.
+    let edit: @MainActor (AutomationTaskItem) -> AutomationTaskEditContext?
 }
 
 /// A bot's avatar, or the task type's icon in a soft circle.
@@ -319,7 +321,8 @@ struct AutomationTaskDetailsSheet: View {
                 onDelete: {
                     close()
                     actions.delete(task)
-                }
+                },
+                edit: actions.edit(task)
             )
         } else {
             ScrollView { card.padding(12) }
@@ -587,6 +590,7 @@ struct AutomationRoutineDetailsSheet: View {
     let onClose: () -> Void
     @ObservedObject private var bots = BotModeStore.shared
     @State private var busy = false
+    @State private var editDraft: AutomationTaskDraft? = nil
 
     private var routine: AutomationRoutine? { store.routines.first { $0.id == routineId } }
 
@@ -601,6 +605,9 @@ struct AutomationRoutineDetailsSheet: View {
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
         .presentationBackground(Color("BgPanel"))
+        .sheet(item: $editDraft) { draft in
+            AutomationWizardSheet(store: store, draft: draft)
+        }
     }
 
     private func panel(_ r: AutomationRoutine) -> some View {
@@ -642,6 +649,16 @@ struct AutomationRoutineDetailsSheet: View {
                 .buttonStyle(.plain)
                 Button { act { await store.setEnabled(r, !r.isEnabled) } } label: {
                     Label(r.isEnabled ? "Pause" : "Resume", systemImage: r.isEnabled ? "pause" : "play")
+                        .font(.system(size: 12))
+                        .foregroundColor(Color("TextPrimary"))
+                        .padding(.horizontal, 10)
+                        .frame(height: 32)
+                        .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).stroke(Color("BorderSubtle"), lineWidth: 1))
+                        .contentShape(Rectangle().inset(by: -6))
+                }
+                .buttonStyle(.plain)
+                Button { editDraft = AutomationTaskDraft(routine: r) } label: {
+                    Label("Edit", systemImage: "pencil")
                         .font(.system(size: 12))
                         .foregroundColor(Color("TextPrimary"))
                         .padding(.horizontal, 10)

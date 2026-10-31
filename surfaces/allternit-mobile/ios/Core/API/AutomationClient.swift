@@ -109,15 +109,29 @@ struct AutomationLoop: Decodable, Identifiable, Equatable, Sendable {
     let scheduleExpression: String
     let createdAt: String?
     let updatedAt: String?
+    let config: AutomationLooseObject?
+    /// When it next runs (the local scheduler's cursor).
+    let nextRunAt: String?
+    let lastRunAt: String?
+    /// Newest first, with `?recent_runs=N`.
+    let recentRuns: [AutomationRunTick]?
 
     enum CodingKeys: String, CodingKey {
-        case id, name, description, status
+        case id, name, description, status, config, recentRuns
+        case nextRunAt = "next_run_at"
+        case lastRunAt = "last_run_at"
         case agentId = "agent_id"
         case goalId = "goal_id"
         case scheduleType = "schedule_type"
         case scheduleExpression = "schedule_expression"
         case createdAt = "created_at"
         case updatedAt = "updated_at"
+    }
+
+    /// What the executor is told to do: `config.prompt`, else the description.
+    var instruction: String {
+        if case .string(let prompt)? = config?.value["prompt"], !prompt.isEmpty { return prompt }
+        return description ?? ""
     }
 }
 
@@ -138,6 +152,16 @@ struct CreateAutomationGoalRequest: Encodable, Sendable {
 struct UpdateAutomationGoalRequest: Encodable, Sendable {
     let status: String?
     let progress: Double?
+    var title: String? = nil
+    var description: String? = nil
+    var priority: String? = nil
+    /// "yyyy-MM-dd"; an empty string clears it.
+    var targetDate: String? = nil
+
+    enum CodingKeys: String, CodingKey {
+        case status, progress, title, description, priority
+        case targetDate = "target_date"
+    }
 }
 
 struct CreateAutomationRoutineRequest: Encodable, Sendable {
@@ -152,9 +176,12 @@ struct CreateAutomationRoutineRequest: Encodable, Sendable {
     /// Optional row metadata (the web's `bot-routine` source / botName /
     /// title / fromTemplate). Omitted from the body when nil.
     var metadata: [String: JSONValue]? = nil
+    /// The goal this routine supports (the wizard's Associated Goal).
+    var goalId: String? = nil
 
     enum CodingKeys: String, CodingKey {
         case name, description, timezone, config, metadata
+        case goalId = "goal_id"
         case agentId = "agent_id"
         case scheduleType = "schedule_type"
         case scheduleExpression = "schedule_expression"
@@ -171,13 +198,58 @@ struct CreateAutomationLoopRequest: Encodable, Sendable {
     let scheduleExpression: String
     let executionDomain: String
     let config: [String: String]
+    /// The goal this loop supports (the wizard's Associated Goal).
+    var goalId: String? = nil
 
     enum CodingKeys: String, CodingKey {
         case name, description, config
+        case goalId = "goal_id"
         case agentId = "agent_id"
         case scheduleType = "schedule_type"
         case scheduleExpression = "schedule_expression"
         case executionDomain = "execution_domain"
+    }
+}
+
+/// `PUT /api/v1/automation/routines/:id` (UpdateRoutineRequest): only the
+/// fields that changed are sent. `config` replaces the whole column, so it
+/// carries the routine's other keys too. An empty `goalId` clears the goal.
+struct UpdateAutomationRoutineRequest: Encodable, Sendable {
+    var name: String? = nil
+    var description: String? = nil
+    var agentId: String? = nil
+    var goalId: String? = nil
+    var scheduleType: String? = nil
+    var scheduleExpression: String? = nil
+    var timezone: String? = nil
+    var config: [String: JSONValue]? = nil
+
+    enum CodingKeys: String, CodingKey {
+        case name, description, timezone, config
+        case agentId = "agent_id"
+        case goalId = "goal_id"
+        case scheduleType = "schedule_type"
+        case scheduleExpression = "schedule_expression"
+    }
+}
+
+/// `PUT /api/v1/automation/loops/:id` (UpdateLoopRequest): only the fields that
+/// changed are sent. An empty `agentId` or `goalId` clears it.
+struct UpdateAutomationLoopRequest: Encodable, Sendable {
+    var name: String? = nil
+    var description: String? = nil
+    var agentId: String? = nil
+    var goalId: String? = nil
+    var scheduleType: String? = nil
+    var scheduleExpression: String? = nil
+    var config: [String: JSONValue]? = nil
+
+    enum CodingKeys: String, CodingKey {
+        case name, description, config
+        case agentId = "agent_id"
+        case goalId = "goal_id"
+        case scheduleType = "schedule_type"
+        case scheduleExpression = "schedule_expression"
     }
 }
 
@@ -203,6 +275,32 @@ private struct UpdateRoutineScheduleRequest: Encodable, Sendable {
         case scheduleType = "schedule_type"
         case scheduleExpression = "schedule_expression"
     }
+}
+
+/// A row of `GET …/loops/:id/runs` (the routine run shape).
+struct AutomationRunRecord: Decodable, Identifiable, Equatable, Sendable {
+    let id: String
+    let status: String
+    let scheduledAt: String
+    let startedAt: String?
+    let finishedAt: String?
+    let durationMs: Double?
+    let output: String?
+    let error: String?
+    let triggeredBy: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id, status, output, error
+        case scheduledAt = "scheduled_at"
+        case startedAt = "started_at"
+        case finishedAt = "finished_at"
+        case durationMs = "duration_ms"
+        case triggeredBy = "triggered_by"
+    }
+}
+
+private struct RunRecordsEnvelope: Decodable, Sendable {
+    let runs: [AutomationRunRecord]?
 }
 
 private struct RunsEnvelope: Decodable, Sendable {
@@ -239,6 +337,10 @@ final class AutomationClient: @unchecked Sendable {
                              body: UpdateRoutineScheduleRequest(scheduleType: "cron", scheduleExpression: cron, timezone: timezone))
     }
 
+    func updateRoutine(id: String, _ request: UpdateAutomationRoutineRequest) async throws {
+        try await client.put(path: "automation/routines/\(Self.escape(id))", body: request)
+    }
+
     func deleteRoutine(id: String) async throws {
         try await client.delete(path: "automation/routines/\(Self.escape(id))")
     }
@@ -271,8 +373,17 @@ final class AutomationClient: @unchecked Sendable {
         try await client.delete(path: "automation/goals/\(Self.escape(id))")
     }
 
-    func listLoops() async throws -> [AutomationLoop] {
-        try await client.get(path: "automation/loops")
+    func listLoops(recentRuns: Int = 14) async throws -> [AutomationLoop] {
+        try await client.get(path: "automation/loops?recent_runs=\(recentRuns)")
+    }
+
+    func cancelLoopRun(loopId: String, runId: String) async throws {
+        try await client.post(path: "automation/loops/\(Self.escape(loopId))/runs/\(Self.escape(runId))/cancel")
+    }
+
+    func listLoopRuns(id: String) async throws -> [AutomationRunRecord] {
+        let envelope: RunRecordsEnvelope = try await client.get(path: "automation/loops/\(Self.escape(id))/runs")
+        return envelope.runs ?? []
     }
 
     func setLoopEnabled(id: String, enabled: Bool) async throws {
@@ -284,6 +395,10 @@ final class AutomationClient: @unchecked Sendable {
     func updateLoopSchedule(id: String, cron: String) async throws {
         try await client.put(path: "automation/loops/\(Self.escape(id))",
                              body: UpdateLoopScheduleRequest(scheduleExpression: cron))
+    }
+
+    func updateLoop(id: String, _ request: UpdateAutomationLoopRequest) async throws {
+        try await client.put(path: "automation/loops/\(Self.escape(id))", body: request)
     }
 
     func createLoop(_ request: CreateAutomationLoopRequest) async throws {

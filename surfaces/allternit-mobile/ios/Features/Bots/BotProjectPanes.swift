@@ -44,7 +44,7 @@ struct ProjectPaneScreen: View {
             case .delegate: ProjectDelegatePane(projectId: context.id)
             case .library: ProjectLibraryPane(projectId: context.id)
             case .routines: ProjectRoutinesPane(context: context)
-            case .team: ProjectTeamPane(botIds: context.botIds)
+            case .team: ProjectTeamPane(projectId: context.id, botIds: context.botIds)
             case .board: ProjectBoardPane(projectId: context.id)
             case .flow: ProjectFlowPane(projectId: context.id)
             }
@@ -997,46 +997,6 @@ struct ProjectNewRoutineSheet: View {
 
 // MARK: - Factory panes
 
-private struct ProjectNodeRow: View {
-    let card: FactoryNodeCard
-    @EnvironmentObject private var navigator: BotNavigator
-
-    var body: some View {
-        Button {
-            navigator.open(.projectNode(dagId: card.dagId, nodeId: card.nodeId, title: card.title))
-        } label: {
-            HStack(spacing: 8) {
-                Circle()
-                    .fill(card.status == "done" ? Theme.statusSuccess
-                          : card.status == "needs_you" ? Theme.statusWarning
-                          : card.status == "failed" ? Theme.statusError
-                          : card.status == "working" || card.status == "checking" ? Theme.statusInfo
-                          : Color("TextTertiary"))
-                    .frame(width: 7, height: 7)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(card.title)
-                        .font(.system(size: 13))
-                        .foregroundColor(Color("TextPrimary"))
-                        .multilineTextAlignment(.leading)
-                    Text([card.statusLabel, card.assignee].compactMap { $0 }.joined(separator: " · "))
-                        .font(.system(size: 11.5))
-                        .foregroundColor(Color("TextTertiary"))
-                        .lineLimit(1)
-                }
-                Spacer(minLength: 4)
-                if let proof = card.proof, proof.total > 0 {
-                    Text("\(proof.proven)/\(proof.total)")
-                        .font(.system(size: 11.5).monospacedDigit())
-                        .foregroundColor(Color("TextTertiary"))
-                }
-            }
-            .frame(minHeight: 44)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-    }
-}
-
 private struct ProjectPaneHeading: View {
     let text: String
     init(_ text: String) { self.text = text }
@@ -1046,221 +1006,6 @@ private struct ProjectPaneHeading: View {
             .font(.system(size: 12, weight: .semibold))
             .foregroundColor(Color("TextSecondary"))
             .padding(.top, 10)
-    }
-}
-
-/// Board: Needs you, Now, Next, then the waves (ProjectBoardView `oneColumn`).
-struct ProjectBoardPane: View {
-    let projectId: String
-
-    @State private var board: FactoryBoard?
-    @State private var isLoading = true
-    @State private var failed = false
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 2) {
-                if let board {
-                    section("Needs you", board.summary.needsYou)
-                    section("Now", board.summary.now)
-                    section("Next", board.summary.next)
-                    ForEach(board.waves) { wave in
-                        section("Wave \(wave.depth + 1)", wave.nodes)
-                    }
-                } else if isLoading {
-                    ProgressView().frame(maxWidth: .infinity).padding(.vertical, 24)
-                } else if failed {
-                    ProjectInlineError(text: "The Factory engine isn't running on this computer.") { Task { await load() } }
-                } else {
-                    ProjectCardNote("No campaign yet. Its Board and Flow show here once work runs through the Factory.")
-                }
-            }
-            .padding(16)
-        }
-        .refreshable { await load() }
-        .task { await load() }
-    }
-
-    @ViewBuilder
-    private func section(_ title: String, _ nodes: [FactoryNodeCard]) -> some View {
-        if !nodes.isEmpty {
-            ProjectPaneHeading(title)
-            ForEach(nodes) { ProjectNodeRow(card: $0) }
-        }
-    }
-
-    private func load() async {
-        defer { isLoading = false }
-        do {
-            if let campaign = try await BotProjectClient.shared.campaign(projectId: projectId) {
-                board = try await BotProjectClient.shared.board(campaignId: campaign.id)
-            } else {
-                board = nil
-            }
-            failed = false
-        } catch is CancellationError {
-        } catch {
-            failed = true
-        }
-    }
-}
-
-/// Flow: the DAG's nodes by depth, with what each waits on (ProjectFlowView `list`).
-struct ProjectFlowPane: View {
-    let projectId: String
-
-    @State private var flow: FactoryFlow?
-    @State private var isLoading = true
-    @State private var failed = false
-
-    private var levels: [(depth: Int, nodes: [FactoryNodeCard])] {
-        guard let flow else { return [] }
-        let grouped = Dictionary(grouping: flow.nodes) { $0.depth ?? 0 }
-        return grouped.keys.sorted().map { ($0, grouped[$0] ?? []) }
-    }
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 2) {
-                if let flow {
-                    Text(flow.title)
-                        .font(.system(size: 15, weight: .medium))
-                        .foregroundColor(Color("TextPrimary"))
-                    ForEach(levels, id: \.depth) { level in
-                        ProjectPaneHeading("Step \(level.depth + 1)")
-                        ForEach(level.nodes) { node in
-                            ProjectNodeRow(card: node)
-                            let waits = flow.edges.filter { $0.to == node.nodeId }.compactMap { edge in
-                                flow.nodes.first { $0.nodeId == edge.from }?.title
-                            }
-                            if !waits.isEmpty {
-                                ProjectCardNote("After \(waits.joined(separator: ", "))").padding(.leading, 15)
-                            }
-                        }
-                    }
-                } else if isLoading {
-                    ProgressView().frame(maxWidth: .infinity).padding(.vertical, 24)
-                } else if failed {
-                    ProjectInlineError(text: "The Factory engine isn't running on this computer.") { Task { await load() } }
-                } else {
-                    ProjectCardNote("No campaign yet. Its Board and Flow show here once work runs through the Factory.")
-                }
-            }
-            .padding(16)
-        }
-        .refreshable { await load() }
-        .task { await load() }
-    }
-
-    private func load() async {
-        defer { isLoading = false }
-        do {
-            guard let campaign = try await BotProjectClient.shared.campaign(projectId: projectId) else {
-                flow = nil
-                failed = false
-                return
-            }
-            let board = try await BotProjectClient.shared.board(campaignId: campaign.id)
-            if let dagId = board.waves.flatMap(\.nodes).first?.dagId {
-                flow = try await BotProjectClient.shared.flow(dagId: dagId)
-            } else {
-                flow = nil
-            }
-            failed = false
-        } catch is CancellationError {
-        } catch {
-            failed = true
-        }
-    }
-}
-
-/// Team lanes on the phone (ProjectTeamGraph `stacked`): each bot with what
-/// it's on, and who hands off to whom.
-struct ProjectTeamPane: View {
-    let botIds: [String]
-
-    @ObservedObject private var store = BotModeStore.shared
-    @EnvironmentObject private var navigator: BotNavigator
-    @State private var agents: [FactoryAgent] = []
-    @State private var edges: [FactoryTeam.Edge] = []
-    @State private var isLoading = true
-    @State private var failed = false
-
-    private func name(_ id: String) -> String {
-        store.bot(id)?.botDisplayName ?? agents.first { $0.id == id }?.name ?? id
-    }
-
-    private func edgeWord(_ kind: String) -> String {
-        switch kind {
-        case "delegates_to": return "hands off to"
-        case "checks": return "checks"
-        case "directs": return "directs"
-        default: return kind
-        }
-    }
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 2) {
-                if isLoading && agents.isEmpty {
-                    ProgressView().frame(maxWidth: .infinity).padding(.vertical, 24)
-                } else if agents.isEmpty {
-                    ProjectCardNote(failed ? "Team graph: the Factory engine isn't running on this computer."
-                                    : "Team graph: these bots aren't in the Factory yet.")
-                        .padding(.bottom, 8)
-                    ForEach(botIds.compactMap { store.bot($0) }) { bot in
-                        Button { navigator.open(.page(bot.id)) } label: {
-                            HStack(spacing: 8) {
-                                BotAvatarView(bot: bot, size: 22)
-                                BotNameText(bot.botDisplayName, size: 13)
-                                Spacer(minLength: 0)
-                            }
-                            .frame(minHeight: 44)
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                    }
-                } else {
-                    ForEach(agents) { agent in
-                        Button {
-                            if let node = agent.currentNode {
-                                navigator.open(.projectNode(dagId: node.dagId, nodeId: node.nodeId, title: node.title))
-                            } else {
-                                navigator.open(.page(agent.id))
-                            }
-                        } label: {
-                            ProjectAgentLabel(agent: agent)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    if !edges.isEmpty {
-                        ProjectPaneHeading("Hand-offs")
-                        ForEach(edges, id: \.self) { edge in
-                            Text("\(name(edge.from)) \(edgeWord(edge.kind)) \(name(edge.to))")
-                                .font(.system(size: 12.5))
-                                .foregroundColor(Color("TextSecondary"))
-                                .padding(.vertical, 4)
-                        }
-                    }
-                }
-            }
-            .padding(16)
-        }
-        .refreshable { await load() }
-        .task { await load() }
-    }
-
-    private func load() async {
-        defer { isLoading = false }
-        do {
-            let team = try await BotProjectClient.shared.team(botIds: botIds)
-            agents = team.agents
-            edges = team.edges
-            failed = false
-        } catch is CancellationError {
-        } catch {
-            failed = true
-        }
     }
 }
 
@@ -1708,16 +1453,25 @@ struct ProjectAddBotSheet: View {
 }
 
 /// The status page (ProjectStatusPanel, full view): state, next action, the
-/// sections, the log. Edits go in as "you".
+/// sections, the log with its archive and proof links, and Close / Reopen.
+/// Edits go in as "you".
 struct ProjectStatusSheet: View {
     let projectId: String
+    /// A close or reopen landed; the project lists show the lifecycle.
+    var onLifecycleChanged: (@MainActor () async -> Void)? = nil
 
     @Environment(\.dismiss) private var dismiss
     @State private var status: ProjectStatusRecord?
-    @State private var error: String?
+    @State private var loadError: String?
+    @State private var actionError: String?
     @State private var saving = false
     @State private var editing: String?
     @State private var draft = ""
+    @State private var showArchive = false
+    @State private var closing = false
+    @State private var outcome = ""
+    @State private var lessons = ""
+    @State private var doneProof: String?
 
     private var closed: Bool { status?.lifecycle == "closed" }
 
@@ -1726,12 +1480,12 @@ struct ProjectStatusSheet: View {
             Group {
                 if let status {
                     form(status)
-                } else if let error {
-                    ProjectInlineError(text: "Couldn't load the status page. \(error)") { Task { await load() } }
+                } else if let loadError {
+                    ProjectInlineError(text: "Couldn't load the status page. \(loadError)") { Task { await load() } }
                         .padding(16)
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 } else {
-                    ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+                    ProgressView("Loading status…").frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
             .navigationTitle("Status page")
@@ -1755,97 +1509,278 @@ struct ProjectStatusSheet: View {
                     .disabled(saving)
                 }
                 if !status.nextAction.isEmpty {
-                    Text(status.nextAction).font(.system(size: 14))
+                    (Text("Next · ").foregroundColor(Color("TextTertiary")) + Text(status.nextAction))
+                        .font(.system(size: 14))
+                }
+                if isEmptyPage(status) {
+                    Text("No status yet. Bots fill it on their first task.")
+                        .font(.system(size: 13))
+                        .foregroundColor(Color("TextSecondary"))
+                }
+            }
+            if doneProof != nil {
+                doneProofSection
+            }
+            if let actionError {
+                Section {
+                    Text(actionError).font(.system(size: 13)).foregroundColor(Theme.statusError)
                 }
             }
             ForEach(ProjectStatusRecord.sectionOrder, id: \.key) { section in
-                Section(section.label) {
-                    if editing == section.key {
-                        TextField(section.label, text: $draft, axis: .vertical)
-                            .lineLimit(3...10)
-                        HStack {
-                            Button("Cancel") { editing = nil }
-                                .buttonStyle(.borderless)
-                            Spacer()
-                            Button(saving ? "Saving…" : "Save") { saveSection(section.key) }
-                                .buttonStyle(.borderless)
-                                .disabled(saving)
-                        }
-                    } else {
-                        let text = status.sections[section.key]?.text ?? ""
-                        Button {
-                            guard !closed else { return }
-                            draft = text
-                            editing = section.key
-                        } label: {
-                            Text(text.isEmpty ? "Add" : text)
-                                .font(.system(size: 14))
-                                .foregroundColor(text.isEmpty ? Color("TextTertiary") : Color("TextPrimary"))
-                                .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
-                                .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
+                sectionRows(section.key, label: section.label, value: status.sections[section.key])
             }
-            Section("Log") {
-                if status.log.isEmpty {
-                    Text("Nothing logged yet.")
-                        .font(.system(size: 13))
-                        .foregroundColor(Color("TextTertiary"))
+            logSection(status)
+            lifecycleSection(status)
+        }
+    }
+
+    private func isEmptyPage(_ status: ProjectStatusRecord) -> Bool {
+        !closed && status.log.isEmpty && status.nextAction.isEmpty
+            && ProjectStatusRecord.sectionOrder.allSatisfy {
+                (status.sections[$0.key]?.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            }
+    }
+
+    /// Done takes a proof link, so choosing it asks for one before anything is saved.
+    private var doneProofSection: some View {
+        Section("Done needs a proof link (PR, doc, deploy)") {
+            TextField("https://", text: Binding(get: { doneProof ?? "" }, set: { doneProof = $0 }))
+                .keyboardType(.URL)
+                .textContentType(.URL)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+            HStack {
+                Button("Cancel") {
+                    doneProof = nil
+                    actionError = nil
                 }
-                ForEach(Array(status.log.prefix(10).enumerated()), id: \.offset) { _, entry in
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(entry.note).font(.system(size: 13))
-                        Text("\(entry.by) · \(BotTime.relative(entry.at))")
+                .buttonStyle(.borderless)
+                .frame(minHeight: 44)
+                Spacer()
+                Button(saving ? "Saving…" : "Mark done") { confirmDone() }
+                    .buttonStyle(.borderless)
+                    .frame(minHeight: 44)
+                    .disabled(saving)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func sectionRows(_ key: String, label: String, value: ProjectStatusSection?) -> some View {
+        let text = value?.text ?? ""
+        Section {
+            if editing == key {
+                TextField(label, text: $draft, axis: .vertical)
+                    .lineLimit(3...10)
+                HStack {
+                    Button("Cancel") {
+                        editing = nil
+                        actionError = nil
+                    }
+                    .buttonStyle(.borderless)
+                    .frame(minHeight: 44)
+                    Spacer()
+                    Button(saving ? "Saving…" : "Save") { saveSection(key) }
+                        .buttonStyle(.borderless)
+                        .frame(minHeight: 44)
+                        .disabled(saving)
+                }
+            } else if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Text("Nothing yet.")
+                    .font(.system(size: 13))
+                    .foregroundColor(Color("TextTertiary"))
+            } else {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(text).font(.system(size: 14))
+                    if let value, !value.updatedBy.isEmpty {
+                        Text("\(value.updatedBy) · \(BotTime.relative(value.updatedAt))")
                             .font(.system(size: 11))
                             .foregroundColor(Color("TextTertiary"))
                     }
                 }
             }
-            if let error {
-                Text(error).font(.caption).foregroundColor(Theme.statusError)
+        } header: {
+            HStack {
+                Text(label)
+                Spacer()
+                if !closed && editing != key {
+                    Button("Edit") {
+                        editing = key
+                        draft = text
+                        actionError = nil
+                    }
+                    .font(.system(size: 13))
+                    .textCase(nil)
+                    .frame(minWidth: 44, minHeight: 32, alignment: .trailing)
+                    .accessibilityLabel("Edit \(label)")
+                }
             }
         }
     }
+
+    private func logSection(_ status: ProjectStatusRecord) -> some View {
+        Section("Log") {
+            if status.log.isEmpty {
+                Text("No updates yet.")
+                    .font(.system(size: 13))
+                    .foregroundColor(Color("TextTertiary"))
+            }
+            ForEach(Array(status.log.prefix(10).enumerated()), id: \.offset) { _, entry in
+                logRow(entry)
+            }
+            if !status.archive.isEmpty {
+                Button(showArchive ? "Hide archive" : "Show archive · \(status.archive.count)") { showArchive.toggle() }
+                    .buttonStyle(.borderless)
+                    .frame(minHeight: 44)
+                if showArchive {
+                    ForEach(Array(status.archive.enumerated()), id: \.offset) { _, entry in
+                        logRow(entry)
+                    }
+                }
+            }
+        }
+    }
+
+    private func logRow(_ entry: ProjectStatusLogEntry) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(entry.note.replacingOccurrences(of: "_", with: " ")).font(.system(size: 13))
+                Text("\(entry.by) · \(BotTime.relative(entry.at))")
+                    .font(.system(size: 11))
+                    .foregroundColor(Color("TextTertiary"))
+            }
+            Spacer(minLength: 0)
+            if let link = entry.proofLink {
+                Link(destination: link) {
+                    HStack(spacing: 3) {
+                        Image(systemName: "link").font(.system(size: 11))
+                        Text("proof").font(.system(size: 13)).underline()
+                    }
+                    .foregroundColor(Color("TextPrimary"))
+                    .frame(minWidth: 44, minHeight: 44)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.borderless)
+                .accessibilityLabel("Open proof for \(entry.note.replacingOccurrences(of: "_", with: " "))")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func lifecycleSection(_ status: ProjectStatusRecord) -> some View {
+        if closing {
+            Section {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Outcome").font(.system(size: 12)).foregroundColor(Color("TextSecondary"))
+                    TextField("Outcome", text: $outcome, axis: .vertical).lineLimit(2...6)
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Lessons").font(.system(size: 12)).foregroundColor(Color("TextSecondary"))
+                    TextField("Lessons", text: $lessons, axis: .vertical).lineLimit(2...6)
+                }
+                Text("Closing pauses this project's routines.")
+                    .font(.system(size: 12))
+                    .foregroundColor(Color("TextTertiary"))
+                HStack {
+                    Button("Cancel") { closing = false }
+                        .buttonStyle(.borderless)
+                        .frame(minHeight: 44)
+                    Spacer()
+                    Button(saving ? "Closing…" : "Close project") { submitClose(reopen: false) }
+                        .buttonStyle(.borderless)
+                        .frame(minHeight: 44)
+                        .disabled(saving)
+                }
+            }
+        } else {
+            Section {
+                if closed {
+                    Button(saving ? "Reopening…" : "Reopen project") { submitClose(reopen: true) }
+                        .frame(minHeight: 44)
+                        .disabled(saving)
+                } else {
+                    Button("Close project") {
+                        outcome = status.sections["outcome"]?.text ?? ""
+                        lessons = status.sections["lessons"]?.text ?? ""
+                        actionError = nil
+                        closing = true
+                    }
+                    .frame(minHeight: 44)
+                }
+            }
+        }
+    }
+
+    // MARK: Loading + actions
 
     private func load() async {
         do {
             status = try await BotProjectClient.shared.status(projectId: projectId)
-            error = nil
+            loadError = nil
         } catch is CancellationError {
         } catch {
-            self.error = FriendlyErrorMessage.from(error.localizedDescription)
+            loadError = errorText(error)
+        }
+    }
+
+    /// ProjectStatusPanel errorText: the server's two refusals in plain words.
+    private func errorText(_ error: Error) -> String {
+        let text = error.localizedDescription
+        if text.contains("proof_required") { return "Marking this done needs a proof link. Add one and try again." }
+        if text.contains("project_closed") { return "This project is closed. Reopen it to edit." }
+        return FriendlyErrorMessage.from(text)
+    }
+
+    /// Runs one change; the answer is the page as it now stands.
+    private func apply(_ run: @escaping @MainActor () async throws -> ProjectStatusRecord,
+                       then done: @escaping @MainActor () async -> Void = {}) {
+        saving = true
+        actionError = nil
+        Task { @MainActor in
+            defer { saving = false }
+            do {
+                status = try await run()
+                await done()
+            } catch {
+                actionError = errorText(error)
+            }
         }
     }
 
     private func setState(_ state: String) {
-        saving = true
-        error = nil
-        Task {
-            defer { saving = false }
-            do {
-                try await BotProjectClient.shared.patchStatus(projectId: projectId, state: state)
-                await load()
-            } catch {
-                self.error = FriendlyErrorMessage.from(error.localizedDescription)
-            }
+        if state == "done" {
+            doneProof = ""
+            return
         }
+        let id = projectId
+        apply({ try await BotProjectClient.shared.patchStatus(projectId: id, state: state) })
+    }
+
+    private func confirmDone() {
+        let proof = (doneProof ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let id = projectId
+        apply({
+            try await BotProjectClient.shared.patchStatus(projectId: id, state: "done", done: true, proofUrl: proof.isEmpty ? nil : proof)
+        }, then: { doneProof = nil })
     }
 
     private func saveSection(_ key: String) {
         let text = draft
-        saving = true
-        error = nil
-        Task {
-            defer { saving = false }
-            do {
-                try await BotProjectClient.shared.patchStatus(projectId: projectId, section: key, text: text)
-                editing = nil
-                await load()
-            } catch {
-                self.error = FriendlyErrorMessage.from(error.localizedDescription)
-            }
-        }
+        let id = projectId
+        apply({ try await BotProjectClient.shared.patchStatus(projectId: id, section: key, text: text) },
+              then: { editing = nil })
+    }
+
+    private func submitClose(reopen: Bool) {
+        let id = projectId
+        let outcomeText = outcome
+        let lessonsText = lessons
+        let changed = onLifecycleChanged
+        apply({
+            try await BotProjectClient.shared.closeProject(projectId: id, outcome: outcomeText, lessons: lessonsText, reopen: reopen)
+        }, then: {
+            closing = false
+            await changed?()
+        })
     }
 }

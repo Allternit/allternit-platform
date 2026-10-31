@@ -19,7 +19,9 @@ import SwiftUI
 /// Stored artifacts open in the web's real `ArtifactWindow` (the kind's editor,
 /// or its viewer without edit access), the same window Desktop and
 /// m.allternit.com use, with its own toolbar for versions, share and export.
-/// The native renderers below remain for records it doesn't serve.
+/// The native renderers below remain for records it doesn't serve, and for a
+/// PDF the person can only view: the web's viewer draws one page at a time at
+/// 1x with zoom capped, so PDFKit reads better and adds Save and Sign.
 ///
 /// Docs (including docs with several tabs), sheets and decks the user can
 /// edit get an Edit button (V2ArtifactEditorView), which saves a new v2
@@ -100,6 +102,7 @@ struct V2ArtifactView: View {
     /// Whether this record opens in the web's artifact window.
     private var usesWebWindow: Bool {
         guard let artifact else { return false }
+        if artifact.kind == "pdf", !artifact.canEdit, artifact.version.bodyFormat == "application/pdf" { return false }
         return artifact.id.hasPrefix("art_") || SampleWorkspace.isEnabled
     }
 

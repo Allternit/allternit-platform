@@ -1,5 +1,23 @@
 import SwiftUI
 
+extension ArtifactStudioSession {
+    /// Standing instructions for a session bound to an open editor: the web's
+    /// `artifactNoteBody` for a bound binding, plus OWN_TOOLS_NOTE
+    /// (src/lib/artifact-session/artifact-session.ts). nil without an editor.
+    var editorSystemPrompt: String? {
+        let note: String
+        if let designProjectId {
+            note = "## Artifact session\n\nThe user has the design canvas \"\(title)\" (Allternit Design project \(designProjectId)) open beside this chat. That canvas is what you work on, with the pane_artifact tool — the canvas's own tools, acting on exactly what the user sees:\n\n1. Call pane_artifact with action \"describe\" once, before the first change: it returns how the canvas works (frames, components, UI blocks, text), its tools with their input schemas, and every shape on it.\n2. Change the canvas with action \"call\" (tool = one of those tools, input = an object matching its schema). Use action \"read\" to see it again.\n\nBuild the design on the canvas itself — don't describe it in the chat instead. Afterwards, say briefly what changed. If pane_artifact reports the pane is closed, ask the user to open it."
+        } else if let artifactId, kind.officeProduct != nil {
+            let noun = kind.noun.lowercased()
+            note = "## Artifact session\n\nThe user has the \(noun) \"\(title)\" (artifact id \(artifactId)) open in the editor beside this chat. That \(noun) is what you work on, and you work on it with the pane_artifact tool — the editor's own tools, acting on exactly what the user sees:\n\n1. Call pane_artifact with action \"describe\" once, before the first change: it returns how the editor's tools work, the tools with their input schemas, and the current \(noun).\n2. Read and change the \(noun) with action \"call\" (tool = one of those tools, input = an object matching its schema). Use action \"read\" to see its current state again.\n\nMake the change in the \(noun) itself — don't paste the \(noun) into the chat instead. Afterwards, say briefly what changed. If pane_artifact reports the editor is closed, ask the user to open it."
+        } else {
+            return nil
+        }
+        return note + "\n\n" + ArtifactStudioKind.ownToolsNote
+    }
+}
+
 /// A studio session on the phone: the chat, and — one tap away, as the
 /// PWA's phone layout does with its full-screen pane — the kind's real editor.
 /// Docs, Sheets, Slides and Design open on their editor straight away, as the
@@ -19,6 +37,9 @@ struct ArtifactStudioView: View {
     @State private var isSavingEditor = false
     /// Where the person was going when the editor couldn't save.
     @State private var leaveAfterFailedSave: (() -> Void)?
+    /// What went wrong with the agent's last change to the open file. Shown over
+    /// the chat and the editor alike; the model is told through its tool result.
+    @State private var agentProblem: String?
 
     init(studio: ArtifactStudioSession) {
         self.studio = studio
@@ -35,18 +56,42 @@ struct ArtifactStudioView: View {
         VStack(spacing: 0) {
             header
             Divider().background(Color("BorderSubtle"))
-            ZStack {
+            ZStack(alignment: .top) {
                 ChatContentView(sessionId: studio.sessionId, viewModel: viewModel)
                     .opacity(showingPane ? 0 : 1)
                     .allowsHitTesting(!showingPane)
-                if showingPane {
+                if studio.editorRoute != nil {
+                    // The agent works on this file while the person is in the
+                    // chat, so the editor stays open out of sight. Not fully
+                    // transparent: WebKit may suspend a page it can't see.
+                    pane
+                        .ignoresSafeArea(edges: .bottom)
+                        .opacity(showingPane ? 1 : 0.001)
+                        .allowsHitTesting(showingPane)
+                        .accessibilityHidden(!showingPane)
+                } else if showingPane {
                     pane
                         .ignoresSafeArea(edges: .bottom)
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
+                if let agentProblem {
+                    TransientErrorBanner(message: agentProblem) { self.agentProblem = nil }
+                        .padding(.horizontal, 12)
+                        .padding(.top, 8)
+                }
             }
         }
         .background(Color("BgPrimary").ignoresSafeArea())
+        .task(id: studio.sessionId) {
+            viewModel.editorSystemPrompt = studio.editorSystemPrompt
+            // The app's scripted sample workspace has no agent to answer.
+            guard !SampleWorkspace.isEnabled else { return }
+            await viewModel.servePaneArtifactRequests(
+                sessionId: studio.sessionId,
+                run: { request in await runAgentRequest(request) },
+                onProblem: { agentProblem = $0 }
+            )
+        }
         .alert("Your changes couldn't be saved", isPresented: Binding(
             get: { leaveAfterFailedSave != nil },
             set: { if !$0 { leaveAfterFailedSave = nil } }
@@ -177,7 +222,28 @@ struct ArtifactStudioView: View {
     }
 
     private func showChat() {
+        // The editor stays open behind the chat; typing must not go to it.
+        editorSave.endEditing()
         withAnimation(.spring(response: 0.32, dampingFraction: 0.9)) { showingPane = false }
+    }
+
+    /// One pane_artifact request on the open file. Its result goes to the model
+    /// either way; a failure or an unsaved change is also shown to the person.
+    @MainActor
+    private func runAgentRequest(_ request: PaneArtifactRequest) async -> PaneArtifactResult {
+        // A stored result's window names itself; the session's editor is named here.
+        let label: String? = results.isEmpty ? "\(studio.kind.noun) \"\(studio.title)\"" : nil
+        let result = await editorSave.runAgentRequest(
+            payload: request.payload,
+            label: label,
+            agentName: viewModel.sessionContext.agentName
+        )
+        if !result.ok {
+            agentProblem = result.error.map(FriendlyErrorMessage.from) ?? "The agent couldn't change the file."
+        } else if result.mutated == true {
+            agentProblem = await editorSave.save() ? nil : "The agent's change is in the editor but couldn't be saved. Check your connection."
+        }
+        return result
     }
 
     private func refreshResults() async {

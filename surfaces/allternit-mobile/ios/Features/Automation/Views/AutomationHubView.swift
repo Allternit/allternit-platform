@@ -221,6 +221,7 @@ struct RoutineRunRowView: View {
     @ObservedObject var store: AutomationStore
     @State private var isExpanded = false
     @State private var confirmDelete = false
+    @State private var editDraft: AutomationTaskDraft? = nil
 
     private var liveRun: AutomationLiveRun? {
         guard let run = store.live[routine.id], run.running else { return nil }
@@ -300,6 +301,9 @@ struct RoutineRunRowView: View {
             Button("Delete", role: .destructive) { Task { await store.delete(routine) } }
             Button("Cancel", role: .cancel) {}
         }
+        .sheet(item: $editDraft) { draft in
+            AutomationWizardSheet(store: store, draft: draft)
+        }
     }
 
     private var statusLine: String {
@@ -363,6 +367,12 @@ struct RoutineRunRowView: View {
                     .foregroundColor(Color("TextSecondary"))
                 }
             }
+            Button(action: { editDraft = AutomationTaskDraft(routine: routine) }) {
+                Label("Edit routine", systemImage: "pencil").font(.caption)
+            }
+            .buttonStyle(.plain)
+            .foregroundColor(Color("TextPrimary"))
+            .frame(minHeight: 32)
             Button(role: .destructive, action: { confirmDelete = true }) {
                 Label("Delete routine", systemImage: "trash").font(.caption)
             }

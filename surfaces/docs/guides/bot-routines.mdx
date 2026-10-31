@@ -99,6 +99,10 @@ On Automation Tasks, the **Goals**, **Loops** and **Agent Heartbeats** tabs have
 - **Calendar:** loops and heartbeats sit at their run times, and a loop that runs every few minutes or hours is one striped band. Goals sit in an **All day** row on their target date. **Coming up** lists the next runs and due dates. Click an empty time to add a task of that tab's kind at that time (on **Goals**, a goal due that day; on **All**, a routine). Click an entry to open its card (see [Reading the calendar](#reading-the-calendar)). Drag a loop or heartbeat to move it; the new time saves at once. Goals can't be dragged; change the target date in the goal. Tasks with no time (manual, or a schedule the calendar can't draw) and goals with no target date are listed under the calendar.
 - **Graph:** each task runs from its trigger (kind, next run, **Run now**) to the bot that runs it to the goal it serves, with the goal's progress. On **Goals**, each goal shows the routines, loops and heartbeats that serve it, even though they are on other tabs.
 
+Loops run on your computer on their schedule, as the bot you assigned or your main bot, on the model you picked or the bot's own. A loop's details show its next run, last run and history, with **Stop** on a run in progress. **Run now** starts one unless one is already running. Each loop keeps its own session, so it doesn't fill the bot's main chat. If the computer was asleep, the loop runs again when it wakes and doesn't make up missed runs.
+
+Heartbeats need a connected computer; without one the tab says so. Saving updates each heartbeat's own job, deletes a removed task's job and keeps full task names in `HEARTBEAT.md`.
+
 On a bot's own page, the Automation Tasks list under its Routines keeps its routines in **List**, because the bot's Routines tab above already has the switch. Its other tabs have the switch.
 
 ### Code

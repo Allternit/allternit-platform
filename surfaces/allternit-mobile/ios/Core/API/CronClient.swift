@@ -40,16 +40,35 @@ final class CronClient: @unchecked Sendable {
     /// `parseScheduleToType` (cron/service.ts:220-222) accepts both cron
     /// expressions and natural language, so no client-side validation
     /// happens here; an invalid schedule surfaces as the server's own error.
-    func createAgentJob(name: String, prompt: String, schedule: String) async throws -> CronJob {
+    func createAgentJob(
+        name: String,
+        prompt: String,
+        schedule: String,
+        description: String? = nil,
+        agentId: String? = nil,
+        model: String? = nil,
+        status: String? = nil,
+        maxRetries: Int? = nil,
+        timeoutSeconds: Int? = nil
+    ) async throws -> CronJob {
         try await client().post(
             path: "v1/cron/jobs",
             body: CreateAgentJobRequest(
                 name: name,
                 type: "agent",
                 schedule: schedule,
-                config: .init(prompt: prompt)
+                config: .init(prompt: prompt, agentId: agentId, model: model),
+                description: description,
+                status: status,
+                maxRetries: maxRetries,
+                timeoutSeconds: timeoutSeconds
             )
         )
+    }
+
+    /// `PUT v1/cron/jobs/:id` (routes/cron.ts `cron.update`): the Edit form's save.
+    func updateJob(id: String, _ request: UpdateCronJobRequest) async throws {
+        try await client().put(path: "v1/cron/jobs/\(Self.escape(id))", body: request)
     }
 
     /// `PUT v1/cron/jobs/:id` (routes/cron.ts `cron.update`): a dragged

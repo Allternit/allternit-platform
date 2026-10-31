@@ -22,6 +22,55 @@ struct AttachmentRef: Encodable, Sendable {
     let name: String?
 }
 
+/// A session agent's pane_artifact tool call, waiting on the app that shows the
+/// session's editor (gizzi `PaneArtifact.Request`; web pane-artifact-bridge.ts).
+struct PaneArtifactRequest: Sendable {
+    let requestId: String
+    let sessionId: String
+    /// When the agent asked (ms). Older than the agent's wait: already failed there.
+    let time: Double?
+    /// The sync event's JSON, which the editor page reads itself.
+    let payload: String
+}
+
+/// The editor's answer, passed to the agent as it is (gizzi `PaneArtifact.Result`).
+struct PaneArtifactResult: Codable, Sendable {
+    var ok: Bool
+    var artifact: String? = nil
+    var text: String? = nil
+    var mutated: Bool? = nil
+    var image: String? = nil
+    var error: String? = nil
+
+    static func failed(_ message: String) -> PaneArtifactResult {
+        PaneArtifactResult(ok: false, error: message)
+    }
+}
+
+/// What the studio reads from the session sync stream.
+enum SessionSyncEvent: Sendable {
+    case connected
+    /// The stream's position, to resume from after a reconnect.
+    case cursor(String)
+    case paneArtifact(PaneArtifactRequest)
+    /// The conversation moved to a fresh session (context handoff).
+    case handedOff(from: String, to: String)
+}
+
+private struct SessionSyncFrame: Decodable {
+    let type: String
+    let requestId: String?
+    let sessionId: String?
+    let time: Double?
+    let to: String?
+
+    enum CodingKeys: String, CodingKey {
+        case type, time, to
+        case requestId = "request_id"
+        case sessionId = "session_id"
+    }
+}
+
 /// Errors specific to the chat path.
 enum AgentChatClientError: Error, LocalizedError {
     /// No gizzi-code/Fabric node is currently reachable.
@@ -207,6 +256,8 @@ final class AgentChatClient: ObservableObject, @unchecked Sendable {
         let effort: String?
         let attachments: [AttachmentRef]?
         let metadata: Metadata?
+        /// The session's working folder (its project's); "" clears it.
+        let workdir: String?
     }
 
     /// Sends `text` to the session and streams the response frames.
@@ -219,7 +270,7 @@ final class AgentChatClient: ObservableObject, @unchecked Sendable {
     /// never reached the phone.
     ///
     /// Throws `AgentChatClientError.noReachableNode` when no computer resolves.
-    func sendMessageStream(sessionId: String, text: String, agentId: String? = nil, systemPrompt: String? = nil, runtimeModelId: String? = nil, effort: String? = nil, attachments: [AttachmentRef]? = nil, tools: ToolOptions? = nil) -> AsyncThrowingStream<AgentChatEvent, Error> {
+    func sendMessageStream(sessionId: String, text: String, agentId: String? = nil, systemPrompt: String? = nil, runtimeModelId: String? = nil, effort: String? = nil, attachments: [AttachmentRef]? = nil, tools: ToolOptions? = nil, workdir: String? = nil) -> AsyncThrowingStream<AgentChatEvent, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
@@ -244,7 +295,8 @@ final class AgentChatClient: ObservableObject, @unchecked Sendable {
                         runtimeModelId: runtimeModelId,
                         effort: effort,
                         attachments: attachments,
-                        metadata: tools.map { AgentChatRequest.Metadata(tools: $0) }
+                        metadata: tools.map { AgentChatRequest.Metadata(tools: $0) },
+                        workdir: workdir
                     ))
 
                     let (bytes, response) = try await InstanceConnection.bytes(for: request)
@@ -282,6 +334,104 @@ final class AgentChatClient: ObservableObject, @unchecked Sendable {
             // job (ChatViewModel.stopStreaming → abort(sessionId:)).
             continuation.onTermination = { _ in task.cancel() }
         }
+    }
+
+    // MARK: - Session sync (the agent's pane_artifact requests)
+
+    /// The session sync stream on the computer the chat runs on
+    /// (`GET /api/v1/agent-sessions/sync`, served by gizzi and allternit-api),
+    /// narrowed to what the studio needs. Ends or throws when the connection
+    /// does; the caller reconnects with the last `.cursor`, and the server
+    /// replays what was missed.
+    func sessionSyncEvents(since cursor: String?) -> AsyncThrowingStream<SessionSyncEvent, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    guard let baseURL = await InstanceConnection.resolve()?.baseURL else {
+                        throw AgentChatClientError.noReachableNode
+                    }
+                    var url = baseURL.appendingPathComponent("api/v1/agent-sessions/sync")
+                    if let cursor, var components = URLComponents(url: url, resolvingAgainstBaseURL: false) {
+                        components.queryItems = [URLQueryItem(name: "since", value: cursor)]
+                        url = components.url ?? url
+                    }
+                    var request = URLRequest(url: url)
+                    request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+                    if let cursor { request.setValue(cursor, forHTTPHeaderField: "Last-Event-ID") }
+                    if let token = try await AuthManager.shared.getToken(), !token.isEmpty {
+                        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+                    }
+                    // An idle stream times out here and reconnects from the cursor.
+                    request.timeoutInterval = 600
+
+                    let (bytes, response) = try await InstanceConnection.bytes(for: request)
+                    guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
+                    guard (200...299).contains(http.statusCode) else {
+                        throw APIError.httpError(statusCode: http.statusCode, message: nil)
+                    }
+                    continuation.yield(.connected)
+
+                    let decoder = JSONDecoder()
+                    for try await line in bytes.lines {
+                        try Task.checkCancellation()
+                        if line.hasPrefix("id:") {
+                            let id = line.dropFirst(3).trimmingCharacters(in: .whitespaces)
+                            if !id.isEmpty { continuation.yield(.cursor(id)) }
+                            continue
+                        }
+                        // Most of this stream is every session's reply text;
+                        // only these two frames get decoded.
+                        guard line.hasPrefix("data:"),
+                              line.contains("pane_artifact_requested") || line.contains("handed_off") else { continue }
+                        let payload = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
+                        guard let frame = try? decoder.decode(SessionSyncFrame.self, from: Data(payload.utf8)) else { continue }
+                        switch frame.type {
+                        case "pane_artifact_requested":
+                            guard let requestId = frame.requestId, let sessionId = frame.sessionId else { continue }
+                            continuation.yield(.paneArtifact(PaneArtifactRequest(requestId: requestId, sessionId: sessionId, time: frame.time, payload: payload)))
+                        case "handed_off":
+                            guard let sessionId = frame.sessionId, let to = frame.to else { continue }
+                            continuation.yield(.handedOff(from: sessionId, to: to))
+                        default:
+                            continue
+                        }
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
+    /// Answers a pane_artifact request on the computer that asked. allternit-api
+    /// serves `/api/v1/pane-artifact`, a gizzi reached directly serves
+    /// `/v1/pane-artifact`, and a relay can end at either, so the likely one
+    /// goes first and a 404 tries the other. False when neither knows the
+    /// request: the agent's wait already ended.
+    @discardableResult
+    func replyPaneArtifact(requestId: String, result: PaneArtifactResult) async throws -> Bool {
+        guard let resolved = await InstanceConnection.resolve() else {
+            throw AgentChatClientError.noReachableNode
+        }
+        let paths = ["api/v1/pane-artifact/\(requestId)/reply", "v1/pane-artifact/\(requestId)/reply"]
+        for path in resolved.isRelay ? paths : paths.reversed() {
+            var request = URLRequest(url: resolved.baseURL.appendingPathComponent(path))
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            if let token = try await AuthManager.shared.getToken(), !token.isEmpty {
+                request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            }
+            request.httpBody = try JSONEncoder().encode(result)
+            let (_, response) = try await InstanceConnection.data(for: request)
+            guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
+            if (200...299).contains(http.statusCode) { return true }
+            if http.statusCode != 404 {
+                throw APIError.httpError(statusCode: http.statusCode, message: nil)
+            }
+        }
+        return false
     }
 
     /// Web uses `encodeURIComponent` on session ids (ses_* ids are already
