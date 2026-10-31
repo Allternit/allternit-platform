@@ -2,15 +2,13 @@ import SwiftUI
 
 /// Settings → Account → Delete account (App Store guideline 5.1.1(v)).
 ///
-/// Says what deletion does, warns about a paid plan that still bills, asks
-/// the user to type DELETE, then calls Clerk's self-delete
+/// Says what deletion does, asks the user to type DELETE, then calls Clerk's
+/// self-delete
 /// (`AuthManager.deleteAccount`). When Clerk has self-delete turned off for
 /// this instance, or the call fails, the page shows the reason and an email
 /// link to have it deleted by hand.
 struct DeleteAccountView: View {
     @EnvironmentObject private var authManager: AuthManager
-    @ObservedObject private var plan = AccountPlanStore.shared
-    @ObservedObject private var storefront = StorefrontGate.shared
     @Environment(\.openURL) private var openURL
 
     /// Called after the account is gone (Settings closes itself).
@@ -32,9 +30,6 @@ struct DeleteAccountView: View {
                 deletedSection
             } else {
                 explainSection
-                if plan.subscription?.isPaid == true {
-                    paidPlanSection
-                }
                 if authManager.canSelfDeleteAccount == false {
                     disabledSection
                 } else {
@@ -61,7 +56,6 @@ struct DeleteAccountView: View {
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(isDeleting || isDeleted)
         .interactiveDismissDisabled(isDeleting || isDeleted)
-        .task { plan.load() }
         .onDisappear {
             // Left without tapping Done: still return to the sign-in gate.
             if isDeleted { Task { await authManager.finishAccountDeletion() } }
@@ -80,7 +74,10 @@ struct DeleteAccountView: View {
                 }
                 bullet("Your Allternit account is closed and you're signed out on every device.")
                 bullet("You can't sign back in to it. Signing up again with the same email starts a new, empty account.")
-                bullet("Allternit closes the account on its servers and stops using its data. To have stored chats, bots, memory and files erased right away, email privacy@allternit.com.")
+                bullet("Your paid plan is cancelled right away and you won't be charged again. The rest of the period isn't refunded.")
+                bullet("Your cloud computers, phone numbers and bot mailboxes are deleted or released.")
+                bullet("The chats, bots, memory and files Allternit stores for you are erased.")
+                bullet("A computer you own keeps its own files. Allternit and its payment processor keep billing and audit records, without your contact details at Allternit.")
                 bullet("Credits left on the account are not refunded.")
                 bullet("This can't be undone.")
             }
@@ -89,21 +86,6 @@ struct DeleteAccountView: View {
             Text("What happens")
         } footer: {
             Text("Want a copy first? Export your data from Settings → Privacy before you delete.")
-        }
-    }
-
-    private var paidPlanSection: some View {
-        Section {
-            FriendlyInlineStateView(
-                style: .offline,
-                icon: "creditcard",
-                title: "Cancel \(plan.subscription?.label ?? "your plan") first",
-                message: storefront.allowsPurchaseLinks
-                    ? "Deleting your account doesn't cancel a paid plan. Cancel it in Billing on the web first so you aren't charged again."
-                    : "Deleting your account doesn't cancel a paid plan. Cancel it on the web at ai.allternit.com first so you aren't charged again.",
-                actionTitle: storefront.allowsPurchaseLinks ? "Open Billing" : nil,
-                action: storefront.allowsPurchaseLinks ? ({ openURL(StorefrontGate.creditsURL) } as () -> Void) : nil
-            )
         }
     }
 

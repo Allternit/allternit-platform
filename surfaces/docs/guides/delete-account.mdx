@@ -19,8 +19,11 @@ Read what happens, type `DELETE` in capitals and choose **Delete my account**.
 
 - Your Allternit account is closed and you're signed out on every device.
 - You can't sign back in to it. Signing up again with the same email starts a new, empty account.
-- Allternit closes the account on its servers and stops using its data. To have stored chats, bots, memory and files erased right away, email privacy@allternit.com.
-- Deleting your account doesn't cancel a paid plan. Cancel it in **Settings → Billing** first so you aren't charged again.
+- Your paid plan is cancelled right away and you aren't charged again. The rest of the current period isn't refunded.
+- Your cloud computers, cloud phones, phone numbers and bot mailboxes are deleted or released.
+- The chats, bots, memory, files, artifacts and call recordings Allternit stores for you are erased.
+- A computer you own keeps its own files. Allternit can no longer reach it. Delete those files yourself if you want them gone.
+- Allternit keeps billing and audit records, without your email, name or address. Stripe keeps its own payment records.
 - Credits left on the account are not refunded. This can't be undone.
 
 Want a copy first? Export your data from **Settings → Privacy** before you delete.
@@ -30,3 +33,5 @@ If the delete doesn't go through, email privacy@allternit.com and we'll delete t
 ## For developers
 
 The web section is `src/views/settings/DeleteAccountSection.tsx` in allternit-ai, shown at the end of the Account panel (`ClerkAuthPanel`), which Desktop, ai.allternit.com and the phone layout all use. It calls Clerk's `user.delete()` and signs out. The iPhone app does the same in `Features/Settings/DeleteAccountView.swift`. Clerk must allow users to delete their own account. cloud-api closes the account when Clerk sends the `user.deleted` webhook (`clerk_webhooks.rs`).
+
+On Clerk's `user.deleted` webhook, `cmd/allternit-cloud-api/src/services/account_erase.rs` stops charges and access, cancels Stripe subscriptions, deletes computers, releases numbers and mailboxes, deletes stored objects, then erases rows in one transaction. A failed step answers non-2xx, so Clerk retries, and every step can run again. The `users` row stays as an empty tombstone because finance tables reference it. A new table with a user or owner column must be added to `ERASE` or `RETAIN` in that file, or a test fails.
