@@ -46,7 +46,7 @@ Desktop → sidecar:
 ```json
 {"op":"sign","apple_id":"me@example.com","password":"…","udid":"00008110-…","device_name":"iPhone",
  "runner_ipa":"/abs/iCTRLUITests-Runner.ipa","host_ipa":"/abs/iCTRL.ipa","out_dir":"/abs/signed/<udid>",
- "anisette_url":"https://anisette.allternit.com","bundle_prefix":"com.allternit.phonelink"}
+ "anisette_url":"https://ani.jkcoxson.com","bundle_prefix":"com.allternit.phonelink"}
 {"op":"two_factor","code":"123456"}
 {"op":"two_factor_sms"}
 {"op":"cancel"}
@@ -200,12 +200,13 @@ own software on a Mac or iPhone.
   `-80045` is classified as `anisette_unavailable`, not `bad_credentials`.
 - **Fallback:** when AuthKit gives nothing, a remote **anisette v3** server.
 
-- **Default here:** `https://anisette.allternit.com`, the constant
-  `DEFAULT_ANISETTE_URL` in `src/main.rs`. It runs on allternit-standby
-  (`dadoum/anisette-v3-server`, image pinned by digest, behind nginx with TLS),
-  live since 2026-10-17; the sidecar is required in macOS packaging. Checked
-  that day: a made-up Apple ID got past anisette and Apple answered
-  `bad_credentials`.
+- **Default here:** `https://ani.jkcoxson.com`, the constant
+  `DEFAULT_ANISETTE_URL` in `src/main.rs`. On macOS 27 AuthKit gives no
+  headers (AOSKit logs `Info request failed: -45070`), so this server does the
+  work. Checked 2026-10-30 with a made-up Apple ID: Apple answered `-20970`
+  (headers accepted) through this server and refused
+  `anisette.allternit.com`. The server sees device headers, not the Apple ID
+  or password. `anisette.allternit.com` still runs on allternit-standby.
 - **Override order:** the request's `anisette_url`, then `--anisette-url URL`,
   then `$ALLTERNIT_ANISETTE_URL`, then the default. Desktop passes
   `ALLTERNIT_ANISETTE_URL` from its own environment through the request,

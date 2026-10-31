@@ -33,7 +33,7 @@ use crate::signer::{Emit, Signer};
 /// Allternit-hosted anisette v3 server (live since 2026-10-17; README
 /// "Anisette"). isideload's own default is a third party's
 /// (`isideload::anisette::remote_v3::DEFAULT_ANISETTE_V3_URL`).
-pub const DEFAULT_ANISETTE_URL: &str = "https://anisette.allternit.com";
+pub const DEFAULT_ANISETTE_URL: &str = "https://ani.jkcoxson.com";
 pub const ANISETTE_URL_ENV: &str = "ALLTERNIT_ANISETTE_URL";
 
 const MAX_LINE: usize = 1 << 20;

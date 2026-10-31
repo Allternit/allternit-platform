@@ -427,8 +427,9 @@ export function pickSigner(packaged: boolean, env: NodeJS.ProcessEnv = process.e
     // The sidecar binary is a hard requirement of macOS packaging; a missing
     // one here means the build is broken, and signing reports it.
     binary: bin && fs.existsSync(bin) ? bin : null,
-    // Allternit-hosted anisette v3 server (anisette.allternit.com, live since 2026-10-17).
-    anisetteUrl: env.ALLTERNIT_ANISETTE_URL ?? 'https://anisette.allternit.com',
+    // Only used when this Mac's AuthKit gives nothing, as on macOS 27. On 2026-10-30 Apple
+    // refused anisette.allternit.com and accepted this server. It sees device headers only.
+    anisetteUrl: env.ALLTERNIT_ANISETTE_URL ?? 'https://ani.jkcoxson.com',
   });
 }
 
