@@ -155,3 +155,6 @@ docs/desktop-cloud-mvp/*.mov
 .logs/
 .pids/
 /tmp/
+
+# Downloaded by build-desktop.sh; left untracked it trips the release guard
+surfaces/allternit-desktop/resources/lume/

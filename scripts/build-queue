@@ -33,6 +33,10 @@ State lives in ~/.allternit/state/build-queue/ (tickets/ + history.jsonl).
 import fcntl, json, os, signal, subprocess, sys, time
 from pathlib import Path
 
+BUILD_STAMPS = (
+    "surfaces/allternit-desktop/src/main/manifest.ts",
+    "surfaces/allternit-desktop/resources/computer-use/VERSION.json",
+)
 STATE = Path(os.environ.get("BUILD_QUEUE_DIR", Path.home() / ".allternit/state/build-queue"))
 TICKETS = STATE / "tickets"
 HISTORY = STATE / "history.jsonl"
@@ -177,6 +181,12 @@ def cmd_run(argv):
 
         if sync_main:
             for r in repos:
+                # A finished build leaves these stamped. They are build output, and
+                # leaving them dirty silently kept the next build on an old commit
+                # (2026-10-31: a Desktop build missed the merged work it was for).
+                for stamp in BUILD_STAMPS:
+                    if (Path(r) / stamp).exists():
+                        git(r, "checkout", "--", stamp)
                 st = repo_state(r)
                 if not st["sha"]:
                     continue
