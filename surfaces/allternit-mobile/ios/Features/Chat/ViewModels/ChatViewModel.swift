@@ -76,6 +76,9 @@ struct MessageRecord: Identifiable, Equatable, Sendable {
     /// Never sent to or loaded from the backend — the row is a feed-local
     /// marker, like the local-only 👍/👎 feedback.
     var voiceSummary: VoiceSummary? = nil
+    /// When the message was written: the server's timestamp for history,
+    /// creation time for messages made on this device (the Office panel's thread).
+    var createdAt: Date = Date()
 }
 
 /// Parameters for the NEXT session create, pushed from the view whenever
@@ -270,8 +273,18 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
             content: record.content,
             reasoning: record.thinking ?? "",
             toolCalls: ToolCallRecord.fromHistory(parts),
-            artifacts: artifacts
+            artifacts: artifacts,
+            createdAt: parseTimestamp(record.timestamp) ?? Date()
         )
+    }
+
+    /// The API's ISO 8601 timestamps, with or without fractional seconds.
+    nonisolated private static func parseTimestamp(_ value: String) -> Date? {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = formatter.date(from: value) { return date }
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter.date(from: value)
     }
 
     /// Creates the backing agent session on first send
