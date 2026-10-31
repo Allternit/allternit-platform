@@ -505,12 +505,22 @@ fn run_object(r: &Value) -> Value {
 pub(crate) async fn op_history(host: &dyn PhoneHost, caller: &PlatformCaller, serial: &str, run_id: Option<&str>, limit: Option<u32>) -> Result<Value, PlatformError> {
     gate(caller)?;
     let serial = check_serial(serial)?;
-    let limit = limit.unwrap_or(HISTORY_DEFAULT_LIMIT).clamp(1, HISTORY_MAX_LIMIT);
-    let mut path = format!("/api/v1/phones/{}/history?limit={limit}", enc(&serial));
-    if let Some(run) = run_id.map(str::trim).filter(|r| !r.is_empty()) {
-        path.push_str(&format!("&run_id={}", enc(run)));
-    }
-    let (_, out) = relay_ok(host, caller, Some(&serial), "GET", &path, Value::Null).await?;
+    let asked = limit.unwrap_or(HISTORY_DEFAULT_LIMIT).clamp(1, HISTORY_MAX_LIMIT);
+    let run = run_id.map(str::trim).filter(|r| !r.is_empty());
+    // The Desktop's answer still carries frames, so a big limit can pass the
+    // relay's cap: ask for half until it fits and say the answer was cut.
+    let mut limit = asked;
+    let out = loop {
+        let mut path = format!("/api/v1/phones/{}/history?limit={limit}", enc(&serial));
+        if let Some(run) = run {
+            path.push_str(&format!("&run_id={}", enc(run)));
+        }
+        match relay_ok(host, caller, Some(&serial), "GET", &path, Value::Null).await {
+            Ok((_, out)) => break out,
+            Err(e) if e.code == "phone_response_too_large" && limit > 1 => limit /= 2,
+            Err(e) => return Err(e),
+        }
+    };
     let list = |k: &str| out.get(k).and_then(Value::as_array).cloned().unwrap_or_default();
     Ok(json!({
         "object": "phone.history",
@@ -519,6 +529,8 @@ pub(crate) async fn op_history(host: &dyn PhoneHost, caller: &PlatformCaller, se
         "runs": list("runs").iter().map(run_object).collect::<Vec<_>>(),
         "retention_days": out.get("retention_days"),
         "max_steps": out.get("max_steps"),
+        "limit": limit,
+        "truncated": limit < asked,
     }))
 }
 
