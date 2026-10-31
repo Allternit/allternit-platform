@@ -355,6 +355,12 @@ private struct ArtifactLiveWebContainer: UIViewRepresentable {
       var clerk = handlers && handlers.\(clerkHandlerName);
       if (!clerk) return;
       \(appApiLine)
+      // Tapping into an editor must not zoom the page: iOS does that for small
+      // text unless the viewport caps the scale.
+      document.addEventListener('DOMContentLoaded', function () {
+        var v = document.querySelector('meta[name=viewport]');
+        if (v) v.setAttribute('content', 'width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover');
+      });
       window.allternit = window.allternit || {};
       if (!window.allternit.auth) {
         window.allternit.auth = {
