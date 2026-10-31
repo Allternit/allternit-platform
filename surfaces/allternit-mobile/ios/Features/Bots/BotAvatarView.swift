@@ -184,24 +184,68 @@ private final class SpriteFrameCache {
     private var frames: [URL: [CGImage]] = [:]
     private var loading: [URL: Task<SpriteFrames, Never>] = [:]
 
+    /// The idle loop of a pet sheet, cut like the web's AnimatedBotSprite:
+    /// cells are 192×208 (×k on a 2× sheet; sheets have 9 or more rows, so
+    /// the height is never divided by a row count), row 0 is idle, blank
+    /// cells at the row's end are skipped (they flashed as a blink), and
+    /// every frame is cropped to the union of the drawn pixels so the
+    /// character fills its frame.
+    nonisolated static func idleFrames(of image: CGImage) -> [CGImage] {
+        let columns = 8
+        let k = max(1, image.width / (columns * 192))
+        let cellW = 192 * k, cellH = 208 * k
+        guard image.width >= cellW * columns, image.height >= cellH else { return [] }
+        // Row 0's alpha, to find drawn cells and their bounds.
+        let rowW = cellW * columns
+        var alpha = [UInt8](repeating: 0, count: rowW * cellH)
+        guard let row = image.cropping(to: CGRect(x: 0, y: 0, width: rowW, height: cellH)),
+              let context = CGContext(data: &alpha, width: rowW, height: cellH, bitsPerComponent: 8,
+                                      bytesPerRow: rowW, space: CGColorSpaceCreateDeviceGray(),
+                                      bitmapInfo: CGImageAlphaInfo.alphaOnly.rawValue) else { return [] }
+        context.draw(row, in: CGRect(x: 0, y: 0, width: rowW, height: cellH))
+        var minX = Int.max, minY = Int.max, maxX = -1, maxY = -1
+        var drawn: [Int] = []
+        for column in 0..<columns {
+            var any = false
+            for y in stride(from: 0, to: cellH, by: 2) {
+                let base = y * rowW + column * cellW
+                for x in stride(from: 0, to: cellW, by: 2) where alpha[base + x] > 16 {
+                    any = true
+                    minX = min(minX, x); maxX = max(maxX, x)
+                    minY = min(minY, y); maxY = max(maxY, y)
+                }
+            }
+            if any { drawn.append(column) }
+        }
+        guard !drawn.isEmpty, maxX >= minX, maxY >= minY else { return [] }
+        // The bitmap's rows run bottom-up from CGContext; flip to image space.
+        let top = cellH - 1 - maxY, bottom = cellH - 1 - minY
+        let pad = 2 * k
+        let box = CGRect(x: max(0, minX - pad), y: max(0, top - pad),
+                         width: min(cellW, maxX + pad + 2) - max(0, minX - pad),
+                         height: min(cellH, bottom + pad + 2) - max(0, top - pad))
+        return drawn.compactMap { column in
+            image.cropping(to: box.offsetBy(dx: CGFloat(column * cellW), dy: 0))
+        }
+    }
+
+    /// Frames already loaded, so a redrawn avatar starts on its face
+    /// instead of blank (it blinked on every parent refresh).
+    func cached(_ url: URL) -> [CGImage] { frames[url] ?? [] }
+
     func frames(for url: URL) async -> [CGImage] {
         if let cached = frames[url] { return cached }
         if let running = loading[url] { return await running.value.images }
         let task = Task.detached(priority: .utility) { () -> SpriteFrames in
             guard let result = try? await URLSession.shared.data(from: url),
                   let image = UIImage(data: result.0)?.cgImage else { return SpriteFrames(images: []) }
-            // 8 columns × 9 rows; row 0 is the idle loop.
-            let columns = 8, rows = 9
-            let width = image.width / columns, height = image.height / rows
-            guard width > 0, height > 0 else { return SpriteFrames(images: []) }
-            return SpriteFrames(images: (0..<columns).compactMap { column in
-                image.cropping(to: CGRect(x: column * width, y: 0, width: width, height: height))
-            })
+            return SpriteFrames(images: SpriteFrameCache.idleFrames(of: image))
         }
         loading[url] = task
         let result = await task.value.images
         loading[url] = nil
-        frames[url] = result
+        // A failed load isn't kept, so the next appearance tries again.
+        if !result.isEmpty { frames[url] = result }
         return result
     }
 }
@@ -219,6 +263,7 @@ struct SpriteAvatar: View {
         self.url = url
         self.size = size
         self.live = live
+        _frames = State(initialValue: SpriteFrameCache.shared.cached(url))
     }
 
     var body: some View {
@@ -234,7 +279,10 @@ struct SpriteAvatar: View {
                 frame(frames[0])
             }
         }
-        .task(id: url) { frames = await SpriteFrameCache.shared.frames(for: url) }
+        .task(id: url) {
+            let loaded = await SpriteFrameCache.shared.frames(for: url)
+            if !loaded.isEmpty { frames = loaded }
+        }
     }
 
     private func frame(_ image: CGImage) -> some View {
