@@ -57,6 +57,7 @@ import { PlatformAgentsPage } from "@/pages/console/platform/AgentsPage";
 import { PlatformConversationsPage } from "@/pages/console/platform/ConversationsPage";
 import { PlatformUsagePage } from "@/pages/console/platform/UsagePage";
 import { PlatformComputersPage } from "@/pages/console/platform/ComputersPage";
+import { PlatformPhonesPage } from "@/pages/console/platform/PhonesPage";
 import { PlatformWebhooksPage } from "@/pages/console/platform/WebhooksPage";
 import { PlatformBillingPage } from "@/pages/console/platform/BillingPage";
 import { SetupPage } from "@/pages/SetupPage";
@@ -534,7 +535,7 @@ export default function App() {
           </ConsoleRoute>
         }
       />
-      {/* Platform API (developer /v1): projects, agents, conversations, computers, usage, webhooks. */}
+      {/* Platform API (developer /v1): projects, agents, conversations, computers, phones, usage, webhooks. */}
       <Route
         path="/platform/projects"
         element={
@@ -564,6 +565,14 @@ export default function App() {
         element={
           <ConsoleRoute>
             <PlatformComputersPage />
+          </ConsoleRoute>
+        }
+      />
+      <Route
+        path="/platform/phones"
+        element={
+          <ConsoleRoute>
+            <PlatformPhonesPage />
           </ConsoleRoute>
         }
       />

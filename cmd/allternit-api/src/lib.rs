@@ -67,6 +67,7 @@ pub mod bot_desktop_admin;
 pub mod bot_desktop_stream;
 pub mod bot_event_routes;
 pub mod events_feed;
+pub mod floor_routes;
 pub mod netops;
 pub mod routine_local_scheduler;
 pub mod agent_gateway_routes;
@@ -262,6 +263,7 @@ pub mod factory_approvals_push;
 /// `/api/factory/*` → the Factory engine (everything except approvals).
 pub mod factory_proxy;
 pub mod inbox_needs;
+pub mod project_status;
 pub mod inbox_routes;
 pub mod internal_auth;
 pub mod internal_routes;

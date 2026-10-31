@@ -1,0 +1,108 @@
+---
+title: 'Tracing'
+description: 'Send a span for every agent turn, phone run and call to Langfuse, Arize Phoenix or any OpenTelemetry collector.'
+---
+
+Point a project at your own OpenTelemetry collector and Allternit sends it one span for each agent turn, phone run, phone step and call in that project. Spans are OTLP over HTTP (protobuf) and follow the [OpenTelemetry GenAI conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/), so Langfuse, Arize Phoenix and any OTLP collector show them without extra setup.
+
+Export runs in the background. It never slows a request down or makes one fail. If the collector is down or rejects a span, the span is dropped and the reason is kept in `last_error`.
+
+## Set it up
+
+```http
+PUT /v1/projects/current/tracing
+```
+
+```json
+{
+  "endpoint": "https://cloud.langfuse.com/api/public/otel",
+  "headers": { "Authorization": "Basic cGstbGYtLi4uOnNrLWxmLS4uLg==" },
+  "service_name": "front-desk-app",
+  "enabled": true
+}
+```
+
+Scope `usage`. Keys bound to one account can read the settings but can't change them. Use your project id (`proj_…`) or `current` for the key's own project.
+
+| Field | |
+|---|---|
+| `endpoint` | The collector's OTLP base URL. `/v1/traces` is added unless the URL already ends with it. Must be a public `https` URL. |
+| `headers` | Request headers, usually the collector's secret. Up to 20. Stored encrypted; the API only ever returns their names. Leave the field out on a later `PUT` to keep the stored headers. |
+| `service_name` | The `service.name` resource attribute. Default `allternit-platform`. |
+| `enabled` | `false` pauses export and keeps the settings. Default `true`. |
+
+The answer, and `GET /v1/projects/current/tracing`:
+
+```json
+{
+  "object": "project.tracing",
+  "project_id": "proj_…",
+  "endpoint": "https://cloud.langfuse.com/api/public/otel",
+  "header_names": ["Authorization"],
+  "service_name": "front-desk-app",
+  "enabled": true,
+  "last_export_at": "2026-10-29T14:02:11Z",
+  "last_error": null,
+  "created_at": "…",
+  "updated_at": "…"
+}
+```
+
+`GET` answers `404 tracing_not_configured` when nothing is set. `DELETE /v1/projects/current/tracing` turns export off and deletes the settings.
+
+### Send a test span
+
+```http
+POST /v1/projects/current/tracing/test
+```
+
+Sends one `allternit.tracing.test` span now and tells you what the collector said:
+
+```json
+{ "object": "project.tracing.test", "ok": false, "status": 401, "message": "The collector answered HTTP 401." }
+```
+
+`status` is `null` when the collector couldn't be reached at all.
+
+You can also do all of this in the console: **Projects → Tracing** on the project.
+
+## Langfuse
+
+| | |
+|---|---|
+| `endpoint` | `https://cloud.langfuse.com/api/public/otel` (EU), `https://us.cloud.langfuse.com/api/public/otel` (US), or `https://YOUR_HOST/api/public/otel` when self-hosted |
+| `headers` | `Authorization: Basic BASE64`, where `BASE64` is the base64 of `PUBLIC_KEY:SECRET_KEY` from your Langfuse project settings |
+
+```bash
+echo -n "pk-lf-...:sk-lf-..." | base64
+```
+
+Turns of one conversation share a trace id, and each span carries `gen_ai.conversation.id`, so Langfuse groups a conversation's turns together.
+
+## Arize Phoenix
+
+| | |
+|---|---|
+| `endpoint` | `https://app.phoenix.arize.com/s/YOUR_SPACE/v1/traces` on Phoenix Cloud, or `https://YOUR_HOST/v1/traces` when self-hosted |
+| `headers` | `Authorization: Bearer API_KEY` (Phoenix Cloud and self-hosted instances with auth turned on). Older Phoenix Cloud spaces use `api_key: API_KEY` instead. |
+
+Phoenix files spans under the project named by `service_name` unless you send a different project name.
+
+## Other collectors
+
+Any OTLP/HTTP endpoint that accepts `application/x-protobuf` works: an OpenTelemetry Collector, Honeycomb, Grafana Tempo, Datadog's OTLP intake and others. Put whatever auth header they ask for in `headers`.
+
+A collector on a private address (localhost, 10.x, 192.168.x and the like) is refused. Put it behind a public https URL.
+
+## What gets exported
+
+| Span | When | Main attributes |
+|---|---|---|
+| `invoke_agent AGENT_ID` | An agent turn in a [conversation](/api/platform/conversations) or [AG-UI](/api/platform/ag-ui) run ends | `gen_ai.operation.name`, `gen_ai.agent.id`, `gen_ai.conversation.id`, `gen_ai.request.model`, `gen_ai.provider.name`, `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`, `allternit.message.id`, `allternit.account.id` |
+| `call inbound` / `call outbound` | A [call](/api/platform/voice) ends | `gen_ai.agent.id`, `gen_ai.conversation.id`, `allternit.call.id`, `allternit.call.status`, `allternit.call.end_reason`, `allternit.call.duration_seconds`, `allternit.call.simulated` |
+| `invoke_agent phone.task` or `invoke_agent SKILL` | A [phone](/api/platform/phones) task or skill run ends | `allternit.phone.run.id`, `allternit.phone.serial`, `allternit.phone.status`, `allternit.phone.steps`, `allternit.phone.model_calls` |
+| `execute_tool TOOL` | One phone tool call ends | `gen_ai.operation.name`, `gen_ai.tool.name`, `allternit.phone.run.id`, `allternit.phone.serial`, `allternit.phone.source` |
+
+A failed turn, run, step or call has status `ERROR` and an `error.type`. Every span carries the resources `service.name` and `allternit.project.id`. Prompts, replies, transcripts, typed text and screen contents are never exported.
+
+Phone spans come from the project owner's Desktop, so like the phone webhooks they go to every project the owner owns that has tracing on, and they arrive a few seconds after the run.

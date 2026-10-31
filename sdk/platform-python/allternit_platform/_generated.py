@@ -33,13 +33,14 @@ StockVoice = Literal['af_alloy', 'af_aoede', 'af_bella', 'af_heart', 'af_jessica
 Conversation = TypedDict('Conversation', {'id': str, 'object': Literal['conversation'], 'agent_id': str, 'account_id': str, 'metadata': Dict[str, Any], 'created_at': str, 'messages': List["ConversationMessage"]}, total=False)
 ConversationMessage = TypedDict('ConversationMessage', {'id': str, 'object': Literal['conversation.message'], 'conversation_id': str, 'role': Literal['user', 'assistant'], 'content': str, 'status': Literal['completed', 'failed'], 'error': Optional[str], 'created_at': str}, total=False)
 ModelKey = TypedDict('ModelKey', {'provider': Literal['anthropic', 'openai', 'xai'], 'object': Literal['model_key'], 'masked': str, 'created_at': str, 'updated_at': str}, total=False)
-UsageRow = TypedDict('UsageRow', {'group': Optional[str], 'meter': Literal['voice_min_allternit', 'voice_min_byok', 'agent_month', 'tokens_in', 'tokens_out', 'number_local_month', 'number_tollfree_month', 'sms_segment', 'mms', 'registration_passthrough_cents', 'recording_min_month'], 'unit': Optional[str], 'quantity': float, 'events': int}, total=False)
+ProjectTracing = TypedDict('ProjectTracing', {'object': Literal['project.tracing'], 'project_id': str, 'endpoint': str, 'header_names': List[str], 'service_name': str, 'enabled': bool, 'last_export_at': Optional[str], 'last_error': Optional[str], 'created_at': str, 'updated_at': str}, total=False)
+UsageRow = TypedDict('UsageRow', {'group': Optional[str], 'meter': Literal['voice_min_allternit', 'voice_min_byok', 'agent_month', 'tokens_in', 'tokens_out', 'number_local_month', 'number_tollfree_month', 'sms_segment', 'mms', 'registration_passthrough_cents', 'recording_min_month', 'computer_minute', 'computer_action', 'mailbox_month', 'identity_month'], 'unit': Optional[str], 'quantity': float, 'events': int}, total=False)
 PhoneNumber = TypedDict('PhoneNumber', {'id': str, 'object': Literal['phone_number'], 'account_id': Optional[str], 'e164': str, 'type': Literal['local', 'toll_free'], 'sms_state': Literal['pending_registration', 'active', 'rejected', 'blocked'], 'simulated': bool, 'created_at': str}, total=False)
 PhoneNumberList = TypedDict('PhoneNumberList', {'data': List["PhoneNumber"], 'has_more': bool, 'next_cursor': Optional[str]}, total=False)
 Message = TypedDict('Message', {'id': str, 'object': Literal['message'], 'account_id': Optional[str], 'number_id': str, 'direction': Literal['inbound', 'outbound'], 'from': str, 'to': str, 'body': str, 'segments': int, 'status': Literal['sent', 'simulated', 'received', 'failed'], 'error_code': Optional[str], 'media': List[Dict[str, Any]], 'created_at': str}, total=False)
 MessageList = TypedDict('MessageList', {'data': List["Message"], 'has_more': bool, 'next_cursor': Optional[str]}, total=False)
 WebhookEndpoint = TypedDict('WebhookEndpoint', {'id': str, 'object': Literal['webhook_endpoint'], 'url': str, 'events': List[str], 'description': Optional[str], 'created_at': str}, total=False)
-Event = TypedDict('Event', {'id': str, 'object': Literal['event'], 'type': Literal['approval.requested', 'message.received', 'message.status', 'registration.updated', 'inbox.item.created', 'call.started', 'call.ended', 'call.transcript.ready', 'usage.threshold', 'phone.step', 'phone.run.completed', 'webhook.test'], 'created': int, 'project_id': str, 'account_id': Optional[str], 'data': Dict[str, Any]}, total=False)
+Event = TypedDict('Event', {'id': str, 'object': Literal['event'], 'type': Literal['approval.requested', 'message.received', 'message.status', 'registration.updated', 'inbox.item.created', 'call.started', 'call.ended', 'call.transcript.ready', 'usage.threshold', 'phone.step', 'phone.run.completed', 'phone.fleet_run.completed', 'mail.received', 'webhook.test'], 'created': int, 'project_id': str, 'account_id': Optional[str], 'data': Dict[str, Any]}, total=False)
 Computer = TypedDict('Computer', {'id': str, 'object': Literal['computer'], 'name': str, 'status': Literal['provisioning', 'starting', 'running', 'stopping', 'stopped', 'error', 'deleted'], 'account_id': Optional[str], 'key_id': str, 'created_at': str, 'started_at': Optional[str], 'metadata': Dict[str, Any]}, total=False)
 ComputerList = TypedDict('ComputerList', {'data': List["Computer"], 'has_more': bool, 'next_cursor': Optional[str]}, total=False)
 ComputerEvent = TypedDict('ComputerEvent', {'id': str, 'type': Literal['computer.action'], 'ts': str, 'data': Dict[str, Any]}, total=False)
@@ -48,11 +49,19 @@ ComputerSettings = TypedDict('ComputerSettings', {'hosted_driver_enabled': bool,
 ToolsetCall = TypedDict('ToolsetCall', {'toolset': Literal['computer', 'browser'], 'member': str, 'input': Dict[str, Any], 'run_id': str, 'turn_id': str, 'call_index': int, 'model_frame': Dict[str, Any], 'coordinate_space': Literal['pixels', 'normalized_1000'], 'approval_grant': str, 'browser_session_id': str, 'enable': List[str], 'agent_id': str, 'agent_name': str, 'step': str}, total=False)
 ToolsetResult = TypedDict('ToolsetResult', {'is_error': bool, 'content': List[Dict[str, Any]], 'browser_state': Dict[str, Any], 'screen': Dict[str, Any], 'error': str}, total=False)
 ToolsetApprovalRequired = TypedDict('ToolsetApprovalRequired', {'error': Dict[str, Any], 'approval': Dict[str, Any], 'result': "ToolsetResult"}, total=False)
+Mailbox = TypedDict('Mailbox', {'id': str, 'object': Literal['mailbox'], 'account_id': str, 'agent_id': Optional[str], 'address': str, 'display_name': Optional[str], 'created_at': str}, total=False)
+MailboxList = TypedDict('MailboxList', {'data': List["Mailbox"], 'has_more': bool, 'next_cursor': Optional[str]}, total=False)
+MailMessage = TypedDict('MailMessage', {'id': str, 'object': Literal['mail_message'], 'mailbox_id': str, 'from': str, 'to': str, 'subject': Optional[str], 'snippet': Optional[str], 'codes': List[str], 'links': List[str], 'is_verification': bool, 'received_at': str}, total=False)
+MailMessageList = TypedDict('MailMessageList', {'data': List["MailMessage"], 'has_more': bool, 'next_cursor': Optional[str]}, total=False)
+Identity = TypedDict('Identity', {'id': str, 'object': Literal['identity'], 'account_id': str, 'agent_id': Optional[str], 'number': Union["PhoneNumber", Optional[Any]], 'mailbox': Union["Mailbox", Optional[Any]], 'phone_serial': Optional[str], 'bundle': Dict[str, Any], 'created_at': str}, total=False)
+IdentityList = TypedDict('IdentityList', {'data': List["Identity"], 'has_more': bool, 'next_cursor': Optional[str]}, total=False)
 Phone = TypedDict('Phone', {'object': Literal['phone'], 'serial': str, 'name': Optional[str], 'model': Optional[str], 'online': bool, 'desktop_online': bool, 'last_seen_at': Optional[str], 'call_bridge': Optional[Dict[str, Any]]}, total=False)
 PhoneList = TypedDict('PhoneList', {'data': List["Phone"], 'has_more': bool, 'next_cursor': Optional[str]}, total=False)
 PhoneSkillList = TypedDict('PhoneSkillList', {'data': List[Dict[str, Any]], 'has_more': bool, 'next_cursor': Optional[str]}, total=False)
 PhoneStep = TypedDict('PhoneStep', {'object': Literal['phone.step'], 'id': str, 'run_id': str, 'serial': str, 'at': str, 'tool': str, 'label': str, 'args': Dict[str, Any], 'ok': bool, 'error': Optional[str], 'duration_ms': int, 'source': Optional[str], 'snapshot': bool}, total=False)
 PhoneHistory = TypedDict('PhoneHistory', {'object': Literal['phone.history'], 'serial': str, 'steps': List["PhoneStep"], 'runs': List[Dict[str, Any]], 'retention_days': int, 'max_steps': int}, total=False)
+PhoneLiveView = TypedDict('PhoneLiveView', {'object': Literal['phone.live_view'], 'id': str, 'serial': str, 'view_only': Literal[True], 'expires_in': int, 'expires_at': str, 'viewer_url': str, 'stream_url': str}, total=False)
+PhoneFleetRun = TypedDict('PhoneFleetRun', {'object': Literal['phone.fleet_run'], 'id': str, 'kind': Literal['task', 'skill'], 'goal': Optional[str], 'skill': Optional[str], 'status': Literal['running', 'completed'], 'created_at': str, 'completed_at': Optional[str], 'counts': Dict[str, Any], 'runs': List[Dict[str, Any]], 'not_started': List[Dict[str, Any]]}, total=False)
 PhoneRunStarted = TypedDict('PhoneRunStarted', {'object': Literal['phone.run'], 'run_id': str, 'serial': Optional[str], 'skill': Optional[str], 'status': Literal['running']}, total=False)
 PhoneToolResult = TypedDict('PhoneToolResult', {'object': Literal['phone.tool_result'], 'ok': bool, 'run_id': str, 'tool': str, 'error': str, 'message': str}, total=False)
 
@@ -466,6 +475,49 @@ class UsageResource:
     def __init__(self, client: Transport) -> None:
         self._client = client
 
+    def get_project_tracing(self, id: str, *, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "ProjectTracing":
+        """The project's trace export settings
+
+        Where the project's spans go. Header values are never returned, only their names. `404 tracing_not_configured` when none is set. Requires the `usage` scope.
+
+        ``GET /v1/projects/{id}/tracing``
+        """
+        return self._client.request("GET", f"/v1/projects/{_q(id)}/tracing", timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def put_project_tracing(self, id: str, *, endpoint: str, headers: Dict[str, Any] = NOT_GIVEN, service_name: str = NOT_GIVEN, enabled: bool = NOT_GIVEN, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "ProjectTracing":
+        """Set the project's trace export
+
+        Send a span for every agent turn, phone run and call of this project to an OTLP/HTTP collector (Langfuse, Arize Phoenix, any OpenTelemetry collector), as OTLP protobuf following the OpenTelemetry GenAI conventions. `endpoint` is the collector's OTLP base URL (`/v1/traces` is appended) or its full traces URL; it must be a public https URL. `headers` are encrypted at rest; leave them out to keep the stored ones. Export runs in the background and never fails or slows a request. Not available to account-bound keys.
+
+        ``PUT /v1/projects/{id}/tracing``
+        """
+        _body: Dict[str, Any] = {}
+        if endpoint is not NOT_GIVEN:
+            _body['endpoint'] = endpoint
+        if headers is not NOT_GIVEN:
+            _body['headers'] = headers
+        if service_name is not NOT_GIVEN:
+            _body['service_name'] = service_name
+        if enabled is not NOT_GIVEN:
+            _body['enabled'] = enabled
+        return self._client.request("PUT", f"/v1/projects/{_q(id)}/tracing", body=_body, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def delete_project_tracing(self, id: str, *, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+        """Turn off and forget the project's trace export
+
+        ``DELETE /v1/projects/{id}/tracing``
+        """
+        return self._client.request("DELETE", f"/v1/projects/{_q(id)}/tracing", timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def test_project_tracing(self, id: str, *, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+        """Send one test span
+
+        Sends one `allternit.tracing.test` span to the collector now and reports its answer.
+
+        ``POST /v1/projects/{id}/tracing/test``
+        """
+        return self._client.request("POST", f"/v1/projects/{_q(id)}/tracing/test", idempotency_key=idempotency_key, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
     def get_spend_cap(self, *, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "SpendCap":
         """The project's monthly spend cap and spend so far
 
@@ -750,7 +802,7 @@ class WebhooksResource:
             return self._client.request("GET", f"/v1/webhooks", query=q, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
         return self._client.paginate(_fetch, after if after is not NOT_GIVEN else None)
 
-    def create(self, *, url: str, events: List[Literal['*', 'approval.requested', 'message.received', 'message.status', 'registration.updated', 'inbox.item.created', 'call.started', 'call.ended', 'call.transcript.ready', 'usage.threshold', 'phone.step', 'phone.run.completed']], description: str = NOT_GIVEN, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+    def create(self, *, url: str, events: List[Literal['*', 'approval.requested', 'message.received', 'message.status', 'registration.updated', 'inbox.item.created', 'call.started', 'call.ended', 'call.transcript.ready', 'usage.threshold', 'phone.step', 'phone.run.completed', 'phone.fleet_run.completed', 'mail.received']], description: str = NOT_GIVEN, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
         """Create a webhook endpoint
 
         `url` must be public https. The response carries `secret` once.
@@ -1324,7 +1376,7 @@ class PhonesResource:
             _body['brain'] = brain
         return self._client.request("POST", f"/v1/phones/skills/{_q(name)}/run", body=_body, idempotency_key=idempotency_key, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
 
-    def get_history(self, serial: str, *, run_id: str = NOT_GIVEN, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "PhoneHistory":
+    def get_history(self, serial: str, *, run_id: str = NOT_GIVEN, limit: int = NOT_GIVEN, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "PhoneHistory":
         """A phone's run history
 
         Every phone tool call on this phone (500 steps / 30 days), newest run first. Typed text, numbers and message bodies are redacted on the Desktop; frames and screen text stay there.
@@ -1334,12 +1386,14 @@ class PhonesResource:
         _query: Dict[str, Any] = {}
         if run_id is not NOT_GIVEN:
             _query['run_id'] = run_id
+        if limit is not NOT_GIVEN:
+            _query['limit'] = limit
         return self._client.request("GET", f"/v1/phones/{_q(serial)}/history", query=_query, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
 
     def call_tool(self, serial: str, *, name: str, arguments: Dict[str, Any] = NOT_GIVEN, run_id: str = NOT_GIVEN, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "PhoneToolResult":
         """Run one phone tool
 
-        One phone tool through the Desktop phone gateway, exactly as a bot calls it: `phone.devices`, `phone.screenshot`, `phone.read_ui`, `phone.screen_text`, `phone.tap`, `phone.type`, `phone.find_and_tap`, `phone.swipe`, `phone.home`, `phone.back`, `phone.key`, `phone.open_app`, `phone.sms.read`, `phone.sms.send`, `phone.call.dial`.
+        One phone tool through the Desktop phone gateway, exactly as a bot calls it: `phone.devices`, `phone.screenshot`, `phone.read_ui`, `phone.screen_text`, `phone.tap`, `phone.type`, `phone.find_and_tap`, `phone.swipe`, `phone.home`, `phone.back`, `phone.key`, `phone.open_app`, `phone.sms.read`, `phone.sms.send`, `phone.call.dial`. An iPhone running the Allternit app (serial `app:<phoneId>`) is screen only plus its in-app browser: `phone.screenshot`, `phone.devices` and `phone.web.open`, `phone.web.snapshot`, `phone.web.click`, `phone.web.type`, `phone.web.scroll`, `phone.web.back`, `phone.web.wait` (the app must be open; taps on native apps answer `not_supported`).
         `phone.sms.send` and `phone.call.dial` wait for the person to approve on their Desktop (up to 80 s; then 503 `phone_timeout`); a refusal is a 200 result with `ok: false, error: approval_denied`. Tool failures are 200 with `ok: false`. 409 `phone_offline` when the phone isn't connected, 503 `phone_desktop_offline` / `phone_gateway_unavailable` when the Desktop or its phone gateway isn't running. The call is a `phone.step` webhook like any other.
 
         ``POST /v1/phones/{serial}/tool``
@@ -1371,6 +1425,262 @@ class PhonesResource:
             _body['brain'] = brain
         return self._client.request("POST", f"/v1/phones/{_q(serial)}/task", body=_body, idempotency_key=idempotency_key, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
 
+    def get_live_view(self, serial: str, *, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "PhoneLiveView":
+        """Watch a phone live
+
+        A view-only live view of the phone's screen for 10 minutes: `viewer_url` is a page you can open or put in an iframe, and `stream_url` is the raw stream (`{type:"meta"}` JSON, then H.264 Annex-B frames) for your own player. Both URLs carry the live view id as their only credential and stop working after `expires_in` seconds; neither can send input. A new view needs a new call. 409 `phone_offline` when the phone isn't connected to the Desktop.
+
+        ``POST /v1/phones/{serial}/live``
+        """
+        return self._client.request("POST", f"/v1/phones/{_q(serial)}/live", idempotency_key=idempotency_key, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def start_fleet_run(self, *, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+        """Run one task or skill on many phones
+
+        Starts one background run per listed phone: a task (`goal`) or a saved skill (`skill`). Answers 202 with the fleet run; phones whose run could not start are in `not_started` with the error. Every run counts against the plan's concurrent phone-run limit (Sandbox 1, Pay as you go 5, Growth 25, Enterprise by contract); asking for more than the room left is 429 `phone_run_limit` and starts nothing. Each run ends with `phone.run.completed`; the whole fleet run with `phone.fleet_run.completed`.
+
+        ``POST /v1/phones/runs``
+        """
+        return self._client.request("POST", f"/v1/phones/runs", idempotency_key=idempotency_key, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def get_fleet_run(self, id: str, *, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+        """A fleet run
+
+        The fleet run and each phone's run (status, ok, start and end).
+
+        ``GET /v1/phones/runs/{id}``
+        """
+        return self._client.request("GET", f"/v1/phones/runs/{_q(id)}", timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+
+class MailboxesResource:
+    def __init__(self, client: Transport) -> None:
+        self._client = client
+
+    def list(self, *, limit: int = NOT_GIVEN, after: str = NOT_GIVEN, account_id: str = NOT_GIVEN, agent_id: str = NOT_GIVEN, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "MailboxList":
+        """List mailboxes
+
+        ``GET /v1/mailboxes``
+        """
+        _query: Dict[str, Any] = {}
+        if limit is not NOT_GIVEN:
+            _query['limit'] = limit
+        if after is not NOT_GIVEN:
+            _query['after'] = after
+        if account_id is not NOT_GIVEN:
+            _query['account_id'] = account_id
+        if agent_id is not NOT_GIVEN:
+            _query['agent_id'] = agent_id
+        return self._client.request("GET", f"/v1/mailboxes", query=_query, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def list_all(self, *, limit: int = NOT_GIVEN, after: str = NOT_GIVEN, account_id: str = NOT_GIVEN, agent_id: str = NOT_GIVEN, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Iterator["Mailbox"]:
+        """Every item of ``list``, fetching pages as you iterate."""
+        _query: Dict[str, Any] = {}
+        if limit is not NOT_GIVEN:
+            _query['limit'] = limit
+        if after is not NOT_GIVEN:
+            _query['after'] = after
+        if account_id is not NOT_GIVEN:
+            _query['account_id'] = account_id
+        if agent_id is not NOT_GIVEN:
+            _query['agent_id'] = agent_id
+        def _fetch(cursor: Optional[str]) -> Page:
+            q = dict(_query)
+            if cursor is not None:
+                q['after'] = cursor
+            return self._client.request("GET", f"/v1/mailboxes", query=q, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+        return self._client.paginate(_fetch, after if after is not NOT_GIVEN else None)
+
+    def create_mailbox(self, *, account_id: str = NOT_GIVEN, agent_id: str = NOT_GIVEN, local_part: str = NOT_GIVEN, display_name: str = NOT_GIVEN, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "Mailbox":
+        """Create a mailbox for an account or agent
+
+        An address on Allternit Mail (`local_part@bots.allternit.com`; `-2`, `-3`… when taken). With `agent_id`, the account is the agent's. Needs a card on file; live projects are billed `mailbox_month` ($2 a month). Requires the `mail` scope.
+
+        ``POST /v1/mailboxes``
+        """
+        _body: Dict[str, Any] = {}
+        if account_id is not NOT_GIVEN:
+            _body['account_id'] = account_id
+        if agent_id is not NOT_GIVEN:
+            _body['agent_id'] = agent_id
+        if local_part is not NOT_GIVEN:
+            _body['local_part'] = local_part
+        if display_name is not NOT_GIVEN:
+            _body['display_name'] = display_name
+        return self._client.request("POST", f"/v1/mailboxes", body=_body, idempotency_key=idempotency_key, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def get_mailbox(self, id: str, *, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "Mailbox":
+        """Retrieve a mailbox
+
+        ``GET /v1/mailboxes/{id}``
+        """
+        return self._client.request("GET", f"/v1/mailboxes/{_q(id)}", timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def delete_mailbox(self, id: str, *, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+        """Delete a mailbox
+
+        Removes the address. A mailbox inside an identity answers `409 mailbox_in_identity`; delete the identity instead.
+
+        ``DELETE /v1/mailboxes/{id}``
+        """
+        return self._client.request("DELETE", f"/v1/mailboxes/{_q(id)}", timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def list_mail_messages(self, id: str, *, limit: int = NOT_GIVEN, after: str = NOT_GIVEN, verification: bool = NOT_GIVEN, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "MailMessageList":
+        """List a mailbox's messages
+
+        Newest first. Each carries the one-time codes and sign-in links found in it.
+
+        ``GET /v1/mailboxes/{id}/messages``
+        """
+        _query: Dict[str, Any] = {}
+        if limit is not NOT_GIVEN:
+            _query['limit'] = limit
+        if after is not NOT_GIVEN:
+            _query['after'] = after
+        if verification is not NOT_GIVEN:
+            _query['verification'] = verification
+        return self._client.request("GET", f"/v1/mailboxes/{_q(id)}/messages", query=_query, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def list_mail_messages_all(self, id: str, *, limit: int = NOT_GIVEN, after: str = NOT_GIVEN, verification: bool = NOT_GIVEN, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Iterator["MailMessage"]:
+        """Every item of ``list_mail_messages``, fetching pages as you iterate."""
+        _query: Dict[str, Any] = {}
+        if limit is not NOT_GIVEN:
+            _query['limit'] = limit
+        if after is not NOT_GIVEN:
+            _query['after'] = after
+        if verification is not NOT_GIVEN:
+            _query['verification'] = verification
+        def _fetch(cursor: Optional[str]) -> Page:
+            q = dict(_query)
+            if cursor is not None:
+                q['after'] = cursor
+            return self._client.request("GET", f"/v1/mailboxes/{_q(id)}/messages", query=q, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+        return self._client.paginate(_fetch, after if after is not NOT_GIVEN else None)
+
+    def get_mail_message(self, id: str, mid: str, *, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+        """Read one message
+
+        ``GET /v1/mailboxes/{id}/messages/{mid}``
+        """
+        return self._client.request("GET", f"/v1/mailboxes/{_q(id)}/messages/{_q(mid)}", timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def read_mail_otp(self, id: str, *, wait_seconds: int = NOT_GIVEN, since: str = NOT_GIVEN, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+        """Wait for the newest one-time code
+
+        The newest message with a code or sign-in link received after `since` (default the last 10 minutes), waiting up to `wait_seconds` for one to arrive. `found` is false when none came.
+
+        ``POST /v1/mailboxes/{id}/otp``
+        """
+        _body: Dict[str, Any] = {}
+        if wait_seconds is not NOT_GIVEN:
+            _body['wait_seconds'] = wait_seconds
+        if since is not NOT_GIVEN:
+            _body['since'] = since
+        return self._client.request("POST", f"/v1/mailboxes/{_q(id)}/otp", body=_body, idempotency_key=idempotency_key, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def send_mail(self, id: str, *, serials: List[str], goal: str = NOT_GIVEN, skill: str = NOT_GIVEN, inputs: Dict[str, Any] = NOT_GIVEN, max_steps: int = NOT_GIVEN, bot_id: str = NOT_GIVEN, brain: str = NOT_GIVEN, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "PhoneFleetRun":
+        """Send an email from a mailbox
+
+        Live projects only. The call is the approval, so the send is queued at once; `pending_approval` only when Allternit Mail held it and could not release it.
+
+        ``POST /v1/mailboxes/{id}/send``
+        """
+        _body: Dict[str, Any] = {}
+        if serials is not NOT_GIVEN:
+            _body['serials'] = serials
+        if goal is not NOT_GIVEN:
+            _body['goal'] = goal
+        if skill is not NOT_GIVEN:
+            _body['skill'] = skill
+        if inputs is not NOT_GIVEN:
+            _body['inputs'] = inputs
+        if max_steps is not NOT_GIVEN:
+            _body['max_steps'] = max_steps
+        if bot_id is not NOT_GIVEN:
+            _body['bot_id'] = bot_id
+        if brain is not NOT_GIVEN:
+            _body['brain'] = brain
+        return self._client.request("POST", f"/v1/mailboxes/{_q(id)}/send", body=_body, idempotency_key=idempotency_key, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+
+class IdentitiesResource:
+    def __init__(self, client: Transport) -> None:
+        self._client = client
+
+    def list(self, *, limit: int = NOT_GIVEN, after: str = NOT_GIVEN, account_id: str = NOT_GIVEN, agent_id: str = NOT_GIVEN, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "IdentityList":
+        """List agent identities
+
+        ``GET /v1/identities``
+        """
+        _query: Dict[str, Any] = {}
+        if limit is not NOT_GIVEN:
+            _query['limit'] = limit
+        if after is not NOT_GIVEN:
+            _query['after'] = after
+        if account_id is not NOT_GIVEN:
+            _query['account_id'] = account_id
+        if agent_id is not NOT_GIVEN:
+            _query['agent_id'] = agent_id
+        return self._client.request("GET", f"/v1/identities", query=_query, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def list_all(self, *, limit: int = NOT_GIVEN, after: str = NOT_GIVEN, account_id: str = NOT_GIVEN, agent_id: str = NOT_GIVEN, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Iterator["Identity"]:
+        """Every item of ``list``, fetching pages as you iterate."""
+        _query: Dict[str, Any] = {}
+        if limit is not NOT_GIVEN:
+            _query['limit'] = limit
+        if after is not NOT_GIVEN:
+            _query['after'] = after
+        if account_id is not NOT_GIVEN:
+            _query['account_id'] = account_id
+        if agent_id is not NOT_GIVEN:
+            _query['agent_id'] = agent_id
+        def _fetch(cursor: Optional[str]) -> Page:
+            q = dict(_query)
+            if cursor is not None:
+                q['after'] = cursor
+            return self._client.request("GET", f"/v1/identities", query=q, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+        return self._client.paginate(_fetch, after if after is not NOT_GIVEN else None)
+
+    def create_identity(self, *, account_id: str = NOT_GIVEN, agent_id: str = NOT_GIVEN, area_code: str = NOT_GIVEN, number_type: Literal['local', 'toll_free'] = NOT_GIVEN, phone_serial: str = NOT_GIVEN, local_part: str = NOT_GIVEN, display_name: str = NOT_GIVEN, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "Identity":
+        """Give an agent a number, a mailbox and a phone in one call
+
+        Gets a number (simulated in sandbox; in live the first available, in `area_code` when given), a mailbox and, with `phone_serial`, binds one of the owner's linked phones. Requires the `numbers` and `mail` scopes, plus `phones` (and an unbound key) with `phone_serial`. Billed as the Agent identity bundle ($9 a month, meter `identity_month`).
+
+        ``POST /v1/identities``
+        """
+        _body: Dict[str, Any] = {}
+        if account_id is not NOT_GIVEN:
+            _body['account_id'] = account_id
+        if agent_id is not NOT_GIVEN:
+            _body['agent_id'] = agent_id
+        if area_code is not NOT_GIVEN:
+            _body['area_code'] = area_code
+        if number_type is not NOT_GIVEN:
+            _body['number_type'] = number_type
+        if phone_serial is not NOT_GIVEN:
+            _body['phone_serial'] = phone_serial
+        if local_part is not NOT_GIVEN:
+            _body['local_part'] = local_part
+        if display_name is not NOT_GIVEN:
+            _body['display_name'] = display_name
+        return self._client.request("POST", f"/v1/identities", body=_body, idempotency_key=idempotency_key, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def get_identity(self, id: str, *, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "Identity":
+        """Retrieve an identity
+
+        ``GET /v1/identities/{id}``
+        """
+        return self._client.request("GET", f"/v1/identities/{_q(id)}", timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def delete_identity(self, id: str, *, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+        """Delete an identity
+
+        Releases the number and removes the mailbox.
+
+        ``DELETE /v1/identities/{id}``
+        """
+        return self._client.request("DELETE", f"/v1/identities/{_q(id)}", timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
 
 def _q(v: str) -> str:
     from urllib.parse import quote
@@ -1394,3 +1704,5 @@ class GeneratedResources:
         self.twin = TwinResource(client)
         self.computers = ComputersResource(client)
         self.phones = PhonesResource(client)
+        self.mailboxes = MailboxesResource(client)
+        self.identities = IdentitiesResource(client)

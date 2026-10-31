@@ -13,6 +13,7 @@ Two WebSockets plus two HTTPS endpoints make the plane:
 |--------|------|------|---------|
 | `GET` | `/api/v1/phones` | Clerk / desktop credential | List the account's registered phones and whether each is online. |
 | `POST` | `/api/v1/phones/:serial/ws-token` | Clerk / desktop credential | Mint the short-lived stream token. |
+| `POST` | `/api/v1/phones/:serial/viewer-token` | Clerk / desktop credential (cloud-api relays it as the owner) | Mint a 10-minute view-only token (purpose `phone_view`) for a Platform API live view. |
 | `WS` | `/ws/phones/:serial/stream?token=…` | HMAC token (public mount) | The browser's video/control stream. |
 | `WS` | `/ws/phone-link/session` | Desktop credential | The Desktop-attached session socket. |
 
@@ -53,6 +54,10 @@ The token is HS256-signed (same secret as the computer ws tokens, `ALLTERNIT_DES
 ```
 
 `readOnly` **defaults to true**. A full-control token (`readOnly: false`) injects input into a personal phone, so minting one requires the ACI confirmation grant (`confirmation_required` denial with an `approval_id`; approve and retry with `?approval_id=`) — the same explicit-request pattern as a full-control computer VNC token.
+
+## `POST /api/v1/phones/:serial/viewer-token`
+
+Same checks as `ws-token` (phone row for the account, attached session), no ACI grant: the token is always view-only. Answers `{ "token", "expiresInSec": 600, "readOnly": true }`. The stream route accepts purpose `phone_view` and forces it read-only whatever the claim says. cloud-api calls it for `POST /v1/phones/:serial/live` ([Phones](/api/platform/phones#watch-a-phone-live)), keeps the token, and serves the viewer page at `/phone-live/:view` and its socket at `/phone-live/:view/socket`, which it tunnels to `/ws/phones/:serial/stream?token=…` over the runtime relay socket (a fresh 30 s socket ticket per connect).
 
 ## `WS /ws/phones/:serial/stream?token=…`
 

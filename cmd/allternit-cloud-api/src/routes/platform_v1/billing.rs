@@ -68,6 +68,12 @@ pub fn unit_price_microusd(meter: &str) -> Option<i64> {
         // toolset actions 0.05¢ each after the first 10,000 a month.
         "computer_minute" => 8_000,
         "computer_action" => 500,
+        // Phones (Eoj 2026-10-29): 2¢ per phone-minute, $5 per linked phone a month.
+        "phone_minutes" => 20_000,
+        "linked_phone" => 5_000_000,
+        // Platform mail and the agent identity bundle (Eoj 2026-10-29).
+        "mailbox_month" => 2_000_000,
+        "identity_month" => 9_000_000,
         _ => return None,
     })
 }
@@ -127,7 +133,21 @@ pub async fn month_spend(db: &PgPool, project_id: &str, now: DateTime<Utc>) -> R
     .bind(end)
     .fetch_all(db)
     .await?;
-    Ok(spend_from_totals(&totals))
+    let plan: Option<String> = sqlx::query_scalar("SELECT plan FROM platform_projects WHERE id = $1").bind(project_id).fetch_optional(db).await?;
+    Ok(spend_from_totals(&on_plan(totals, plan.as_deref() == Some("growth"))))
+}
+
+/// Growth's included phone minutes and linked phones (`stripe_plan::GROWTH_INCLUDED`) cost nothing.
+pub fn on_plan(mut totals: Vec<MeterTotal>, growth: bool) -> Vec<MeterTotal> {
+    if growth {
+        for t in &mut totals {
+            let included = super::stripe_plan::meter_plan(&t.meter)
+                .map(|m| super::stripe_plan::included_units("growth", m) - m.free_units)
+                .unwrap_or(0);
+            t.quantity = (t.quantity - included as f64).max(0.0);
+        }
+    }
+    totals
 }
 
 async fn cap_cents(db: &PgPool, project_id: &str) -> Result<i64, sqlx::Error> {
@@ -363,6 +383,10 @@ mod tests {
         let expected = 900_000 + 600_000 + 8_000_000 + 2_000_000 + 3_000_000 + 1_200_000 + 300_000 + 20_000_000 + 200_000 + 345_000;
         assert_eq!(spend_from_totals(&totals), expected);
         assert_eq!(spend_from_totals(&[t("agent_month", 3.0, 0)]), 0, "first three agents are free");
+        // Phones: 2¢ a minute, $5 a phone; Growth includes 3,000 minutes and 25 phones.
+        assert_eq!(spend_from_totals(&[t("phone_minutes", 100.0, 0), t("linked_phone", 2.0, 0)]), 2_000_000 + 10_000_000);
+        assert_eq!(spend_from_totals(&on_plan(vec![t("phone_minutes", 3_100.0, 0), t("linked_phone", 25.0, 0)], true)), 2_000_000);
+        assert_eq!(spend_from_totals(&on_plan(vec![t("phone_minutes", 100.0, 0)], false)), 2_000_000);
         assert_eq!(spend_from_totals(&[t("tokens_in", 1e6, 0)]), 0, "own-key tokens cost nothing");
     }
 

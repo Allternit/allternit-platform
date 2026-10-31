@@ -5,7 +5,7 @@ use sqlx::PgPool;
 use super::PlatformError;
 
 /// Exact meter strings (spec §7 / CONTRACTS).
-pub const METERS: [&str; 13] = [
+pub const METERS: [&str; 18] = [
     "voice_min_allternit",
     "voice_min_byok",
     "agent_month",
@@ -20,6 +20,17 @@ pub const METERS: [&str; 13] = [
     // Hosted computer driver (computer toolset P6). Prices TBD (Eoj).
     "computer_minute",
     "computer_action",
+    // Phones (`/v1/phones`, MCP phone tools): minutes an agent drives one of
+    // the owner's phones (runs and tool calls, rounded up per minute), and one
+    // `linked_phone` per phone a live project drives in a month.
+    "phone_minutes",
+    // Phone minutes an agent identity's bundle covers: recorded at $0, never sent to Stripe.
+    "phone_minutes_included",
+    "linked_phone",
+    // Platform mail (`/v1/mailboxes`): one per live mailbox per month.
+    "mailbox_month",
+    // Agent identity bundle (`/v1/identities`): number + mailbox + phone slot.
+    "identity_month",
 ];
 
 #[derive(Debug, Clone)]

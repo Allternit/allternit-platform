@@ -90,7 +90,7 @@ pub struct ApiNumber {
 const COLUMNS: &str = "id, account_id, e164, type, sms_state, simulated, agent_id, voice_state, created_at";
 
 impl ApiNumber {
-    fn to_json(&self) -> Value {
+    pub(crate) fn to_json(&self) -> Value {
         json!({
             "id": self.id, "object": "phone_number", "account_id": self.account_id, "e164": self.e164,
             "type": self.kind, "sms_state": self.sms_state, "simulated": self.simulated, "agent_id": self.agent_id,
@@ -151,7 +151,7 @@ async fn available(caller: PlatformCaller, ApiQuery(q): ApiQuery<AvailableQuery>
     Ok(Json(json!({ "data": found, "has_more": false, "next_cursor": null })))
 }
 
-fn parse_kind(raw: Option<&str>) -> Result<Option<NumberType>, PlatformError> {
+pub(crate) fn parse_kind(raw: Option<&str>) -> Result<Option<NumberType>, PlatformError> {
     raw.map(|k| NumberType::parse(k).ok_or_else(|| PlatformError::invalid_request("invalid_type", "type must be local or toll_free.").with_param("type")))
         .transpose()
 }
@@ -182,30 +182,16 @@ async fn buy(
             return Err(PlatformError::invalid_request("account_mismatch", "The number and the agent belong to different accounts.").with_param("agent_id"));
         }
     }
-    let sandbox = caller.project_env == ProjectEnv::Sandbox;
-    // Card on file first (sandbox too: no free usage); a real number is billed
-    // monthly, so it also has to be under the spend cap.
-    if sandbox {
-        super::billing::require_payment_method(&state.db, &caller.project_id).await?;
-    } else {
-        super::spend_allowed(&state.db, &caller.project_id).await?;
-    }
-    if !sandbox && !live_allowed(&caller) {
-        return Err(PlatformError::permission("plan_required", "Buying real numbers needs a paid plan with a card on file."));
-    }
     let kind = parse_kind(body.kind.as_deref())?.unwrap_or_else(|| body.e164.as_deref().map(phone::infer_type).unwrap_or(NumberType::Local));
-    let carrier = if sandbox { None } else { Some(phone::carrier().map_err(phone_error)?) };
-    let row = phone::buy_platform_number(&state.db, carrier.as_deref(), &caller.owner_user_id, &caller.project_id, &account, body.e164.as_deref(), kind)
-        .await
-        .map_err(phone_error)?;
-    let mut number = api_number(&state.db, &caller, &row.id).await?;
+    let mut number = acquire(&state, &caller, &account, body.e164.as_deref(), None, kind, false).await?;
+    let row_id = number.id.clone();
     if let Some(agent_id) = body.agent_id.as_deref() {
         // The number is bought either way: if voice setup fails it stays `voice_state: pending`
         // and PATCH /v1/numbers/{id} with the same agent_id retries it.
         if let Err(e) = super::calls::bind_agent(&state, &caller, &number, Some(agent_id), voice).await {
             tracing::warn!(number = %number.id, code = %e.code, "platform: number bought, voice setup failed");
         }
-        number = api_number(&state.db, &caller, &row.id).await?;
+        number = api_number(&state.db, &caller, &row_id).await?;
     }
     if !number.simulated {
         let month = Utc::now().format("%Y-%m");
@@ -225,6 +211,46 @@ async fn buy(
         .await;
     }
     Ok((StatusCode::CREATED, Json(number.to_json())))
+}
+
+/// The buy path shared by `POST /v1/numbers` and `POST /v1/identities`: card on
+/// file (sandbox too) or spend cap, the paid-plan check, then a simulated number
+/// (sandbox) or a carrier purchase. Without `e164` and with `pick_any`, a live
+/// project takes the first available number (in `area_code` when given). Records no usage: each
+/// caller bills the number its own way.
+pub(crate) async fn acquire(
+    state: &ApiState,
+    caller: &PlatformCaller,
+    account: &str,
+    e164: Option<&str>,
+    area_code: Option<&str>,
+    kind: NumberType,
+    pick_any: bool,
+) -> Result<ApiNumber, PlatformError> {
+    let sandbox = caller.project_env == ProjectEnv::Sandbox;
+    // Card on file first (sandbox too: no free usage); a real number is billed
+    // monthly, so it also has to be under the spend cap.
+    if sandbox {
+        super::billing::require_payment_method(&state.db, &caller.project_id).await?;
+    } else {
+        super::spend_allowed(&state.db, &caller.project_id).await?;
+    }
+    if !sandbox && !live_allowed(caller) {
+        return Err(PlatformError::permission("plan_required", "Buying real numbers needs a paid plan with a card on file."));
+    }
+    let carrier = if sandbox { None } else { Some(phone::carrier().map_err(phone_error)?) };
+    let mut chosen = e164.map(str::to_string);
+    if let (None, Some(c), true) = (&chosen, carrier.as_deref(), pick_any) {
+        let found = c
+            .search(&SearchQuery { country: "US".into(), area_code: area_code.map(str::to_string), locality: None, kind, limit: 1 })
+            .await
+            .map_err(|e| phone_error(e.into()))?;
+        chosen = Some(found.into_iter().next().map(|n| n.e164).ok_or_else(|| PlatformError::conflict("no_numbers_available", "No numbers are available there right now. Try another area_code.").with_param("area_code"))?);
+    }
+    let row = phone::buy_platform_number(&state.db, carrier.as_deref(), &caller.owner_user_id, &caller.project_id, account, chosen.as_deref(), kind)
+        .await
+        .map_err(phone_error)?;
+    api_number(&state.db, caller, &row.id).await
 }
 
 #[derive(Debug, Deserialize)]
@@ -302,11 +328,24 @@ async fn release(
 ) -> Result<Json<Value>, PlatformError> {
     caller.require("numbers")?;
     let number = api_number(&state.db, &caller, &id).await?;
+    if super::identities::number_in_identity(&state.db, &number.id).await? {
+        return Err(PlatformError::conflict("number_in_identity", "This number belongs to an identity. DELETE /v1/identities/{id} releases it with its mailbox."));
+    }
+    release_number(&state, &caller, &number, voice).await?;
+    Ok(Json(json!({ "id": number.id, "object": "phone_number", "deleted": true })))
+}
+
+/// Unbind voice, then give the number back to the carrier (or drop a simulated one).
+pub(crate) async fn release_number(
+    state: &ApiState,
+    caller: &PlatformCaller,
+    number: &ApiNumber,
+    voice: Option<axum::Extension<Arc<super::calls::VoiceDeps>>>,
+) -> Result<(), PlatformError> {
     super::calls::unprovision(&state.db, &number.id, voice).await;
     let row = phone::number_for_user(&state.db, &caller.owner_user_id, &number.id).await.map_err(phone_error)?;
     let carrier = if number.simulated { None } else { Some(phone::carrier().map_err(phone_error)?) };
-    phone::release_platform_number(&state.db, carrier.as_deref(), &row).await.map_err(phone_error)?;
-    Ok(Json(json!({ "id": number.id, "object": "phone_number", "deleted": true })))
+    phone::release_platform_number(&state.db, carrier.as_deref(), &row).await.map_err(phone_error)
 }
 
 #[derive(Debug, Deserialize)]

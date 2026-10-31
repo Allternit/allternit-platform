@@ -475,6 +475,14 @@ async fn inbound_inner(
             Err(error) => error.into_response(),
         });
     }
+    // A Platform API mailbox: Allternit Mail's `message.inbound` webhook. The
+    // cloud keeps the message and sends `mail.received`; nothing is queued.
+    if route.provider == super::platform_v1::mailboxes::ROUTE_PROVIDER {
+        if method != Method::POST {
+            return Ok(StatusCode::METHOD_NOT_ALLOWED.into_response());
+        }
+        return Ok(super::platform_v1::mailboxes::inbound(state, &route.id, headers, &body).await);
+    }
     if route.provider == "whatsapp" {
         use super::whatsapp_es::Edge;
         match super::whatsapp_es::edge(state, &route.id, &method, &query, &forwarded, &body).await? {

@@ -598,7 +598,7 @@
       ],
       "components": [
         "allternit/platform/packages/api-client",
-        "allternit/cmd/allternit-cloud-api/src/routes/platform_v1"
+        "allternit/cmd/allternit-cloud-api"
       ],
       "uses": [
         "product:cloud-api",

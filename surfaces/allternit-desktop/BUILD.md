@@ -187,3 +187,15 @@ scp release/Allternit-1.0.0.AppImage user@install.gizziio.com:/var/www/install/
 Update download links in:
 - `allternit-websites/projects/gizziio/source/index.html`
 - `www.allternit.com` download page
+
+## Mac signing with a Developer ID
+
+`scripts/build-local.cjs` looks for a `Developer ID Application` certificate in the keychain. If it finds one, the build signs with it and notarizes with the `allternit` notarytool profile. With no certificate, the build stays ad-hoc signed.
+
+One-time setup on the build Mac:
+
+1. In Xcode, open Settings → Accounts → Manage Certificates. Add a **Developer ID Application** certificate. This needs the Account Holder role on a paid Apple Developer Program team.
+2. Create an app-specific password at account.apple.com.
+3. Run `xcrun notarytool store-credentials allternit --apple-id <email> --team-id <team id>` and enter the password when asked. The password stays in the keychain.
+
+Check a finished build with `codesign --verify --deep --strict` and `spctl --assess --type execute --verbose`. Signing and notarization run only on a Mac set up this way. The GitHub release workflow has no Apple secrets and stays ad-hoc.

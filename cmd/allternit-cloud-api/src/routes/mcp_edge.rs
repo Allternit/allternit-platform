@@ -297,7 +297,23 @@ pub trait EdgeBackend: Send + Sync {
     async fn verify_project_key(&self, _token: &str) -> Result<Option<crate::routes::platform_v1::PlatformCaller>, String> {
         Ok(None)
     }
+    /// One MCP phone tool for a project key with `phones`, as a `tools/call` result.
+    async fn phone_call(&self, _key: &crate::routes::platform_v1::PlatformCaller, _name: &str, _args: &Value) -> Value {
+        crate::routes::platform_v1::phones::mcp_result(Err(crate::routes::platform_v1::PlatformError::service_unavailable("phones_unavailable", "Phones are not available here.")))
+    }
+    // ─── mail tools (scope `mail`) ───
+    /// Run one `/v1/mailboxes` MCP tool as a project key.
+    async fn mail_tool(&self, _key: &crate::routes::platform_v1::PlatformCaller, _name: &str, _args: &Value) -> Result<Value, String> {
+        Err("Mail tools are not available.".into())
+    }
 }
+
+/// A project key with this scope also gets the phone tools on `/mcp`
+/// (`platform_v1::phones::mcp_tools`), answered here through the same
+/// operations as `/v1/phones`, never relayed to the hosted runtime.
+const PHONES_SCOPE: &str = crate::routes::platform_v1::phones::SCOPE;
+/// Same for the mail tools (`platform_v1::mailboxes::MCP_TOOLS`).
+const MAIL_SCOPE: &str = "mail";
 
 /// A Platform API project key on the agents server (spec §4 MCP): the project's
 /// hosted runtime answers, as the project's runtime owner. Needs the `agents`
@@ -308,14 +324,14 @@ fn project_key_caller(target: &Target, resource: &str, key: &crate::routes::plat
     if *target != Target::Agents {
         return Err(refuse(StatusCode::FORBIDDEN, "insufficient_scope", "A project API key opens the agents server (/mcp) only."));
     }
-    if !key.has_scope("agents") {
-        return Err(refuse(StatusCode::FORBIDDEN, "insufficient_scope", "This API key lacks the 'agents' scope."));
+    if !key.has_scope("agents") && !key.has_scope(PHONES_SCOPE) && !key.has_scope(MAIL_SCOPE) {
+        return Err(refuse(StatusCode::FORBIDDEN, "insufficient_scope", "This API key lacks the 'agents' (or 'phones' or 'mail') scope."));
     }
     if key.account_id.is_some() {
         return Err(refuse(
             StatusCode::FORBIDDEN,
             "account_bound_key",
-            "This API key is bound to one account; the MCP agents server needs a project-wide key with the 'agents' scope.",
+            "This API key is bound to one account; the MCP agents server needs a project-wide key with the 'agents', 'phones' or 'mail' scope.",
         ));
     }
     Ok(Caller { user_id: crate::routes::platform_v1::hosting::runtime_owner(&key.project_id), client: format!("platform-key:{}", key.key_id), needs_approval: false })
@@ -422,10 +438,17 @@ async fn serve(backend: &dyn EdgeBackend, base: &str, target: Target, method: &M
     let Some(token) = headers.get(header::AUTHORIZATION).and_then(|v| v.to_str().ok()).and_then(|v| v.strip_prefix("Bearer ")).map(str::trim).filter(|t| !t.is_empty()) else {
         return refusal(&resource, StatusCode::UNAUTHORIZED, json!({ "error": "unauthorized" }), None);
     };
+    // A project key with `phones` also gets the phone tools (answered here).
+    let mut phone_key: Option<crate::routes::platform_v1::PlatformCaller> = None;
+    let mut mail_key: Option<crate::routes::platform_v1::PlatformCaller> = None;
     let caller = if crate::routes::platform_v1::caller::is_project_key_token(token) {
         match backend.verify_project_key(token).await {
             Ok(Some(key)) => match project_key_caller(&target, &resource, &key) {
-                Ok(c) => c,
+                Ok(c) => {
+                    mail_key = key.has_scope(MAIL_SCOPE).then(|| key.clone());
+                    phone_key = key.has_scope(PHONES_SCOPE).then_some(key);
+                    c
+                }
                 Err(resp) => return resp,
             },
             Ok(None) => return refusal(&resource, StatusCode::UNAUTHORIZED, json!({ "error": "invalid_token", "message": "Invalid or revoked API key" }), Some(("invalid_token", "The key is invalid"))),
@@ -503,6 +526,37 @@ async fn serve(backend: &dyn EdgeBackend, base: &str, target: Target, method: &M
         return rpc_reply(&era, mcp_protocol::finish(&spec, &era, rpc_method, reply));
     }
 
+    // Phone and mail tools are answered here for a project key, never relayed.
+    let edge_key = phone_key.as_ref().or(mail_key.as_ref());
+    if let Some(key) = edge_key {
+        let tool = request["params"]["name"].as_str().unwrap_or_default();
+        if rpc_method == "tools/call" {
+            if let Some(pk) = phone_key.as_ref().filter(|_| crate::routes::platform_v1::phones::is_mcp_tool(tool)) {
+                let result = backend.phone_call(pk, tool, &request["params"]["arguments"]).await;
+                return rpc_reply(&era, mcp_protocol::finish(&spec, &era, rpc_method, mcp_protocol::rpc_ok(&id, result)));
+            }
+            if let Some(mk) = mail_key.as_ref().filter(|_| crate::routes::platform_v1::mailboxes::MCP_TOOLS.contains(&tool)) {
+                let result = mail_tool_result(backend.mail_tool(mk, tool, &request["params"]["arguments"]).await);
+                return rpc_reply(&era, mcp_protocol::finish(&spec, &era, rpc_method, mcp_protocol::rpc_ok(&id, result)));
+            }
+        }
+        // A key without `agents` never reaches the hosted runtime: the edge is its whole server.
+        if !key.has_scope("agents") {
+            if let Some(reply) = mcp_protocol::preflight(&spec, &era, &id, rpc_method) {
+                if reply.is_null() {
+                    return StatusCode::ACCEPTED.into_response();
+                }
+                return rpc_reply(&era, reply);
+            }
+            let reply = match rpc_method {
+                "tools/list" => mcp_protocol::rpc_ok(&id, json!({ "tools": edge_tools(phone_key.is_some(), mail_key.is_some()) })),
+                "tools/call" => mcp_protocol::rpc_err(&id, mcp_protocol::codes::INVALID_PARAMS, format!("Unknown tool: {tool}")),
+                _ => mcp_protocol::rpc_err(&id, mcp_protocol::codes::METHOD_NOT_FOUND, format!("Method not found: {rpc_method}")),
+            };
+            return rpc_reply(&era, mcp_protocol::finish(&spec, &era, rpc_method, reply));
+        }
+    }
+
     let outcome = match tokio::time::timeout(BUDGET, deliver(backend, &target, &caller, &body)).await {
         Ok(o) => o,
         Err(_) => Outcome::Unreachable,
@@ -512,6 +566,8 @@ async fn serve(backend: &dyn EdgeBackend, base: &str, target: Target, method: &M
         Outcome::NotFound => (StatusCode::NOT_FOUND, Json(json!({ "error": "not_found" }))).into_response(),
         Outcome::Answer(status, reply) => {
             let reply = if rpc_method == "initialize" && status == 200 { advertise_events(reply) } else { reply };
+            let reply = if rpc_method == "tools/list" && status == 200 && phone_key.is_some() { with_phone_tools(reply) } else { reply };
+            let reply = if rpc_method == "tools/list" && status == 200 && mail_key.is_some() { with_mail_tools(reply) } else { reply };
             let status = StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY);
             let mut resp = Response::new(axum::body::Body::from(reply));
             *resp.status_mut() = status;
@@ -534,6 +590,14 @@ fn edge_spec(target: &Target) -> mcp_protocol::ServerSpec {
     mcp_protocol::servers::with_events(spec)
 }
 
+/// A relayed `tools/list` answer, plus the phone tools (key with `phones`).
+fn with_phone_tools(reply: Vec<u8>) -> Vec<u8> {
+    let Ok(mut v) = serde_json::from_slice::<Value>(&reply) else { return reply };
+    let Some(tools) = v.pointer_mut("/result/tools").and_then(Value::as_array_mut) else { return reply };
+    tools.extend(crate::routes::platform_v1::phones::mcp_tools());
+    serde_json::to_vec(&v).unwrap_or(reply)
+}
+
 /// A relayed `initialize` answer comes from the runtime, which doesn't know
 /// the edge serves events: add the capability so legacy-era clients see it too.
 fn advertise_events(reply: Vec<u8>) -> Vec<u8> {
@@ -546,6 +610,44 @@ fn advertise_events(reply: Vec<u8>) -> Vec<u8> {
         None => reply,
     }
 }
+
+// ─── mail tools (scope `mail`) ─── BEGIN
+// `/v1/mailboxes` as MCP tools for Platform API project keys on `/mcp`. A key
+// with `agents` gets them next to the runtime's tools; a key with `mail` but
+// not `agents` gets only these (initialize, tools/list, tools/call, ping are
+// answered here and nothing reaches a runtime).
+
+fn mail_tool_result(out: Result<Value, String>) -> Value {
+    match out {
+        Ok(v) => json!({ "content": [{ "type": "text", "text": v.to_string() }], "structuredContent": v, "isError": false }),
+        Err(msg) => json!({ "content": [{ "type": "text", "text": msg }], "isError": true }),
+    }
+}
+
+/// The tools a project key without `agents` sees: phone and/or mail tools.
+fn edge_tools(phones: bool, mail: bool) -> Vec<Value> {
+    let mut tools: Vec<Value> = Vec::new();
+    if phones {
+        tools.extend(crate::routes::platform_v1::phones::mcp_tools());
+    }
+    if mail {
+        tools.extend(crate::routes::platform_v1::mailboxes::mcp_tool_defs());
+    }
+    tools
+}
+
+/// A relayed `tools/list` answer plus the mail tools.
+fn with_mail_tools(reply: Vec<u8>) -> Vec<u8> {
+    let Ok(mut v) = serde_json::from_slice::<Value>(&reply) else { return reply };
+    match v.pointer_mut("/result/tools").and_then(Value::as_array_mut) {
+        Some(tools) => {
+            tools.extend(crate::routes::platform_v1::mailboxes::mcp_tool_defs());
+            serde_json::to_vec(&v).unwrap_or(reply)
+        }
+        None => reply,
+    }
+}
+// ─── mail tools (scope `mail`) ─── END
 
 // ─── human page ───────────────────────────────────────────────────────────────
 
@@ -589,7 +691,7 @@ th{{color:var(--muted);font-weight:600}}ol{{padding-left:20px}}
 
 <h2>Servers</h2>
 <table><thead><tr><th scope="col">URL</th><th scope="col">What it is</th></tr></thead><tbody>
-<tr><td><code>{base}</code></td><td>Agents server: read your agents and their runs. OAuth scope <code>agents:read</code>.</td></tr>
+<tr><td><code>{base}</code></td><td>Agents server: read your agents and their runs. OAuth scope <code>agents:read</code>. A Platform API key with the <code>phones</code> scope adds the phone tools.</td></tr>
 <tr><td><code>{base}/bots/&lt;bot id&gt;</code></td><td>Vendor bot connector: act through one bot. OAuth scope <code>bots:act</code>.</td></tr>
 </tbody></table>
 <p>Protocol versions: {versions}. Streamable HTTP, <code>POST</code> JSON-RPC. Modern clients can call <code>server/discover</code>.</p>
@@ -677,12 +779,12 @@ async fn well_known_at(Path(rest): Path<String>) -> Response {
 // ─── production backend ───────────────────────────────────────────────────────
 
 struct ProdBackend<'a> {
-    state: &'a ApiState,
+    state: &'a Arc<ApiState>,
     events: crate::routes::mcp_events::PgEventsStore<'a>,
 }
 
 impl<'a> ProdBackend<'a> {
-    fn new(state: &'a ApiState) -> Self {
+    fn new(state: &'a Arc<ApiState>) -> Self {
         Self { state, events: crate::routes::mcp_events::PgEventsStore { db: &state.db } }
     }
 }
@@ -706,6 +808,17 @@ impl EdgeBackend for ProdBackend<'_> {
             Err(e) if e.status == StatusCode::UNAUTHORIZED => Ok(None),
             Err(e) => Err(e.message),
         }
+    }
+
+    async fn phone_call(&self, key: &crate::routes::platform_v1::PlatformCaller, name: &str, args: &Value) -> Value {
+        use crate::routes::platform_v1::phones;
+        let host = phones::ProdPhoneHost(self.state.clone());
+        phones::mcp_result(phones::mcp_call(&self.state.db, &host, key, name, args).await)
+    }
+    // ─── mail tools (scope `mail`) ───
+    async fn mail_tool(&self, key: &crate::routes::platform_v1::PlatformCaller, name: &str, args: &Value) -> Result<Value, String> {
+        use crate::routes::platform_v1::mailboxes;
+        mailboxes::mcp_call(self.state, key, &mailboxes::ProdMailHost, name, args).await.map_err(|e| format!("{}: {}", e.code, e.message))
     }
 
     async fn is_approved(&self, user_id: &str, client: &str, target: &str) -> Result<bool, String> {
@@ -853,6 +966,11 @@ mod tests {
         async fn verify_project_key(&self, token: &str) -> Result<Option<crate::routes::platform_v1::PlatformCaller>, String> {
             Ok(self.project_keys.get(token).cloned())
         }
+        async fn phone_call(&self, key: &crate::routes::platform_v1::PlatformCaller, name: &str, args: &Value) -> Value {
+            // Recorded with runtime "edge": answered here, never forwarded.
+            self.calls.lock().unwrap().push((key.owner_user_id.clone(), "edge".into(), format!("phone:{name}"), key.key_id.clone(), args.to_string().into_bytes()));
+            crate::routes::platform_v1::phones::mcp_result(Ok(json!({ "ok": true, "tool": name })))
+        }
         async fn runtimes(&self, _user: &str) -> Result<Vec<String>, String> {
             Ok(self.runtimes.clone())
         }
@@ -974,6 +1092,44 @@ mod tests {
         let calls = f.calls.lock().unwrap();
         assert_eq!((calls[0].0.as_str(), calls[0].3.as_str()), ("platform:proj_9", "platform-key:ak_proj_9"));
         assert_eq!(f.verified.load(Ordering::SeqCst), 0, "a project key is never treated as a Clerk token");
+    }
+
+    #[tokio::test]
+    async fn a_phones_key_gets_the_phone_tools_answered_at_the_edge() {
+        let f = Fake::new(&["rt1"]).project_key(PKEY, "proj_9", None, &["phones"]);
+        let (s, _, b) = post(&f, Target::Agents, &bearer(PKEY), LIST).await;
+        let names: Vec<_> = b["result"]["tools"].as_array().unwrap().iter().filter_map(|t| t["name"].as_str()).collect();
+        assert_eq!(s, StatusCode::OK);
+        for want in ["phones_list", "phone_screenshot", "phone_tap", "phone_type", "phone_open_app", "phone_task", "phone_run_status", "phone_skill_run", "phone_history", "phone_live_url"] {
+            assert!(names.contains(&want), "{want} missing from {names:?}");
+        }
+        let call = r#"{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"phone_tap","arguments":{"serial":"R5C","x":10,"y":20}}}"#;
+        let (s, _, b) = post(&f, Target::Agents, &bearer(PKEY), call).await;
+        assert_eq!((s, b["result"]["isError"].as_bool(), b["result"]["structuredContent"]["tool"].as_str()), (StatusCode::OK, Some(false), Some("phone_tap")));
+        let (s, _, b) = post(&f, Target::Agents, &bearer(PKEY), r#"{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"agents_list","arguments":{}}}"#).await;
+        assert_eq!((s, b["error"]["code"].as_i64()), (StatusCode::OK, Some(mcp_protocol::codes::INVALID_PARAMS)));
+        let (_, _, b) = post(&f, Target::Agents, &bearer(PKEY), r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}"#).await;
+        assert!(b["result"]["capabilities"].is_object(), "{b}");
+        let calls = f.calls.lock().unwrap();
+        assert_eq!(calls.len(), 1, "a phones-only key never reaches the hosted runtime");
+        assert_eq!((calls[0].0.as_str(), calls[0].1.as_str(), calls[0].2.as_str()), ("dev", "edge", "phone:phone_tap"), "the owner's phones, as the key");
+        assert_eq!(serde_json::from_slice::<Value>(&calls[0].4).unwrap()["x"], 10);
+    }
+
+    #[tokio::test]
+    async fn an_agents_and_phones_key_gets_the_runtime_tools_plus_the_phone_tools() {
+        let f = Fake::new(&["rt1"])
+            .project_key(PKEY, "proj_9", None, &["agents", "phones"])
+            .reply("rt1", Ok((200, r#"{"jsonrpc":"2.0","id":7,"result":{"tools":[{"name":"agents_list","inputSchema":{"type":"object"}}]}}"#)));
+        let (s, _, b) = post(&f, Target::Agents, &bearer(PKEY), LIST).await;
+        let names: Vec<_> = b["result"]["tools"].as_array().unwrap().iter().filter_map(|t| t["name"].as_str()).collect();
+        assert_eq!(s, StatusCode::OK);
+        assert!(names.contains(&"agents_list") && names.contains(&"phone_task"), "{names:?}");
+        // An agents-only key sees no phone tools.
+        let f = Fake::new(&["rt1"]).project_key(PKEY, "proj_9", None, &["agents"]);
+        let call = r#"{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"phone_tap","arguments":{}}}"#;
+        post(&f, Target::Agents, &bearer(PKEY), call).await;
+        assert_eq!(f.paths(), [("rt1".to_string(), SERVER_RUNTIME_PATH.to_string())], "relayed, not answered as a phone tool");
     }
 
     #[tokio::test]

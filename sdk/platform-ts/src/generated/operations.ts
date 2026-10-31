@@ -314,6 +314,48 @@ export class UsageResource {
   }
 
   /**
+   * The project's trace export settings
+   *
+   * Where the project's spans go. Header values are never returned, only their names. `404 tracing_not_configured` when none is set. Requires the `usage` scope.
+   *
+   * `GET /v1/projects/{id}/tracing`
+   */
+  getProjectTracing(id: string, options?: RequestOptions): Promise<T.GetProjectTracingResponse> {
+    return this._client.request<T.GetProjectTracingResponse>({ method: "GET", path: `/v1/projects/${encodeURIComponent(id)}/tracing`, options });
+  }
+
+  /**
+   * Set the project's trace export
+   *
+   * Send a span for every agent turn, phone run and call of this project to an OTLP/HTTP collector (Langfuse, Arize Phoenix, any OpenTelemetry collector), as OTLP protobuf following the OpenTelemetry GenAI conventions. `endpoint` is the collector's OTLP base URL (`/v1/traces` is appended) or its full traces URL; it must be a public https URL. `headers` are encrypted at rest; leave them out to keep the stored ones. Export runs in the background and never fails or slows a request. Not available to account-bound keys.
+   *
+   * `PUT /v1/projects/{id}/tracing`
+   */
+  putProjectTracing(id: string, body: T.PutProjectTracingRequest, options?: RequestOptions): Promise<T.PutProjectTracingResponse> {
+    return this._client.request<T.PutProjectTracingResponse>({ method: "PUT", path: `/v1/projects/${encodeURIComponent(id)}/tracing`, body: body, options });
+  }
+
+  /**
+   * Turn off and forget the project's trace export
+   *
+   * `DELETE /v1/projects/{id}/tracing`
+   */
+  deleteProjectTracing(id: string, options?: RequestOptions): Promise<T.DeleteProjectTracingResponse> {
+    return this._client.request<T.DeleteProjectTracingResponse>({ method: "DELETE", path: `/v1/projects/${encodeURIComponent(id)}/tracing`, options });
+  }
+
+  /**
+   * Send one test span
+   *
+   * Sends one `allternit.tracing.test` span to the collector now and reports its answer.
+   *
+   * `POST /v1/projects/{id}/tracing/test`
+   */
+  testProjectTracing(id: string, options?: RequestOptions): Promise<T.TestProjectTracingResponse> {
+    return this._client.request<T.TestProjectTracingResponse>({ method: "POST", path: `/v1/projects/${encodeURIComponent(id)}/tracing/test`, options });
+  }
+
+  /**
    * The project's monthly spend cap and spend so far
    *
    * Spend is this UTC calendar month's usage at list prices (before plan credits or discounts). Requires the `usage` scope.
@@ -1100,7 +1142,7 @@ export class PhonesResource {
   /**
    * Run one phone tool
    *
-   * One phone tool through the Desktop phone gateway, exactly as a bot calls it: `phone.devices`, `phone.screenshot`, `phone.read_ui`, `phone.screen_text`, `phone.tap`, `phone.type`, `phone.find_and_tap`, `phone.swipe`, `phone.home`, `phone.back`, `phone.key`, `phone.open_app`, `phone.sms.read`, `phone.sms.send`, `phone.call.dial`.
+   * One phone tool through the Desktop phone gateway, exactly as a bot calls it: `phone.devices`, `phone.screenshot`, `phone.read_ui`, `phone.screen_text`, `phone.tap`, `phone.type`, `phone.find_and_tap`, `phone.swipe`, `phone.home`, `phone.back`, `phone.key`, `phone.open_app`, `phone.sms.read`, `phone.sms.send`, `phone.call.dial`. An iPhone running the Allternit app (serial `app:<phoneId>`) is screen only plus its in-app browser: `phone.screenshot`, `phone.devices` and `phone.web.open`, `phone.web.snapshot`, `phone.web.click`, `phone.web.type`, `phone.web.scroll`, `phone.web.back`, `phone.web.wait` (the app must be open; taps on native apps answer `not_supported`).
    * `phone.sms.send` and `phone.call.dial` wait for the person to approve on their Desktop (up to 80 s; then 503 `phone_timeout`); a refusal is a 200 result with `ok: false, error: approval_denied`. Tool failures are 200 with `ok: false`. 409 `phone_offline` when the phone isn't connected, 503 `phone_desktop_offline` / `phone_gateway_unavailable` when the Desktop or its phone gateway isn't running. The call is a `phone.step` webhook like any other.
    *
    * `POST /v1/phones/{serial}/tool`
@@ -1119,6 +1161,196 @@ export class PhonesResource {
   runTask(serial: string, body: T.RunPhoneTaskRequest, options?: RequestOptions): Promise<T.RunPhoneTaskResponse> {
     return this._client.request<T.RunPhoneTaskResponse>({ method: "POST", path: `/v1/phones/${encodeURIComponent(serial)}/task`, body: body, options });
   }
+
+  /**
+   * Watch a phone live
+   *
+   * A view-only live view of the phone's screen for 10 minutes: `viewer_url` is a page you can open or put in an iframe, and `stream_url` is the raw stream (`{type:"meta"}` JSON, then H.264 Annex-B frames) for your own player. Both URLs carry the live view id as their only credential and stop working after `expires_in` seconds; neither can send input. A new view needs a new call. 409 `phone_offline` when the phone isn't connected to the Desktop.
+   *
+   * `POST /v1/phones/{serial}/live`
+   */
+  getLiveView(serial: string, options?: RequestOptions): Promise<T.GetPhoneLiveViewResponse> {
+    return this._client.request<T.GetPhoneLiveViewResponse>({ method: "POST", path: `/v1/phones/${encodeURIComponent(serial)}/live`, options });
+  }
+
+  /**
+   * Run one task or skill on many phones
+   *
+   * Starts one background run per listed phone: a task (`goal`) or a saved skill (`skill`). Answers 202 with the fleet run; phones whose run could not start are in `not_started` with the error. Every run counts against the plan's concurrent phone-run limit (Sandbox 1, Pay as you go 5, Growth 25, Enterprise by contract); asking for more than the room left is 429 `phone_run_limit` and starts nothing. Each run ends with `phone.run.completed`; the whole fleet run with `phone.fleet_run.completed`.
+   *
+   * `POST /v1/phones/runs`
+   */
+  startFleetRun(options?: RequestOptions): Promise<T.StartPhoneFleetRunResponse> {
+    return this._client.request<T.StartPhoneFleetRunResponse>({ method: "POST", path: `/v1/phones/runs`, options });
+  }
+
+  /**
+   * A fleet run
+   *
+   * The fleet run and each phone's run (status, ok, start and end).
+   *
+   * `GET /v1/phones/runs/{id}`
+   */
+  getFleetRun(id: string, options?: RequestOptions): Promise<T.GetPhoneFleetRunResponse> {
+    return this._client.request<T.GetPhoneFleetRunResponse>({ method: "GET", path: `/v1/phones/runs/${encodeURIComponent(id)}`, options });
+  }
+}
+
+export class MailboxesResource {
+  protected readonly _client: Transport;
+  constructor(client: Transport) {
+    this._client = client;
+  }
+
+  /**
+   * List mailboxes
+   *
+   * `GET /v1/mailboxes`
+   */
+  list(query?: T.ListMailboxesQuery, options?: RequestOptions): Promise<T.ListMailboxesResponse> {
+    return this._client.request<T.ListMailboxesResponse>({ method: "GET", path: `/v1/mailboxes`, query: query, options });
+  }
+
+  /**
+   * Every item of `list`, fetching pages as you iterate.
+   */
+  listAll(query?: T.ListMailboxesQuery, options?: RequestOptions): AsyncIterable<T.Mailbox> {
+    return this._client.paginate<T.Mailbox>((after) => this.list({ ...(query ?? {}), after } as T.ListMailboxesQuery, options) as unknown as Promise<Page<T.Mailbox>>);
+  }
+
+  /**
+   * Create a mailbox for an account or agent
+   *
+   * An address on Allternit Mail (`local_part@bots.allternit.com`; `-2`, `-3`… when taken). With `agent_id`, the account is the agent's. Needs a card on file; live projects are billed `mailbox_month` ($2 a month). Requires the `mail` scope.
+   *
+   * `POST /v1/mailboxes`
+   */
+  createMailbox(body: T.CreateMailboxRequest, options?: RequestOptions): Promise<T.CreateMailboxResponse> {
+    return this._client.request<T.CreateMailboxResponse>({ method: "POST", path: `/v1/mailboxes`, body: body, options });
+  }
+
+  /**
+   * Retrieve a mailbox
+   *
+   * `GET /v1/mailboxes/{id}`
+   */
+  getMailbox(id: string, options?: RequestOptions): Promise<T.GetMailboxResponse> {
+    return this._client.request<T.GetMailboxResponse>({ method: "GET", path: `/v1/mailboxes/${encodeURIComponent(id)}`, options });
+  }
+
+  /**
+   * Delete a mailbox
+   *
+   * Removes the address. A mailbox inside an identity answers `409 mailbox_in_identity`; delete the identity instead.
+   *
+   * `DELETE /v1/mailboxes/{id}`
+   */
+  deleteMailbox(id: string, options?: RequestOptions): Promise<T.DeleteMailboxResponse> {
+    return this._client.request<T.DeleteMailboxResponse>({ method: "DELETE", path: `/v1/mailboxes/${encodeURIComponent(id)}`, options });
+  }
+
+  /**
+   * List a mailbox's messages
+   *
+   * Newest first. Each carries the one-time codes and sign-in links found in it.
+   *
+   * `GET /v1/mailboxes/{id}/messages`
+   */
+  listMailMessages(id: string, query?: T.ListMailMessagesQuery, options?: RequestOptions): Promise<T.ListMailMessagesResponse> {
+    return this._client.request<T.ListMailMessagesResponse>({ method: "GET", path: `/v1/mailboxes/${encodeURIComponent(id)}/messages`, query: query, options });
+  }
+
+  /**
+   * Every item of `listMailMessages`, fetching pages as you iterate.
+   */
+  listMailMessagesAll(id: string, query?: T.ListMailMessagesQuery, options?: RequestOptions): AsyncIterable<T.MailMessage> {
+    return this._client.paginate<T.MailMessage>((after) => this.listMailMessages(id, { ...(query ?? {}), after } as T.ListMailMessagesQuery, options) as unknown as Promise<Page<T.MailMessage>>);
+  }
+
+  /**
+   * Read one message
+   *
+   * `GET /v1/mailboxes/{id}/messages/{mid}`
+   */
+  getMailMessage(id: string, mid: string, options?: RequestOptions): Promise<T.GetMailMessageResponse> {
+    return this._client.request<T.GetMailMessageResponse>({ method: "GET", path: `/v1/mailboxes/${encodeURIComponent(id)}/messages/${encodeURIComponent(mid)}`, options });
+  }
+
+  /**
+   * Wait for the newest one-time code
+   *
+   * The newest message with a code or sign-in link received after `since` (default the last 10 minutes), waiting up to `wait_seconds` for one to arrive. `found` is false when none came.
+   *
+   * `POST /v1/mailboxes/{id}/otp`
+   */
+  readMailOtp(id: string, body?: T.ReadMailOtpRequest, options?: RequestOptions): Promise<T.ReadMailOtpResponse> {
+    return this._client.request<T.ReadMailOtpResponse>({ method: "POST", path: `/v1/mailboxes/${encodeURIComponent(id)}/otp`, body: body, options });
+  }
+
+  /**
+   * Send an email from a mailbox
+   *
+   * Live projects only. The call is the approval, so the send is queued at once; `pending_approval` only when Allternit Mail held it and could not release it.
+   *
+   * `POST /v1/mailboxes/{id}/send`
+   */
+  sendMail(id: string, body: T.SendMailRequest, options?: RequestOptions): Promise<T.SendMailResponse> {
+    return this._client.request<T.SendMailResponse>({ method: "POST", path: `/v1/mailboxes/${encodeURIComponent(id)}/send`, body: body, options });
+  }
+}
+
+export class IdentitiesResource {
+  protected readonly _client: Transport;
+  constructor(client: Transport) {
+    this._client = client;
+  }
+
+  /**
+   * List agent identities
+   *
+   * `GET /v1/identities`
+   */
+  list(query?: T.ListIdentitiesQuery, options?: RequestOptions): Promise<T.ListIdentitiesResponse> {
+    return this._client.request<T.ListIdentitiesResponse>({ method: "GET", path: `/v1/identities`, query: query, options });
+  }
+
+  /**
+   * Every item of `list`, fetching pages as you iterate.
+   */
+  listAll(query?: T.ListIdentitiesQuery, options?: RequestOptions): AsyncIterable<T.Identity> {
+    return this._client.paginate<T.Identity>((after) => this.list({ ...(query ?? {}), after } as T.ListIdentitiesQuery, options) as unknown as Promise<Page<T.Identity>>);
+  }
+
+  /**
+   * Give an agent a number, a mailbox and a phone in one call
+   *
+   * Gets a number (simulated in sandbox; in live the first available, in `area_code` when given), a mailbox and, with `phone_serial`, binds one of the owner's linked phones. Requires the `numbers` and `mail` scopes, plus `phones` (and an unbound key) with `phone_serial`. Billed as the Agent identity bundle ($9 a month, meter `identity_month`).
+   *
+   * `POST /v1/identities`
+   */
+  createIdentity(body: T.CreateIdentityRequest, options?: RequestOptions): Promise<T.CreateIdentityResponse> {
+    return this._client.request<T.CreateIdentityResponse>({ method: "POST", path: `/v1/identities`, body: body, options });
+  }
+
+  /**
+   * Retrieve an identity
+   *
+   * `GET /v1/identities/{id}`
+   */
+  getIdentity(id: string, options?: RequestOptions): Promise<T.GetIdentityResponse> {
+    return this._client.request<T.GetIdentityResponse>({ method: "GET", path: `/v1/identities/${encodeURIComponent(id)}`, options });
+  }
+
+  /**
+   * Delete an identity
+   *
+   * Releases the number and removes the mailbox.
+   *
+   * `DELETE /v1/identities/{id}`
+   */
+  deleteIdentity(id: string, options?: RequestOptions): Promise<T.DeleteIdentityResponse> {
+    return this._client.request<T.DeleteIdentityResponse>({ method: "DELETE", path: `/v1/identities/${encodeURIComponent(id)}`, options });
+  }
 }
 
 /** Every API area as a client property. `AllternitPlatform` extends this. */
@@ -1136,6 +1368,8 @@ export class GeneratedResources {
   twin: TwinResource;
   computers: ComputersResource;
   phones: PhonesResource;
+  mailboxes: MailboxesResource;
+  identities: IdentitiesResource;
   constructor(client: Transport) {
     this.accounts = new AccountsResource(client);
     this.agents = new AgentsResource(client);
@@ -1150,5 +1384,7 @@ export class GeneratedResources {
     this.twin = new TwinResource(client);
     this.computers = new ComputersResource(client);
     this.phones = new PhonesResource(client);
+    this.mailboxes = new MailboxesResource(client);
+    this.identities = new IdentitiesResource(client);
   }
 }

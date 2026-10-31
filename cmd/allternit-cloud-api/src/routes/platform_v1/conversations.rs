@@ -346,16 +346,47 @@ pub(crate) struct TurnMeter {
     pub(crate) account_id: String,
     pub(crate) key_id: String,
     pub(crate) own_key: bool,
+    pub(crate) agent_id: String,
+    pub(crate) conversation_id: String,
+    pub(crate) started_at: chrono::DateTime<chrono::Utc>,
+}
+
+impl TurnMeter {
+    pub(crate) fn new(caller: &PlatformCaller, conv: &ConvRow, own_key: bool) -> Self {
+        Self {
+            project_id: caller.project_id.clone(),
+            account_id: conv.account_id.clone(),
+            key_id: caller.key_id.clone(),
+            own_key,
+            agent_id: conv.agent_id.clone(),
+            conversation_id: conv.id.clone(),
+            started_at: chrono::Utc::now(),
+        }
+    }
 }
 
 /// Record a turn's token usage (`usage` from the runtime's final event) against
 /// the reply `message_id`. Idempotent per message; failures are logged, never
-/// surfaced to the developer (the reply already happened).
-pub(crate) async fn meter_turn(db: &PgPool, m: &TurnMeter, message_id: &str, usage: &Value) {
+/// surfaced to the developer (the reply already happened). Also exports the
+/// turn as an `invoke_agent` span when the project has trace export set up.
+pub(crate) async fn meter_turn(db: &PgPool, m: &TurnMeter, message_id: &str, usage: &Value, failure: Option<&str>) {
+    let model = usage["model"].as_str();
+    let span = super::project_tracing::SpanOut::new(format!("invoke_agent {}", m.agent_id), m.started_at, chrono::Utc::now())
+        .attr("gen_ai.operation.name", "invoke_agent")
+        .attr("gen_ai.agent.id", m.agent_id.as_str())
+        .attr("gen_ai.conversation.id", m.conversation_id.as_str())
+        .attr("allternit.message.id", message_id)
+        .attr("allternit.account.id", m.account_id.as_str())
+        .attr_opt("gen_ai.request.model", model)
+        .attr_opt("gen_ai.provider.name", model.and_then(|x| x.split_once('/')).map(|(p, _)| p))
+        .attr_opt("gen_ai.usage.input_tokens", usage["inputTokens"].as_i64())
+        .attr_opt("gen_ai.usage.output_tokens", usage["outputTokens"].as_i64())
+        .error(failure)
+        .trace(&m.conversation_id);
+    super::project_tracing::emit(db, &m.project_id, span);
     if !usage.is_object() {
         return;
     }
-    let model = usage["model"].as_str();
     for (meter, tokens, cost) in [("tokens_in", "inputTokens", "inputCostMicrousd"), ("tokens_out", "outputTokens", "outputCostMicrousd")] {
         let quantity = usage[tokens].as_i64().unwrap_or(0).max(0);
         if quantity == 0 {
@@ -463,7 +494,7 @@ async fn send_message(
     let lock = TurnLock::take(&conv.id).ok_or_else(|| PlatformError::conflict("conversation_busy", "The agent is still answering the previous message in this conversation."))?;
     let host = host_for(&state, layered);
     let (rt, session, own_key) = prepare(&state, host.as_ref(), &caller, &conv).await?;
-    let meter = TurnMeter { project_id: caller.project_id.clone(), account_id: conv.account_id.clone(), key_id: caller.key_id.clone(), own_key };
+    let meter = TurnMeter::new(&caller, &conv, own_key);
     let path = format!("/api/v1/platform/agents/{}/sessions/{}/turn", conv.agent_id, session);
     let mut upstream = host.stream(&rt, &path, &json!({ "text": content })).await?;
     // Stored once the runtime took the turn: a refused turn (still starting) leaves nothing behind.
@@ -497,7 +528,7 @@ async fn send_message(
             Some(f) => insert_message(&db, &conv.id, "assistant", &text, "failed", Some(f)).await?,
             None => insert_message(&db, &conv.id, "assistant", &text, "completed", None).await?,
         };
-        meter_turn(&db, &meter, &msg.id, &usage).await;
+        meter_turn(&db, &meter, &msg.id, &usage, failure.as_deref()).await;
         return Ok(Json(msg).into_response());
     }
 
@@ -544,7 +575,7 @@ async fn send_message(
             None => insert_message(&db, &conv_id, "assistant", &text, "completed", None).await,
         };
         if let Ok(m) = &stored {
-            meter_turn(&db, &meter, &m.id, &usage).await;
+            meter_turn(&db, &meter, &m.id, &usage, failure.as_deref()).await;
         }
         let last = match (stored, failure) {
             (Ok(_), Some(f)) => error_event("turn_failed", &f),
