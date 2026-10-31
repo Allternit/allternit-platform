@@ -470,7 +470,8 @@ export class IosDriver implements PhoneLinkDriver {
       let credentials: AppleIdCredentials | undefined;
       if (signer.needsAppleId) {
         this.set(ctx, 'apple_id', 'Sign in with your Apple ID to install the helper.', {
-          detail: problem ?? 'A free Apple ID works. Your password goes to Apple only and isn\'t saved.',
+          detail: 'A free Apple ID works. Your password goes to Apple only and isn\'t saved.',
+          error: problem ? { code: 'sign_in_failed', message: problem, retryable: true } : undefined,
         });
         credentials = await this.ask<AppleIdCredentials>(ctx, (resolve) => (this.appleIdWaiter = resolve));
         this.appleIdWaiter = null;
@@ -505,13 +506,15 @@ export class IosDriver implements PhoneLinkDriver {
         if (error instanceof SetupStop) throw error;
         if (
           error instanceof SigningError &&
-          (error.code === 'bad_credentials' || error.code === 'password_required' || error.code === 'two_factor_failed') &&
+          (error.code === 'bad_credentials' || error.code === 'password_required' || error.code === 'two_factor_failed' || error.code === 'anisette_unavailable') &&
           signer.needsAppleId
         ) {
           problem =
             error.code === 'bad_credentials'
               ? 'That Apple ID or password didn\'t work. Try again.'
-              : error.code === 'password_required'
+              : error.code === 'anisette_unavailable'
+                ? 'Apple refused this Mac\'s sign-in check before it looked at your password. Try again in a few minutes.'
+                : error.code === 'password_required'
                 ? 'Your Apple sign-in expired. Enter your password again.'
                 : 'That code didn\'t work. Sign in again to get a new one.';
           continue;
@@ -613,7 +616,8 @@ export class IosDriver implements PhoneLinkDriver {
   private async removeOldHelpers(udid: string, prefix: string, keep: string[]): Promise<void> {
     const installed = await this.deps.goios.apps(udid).catch(() => [] as string[]);
     for (const id of installed) {
-      if (!id.startsWith(`${prefix}.`) || keep.includes(id)) continue;
+      // Only the helper's own bundles: the Allternit app can share this prefix.
+      if (!id.startsWith(`${prefix}.`) || !/\.ictrl(\.|$)/.test(id) || keep.includes(id)) continue;
       await this.deps.goios.uninstall(udid, id).then(
         () => this.log(`removed old helper ${id}`),
         (error) => this.log(`couldn't remove old helper ${id}: ${error instanceof Error ? error.message : String(error)}`),

@@ -199,3 +199,7 @@ One-time setup on the build Mac:
 3. Run `xcrun notarytool store-credentials allternit --apple-id <email> --team-id <team id>` and enter the password when asked. The password stays in the keychain.
 
 Check a finished build with `codesign --verify --deep --strict` and `spctl --assess --type execute --verbose`. Signing and notarization run only on a Mac set up this way. The GitHub release workflow has no Apple secrets and stays ad-hoc.
+
+## Local builds and the Keychain
+
+An ad-hoc build gets a new code hash each time, so macOS asks for the password again after every update. When there is no Developer ID, `build-local.cjs` signs local builds with an `Apple Development` cert from the keychain. The stable team ID keeps **Always Allow** across builds on that Mac. These builds don't open on other Macs, so never publish one. CI builds stay ad-hoc until a Developer ID is set up.
