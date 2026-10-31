@@ -257,6 +257,24 @@
       "label": "runtime events feed",
       "kind": "module",
       "path": "allternit/cmd/allternit-api/src/events_feed.rs"
+    },
+    {
+      "id": "allternit/cmd/allternit-api/src/bot_hub_routes.rs",
+      "label": "bot hub routes",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-api/src/bot_hub_routes.rs"
+    },
+    {
+      "id": "allternit/cmd/allternit-api/src/memory_map_routes.rs",
+      "label": "memory map routes",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-api/src/memory_map_routes.rs"
+    },
+    {
+      "id": "allternit/cmd/allternit-api/src/skill_use.rs",
+      "label": "skill use",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-api/src/skill_use.rs"
     }
   ],
   "edges": [
@@ -828,6 +846,30 @@
       "evidence": [
         "allternit-ai/src/lib/notifications/runtime-feed.ts",
         "allternit-ai/src/lib/app-phone-pairing.ts"
+      ]
+    },
+    {
+      "source": "allternit/cmd/allternit-api/src/bot_hub_routes.rs",
+      "target": "allternit/cmd/allternit-api/src/agent_workspace_routes.rs",
+      "kind": "authorization (authorize_agent) and unified SOUL.md metadata",
+      "evidence": [
+        "allternit/cmd/allternit-api/src/bot_hub_routes.rs"
+      ]
+    },
+    {
+      "source": "allternit/cmd/allternit-api/src/memory_map_routes.rs",
+      "target": "allternit/cmd/allternit-api/src/skill_use.rs",
+      "kind": "skill_use rows (V284) give thread/routine -> skill links",
+      "evidence": [
+        "allternit/cmd/allternit-api/src/memory_map_routes.rs"
+      ]
+    },
+    {
+      "source": "allternit/cmd/allternit-api/src/v1_routes.rs",
+      "target": "allternit/cmd/allternit-api/src/skill_use.rs",
+      "kind": "agent-chat stream records gizzi skill tool calls",
+      "evidence": [
+        "allternit/cmd/allternit-api/src/v1_routes.rs"
       ]
     }
   ]

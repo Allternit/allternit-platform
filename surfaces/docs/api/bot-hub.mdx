@@ -1,0 +1,55 @@
+---
+title: "Bot hub and memory map API"
+description: "Routes behind the bot page tiles and the memory map, the one-Soul workspace file rules, and where skill use is recorded."
+---
+
+Served by allternit-api under `/api/v1`, on the same data plane as `/cowork/memory`, with the signed-in session. cloud-api is not involved.
+
+## GET /bot-hub/:id/summary
+
+Same authorization as the workspace file routes (the bot must be yours, else 404). Any value without a real source is `null`.
+
+```json
+{ "model": "string|null",
+  "soul": {"updated_at": "iso|null", "bytes": 0},
+  "memory": {"count": 0},
+  "skills": {"on": 0, "total": 0},
+  "usage": {"sessions_30d": 0, "api_calls_30d": 0, "spend_usd_30d": null} }
+```
+
+| Field | Source |
+| --- | --- |
+| `model` | `agents.model`, null when empty |
+| `soul` | Mtime and size of the root `SOUL.md` (null date, 0 bytes when absent) |
+| `memory.count` | Cowork memory entries owned by the bot's principal, as in `GET /cowork/memory?bot=` |
+| `skills.total` | Folders with a `SKILL.md` under the skills root on the node |
+| `skills.on` | `agents.allowed_skills` entries that are installed; all installed skills when the bot has no allow-list |
+| `usage.sessions_30d` | Bot threads with activity in the last 30 days |
+| `usage.api_calls_30d` | `agent_runs` rows in the last 30 days (one per chat round trip) |
+| `usage.spend_usd_30d` | Always null: spend is not recorded |
+
+## GET /memory-map
+
+`?bot=<id>` scopes to one bot; omit it for the whole account. At most 500 items; `truncated: true` when capped. Each item is `{id, kind, label, uses, last_at, ref}` with `kind` one of `skill`, `memory`, `thread`, `routine`, `artifact`, `soul`, `entity` (`artifact` is reserved, not emitted yet). Links are `{from, to, kind}` with `kind` one of `uses`, `learned_from`, `updates`, `contradicts`, `mentions`. `from` depends on `to`.
+
+| Link | Source |
+| --- | --- |
+| thread -> skill `uses` | `skill_use.session_id` equals the thread's `current_session_id` |
+| routine -> skill `uses` | the routine's thread (`routines.metadata.threadId`), same match |
+| memory -> thread `learned_from` | memory `source` equals a thread id or its session id |
+| entity/memory edges | `memory_edges` rows whose two ends are both on the map; relationship text containing "contradict" or "updat"/"supersed" maps to `contradicts` / `updates`, everything else to `mentions` |
+
+`uses` is a count only for skills (and threads, as skill uses in the thread); it is `null` elsewhere.
+
+## Workspace files: one Soul
+
+`GET`/`PUT /agents/:id/workspace/file` treat the workspace root as canonical for `SOUL.md`, `USER.md`, `AGENTS.md`, `TOOLS.md` and `HEARTBEAT.md`. A read or write of `.allternit/bot/<file>` is served from the root file, so old clients keep working. On the first workspace access, legacy copies move to the root; when both exist the newer mtime wins and the other is kept as `.allternit/bot/<file>.pre-unify`. Migration is idempotent and never fails a read or a chat.
+
+- `GET` returns `{path, hash, content}`, `hash` being the sha256 hex of the content.
+- `PUT` takes an optional `expected_hash`. On mismatch the response is `409 {"error":"changed_elsewhere","hash","content"}` with the current values; omitted means overwrite, as before. A successful `PUT` returns the new `hash`.
+
+The chat bridge composes `SOUL.md`, then the instruction files (`AGENTS.md`, `GIZZI.md`, `.claude/CLAUDE.md`, `SYSTEM_LAW.md`), then `USER.md`.
+
+## Skill use
+
+Table `skill_use` (migration V284, allternit-api SQLite): `user_id, agent_id, skill, session_id, call_id, used_at`, unique on `(session_id, call_id)`. A row is written by the agent-chat bridge when gizzi's `skill` tool call starts. Runs that do not pass through the agent-chat bridge (direct gizzi sessions, `POST /skills/:id/run`) are not recorded.
