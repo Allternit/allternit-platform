@@ -28,7 +28,7 @@ import WebSocket from 'ws';
 import { IosVideoPacketParser, type IosVideoConfig } from './phone-ios-video.js';
 import type { PhoneAudioMeta, PhoneInputEvent, PhoneStreamMeta, PhoneStreamStatus, ScrcpyDeviceMessage } from './phone-scrcpy.js';
 import type { StreamConsumer, StreamSessionHandle } from './phone-stream.js';
-import type { ToolErrorCode, ToolResult, UsbPhoneBackend } from './phone-tools.js';
+import { canonicalHash, type ApprovalGate, type ToolErrorCode, type ToolResult, type UsbPhoneBackend } from './phone-tools.js';
 
 export const APP_SERIAL_PREFIX = 'app:';
 export const APP_PHONE_ROUTE = 'iphone-app-store';
@@ -47,6 +47,10 @@ const APP_ERRORS: Record<string, { error: ToolErrorCode; message: string }> = {
   script_error: { error: 'phone_failed', message: 'The page didn\'t let the Allternit app read or act on it.' },
   internal: { error: 'phone_failed', message: 'The Allternit app hit an error. Try again.' },
   app_not_open: { error: 'app_not_open', message: APP_NOT_OPEN_MESSAGE },
+  // Device Access (calendar, reminders, contacts): switched off in the app, or iOS access denied.
+  device_access_off: { error: 'device_access_off', message: 'The person has not turned this on. Ask them to open the Allternit app on the iPhone, go to Settings > Device Access and switch it on. Do not retry until they say so.' },
+  permission_denied: { error: 'device_access_off', message: 'iOS access is denied for the Allternit app. Ask the person to allow it in the iPhone Settings app (Allternit), then switch it on in Settings > Device Access.' },
+  device_failed: { error: 'phone_failed', message: 'The iPhone could not complete that.' },
 };
 
 /** How long a viewer waits for the first CONFIG packet before giving up. */
@@ -392,6 +396,8 @@ export interface AppPhoneBackendDeps {
   node: AppPhoneNode;
   streams: AppStreams;
   decodeStill: StillDecoder;
+  /** Approval for Device Access writes. Without it, writes are refused. */
+  gate?: ApprovalGate;
   now?: () => number;
   log?: (message: string) => void;
   viewerIdleMs?: number;
@@ -424,6 +430,82 @@ const WEB_METHODS: Record<string, string> = {
 };
 
 export const isWebTool = (name: string): boolean => name in WEB_METHODS;
+
+// ── Device Access (calendar, reminders, contacts) ───────────────────────────
+
+const DEVICE_METHODS: Record<string, string> = {
+  'phone.calendar.list': 'device.calendar.list',
+  'phone.calendar.create': 'device.calendar.create',
+  'phone.reminders.list': 'device.reminders.list',
+  'phone.reminders.create': 'device.reminders.create',
+  'phone.contacts.search': 'device.contacts.search',
+};
+const DEVICE_WRITES = new Set(['device.calendar.create', 'device.reminders.create']);
+const MAX_RANGE_MS = 62 * 86_400_000;
+
+export const isDeviceTool = (name: string): boolean => name in DEVICE_METHODS;
+
+const isoMs = (v: unknown): number | null => {
+  if (typeof v !== 'string' || v.length > 40) return null;
+  const t = Date.parse(v);
+  return Number.isFinite(t) ? t : null;
+};
+const optText = (v: unknown, max: number): string | undefined | null =>
+  v === undefined ? undefined : typeof v === 'string' && v.length <= max ? v : null;
+const optLimit = (v: unknown, max: number): number | undefined | null =>
+  v === undefined ? undefined : Number.isInteger(v) && (v as number) >= 1 && (v as number) <= max ? (v as number) : null;
+
+/** Validated `{method, params}` for a Device Access call, or the error to return. */
+export function deviceRpc(name: string, a: Record<string, unknown>): { method: string; params: Record<string, unknown>; write: boolean; summary: string } | ToolResult {
+  const method = DEVICE_METHODS[name];
+  if (!method) return fail('unknown_tool', `No phone tool named ${name}.`);
+  const bad = (m: string) => fail('invalid_args', m);
+  switch (method) {
+    case 'device.calendar.list': {
+      const from = isoMs(a.from);
+      const to = isoMs(a.to);
+      if (from === null || to === null) return bad('from and to must be ISO 8601 times.');
+      if (to <= from || to - from > MAX_RANGE_MS) return bad('to must be after from, within 62 days.');
+      const limit = optLimit(a.limit, 200);
+      if (limit === null) return bad('limit must be 1-200.');
+      return { method, params: { from: new Date(from).toISOString(), to: new Date(to).toISOString(), ...(limit ? { limit } : {}) }, write: false, summary: '' };
+    }
+    case 'device.calendar.create': {
+      const title = typeof a.title === 'string' ? a.title.trim() : '';
+      const start = isoMs(a.start);
+      const end = a.end === undefined ? (start === null ? null : start + 3_600_000) : isoMs(a.end);
+      const location = optText(a.location, 200);
+      const notes = optText(a.notes, 2000);
+      if (!title || title.length > 200) return bad('title is required (up to 200 characters).');
+      if (start === null || end === null || end <= start) return bad('start must be an ISO 8601 time and end after it.');
+      if (location === null || notes === null || (a.allDay !== undefined && typeof a.allDay !== 'boolean')) return bad('location, notes or allDay is malformed.');
+      const params = { title, start: new Date(start).toISOString(), end: new Date(end).toISOString(), allDay: a.allDay === true, ...(location ? { location } : {}), ...(notes ? { notes } : {}) };
+      return { method, params, write: true, summary: `Add calendar event "${title}" starting ${params.start}${location ? ` at ${location}` : ''}` };
+    }
+    case 'device.reminders.list': {
+      const limit = optLimit(a.limit, 200);
+      if (limit === null || (a.completed !== undefined && typeof a.completed !== 'boolean')) return bad('limit must be 1-200 and completed a boolean.');
+      return { method, params: { completed: a.completed === true, ...(limit ? { limit } : {}) }, write: false, summary: '' };
+    }
+    case 'device.reminders.create': {
+      const title = typeof a.title === 'string' ? a.title.trim() : '';
+      const due = a.due === undefined ? undefined : isoMs(a.due);
+      const notes = optText(a.notes, 2000);
+      if (!title || title.length > 200) return bad('title is required (up to 200 characters).');
+      if (due === null || notes === null) return bad('due must be an ISO 8601 time and notes up to 2000 characters.');
+      const params = { title, ...(due !== undefined ? { due: new Date(due).toISOString() } : {}), ...(notes ? { notes } : {}) };
+      return { method, params, write: true, summary: `Add reminder "${title}"${due !== undefined ? ` due ${params.due}` : ''}` };
+    }
+    default: {
+      const query = typeof a.query === 'string' ? a.query.trim() : '';
+      const limit = optLimit(a.limit, 50);
+      if (!query || query.length > 100 || limit === null) return bad('query is required (up to 100 characters); limit is 1-50.');
+      return { method, params: { query, ...(limit ? { limit } : {}) }, write: false, summary: '' };
+    }
+  }
+}
+
+export { DEVICE_WRITES };
 
 /** Validated `{method, params}` for a phone.web.* call, or the error to return. */
 export function webRpc(name: string, a: Record<string, unknown>): { method: string; params: Record<string, unknown> } | ToolResult {
@@ -574,8 +656,29 @@ export class AppPhoneBackend implements UsbPhoneBackend {
     if (name === 'phone.screenshot') return this.screenshot(serial);
     if (name === 'phone.screen.request') return this.screenRequest(serial);
     if (isWebTool(name)) return this.web(name, serial, args);
+    if (isDeviceTool(name)) return this.device(name, serial, args);
     const instead = notOnAppPhone(name);
     return fail('not_supported', instead ?? `${name} is not available on an iPhone connected with the Allternit app.`);
+  }
+
+  /** Calendar, reminders, contacts: the app answers while it is open; writes need the person's approval here first. */
+  private async device(name: string, serial: string, args: Record<string, unknown>): Promise<ToolResult> {
+    const rpc = deviceRpc(name, args);
+    if ('ok' in rpc) return rpc;
+    if (rpc.write) {
+      if (!this.deps.gate) return fail('approval_denied', 'Writes to the iPhone need an approval prompt, which is not available here.');
+      const decision = await this.deps.gate.request({ kind: 'device_write', serial, summary: rpc.summary, actionHash: canonicalHash({ kind: 'device_write', serial, method: rpc.method, ...rpc.params }) });
+      if (decision === 'denied') return fail('approval_denied', 'The user declined.');
+      if (decision === 'timeout') return fail('approval_timeout', 'The user did not respond in time.');
+    }
+    let res: AppRpcResult;
+    try {
+      res = await this.deps.node.rpc(appPhoneId(serial), rpc.method, rpc.params, RPC_TIMEOUT_MS);
+    } catch (error) {
+      return fail('device_offline', `Allternit Desktop's local API didn't answer (${error instanceof Error ? error.message : String(error)}).`);
+    }
+    if (!res.ok) return appError(res);
+    return { ...res.result, ok: true };
   }
 
   private async web(name: string, serial: string, args: Record<string, unknown>): Promise<ToolResult> {

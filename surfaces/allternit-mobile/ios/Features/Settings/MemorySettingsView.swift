@@ -34,6 +34,11 @@ struct MemorySettingsView: View {
                 Divider().background(Color("BorderSubtle"))
             }
             ScrollView {
+                // The account memory map (every bot plus your own memory).
+                ImpactMapView(botId: nil)
+                    .padding(.horizontal, 20)
+                    .padding(.top, 16)
+                    .padding(.bottom, 8)
                 content
             }
             .refreshable { await load() }

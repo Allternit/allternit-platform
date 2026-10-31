@@ -749,9 +749,21 @@ struct AgentChatContext {
 /// (agents are not required to have persona files); other read failures are
 /// logged and skipped so they never fail the chat request. MEMORY.md is
 /// deliberately never read this way — too large for every send.
+/// The web serializer stores bot fields as JSON frontmatter at the top of
+/// SOUL.md and AGENTS.md (`---\n{...}\n---\n`). That is data for the editors,
+/// not instructions, so it never goes in the prompt.
+fn strip_json_frontmatter(text: String) -> String {
+    if text.starts_with("---\n{") {
+        if let Some(end) = text[4..].find("\n---\n") {
+            return text[4 + end + 5..].to_string();
+        }
+    }
+    text
+}
+
 fn read_workspace_md(dir: &std::path::Path, name: &str) -> Option<String> {
     match std::fs::read_to_string(dir.join(name)) {
-        Ok(text) => Some(text),
+        Ok(text) => Some(strip_json_frontmatter(text)),
         Err(e) => {
             if e.kind() != std::io::ErrorKind::NotFound {
                 warn!(
@@ -784,6 +796,14 @@ fn read_instruction_files(dir: &std::path::Path) -> Option<String> {
                 .filter(|text| !text.is_empty())
                 .map(|text| format!("--- {} ---\n{}", name, text))
         })
+        .chain(
+            // USER.md (the bot's notes about its user) rides after the
+            // canonical files; it is not part of the pack.ts list.
+            read_workspace_md(dir, "USER.md")
+                .map(|text| text.trim().to_string())
+                .filter(|text| !text.is_empty())
+                .map(|text| format!("--- USER.md ---\n{}", text)),
+        )
         .collect();
     if parts.is_empty() {
         None
@@ -1548,6 +1568,9 @@ async fn agent_chat_bridge(
                     .optional()?;
                 row.map(|(system_prompt, provider, model)| {
                     let dir = workspace_dir_for(agent_id);
+                    // Legacy `.allternit/bot/<file>` copies move to the root
+                    // first; a failure never fails the chat.
+                    crate::agent_workspace_routes::unify_legacy_files(&dir);
                     AgentChatContext {
                         system_prompt,
                         provider,
@@ -1849,6 +1872,8 @@ async fn agent_chat_bridge(
     // for the next send unless this turn was already the retry.
     let repair_user = user_id_for_record.clone();
     let repair_chat = chat_id.clone();
+    let skill_chat_id = chat_id.clone();
+    let skill_agent_id = agent_id.clone();
     let repair_note = if resume.is_none() && crate::card_repair::enabled() {
         crate::card_repair::take(&repair_user, &repair_chat)
     } else {
@@ -2338,6 +2363,15 @@ async fn agent_chat_bridge(
                                     .and_then(|v| v.as_str())
                                     .unwrap_or("");
                                 if status == "running" {
+                                    crate::skill_use::record_from_part(
+                                        &state.db,
+                                        &user_id_for_record,
+                                        skill_agent_id.as_deref(),
+                                        &skill_chat_id,
+                                        call_id,
+                                        part,
+                                    )
+                                    .await;
                                     if let Some(link) = dag_link.clone() {
                                         let db = state.db.clone();
                                         let uid = user_id_for_record.clone();
@@ -2722,6 +2756,15 @@ async fn body_to_bytes(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn prompt_files_lose_the_web_json_frontmatter_only() {
+        use super::strip_json_frontmatter as strip;
+        assert_eq!(strip("---\n{\n  \"a\": 1\n}\n---\n# SOUL\nHi".into()), "# SOUL\nHi");
+        assert_eq!(strip("# SOUL\nHi\n---\nmore".into()), "# SOUL\nHi\n---\nmore");
+        assert_eq!(strip("---\ntitle: x\n---\nbody".into()), "---\ntitle: x\n---\nbody");
+        assert_eq!(strip("---\n{unclosed".into()), "---\n{unclosed");
+    }
+
 
     use serde_json::json;
 

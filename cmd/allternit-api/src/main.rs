@@ -1035,6 +1035,8 @@ async fn main() {
         .merge(allternit_api::phone_seen_routes::phone_seen_router())
         .merge(agent_preferences_router())
         .merge(agent_workspace_router())
+        .merge(allternit_api::bot_hub_routes::bot_hub_router())
+        .merge(allternit_api::memory_map_routes::memory_map_router())
         // A thread placed on another Allternit (P4.2): its session's calls
         // pass through to where it lives.
         .merge(agent_session_router().route_layer(axum::middleware::from_fn_with_state(

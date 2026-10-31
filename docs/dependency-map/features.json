@@ -561,6 +561,10 @@
         {
           "on": "2026-10-17",
           "note": "Eoj: reading vendor memory is automatic once Memory Drive is on. vendor_memory reads each signed-in login (disclosure acknowledged, vendors switch on by default) every 6 h through the gateway's read-only routes: saved memories and instructions word for word, plus new chats distilled from the person's own messages. It never sends. ChatGPT and Claude first."
+        },
+        {
+          "on": "2026-10-31",
+          "note": "Memory and Learning page with a memory map (GET /memory-map) sits behind the bot Memory tile and in Settings; see feature:bot-hub-soul."
         }
       ],
       "evidence": [
@@ -3439,6 +3443,33 @@
       ],
       "evidence": [
         "allternit/surfaces/docs/guides/project-layouts.mdx"
+      ]
+    },
+    {
+      "id": "feature:bot-hub-soul",
+      "label": "Bot page, Soul and memory map",
+      "product": "product:memory-drive",
+      "status": "building",
+      "description": "Four tiles on the bot page (Soul, Memory, Skills, Usage), one root SOUL.md for web, phone and iOS, and a memory map of skills, memories, threads and routines.",
+      "touches": [
+        "allternit/cmd/allternit-api/src/bot_hub_routes.rs",
+        "allternit/cmd/allternit-api/src/memory_map_routes.rs",
+        "allternit/cmd/allternit-api/src/skill_use.rs",
+        "allternit/cmd/allternit-api/src/agent_workspace_routes.rs",
+        "allternit/cmd/allternit-api/src/v1_routes.rs",
+        "allternit/cmd/allternit-api/migrations/V284__skill_use.sql"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-31",
+          "note": "Eoj approved Hermes parity: the workspace root is canonical for SOUL.md, USER.md, AGENTS.md, TOOLS.md and HEARTBEAT.md (web Soul edits under .allternit/bot never reached chat). Legacy paths map to root; newer mtime wins and the loser is kept as .pre-unify. File GET returns a sha256 hash and PUT takes expected_hash (409 on mismatch). USER.md now joins the chat prompt after the instruction files; a root AGENTS.md also reaches the prompt. Skill use is recorded from the agent-chat stream (skill_use, V284) and feeds /bot-hub/:id/summary and /memory-map. Spend is not recorded, so Usage shows sessions."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/bot-soul.mdx",
+        "allternit/surfaces/docs/guides/bot-page.mdx",
+        "allternit/surfaces/docs/guides/memory-and-learning.mdx",
+        "allternit/surfaces/docs/api/bot-hub.mdx"
       ]
     }
   ],
