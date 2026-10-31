@@ -98,6 +98,11 @@ struct OfficeFloorView: View {
                 "chief": bot.isPrimaryTemplateBot,
             ]
             if let waiting { entry["question"] = waiting.statusLine ?? waiting.title }
+            // A:// is the Allternit orb (BotAvatarView): the facility sees this picture and draws the living orb.
+            if bot.isPrimaryTemplateBot {
+                entry["avatar"] = ["sheet": Self.orbSheet, "layout": "still"]
+                return entry
+            }
             switch BotAvatarSource.resolve(bot) {
             case .sprite(let url) where Self.allowedAsset(url):
                 entry["avatar"] = ["sheet": url.absoluteString]
@@ -111,6 +116,9 @@ struct OfficeFloorView: View {
         let data = (try? JSONSerialization.data(withJSONObject: ["type": "allternit:workspace", "bots": bots])) ?? Data("{}".utf8)
         return String(decoding: data, as: UTF8.self)
     }
+
+    /// The A-block orb mark the web app hosts; the facility draws A:// as the orb when its avatar is this.
+    private static let orbSheet = "https://ai.allternit.com/brand/allternit-orb.svg"
 
     /// The facility loads pictures from allternit.com hosts only.
     private static func allowedAsset(_ url: URL) -> Bool {
