@@ -74,7 +74,7 @@ First release of Allternit for iPhone.
 
 ## Export compliance
 
-The app uses WireGuard (via the Allternit mesh) in addition to HTTPS, so it is not limited to exempt encryption. Answer in App Store Connect: uses encryption = Yes; qualifies for exemption = check with Apple's questions. WireGuard for the user's own data generally falls under the mass-market exemption (Category 5 Part 2, note 3); the year-end self-classification report may be required. Eoj decides; `ITSAppUsesNonExemptEncryption` is deliberately not set in Info.plist so the question is asked in App Store Connect.
+The app uses encryption: HTTPS, and WireGuard (via the Allternit mesh) for the user's own data. Eoj's answer (2026-10-31): yes, it uses encryption, and it is exempt (mass-market, Category 5 Part 2, note 3), so no export documents are needed. `ITSAppUsesNonExemptEncryption` is set to NO in Info.plist, so App Store Connect no longer asks on each build. A year-end self-classification report to the US Bureau of Industry and Security may still be required for the mass-market exemption; check before the first public release.
 
 ## App Privacy (nutrition label)
 

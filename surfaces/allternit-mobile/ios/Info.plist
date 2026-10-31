@@ -86,6 +86,9 @@
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
 	<string>$(MARKETING_VERSION)</string>
+	<!-- Export compliance (Eoj, 2026-10-31): the app uses encryption (HTTPS and WireGuard for the user's own data), all of it exempt, so no export documents; App Store Connect stops asking per build. -->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>CLERK_PUBLISHABLE_KEY</key>
