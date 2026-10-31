@@ -400,6 +400,7 @@ struct SettingsView: View {
             SettingsWebPage(page: page, intro: "Policies, approvals, purpose binding and compliance for your organization.")
         case .agents: agentsPage
         case .webhooks: WebhooksSettingsView()
+        case .deviceAccess: DeviceAccessSettingsView()
         }
     }
 

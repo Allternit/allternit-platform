@@ -13,6 +13,7 @@ enum SettingsPageID: String, CaseIterable, Hashable, Identifiable {
     case models, imageProviders = "image-providers", videoProviders = "video-providers", mcp
     case apiKeys = "api-keys", permissions, remoteControl = "remote-control", infrastructure
     case security, agents, webhooks, about
+    case deviceAccess = "device-access"
 
     var id: String { rawValue }
 
@@ -62,6 +63,7 @@ enum SettingsPageID: String, CaseIterable, Hashable, Identifiable {
         case .agents: return "Agents"
         case .webhooks: return "Webhooks"
         case .about: return "About"
+        case .deviceAccess: return "Device Access"
         }
     }
 
@@ -107,6 +109,7 @@ enum SettingsPageID: String, CaseIterable, Hashable, Identifiable {
         case .agents: return "gearshape.2"
         case .webhooks: return "arrow.triangle.branch"
         case .about: return "info.circle"
+        case .deviceAccess: return "hand.raised"
         }
     }
 
@@ -135,6 +138,7 @@ enum SettingsPageID: String, CaseIterable, Hashable, Identifiable {
         case .connectedApps: return (.bots, 7)
         case .twin: return (.bots, 8)
         case .lens: return (.bots, 9)
+        case .deviceAccess: return (.bots, 10)
         case .devices: return (.computers, 1)
         case .computers: return (.computers, 2)
         case .desktopPet: return (.computers, 3)

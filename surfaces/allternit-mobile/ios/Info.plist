@@ -102,12 +102,18 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>Allternit lets your bots read your calendar and add events, only after you turn on Device Access. Each new event needs your approval.</string>
+	<key>NSContactsUsageDescription</key>
+	<string>Allternit lets your bots search your contacts by name (read only), only after you turn on Device Access.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>Allternit uses the camera so you can take photos and attach them to your chat.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Allternit uses the microphone so you can talk to your agent (voice chat) and dictate messages in chat. Audio is sent to Allternit Cloud Voice only when you choose it; "This device" keeps your speech on the phone.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Allternit accesses your photo library so you can attach photos and see recent ones in the composer.</string>
+	<key>NSRemindersFullAccessUsageDescription</key>
+	<string>Allternit lets your bots read your reminders and add new ones, only after you turn on Device Access. Each new reminder needs your approval.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>Allternit uses speech recognition to transcribe your dictation into chat text.</string>
 	<key>NSSupportsLiveActivities</key>
