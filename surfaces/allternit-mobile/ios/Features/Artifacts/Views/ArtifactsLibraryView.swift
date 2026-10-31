@@ -832,28 +832,10 @@ private struct ArtifactLibraryCard: View {
         .accessibilityLabel("More for \(summary.title)")
     }
 
+    /// The record's own content (ArtifactCardPreview): the list endpoint
+    /// sends no picture, so the card draws one from the body.
     private var thumbnail: some View {
-        ZStack {
-            Color("FillNeutral")
-            if let raw = summary.thumbnailURL, let url = URL(string: raw) {
-                AsyncImage(url: url) { phase in
-                    if let image = phase.image {
-                        image.resizable().scaledToFill()
-                    } else {
-                        kindGlyph
-                    }
-                }
-            } else {
-                kindGlyph
-            }
-        }
-        .clipped()
-    }
-
-    private var kindGlyph: some View {
-        Image(ArtifactV2Kind.iconAsset(for: summary.kind))
-            .resizable()
-            .frame(width: 32, height: 32)
+        ArtifactCardPreview(summary: summary)
     }
 
     private var badge: some View {

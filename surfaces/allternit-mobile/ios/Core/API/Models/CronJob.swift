@@ -78,6 +78,8 @@ struct CronAgentConfig: Decodable, Sendable {
     let context: String?
     let maxTokens: Int?
     let temperature: Double?
+    /// Bot Mode: delivers into this bot's own chat (`[bot:<name>] <label>` jobs).
+    let bot: String?
 }
 
 /// A cron job (`BaseJob`, types.ts:61-94, plus `AgentJob.config` when
@@ -139,11 +141,30 @@ struct CronJob: Decodable, Sendable, Identifiable, Hashable {
 struct CreateAgentJobRequest: Encodable, Sendable {
     struct Config: Encodable, Sendable {
         let prompt: String
+        /// The agent that runs it (`AgentJob.config.agentId`); nil is the default model.
+        var agentId: String? = nil
+        /// "provider/model" (`AgentJob.config.model`); nil is the default model.
+        var model: String? = nil
     }
     let name: String
     let type: String
     let schedule: String
     let config: Config
+    var description: String? = nil
+    /// "paused" to create it switched off; the server defaults to "active".
+    var status: String? = nil
+    var maxRetries: Int? = nil
+    var timeoutSeconds: Int? = nil
+}
+
+/// Body of `PUT v1/cron/jobs/:id` (`UpdateJobInput`, types.ts): only the fields
+/// that changed. The server merges `config` over the job's own, so a
+/// `.null` value is how `agentId` is cleared.
+struct UpdateCronJobRequest: Encodable, Sendable {
+    var name: String? = nil
+    var description: String? = nil
+    var schedule: String? = nil
+    var config: [String: JSONValue]? = nil
 }
 
 // MARK: - Run record

@@ -6,8 +6,9 @@ import SwiftUI
 /// cards, and the floating search and "New project". Each card's ⋯ menu has
 /// Open, Pin, Edit details, Archive and Delete.
 ///
-/// Data: chat projects from `ProjectStore` (`/api/v1/cowork/projects`) and
-/// bot projects from `/api/v1/bot-projects` (ProjectsLibraryStore).
+/// Data: chat projects from `ProjectStore` (`/api/v1/cowork/projects`), bot
+/// projects from `/api/v1/bot-projects` and code and design projects from
+/// `/api/v1/project-workspaces` (ProjectsLibraryStore).
 struct ProjectsListView: View {
     /// Detail's "+ New chat": selects the project and starts a fresh Chats
     /// conversation stamped with it (the shell owns the session binding).
@@ -28,6 +29,13 @@ struct ProjectsListView: View {
     @State private var sortBy: Sort = .recent
     @State private var showArchived = false
     @State private var detailProject: CoworkProject? = nil
+    @State private var codeDetail: WorkspaceLibraryProject? = nil
+    @State private var designCanvas: WorkspaceLibraryProject? = nil
+    @State private var newDesignProjectId: String? = nil
+    /// The code project just made here: it opens asking for a folder.
+    @State private var newCodeProjectId: String? = nil
+    /// Which kind the New project sheet is making.
+    @State private var newMode: LibraryProject.Mode = .chat
     @State private var isCreateSheetPresented = false
     @State private var editing: LibraryProject? = nil
     @State private var deleting: LibraryProject? = nil
@@ -35,12 +43,14 @@ struct ProjectsListView: View {
 
     /// The Show menu (ProjectView CATEGORY_CONFIG, the kinds iOS has).
     private enum Category: String, CaseIterable {
-        case all, chat, bot
+        case all, chat, code, design, bot
 
         var label: String {
             switch self {
             case .all: return "All Projects"
             case .chat: return "Chat"
+            case .code: return "Code"
+            case .design: return "Design"
             case .bot: return "Bot"
             }
         }
@@ -49,6 +59,8 @@ struct ProjectsListView: View {
             switch self {
             case .all: return "folder"
             case .chat: return "bubble.left"
+            case .code: return "chevron.left.forwardslash.chevron.right"
+            case .design: return "paintpalette"
             case .bot: return "cpu"
             }
         }
@@ -119,12 +131,12 @@ struct ProjectsListView: View {
                     query: $searchText,
                     placeholder: "Search projects",
                     newLabel: "New project",
-                    wide: .new,
-                    onNew: {
-                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                        isCreateSheetPresented = true
-                    }
-                ) { EmptyView() }
+                    wide: .new
+                ) {
+                    Button { startNew(.chat) } label: { Label("Chat project", systemImage: "bubble.left") }
+                    Button { startNew(.code) } label: { Label("Code project", systemImage: "chevron.left.forwardslash.chevron.right") }
+                    Button { startNew(.design) } label: { Label("Design project", systemImage: "paintpalette") }
+                }
             }
             .background(Color("BgPrimary").ignoresSafeArea())
             .toolbar(.hidden, for: .navigationBar)
@@ -135,6 +147,9 @@ struct ProjectsListView: View {
                     onOpenChat: onOpenChat
                 )
             }
+            .navigationDestination(item: $codeDetail) { project in
+                CodeProjectDetailView(project: project, asksForFolder: project.id == newCodeProjectId)
+            }
             .navigationDestination(for: BotRoute.self) { route in
                 BotRouteDestination(route: route)
             }
@@ -142,8 +157,11 @@ struct ProjectsListView: View {
         .environmentObject(navigator)
         .sheet(isPresented: $isCreateSheetPresented) {
             NewProjectSheet { title, description in
-                createProject(title: title, description: description)
+                createProject(mode: newMode, title: title, description: description)
             }
+        }
+        .fullScreenCover(item: $designCanvas) { project in
+            DesignProjectCanvasView(project: project, createdHere: project.id == newDesignProjectId)
         }
         .sheet(item: $editing) { project in
             EditProjectDetailsSheet(project: project) { title, description in
@@ -234,8 +252,9 @@ struct ProjectsListView: View {
     @ViewBuilder
     private var errors: some View {
         let botError = (category == .all || category == .bot) ? library.botProjectsError : nil
+        let codeError = (category == .all || category == .code || category == .design) ? library.workspaceProjectsError : nil
         let loadError = projectStore.loadError.map { _ in "Couldn't load projects. Check the connection and try again." }
-        ForEach([loadError, botError, createError].compactMap { $0 }.uniqued(), id: \.self) { message in
+        ForEach([loadError, botError, codeError, createError].compactMap { $0 }.uniqued(), id: \.self) { message in
             Text(message)
                 .font(.system(size: 13))
                 .foregroundColor(Theme.statusError)
@@ -335,6 +354,8 @@ struct ProjectsListView: View {
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         if let cowork = project.cowork {
             detailProject = cowork
+        } else if let row = project.workspace {
+            if project.mode == .design { designCanvas = row } else { codeDetail = row }
         } else if let bot = project.bot {
             navigator.path = [.project(bot)]
         }
@@ -345,13 +366,28 @@ struct ProjectsListView: View {
         await library.load()
     }
 
+    private func startNew(_ mode: LibraryProject.Mode) {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        newMode = mode
+        isCreateSheetPresented = true
+    }
+
     /// New projects open straight into their project page (Claude parity).
-    private func createProject(title: String, description: String?) {
+    private func createProject(mode: LibraryProject.Mode, title: String, description: String?) {
         Task {
             do {
                 createError = nil
-                let created = try await projectStore.createProject(title: title, description: description)
-                detailProject = created
+                if mode == .code {
+                    let created = try await library.createCodeProject(title: title, description: description)
+                    newCodeProjectId = created.id
+                    codeDetail = created
+                } else if mode == .design {
+                    let created = try await library.createDesignProject(title: title, description: description)
+                    newDesignProjectId = created.id
+                    designCanvas = created
+                } else {
+                    detailProject = try await projectStore.createProject(title: title, description: description)
+                }
             } catch {
                 createError = "Couldn't create the project: \(FriendlyErrorMessage.from(error.localizedDescription))"
             }
@@ -387,11 +423,41 @@ private struct ProjectOverviewCard<Menu: View>: View {
     let onOpen: () -> Void
 
     private var icon: String {
-        project.mode == .bot ? "cpu" : "bubble.left"
+        switch project.mode {
+        case .chat: return "bubble.left"
+        case .code: return "chevron.left.forwardslash.chevron.right"
+        case .design: return "paintpalette"
+        case .bot: return "cpu"
+        }
+    }
+
+    private var modeLabel: String {
+        switch project.mode {
+        case .chat: return "Chat"
+        case .code: return "Code"
+        case .design: return "Design"
+        case .bot: return "Bot"
+        }
+    }
+
+    private var status: WorkspaceLibraryProject.Status? { project.workspace?.status }
+
+    /// The note line's chip (ProjectStateChip): Closed and Blocked show as the
+    /// card's status instead, and On track says nothing.
+    private var stateChip: (label: String, color: Color)? {
+        guard let status, !status.closed else { return nil }
+        switch status.state {
+        case "at_risk": return ("At risk", Theme.statusWarning)
+        case "needs_decision": return ("Needs decision", Theme.statusWarning)
+        case "done": return ("Done", Color("TextTertiary"))
+        default: return nil
+        }
     }
 
     private var tone: (label: String, color: Color)? {
         if project.isArchived { return ("Archived", Color("TextTertiary")) }
+        if status?.closed == true { return ("Closed", Color("TextTertiary")) }
+        if status?.state == "blocked" { return ("Blocked", Theme.statusWarning) }
         if project.waiting > 0 { return ("\(project.waiting) waiting", Theme.statusWarning) }
         if project.working > 0 { return ("\(project.working) working", Theme.accentChat) }
         return nil
@@ -404,6 +470,7 @@ private struct ProjectOverviewCard<Menu: View>: View {
     }
 
     private var preview: String {
+        if let next = status?.nextAction, !next.isEmpty { return next }
         if let description = project.description, !description.isEmpty { return description }
         return project.countLine.prefix(1).uppercased() + project.countLine.dropFirst()
     }
@@ -420,7 +487,7 @@ private struct ProjectOverviewCard<Menu: View>: View {
                     .stroke(ring, lineWidth: 1)
             )
             .shadow(color: variant == .deck ? .black.opacity(0.10) : .clear, radius: 15, x: 0, y: 10)
-            .opacity(project.isArchived ? 0.6 : 1)
+            .opacity(project.isArchived || status?.closed == true ? 0.6 : 1)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -455,11 +522,17 @@ private struct ProjectOverviewCard<Menu: View>: View {
                     .foregroundColor(Color(hex: "#EAB308"))
                     .accessibilityLabel("Pinned")
             }
-            Text(project.mode == .bot ? "Bot" : "Chat")
+            Text(modeLabel)
                 .lineLimit(1)
             Text("·")
             Text(project.countLine)
                 .lineLimit(1)
+            if let stateChip {
+                Text(stateChip.label)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(stateChip.color)
+                    .lineLimit(1)
+            }
         }
         .font(.system(size: 12.5))
         .foregroundColor(Color("TextTertiary"))

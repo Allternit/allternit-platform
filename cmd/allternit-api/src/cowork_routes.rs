@@ -1555,10 +1555,25 @@ async fn close_project_status(
 /// at a project that no longer existed. Returns whether a project was deleted.
 fn delete_project_rows(conn: &rusqlite::Connection, id: &str, user_id: &str) -> rusqlite::Result<bool> {
     let tx = conn.unchecked_transaction()?;
-    let deleted = tx.execute(
-        "DELETE FROM cowork_projects WHERE id = ?1 AND user_id = ?2",
+    // A registered workspace (a code or design project a browser holds) keeps
+    // an empty row with only its key: that browser re-registers it whenever its
+    // page opens, and a removed row would come back on every other device.
+    let scrubbed = tx.execute(
+        "UPDATE cowork_projects
+         SET title = '', description = NULL, instructions = NULL,
+             metadata = json_object('workspace', json_object('key', json_extract(metadata, '$.workspace.key')), 'workspaceDeleted', 1),
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?1 AND user_id = ?2 AND json_valid(metadata) AND json_extract(metadata, '$.workspace.key') IS NOT NULL",
         params![id, user_id],
     )?;
+    let deleted = if scrubbed > 0 {
+        scrubbed
+    } else {
+        tx.execute(
+            "DELETE FROM cowork_projects WHERE id = ?1 AND user_id = ?2",
+            params![id, user_id],
+        )?
+    };
     if deleted > 0 {
         tx.execute(
             "UPDATE bot_threads SET project_id = NULL WHERE project_id = ?1 AND user_id = ?2",
@@ -3132,14 +3147,36 @@ mod tests {
     use super::*;
 
     #[test]
-    fn deleting_a_project_detaches_its_threads_and_drops_its_team_and_chat() {
+    fn deleting_a_registered_workspace_leaves_an_empty_row_that_keeps_its_key() {
         let conn = rusqlite::Connection::open_in_memory().unwrap();
         conn.execute_batch(
-            "CREATE TABLE cowork_projects (id TEXT PRIMARY KEY, user_id TEXT NOT NULL);
+            "CREATE TABLE cowork_projects (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, title TEXT, description TEXT, instructions TEXT, metadata TEXT, updated_at TEXT);
              CREATE TABLE bot_threads (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, project_id TEXT);
              CREATE TABLE project_bots (project_id TEXT NOT NULL, bot_id TEXT NOT NULL);
              CREATE TABLE project_messages (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, user_id TEXT NOT NULL);
-             INSERT INTO cowork_projects VALUES ('p1','u1'), ('p2','u1');
+             INSERT INTO cowork_projects (id, user_id, title, metadata) VALUES ('w1','u1','Site','{\"workspace\":{\"key\":\"code-a\",\"directory\":\"/secret\"}}');",
+        )
+        .unwrap();
+        assert!(delete_project_rows(&conn, "w1", "u1").unwrap());
+        let (title, key, deleted, directory): (String, String, i64, Option<String>) = conn
+            .query_row(
+                "SELECT title, json_extract(metadata, '$.workspace.key'), json_extract(metadata, '$.workspaceDeleted'), json_extract(metadata, '$.workspace.directory') FROM cowork_projects WHERE id = 'w1'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!((title.as_str(), key.as_str(), deleted, directory), ("", "code-a", 1, None));
+    }
+
+    #[test]
+    fn deleting_a_project_detaches_its_threads_and_drops_its_team_and_chat() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE cowork_projects (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, title TEXT, description TEXT, instructions TEXT, metadata TEXT, updated_at TEXT);
+             CREATE TABLE bot_threads (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, project_id TEXT);
+             CREATE TABLE project_bots (project_id TEXT NOT NULL, bot_id TEXT NOT NULL);
+             CREATE TABLE project_messages (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, user_id TEXT NOT NULL);
+             INSERT INTO cowork_projects (id, user_id) VALUES ('p1','u1'), ('p2','u1');
              INSERT INTO bot_threads VALUES ('t1','u1','p1'), ('t2','u1','p2');
              INSERT INTO project_bots VALUES ('p1','b1'), ('p2','b1');
              INSERT INTO project_messages VALUES ('m1','p1','u1'), ('m2','p2','u1');",

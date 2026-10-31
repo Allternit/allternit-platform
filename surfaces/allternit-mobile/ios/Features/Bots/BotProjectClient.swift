@@ -133,12 +133,41 @@ enum DelegateWords {
 
 struct ProjectStatusSection: Decodable, Hashable, Sendable {
     let text: String
+    let updatedBy: String
+    let updatedAt: String
+
+    private enum CodingKeys: String, CodingKey {
+        case text
+        case updatedBy = "updated_by"
+        case updatedAt = "updated_at"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        text = try c.decodeIfPresent(String.self, forKey: .text) ?? ""
+        updatedBy = try c.decodeIfPresent(String.self, forKey: .updatedBy) ?? ""
+        updatedAt = try c.decodeIfPresent(String.self, forKey: .updatedAt) ?? ""
+    }
 }
 
 struct ProjectStatusLogEntry: Decodable, Hashable, Sendable {
     let at: String
     let by: String
     let note: String
+    let proofUrl: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case at, by, note
+        case proofUrl = "proof_url"
+    }
+
+    /// The proof as something a tap can open: bots write this field, so only
+    /// web links count.
+    var proofLink: URL? {
+        guard let proofUrl, let url = URL(string: proofUrl.trimmingCharacters(in: .whitespacesAndNewlines)),
+              let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" else { return nil }
+        return url
+    }
 }
 
 struct ProjectStatusRecord: Decodable, Sendable {
@@ -147,9 +176,10 @@ struct ProjectStatusRecord: Decodable, Sendable {
     let nextAction: String
     let sections: [String: ProjectStatusSection]
     let log: [ProjectStatusLogEntry]
+    let archive: [ProjectStatusLogEntry]
 
     private enum CodingKeys: String, CodingKey {
-        case lifecycle, state, sections, log
+        case lifecycle, state, sections, log, archive
         case nextAction = "next_action"
     }
 
@@ -160,6 +190,7 @@ struct ProjectStatusRecord: Decodable, Sendable {
         nextAction = try c.decodeIfPresent(String.self, forKey: .nextAction) ?? ""
         sections = try c.decodeIfPresent([String: ProjectStatusSection].self, forKey: .sections) ?? [:]
         log = try c.decodeIfPresent([ProjectStatusLogEntry].self, forKey: .log) ?? []
+        archive = try c.decodeIfPresent([ProjectStatusLogEntry].self, forKey: .archive) ?? []
     }
 
     /// STATUS_SECTION_KEYS with their labels, in the web's order.
@@ -264,16 +295,22 @@ struct FactoryNodeRef: Decodable, Hashable, Sendable {
     let title: String
 }
 
+struct FactoryGate: Decodable, Hashable, Sendable {
+    let kind: String
+}
+
 struct FactoryNodeCard: Decodable, Identifiable, Hashable, Sendable {
     let dagId: String
     let nodeId: String
     let title: String
     let status: String
     let assignee: String?
+    let bindingType: String?
     let proof: FactoryProof?
     let blockedBy: [String]?
     let needsYou: Bool?
     let depth: Int?
+    let gate: FactoryGate?
 
     var id: String { "\(dagId):\(nodeId)" }
 
@@ -293,9 +330,20 @@ struct FactoryNodeCard: Decodable, Identifiable, Hashable, Sendable {
 }
 
 struct FactoryBoard: Decodable, Sendable {
+    struct Campaign: Decodable, Sendable {
+        let intent: String?
+    }
+
+    /// The judge's count, the only source of PROVEN and the progress bar.
+    struct Proven: Decodable, Sendable {
+        let k: Int
+        let n: Int
+    }
+
     struct Summary: Decodable, Sendable {
         let now: [FactoryNodeCard]
         let next: [FactoryNodeCard]
+        let proven: Proven?
         let needsYou: [FactoryNodeCard]
     }
 
@@ -305,14 +353,32 @@ struct FactoryBoard: Decodable, Sendable {
         var id: Int { depth }
     }
 
+    let campaign: Campaign?
     let summary: Summary
     let waves: [Wave]
+
+    /// layout.ts boardWaves: depth order, each sorted by node id, no empty waves.
+    var sortedWaves: [(depth: Int, nodes: [FactoryNodeCard])] {
+        let merged = Dictionary(grouping: waves, by: \.depth).mapValues { $0.flatMap(\.nodes) }
+        return merged.keys.sorted().compactMap { depth in
+            guard let nodes = merged[depth], !nodes.isEmpty else { return nil }
+            return (depth: depth, nodes: nodes.sorted { ($0.nodeId, $0.dagId) < ($1.nodeId, $1.dagId) })
+        }
+    }
+
+    /// Every node on the board (connected.tsx boardNodes).
+    var allNodes: [FactoryNodeCard] { waves.flatMap(\.nodes) }
+
+    /// The campaign's DAGs, sorted; the Flow picker shows when there are several.
+    var dagIds: [String] { Array(Set(allNodes.map(\.dagId))).sorted() }
 }
 
 struct FactoryFlow: Decodable, Sendable {
     struct Edge: Decodable, Hashable, Sendable {
         let from: String
         let to: String
+        /// "blocked_by" or "on_fail".
+        let type: String?
     }
 
     let dagId: String
@@ -321,22 +387,72 @@ struct FactoryFlow: Decodable, Sendable {
     let edges: [Edge]
 }
 
+struct FactoryAgentBinding: Decodable, Hashable, Sendable {
+    let type: String?
+    let harness: String?
+    let vendor: String?
+    let lane: String?
+
+    /// parts.tsx bindingLabel: "Hosted · Gizzi", "Terminal · Claude Code", "Vendor · ChatGPT · official".
+    var label: String {
+        switch type {
+        case "hosted":
+            return "Hosted · Gizzi"
+        case "terminal":
+            let harnessName = harness.map { Self.harnessNames[$0] ?? $0 } ?? "terminal"
+            return "Terminal · \(harnessName)"
+        default:
+            let vendorName = vendor.map { Self.vendorNames[$0.lowercased()] ?? $0 } ?? "vendor"
+            let laneName = lane.map { Self.laneNames[$0] ?? $0 }
+            return ["Vendor", vendorName, laneName].compactMap { $0 }.joined(separator: " · ")
+        }
+    }
+
+    private static let harnessNames = ["gizzi": "Gizzi", "claude": "Claude Code", "codex": "Codex",
+                                       "kimi": "Kimi", "grok": "Grok", "agy": "Antigravity"]
+    private static let vendorNames = ["chatgpt": "ChatGPT", "claude": "Claude", "gemini": "Gemini",
+                                      "grok": "Grok", "perplexity": "Perplexity"]
+    private static let laneNames = ["official": "official", "channel": "channel", "ui_bridge": "UI bridge", "local": "local"]
+}
+
 struct FactoryAgent: Decodable, Identifiable, Hashable, Sendable {
     let id: String
     let name: String
+    /// "slug@team", or the slug; nodes name their assignee by this.
+    let address: String
     let role: String?
     let state: String?
+    let binding: FactoryAgentBinding?
+    let proof: FactoryProof?
     let currentNode: FactoryNodeRef?
+    /// Terminal bots only.
+    let pane: Pane?
+    let reach: [String]
 
-    private enum CodingKeys: String, CodingKey { case id, name, role, state, currentNode }
+    struct Pane: Decodable, Hashable, Sendable {
+        let id: String
+        let attachable: Bool
+    }
+
+    private enum CodingKeys: String, CodingKey { case id, name, address, role, state, binding, proof, currentNode, pane, reach }
+
+    /// A Terminal bot whose pane is running can be taken over (TeamLanes NodeDetail).
+    var attachablePane: Pane? {
+        binding?.type == "terminal" && pane?.attachable == true ? pane : nil
+    }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(String.self, forKey: .id)
         name = try c.decodeIfPresent(String.self, forKey: .name) ?? "Bot"
+        address = (try? c.decodeIfPresent(String.self, forKey: .address)) ?? id
         role = try? c.decodeIfPresent(String.self, forKey: .role)
         state = try? c.decodeIfPresent(String.self, forKey: .state)
+        binding = try? c.decodeIfPresent(FactoryAgentBinding.self, forKey: .binding)
+        proof = try? c.decodeIfPresent(FactoryProof.self, forKey: .proof)
         currentNode = try? c.decodeIfPresent(FactoryNodeRef.self, forKey: .currentNode)
+        pane = try? c.decodeIfPresent(Pane.self, forKey: .pane)
+        reach = (try? c.decodeIfPresent([String].self, forKey: .reach)) ?? []
     }
 }
 
@@ -363,9 +479,19 @@ struct FactoryNodePage: Decodable, Sendable {
         let proofContract: [ProofLine]?
     }
 
+    struct File: Decodable, Hashable, Sendable {
+        let path: String
+    }
+
+    struct Delivery: Decodable, Hashable, Sendable {
+        let id: String?
+    }
+
     let card: FactoryNodeCard
     let spec: Spec?
     let progressMd: String?
+    let files: [File]?
+    let deliveries: [Delivery]?
 }
 
 // MARK: - Client
@@ -528,15 +654,42 @@ final class BotProjectClient: @unchecked Sendable {
         return envelope.status
     }
 
-    /// People edit the page as "you" (project-status.ts).
-    func patchStatus(projectId: String, section: String? = nil, text: String? = nil, state: String? = nil) async throws {
+    /// People edit the page as "you" (project-status.ts). Answers with the
+    /// page as it now stands.
+    func patchStatus(projectId: String, section: String? = nil, text: String? = nil, state: String? = nil,
+                     done: Bool? = nil, proofUrl: String? = nil) async throws -> ProjectStatusRecord {
         struct Body: Encodable {
             let by = "you"
             let section: String?
             let text: String?
             let state: String?
+            let done: Bool?
+            let proof_url: String?
         }
-        try await client.patch(path: statusPath(projectId), body: Body(section: section, text: text, state: state))
+        struct Envelope: Decodable { let status: ProjectStatusRecord }
+        var request = try await client.authorizedRequest(path: statusPath(projectId), method: "PATCH")
+        request.httpBody = try JSONEncoder().encode(Body(section: section, text: text, state: state, done: done, proof_url: proofUrl))
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let (data, response) = try await client.send(request)
+        try client.validate(response, data: data)
+        return try JSONDecoder().decode(Envelope.self, from: data).status
+    }
+
+    /// `POST cowork/projects/:id/close`: closes the project, or reopens it
+    /// with `reopen`. Closing pauses the project's routines; reopening restarts them.
+    func closeProject(projectId: String, outcome: String, lessons: String, reopen: Bool) async throws -> ProjectStatusRecord {
+        struct Body: Encodable {
+            let by = "you"
+            let outcome: String
+            let lessons: String
+            let reopen: Bool
+        }
+        struct Envelope: Decodable { let status: ProjectStatusRecord }
+        let envelope: Envelope = try await client.post(
+            path: "cowork/projects/\(Self.escape(projectId))/close",
+            body: Body(outcome: outcome, lessons: lessons, reopen: reopen)
+        )
+        return envelope.status
     }
 
     // MARK: Routines
@@ -594,8 +747,12 @@ final class BotProjectClient: @unchecked Sendable {
         }
     }
 
-    func registerWorkspace(key: String, nativeId: String, mode: String, title: String, description: String?) async throws -> String {
-        struct Settings: Encodable { let context: String }
+    func registerWorkspace(key: String, nativeId: String, mode: String, title: String, description: String?,
+                           directory: String? = nil) async throws -> String {
+        struct Settings: Encodable {
+            let context: String
+            let directory: String?
+        }
         struct Body: Encodable {
             let nativeId: String
             let mode: String
@@ -606,12 +763,40 @@ final class BotProjectClient: @unchecked Sendable {
         var request = try await client.authorizedRequest(path: "project-workspaces/\(Self.escape(key))", method: "PUT")
         request.httpBody = try JSONEncoder().encode(Body(
             nativeId: nativeId, mode: mode, title: title, description: description,
-            settings: Settings(context: description ?? "")
+            settings: Settings(context: description ?? "", directory: directory)
         ))
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         let (data, response) = try await client.send(request)
         try client.validate(response, data: data)
         return try JSONDecoder().decode(Registration.self, from: data).projectId
+    }
+
+    /// Moves a registered workspace to a working folder, or clears it. The PUT
+    /// replaces the settings whole, so what's stored (models, permission modes)
+    /// is read first and kept. Worker sessions take the folder from here.
+    func setWorkspaceDirectory(key: String, nativeId: String, mode: String, title: String, description: String?,
+                               directory: String?) async throws {
+        struct Stored: Decodable { let settings: [String: JSONValue]? }
+        struct Body: Encodable {
+            let nativeId: String
+            let mode: String
+            let title: String
+            let description: String?
+            let settings: [String: JSONValue]
+        }
+        let path = "project-workspaces/\(Self.escape(key))"
+        let stored: Stored = try await client.get(path: path)
+        var settings = stored.settings ?? [:]
+        if let directory {
+            settings["directory"] = .string(directory)
+        } else {
+            settings.removeValue(forKey: "directory")
+        }
+        var request = try await client.authorizedRequest(path: path, method: "PUT")
+        request.httpBody = try JSONEncoder().encode(Body(nativeId: nativeId, mode: mode, title: title, description: description, settings: settings))
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let (data, response) = try await client.send(request)
+        try client.validate(response, data: data)
     }
 
     // MARK: Factory (lives on the user's allternit-api, like Agent Activity)
@@ -639,6 +824,81 @@ final class BotProjectClient: @unchecked Sendable {
 
     func node(dagId: String, nodeId: String) async throws -> FactoryNodePage {
         try await factory("nodes/\(dagId)/\(nodeId)")
+    }
+
+    // MARK: Save a run as a template (POST /api/factory/templates)
+
+    /// A saved run. `finished` is false when some of its steps hadn't finished.
+    struct SavedRunTemplate: Decodable, Sendable {
+        struct FromRun: Decodable, Sendable { let finished: Bool }
+
+        let id: String
+        let steps: Int
+        let fromRun: FromRun
+    }
+
+    /// The Factory's refusal, in its own words (API.md §2).
+    struct FactoryRefusal: Error, Sendable {
+        let status: Int
+        let code: String?
+        let fact: String
+        let action: String
+    }
+
+    func saveRunAsTemplate(fromRun: String, id: String, force: Bool) async throws -> SavedRunTemplate {
+        struct Body: Encodable {
+            let fromRun: String
+            let id: String
+            let force: Bool
+        }
+        struct Answer: Decodable { let saved: SavedRunTemplate }
+        struct Refusal: Decodable {
+            struct Detail: Decodable {
+                let code: String?
+                let fact: String?
+                let action: String?
+            }
+            let error: Detail
+        }
+        var request = try await client.authorizedRequest(url: factoryBase.appendingPathComponent("templates"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(Body(fromRun: fromRun, id: id, force: force))
+        let (data, response) = try await InstanceConnection.runtimeAPIData(for: request, session: client.session)
+        if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode),
+           let refusal = try? JSONDecoder().decode(Refusal.self, from: data) {
+            throw FactoryRefusal(status: http.statusCode, code: refusal.error.code,
+                                 fact: refusal.error.fact ?? "Couldn't save the template.",
+                                 action: refusal.error.action ?? "Try again.")
+        }
+        try client.validate(response, data: data)
+        return try JSONDecoder().decode(Answer.self, from: data).saved
+    }
+
+    // MARK: A Terminal bot's pane (lib/factory/panes.ts)
+
+    /// `GET agents/:id/stream`: SSE of `screen` events, then one `gone`.
+    func paneStream(agentId: String) async throws -> URLSession.AsyncBytes {
+        var request = try await client.authorizedRequest(url: factoryBase.appendingPathComponent("agents/\(agentId)/stream"))
+        request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        request.timeoutInterval = 3600
+        let (bytes, response) = try await InstanceConnection.runtimeAPIBytes(for: request, session: client.session)
+        try client.validate(response)
+        return bytes
+    }
+
+    /// `POST agents/:id/input`: keystrokes, not a send.
+    func paneInput(agentId: String, text: String?, keys: [String]?) async throws {
+        struct Body: Encodable {
+            let text: String?
+            let keys: [String]?
+        }
+        var request = try await client.authorizedRequest(url: factoryBase.appendingPathComponent("agents/\(agentId)/input"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(Body(text: text, keys: keys))
+        let (data, response) = try await InstanceConnection.runtimeAPIData(for: request, session: client.session)
+        try client.validate(response, data: data)
     }
 
     /// `useFactoryTeamFor`: the project's bots that are in the Factory, and

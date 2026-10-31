@@ -337,9 +337,12 @@ final class BotModeClient: @unchecked Sendable {
 
     /// Hands the main bot a request in a project (web coordinator.ts
     /// `sendToCoordinator`: `POST /api/v1/projects/:id/messages`).
-    func sendToCoordinator(projectId: String, text: String) async throws {
-        struct Body: Encodable { let text: String }
-        try await client.post(path: "projects/\(Self.escape(projectId))/messages", body: Body(text: text))
+    func sendToCoordinator(projectId: String, text: String, workdir: String? = nil) async throws {
+        struct Body: Encodable {
+            let text: String
+            let workdir: String?
+        }
+        try await client.post(path: "projects/\(Self.escape(projectId))/messages", body: Body(text: text, workdir: workdir))
     }
 
     // MARK: Group chats (bot_group_routes.rs)

@@ -3116,6 +3116,15 @@ pub(crate) fn gizzi_message_error(body: &[u8]) -> Option<String> {
 
 /// Run one user turn in a session and return the assistant's text.
 pub(crate) async fn send_bot_turn(db: &DbHandle, session_id: &str, bot_id: &str, text: &str) -> Result<String, String> {
+    bot_turn_with_brain(db, session_id, bot_id, text, None).await
+}
+
+/// [`send_bot_turn`] on `"provider/model"` instead of the bot's own model.
+pub(crate) async fn send_bot_turn_on_model(db: &DbHandle, session_id: &str, bot_id: &str, text: &str, model: &str) -> Result<String, String> {
+    bot_turn_with_brain(db, session_id, bot_id, text, Some(model)).await
+}
+
+async fn bot_turn_with_brain(db: &DbHandle, session_id: &str, bot_id: &str, text: &str, brain: Option<&str>) -> Result<String, String> {
     // Vendor-bound bots run through the Agent Gateway; never a native brain,
     // unless the owner opted in to a fallback brain (disclosed in the reply).
     if let Some(vendor) = crate::gateway_runner::intercept_turn_with_fallback(session_id, text, Default::default(), |brain| {
@@ -3126,7 +3135,7 @@ pub(crate) async fn send_bot_turn(db: &DbHandle, session_id: &str, bot_id: &str,
     {
         return vendor;
     }
-    native_turn_on(db, session_id, bot_id, text, None).await
+    native_turn_on(db, session_id, bot_id, text, brain).await
 }
 
 /// The native (placed or local gizzi) half of [`send_bot_turn`]. `brain` =

@@ -539,6 +539,12 @@ pub struct Outcome {
 /// threads. Starting threads is separate (`start_threads`) so the HTTP
 /// handler can answer at once.
 pub async fn coordinate<R: CoordinatorRuntime>(db: &DbHandle, rt: &R, user_id: &str, project_id: &str, message: &str) -> Result<Outcome, String> {
+    coordinate_in_folder(db, rt, user_id, project_id, message, None).await
+}
+
+/// `coordinate`, with the sender's working folder for this project (a
+/// per-device choice, so it rides on the request, not in the stored message).
+pub async fn coordinate_in_folder<R: CoordinatorRuntime>(db: &DbHandle, rt: &R, user_id: &str, project_id: &str, message: &str, workdir: Option<&str>) -> Result<Outcome, String> {
     let title = project_title(db, project_id, user_id).map_err(|e| e.to_string())?.ok_or("project not found")?;
     add_message(db, project_id, user_id, "user", message, json!({})).map_err(|e| e.to_string())?;
     let team = load_team(db, project_id, user_id).map_err(|e| e.to_string())?;
@@ -562,6 +568,9 @@ pub async fn coordinate<R: CoordinatorRuntime>(db: &DbHandle, rt: &R, user_id: &
     if let Ok(conn) = db.connect() {
         let page = crate::project_status::prompt_context(&conn, project_id);
         if !page.is_empty() { system.push_str("\n\n"); system.push_str(&page); }
+    }
+    if let Some(folder) = workdir.map(str::trim).filter(|f| !f.is_empty()) {
+        system.push_str(&format!("\n\nWorking folder: {folder}"));
     }
     let proposal = rt
         .plan(&system, &prompt, model)
@@ -957,6 +966,19 @@ struct WorkspaceBody {
     settings: Value,
 }
 
+/// (title, description) to store: see the comment in `save_workspace`. A row
+/// never registered this way has nothing to compare with, so the body wins.
+fn merge_registered_details(stored: Option<(String, Option<String>, Option<String>)>, title: &str, description: Option<&str>) -> (String, Option<String>) {
+    let fresh = (title.to_string(), description.map(str::to_string));
+    let Some((stored_title, stored_description, metadata)) = stored else { return fresh };
+    let meta = metadata.and_then(|raw| serde_json::from_str::<Value>(&raw).ok()).unwrap_or_default();
+    let Some(last) = meta.get("registered").filter(|v| v.is_object()) else { return fresh };
+    (
+        if last["title"].as_str() == Some(title) { stored_title } else { fresh.0 },
+        if last["description"].as_str() == description { stored_description } else { fresh.1 },
+    )
+}
+
 fn save_workspace(db: &DbHandle, user_id: &str, key: &str, body: WorkspaceBody) -> Result<Value, String> {
     if !matches!(body.mode.as_str(), "chat" | "cowork" | "code" | "design") || body.native_id.trim().is_empty() || key != format!("{}-{}", body.mode, body.native_id) || body.title.trim().is_empty() {
         return Err("invalid project identity".into());
@@ -972,13 +994,23 @@ fn save_workspace(db: &DbHandle, user_id: &str, key: &str, body: WorkspaceBody) 
     let existing: Option<String> = tx.query_row("SELECT id FROM cowork_projects WHERE user_id = ?1 AND json_extract(metadata, '$.workspace.key') = ?2", params![user_id, key], |r| r.get(0)).optional().map_err(|e| e.to_string())?;
     let id = existing.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     let worker_id = format!("project-worker-{id}");
+    // The registering browser sends its own copy of the name on every save. It
+    // wins only when that copy changed since the last save; otherwise a newer
+    // edit made elsewhere (PATCH /cowork/projects/:id, the phone) stands.
+    let stored: Option<(String, Option<String>, Option<String>)> = tx.query_row(
+        "SELECT title, description, metadata FROM cowork_projects WHERE id = ?1",
+        params![id],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+    ).optional().map_err(|e| e.to_string())?;
+    let (title, description) = merge_registered_details(stored, &body.title, body.description.as_deref());
+    let registered = json!({ "title": body.title, "description": body.description });
     let mut workspace = body.settings;
     workspace["id"] = json!(id);
     workspace["key"] = json!(key);
     workspace["nativeId"] = json!(body.native_id);
     workspace["mode"] = json!(body.mode);
-    let metadata = json!({ "workspace": workspace });
-    tx.execute("INSERT INTO cowork_projects (id, user_id, title, description, metadata) VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT(id) DO UPDATE SET title = excluded.title, description = excluded.description, metadata = json_set(CASE WHEN json_valid(cowork_projects.metadata) THEN cowork_projects.metadata ELSE '{}' END, '$.workspace', json(json_extract(excluded.metadata, '$.workspace'))), updated_at = CURRENT_TIMESTAMP", params![id, user_id, body.title, body.description, metadata.to_string()]).map_err(|e| e.to_string())?;
+    let metadata = json!({ "workspace": workspace, "registered": registered });
+    tx.execute("INSERT INTO cowork_projects (id, user_id, title, description, metadata) VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT(id) DO UPDATE SET title = excluded.title, description = excluded.description, metadata = json_set(CASE WHEN json_valid(cowork_projects.metadata) THEN cowork_projects.metadata ELSE '{}' END, '$.workspace', json(json_extract(excluded.metadata, '$.workspace')), '$.registered', json(json_extract(excluded.metadata, '$.registered'))), updated_at = CURRENT_TIMESTAMP", params![id, user_id, title, description, metadata.to_string()]).map_err(|e| e.to_string())?;
     let (provider, model) = selection_model(&workspace["threadModel"]).unwrap_or_else(crate::default_model);
     let config = json!({ "internal": true, "projectWorkspace": workspace });
     tx.execute("INSERT INTO agents (id, user_id, name, type, provider, model, config, is_bot, enabled_modes) VALUES (?1, ?2, 'Project worker', 'project-worker', ?3, ?4, ?5, 0, '[\"chat\",\"cowork\",\"code\",\"design\"]') ON CONFLICT(id) DO UPDATE SET provider = excluded.provider, model = excluded.model, config = excluded.config", params![worker_id, user_id, provider, model, config.to_string()]).map_err(|e| e.to_string())?;
@@ -1013,16 +1045,37 @@ async fn get_workspace(State(state): State<Arc<AppState>>, Extension(user): Exte
 /// Projects hub can show each one's status page state without a call per project.
 async fn list_workspaces(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>) -> Response {
     let db = state.db.clone();
-    match tokio::task::spawn_blocking(move || -> rusqlite::Result<Vec<Value>> {
+    match tokio::task::spawn_blocking(move || -> rusqlite::Result<(Vec<Value>, Vec<Value>)> {
         let conn = db.connect()?;
-        let mut stmt = conn.prepare("SELECT id, metadata FROM cowork_projects WHERE user_id = ?1 AND json_extract(metadata, '$.workspace.key') IS NOT NULL")?;
-        let rows = stmt.query_map(params![user.user_id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
-        Ok(rows.filter_map(Result::ok).map(|(id, raw)| {
+        let mut stmt = conn.prepare("SELECT id, metadata, title, description, created_at, updated_at FROM cowork_projects WHERE user_id = ?1 AND json_extract(metadata, '$.workspace.key') IS NOT NULL")?;
+        let rows = stmt.query_map(params![user.user_id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, Option<String>>(3)?, r.get::<_, String>(4)?, r.get::<_, String>(5)?)))?;
+        let mut workspaces = Vec::new();
+        // A deleted workspace stays behind only so re-registering can't bring it
+        // back: browsers read these keys to drop their copy, nothing else sees it.
+        let mut deleted = Vec::new();
+        for (id, raw, title, description, created_at, updated_at) in rows.filter_map(Result::ok) {
             let meta = serde_json::from_str::<Value>(&raw).unwrap_or_default();
-            json!({ "projectId": id, "key": meta["workspace"]["key"], "status": meta.get("status").cloned().unwrap_or(Value::Null) })
-        }).collect())
+            if meta.get("workspaceDeleted").is_some() {
+                deleted.push(meta["workspace"]["key"].clone());
+                continue;
+            }
+            workspaces.push(json!({
+                "projectId": id,
+                "key": meta["workspace"]["key"],
+                "status": meta.get("status").cloned().unwrap_or(Value::Null),
+                "title": title,
+                "description": description,
+                "nativeId": meta["workspace"]["nativeId"],
+                "directory": meta["workspace"]["directory"],
+                "registeredTitle": meta["registered"]["title"],
+                "registeredDescription": meta["registered"]["description"],
+                "createdAt": created_at,
+                "updatedAt": updated_at,
+            }));
+        }
+        Ok((workspaces, deleted))
     }).await {
-        Ok(Ok(workspaces)) => Json(json!({ "workspaces": workspaces })).into_response(),
+        Ok(Ok((workspaces, deleted))) => Json(json!({ "workspaces": workspaces, "deleted": deleted })).into_response(),
         _ => err(StatusCode::INTERNAL_SERVER_ERROR, "could not list project workspaces"),
     }
 }
@@ -1082,6 +1135,8 @@ async fn list_messages(
 #[derive(Debug, Deserialize)]
 struct PostMessageBody {
     text: String,
+    #[serde(default)]
+    workdir: Option<String>,
 }
 
 async fn post_message(
@@ -1094,7 +1149,7 @@ async fn post_message(
         return err(StatusCode::BAD_REQUEST, "text is required");
     }
     let rt = GizziCoordinator { state: state.clone() };
-    match coordinate(&state.db, &rt, &user.user_id, &project_id, body.text.trim()).await {
+    match coordinate_in_folder(&state.db, &rt, &user.user_id, &project_id, body.text.trim(), body.workdir.as_deref()).await {
         Ok(outcome) => {
             if !outcome.start.is_empty() {
                 let state2 = state.clone();
@@ -1292,6 +1347,23 @@ mod tests {
         assert_eq!(team[0].id, first["workerId"].as_str().unwrap());
         let bot_projects = crate::thread_routes::bot_project_overview(&state.db, "u").unwrap();
         assert!(bot_projects.iter().all(|project| project["id"] != first["projectId"] && project["id"] != other_mode["projectId"]));
+    }
+
+    fn row_details(state: &Arc<AppState>, id: &str) -> (String, Option<String>) {
+        state.db.connect().unwrap().query_row("SELECT title, description FROM cowork_projects WHERE id = ?1", params![id], |r| Ok((r.get(0)?, r.get(1)?))).unwrap()
+    }
+
+    #[tokio::test]
+    async fn re_registering_keeps_an_edit_made_elsewhere_until_the_browser_changes_its_own_copy() {
+        let state = setup("workspace-edit").await;
+        let id = save_workspace(&state.db, "u", "code-native-1", workspace_body("code", "m")).unwrap()["projectId"].as_str().unwrap().to_string();
+        state.db.connect().unwrap().execute("UPDATE cowork_projects SET title = 'From the phone' WHERE id = ?1", params![id]).unwrap();
+        save_workspace(&state.db, "u", "code-native-1", workspace_body("code", "m")).unwrap();
+        assert_eq!(row_details(&state, &id).0, "From the phone");
+        let mut renamed = workspace_body("code", "m");
+        renamed.title = "From the browser".into();
+        save_workspace(&state.db, "u", "code-native-1", renamed).unwrap();
+        assert_eq!(row_details(&state, &id).0, "From the browser");
     }
 
     #[tokio::test]

@@ -16,6 +16,7 @@ struct AutomationTasksPhoneView: View {
     @StateObject private var store = AutomationStore()
     @ObservedObject private var cron = CronJobStore.shared
     @ObservedObject private var bots = BotModeStore.shared
+    @ObservedObject private var agentHub = AgentHubStore.shared
 
     @AppStorage("allternit.botRoutines.view") private var routinesViewRaw = RoutinesView.list.rawValue
     @State private var activeTab: TaskTab = .all
@@ -29,8 +30,9 @@ struct AutomationTasksPhoneView: View {
     @State private var selectedTask: AutomationTaskItem? = nil
     @State private var selectedRoutine: RoutineSelection? = nil
     @State private var isFilterPresented = false
-    @State private var isTypeChoicePresented = false
     @State private var newTask: NewTask? = nil
+    /// The agent whose heartbeats are open on the Agent Heartbeats tab.
+    @State private var selectedHeartbeatAgent: String? = nil
 
     /// A task being added: by hand, or from a calendar slot.
     private struct NewTask: Identifiable {
@@ -110,7 +112,7 @@ struct AutomationTasksPhoneView: View {
                 frequency: loop.scheduleType == "cron" ? "daily" : "continuous",
                 schedule: loop.scheduleExpression, createdAt: libraryParseDate(loop.createdAt),
                 agentId: loop.agentId, executorName: executor(loop.agentId), progress: nil, targetDate: nil,
-                goalId: loop.goalId, nextRun: nil, lastRun: nil
+                goalId: loop.goalId, nextRun: loop.nextRunAt, lastRun: loop.lastRunAt
             ))
         }
         for job in cron.jobs {
@@ -214,26 +216,18 @@ struct AutomationTasksPhoneView: View {
                 newLabel: "New task",
                 wide: .new
             ) {
-                Button { isTypeChoicePresented = true } label: { Label("Set up manually", systemImage: "plus") }
+                Button { newTask = NewTask(kind: activeKind ?? .routine) } label: { Label("Set up manually", systemImage: "plus") }
                 Button(action: startWithAssistant) { Label("Create with Assistant", systemImage: "cpu") }
             }
         }
         .sheet(isPresented: $isFilterPresented) {
             AutomationFilterSheet(activeTab: $activeTab, sortBy: $sortBy, routinesViewRaw: $routinesViewRaw)
         }
-        .confirmationDialog("New task", isPresented: $isTypeChoicePresented, titleVisibility: .visible) {
-            Button("Goal") { newTask = NewTask(kind: .goal) }
-            Button("Routine") { newTask = NewTask(kind: .routine) }
-            Button("Loop") { newTask = NewTask(kind: .loop) }
-            Button("Agent Heartbeat") { newTask = NewTask(kind: .heartbeat) }
-            Button("Cancel", role: .cancel) {}
-        }
         .sheet(item: $newTask, onDismiss: { Task { await loadAll() } }) { new in
-            if new.kind == .goal {
-                NewGoalSheet(store: store, targetDate: new.targetDate)
-            } else {
-                ScheduledTaskSheet(store: store, kind: new.kind, slotCron: new.cron)
-            }
+            AutomationWizardSheet(
+                store: store,
+                draft: AutomationTaskDraft(kind: new.kind, slotCron: new.cron, targetDate: new.targetDate)
+            )
         }
         .sheet(item: $selectedTask) { task in
             AutomationTaskDetailSheet(
@@ -241,7 +235,8 @@ struct AutomationTasksPhoneView: View {
                 isRunning: runningTaskId == task.id,
                 onToggle: { active in Task { await setActive(task, active) } },
                 onRunNow: { Task { await runNow(task) } },
-                onDelete: { Task { await delete(task) } }
+                onDelete: { Task { await delete(task) } },
+                edit: editContext(for: task)
             )
         }
         .sheet(item: $selectedRoutine) { picked in
@@ -333,8 +328,32 @@ struct AutomationTasksPhoneView: View {
             setActive: { task, active in Task { await setActive(task, active) } },
             delete: { task in Task { await delete(task) } },
             new: { cron, day in newTask = NewTask(kind: activeKind ?? .routine, cron: cron, targetDate: Self.ymd(day)) },
-            move: { task, cron in Task { await move(task, cron: cron) } }
+            move: { task, cron in Task { await move(task, cron: cron) } },
+            edit: { task in editContext(for: task) }
         )
+    }
+
+    /// What the task's Edit form starts from, read from its full record.
+    private func editContext(for task: AutomationTaskItem) -> AutomationTaskEditContext? {
+        let draft: AutomationTaskDraft?
+        switch task.type {
+        case .goal: draft = store.goals.first { $0.id == task.id }.map { AutomationTaskDraft(goal: $0) }
+        case .routine: draft = store.routines.first { $0.id == task.id }.map { AutomationTaskDraft(routine: $0) }
+        case .loop: draft = loops.first { $0.id == task.id }.map { AutomationTaskDraft(loop: $0) }
+        case .heartbeat: draft = cron.job(withId: task.id).map { AutomationTaskDraft(job: $0) }
+        }
+        return draft.map { draft in
+            AutomationTaskEditContext(draft: draft, store: store, onSaved: { Task { await loadAll() } })
+        }
+    }
+
+    /// Heartbeats no listed agent runs: the default model's, a bot's own chat
+    /// jobs, or a deleted agent's. The agent list can't reach these.
+    private var unassignedHeartbeats: [AutomationTaskItem] {
+        filteredTasks.filter { task in
+            guard let id = task.agentId, !id.isEmpty else { return true }
+            return agentHub.agent(withId: id) == nil
+        }
     }
 
     /// The tab's kind; nil on All, which mixes them.
@@ -388,22 +407,28 @@ struct AutomationTasksPhoneView: View {
         case (.calendar, _):
             AutomationTasksCalendar(tasks: filteredTasks, kind: activeKind, runningId: runningTaskId, actions: actions)
         case (.list, .heartbeat):
-            VStack(alignment: .leading, spacing: 20) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Label("Agent Heartbeat Tasks", systemImage: "clock")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundColor(Color("TextPrimary"))
-                    Text("Configure periodic tasks that agents execute automatically. Heartbeat tasks are stored in each agent's workspace and synced with the scheduler.")
-                        .font(.system(size: 13))
-                        .foregroundColor(Color("TextSecondary"))
-                        .fixedSize(horizontal: false, vertical: true)
+            if let id = selectedHeartbeatAgent, let agent = agentHub.agent(withId: id) {
+                HeartbeatSchedulerView(agent: agent, onClose: { selectedHeartbeatAgent = nil })
+            } else {
+                VStack(alignment: .leading, spacing: 20) {
+                    HeartbeatAgentPicker(query: searchQuery, onPick: { selectedHeartbeatAgent = $0.id })
+                    let unassigned = unassignedHeartbeats
+                    if !unassigned.isEmpty {
+                        Text("Not assigned to an agent")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(Color("TextSecondary"))
+                        LazyVStack(spacing: 20) {
+                            ForEach(unassigned, id: \.key) { task in
+                                AutomationTaskCard(
+                                    task: task,
+                                    isRunning: runningTaskId == task.id,
+                                    onOpen: { selectedTask = task },
+                                    onRunNow: { Task { await runNow(task) } }
+                                )
+                            }
+                        }
+                    }
                 }
-                .padding(.horizontal, 20)
-                .padding(.vertical, 16)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color("BgPanel")))
-                .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Color("BorderStrong"), lineWidth: 1))
-                taskCards
             }
         case (.list, .routine):
             routineList
@@ -788,7 +813,7 @@ struct AutomationTaskCard: View {
 
 // MARK: - Detail
 
-/// TaskDetailOverlay: what the task is and does, its switch, Run now and
+/// TaskDetailOverlay: what the task is and does, its switch, Edit, Run now and
 /// Delete.
 struct AutomationTaskDetailSheet: View {
     let task: AutomationTaskItem
@@ -796,13 +821,18 @@ struct AutomationTaskDetailSheet: View {
     let onToggle: (Bool) -> Void
     let onRunNow: () -> Void
     let onDelete: () -> Void
+    /// Nil when the task's full record hasn't loaded, so there's nothing to edit yet.
+    let edit: AutomationTaskEditContext?
 
     @Environment(\.dismiss) private var dismiss
     @State private var active: Bool
     @State private var confirmDelete = false
+    @State private var editDraft: AutomationTaskDraft? = nil
 
     init(task: AutomationTaskItem, isRunning: Bool, onToggle: @escaping (Bool) -> Void,
-         onRunNow: @escaping () -> Void, onDelete: @escaping () -> Void) {
+         onRunNow: @escaping () -> Void, onDelete: @escaping () -> Void,
+         edit: AutomationTaskEditContext? = nil) {
+        self.edit = edit
         self.task = task
         self.isRunning = isRunning
         self.onToggle = onToggle
@@ -837,9 +867,19 @@ struct AutomationTaskDetailSheet: View {
                     } else {
                         row("Schedule", task.schedule ?? "Manual")
                         row("Runs as", task.executorName)
+                        if let next = libraryParseDate(task.nextRun), task.isActive {
+                            row("Next run", next.formatted(.relative(presentation: .named)))
+                        }
+                        if let last = libraryParseDate(task.lastRun) {
+                            row("Last run", last.formatted(.relative(presentation: .named)))
+                        }
                     }
                 }
+                if task.type == .loop { LoopRunHistorySection(loopId: task.id) }
                 Section {
+                    if let edit {
+                        Button { editDraft = edit.draft } label: { Label("Edit", systemImage: "pencil") }
+                    }
                     if task.type != .goal {
                         Button(action: onRunNow) {
                             HStack {
@@ -862,6 +902,15 @@ struct AutomationTaskDetailSheet: View {
             .confirmationDialog("Delete \(task.name)?", isPresented: $confirmDelete, titleVisibility: .visible) {
                 Button("Delete", role: .destructive, action: onDelete)
             }
+            .sheet(item: $editDraft) { draft in
+                if let edit {
+                    // As on the web, a save closes the details too: its copy is now old.
+                    AutomationWizardSheet(store: edit.store, draft: draft, onSaved: {
+                        edit.onSaved()
+                        dismiss()
+                    })
+                }
+            }
         }
         .presentationDetents([.medium, .large])
     }
@@ -871,6 +920,82 @@ struct AutomationTaskDetailSheet: View {
             Text(title).foregroundColor(Color("TextPrimary"))
             Spacer()
             Text(value).foregroundColor(Color("TextSecondary")).lineLimit(1)
+        }
+    }
+}
+
+/// A loop's run history, read from `GET …/loops/:id/runs`.
+private struct LoopRunHistorySection: View {
+    let loopId: String
+    @State private var runs: [AutomationRunRecord] = []
+    @State private var isLoading = true
+    @State private var error: String? = nil
+
+    var body: some View {
+        Section("Run history") {
+            if isLoading && runs.isEmpty {
+                ProgressView()
+            } else if let error, runs.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(FriendlyErrorMessage.from(error))
+                        .font(.footnote)
+                        .foregroundColor(Theme.statusError)
+                    Button("Try again") { Task { await load() } }
+                }
+            } else if runs.isEmpty {
+                Text("No runs yet")
+                    .font(.system(size: 14))
+                    .foregroundColor(Color("TextSecondary"))
+            } else {
+                ForEach(runs.prefix(20)) { run in
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack {
+                            Circle().fill(RunStrip.color(run.status)).frame(width: 6, height: 6)
+                            Text(RunStrip.label(run.status))
+                            Spacer()
+                            if let started = libraryParseDate(run.startedAt ?? run.scheduledAt) {
+                                Text(started.formatted(.dateTime.month(.abbreviated).day().hour().minute()))
+                            }
+                        }
+                        .font(.system(size: 13))
+                        .foregroundColor(Color("TextSecondary"))
+                        if run.status == "running" {
+                            Button("Stop") { stop(run) }
+                                .font(.system(size: 13, weight: .medium))
+                                .frame(minHeight: 44)
+                        }
+                        if let detail = run.error ?? run.output, !detail.isEmpty {
+                            Text(detail)
+                                .font(.system(size: 12))
+                                .foregroundColor(run.error != nil ? Theme.statusError : Color("TextTertiary"))
+                                .lineLimit(3)
+                        }
+                    }
+                }
+            }
+        }
+        .task { await load() }
+    }
+
+    private func stop(_ run: AutomationRunRecord) {
+        Task {
+            do {
+                try await AutomationClient.shared.cancelLoopRun(loopId: loopId, runId: run.id)
+                await load()
+            } catch {
+                self.error = error.localizedDescription
+            }
+        }
+    }
+
+    private func load() async {
+        isLoading = true
+        defer { isLoading = false }
+        do {
+            runs = try await AutomationClient.shared.listLoopRuns(id: loopId)
+            error = nil
+        } catch {
+            self.error = error.localizedDescription
         }
     }
 }

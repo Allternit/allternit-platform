@@ -9,6 +9,8 @@ struct AutomationTaskDetailView: View {
     let job: CronJob
 
     @StateObject private var jobStore = CronJobStore.shared
+    @StateObject private var automationStore = AutomationStore()
+    @State private var editDraft: AutomationTaskDraft? = nil
     @Environment(\.dismiss) private var dismiss
 
     @State private var runs: [CronRun] = []
@@ -47,6 +49,9 @@ struct AutomationTaskDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
+                Button("Edit") { editDraft = AutomationTaskDraft(job: liveJob) }
+            }
+            ToolbarItem(placement: .topBarTrailing) {
                 Button(role: .destructive, action: { isDeleteConfirmPresented = true }) {
                     Image(systemName: "trash")
                         .font(.system(size: 15, weight: .medium))
@@ -54,6 +59,9 @@ struct AutomationTaskDetailView: View {
                 }
                 .accessibilityLabel("Delete task")
             }
+        }
+        .sheet(item: $editDraft) { draft in
+            AutomationWizardSheet(store: automationStore, draft: draft)
         }
         .alert("Delete this automation task?", isPresented: $isDeleteConfirmPresented) {
             Button("Delete", role: .destructive) { deleteJob() }

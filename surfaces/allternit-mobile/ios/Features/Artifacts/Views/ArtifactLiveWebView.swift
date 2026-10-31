@@ -85,6 +85,90 @@ final class EditorSaveHandle {
             continuation = nil
         }
     }
+
+    /// Closes the keyboard of an editor that is staying open out of sight.
+    func endEditing() {
+        webView?.endEditing(true)
+    }
+
+    // MARK: - The agent's pane_artifact requests
+
+    /// How long a request waits for the page to offer `allternitEditorAgent`.
+    /// A page older than the app never does, and the agent is told so.
+    private static let agentPageTimeout: TimeInterval = 20
+    /// Longer than the page's own limit on a tool (PANE_ARTIFACT_TIMEOUT_MS).
+    private static let agentCallTimeout: Duration = .seconds(130)
+
+    /// Runs one request on the open file through the web's own executors
+    /// (allternit-ai src/pages/app-editor-agent.ts). `payload` is the sync
+    /// event's JSON as it arrived. Every failure comes back as a result, so
+    /// the model hears it.
+    func runAgentRequest(payload: String, label: String?, agentName: String?) async -> PaneArtifactResult {
+        let deadline = Date().addingTimeInterval(Self.agentPageTimeout)
+        while true {
+            guard let webView else {
+                return .failed("The editor is closed. Ask the user to open it beside the chat, then try again.")
+            }
+            if let result = await callAgent(on: webView, payload: payload, label: label, agentName: agentName) {
+                return result
+            }
+            guard Date() < deadline else {
+                return .failed("This editor can't take agent changes yet. Say what you were going to change and ask the user to reopen the editor.")
+            }
+            try? await Task.sleep(for: .milliseconds(400))
+        }
+    }
+
+    /// nil when the page has no agent to call (yet). A request the page may
+    /// have started is never sent twice: any other failure is the answer.
+    private func callAgent(on webView: WKWebView, payload: String, label: String?, agentName: String?) async -> PaneArtifactResult? {
+        await withCheckedContinuation { continuation in
+            let reply = SingleAgentReply(continuation)
+            webView.callAsyncJavaScript(
+                """
+                const agent = window.allternitEditorAgent;
+                if (!agent) return null;
+                return JSON.stringify(await agent.run(JSON.parse(payload), { label, agentName }));
+                """,
+                arguments: [
+                    "payload": payload,
+                    "label": label ?? NSNull(),
+                    "agentName": agentName ?? NSNull(),
+                ],
+                in: nil,
+                in: .page
+            ) { result in
+                switch result {
+                case .success(let value):
+                    guard let json = value as? String else {
+                        reply.send(nil)
+                        return
+                    }
+                    if let decoded = try? JSONDecoder().decode(PaneArtifactResult.self, from: Data(json.utf8)) {
+                        reply.send(decoded)
+                    } else {
+                        reply.send(.failed("The editor's answer couldn't be read."))
+                    }
+                case .failure(let error):
+                    reply.send(.failed("The editor couldn't run that: \(error.localizedDescription)"))
+                }
+            }
+            Task { @MainActor in
+                try? await Task.sleep(for: Self.agentCallTimeout)
+                reply.send(.failed("The editor didn't finish in time. Read the file again before retrying."))
+            }
+        }
+    }
+
+    @MainActor
+    private final class SingleAgentReply {
+        private var continuation: CheckedContinuation<PaneArtifactResult?, Never>?
+        init(_ continuation: CheckedContinuation<PaneArtifactResult?, Never>) { self.continuation = continuation }
+        func send(_ value: PaneArtifactResult?) {
+            continuation?.resume(returning: value)
+            continuation = nil
+        }
+    }
 }
 
 struct ArtifactLiveWebView: View {
@@ -258,14 +342,15 @@ private struct ArtifactLiveSeed: Encodable {
 enum ArtifactWebRoute: Equatable {
     case window(id: String)
     case office(product: String, artifactId: String)
-    case design(projectId: String, title: String)
+    /// `fromProject`: opened from the Projects list, whose canvas may still be on another computer.
+    case design(projectId: String, title: String, fromProject: Bool = false)
 
     /// Identity for a pane that swaps pages.
     var paneKey: String {
         switch self {
         case .window(let id): return "window:\(id)"
         case .office(_, let artifactId): return "office:\(artifactId)"
-        case .design(let projectId, _): return "design:\(projectId)"
+        case .design(let projectId, _, _): return "design:\(projectId)"
         }
     }
 
@@ -282,9 +367,10 @@ enum ArtifactWebRoute: Equatable {
             path = sample ? "/embed/editor/a/\(escaped(id))" : "/a/\(escaped(id))/edit"
         case .office(let product, let artifactId):
             path = "\(sample ? "/embed" : "")/editor/office/\(escaped(product))/\(escaped(artifactId))"
-        case .design(let projectId, let title):
+        case .design(let projectId, let title, let fromProject):
             path = "\(sample ? "/embed" : "")/editor/design/\(escaped(projectId))"
             items.append(URLQueryItem(name: "title", value: title))
+            if fromProject { items.append(URLQueryItem(name: "source", value: "project")) }
         }
         var components = URLComponents(url: ArtifactLiveWebView.webOrigin, resolvingAgainstBaseURL: false)!
         components.path = path
@@ -374,6 +460,7 @@ private struct ArtifactLiveWebContainer: UIViewRepresentable {
         context.coordinator.editorHandler.onChat = onChat
         if context.coordinator.reloadToken != reloadToken {
             context.coordinator.reloadToken = reloadToken
+            context.coordinator.crashCount = 0
             context.coordinator.load(pageURL, into: webView)
         }
     }
@@ -616,6 +703,9 @@ private struct ArtifactLiveWebContainer: UIViewRepresentable {
         var onPhase: (ArtifactLiveWebView.Phase) -> Void
         var onDownload: (ArtifactLiveWebView.DownloadEvent) -> Void
         var reloadToken = 0
+        /// Page crashes since the last Retry; a page too big for the phone
+        /// would otherwise reload and crash forever.
+        var crashCount = 0
         private var pageURL: URL?
         /// Where each running WKDownload is being written.
         private var downloadDestinations: [ObjectIdentifier: URL] = [:]
@@ -814,7 +904,12 @@ private struct ArtifactLiveWebContainer: UIViewRepresentable {
         }
 
         func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
-            if let pageURL { load(pageURL, into: webView) }
+            crashCount += 1
+            if crashCount >= 3 {
+                onPhase(.failed("This is too large to open on this phone right now. Your saved work is safe; try again, or open it on Desktop."))
+            } else if let pageURL {
+                load(pageURL, into: webView)
+            }
         }
 
         private func fail(_ error: Error) {

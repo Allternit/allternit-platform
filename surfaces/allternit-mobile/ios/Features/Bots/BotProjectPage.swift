@@ -373,6 +373,7 @@ struct BotProjectPage: View {
                 ProjectCardNote("Project memory will show here after a few chats.")
             }
             ProjectContextFilesCard(projectId: projectId)
+            ProjectFolderCard(projectId: projectId, title: title)
         }
     }
 
@@ -467,7 +468,7 @@ struct BotProjectPage: View {
                 startThread(bot)
             }
         case .statusPage:
-            ProjectStatusSheet(projectId: projectId)
+            ProjectStatusSheet(projectId: projectId) { await reloadLists() }
         case .artifact(let item):
             V2ArtifactView(artifactId: item.id, initialTitle: item.title) {
                 artifacts.removeAll { $0.id == item.id }
@@ -565,7 +566,9 @@ struct BotProjectPage: View {
         Task {
             defer { sending = false }
             do {
-                try await BotModeClient.shared.sendToCoordinator(projectId: projectId, text: text)
+                // The folder goes on the request, never into the visible message.
+                try await BotModeClient.shared.sendToCoordinator(projectId: projectId, text: text,
+                                                                 workdir: ProjectFolderStore.shared.folder(for: projectId)?.path)
                 await refresh()
             } catch {
                 messages.removeAll { $0.id == pending.id }
@@ -597,6 +600,8 @@ struct BotProjectPage: View {
             defer { startingBotId = nil }
             do {
                 let sessionId = try await store.newThreadSession(for: bot)
+                // The chat opens before the thread list knows it's in this project.
+                ProjectFolderStore.shared.remember(sessionId: sessionId, projectId: projectId)
                 // As on the web, the chat still opens if the server thread can't be made.
                 try? await BotProjectClient.shared.adoptThread(botId: bot.id, title: "New thread", sessionId: sessionId, projectId: projectId)
                 navigator.open(.chat(botId: bot.id, sessionId: sessionId))

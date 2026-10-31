@@ -149,6 +149,7 @@ struct ProjectDetailView: View {
                             addButtonsRow
                             instructionsSection
                             filesSection
+                            ProjectFolderCard(projectId: project.id, title: liveProject.title) { saveFolder($0) }
                         }
                     }
                     .padding(.horizontal, 20)
@@ -247,7 +248,7 @@ struct ProjectDetailView: View {
         case .memory:
             ProjectMemorySheet(sessionIds: memorySessionIds)
         case .status:
-            ProjectStatusSheet(projectId: coordinatorId ?? project.id)
+            ProjectStatusSheet(projectId: coordinatorId ?? project.id) { projectStore.fetchProjectsIfNeeded(force: true) }
         }
     }
 
@@ -506,10 +507,27 @@ struct ProjectDetailView: View {
         if let coordinatorId { return coordinatorId }
         let id = try await BotProjectClient.shared.registerWorkspace(
             key: workspaceKey, nativeId: project.id, mode: "chat",
-            title: liveProject.title, description: liveProject.description
+            title: liveProject.title, description: liveProject.description,
+            directory: ProjectFolderStore.shared.folder(for: project.id)?.path
         )
         coordinatorId = id
         return id
+    }
+
+    /// The folder reaches the project's worker sessions through the workspace
+    /// settings. Not registered yet: `ensureCoordinator` sends it on first use.
+    private func saveFolder(_ path: String?) {
+        guard coordinatorId != nil else { return }
+        Task {
+            do {
+                try await BotProjectClient.shared.setWorkspaceDirectory(
+                    key: workspaceKey, nativeId: project.id, mode: "chat",
+                    title: liveProject.title, description: liveProject.description, directory: path
+                )
+            } catch {
+                actionError = "Couldn't save the folder: \(FriendlyErrorMessage.from(error.localizedDescription))"
+            }
+        }
     }
 
     private func refreshCoordinator() async {

@@ -67,8 +67,21 @@ final class CronJobStore: ObservableObject {
     /// Creates an agent job and prepends it locally, then refreshes so
     /// server-computed fields (`nextRunAt`, normalized schedule) land.
     @discardableResult
-    func createAgentJob(name: String, prompt: String, schedule: String) async throws -> CronJob {
-        let job = try await client.createAgentJob(name: name, prompt: prompt, schedule: schedule)
+    func createAgentJob(
+        name: String,
+        prompt: String,
+        schedule: String,
+        description: String? = nil,
+        agentId: String? = nil,
+        model: String? = nil,
+        status: String? = nil,
+        maxRetries: Int? = nil,
+        timeoutSeconds: Int? = nil
+    ) async throws -> CronJob {
+        let job = try await client.createAgentJob(
+            name: name, prompt: prompt, schedule: schedule, description: description,
+            agentId: agentId, model: model, status: status, maxRetries: maxRetries, timeoutSeconds: timeoutSeconds
+        )
         jobs.insert(job, at: 0)
         await refresh()
         return job
@@ -97,6 +110,12 @@ final class CronJobStore: ObservableObject {
     /// Saves a new schedule (drag on the calendar), then resyncs `nextRunAt`.
     func updateSchedule(id: String, schedule: String) async throws {
         try await client.updateSchedule(id: id, schedule: schedule)
+        await refresh()
+    }
+
+    /// Saves the Edit form's changes, then resyncs `nextRunAt`.
+    func updateJob(id: String, _ request: UpdateCronJobRequest) async throws {
+        try await client.updateJob(id: id, request)
         await refresh()
     }
 
