@@ -65,6 +65,56 @@ pub fn tool_hash(tool: &Value) -> String {
     hex::encode(Sha256::digest(canon.to_string().as_bytes()))
 }
 
+/// A tool id as people read it: `list_recent_files` → "List recent files".
+pub fn tool_label(name: &str) -> String {
+    let mut out = String::new();
+    let mut prev_lower = false;
+    for c in name.chars() {
+        if matches!(c, '_' | '-' | '.' | '/') {
+            out.push(' ');
+            prev_lower = false;
+        } else if c.is_uppercase() && prev_lower {
+            out.push(' ');
+            out.extend(c.to_lowercase());
+            prev_lower = false;
+        } else {
+            out.push(c);
+            prev_lower = c.is_lowercase();
+        }
+    }
+    let out = out.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut chars = out.chars();
+    chars.next().map_or(String::new(), |f| f.to_uppercase().chain(chars).collect())
+}
+
+/// The connector behind a server id, for naming it and showing its logo.
+pub fn server_connector(conn: &Connection, owner: &str, server_id: &str) -> Option<Value> {
+    conn.query_row("SELECT name, name_id, url FROM mcp_connectors WHERE id = ?1 AND user_id = ?2", params![server_id, owner], |r| {
+        Ok(json!({ "name": r.get::<_, String>(0)?, "id": r.get::<_, String>(1)?, "url": r.get::<_, String>(2)? }))
+    })
+    .ok()
+}
+
+/// What to call a server in a sentence. A bare id never reaches the screen: local servers
+/// report a name as their id, and a removed connector has only a UUID left.
+pub fn server_label(connector: Option<&Value>, server_id: &str) -> String {
+    match connector.and_then(|c| c["name"].as_str()).filter(|n| !n.trim().is_empty()) {
+        Some(name) => name.to_string(),
+        None if uuid::Uuid::parse_str(server_id).is_ok() || server_id.trim().is_empty() => "A connected app".to_string(),
+        None => server_id.to_string(),
+    }
+}
+
+/// The inbox line for one held tool.
+pub fn tool_held_summary(server: &str, tool: &str, reason: &str) -> String {
+    let tool = tool_label(tool);
+    if reason == "new" {
+        format!("{server} added a new tool, {tool}. It stays off until you approve it.")
+    } else {
+        format!("{server} changed its {tool} tool. It stays off until you approve it.")
+    }
+}
+
 /// Split `tools` into the ones the owner may use and the ones held (`new` or `changed`).
 /// A server with no pins yet is pinned as listed (nothing held). Each held tool opens
 /// its own `tool_changed` item (`source_id` = `server/tool`) with an Approve retry.
@@ -91,6 +141,8 @@ pub fn check_pins(conn: &Connection, owner: &str, server_id: &str, tools: &[Valu
             }
         }
     }
+    let connector = if held.is_empty() { None } else { server_connector(conn, owner, server_id) };
+    let server = server_label(connector.as_ref(), server_id);
     for h in &held {
         let name = h["tool"].as_str().unwrap_or_default();
         crate::netops::alerts::open(
@@ -101,7 +153,7 @@ pub fn check_pins(conn: &Connection, owner: &str, server_id: &str, tools: &[Valu
                 severity: "warn".into(),
                 source: "mcp".into(),
                 source_id: format!("{server_id}/{name}"),
-                summary: format!("{server_id} changed its tool \"{name}\". It stays off until you approve it."),
+                summary: tool_held_summary(&server, name, h["reason"].as_str().unwrap_or("changed")),
                 detail: json!({ "serverId": server_id, "tool": name, "reason": h["reason"], "hash": h["hash"], "oldDescription": h["oldDescription"], "newDescription": h["newDescription"] }),
                 retry: Some(json!({ "pinApprove": { "serverId": server_id, "tool": name, "hash": h["hash"] } })),
                 ..Default::default()

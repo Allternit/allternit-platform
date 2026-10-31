@@ -334,6 +334,15 @@ pub fn collect(conn: &Connection, user_id: &str, unanswered_min: i64) -> rusqlit
             let d: Value = detail.as_deref().and_then(|d| serde_json::from_str(d).ok()).unwrap_or(Value::Null);
             it["tool"] = d["tool"].clone();
             it["serverId"] = d["serverId"].clone();
+            // Named when read, so items opened before the connector had a name still read right.
+            let server_id = d["serverId"].as_str().unwrap_or_default();
+            let connector = crate::mcp_server_routes::server_connector(conn, user_id, server_id);
+            it["summary"] = json!(crate::mcp_server_routes::tool_held_summary(
+                &crate::mcp_server_routes::server_label(connector.as_ref(), server_id),
+                d["tool"].as_str().unwrap_or_default(),
+                d["reason"].as_str().unwrap_or("changed"),
+            ));
+            it["connector"] = connector.unwrap_or(Value::Null);
             let cut = |v: &Value| v.as_str().map(|s| s.chars().take(200).collect::<String>());
             it["change"] = json!({ "reason": d["reason"], "old": cut(&d["oldDescription"]), "new": cut(&d["newDescription"]) });
         }
