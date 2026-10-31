@@ -137,6 +137,9 @@ enum AgentChatEvent: Decodable, Sendable {
         let messageId: String?
         let status: String?
         let metadata: Metadata?
+        /// What the run used (v1_routes.rs `usage_from_message_info`); absent
+        /// when the runtime reported nothing.
+        let usage: CodeRunUsage?
     }
 
     /// Normalized artifact payload (mirrors the `ArtifactUIPart` the web

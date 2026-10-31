@@ -27,9 +27,8 @@ struct MessageRecord: Identifiable, Equatable, Sendable {
     }
 
     /// Client-side-measured performance readout for a completed assistant
-    /// reply, rendered as an inline footer (PocketPal-inspired). The backend
-    /// stream (v1_routes.rs's `finish` frame) carries no token/usage
-    /// telemetry at all, so this is wall-clock timing plus an approximate
+    /// reply, rendered as an inline footer (PocketPal-inspired). This is
+    /// wall-clock timing plus an approximate
     /// token count (chars/4, the common rule-of-thumb for English text) —
     /// not real inference-engine stats the way a local llama.cpp run would
     /// have. `~` prefixes in the UI make the approximation explicit rather
@@ -69,6 +68,9 @@ struct MessageRecord: Identifiable, Equatable, Sendable {
     /// and nil for messages loaded from history (no live timing to derive
     /// it from).
     var perfStats: PerfStats? = nil
+    /// What the run reported in its finish frame, for the Code prompt's
+    /// usage line. nil for messages loaded from history.
+    var runUsage: CodeRunUsage? = nil
     /// Local-only record of a finished voice-mode session (Phase 7b),
     /// rendered as the "Voice chat ended · Ns" card (VoiceSummaryCardView).
     /// Never sent to or loaded from the backend — the row is a feed-local
@@ -570,6 +572,9 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
             ArtifactLibraryStore.shared.record(record, sessionId: currentSessionId)
 
         case .finish(let payload):
+            if let usage = payload.usage {
+                updateMessage(messageId) { $0.runUsage = usage }
+            }
             guard payload.status == "error" else { break }
             flushPendingDeltas()
             let raw = payload.metadata?.error ?? "The generation failed."
