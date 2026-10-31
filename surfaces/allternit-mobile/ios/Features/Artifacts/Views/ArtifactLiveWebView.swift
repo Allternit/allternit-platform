@@ -354,6 +354,13 @@ private struct ArtifactLiveWebContainer: UIViewRepresentable {
       var handlers = window.webkit && window.webkit.messageHandlers;
       var clerk = handlers && handlers.\(clerkHandlerName);
       if (!clerk) return;
+      \(appApiLine)
+      // Tapping into an editor must not zoom the page: iOS does that for small
+      // text unless the viewport caps the scale.
+      document.addEventListener('DOMContentLoaded', function () {
+        var v = document.querySelector('meta[name=viewport]');
+        if (v) v.setAttribute('content', 'width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover');
+      });
       window.allternit = window.allternit || {};
       if (!window.allternit.auth) {
         window.allternit.auth = {
@@ -364,6 +371,14 @@ private struct ArtifactLiveWebContainer: UIViewRepresentable {
       }
     })();
     """
+
+    /// Sends the page's API calls where the app's own go (fetch-interceptor's
+    /// `appApiOrigin`). Not in sample mode, which answers them on the page.
+    private static var appApiLine: String {
+        if SampleWorkspace.isEnabled { return "" }
+        let base = AppConfig.apiBaseURL.absoluteString.replacingOccurrences(of: "/api/v1", with: "")
+        return "window.allternitAppApi = \(ArtifactHTML.jsString(base));"
+    }
 
     /// Runs before the web bundle: the Desktop-style Clerk getter, the
     /// answer to the route's public fetch, and the in-app chrome tweaks.

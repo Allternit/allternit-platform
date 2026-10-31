@@ -37,6 +37,7 @@ struct ArtifactStudioView: View {
                     .allowsHitTesting(!showingPane)
                 if showingPane {
                     pane
+                        .ignoresSafeArea(edges: .bottom)
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
             }
@@ -64,27 +65,34 @@ struct ArtifactStudioView: View {
 
             VStack(alignment: .leading, spacing: 1) {
                 Text(studio.title)
-                    .font(.system(.headline, design: .serif))
+                    .font(.system(size: 15, weight: .semibold, design: .serif))
                     .foregroundColor(Color("TextPrimary"))
                     .lineLimit(1)
+                    .minimumScaleFactor(0.85)
                 Text(studio.kind.label)
                     .font(.caption)
                     .foregroundColor(Color("TextSecondary"))
             }
-            Spacer()
+            Spacer(minLength: 4)
             Picker("View", selection: Binding(
                 get: { showingPane },
                 set: { value in withAnimation(.spring(response: 0.32, dampingFraction: 0.9)) { showingPane = value } }
             )) {
                 Text("Chat").tag(false)
-                Text(results.isEmpty ? studio.kind.noun : "\(studio.kind.noun) · \(results.count)").tag(true)
+                Text(paneLabel).tag(true)
             }
             .pickerStyle(.segmented)
-            .frame(maxWidth: 200)
+            .fixedSize()
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
         .background(Color("BgPrimary"))
+    }
+
+    /// Short enough not to truncate beside the title ("Spreadsheet" did).
+    private var paneLabel: String {
+        let name = studio.editorRoute != nil ? "Edit" : studio.kind.noun
+        return results.isEmpty ? name : "\(name) · \(results.count)"
     }
 
     @ViewBuilder
