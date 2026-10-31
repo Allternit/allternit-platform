@@ -294,8 +294,21 @@ pub(crate) fn build(conn: &Connection, user_id: &str, bot: Option<&str>) -> Valu
                 && dedup.insert(l.to_string())
         })
         .collect();
+    // Threads open by session, and the account-wide map needs the owning bot.
+    let thread_meta: HashMap<String, (String, Option<String>)> = rows(
+        conn,
+        "SELECT id, bot_id, current_session_id FROM bot_threads WHERE user_id = ?1 AND (?2 IS NULL OR bot_id = ?2)",
+        &[&user_id, &bot],
+        |r| Ok((r.get::<_, String>(0)?, (r.get::<_, String>(1)?, r.get::<_, Option<String>>(2)?))),
+    )
+    .into_iter()
+    .collect();
     json!({
-        "items": items.iter().map(|i| json!({"id": i.id, "kind": i.kind, "label": i.label, "uses": i.uses, "last_at": i.last_at, "ref": i.r#ref})).collect::<Vec<_>>(),
+        "items": items.iter().map(|i| {
+            let meta = if i.kind == "thread" { thread_meta.get(&i.r#ref) } else { None };
+            json!({"id": i.id, "kind": i.kind, "label": i.label, "uses": i.uses, "last_at": i.last_at, "ref": i.r#ref,
+                   "bot": meta.map(|m| m.0.clone()), "session": meta.and_then(|m| m.1.clone())})
+        }).collect::<Vec<_>>(),
         "links": links,
         "truncated": truncated,
     })

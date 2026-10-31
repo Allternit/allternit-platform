@@ -749,9 +749,21 @@ struct AgentChatContext {
 /// (agents are not required to have persona files); other read failures are
 /// logged and skipped so they never fail the chat request. MEMORY.md is
 /// deliberately never read this way — too large for every send.
+/// The web serializer stores bot fields as JSON frontmatter at the top of
+/// SOUL.md and AGENTS.md (`---\n{...}\n---\n`). That is data for the editors,
+/// not instructions, so it never goes in the prompt.
+fn strip_json_frontmatter(text: String) -> String {
+    if text.starts_with("---\n{") {
+        if let Some(end) = text[4..].find("\n---\n") {
+            return text[4 + end + 5..].to_string();
+        }
+    }
+    text
+}
+
 fn read_workspace_md(dir: &std::path::Path, name: &str) -> Option<String> {
     match std::fs::read_to_string(dir.join(name)) {
-        Ok(text) => Some(text),
+        Ok(text) => Some(strip_json_frontmatter(text)),
         Err(e) => {
             if e.kind() != std::io::ErrorKind::NotFound {
                 warn!(
@@ -2744,6 +2756,15 @@ async fn body_to_bytes(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn prompt_files_lose_the_web_json_frontmatter_only() {
+        use super::strip_json_frontmatter as strip;
+        assert_eq!(strip("---\n{\n  \"a\": 1\n}\n---\n# SOUL\nHi".into()), "# SOUL\nHi");
+        assert_eq!(strip("# SOUL\nHi\n---\nmore".into()), "# SOUL\nHi\n---\nmore");
+        assert_eq!(strip("---\ntitle: x\n---\nbody".into()), "---\ntitle: x\n---\nbody");
+        assert_eq!(strip("---\n{unclosed".into()), "---\n{unclosed");
+    }
+
 
     use serde_json::json;
 
