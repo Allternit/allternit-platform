@@ -368,6 +368,10 @@ final class PaneMirror: ObservableObject {
     private var lastScreen: String?
     private var task: Task<Void, Never>?
     private let client = FactoryPaneClient()
+    /// Keystrokes typed while a send is in flight; they go out together in
+    /// the next one, so keys can't overtake each other on the way to the pane.
+    private var pendingInput = ""
+    private var isSendingInput = false
     let agentId: String
 
     init(agentId: String) {
@@ -417,12 +421,25 @@ final class PaneMirror: ObservableObject {
     }
 
     func send(_ data: String) {
+        pendingInput += data
+        flushInput()
+    }
+
+    /// Sends what was typed, in order, one send at a time.
+    private func flushInput() {
+        guard !isSendingInput, !pendingInput.isEmpty else { return }
+        let data = pendingInput
+        pendingInput = ""
+        isSendingInput = true
         let agentId = self.agentId
         let client = self.client
-        Task {
+        Task { [weak self] in
             for batch in FactoryPaneClient.paneInput(from: data) {
                 try? await client.sendInput(agentId: agentId, text: batch.text, keys: batch.keys)
             }
+            guard let self else { return }
+            self.isSendingInput = false
+            self.flushInput()
         }
     }
 

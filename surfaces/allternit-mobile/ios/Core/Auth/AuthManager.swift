@@ -124,10 +124,12 @@ final class AuthManager: ObservableObject {
     }
 
     /// Clerk session token for the API layer (the SDK caches and refreshes it).
+    /// Don't skip that cache: this runs on every API call, so a terminal on a
+    /// relayed computer waited on Clerk for every batch of keystrokes.
     func getToken() async throws -> String? {
         if SampleWorkspace.isEnabled { return "sample-workspace" }
         guard isClerkConfigured else { return nil }
-        let token = try await Clerk.shared.session?.getToken(.init(skipCache: true))
+        let token = try await Clerk.shared.session?.getToken()
         #if DEBUG
         if let token {
             let parts = token.split(separator: ".")
