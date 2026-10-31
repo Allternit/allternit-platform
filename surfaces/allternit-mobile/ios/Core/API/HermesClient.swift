@@ -147,6 +147,13 @@ final class HermesClient: @unchecked Sendable {
         return .saved(hash: echoed ?? Self.sha256Hex(content))
     }
 
+    /// Forgets one account fact (a map item whose ref is `fact:<id>`).
+    func forgetFact(id: String) async throws {
+        let request = try await client.authorizedRequest(path: "memory/v2/facts/\(Self.escape(id))", method: "DELETE")
+        let (data, response) = try await client.send(request)
+        try client.validate(response, data: data)
+    }
+
     static func sha256Hex(_ text: String) -> String {
         SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
     }

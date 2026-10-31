@@ -441,7 +441,11 @@ struct ImpactMapView: View {
             } else {
                 var id = item.ref ?? item.id
                 if id.hasPrefix("memory:") { id = String(id.dropFirst("memory:".count)) }
-                try await BotModeClient.shared.forgetMemory(id: id)
+                if id.hasPrefix("fact:") {
+                    try await HermesClient.shared.forgetFact(id: String(id.dropFirst("fact:".count)))
+                } else {
+                    try await BotModeClient.shared.forgetMemory(id: id)
+                }
             }
             focusId = nil
             await load()

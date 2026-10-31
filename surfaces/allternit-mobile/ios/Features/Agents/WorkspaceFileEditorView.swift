@@ -42,6 +42,22 @@ struct WorkspaceFileEditorView: View {
 
     private struct ConflictCopy { let hash: String?; let content: String }
 
+    /// The web's JSON frontmatter at the top of SOUL.md: kept on save, never shown.
+    @State private var soulFrontmatter = ""
+    private var draftKey: String { "soul-draft.\(agentId)" }
+
+    /// On the Soul page, stores the file's frontmatter and returns its readable text.
+    private func visibleSoul(_ raw: String) -> String {
+        guard initialDescription != nil, raw.hasPrefix("---\n{"),
+              let close = raw.range(of: "\n---\n", range: raw.index(raw.startIndex, offsetBy: 4)..<raw.endIndex)
+        else {
+            soulFrontmatter = ""
+            return raw
+        }
+        soulFrontmatter = String(raw[..<close.upperBound])
+        return String(raw[close.upperBound...])
+    }
+
     // Edit-with-chat state.
     @State private var instruction = ""
     @State private var isAssisting = false
@@ -186,7 +202,15 @@ struct WorkspaceFileEditorView: View {
             assistTask?.cancel()
             // The Soul page saves when you leave it.
             if initialDescription != nil, isDirty, !isSaving, conflict == nil, !isLoading, loadError == nil {
-                Task { @MainActor in _ = await performSave(force: false) }
+                let unsaved = content
+                let key = draftKey
+                Task { @MainActor in
+                    // No screen is left to ask on, so an edit that can't save
+                    // is kept and offered the next time the Soul page opens.
+                    if !(await performSave(force: false)) {
+                        UserDefaults.standard.set(unsaved, forKey: key)
+                    }
+                }
             }
         }
         .alert("Changed elsewhere", isPresented: Binding(
@@ -204,7 +228,15 @@ struct WorkspaceFileEditorView: View {
                 // Take the current revision as the base, then save over it.
                 loadedHash = conflict?.hash
                 conflict = nil
-                Task { @MainActor in _ = await performSave(force: false) }
+                let unsaved = content
+                let key = draftKey
+                Task { @MainActor in
+                    // No screen is left to ask on, so an edit that can't save
+                    // is kept and offered the next time the Soul page opens.
+                    if !(await performSave(force: false)) {
+                        UserDefaults.standard.set(unsaved, forKey: key)
+                    }
+                }
             }
             Button("Cancel", role: .cancel) { conflict = nil }
         } message: {
@@ -386,9 +418,15 @@ struct WorkspaceFileEditorView: View {
         loadError = nil
         do {
             let file = try await HermesClient.shared.readFile(agentId: agentId, path: file.path)
-            content = file.content
-            loadedContent = file.content
+            let visible = visibleSoul(file.content)
+            content = visible
+            loadedContent = visible
             loadedHash = file.hash
+            if initialDescription != nil,
+               let draft = UserDefaults.standard.string(forKey: draftKey), draft != visible {
+                content = draft
+                actionError = "Restored an edit that couldn't save. Tap Save to keep it."
+            }
         } catch is CancellationError {
             // View went away mid-flight — keep current state.
         } catch APIError.httpError(let status, _) where status == 404 && initialDescription != nil {
@@ -425,15 +463,16 @@ struct WorkspaceFileEditorView: View {
             }
             if content != loadedContent {
                 let result = try await HermesClient.shared.writeFile(
-                    agentId: agentId, path: file.path, content: content,
+                    agentId: agentId, path: file.path, content: soulFrontmatter + content,
                     expectedHash: force ? nil : loadedHash
                 )
                 switch result {
                 case .saved(let hash):
                     loadedContent = content
                     loadedHash = hash
+                    if initialDescription != nil { UserDefaults.standard.removeObject(forKey: draftKey) }
                 case .conflict(let hash, let current):
-                    conflict = ConflictCopy(hash: hash, content: current)
+                    conflict = ConflictCopy(hash: hash, content: visibleSoul(current))
                     return false
                 }
             }
