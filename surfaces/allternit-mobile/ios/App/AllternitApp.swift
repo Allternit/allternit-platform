@@ -81,7 +81,9 @@ struct AllternitApp: App {
                     EmptyView()
                 }
             }
+            .onAppear { AppLockStore.shared.appeared() }
             .onChange(of: scenePhase) { _, newPhase in
+                AppLockStore.shared.sceneChanged(newPhase)
                 if newPhase == .active {
                     authManager.refreshAuthState()
                     PushNotificationManager.shared.clearBadge()
