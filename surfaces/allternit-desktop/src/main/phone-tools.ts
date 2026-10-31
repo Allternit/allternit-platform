@@ -30,7 +30,7 @@ export interface AdbCall {
 }
 
 export interface ApprovalRequest {
-  kind: 'sms' | 'dial' | 'sms_read';
+  kind: 'sms' | 'dial' | 'sms_read' | 'device_write';
   serial: string;
   /** Human-readable, shown verbatim to the user. */
   summary: string;
@@ -165,8 +165,10 @@ export type ToolErrorCode =
   | 'not_found'
   // iPhone with the Allternit app (app:…): no taps on native apps without the Bluetooth board
   | 'not_supported'
-  // phone.web.*: the Allternit app is not open on the iPhone
-  | 'app_not_open';
+  // phone.web.* / phone.calendar.* ...: the Allternit app is not open on the iPhone
+  | 'app_not_open'
+  // phone.calendar/reminders/contacts: the person has not turned that type on, or iOS access is denied
+  | 'device_access_off';
 
 export type ToolResult =
   | { ok: true; [key: string]: unknown }
@@ -414,6 +416,73 @@ export const PHONE_TOOLS = [
       type: 'object',
       properties: { serial: appSerialProp, ms: { type: 'integer', minimum: 0, maximum: 10000 } },
       required: ['ms'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'phone.calendar.list',
+    description: 'iPhone with the Allternit app only: list calendar events between two times (Device Access > Calendar must be on in the app, and the app must be open on the phone). Returns events [{id, title, start, end, allDay, location?, calendar}].',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        serial: appSerialProp,
+        from: { type: 'string', maxLength: 40, description: 'ISO 8601 start, e.g. 2026-11-01T00:00:00Z.' },
+        to: { type: 'string', maxLength: 40, description: 'ISO 8601 end, at most 62 days after from.' },
+        limit: { type: 'integer', minimum: 1, maximum: 200 },
+      },
+      required: ['from', 'to'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'phone.calendar.create',
+    description: 'iPhone with the Allternit app only: add one event to the default calendar. The person approves every event on the Desktop screen first. Device Access > Calendar must be on and the app open on the phone.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        serial: appSerialProp,
+        title: { type: 'string', maxLength: 200 },
+        start: { type: 'string', maxLength: 40, description: 'ISO 8601.' },
+        end: { type: 'string', maxLength: 40, description: 'ISO 8601, after start. Optional: defaults to one hour.' },
+        allDay: { type: 'boolean' },
+        location: { type: 'string', maxLength: 200 },
+        notes: { type: 'string', maxLength: 2000 },
+      },
+      required: ['title', 'start'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'phone.reminders.list',
+    description: 'iPhone with the Allternit app only: list reminders (Device Access > Reminders must be on and the app open). Returns reminders [{id, title, due?, completed, list}].',
+    inputSchema: {
+      type: 'object',
+      properties: { serial: appSerialProp, completed: { type: 'boolean', description: 'true = completed only, false or omitted = open only.' }, limit: { type: 'integer', minimum: 1, maximum: 200 } },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'phone.reminders.create',
+    description: 'iPhone with the Allternit app only: add one reminder to the default list. The person approves every reminder on the Desktop screen first. Device Access > Reminders must be on and the app open.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        serial: appSerialProp,
+        title: { type: 'string', maxLength: 200 },
+        due: { type: 'string', maxLength: 40, description: 'ISO 8601, optional.' },
+        notes: { type: 'string', maxLength: 2000 },
+      },
+      required: ['title'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'phone.contacts.search',
+    description: 'iPhone with the Allternit app only: search contacts by name (read only; Device Access > Contacts must be on and the app open). Returns contacts [{id, name, phones[], emails[]}].',
+    inputSchema: {
+      type: 'object',
+      properties: { serial: appSerialProp, query: { type: 'string', minLength: 1, maxLength: 100 }, limit: { type: 'integer', minimum: 1, maximum: 50 } },
+      required: ['query'],
       additionalProperties: false,
     },
   },
@@ -771,8 +840,8 @@ export class PhoneToolRunner {
     if (typeof serial !== 'string') return serial;
     // iPhones with the Allternit app: the screen and the app's browser, nothing that taps.
     if (apps?.has(serial)) return apps.call(name, serial, a);
-    if (name.startsWith('phone.web.') || name === 'phone.screen.request') {
-      return fail('not_supported', `${name} works on an iPhone connected with the Allternit app (serial "app:…"). On this phone use phone.screenshot, phone.open_app, phone.tap and phone.type.`);
+    if (name.startsWith('phone.web.') || name === 'phone.screen.request' || name.startsWith('phone.calendar.') || name.startsWith('phone.reminders.') || name.startsWith('phone.contacts.')) {
+      return fail('not_supported', `${name} works on an iPhone connected with the Allternit app (serial "app:…"); calendar, reminders and contacts are not available on other phones. On this phone use phone.screenshot, phone.open_app, phone.tap and phone.type.`);
     }
     // Every lane: phone.task runs on the bot's brain in allternit-api; skills replay there too.
     if (name === 'phone.task') return this.task(serial, a, usb, links);
