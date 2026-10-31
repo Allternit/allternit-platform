@@ -30,7 +30,7 @@ export interface AppRosterBot {
 }
 
 export interface AppRoster {
-  caller: { id: string; name: string; threadId?: string | null; projectId?: string | null }
+  caller: { id: string; name: string; threadId?: string | null; projectId?: string | null; mainChat?: boolean }
   bots: AppRosterBot[]
   /** One line per teammate, ready for the model. */
   text: string
@@ -262,7 +262,47 @@ export async function isAppBotSession(sessionID: string): Promise<boolean> {
   return ok
 }
 
+const mainChatCache = new Map<string, { at: number; ok: boolean }>()
+
+/** A bot's main chat (or a person's chat running as their main bot), not a task thread. */
+export async function isAppBotMainChat(sessionID: string): Promise<boolean> {
+  if (!sessionID) return false
+  const hit = mainChatCache.get(sessionID)
+  if (hit && Date.now() - hit.at < TTL_MS) return hit.ok
+  const roster = await fetchAppRoster(sessionID, 2_000).catch(() => null)
+  const ok = roster?.caller?.mainChat === true
+  mainChatCache.set(sessionID, { at: Date.now(), ok })
+  if (mainChatCache.size > 500) mainChatCache.delete(mainChatCache.keys().next().value!)
+  return ok
+}
+
+/* Sending work to another project. Server: allternit-api project_send_tools.rs. */
+
+export interface AppProjectSummary {
+  id: string
+  title: string
+  description?: string | null
+  mode: string
+}
+
+export async function listAppProjects(sessionID: string): Promise<AppProjectSummary[]> {
+  const r = await post<{ projects: AppProjectSummary[] }>("/bot-routing/project/list", { sessionId: sessionID }, 10_000)
+  return r.projects
+}
+
+export interface AppProjectSendResult {
+  project: { id: string; title: string }
+  message: { text?: string }
+  threads: string[]
+}
+
+/** Planning can take a model turn, so this waits longer than the other routes. */
+export async function sendToAppProject(sessionID: string, projectId: string, message: string): Promise<AppProjectSendResult> {
+  return post("/bot-routing/project/send", { sessionId: sessionID, projectId, message }, 180_000)
+}
+
 /** Tests only. */
 export function resetAppBotSessionCache() {
   cache.clear()
+  mainChatCache.clear()
 }

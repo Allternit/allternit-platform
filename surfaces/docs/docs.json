@@ -81,6 +81,7 @@
               "guides/agency-kernel",
               "guides/bot-threads",
               "guides/worker-bots",
+              "guides/send-work-to-projects",
               "guides/bot-routines",
               "guides/usage-dashboard",
               "guides/phone-sms-runtime",

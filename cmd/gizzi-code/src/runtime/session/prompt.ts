@@ -80,7 +80,8 @@ import { SuggestTaskTool } from "@/runtime/tools/builtins/suggest-task"
 import { GrantTaskPermissionTool } from "@/runtime/tools/builtins/grant-task-permission"
 import { THREAD_TOOL_IDS } from "@/runtime/tools/builtins/thread-tools"
 import { WORKER_BOT_TOOL_IDS } from "@/runtime/tools/builtins/worker-bot-tools"
-import { isAppBotSession } from "@/runtime/bots/app-bot-routing"
+import { isAppBotMainChat, isAppBotSession } from "@/runtime/bots/app-bot-routing"
+import { PROJECT_SEND_TOOL_IDS } from "@/runtime/tools/builtins/project-send"
 import { SessionHandoff } from "@/runtime/session/handoff"
 import { SessionPause } from "@/runtime/session/pause"
 import { SessionLimit } from "@/runtime/session/limit"
@@ -1933,6 +1934,12 @@ const message = await createUserMessage(input)
     if (WORKER_BOT_TOOL_IDS.some((id) => id in tools)) {
       const allowed = await isAppBotSession(input.session.id).catch(() => false)
       if (!allowed) for (const id of WORKER_BOT_TOOL_IDS) delete tools[id]
+    }
+
+    // project_list / project_send: only a bot's main chat works across projects.
+    if (PROJECT_SEND_TOOL_IDS.some((id) => id in tools)) {
+      const allowed = await isAppBotMainChat(input.session.id).catch(() => false)
+      if (!allowed) for (const id of PROJECT_SEND_TOOL_IDS) delete tools[id]
     }
 
     return tools

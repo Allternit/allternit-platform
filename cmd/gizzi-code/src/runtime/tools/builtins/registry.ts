@@ -71,6 +71,7 @@ import { GetAgentEmailStatusTool, SendAgentEmailTool } from "@/runtime/tools/bui
 import { MessageAgentTool } from "@/runtime/tools/builtins/message-agent"
 import { SuggestTaskTool } from "@/runtime/tools/builtins/suggest-task"
 import { BotCreateTool, VendorConnectTool } from "@/runtime/tools/builtins/worker-bot-tools"
+import { ProjectListTool, ProjectSendTool } from "@/runtime/tools/builtins/project-send"
 import { GrantTaskPermissionTool } from "@/runtime/tools/builtins/grant-task-permission"
 import { ThreadCloseTool, ThreadSearchTool, ThreadUpdateTool } from "@/runtime/tools/builtins/thread-tools"
 import { MdxGraphTool } from "@/runtime/tools/builtins/mdx-graph"
@@ -217,6 +218,9 @@ export namespace ToolRegistry {
       // Worker bots + vendor connect: gated like suggest_task (app bot chats only).
       BotCreateTool,
       VendorConnectTool,
+      // Send work to another project: gated to a bot's main chat; every send asks the person.
+      ProjectListTool,
+      ProjectSendTool,
       ...(Flag.GIZZI_ENABLE_LSP_TOOL ? [LspTool] : []),
       ...(config.experimental?.batch_tool === true ? [BatchTool] : []),
       ...(Flag.GIZZI_CLIENT === "cli" ? [PlanExitTool, PlanEnterTool] : []),

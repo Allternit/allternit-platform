@@ -113,8 +113,11 @@ export namespace PermissionNext {
    * `mcp_app` gates a model-initiated call to an MCP App tool whose install
    * permission mode (allternit-api) requires the user's confirmation. The mode
    * is the user's own choice, so no session mode or earlier approval waives it.
+   *
+   * `project_send` gates a bot's main chat sending work into another project:
+   * the person approves every send, with the project and full message on the card.
    */
-  export const ALWAYS_ASK = new Set(["subscription", "mcp_app"])
+  export const ALWAYS_ASK = new Set(["subscription", "mcp_app", "project_send"])
 
   /**
    * Classes a one-task grant ("Allow for this task") never covers: money,

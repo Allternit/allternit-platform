@@ -1112,6 +1112,44 @@ async fn post_message(
     }
 }
 
+/// A bot's main chat sends `text` into a project (`project_send`, already
+/// approved by the person). The same path as the project page: the project's
+/// coordinator plans it with the project's team, instructions and settings.
+/// When the threads it started finish, a report lands in the asking chat.
+pub async fn send_from_bot(state: &Arc<AppState>, user_id: &str, project_id: &str, title: &str, text: &str, report_session: &str) -> Result<Value, String> {
+    let rt = GizziCoordinator { state: state.clone() };
+    let outcome = coordinate(&state.db, &rt, user_id, project_id, text).await?;
+    let reply = outcome.reply;
+    // A fan-out lists every thread, queued ones too; a routed follow-up has only its start entry.
+    let mut threads: Vec<String> = reply["payload"]["threads"].as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect()).unwrap_or_default();
+    if threads.is_empty() {
+        threads = outcome.start.iter().map(|(id, _)| id.clone()).collect();
+    }
+    if !outcome.start.is_empty() {
+        let (state2, uid, pid, title, session, ids) = (state.clone(), user_id.to_string(), project_id.to_string(), title.to_string(), report_session.to_string(), threads.clone());
+        let start = outcome.start;
+        tokio::spawn(async move {
+            let rt = GizziCoordinator { state: state2.clone() };
+            start_threads(&state2.db, &rt, &uid, &pid, start).await;
+            let report = send_report(&state2.db, &title, &ids);
+            if let Err(e) = crate::agent_session_routes::seed_session_message(&state2.db, &session, &report).await {
+                warn!(project = %pid, error = %e, "could not post the project report to the asking chat");
+            }
+        });
+    }
+    Ok(json!({ "message": reply, "threads": threads }))
+}
+
+/// The report the asking chat gets: one line per thread the send started.
+pub fn send_report(db: &DbHandle, title: &str, thread_ids: &[String]) -> String {
+    let lines: Vec<String> = thread_ids
+        .iter()
+        .filter_map(|id| thread_routes::load_view(db, id).ok().flatten())
+        .map(|t| format!("- {} ({}): {}", t.title, t.status, t.summary.as_deref().or(t.status_line.as_deref()).unwrap_or("no report")))
+        .collect();
+    format!("Report from the project \"{title}\":\n{}", lines.join("\n"))
+}
+
 /// Why a start request was refused.
 #[derive(Debug, PartialEq)]
 pub enum StartRefusal {
