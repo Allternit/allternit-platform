@@ -148,6 +148,23 @@ struct BotsDrawerRail: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            Button {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                onOpen(.office)
+            } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: "building.2").font(.system(size: 14))
+                    Text("Office").font(.system(size: 14, weight: .medium))
+                }
+                .foregroundColor(Color("TextPrimary"))
+                .padding(.horizontal, 12)
+                .frame(height: 36)
+                .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color("FillNeutral")))
+                .frame(minHeight: 44)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Office: your bots at their desks")
             Spacer(minLength: 0)
             // One ⋯: Create bot · Add a vendor bot · Marketplace · Replay intro (BotRailOverflow).
             Menu {

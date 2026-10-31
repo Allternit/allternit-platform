@@ -34,6 +34,8 @@ enum BotRoute: Hashable {
     case projectThread(BotThread)
     /// A Factory node (factoryNodePane).
     case projectNode(dagId: String, nodeId: String, title: String)
+    /// The bots' floor (the web's Office view).
+    case office
 }
 
 /// Bot Mode's navigation path, shared with every pushed screen so async
@@ -102,6 +104,10 @@ struct BotsModeRootView: View {
                                     .offset(x: -4, y: 4)
                                     .allowsHitTesting(false)
                             }
+                        }
+                        // Office: the bots at their desks (the web's Office view).
+                        PhoneIconButton(systemName: "building.2", label: "Office") {
+                            navigator.open(.office)
                         }
                         // Connections: the apps your bots can use.
                         PhoneIconButton(systemName: "square.grid.2x2", label: "Connections") {
@@ -253,6 +259,8 @@ struct BotRouteDestination: View {
             BotProjectPage(project: project)
         case .groups:
             GroupsListView()
+        case .office:
+            OfficeFloorView()
         case .group(let id):
             GroupChatView(groupId: id)
         case .computers:

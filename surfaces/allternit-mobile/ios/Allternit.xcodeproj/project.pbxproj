@@ -469,6 +469,7 @@
 		E93B1D499FE846A5A5F2563B /* AllternitWidgetsBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 130D14F5DE715D27DFD14195 /* AllternitWidgetsBundle.swift */; };
 		E949F4453779DBD9E7181285 /* SherpaOnnx.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F1773539996DD0C8EB6E726 /* SherpaOnnx.swift */; };
 		EA32C2163D2CF4E1EC5CC82A /* ArtifactCreateTileArt.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD6A3E6D3C429D37B634CA69 /* ArtifactCreateTileArt.swift */; };
+		EB364C73092EBB4B584E3A1A /* OfficeFloorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F6F22A05812B613CE705297C /* OfficeFloorView.swift */; };
 		EB48BBB9F3A19ACBDB9E533D /* EnvironmentStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = EB5FC664C55551D4AFE4F68F /* EnvironmentStore.swift */; };
 		EB73BA8CE6020C46DB078486 /* ArtifactPageWebView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D63FEA2F5A4F240A19DFEA95 /* ArtifactPageWebView.swift */; };
 		EBD76249148F2229E7E2D842 /* RuntimeModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD557129AC5FE54BDF7BE1BC /* RuntimeModel.swift */; };
@@ -1035,6 +1036,7 @@
 		F5E7E848E0B73554E572A561 /* BotZipImport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotZipImport.swift; sourceTree = "<group>"; };
 		F63B7493C9D1FC2AB9560D6D /* ACINavStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ACINavStore.swift; sourceTree = "<group>"; };
 		F6D2C7796AA7864163BD882B /* CreateAutomationTaskSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CreateAutomationTaskSheet.swift; sourceTree = "<group>"; };
+		F6F22A05812B613CE705297C /* OfficeFloorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfficeFloorView.swift; sourceTree = "<group>"; };
 		F7AEC5CF2FBE0926C09D8DDF /* ACIAgentRunView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ACIAgentRunView.swift; sourceTree = "<group>"; };
 		F7DD389A8BFF1E5E0EF97F81 /* ProjectsClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectsClient.swift; sourceTree = "<group>"; };
 		F8759BCF9C57565126D0ACC7 /* Workspace.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Workspace.swift; sourceTree = "<group>"; };
@@ -1918,6 +1920,7 @@
 				B2E118251BDF66D3E3C38FA1 /* OfficeDocumentView.swift */,
 				8856BE3693E21D020C63562C /* OfficeEditorWebView.swift */,
 				8CE87062DF914F64F131FF85 /* PDFSignView.swift */,
+				D3FE2BA642EC4E1BBFC5A4A3 /* Floor */,
 			);
 			path = Office;
 			sourceTree = "<group>";
@@ -2073,6 +2076,14 @@
 				68B1051892B0960972533D49 /* AllternitWidgets.appex */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		D3FE2BA642EC4E1BBFC5A4A3 /* Floor */ = {
+			isa = PBXGroup;
+			children = (
+				F6F22A05812B613CE705297C /* OfficeFloorView.swift */,
+			);
+			path = Floor;
 			sourceTree = "<group>";
 		};
 		D41AB13CDC0674F4D30172FB /* Connect */ = {
@@ -2759,6 +2770,7 @@
 				BC7DEB6D53F748E38511FC96 /* OfficeDocumentView.swift in Sources */,
 				E6FE4F02E45912D513313DBC /* OfficeDocumentsView.swift in Sources */,
 				52B60D2A9673F14847C00C7E /* OfficeEditorWebView.swift in Sources */,
+				EB364C73092EBB4B584E3A1A /* OfficeFloorView.swift in Sources */,
 				F488AECF2D5DCE640148634E /* OnboardingStore.swift in Sources */,
 				145F8258CCC59437E3BBD4CA /* OnboardingView.swift in Sources */,
 				86B74F65A86145316E5D21B1 /* OrganizationAccessView.swift in Sources */,
