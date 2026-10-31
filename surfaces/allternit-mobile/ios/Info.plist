@@ -97,6 +97,8 @@
 	<true/>
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<false/>
+	<key>NSFaceIDUsageDescription</key>
+	<string>Allternit uses Face ID to unlock the app when you turn on the app lock in Settings.</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsLocalNetworking</key>

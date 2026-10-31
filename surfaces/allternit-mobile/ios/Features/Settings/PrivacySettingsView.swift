@@ -5,6 +5,7 @@ import SwiftUI
 /// Settings list; same backend calls.)
 struct PrivacySettingsView: View {
     @ObservedObject private var settings = SettingsStore.shared
+    @ObservedObject private var appLock = AppLockStore.shared
     @State private var safariURL: IdentifiableURL? = nil
     @State private var isArchiveConfirmPresented = false
     @State private var isDeleteConfirmPresented = false
@@ -24,6 +25,27 @@ struct PrivacySettingsView: View {
 
     var body: some View {
         List {
+            Section {
+                Toggle(isOn: Binding(
+                    get: { appLock.isEnabled },
+                    set: { on in Task { await appLock.setEnabled(on) } }
+                )) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Lock with Face ID")
+                            .font(.subheadline)
+                            .foregroundColor(Color("TextPrimary"))
+                        Text("Ask for Face ID or your passcode when you open Allternit.")
+                            .font(.caption)
+                            .foregroundColor(Color("TextSecondary"))
+                    }
+                }
+                .tint(Color("AccentPrimary"))
+            } footer: {
+                if let message = appLock.message {
+                    Text(message).foregroundColor(Theme.statusError)
+                }
+            }
+
             Section {
                 Toggle(isOn: $settings.improveModel) {
                     VStack(alignment: .leading, spacing: 2) {

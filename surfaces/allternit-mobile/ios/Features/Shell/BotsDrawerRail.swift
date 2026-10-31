@@ -28,6 +28,7 @@ struct BotsDrawerRail: View {
     @State private var railError: String?
 
     private static let maxPromoted = 3
+    private static let maxNested = 3
 
     private var bots: [AgentRecord] { store.bots }
     private var mainBot: AgentRecord? { bots.first(where: \.isMainBot) }
@@ -422,7 +423,12 @@ struct BotsDrawerRail: View {
                     }
                     .buttonStyle(.plain)
                 } else {
-                    ForEach(listBots) { botRow($0) }
+                    ForEach(listBots) { bot in
+                        VStack(spacing: 0) {
+                            botRow(bot)
+                            nestedThreads(bot)
+                        }
+                    }
                 }
             }
         }
@@ -474,6 +480,65 @@ struct BotsDrawerRail: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(bot.botDisplayName + (waiting ? ", needs you" : working ? ", working" : ""))
+    }
+
+    /// A bot's latest threads under its row: title, a Working or Needs you
+    /// state, and "N more" opening the bot's full thread list.
+    @ViewBuilder
+    private func nestedThreads(_ bot: AgentRecord) -> some View {
+        let main = store.canonicalChatIds[bot.id]
+        let open = store.threads(for: bot.id).filter {
+            $0.group != "resolved" && !$0.isMainChat && (main == nil || $0.currentSessionId != main) && $0.archived != true
+        }
+        let shown = Array(open.prefix(Self.maxNested))
+        if !shown.isEmpty {
+            VStack(spacing: 0) {
+                ForEach(shown) { thread in
+                    Button { openNested(thread) } label: {
+                        HStack(spacing: 8) {
+                            Rectangle().fill(Color("BorderSubtle")).frame(width: 1)
+                            Text(thread.title)
+                                .font(.system(size: 13))
+                                .foregroundColor(Color("TextSecondary"))
+                                .lineLimit(1)
+                            Spacer(minLength: 4)
+                            if thread.group == "waiting" {
+                                Text("Needs you").font(.system(size: 11, weight: .medium)).foregroundColor(Theme.statusWarning)
+                            } else if thread.group == "working" {
+                                Text("Working").font(.system(size: 11, weight: .medium)).foregroundColor(Theme.statusSuccess)
+                            }
+                        }
+                        .padding(.leading, 38)
+                        .padding(.trailing, 8)
+                        .frame(minHeight: 44)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("\(thread.title), thread of \(bot.botDisplayName)"
+                        + (thread.group == "working" ? ", working" : thread.group == "waiting" ? ", needs you" : ""))
+                }
+                if open.count > shown.count {
+                    Button { onOpen(.threads(botId: bot.id)) } label: {
+                        Text("\(open.count - shown.count) more")
+                            .font(.system(size: 12.5, weight: .medium))
+                            .foregroundColor(Color("TextTertiary"))
+                            .padding(.leading, 38)
+                            .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("\(open.count - shown.count) more threads of \(bot.botDisplayName)")
+                }
+            }
+        }
+    }
+
+    private func openNested(_ thread: BotThread) {
+        if let sessionId = thread.currentSessionId {
+            onOpen(.chat(botId: thread.botId, sessionId: sessionId))
+        } else {
+            onOpen(.projectThread(thread))
+        }
     }
 
     /// Group chats sit at the bottom, above the footer; about three rows show.

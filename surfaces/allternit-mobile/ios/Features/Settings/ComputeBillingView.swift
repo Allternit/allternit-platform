@@ -48,7 +48,7 @@ struct ComputeBillingView: View {
                 Text("Usage")
             }
 
-            if storefront.allowsPurchaseLinks {
+            if storefront.allowsPurchaseLinks && title != "Usage" {
                 Section {
                     PayLinkRows()
                 } footer: {
