@@ -1,0 +1,41 @@
+---
+title: Device Access
+description: "Let your bots read and add calendar events and reminders, and search contacts, on your iPhone. Each type is off until you turn it on, and bots reach it only while the Allternit app is open."
+---
+
+Device Access lets your bots use three things on your iPhone: **Calendar**, **Reminders** and **Contacts**. It does not include Health. Each one is off until you turn it on, and you can turn it off at any time.
+
+## Turn it on
+
+1. In the Allternit app on your iPhone, open **Settings → Device Access**.
+2. Switch on the types you want. The first time, iOS asks for permission. Allow full access for Calendar and Reminders.
+3. Each type shows what iOS says: allowed, not asked yet, denied or blocked. If you denied it, tap **Open Settings** and allow it for Allternit, then switch it on here.
+
+A type reaches a bot only when both the switch is on and iOS allows it. If you turn a permission off in the iPhone Settings app, the switch turns off too. Unpairing the iPhone turns every type off.
+
+## What bots can do
+
+| Tool | What it does | Needs approval |
+| --- | --- | --- |
+| `phone.calendar.list` | List events between two times (up to 62 days) | No |
+| `phone.calendar.create` | Add one event to your default calendar | Yes |
+| `phone.reminders.list` | List open or completed reminders | No |
+| `phone.reminders.create` | Add one reminder to your default list | Yes |
+| `phone.contacts.search` | Search contacts by name (names, numbers, emails; read only) | No |
+
+Adding an event or a reminder always shows what will be added on your computer in Allternit Desktop, and nothing is added unless you tap **Allow**.
+
+## When a bot can't reach your iPhone
+
+The bot reaches your iPhone through the same private connection as the screen and the app's browser. That connection is open **only while the Allternit app is open on the iPhone**. This is an iOS limit: a backgrounded app is suspended and can't answer.
+
+- If the app is in the background or closed, the bot gets "open the Allternit app on the iPhone" straight away. It doesn't wait or retry in the background.
+- If a type is off, the bot is told you haven't turned it on and to ask you to switch it on in **Settings → Device Access**.
+- If iOS access is denied, the bot is told to ask you to allow it in the iPhone Settings app.
+- Only the iPhone's owner can reach it: a bot can use only an iPhone paired to its own account.
+
+## For developers
+
+The tools are defined in `surfaces/allternit-desktop/src/main/phone-tools.ts` and handled in `phone-app-store.ts`. They call `POST /api/v1/phones/app/:phoneId/rpc` with `device.calendar.list`, `device.calendar.create`, `device.reminders.list`, `device.reminders.create` or `device.contacts.search`. That route is Desktop-only and looks the phone up by account and phone id.
+
+The app reports which types are on in its `state` frame as `deviceAccess` (`calendar`, `reminders`, `contacts`, each true only when the switch is on and iOS allows it). The node refuses a `device.*` call for a type that isn't true with `device_access_off`, and the app checks again, answering `device_access_off` or `permission_denied`. Writes go through the Desktop approval dialog before they are sent. The app side is `Core/Device/` and `Features/Settings/DeviceAccessSettingsView.swift` in `surfaces/allternit-mobile/ios`.
