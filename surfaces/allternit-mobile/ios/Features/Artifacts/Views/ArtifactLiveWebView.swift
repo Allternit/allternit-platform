@@ -46,12 +46,54 @@ import WebKit
 /// artifact, or the Docs/Sheets/Slides and Design editors of a studio session.
 /// Those pages have their own toolbar, so they call back to close the view,
 /// and their "ask the chat" buttons call back with the text.
+/// Lets the screen around an editor save it before the web view goes away; a
+/// WKWebView being torn down gives the page no chance to.
+@MainActor
+final class EditorSaveHandle {
+    weak var webView: WKWebView?
+
+    /// False when a change didn't reach the record. A page without the call
+    /// (still loading, or a viewer) has nothing to save.
+    func save() async -> Bool {
+        guard let webView else { return true }
+        return await withCheckedContinuation { continuation in
+            let reply = SingleReply(continuation)
+            webView.callAsyncJavaScript(
+                "return window.allternitEditorFlush ? await window.allternitEditorFlush() : true;",
+                in: nil,
+                in: .page
+            ) { result in
+                if case .success(let value) = result {
+                    reply.send(value as? Bool ?? false)
+                } else {
+                    reply.send(false)
+                }
+            }
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(20))
+                reply.send(false)
+            }
+        }
+    }
+
+    @MainActor
+    private final class SingleReply {
+        private var continuation: CheckedContinuation<Bool, Never>?
+        init(_ continuation: CheckedContinuation<Bool, Never>) { self.continuation = continuation }
+        func send(_ value: Bool) {
+            continuation?.resume(returning: value)
+            continuation = nil
+        }
+    }
+}
+
 struct ArtifactLiveWebView: View {
     /// The viewer's record; nil when a `route` opens an editor.
     var artifact: ArtifactV2? = nil
     var route: ArtifactWebRoute? = nil
     var onClose: (() -> Void)? = nil
     var onChat: ((String) -> Void)? = nil
+    var saveHandle: EditorSaveHandle? = nil
     @Environment(\.colorScheme) private var colorScheme
 
     enum Phase: Equatable {
@@ -89,7 +131,7 @@ struct ArtifactLiveWebView: View {
 
     var body: some View {
         ZStack {
-            ArtifactLiveWebContainer(artifact: artifact, route: route, dark: colorScheme == .dark, onClose: onClose, onChat: onChat, reloadToken: reloadToken, onPhase: { next in
+            ArtifactLiveWebContainer(artifact: artifact, route: route, dark: colorScheme == .dark, onClose: onClose, onChat: onChat, saveHandle: saveHandle, reloadToken: reloadToken, onPhase: { next in
                 phase = next
             }, onDownload: { event in
                 switch event {
@@ -257,6 +299,7 @@ private struct ArtifactLiveWebContainer: UIViewRepresentable {
     let dark: Bool
     let onClose: (() -> Void)?
     let onChat: ((String) -> Void)?
+    let saveHandle: EditorSaveHandle?
     let reloadToken: Int
     let onPhase: (ArtifactLiveWebView.Phase) -> Void
     let onDownload: (ArtifactLiveWebView.DownloadEvent) -> Void
@@ -318,6 +361,7 @@ private struct ArtifactLiveWebContainer: UIViewRepresentable {
         webView.isOpaque = false
         webView.backgroundColor = .clear
         webView.scrollView.contentInsetAdjustmentBehavior = .never
+        saveHandle?.webView = webView
         context.coordinator.reloadToken = reloadToken
         context.coordinator.load(pageURL, into: webView)
         return webView
