@@ -18,6 +18,7 @@ struct BotPageView: View {
     @EnvironmentObject private var navigator: BotNavigator
     @State private var routinesOn: Int? = nil
     @State private var channelNames: [String]? = nil
+    @StateObject private var summary = BotSummaryModel()
 
     /// The bot's own colour (given, or read from its art).
     private var accent: Color? {
@@ -28,6 +29,7 @@ struct BotPageView: View {
         ScrollView {
             VStack(spacing: 16) {
                 banner
+                BotSummaryTiles(bot: bot, model: summary)
                 rows
             }
             .padding(.bottom, 32)
@@ -39,7 +41,9 @@ struct BotPageView: View {
         .navigationBarTitleDisplayMode(.inline)
         .task {
             desktop.fetchStatusIfNeeded(botId: bot.id)
-            await loadCounts()
+            async let counts: Void = loadCounts()
+            async let tiles: Void = summary.load(botId: bot.id)
+            _ = await (counts, tiles)
         }
     }
 
@@ -95,6 +99,9 @@ struct BotPageView: View {
         let working = store.workingCount(for: bot.id)
         let waiting = store.waitingCount(for: bot.id)
         return VStack(spacing: 0) {
+            pageRow("Model", icon: "cpu", value: modelLabel) {
+                navigator.open(.model(bot.id))
+            }
             pageRow("Threads", icon: "bubble.left.and.bubble.right", value: "\(store.openThreadCount(for: bot.id)) open") {
                 if let onOpenThreads { onOpenThreads() } else { navigator.open(.botHome(bot.id, .threads)) }
             }
@@ -124,6 +131,13 @@ struct BotPageView: View {
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Color("BorderSubtle")))
         .padding(.horizontal, 14)
+    }
+
+    /// The summary's model, else the bot's own.
+    private var modelLabel: String? {
+        let candidates = [summary.summary?.model, bot.model].compactMap { $0 }
+            .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+        return candidates.first.flatMap { $0.split(separator: "/").last.map(String.init) }
     }
 
     /// web phoneComputerLabel: Running · Starting · Idle.
@@ -307,6 +321,8 @@ struct BotMemoryView: View {
     @State private var error: String? = nil
     @State private var draft = ""
     @State private var search = ""
+    @State private var summary: BotSummary? = nil
+    @EnvironmentObject private var navigator: BotNavigator
 
     private var filtered: [BotMemoryItem] {
         let q = search.trimmingCharacters(in: .whitespaces)
@@ -316,6 +332,19 @@ struct BotMemoryView: View {
 
     var body: some View {
         List {
+            // Memory & Learning: the map first, then stored memory, then the list.
+            Section {
+                ImpactMapView(
+                    botId: bot.id,
+                    openAction: { BotMapOpen.action(bot: bot, navigator: navigator, item: $0) },
+                    onChanged: { Task { await load() } }
+                )
+                .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+                .listRowBackground(Color.clear)
+            }
+            if summary != nil {
+                Section("Stored memory") { StoredMemorySizes(summary: summary) }
+            }
             Section("Teach \(bot.botDisplayName)") {
                 HStack {
                     TextField("Something to remember", text: $draft, axis: .vertical)
@@ -350,7 +379,7 @@ struct BotMemoryView: View {
             }
         }
         .searchable(text: $search)
-        .navigationTitle("Memory")
+        .navigationTitle("Memory & Learning")
         .refreshable { await load() }
         .task { await load() }
     }
@@ -358,6 +387,7 @@ struct BotMemoryView: View {
     private func load() async {
         isLoading = true
         defer { isLoading = false }
+        summary = try? await HermesClient.shared.summary(botId: bot.id)
         do {
             memories = try await BotModeClient.shared.listMemories(botId: bot.id)
             error = nil

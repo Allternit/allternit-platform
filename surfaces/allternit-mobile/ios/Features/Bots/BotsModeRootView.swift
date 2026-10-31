@@ -18,6 +18,12 @@ enum BotRoute: Hashable {
     case routines(String)
     case memory(String)
     case channels(String)
+    /// Hermes parity: the pages the bot page tiles open.
+    case soul(String)
+    case skills(String)
+    case usage(String)
+    /// The bot page's Model row.
+    case model(String)
     /// The bot's phone: its number, address and channel conversations.
     case phone(String)
     case stage(String)
@@ -282,6 +288,14 @@ struct BotRouteDestination: View {
             withBot(botId) { BotMemoryView(bot: $0) }
         case .channels(let botId):
             withBot(botId) { BotChannelsView(bot: $0) }
+        case .soul(let botId):
+            withBot(botId) { BotSoulPage(bot: $0) }
+        case .skills(let botId):
+            withBot(botId) { BotSkillsPage(bot: $0) }
+        case .usage(let botId):
+            withBot(botId) { BotUsagePage(bot: $0) }
+        case .model(let botId):
+            withBot(botId) { AgentDetailView(initialAgent: $0) }
         case .phone(let botId):
             withBot(botId) { BotPhoneView(bot: $0) }
         case .stage(let botId):

@@ -391,6 +391,11 @@ struct WorkspaceFileEditorView: View {
             loadedHash = file.hash
         } catch is CancellationError {
             // View went away mid-flight — keep current state.
+        } catch APIError.httpError(let status, _) where status == 404 && initialDescription != nil {
+            // No SOUL.md yet: start an empty one (saved with no hash check).
+            content = ""
+            loadedContent = ""
+            loadedHash = nil
         } catch {
             loadError = error.localizedDescription
         }
