@@ -52,6 +52,12 @@ targets:
     settings:
       base:
         INFOPLIST_FILE: Info.plist
+        # Device Access purpose strings live in Info.plist (NSCalendarsFullAccessUsageDescription,
+        # NSRemindersFullAccessUsageDescription, NSContactsUsageDescription); mirrored here so a
+        # generated plist keeps them.
+        INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription: "Allternit lets your bots read your calendar and add events, only after you turn on Device Access. Each new event needs your approval."
+        INFOPLIST_KEY_NSRemindersFullAccessUsageDescription: "Allternit lets your bots read your reminders and add new ones, only after you turn on Device Access. Each new reminder needs your approval."
+        INFOPLIST_KEY_NSContactsUsageDescription: "Allternit lets your bots search your contacts by name (read only), only after you turn on Device Access."
         PRODUCT_BUNDLE_IDENTIFIER: com.allternit.mobile
         PRODUCT_NAME: Allternit
         SWIFT_VERSION: "6.0"

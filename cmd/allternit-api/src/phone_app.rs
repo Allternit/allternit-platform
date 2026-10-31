@@ -39,6 +39,12 @@
 //! * `POST /api/v1/phones/app/:phoneId/rpc` `{method, params}` → 200
 //!   `{"result"}` or 200 `{"error":{"code","message"}}` (the app's error), 409
 //!   `{"error":"app_not_open"}`, 504 `{"error":"app_timeout"}`.
+//!   `device.calendar.*`, `device.reminders.*`, `device.contacts.search` (Device
+//!   Access) are refused here with `{"error":{"code":"device_access_off"}}` unless
+//!   the app's last `state` frame (`deviceAccess:{calendar,reminders,contacts}`)
+//!   has that type on; the app checks again and answers `permission_denied` when
+//!   iOS access is denied. The call key is `(account, phone)`: another account's
+//!   phone is never reachable.
 //! * `POST /api/v1/phones/app/pair/:phoneId/decision` `{approve}` → `{"ok":true}`
 //!   or 404 `{"error":"no_pending_pair"}`.
 //! * `GET /api/v1/phones/app/pair/pending` → `{"pairs":[…pair_request payloads]}`
@@ -94,6 +100,13 @@ const RPC_METHODS: &[&str] = &[
     "web.back",
     "web.wait",
     "screen.prompt",
+    // Device Access: calendar, reminders, contacts. Answered by the app only
+    // while it is open and only for types the person switched on.
+    "device.calendar.list",
+    "device.calendar.create",
+    "device.reminders.list",
+    "device.reminders.create",
+    "device.contacts.search",
 ];
 
 fn now_secs() -> i64 {
@@ -699,6 +712,11 @@ async fn run_control<T: FrameTransport>(mut transport: T, state: Arc<AppState>, 
                         *conn.state.write().await = json!({
                             "foreground": value["foreground"].as_bool().unwrap_or(false),
                             "browserOpen": value["browserOpen"].as_bool().unwrap_or(false),
+                            "deviceAccess": {
+                                "calendar": value["deviceAccess"]["calendar"].as_bool().unwrap_or(false),
+                                "reminders": value["deviceAccess"]["reminders"].as_bool().unwrap_or(false),
+                                "contacts": value["deviceAccess"]["contacts"].as_bool().unwrap_or(false),
+                            },
                         });
                     } else if let Some(id) = value["id"].as_str() {
                         if let Some(waiter) = conn.pending.lock().await.remove(id) {
@@ -743,7 +761,28 @@ fn validate_rpc(method: &str, params: &Value) -> Result<(), &'static str> {
     if method == "web.wait" && params["ms"].as_u64().map_or(true, |ms| ms > MAX_WEB_WAIT_MS) {
         return Err("web.wait needs ms between 0 and 10000");
     }
+    if method.starts_with("device.") && !params.is_object() {
+        return Err("params must be an object");
+    }
+    if method == "device.contacts.search"
+        && !params["query"].as_str().is_some_and(|q| !q.trim().is_empty() && q.len() <= 400)
+    {
+        return Err("device.contacts.search needs a query");
+    }
     Ok(())
+}
+
+/// Device Access gate on the server path: the app reports which types the
+/// person switched on (and iOS allows) in its `state` frame; a device.* call
+/// for a type that is not explicitly on never goes to the phone.
+fn device_gate(state: &Value, method: &str) -> Result<(), &'static str> {
+    let Some(rest) = method.strip_prefix("device.") else { return Ok(()) };
+    let kind = rest.split('.').next().unwrap_or("");
+    if state["deviceAccess"][kind].as_bool() == Some(true) {
+        Ok(())
+    } else {
+        Err("device_access_off")
+    }
 }
 
 async fn rpc(
@@ -771,6 +810,13 @@ async fn rpc(
         .cloned();
     let not_open = || err(StatusCode::CONFLICT, "app_not_open", "Open the Allternit app on the iPhone");
     let Some(conn) = conn else { return not_open() };
+    if let Err(code) = device_gate(&*conn.state.read().await, &body.method) {
+        return Json(json!({ "error": {
+            "code": code,
+            "message": "The person has not turned this on in the Allternit app (Settings > Device Access)."
+        } }))
+        .into_response();
+    }
 
     let id = uuid::Uuid::new_v4().to_string();
     let (tx, rx) = oneshot::channel();
@@ -823,6 +869,38 @@ mod tests {
         let short = json!({ "type": "hello", "pub": STANDARD.encode([9u8; 31]) }).to_string();
         assert!(parse_pair_hello(&short, id).is_none());
         assert!(parse_pair_hello(&json!({ "type": "hi", "pub": pubkey }).to_string(), id).is_none());
+    }
+
+    #[test]
+    fn device_calls_need_the_type_switched_on() {
+        let on = json!({ "deviceAccess": { "calendar": true, "reminders": false, "contacts": false } });
+        assert!(device_gate(&on, "device.calendar.list").is_ok());
+        assert!(device_gate(&on, "device.calendar.create").is_ok());
+        assert_eq!(device_gate(&on, "device.reminders.list"), Err("device_access_off"));
+        assert_eq!(device_gate(&on, "device.contacts.search"), Err("device_access_off"));
+        // An app that never reported Device Access (or an old one) is off, not on.
+        assert_eq!(device_gate(&json!({ "foreground": true }), "device.calendar.list"), Err("device_access_off"));
+        assert!(device_gate(&json!({}), "web.snapshot").is_ok());
+        assert!(validate_rpc("device.contacts.search", &json!({ "query": "ann" })).is_ok());
+        assert!(validate_rpc("device.contacts.search", &json!({ "query": " " })).is_err());
+        assert!(validate_rpc("device.calendar.list", &json!([])).is_err());
+        assert!(validate_rpc("device.health.read", &json!({})).is_err());
+    }
+
+    #[tokio::test]
+    async fn a_control_socket_is_only_reachable_by_its_own_account() {
+        let phone = uuid::Uuid::new_v4().to_string();
+        let (to_app, _rx) = mpsc::channel::<String>(1);
+        let conn = Arc::new(ControlConn {
+            id: u64::MAX,
+            to_app,
+            pending: Mutex::new(HashMap::new()),
+            state: RwLock::new(json!({})),
+        });
+        hub().controls.write().await.insert(("owner".to_string(), phone.clone()), conn);
+        assert!(control_open("owner", &phone).await);
+        assert!(!control_open("someone-else", &phone).await);
+        hub().controls.write().await.remove(&("owner".to_string(), phone));
     }
 
     #[test]
