@@ -3,13 +3,13 @@ import UIKit
 
 // MARK: - Launch composer
 
-/// The Code prompt on the phone (ChatComposer's Code terminal line, phone.css
-/// "Terminal-style composer: one square line, prompt and keys side by
-/// side"): the computer on the left and the context meter on the right
-/// above it, one line between dashed rules — `+`, the coral `❯` on the
-/// text's first line, voice and the coral run key — then one icon row under
-/// it (folder · branch · worktree · permission mode, then the model and the
-/// Chat/Terminal switch on the right). Sending starts a code thread.
+/// The Code prompt on the phone (ChatComposer's Code terminal line): one line
+/// in a dashed frame — `+`, the coral `❯` on the text's first line, voice and
+/// the coral run key — with the cache state and the model on the frame's top
+/// edge. Under it, one icon row (folder · branch · worktree · permission mode,
+/// then the context meter and the Chat/Terminal switch) and the last run's
+/// usage. The context bar sits in the icon row or above the frame
+/// (`CodeContextBarPosition`). Sending starts a code thread.
 struct CodeLaunchComposer: View {
     @Binding var text: String
     let folder: CodeFolderInfo?
@@ -26,9 +26,14 @@ struct CodeLaunchComposer: View {
     /// The thread's backend session, for the context meter (nil on the
     /// launchpad: the meter then shows the plan window).
     var sessionId: String? = nil
+    /// The newest run's reported usage, for the usage line and cache state.
+    var lastRunUsage: CodeRunUsage? = nil
     /// Moves when a turn lands, so the context meter follows the thread.
     var contextRefresh: Int = 0
 
+    @StateObject private var contextState = CodeContextState()
+    @AppStorage(CodeContextBarPosition.storageKey) private var contextBarRaw = CodeContextBarPosition.bottom.rawValue
+    @Environment(\.horizontalSizeClass) private var sizeClass
     @StateObject private var dictation = DictationController()
     @State private var dictationBase = ""
     @FocusState private var isFocused: Bool
@@ -41,7 +46,11 @@ struct CodeLaunchComposer: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            DashedHairline(strong: isFocused, terminal: terminal)
+            if contextBarRaw == CodeContextBarPosition.above.rawValue {
+                CodeContextBar(state: contextState, terminal: terminal)
+            }
+            CodePromptEdge(strong: isFocused, terminal: terminal, isRunning: isRunning, usage: lastRunUsage)
+                .zIndex(1)
             HStack(alignment: .bottom, spacing: 4) {
                 if let onAttach {
                     Button(action: onAttach) {
@@ -62,7 +71,7 @@ struct CodeLaunchComposer: View {
                         .foregroundColor(GizziCodeWordmark.coral)
                         .frame(height: Self.line)
                         .accessibilityHidden(true)
-                    TextField("Run a command or describe a task...", text: $text, axis: .vertical)
+                    TextField("Describe a task...", text: $text, prompt: Text("Describe a task...").foregroundColor(ink.tertiary), axis: .vertical)
                         .font(Font(Self.textFont))
                         .foregroundColor(ink.primary)
                         .tint(GizziCodeWordmark.coral)
@@ -117,10 +126,49 @@ struct CodeLaunchComposer: View {
                 }
                 .padding(.vertical, 6)
             }
+            .padding(.top, 14)
             .padding(.horizontal, 6)
-            DashedHairline(strong: isFocused, terminal: terminal)
-            CodeDeckRow(folder: folder, terminal: terminal, sessionId: sessionId,
-                        contextRefresh: contextRefresh, onOpenTerminal: onOpenTerminal)
+            .overlay {
+                CodePromptSides()
+                    .stroke(isFocused ? ink.borderStrong : ink.border, style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
+                    .accessibilityHidden(true)
+            }
+            CodeDeckRow(folder: folder, terminal: terminal, context: contextState,
+                        showsMeter: contextBarRaw != CodeContextBarPosition.above.rawValue, onOpenTerminal: onOpenTerminal)
+            if let line = lastRunUsage?.line(narrow: sizeClass != .regular) {
+                Text(line)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(ink.tertiary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                    .padding(.horizontal, 8)
+                    .padding(.bottom, 10)
+            }
+        }
+        // The frame needs a gutter: its sides would sit on the screen edge.
+        .padding(.horizontal, 10)
+        .task(id: "\(sessionId ?? "")-\(contextRefresh)") {
+            await contextState.load(sessionId: sessionId)
+        }
+        .sheet(isPresented: $contextState.showsUsage) {
+            NavigationStack {
+                List {
+                    if let context = contextState.breakdown { CodeContextRows(breakdown: context) }
+                    PlanUsageRows()
+                    Section("Context bar") {
+                        Picker("Position", selection: $contextBarRaw) {
+                            Text("Bottom").tag(CodeContextBarPosition.bottom.rawValue)
+                            Text("Above").tag(CodeContextBarPosition.above.rawValue)
+                        }
+                        .pickerStyle(.segmented)
+                    }
+                }
+                .navigationTitle(contextState.breakdown == nil ? "Usage" : "Context and usage")
+                .navigationBarTitleDisplayMode(.inline)
+            }
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
         }
         .onChange(of: dictation.transcript) { _, transcript in
             guard dictation.isRecording || !transcript.isEmpty else { return }
@@ -167,6 +215,215 @@ struct DashedHairline: View {
     }
 }
 
+// MARK: - Prompt frame
+
+/// The frame's sides and bottom; `CodePromptEdge` draws its top.
+private struct CodePromptSides: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.move(to: CGPoint(x: rect.minX + 0.5, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.minX + 0.5, y: rect.maxY - 0.5))
+        path.addLine(to: CGPoint(x: rect.maxX - 0.5, y: rect.maxY - 0.5))
+        path.addLine(to: CGPoint(x: rect.maxX - 0.5, y: rect.minY))
+        return path
+    }
+}
+
+/// The frame's top edge, drawn in segments so a background shows through: the
+/// prompt cache's state on the left, the model and the run dot on the right.
+private struct CodePromptEdge: View {
+    var strong: Bool
+    var terminal: Bool
+    var isRunning: Bool
+    var usage: CodeRunUsage?
+
+    @StateObject private var modelStore = ModelStore.shared
+    @State private var showsModels = false
+
+    private var ink: CodeInk { CodeInk(terminal: terminal) }
+
+    /// ChatComposer `modelPillLabel`: "Allternit Cloud · Kimi K3".
+    private var modelLabel: String {
+        let name = ComposerModelLabel.label(modelStore)
+        guard let provider = modelStore.selectedModel?.provider, !provider.isEmpty else { return name }
+        let providerName = CodeProviderName.name(provider)
+        return name.lowercased().hasPrefix(providerName.lowercased()) ? name : "\(providerName) · \(name)"
+    }
+
+    var body: some View {
+        HStack(spacing: 6) {
+            DashedHairline(strong: strong, terminal: terminal).frame(width: 10)
+            if usage?.hasCacheEstimate == true {
+                TimelineView(.periodic(from: .now, by: 30)) { timeline in
+                    if let state = usage?.cacheState(now: timeline.date) {
+                        Text("cache \(state)")
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundColor(ink.tertiary)
+                            .fixedSize()
+                    }
+                }
+            }
+            DashedHairline(strong: strong, terminal: terminal).frame(minWidth: 8)
+            Button(action: { showsModels = true }) {
+                HStack(spacing: 5) {
+                    Image("MatrixLogo")
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 14, height: 14)
+                    Text(modelLabel)
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundColor(ink.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundColor(ink.secondary)
+                }
+                .frame(minHeight: 36)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Model: \(modelLabel)")
+            Circle()
+                .fill(isRunning ? GizziCodeWordmark.coral : Color(hex: "#8EAB84"))
+                .frame(width: 6, height: 6)
+                .accessibilityHidden(true)
+            DashedHairline(strong: strong, terminal: terminal).frame(width: 10)
+        }
+        .frame(height: 36)
+        .padding(.bottom, -18)
+        .task { modelStore.fetchModelsIfNeeded() }
+        .sheet(isPresented: $showsModels) { ModelPickerSheet(modelStore: modelStore) }
+    }
+}
+
+// MARK: - Run usage
+
+/// `usage` on the chat stream's finish frame (ChatFinishUsage). Absent is not
+/// zero: a provider that reports nothing shows nothing.
+struct CodeRunUsage: Decodable, Equatable, Sendable {
+    var inputTokens: Double?
+    var outputTokens: Double?
+    var cacheReadTokens: Double?
+    var cacheWriteTokens: Double?
+    var cacheTtlSeconds: Double?
+    /// Estimated expiry in epoch milliseconds.
+    var cacheExpiresAt: Double?
+    var cost: Double?
+    var estimated: Bool?
+
+    /// `52.8k in · 152 out · 88% cached · $0.03`; nil when nothing was
+    /// reported (code-composer-status.tsx `codeRunUsageLine`).
+    func line(narrow: Bool) -> String? {
+        let approx = estimated == true ? "~" : ""
+        let input = inputTokens ?? 0
+        let output = outputTokens ?? 0
+        let total = input + (cacheReadTokens ?? 0) + (cacheWriteTokens ?? 0)
+        var parts: [String] = []
+        if input + output > 0 {
+            parts.append("\(approx)\(Self.compact(input)) in")
+            if !narrow { parts.append("\(approx)\(Self.compact(output)) out") }
+        }
+        if let read = cacheReadTokens, total > 0 {
+            parts.append("\(Int((read / total * 100).rounded()))% cached")
+        }
+        if let cost, cost > 0 {
+            parts.append(cost < 0.01 ? String(format: "$%.4f", cost) : String(format: "$%.2f", cost))
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    var hasCacheEstimate: Bool { (cacheTtlSeconds ?? 0) > 0 && cacheExpiresAt != nil }
+
+    /// `warm`, `expiring` or `cold` (cache-countdown.ts); nil with no estimate.
+    func cacheState(now: Date) -> String? {
+        guard let ttl = cacheTtlSeconds, ttl > 0, let expiresAt = cacheExpiresAt else { return nil }
+        let left = max(0, min(ttl, expiresAt / 1000 - now.timeIntervalSince1970))
+        if left == 0 { return "cold" }
+        return left / ttl < 0.2 ? "expiring" : "warm"
+    }
+
+    /// RunTelemetry.tsx `compact`.
+    private static func compact(_ n: Double) -> String {
+        if n >= 1_000_000 { return String(format: n >= 10_000_000 ? "%.0fM" : "%.1fM", n / 1_000_000) }
+        if n >= 1_000 { return String(format: n >= 10_000 ? "%.0fk" : "%.1fk", n / 1_000) }
+        return String(Int(n))
+    }
+}
+
+// MARK: - Context
+
+/// Where the context bar sits; the usage sheet sets it.
+enum CodeContextBarPosition: String {
+    case bottom, above
+    static let storageKey = "allternit-code-composer-context-bar"
+}
+
+/// The session's context window (gizzi `/session/:id/context`), shared by the
+/// meter and the bar, and whether the usage sheet is open.
+@MainActor
+final class CodeContextState: ObservableObject {
+    @Published var breakdown: SessionContextBreakdown? = nil
+    @Published var showsUsage = false
+    private var loadedSessionId: String? = nil
+
+    /// A failed read keeps the last figure for the same session.
+    func load(sessionId: String?) async {
+        guard let sessionId, !sessionId.hasPrefix("temp-") else {
+            breakdown = nil
+            loadedSessionId = nil
+            return
+        }
+        if loadedSessionId != sessionId { breakdown = nil }
+        if let next = try? await AgentChatClient().sessionContext(sessionId: sessionId) {
+            breakdown = next
+            loadedSessionId = sessionId
+        }
+    }
+}
+
+/// ComposerContextBar: a thin bar on its own line above the prompt. With no
+/// session yet it shows the plan window, like the meter. A tap opens the usage
+/// sheet, which also moves it back.
+private struct CodeContextBar: View {
+    @ObservedObject var state: CodeContextState
+    var terminal: Bool
+    @ObservedObject private var usage = UsageStore.shared
+
+    private var ink: CodeInk { CodeInk(terminal: terminal) }
+    private var fraction: Double { min(max(state.breakdown?.utilization ?? (usage.percentUsed ?? 0) / 100, 0), 1) }
+    private var tint: Color {
+        switch state.breakdown?.level {
+        case .approaching: return Theme.statusWarning
+        case .reached: return Theme.statusError
+        default: return GizziCodeWordmark.coral
+        }
+    }
+
+    var body: some View {
+        Button(action: { state.showsUsage = true }) {
+            HStack(spacing: 8) {
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(ink.border)
+                        Capsule().fill(tint).frame(width: geo.size.width * fraction)
+                    }
+                }
+                .frame(height: 2)
+                if let breakdown = state.breakdown {
+                    Text("\(Int((breakdown.utilization * 100).rounded()))%")
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundColor(ink.tertiary)
+                }
+            }
+            .frame(minHeight: 32)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(state.breakdown.map { "Context: \(Int(($0.utilization * 100).rounded()))% used (\(SessionContextBreakdown.format($0.usedTokens)) of \(SessionContextBreakdown.format($0.contextWindow))). Open details." } ?? "Context and usage. Open details.")
+    }
+}
+
 // MARK: - Ink
 
 /// The Code prompt's colours: the app's tokens, or the terminal palette on
@@ -188,30 +445,27 @@ struct CodeInk {
 /// The Code prompt's controls (CodeBottomStatusBar with CodeWorkspaceBar
 /// leading), icons only so all eight fit one row under the prompt; each
 /// keeps its words as its accessibility label. Computer · working folder ·
-/// branch · worktree · permission mode on the left; the model, the context
-/// meter and the Chat/Terminal toggle on the right.
+/// branch · worktree · permission mode on the left; the context meter and the
+/// Chat/Terminal toggle on the right.
 struct CodeDeckRow: View {
     let folder: CodeFolderInfo?
     /// On the terminal surface the toggle flips back to the chat view.
     var terminal: Bool = false
-    var sessionId: String? = nil
-    var contextRefresh: Int = 0
+    @ObservedObject var context: CodeContextState
+    /// False while the context bar sits above the prompt.
+    var showsMeter: Bool = true
     let onOpenTerminal: () -> Void
 
     @StateObject private var environmentStore = EnvironmentStore.shared
     @ObservedObject private var relay = RuntimeRelayStore.shared
-    @StateObject private var modelStore = ModelStore.shared
     @ObservedObject private var usage = UsageStore.shared
     @AppStorage(CodePermissionMode.storageKey) private var permissionRaw = CodePermissionMode.manual.rawValue
     @AppStorage(CodeWorktree.storageKey) private var worktree = false
 
     @State private var sheet: Sheet? = nil
-    /// The session's context window (gizzi `/session/:id/context`).
-    @State private var context: SessionContextBreakdown? = nil
-    @State private var contextSessionId: String? = nil
 
     enum Sheet: String, Identifiable {
-        case environment, folder, permission, model, pairing, usage
+        case environment, folder, permission, pairing
         var id: String { rawValue }
     }
 
@@ -228,14 +482,6 @@ struct CodeDeckRow: View {
     private var cloudStatus: String? {
         guard environmentStore.environment == .cloud else { return nil }
         return relay.activeDevice?.isOnline == true ? nil : "Connecting"
-    }
-
-    /// ChatComposer `modelPillLabel`: "Allternit Cloud · Kimi K3".
-    private var modelLabel: String {
-        let name = ComposerModelLabel.label(modelStore)
-        guard let provider = modelStore.selectedModel?.provider, !provider.isEmpty else { return name }
-        let providerName = CodeProviderName.name(provider)
-        return name.lowercased().hasPrefix(providerName.lowercased()) ? name : "\(providerName) · \(name)"
     }
 
     /// The worktree pill only shows on the default branch (isDefaultCodeBranch).
@@ -263,8 +509,7 @@ struct CodeDeckRow: View {
             }
             icon(permission.icon, label: "Code permission mode: \(permission.label)", tint: ink.accent) { sheet = .permission }
             Spacer(minLength: 4)
-            modelButton
-            contextMeter
+            if showsMeter { contextMeter }
             modeToggle
         }
         .padding(.top, 4)
@@ -272,12 +517,8 @@ struct CodeDeckRow: View {
         .padding(.horizontal, 6)
         .frame(maxWidth: .infinity)
         .task {
-            modelStore.fetchModelsIfNeeded()
             usage.fetchUsageIfNeeded()
             await relay.refresh()
-        }
-        .task(id: "\(sessionId ?? "")-\(contextRefresh)") {
-            await loadContext()
         }
         .sheet(item: $sheet) { sheet in
             switch sheet {
@@ -293,21 +534,8 @@ struct CodeDeckRow: View {
                 CodePermissionSheet(selection: $permissionRaw)
                     .presentationDetents([.medium])
                     .presentationDragIndicator(.visible)
-            case .model:
-                ModelPickerSheet(modelStore: modelStore)
             case .pairing:
                 RuntimePairingView()
-            case .usage:
-                NavigationStack {
-                    List {
-                        if let context { CodeContextRows(breakdown: context) }
-                        PlanUsageRows()
-                    }
-                        .navigationTitle(context == nil ? "Usage" : "Context and usage")
-                        .navigationBarTitleDisplayMode(.inline)
-                }
-                .presentationDetents([.medium, .large])
-                .presentationDragIndicator(.visible)
             }
         }
     }
@@ -331,8 +559,8 @@ struct CodeDeckRow: View {
     /// has a figure, empty blocks (a tap still opens the usage sheet).
     @ViewBuilder
     private var contextMeter: some View {
-        if let context {
-            Button(action: { sheet = .usage }) {
+        if let context = context.breakdown {
+            Button(action: { self.context.showsUsage = true }) {
                 HStack(spacing: 4) {
                     CodeUsageBlocks(fraction: context.utilization, tone: tone(context.level), terminal: terminal)
                     Text("\(Int((context.utilization * 100).rounded()))%")
@@ -346,7 +574,7 @@ struct CodeDeckRow: View {
             .buttonStyle(.plain)
             .accessibilityLabel("Context: \(Int((context.utilization * 100).rounded()))% used (\(SessionContextBreakdown.format(context.usedTokens)) of \(SessionContextBreakdown.format(context.contextWindow))). Open details.")
         } else {
-            Button(action: { sheet = .usage }) {
+            Button(action: { self.context.showsUsage = true }) {
                 CodeUsageBlocks(fraction: (usage.percentUsed ?? 0) / 100, terminal: terminal)
                     .padding(.horizontal, 6)
                     .frame(height: 40)
@@ -365,23 +593,6 @@ struct CodeDeckRow: View {
         }
     }
 
-    /// The model, as its provider mark.
-    private var modelButton: some View {
-        Button(action: { sheet = .model }) {
-            Image("MatrixLogo")
-                .resizable()
-                .scaledToFit()
-                .frame(width: 16, height: 16)
-                .frame(width: 24, height: 24)
-                .background(ink.fill, in: RoundedRectangle(cornerRadius: 6))
-                .overlay(RoundedRectangle(cornerRadius: 6).stroke(ink.border, lineWidth: 1))
-                .frame(width: 40, height: 40)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Model: \(modelLabel)")
-    }
-
     /// The view switch: Code · Terminal · Shell. Its icon is the current
     /// view; the pick goes to Code mode (`.codePickView`).
     private var modeToggle: some View {
@@ -398,21 +609,6 @@ struct CodeDeckRow: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(label)
-    }
-
-    /// The thread's context window; a failed read keeps the last figure
-    /// for the same session.
-    private func loadContext() async {
-        guard let sessionId, !sessionId.hasPrefix("temp-") else {
-            context = nil
-            contextSessionId = nil
-            return
-        }
-        if contextSessionId != sessionId { context = nil }
-        if let breakdown = try? await AgentChatClient().sessionContext(sessionId: sessionId) {
-            context = breakdown
-            contextSessionId = sessionId
-        }
     }
 }
 
