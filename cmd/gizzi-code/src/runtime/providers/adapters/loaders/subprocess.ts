@@ -16,6 +16,7 @@ import { Log } from "@/shared/util/log"
 import { Token } from "@/shared/util/token"
 import { CliBridge } from "@/runtime/integrations/cli-bridge"
 import { extractSystemText } from "@/runtime/providers/adapters/loaders/system-text"
+import { imageAttachmentNote } from "@/runtime/providers/adapters/loaders/cli-image-attachments"
 import { Server } from "@/runtime/server/server"
 import { VendorSession } from "@/runtime/session/vendor-session"
 import { ContextBreakdown } from "@/runtime/session/context-breakdown"
@@ -211,10 +212,14 @@ export class SubprocessLanguageModel implements LanguageModelV2 {
     stream: ReadableStream<LanguageModelV2StreamPart>
     rawCall: { rawPrompt: unknown; rawSettings: Record<string, unknown> }
   }> {
-    const message = extractLastUserText(options.prompt ?? [])
-    if (!message) {
+    const lastText = extractLastUserText(options.prompt ?? [])
+    if (!lastText) {
       return emptyStream(options.prompt)
     }
+    const message = lastText + (await imageAttachmentNote(options.prompt ?? []).catch((err) => {
+      log.warn("could not save image attachments for the CLI", { err })
+      return ""
+    }))
 
     const { runtime, driver } = await RuntimeDriverFactory.resolveCli(this.providerID)
     const sessionID = resolveTaskSessionID(options?.headers)
