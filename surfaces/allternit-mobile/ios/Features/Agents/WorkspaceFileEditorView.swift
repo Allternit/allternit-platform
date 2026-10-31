@@ -20,6 +20,9 @@ struct WorkspaceFileEditorView: View {
     let agentId: String
     let agentName: String
     let file: WorkspaceFileInfo
+    /// Soul page mode: non-nil shows the agent's Description above the file
+    /// and saves it with the file; the page also saves when you leave it.
+    var initialDescription: String? = nil
 
     @State private var content: String = ""
     @State private var isLoading = true
@@ -28,6 +31,16 @@ struct WorkspaceFileEditorView: View {
     /// "Saved" confirmation flash after a successful PUT.
     @State private var didSave = false
     @State private var actionError: String? = nil
+    /// What the server had when the file was loaded (dirty check, and the
+    /// `expected_hash` a save sends so a change made elsewhere is noticed).
+    @State private var loadedContent = ""
+    @State private var loadedHash: String? = nil
+    @State private var descriptionText = ""
+    @State private var loadedDescription = ""
+    /// The current server copy when a save found the file changed elsewhere.
+    @State private var conflict: ConflictCopy? = nil
+
+    private struct ConflictCopy { let hash: String?; let content: String }
 
     // Edit-with-chat state.
     @State private var instruction = ""
@@ -94,6 +107,7 @@ struct WorkspaceFileEditorView: View {
                     action: { Task { await loadContent() } }
                 )
             } else {
+                if initialDescription != nil { descriptionField }
                 // Meta strip: category tag + live character count.
                 HStack(spacing: 8) {
                     Text(categoryLabel.uppercased())
@@ -162,13 +176,63 @@ struct WorkspaceFileEditorView: View {
             }
         }
         .task {
+            descriptionText = initialDescription ?? ""
+            loadedDescription = descriptionText
             await loadContent()
         }
         .onDisappear {
             // Leaving mid-revision: cancel locally; the ephemeral session
             // is purged server-side on abort.
             assistTask?.cancel()
+            // The Soul page saves when you leave it.
+            if initialDescription != nil, isDirty, !isSaving, conflict == nil, !isLoading, loadError == nil {
+                Task { @MainActor in _ = await performSave(force: false) }
+            }
         }
+        .alert("Changed elsewhere", isPresented: Binding(
+            get: { conflict != nil }, set: { if !$0 { conflict = nil } }
+        )) {
+            Button("Reload") {
+                if let conflict {
+                    content = conflict.content
+                    loadedContent = conflict.content
+                    loadedHash = conflict.hash
+                }
+                conflict = nil
+            }
+            Button("Keep mine") {
+                // Take the current revision as the base, then save over it.
+                loadedHash = conflict?.hash
+                conflict = nil
+                Task { @MainActor in _ = await performSave(force: false) }
+            }
+            Button("Cancel", role: .cancel) { conflict = nil }
+        } message: {
+            Text("This file was changed on another device or by the bot while you were editing. Reload to see the new version, or keep yours and save over it.")
+        }
+    }
+
+    private var isDirty: Bool {
+        content != loadedContent || (initialDescription != nil && descriptionText != loadedDescription)
+    }
+
+    private var descriptionField: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Description")
+                .font(.caption.weight(.semibold))
+                .foregroundColor(Color("TextSecondary"))
+            TextField("What \(agentName) is for", text: $descriptionText, axis: .vertical)
+                .font(.subheadline)
+                .foregroundColor(Color("TextPrimary"))
+                .lineLimit(1...3)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .background(Color("BgPanel"))
+                .clipShape(RoundedRectangle(cornerRadius: Theme.radiusMD))
+                .overlay(RoundedRectangle(cornerRadius: Theme.radiusMD).stroke(Theme.borderWarmDefault, lineWidth: 1))
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 12)
     }
 
     // MARK: - Edit with chat
@@ -321,8 +385,10 @@ struct WorkspaceFileEditorView: View {
         isLoading = true
         loadError = nil
         do {
-            let file = try await agentClient.readWorkspaceFile(agentId: agentId, path: file.path)
+            let file = try await HermesClient.shared.readFile(agentId: agentId, path: file.path)
             content = file.content
+            loadedContent = file.content
+            loadedHash = file.hash
         } catch is CancellationError {
             // View went away mid-flight — keep current state.
         } catch {
@@ -332,17 +398,44 @@ struct WorkspaceFileEditorView: View {
     }
 
     private func save() {
-        isSaving = true
         actionError = nil
         didSave = false
-        Task {
-            do {
-                try await agentClient.writeWorkspaceFile(agentId: agentId, path: file.path, content: content)
-                didSave = true
-            } catch {
-                actionError = "Couldn't save the file: \(error.localizedDescription)"
+        Task { @MainActor in
+            if await performSave(force: false) { didSave = true }
+        }
+    }
+
+    /// Saves the description (Soul page) and the file. The file goes with the
+    /// hash it was loaded at; a 409 opens the "changed elsewhere" prompt.
+    /// Returns true when everything was saved.
+    @MainActor
+    private func performSave(force: Bool) async -> Bool {
+        guard !isSaving else { return false }
+        isSaving = true
+        defer { isSaving = false }
+        do {
+            if initialDescription != nil, descriptionText != loadedDescription {
+                try await agentClient.updateAgent(id: agentId, description: descriptionText)
+                loadedDescription = descriptionText
             }
-            isSaving = false
+            if content != loadedContent {
+                let result = try await HermesClient.shared.writeFile(
+                    agentId: agentId, path: file.path, content: content,
+                    expectedHash: force ? nil : loadedHash
+                )
+                switch result {
+                case .saved(let hash):
+                    loadedContent = content
+                    loadedHash = hash
+                case .conflict(let hash, let current):
+                    conflict = ConflictCopy(hash: hash, content: current)
+                    return false
+                }
+            }
+            return true
+        } catch {
+            actionError = "Couldn't save: \(error.localizedDescription)"
+            return false
         }
     }
 
