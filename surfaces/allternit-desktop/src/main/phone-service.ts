@@ -114,15 +114,17 @@ export function dialogGate(): ApprovalGate {
     async request(req: ApprovalRequest) {
       const shown = dialog.showMessageBox({
         type: 'question',
-        title: req.kind === 'sms' ? 'Allow this text?' : req.kind === 'sms_read' ? 'Allow reading texts?' : 'Allow this call?',
+        title: req.kind === 'sms' ? 'Allow this text?' : req.kind === 'sms_read' ? 'Allow reading texts?' : req.kind === 'device_write' ? 'Allow this change on your iPhone?' : 'Allow this call?',
         message:
           req.kind === 'sms'
             ? 'Your bot wants to send a text from your phone'
             : req.kind === 'sms_read'
               ? 'Your bot wants to read recent texts on your phone'
-              : 'Your bot wants to place a call from your phone',
+              : req.kind === 'device_write'
+                ? 'Your bot wants to add this to your iPhone calendar or reminders'
+                : 'Your bot wants to place a call from your phone',
         detail: req.summary,
-        buttons: [req.kind === 'sms' ? 'Send' : req.kind === 'sms_read' ? 'Allow' : 'Call', 'Deny'],
+        buttons: [req.kind === 'sms' ? 'Send' : req.kind === 'sms_read' || req.kind === 'device_write' ? 'Allow' : 'Call', 'Deny'],
         defaultId: 1,
         cancelId: 1,
         noLink: true,
@@ -837,6 +839,7 @@ class PhoneService {
         consumerCount: (serial) => this.ensureStreamManager().consumerCount(serial),
       },
       decodeStill: decodeStillInWindow,
+      gate: dialogGate(),
       log: (message) => log.info(message),
     });
     return this.appBackend;
