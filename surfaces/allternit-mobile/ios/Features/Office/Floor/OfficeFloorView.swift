@@ -61,10 +61,20 @@ struct OfficeFloorView: View {
         }
     }
 
-    private func handle(action: String, botId: String?) {
-        guard let botId, store.bot(botId) != nil, action == "answer" || action == "open" else { return }
-        // A waiting bot's question is at the top of its main chat.
-        navigator.open(.chat(botId: botId, sessionId: nil))
+    private func handle(action: String, botId: String?, text: String?) {
+        guard let botId, store.bot(botId) != nil else { return }
+        switch action {
+        case "message":
+            // Written in the panel: its chat sends it, so the reply streams in front of you.
+            guard let text = text?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else { return }
+            store.pendingMessages[botId] = text
+            navigator.open(.chat(botId: botId, sessionId: nil))
+        case "answer", "open":
+            // A waiting bot's question is at the top of its main chat.
+            navigator.open(.chat(botId: botId, sessionId: nil))
+        default:
+            break
+        }
     }
 
     /// The live roster in the facility's `allternit:workspace` shape (workspace-feed.ts parseBots).
@@ -110,7 +120,7 @@ private struct OfficeFloorWeb: UIViewRepresentable {
     let feed: String
     let attempt: Int
     let onReady: () -> Void
-    let onAction: (String, String?) -> Void
+    let onAction: (String, String?, String?) -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
@@ -145,7 +155,9 @@ private struct OfficeFloorWeb: UIViewRepresentable {
         c.lastSent = nil
         c.pending = feed
         let dark = UITraitCollection.current.userInterfaceStyle == .dark
-        let src = "\(Self.origin)/?embed=workspace\(dark ? "&theme=dark" : "")"
+        // The Office layout: the loft full bleed with its one panel (bots, then the picked bot's chat).
+        // This app handles chat only (open, answer, message), so the page leaves hire and share off.
+        let src = "\(Self.origin)/?embed=workspace&ui=office&actions=chat\(dark ? "&theme=dark" : "")"
         let html = """
         <!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
         <style>html,body{margin:0;height:100%;background:transparent}iframe{border:0;width:100%;height:100%;display:block}</style></head>
@@ -156,7 +168,7 @@ private struct OfficeFloorWeb: UIViewRepresentable {
           if (e.origin !== O || e.source !== f.contentWindow || !e.data) return;
           const d = e.data;
           if (d.type === 'allternit:workspace:ready') webkit.messageHandlers.office.postMessage({ type: 'ready' });
-          else if (d.type === 'allternit:workspace:action') webkit.messageHandlers.office.postMessage({ type: 'action', action: String(d.action || ''), botId: typeof d.botId === 'string' ? d.botId : null });
+          else if (d.type === 'allternit:workspace:action') webkit.messageHandlers.office.postMessage({ type: 'action', action: String(d.action || ''), botId: typeof d.botId === 'string' ? d.botId : null, text: typeof d.text === 'string' ? d.text.slice(0, 4000) : null });
         });
         </script></body></html>
         """
@@ -171,7 +183,7 @@ private struct OfficeFloorWeb: UIViewRepresentable {
         var pending: String?
         var lastSent: String?
         var onReady: () -> Void = {}
-        var onAction: (String, String?) -> Void = { _, _ in }
+        var onAction: (String, String?, String?) -> Void = { _, _, _ in }
 
         func send(_ feed: String) {
             pending = feed
@@ -189,7 +201,7 @@ private struct OfficeFloorWeb: UIViewRepresentable {
                 if let pending { send(pending) }
                 onReady()
             case "action":
-                if let action = body["action"] as? String { onAction(action, body["botId"] as? String) }
+                if let action = body["action"] as? String { onAction(action, body["botId"] as? String, body["text"] as? String) }
             default:
                 break
             }

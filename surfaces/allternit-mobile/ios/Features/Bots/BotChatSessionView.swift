@@ -90,6 +90,7 @@ struct BotChatSessionView: View {
                 status.subscribe(botId: bot.id)
                 desktop.fetchStatusIfNeeded(botId: bot.id)
                 await resolve()
+                await sendPendingMessage()
             }
             .task { await InappCallStore.shared.loadCallableContacts(botId: bot.id) }
             .onDisappear { status.unsubscribe(botId: bot.id) }
@@ -482,6 +483,15 @@ struct BotChatSessionView: View {
         } else {
             navigator.open(.chat(botId: bot.id, sessionId: id))
         }
+    }
+
+    /// A message from the Office's panel: sent through this chat once its conversation is loaded.
+    private func sendPendingMessage() async {
+        guard sessionId != nil, let text = store.takePendingMessage(for: bot.id) else { return }
+        for _ in 0..<50 where viewModel.currentSessionId != sessionId {
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+        viewModel.sendMessage(text)
     }
 
     private func resolve() async {
