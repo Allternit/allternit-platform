@@ -76,7 +76,7 @@ fn resolve(id: &str) -> Option<(String, Source)> {
     }
 }
 
-fn skills_root() -> Option<PathBuf> {
+pub(crate) fn skills_root() -> Option<PathBuf> {
     if let Ok(dir) = std::env::var("ALLTERNIT_SKILLS_INSTALL_DIR") {
         return Some(PathBuf::from(dir));
     }

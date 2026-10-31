@@ -784,6 +784,14 @@ fn read_instruction_files(dir: &std::path::Path) -> Option<String> {
                 .filter(|text| !text.is_empty())
                 .map(|text| format!("--- {} ---\n{}", name, text))
         })
+        .chain(
+            // USER.md (the bot's notes about its user) rides after the
+            // canonical files; it is not part of the pack.ts list.
+            read_workspace_md(dir, "USER.md")
+                .map(|text| text.trim().to_string())
+                .filter(|text| !text.is_empty())
+                .map(|text| format!("--- USER.md ---\n{}", text)),
+        )
         .collect();
     if parts.is_empty() {
         None
@@ -1548,6 +1556,9 @@ async fn agent_chat_bridge(
                     .optional()?;
                 row.map(|(system_prompt, provider, model)| {
                     let dir = workspace_dir_for(agent_id);
+                    // Legacy `.allternit/bot/<file>` copies move to the root
+                    // first; a failure never fails the chat.
+                    crate::agent_workspace_routes::unify_legacy_files(&dir);
                     AgentChatContext {
                         system_prompt,
                         provider,
@@ -1849,6 +1860,8 @@ async fn agent_chat_bridge(
     // for the next send unless this turn was already the retry.
     let repair_user = user_id_for_record.clone();
     let repair_chat = chat_id.clone();
+    let skill_chat_id = chat_id.clone();
+    let skill_agent_id = agent_id.clone();
     let repair_note = if resume.is_none() && crate::card_repair::enabled() {
         crate::card_repair::take(&repair_user, &repair_chat)
     } else {
@@ -2338,6 +2351,15 @@ async fn agent_chat_bridge(
                                     .and_then(|v| v.as_str())
                                     .unwrap_or("");
                                 if status == "running" {
+                                    crate::skill_use::record_from_part(
+                                        &state.db,
+                                        &user_id_for_record,
+                                        skill_agent_id.as_deref(),
+                                        &skill_chat_id,
+                                        call_id,
+                                        part,
+                                    )
+                                    .await;
                                     if let Some(link) = dag_link.clone() {
                                         let db = state.db.clone();
                                         let uid = user_id_for_record.clone();
