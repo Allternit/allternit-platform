@@ -2241,6 +2241,12 @@
         "allternit/surfaces/allternit-desktop/src/main/pet-hook-server.ts",
         "allternit/cmd/gizzi-code/src/cli/ui/ink-app/pet/desktopPetHook.ts",
         "allternit-ai/src/lib/bots/character-builder/recipe.ts",
+        "allternit-ai/src/lib/bots/character-builder/outline.ts",
+        "allternit-ai/src/lib/bots/character-builder/outline-catalog.ts",
+        "allternit-ai/src/views/agent-view/components/create-bot/steps/LookStudio.tsx",
+        "allternit-ai/src/views/agent-view/components/create-bot/describeCharacter.ts",
+        "allternit-ai/src/views/agent-view/components/create-bot/look-yours.ts",
+        "allternit-ai/src/views/agent-view/components/create-bot/pack-groups.ts",
         "allternit-ai/src/views/bots/PortraitPetMotion.tsx",
         "allternit-ai/public/avatar-packs/gizzi-brawl",
         "allternit-ai/public/avatar-packs/dot-friends",
@@ -2249,6 +2255,10 @@
         "allternit/surfaces/allternit-desktop/src/main/bot-carry-context.ts"
       ],
       "decisions": [
+        {
+          "on": "2026-10-30",
+          "note": "Eoj approved the one-panel Look after Dominik Scholz's Bot Avatar: Library (Yours, Objects, Shapes, Gizzi, Vendors, Robots, Creatures, People), Describe (model writes validated outline JSON; copy-prompt lane needs no Allternit model), Your photo, Initials. Build folds into Library. Originals and Minimals redrawn as recolourable outlines; other packs stay fixed art. Own prompt, validator and paths, nothing copied: the tool has no licence we could find."
+        },
         {
           "on": "2026-10-15",
           "note": "Eoj approved the desktop pet plan (8 PRs) after seeing Hermes Agent + Petdex. Sheets adopt the Petdex standard. Avatars without real frames hop (free approach). Muse in Gizzi Brawl is Jolly. Hook port 127.0.0.1:7787, not shared with anything else. Plan: agent-ledger/summaries/2026-10-15-2245-claude-desktop-pets-petdex.md."
