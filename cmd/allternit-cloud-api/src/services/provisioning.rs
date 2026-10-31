@@ -2959,6 +2959,28 @@ impl ProvisioningService {
         self.get_for_user(instance_id, user_id).await
     }
 
+    /// Account erase: deletes every computer the user has and every kept
+    /// snapshot. A row that never reached a host only needs closing.
+    pub async fn delete_all_for_user(&self, user_id: &str) -> Result<(), ApiError> {
+        let rows = sqlx::query_as::<_, InstanceRow>(&format!(
+            "SELECT {INSTANCE_COLUMNS} FROM provisioned_instances WHERE user_id = $1"
+        ))
+        .bind(user_id)
+        .fetch_all(&self.db)
+        .await?;
+        for row in rows {
+            if row.status != "deleted" && row.host_id.is_some() {
+                self.delete(&row.id, user_id).await?;
+            }
+            // Tolerates an image that is already gone, so a retry is safe.
+            if let (Some(alias), true) = (row.snapshot_image.as_deref(), row.host_id.is_some()) {
+                let backend = self.backend_for_row(&row).await?;
+                backend.delete_image(alias).await.map_err(|error| error.to_api_error())?;
+            }
+        }
+        Ok(())
+    }
+
     /// Total running seconds since `since` (closed intervals + the open one
     /// counted to now) — the metering input for per-minute billing.
     pub async fn usage(

@@ -1,6 +1,7 @@
 //! Core services for Cowork Runtime
 
 pub mod api_keys;
+pub mod account_erase;
 pub mod audit;
 pub mod auto_topup;
 pub mod billing_disputes;

@@ -3288,7 +3288,7 @@
       "label": "Delete your account",
       "product": "product:ai-allternit",
       "status": "building",
-      "description": "Settings → Account → Delete account on Desktop, ai.allternit.com, the PWA and the iPhone app: type DELETE, Clerk user.delete(), sign out; cloud-api closes the account on Clerk's user.deleted webhook. Required by App Store guideline 5.1.1(v).",
+      "description": "Settings → Account → Delete account on Desktop, ai.allternit.com, the PWA and the iPhone app: type DELETE, Clerk user.delete(), sign out; cloud-api cancels billing, deletes computers and erases the data on Clerk's user.deleted webhook. Required by App Store guideline 5.1.1(v).",
       "evidence": [
         "allternit/surfaces/docs/guides/delete-account.mdx"
       ],
@@ -3303,6 +3303,10 @@
         {
           "on": "2026-10-28",
           "note": "Built for the iPhone App Store submission (platform #1942, ai #881). Open: server cleanup after delete (data erase, Stripe cancel) waits on Eoj; today the account is only marked inactive and the copy says so."
+        },
+        {
+          "on": "2026-10-30",
+          "note": "Eoj chose erase and Stripe cancel before merging ai #881. user.deleted now runs services/account_erase.rs: cancels Stripe, deletes computers, releases numbers and mailboxes, deletes objects, erases rows. Finance and audit rows stay with contact details cleared; the users row stays as a tombstone."
         }
       ]
     },

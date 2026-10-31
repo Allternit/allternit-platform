@@ -481,6 +481,40 @@ async fn teardown(State(state): State<Arc<ApiState>>, headers: HeaderMap, Path(m
     Ok(Json(json!({ "mailboxId": mailbox_id, "deleted": true })).into_response())
 }
 
+/// Account erase: removes every mailbox and sending domain from the mail host.
+/// A 404 means it is already gone. The rows go later, with the rest of the account.
+pub(crate) async fn remove_all_for_user(db: &sqlx::PgPool, user_id: &str) -> Result<(), String> {
+    let mailboxes: Vec<(String, Option<String>, Option<String>)> =
+        sqlx::query_as("SELECT mailbox_id, webhook_id, api_key_id FROM bot_email_mailboxes WHERE user_id = $1 AND deleted_at IS NULL")
+            .bind(user_id)
+            .fetch_all(db)
+            .await
+            .map_err(|e| e.to_string())?;
+    let domains: Vec<String> = sqlx::query_scalar("SELECT domain FROM bot_email_domains WHERE user_id = $1")
+        .bind(user_id)
+        .fetch_all(db)
+        .await
+        .map_err(|e| e.to_string())?;
+    if mailboxes.is_empty() && domains.is_empty() {
+        return Ok(());
+    }
+    let cfg = MailConfig::from_env().ok_or("mail host is not configured")?;
+    let mut paths = Vec::new();
+    for (mailbox_id, webhook_id, api_key_id) in &mailboxes {
+        paths.extend(webhook_id.iter().map(|id| format!("/api/webhooks/{id}")));
+        paths.extend(api_key_id.iter().map(|id| format!("/api/api-keys/{id}")));
+        paths.push(format!("/api/mailboxes/{mailbox_id}"));
+    }
+    paths.extend(domains.iter().map(|domain| format!("/api/v1/relay/domains/{domain}")));
+    for path in paths {
+        match call(&cfg, reqwest::Method::DELETE, &path, None).await {
+            Ok(_) | Err((Some(404), _)) => {}
+            Err((status, detail)) => return Err(format!("{path}: {status:?} {detail}")),
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

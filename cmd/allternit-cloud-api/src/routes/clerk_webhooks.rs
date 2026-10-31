@@ -139,46 +139,49 @@ async fn clerk_webhook(State(state): State<Arc<ApiState>>, headers: HeaderMap, b
             tokio::spawn(async move { services::customer_emails::on_user_created(&db, &user).await });
             Json(json!({ "received": true })).into_response()
         }
-        "user.deleted" => handle_user_deleted(&state, &event).await,
+        "user.deleted" => handle_user_deleted(state.clone(), &event).await,
         other => ignored_response(other),
     }
 }
 
-async fn handle_user_deleted(state: &ApiState, event: &Value) -> Response {
+async fn handle_user_deleted(state: Arc<ApiState>, event: &Value) -> Response {
     let Some(user_id) = event
         .get("data")
         .and_then(|d| d.get("id"))
         .and_then(Value::as_str)
+        .map(str::to_string)
     else {
         return ApiError::BadRequest("user.deleted event missing data.id".to_string()).into_response();
     };
 
-    match sqlx::query("UPDATE users SET status = 'inactive' WHERE id = $1")
-        .bind(user_id)
-        .execute(&state.db)
+    // Its own task: Clerk gives up on a slow delivery, and hanging up must not
+    // stop a teardown part way. A failure answers non-2xx, so Clerk retries.
+    let erasing = {
+        let (state, user_id) = (state.clone(), user_id.clone());
+        tokio::spawn(async move { services::account_erase::erase_account(&state, &user_id).await })
+    };
+    let result = erasing
         .await
-    {
-        Ok(result) => {
-            services::audit::write_audit_log(
-                &state.db,
-                services::audit::AuditEvent {
-                    action: "user.deleted".to_string(),
-                    resource_type: "user".to_string(),
-                    resource_id: Some(user_id.to_string()),
-                    user_id: Some(user_id.to_string()),
-                    user_email: None,
-                    details: Some(json!({ "matched": result.rows_affected() > 0 })),
-                    success: true,
-                },
-            )
-            .await;
-            Json(json!({
-                "received": true,
-                "userId": user_id,
-                "matched": result.rows_affected() > 0,
-            }))
-            .into_response()
-        }
-        Err(error) => ApiError::from(error).into_response(),
+        .unwrap_or_else(|error| Err(ApiError::Internal(format!("account erase stopped: {error}"))));
+    let failure = result.as_ref().err().map(ToString::to_string);
+    if let Some(failure) = &failure {
+        tracing::error!(%user_id, %failure, "account erase failed; Clerk will retry");
+    }
+    services::audit::write_audit_log(
+        &state.db,
+        services::audit::AuditEvent {
+            action: "user.deleted".to_string(),
+            resource_type: "user".to_string(),
+            resource_id: Some(user_id.clone()),
+            user_id: Some(user_id.clone()),
+            user_email: None,
+            details: Some(json!({ "erased": failure.is_none(), "failure": failure })),
+            success: failure.is_none(),
+        },
+    )
+    .await;
+    match result {
+        Ok(()) => Json(json!({ "received": true, "userId": user_id, "erased": true })).into_response(),
+        Err(error) => error.into_response(),
     }
 }
