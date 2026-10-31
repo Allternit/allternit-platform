@@ -38,6 +38,14 @@ final class BotModeStore: ObservableObject {
     @Published var pendingRoute: BotRoute?
     /// Set by the drawer's Home: back to the Bots home (root of the stack).
     @Published var pendingHome = false
+    /// A message written in the Office's panel, by bot: its chat sends it once
+    /// that conversation has loaded, so the reply streams where you can see it.
+    var pendingMessages: [String: String] = [:]
+
+    /// Hands the Office's message over once (nil when there is none).
+    func takePendingMessage(for botId: String) -> String? {
+        pendingMessages.removeValue(forKey: botId)
+    }
 
     private let hub = AgentHubStore.shared
     private let client = BotModeClient.shared
