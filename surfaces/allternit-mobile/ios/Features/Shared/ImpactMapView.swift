@@ -131,6 +131,7 @@ struct ImpactMapView: View {
     private enum Phase { case loading, loaded, failed(String) }
 
     @State private var phase: Phase = .loading
+    @State private var unavailable = false
     @State private var graph = ImpactGraph(map: MemoryMap(items: [], links: [], truncated: false))
     @State private var truncated = false
     @State private var focusId: String?
@@ -143,6 +144,11 @@ struct ImpactMapView: View {
     private static let groupLimit = 5
 
     var body: some View {
+        // A computer on an older runtime has no map route yet: show nothing.
+        if !unavailable { mapContent }
+    }
+
+    private var mapContent: some View {
         VStack(alignment: .leading, spacing: 10) {
             header
             switch phase {
@@ -421,6 +427,8 @@ struct ImpactMapView: View {
             if let focusId, graph.item(focusId) == nil { self.focusId = nil }
             phase = .loaded
         } catch is CancellationError {
+        } catch APIError.httpError(let status, _) where status == 404 {
+            unavailable = true
         } catch {
             phase = .failed(FriendlyErrorMessage.from(error.localizedDescription))
         }
