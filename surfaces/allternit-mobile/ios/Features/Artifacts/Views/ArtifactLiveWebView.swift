@@ -40,8 +40,19 @@ import WebKit
 /// share sheet, so the person can Save to Files or Photos. `window.print()`
 /// (the web's "PDF" exports) opens the iOS print sheet, which saves a PDF. Data lives in an in-memory store shared by
 /// these views for the app session, so nothing persists across launches.
+///
+/// With a `route`, it hosts the web's real editors instead of the viewer
+/// (src/pages/AppEditorPage.tsx in allternit-ai): `ArtifactWindow` for a stored
+/// artifact, or the Docs/Sheets/Slides and Design editors of a studio session.
+/// Those pages have their own toolbar, so they call back to close the view,
+/// and their "ask the chat" buttons call back with the text.
 struct ArtifactLiveWebView: View {
-    let artifact: ArtifactV2
+    /// The viewer's record; nil when a `route` opens an editor.
+    var artifact: ArtifactV2? = nil
+    var route: ArtifactWebRoute? = nil
+    var onClose: (() -> Void)? = nil
+    var onChat: ((String) -> Void)? = nil
+    @Environment(\.colorScheme) private var colorScheme
 
     enum Phase: Equatable {
         case loading
@@ -64,11 +75,21 @@ struct ArtifactLiveWebView: View {
 
     /// The web app that serves `/a/<id>` (DEFAULT_PUBLIC_BASE_URL in
     /// artifacts_v2.rs).
-    static let webOrigin = URL(string: "https://ai.allternit.com")!
+    static let webOrigin: URL = {
+        #if DEBUG
+        // `-web-url <url>` (DEBUG only): a local or preview build of the web app.
+        if let override = UserDefaults.standard.string(forKey: "web-url"), let url = URL(string: override) {
+            return url
+        }
+        #endif
+        return URL(string: "https://ai.allternit.com")!
+    }()
+
+    private var noun: String { artifact?.knownKind?.noun.lowercased() ?? "artifact" }
 
     var body: some View {
         ZStack {
-            ArtifactLiveWebContainer(artifact: artifact, reloadToken: reloadToken, onPhase: { next in
+            ArtifactLiveWebContainer(artifact: artifact, route: route, dark: colorScheme == .dark, onClose: onClose, onChat: onChat, reloadToken: reloadToken, onPhase: { next in
                 phase = next
             }, onDownload: { event in
                 switch event {
@@ -95,14 +116,14 @@ struct ArtifactLiveWebView: View {
 
             switch phase {
             case .loading:
-                ProgressView("Opening \(artifact.knownKind?.noun.lowercased() ?? "artifact")…")
+                ProgressView("Opening \(noun)…")
             case .ready:
                 EmptyView()
             case .failed(let message):
                 FriendlyStateView(
                     style: .offline,
                     icon: "wifi.slash",
-                    title: "Couldn't open this \(artifact.knownKind?.noun.lowercased() ?? "artifact")",
+                    title: "Couldn't open this \(noun)",
                     message: message,
                     actionTitle: "Retry",
                     action: {
@@ -191,24 +212,74 @@ private struct ArtifactLiveSeed: Encodable {
     }
 }
 
+/// A web editor page (allternit-ai src/routes.tsx).
+enum ArtifactWebRoute: Equatable {
+    case window(id: String)
+    case office(product: String, artifactId: String)
+    case design(projectId: String, title: String)
+
+    /// Identity for a pane that swaps pages.
+    var paneKey: String {
+        switch self {
+        case .window(let id): return "window:\(id)"
+        case .office(_, let artifactId): return "office:\(artifactId)"
+        case .design(let projectId, _): return "design:\(projectId)"
+        }
+    }
+
+    func url(dark: Bool) -> URL {
+        // The sample workspace is answered inside the page on the /embed path.
+        let sample = SampleWorkspace.isEnabled
+        func escaped(_ value: String) -> String {
+            value.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed.subtracting(CharacterSet(charactersIn: "/"))) ?? value
+        }
+        let path: String
+        var items = [URLQueryItem(name: "theme", value: dark ? "dark" : "light")]
+        switch self {
+        case .window(let id):
+            path = sample ? "/embed/editor/a/\(escaped(id))" : "/a/\(escaped(id))/edit"
+        case .office(let product, let artifactId):
+            path = "\(sample ? "/embed" : "")/editor/office/\(escaped(product))/\(escaped(artifactId))"
+        case .design(let projectId, let title):
+            path = "\(sample ? "/embed" : "")/editor/design/\(escaped(projectId))"
+            items.append(URLQueryItem(name: "title", value: title))
+        }
+        var components = URLComponents(url: ArtifactLiveWebView.webOrigin, resolvingAgainstBaseURL: false)!
+        components.path = path
+        components.queryItems = items
+        return components.url!
+    }
+}
+
 private struct ArtifactLiveWebContainer: UIViewRepresentable {
-    let artifact: ArtifactV2
+    let artifact: ArtifactV2?
+    let route: ArtifactWebRoute?
+    let dark: Bool
+    let onClose: (() -> Void)?
+    let onChat: ((String) -> Void)?
     let reloadToken: Int
     let onPhase: (ArtifactLiveWebView.Phase) -> Void
     let onDownload: (ArtifactLiveWebView.DownloadEvent) -> Void
 
     static let clerkHandlerName = "allternitClerk"
     static let downloadHandlerName = "allternitDownload"
+    static let editorHandlerName = "allternitEditor"
 
     /// One in-memory store for every live artifact view this launch: the web
     /// bundle stays cached between opens, and nothing outlives the process.
     @MainActor private static let dataStore = WKWebsiteDataStore.nonPersistent()
 
+    private var pageURL: URL {
+        if let route { return route.url(dark: dark) }
+        return artifact.map(Self.pageURL(for:)) ?? ArtifactLiveWebView.webOrigin
+    }
+
     func makeCoordinator() -> Coordinator { Coordinator(onPhase: onPhase, onDownload: onDownload) }
 
     func makeUIView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
-        configuration.websiteDataStore = Self.dataStore
+        // Editors keep drafts and Design canvases in the page's storage, as on the web.
+        configuration.websiteDataStore = route == nil ? Self.dataStore : .default()
         configuration.allowsInlineMediaPlayback = true
         configuration.mediaTypesRequiringUserActionForPlayback = []
         let preferences = WKWebpagePreferences()
@@ -223,12 +294,17 @@ private struct ArtifactLiveWebContainer: UIViewRepresentable {
         )
         controller.addScriptMessageHandler(context.coordinator.clerkHandler, contentWorld: .page, name: Self.clerkHandlerName)
         controller.addUserScript(WKUserScript(
-            source: Self.seedScript(for: artifact),
+            source: artifact.map(Self.seedScript(for:)) ?? Self.signInScript,
             injectionTime: .atDocumentStart,
             forMainFrameOnly: true,
             in: .page
         ))
         controller.add(context.coordinator.downloadHandler, contentWorld: .page, name: Self.downloadHandlerName)
+        if route != nil {
+            context.coordinator.editorHandler.onClose = onClose
+            context.coordinator.editorHandler.onChat = onChat
+            controller.add(context.coordinator.editorHandler, contentWorld: .page, name: Self.editorHandlerName)
+        }
         controller.addUserScript(WKUserScript(
             source: Self.downloadScript,
             injectionTime: .atDocumentStart,
@@ -243,16 +319,18 @@ private struct ArtifactLiveWebContainer: UIViewRepresentable {
         webView.backgroundColor = .clear
         webView.scrollView.contentInsetAdjustmentBehavior = .never
         context.coordinator.reloadToken = reloadToken
-        context.coordinator.load(Self.pageURL(for: artifact), into: webView)
+        context.coordinator.load(pageURL, into: webView)
         return webView
     }
 
     func updateUIView(_ webView: WKWebView, context: Context) {
         context.coordinator.onPhase = onPhase
         context.coordinator.onDownload = onDownload
+        context.coordinator.editorHandler.onClose = onClose
+        context.coordinator.editorHandler.onChat = onChat
         if context.coordinator.reloadToken != reloadToken {
             context.coordinator.reloadToken = reloadToken
-            context.coordinator.load(Self.pageURL(for: artifact), into: webView)
+            context.coordinator.load(pageURL, into: webView)
         }
     }
 
@@ -261,6 +339,7 @@ private struct ArtifactLiveWebContainer: UIViewRepresentable {
         controller.removeScriptMessageHandler(forName: AuthenticatedWebBridge.handlerName, contentWorld: .page)
         controller.removeScriptMessageHandler(forName: clerkHandlerName, contentWorld: .page)
         controller.removeScriptMessageHandler(forName: downloadHandlerName, contentWorld: .page)
+        controller.removeScriptMessageHandler(forName: editorHandlerName, contentWorld: .page)
         controller.removeAllUserScripts()
     }
 
@@ -268,6 +347,23 @@ private struct ArtifactLiveWebContainer: UIViewRepresentable {
         let escaped = a.id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed.subtracting(CharacterSet(charactersIn: "/"))) ?? a.id
         return URL(string: "\(ArtifactLiveWebView.webOrigin.absoluteString)/a/\(escaped)")!
     }
+
+    /// Runs before an editor page: the Desktop-style Clerk getter alone.
+    static let signInScript = """
+    (function () {
+      var handlers = window.webkit && window.webkit.messageHandlers;
+      var clerk = handlers && handlers.\(clerkHandlerName);
+      if (!clerk) return;
+      window.allternit = window.allternit || {};
+      if (!window.allternit.auth) {
+        window.allternit.auth = {
+          getClerkToken: function () {
+            return clerk.postMessage(null).then(function (t) { return t || null; }, function () { return null; });
+          }
+        };
+      }
+    })();
+    """
 
     /// Runs before the web bundle: the Desktop-style Clerk getter, the
     /// answer to the route's public fetch, and the in-app chrome tweaks.
@@ -327,9 +423,26 @@ private struct ArtifactLiveWebContainer: UIViewRepresentable {
       if (!h) return;
       var MAX = \(ArtifactFileShare.maxBytes);
       function post(m) { try { h.postMessage(m); } catch (e) {} }
+      // The site's CSP has no blob: in connect-src, so fetch(blobURL) fails
+      // there; keep each blob as its URL is made and read that instead.
+      var blobs = new Map();
+      var createURL = URL.createObjectURL;
+      URL.createObjectURL = function (b) {
+        var url = createURL.call(URL, b);
+        if (b instanceof Blob) {
+          blobs.set(url, b);
+          if (blobs.size > 20) blobs.delete(blobs.keys().next().value);
+        }
+        return url;
+      };
+      function read(href) {
+        var b = blobs.get(href);
+        if (b) { blobs.delete(href); return Promise.resolve(b); }
+        return fetch(href).then(function (r) { return r.blob(); });
+      }
       function save(href, name) {
         post({ stage: 'start' });
-        fetch(href).then(function (r) { return r.blob(); }).then(function (b) {
+        read(href).then(function (b) {
           if (b.size > MAX) { post({ error: 'tooLarge' }); return; }
           var fr = new FileReader();
           fr.onload = function () {
@@ -383,6 +496,22 @@ private struct ArtifactLiveWebContainer: UIViewRepresentable {
     })();
     """
 
+    /// What an editor page tells the app (AppEditorPage's `tellApp`).
+    @MainActor
+    final class EditorHandler: NSObject, WKScriptMessageHandler {
+        var onClose: (() -> Void)?
+        var onChat: ((String) -> Void)?
+
+        func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+            guard let body = message.body as? [String: Any] else { return }
+            switch body["type"] as? String {
+            case "close": onClose?()
+            case "chat": onChat?(body["text"] as? String ?? "")
+            default: break
+            }
+        }
+    }
+
     /// Files posted by `downloadScript`.
     @MainActor
     final class DownloadHandler: NSObject, WKScriptMessageHandler {
@@ -424,6 +553,7 @@ private struct ArtifactLiveWebContainer: UIViewRepresentable {
         let authHandler = AuthHandler()
         let clerkHandler = ClerkHandler()
         let downloadHandler = DownloadHandler()
+        let editorHandler = EditorHandler()
         var onPhase: (ArtifactLiveWebView.Phase) -> Void
         var onDownload: (ArtifactLiveWebView.DownloadEvent) -> Void
         var reloadToken = 0
@@ -560,8 +690,8 @@ private struct ArtifactLiveWebContainer: UIViewRepresentable {
         }
 
         private func isAppPage(_ url: URL) -> Bool {
-            url.scheme?.lowercased() == "https" && url.host == ArtifactLiveWebView.webOrigin.host
-                && url.path.hasPrefix("/a/")
+            url.scheme?.lowercased() == ArtifactLiveWebView.webOrigin.scheme && url.host == ArtifactLiveWebView.webOrigin.host
+                && ["/a/", "/editor/", "/embed/editor/"].contains { url.path.hasPrefix($0) }
         }
 
         func webView(_ webView: WKWebView,

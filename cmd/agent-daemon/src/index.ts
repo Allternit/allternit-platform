@@ -21,7 +21,7 @@ const LOCAL_GIZZI_URL = (process.env.ALLTERNIT_GIZZI_URL || 'http://127.0.0.1:40
  * (surfaces/allternit-desktop/src/main/relay-gizzi-credential.ts).
  */
 function isGizziOwnedRelayPath(requestPath: string): boolean {
-  return /^\/v1\/(pty|file|cron|automations)(\/|\?|$)/.test(requestPath)
+  return /^\/v1\/(pty|file|cron|automations|mcp|vcs|path)(\/|\?|$)/.test(requestPath)
     || /^\/v1\/event(\?|$)/.test(requestPath);
 }
 

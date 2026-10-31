@@ -217,68 +217,11 @@ enum SessionWorkerEvent: Decodable, Sendable {
     }
 }
 
-// MARK: - Event → AgentChatEvent mapping
-
-extension SessionWorkerEvent {
-    /// Best-effort mapping from session-worker Bus events to the
-    /// `AgentChatEvent` frames the chat UI already understands.
-    ///
-    /// The session-worker stream is richer than the legacy agent-chat frame
-    /// set, so some events map to `.ignored` until the UI grows handlers for
-    /// them.
-    var asAgentChatEvent: AgentChatEvent {
-        switch self {
-        case .partDelta(let delta):
-            if delta.field == "text" {
-                return .textDelta(.init(messageId: delta.messageID, partId: delta.partID, text: delta.delta))
-            }
-            if delta.field == "reasoning" {
-                return .thinkingDelta(delta.delta)
-            }
-            return .ignored
-
-        case .partUpdated(let part):
-            if part.type == "tool", let name = part.tool ?? part.name, let callID = part.callID {
-                let detail = part.toolDetail
-                switch part.toolStatus {
-                case "pending", "running":
-                    return .toolCall(.init(toolCallId: callID, toolName: name, detail: detail))
-                case "completed":
-                    return .toolResult(.init(toolCallId: callID, toolName: name, detail: detail))
-                case "error":
-                    return .toolError(.init(toolCallId: callID, toolName: name, error: detail?.error ?? "Tool execution failed", detail: detail))
-                default:
-                    return .ignored
-                }
-            }
-            return .ignored
-
-        case .statusChanged(let info):
-            if info.status == "error" {
-                return .finish(.init(messageId: nil, status: "error", metadata: .init(status: "error", error: info.error, errorDetails: nil)))
-            }
-            if info.status == "idle" {
-                return .done
-            }
-            return .ignored
-
-        case .asked(let info):
-            if let ask = info.permissionAsk { return .permissionAsked(ask) }
-            return .toolCall(.init(toolCallId: info.id, toolName: info.title ?? "Permission"))
-
-        case .questionAsked(let request):
-            return request.questions.isEmpty ? .ignored : .question(request)
-
-        case .connected, .heartbeat, .messageUpdated, .partRemoved, .unknown:
-            return .ignored
-        }
-    }
-}
-
 // MARK: - Client
 
-/// Client for the capability-native Fabric session-worker endpoints mounted
-/// under `/v1/session-worker` and `/v1/fabric` on a gizzi-code node.
+/// Client for the Fabric peer endpoints (`/v1/fabric/peers*`) on a
+/// gizzi-code node. Chat turns don't go through here: they stream from
+/// `POST /api/agent-chat` (AgentChatClient).
 final class SessionWorkerClient: @unchecked Sendable {
     let baseURL: URL
     private let session: URLSession
@@ -315,161 +258,6 @@ final class SessionWorkerClient: @unchecked Sendable {
         try await get(path: "v1/fabric/peers/local")
     }
 
-    // MARK: - Leases
-
-    /// `POST /v1/fabric/leases` — mints a signed lease for a capability.
-    func issueLease(request: IssueLeaseRequest) async throws -> FabricLease {
-        try await post(path: "v1/fabric/leases", body: request)
-    }
-
-    /// Convenience lease helper for `harness.session.message`.
-    func leaseSessionMessage(grantee: String, ttlSeconds: Int = 300) async throws -> FabricLease {
-        try await issueLease(request: IssueLeaseRequest(
-            capabilityId: "harness.session.message",
-            grantee: grantee,
-            ttlSeconds: ttlSeconds,
-            constraints: nil,
-            policy: nil
-        ))
-    }
-
-    // MARK: - Invocation
-
-    /// `POST /v1/session-worker/invoke` — invokes a capability with an
-    /// optional lease. Sends `X-Allternit-Lease` when `lease` is provided.
-    func invoke(capability: String,
-                inputs: [String: AnyCodable],
-                lease: FabricLease? = nil) async throws -> InvocationResult {
-        var request = try await authorizedRequest(path: "v1/session-worker/invoke", method: "POST")
-        if let lease {
-            request.setValue(lease.signature, forHTTPHeaderField: "X-Allternit-Lease")
-        }
-        request.httpBody = try JSONEncoder().encode(CapabilityInvocationRequest(capability: capability, inputs: inputs))
-        let (data, response) = try await InstanceConnection.data(for: request, session: session)
-        try validate(response, data: data)
-        return try JSONDecoder().decode(InvocationResult.self, from: data)
-    }
-
-    /// Convenience invocation for `harness.session.message`.
-    func sendSessionMessage(sessionID: String,
-                            text: String,
-                            attachments: [SessionWorkerAttachment] = [],
-                            agentId: String? = nil,
-                            systemPrompt: String? = nil,
-                            runtimeModelId: String? = nil,
-                            effort: String? = nil,
-                            tools: ToolOptions? = nil,
-                            lease: FabricLease) async throws -> InvocationResult {
-        let attachmentInputs = attachments.map { attachment in
-            [
-                "mime": AnyCodable(attachment.mime),
-                "url": AnyCodable(attachment.url),
-                "filename": AnyCodable(attachment.filename),
-            ]
-        }
-        var inputs: [String: AnyCodable] = [
-            "sessionID": AnyCodable(sessionID),
-            "text": AnyCodable(text),
-        ]
-        if !attachmentInputs.isEmpty {
-            inputs["attachments"] = AnyCodable(attachmentInputs)
-        }
-        if let agentId, !agentId.isEmpty {
-            inputs["agent"] = AnyCodable(agentId)
-        }
-        if let systemPrompt, !systemPrompt.isEmpty {
-            inputs["system"] = AnyCodable(systemPrompt)
-        }
-        if let runtimeModelId, !runtimeModelId.isEmpty,
-           let model = Self.parseRuntimeModelId(runtimeModelId) {
-            inputs["model"] = AnyCodable(model)
-        }
-        if let effort, !effort.isEmpty {
-            inputs["effort"] = AnyCodable(effort)
-        }
-        var metadata: [String: AnyCodable] = [:]
-        if let tools {
-            metadata["tools"] = AnyCodable(tools)
-        }
-        if !metadata.isEmpty {
-            inputs["metadata"] = AnyCodable(metadata)
-        }
-        return try await invoke(capability: "harness.session.message", inputs: inputs, lease: lease)
-    }
-
-    private static func parseRuntimeModelId(_ id: String) -> [String: String]? {
-        let separators = CharacterSet(charactersIn: "/:")
-        let parts = id.components(separatedBy: separators).filter { !$0.isEmpty }
-        guard parts.count >= 2 else { return nil }
-        return ["providerID": parts[0], "modelID": parts[1]]
-    }
-
-    // MARK: - Session events (SSE)
-
-    /// `GET /v1/session-worker/sessions/:id/events` — returns an async stream
-    /// of `SessionWorkerEvent` values parsed from SSE `data:` lines.
-    /// Pass a `harness.session.events` lease when the runtime enforces leases.
-    func streamEvents(sessionID: String, lease: FabricLease? = nil) -> AsyncThrowingStream<SessionWorkerEvent, Error> {
-        AsyncThrowingStream { continuation in
-            let task = Task {
-                do {
-                    var request = try await self.authorizedRequest(
-                        path: "v1/session-worker/sessions/\(Self.escape(sessionID))/events"
-                    )
-                    if let lease {
-                        request.setValue(lease.signature, forHTTPHeaderField: "X-Allternit-Lease")
-                    }
-                    let (bytes, response) = try await InstanceConnection.bytes(for: request, session: self.session)
-                    try self.validate(response, data: nil)
-
-                    let decoder = JSONDecoder()
-                    for try await line in bytes.lines {
-                        try Task.checkCancellation()
-                        guard line.hasPrefix("data: ") else { continue }
-                        let payload = String(line.dropFirst(6))
-                        guard !payload.isEmpty else { continue }
-                        if payload == "[DONE]" { continuation.finish(); return }
-                        guard let data = payload.data(using: .utf8),
-                              let event = try? decoder.decode(SessionWorkerEvent.self, from: data) else {
-                            print("session-worker: skipping undecodable frame: \(payload)")
-                            continue
-                        }
-                        continuation.yield(event)
-                    }
-                    continuation.finish()
-                } catch {
-                    continuation.finish(throwing: error)
-                }
-            }
-            continuation.onTermination = { _ in task.cancel() }
-        }
-    }
-
-    /// `GET /v1/session-worker/sessions/:id/events` mapped to the existing
-    /// `AgentChatEvent` model so `ChatViewModel` does not change.
-    func streamAgentChatEvents(sessionID: String, lease: FabricLease? = nil) -> AsyncThrowingStream<AgentChatEvent, Error> {
-        AsyncThrowingStream { continuation in
-            let task = Task {
-                do {
-                    for try await event in self.streamEvents(sessionID: sessionID, lease: lease) {
-                        try Task.checkCancellation()
-                        let mapped = event.asAgentChatEvent
-                        if case .ignored = mapped { continue }
-                        continuation.yield(mapped)
-                        if mapped.isTerminal {
-                            continuation.finish()
-                            return
-                        }
-                    }
-                    continuation.finish()
-                } catch {
-                    continuation.finish(throwing: error)
-                }
-            }
-            continuation.onTermination = { _ in task.cancel() }
-        }
-    }
-
     // MARK: - Generic REST helpers
 
     private func get<T: Decodable>(path: String) async throws -> T {
@@ -486,13 +274,6 @@ final class SessionWorkerClient: @unchecked Sendable {
         return try JSONDecoder().decode(T.self, from: data)
     }
 
-    private func post<T: Decodable, B: Encodable>(path: String, body: B) async throws -> T {
-        var request = try await authorizedRequest(path: path, method: "POST")
-        request.httpBody = try JSONEncoder().encode(body)
-        let (data, response) = try await InstanceConnection.data(for: request, session: session)
-        try validate(response, data: data)
-        return try JSONDecoder().decode(T.self, from: data)
-    }
 
     private func authorizedRequest(path: String, method: String = "GET") async throws -> URLRequest {
         let url = baseURL.appendingPathComponent(Self.routed(path, base: baseURL))
@@ -536,18 +317,4 @@ final class SessionWorkerClient: @unchecked Sendable {
     private static func routed(_ path: String, base: URL) -> String {
         RuntimeRelayClient.isRelayURL(base) ? "api/\(path)" : path
     }
-
-    private static func escape(_ sessionID: String) -> String {
-        sessionID.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? sessionID
-    }
-}
-
-// MARK: - Attachment input
-
-/// Attachment shape expected by `harness.session.message` inputs
-/// (`{ mime, url, filename }`).
-struct SessionWorkerAttachment: Sendable {
-    let mime: String
-    let url: String
-    let filename: String?
 }

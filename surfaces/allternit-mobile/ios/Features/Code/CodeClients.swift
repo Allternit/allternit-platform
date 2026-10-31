@@ -252,9 +252,25 @@ struct FactoryPaneClient: Sendable {
         let engine: Engine?
     }
 
+    /// The contract error `{ error: { code, fact, action } }` (older
+    /// engines put `fact` / `action` at the top level).
     private struct ErrorBody: Decodable {
-        let fact: String?
-        let action: String?
+        struct Contract: Decodable { let fact: String?; let action: String? }
+        let error: Contract?
+        private let topFact: String?
+        private let topAction: String?
+
+        var fact: String? { error?.fact ?? topFact }
+        var action: String? { error?.action ?? topAction }
+
+        private enum CodingKeys: String, CodingKey { case error, topFact = "fact", topAction = "action" }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            error = try? c.decodeIfPresent(Contract.self, forKey: .error)
+            topFact = try? c.decodeIfPresent(String.self, forKey: .topFact)
+            topAction = try? c.decodeIfPresent(String.self, forKey: .topAction)
+        }
     }
 
     func terminalBots() async throws -> TerminalBotsResult {
@@ -350,6 +366,16 @@ struct FactoryPaneClient: Sendable {
         struct Body: Decodable { let checkpoints: [FactoryTreeCheckpoint] }
         let data = try await send(path: "trees/\(Self.escape(id))/checkpoints")
         return try JSONDecoder().decode(Body.self, from: data).checkpoints
+    }
+
+    /// `POST /trees/:id/rewind` `{ checkpoint }`. The engine saves the current
+    /// state first, as checkpoint `savedAs`, so the rewind can be undone.
+    /// A refused rewind (a running agent) throws the engine's fact.
+    func rewindTree(id: String, checkpoint: Int) async throws -> Int {
+        struct Body: Encodable { let checkpoint: Int }
+        struct Result: Decodable { let savedAs: Int }
+        let data = try await send(path: "trees/\(Self.escape(id))/rewind", method: "POST", body: Body(checkpoint: checkpoint))
+        return try JSONDecoder().decode(Result.self, from: data).savedAs
     }
 
     private func send<B: Encodable>(path: String, method: String = "GET", body: B) async throws -> Data {

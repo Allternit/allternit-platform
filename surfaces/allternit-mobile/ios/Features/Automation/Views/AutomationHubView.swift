@@ -1,14 +1,13 @@
 import SwiftUI
-import Charts
 
 /// Bot routines, their schedule, and goals (the PWA's Automation Tasks →
-/// Routines / Calendar / Graph + Goals, over allternit-api
+/// Routines + Goals, over allternit-api
 /// `/api/v1/automation/*`). Each routine is a run row (RoutineRunRow.tsx):
 /// schedule in words, next run or the live step, the last 14 runs as a
 /// strip, Run now / Stop and an on/off switch; tap expands it.
 struct AutomationHubView: View {
     enum Tab: String, CaseIterable, Identifiable {
-        case routines = "Routines", calendar = "Calendar", graph = "Graph", goals = "Goals"
+        case routines = "Routines", goals = "Goals"
         var id: String { rawValue }
     }
 
@@ -29,8 +28,6 @@ struct AutomationHubView: View {
             Group {
                 switch tab {
                 case .routines: routinesList
-                case .calendar: AutomationCalendarView(routines: store.routines)
-                case .graph: AutomationGraphView(routines: store.routines)
                 case .goals: GoalsListView(store: store)
                 }
             }
@@ -185,6 +182,17 @@ final class AutomationStore: ObservableObject {
     func createGoal(_ request: CreateAutomationGoalRequest) async throws {
         let goal = try await client.createGoal(request)
         goals.insert(goal, at: 0)
+    }
+
+    /// A dragged routine's new cron: saves at once; a failure stays where it
+    /// was on the reload and is reported.
+    func moveRoutine(_ routine: AutomationRoutine, cron: String) async {
+        do {
+            try await client.updateSchedule(id: routine.id, cron: cron, timezone: routine.timezone ?? TimeZone.current.identifier)
+            await load()
+        } catch {
+            actionError = "Couldn't move the routine. \(FriendlyErrorMessage.from(error.localizedDescription))"
+        }
     }
 
     func setGoalStatus(_ goal: AutomationGoal, _ status: String) async {
@@ -406,120 +414,6 @@ struct RunStrip: View {
     }
 }
 
-// MARK: - Calendar + graph
-
-/// The next week of runs, by day (from each routine's cron).
-struct AutomationCalendarView: View {
-    let routines: [AutomationRoutine]
-
-    private struct Slot: Identifiable {
-        let id: String
-        let at: Date
-        let name: String
-    }
-
-    private struct Day: Identifiable {
-        let day: Date
-        let slots: [Slot]
-        var id: Date { day }
-    }
-
-    private var days: [Day] {
-        let calendar = Calendar.current
-        let start = calendar.startOfDay(for: Date())
-        var buckets: [Date: [Slot]] = [:]
-        for routine in routines where routine.isEnabled {
-            for date in CronWords.upcoming(routine, days: 7) {
-                let slot = Slot(id: "\(routine.id)-\(date.timeIntervalSince1970)", at: date, name: routine.name)
-                buckets[calendar.startOfDay(for: date), default: []].append(slot)
-            }
-        }
-        return (0..<7).compactMap { offset in
-            guard let day = calendar.date(byAdding: .day, value: offset, to: start) else { return nil }
-            return Day(day: day, slots: (buckets[day] ?? []).sorted { $0.at < $1.at })
-        }
-    }
-
-    var body: some View {
-        List {
-            ForEach(days) { entry in
-                Section {
-                    if entry.slots.isEmpty {
-                        Text("Nothing scheduled").font(.caption).foregroundColor(Color("TextSecondary"))
-                    }
-                    ForEach(entry.slots) { slot in
-                        HStack {
-                            Text(slot.at.formatted(.dateTime.hour().minute()))
-                                .font(.caption.monospacedDigit())
-                                .foregroundColor(Color("TextSecondary"))
-                                .frame(width: 64, alignment: .leading)
-                            Text(slot.name).font(.subheadline).foregroundColor(Color("TextPrimary"))
-                        }
-                    }
-                } header: {
-                    Text(entry.day.formatted(.dateTime.weekday(.wide).month(.abbreviated).day()))
-                }
-            }
-        }
-        .listStyle(.insetGrouped)
-        .scrollContentBackground(.hidden)
-    }
-}
-
-/// Runs per day for the last 14 days, done vs failed.
-struct AutomationGraphView: View {
-    let routines: [AutomationRoutine]
-
-    private struct Point: Identifiable {
-        let day: Date
-        let outcome: String
-        let count: Int
-        var id: String { "\(day.timeIntervalSince1970)-\(outcome)" }
-    }
-
-    private var points: [Point] {
-        let calendar = Calendar.current
-        var counts: [Date: [String: Int]] = [:]
-        let cutoff = calendar.date(byAdding: .day, value: -13, to: calendar.startOfDay(for: Date())) ?? Date()
-        for routine in routines {
-            for run in routine.recentRuns ?? [] {
-                guard let started = run.startedAt.flatMap(DevicePairingView.parseDate), started >= cutoff else { continue }
-                let outcome = run.status == "failed" ? "Failed" : (RunStrip.label(run.status) == "Done" ? "Done" : "Other")
-                counts[calendar.startOfDay(for: started), default: [:]][outcome, default: 0] += 1
-            }
-        }
-        return counts.flatMap { day, byOutcome in byOutcome.map { Point(day: day, outcome: $0.key, count: $0.value) } }
-    }
-
-    var body: some View {
-        if points.isEmpty {
-            FriendlyStateView(style: .empty, icon: "chart.bar", title: "No runs in the last two weeks",
-                              message: "Runs show here as your routines go.")
-        } else {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Runs per day · last 14 days")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundColor(Color("TextPrimary"))
-                Chart(points) { point in
-                    BarMark(
-                        x: .value("Day", point.day, unit: .day),
-                        y: .value("Runs", point.count)
-                    )
-                    .foregroundStyle(by: .value("Outcome", point.outcome))
-                }
-                .chartForegroundStyleScale([
-                    "Done": Theme.statusSuccess,
-                    "Failed": Theme.statusError,
-                    "Other": Color("TextSecondary"),
-                ])
-                .frame(height: 220)
-            }
-            .padding(16)
-            .frame(maxHeight: .infinity, alignment: .top)
-        }
-    }
-}
-
 // MARK: - Goals
 
 struct GoalsListView: View {
@@ -580,6 +474,8 @@ struct GoalsListView: View {
 
 struct NewGoalSheet: View {
     @ObservedObject var store: AutomationStore
+    /// "2026-11-01" when added from a calendar day.
+    var targetDate: String? = nil
     @Environment(\.dismiss) private var dismiss
     @State private var title = ""
     @State private var details = ""
@@ -595,6 +491,7 @@ struct NewGoalSheet: View {
                 Picker("Priority", selection: $priority) {
                     ForEach(["low", "medium", "high", "urgent"], id: \.self) { Text($0.capitalized).tag($0) }
                 }
+                if let targetDate { LabeledContent("Target date", value: targetDate) }
                 if let error { Text(error).font(.caption).foregroundColor(Theme.statusError) }
             }
             .navigationTitle("New goal")
@@ -619,7 +516,7 @@ struct NewGoalSheet: View {
             try await store.createGoal(CreateAutomationGoalRequest(
                 title: title.trimmingCharacters(in: .whitespaces),
                 description: trimmed.isEmpty ? nil : trimmed,
-                priority: priority, agentId: nil, targetDate: nil))
+                priority: priority, agentId: nil, targetDate: targetDate))
             dismiss()
         } catch {
             self.error = FriendlyErrorMessage.from(error.localizedDescription)

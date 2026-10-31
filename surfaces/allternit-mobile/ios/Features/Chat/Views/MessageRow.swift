@@ -200,7 +200,8 @@ struct MessageRow: View {
     @ViewBuilder
     private var bubble: some View {
         if message.role == "user" {
-            Text(message.content)
+            // History stores the sent text, tool tags included; show what was typed.
+            Text(ToolOptionsStore.shared.strippedText(message.content))
                 .font(.system(size: 15))
                 .lineSpacing(15 * 0.6 - 4)
                 .foregroundColor(Color("TextPrimary"))

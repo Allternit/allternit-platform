@@ -27,6 +27,9 @@ struct CodeThreadChatView: View {
     var onLeaveTerminal: () -> Void = {}
     /// The composer switch's "Terminal": this thread in its terminal look.
     var onEnterTerminal: () -> Void = {}
+    /// Hidden behind the open shell: the permission event stream (the
+    /// computer's whole bus) stops so it doesn't compete with keystrokes.
+    var paused: Bool = false
 
     @StateObject private var viewModel = ChatViewModel()
     @StateObject private var modelStore = ModelStore.shared
@@ -66,7 +69,8 @@ struct CodeThreadChatView: View {
         .onChange(of: viewModel.currentSessionId) { _, id in
             onSessionChanged(id)
         }
-        .task(id: sessionId) {
+        .task(id: paused ? nil : sessionId) {
+            guard !paused else { return }
             await pollPendingPermissions()
         }
         .sheet(item: $reviewingPermission) { request in

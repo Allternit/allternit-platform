@@ -113,4 +113,20 @@ final class ToolOptionsStore: ObservableObject {
         guard !parts.isEmpty else { return body }
         return (parts + [body]).joined(separator: " ")
     }
+
+    /// Undoes `enrichedText` so a failed send hands back what the person typed.
+    func strippedText(_ text: String) -> String {
+        var body = text
+        let prefixes = ["[web_search_enabled] "] + ComposerResponseStyle.allCases.map(\.promptPrefix)
+        var changed = true
+        while changed {
+            changed = false
+            for prefix in prefixes where body.hasPrefix(prefix) {
+                body.removeFirst(prefix.count)
+                body = body.trimmingCharacters(in: .whitespaces)
+                changed = true
+            }
+        }
+        return body
+    }
 }

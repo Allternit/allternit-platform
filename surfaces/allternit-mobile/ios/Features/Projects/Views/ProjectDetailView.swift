@@ -3,12 +3,14 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 /// Project detail in the desktop project page's layout (allternit-ai
-/// ChatProjectDetail → BaseProjectView): a "Projects / name" breadcrumb, the
-/// hero band (folder mark, serif name, description, section tabs), then
-/// Overview (the project intro, "Start a thread" and its threads) or Details
-/// ("Add files" / "Add instructions", the instructions editor → PUT
-/// …/projects/:id, the attached files), and the composer card at the bottom,
-/// which starts a chat in the project.
+/// ChatProjectDetail → BaseProjectView + ProjectCoordinatorWorkspace): a
+/// "Projects / name" breadcrumb, the hero band (folder mark, serif name,
+/// description, the actions, section tabs) following the theme, then Overview
+/// (the project intro, "Start a thread", the coordinator conversation and the
+/// threads), Delegate and Board (the project pane, full screen as on the web's
+/// phone) or Details (status page, memory, "Add files" / "Add instructions",
+/// the instructions editor → PUT …/projects/:id, the attached files), and the
+/// composer at the bottom, which sends to the project's coordinator.
 ///
 /// The old live backend has no files routes and doesn't persist
 /// `metadata.projectId` on session create, so the files list renders its
@@ -23,7 +25,11 @@ struct ProjectDetailView: View {
     let onOpenChat: (AgentSession) -> Void
 
     @StateObject private var projectStore = ProjectStore.shared
+    @ObservedObject private var library = ProjectsLibraryStore.shared
+    @EnvironmentObject private var navigator: BotNavigator
     @Environment(\.dismiss) private var dismiss
+    @StateObject private var dictation = DictationController()
+    @StateObject private var composerAttachments = AttachmentStore()
 
     @State private var instructions: String
     @State private var isEditingInstructions = false
@@ -38,17 +44,41 @@ struct ProjectDetailView: View {
     @State private var isFilePickerPresented = false
     @State private var selectedPhotoItems: [PhotosPickerItem] = []
 
-    @State private var isRenameAlertPresented = false
-    @State private var renameText = ""
     @State private var isDeleteConfirmPresented = false
     @State private var section: Section = .overview
+    @State private var sheet: DetailSheet? = nil
+    @State private var statusRecord: ProjectStatusRecord? = nil
+    @StateObject private var looks: ProjectLookStore
+    @ObservedObject private var backdrops = StageBackdropStore.shared
+
+    // The project's coordinator (project-workspaces): registered on first use.
+    @State private var coordinatorId: String? = nil
+    @State private var messages: [ProjectMessage] = []
+    @State private var serverThreads: [BotThread] = []
+    @State private var draft = ""
+    @State private var isSending = false
+    @State private var composerError: String? = nil
+    @State private var dictationBase = ""
+    @State private var isDictating = false
 
     /// The hero band's tabs the phone has (desktop: Overview · Delegate ·
-    /// Board · Details · Browser).
+    /// Board · Details · Browser). Delegate and Board open the pane.
     private enum Section: String, CaseIterable {
-        case overview, details
-        var label: String { self == .overview ? "Overview" : "Details" }
-        var icon: String? { self == .overview ? "list.bullet" : nil }
+        case overview, delegate, board, details
+        var label: String { rawValue.capitalized }
+        var icon: String? {
+            switch self {
+            case .overview: return "list.bullet"
+            case .delegate: return "checklist"
+            case .board: return "square.grid.2x2"
+            case .details: return nil
+            }
+        }
+    }
+
+    private enum DetailSheet: String, Identifiable {
+        case customize, settings, edit, memory, status
+        var id: String { rawValue }
     }
 
     private let projectsClient = ProjectsClient()
@@ -58,6 +88,7 @@ struct ProjectDetailView: View {
          onNewChat: @escaping (CoworkProject) -> Void,
          onOpenChat: @escaping (AgentSession) -> Void) {
         self.project = project
+        _looks = StateObject(wrappedValue: ProjectLookStore(scope: "project:chat:\(project.id)"))
         self.onNewChat = onNewChat
         self.onOpenChat = onOpenChat
         _instructions = State(initialValue: project.instructions ?? "")
@@ -68,6 +99,15 @@ struct ProjectDetailView: View {
     /// back to the value captured on push.
     private var liveProject: CoworkProject {
         projectStore.project(withId: project.id) ?? project
+    }
+
+    private var libraryRow: LibraryProject? {
+        library.projects(from: [liveProject]).first { $0.mode == .chat && $0.nativeId == project.id }
+    }
+    private var scope: BackdropScope { .project(project.id) }
+    private var workspaceKey: String { "chat-\(project.id)" }
+    private var memorySessionIds: Set<String> {
+        Set(chats.map(\.id)).union(serverThreads.compactMap(\.currentSessionId))
     }
 
     var body: some View {
@@ -83,9 +123,29 @@ struct ProjectDetailView: View {
                                 .foregroundColor(Theme.statusWarning)
                         }
                         if section == .overview {
-                            overviewIntro
+                            ProjectDashboardView(layout: looks.look.layout, look: looks.look, data: boardData, title: liveProject.title) { sheet = .status }
+                            if chats.isEmpty && serverThreads.isEmpty { overviewIntro }
+                            if !messages.isEmpty {
+                                ProjectConversationView(
+                                    messages: messages,
+                                    threads: serverThreads,
+                                    onOpenThread: { navigator.openThread($0) }
+                                )
+                            }
                             chatsSection
+                            if !serverThreads.isEmpty {
+                                BotThreadsPanel(botId: nil, greeting: nil, threadsOverride: serverThreads) {
+                                    navigator.openThread($0)
+                                }
+                                .padding(.horizontal, -8)
+                            }
                         } else {
+                            ProjectStatusCard(projectId: coordinatorId ?? project.id) { sheet = .status }
+                            ProjectCard(title: "Memory") {
+                                ProjectTextButton("View memory") { sheet = .memory }
+                            } content: {
+                                ProjectCardNote("Project memory will show here after a few chats.")
+                            }
                             addButtonsRow
                             instructionsSection
                             filesSection
@@ -98,13 +158,28 @@ struct ProjectDetailView: View {
             }
             composerCard
         }
-        .background(Color("BgPrimary").edgesIgnoringSafeArea(.all))
+        .background {
+            let variant = backdrops.variant(for: .project, scope: scope)
+            if variant == "plain" {
+                Color("BgPrimary").edgesIgnoringSafeArea(.all)
+            } else {
+                StageBackdropView(variant: variant, colors: StageBackdrops.sampleColors)
+                    .ignoresSafeArea()
+                    .allowsHitTesting(false)
+            }
+        }
         .toolbar(.hidden, for: .navigationBar)
-        .alert("Rename project", isPresented: $isRenameAlertPresented) {
-            TextField("Project name", text: $renameText)
-            Button("Save") { renameProject() }
-                .disabled(renameText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            Button("Cancel", role: .cancel) {}
+        .sheet(item: $sheet) { which in
+            sheetContent(which)
+        }
+        .onChange(of: dictation.transcript) { _, transcript in
+            if isDictating { draft = dictationBase + transcript }
+        }
+        .onChange(of: dictation.isRecording) { _, recording in
+            if !recording && isDictating {
+                draft = dictationBase + dictation.transcript
+                isDictating = false
+            }
         }
         .alert("Delete this project?", isPresented: $isDeleteConfirmPresented) {
             Button("Delete", role: .destructive) { deleteProject() }
@@ -134,12 +209,51 @@ struct ProjectDetailView: View {
         .task {
             await loadFiles()
             await loadChats()
+            coordinatorId = try? await BotProjectClient.shared.workspaceProjectId(key: workspaceKey)
+            while !Task.isCancelled {
+                await refreshCoordinator()
+                statusRecord = try? await BotProjectClient.shared.status(projectId: coordinatorId ?? project.id)
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+            }
+        }
+    }
+
+    // MARK: - Sheets
+
+    @ViewBuilder
+    private func sheetContent(_ which: DetailSheet) -> some View {
+        switch which {
+        case .customize:
+            ProjectCustomizeSheet(store: looks, data: boardData, title: liveProject.title, scope: scope,
+                                  backdropColors: StageBackdrops.sampleColors) {
+                Button("Project settings") { sheet = .settings }.frame(minHeight: 44)
+            } manage: {
+                Button("Edit details") { sheet = .edit }.frame(minHeight: 44)
+                if let libraryRow {
+                    Button(libraryRow.isArchived ? "Unarchive" : "Archive") { library.toggleArchive(libraryRow) }.frame(minHeight: 44)
+                }
+                Button("Delete", role: .destructive) { sheet = nil; isDeleteConfirmPresented = true }.frame(minHeight: 44)
+            }
+        case .settings:
+            ProjectSettingsSheet(projectId: project.id, scope: scope, colors: StageBackdrops.sampleColors,
+                                 note: "Appearance is saved on this device. Instructions are saved with the project.",
+                                 placeholder: "How should the coordinator manage this project?")
+                .onDisappear { projectStore.fetchProjectsIfNeeded(force: true) }
+        case .edit:
+            ProjectEditDetailsSheet(title: liveProject.title, details: liveProject.description ?? "") { title, details in
+                try await BotProjectClient.shared.saveDetails(projectId: project.id, title: title, description: details)
+                projectStore.fetchProjectsIfNeeded(force: true)
+            }
+        case .memory:
+            ProjectMemorySheet(sessionIds: memorySessionIds)
+        case .status:
+            ProjectStatusSheet(projectId: coordinatorId ?? project.id)
         }
     }
 
     // MARK: - Desktop chrome
 
-    /// "Projects / name", with the project's options on the right.
+    /// "Projects / name".
     private var breadcrumb: some View {
         HStack(spacing: 8) {
             Button { dismiss() } label: {
@@ -158,24 +272,6 @@ struct ProjectDetailView: View {
                 .foregroundColor(Color("TextPrimary"))
                 .lineLimit(1)
             Spacer(minLength: 0)
-            Menu {
-                Button(action: {
-                    renameText = liveProject.title
-                    isRenameAlertPresented = true
-                }) {
-                    Label("Rename", systemImage: "pencil")
-                }
-                Button(role: .destructive, action: { isDeleteConfirmPresented = true }) {
-                    Label("Delete project", systemImage: "trash")
-                }
-            } label: {
-                Image(systemName: "gearshape")
-                    .font(.system(size: 17))
-                    .foregroundColor(Color("TextSecondary"))
-                    .frame(width: 44, height: 44)
-                    .contentShape(Rectangle())
-            }
-            .accessibilityLabel("Project options")
         }
         .font(.system(size: 14))
         .padding(.horizontal, 16)
@@ -190,10 +286,15 @@ struct ProjectDetailView: View {
                     .font(.system(size: 46, weight: .regular))
                     .foregroundColor(Color("TextPrimary"))
                 VStack(alignment: .leading, spacing: 6) {
-                    Text(liveProject.title)
-                        .font(.system(size: 28, design: .serif))
-                        .foregroundColor(Color("TextPrimary"))
-                        .fixedSize(horizontal: false, vertical: true)
+                    Button { sheet = .edit } label: {
+                        Text(liveProject.title)
+                            .font(.system(size: 28, design: .serif))
+                            .foregroundColor(Color("TextPrimary"))
+                            .multilineTextAlignment(.leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityHint("Rename project")
                     if let description = liveProject.description, !description.isEmpty {
                         Text(description)
                             .font(.system(size: 14))
@@ -202,19 +303,21 @@ struct ProjectDetailView: View {
                     }
                 }
             }
-            HStack(spacing: 6) {
+            actionsRow
+            HStack(spacing: 4) {
                 ForEach(Section.allCases, id: \.self) { tab in
                     let on = section == tab
-                    Button { section = tab } label: {
+                    Button { select(tab) } label: {
                         HStack(spacing: 6) {
                             if let icon = tab.icon { Image(systemName: icon).font(.system(size: 12)) }
                             Text(tab.label)
                         }
-                        .font(.system(size: 14, weight: on ? .medium : .regular))
+                        .font(.system(size: 13, weight: on ? .medium : .regular))
                         .foregroundColor(on ? Color("TextPrimary") : Color("TextSecondary"))
-                        .padding(.horizontal, 10)
-                        .frame(height: 32)
-                        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(on ? Color("BgPanel").opacity(0.7) : Color.clear))
+                        .padding(.horizontal, 8)
+                        .frame(minHeight: 44)
+                        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(on ? Color("BgPanel").opacity(0.7) : Color.clear).padding(.vertical, 6))
+                        .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                     .accessibilityAddTraits(on ? .isSelected : [])
@@ -224,15 +327,81 @@ struct ProjectDetailView: View {
         .padding(.horizontal, 20)
         .padding(.vertical, 24)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            ZStack {
-                Color(hex: "#E6E9ED")
-                RadialGradient(colors: [Color(hex: "#A9B4C2").opacity(0.75), .clear],
-                               center: .init(x: 0.62, y: 0.9), startRadius: 4, endRadius: 260)
+        .background {
+            // The project's own look when it has one, else a quiet band in the theme.
+            if let own = backdrops.own(scope) {
+                StageBackdropView(variant: own, colors: [], size: .compact)
+                    .allowsHitTesting(false)
+                    .clipped()
+            } else {
+                ZStack {
+                    Color("BgTertiary")
+                    RadialGradient(colors: [Color("FillNeutral"), .clear],
+                                   center: .init(x: 0.62, y: 0.9), startRadius: 4, endRadius: 260)
+                }
             }
-        )
+        }
         .overlay(alignment: .bottom) { Rectangle().fill(Color("BorderSubtle")).frame(height: 1) }
-        .environment(\.colorScheme, .light)
+    }
+
+    /// Customize appearance · settings · pin · ⋮ (BaseProjectView headerActions).
+    private var actionsRow: some View {
+        HStack(spacing: 2) {
+            Spacer(minLength: 4)
+            if let libraryRow {
+                ProjectIconButton(systemName: libraryRow.isFavorite ? "pin.fill" : "pin",
+                                  label: libraryRow.isFavorite ? "Unpin project" : "Pin project") {
+                    library.toggleFavorite(libraryRow)
+                }
+            }
+            Button { sheet = .customize } label: {
+                Image(systemName: "slider.horizontal.3")
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundColor(Color("TextPrimary"))
+                    .frame(width: 44, height: 44)
+                    .background(Circle().fill(Color("BgPanel")))
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Customize")
+        }
+    }
+
+    private var boardData: ProjectBoardData {
+        let columns: [String: ProjectBoardWork.Column] = ["waiting": .needsYou, "working": .working, "queued": .queued, "idle": .queued, "resolved": .done]
+        var work = chats.map { chat in
+            ProjectBoardWork(id: chat.id, title: chat.name ?? "Chat", column: .working, owner: nil,
+                             at: ProjectBoardData.date(chat.updatedAt), open: { onOpenChat(chat) })
+        }
+        work += serverThreads.filter { !$0.incognito }.map { t in
+            ProjectBoardWork(id: t.id, title: t.title, column: columns[t.group] ?? .queued, owner: nil,
+                             at: ProjectBoardData.date(t.lastActivityAt), open: { navigator.openThread(t) })
+        }
+        let made = files.map { ProjectBoardMade(id: $0.id, name: $0.name, kind: "File", open: nil) }
+        return ProjectBoardData(status: statusRecord, work: work, people: [], made: made)
+    }
+
+    private func select(_ tab: Section) {
+        switch tab {
+        case .overview, .details:
+            section = tab
+        case .delegate:
+            openPane(.delegate)
+        case .board:
+            openPane(.board)
+        }
+    }
+
+    /// The pane works on the coordinator's project, registered on first use.
+    private func openPane(_ kind: ProjectPaneKind) {
+        Task {
+            do {
+                let id = try await ensureCoordinator()
+                navigator.open(.projectPane(ProjectPaneContext(id: id, title: liveProject.title, botIds: []), kind))
+            } catch {
+                actionError = "Couldn't open \(kind.label): \(FriendlyErrorMessage.from(error.localizedDescription))"
+            }
+        }
     }
 
     /// The project intro over its threads (BaseProjectView empty header).
@@ -249,7 +418,7 @@ struct ProjectDetailView: View {
                     .font(.system(size: 15))
                     .foregroundColor(Color("TextSecondary"))
             }
-            Text("Keep goals, decisions and updates here. Start a thread for a specific task.")
+            Text("Keep goals, decisions, and updates here with your project coordinator. Open a thread alongside this conversation for a specific task.")
                 .font(.system(size: 15))
                 .foregroundColor(Color("TextSecondary"))
                 .fixedSize(horizontal: false, vertical: true)
@@ -268,45 +437,97 @@ struct ProjectDetailView: View {
         }
     }
 
-    /// The composer card at the bottom: starts a chat in this project.
+    /// The composer at the bottom: sends to the project's coordinator
+    /// (ProjectCoordinatorWorkspace `sendCoordinator`), with Threads (N) under it.
     private var composerCard: some View {
-        Button { onNewChat(liveProject) } label: {
-            VStack(alignment: .leading, spacing: 0) {
-                Text("Ask a question or start work in this project…")
-                    .font(.system(size: 16))
-                    .foregroundColor(Color("TextTertiary"))
-                    .lineLimit(1)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 16)
-                    .padding(.top, 14)
-                    .padding(.bottom, 10)
-                HStack {
-                    Image(systemName: "plus")
-                        .font(.system(size: 18, weight: .medium))
-                        .foregroundColor(Color("TextSecondary"))
-                        .frame(width: 40, height: 40)
-                        .background(Circle().fill(Color("FillNeutral")))
-                    Spacer()
-                    Image(systemName: "arrow.up")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundColor(Color("OnAccent"))
-                        .frame(width: 40, height: 40)
-                        .background(Circle().fill(Color("AccentPrimary").opacity(0.35)))
-                }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 8)
-                .overlay(alignment: .top) { Rectangle().fill(Color("BorderSubtle")).frame(height: 1).padding(.horizontal, 8) }
+        VStack(alignment: .leading, spacing: 4) {
+            if let composerError {
+                Text(composerError)
+                    .font(.system(size: 12))
+                    .foregroundColor(Theme.statusError)
+                    .padding(.horizontal, 4)
             }
-            .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Color("BgPanel")))
-            .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(Color("BorderSubtle"), lineWidth: 1))
-            .shadow(color: .black.opacity(0.04), radius: 4, y: 2)
+            ComposerView(
+                inputText: $draft,
+                attachmentStore: composerAttachments,
+                isStreaming: false,
+                isSendDisabled: isSending,
+                hasActiveSession: false,
+                onSend: { _ in composerAttachments.clear(); sendToCoordinator() },
+                onStop: {},
+                onVoiceMode: toggleDictation,
+                placeholderOverride: "Ask your coordinator a question or start work…",
+                showsAttach: false
+            )
+            HStack {
+                Spacer()
+                Button {
+                    if let coordinatorId {
+                        navigator.open(.projectPane(ProjectPaneContext(id: coordinatorId, title: liveProject.title, botIds: []), .threads))
+                    } else {
+                        section = .overview
+                    }
+                } label: {
+                    Text("Threads (\(chats.count + serverThreads.count))")
+                        .font(.system(size: 13))
+                        .foregroundColor(Color("TextSecondary"))
+                        .frame(minHeight: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Start a chat in \(liveProject.title)")
         .padding(.horizontal, 12)
         .padding(.top, 6)
-        .padding(.bottom, 8)
         .background(Color("BgPrimary"))
+    }
+
+    private func sendToCoordinator() {
+        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, !isSending else { return }
+        isSending = true
+        composerError = nil
+        draft = ""
+        Task {
+            defer { isSending = false }
+            do {
+                let id = try await ensureCoordinator()
+                try await BotModeClient.shared.sendToCoordinator(projectId: id, text: text)
+                section = .overview
+                await refreshCoordinator()
+            } catch {
+                draft = text
+                composerError = "Your coordinator didn't get that. Try sending it again."
+            }
+        }
+    }
+
+    private func ensureCoordinator() async throws -> String {
+        if let coordinatorId { return coordinatorId }
+        let id = try await BotProjectClient.shared.registerWorkspace(
+            key: workspaceKey, nativeId: project.id, mode: "chat",
+            title: liveProject.title, description: liveProject.description
+        )
+        coordinatorId = id
+        return id
+    }
+
+    private func refreshCoordinator() async {
+        guard let coordinatorId else { return }
+        if let loaded = try? await BotProjectClient.shared.messages(projectId: coordinatorId) { messages = loaded }
+        if let loaded = try? await BotModeClient.shared.listProjectThreads(projectId: coordinatorId) { serverThreads = loaded }
+    }
+
+    private func toggleDictation() {
+        if isDictating {
+            dictation.stop()
+            return
+        }
+        var base = draft
+        if !base.isEmpty, !base.hasSuffix(" ") { base += " " }
+        dictationBase = base
+        isDictating = true
+        Task { await dictation.start() }
     }
 
     // MARK: - Sections
@@ -569,18 +790,6 @@ struct ProjectDetailView: View {
     }
 
     // MARK: - Actions
-
-    private func renameProject() {
-        let title = renameText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !title.isEmpty, title != liveProject.title else { return }
-        Task {
-            do {
-                try await projectStore.renameProject(id: project.id, title: title)
-            } catch {
-                actionError = "Couldn't rename the project: \(error.localizedDescription)"
-            }
-        }
-    }
 
     private func deleteProject() {
         Task {

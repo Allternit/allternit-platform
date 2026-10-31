@@ -13,7 +13,7 @@ struct ToolOptions: Encodable, Sendable {
 
 /// One composer-staged attachment in the agent-chat body. `url` is the
 /// `POST /api/v1/uploads` result; `dataBase64` inlines small payloads
-/// without an upload round-trip. The Fabric session-worker forwards each as
+/// without an upload round-trip. The agent-chat bridge forwards each as
 /// a gizzi `{"type":"file","url":...}` part.
 struct AttachmentRef: Encodable, Sendable {
     let url: String?
@@ -22,7 +22,7 @@ struct AttachmentRef: Encodable, Sendable {
     let name: String?
 }
 
-/// Errors specific to the capability-native chat path.
+/// Errors specific to the chat path.
 enum AgentChatClientError: Error, LocalizedError {
     /// No gizzi-code/Fabric node is currently reachable.
     case noReachableNode
@@ -35,17 +35,13 @@ enum AgentChatClientError: Error, LocalizedError {
     }
 }
 
-/// Client for the capability-native agent-chat protocol.
+/// Client for the agent-chat protocol.
 ///
-/// Sessions and messages are still managed by the platform gateway
+/// Sessions and messages are managed by the platform gateway
 /// (`POST /api/v1/agent-sessions`, `GET /api/v1/agent-sessions/:id/messages`,
-/// etc.). Streaming a turn happens through the Fabric session-worker on the
-/// resolved gizzi-code node: lease `harness.session.message`, invoke it, then
-/// stream `AgentChatEvent` frames from the session-worker events endpoint.
-///
-/// The legacy `POST /api/agent-chat` streaming bridge has been removed; there
-/// is no fallback path. If no node resolves, the stream fails fast with
-/// `AgentChatClientError.noReachableNode`.
+/// etc.). A turn streams from `POST /api/agent-chat` on the resolved
+/// computer, as on the web. If no computer resolves, the stream fails fast
+/// with `AgentChatClientError.noReachableNode`.
 final class AgentChatClient: ObservableObject, @unchecked Sendable {
     private let client: APIClient
 
@@ -197,59 +193,83 @@ final class AgentChatClient: ObservableObject, @unchecked Sendable {
 
     // MARK: - Chat streaming
 
+    /// Body of `POST /api/agent-chat`, the same body m.allternit.com sends
+    /// (native-agent-api.ts chatApi.streamChat). `metadata.tools` carries the
+    /// "+" sheet's tool options; the bridge turns `attachments` into gizzi
+    /// file parts.
+    private struct AgentChatRequest: Encodable {
+        struct Metadata: Encodable { let tools: ToolOptions }
+        let chatId: String
+        let message: String
+        let agentId: String?
+        let systemPrompt: String?
+        let runtimeModelId: String?
+        let effort: String?
+        let attachments: [AttachmentRef]?
+        let metadata: Metadata?
+    }
+
     /// Sends `text` to the session and streams the response frames.
     ///
-    /// Uses the capability-native Fabric path exclusively: resolve a gizzi-code
-    /// node through `InstanceConnection`, lease `harness.session.message`,
-    /// invoke it, then stream `AgentChatEvent` frames from the session-worker
-    /// events endpoint.
+    /// `POST /api/agent-chat` on the resolved computer (relay, mesh or
+    /// direct gizzi-code, which mounts it under `/api`); the response body is
+    /// the `AgentChatEvent` SSE stream, as on the web. The session-worker
+    /// invoke + events path is not used: computers answer invoke but don't
+    /// serve `/v1/session-worker/sessions/:id/events` (404), so the reply
+    /// never reached the phone.
     ///
-    /// Throws `AgentChatClientError.noReachableNode` when no instance or static
-    /// gizzi-code URL is available.
+    /// Throws `AgentChatClientError.noReachableNode` when no computer resolves.
     func sendMessageStream(sessionId: String, text: String, agentId: String? = nil, systemPrompt: String? = nil, runtimeModelId: String? = nil, effort: String? = nil, attachments: [AttachmentRef]? = nil, tools: ToolOptions? = nil) -> AsyncThrowingStream<AgentChatEvent, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
-                    let resolved = await InstanceConnection.resolve()
-                    guard let baseURL = resolved?.baseURL else {
+                    guard let baseURL = await InstanceConnection.resolve()?.baseURL else {
                         throw AgentChatClientError.noReachableNode
                     }
-
-                    let worker = SessionWorkerClient(
-                        baseURL: baseURL,
-                        tokenProvider: { try await AuthManager.shared.getToken() }
-                    )
-                    let messageLease = try await worker.leaseSessionMessage(grantee: "ios-client")
-                    let eventsLease = try await worker.issueLease(request: IssueLeaseRequest(
-                        capabilityId: "harness.session.events",
-                        grantee: "ios-client",
-                        ttlSeconds: 300,
-                        constraints: nil,
-                        policy: nil
-                    ))
-                    let workerAttachments = (attachments ?? []).compactMap { ref -> SessionWorkerAttachment? in
-                        guard let url = ref.url else { return nil }
-                        return SessionWorkerAttachment(mime: ref.mediaType, url: url, filename: ref.name)
+                    var request = URLRequest(url: baseURL.appendingPathComponent("api/agent-chat"))
+                    request.httpMethod = "POST"
+                    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                    request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+                    if let token = try await AuthManager.shared.getToken(), !token.isEmpty {
+                        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
                     }
-                    _ = try await worker.sendSessionMessage(
-                        sessionID: sessionId,
-                        text: text,
-                        attachments: workerAttachments,
+                    // Streams are long-lived; the default 60s idle timeout
+                    // would kill slow generations between frames.
+                    request.timeoutInterval = 600
+                    request.httpBody = try JSONEncoder().encode(AgentChatRequest(
+                        chatId: sessionId,
+                        message: text,
                         agentId: agentId,
                         systemPrompt: systemPrompt,
                         runtimeModelId: runtimeModelId,
                         effort: effort,
-                        tools: tools,
-                        lease: messageLease
-                    )
+                        attachments: attachments,
+                        metadata: tools.map { AgentChatRequest.Metadata(tools: $0) }
+                    ))
 
-                    for try await event in worker.streamAgentChatEvents(sessionID: sessionId, lease: eventsLease) {
+                    let (bytes, response) = try await InstanceConnection.bytes(for: request)
+                    guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
+                    guard (200...299).contains(http.statusCode) else {
+                        throw APIError.httpError(statusCode: http.statusCode, message: nil)
+                    }
+
+                    let decoder = JSONDecoder()
+                    for try await line in bytes.lines {
                         try Task.checkCancellation()
-                        continuation.yield(event)
-                        if event.isTerminal {
-                            continuation.finish()
-                            return
+                        // SSE frames are `data: {json}`; keep-alive comments
+                        // and event lines are skipped.
+                        guard line.hasPrefix("data: ") else { continue }
+                        let payload = String(line.dropFirst(6))
+                        guard !payload.isEmpty else { continue }
+                        if payload == "[DONE]" { break }
+                        guard let data = payload.data(using: .utf8),
+                              let event = try? decoder.decode(AgentChatEvent.self, from: data) else {
+                            print("agent-chat: skipping undecodable frame: \(payload)")
+                            continue
                         }
+                        if case .ignored = event { continue }
+                        continuation.yield(event)
+                        if event.isTerminal { break }
                     }
                     continuation.finish()
                 } catch {

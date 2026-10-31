@@ -1,19 +1,31 @@
 import SwiftUI
 
 /// A studio session on the phone: the chat, and — one tap away, as the
-/// PWA's phone layout does with its full-screen pane — the studio pane
-/// showing what the session made. The pane lists the v2 artifacts whose
-/// `origin.session_id` is this session (what `artifact_create` and saved
-/// chat frames record) and refreshes while it is open.
+/// PWA's phone layout does with its full-screen pane — the kind's real editor.
+/// Docs, Sheets, Slides and Design open on their editor straight away, as the
+/// web does (`takePhoneEditorOpen`). The other kinds show the kind's empty
+/// state until the agent makes something; the pane then opens the newest v2
+/// artifact whose `origin.session_id` is this session in the web's artifact
+/// window. The pane refreshes while it is open.
 struct ArtifactStudioView: View {
     let studio: ArtifactStudioSession
 
     @Environment(\.dismiss) private var dismiss
     @StateObject private var viewModel = ChatViewModel()
-    @State private var showingPane = false
+    @State private var showingPane: Bool
     @State private var results: [ArtifactV2Summary] = []
     @State private var paneError: String?
-    @State private var openArtifact: ArtifactV2Summary?
+
+    init(studio: ArtifactStudioSession) {
+        self.studio = studio
+        _showingPane = State(initialValue: studio.editorRoute != nil)
+    }
+
+    /// What the pane shows: the agent's newest result, else the session's editor.
+    private var paneRoute: ArtifactWebRoute? {
+        if let newest = results.first { return .window(id: newest.id) }
+        return studio.editorRoute
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -30,11 +42,6 @@ struct ArtifactStudioView: View {
             }
         }
         .background(Color("BgPrimary").ignoresSafeArea())
-        .sheet(item: $openArtifact) { summary in
-            V2ArtifactView(artifactId: summary.id, initialTitle: summary.title) {
-                results.removeAll { $0.id == summary.id }
-            }
-        }
         .task(id: studio.sessionId) {
             // Refresh the pane's results every few seconds while the studio
             // is open, so a result appears as soon as the agent saves it.
@@ -83,7 +90,17 @@ struct ArtifactStudioView: View {
     @ViewBuilder
     private var pane: some View {
         Group {
-            if results.isEmpty {
+            if let route = paneRoute {
+                ArtifactLiveWebView(
+                    route: route,
+                    onClose: { showChat() },
+                    onChat: { text in
+                        showChat()
+                        if !text.isEmpty { viewModel.sendMessage(text) }
+                    }
+                )
+                .id(route.paneKey)
+            } else {
                 VStack(spacing: 14) {
                     Image(studio.kind.iconAsset)
                         .resizable()
@@ -96,30 +113,19 @@ struct ArtifactStudioView: View {
                         .font(.subheadline)
                         .foregroundColor(Color("TextSecondary"))
                         .multilineTextAlignment(.center)
-                    Button("Describe it in the chat") {
-                        withAnimation(.spring(response: 0.32, dampingFraction: 0.9)) { showingPane = false }
-                    }
-                    .font(.subheadline.weight(.semibold))
-                    .padding(.top, 4)
+                    Button("Describe it in the chat") { showChat() }
+                        .font(.subheadline.weight(.semibold))
+                        .padding(.top, 4)
                 }
                 .padding(32)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                ScrollView {
-                    LazyVStack(spacing: 10) {
-                        ForEach(results) { summary in
-                            Button { openArtifact = summary } label: {
-                                ArtifactLibraryRow(summary: summary)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                    .padding(16)
-                }
-                .refreshable { await refreshResults() }
             }
         }
         .background(Color("BgPrimary"))
+    }
+
+    private func showChat() {
+        withAnimation(.spring(response: 0.32, dampingFraction: 0.9)) { showingPane = false }
     }
 
     private func refreshResults() async {

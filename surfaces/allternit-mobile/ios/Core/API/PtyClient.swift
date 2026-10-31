@@ -173,8 +173,11 @@ final class PtySession: ObservableObject {
     nonisolated(unsafe) private var webSocket: URLSessionWebSocketTask?
     nonisolated(unsafe) private var receiveTask: Task<Void, Never>?
     nonisolated(unsafe) private var streamTask: Task<Void, Never>?
-    /// Keystrokes go out one POST at a time, in order (queueTerminalInput).
-    private var inputChain: Task<Void, Never>?
+    /// Keystrokes typed while an input POST is in flight; they go out
+    /// together in the next one, so fast typing costs one round trip, not
+    /// one per key queued behind each other.
+    private var pendingInput = ""
+    private var isSendingInput = false
 
     init(client: PtyClient = .shared, attachedInstanceName: String? = nil) {
         self.client = client
@@ -237,16 +240,8 @@ final class PtySession: ObservableObject {
     func send(_ text: String) {
         if let service {
             guard readyForInput, let ptyId else { return }
-            let previous = inputChain
-            inputChain = Task { [weak self] in
-                await previous?.value
-                do {
-                    try await service.input(sessionId: ptyId, text)
-                } catch {
-                    guard !Task.isCancelled else { return }
-                    self?.state = .failed(error.localizedDescription)
-                }
-            }
+            pendingInput += text
+            flushServiceInput(service, ptyId: ptyId)
             return
         }
         guard readyForInput, let webSocket else { return }
@@ -337,11 +332,21 @@ final class PtySession: ObservableObject {
                     self.lastResize = nil
                     self.sendResize(cols: pendingSize.cols, rows: pendingSize.rows)
                 }
-                for try await line in bytes.lines {
-                    guard line.hasPrefix("data:") else { continue }
-                    var payload = String(line.dropFirst(5))
-                    if payload.hasPrefix(" ") { payload.removeFirst() }
-                    self.handleServiceEvent(payload)
+                // Read and decode off the main thread; only printable text
+                // hops back to the terminal.
+                let reader = Task.detached { [weak self] in
+                    for try await line in bytes.lines {
+                        guard line.hasPrefix("data:") else { continue }
+                        var payload = String(line.dropFirst(5))
+                        if payload.hasPrefix(" ") { payload.removeFirst() }
+                        guard let text = Self.serviceOutput(payload) else { continue }
+                        await MainActor.run { self?.onOutput?(text) }
+                    }
+                }
+                try await withTaskCancellationHandler {
+                    try await reader.value
+                } onCancel: {
+                    reader.cancel()
                 }
                 guard !Task.isCancelled, !self.intentionalClose else { return }
                 self.state = .failed("Terminal stream ended")
@@ -353,16 +358,35 @@ final class PtySession: ObservableObject {
         }
     }
 
-    private func handleServiceEvent(_ payload: String) {
-        // Like the web: any JSON message is handled by its type (only
-        // `data` prints; keep-alives such as `{}` don't); text that isn't
-        // JSON prints as is.
+    /// Sends what was typed, in order, one POST at a time.
+    private func flushServiceInput(_ service: TerminalServiceClient, ptyId: String) {
+        guard !isSendingInput, !pendingInput.isEmpty else { return }
+        let text = pendingInput
+        pendingInput = ""
+        isSendingInput = true
+        Task { [weak self] in
+            do {
+                try await service.input(sessionId: ptyId, text)
+            } catch {
+                guard !Task.isCancelled else { return }
+                self?.state = .failed(error.localizedDescription)
+            }
+            guard let self else { return }
+            self.isSendingInput = false
+            self.flushServiceInput(service, ptyId: ptyId)
+        }
+    }
+
+    /// The text an SSE `data:` payload prints, or nil. Like the web: any JSON
+    /// message is handled by its type (only `data` prints; keep-alives such
+    /// as `{}` don't); text that isn't JSON prints as is.
+    nonisolated private static func serviceOutput(_ payload: String) -> String? {
         if let data = payload.data(using: .utf8),
            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            if object["type"] as? String == "data", let text = object["data"] as? String, !text.isEmpty { onOutput?(text) }
-        } else if !payload.isEmpty {
-            onOutput?(payload)
+            if object["type"] as? String == "data", let text = object["data"] as? String, !text.isEmpty { return text }
+            return nil
         }
+        return payload.isEmpty ? nil : payload
     }
 
     private func startReceiveLoop(_ socket: URLSessionWebSocketTask) {

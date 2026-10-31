@@ -56,9 +56,9 @@ targets:
         PRODUCT_NAME: Allternit
         SWIFT_VERSION: "6.0"
         IPHONEOS_DEPLOYMENT_TARGET: "17.0"
-        TARGETED_DEVICE_FAMILY: "1,2"
+        TARGETED_DEVICE_FAMILY: "1"
         MARKETING_VERSION: "1.0"
-        CURRENT_PROJECT_VERSION: "1"
+        CURRENT_PROJECT_VERSION: "4"
         CODE_SIGN_ENTITLEMENTS: Allternit.entitlements
         SWIFT_OBJC_BRIDGING_HEADER: Core/Voice/Voice-Bridging-Header.h
         # Clerk publishable key (client-public by design) — the production
@@ -70,7 +70,7 @@ targets:
         # plug in their own Clerk instance.
         CLERK_PUBLISHABLE_KEY: $(CLERK_PUBLISHABLE_KEY)
         # Placeholder — set your team for device builds.
-        DEVELOPMENT_TEAM: ""
+        DEVELOPMENT_TEAM: MQ85968PQP
         CODE_SIGN_STYLE: Automatic
         # Headscale control plane for the embedded mesh (tsnet) node. Same
         # value in debug+release; AppConfig falls back to this URL when the
@@ -169,11 +169,11 @@ targets:
         PRODUCT_NAME: AllternitWidgets
         SWIFT_VERSION: "6.0"
         IPHONEOS_DEPLOYMENT_TARGET: "17.0"
-        TARGETED_DEVICE_FAMILY: "1,2"
+        TARGETED_DEVICE_FAMILY: "1"
         MARKETING_VERSION: "1.0"
-        CURRENT_PROJECT_VERSION: "1"
+        CURRENT_PROJECT_VERSION: "4"
         # Same placeholder as the main app — set your team for device builds.
-        DEVELOPMENT_TEAM: ""
+        DEVELOPMENT_TEAM: MQ85968PQP
         CODE_SIGN_STYLE: Automatic
         SKIP_INSTALL: true
   # Live screen for the owner's bots: a ReplayKit broadcast upload extension
@@ -200,12 +200,12 @@ targets:
         PRODUCT_NAME: AllternitScreen
         SWIFT_VERSION: "5.0"
         IPHONEOS_DEPLOYMENT_TARGET: "17.0"
-        TARGETED_DEVICE_FAMILY: "1,2"
+        TARGETED_DEVICE_FAMILY: "1"
         MARKETING_VERSION: "1.0"
-        CURRENT_PROJECT_VERSION: "1"
+        CURRENT_PROJECT_VERSION: "4"
         CODE_SIGN_ENTITLEMENTS: AllternitScreen/AllternitScreen.entitlements
         # Same placeholder as the main app — set your team for device builds.
-        DEVELOPMENT_TEAM: ""
+        DEVELOPMENT_TEAM: MQ85968PQP
         CODE_SIGN_STYLE: Automatic
         SKIP_INSTALL: true
   # Unit tests for the iOS app. Hosts the app so tests can `@testable import Allternit`.
@@ -223,9 +223,9 @@ targets:
         PRODUCT_NAME: AllternitTests
         SWIFT_VERSION: "6.0"
         IPHONEOS_DEPLOYMENT_TARGET: "17.0"
-        TARGETED_DEVICE_FAMILY: "1,2"
+        TARGETED_DEVICE_FAMILY: "1"
         MARKETING_VERSION: "1.0"
-        CURRENT_PROJECT_VERSION: "1"
-        DEVELOPMENT_TEAM: ""
+        CURRENT_PROJECT_VERSION: "4"
+        DEVELOPMENT_TEAM: MQ85968PQP
         CODE_SIGN_STYLE: Automatic
         GENERATE_INFOPLIST_FILE: YES

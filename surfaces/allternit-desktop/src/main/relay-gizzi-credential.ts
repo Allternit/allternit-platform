@@ -23,10 +23,11 @@ export function isGizziProviderListPath(requestPath: string): boolean {
  * gizzi-code routes allternit-api does not serve, which the native phone app
  * (Allternit Mobile) reaches over the relay: terminal (pty REST + attach
  * socket + dev-server ports), file browser, cron jobs, routines and loops,
+ * MCP servers, the project path and VCS branch,
  * and the bus event stream. Before this they fell through to allternit-api
  * and answered 501.
  */
 export function isGizziOwnedRelayPath(requestPath: string): boolean {
-  return /^\/v1\/(pty|file|cron|automations)(\/|\?|$)/.test(requestPath)
+  return /^\/v1\/(pty|file|cron|automations|mcp|vcs|path)(\/|\?|$)/.test(requestPath)
     || /^\/v1\/event(\?|$)/.test(requestPath);
 }

@@ -1,10 +1,10 @@
 import SwiftUI
 
-/// The Projects section in the desktop layout (allternit-ai ProjectView →
-/// ProjectsOverview, not `phoneChrome`), at phone width: "Projects" with
-/// "N open · N needs you", the controls (kind · search · Sort by · Archived ·
-/// List / Grid / Deck), the project cards, and the floating "New project"
-/// pill. Each card's ⋯ menu has Open, Pin, Edit details, Archive and Delete.
+/// The Projects section as on m.allternit.com (allternit-ai ProjectView with
+/// `phoneChrome`): ☰ · "Projects" · filter menu (Show, Sort by, Show archived),
+/// "N open · N needs you" beside the List · Grid · Deck switch, the project
+/// cards, and the floating search and "New project". Each card's ⋯ menu has
+/// Open, Pin, Edit details, Archive and Delete.
 ///
 /// Data: chat projects from `ProjectStore` (`/api/v1/cowork/projects`) and
 /// bot projects from `/api/v1/bot-projects` (ProjectsLibraryStore).
@@ -106,11 +106,25 @@ struct ProjectsListView: View {
         NavigationStack(path: $navigator.path) {
             ZStack(alignment: .bottom) {
                 VStack(spacing: 0) {
-                    LibraryPlainHeader(onMenu: openMenu)
-                    overviewHeader
+                    LibrarySectionHeader(title: "Projects", onMenu: openMenu) { filterMenu }
+                    HStack(spacing: 8) {
+                        countsLine
+                        OverviewLayoutSwitch(raw: $layoutRaw, fallback: .grid)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 6)
                     content
                 }
-                newProjectPill
+                LibraryFloatingBar(
+                    query: $searchText,
+                    placeholder: "Search projects",
+                    newLabel: "New project",
+                    wide: .new,
+                    onNew: {
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        isCreateSheetPresented = true
+                    }
+                ) { EmptyView() }
             }
             .background(Color("BgPrimary").ignoresSafeArea())
             .toolbar(.hidden, for: .navigationBar)
@@ -170,134 +184,33 @@ struct ProjectsListView: View {
         }
     }
 
-    // MARK: - Overview header (title · counts · controls)
+    // MARK: - Filter menu (Show · Sort by · Show archived)
 
-    private var overviewHeader: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Projects")
-                    .font(.system(size: 20, weight: .semibold))
-                    .tracking(-0.2)
-                    .foregroundColor(Color("TextPrimary"))
-                countsLine
-            }
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    categoryMenu
-                    sortMenu
-                    archivedToggle
-                }
-            }
-            HStack(spacing: 8) {
-                searchField
-                OverviewLayoutSwitch(raw: $layoutRaw, fallback: .grid)
-            }
-        }
-        .padding(.horizontal, 16)
-        .padding(.top, 4)
-        .padding(.bottom, 12)
-    }
+    private var filtersOn: Bool { category != .all || sortBy != .recent || showArchived }
 
-    /// The kind menu: every kind, with counts.
-    private var categoryMenu: some View {
+    private var filterMenu: some View {
         Menu {
-            ForEach(Category.allCases, id: \.self) { cat in
-                LibraryMenuCheck(title: cat.label, icon: cat.icon, hint: String(count(cat)), checked: category == cat) {
-                    category = cat
+            Section("Show") {
+                ForEach(Category.allCases, id: \.self) { option in
+                    checked("\(option.label)  \(count(option))", on: category == option) { category = option }
                 }
             }
-        } label: {
-            controlFace {
-                Image(systemName: category.icon).font(.system(size: 12))
-                Text(category.label).fontWeight(.medium).foregroundColor(Color("TextPrimary"))
-                Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold))
-            }
-        }
-        .accessibilityLabel("Show: \(category.label)")
-    }
-
-    private var sortMenu: some View {
-        Menu {
-            ForEach(Sort.allCases, id: \.self) { sort in
-                LibraryMenuCheck(title: sort.label, checked: sortBy == sort) { sortBy = sort }
-            }
-        } label: {
-            controlFace {
-                Text("Sort by")
-                Text(sortBy.label).fontWeight(.medium).foregroundColor(Color("TextPrimary"))
-                Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold))
-            }
-        }
-        .accessibilityLabel("Sort by \(sortBy.label)")
-    }
-
-    /// ArchivedToggle: "Archived N", pressed while archived projects show.
-    private var archivedToggle: some View {
-        Button { showArchived.toggle() } label: {
-            controlFace(pressed: showArchived) {
-                Image(systemName: "archivebox").font(.system(size: 12))
-                Text("Archived").foregroundColor(Color("TextPrimary"))
-                Text(String(allProjects.filter(\.isArchived).count)).foregroundColor(Color("TextTertiary"))
-            }
-        }
-        .buttonStyle(.plain)
-        .accessibilityAddTraits(showArchived ? .isSelected : [])
-    }
-
-    private func controlFace<Content: View>(pressed: Bool = false, @ViewBuilder _ content: () -> Content) -> some View {
-        HStack(spacing: 5) { content() }
-            .font(.system(size: 13))
-            .foregroundColor(Color("TextSecondary"))
-            .lineLimit(1)
-            .padding(.horizontal, 10)
-            .frame(height: 32)
-            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(pressed ? Color("FillNeutral") : Color("BgPanel")))
-            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(Color("BorderStrong"), lineWidth: 1))
-            .fixedSize()
-    }
-
-    private var searchField: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 13))
-                .foregroundColor(Color("TextTertiary"))
-            TextField("Search projects…", text: $searchText)
-                .font(.system(size: 15))
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-            if !searchText.isEmpty {
-                Button { searchText = "" } label: {
-                    Image(systemName: "xmark.circle.fill").foregroundColor(Color("TextTertiary"))
+            Section("Sort by") {
+                ForEach(Sort.allCases, id: \.self) { option in
+                    checked(option.label, on: sortBy == option) { sortBy = option }
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Clear search")
             }
+            checked("Show archived  \(allProjects.filter(\.isArchived).count)", on: showArchived) { showArchived.toggle() }
+        } label: {
+            PhoneFilterButtonLabel(active: filtersOn)
         }
-        .padding(.horizontal, 10)
-        .frame(height: 34)
-        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color("BgPanel")))
-        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(Color("BorderStrong"), lineWidth: 1))
+        .accessibilityLabel("Filter and sort")
     }
 
-    /// The floating "New project" pill, centered at the bottom.
-    private var newProjectPill: some View {
-        Button {
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            isCreateSheetPresented = true
-        } label: {
-            HStack(spacing: 8) {
-                Image(systemName: "plus").font(.system(size: 14, weight: .medium))
-                Text("New project").font(.system(size: 15, weight: .medium))
-            }
-            .foregroundColor(Color("TextPrimary"))
-            .padding(.horizontal, 18)
-            .frame(height: 44)
-            .background(Capsule().fill(Color("BgPanel")))
-            .overlay(Capsule().stroke(Color("BorderSubtle"), lineWidth: 1))
-            .shadow(color: .black.opacity(0.10), radius: 12, y: 4)
+    private func checked(_ title: String, on: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            if on { Label(title, systemImage: "checkmark") } else { Text(title) }
         }
-        .buttonStyle(.plain)
-        .padding(.bottom, 12)
     }
 
     // MARK: - Content
@@ -358,12 +271,12 @@ struct ProjectsListView: View {
                 ScrollView {
                     VStack(spacing: 0) {
                         errors
-                        LazyVStack(spacing: 16) {
+                        LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
                             ForEach(projects) { project in card(project, variant: .grid) }
                         }
                         .padding(.top, 4)
                     }
-                    .padding(.horizontal, 16)
+                    .padding(.horizontal, 12)
                     .padding(.bottom, 84)
                 }
                 .refreshable { await reload() }
@@ -542,7 +455,10 @@ private struct ProjectOverviewCard<Menu: View>: View {
                     .foregroundColor(Color(hex: "#EAB308"))
                     .accessibilityLabel("Pinned")
             }
-            Text(project.countLine.prefix(1).uppercased() + project.countLine.dropFirst())
+            Text(project.mode == .bot ? "Bot" : "Chat")
+                .lineLimit(1)
+            Text("·")
+            Text(project.countLine)
                 .lineLimit(1)
         }
         .font(.system(size: 12.5))
@@ -616,7 +532,7 @@ private struct ProjectOverviewCard<Menu: View>: View {
             note.padding(.top, 2)
             Text(preview)
                 .font(.system(size: 14))
-                .lineSpacing(5)
+                .lineSpacing(3)
                 .foregroundColor(Color("TextSecondary"))
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 .clipped()
@@ -628,7 +544,7 @@ private struct ProjectOverviewCard<Menu: View>: View {
             }
             .padding(.top, 4)
         }
-        .padding(16)
+        .padding(variant == .grid ? 12 : 16)
         .frame(width: deck ? OverviewDeck.width : nil, height: deck ? OverviewDeck.height : 200)
     }
 }

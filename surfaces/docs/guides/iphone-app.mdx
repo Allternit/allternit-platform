@@ -82,7 +82,7 @@ Once a session has started, the **Panes** button appears left of the sessions bu
 
 | Pane | What it shows |
 |---|---|
-| Session panel | The agent's plan as a checklist (Progress); the computer, folder, branch and permission mode; the context window; the session's pull requests; what it made (artifacts, published pages and files it wrote); how many background tasks run; the agent tree its folder sits in, with running processes and checkpoints; and the connectors the session loaded |
+| Session panel | The agent's plan as a checklist (Progress); the computer, folder, branch and permission mode; the context window; the session's pull requests; what it made (artifacts, published pages and files it wrote); how many background tasks run; the agent tree its folder sits in, with running processes and checkpoints (tap **Rewind** on a checkpoint to put the tree's files back to it; the current state is saved first, so **Undo** takes you back); and the connectors the session loaded |
 | Terminal | The computer's shell |
 | Changes | The files the session changed, with their diffs |
 | Browser | The dev server running in the terminal |
@@ -101,12 +101,15 @@ You record a site in Allternit Desktop or the Allternit browser extension: click
 
 - **See your skills.** The **Skills** list shows each skill's site and number of steps, and whether it is saved as a skill file or scheduled. Recordings that have no skill yet show **Not analyzed**.
 - **Edit a skill.** Tap one to open it. You can rename it and change its goal. Tap a step to rewrite it or change its type (Page, API, Shell or Note); the arrows move it and the bin deletes it. **Add step** adds one at the end. Under **Inputs**, change each input's name, label, example and type, or add and delete inputs. A **Secret** input never keeps an example. Edits stay on the phone until **Save changes**; **Undo changes** puts them back. **Run on a schedule** saves your edits first.
-- **Replay it.** **Replay** asks for the input values, then the agent runs the skill in the Agent browser. It asks before any step that submits, pays, sends or deletes.
+- **Set how an input is used.** Each input has **Required**, plus the setting its type needs: **Format** for a date, a date and time or a number (how it's typed into the page, like MM/DD/YYYY or de-DE), **Root** for a file or folder (where it may come from; it can be `{{profile.key}}`), **Saved login** for a secret (a credential id), and **Choices**, one per line, for a choice.
+- **Run or Replay it.** A skill with recorded steps shows **Run**, which plays those steps back exactly, without the model. Run needs Allternit Desktop, because it drives Desktop's own browser. On the iPhone, **Run** lists the recorded steps it would play and offers Replay instead. **Replay** asks for the input values, then the agent runs the skill in the Agent browser. Both ask before any step that submits, pays, sends or deletes.
 - **Run it on a schedule.** Pick the bot it runs as, how often (hourly, daily at 9:00, weekdays at 9:00, or your own cron line) and the input values. It shows up in Automation Tasks.
-- **Import a recording.** **Teach**, or the button on the empty screen, imports a recording (.har). Add a note for the agent, then **Analyze** turns it into a skill.
+- **Save the skill file.** **Save skill** shows the exact SKILL.md for the skill. Allternit Desktop writes it into `~/.allternit/skills/`; on the iPhone, **Copy SKILL.md** or **Share** it (to Files, AirDrop or a message).
+- **Edit your business profile.** **Business profile** holds values you set once, like your ERP address or reports folder. Each has a key, a label, a value and a type (Text, Web address, Email, Folder or Number), and any skill uses it as `{{profile.key}}`.
+- **Import a recording.** **Teach**, or the button on the empty screen, imports a recording (.har). Review shows what will be sent and the recording's **Actions**: a recording from Allternit Desktop lists each click, page and typed value with its time, and × leaves one out. A .har has network traffic only, so its list is empty. Add a note for the agent, then **Analyze** turns it into a skill.
 - **Delete a skill.**
 
-Exact playback of recorded steps (**Run**), the recording timeline and the business profile are in Allternit Desktop.
+Recording itself happens in Allternit Desktop or the browser extension.
 
 ## Your computer
 
@@ -182,7 +185,14 @@ Bots mode lists your bots with their status. In the drawer, the **Bots** row sho
 
 ### A bot's chat
 
-A bot's chat opens on its stage: the bot large at the top, what it is doing under it, cards for threads that need you and work it suggests (**Go ahead** or **Not now**), and **Hand it a file**. Pick files or photos, then choose **Plan it first**, **Just do it** or **Ask me questions**. The conversation is under the stage. Swipe up on the stage, or send a message, and the bot moves up into the header. Tap its picture in the header to bring it back.
+A bot's chat opens on its stage: the bot large at the top, what it is doing under it, cards for threads that need you and work it suggests (**Go ahead** or **Not now**), and **Hand it a file**. Under those, as on the web:
+
+- **Working · step 2 of 3** (or **Plan**): the thread's checklist while a step is unfinished. With no checklist, it lists what the bot is doing this turn, one line per tool. While it works, **Stop** stops the reply and **Take over** opens the bot's computer.
+- **Since you were last here**: the bot's other threads that moved and the routines it ran since you last opened its chat, with failed runs counted. Tap a thread to open it. It doesn't show the first time you open a bot.
+- **What I made** (**So far** while it works): a montage of what the bot saved from its threads and the steps it finished, one frame every few seconds. Tap a tick to jump, or a saved artifact to open it.
+- The next routine, such as **Next routine "Menu board refresh" in 3.0h**.
+
+For **Hand it a file**, pick files or photos, then choose **Plan it first**, **Just do it** or **Ask me questions**. The conversation is under the stage. Swipe up on the stage, or send a message, and the bot moves up into the header. Tap its picture in the header to bring it back.
 
 The composer is the same as on the web. Above the message box are the thread's tabs: the open thread (**Main chat** or the thread's name), **Threads**, **Tasks** and **Bot**. Under it are **Agent mode**, **Plugins** and **Artifacts**. On **Threads**, what you type starts a new thread. On **Tasks**, it asks for a task in this thread. **Bot** shows the bot's page with the tabs still at the bottom.
 
@@ -215,17 +225,40 @@ Not on the phone: WhatsApp personal. Use Desktop or ai.allternit.com for it.
 
 ## Artifacts
 
-**Artifacts** in the drawer is your library: the things you and your bots made, filtered by kind and by mine or shared. Artifacts made in a chat are saved to it. Every kind opens in the app. Documents, sheets, slides and PDFs open natively. Dashboards, ops sheets, motion pieces, cards, canvas designs and pages that use stored data, AI or connectors open in the same viewer the web uses, signed in, inside the app. AI those pages run is billed to you, as on the web. Links that leave Allternit open in Safari.
+**Artifacts** in the drawer is your library: the things you and your bots made, filtered by kind and by mine or shared. Artifacts made in a chat are saved to it. AI that a page runs is billed to you, as on the web. Links that leave Allternit open in Safari.
 
-Tap **Edit** on a document, sheet or deck you can edit:
+Every artifact opens full screen in the same window and editors as Desktop and m.allternit.com, signed in, inside the app. The window has its version menu, share and export. If you only have view access, it opens read-only.
 
-- **Documents:** edit paragraphs, headings, list items and the text in table cells that hold one paragraph. Images show in place with their description, which you can edit; to swap the picture itself, paste a new image URL on Desktop or the web. Dividers and cells with more than one paragraph stay locked. Markdown documents edit as plain text. Tabs show as pills along the top; a dot marks a tab you changed, and **Save** keeps all of them. **Add tab** (or **+ Tab**) adds one. Tap the open tab to rename it, and tap **×** next to it to delete it. A document always keeps at least one tab.
-- **Sheets:** edit any cell (start with `=` for a formula), and add rows and columns.
-- **Decks:** edit the text on each slide.
+**Make something new** starts a session for that kind:
 
-**Save** makes a new version that every device sees. If someone else saved first, the app tells you and offers **Get the latest**.
+- **Docs, Sheets, Slides and Design** open on the editor straight away. **Chat** and **Document** at the top switch between the editor and the chat. They stay listed under **Your artifacts** on the phone that started them, and Recents reopens them on the editor.
+- **Other kinds** start in the chat. What the agent makes opens in the editor when you switch to it.
 
-Exports and downloads from the viewer, such as MP4, CSV, XLSX, DOCX and PNG, open the share sheet so you can save them to Files or Photos. **PDF** opens the print sheet, which can save a PDF. PDFs, images and videos have a **Save or share** button. Files over 512 MB can't be saved on the phone.
+The agent can't edit an open Docs, Sheets or Slides file from the phone. What it makes in that session opens as its own artifact.
+
+Exports and downloads from the window, such as MP4, CSV, XLSX, DOCX and PNG, open the share sheet so you can save them to Files or Photos. **PDF** opens the print sheet, which can save a PDF. PDFs, images and videos have a **Save or share** button. Files over 512 MB can't be saved on the phone.
+
+## Projects
+
+**Projects** in the drawer lists your projects in the same two columns as the web. The **List · Grid · Deck** switch changes the layout. The filter button shows one kind, sorts, and shows archived projects. Search and **New project** float at the bottom.
+
+A bot project opens on the same page as on the web:
+
+- **Header:** the name, **Customize appearance**, project settings, pin, and a menu with Edit details, Archive, Save as template and Delete. **Needs you** opens the thread waiting on you.
+- **Composer:** write to Al, the coordinator. To start one bot on a new thread, tap it under **Memory, files and more**.
+- **Dashboard:** the project opens on a dashboard. **Customize** in the header picks one of ten layouts, or **Yours** to choose the tiles yourself. It also sets the page's icon and background.
+- **Threads and conversation:** the project's threads, Al's replies and any decisions waiting on you.
+- **Memory, files and more:** your bots, Team, Campaign, Delegate, Artifacts, Routines, Status page, Memory and Context sit under this button.
+
+**Graph**, **Delegate**, **Board**, **Flow** and **Open team lanes** open full screen. On the phone, Team, Board and Flow are lists rather than the web's graph canvas. A thread that hasn't started yet opens on its plan and turns into the chat when it starts.
+
+## Automation Tasks
+
+**Automation Tasks** in the drawer shows your goals, routines, loops and heartbeats. The filter button picks the type, the sort order and the view:
+
+- **List:** one card per task, with its status and a run button.
+- **Graph:** each task with its next and last run, and **Run now**.
+- **Calendar:** Day, Week or Month. Tap an empty time to add a task and tap a task to open it. Press and hold a task, then drag to move it.
 
 ## Calls
 

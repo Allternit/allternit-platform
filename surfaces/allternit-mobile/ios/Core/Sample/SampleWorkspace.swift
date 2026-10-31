@@ -135,7 +135,14 @@ enum SampleWorkspace {
         let line: String
         let todo: [(String, String)]
         let minutes: Double
+        var session: String? = nil
+        /// A bot's main chat thread (standing, made by the import).
+        var mainChat = false
     }
+
+    /// Rimraf's sessions, so its stage can show what it made.
+    static let rimrafMainSession = "preview-session-rimraf-main"
+    static let launchPageSession = "preview-session-launch-page"
 
     private static let threadSeeds: [ThreadSeed] = [
         ThreadSeed(bot: "preview-bot-researcher", title: "Price check: spring menu vs. three nearby bakeries",
@@ -145,7 +152,7 @@ enum SampleWorkspace {
         ThreadSeed(bot: "preview-bot-designer", title: "Launch page for the spring menu",
                    status: "review", group: "waiting", line: "Draft ready. Two hero options for you to pick",
                    todo: [("Layout", "done"), ("Photos and captions", "done"), ("Pick a hero", "active")],
-                   minutes: 18),
+                   minutes: 18, session: launchPageSession),
         ThreadSeed(bot: "preview-bot-writer", title: "Announcement email and three posts",
                    status: "queued", group: "queued", line: "Starts when the launch page is approved",
                    todo: [("Email", "pending"), ("Posts", "pending")],
@@ -154,6 +161,10 @@ enum SampleWorkspace {
                    status: "working", group: "working", line: "Tracking 3 threads; next check-in at 4 pm",
                    todo: [("Split the work", "done"), ("Research and page", "active"), ("Email and posts", "pending")],
                    minutes: 1),
+        ThreadSeed(bot: "preview-bot-designer", title: "Main chat",
+                   status: "working", group: "working", line: "Building the menu cards",
+                   todo: [("Pick the hero photo", "done"), ("Build the menu cards", "active"), ("Export for print", "pending")],
+                   minutes: 2, session: rimrafMainSession, mainChat: true),
     ]
 
     /// `GET /api/v1/threads` rows (lib/bots/threads.ts Thread, camelCase).
@@ -163,9 +174,9 @@ enum SampleWorkspace {
             return [
                 "id": "preview-thread-\(index + 1)",
                 "botId": seed.bot,
-                "projectId": projectId,
-                "parentThreadId": orNull(seed.bot == "preview-bot-a" ? nil : "preview-thread-4"),
-                "kind": "task",
+                "projectId": orNull(seed.mainChat ? nil : projectId),
+                "parentThreadId": orNull(seed.bot == "preview-bot-a" || seed.mainChat ? nil : "preview-thread-4"),
+                "kind": seed.mainChat ? "standing" : "task",
                 "incognito": false,
                 "title": seed.title,
                 "objective": seed.title,
@@ -177,11 +188,11 @@ enum SampleWorkspace {
                 "progress": [done, seed.todo.count],
                 "summary": NSNull(),
                 "checkpoint": NSNull(),
-                "currentSessionId": NSNull(),
+                "currentSessionId": orNull(seed.session),
                 "generation": 1,
                 "contextUsed": 0.2 + Double(index) * 0.1,
                 "dependsOn": seed.status == "queued" ? ["preview-thread-2"] : [],
-                "createdBy": userId,
+                "createdBy": seed.mainChat ? "import" : userId,
                 "lastActivityAt": ago(seed.minutes, now: now),
                 "resolvedAt": NSNull(),
                 "createdAt": ago(Double(60 * 5 + index), now: now),
@@ -326,7 +337,8 @@ enum SampleWorkspace {
                 "shared_version": NSNull(),
                 "visibility": "private",
                 "my_access": "view",
-                "origin": ["surface": "bot"],
+                // The launch page came from Rimraf's thread (its stage montage).
+                "origin": design ? ["surface": "bot", "session_id": launchPageSession] : ["surface": "bot"],
                 "runtime_version": 1,
                 "capabilities": [String: Any](),
                 "version": [
@@ -418,20 +430,8 @@ enum SampleWorkspace {
     /// The routines as the computer's scheduler lists them
     /// (`GET v1/cron/jobs`, gizzi-code cron/types.ts, camelCase) — the
     /// Automation Tasks list's source on the phone.
-    static func cronJobs(now: Date = Date()) -> [[String: Any]] {
-        routineSeeds.map { seed in
-            [
-                "id": seed.id, "name": seed.name, "description": seed.description,
-                "type": "agent", "status": "active",
-                "schedule": ["type": "cron", "expression": seed.cron, "timezone": timezone],
-                "createdAt": ago(seed.createdMinutes, now: now), "updatedAt": ago(seed.updatedMinutes, now: now),
-                "lastRunAt": ago(seed.lastMinutes, now: now),
-                "nextRunAt": iso(now.addingTimeInterval(seed.nextInMinutes * 60)),
-                "runCount": 9, "failCount": 0, "tags": [String](),
-                "config": ["prompt": seed.description, "agentId": seed.bot],
-            ]
-        }
-    }
+    /// The web's preview has no heartbeats: its routines aren't cron jobs.
+    static func cronJobs(now: Date = Date()) -> [[String: Any]] { [] }
 
     /// `GET v1/automations/routines` (gizzi-code automations.ts, ms epochs).
     static func gizziRoutines(now: Date = Date()) -> [[String: Any]] {
@@ -468,7 +468,7 @@ enum SampleWorkspace {
     /// `GET /api/v1/projects/:id/messages` (nil → 404 for unknown projects).
     static func projectMessages(projectId id: String, now: Date = Date()) -> [[String: Any]]? {
         guard id == projectId else { return id == cateringProjectId ? [] : nil }
-        let fanout = threads(now: now).filter { ($0["botId"] as? String) != "preview-bot-a" }.map { thread in
+        let fanout = threads(now: now).filter { ($0["botId"] as? String) != "preview-bot-a" && ($0["kind"] as? String) == "task" }.map { thread in
             ["id": thread["id"] ?? "", "title": thread["title"] ?? "", "botId": thread["botId"] ?? "", "status": thread["status"] ?? ""]
         }
         return [

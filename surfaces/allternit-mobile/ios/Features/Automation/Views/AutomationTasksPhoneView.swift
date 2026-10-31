@@ -1,12 +1,10 @@
 import SwiftUI
 import UIKit
 
-/// Automation Tasks in the desktop layout (allternit-ai
-/// src/views/tasks/AutomationTasksView.tsx without `phoneChrome`), at phone
-/// width: serif title and subtitle, Type · Sort and the dark "New task" menu,
-/// the type tab strip with List · Graph · Calendar, the search field, the
-/// keep-awake card, then Goals, Routines, Loops and Agent Heartbeats as one
-/// list of task cards.
+/// Automation Tasks as the web phone draws it (allternit-ai
+/// src/views/tasks/AutomationTasksView.tsx with `phoneChrome`): ☰ · title · a
+/// filter button whose sheet holds Type, Sort by and View; the keep-awake card;
+/// List, Graph or Calendar; and a floating search + "New task" bar.
 ///
 /// Data: goals, routines and loops from allternit-api `/api/v1/automation/*`
 /// (AutomationClient); heartbeats are the scheduler's cron jobs
@@ -29,9 +27,20 @@ struct AutomationTasksPhoneView: View {
     @State private var error: String? = nil
     @State private var runningTaskId: String? = nil
     @State private var selectedTask: AutomationTaskItem? = nil
+    @State private var selectedRoutine: RoutineSelection? = nil
+    @State private var isFilterPresented = false
     @State private var isTypeChoicePresented = false
-    @State private var isRoutineSheetPresented = false
-    @State private var isGoalSheetPresented = false
+    @State private var newTask: NewTask? = nil
+
+    /// A task being added: by hand, or from a calendar slot.
+    private struct NewTask: Identifiable {
+        let id = UUID()
+        let kind: AutomationTaskItem.Kind
+        var cron: String? = nil
+        var targetDate: String? = nil
+    }
+
+    private struct RoutineSelection: Identifiable { let id: String }
 
     enum TaskTab: String, CaseIterable {
         case all, goal, routine, loop, heartbeat
@@ -78,38 +87,45 @@ struct AutomationTasksPhoneView: View {
         for goal in store.goals {
             out.append(AutomationTaskItem(
                 type: .goal, id: goal.id, name: goal.title, description: goal.description ?? "",
-                isActive: goal.status == "active", frequency: "manual", schedule: nil,
+                status: goal.status, isActive: goal.status == "active", frequency: "manual", schedule: nil,
                 createdAt: libraryParseDate(goal.createdAt), agentId: goal.agentId,
-                executorName: executor(goal.agentId), progress: goal.progress, targetDate: goal.targetDate
+                executorName: executor(goal.agentId), progress: goal.progress, targetDate: goal.targetDate,
+                goalId: nil, nextRun: nil, lastRun: nil
             ))
         }
         for routine in store.routines {
             out.append(AutomationTaskItem(
-                type: .routine, id: routine.id, name: routine.name, description: routine.description ?? "",
-                isActive: routine.isEnabled,
-                frequency: routine.scheduleType == "cron" ? Self.cronFrequency(routine.scheduleExpression) : "manual",
+                type: .routine, id: routine.id, name: AutomationScheduleLogic.displayName(routine.name), description: routine.description ?? "",
+                status: routine.status, isActive: routine.isEnabled,
+                frequency: routine.scheduleType == "cron" ? AutomationScheduleLogic.cronFrequency(routine.scheduleExpression) : "manual",
                 schedule: routine.scheduleExpression, createdAt: libraryParseDate(routine.createdAt),
-                agentId: routine.agentId, executorName: executor(routine.agentId), progress: nil, targetDate: nil
+                agentId: routine.agentId, executorName: executor(routine.agentId), progress: nil, targetDate: nil,
+                goalId: routine.goalId, nextRun: routine.nextRunAt, lastRun: routine.lastRunAt
             ))
         }
         for loop in loops {
             out.append(AutomationTaskItem(
-                type: .loop, id: loop.id, name: loop.name, description: loop.description ?? "",
-                isActive: loop.status == "active",
+                type: .loop, id: loop.id, name: AutomationScheduleLogic.displayName(loop.name), description: loop.description ?? "",
+                status: loop.status, isActive: loop.status == "active",
                 frequency: loop.scheduleType == "cron" ? "daily" : "continuous",
                 schedule: loop.scheduleExpression, createdAt: libraryParseDate(loop.createdAt),
-                agentId: loop.agentId, executorName: executor(loop.agentId), progress: nil, targetDate: nil
+                agentId: loop.agentId, executorName: executor(loop.agentId), progress: nil, targetDate: nil,
+                goalId: loop.goalId, nextRun: nil, lastRun: nil
             ))
         }
         for job in cron.jobs {
             let expression: String?
-            if case .cron(let value, _) = job.schedule { expression = value } else { expression = nil }
+            switch job.schedule {
+            case .cron(let value, _): expression = value
+            case .interval(let seconds, _): expression = "\(seconds)s"
+            case .unknown: expression = nil
+            }
             out.append(AutomationTaskItem(
                 type: .heartbeat, id: job.id, name: job.name, description: job.description ?? "",
-                isActive: job.status == "active", frequency: Self.heartbeatFrequency(expression),
-                schedule: expression ?? job.schedule.displayText, createdAt: libraryParseDate(job.createdAt),
+                status: job.status, isActive: job.status == "active", frequency: Self.heartbeatFrequency(expression),
+                schedule: expression, createdAt: libraryParseDate(job.createdAt),
                 agentId: job.agentConfig?.agentId, executorName: executor(job.agentConfig?.agentId),
-                progress: nil, targetDate: nil
+                progress: nil, targetDate: nil, goalId: nil, nextRun: job.nextRunAt, lastRun: job.lastRunAt
             ))
         }
         return out
@@ -117,19 +133,28 @@ struct AutomationTasksPhoneView: View {
 
     private var filteredTasks: [AutomationTaskItem] {
         let query = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return tasks
+        // Ties keep their order (goals first), as the web's stable sort does.
+        let rows = tasks
             .filter { activeTab == .all || $0.type.rawValue == activeTab.rawValue }
             .filter { query.isEmpty || $0.name.lowercased().contains(query) || $0.description.lowercased().contains(query) }
-            .sorted { a, b in
+        return rows.enumerated()
+            .sorted { left, right in
+                let a = left.element, b = right.element
                 switch sortBy {
-                case .name: return a.name.localizedCompare(b.name) == .orderedAscending
-                case .type: return a.type.rawValue < b.type.rawValue
-                case .date: return (a.createdAt ?? .distantPast) > (b.createdAt ?? .distantPast)
+                case .name:
+                    let order = a.name.localizedCompare(b.name)
+                    return order == .orderedSame ? left.offset < right.offset : order == .orderedAscending
+                case .type:
+                    return a.type.rawValue == b.type.rawValue ? left.offset < right.offset : a.type.rawValue < b.type.rawValue
+                case .date:
+                    let l = a.createdAt ?? .distantPast, r = b.createdAt ?? .distantPast
+                    return l == r ? left.offset < right.offset : l > r
                 }
             }
+            .map(\.element)
     }
 
-    /// Routines with no bot keep their card (RoutineRunList shows the rest).
+    /// The Routines tab's rows, filtered by the search.
     private var visibleRoutines: [AutomationRoutine] {
         let query = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return store.routines.filter { query.isEmpty || $0.name.lowercased().contains(query) }
@@ -160,42 +185,55 @@ struct AutomationTasksPhoneView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            LibraryPlainHeader(onMenu: { openLibraryDrawer($isSidebarOpen) })
+            LibrarySectionHeader(title: "Automation Tasks", onMenu: { openLibraryDrawer($isSidebarOpen) }) {
+                Button { isFilterPresented = true } label: {
+                    PhoneFilterButtonLabel(active: filtersOn)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Filter and sort")
+            }
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    pageTitle
-                    controls.padding(.top, 20)
-                    tabStrip.padding(.top, 24)
-                    if showRoutineViews {
-                        HStack {
-                            Spacer()
-                            viewToggle
-                        }
-                        .padding(.top, 8)
-                    }
-                    searchField.padding(.top, 24)
-                    keepAwakeBanner.padding(.top, 24)
                     if let error { errorBanner(error) }
                     if let actionError = store.actionError { errorBanner(actionError) }
-                    mainContent.padding(.top, 32)
+                    keepAwakeBanner
+                    mainContent.padding(.top, 20)
                 }
-                .padding(.horizontal, 20)
+                .padding(.horizontal, 16)
                 .padding(.top, 8)
-                .padding(.bottom, 48)
+                // Clears the floating bar.
+                .padding(.bottom, 96)
             }
             .refreshable { await loadAll() }
         }
         .background(Color("BgPrimary").ignoresSafeArea())
+        .overlay(alignment: .bottom) {
+            LibraryFloatingBar(
+                query: $searchQuery,
+                placeholder: "Search automation tasks",
+                newLabel: "New task",
+                wide: .new
+            ) {
+                Button { isTypeChoicePresented = true } label: { Label("Set up manually", systemImage: "plus") }
+                Button(action: startWithAssistant) { Label("Create with Assistant", systemImage: "cpu") }
+            }
+        }
+        .sheet(isPresented: $isFilterPresented) {
+            AutomationFilterSheet(activeTab: $activeTab, sortBy: $sortBy, routinesViewRaw: $routinesViewRaw)
+        }
         .confirmationDialog("New task", isPresented: $isTypeChoicePresented, titleVisibility: .visible) {
-            Button("Goal") { isGoalSheetPresented = true }
-            Button("Routine") { isRoutineSheetPresented = true }
+            Button("Goal") { newTask = NewTask(kind: .goal) }
+            Button("Routine") { newTask = NewTask(kind: .routine) }
+            Button("Loop") { newTask = NewTask(kind: .loop) }
+            Button("Agent Heartbeat") { newTask = NewTask(kind: .heartbeat) }
             Button("Cancel", role: .cancel) {}
         }
-        .sheet(isPresented: $isRoutineSheetPresented, onDismiss: { Task { await loadAll() } }) {
-            ScheduledTaskSheet(store: store)
-        }
-        .sheet(isPresented: $isGoalSheetPresented) {
-            NewGoalSheet(store: store)
+        .sheet(item: $newTask, onDismiss: { Task { await loadAll() } }) { new in
+            if new.kind == .goal {
+                NewGoalSheet(store: store, targetDate: new.targetDate)
+            } else {
+                ScheduledTaskSheet(store: store, kind: new.kind, slotCron: new.cron)
+            }
         }
         .sheet(item: $selectedTask) { task in
             AutomationTaskDetailSheet(
@@ -205,6 +243,9 @@ struct AutomationTasksPhoneView: View {
                 onRunNow: { Task { await runNow(task) } },
                 onDelete: { Task { await delete(task) } }
             )
+        }
+        .sheet(item: $selectedRoutine) { picked in
+            AutomationRoutineDetailsSheet(routineId: picked.id, store: store, onClose: { selectedRoutine = nil })
         }
         .task {
             // The drawer's quick scheduled task lands here on heartbeats.
@@ -221,157 +262,15 @@ struct AutomationTasksPhoneView: View {
 
     // MARK: - Chrome
 
-    /// The web hides List · Graph · Calendar on the Routines tab, which has
-    /// its own run list.
-    private var showRoutineViews: Bool { activeTab != .routine }
-
-    private var pageTitle: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Automation Tasks")
-                .font(.system(size: 32, design: .serif))
-                .tracking(-0.4)
-                .foregroundColor(Color("TextPrimary"))
-            Text("Manage workflows, persistent schedules, and continuous execution loops")
-                .font(.system(size: 15))
-                .foregroundColor(Color("TextSecondary"))
-                .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-
-    private var controls: some View {
-        HStack(spacing: 8) {
-            Menu {
-                ForEach(TaskTab.allCases, id: \.self) { tab in
-                    LibraryMenuCheck(title: tab.label, checked: activeTab == tab) { activeTab = tab }
-                }
-            } label: {
-                dropLabel("Type:", activeTab.label == "Agent Heartbeats" ? "Heartbeats" : activeTab.label)
-            }
-            .accessibilityLabel("Type: \(activeTab.label)")
-            Menu {
-                ForEach(TaskSort.allCases, id: \.self) { sort in
-                    LibraryMenuCheck(title: sort.label, checked: sortBy == sort) { sortBy = sort }
-                }
-            } label: {
-                dropLabel("Sort:", sortBy.label)
-            }
-            .accessibilityLabel("Sort: \(sortBy.label)")
-            Spacer(minLength: 0)
-            Menu {
-                Button { isTypeChoicePresented = true } label: { Label("Set up manually", systemImage: "plus") }
-                Button(action: startWithAssistant) { Label("Create with Assistant", systemImage: "cpu") }
-            } label: {
-                HStack(spacing: 6) {
-                    Text("New task").font(.system(size: 14, weight: .medium))
-                    Image(systemName: "chevron.down").font(.system(size: 10, weight: .semibold))
-                }
-                .foregroundColor(Color("OnAccent"))
-                .padding(.horizontal, 14)
-                .frame(height: 36)
-                .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color("AccentPrimary")))
-                .fixedSize()
-            }
-            .accessibilityLabel("New task")
-        }
-    }
-
-    private func dropLabel(_ key: String, _ value: String) -> some View {
-        HStack(spacing: 5) {
-            Text(key).foregroundColor(Color("TextSecondary"))
-            Text(value).fontWeight(.medium).foregroundColor(Color("TextPrimary"))
-            Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold)).foregroundColor(Color("TextSecondary"))
-        }
-        .font(.system(size: 14))
-        .lineLimit(1)
-        .padding(.horizontal, 12)
-        .frame(height: 36)
-        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color("BgPanel")))
-        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(Color("BorderStrong"), lineWidth: 1))
-        .fixedSize()
-    }
-
-    /// TabsList: a filled track, the picked tab as a raised white pill.
-    private var tabStrip: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 2) {
-                ForEach(TaskTab.allCases, id: \.self) { tab in
-                    let on = activeTab == tab
-                    Button { activeTab = tab } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: tab.icon).font(.system(size: 13))
-                            Text(tab.label).font(.system(size: 14, weight: on ? .medium : .regular))
-                        }
-                        .foregroundColor(on ? Color("TextPrimary") : Color("TextTertiary"))
-                        .padding(.horizontal, 14)
-                        .frame(height: 32)
-                        .background(
-                            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                .fill(on ? Color("BgPanel") : Color.clear)
-                                .shadow(color: .black.opacity(on ? 0.06 : 0), radius: 2, y: 1)
-                        )
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityAddTraits(on ? .isSelected : [])
-                }
-            }
-            .padding(4)
-            .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color("FillNeutral")))
-            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Color("BorderSubtle"), lineWidth: 1))
-        }
-    }
-
-    /// ViewToggle "View": List · Graph · Calendar.
-    private var viewToggle: some View {
-        HStack(spacing: 2) {
-            ForEach(RoutinesView.allCases, id: \.self) { view in
-                let on = routinesView == view
-                Button { routinesViewRaw = view.rawValue } label: {
-                    Text(view.label)
-                        .font(.system(size: 13, weight: on ? .medium : .regular))
-                        .foregroundColor(on ? Color("TextPrimary") : Color("TextSecondary"))
-                        .padding(.horizontal, 10)
-                        .frame(height: 28)
-                        .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(on ? Color("BgPanel") : Color.clear))
-                }
-                .buttonStyle(.plain)
-                .accessibilityAddTraits(on ? .isSelected : [])
-            }
-        }
-        .padding(3)
-        .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Color("FillNeutral")))
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("View")
-    }
-
-    private var searchField: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 15))
-                .foregroundColor(Color("TextTertiary"))
-            TextField("Search automation tasks…", text: $searchQuery)
-                .font(.system(size: 16))
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-            if !searchQuery.isEmpty {
-                Button { searchQuery = "" } label: {
-                    Image(systemName: "xmark.circle.fill").foregroundColor(Color("TextTertiary"))
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Clear search")
-            }
-        }
-        .padding(.horizontal, 16)
-        .frame(height: 44)
-        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color("BgPanel")))
-        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Color("BorderStrong"), lineWidth: 1))
-    }
+    /// `filtersOn`: the filter button's dot.
+    private var filtersOn: Bool { activeTab != .all || sortBy != .date || routinesView != .list }
 
     private var keepAwakeBanner: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Image(systemName: "calendar.badge.checkmark")
-                    .font(.system(size: 15))
-                    .foregroundColor(Color("AccentPrimary"))
+                    .font(.system(size: 14))
+                    .foregroundColor(Color("TextSecondary"))
                 Text("Automation tasks only run while your computer is awake and online.")
                     .font(.system(size: 13))
                     .foregroundColor(Color("TextSecondary"))
@@ -381,10 +280,23 @@ struct AutomationTasksPhoneView: View {
                 Text("Keep awake")
                     .font(.system(size: 12))
                     .foregroundColor(Color("TextTertiary"))
-                Toggle("Keep awake", isOn: $keepAwake)
-                    .labelsHidden()
-                    .tint(Theme.statusSuccess)
-                    .scaleEffect(0.8, anchor: .leading)
+                Button { keepAwake.toggle() } label: {
+                    Capsule()
+                        .fill(keepAwake ? Color(hex: "#059669").opacity(0.2) : Color("FillNeutral"))
+                        .frame(width: 40, height: 22)
+                        .overlay(alignment: keepAwake ? .trailing : .leading) {
+                            Circle()
+                                .fill(keepAwake ? Color(hex: "#059669") : Color("TextTertiary"))
+                                .frame(width: 16, height: 16)
+                                .padding(.horizontal, 3)
+                        }
+                        .animation(.easeOut(duration: 0.15), value: keepAwake)
+                        .frame(height: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Keep awake")
+                .accessibilityValue(keepAwake ? "On" : "Off")
             }
         }
         .padding(16)
@@ -410,21 +322,72 @@ struct AutomationTasksPhoneView: View {
         .padding(.vertical, 12)
         .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Theme.statusError.opacity(0.08)))
         .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Theme.statusError.opacity(0.3), lineWidth: 1))
-        .padding(.top, 16)
+        .padding(.bottom, 16)
     }
 
     // MARK: - Main content
 
+    private var actions: AutomationTaskActions {
+        AutomationTaskActions(
+            runNow: { task in Task { await runNow(task) } },
+            setActive: { task, active in Task { await setActive(task, active) } },
+            delete: { task in Task { await delete(task) } },
+            new: { cron, day in newTask = NewTask(kind: activeKind ?? .routine, cron: cron, targetDate: Self.ymd(day)) },
+            move: { task, cron in Task { await move(task, cron: cron) } }
+        )
+    }
+
+    /// The tab's kind; nil on All, which mixes them.
+    private var activeKind: AutomationTaskItem.Kind? { AutomationTaskItem.Kind(rawValue: activeTab.rawValue) }
+
+    private static func ymd(_ day: Date) -> String {
+        let c = Calendar.current.dateComponents([.year, .month, .day], from: day)
+        return String(format: "%04d-%02d-%02d", c.year ?? 0, c.month ?? 0, c.day ?? 0)
+    }
+
+    /// Routines that can run: a routine with no bot isn't on the graph or calendar.
+    private var scheduledRoutines: [AutomationRoutine] {
+        visibleRoutines
+            .filter { !($0.agentId ?? "").isEmpty }
+            .sorted { a, b in
+                let (botA, botB) = (a.agentId ?? "", b.agentId ?? "")
+                return botA != botB ? botA < botB : a.createdAt < b.createdAt
+            }
+    }
+
+    /// Which view each tab shows: mainContent in AutomationTasksView.tsx with
+    /// `routineViews` on, so the view switch applies to every tab.
     @ViewBuilder
     private var mainContent: some View {
-        if routinesView != .list, showRoutineViews {
-            let routines = activeTab == .all || activeTab == .routine ? visibleRoutines : []
-            if routinesView == .graph {
-                AutomationGraphView(routines: routines).frame(minHeight: 360)
-            } else {
-                AutomationCalendarView(routines: routines).frame(minHeight: 480)
-            }
-        } else if activeTab == .heartbeat {
+        switch (routinesView, activeTab) {
+        case (.graph, .routine):
+            AutomationRoutinesGraph(
+                routines: scheduledRoutines,
+                isLoaded: !isLoading,
+                selectedId: selectedRoutine?.id,
+                onSelect: { selectedRoutine = RoutineSelection(id: $0.id) },
+                onRunNow: { routine in Task { await runRoutineNow(routine) } },
+                onNew: { newTask = NewTask(kind: .routine) }
+            )
+        case (.calendar, .routine):
+            AutomationRoutinesCalendar(
+                routines: scheduledRoutines,
+                store: store,
+                onNew: { cron, day in newTask = NewTask(kind: .routine, cron: cron, targetDate: Self.ymd(day)) }
+            )
+        case (.graph, _):
+            AutomationTasksGraph(
+                tasks: filteredTasks,
+                allTasks: tasks,
+                kind: activeKind,
+                isLoaded: !isLoading || !tasks.isEmpty,
+                runningId: runningTaskId,
+                onOpen: { selectedTask = $0 },
+                onRunNow: { task in Task { await runNow(task) } }
+            )
+        case (.calendar, _):
+            AutomationTasksCalendar(tasks: filteredTasks, kind: activeKind, runningId: runningTaskId, actions: actions)
+        case (.list, .heartbeat):
             VStack(alignment: .leading, spacing: 20) {
                 VStack(alignment: .leading, spacing: 8) {
                     Label("Agent Heartbeat Tasks", systemImage: "clock")
@@ -442,30 +405,49 @@ struct AutomationTasksPhoneView: View {
                 .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Color("BorderStrong"), lineWidth: 1))
                 taskCards
             }
-        } else if activeTab == .routine {
-            VStack(spacing: 24) {
-                VStack(spacing: 0) {
-                    if visibleRoutines.isEmpty {
-                        emptyState(
-                            title: searchQuery.isEmpty ? "No routines yet" : "No routines match your search",
-                            message: "Tap 'New task' above to add a routine."
-                        )
-                        .padding(.vertical, 40)
-                    } else {
-                        ForEach(Array(visibleRoutines.enumerated()), id: \.element.id) { index, routine in
-                            if index > 0 { Divider().background(Color("BorderSubtle")) }
-                            RoutineRunRowView(routine: routine, store: store)
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 10)
-                        }
+        case (.list, .routine):
+            routineList
+        case (.list, _):
+            taskCards
+        }
+    }
+
+    /// Routines as run rows; routines with no bot keep their card.
+    private var routineList: some View {
+        let rows = visibleRoutines.filter { !($0.agentId ?? "").isEmpty }
+        let needBot = filteredTasks.filter { ($0.agentId ?? "").isEmpty }
+        return VStack(spacing: 24) {
+            VStack(spacing: 0) {
+                if rows.isEmpty {
+                    emptyState(
+                        title: searchQuery.isEmpty ? "No routines yet" : "No routines match your search",
+                        message: "Tap 'New task' to add a routine."
+                    )
+                    .padding(.vertical, 40)
+                } else {
+                    ForEach(Array(rows.enumerated()), id: \.element.id) { index, routine in
+                        if index > 0 { Divider().background(Color("BorderSubtle")) }
+                        RoutineRunRowView(routine: routine, store: store)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 10)
                     }
                 }
-                .padding(8)
-                .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color("BgPanel")))
-                .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Color("BorderStrong"), lineWidth: 1))
             }
-        } else {
-            taskCards
+            .padding(8)
+            .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color("BgPanel")))
+            .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Color("BorderStrong"), lineWidth: 1))
+            if !needBot.isEmpty {
+                LazyVStack(spacing: 20) {
+                    ForEach(needBot, id: \.key) { task in
+                        AutomationTaskCard(
+                            task: task,
+                            isRunning: runningTaskId == task.id,
+                            onOpen: { selectedTask = task },
+                            onRunNow: { Task { await runNow(task) } }
+                        )
+                    }
+                }
+            }
         }
     }
 
@@ -496,7 +478,7 @@ struct AutomationTasksPhoneView: View {
             emptyState(
                 title: searchQuery.isEmpty ? "No automation tasks yet" : "No tasks match your search",
                 message: searchQuery.isEmpty
-                    ? "Tap 'New task' above to configure your first Goal, Routine, or Loop."
+                    ? "Tap 'New task' to configure your first Goal, Routine, or Loop."
                     : "Try another search or type."
             )
             .padding(.vertical, 80)
@@ -527,7 +509,48 @@ struct AutomationTasksPhoneView: View {
         defer { isLoading = false }
         await store.load()
         await cron.refresh()
-        if let rows = try? await AutomationClient.shared.listLoops() { loops = rows }
+        var failed = store.loadError != nil
+        do {
+            loops = try await AutomationClient.shared.listLoops()
+        } catch {
+            failed = true
+        }
+        error = failed ? "Failed to load automation tasks" : nil
+    }
+
+    /// The run happens on the server; pick up its result shortly.
+    private func refreshAfterRun() {
+        Task {
+            for delay in [4, 11] {
+                try? await Task.sleep(for: .seconds(delay))
+                await loadAll()
+            }
+        }
+    }
+
+    private func runRoutineNow(_ routine: AutomationRoutine) async {
+        await store.runNow(routine)
+        refreshAfterRun()
+    }
+
+    /// A dragged task's new cron, through the same update route as the web's save.
+    private func move(_ task: AutomationTaskItem, cron expression: String) async {
+        do {
+            switch task.type {
+            case .goal: return
+            case .routine:
+                if let routine = store.routines.first(where: { $0.id == task.id }) {
+                    await store.moveRoutine(routine, cron: expression)
+                }
+            case .loop:
+                try await AutomationClient.shared.updateLoopSchedule(id: task.id, cron: expression)
+                await loadAll()
+            case .heartbeat:
+                try await cron.updateSchedule(id: task.id, schedule: expression)
+            }
+        } catch {
+            self.error = "Failed to update automation"
+        }
     }
 
     private func startWithAssistant() {
@@ -547,6 +570,7 @@ struct AutomationTasksPhoneView: View {
             case .loop: try await AutomationClient.shared.runLoop(id: task.id)
             case .heartbeat: try await cron.runNow(id: task.id)
             }
+            refreshAfterRun()
         } catch {
             self.error = "Failed to run \(task.name)"
         }
@@ -632,6 +656,7 @@ struct AutomationTaskItem: Identifiable, Hashable {
     let id: String
     let name: String
     let description: String
+    let status: String
     let isActive: Bool
     let frequency: String
     let schedule: String?
@@ -640,6 +665,13 @@ struct AutomationTaskItem: Identifiable, Hashable {
     let executorName: String
     let progress: Double?
     let targetDate: String?
+    /// The goal this task serves.
+    let goalId: String?
+    let nextRun: String?
+    let lastRun: String?
+
+    /// The raw cron or interval the calendar and graph read.
+    var scheduleExpression: String? { schedule }
 
     var key: String { "\(type.rawValue)-\(id)" }
 
@@ -647,7 +679,8 @@ struct AutomationTaskItem: Identifiable, Hashable {
         if type == .goal, let targetDate, let date = libraryParseDate(targetDate) ?? Self.day(targetDate) {
             return "Target: \(date.formatted(date: .numeric, time: .omitted))"
         }
-        return schedule ?? "Manual"
+        if let schedule, !schedule.isEmpty { return schedule }
+        return "Manual"
     }
 
     private static func day(_ raw: String) -> Date? {
@@ -695,6 +728,7 @@ struct AutomationTaskCard: View {
                             .padding(.horizontal, 8)
                             .padding(.vertical, 2)
                             .background(RoundedRectangle(cornerRadius: 6).fill(task.isActive ? Color(hex: "#10B981").opacity(0.1) : Color("FillNeutral")))
+                            .overlay(RoundedRectangle(cornerRadius: 6).stroke(task.isActive ? Color(hex: "#10B981").opacity(0.2) : Color.clear, lineWidth: 1))
                         if task.type != .goal {
                             Button(action: onRunNow) {
                                 Group {
@@ -704,6 +738,7 @@ struct AutomationTaskCard: View {
                                 .frame(width: 28, height: 28)
                                 .background(RoundedRectangle(cornerRadius: 8).fill(Color("BgPanel")))
                                 .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color("BorderStrong"), lineWidth: 1))
+                                .contentShape(Rectangle().inset(by: -8))
                             }
                             .buttonStyle(.plain)
                             .disabled(isRunning)
@@ -729,7 +764,10 @@ struct AutomationTaskCard: View {
                     if task.type == .goal {
                         Label("Progress: \(Int(task.progress ?? 0))%", systemImage: "target")
                     } else {
-                        Label(task.executorName, systemImage: "sparkle")
+                        HStack(spacing: 4) {
+                            Image(systemName: "sparkle")
+                            BotNameText(task.executorName, size: 11, ink: "TextTertiary").lineLimit(1)
+                        }
                     }
                     Spacer()
                     Text(task.targetLine).lineLimit(1)
@@ -752,7 +790,7 @@ struct AutomationTaskCard: View {
 
 /// TaskDetailOverlay: what the task is and does, its switch, Run now and
 /// Delete.
-private struct AutomationTaskDetailSheet: View {
+struct AutomationTaskDetailSheet: View {
     let task: AutomationTaskItem
     let isRunning: Bool
     let onToggle: (Bool) -> Void
@@ -834,5 +872,73 @@ private struct AutomationTaskDetailSheet: View {
             Spacer()
             Text(value).foregroundColor(Color("TextSecondary")).lineLimit(1)
         }
+    }
+}
+
+// MARK: - Filter sheet
+
+/// The filter button's sheet (QuietMenu on a phone): Type, Sort by, View, each
+/// row checked when on; a pick closes it.
+private struct AutomationFilterSheet: View {
+    @Binding var activeTab: AutomationTasksPhoneView.TaskTab
+    @Binding var sortBy: AutomationTasksPhoneView.TaskSort
+    @Binding var routinesViewRaw: String
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                section("Type")
+                ForEach(AutomationTasksPhoneView.TaskTab.allCases, id: \.self) { tab in
+                    row(tab.label, checked: activeTab == tab) { activeTab = tab }
+                }
+                Divider().background(Color("BorderSubtle")).padding(.vertical, 6)
+                section("Sort by")
+                ForEach(AutomationTasksPhoneView.TaskSort.allCases, id: \.self) { sort in
+                    row(sort.label, checked: sortBy == sort) { sortBy = sort }
+                }
+                Divider().background(Color("BorderSubtle")).padding(.vertical, 6)
+                section("View")
+                ForEach(AutomationTasksPhoneView.RoutinesView.allCases, id: \.self) { view in
+                    row(view.label, checked: routinesViewRaw == view.rawValue) { routinesViewRaw = view.rawValue }
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+        }
+        .presentationDetents([.height(640), .large])
+        .presentationDragIndicator(.visible)
+        .presentationCornerRadius(24)
+        .presentationBackground(Color("BgPanel"))
+    }
+
+    private func section(_ title: String) -> some View {
+        Text(title)
+            .font(.system(size: 13))
+            .foregroundColor(Color("TextTertiary"))
+            .padding(.vertical, 6)
+    }
+
+    private func row(_ title: String, checked: Bool, action: @escaping () -> Void) -> some View {
+        Button {
+            action()
+            dismiss()
+        } label: {
+            HStack {
+                Text(title)
+                    .font(.system(size: 16))
+                    .foregroundColor(Color("TextPrimary"))
+                Spacer()
+                if checked {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 12))
+                        .foregroundColor(Color("TextTertiary"))
+                }
+            }
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(checked ? .isSelected : [])
     }
 }

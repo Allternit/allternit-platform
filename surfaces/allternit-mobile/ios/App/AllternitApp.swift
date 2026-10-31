@@ -73,6 +73,10 @@ struct AllternitApp: App {
                         mode: authManager.authEntryMode == .signUp ? .signUp : .signIn
                     )
                         .environment(Clerk.shared)
+                        // Skip Clerk's Create organization step (AuthManager).
+                        .task(id: Clerk.shared.session?.status) {
+                            await authManager.finishOrganizationTaskIfNeeded()
+                        }
                 } else {
                     EmptyView()
                 }
@@ -263,6 +267,9 @@ struct LoginGateView: View {
             if auth.isClerkConfigured {
                 emailAuthView(start.identifier)
                     .environment(Clerk.shared)
+                    .task(id: Clerk.shared.session?.status) {
+                        await auth.finishOrganizationTaskIfNeeded()
+                    }
             }
         }
     }
