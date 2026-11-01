@@ -204,9 +204,6 @@ for (const mdxPath of collectMdxFiles(DOCS_DIR)) {
       if (['api/platform/conversations.mdx', 'api/platform/sdks/python.mdx', 'api/platform/sdks/typescript.mdx'].some((p) => mdxPath.endsWith(p))) continue;
       // Skills load from each CLI's real config directories; the page has to name those paths.
       if (mdxPath.endsWith('core/skills.mdx')) continue;
-      // Bot Hub names the instruction files it reads. Memory and learning explains
-      // why a CLI brain can still load its own personal skills.
-      if (['api/bot-hub.mdx', 'guides/memory-and-learning.mdx'].some((p) => mdxPath.endsWith(p))) continue;
       // The computer toolset absorbs each model family's native computer-use tool and the hosted
       // driver plugs into those SDKs, so these pages have to name the providers and SDK classes.
       if (['api/platform/hosted-computers.mdx', 'tools/computer-toolset.mdx', 'tools/computer-use.mdx', 'core/computer-use-engine.mdx'].some((p) => mdxPath.endsWith(p))) continue;
@@ -228,6 +225,8 @@ for (const mdxPath of collectMdxFiles(DOCS_DIR)) {
       // The phone add-ons ship as a Claude Code plugin and a Codex skill, and the MCP servers page
       // points to them; both have to name those clients and their install commands.
       if (['api/platform/sdks/claude-code-codex.mdx', 'api/mcp-servers.mdx'].some((p) => mdxPath.endsWith(p))) continue;
+      // The chat bridge reads `.claude/CLAUDE.md` by name; the Skills note names Claude CLI brains and their own skills.
+      if (['api/bot-hub.mdx', 'guides/memory-and-learning.mdx'].some((p) => mdxPath.endsWith(p))) continue;
       fail(
         `competitor mention in ${path.relative(ROOT, mdxPath)}:${i + 1}: ${line.trim()}`
       );
