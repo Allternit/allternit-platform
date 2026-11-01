@@ -505,6 +505,9 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         // the caller's default node. Office state is in-memory per :8013
         // process, so these handlers are node-affine by design (§3.3).
         .merge(routes::office::routes())
+        // Workbook sessions on this host's office engine, for people with no
+        // computer. Clerk session verified per-request; each session is its owner's.
+        .merge(routes::office_engine::routes())
         // Beta namespace (P1): research tasks + playground sessions, relayed
         // to the caller's default node. The WS event stream
         // (/beta/sessions/:id/events/ws) is intentionally not exposed — it

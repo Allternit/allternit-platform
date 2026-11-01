@@ -21,6 +21,8 @@ struct MainWorkspaceView: View {
     @State private var screenWidth: CGFloat = 390
     @State private var isOverviewPresented = false
     @State private var artifactSession: ArtifactStudioSession?
+    /// A Recents row from another install, while the server says what it opens as.
+    @State private var sessionLookup: SessionLookupState? = nil
 
     /// PhoneShell DRAWER_FRACTION / DRAWER_MAX.
     private var sidebarWidth: CGFloat { min(screenWidth * 0.92, 440) }
@@ -111,17 +113,15 @@ struct MainWorkspaceView: View {
         )
         // The waiting games window, over every mode (WaitingGamesLayer).
         .overlay { WaitingGamesLayer() }
+        .overlay { sessionLookupCover }
         // Recents and the overviews open a Docs, Sheets, Slides or Design
         // session on its editor, not as a plain chat.
         .onChange(of: selectedSessionId) { _, id in
-            guard let id else { return }
-            Task {
-                // Started on another install: the session or its record says which editor.
-                guard let session = await ArtifactStudioLauncher.shared.resolveSession(id: id),
-                      session.editorRoute != nil, selectedSessionId == id else { return }
-                selectedSessionId = nil
-                artifactSession = session
+            guard let id else {
+                sessionLookup = nil
+                return
             }
+            openEditorSession(id: id)
         }
         .fullScreenCover(item: $artifactSession) { session in
             ArtifactStudioView(studio: session)
@@ -239,6 +239,81 @@ struct MainWorkspaceView: View {
                 modeStore.selectBarItem(.code)
             }
             #endif
+        }
+    }
+
+    private enum SessionLookupState: Equatable {
+        case loading(String)
+        case unlinked(id: String, noun: String)
+    }
+
+    /// Opens an editor session on its editor. One from another install is looked
+    /// up behind a cover, so its chat doesn't flash first.
+    private func openEditorSession(id: String) {
+        let launcher = ArtifactStudioLauncher.shared
+        if let session = launcher.session(for: id) {
+            guard session.editorRoute != nil else { return }
+            selectedSessionId = nil
+            artifactSession = session
+            return
+        }
+        guard launcher.needsLookup(id: id) else { return }
+        sessionLookup = .loading(id)
+        Task {
+            // A slow server gets the chat rather than a spinner.
+            try? await Task.sleep(for: .seconds(6))
+            if sessionLookup == .loading(id) { sessionLookup = nil }
+        }
+        Task {
+            let result = await launcher.lookUpSession(id: id)
+            guard selectedSessionId == id else { return }
+            switch result {
+            case .editor(let session) where session.editorRoute != nil:
+                sessionLookup = nil
+                selectedSessionId = nil
+                artifactSession = session
+            case .unlinked(let noun):
+                sessionLookup = .unlinked(id: id, noun: noun)
+            default:
+                sessionLookup = nil
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var sessionLookupCover: some View {
+        switch sessionLookup {
+        case .loading?:
+            ZStack {
+                Color("BgPrimary").ignoresSafeArea()
+                ProgressView("Opening…")
+            }
+        case .unlinked(let id, let noun)?:
+            ZStack {
+                Color("BgPrimary").ignoresSafeArea()
+                VStack(spacing: 8) {
+                    FriendlyStateView(
+                        style: .empty,
+                        icon: "doc.questionmark",
+                        title: "Couldn't find this \(noun)",
+                        message: "This chat was started on another install before chats were linked to their files. The \(noun) may still be in Artifacts.",
+                        actionTitle: "Open as chat",
+                        action: {
+                            ArtifactStudioLauncher.shared.treatAsChat(id: id)
+                            sessionLookup = nil
+                        }
+                    )
+                    Button("Back") {
+                        sessionLookup = nil
+                        selectedSessionId = nil
+                    }
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundColor(Color("TextSecondary"))
+                    .frame(minHeight: 44)
+                }
+            }
+        case nil:
+            EmptyView()
         }
     }
 

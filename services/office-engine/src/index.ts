@@ -34,6 +34,16 @@ import { extname, join } from 'node:path'
 
 const app = new Hono()
 
+// The hosted engine serves workbook sessions and nothing else. The other routes
+// assume one trusted local user (`/markdown-url` fetches URLs from this machine).
+if (process.env.OFFICE_ENGINE_SESSIONS_ONLY === '1') {
+  app.use('*', async (c, next) => {
+    const path = c.req.path
+    if (path === '/health' || path.startsWith('/xlsx/session/')) return next()
+    return c.json({ error: 'not_available' }, 404)
+  })
+}
+
 const PPTX_MIME = 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
 const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 

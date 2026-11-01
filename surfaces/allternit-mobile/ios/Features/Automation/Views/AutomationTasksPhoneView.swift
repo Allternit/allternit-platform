@@ -869,10 +869,10 @@ struct AutomationTaskDetailSheet: View {
                         row("Schedule", task.schedule ?? "Manual")
                         row("Runs as", task.executorName)
                         if let next = libraryParseDate(task.nextRun), task.isActive {
-                            row("Next run", next.formatted(.relative(presentation: .named)))
+                            row("Next run", AutomationScheduleLogic.when(next))
                         }
                         if let last = libraryParseDate(task.lastRun) {
-                            row("Last run", last.formatted(.relative(presentation: .named)))
+                            row("Last run", AutomationScheduleLogic.when(last))
                         }
                     }
                 }

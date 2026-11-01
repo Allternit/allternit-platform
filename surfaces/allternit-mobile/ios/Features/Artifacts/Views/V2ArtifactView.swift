@@ -551,6 +551,13 @@ private struct PDFKitView: UIViewRepresentable {
 /// Loads media an artifact points at. API paths (`/api/...`) are resolved
 /// against the cloud API and sent with the bearer; external URLs never get it.
 enum ArtifactMediaLoader {
+    /// An API path's full URL: `/api/v1/...` (uploads, generated media) is on
+    /// the runtime API, `/api/v2/...` on the cloud API.
+    static func apiURL(for path: String) -> URL? {
+        let base = path.hasPrefix("/api/v1/") ? AppConfig.apiBaseURL : AppConfig.cloudAPIBaseURL
+        return URL(string: path, relativeTo: base)?.absoluteURL
+    }
+
     static func data(for urlString: String) async throws -> Data {
         if urlString.hasPrefix("data:") {
             guard let comma = urlString.firstIndex(of: ",") else { throw ArtifactContentError.badURL }
@@ -564,7 +571,7 @@ enum ArtifactMediaLoader {
         }
         var request: URLRequest
         if urlString.hasPrefix("/") {
-            guard let url = URL(string: urlString, relativeTo: AppConfig.cloudAPIBaseURL)?.absoluteURL else { throw ArtifactContentError.badURL }
+            guard let url = apiURL(for: urlString) else { throw ArtifactContentError.badURL }
             request = URLRequest(url: url)
             if let token = await ArtifactsV2Client.bearerToken() {
                 request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")

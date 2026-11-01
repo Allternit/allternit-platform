@@ -7,6 +7,8 @@ description: 'Changelog for the Allternit platform, SDKs, and Gizzi Code CLI'
 
 ## 2026-11-01 — Schedules keep their timezone; unsaved work is protected
 
+- **Keychain prompts:** Mac runtime updates are signed with the Developer ID under stable names, so Keychain approval lasts across updates.
+- **Video:** Allternit's media and upload routes support range requests, and iPhone cards load a frame without downloading the whole file.
 - **Schedules:** routines and loops run in the timezone they were saved with. Before this, a server in UTC ran them at the wrong hour.
 - **Closing with unsaved changes:** a browser tab warns you, and Desktop asks **Leave** or **Stay**. Closing an editor inside Allternit saves first and asks only if that fails.
 - **Sheets exports:** `.xlsx` files made from a sheet keep their cell formatting.

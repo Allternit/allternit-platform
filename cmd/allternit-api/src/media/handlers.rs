@@ -705,13 +705,5 @@ pub async fn get_media_artifact(
                 .into_response()
         }
     };
-    let len = artifact.bytes.len();
-    (
-        [
-            (header::CONTENT_TYPE, artifact.content_type),
-            (header::CONTENT_LENGTH, len.to_string()),
-        ],
-        artifact.bytes,
-    )
-        .into_response()
+    crate::byte_range::ranged_response(&headers, artifact.content_type, artifact.bytes)
 }
