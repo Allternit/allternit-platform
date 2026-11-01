@@ -36,6 +36,10 @@ from pathlib import Path
 BUILD_STAMPS = (
     "surfaces/allternit-desktop/src/main/manifest.ts",
     "surfaces/allternit-desktop/resources/computer-use/VERSION.json",
+    "surfaces/allternit-extensions/allternit-office-addin/manifest.xml",
+    "surfaces/allternit-extensions/allternit-office-addin/manifests/excel.xml",
+    "surfaces/allternit-extensions/allternit-office-addin/manifests/powerpoint.xml",
+    "surfaces/allternit-extensions/allternit-office-addin/manifests/word.xml",
 )
 STATE = Path(os.environ.get("BUILD_QUEUE_DIR", Path.home() / ".allternit/state/build-queue"))
 TICKETS = STATE / "tickets"
