@@ -2857,11 +2857,11 @@ pub(crate) fn bot_job_payload(db: &DbHandle, user_id: &str, target: &str, descri
 /// `None` and keep today's behavior.
 pub(crate) fn bot_turn_marker(db: &DbHandle, agent_id: &str, session_id: Option<&str>) -> Option<serde_json::Value> {
     let conn = db.connect().ok()?;
-    let (name, is_bot, config, allowed, perms): (String, i64, Option<String>, Option<String>, Option<String>) = conn
+    let (name, is_bot, config, allowed, perms, skills): (String, i64, Option<String>, Option<String>, Option<String>, Option<String>) = conn
         .query_row(
-            "SELECT name, is_bot, config, allowed_tools, tool_permissions FROM agents WHERE id = ?1",
+            "SELECT name, is_bot, config, allowed_tools, tool_permissions, allowed_skills FROM agents WHERE id = ?1",
             params![agent_id],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)),
         )
         .ok()?;
     let parse = |raw: Option<String>| raw.and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok()).unwrap_or(serde_json::Value::Null);
@@ -2895,6 +2895,10 @@ pub(crate) fn bot_turn_marker(db: &DbHandle, agent_id: &str, session_id: Option<
         "askTools": ask_tools,
         "gated": gated,
     });
+    // The bot's Skills page; gizzi hides anything not on a non-empty list.
+    if let Some(list) = parse(skills).as_array().filter(|l| !l.is_empty()) {
+        marker["allowedSkills"] = json!(list);
+    }
     bot_account_fields(&config, &mut marker);
     Some(marker)
 }

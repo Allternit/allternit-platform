@@ -25,3 +25,18 @@ The map starts on the most recently used item. An empty account shows a short ex
 ## What the map cannot see yet
 
 Skill use is recorded from chat turns. Skills that ran in other ways, such as inside a terminal session you started yourself, are not counted. A routine is linked to a skill only through the thread it runs in.
+
+## Where the links come from
+
+Every line on the map comes from a real record:
+
+- A thread uses its bot's Soul, because chat reads `SOUL.md` on every message.
+- A thread uses a fact when the memory recall log shows it recalled that fact.
+- A fact was learned from a thread when the note it was extracted from ran in that thread.
+- A fact names a person, product or place when two or more facts share that name.
+- A routine uses the thread it runs in.
+- A thread uses a skill once the bot runs that skill in agent chat. Skills that never ran are not on the map.
+
+An item with no links says so. The map opens on the most recent item that has links.
+
+Turning a skill off on a bot's Skills page hides it from that bot's skill tool. A Claude CLI brain can still reach its own personal Claude skills, because those load inside the CLI.

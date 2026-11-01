@@ -73,6 +73,8 @@ pub(crate) fn allowed_skills(conn: &Connection, user_id: &str, bot: &str) -> Opt
         .flatten()
         .flatten();
     match serde_json::from_str::<Value>(raw.as_deref()?).ok()? {
+        // An empty list restricts nothing: bots are created with `[]` and use any skill.
+        Value::Array(a) if a.is_empty() => None,
         Value::Array(a) => Some(a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect()),
         _ => None,
     }
