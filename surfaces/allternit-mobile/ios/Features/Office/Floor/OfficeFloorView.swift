@@ -3,7 +3,7 @@ import SwiftUI
 import WebKit
 
 /// Bots mode → Office: the bots' floor from 3dfacility.allternit.com
-/// (`?embed=workspace`), fed with the person's real bots — the native
+/// (`?embed=facility`), fed with the person's real bots — the native
 /// counterpart of the web's OfficeFloor (allternit-ai src/views/office).
 ///
 /// The facility only talks to a parent frame, so a tiny host page (served as
@@ -13,6 +13,7 @@ import WebKit
 /// (`allternit:workspace:thread`); a message written there is sent in the
 /// background and its reply streams into the panel; answer/open push the chat.
 struct OfficeFloorView: View {
+    @ObservedObject private var auth = AuthManager.shared
     @ObservedObject private var store = BotModeStore.shared
     @ObservedObject private var hub = AgentHubStore.shared
     @ObservedObject private var colors = BotColorStore.shared
@@ -24,10 +25,7 @@ struct OfficeFloorView: View {
 
     var body: some View {
         ZStack {
-            if store.bots.isEmpty && !hub.agents.isEmpty {
-                ContentUnavailableView("No bots yet", systemImage: "building.2",
-                                       description: Text("Make a bot and it gets a desk here."))
-            } else if failed {
+            if failed {
                 VStack(spacing: 12) {
                     ContentUnavailableView("The office didn't load", systemImage: "wifi.exclamationmark",
                                            description: Text("Check your connection and try again."))
@@ -39,7 +37,8 @@ struct OfficeFloorView: View {
                     .buttonStyle(.borderedProminent)
                 }
             } else {
-                OfficeFloorWeb(feed: feedJSON, thread: thread, attempt: attempt, onReady: { ready = true }, onAction: handle)
+                OfficeFloorWeb(feed: feedJSON, thread: thread, attempt: attempt, visitorKey: "allternit.facility.visitor.\(auth.currentUserId ?? "local")", onReady: { ready = true }, onAction: handle)
+                    .id(auth.currentUserId ?? "local")
                     .ignoresSafeArea(edges: .bottom)
                 if !ready {
                     ProgressView("Opening the office…")
@@ -69,7 +68,8 @@ struct OfficeFloorView: View {
         guard let botId, store.bot(botId) != nil else { return }
         switch action {
         case "select":
-            Task { await thread.select(botId) }
+            // The full facility opens real native bot work, then returns to the same world.
+            navigator.open(.chat(botId: botId, sessionId: nil))
         case "message":
             // Written in the panel: sent into the bot's main chat here, the reply streams back into the panel.
             guard let text = text?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else { return }
@@ -133,6 +133,7 @@ private struct OfficeFloorWeb: UIViewRepresentable {
     let feed: String
     let thread: OfficePanelThread
     let attempt: Int
+    let visitorKey: String
     let onReady: () -> Void
     let onAction: (String, String?, String?) -> Void
 
@@ -166,24 +167,27 @@ private struct OfficeFloorWeb: UIViewRepresentable {
     private func load(_ web: WKWebView, context: Context) {
         let c = context.coordinator
         c.attempt = attempt
+        c.visitorKey = visitorKey
         c.ready = false
         c.lastSent = nil
         c.pending = feed
         c.pendingThread = nil
         let dark = UITraitCollection.current.userInterfaceStyle == .dark
-        // The Office layout: the loft full bleed with its one panel (bots, then the picked bot's chat).
+        // The complete facility: character creation, roaming, and the existing live bot room.
         // This app handles chat only (open, answer, message), so the page leaves hire and share off.
-        let src = "\(Self.origin)/?embed=workspace&ui=office&actions=chat\(dark ? "&theme=dark" : "")"
+        let src = "\(Self.origin)/?embed=facility&actions=chat\(dark ? "&theme=dark" : "")"
         let html = """
         <!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
         <style>html,body{margin:0;height:100%;background:transparent}iframe{border:0;width:100%;height:100%;display:block}</style></head>
         <body><iframe id="f" src="\(src)" allow="autoplay"></iframe><script>
         const f = document.getElementById('f'), O = '\(Self.origin)';
         window.feed = (m) => f.contentWindow && f.contentWindow.postMessage(m, O);
+        let connected = false;
         addEventListener('message', (e) => {
           if (e.origin !== O || e.source !== f.contentWindow || !e.data) return;
           const d = e.data;
-          if (d.type === 'allternit:workspace:ready') webkit.messageHandlers.office.postMessage({ type: 'ready' });
+          if (d.type === 'allternit:facility:ready' && d.version === 1 && !connected) { connected = true; webkit.messageHandlers.office.postMessage({ type: 'ready' }); }
+          else if (d.type === 'allternit:facility:visitor' && d.version === 1) webkit.messageHandlers.office.postMessage({ type: 'visitor', visitor: d.visitor });
           else if (d.type === 'allternit:workspace:action') webkit.messageHandlers.office.postMessage({ type: 'action', action: String(d.action || ''), botId: typeof d.botId === 'string' ? d.botId : null, text: typeof d.text === 'string' ? d.text.slice(0, 4000) : null });
         });
         </script></body></html>
@@ -195,6 +199,7 @@ private struct OfficeFloorWeb: UIViewRepresentable {
     final class Coordinator: NSObject, WKScriptMessageHandler {
         weak var web: WKWebView?
         var attempt = -1
+        var visitorKey = ""
         var ready = false
         var pending: String?
         /// Dedupe for the roster feed only; every thread post goes out.
@@ -218,9 +223,19 @@ private struct OfficeFloorWeb: UIViewRepresentable {
         }
 
         func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
-            guard let body = message.body as? [String: Any] else { return }
+            // Only the validated top-level relay may reach native actions or persistence.
+            guard message.frameInfo.isMainFrame, let body = message.body as? [String: Any] else { return }
             switch body["type"] as? String {
+            case "visitor":
+                guard ready, let visitor = body["visitor"] as? [String: Any],
+                      let config = visitor["config"] as? [String: Any], config["name"] is String,
+                      let data = try? JSONSerialization.data(withJSONObject: visitor), data.count < 3_200_000 else { return }
+                UserDefaults.standard.set(data, forKey: visitorKey)
             case "ready":
+                // Identity state is owned by the app, never the frame's partitioned storage.
+                let stored = UserDefaults.standard.data(forKey: visitorKey)
+                let visitor = stored.flatMap { String(data: $0, encoding: .utf8) } ?? "null"
+                web?.evaluateJavaScript("window.feed({type:'allternit:facility:init',version:1,visitor:\(visitor)})")
                 ready = true
                 lastSent = nil
                 if let pending { send(pending) }

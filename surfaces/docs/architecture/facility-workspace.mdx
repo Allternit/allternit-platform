@@ -1,0 +1,120 @@
+---
+title: "Facility workspace bridge"
+description: "The parent-to-frame roster contract and local facility state."
+---
+
+The Allternit app embeds `https://3dfacility.allternit.com/?embed=workspace`, optionally with `theme=dark`. The facility renders the floor; the host owns account data and bot conversations. Desktop, phone and PWA consume the same remote frame.
+
+## Handshake and roster
+
+The frame sends `allternit:workspace:ready` to its parent. The host sends `{ type: "allternit:workspace", bots, handoffs? }`. Bot fields are `id`, `name`, `role`, `color`, `status`, `task`, optional `question`, `chief` and `avatar`. Supported statuses are working, waiting, talking and idle. The frame bounds strings, normalizes recipes, limits asset URLs, ignores duplicate IDs and accepts at most 200 bots. There are 77 seats; remaining bots are listed as unseated.
+
+The renewal accepts roster messages only inside an embed, from `window.parent`, at an allowed Allternit, local-development or desktop origin. Sibling windows cannot replace the roster. The accepted parent origin becomes the destination for actions; opaque desktop origins require `*` after parent validation. The initial ready message contains no account data.
+
+## Actions and state
+
+`{ type: "allternit:workspace:action", action: "answer" | "open", botId }` returns to the parent only after a valid roster is received, for a bot still on that roster. Both actions open host UI. The frame never approves a permission request. Live handoffs require existing endpoints and are deduplicated while in flight.
+
+Demo activity stops replacing data after a live roster arrives. Empty rosters remain live. The host must resend current state after frame reload. This protocol does not currently detect a silent host disconnect; the Live label indicates received data, not an independent heartbeat.
+
+## Office controls
+
+The current Office host also sends `allternit:workspace:select`, `allternit:workspace:replay` and `allternit:workspace:snapshot` after the roster. Selection from the host is applied without echo. Replay uses recorded events and restores the latest live roster when it ends. A snapshot request returns a 1200×630 PNG floor-plan picture. Replies target the validated parent's origin. Invalid numeric replay bounds fall back to the event range.
+
+The frame supports `chrome=none` when the Office host supplies its own team/activity panel. Bot selection and free-desk hiring return `select` and `hire` actions to the host; hiring opens host UI. Public floors use `embed=public` and their separate public-data feed; parent roster messages are rejected there. Public views omit task text, questions and desk screens.
+
+## Local visitor data
+
+Character records use `sim:<tab client ID>`. The Project Studio saves one brief under `allternit.facility.project-brief.v1`. These are browser-local records, independent of host account state. Brief reference links allow only HTTP/HTTPS; failed persistence produces a visible message. Clearing a brief requires confirmation.
+
+## Verification and release
+
+Run `node scripts/test-workspace-bridge.mjs` against an authorized local preview using `FACILITY_TEST_URL` when needed. It checks a 30-bot roster, parent answer/open actions, same-origin sibling rejection, host selection without echo, share picture dimensions, replay/live restoration, the live empty state, graphics-loss recovery to 2D and phone width. `node scripts/test-people2-geometry.mjs` protects per-person ownership of GPU attributes and index buffers.
+
+Browser review also covers studio entry and collision, save/reload, keyboard focus, graphics recovery and each workspace view. Fixture verification does not replace validation in a signed-in host. The facility and docs deploy separately; local changes are not published automatically.
+
+## Human character materials
+
+The facility's human visitors and campus staff use the parametric person renderer. Eye recoloring preserves authored black pupils. Skin normal-map strength is 0.24; albedo and age/body morphs are retained. Native locomotion clips remain the motion source.
+
+Wardrobe references use `ItemInfo.lumLinear`, measured from each packed texture at its mesh UVs by `scripts/calibrate-people2-luminance.mjs`. Run that script after changing wardrobe assets, against an authorized local preview, before regenerating thumbnails. It accepts `FACILITY_TEST_URL`. Legacy `lum` values are sampled sRGB and require a fallback conversion; untextured items use their source material color. The visitor runtime performs no texture readback.
+
+`node scripts/test-people2-eyes.mjs` checks actual WebGL pupil/iris separation. `node scripts/test-people2-tint.mjs` checks calibrated color normalization against a plain reference material. Both use synthetic texture inputs through the real material shaders. Visual review additionally checks the real people, outfits, body limits and native motion frames.
+
+Regenerate the portrait and wardrobe cards with `scripts/render-people2-thumbs.mjs --templates --items`, supplying its preview URL when needed. Update `P2_THUMB_VERSION` when card appearance changes. The GLB version is independent because a rendering change does not require changing geometry URLs.
+
+### Resident avatar reuse
+
+The resident creator's `bot-catalog.ts` combines Workspace's `IMAGE_PACKS`, the
+Clawd Crew/Duet Carry vector packs, and Pip Gray. `SimConfig.botAvatarId` stores a
+catalog ID for `kind: "bot"`; sanitization rejects arbitrary asset URLs and uses
+the approved Gizzi Brawl model for unknown IDs. Save/edit/reload and visitor broadcasts use that same config.
+`BotVisitorBody` uses the Office `bodyFor`, `BuiltBody` and `SpriteBody` renderers.
+Local `/workspace/packs/` URLs resolve through `modelKeyFor` as well as host
+`/avatar-packs/` URLs. This shares models without importing host account state.
+
+Human idle stance targets come from the bind hierarchy and blend by actual idle
+clip weight. Native movement clips are preserved. Run
+`node scripts/test-facility-avatars.mjs` against an authorized local studio preview
+to check resting joints, pose release/accumulation, native movement, bot catalog
+assets, approved model loading and saved selection round trips.
+
+### Avatar resource ownership and recovery
+
+Cached GLBs are templates; displayed instances clone geometry, materials and
+texture slots so releasing one avatar cannot delete another's GPU resources.
+`owned-model.ts` also disposes asynchronous results that arrive after a picker
+switch or unmount. Each instance releases a shared-in-instance resource once.
+Failed GLB/SVG requests leave the template cache so retry can fetch them again.
+The creator retains the selected artwork during loading and reports model
+failures with **Retry 3D model**. Painted models reject missing artwork instead
+of reporting successful loading. Resource regressions are covered by
+`node --test scripts/test-owned-avatar-model.mjs`.
+
+## Full-facility Office entry
+
+`OfficeView` now hosts `OfficeFloor surface="facility"`. Its frame loads the new
+`?embed=facility` root, which mounts the real campus and avatar chooser without
+the public site's header, footer or scroll sections. `BotWorkspaceView` preserves
+the former Office bot-floor component; System Workspace uses that component.
+The web phone/PWA dispatch entry shares `OfficeView` with Desktop.
+
+The facility mounts its existing Bots Floor (`threads-loft`), not a second world.
+It accepts the same real `allternit:workspace` feed and emits validated bot actions.
+The parent opens the established `BotPanel`. Closing the panel returns to the
+same campus and avatar. Parent panel state blocks movement and pauses rendering.
+Hidden pages and avatar dialogs also pause the campus frame loop.
+
+The version-1 `allternit:facility` protocol adds:
+
+- `ready` from the frame, followed by parent `init` with visitor state.
+- `visitor` with bounded, sanitized config, saved main config, room and finite pose.
+- `panel` from the parent to stop world input while bot work is open.
+- `navigate` from the parent, restricted to known room IDs.
+
+Both ends pin origin and window source. Public embeds reject private messages.
+The host persists visitor state under a user/organization key in localStorage.
+No authentication tokens are sent to the facility. The embedded world never
+hydrates another account's saved standalone visitor. Room and floor bounds
+validate a saved pose before camera restoration. The standalone visitor key is
+stable across tabs, while each tab retains a distinct presence ID.
+
+`workspaceAvatar` carries recipe data for builder characters, the primary orb,
+legacy sheet/image and mascot pack identities. Canonical vector pet/geometric
+components are rasterized locally for texture transport. Picking a bot appearance
+stores its roster ID separately from the selected conversation. If that bot is
+removed, the saved main avatar is restored or the chooser opens.
+
+The native iPhone wrapper uses the same facility handshake and persists visitor
+JSON in account-scoped UserDefaults. Bot selection opens native chat. Swift parse
+passed, but this is not a device-memory, signed-build or physical-iPhone check.
+
+Validation entry points:
+
+- Facility: `scripts/test-facility-embed.mjs` exercises real assets, first entry,
+  human/orb/recipe switching, keyboard roam, room changes, source rejection,
+  host action, input blocking, exact resume, phone and empty team.
+- Host: `OfficeFacility.test.tsx`, `OfficeFloor.bridge.test.tsx` verify routing,
+  account scoping, handshake, appearance/action separation and compact route.
+- `scripts/test-workspace-bridge.mjs` retains the legacy compact-floor protocol
+  regression; `test-owned-avatar-model.mjs` checks resource lifetime.

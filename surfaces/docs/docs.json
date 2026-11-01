@@ -71,6 +71,7 @@
               "guides/session-overview",
               "guides/system-drawer",
               "guides/office-view",
+              "guides/facility",
               "guides/decisions",
               "guides/glance-lines",
               "architecture/sidebar-layout",
@@ -182,6 +183,7 @@
             "pages": [
               "architecture",
               "architecture/dependency-map",
+              "architecture/facility-workspace",
               "architecture/first-run-setup",
               "architecture/bot-setup-picker",
               "architecture/group-room-brief",
