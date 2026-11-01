@@ -100,7 +100,7 @@ struct CodeLaunchComposer: View {
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel(dictation.isRecording ? "Stop voice input" : "Start voice mode")
-                    WaitingGamesPlayButton(busy: isRunning)
+                    WaitingGamesPlayButton(busy: isRunning, anytime: true)
                     if isRunning, trimmed.isEmpty, let onStop {
                         Button(action: onStop) {
                             Image(systemName: "stop.fill")

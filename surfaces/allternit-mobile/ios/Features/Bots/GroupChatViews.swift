@@ -401,6 +401,7 @@ struct GroupChatView: View {
             isStreaming: isRunning,
             isSendDisabled: false,
             hasActiveSession: true,
+            playGamesAnytime: true,
             deck: .compact,
             onSend: { _ in send(group, text: draft) },
             onStop: { runner.cancel() },

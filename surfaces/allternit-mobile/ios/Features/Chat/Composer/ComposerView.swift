@@ -40,6 +40,8 @@ struct ComposerView: View {
     var isUsageLocked: Bool = false
     /// Voice is disabled while a stream is in flight or usage is locked.
     var isVoiceModeEnabled: Bool = true
+    /// Bot composers: Play shows from the moment the session opens.
+    var playGamesAnytime: Bool = false
     var deck: ComposerDeckVariant = .none
     /// Send tapped; carries the composer's staged attachments (empty when
     /// none) alongside the bound inputText.
@@ -300,7 +302,7 @@ struct ComposerView: View {
     /// tell an open game the reply is ready.
     private var sendSlot: some View {
         HStack(spacing: 8) {
-            WaitingGamesPlayButton(busy: isStreaming)
+            WaitingGamesPlayButton(busy: isStreaming, anytime: playGamesAnytime)
             sendButton
         }
     }

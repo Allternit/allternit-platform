@@ -1,7 +1,7 @@
 import SwiftUI
 import UIKit
 
-/// The game window opened from a message box while its bot works (web
+/// The game window opened from a message box, busy or not (web
 /// waiting-games.store.ts). Only the Play button that opened it reports the
 /// work, so another chat's composer can't mark this reply ready. `work` is
 /// nil once that composer is gone.
@@ -24,10 +24,10 @@ final class WaitingGamesStore: ObservableObject {
         game = UserDefaults.standard.string(forKey: Self.gameKey).flatMap(WaitingGameID.init(rawValue:)) ?? .fish
     }
 
-    func openFor(_ owner: String) {
+    func openFor(_ owner: String, busy: Bool = true) {
         self.owner = owner
         expanded = false
-        work = .working
+        work = busy ? .working : nil
         open = true
     }
 
@@ -59,11 +59,13 @@ final class WaitingGamesStore: ObservableObject {
 
 // MARK: - Play button
 
-/// Play, beside Stop in a message box while its bot works (web
-/// WaitingGamesPlayButton). Keep it mounted whether or not the bot is busy:
-/// it tells the open game when the reply is ready.
+/// Play, in a message box (web WaitingGamesPlayButton). With `anytime` (Bot and
+/// Code) it shows as soon as the session opens; otherwise beside Stop after 5 s
+/// of work. Keep it mounted either way: it tells the open game when the reply
+/// is ready.
 struct WaitingGamesPlayButton: View {
     let busy: Bool
+    var anytime: Bool = false
     /// Work shorter than this never shows the button, so quick replies stay calm.
     private static let showAfter: UInt64 = 5_000_000_000
 
@@ -76,8 +78,8 @@ struct WaitingGamesPlayButton: View {
 
     var body: some View {
         Group {
-            if enabled && busy && shown && !playing {
-                Button { store.openFor(owner) } label: {
+            if enabled && !playing && (anytime || (busy && shown)) {
+                Button { store.openFor(owner, busy: busy) } label: {
                     Image(systemName: "gamecontroller.fill")
                         .font(.system(size: 14))
                         .foregroundColor(Color("AccentPrimary"))
@@ -89,7 +91,7 @@ struct WaitingGamesPlayButton: View {
                 }
                 .buttonStyle(.plain)
                 .transition(.scale(scale: 0.9).combined(with: .opacity))
-                .accessibilityLabel("Play a game while you wait")
+                .accessibilityLabel("Play a game")
             }
         }
         .task(id: busy) {

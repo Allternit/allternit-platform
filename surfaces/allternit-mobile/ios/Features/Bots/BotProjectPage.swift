@@ -293,6 +293,7 @@ struct BotProjectPage: View {
                 isStreaming: false,
                 isSendDisabled: sending,
                 hasActiveSession: false,
+                playGamesAnytime: true,
                 deck: .none,
                 onSend: { _ in attachments.clear(); send() },
                 onStop: {},
