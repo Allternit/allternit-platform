@@ -375,6 +375,7 @@ struct BotTabComposer: View {
                 isStreaming: false,
                 isSendDisabled: sending,
                 hasActiveSession: true,
+                playGamesAnytime: true,
                 deck: .compact,
                 onSend: { _ in send() },
                 onStop: {},

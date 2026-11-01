@@ -754,6 +754,7 @@ struct BotLaunchComposer: View {
             isStreaming: false,
             isSendDisabled: busy,
             hasActiveSession: false,
+            playGamesAnytime: true,
             deck: .full,
             onSend: { _ in attachments.clear(); onSend() },
             onStop: {},
