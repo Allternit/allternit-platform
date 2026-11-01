@@ -214,11 +214,12 @@ struct AutomationTasksPhoneView: View {
                 query: $searchQuery,
                 placeholder: "Search automation tasks",
                 newLabel: "New task",
-                wide: .new
-            ) {
-                Button { newTask = NewTask(kind: activeKind ?? .routine) } label: { Label("Set up manually", systemImage: "plus") }
-                Button(action: startWithAssistant) { Label("Create with Assistant", systemImage: "cpu") }
-            }
+                wide: .new,
+                newMenu: {
+                    Button { newTask = NewTask(kind: activeKind ?? .routine) } label: { Label("Set up manually", systemImage: "plus") }
+                    Button(action: startWithAssistant) { Label("Create with Assistant", systemImage: "cpu") }
+                }
+            )
         }
         .sheet(isPresented: $isFilterPresented) {
             AutomationFilterSheet(activeTab: $activeTab, sortBy: $sortBy, routinesViewRaw: $routinesViewRaw)

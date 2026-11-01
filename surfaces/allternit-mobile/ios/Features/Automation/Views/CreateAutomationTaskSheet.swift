@@ -105,7 +105,7 @@ struct CreateAutomationTaskSheet: View {
                     Button(action: create) {
                         Text("Create task")
                             .font(.system(size: 15, weight: .semibold))
-                            .foregroundColor(canCreate ? .black : Color("TextSecondary"))
+                            .foregroundColor(canCreate ? Color("BgPrimary") : Color("TextSecondary"))
                             .frame(maxWidth: .infinity)
                             .frame(height: 48)
                             .background(canCreate ? Color("AccentPrimary") : Color("BgSecondary"))
