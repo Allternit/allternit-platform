@@ -273,7 +273,9 @@ final class ArtifactStudioLauncher: ObservableObject {
         var artifactId: String? = nil
         var designProjectId: String? = nil
     }
-    private var stored: [String: Stored]
+    @Published private var stored: [String: Stored]
+    /// Session ids already looked up and found not to be editor sessions.
+    private var knownPlain: Set<String> = []
 
     private init() {
         if let data = UserDefaults.standard.data(forKey: Self.defaultsKey),
@@ -338,9 +340,136 @@ final class ArtifactStudioLauncher: ObservableObject {
                 stored.removeValue(forKey: key)
             }
         }
+        persist()
+        // The binding rides on the session, as the web's does, so Recents on
+        // another install or on the web opens the editor too. A failure only
+        // costs that.
+        try? await APIClient.shared.patch(
+            path: "agent-sessions/\(Self.escape(session.id))",
+            body: SessionBindingPatch(metadata: .init(artifactSession: .init(
+                kind: kind.rawValue, title: title, artifactId: artifactId, designProjectId: designProjectId
+            )))
+        )
+        return started
+    }
+
+    private func persist() {
         if let data = try? JSONEncoder().encode(stored) {
             UserDefaults.standard.set(data, forKey: Self.defaultsKey)
         }
-        return started
+    }
+
+    private static func escape(_ id: String) -> String {
+        id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed.subtracting(CharacterSet(charactersIn: "/"))) ?? id
+    }
+
+    // MARK: Sessions from another install
+
+    private struct SessionBinding: Codable {
+        let kind: String
+        let title: String?
+        let artifactId: String?
+        let designProjectId: String?
+    }
+
+    private struct SessionBindingPatch: Encodable {
+        struct Metadata: Encodable { let artifactSession: SessionBinding }
+        let metadata: Metadata
+    }
+
+    private struct SessionRow: Decodable {
+        struct Metadata: Decodable { let artifactSession: SessionBinding? }
+        let name: String?
+        let createdAt: String?
+        let metadata: Metadata?
+
+        enum CodingKeys: String, CodingKey {
+            case name, metadata
+            case createdAt = "created_at"
+        }
+    }
+
+    private struct RecordList: Decodable {
+        struct Record: Decodable {
+            let id: String
+            let title: String?
+            let tags: [String]?
+            let createdAt: String?
+
+            enum CodingKeys: String, CodingKey {
+                case id, title, tags, createdAt
+                case createdSnake = "created_at"
+            }
+
+            init(from decoder: Decoder) throws {
+                let c = try decoder.container(keyedBy: CodingKeys.self)
+                id = try c.decode(String.self, forKey: .id)
+                title = try? c.decodeIfPresent(String.self, forKey: .title)
+                tags = try? c.decodeIfPresent([String].self, forKey: .tags)
+                createdAt = (try? c.decodeIfPresent(String.self, forKey: .createdAt))
+                    ?? (try? c.decodeIfPresent(String.self, forKey: .createdSnake))
+            }
+        }
+        let artifacts: [Record]
+    }
+
+    /// The editor session behind a Recents row, on any install: this phone's
+    /// record, else the binding on the session, else (a session started by an
+    /// older app, which didn't save one) its blank record: same kind's title,
+    /// made within minutes of the session, and only if exactly one fits.
+    func resolveSession(id: String) async -> ArtifactStudioSession? {
+        if let known = session(for: id) { return known }
+        guard !knownPlain.contains(id) else { return nil }
+        guard let row: SessionRow = try? await APIClient.shared.get(path: "agent-sessions/\(Self.escape(id))") else { return nil }
+        let started = libraryParseDate(row.createdAt) ?? Date()
+        var binding = row.metadata?.artifactSession
+        if binding == nil, let kind = ArtifactStudioKind.allCases.first(where: { $0.officeProduct != nil && $0.newTitle == row.name }),
+           let product = kind.officeProduct,
+           let list: RecordList = try? await APIClient.shared.get(path: "artifacts") {
+            let fits = list.artifacts.filter { record in
+                guard record.title == kind.newTitle, record.tags?.contains("office:\(product)") == true,
+                      let made = libraryParseDate(record.createdAt) else { return false }
+                return abs(made.timeIntervalSince(started)) < 300
+            }
+            if fits.count == 1 {
+                binding = SessionBinding(kind: kind.rawValue, title: kind.newTitle, artifactId: fits[0].id, designProjectId: nil)
+            }
+        }
+        guard let binding, let kind = ArtifactStudioKind(rawValue: binding.kind),
+              binding.artifactId != nil || binding.designProjectId != nil else {
+            knownPlain.insert(id)
+            return nil
+        }
+        let title = binding.title ?? row.name ?? kind.newTitle
+        stored[id] = Stored(kind: kind.rawValue, title: title, prompt: kind.systemPrompt(title: title), startedAt: started,
+                            artifactId: binding.artifactId, designProjectId: binding.designProjectId)
+        persist()
+        return session(for: id)
+    }
+
+    // MARK: Delete
+
+    /// Removes an editor session: the chat (the web's deleteSession), and its
+    /// record, which the server only deletes for its owner. Nothing changes here
+    /// until both calls are through, so a failure leaves the row to retry.
+    func delete(_ session: ArtifactStudioSession) async throws {
+        func ignoringGone(_ call: () async throws -> Void) async throws {
+            do {
+                try await call()
+            } catch let error as APIError where error.httpStatus == 404 {
+                return
+            }
+        }
+        var recordId = session.artifactId
+        if recordId == nil, let project = session.designProjectId {
+            let list: RecordList = try await APIClient.shared.get(path: "artifacts?type=design")
+            recordId = list.artifacts.first { $0.tags?.contains("design:\(project)") == true }?.id
+        }
+        if let recordId {
+            try await ignoringGone { try await APIClient.shared.delete(path: "artifacts/\(Self.escape(recordId))") }
+        }
+        try await ignoringGone { try await APIClient.shared.delete(path: "agent-sessions/\(Self.escape(session.sessionId))") }
+        stored.removeValue(forKey: session.sessionId)
+        persist()
     }
 }

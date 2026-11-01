@@ -114,9 +114,14 @@ struct MainWorkspaceView: View {
         // Recents and the overviews open a Docs, Sheets, Slides or Design
         // session on its editor, not as a plain chat.
         .onChange(of: selectedSessionId) { _, id in
-            guard let id, let session = ArtifactStudioLauncher.shared.session(for: id), session.editorRoute != nil else { return }
-            selectedSessionId = nil
-            artifactSession = session
+            guard let id else { return }
+            Task {
+                // Started on another install: the session or its record says which editor.
+                guard let session = await ArtifactStudioLauncher.shared.resolveSession(id: id),
+                      session.editorRoute != nil, selectedSessionId == id else { return }
+                selectedSessionId = nil
+                artifactSession = session
+            }
         }
         .fullScreenCover(item: $artifactSession) { session in
             ArtifactStudioView(studio: session)

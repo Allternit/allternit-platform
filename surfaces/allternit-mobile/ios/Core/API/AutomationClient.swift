@@ -191,6 +191,8 @@ struct CreateAutomationRoutineRequest: Encodable, Sendable {
 
 /// `POST /api/v1/automation/loops` (automation-api.ts createLoop).
 struct CreateAutomationLoopRequest: Encodable, Sendable {
+    /// The zone its cron line reads in.
+    var timezone: String = TimeZone.current.identifier
     let name: String
     let description: String?
     let agentId: String?
@@ -202,7 +204,7 @@ struct CreateAutomationLoopRequest: Encodable, Sendable {
     var goalId: String? = nil
 
     enum CodingKeys: String, CodingKey {
-        case name, description, config
+        case name, description, config, timezone
         case goalId = "goal_id"
         case agentId = "agent_id"
         case scheduleType = "schedule_type"

@@ -5,6 +5,14 @@ description: 'Changelog for the Allternit platform, SDKs, and Gizzi Code CLI'
 
 # Release Notes
 
+## 2026-11-01 — Schedules keep their timezone; unsaved work is protected
+
+- **Schedules:** routines and loops run in the timezone they were saved with. Before this, a server in UTC ran them at the wrong hour.
+- **Closing with unsaved changes:** a browser tab warns you, and Desktop asks **Leave** or **Stay**. Closing an editor inside Allternit saves first and asks only if that fails.
+- **Sheets exports:** `.xlsx` files made from a sheet keep their cell formatting.
+- **iPhone:** New task and New project open a list of choices. Motion and video cards show real previews. Rows under **Your artifacts** can be deleted, and Recents opens a session from another install on its editor.
+- **Admin site:** deploys work again.
+
 ## 2026-11-01 — Bots rail back to one row per bot
 
 The same changes apply on Desktop, on ai.allternit.com (including the phone layout) and in the m.allternit.com app. The iPhone app gets it in the next app build.

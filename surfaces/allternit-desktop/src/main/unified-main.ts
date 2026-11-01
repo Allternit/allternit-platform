@@ -883,6 +883,24 @@ const agentCursorWindow = installAgentCursorWindow({
 
 // Terminal agents (gizzi, Claude Code, Codex, scripts) drive the same pet through a loopback hook port.
 let petHookServer: PetHookServer | null = null;
+// Editors block a close while they hold unsaved work. Electron would cancel it
+// with no prompt, so ask here. A reload stays a reload this way.
+app.on('web-contents-created', (_event, contents) => {
+  contents.on('will-prevent-unload', (event) => {
+    const options = {
+      type: 'warning' as const,
+      buttons: ['Leave', 'Stay'],
+      defaultId: 1,
+      cancelId: 1,
+      message: 'Leave without saving?',
+      detail: "Your latest changes haven't been saved.",
+    };
+    const owner = BrowserWindow.fromWebContents(contents);
+    const choice = owner ? dialog.showMessageBoxSync(owner, options) : dialog.showMessageBoxSync(options);
+    if (choice === 0) event.preventDefault();
+  });
+});
+
 app.whenReady().then(async () => {
   try {
     petHookServer = await startPetHookServer({

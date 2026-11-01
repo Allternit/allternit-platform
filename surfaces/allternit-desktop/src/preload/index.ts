@@ -1236,6 +1236,8 @@ const teachAPI = {
 // ─── Expose ───────────────────────────────────────────────────────────────────
 
 const allternitDesktopAPI = {
+  /** Main asks Leave or Stay when an editor blocks a close (will-prevent-unload). */
+  promptsBeforeUnload: true,
   sdk: sdkAPI,
   connection: connectionAPI,
   backend: backendAPI,

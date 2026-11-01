@@ -15,12 +15,13 @@ import WebKit
 ///  design/page/card   a script-free snapshot of the page
 ///  diagram            its SVG, or the mermaid source drawn by mermaid
 ///  code               its first lines
-///  dashboard, ops     its tile or panel titles
+///  dashboard          its tiles' titles
+///  motion, ops        the web's own poster page, one at a time, on-screen cards only
+///                     (ops falls back to its panel titles)
 ///  pdf                the first page
-///  video              a frame, when the footage is on the open web
+///  video              a frame, through range requests
 ///
-/// Anything else (motion needs the web's canvas renderer), and anything that
-/// can't be drawn, falls back to `thumbnail_url`, then the kind art.
+/// Anything that can't be drawn falls back to `thumbnail_url`, then the kind art.
 struct ArtifactCardPreview: View {
     let summary: ArtifactV2Summary
 
@@ -35,6 +36,8 @@ struct ArtifactCardPreview: View {
         }
         .clipped()
         .accessibilityHidden(true)
+        .onAppear { ArtifactCardPreviewStore.shared.setVisible(summary, true) }
+        .onDisappear { ArtifactCardPreviewStore.shared.setVisible(summary, false) }
         .task(id: "\(summary.id)@\(summary.currentVersion)") {
             let store = ArtifactCardPreviewStore.shared
             preview = store.cached(summary)
@@ -326,8 +329,16 @@ final class ArtifactCardPreviewStore {
     private var running: [String: Task<Preview, Never>] = [:]
     private let bodies = ArtifactPreviewGate(limit: 3)
     private let snapshots = ArtifactPreviewGate(limit: 1)
+    private let videos = ArtifactPreviewGate(limit: 3)
+    private let posters = ArtifactPreviewGate(limit: 1)
+    /// Cards on screen: a poster loads the web renderer, so only these get one.
+    private var visible: Set<String> = []
 
     private func key(_ summary: ArtifactV2Summary) -> String { "\(summary.id)@\(summary.currentVersion)" }
+
+    func setVisible(_ summary: ArtifactV2Summary, _ isVisible: Bool) {
+        if isVisible { visible.insert(key(summary)) } else { visible.remove(key(summary)) }
+    }
 
     func cached(_ summary: ArtifactV2Summary) -> Preview? {
         cache.object(forKey: key(summary) as NSString)?.value
@@ -348,11 +359,6 @@ final class ArtifactCardPreviewStore {
     }
 
     private func build(_ summary: ArtifactV2Summary, key: String) async -> Preview {
-        // Drawn by the web's own renderer; the body alone wouldn't help here.
-        if summary.kind == "motion" {
-            cache.setObject(Box(.art), forKey: key as NSString)
-            return .art
-        }
         await bodies.acquire()
         let full = try? await ArtifactsV2Client.shared.get(id: summary.id)
         bodies.release()
@@ -370,14 +376,31 @@ final class ArtifactCardPreviewStore {
         case .dashboard(let titles): preview = .dashboard(titles)
         case .html(let html):
             await snapshots.acquire()
+            await waitForScrollToSettle()
             let image = await ArtifactSnapshotJob().run(html: html, scripts: false)
             snapshots.release()
             preview = image.map(Preview.image) ?? .art
         case .scriptedPage(let html):
             await snapshots.acquire()
+            await waitForScrollToSettle()
             let image = await ArtifactSnapshotJob().run(html: html, scripts: true)
             snapshots.release()
             preview = image.map(Preview.image) ?? .art
+        case .videoFrame(let uri):
+            await videos.acquire()
+            var token: String? = nil
+            if uri.hasPrefix("/") { token = await ArtifactsV2Client.bearerToken() }
+            let data = await ArtifactCardContent.frameData(uri, bearer: token)
+            videos.release()
+            preview = data.flatMap { UIImage(data: $0) }.map(Preview.image) ?? .art
+        case .poster(let kind, let fallbackTitles):
+            await posters.acquire()
+            defer { posters.release() }
+            // Scrolled away while waiting: not remembered, the card asks again.
+            guard visible.contains(key) else { return .art }
+            await waitForScrollToSettle()
+            let image = await ArtifactPosterHost.shared.render(kind: kind, body: full.version.body)
+            preview = image.map(Preview.image) ?? (fallbackTitles.isEmpty ? .art : .dashboard(fallbackTitles))
         case .art:
             preview = .art
         }
@@ -398,6 +421,9 @@ private enum ArtifactCardContent: Sendable {
     case html(String)
     /// Our own page around the record's text (mermaid), which needs scripts.
     case scriptedPage(String)
+    case videoFrame(String)
+    /// The web's poster page draws it; the titles stand in when it can't.
+    case poster(kind: String, fallbackTitles: [String])
     case art
 
     static func decode(_ artifact: ArtifactV2) async -> ArtifactCardContent {
@@ -406,12 +432,12 @@ private enum ArtifactCardContent: Sendable {
         switch artifact.kind {
         case "image":
             guard let uri = ArtifactBodyDecoder.firstURI(body) else { return .art }
-            if case .string("video")? = artifact.version.meta?["media"] { return await videoFrame(uri) }
+            if case .string("video")? = artifact.version.meta?["media"] { return .videoFrame(uri) }
             guard let data = try? await ArtifactMediaLoader.data(for: uri), let small = thumbnail(data) else { return .art }
             return .image(small)
         case "video":
             guard let uri = ArtifactBodyDecoder.videoURL(body: body, meta: artifact.version.meta) else { return .art }
-            return await videoFrame(uri)
+            return .videoFrame(uri)
         case "doc":
             guard let markdown = ArtifactBodyDecoder.docMarkdown(body: body, format: format) else { return .art }
             return .page(plainLines(markdown))
@@ -439,7 +465,11 @@ private enum ArtifactCardContent: Sendable {
             guard !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return .art }
             let lines = body.split(separator: "\n", maxSplits: 16, omittingEmptySubsequences: false).prefix(16)
             return .code(lines.map(String.init))
-        case "dashboard", "ops":
+        case "motion":
+            return body.isEmpty ? .art : .poster(kind: "motion", fallbackTitles: [])
+        case "ops":
+            return .poster(kind: "ops", fallbackTitles: ArtifactBodyDecoder.dashboardTileTitles(body: body) ?? [])
+        case "dashboard":
             guard let titles = ArtifactBodyDecoder.dashboardTileTitles(body: body), !titles.isEmpty else { return .art }
             return .dashboard(titles)
         case "pdf":
@@ -494,19 +524,61 @@ private enum ArtifactCardContent: Sendable {
         return UIImage(cgImage: image).pngData()
     }
 
-    /// API-hosted footage needs the bearer, which a video request can't carry
-    /// without downloading the whole file, so only open-web footage gets a frame.
-    private static func videoFrame(_ uri: String) async -> ArtifactCardContent {
-        guard let url = URL(string: uri), url.scheme?.lowercased() == "https" else { return .art }
-        let generator = AVAssetImageGenerator(asset: AVURLAsset(url: url))
+    /// One frame through range requests: API-hosted footage carries the
+    /// bearer on the asset; open-web footage never gets it. A server that stalls
+    /// is cancelled, so it can't hold a slot.
+    static func frameData(_ uri: String, bearer: String?) async -> Data? {
+        let url: URL?
+        var options: [String: Any] = [:]
+        if uri.hasPrefix("/") {
+            url = URL(string: uri, relativeTo: AppConfig.cloudAPIBaseURL)?.absoluteURL
+            if let bearer { options["AVURLAssetHTTPHeaderFieldsKey"] = ["Authorization": "Bearer \(bearer)"] }
+        } else {
+            url = URL(string: uri).flatMap { $0.scheme?.lowercased() == "https" ? $0 : nil }
+        }
+        guard let url else { return nil }
+        let generator = AVAssetImageGenerator(asset: AVURLAsset(url: url, options: options))
         generator.appliesPreferredTrackTransform = true
         generator.maximumSize = CGSize(width: 640, height: 640)
-        guard let frame = try? await generator.image(at: CMTime(seconds: 1, preferredTimescale: 600)) else { return .art }
-        return UIImage(cgImage: frame.image).jpegData(compressionQuality: 0.8).map(ArtifactCardContent.image) ?? .art
+        generator.requestedTimeToleranceBefore = .positiveInfinity
+        generator.requestedTimeToleranceAfter = .positiveInfinity
+        let box = FrameGeneratorBox(generator)
+        let watchdog = Task.detached {
+            try await Task.sleep(for: .seconds(20))
+            box.generator.cancelAllCGImageGeneration()
+        }
+        defer { watchdog.cancel() }
+        guard let frame = try? await generator.image(at: CMTime(seconds: 1, preferredTimescale: 600)) else { return nil }
+        return UIImage(cgImage: frame.image).jpegData(compressionQuality: 0.8)
+    }
+}
+
+/// Only used to cancel: `cancelAllCGImageGeneration` is safe from any thread.
+private final class FrameGeneratorBox: @unchecked Sendable {
+    let generator: AVAssetImageGenerator
+    init(_ generator: AVAssetImageGenerator) { self.generator = generator }
+}
+
+/// WebKit work starts while the list is still; a long fling just waits, capped.
+@MainActor
+private func waitForScrollToSettle() async {
+    var waits = 0
+    while RunLoop.main.currentMode == .tracking, waits < 25 {
+        try? await Task.sleep(for: .milliseconds(200))
+        waits += 1
     }
 }
 
 // MARK: - HTML snapshot
+
+@MainActor
+private func artifactSnapshotHostWindow() -> UIWindow? {
+    let windows = UIApplication.shared.connectedScenes
+        .compactMap { $0 as? UIWindowScene }
+        .filter { $0.activationState == .foregroundActive }
+        .flatMap(\.windows)
+    return windows.first(where: \.isKeyWindow) ?? windows.first
+}
 
 /// One picture of a page. A record's own markup is script-free (HtmlSnapshot /
 /// snapshotDoc): JavaScript off and a CSP that allows no scripts or frames.
@@ -524,7 +596,7 @@ private final class ArtifactSnapshotJob: NSObject, WKNavigationDelegate {
     private var settle = Duration.milliseconds(250)
 
     func run(html: String, scripts: Bool) async -> UIImage? {
-        guard let window = Self.hostWindow() else { return nil }
+        guard let window = artifactSnapshotHostWindow() else { return nil }
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .nonPersistent()
         let preferences = WKWebpagePreferences()
@@ -551,14 +623,6 @@ private final class ArtifactSnapshotJob: NSObject, WKNavigationDelegate {
                 self?.finish(nil)
             }
         }
-    }
-
-    private static func hostWindow() -> UIWindow? {
-        let windows = UIApplication.shared.connectedScenes
-            .compactMap { $0 as? UIWindowScene }
-            .filter { $0.activationState == .foregroundActive }
-            .flatMap(\.windows)
-        return windows.first(where: \.isKeyWindow) ?? windows.first
     }
 
     private func finish(_ image: UIImage?) {
@@ -600,5 +664,130 @@ private final class ArtifactSnapshotJob: NSObject, WKNavigationDelegate {
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         finish(nil)
+    }
+}
+
+// MARK: - Poster page
+
+/// The web's poster page (`/poster/artifact`, allternit-ai
+/// src/pages/ArtifactPosterPage.tsx) draws motion and ops bodies with the real
+/// renderer. One web view stays loaded while cards ask, so the bundle loads
+/// once, and goes away after a quiet spell. It has no sign-in and an in-memory
+/// store. A web build without the page costs one failed load per few minutes,
+/// and the cards keep their fallback.
+@MainActor
+final class ArtifactPosterHost: NSObject, WKNavigationDelegate {
+    static let shared = ArtifactPosterHost()
+
+    private static let size = CGSize(width: 1000, height: 625)
+    private var webView: WKWebView?
+    private var isReady = false
+    private var loading: CheckedContinuation<Bool, Never>?
+    private var unavailableUntil = Date.distantPast
+    private var idleTask: Task<Void, Never>?
+
+    func render(kind: String, body: String) async -> UIImage? {
+        guard !SampleWorkspace.isEnabled, Date() >= unavailableUntil else { return nil }
+        idleTask?.cancel()
+        defer { scheduleTeardown() }
+        guard await prepare(), let webView else { return nil }
+        let drawn = await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+            webView.callAsyncJavaScript(
+                "return await window.allternitPoster.render(kind, body);",
+                arguments: ["kind": kind, "body": body],
+                in: nil,
+                in: .page
+            ) { result in
+                if case .success(let value) = result {
+                    continuation.resume(returning: value as? Bool ?? false)
+                } else {
+                    continuation.resume(returning: false)
+                }
+            }
+        }
+        guard drawn else { return nil }
+        let configuration = WKSnapshotConfiguration()
+        configuration.rect = CGRect(origin: .zero, size: Self.size)
+        configuration.snapshotWidth = 560
+        return try? await webView.takeSnapshot(configuration: configuration)
+    }
+
+    private func prepare() async -> Bool {
+        if isReady, webView != nil { return true }
+        guard let window = artifactSnapshotHostWindow() else { return false }
+        let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = .nonPersistent()
+        let view = WKWebView(frame: CGRect(origin: .zero, size: Self.size), configuration: configuration)
+        view.navigationDelegate = self
+        view.isUserInteractionEnabled = false
+        view.accessibilityElementsHidden = true
+        view.overrideUserInterfaceStyle = .light
+        view.backgroundColor = .white
+        view.scrollView.isScrollEnabled = false
+        window.insertSubview(view, at: 0)
+        webView = view
+        var components = URLComponents(url: ArtifactLiveWebView.webOrigin, resolvingAgainstBaseURL: false)!
+        components.path = "/poster/artifact"
+        let loaded = await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+            loading = continuation
+            view.load(URLRequest(url: components.url!, cachePolicy: .useProtocolCachePolicy, timeoutInterval: 20))
+        }
+        guard loaded else {
+            tearDown()
+            return false
+        }
+        // The page's code is a lazy chunk: it arrives after the document does.
+        for _ in 0..<40 {
+            let found = (try? await view.evaluateJavaScript("typeof window.allternitPoster")) as? String
+            if found == "object" {
+                isReady = true
+                return true
+            }
+            try? await Task.sleep(for: .milliseconds(300))
+        }
+        // Loaded, but no poster page: an older web build.
+        unavailableUntil = Date().addingTimeInterval(300)
+        tearDown()
+        return false
+    }
+
+    private func scheduleTeardown() {
+        idleTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(20))
+            guard !Task.isCancelled else { return }
+            self?.tearDown()
+        }
+    }
+
+    private func tearDown() {
+        isReady = false
+        webView?.stopLoading()
+        webView?.navigationDelegate = nil
+        webView?.removeFromSuperview()
+        webView = nil
+    }
+
+    private func finishLoading(_ ok: Bool) {
+        loading?.resume(returning: ok)
+        loading = nil
+    }
+
+    /// The page may only stay on the web app's own origin.
+    func webView(_ webView: WKWebView,
+                 decidePolicyFor navigationAction: WKNavigationAction,
+                 decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void) {
+        let allowed = navigationAction.request.url?.host == ArtifactLiveWebView.webOrigin.host
+        decisionHandler(allowed || navigationAction.targetFrame?.isMainFrame == false ? .allow : .cancel)
+    }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { finishLoading(true) }
+
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { finishLoading(false) }
+
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { finishLoading(false) }
+
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        finishLoading(false)
+        tearDown()
     }
 }
