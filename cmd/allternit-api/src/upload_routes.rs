@@ -10,7 +10,7 @@
 
 use axum::{
     extract::Path,
-    http::{header, StatusCode},
+    http::{HeaderMap, StatusCode},
     response::IntoResponse,
     routing::{get, post},
     Json, Router,
@@ -149,7 +149,7 @@ async fn create_upload(Json(req): Json<CreateUploadRequest>) -> impl IntoRespons
 }
 
 /// Serves a stored upload so runtime file parts (and clients) can fetch it.
-async fn get_upload(Path(id): Path<String>) -> impl IntoResponse {
+async fn get_upload(headers: HeaderMap, Path(id): Path<String>) -> impl IntoResponse {
     // Upload ids are hex-only (Uuid::simple), but reject anything path-y
     // anyway so this can never escape the uploads dir.
     if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric()) {
@@ -170,10 +170,5 @@ async fn get_upload(Path(id): Path<String>) -> impl IntoResponse {
         .and_then(|meta| meta.get("mediaType").and_then(|v| v.as_str()).map(str::to_string))
         .unwrap_or_else(|| "application/octet-stream".to_string());
 
-    (
-        StatusCode::OK,
-        [(header::CONTENT_TYPE, media_type)],
-        bytes,
-    )
-        .into_response()
+    crate::byte_range::ranged_response(&headers, media_type, bytes)
 }

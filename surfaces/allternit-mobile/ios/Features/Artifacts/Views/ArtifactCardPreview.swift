@@ -3,6 +3,7 @@ import ImageIO
 import PDFKit
 import SwiftUI
 import UIKit
+import UniformTypeIdentifiers
 import WebKit
 
 /// What an Artifacts card shows: the record's own content (allternit-ai
@@ -19,7 +20,7 @@ import WebKit
 ///  motion, ops        the web's own poster page, one at a time, on-screen cards only
 ///                     (ops falls back to its panel titles)
 ///  pdf                the first page
-///  video              a frame, through range requests
+///  video              a frame, through range requests or a capped first chunk
 ///
 /// Anything that can't be drawn falls back to `thumbnail_url`, then the kind art.
 struct ArtifactCardPreview: View {
@@ -524,27 +525,47 @@ private enum ArtifactCardContent: Sendable {
         return UIImage(cgImage: image).pngData()
     }
 
-    /// One frame through range requests: API-hosted footage carries the
-    /// bearer on the asset; open-web footage never gets it. A server that stalls
-    /// is cancelled, so it can't hold a slot.
+    /// One frame. Open-web footage loads directly and never sees the bearer.
+    /// API-hosted footage goes through a resource loader that adds it, reading
+    /// byte ranges where the server offers them. The media routes answer a range
+    /// request with the whole file, so against those it reads a capped first
+    /// chunk instead, which holds a frame when the movie's index comes first.
     static func frameData(_ uri: String, bearer: String?) async -> Data? {
-        let url: URL?
-        var options: [String: Any] = [:]
-        if uri.hasPrefix("/") {
-            url = URL(string: uri, relativeTo: AppConfig.cloudAPIBaseURL)?.absoluteURL
-            if let bearer { options["AVURLAssetHTTPHeaderFieldsKey"] = ["Authorization": "Bearer \(bearer)"] }
-        } else {
-            url = URL(string: uri).flatMap { $0.scheme?.lowercased() == "https" ? $0 : nil }
+        let deadline = ContinuousClock.now + .seconds(20)
+        guard uri.hasPrefix("/") else {
+            guard let url = URL(string: uri), url.scheme?.lowercased() == "https" else { return nil }
+            return await firstFrame(of: AVURLAsset(url: url), deadline: deadline)
         }
-        guard let url else { return nil }
-        let generator = AVAssetImageGenerator(asset: AVURLAsset(url: url, options: options))
+        guard let url = ArtifactMediaLoader.apiURL(for: uri),
+              let loader = ArtifactMediaResourceLoader(url: url, bearer: bearer) else { return nil }
+        defer { loader.invalidate() }
+        let asset = AVURLAsset(url: loader.assetURL)
+        asset.resourceLoader.setDelegate(loader, queue: loader.queue)
+        if let frame = await firstFrame(of: asset, deadline: deadline) { return frame }
+        guard loader.isRangeUnsupported else { return nil }
+
+        let watchdog = Task.detached {
+            try await Task.sleep(until: deadline, clock: .continuous)
+            loader.invalidate()
+        }
+        defer { watchdog.cancel() }
+        guard let chunk = await loader.firstChunk() else { return nil }
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".mp4")
+        defer { try? FileManager.default.removeItem(at: file) }
+        guard (try? chunk.write(to: file, options: .atomic)) != nil else { return nil }
+        return await firstFrame(of: AVURLAsset(url: file), deadline: deadline)
+    }
+
+    /// Cancelled at the deadline, so a stalled server can't hold a slot.
+    private static func firstFrame(of asset: AVURLAsset, deadline: ContinuousClock.Instant) async -> Data? {
+        let generator = AVAssetImageGenerator(asset: asset)
         generator.appliesPreferredTrackTransform = true
         generator.maximumSize = CGSize(width: 640, height: 640)
         generator.requestedTimeToleranceBefore = .positiveInfinity
         generator.requestedTimeToleranceAfter = .positiveInfinity
         let box = FrameGeneratorBox(generator)
         let watchdog = Task.detached {
-            try await Task.sleep(for: .seconds(20))
+            try await Task.sleep(until: deadline, clock: .continuous)
             box.generator.cancelAllCGImageGeneration()
         }
         defer { watchdog.cancel() }
@@ -557,6 +578,176 @@ private enum ArtifactCardContent: Sendable {
 private final class FrameGeneratorBox: @unchecked Sendable {
     let generator: AVAssetImageGenerator
     init(_ generator: AVAssetImageGenerator) { self.generator = generator }
+}
+
+/// Serves an authenticated API video to AVFoundation under a custom scheme
+/// (`AVAssetResourceLoaderDelegate`): each loading request becomes a `Range`
+/// request carrying the bearer, streamed until AVFoundation has enough. All
+/// state stays on `queue`, which runs both delegates' callbacks.
+private final class ArtifactMediaResourceLoader: NSObject, AVAssetResourceLoaderDelegate, URLSessionDataDelegate, @unchecked Sendable {
+    private static let scheme = "allternit-media"
+    private static let chunkCap = 8 * 1024 * 1024
+
+    let queue = DispatchQueue(label: "com.allternit.artifact-media-loader")
+    let assetURL: URL
+    private let url: URL
+    private let bearer: String?
+    private var session: URLSession!
+    private var loading: [Int: AVAssetResourceLoadingRequest] = [:]
+    private var tasks: [Int: URLSessionDataTask] = [:]
+    private var rangeUnsupported = false
+    private var isInvalidated = false
+    private var chunkTask: Int?
+    private var chunk = Data()
+    private var chunkReply: CheckedContinuation<Data?, Never>?
+
+    init?(url: URL, bearer: String?) {
+        guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return nil }
+        components.scheme = Self.scheme
+        guard let assetURL = components.url else { return nil }
+        self.url = url
+        self.bearer = bearer
+        self.assetURL = assetURL
+        super.init()
+        let delegateQueue = OperationQueue()
+        delegateQueue.maxConcurrentOperationCount = 1
+        delegateQueue.underlyingQueue = queue
+        session = URLSession(configuration: .ephemeral, delegate: self, delegateQueue: delegateQueue)
+    }
+
+    /// True once the server answered a range request with the whole file.
+    var isRangeUnsupported: Bool { queue.sync { rangeUnsupported } }
+
+    /// Ends every request and breaks the session's hold on this object. A task
+    /// made on an invalidated session throws, so later requests are refused.
+    func invalidate() {
+        queue.async { [self] in
+            guard !isInvalidated else { return }
+            isInvalidated = true
+            session.invalidateAndCancel()
+        }
+    }
+
+    /// The file's first few MB, whichever way the server answers.
+    func firstChunk() async -> Data? {
+        await withCheckedContinuation { continuation in
+            queue.async { [self] in
+                guard !isInvalidated else {
+                    continuation.resume(returning: nil)
+                    return
+                }
+                chunkReply = continuation
+                let task = session.dataTask(with: request(range: "bytes=0-\(Self.chunkCap - 1)"))
+                chunkTask = task.taskIdentifier
+                task.resume()
+            }
+        }
+    }
+
+    private func request(range: String) -> URLRequest {
+        var request = URLRequest(url: url)
+        request.setValue(range, forHTTPHeaderField: "Range")
+        if let bearer { request.setValue("Bearer \(bearer)", forHTTPHeaderField: "Authorization") }
+        return request
+    }
+
+    private func finishChunk() {
+        guard let reply = chunkReply else { return }
+        chunkReply = nil
+        chunkTask = nil
+        reply.resume(returning: chunk.isEmpty ? nil : chunk)
+    }
+
+    // MARK: AVAssetResourceLoaderDelegate
+
+    func resourceLoader(_ resourceLoader: AVAssetResourceLoader,
+                        shouldWaitForLoadingOfRequestedResource loadingRequest: AVAssetResourceLoadingRequest) -> Bool {
+        guard !isInvalidated else { return false }
+        let range: String
+        if let data = loadingRequest.dataRequest {
+            let start = data.requestedOffset
+            range = data.requestsAllDataToEndOfResource
+                ? "bytes=\(start)-"
+                : "bytes=\(start)-\(start + Int64(data.requestedLength) - 1)"
+        } else {
+            // Content information alone: two bytes are enough to read the total.
+            range = "bytes=0-1"
+        }
+        let task = session.dataTask(with: request(range: range))
+        loading[task.taskIdentifier] = loadingRequest
+        tasks[task.taskIdentifier] = task
+        task.resume()
+        return true
+    }
+
+    func resourceLoader(_ resourceLoader: AVAssetResourceLoader, didCancel loadingRequest: AVAssetResourceLoadingRequest) {
+        guard let id = loading.first(where: { $0.value === loadingRequest })?.key else { return }
+        loading[id] = nil
+        tasks.removeValue(forKey: id)?.cancel()
+    }
+
+    // MARK: URLSessionDataDelegate
+
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse,
+                    completionHandler: @escaping @Sendable (URLSession.ResponseDisposition) -> Void) {
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        if dataTask.taskIdentifier == chunkTask {
+            completionHandler((200...299).contains(status) ? .allow : .cancel)
+            return
+        }
+        guard let loadingRequest = loading[dataTask.taskIdentifier] else {
+            completionHandler(.cancel)
+            return
+        }
+        guard status == 206, let http = response as? HTTPURLResponse,
+              let total = http.value(forHTTPHeaderField: "Content-Range")?.split(separator: "/").last.flatMap({ Int64($0) }) else {
+            // 200 is the whole file: the chunk path takes over.
+            if status == 200 { rangeUnsupported = true }
+            loading[dataTask.taskIdentifier] = nil
+            tasks[dataTask.taskIdentifier] = nil
+            loadingRequest.finishLoading(with: URLError(.badServerResponse))
+            completionHandler(.cancel)
+            return
+        }
+        if let information = loadingRequest.contentInformationRequest {
+            let type = http.mimeType.flatMap { UTType(mimeType: $0) }
+            information.contentType = (type?.conforms(to: .audiovisualContent) == true ? type : .mpeg4Movie)?.identifier
+            information.contentLength = total
+            information.isByteRangeAccessSupported = true
+        }
+        completionHandler(.allow)
+    }
+
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        if dataTask.taskIdentifier == chunkTask {
+            chunk.append(data)
+            if chunk.count >= Self.chunkCap { dataTask.cancel() }
+            return
+        }
+        loading[dataTask.taskIdentifier]?.dataRequest?.respond(with: data)
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        if task.taskIdentifier == chunkTask {
+            finishChunk()
+            return
+        }
+        tasks[task.taskIdentifier] = nil
+        guard let loadingRequest = loading.removeValue(forKey: task.taskIdentifier) else { return }
+        if let error {
+            loadingRequest.finishLoading(with: error)
+        } else {
+            loadingRequest.finishLoading()
+        }
+    }
+
+    /// The bearer stays with the API: a redirect to storage doesn't carry it.
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest, completionHandler: @escaping @Sendable (URLRequest?) -> Void) {
+        var next = request
+        if request.url?.host != url.host { next.setValue(nil, forHTTPHeaderField: "Authorization") }
+        completionHandler(next)
+    }
 }
 
 /// WebKit work starts while the list is still; a long fling just waits, capped.

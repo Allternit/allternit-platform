@@ -203,3 +203,7 @@ Check a finished build with `codesign --verify --deep --strict` and `spctl --ass
 ## Local builds and the Keychain
 
 An ad-hoc build gets a new code hash each time, so macOS asks for the password again after every update. When there is no Developer ID, `build-local.cjs` signs local builds with an `Apple Development` cert from the keychain. The stable team ID keeps **Always Allow** across builds on that Mac. These builds don't open on other Macs, so never publish one. CI builds stay ad-hoc until a Developer ID is set up.
+
+## Runtime packages on Mac
+
+`runtime-package.cjs` signs `allternit-api`, `gizzi-code` and `allternit-factory` with the Developer ID before it hashes them, under the same identifiers as the app bundle. Without the certificate it refuses to pack, because ad-hoc binaries bring the Keychain prompts back. Set `ALLTERNIT_RUNTIME_ALLOW_ADHOC=1` only for a local test.

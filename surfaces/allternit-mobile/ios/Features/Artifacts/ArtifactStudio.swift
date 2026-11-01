@@ -378,7 +378,11 @@ final class ArtifactStudioLauncher: ObservableObject {
     }
 
     private struct SessionRow: Decodable {
-        struct Metadata: Decodable { let artifactSession: SessionBinding? }
+        struct Metadata: Decodable {
+            let artifactSession: SessionBinding?
+            let agentModeId: String?
+            let originSurface: String?
+        }
         let name: String?
         let createdAt: String?
         let metadata: Metadata?
@@ -413,38 +417,84 @@ final class ArtifactStudioLauncher: ObservableObject {
         let artifacts: [Record]
     }
 
-    /// The editor session behind a Recents row, on any install: this phone's
-    /// record, else the binding on the session, else (a session started by an
-    /// older app, which didn't save one) its blank record: same kind's title,
-    /// made within minutes of the session, and only if exactly one fits.
-    func resolveSession(id: String) async -> ArtifactStudioSession? {
-        if let known = session(for: id) { return known }
-        guard !knownPlain.contains(id) else { return nil }
-        guard let row: SessionRow = try? await APIClient.shared.get(path: "agent-sessions/\(Self.escape(id))") else { return nil }
+    /// What a Recents row opens as.
+    enum SessionLookup {
+        case editor(ArtifactStudioSession)
+        case chat
+        /// It made a file here, but nothing says which one any more.
+        case unlinked(noun: String)
+    }
+
+    /// Whether opening this session needs a look at the server. Only sessions
+    /// on the surface studio sessions are made on, so a plain chat opens at once.
+    func needsLookup(id: String) -> Bool {
+        guard stored[id] == nil, !knownPlain.contains(id) else { return false }
+        guard let surface = ShellSessionsStore.shared.sessions.first(where: { $0.id == id })?.originSurface else { return true }
+        return surface == "cowork" || surface.isEmpty
+    }
+
+    /// "Open as chat": not asked again this launch.
+    func treatAsChat(id: String) {
+        knownPlain.insert(id)
+    }
+
+    /// The editor behind a session from another install: the binding on the
+    /// session, else (an older app saved none) the one record it could only be.
+    /// The records don't name their session, so that means the kind, the time
+    /// the session started and exactly one fit: the default title identifies the
+    /// kind, and so does the mode of a renamed session.
+    func lookUpSession(id: String) async -> SessionLookup {
+        if let known = session(for: id) { return .editor(known) }
+        guard !knownPlain.contains(id),
+              let row: SessionRow = try? await APIClient.shared.get(path: "agent-sessions/\(Self.escape(id))") else { return .chat }
         let started = libraryParseDate(row.createdAt) ?? Date()
+        let titled = Self.editorKinds.first { $0.newTitle == row.name }
+        let moded = row.metadata?.originSurface == "cowork" ? Self.editorKind(mode: row.metadata?.agentModeId) : nil
         var binding = row.metadata?.artifactSession
-        if binding == nil, let kind = ArtifactStudioKind.allCases.first(where: { $0.officeProduct != nil && $0.newTitle == row.name }),
-           let product = kind.officeProduct,
-           let list: RecordList = try? await APIClient.shared.get(path: "artifacts") {
-            let fits = list.artifacts.filter { record in
-                guard record.title == kind.newTitle, record.tags?.contains("office:\(product)") == true,
-                      let made = libraryParseDate(record.createdAt) else { return false }
-                return abs(made.timeIntervalSince(started)) < 300
-            }
-            if fits.count == 1 {
-                binding = SessionBinding(kind: kind.rawValue, title: kind.newTitle, artifactId: fits[0].id, designProjectId: nil)
-            }
+        if binding == nil, let kind = titled ?? moded {
+            binding = await findRecord(kind: kind, started: started, window: titled != nil ? 300 : 120)
         }
         guard let binding, let kind = ArtifactStudioKind(rawValue: binding.kind),
               binding.artifactId != nil || binding.designProjectId != nil else {
+            // "data" and "website" also start dashboards and pages, which have no file to lose.
+            if let lost = titled ?? (moded == .docs || moded == .slides ? moded : nil) { return .unlinked(noun: lost.noun.lowercased()) }
             knownPlain.insert(id)
-            return nil
+            return .chat
         }
         let title = binding.title ?? row.name ?? kind.newTitle
         stored[id] = Stored(kind: kind.rawValue, title: title, prompt: kind.systemPrompt(title: title), startedAt: started,
                             artifactId: binding.artifactId, designProjectId: binding.designProjectId)
         persist()
-        return session(for: id)
+        return session(for: id).map(SessionLookup.editor) ?? .chat
+    }
+
+    private static let editorKinds: [ArtifactStudioKind] = [.docs, .sheets, .slides, .design]
+
+    private static func editorKind(mode: String?) -> ArtifactStudioKind? {
+        switch mode {
+        case "docs": return .docs
+        case "data": return .sheets
+        case "slides": return .slides
+        case "website": return .design
+        default: return nil
+        }
+    }
+
+    private func findRecord(kind: ArtifactStudioKind, started: Date, window: TimeInterval) async -> SessionBinding? {
+        let tagPrefix = kind == .design ? "design:" : "office:\(kind.rawValue)"
+        let path = kind == .design ? "artifacts?type=design" : "artifacts"
+        guard let list: RecordList = try? await APIClient.shared.get(path: path) else { return nil }
+        let fits = list.artifacts.filter { record in
+            guard record.tags?.contains(where: { $0.hasPrefix(tagPrefix) }) == true,
+                  let made = libraryParseDate(record.createdAt) else { return false }
+            return abs(made.timeIntervalSince(started)) < window
+        }
+        guard fits.count == 1, let record = fits.first else { return nil }
+        if kind == .design {
+            let project = record.tags?.first { $0.hasPrefix(tagPrefix) }.map { String($0.dropFirst(tagPrefix.count)) }
+            return SessionBinding(kind: kind.rawValue, title: record.title, artifactId: nil, designProjectId: project)
+        }
+        return SessionBinding(kind: kind.rawValue, title: record.title, artifactId: record.id, designProjectId: nil)
     }
 
     // MARK: Delete

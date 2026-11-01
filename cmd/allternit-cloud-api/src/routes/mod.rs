@@ -1,6 +1,7 @@
 //! Routes module
 
 pub mod agency_forward;
+pub mod office_engine;
 pub mod agent_sessions;
 pub mod api_keys;
 pub mod artifacts_comments;

@@ -179,6 +179,47 @@ start_service() {
   fi
 }
 
+# Installs the office engine when CI left a release beside this script. Its
+# failure never takes the API down: the old engine goes back, and a sheet with no
+# engine still works from its snapshot.
+install_office_engine() {
+  local bundle="${SRC_DIR}/infrastructure/vps-desktop-cloud/office-engine.tar.gz"
+  local engine_dir="/opt/allternit-office-engine"
+  if ! ssh_cmd "test -f ${bundle}"; then
+    log_warn "No office engine release to install; leaving it as it is."
+    return 0
+  fi
+  log_info "Installing office engine..."
+  local release
+  release="$(ssh_cmd "sha256sum ${bundle} | cut -c1-16")"
+  ssh_cmd "mkdir -p ${engine_dir}/releases/${release} && tar -xzf ${bundle} -C ${engine_dir}/releases/${release} && chmod -R a+rX ${engine_dir}"
+  scp_cmd "./allternit-office-engine.service" "/etc/systemd/system/allternit-office-engine.service"
+  local previous
+  previous="$(ssh_cmd "readlink ${engine_dir}/current || true")"
+  # Swap in one step, by renaming a link over the old one.
+  ssh_cmd "ln -sfn ${engine_dir}/releases/${release} ${engine_dir}/current.new && mv -Tf ${engine_dir}/current.new ${engine_dir}/current"
+  ssh_cmd "systemctl daemon-reload && systemctl enable allternit-office-engine && systemctl restart allternit-office-engine"
+  sleep 3
+  if ssh_cmd "curl -fsS --max-time 5 http://127.0.0.1:8099/health >/dev/null"; then
+    log_info "Office engine is healthy (${release})"
+    ssh_cmd "cd ${engine_dir}/releases && ls -1t | grep -vx ${release} | tail -n +3 | xargs -r rm -rf"
+  else
+    log_error "Office engine failed its health check"
+    ssh_cmd "journalctl -u allternit-office-engine -n 30 --no-pager || true"
+    if [ -n "${previous}" ]; then
+      log_warn "Rolling the office engine back to ${previous}"
+      ssh_cmd "ln -sfn ${previous} ${engine_dir}/current.new && mv -Tf ${engine_dir}/current.new ${engine_dir}/current && systemctl restart allternit-office-engine"
+    else
+      ssh_cmd "systemctl disable --now allternit-office-engine || true"
+    fi
+  fi
+  ssh_cmd "rm -f ${bundle}"
+  # api.allternit.com is answered by the cloud API, and both read this on their next start.
+  for env_file in /opt/allternit-cloud-api/.env ${ETC_DIR}/api.env; do
+    ssh_cmd "test -f ${env_file} && (grep -q '^OFFICE_ENGINE_URL=' ${env_file} || echo 'OFFICE_ENGINE_URL=http://127.0.0.1:8099' >> ${env_file}) || true"
+  done
+}
+
 print_summary() {
   echo ""
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -202,4 +243,5 @@ install_incus_certs
 install_service
 install_backup
 start_service
+install_office_engine
 print_summary

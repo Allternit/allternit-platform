@@ -7,6 +7,8 @@ on:
       - 'cmd/allternit-api/**'
       - 'cmd/allternit-computer-cloud/**'
       - 'cmd/allternit-factory/**'
+      - 'services/office-engine/**'
+      - 'platform/packages/office-xlsx-engine/**'
       - 'infrastructure/vps-desktop-cloud/**'
       - '.github/workflows/deploy-desktop-cloud-vps.yml'
   workflow_dispatch:
@@ -31,6 +33,35 @@ jobs:
 
       - name: Build release binary
         run: cargo build -p allternit-api --release
+
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      # The engine bundle and the xlsx sidecar it runs. Node on the host runs the
+      # bundle; the sidecar links against the runner's glibc (ubuntu-24.04, as prod).
+      # Its failure must not hold up the API deploy: no release just means the
+      # host keeps the engine it has.
+      - name: Build office engine release
+        # Off until the engine passes its two-account test and Eoj turns it on.
+        if: ${{ vars.OFFICE_ENGINE_ENABLED == 'true' }}
+        continue-on-error: true
+        run: |
+          cargo build --release --manifest-path platform/packages/office-xlsx-engine/crate/Cargo.toml
+          pnpm install --frozen-lockfile --filter @allternit/office-engine-service...
+          pnpm --filter @allternit/office-engine-service run build
+          mkdir -p office-engine-release/engine/dist office-engine-release/bin
+          cd services/office-engine
+          pnpm dlx esbuild@0.25.12 dist/index.js --bundle --platform=node --format=esm --target=node20 \
+            --external:@firecrawl/anydoc --external:@firecrawl/anydoc-* --external:canvas \
+            --outfile=../../office-engine-release/engine/dist/index.js \
+            "--banner:js=import{createRequire as __oeCreateRequire}from'node:module';const require=__oeCreateRequire(import.meta.url);"
+          cd ../..
+          echo '{"name":"@allternit/office-engine-bundled","private":true,"type":"module"}' > office-engine-release/engine/package.json
+          cp platform/packages/office-xlsx-engine/crate/target/release/allternit-xlsx-sidecar office-engine-release/bin/
+          tar -czf office-engine.tar.gz -C office-engine-release .
 
       - name: Check VPS secrets
         id: vps
@@ -73,6 +104,12 @@ jobs:
           HASH=$(sha256sum target/release/allternit-api | cut -d' ' -f1)
           ssh vps "echo '$HASH  /opt/allternit-src/target/release/allternit-api' | sha256sum -c -"
           scp infrastructure/vps-desktop-cloud/deploy.sh vps:/opt/allternit-src/infrastructure/vps-desktop-cloud/deploy.sh
+          scp infrastructure/vps-desktop-cloud/allternit-office-engine.service vps:/opt/allternit-src/infrastructure/vps-desktop-cloud/allternit-office-engine.service
+          if [ -f office-engine.tar.gz ]; then
+            scp office-engine.tar.gz vps:/opt/allternit-src/infrastructure/vps-desktop-cloud/office-engine.tar.gz
+            ENGINE_HASH=$(sha256sum office-engine.tar.gz | cut -d' ' -f1)
+            ssh vps "echo '$ENGINE_HASH  /opt/allternit-src/infrastructure/vps-desktop-cloud/office-engine.tar.gz' | sha256sum -c -"
+          fi
           ssh vps "chmod +x /opt/allternit-src/infrastructure/vps-desktop-cloud/deploy.sh && cd /opt/allternit-src/infrastructure/vps-desktop-cloud && ./deploy.sh local"
 
       - name: Extract self-hosted setup token

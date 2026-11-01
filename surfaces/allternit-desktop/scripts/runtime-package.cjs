@@ -28,7 +28,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const zlib = require('node:zlib');
-const { execFileSync } = require('node:child_process');
+const { execFileSync, spawnSync } = require('node:child_process');
 const https = require('node:https');
 
 const DESKTOP_DIR = path.resolve(__dirname, '..');
@@ -105,7 +105,37 @@ function stagedUiSource() {
   }
 }
 
+/**
+ * Sign the Mac binaries with the Developer ID, under the same identifiers as the
+ * app bundle. A linker's ad-hoc signature is a new identity on every publish, so
+ * macOS asked again for Keychain access after each runtime update, once per
+ * binary. This has to run before stamp and pack hash the files.
+ */
+function signMacBinaries() {
+  if (!PLATFORM.startsWith('darwin') || process.platform !== 'darwin') return;
+  const identities = execFileSync('security', ['find-identity', '-v', '-p', 'codesigning'], { encoding: 'utf8' });
+  const developerId = identities.match(/"(Developer ID Application: [^"]+)"/);
+  if (!developerId) {
+    if (process.env.ALLTERNIT_RUNTIME_ALLOW_ADHOC === '1') return;
+    die('no Developer ID Application certificate: an ad-hoc runtime brings the Keychain prompts back (ALLTERNIT_RUNTIME_ALLOW_ADHOC=1 for a local test)');
+  }
+  const entitlements = path.join(DESKTOP_DIR, 'build', 'entitlements.mac.plist');
+  for (const binary of BINARIES) {
+    const file = path.join(RESOURCES, 'bin', binary);
+    if (!fs.existsSync(file)) continue;
+    // codesign reports on stderr.
+    const details = spawnSync('codesign', ['-dvv', file], { encoding: 'utf8' }).stderr || '';
+    if (details.includes(`Identifier=${binary}\n`) && details.includes(`Authority=${developerId[1]}`)) continue;
+    execFileSync('codesign', [
+      '--force', '--options', 'runtime', '--timestamp', '--identifier', binary,
+      '--entitlements', entitlements, '--sign', developerId[1], file,
+    ], { stdio: 'inherit' });
+    console.log(`✓ signed ${binary}`);
+  }
+}
+
 function stamp() {
+  signMacBinaries();
   const staged = stagedUiSource();
   const aiDir = process.env.ALLTERNIT_AI_PATH || staged?.path;
   const aiRef = process.env.ALLTERNIT_AI_PATH ? 'HEAD' : staged?.commit;
@@ -140,6 +170,7 @@ function signingKey() {
 }
 
 function pack() {
+  signMacBinaries();
   const info = fs.existsSync(STAMP) ? JSON.parse(fs.readFileSync(STAMP, 'utf8')) : stamp();
   const files = runtimeFiles();
   if (!files) die(`resources/bin/{${BINARIES.join(',')}} or resources/platform missing — build them first`);
