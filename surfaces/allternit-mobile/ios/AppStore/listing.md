@@ -74,7 +74,9 @@ First release of Allternit for iPhone.
 
 ## Export compliance
 
-The app uses encryption: HTTPS, and WireGuard (via the Allternit mesh) for the user's own data. Eoj's answer (2026-10-31): yes, it uses encryption, and it is exempt (mass-market, Category 5 Part 2, note 3), so no export documents are needed. `ITSAppUsesNonExemptEncryption` is set to NO in Info.plist, so App Store Connect no longer asks on each build. A year-end self-classification report to the US Bureau of Industry and Security may still be required for the mass-market exemption; check before the first public release.
+The app uses WireGuard (via the Allternit mesh) in addition to HTTPS, only to reach the person's own computers. That is mass-market encryption under the Cryptography Note (Note 3 to Category 5, Part 2), ECCN 5D992. Eoj answered "uses encryption, exempt" for build 6, and `ITSAppUsesNonExemptEncryption = NO` is set in Info.plist (platform #2013), so App Store Connect no longer asks for each build.
+
+No year-end self-classification report is needed. 15 CFR 740.17(e)(3) requires it only for mass-market encryption components, "executable software" taken from hardware components, and non-mass-market items (5A002, 5B002, 5D002). Its note excludes "complete binary images of the software running on an end item", which is what an App Store app is. Checked against the eCFR text on 2026-11-01. If the app ever ships its own crypto library to other developers (an SDK or toolkit), check this again.
 
 ## App Privacy (nutrition label)
 
