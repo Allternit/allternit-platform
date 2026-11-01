@@ -13,6 +13,10 @@ on:
 
 jobs:
   deploy-and-e2e:
+    # Same host as deploy-allternit-api-contabo: one deploy at a time.
+    concurrency:
+      group: deploy-allternit-api-contabo
+      cancel-in-progress: false
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout repository
@@ -65,6 +69,9 @@ jobs:
         run: |
           ssh vps "mkdir -p /opt/allternit-src/target/release /opt/allternit-src/infrastructure/vps-desktop-cloud"
           scp target/release/allternit-api vps:/opt/allternit-src/target/release/allternit-api
+          # A cut-short copy must stop here, before it reaches the service.
+          HASH=$(sha256sum target/release/allternit-api | cut -d' ' -f1)
+          ssh vps "echo '$HASH  /opt/allternit-src/target/release/allternit-api' | sha256sum -c -"
           scp infrastructure/vps-desktop-cloud/deploy.sh vps:/opt/allternit-src/infrastructure/vps-desktop-cloud/deploy.sh
           ssh vps "chmod +x /opt/allternit-src/infrastructure/vps-desktop-cloud/deploy.sh && cd /opt/allternit-src/infrastructure/vps-desktop-cloud && ./deploy.sh local"
 

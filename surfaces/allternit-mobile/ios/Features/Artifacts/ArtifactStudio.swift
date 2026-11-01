@@ -468,7 +468,10 @@ final class ArtifactStudioLauncher: ObservableObject {
         if let recordId {
             try await ignoringGone { try await APIClient.shared.delete(path: "artifacts/\(Self.escape(recordId))") }
         }
-        try await ignoringGone { try await APIClient.shared.delete(path: "agent-sessions/\(Self.escape(session.sessionId))") }
+        // An older row can hold an id the session API refuses, with no session behind it.
+        if session.sessionId.hasPrefix("ses") {
+            try await ignoringGone { try await APIClient.shared.delete(path: "agent-sessions/\(Self.escape(session.sessionId))") }
+        }
         stored.removeValue(forKey: session.sessionId)
         persist()
     }

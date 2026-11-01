@@ -131,12 +131,13 @@ struct ProjectsListView: View {
                     query: $searchText,
                     placeholder: "Search projects",
                     newLabel: "New project",
-                    wide: .new
-                ) {
-                    Button { startNew(.chat) } label: { Label("Chat project", systemImage: "bubble.left") }
-                    Button { startNew(.code) } label: { Label("Code project", systemImage: "chevron.left.forwardslash.chevron.right") }
-                    Button { startNew(.design) } label: { Label("Design project", systemImage: "paintpalette") }
-                }
+                    wide: .new,
+                    newMenu: {
+                        Button { startNew(.chat) } label: { Label("Chat project", systemImage: "bubble.left") }
+                        Button { startNew(.code) } label: { Label("Code project", systemImage: "chevron.left.forwardslash.chevron.right") }
+                        Button { startNew(.design) } label: { Label("Design project", systemImage: "paintpalette") }
+                    }
+                )
             }
             .background(Color("BgPrimary").ignoresSafeArea())
             .toolbar(.hidden, for: .navigationBar)

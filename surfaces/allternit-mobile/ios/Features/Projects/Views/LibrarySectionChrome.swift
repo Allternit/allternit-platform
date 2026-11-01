@@ -122,9 +122,9 @@ struct LibraryFloatingBar<NewMenu: View>: View {
     var newDisabled = false
     /// Plain New action; ignored when `newMenu` is non-empty.
     var onNew: (() -> Void)? = nil
-    /// Menu items for New (the web's renderNew menus).
+    /// Menu items for New (the web's renderNew menus). Pass as `newMenu:`: a
+    /// trailing closure binds to `onNew` in the init below and the items are lost.
     @ViewBuilder var newMenu: () -> NewMenu
-    @State private var isNewMenuOpen = false
 
     @State private var open = false
     @FocusState private var focused: Bool
@@ -191,14 +191,9 @@ struct LibraryFloatingBar<NewMenu: View>: View {
     private var newButton: some View {
         let face = newFace
         if NewMenu.self != EmptyView.self {
-            // A Menu inside this floating overlay didn't open on tap; a dialog does.
-            Button { isNewMenuOpen = true } label: { face }
-                .buttonStyle(.plain)
+            Menu { newMenu() } label: { face }
                 .disabled(newDisabled)
                 .accessibilityLabel(newLabel)
-                .confirmationDialog(newLabel, isPresented: $isNewMenuOpen, titleVisibility: .hidden) {
-                    newMenu()
-                }
         } else {
             Button(action: { onNew?() }) { face }
                 .buttonStyle(.plain)

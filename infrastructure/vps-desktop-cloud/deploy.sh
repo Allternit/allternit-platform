@@ -57,12 +57,15 @@ install_binary() {
   # Keep only the newest 5 backups: every deploy adds an ~80 MB copy, and 251
   # of them filled the prod disk (2026-10-08). rollback.sh uses the newest.
   ssh_cmd "ls -1t ${API_DIR}/bin/backups/allternit-api.* 2>/dev/null | tail -n +6 | xargs -r rm -f"
+  # Copy beside the live binary, check it, then swap in one step: a cut-short
+  # copy crashed the loader on start and took the service down (2026-11-01).
   if [ -f "${SRC_DIR}/target/release/allternit-api" ]; then
-    scp_cmd "${SRC_DIR}/target/release/allternit-api" "${API_DIR}/bin/allternit-api"
+    scp_cmd "${SRC_DIR}/target/release/allternit-api" "${API_DIR}/bin/allternit-api.new"
   else
-    ssh_cmd "cp ${SRC_DIR}/target/release/allternit-api ${API_DIR}/bin/allternit-api"
+    ssh_cmd "cp ${SRC_DIR}/target/release/allternit-api ${API_DIR}/bin/allternit-api.new"
   fi
-  ssh_cmd "chmod +x ${API_DIR}/bin/allternit-api"
+  ssh_cmd "cmp ${SRC_DIR}/target/release/allternit-api ${API_DIR}/bin/allternit-api.new"
+  ssh_cmd "chmod +x ${API_DIR}/bin/allternit-api.new && mv -f ${API_DIR}/bin/allternit-api.new ${API_DIR}/bin/allternit-api"
 }
 
 install_env() {
@@ -165,6 +168,13 @@ start_service() {
   else
     log_error "Service failed to start"
     ssh_cmd "journalctl -u allternit-api -n 50 --no-pager"
+    # Never leave production crash-looping: put the last good binary back.
+    local last_good
+    last_good="$(ssh_cmd "ls -1t ${API_DIR}/bin/backups/allternit-api.* 2>/dev/null | head -1")"
+    if [ -n "${last_good}" ]; then
+      log_warn "Rolling back to ${last_good}"
+      ssh_cmd "cp -p ${last_good} ${API_DIR}/bin/allternit-api && systemctl restart allternit-api"
+    fi
     exit 1
   fi
 }
