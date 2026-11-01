@@ -2362,7 +2362,8 @@ async fn agent_chat_bridge(
                                     .pointer("/state/status")
                                     .and_then(|v| v.as_str())
                                     .unwrap_or("");
-                                if status == "running" {
+                                // Only a skill that loaded counts: a refused one ends in `error`.
+                                if status == "completed" {
                                     crate::skill_use::record_from_part(
                                         &state.db,
                                         &user_id_for_record,
@@ -2372,6 +2373,8 @@ async fn agent_chat_bridge(
                                         part,
                                     )
                                     .await;
+                                }
+                                if status == "running" {
                                     if let Some(link) = dag_link.clone() {
                                         let db = state.db.clone();
                                         let uid = user_id_for_record.clone();

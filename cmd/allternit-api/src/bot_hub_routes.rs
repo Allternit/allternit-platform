@@ -94,10 +94,11 @@ pub(crate) fn summary(conn: Option<&Connection>, user_id: &str, bot: &str) -> Va
     let skills = match conn {
         Some(c) => {
             let on = match allowed_skills(c, user_id, bot) {
-                Some(list) => list.iter().filter(|s| installed.contains(s)).count(),
+                // A listed built-in skill is on too, and it has no folder under the skills root.
+                Some(list) => list.len(),
                 None => installed.len(),
             };
-            json!({"on": on, "total": installed.len()})
+            json!({"on": on, "total": installed.len().max(on)})
         }
         None => json!({"on": 0, "total": installed.len()}),
     };
