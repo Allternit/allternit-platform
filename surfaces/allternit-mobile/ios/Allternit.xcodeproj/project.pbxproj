@@ -2363,6 +2363,7 @@
 				FE245E6E1EC04219C0D019BA /* Frameworks */,
 				12ABAE583D6D170EE47EE1B3 /* Embed Foundation Extensions */,
 				587CCE140FFA23803184DC05 /* Embed Frameworks */,
+				A82A481C885C74A89948578F /* SherpaOnnxC dSYM */,
 			);
 			buildRules = (
 			);
@@ -2496,6 +2497,28 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		A82A481C885C74A89948578F /* SherpaOnnxC dSYM */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "SherpaOnnxC dSYM";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "[ \"$ACTION\" = \"install\" ] || exit 0\nBIN=\"$TARGET_BUILD_DIR/$FRAMEWORKS_FOLDER_PATH/SherpaOnnxC.framework/SherpaOnnxC\"\n[ -f \"$BIN\" ] || exit 0\nxcrun dsymutil \"$BIN\" -o \"$DWARF_DSYM_FOLDER_PATH/SherpaOnnxC.framework.dSYM\" 2>&1 | grep -v \"no debug symbols\" || true\n";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		574E6FF3D59E4C4875EBBADE /* Sources */ = {
