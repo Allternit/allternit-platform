@@ -223,7 +223,8 @@ private struct OfficeFloorWeb: UIViewRepresentable {
         }
 
         func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
-            guard let body = message.body as? [String: Any] else { return }
+            // Only the validated top-level relay may reach native actions or persistence.
+            guard message.frameInfo.isMainFrame, let body = message.body as? [String: Any] else { return }
             switch body["type"] as? String {
             case "visitor":
                 guard ready, let visitor = body["visitor"] as? [String: Any],
