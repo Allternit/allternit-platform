@@ -81,6 +81,9 @@ struct Item {
     r#ref: String,
 }
 
+/// Everyday words the name extractor picks up; they connect unrelated facts.
+const GENERIC_NAMES: &[&str] = &["never", "always", "tier", "threads", "title", "site", "url", "search", "open", "snippet", "pr", "prs", "ui", "ai", "api", "film"];
+
 fn clip(s: &str, n: usize) -> String {
     let one: String = s.split_whitespace().collect::<Vec<_>>().join(" ");
     if one.chars().count() <= n {
@@ -142,6 +145,18 @@ pub(crate) fn build(conn: &Connection, user_id: &str, bot: Option<&str>) -> Valu
         thread_ids.insert(id.clone());
         items.push(Item { id: format!("thread:{id}"), kind: "thread", label: clip(&title, 60), uses: None, last_at: Some(at), r#ref: id });
     }
+    // Every session a thread ever ran in, not only its latest one.
+    let past_sessions: Vec<(String, String)> = rows(
+        conn,
+        "SELECT s.session_id, s.thread_id FROM bot_thread_sessions s JOIN bot_threads t ON t.id = s.thread_id WHERE t.user_id = ?1",
+        &[&user_id],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    );
+    for (session, thread) in past_sessions {
+        if thread_ids.contains(&thread) {
+            session_thread.entry(session).or_insert(thread);
+        }
+    }
     let mut seen_links: HashSet<(String, String)> = HashSet::new();
     let mut thread_skill_uses: HashMap<String, i64> = HashMap::new();
     for (_, skill, session, _) in &use_rows {
@@ -168,6 +183,9 @@ pub(crate) fn build(conn: &Connection, user_id: &str, bot: Option<&str>) -> Valu
     }
     for (id, name, thread, at) in routine_rows.into_iter().take(60) {
         if let Some(t) = thread {
+            if thread_ids.contains(&t) {
+                links.push(json!({"from": format!("routine:{id}"), "to": format!("thread:{t}"), "kind": "uses"}));
+            }
             let skills_of_thread: HashSet<&String> = use_rows
                 .iter()
                 .filter(|u| session_thread.get(&u.2) == Some(&t))
@@ -219,7 +237,83 @@ pub(crate) fn build(conn: &Connection, user_id: &str, bot: Option<&str>) -> Valu
     if facts.len() > 150 {
         truncated = true;
     }
-    for (id, fact, at) in facts.into_iter().take(150) {
+    // Facts a thread actually recalled: the recall log names them per session.
+    let recall_rows: Vec<(String, String)> = rows(
+        conn,
+        "SELECT session_id, results FROM memory_recall_logs WHERE user_id = ?1 AND session_id IS NOT NULL ORDER BY created_at DESC LIMIT 1000",
+        &[&user_id],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    );
+    let mut recalled: Vec<(String, String)> = Vec::new();
+    for (session, results) in recall_rows {
+        let Some(thread) = session_thread.get(&session) else { continue };
+        let parsed: Value = serde_json::from_str(&results).unwrap_or(Value::Null);
+        for r in parsed.as_array().map(Vec::as_slice).unwrap_or_default() {
+            if r["item_type"] == "fact" {
+                if let Some(id) = r["id"].as_str() {
+                    recalled.push((thread.clone(), id.to_string()));
+                }
+            }
+        }
+    }
+    let mut facts: Vec<(String, String, Option<String>)> = facts.into_iter().take(150).collect();
+    let mut fact_ids: HashSet<String> = facts.iter().map(|f| f.0.clone()).collect();
+    // A fact this bot's threads recalled belongs on its map even with no agent_id.
+    for (_, id) in recalled.iter().take(200) {
+        if fact_ids.contains(id) {
+            continue;
+        }
+        let row: Option<(String, Option<String>)> = conn
+            .query_row(
+                "SELECT fact, valid_from FROM memory_facts WHERE id = ?1 AND user_id = ?2 AND valid_until IS NULL",
+                rusqlite::params![id, user_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .ok();
+        if let Some((fact, at)) = row {
+            fact_ids.insert(id.clone());
+            facts.push((id.clone(), fact, at));
+        }
+    }
+    for (thread, id) in &recalled {
+        if fact_ids.contains(id) {
+            links.push(json!({"from": format!("thread:{thread}"), "to": format!("memory:fact:{id}"), "kind": "uses"}));
+        }
+    }
+    // learned_from: the observation a fact was extracted from ran in a thread's session.
+    let fact_sources: Vec<(String, String)> = rows(
+        conn,
+        "SELECT f.id, o.session_id FROM memory_facts f JOIN memory_observations o ON o.id = f.source_observation_id WHERE f.user_id = ?1 AND o.session_id IS NOT NULL",
+        &[&user_id],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    );
+    for (fact, session) in fact_sources {
+        if let (true, Some(thread)) = (fact_ids.contains(&fact), session_thread.get(&session)) {
+            links.push(json!({"from": format!("memory:fact:{fact}"), "to": format!("thread:{thread}"), "kind": "learned_from"}));
+        }
+    }
+    // The people, products and places facts name. A name counts once two facts share it.
+    let mention_rows: Vec<(String, String, String)> = rows(
+        conn,
+        "SELECT key, surface, target_id FROM memory_entity_mentions WHERE user_id = ?1 AND target_type = 'fact' AND kind = 'name'",
+        &[&user_id],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+    );
+    let mut named: HashMap<String, (String, HashSet<String>)> = HashMap::new();
+    for (key, surface, fact) in mention_rows {
+        if fact_ids.contains(&fact) && !GENERIC_NAMES.contains(&key.as_str()) {
+            named.entry(key).or_insert_with(|| (surface, HashSet::new())).1.insert(fact);
+        }
+    }
+    let mut named: Vec<(String, (String, HashSet<String>))> = named.into_iter().filter(|(_, (_, f))| f.len() > 1).collect();
+    named.sort_by(|a, b| b.1 .1.len().cmp(&a.1 .1.len()).then_with(|| a.0.cmp(&b.0)));
+    for (key, (surface, named_facts)) in named.into_iter().take(40) {
+        for fact in &named_facts {
+            links.push(json!({"from": format!("memory:fact:{fact}"), "to": format!("entity:name:{key}"), "kind": "mentions"}));
+        }
+        items.push(Item { id: format!("entity:name:{key}"), kind: "entity", label: clip(&surface, 60), uses: None, last_at: None, r#ref: key });
+    }
+    for (id, fact, at) in facts.into_iter() {
         items.push(Item { id: format!("memory:fact:{id}"), kind: "memory", label: clip(&fact, 80), uses: None, last_at: at, r#ref: format!("fact:{id}") });
     }
     // learned_from: a memory whose source is a thread id or that thread's session.
@@ -271,12 +365,27 @@ pub(crate) fn build(conn: &Connection, user_id: &str, bot: Option<&str>) -> Valu
         links.push(json!({"from": from, "to": to, "kind": kind}));
     }
 
+    // Threads open by session, and the account-wide map needs the owning bot.
+    let thread_meta: HashMap<String, (String, Option<String>)> = rows(
+        conn,
+        "SELECT id, bot_id, current_session_id FROM bot_threads WHERE user_id = ?1 AND (?2 IS NULL OR bot_id = ?2)",
+        &[&user_id, &bot],
+        |r| Ok((r.get::<_, String>(0)?, (r.get::<_, String>(1)?, r.get::<_, Option<String>>(2)?))),
+    )
+    .into_iter()
+    .collect();
     // Souls: one per bot in scope that has a SOUL.md.
     for (id, name) in &bots {
         let path = workspace_dir_for(id).join("SOUL.md");
         if let Ok(meta) = std::fs::metadata(&path) {
             let at = meta.modified().ok().map(|t| chrono::DateTime::<chrono::Utc>::from(t).to_rfc3339());
             items.push(Item { id: format!("soul:{id}"), kind: "soul", label: format!("{name} Soul"), uses: None, last_at: at, r#ref: id.clone() });
+            // The chat bridge composes SOUL.md into every turn of this bot's threads.
+            for (thread, (owner, _)) in &thread_meta {
+                if owner == id && thread_ids.contains(thread) {
+                    links.push(json!({"from": format!("thread:{thread}"), "to": format!("soul:{id}"), "kind": "uses"}));
+                }
+            }
         }
     }
 
@@ -294,15 +403,6 @@ pub(crate) fn build(conn: &Connection, user_id: &str, bot: Option<&str>) -> Valu
                 && dedup.insert(l.to_string())
         })
         .collect();
-    // Threads open by session, and the account-wide map needs the owning bot.
-    let thread_meta: HashMap<String, (String, Option<String>)> = rows(
-        conn,
-        "SELECT id, bot_id, current_session_id FROM bot_threads WHERE user_id = ?1 AND (?2 IS NULL OR bot_id = ?2)",
-        &[&user_id, &bot],
-        |r| Ok((r.get::<_, String>(0)?, (r.get::<_, String>(1)?, r.get::<_, Option<String>>(2)?))),
-    )
-    .into_iter()
-    .collect();
     json!({
         "items": items.iter().map(|i| {
             let meta = if i.kind == "thread" { thread_meta.get(&i.r#ref) } else { None };
@@ -333,6 +433,39 @@ mod tests {
         )
         .unwrap();
         c
+    }
+
+    /// 2026-11-01: a real account had 406 items and no links at all, because the
+    /// map read only memory_edges and skill_use, which were both empty.
+    #[test]
+    fn real_history_links_threads_facts_names_and_the_soul() {
+        let c = conn();
+        c.execute_batch(
+            "CREATE TABLE bot_thread_sessions (thread_id TEXT, session_id TEXT);
+             CREATE TABLE memory_facts (id TEXT, user_id TEXT, agent_id TEXT, fact TEXT, valid_from TEXT, valid_until TEXT, source_observation_id TEXT);
+             CREATE TABLE memory_observations (id TEXT, session_id TEXT);
+             CREATE TABLE memory_recall_logs (user_id TEXT, session_id TEXT, results TEXT, created_at TEXT);
+             CREATE TABLE memory_entity_mentions (user_id TEXT, key TEXT, surface TEXT, kind TEXT, target_type TEXT, target_id TEXT);
+             INSERT INTO bot_thread_sessions VALUES ('t1','s-old');
+             INSERT INTO memory_facts VALUES ('f1','u1',NULL,'Eoj likes short briefs','2026-10-01',NULL,'o1'), ('f2','u1',NULL,'Eoj runs Harbor','2026-10-02',NULL,NULL), ('f3','u2',NULL,'Other account','2026-10-02',NULL,NULL);
+             INSERT INTO memory_observations VALUES ('o1','s1');
+             INSERT INTO memory_recall_logs VALUES ('u1','s-old','[{\"id\":\"f2\",\"item_type\":\"fact\"},{\"id\":\"obs\",\"item_type\":\"observation\"}]','2026-10-03'), ('u2','s2','[{\"id\":\"f3\",\"item_type\":\"fact\"}]','2026-10-03');
+             INSERT INTO memory_entity_mentions VALUES ('u1','eoj','Eoj','name','fact','f1'), ('u1','eoj','Eoj','name','fact','f2'), ('u1','never','Never','name','fact','f1'), ('u1','never','Never','name','fact','f2'), ('u1','harbor','Harbor','name','fact','f2');",
+        )
+        .unwrap();
+        let out = build(&c, "u1", None);
+        let has = |from: &str, to: &str, kind: &str| {
+            out["links"].as_array().unwrap().iter().any(|l| l["from"] == from && l["to"] == to && l["kind"] == kind)
+        };
+        // An older session of the thread still counts.
+        assert!(has("thread:t1", "memory:fact:f2", "uses"));
+        assert!(has("memory:fact:f1", "thread:t1", "learned_from"));
+        assert!(has("memory:fact:f1", "entity:name:eoj", "mentions"));
+        // One fact is not a shared name, and everyday words are not names.
+        let text = out.to_string();
+        assert!(!text.contains("entity:name:harbor"));
+        assert!(!text.contains("entity:name:never"));
+        assert!(!text.contains("f3"), "another account's fact leaked");
     }
 
     #[test]

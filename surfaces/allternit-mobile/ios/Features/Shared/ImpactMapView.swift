@@ -110,11 +110,14 @@ struct ImpactGraph: Sendable {
 
     /// Most recently used; else most used; else the first.
     var defaultFocus: MemoryMapItem? {
-        let dated = items.filter { $0.lastAt.flatMap(BotTime.date) != nil }
+        // Open on something connected: an item with no links shows an empty map.
+        let linked = items.filter { !(usesOf[$0.id] ?? []).isEmpty || !(usedByOf[$0.id] ?? []).isEmpty }
+        let pool = linked.isEmpty ? items : linked
+        let dated = pool.filter { $0.lastAt.flatMap(BotTime.date) != nil }
         if let latest = dated.max(by: { (BotTime.date($0.lastAt ?? "") ?? .distantPast) < (BotTime.date($1.lastAt ?? "") ?? .distantPast) }) {
             return latest
         }
-        return items.max { ($0.uses ?? 0) < ($1.uses ?? 0) } ?? items.first
+        return pool.max { ($0.uses ?? 0) < ($1.uses ?? 0) } ?? pool.first
     }
 }
 

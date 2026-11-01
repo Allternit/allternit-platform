@@ -10,8 +10,10 @@ import { iife } from "@/shared/util/iife"
 
 export const SkillTool = Tool.define("skill", async (ctx) => {
   // A bot turn never sees the user's personal skills (runtime/bots/bot-turn.ts).
-  const forBot = Boolean(BotTurn.get(ctx?.sessionID))
-  const skills = (await Skill.all()).filter((skill) => !forBot || BotTurn.skillVisibleToBot(skill))
+  const bot = BotTurn.get(ctx?.sessionID)
+  const skills = (await Skill.all()).filter(
+    (skill) => !bot || (BotTurn.skillVisibleToBot(skill) && BotTurn.skillOnForBot(bot, skill.name)),
+  )
 
   // Filter skills by agent permissions if agent provided
   const agent = ctx?.agent
@@ -62,14 +64,15 @@ export const SkillTool = Tool.define("skill", async (ctx) => {
     description,
     parameters,
     async execute(params: z.infer<typeof parameters>, ctx) {
-      const botTurn = Boolean(BotTurn.get(ctx.sessionID))
+      const turnBot = BotTurn.get(ctx.sessionID)
+      const botTurn = Boolean(turnBot)
       const found = await Skill.get(params.name)
-      const skill = found && (!botTurn || BotTurn.skillVisibleToBot(found)) ? found : undefined
+      const skill = found && (!botTurn || (BotTurn.skillVisibleToBot(found) && BotTurn.skillOnForBot(turnBot, found.name))) ? found : undefined
 
       if (!skill) {
         const available = await Skill.all().then((items) =>
           items
-            .filter((item) => !botTurn || BotTurn.skillVisibleToBot(item))
+            .filter((item) => !botTurn || (BotTurn.skillVisibleToBot(item) && BotTurn.skillOnForBot(turnBot, item.name)))
             .map((item) => item.name)
             .join(", "),
         )

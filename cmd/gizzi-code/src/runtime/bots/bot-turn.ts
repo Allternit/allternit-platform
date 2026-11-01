@@ -38,6 +38,8 @@ export const BotTurnInfo = z.object({
    * Empty/absent = no allowlist configured.
    */
   allowedTools: z.array(z.string()).optional(),
+  /** The bot's skill list from its Skills page; absent or empty means every skill it can see. */
+  allowedSkills: z.array(z.string()).optional(),
   /** Tools a person approves each time (`tool_permissions` = always_ask). */
   askTools: z.array(z.string()).optional(),
   /**
@@ -117,6 +119,13 @@ export function skillVisibleToBot(
   if (skill.source === "project") return false
   const location = path.resolve(skill.location)
   return !personalSkillRoots(home).some((root) => location.startsWith(root))
+}
+
+/** Whether this bot's own skill list (its Skills page) leaves the skill on. */
+export function skillOnForBot(bot: BotTurnInfo | undefined, name: string): boolean {
+  const list = bot?.allowedSkills
+  if (!list || list.length === 0) return true
+  return list.some((allowed) => allowed.toLowerCase() === name.toLowerCase())
 }
 
 /* -------------------------------------------------------------------------- */
