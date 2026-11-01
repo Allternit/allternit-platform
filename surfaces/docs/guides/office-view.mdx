@@ -1,32 +1,51 @@
 ---
 title: "Office view"
-description: "Your bots at their desks on one floor: who is working, who needs you, hand-offs as they happen, a replay of the day, and an optional live link you can share."
+description: "Enter the whole Allternit facility, choose your avatar, roam the campus, and work with your bots upstairs."
 ---
 
-The Office view shows your bots at their desks in the Allternit facility's Office loft, in 3D. Each bot is its own 3D character. You see who is working, who is waiting on you, who is talking, and who is idle, and you can answer and chat without leaving the floor.
+Office opens the full Allternit facility inside the app. On first entry, choose
+**Create my avatar** or walk as a bot from **My bots**. Your main avatar stays
+available when you switch to a bot's appearance. **Browse characters** opens the
+existing character library and editor.
 
-The loft fills the screen with one panel over it. With nothing picked, the panel lists your bots, each with its latest line and how long ago it happened. Pick a bot and the same panel becomes its chat. Desktop, ai.allternit.com, the phone layout, the m.allternit.com app and the iPhone app all have it. On a phone the panel is a sheet across the bottom half.
+On a return visit, Office resumes your saved character and a valid room position.
+The host app stores this state per account and organization on this device.
+It is not a cross-device cloud save. Standalone facility visitors have a separate
+browser-local saved character that now survives opening a new tab.
 
-In the iPhone app, open **Office** from the Bots screen header or from the top of the Bots drawer. A message you write in the panel is sent to that bot's main chat, and the reply shows in the panel as it comes. The ⋯ button opens the full chat. Hire, replay, share and the film are on the web and Desktop for now.
+## Roam and work
 
-## What you can do
+Use WASD, drag to look, and Shift to run on a keyboard. Phones use the facility's
+touch controls. **Rooms** lists all destinations. Walk between connected rooms
+and outside, or choose a room to travel there.
 
-| Feature | What it does |
-| --- | --- |
-| **Move around** | Drag to turn, scroll or pinch to zoom. The buttons at the bottom right zoom in, zoom out and reset the view. |
-| **Your bots** | With nothing picked, the panel lists your bots. Each row shows the bot's latest event and how long ago it happened. Bots that need you come first, with their question in amber. Search finds a bot by name or role. Your main bot sits at the top. |
-| **Select a bot** | Click a bot in the room or in the list. The camera moves to it and the panel becomes that bot: its chat, its Apps, its Routines and a button to its Computer. The back arrow returns to your bots. Click empty floor to let go. |
-| **A:// is the orb** | Your main bot, A://, is the Allternit orb, not a character. On the floor it floats above its desk as the eleven ink blocks and coral core, turned to face you, and its face in the panel is the same orb. It moves the way the orb moves everywhere else in the app: the blocks run like a conveyor while it works, breathe while it waits on you, melt toward the core on a call, and hold still when idle. With reduced motion on, it holds still. If you gave A:// your own picture or picked another look, it wears that instead. |
-| **Desk screens** | A bot's desk shows what it is doing: its latest status line, or, when the bot has a computer, a small picture of its screen (at most six bots, refreshed every 15 seconds, only while the Office is on screen). |
-| **Needs you** | A bot waiting on you walks to the YOU desk and joins the line. Its real question shows on the desk, never the thread title. Answer it from the panel with the same approve, deny or reply actions as anywhere else. The bot goes back to its desk once you answer. |
-| **Meetings** | Bots in the same group chat gather at the meeting board. |
-| **Hand-offs** | When one bot passes work to another, you see it walk over. Only real hand-offs walk. |
-| **Hire** | The **+** next to search, or a free desk, opens a role picker (Support, Finance, Research, Sales, Code, or a vendor bot). The create-bot screen opens set up for it. |
-| **Replay** | The timeline button replays a day of events on the floor with a scrub bar, speeds of 1x, 8x, 32x and 120x, and Exit. Replay never changes live state. |
-| **While you were out** | Open the Office after eight or more hours away, with three or more events, and a row says what happened with a **Watch** button that replays it. |
-| **Share** | The Share button at the top right makes a 1200 by 630 picture of the floor (copy, download or post) and offers the live link. |
+Choose **Workspace** to enter the existing Bots Floor upstairs. It receives your
+real roster, appearances, desk content, statuses and questions. Choose a bot in
+the room or the Workspace panel to open its real conversation. **Back to roaming**
+closes the conversation without resetting your avatar or the world. Movement is
+paused while you type in a conversation or use the avatar chooser.
 
-An older runtime without the floor routes still shows your team and their live status. Replay and activity history say they need an update.
+The native iPhone entry uses the same full-facility route. Picking a bot opens
+its native chat. Returning to Office restores the saved character and room.
+The iPhone source has been syntax-checked; physical-device performance still
+needs validation before a signed native release.
+
+## Switch character
+
+Choose **Avatar** to restore **My avatar**, edit it, or select one of **My bots**.
+Search finds a bot by name or role. Public avatar-library choices are also
+available in the editor. A:// uses the living orb; builder characters retain
+their recipe rig, and sprite-only avatars retain their artwork. The app's vector
+pet/geometric avatars are rendered from their canonical components into textures.
+An unavailable or unsupported appearance is labelled; it is not replaced by an
+unrelated bot. Appearance changes do not change your account, permissions, jobs,
+or chat identity.
+
+## Compact bot Workspace
+
+**System → Workspace** remains the compact bot floor. It keeps the existing
+team/chat panel, 2D/3D controls, hiring, timeline, film, share picture and optional
+public live link. It does not open the whole campus inside the System drawer.
 
 ## Sharing and privacy
 
@@ -67,4 +86,21 @@ Migration `V283__floor_share.sql` adds an index on `bot_events(event_type, occur
 
 ### Frame messages
 
-The app talks to the facility frame by `postMessage`, always checking the origin. App to facility: `allternit:workspace` (bots, with optional `desk` and `meeting`, and `handoffs` deduplicated by id), `allternit:workspace:select`, `allternit:workspace:thread` (a bot's main chat for the panel: `botId`, `lines` with `id`, `from` (`bot` or `you`), plain `text` and `at` in ms, the last 20 messages oldest first, and `working: true` while a reply streams; each post replaces that bot's thread, and a failed send ends with a bot line saying so), `allternit:workspace:replay` (events with `from` and `to`, or `stop: true`) and `allternit:workspace:snapshot`. Facility to app: `ready`, `action` (`answer`, `open`, `select`, `hire`, `share`, and `message` with the `text` written in the facility's own panel) and `allternit:workspace:snapshot` with a PNG data URL. `?embed=workspace&ui=office` is the Office layout: the 3D loft full bleed with the facility's one panel (bots, then the picked bot's chat). Add `&chrome=none` when the app draws that panel itself (Desktop, ai, m), so only the floor and zoom show, and `&actions=chat` when the host handles only `open`, `answer`, `select` and `message` (the iPhone app), which hides hire and share. The iPhone app answers `select` with that bot's `thread` and sends `message` into the bot's main chat without leaving the floor, posting the thread again (at most 4 times a second) as the reply grows and once it ends. A bot whose avatar `sheet` is `https://ai.allternit.com/brand/allternit-orb.svg` is drawn as the orb (the facility's `OrbBody`, with keyframes ported from `AllternitOrb`); the app sends it for the bot `showsPrimaryOrb` picks, and the iPhone app for `isPrimaryTemplateBot`. `?embed=public&t=<token>` is the read-only public floor.
+Full Office loads `?embed=facility`. The version-1 `allternit:facility` handshake
+carries the host-owned visitor config and saved main character. Visitor updates
+carry appearance, room and validated pose; panel state stops movement while the
+host's bot conversation is open. No account token enters the frame.
+
+The existing `allternit:workspace` namespace still carries the real roster,
+selection, thread content, replay, snapshots and bot actions. Both ends validate
+origin and window source. The compact System Workspace keeps
+`?embed=workspace&ui=office&chrome=none`. Public floors use `?embed=public&t=…`
+and never accept the private visitor initialization.
+
+The native iPhone full-facility wrapper sends its account-scoped saved visitor
+on ready and stores visitor updates in UserDefaults. Bot selection opens the
+native chat. The earlier inline fixed-floor panel is retained by the dedicated
+workspace route for consumers that still use it.
+
+See [Facility and Workspace architecture](/architecture/facility-workspace) for
+source paths and the integration acceptance tests.

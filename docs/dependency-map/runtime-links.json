@@ -377,6 +377,157 @@
       "label": "DeleteAccountSection",
       "kind": "module",
       "path": "allternit-ai/src/views/settings/DeleteAccountSection.tsx"
+    },
+    {
+      "id": "allternit-ai/src/views/office/OfficeView.tsx",
+      "label": "OfficeView",
+      "kind": "module",
+      "path": "allternit-ai/src/views/office/OfficeView.tsx"
+    },
+    {
+      "id": "allternit-ai/src/views/office/BotWorkspaceView.tsx",
+      "label": "BotWorkspaceView",
+      "kind": "module",
+      "path": "allternit-ai/src/views/office/BotWorkspaceView.tsx"
+    },
+    {
+      "id": "allternit-ai/src/views/office/OfficeFloor.tsx",
+      "label": "OfficeFloor",
+      "kind": "module",
+      "path": "allternit-ai/src/views/office/OfficeFloor.tsx"
+    },
+    {
+      "id": "allternit-ai/src/views/office/facility-visitor.ts",
+      "label": "facility-visitor",
+      "kind": "module",
+      "path": "allternit-ai/src/views/office/facility-visitor.ts"
+    },
+    {
+      "id": "allternit-ai/src/lib/office/portrait-avatar.tsx",
+      "label": "portrait-avatar",
+      "kind": "module",
+      "path": "allternit-ai/src/lib/office/portrait-avatar.tsx"
+    },
+    {
+      "id": "allternit-ai/src/views/code/console/WorkspaceTab.tsx",
+      "label": "WorkspaceTab",
+      "kind": "module",
+      "path": "allternit-ai/src/views/code/console/WorkspaceTab.tsx"
+    },
+    {
+      "id": "allternit-ai/src/components/dispatch/FabricBotMode.tsx",
+      "label": "FabricBotMode",
+      "kind": "module",
+      "path": "allternit-ai/src/components/dispatch/FabricBotMode.tsx"
+    },
+    {
+      "id": "allternit/surfaces/allternit-mobile/ios/Features/Office/Floor/OfficeFloorView.swift",
+      "label": "OfficeFloorView",
+      "kind": "module",
+      "path": "allternit/surfaces/allternit-mobile/ios/Features/Office/Floor/OfficeFloorView.swift"
+    },
+    {
+      "id": "allternit/surfaces/docs/architecture/facility-workspace.mdx",
+      "label": "facility-workspace",
+      "kind": "module",
+      "path": "allternit/surfaces/docs/architecture/facility-workspace.mdx"
+    },
+    {
+      "id": "external:allternit-facility",
+      "label": "Hosted Allternit 3D facility",
+      "kind": "external",
+      "url": "https://3dfacility.allternit.com",
+      "path": "https://3dfacility.allternit.com"
+    },
+    {
+      "id": "allternit-ai/src/views/settings/SettingsView.tsx",
+      "label": "SettingsView",
+      "kind": "module",
+      "path": "allternit-ai/src/views/settings/SettingsView.tsx"
+    },
+    {
+      "id": "allternit/surfaces/allternit-mobile/ios/Features/Settings/DeleteAccountView.swift",
+      "label": "DeleteAccountView",
+      "kind": "module",
+      "path": "allternit/surfaces/allternit-mobile/ios/Features/Settings/DeleteAccountView.swift"
+    },
+    {
+      "id": "allternit/surfaces/allternit-mobile/ios/Core/Auth/AuthManager+DeleteAccount.swift",
+      "label": "AuthManager+DeleteAccount",
+      "kind": "module",
+      "path": "allternit/surfaces/allternit-mobile/ios/Core/Auth/AuthManager+DeleteAccount.swift"
+    },
+    {
+      "id": "allternit/cmd/allternit-cloud-api/src/routes/clerk_webhooks.rs",
+      "label": "clerk_webhooks",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-cloud-api/src/routes/clerk_webhooks.rs"
+    },
+    {
+      "id": "allternit/cmd/allternit-api/src/project_status.rs",
+      "label": "project_status",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-api/src/project_status.rs"
+    },
+    {
+      "id": "allternit/cmd/allternit-api/src/cowork_routes.rs",
+      "label": "cowork_routes",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-api/src/cowork_routes.rs"
+    },
+    {
+      "id": "allternit/cmd/allternit-api/src/coordinator_routes.rs",
+      "label": "coordinator_routes",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-api/src/coordinator_routes.rs"
+    },
+    {
+      "id": "allternit/cmd/gizzi-code/src/runtime/tools/builtins/project-status.ts",
+      "label": "project-status",
+      "kind": "module",
+      "path": "allternit/cmd/gizzi-code/src/runtime/tools/builtins/project-status.ts"
+    },
+    {
+      "id": "allternit-ai/src/lib/bots/templates",
+      "label": "templates",
+      "kind": "module",
+      "path": "allternit-ai/src/lib/bots/templates"
+    },
+    {
+      "id": "allternit-ai/src/components/projects/board",
+      "label": "board",
+      "kind": "module",
+      "path": "allternit-ai/src/components/projects/board"
+    },
+    {
+      "id": "allternit-ai/src/lib/projects/project-look.ts",
+      "label": "project-look",
+      "kind": "module",
+      "path": "allternit-ai/src/lib/projects/project-look.ts"
+    },
+    {
+      "id": "allternit-ai/src/lib/projects/project-board-data.ts",
+      "label": "project-board-data",
+      "kind": "module",
+      "path": "allternit-ai/src/lib/projects/project-board-data.ts"
+    },
+    {
+      "id": "allternit-ai/src/views/BaseProjectView.tsx",
+      "label": "BaseProjectView",
+      "kind": "module",
+      "path": "allternit-ai/src/views/BaseProjectView.tsx"
+    },
+    {
+      "id": "allternit-ai/src/views/project/workspace/ProjectCoordinatorWorkspace.tsx",
+      "label": "ProjectCoordinatorWorkspace",
+      "kind": "module",
+      "path": "allternit-ai/src/views/project/workspace/ProjectCoordinatorWorkspace.tsx"
+    },
+    {
+      "id": "allternit/cmd/allternit-api/migrations/V284__skill_use.sql",
+      "label": "V284__skill_use",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-api/migrations/V284__skill_use.sql"
     }
   ],
   "edges": [
@@ -972,6 +1123,24 @@
       "kind": "agent-chat stream records gizzi skill tool calls",
       "evidence": [
         "allternit/cmd/allternit-api/src/v1_routes.rs"
+      ]
+    },
+    {
+      "source": "allternit-ai/src/views/office/OfficeFloor.tsx",
+      "target": "external:allternit-facility",
+      "kind": "Hosted full-facility iframe, version-1 visitor bridge and live bot floor protocol",
+      "evidence": [
+        "allternit-ai/src/views/office/OfficeFloor.tsx",
+        "allternit/surfaces/docs/architecture/facility-workspace.mdx"
+      ]
+    },
+    {
+      "source": "allternit/surfaces/allternit-mobile/ios/Features/Office/Floor/OfficeFloorView.swift",
+      "target": "external:allternit-facility",
+      "kind": "Hosted full-facility iframe, version-1 visitor bridge and live bot floor protocol",
+      "evidence": [
+        "allternit/surfaces/allternit-mobile/ios/Features/Office/Floor/OfficeFloorView.swift",
+        "allternit/surfaces/docs/architecture/facility-workspace.mdx"
       ]
     }
   ]
