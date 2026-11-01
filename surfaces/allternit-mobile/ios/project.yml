@@ -156,6 +156,17 @@ targets:
         embed: true
       - target: AllternitScreen
         embed: true
+    postBuildScripts:
+      # The sherpa-onnx xcframework ships no dSYM, so an App Store upload warns
+      # "Upload Symbols Failed" for SherpaOnnxC and its crashes stay
+      # unsymbolicated. Write one from the embedded binary for archives.
+      - name: SherpaOnnxC dSYM
+        basedOnDependencyAnalysis: false
+        script: |
+          [ "$ACTION" = "install" ] || exit 0
+          BIN="$TARGET_BUILD_DIR/$FRAMEWORKS_FOLDER_PATH/SherpaOnnxC.framework/SherpaOnnxC"
+          [ -f "$BIN" ] || exit 0
+          xcrun dsymutil "$BIN" -o "$DWARF_DSYM_FOLDER_PATH/SherpaOnnxC.framework.dSYM" 2>&1 | grep -v "no debug symbols" || true
   # Gap 4 (Live Activities): local (non-push) ActivityKit widget for a
   # running Loop's iteration progress — see LoopLiveActivityManager.swift
   # (main target) and AllternitWidgets/LoopLiveActivity.swift (here).
