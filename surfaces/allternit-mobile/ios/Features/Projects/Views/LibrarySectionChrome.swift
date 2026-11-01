@@ -124,6 +124,7 @@ struct LibraryFloatingBar<NewMenu: View>: View {
     var onNew: (() -> Void)? = nil
     /// Menu items for New (the web's renderNew menus).
     @ViewBuilder var newMenu: () -> NewMenu
+    @State private var isNewMenuOpen = false
 
     @State private var open = false
     @FocusState private var focused: Bool
@@ -190,9 +191,14 @@ struct LibraryFloatingBar<NewMenu: View>: View {
     private var newButton: some View {
         let face = newFace
         if NewMenu.self != EmptyView.self {
-            Menu { newMenu() } label: { face }
+            // A Menu inside this floating overlay didn't open on tap; a dialog does.
+            Button { isNewMenuOpen = true } label: { face }
+                .buttonStyle(.plain)
                 .disabled(newDisabled)
                 .accessibilityLabel(newLabel)
+                .confirmationDialog(newLabel, isPresented: $isNewMenuOpen, titleVisibility: .hidden) {
+                    newMenu()
+                }
         } else {
             Button(action: { onNew?() }) { face }
                 .buttonStyle(.plain)

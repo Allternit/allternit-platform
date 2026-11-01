@@ -28,6 +28,7 @@ struct ArtifactsLibraryView: View {
     @State private var openArtifact: ArtifactV2Summary?
     @State private var studio: ArtifactStudioSession?
     @State private var notice: String?
+    @State private var deletingSession: ArtifactStudioSession?
     @State private var showingOfficeDocuments = false
     @State private var showingConnectors = false
     @State private var searchDraft = ""
@@ -74,6 +75,18 @@ struct ArtifactsLibraryView: View {
         .background(Color("BgPrimary").ignoresSafeArea())
         .fullScreenCover(item: $openArtifact) { summary in
             V2ArtifactView(artifactId: summary.id, initialTitle: summary.title)
+        }
+        .alert("Delete this \(deletingSession?.kind.noun.lowercased() ?? "artifact")?", isPresented: Binding(
+            get: { deletingSession != nil },
+            set: { if !$0 { deletingSession = nil } }
+        )) {
+            Button("Cancel", role: .cancel) { deletingSession = nil }
+            Button("Delete", role: .destructive) {
+                if let session = deletingSession { deleteEditorSession(session) }
+                deletingSession = nil
+            }
+        } message: {
+            Text("Its chat and file are deleted. People it's shared with lose access. This can't be undone.")
         }
         .fullScreenCover(item: $studio, onDismiss: { Task { await store.reload() } }) { session in
             ArtifactStudioView(studio: session)
@@ -531,38 +544,63 @@ struct ArtifactsLibraryView: View {
     }
 
     /// A Docs, Sheets, Slides or Design session: reopens its chat and editor.
+    /// The ⋯ beside it holds Delete.
     private func editorSessionRow(_ session: ArtifactStudioSession) -> some View {
-        Button {
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            studio = session
-        } label: {
-            HStack(spacing: 10) {
-                Image(session.kind.iconAsset)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: 24, height: 24)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(session.title)
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundColor(Color("TextPrimary"))
-                        .lineLimit(1)
-                    Text(session.kind.label)
-                        .font(.system(size: 12.5))
+        HStack(spacing: 4) {
+            Button {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                studio = session
+            } label: {
+                HStack(spacing: 10) {
+                    Image(session.kind.iconAsset)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 24, height: 24)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(session.title)
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundColor(Color("TextPrimary"))
+                            .lineLimit(1)
+                        Text(session.kind.label)
+                            .font(.system(size: 12.5))
+                            .foregroundColor(Color("TextTertiary"))
+                    }
+                    Spacer(minLength: 0)
+                    Text(libraryShortAgo(session.startedAt))
+                        .font(.system(size: 12).monospacedDigit())
                         .foregroundColor(Color("TextTertiary"))
                 }
-                Spacer(minLength: 0)
-                Text(libraryShortAgo(session.startedAt))
-                    .font(.system(size: 12).monospacedDigit())
-                    .foregroundColor(Color("TextTertiary"))
+                .padding(.leading, 12)
+                .frame(minHeight: 60)
+                .contentShape(Rectangle())
             }
-            .padding(.horizontal, 12)
-            .frame(minHeight: 60)
-            .background(Color("BgPanel"))
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Color("BorderSubtle"), lineWidth: 1))
-            .contentShape(Rectangle())
+            .buttonStyle(.plain)
+            Menu {
+                Button(role: .destructive) { deletingSession = session } label: { Label("Delete", systemImage: "trash") }
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundColor(Color("TextSecondary"))
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
+            }
+            .accessibilityLabel("More for \(session.title)")
+            .padding(.trailing, 4)
         }
-        .buttonStyle(.plain)
+        .background(Color("BgPanel"))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Color("BorderSubtle"), lineWidth: 1))
+    }
+
+    private func deleteEditorSession(_ session: ArtifactStudioSession) {
+        Task {
+            do {
+                try await launcher.delete(session)
+                _ = ShellSessionsStore.shared.remove(id: session.sessionId)
+            } catch {
+                notice = "Couldn't delete “\(session.title)”. \(FriendlyErrorMessage.from(error.localizedDescription))"
+            }
+        }
     }
 
     @ViewBuilder

@@ -307,6 +307,9 @@ pub struct UpdateRoutineRequest {
 
 #[derive(Debug, Deserialize)]
 pub struct CreateLoopRequest {
+    /// The zone its cron line reads in.
+    #[serde(default)]
+    pub timezone: Option<String>,
     pub name: String,
     pub schedule_type: String,
     pub schedule_expression: String,
@@ -334,6 +337,9 @@ pub struct CreateLoopRequest {
 
 #[derive(Debug, Deserialize)]
 pub struct UpdateLoopRequest {
+    /// The zone its cron line reads in.
+    #[serde(default)]
+    pub timezone: Option<String>,
     #[serde(default)]
     pub name: Option<String>,
     /// The agent that runs it; an empty string goes back to the default model.
@@ -2054,8 +2060,8 @@ async fn create_loop(
     })?;
 
     conn.execute(
-        "INSERT INTO loops (id, user_id, workspace_id, agent_id, goal_id, gizzi_job_id, session_id, name, description, status, schedule_type, schedule_expression, execution_domain, config, tags, metadata, expires_at, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
+        "INSERT INTO loops (id, user_id, workspace_id, agent_id, goal_id, gizzi_job_id, session_id, name, description, status, schedule_type, schedule_expression, execution_domain, config, tags, metadata, expires_at, created_at, updated_at, timezone)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
         params![
             &loop_item.id,
             &loop_item.user_id,
@@ -2076,6 +2082,7 @@ async fn create_loop(
             &loop_item.expires_at,
             &loop_item.created_at,
             &loop_item.updated_at,
+            req.timezone.as_ref(),
         ],
     )
     .map_err(|e| {
@@ -2173,9 +2180,10 @@ async fn update_loop(
             updated_at = ?11,
             agent_id = CASE WHEN ?14 IS NULL THEN agent_id ELSE NULLIF(?14, '') END,
             goal_id = CASE WHEN ?15 IS NULL THEN goal_id ELSE NULLIF(?15, '') END,
+            timezone = COALESCE(?16, timezone),
             -- A schedule, status or domain change restarts the local cursor from
             -- the new definition; a new schedule also re-arms a one-shot that ran.
-            next_run_at = CASE WHEN ?3 IS NOT NULL OR ?4 IS NOT NULL OR ?5 IS NOT NULL OR ?6 IS NOT NULL
+            next_run_at = CASE WHEN ?3 IS NOT NULL OR ?4 IS NOT NULL OR ?5 IS NOT NULL OR ?6 IS NOT NULL OR ?16 IS NOT NULL
                                THEN NULL ELSE next_run_at END,
             last_run_at = CASE WHEN ?4 IS NOT NULL OR ?5 IS NOT NULL THEN NULL ELSE last_run_at END
          WHERE id = ?12 AND user_id = ?13",
@@ -2197,6 +2205,7 @@ async fn update_loop(
             &user.user_id,
             req.agent_id.as_ref(),
             req.goal_id.as_ref(),
+            req.timezone.as_ref(),
         ),
     )
     .map_err(|e| {

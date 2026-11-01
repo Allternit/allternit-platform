@@ -54,7 +54,7 @@
 //!   `disabled`. Occurrences missed while the computer slept aren't recorded:
 //!   a loop just runs again on waking. Each due loop runs in its own task.
 
-use chrono::{DateTime, Offset, Utc};
+use chrono::{DateTime, Offset, TimeZone, Utc};
 use rusqlite::{params, OptionalExtension};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
@@ -86,22 +86,26 @@ const META: &str = "CASE WHEN json_valid(metadata) THEN metadata ELSE '{}' END";
 // ─── Schedule ───────────────────────────────────────────────────────────────
 
 /// Next run strictly after `after`, or `None` when the routine is not
-/// tick-scheduled (manual, or a one-shot that already ran).
-pub fn next_run(schedule_type: &str, expression: &str, after: DateTime<Utc>, first: bool) -> Option<DateTime<Utc>> {
+/// tick-scheduled (manual, or a one-shot that already ran). A cron line reads
+/// in the task's saved timezone, or this runtime's zone when it has none.
+pub fn next_run(schedule_type: &str, expression: &str, after: DateTime<Utc>, first: bool, timezone: Option<&str>) -> Option<DateTime<Utc>> {
     match schedule_type {
         "interval" => {
             let secs = crate::automation_routes::parse_interval_seconds(expression)?;
             (secs > 0).then(|| after + chrono::Duration::seconds(secs))
         }
-        "cron" => {
-            // cron_lite evaluates fields in UTC; shift so "0 9 * * *" means
-            // 9:00 in this runtime's local zone.
-            let offset = chrono::Local::now().offset().fix().local_minus_utc() as i64;
-            let shifted = after + chrono::Duration::seconds(offset);
-            crate::cron_lite::next_run_after(expression, shifted)
-                .ok()
-                .map(|t| t - chrono::Duration::seconds(offset))
-        }
+        "cron" => match timezone.and_then(|t| t.parse::<chrono_tz::Tz>().ok()) {
+            Some(zone) => next_cron_in_zone(expression, after, zone),
+            None => {
+                // cron_lite evaluates fields in UTC; shift so "0 9 * * *" means
+                // 9:00 in this runtime's local zone.
+                let offset = chrono::Local::now().offset().fix().local_minus_utc() as i64;
+                let shifted = after + chrono::Duration::seconds(offset);
+                crate::cron_lite::next_run_after(expression, shifted)
+                    .ok()
+                    .map(|t| t - chrono::Duration::seconds(offset))
+            }
+        },
         "once" if first => Some(
             DateTime::parse_from_rfc3339(expression.trim())
                 .map(|t| t.with_timezone(&Utc))
@@ -109,6 +113,27 @@ pub fn next_run(schedule_type: &str, expression: &str, after: DateTime<Utc>, fir
         ),
         _ => None,
     }
+}
+
+/// cron_lite reads fields in UTC, so it is handed wall-clock time in `zone`.
+/// A time the clocks skip runs an hour on; one they repeat runs the first time.
+fn next_cron_in_zone(expression: &str, after: DateTime<Utc>, zone: chrono_tz::Tz) -> Option<DateTime<Utc>> {
+    let mut wall = after.with_timezone(&zone).naive_local().and_utc();
+    // Bounded: only a DST change can make a wall-clock match fall at or before `after`.
+    for _ in 0..4 {
+        let next = crate::cron_lite::next_run_after(expression, wall).ok()?;
+        let local = next.naive_utc();
+        let at = zone
+            .from_local_datetime(&local)
+            .earliest()
+            .or_else(|| zone.from_local_datetime(&(local + chrono::Duration::hours(1))).earliest())
+            .map(|t| t.with_timezone(&Utc));
+        if let Some(at) = at.filter(|t| *t > after) {
+            return Some(at);
+        }
+        wall = next;
+    }
+    None
 }
 
 // ─── Stored routine (the columns this scheduler needs) ─────────────────────
@@ -152,12 +177,14 @@ pub struct LocalRoutine {
     pub next_run_at: Option<String>,
     /// Seconds a run may take before it is cut off (`routines.timeout_seconds`; default [`DEFAULT_TIMEOUT_SECS`]).
     pub timeout_seconds: Option<i64>,
+    /// The saved zone its cron line reads in.
+    pub timezone: Option<String>,
     /// How late a scheduled run started, set by [`claim_due`] when it ran past its grace period.
     pub late_by_ms: Option<i64>,
 }
 
 const COLS: &str = "id, user_id, agent_id, name, description, schedule_type, schedule_expression, \
-                    config, metadata, next_run_at, timeout_seconds";
+                    config, metadata, next_run_at, timeout_seconds, timezone";
 
 fn map_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<LocalRoutine> {
     let parse = |s: Option<String>| s.and_then(|s| serde_json::from_str(&s).ok()).unwrap_or(Value::Null);
@@ -174,13 +201,14 @@ fn map_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<LocalRoutine> {
         metadata: parse(row.get(8)?),
         next_run_at: row.get(9)?,
         timeout_seconds: row.get(10)?,
+        timezone: row.get(11)?,
         late_by_ms: None,
     })
 }
 
 /// `COLS` for `loops`: a loop has no timeout of its own, so the default applies.
 const LOOP_COLS: &str = "id, user_id, agent_id, name, description, schedule_type, schedule_expression, \
-                         config, metadata, next_run_at, NULL";
+                         config, metadata, next_run_at, NULL, timezone";
 
 fn map_loop_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<LocalRoutine> {
     map_row(row).map(|r| LocalRoutine { kind: TaskKind::Loop, ..r })
@@ -230,22 +258,22 @@ pub fn get_routine(db: &DbHandle, id: &str) -> rusqlite::Result<Option<LocalRout
 fn backfill(db: &DbHandle, now: DateTime<Utc>) -> rusqlite::Result<()> {
     let conn = db.connect()?;
     flag_agentless(&conn)?;
-    let pending: Vec<(String, String, String, Option<String>)> = {
+    let pending: Vec<(String, String, String, Option<String>, Option<String>)> = {
         let mut stmt = conn.prepare(&format!(
-            "SELECT id, schedule_type, schedule_expression, last_run_at FROM routines
+            "SELECT id, schedule_type, schedule_expression, last_run_at, timezone FROM routines
              WHERE execution_domain = 'local' AND status = 'active' AND next_run_at IS NULL
                AND {HAS_AGENT}
                AND schedule_type IN ('interval', 'cron', 'once')"
         ))?;
-        let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?;
+        let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))?;
         rows.filter_map(Result::ok).collect()
     };
-    for (id, kind, expr, last_run) in pending {
+    for (id, kind, expr, last_run, timezone) in pending {
         // A one-shot that already ran stays unscheduled.
         if kind == "once" && last_run.is_some() {
             continue;
         }
-        if let Some(next) = next_run(&kind, &expr, now, true) {
+        if let Some(next) = next_run(&kind, &expr, now, true, timezone.as_deref()) {
             conn.execute(
                 "UPDATE routines SET next_run_at = ?2 WHERE id = ?1 AND next_run_at IS NULL",
                 params![id, next.to_rfc3339()],
@@ -331,7 +359,7 @@ fn claim_due(db: &DbHandle, now: DateTime<Utc>) -> rusqlite::Result<Vec<LocalRou
     };
     let mut claimed = Vec::new();
     for r in due {
-        let next = next_run(&r.schedule_type, &r.schedule_expression, now, false).map(|t| t.to_rfc3339());
+        let next = next_run(&r.schedule_type, &r.schedule_expression, now, false, r.timezone.as_deref()).map(|t| t.to_rfc3339());
         let changed = conn.execute(
             "UPDATE routines SET next_run_at = ?2 WHERE id = ?1 AND next_run_at = ?3",
             params![r.id, next, r.next_run_at],
@@ -340,7 +368,7 @@ fn claim_due(db: &DbHandle, now: DateTime<Utc>) -> rusqlite::Result<Vec<LocalRou
             let mut r = r;
             if let Some(due_at) = r.next_run_at.as_deref().and_then(|t| DateTime::parse_from_rfc3339(t).ok()).map(|t| t.with_timezone(&Utc)) {
                 let late = now - due_at;
-                let interval = next_run(&r.schedule_type, &r.schedule_expression, due_at, false).map_or(0, |t| (t - due_at).num_seconds());
+                let interval = next_run(&r.schedule_type, &r.schedule_expression, due_at, false, r.timezone.as_deref()).map_or(0, |t| (t - due_at).num_seconds());
                 let grace = chrono::Duration::seconds(MIN_GRACE_SECS.max(interval / 10));
                 if late > grace {
                     r.late_by_ms = Some(late.num_milliseconds());
@@ -385,20 +413,20 @@ fn expire_loops(db: &DbHandle, now: DateTime<Utc>) -> rusqlite::Result<usize> {
 /// Give every active local loop without a cursor its first run time.
 fn backfill_loops(db: &DbHandle, now: DateTime<Utc>) -> rusqlite::Result<()> {
     let conn = db.connect()?;
-    let pending: Vec<(String, String, String, Option<String>)> = {
+    let pending: Vec<(String, String, String, Option<String>, Option<String>)> = {
         let mut stmt = conn.prepare(
-            "SELECT id, schedule_type, schedule_expression, last_run_at FROM loops
+            "SELECT id, schedule_type, schedule_expression, last_run_at, timezone FROM loops
              WHERE execution_domain = 'local' AND status = 'active' AND next_run_at IS NULL
                AND schedule_type IN ('interval', 'cron', 'once')",
         )?;
-        let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?;
+        let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))?;
         rows.filter_map(Result::ok).collect()
     };
-    for (id, kind, expr, last_run) in pending {
+    for (id, kind, expr, last_run, timezone) in pending {
         if kind == "once" && last_run.is_some() {
             continue;
         }
-        if let Some(next) = next_run(&kind, &expr, now, true) {
+        if let Some(next) = next_run(&kind, &expr, now, true, timezone.as_deref()) {
             conn.execute(
                 "UPDATE loops SET next_run_at = ?2 WHERE id = ?1 AND next_run_at IS NULL",
                 params![id, next.to_rfc3339()],
@@ -424,7 +452,7 @@ fn claim_due_loops(db: &DbHandle, now: DateTime<Utc>) -> rusqlite::Result<Vec<Lo
     };
     let mut claimed = Vec::new();
     for r in due {
-        let next = next_run(&r.schedule_type, &r.schedule_expression, now, false).map(|t| t.to_rfc3339());
+        let next = next_run(&r.schedule_type, &r.schedule_expression, now, false, r.timezone.as_deref()).map(|t| t.to_rfc3339());
         let changed = conn.execute(
             "UPDATE loops SET next_run_at = ?2 WHERE id = ?1 AND next_run_at = ?3",
             params![r.id, next, r.next_run_at],
@@ -459,7 +487,7 @@ fn record_missed(conn: &rusqlite::Connection, r: &LocalRoutine, due_at: DateTime
     let mut t = due_at;
     while t <= now && occurrences.len() <= MISSED_ROWS_CAP {
         occurrences.push(t);
-        match next_run(&r.schedule_type, &r.schedule_expression, t, false) {
+        match next_run(&r.schedule_type, &r.schedule_expression, t, false, r.timezone.as_deref()) {
             Some(n) => t = n,
             None => break,
         }
@@ -1629,13 +1657,23 @@ mod tests {
     #[test]
     fn schedule_math() {
         let t = DateTime::parse_from_rfc3339("2026-09-27T10:00:00Z").unwrap().with_timezone(&Utc);
-        assert_eq!(next_run("interval", "30m", t, false), Some(t + chrono::Duration::minutes(30)));
-        assert_eq!(next_run("interval", "bogus", t, false), None);
-        assert_eq!(next_run("manual", "", t, true), None);
-        assert_eq!(next_run("once", "", t, true), Some(t));
-        assert_eq!(next_run("once", "", t, false), None);
-        let later = next_run("cron", "0 9 * * *", t, false).unwrap();
+        assert_eq!(next_run("interval", "30m", t, false, None), Some(t + chrono::Duration::minutes(30)));
+        assert_eq!(next_run("interval", "bogus", t, false, None), None);
+        assert_eq!(next_run("manual", "", t, true, None), None);
+        assert_eq!(next_run("once", "", t, true, None), Some(t));
+        assert_eq!(next_run("once", "", t, false, None), None);
+        let later = next_run("cron", "0 9 * * *", t, false, None).unwrap();
         assert!(later > t && later - t <= chrono::Duration::days(1));
+        // Saved zone: Saturday 10:30 in Chicago, due 15:00 there today, not next week.
+        let sat = DateTime::parse_from_rfc3339("2026-10-31T15:30:00Z").unwrap().with_timezone(&Utc);
+        let expect = DateTime::parse_from_rfc3339("2026-10-31T20:00:00Z").unwrap().with_timezone(&Utc);
+        assert_eq!(next_run("cron", "0 15 * * 6", sat, false, Some("America/Chicago")), Some(expect));
+        // On the morning the US clocks change, 9:00 stays 9:00 on the wall.
+        let before = DateTime::parse_from_rfc3339("2026-11-01T14:30:00Z").unwrap().with_timezone(&Utc);
+        let after_dst = DateTime::parse_from_rfc3339("2026-11-01T15:00:00Z").unwrap().with_timezone(&Utc);
+        assert_eq!(next_run("cron", "0 9 * * *", before, false, Some("America/Chicago")), Some(after_dst));
+        // An unknown zone falls back to this runtime's.
+        assert!(next_run("cron", "0 9 * * *", t, false, Some("Not/AZone")).is_some());
         assert_eq!(fnv1a_hex("a"), "e40c292c");
         assert_eq!(routine_turn("[bot:Ledger] Month close", "x"), "[routine: Month close] x");
         assert_eq!(routine_turn("Weekly report", "x"), "[routine: Weekly report] x");

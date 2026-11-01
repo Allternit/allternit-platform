@@ -275,6 +275,108 @@
       "label": "skill use",
       "kind": "module",
       "path": "allternit/cmd/allternit-api/src/skill_use.rs"
+    },
+    {
+      "id": "allternit/cmd/allternit-api/src/agent_workspace_routes.rs",
+      "label": "agent workspace routes",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-api/src/agent_workspace_routes.rs"
+    },
+    {
+      "id": "allternit/cmd/allternit-api/src/v1_routes.rs",
+      "label": "v1 routes",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-api/src/v1_routes.rs"
+    },
+    {
+      "id": "allternit/cmd/allternit-cloud-api/src/routes/platform_v1",
+      "label": "platform v1",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-cloud-api/src/routes/platform_v1"
+    },
+    {
+      "id": "allternit/cmd/allternit-cloud-api/src/routes/bot_email.rs",
+      "label": "bot email",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-cloud-api/src/routes/bot_email.rs"
+    },
+    {
+      "id": "allternit/cmd/allternit-api/src/email_otp.rs",
+      "label": "email otp",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-api/src/email_otp.rs"
+    },
+    {
+      "id": "allternit-ai/src/pages/AppEditorPage.tsx",
+      "label": "AppEditorPage",
+      "kind": "module",
+      "path": "allternit-ai/src/pages/AppEditorPage.tsx"
+    },
+    {
+      "id": "allternit/surfaces/allternit-mobile/ios/Features/Bots/BotProjectPage.swift",
+      "label": "BotProjectPage",
+      "kind": "module",
+      "path": "allternit/surfaces/allternit-mobile/ios/Features/Bots/BotProjectPage.swift"
+    },
+    {
+      "id": "allternit/surfaces/allternit-mobile/ios/Features/Automation/Views/AutomationSchedulerView.swift",
+      "label": "AutomationSchedulerView",
+      "kind": "module",
+      "path": "allternit/surfaces/allternit-mobile/ios/Features/Automation/Views/AutomationSchedulerView.swift"
+    },
+    {
+      "id": "allternit/cmd/allternit-api/src/floor_routes.rs",
+      "label": "floor routes",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-api/src/floor_routes.rs"
+    },
+    {
+      "id": "allternit/cmd/allternit-cloud-api/src/routes/floor_shares.rs",
+      "label": "floor shares",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-cloud-api/src/routes/floor_shares.rs"
+    },
+    {
+      "id": "allternit/surfaces/docs/guides/office-view.mdx",
+      "label": "office-view",
+      "kind": "module",
+      "path": "allternit/surfaces/docs/guides/office-view.mdx"
+    },
+    {
+      "id": "allternit-ai/src/components/threads/ThreadComposer.tsx",
+      "label": "ThreadComposer",
+      "kind": "module",
+      "path": "allternit-ai/src/components/threads/ThreadComposer.tsx"
+    },
+    {
+      "id": "allternit-ai/src/views/chat/ChatComposer.tsx",
+      "label": "ChatComposer",
+      "kind": "module",
+      "path": "allternit-ai/src/views/chat/ChatComposer.tsx"
+    },
+    {
+      "id": "allternit-ai/src/shell/ShellApp.tsx",
+      "label": "ShellApp",
+      "kind": "module",
+      "path": "allternit-ai/src/shell/ShellApp.tsx"
+    },
+    {
+      "id": "allternit-ai/src/fabric-session/PhoneProviders.tsx",
+      "label": "PhoneProviders",
+      "kind": "module",
+      "path": "allternit-ai/src/fabric-session/PhoneProviders.tsx"
+    },
+    {
+      "id": "allternit-ai/src/components/bots/stage/backdrop/StageBackdropPicker.tsx",
+      "label": "StageBackdropPicker",
+      "kind": "module",
+      "path": "allternit-ai/src/components/bots/stage/backdrop/StageBackdropPicker.tsx"
+    },
+    {
+      "id": "allternit-ai/src/views/settings/DeleteAccountSection.tsx",
+      "label": "DeleteAccountSection",
+      "kind": "module",
+      "path": "allternit-ai/src/views/settings/DeleteAccountSection.tsx"
     }
   ],
   "edges": [
