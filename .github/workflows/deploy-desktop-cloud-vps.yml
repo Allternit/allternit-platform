@@ -60,7 +60,7 @@ jobs:
             "--banner:js=import{createRequire as __oeCreateRequire}from'node:module';const require=__oeCreateRequire(import.meta.url);"
           cd ../..
           echo '{"name":"@allternit/office-engine-bundled","private":true,"type":"module"}' > office-engine-release/engine/package.json
-          cp platform/packages/office-xlsx-engine/crate/target/release/allternit-xlsx-sidecar office-engine-release/bin/
+          cp target/release/allternit-xlsx-sidecar office-engine-release/bin/
           tar -czf office-engine.tar.gz -C office-engine-release .
 
       - name: Check VPS secrets
