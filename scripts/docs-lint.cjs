@@ -225,6 +225,8 @@ for (const mdxPath of collectMdxFiles(DOCS_DIR)) {
       // The phone add-ons ship as a Claude Code plugin and a Codex skill, and the MCP servers page
       // points to them; both have to name those clients and their install commands.
       if (['api/platform/sdks/claude-code-codex.mdx', 'api/mcp-servers.mdx'].some((p) => mdxPath.endsWith(p))) continue;
+      // The chat bridge reads `.claude/CLAUDE.md` by name; the Skills note names Claude CLI brains and their own skills.
+      if (['api/bot-hub.mdx', 'guides/memory-and-learning.mdx'].some((p) => mdxPath.endsWith(p))) continue;
       fail(
         `competitor mention in ${path.relative(ROOT, mdxPath)}:${i + 1}: ${line.trim()}`
       );
