@@ -161,3 +161,17 @@ The implementation also prevents delayed event references from exposing a held t
 Integrated the reviewed source onto UI main `c8198aeb280ca19af0d95d40d146cbe9277cd8bd` and platform main `c3a88eb9ae6e6913691f1581e9ab4f7f32a0d8c9`. Resolved the runtime-links conflict by retaining current Office records and adding the answer-policy edge. The fresh trees are `allternit-ai-genui-release-20261102` and `allternit-genui-release-20261102`, branch `session/genui-release-20261102`. Factory tracking is `dag:dag_491381` (`wih:wih_6268`, verification `wih:wih_8628`).
 
 The initial shared dependency links were stale. A frozen, script-free pnpm install in the owned UI tree restored the declared packages and the full pinned typecheck passed. The Desktop release preflight misread the existing four-variable Apple/keychain destructuring; its credential-presence pattern now accepts the same required three keys with additional variables. No notarization policy changed. The preflight passes 58 checks. Publication still requires the exact deployment preview and subsequent approval.
+
+## Released and verified — 2026-11-02
+
+Eoj approved the coordinated release after the command preview. UI PR #937, platform PR #2043 and the runtime metadata type fix #2044 merged. The released UI is `1df83e37de4d6c5afaf758c920e0152a405360ff`; the runtime source is `0f563cce31e4e8c272800f1f040fdcc631fd6677`.
+
+- Workspace, bots and phone PWA deployments serve the merged UI; their public roots and app entry scripts return HTTP 200. The phone source receipt matches the UI commit.
+- Docs and both API deployment workflows succeeded. The API suite passed 2,957 tests, with 12 existing ignored cases; its fresh-database boot check and deployed health check passed.
+- Gizzi 2.2.16 was published for all five platforms by workflow `41407117304`. Homebrew tap PR #4 carries its verified platform hashes.
+- Signed runtime feeds are `r20261102.0733-0f563cc-770` (Darwin arm64) and `r20261102.0733-0f563cc-961` (Linux x64). Both signatures, source commits, manifest hashes and required objects were verified. Both contain the same UI commit.
+- Each compiled Gizzi runtime passed correction with tools disabled, terminal validation failure, and Text only against a local vendor fixture. Both compiled APIs booted on isolated fresh databases. The Mac applied the new runtime through a normal restart and confirmed healthy; its served UI receipt matches the release.
+
+The UI suite passed 444 tests with clean dependencies; the full UI and runtime typechecks passed. Fourteen real-runtime enforcement scenarios passed in CI with production feature flags. Browser automation was unavailable and native accessibility inspection timed out after relaunch, so a fresh visual pass across signed-in Desktop and phone remains unverified. Unsupported external paths remain outside the required-card policy.
+
+The local Mac Factory build encountered an Xcode/Zig compatibility failure. Its matching Factory binary came from the successful official release build at the same source commit. Local Homebrew CLI activation remains blocked by its outdated Command Line Tools check; the installed Desktop runtime is already updated independently.
