@@ -2,7 +2,6 @@
 title: Computers, ACI, and connected tools
 description: Understand a bot computer, the Sessions computer, MCP tools, and interactive app results.
 ---
-
 **ACI** means Allternit Computer Interface. It is the surface for observing and interacting with a computer used by an agent. A computer, a connector, and an MCP App supply different capabilities.
 
 | Resource | Purpose |
@@ -144,3 +143,12 @@ Your computer tells the cloud it is awake every minute. If it goes quiet, Allter
 
 Each alert closes by itself when your computer comes back. If the status can't be loaded, the list shows the computer's last known status instead of guessing.
 
+## Linux memory-drive troubleshooting
+
+Allternit Desktop on Linux requires Git. The Debian package declares this
+dependency. If an older cloud-computer image shows “Memory storage is unavailable”
+and its kernel log reports `memory drive io error: No such file or directory`,
+check that `git --version` works inside that computer. Install a missing Git
+package with `apt-get install -y --no-install-recommends git`, then retry the
+memory activity request. This repair does not require deleting memory data or
+restarting Desktop.

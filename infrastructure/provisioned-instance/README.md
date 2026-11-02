@@ -11,6 +11,19 @@
 
 ## Bootstrap contract (A2) — what the Desktop app reads
 
+### Linux runtime dependency: Git
+
+The Desktop Debian package requires `git`. Memory drives use the Git executable
+to initialize and read their repositories. A guest without Git returns HTTP 500
+from `/api/v1/memory/drive/activity`, with `memory drive io error: No such file
+or directory` in the Desktop kernel log.
+
+For an existing affected guest, install Git with the guest's package manager:
+`apt-get install -y --no-install-recommends git`. No Desktop restart or database
+reset is required. Verify `git --version` and then call the memory activity
+endpoint through the authenticated runtime relay; expect HTTP 200. Include Git
+when updating the cloud-computer base image and verify it before publication.
+
 On create, the provisioning service mints a one-time token (24 random chars;
 only its sha256 is stored, in `provisioned_instances.pairing_code_hash`) and
 writes it into the container **before first start** at:

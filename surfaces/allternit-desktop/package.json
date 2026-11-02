@@ -491,6 +491,7 @@
     },
     "deb": {
       "depends": [
+        "git",
         "libgtk-3-0",
         "libnotify4",
         "libnss3",
