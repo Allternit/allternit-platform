@@ -82,7 +82,7 @@ export class AnswerTurnGuard {
     this.attempts++;
     const status = checked.valid ? 'accepted' : allowRepair && this.repairs < 1 ? 'repairing' : 'rejected';
     if (status === 'repairing') this.repairs++;
-    const record = { version: 1 as const, selected: this.policy.mode === 'template' ? this.policy.template : undefined, returned: checked.returned, status, attempt: this.attempts, problems: checked.problems };
+    const record: NonNullable<MessageV2.Assistant['answerPolicy']> = { version: 1, selected: this.policy.mode === 'template' ? this.policy.template : undefined, returned: checked.returned, status, attempt: this.attempts, problems: checked.problems };
     SessionTrace.append({ sessionID: message.sessionID, messageID: message.id, kind: 'answer.validation', data: SecretRedactor.deep({
       ...record, responseHash: createHash('sha256').update(text.slice(0, ANSWER_POLICY_MAX_CHARS)).digest('hex'),
       ...(!checked.valid ? { rejectedText: text.slice(0, ANSWER_POLICY_MAX_CHARS), truncated: text.length > ANSWER_POLICY_MAX_CHARS } : {}),
