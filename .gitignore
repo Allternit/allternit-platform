@@ -9,6 +9,7 @@ services/vault-viewer/server/public/
 dist/
 dist-bundle/
 target/
+.shared-target/
 .DS_Store
 .beads/
 *.log
