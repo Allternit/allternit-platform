@@ -118,3 +118,17 @@ Validation entry points:
   account scoping, handshake, appearance/action separation and compact route.
 - `scripts/test-workspace-bridge.mjs` retains the legacy compact-floor protocol
   regression; `test-owned-avatar-model.mjs` checks resource lifetime.
+
+## Older iPhone Office compatibility
+
+TestFlight build 13 still requests `?embed=workspace&ui=office&actions=chat`.
+The native route change to `?embed=facility` landed afterward in platform PR
+#2035. The remote compatibility drawer fix can reach older apps through a
+facility-site deploy; main-avatar selection and roaming need the newer native
+route. Do not use a web deploy as proof that a new TestFlight build shipped.
+
+In the legacy Office, `officePanelOpen` controls both panel visibility and the
+camera view offset. Phones start closed; desktop starts open. Bot selection
+opens the panel. The close control and Escape hide it without clearing the
+selected bot or draft. `chrome=none` remains controlled by its host and does
+not render an extra panel or trigger. Breakpoint changes update the layout.
