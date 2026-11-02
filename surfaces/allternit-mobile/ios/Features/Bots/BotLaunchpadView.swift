@@ -73,7 +73,13 @@ struct BotLaunchpadView: View {
             }
         }
         .sheet(isPresented: $isNewBotPresented) {
-            NewBotSheet(onBrowseTemplates: { isTemplatesPresented = true }) { _ in Task { await refresh() } }
+            NewBotSheet(onBrowseTemplates: { isTemplatesPresented = true }) { outcome in
+                // A new bot opens straight into its first thread (useCreateBotSubmit).
+                Task {
+                    await refresh()
+                    if let botId = outcome.botIds.first { store.pendingOpenBotId = botId }
+                }
+            }
         }
         .sheet(isPresented: $isTemplatesPresented) {
             AgentTemplateSheet(onConfirm: createFromTemplate)

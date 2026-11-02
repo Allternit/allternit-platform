@@ -1,0 +1,12 @@
+{
+  "images": [
+    {
+      "filename": "weatherbit.png",
+      "idiom": "universal"
+    }
+  ],
+  "info": {
+    "author": "xcode",
+    "version": 1
+  }
+}

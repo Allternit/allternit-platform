@@ -252,6 +252,16 @@ struct TeachDraft: Equatable {
                             required: true, format: "", root: "", secretRef: "", choices: "", raw: [:]))
     }
 
+    /// "Add input" from a step's unknown placeholder: named for it, labelled
+    /// from the name (`order_no` → "Order no").
+    mutating func addInput(named name: String) {
+        guard !inputs.contains(where: { $0.name == name }) else { return }
+        let words = name.replacingOccurrences(of: "[_.-]+", with: " ", options: .regularExpression)
+        let label = words.prefix(1).uppercased() + words.dropFirst()
+        inputs.append(Input(id: UUID(), name: name, label: label, example: "", type: "text",
+                            required: true, format: "", root: "", secretRef: "", choices: "", raw: [:]))
+    }
+
     mutating func moveStep(at index: Int, by delta: Int) {
         let to = index + delta
         guard steps.indices.contains(index), steps.indices.contains(to) else { return }
@@ -317,11 +327,25 @@ struct TeachDraft: Equatable {
 }
 
 /// A recording not analyzed into a skill yet (`SiteApiContract`).
+///
+/// `GET /contracts` sends only `{ id, domain, source, derived_at }`
+/// (db.rs `list_capture_contracts`); `endpoints` comes with
+/// `GET /contracts/:id`, so it is optional here. Requiring it made every
+/// list fail to decode and the recordings vanish.
 struct TeachContract: Decodable, Sendable, Identifiable, Equatable {
     struct Endpoint: Decodable, Sendable, Equatable { let id: String }
     let id: String
     let domain: String
     let endpoints: [Endpoint]
+
+    private enum CodingKeys: String, CodingKey { case id, domain, endpoints }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        domain = ((try? c.decodeIfPresent(String.self, forKey: .domain)) ?? nil) ?? ""
+        endpoints = ((try? c.decodeIfPresent([Endpoint].self, forKey: .endpoints)) ?? nil) ?? []
+    }
 }
 
 // MARK: - Prompt (teach-prompt.ts / teach-format.ts)
@@ -576,6 +600,12 @@ private extension String {
 
 /// Teach skills and recordings: `/api/har-derived-api/*` on allternit-api
 /// (mounted under `/api`, not the `/api/v1` router).
+///
+/// These routes live only on the person's own computer. cloud-api answers 404
+/// for them (its data-plane fallback relays `/api/v1/*` only), so every call
+/// goes through the runtime relay, the way the web does
+/// (api-client.ts `isRuntimeOnlyPath`). With no computer the call throws
+/// `RuntimeRelayError.noComputer`.
 struct TeachClient: Sendable {
     static let shared = TeachClient()
 
@@ -596,15 +626,17 @@ struct TeachClient: Sendable {
     private func call(_ path: String, method: String = "GET", body: Data? = nil) async throws -> Data {
         var request = try await client.authorizedRequest(url: root.appendingPathComponent(path), method: method)
         request.httpBody = body
-        let (data, response) = try await client.send(request)
+        let (data, response) = try await InstanceConnection.runtimeAPIData(for: request, session: client.session)
         try client.validate(response, data: data)
         return data
     }
 
+    /// Newest first, as the web sorts them (teach-store.ts `sortSkills`). A
+    /// body with no `skills` key is an error, not an empty list.
     func listSkills() async throws -> [TeachSkill] {
-        struct Response: Decodable { let skills: [[String: JSONValue]]? }
+        struct Response: Decodable { let skills: [[String: JSONValue]] }
         let response = try JSONDecoder().decode(Response.self, from: try await call("teach/skills"))
-        return (response.skills ?? []).compactMap(TeachSkill.init(raw:))
+        return response.skills.compactMap(TeachSkill.init(raw:)).sorted { $0.updatedAt > $1.updatedAt }
     }
 
     @discardableResult
@@ -652,6 +684,12 @@ struct TeachClient: Sendable {
     func listContracts() async throws -> [TeachContract] {
         struct Response: Decodable { let contracts: [TeachContract]? }
         return (try JSONDecoder().decode(Response.self, from: try await call("contracts")).contracts) ?? []
+    }
+
+    /// One recording with its endpoints (`GET /contracts/:id`).
+    func contract(id: String) async throws -> TeachContract {
+        let escaped = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed.subtracting(CharacterSet(charactersIn: "/"))) ?? id
+        return try JSONDecoder().decode(TeachContract.self, from: try await call("contracts/\(escaped)"))
     }
 
     /// An imported .har → a contract (`POST /ingest`), then the model's

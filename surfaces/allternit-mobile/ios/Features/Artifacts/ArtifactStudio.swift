@@ -162,9 +162,8 @@ enum ArtifactStudioKind: String, CaseIterable, Identifiable, Sendable {
         case .sheets: return "data"
         case .slides: return "slides"
         case .design: return "website"
-        case .ops: return nil
-        case .dashboard: return "data"
-        case .motion: return nil
+        // These make their own kind: "data" is the Sheets contract.
+        case .ops, .dashboard, .motion: return nil
         case .page, .build: return "website"
         case .image: return "image"
         case .video: return "video"
@@ -209,7 +208,9 @@ enum ArtifactStudioKind: String, CaseIterable, Identifiable, Sendable {
 
     /// The session's standing instructions — the web's `artifactNoteBody`
     /// for an unbound binding, plus OWN_TOOLS_NOTE
-    /// (src/lib/artifact-session/artifact-session.ts).
+    /// (src/lib/artifact-session/artifact-session.ts). The kind's mode contract
+    /// comes first, as the web's `artifactSessionMetadata` puts it; a session
+    /// bound to an open editor uses `editorSystemPrompt` instead, which has none.
     func systemPrompt(title: String) -> String {
         let n = noun.lowercased()
         let note: String
@@ -225,8 +226,52 @@ enum ArtifactStudioKind: String, CaseIterable, Identifiable, Sendable {
         case .research:
             note = "## Artifact session\n\nThis session makes one \(n), titled \"\(title)\". Deliver it as an artifact the user can open beside this chat."
         }
-        return note + "\n\n" + Self.ownToolsNote
+        return [modeContract, note, Self.ownToolsNote].compactMap { $0 }.joined(separator: "\n\n")
     }
+
+    /// The contract for `modeId`, word for word from the web's
+    /// `AGENT_MODE_CONTRACTS` + `buildModeSystemPrompt`
+    /// (src/lib/agents/agent-mode-contracts.ts).
+    private var modeContract: String? {
+        let brief: String
+        let artifact: String
+        let capabilities: String
+        switch modeId {
+        case "research":
+            brief = "You are executing Deep Research mode. Search multiple authoritative sources, distinguish evidence from inference, attach citations to claims, reconcile conflicting sources, and create a structured research-report artifact. Do not answer from memory alone."
+            artifact = "research-report"
+            capabilities = "web_search, browser, file_write"
+        case "website":
+            brief = "You are executing Build mode. Produce a runnable website or app artifact with complete HTML/CSS/JS or framework files, responsive behavior, accessible interaction, and no placeholder sections. Validate the artifact structure before completion."
+            artifact = "website"
+            capabilities = "artifact_create, file_write"
+        case "docs":
+            brief = "You are executing Docs mode. Produce an editable structured document artifact—not only chat markdown—with headings, semantic sections, consistent styles, and the requested professional format. Validate completeness and exportability."
+            artifact = "document"
+            capabilities = "document_create, file_write"
+        case "data":
+            brief = "You are executing Sheets mode. Produce an editable spreadsheet artifact with typed cells, formulas where appropriate, source-data preservation, and charts or analysis requested by the user. Validate formulas, ranges, and missing-data behavior."
+            artifact = "spreadsheet"
+            capabilities = "spreadsheet_create, spreadsheet_formula, file_write"
+        case "slides":
+            brief = "You are executing Slides mode. Produce an editable presentation artifact with a coherent narrative, slide-specific layouts, visual hierarchy, and speaker-ready content. Validate slide count, overflow, and required sections."
+            artifact = "presentation"
+            capabilities = "presentation_create, file_write"
+        case "image":
+            brief = "You are executing Image mode. Make the image with the media_generate tool (kind \"image\"; its description explains the lanes and how to write a native image as svg, html or canvas code), check the rendered PNG it returns, and fix it if needed. Match the requested subject, composition, dimensions, and constraints. A textual image description is not completion."
+            artifact = "image"
+            capabilities = "media_generate"
+        case "video":
+            brief = "You are executing Video mode. Make the video with the media_generate tool (kind \"video\"; its description explains how to write a native video as a canvas scene with an optional score), check the contact sheet it returns, and fix the scene if needed. Return a playable video artifact with the requested duration and format. A storyboard, EDL, or prose description alone is not completion."
+            artifact = "video"
+            capabilities = "media_generate"
+        default:
+            return nil
+        }
+        return "<!--allternit-mode-contract-->\n\(brief)\n\(Self.completionLaw)\n\nMODE: \(modeId ?? "")\nREQUIRED ARTIFACT: \(artifact)\nREQUIRED CAPABILITIES: \(capabilities)\n<!--/allternit-mode-contract-->"
+    }
+
+    private static let completionLaw = "MODE EXECUTION LAW:\n- Do not claim completion from prose alone.\n- Produce the required artifact and use the required capabilities.\n- If a required capability or provider is unavailable, return MODE_EXECUTION_BLOCKED with the missing capability. Never simulate a successful artifact.\n- Preserve the user's requested format and validate the deliverable before reporting success.\n- End successful work with MODE_EXECUTION_COMPLETE and a concise artifact manifest."
 
     static let ownToolsNote = "The session tools named here (pane_artifact, media_generate, pane_browser) may be listed with a prefix, such as mcp__allternit__pane_artifact; they are the same tools. Do this session's work with them, in Allternit. Don't create or edit documents, images or files through outside connectors or services (claude.ai Docs, Google Drive, Notion, email and the like), and don't write a local file instead of changing what the user has open, unless the user explicitly asks for that."
 }
@@ -249,6 +294,8 @@ struct ArtifactStudioSession: Identifiable, Hashable, Sendable {
             return .office(product: product, artifactId: artifactId)
         }
         if let designProjectId { return .design(projectId: designProjectId, title: title) }
+        // A Dashboard, Page or the like the session already made, bound on the web.
+        if let artifactId { return .window(id: artifactId) }
         return nil
     }
 }
@@ -288,8 +335,9 @@ final class ArtifactStudioLauncher: ObservableObject {
 
     /// The standing instructions for a studio session; nil for any other.
     func systemPrompt(for sessionId: String?) -> String? {
-        guard let sessionId else { return nil }
-        return stored[sessionId]?.prompt
+        guard let sessionId, let s = stored[sessionId] else { return nil }
+        // Built fresh, so a session started on an older app gets today's prompt.
+        return ArtifactStudioKind(rawValue: s.kind)?.systemPrompt(title: s.title) ?? s.prompt
     }
 
     /// The studio session record for a session id, if it is one.
@@ -304,7 +352,7 @@ final class ArtifactStudioLauncher: ObservableObject {
     /// person gets back to one.
     var editorSessions: [ArtifactStudioSession] {
         stored.keys.compactMap { session(for: $0) }
-            .filter { $0.editorRoute != nil }
+            .filter { $0.kind.officeProduct != nil && $0.artifactId != nil || $0.designProjectId != nil }
             .sorted { $0.startedAt > $1.startedAt }
     }
 
@@ -425,11 +473,14 @@ final class ArtifactStudioLauncher: ObservableObject {
         case unlinked(noun: String)
     }
 
-    /// Whether opening this session needs a look at the server. Only sessions
-    /// on the surface studio sessions are made on, so a plain chat opens at once.
+    /// Whether opening this session needs a look at the server: the list row
+    /// names a binding (the web's sessions are on the chat surface), or it's on
+    /// the surface this app's are made on. A plain chat opens at once.
     func needsLookup(id: String) -> Bool {
         guard stored[id] == nil, !knownPlain.contains(id) else { return false }
-        guard let surface = ShellSessionsStore.shared.sessions.first(where: { $0.id == id })?.originSurface else { return true }
+        guard let row = ShellSessionsStore.shared.sessions.first(where: { $0.id == id }) else { return true }
+        if row.artifactSessionKind != nil { return true }
+        guard let surface = row.originSurface else { return true }
         return surface == "cowork" || surface.isEmpty
     }
 
@@ -454,8 +505,9 @@ final class ArtifactStudioLauncher: ObservableObject {
         if binding == nil, let kind = titled ?? moded {
             binding = await findRecord(kind: kind, started: started, window: titled != nil ? 300 : 120)
         }
-        guard let binding, let kind = ArtifactStudioKind(rawValue: binding.kind),
-              binding.artifactId != nil || binding.designProjectId != nil else {
+        // Any kind with a binding opens its session. Kinds with no file yet (an
+        // Image or Page that hasn't made anything) show their pane until it does.
+        guard let binding, let kind = ArtifactStudioKind(rawValue: binding.kind) else {
             // "data" and "website" also start dashboards and pages, which have no file to lose.
             if let lost = titled ?? (moded == .docs || moded == .slides ? moded : nil) { return .unlinked(noun: lost.noun.lowercased()) }
             knownPlain.insert(id)

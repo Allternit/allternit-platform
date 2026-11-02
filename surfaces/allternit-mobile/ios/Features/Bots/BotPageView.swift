@@ -19,6 +19,7 @@ struct BotPageView: View {
     @State private var routinesOn: Int? = nil
     @State private var channelNames: [String]? = nil
     @StateObject private var summary = BotSummaryModel()
+    @State private var isEditFormPresented = false
 
     /// The bot's own colour (given, or read from its art).
     private var accent: Color? {
@@ -39,6 +40,9 @@ struct BotPageView: View {
         .background { BotWashedBackground(color: .some(colors.hex(for: bot))).ignoresSafeArea() }
         .claimsBotTint(bot.id)
         .navigationBarTitleDisplayMode(.inline)
+        .sheet(isPresented: $isEditFormPresented) {
+            EditBotSheet(botId: bot.id) { Task { await store.refreshAll() } }
+        }
         .task {
             desktop.fetchStatusIfNeeded(botId: bot.id)
             async let counts: Void = loadCounts()
@@ -66,16 +70,18 @@ struct BotPageView: View {
                     .frame(maxWidth: 320)
                     .padding(.top, 2)
             }
-            Button { navigator.open(.settings(bot.id)) } label: {
-                Label("Edit", systemImage: "pencil")
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(Color("TextPrimary"))
-                    .padding(.horizontal, 16)
-                    .frame(minHeight: 36)
-                    .background(Capsule().fill(Color("BgPanel")))
-                    .overlay(Capsule().stroke(Color("BorderSubtle")))
+            HStack(spacing: 8) {
+                // The form Create bot uses, prefilled (web PhoneBotPage's Edit → EditBotForm).
+                Button { isEditFormPresented = true } label: {
+                    bannerAction("Edit bot", icon: "pencil")
+                }
+                .buttonStyle(.plain)
+                // Workspace files, identity and the rest of the bot's settings.
+                Button { navigator.open(.settings(bot.id)) } label: {
+                    bannerAction("Workspace", icon: "doc.text")
+                }
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
             .padding(.top, 10)
         }
         .padding(.horizontal, 14)
@@ -88,6 +94,17 @@ struct BotPageView: View {
                            startPoint: .top, endPoint: .bottom)
         )
         .overlay(alignment: .bottom) { Rectangle().fill(Color("BorderSubtle")).frame(height: 1) }
+    }
+
+    private func bannerAction(_ title: String, icon: String) -> some View {
+        Label(title, systemImage: icon)
+            .font(.system(size: 14, weight: .medium))
+            .foregroundColor(Color("TextPrimary"))
+            .padding(.horizontal, 16)
+            .frame(minHeight: 44)
+            .background(Capsule().fill(Color("BgPanel")))
+            .overlay(Capsule().stroke(Color("BorderSubtle")))
+            .contentShape(Capsule())
     }
 
     private var roleLine: String {

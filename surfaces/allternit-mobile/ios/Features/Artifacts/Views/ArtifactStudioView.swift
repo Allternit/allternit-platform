@@ -18,19 +18,43 @@ extension ArtifactStudioSession {
     }
 }
 
+/// What the chat shows before the first message in an artifact session
+/// (web ArtifactSessionEmptyState): the kind's picture and its headline.
+struct ArtifactSessionEmptyState: View {
+    let kind: ArtifactStudioKind
+
+    var body: some View {
+        VStack(spacing: 14) {
+            ArtifactCreateTileArt(kind: kind)
+                .frame(width: 128, height: 90)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .accessibilityHidden(true)
+            Text(kind.emptyTitle)
+                .font(.system(.title3, design: .serif))
+                .foregroundColor(Color("TextPrimary"))
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 300)
+        }
+        .padding(.horizontal, 24)
+        .frame(maxWidth: .infinity)
+    }
+}
+
 /// A studio session on the phone: the chat, and — one tap away, as the
 /// PWA's phone layout does with its full-screen pane — the kind's real editor.
-/// Docs, Sheets, Slides and Design open on their editor straight away, as the
-/// web does (`takePhoneEditorOpen`). The other kinds show the kind's empty
-/// state until the agent makes something; the pane then opens the newest v2
+/// Every kind opens on its pane with the same header, as the web does
+/// (`takePhoneEditorOpen`): Docs, Sheets, Slides and Design on their editor, the
+/// others on what they've made. Until the agent makes something that pane shows
+/// the kind's empty state, then that it's working; it then opens the newest v2
 /// artifact whose `origin.session_id` is this session in the web's artifact
-/// window. The pane refreshes while it is open.
+/// window, or the newest output of the chat. The pane refreshes while it is open.
 struct ArtifactStudioView: View {
     let studio: ArtifactStudioSession
 
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var modeStore: AppModeStore
     @StateObject private var viewModel = ChatViewModel()
-    @State private var showingPane: Bool
+    @State private var showingPane = true
     @State private var results: [ArtifactV2Summary] = []
     @State private var paneError: String?
     @State private var editorSave = EditorSaveHandle()
@@ -40,11 +64,8 @@ struct ArtifactStudioView: View {
     /// What went wrong with the agent's last change to the open file. Shown over
     /// the chat and the editor alike; the model is told through its tool result.
     @State private var agentProblem: String?
-
-    init(studio: ArtifactStudioSession) {
-        self.studio = studio
-        _showingPane = State(initialValue: studio.editorRoute != nil)
-    }
+    /// A chat output opened from the pane (image, video, report without a v2 record).
+    @State private var openOutput: ArtifactRecord?
 
     /// What the pane shows: the agent's newest result, else the session's editor.
     private var paneRoute: ArtifactWebRoute? {
@@ -57,10 +78,20 @@ struct ArtifactStudioView: View {
             header
             Divider().background(Color("BorderSubtle"))
             ZStack(alignment: .top) {
-                ChatContentView(sessionId: studio.sessionId, viewModel: viewModel)
+                ChatContentView(
+                    sessionId: studio.sessionId,
+                    viewModel: viewModel,
+                    artifactStudio: studio,
+                    onAllArtifacts: {
+                        saveEditor {
+                            modeStore.selectBarItem(.artifacts)
+                            dismiss()
+                        }
+                    }
+                )
                     .opacity(showingPane ? 0 : 1)
                     .allowsHitTesting(!showingPane)
-                if studio.editorRoute != nil {
+                if paneRoute != nil {
                     // The agent works on this file while the person is in the
                     // chat, so the editor stays open out of sight. Not fully
                     // transparent: WebKit may suspend a page it can't see.
@@ -91,6 +122,9 @@ struct ArtifactStudioView: View {
                 run: { request in await runAgentRequest(request) },
                 onProblem: { agentProblem = $0 }
             )
+        }
+        .sheet(item: $openOutput) { output in
+            ArtifactDetailsView(artifact: output)
         }
         .alert("Your changes couldn't be saved", isPresented: Binding(
             get: { leaveAfterFailedSave != nil },
@@ -161,8 +195,7 @@ struct ArtifactStudioView: View {
 
     /// Short enough not to truncate beside the title ("Spreadsheet" did).
     private var paneLabel: String {
-        let name = studio.editorRoute != nil ? "Edit" : studio.kind.noun
-        return results.isEmpty ? name : "\(name) · \(results.count)"
+        results.isEmpty ? "Edit" : "Edit · \(results.count)"
     }
 
     @ViewBuilder
@@ -182,27 +215,47 @@ struct ArtifactStudioView: View {
                 )
                 .id(route.paneKey)
             } else {
-                VStack(spacing: 14) {
-                    Image(studio.kind.iconAsset)
-                        .resizable()
-                        .frame(width: 40, height: 40)
-                    Text(studio.kind.emptyTitle)
-                        .font(.system(.title3, design: .serif))
-                        .foregroundColor(Color("TextPrimary"))
-                        .multilineTextAlignment(.center)
-                    Text(paneError.map(FriendlyErrorMessage.from) ?? studio.kind.studioHint)
-                        .font(.subheadline)
-                        .foregroundColor(Color("TextSecondary"))
-                        .multilineTextAlignment(.center)
-                    Button("Describe it in the chat") { showChat() }
-                        .font(.subheadline.weight(.semibold))
-                        .padding(.top, 4)
-                }
-                .padding(32)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                paneEmptyState
             }
         }
         .background(Color("BgPrimary"))
+    }
+
+    /// The newest thing the agent made in the chat that has no v2 record.
+    private var latestOutput: ArtifactRecord? {
+        viewModel.messages.last { $0.role == "assistant" && !$0.artifacts.isEmpty }?.artifacts.last
+    }
+
+    /// A kind with nothing in its pane yet: what it makes, that the agent is on
+    /// it, or the output it made in the chat. Never a blank page.
+    private var paneEmptyState: some View {
+        VStack(spacing: 14) {
+            ArtifactSessionEmptyState(kind: studio.kind)
+            Text(paneError.map(FriendlyErrorMessage.from) ?? studio.kind.studioHint)
+                .font(.subheadline)
+                .foregroundColor(Color("TextSecondary"))
+                .multilineTextAlignment(.center)
+            if let latestOutput {
+                Button("Open \(latestOutput.title)") { openOutput = latestOutput }
+                    .font(.subheadline.weight(.semibold))
+                    .frame(minHeight: 44)
+            } else if viewModel.isStreaming {
+                HStack(spacing: 8) {
+                    ProgressView()
+                    Text("Allternit is working on it")
+                        .font(.subheadline)
+                        .foregroundColor(Color("TextSecondary"))
+                }
+                .frame(minHeight: 44)
+                .accessibilityElement(children: .combine)
+            } else {
+                Button("Describe it in the chat") { showChat() }
+                    .font(.subheadline.weight(.semibold))
+                    .frame(minHeight: 44)
+            }
+        }
+        .padding(32)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     /// The editor's web view goes away when the pane closes, so its unsaved

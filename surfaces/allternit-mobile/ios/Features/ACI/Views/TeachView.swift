@@ -16,8 +16,13 @@ struct TeachView: View {
     @State private var contracts: [TeachContract] = []
     @State private var loaded = false
     @State private var loading = false
-    @State private var loadError: String? = nil
+    /// Why the list didn't load, nil when it did. Skills live on the person's
+    /// computer, so "no computer" is its own screen (`computerOffline`).
+    @State private var failure: SettingsLoadFailure? = nil
     @State private var signedOut = false
+    @State private var isConnectOpen = false
+    @ObservedObject private var relay = RuntimeRelayStore.shared
+    @ObservedObject private var auth = AuthManager.shared
     @State private var notice: String? = nil
     @State private var selectedId: String? = nil
     @State private var review: Review? = nil
@@ -60,14 +65,18 @@ struct TeachView: View {
 
     private var selected: TeachSkill? { skills.first { $0.id == selectedId } }
     private var showList: Bool { !skills.isEmpty || !unanalyzed.isEmpty || (loading && !loaded) }
+    private var isComputerOffline: Bool {
+        if case .computerOffline = failure { return true }
+        return false
+    }
 
     var body: some View {
         VStack(spacing: 0) {
             header
             if signedOut {
                 TeachBanner(text: "\(TeachClient.signInToSave) Recording and review still work here.", tone: .info)
-            } else if let loadError {
-                TeachBanner(text: loadError, tone: .error, onRetry: { Task { await load() } })
+            } else if let failure, !isComputerOffline {
+                TeachBanner(text: failure.message, tone: .error, onRetry: { Task { await load() } })
             }
             if let notice {
                 TeachBanner(text: notice, tone: .info, onDismiss: { self.notice = nil })
@@ -118,6 +127,9 @@ struct TeachView: View {
                 TeachProfileSheet()
             }
         }
+        .sheet(isPresented: $isConnectOpen, onDismiss: { Task { await load() } }) {
+            ConnectComputerSheet()
+        }
         .confirmationDialog("Delete this skill?", isPresented: $isDeleteConfirming, titleVisibility: .visible) {
             Button("Delete skill", role: .destructive) { deleteSelected() }
         } message: {
@@ -131,8 +143,10 @@ struct TeachView: View {
     private var header: some View {
         ZStack {
             Text("Teach")
-                .font(.system(size: 17, weight: .semibold))
+                .font(.system(size: 22, weight: .medium, design: .serif))
+                .tracking(-0.2)
                 .foregroundColor(Color("TextPrimary"))
+                .accessibilityAddTraits(.isHeader)
             HStack {
                 Button { dismiss() } label: {
                     HStack(spacing: 3) {
@@ -150,6 +164,7 @@ struct TeachView: View {
         }
         .padding(.horizontal, 14)
         .frame(height: 52)
+        .overlay(alignment: .bottom) { Rectangle().fill(Color("BorderSubtle")).frame(height: 1) }
     }
 
     // MARK: - Skill list (TeachSkillList)
@@ -165,7 +180,7 @@ struct TeachView: View {
                 if review == nil {
                     Button { isImporting = true } label: {
                         HStack(spacing: 4) {
-                            Circle().fill(Theme.statusError).frame(width: 8, height: 8)
+                            PhIcon("record-fill", size: 11).foregroundColor(Theme.statusError)
                             Text("Teach").font(.system(size: 12))
                         }
                         .foregroundColor(Color("TextSecondary"))
@@ -178,9 +193,9 @@ struct TeachView: View {
                 }
             }
             .padding(.horizontal, 14)
-            .padding(.top, 8)
+            .padding(.top, 10)
             ScrollView {
-                LazyVStack(spacing: 2) {
+                LazyVStack(spacing: 4) {
                     if loading && skills.isEmpty {
                         Text("Loading skills…")
                             .font(.system(size: 12))
@@ -220,8 +235,8 @@ struct TeachView: View {
                     .lineLimit(1)
                 if skill.skillPath != nil || skill.routineId != nil {
                     HStack(spacing: 4) {
-                        if skill.skillPath != nil { TeachBadge(icon: "checkmark.circle.fill", text: "Skill saved") }
-                        if skill.routineId != nil { TeachBadge(icon: "calendar", text: "Scheduled") }
+                        if skill.skillPath != nil { TeachBadge(icon: "check-circle-fill", text: "Skill saved") }
+                        if skill.routineId != nil { TeachBadge(icon: "calendar-blank", text: "Scheduled") }
                     }
                     .padding(.top, 2)
                 }
@@ -240,6 +255,12 @@ struct TeachView: View {
         let on = review?.contract?.id == contract.id
         return Button {
             review = Review(contract: contract)
+            // The list carries no endpoints; Review counts them.
+            Task {
+                guard let full = try? await TeachClient.shared.contract(id: contract.id),
+                      review?.contract?.id == full.id else { return }
+                review?.contract = full
+            }
         } label: {
             VStack(alignment: .leading, spacing: 2) {
                 Text(contract.domain)
@@ -267,38 +288,80 @@ struct TeachView: View {
             reviewPane
         } else if let skill = selected {
             skillDetail(skill)
-        } else if loading && !loaded {
-            Text("Loading…")
-                .font(.system(size: 13))
-                .foregroundColor(Color("TextTertiary"))
+        } else if isComputerOffline {
+            computerOffline
+        } else if loading {
+            VStack(spacing: 10) {
+                ProgressView()
+                Text(relay.isWaking ? "Waking your computer…" : "Loading…")
+                    .font(.system(size: 13))
+                    .foregroundColor(Color("TextTertiary"))
+            }
         } else {
             emptyTeach
         }
     }
 
-    /// EmptyTeach, the phone's variant (nothing records here: import leads).
-    private var emptyTeach: some View {
+    /// No computer answered. Skills and recordings are stored on it, so the
+    /// phone can't list them or analyze a recording without one.
+    private var computerOffline: some View {
         VStack(spacing: 0) {
-            Button { isImporting = true } label: {
-                Image(systemName: "square.and.arrow.up")
-                    .font(.system(size: 26))
-                    .foregroundColor(Color("TextPrimary"))
-                    .frame(width: 72, height: 72)
-                    .background(Circle().fill(Color("FillNeutral")))
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Import a recording")
-            Text("Teach the agent a site")
+            PhIcon("desktop", size: 28)
+                .foregroundColor(Color("TextPrimary"))
+                .frame(width: 72, height: 72)
+                .background(Circle().fill(Color("FillNeutral")))
+            Text(relay.devices.isEmpty ? "Connect a computer to see your skills" : "Can’t reach your computer")
                 .font(.system(size: 20, weight: .semibold))
                 .foregroundColor(Color("TextPrimary"))
+                .multilineTextAlignment(.center)
                 .padding(.top, 20)
                 .padding(.bottom, 4)
-            Text("Recording runs in Allternit Desktop or the Allternit browser extension: click through the flow once and it's saved as a skill the agent can replay. Here, you can import a recording (.har).")
+            Text("Teach skills and recordings are saved on your computer. Open Allternit Desktop or start your cloud computer, then try again.")
                 .font(.system(size: 13))
                 .foregroundColor(Color("TextSecondary"))
                 .multilineTextAlignment(.center)
                 .lineSpacing(3)
                 .frame(maxWidth: 340)
+            HStack(spacing: 8) {
+                Button(relay.devices.isEmpty ? "Connect" : "Fix") { isConnectOpen = true }
+                    .buttonStyle(TeachPrimaryButton())
+                Button("Try again") { Task { await load() } }
+                    .buttonStyle(TeachSecondaryButton())
+            }
+            .padding(.top, 18)
+        }
+        .padding(.horizontal, 16)
+    }
+
+    /// EmptyTeach: Desktop's record mark and words. Nothing records on the
+    /// phone, so its action is the phone's own: import a recording.
+    private var emptyTeach: some View {
+        VStack(spacing: 0) {
+            PhIcon("record-fill", size: 28)
+                .foregroundColor(.white)
+                .frame(width: 72, height: 72)
+                .background(Circle().fill(Theme.statusError))
+            Text("Show the agent this site")
+                .font(.system(size: 20, weight: .semibold))
+                .tracking(-0.2)
+                .foregroundColor(Color("TextPrimary"))
+                .padding(.top, 20)
+                .padding(.bottom, 4)
+            Text("Click through the flow once in Allternit Desktop or the Allternit browser extension. We record the path and save it as a skill the agent can replay.")
+                .font(.system(size: 13))
+                .foregroundColor(Color("TextSecondary"))
+                .multilineTextAlignment(.center)
+                .lineSpacing(3)
+                .frame(maxWidth: 340)
+            Button { isImporting = true } label: {
+                HStack(spacing: 6) {
+                    PhIcon("upload-simple", size: 14)
+                    Text("Import a recording")
+                }
+            }
+            .buttonStyle(TeachSecondaryButton())
+            .padding(.top, 18)
+            .accessibilityLabel("Import a recording (.har)")
         }
         .padding(.horizontal, 16)
     }
@@ -321,7 +384,9 @@ struct TeachView: View {
                         .font(.system(size: 13, weight: .medium))
                         .foregroundColor(Color("TextPrimary"))
                     if let contract = review?.contract {
-                        Text("The recording of \(contract.domain): \(contract.endpoints.count) API call\(contract.endpoints.count == 1 ? "" : "s").")
+                        Text(contract.endpoints.isEmpty
+                             ? "The recording of \(contract.domain)."
+                             : "The recording of \(contract.domain): \(contract.endpoints.count) API call\(contract.endpoints.count == 1 ? "" : "s").")
                     } else {
                         Text("Network traffic from \(review?.fileName ?? "the recording"). No actions or narration: those come from Allternit Desktop.")
                     }
@@ -410,24 +475,37 @@ struct TeachView: View {
 
     private func load() async {
         loading = true
+        failure = nil
+        signedOut = false
         defer { loading = false; loaded = true }
+        guard auth.canCallAccountAPIs else {
+            signedOut = true
+            return
+        }
         do {
-            async let skillList = TeachClient.shared.listSkills()
-            async let contractList = TeachClient.shared.listContracts()
-            skills = try await skillList
-            contracts = (try? await contractList) ?? []
-            loadError = nil
-            signedOut = false
+            skills = try await TeachClient.shared.listSkills()
             if selectedId == nil || !skills.contains(where: { $0.id == selectedId }) {
                 selectedId = skills.first?.id
             }
+        } catch is CancellationError {
+            return
         } catch {
             if case APIError.httpError(let status, _) = error, status == 401 {
                 signedOut = true
-                loadError = nil
+            } else if case APIError.httpError(let status, _) = error, status == 404 {
+                // A computer on an older Allternit has no Teach routes.
+                failure = .error("This computer doesn’t have Teach yet. Update Allternit Desktop, then try again.")
             } else {
-                loadError = "Couldn’t load your skills. \(FriendlyErrorMessage.from(error.localizedDescription))"
+                failure = SettingsLoadFailure.from(error)
+                if isComputerOffline { await relay.refresh() }
             }
+            return
+        }
+        do {
+            contracts = try await TeachClient.shared.listContracts()
+        } catch is CancellationError {
+        } catch {
+            notice = "Couldn’t list your recordings. \(SettingsLoadFailure.from(error).message)"
         }
     }
 
@@ -561,7 +639,15 @@ private struct TeachSkillEditor: View {
     }
 
     private var dirty: Bool { draft != baseline }
-    private var problem: String? { draft.blockingProblem }
+    /// teach-validate's errors the phone checks; Replay and Save stop on them.
+    private var problem: String? {
+        if let blocking = draft.blockingProblem { return blocking }
+        let unknown = draft.steps.flatMap { unknownNames(in: $0) }
+        guard let first = unknown.first else { return nil }
+        return unknown.count == 1
+            ? "{{\(first)}} has no input."
+            : "\(Set(unknown).count) placeholders have no input."
+    }
     private var current: TeachSkill { draft.apply(to: base) ?? base }
 
     var body: some View {
@@ -583,7 +669,7 @@ private struct TeachSkillEditor: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 10)
-                    .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color("FillNeutral")))
+                    .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color("FillNeutral")))
                     .padding(.bottom, 14)
                 }
 
@@ -602,8 +688,9 @@ private struct TeachSkillEditor: View {
                     TextField("What this skill does and when to use it.", text: $draft.intent, axis: .vertical)
                         .lineLimit(2...6)
                         .font(.system(size: 14))
-                        .padding(10)
-                        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Color("BorderSubtle")))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .teachField()
                 }
                 section("Steps") { steps }
                 section("Inputs") { inputs }
@@ -628,63 +715,64 @@ private struct TeachSkillEditor: View {
 
     private var meta: some View {
         var parts: [String] = []
-        if let domain = base.domain { parts.append(domain) }
         parts.append("\(draft.steps.count) step\(draft.steps.count == 1 ? "" : "s")")
         parts.append(base.source == "model" ? "Written by a model" : "Built from the recording")
         if base.redactions > 0 { parts.append("\(base.redactions) redacted") }
         return VStack(alignment: .leading, spacing: 6) {
-            Text(parts.joined(separator: " · "))
-                .font(.system(size: 12))
-                .foregroundColor(Color("TextTertiary"))
+            HStack(spacing: 6) {
+                if let domain = base.domain {
+                    PhIcon("globe", size: 12)
+                    Text(domain).lineLimit(1)
+                    Text("·")
+                }
+                Text(parts.joined(separator: " · ")).lineLimit(2)
+            }
+            .font(.system(size: 12))
+            .foregroundColor(Color("TextTertiary"))
             if base.skillPath != nil || base.routineId != nil {
                 HStack(spacing: 4) {
-                    if base.skillPath != nil { TeachBadge(icon: "checkmark.circle.fill", text: "Skill saved") }
-                    if base.routineId != nil { TeachBadge(icon: "calendar", text: "Scheduled") }
+                    if base.skillPath != nil { TeachBadge(icon: "check-circle-fill", text: "Skill saved") }
+                    if base.routineId != nil { TeachBadge(icon: "calendar-blank", text: "Scheduled") }
                 }
             }
         }
     }
 
+    /// TeachEditor's button row: wraps, Replay first and filled.
     private var actions: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                Button { onReplay(current) } label: {
-                    Label("Replay", systemImage: "play.fill")
-                }
+        TeachChipFlow(spacing: 8) {
+            Button { onReplay(current) } label: { TeachAction(icon: "play-fill", title: "Replay") }
                 .buttonStyle(TeachPrimaryButton())
                 .disabled(problem != nil)
-                Button { onSaveSkill(current) } label: {
-                    Label(base.skillPath == nil ? "Save skill" : "Update skill file", systemImage: "square.and.arrow.down")
-                }
-                .buttonStyle(TeachSecondaryButton())
-                .disabled(saving)
-                Button {
-                    Task {
-                        // withSaved: Schedule saves pending edits first.
-                        if dirty { if let saved = await saveDraft() { onSchedule(saved) } } else { onSchedule(base) }
-                    }
-                } label: {
-                    Label(base.routineId == nil ? "Run on a schedule" : "Schedule again", systemImage: "calendar")
-                }
-                .buttonStyle(TeachSecondaryButton())
-                .disabled(saving || blocked || problem != nil)
-                Button(action: onTeachAgain) {
-                    Label("Teach again", systemImage: "record.circle")
-                }
-                .buttonStyle(TeachSecondaryButton())
-                Button(action: onOpenProfile) {
-                    Label("Business profile", systemImage: "person.text.rectangle")
-                }
-                .buttonStyle(TeachSecondaryButton())
-                Button(action: onDelete) {
-                    Image(systemName: "trash")
-                        .font(.system(size: 14))
-                        .foregroundColor(Color("TextSecondary"))
-                        .frame(width: 40, height: 40)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Delete skill")
+                .opacity(problem != nil ? 0.4 : 1)
+            Button { onSaveSkill(current) } label: {
+                TeachAction(icon: "floppy-disk", title: base.skillPath == nil ? "Save skill" : "Update skill file")
             }
+            .buttonStyle(TeachSecondaryButton())
+            .disabled(saving)
+            Button {
+                Task {
+                    // withSaved: Schedule saves pending edits first.
+                    if dirty { if let saved = await saveDraft() { onSchedule(saved) } } else { onSchedule(base) }
+                }
+            } label: {
+                TeachAction(icon: "calendar-blank", title: base.routineId == nil ? "Run on a schedule" : "Schedule again")
+            }
+            .buttonStyle(TeachSecondaryButton())
+            .disabled(saving || blocked || problem != nil)
+            .opacity(saving || blocked || problem != nil ? 0.5 : 1)
+            Button(action: onTeachAgain) { TeachAction(icon: "record-fill", title: "Teach again") }
+                .buttonStyle(TeachSecondaryButton())
+            Button(action: onOpenProfile) { TeachAction(icon: "identification-card", title: "Business profile") }
+                .buttonStyle(TeachSecondaryButton())
+            Button(action: onDelete) {
+                PhIcon("trash", size: 14)
+                    .foregroundColor(Color("TextTertiary"))
+                    .frame(width: 40, height: 40)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Delete skill")
         }
     }
 
@@ -716,7 +804,7 @@ private struct TeachSkillEditor: View {
         Button {
             editingStep = draft.addStep()
         } label: {
-            Label("Add step", systemImage: "plus")
+            TeachAction(icon: "plus", title: "Add step")
         }
         .buttonStyle(TeachSecondaryButton())
     }
@@ -739,7 +827,7 @@ private struct TeachSkillEditor: View {
                         .lineLimit(2...6)
                         .font(.system(size: 14))
                         .padding(8)
-                        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(Color("BorderStrong")))
+                        .teachField()
                         .accessibilityLabel("Step \(index + 1)")
                     HStack(spacing: 8) {
                         Menu {
@@ -749,13 +837,13 @@ private struct TeachSkillEditor: View {
                         } label: {
                             HStack(spacing: 4) {
                                 Text(TeachDraft.stepKindLabel(step.kind))
-                                Image(systemName: "chevron.up.chevron.down").font(.system(size: 9))
+                                PhIcon("caret-down", size: 11)
                             }
                             .font(.system(size: 13))
                             .foregroundColor(Color("TextPrimary"))
                             .padding(.horizontal, 10)
                             .frame(height: 36)
-                            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(Color("BorderStrong")))
+                            .teachField()
                         }
                         .accessibilityLabel("Step type")
                         if step.kind == "api" {
@@ -765,7 +853,7 @@ private struct TeachSkillEditor: View {
                                 .autocorrectionDisabled()
                                 .padding(.horizontal, 8)
                                 .frame(height: 36)
-                                .background(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(Color("BorderStrong")))
+                                .teachField()
                                 .accessibilityLabel("API call")
                         }
                         Spacer(minLength: 0)
@@ -775,12 +863,8 @@ private struct TeachSkillEditor: View {
                 } else {
                     Button { editingStep = step.id } label: {
                         VStack(alignment: .leading, spacing: 2) {
-                            (Text(TeachDraft.stepKindLabel(step.kind).uppercased() + "  ")
-                                .font(.system(size: 10, weight: .bold))
-                                .foregroundColor(Color("TextTertiary"))
-                             + Text(step.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Empty step. Write it here." : step.text)
-                                .font(.system(size: 13))
-                                .foregroundColor(step.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? Color("TextTertiary") : Color("TextPrimary")))
+                            Text(stepLine(step))
+                                .lineSpacing(2)
                                 .multilineTextAlignment(.leading)
                                 .fixedSize(horizontal: false, vertical: true)
                             if step.kind == "api", !step.target.isEmpty {
@@ -797,11 +881,12 @@ private struct TeachSkillEditor: View {
                     .buttonStyle(.plain)
                     .accessibilityLabel("Edit step \(index + 1)")
                 }
+                unknownInputs(in: step)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             HStack(spacing: 0) {
-                iconButton("arrow.up", label: "Move up", disabled: index == 0) { draft.moveStep(at: index, by: -1) }
-                iconButton("arrow.down", label: "Move down", disabled: index == draft.steps.count - 1) { draft.moveStep(at: index, by: 1) }
+                iconButton("arrow-up", label: "Move up", disabled: index == 0) { draft.moveStep(at: index, by: -1) }
+                iconButton("arrow-down", label: "Move down", disabled: index == draft.steps.count - 1) { draft.moveStep(at: index, by: 1) }
                 iconButton("trash", label: "Delete step") {
                     draft.steps.removeAll { $0.id == step.id }
                     if editingStep == step.id { editingStep = nil }
@@ -809,14 +894,73 @@ private struct TeachSkillEditor: View {
             }
         }
         .padding(8)
-        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color("BgPanel")))
-        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Color("BorderSubtle")))
+        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color("BgPanel")))
+        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
+            .stroke(unknownNames(in: step).isEmpty ? Color("BorderSubtle") : Theme.statusError.opacity(0.4)))
     }
 
-    private func iconButton(_ systemName: String, label: String, disabled: Bool = false, action: @escaping () -> Void) -> some View {
+    /// PlaceholderText: `{{name}}` marked in the step, amber when no input,
+    /// business-profile value or earlier step provides it.
+    private func stepLine(_ step: TeachDraft.Step) -> AttributedString {
+        var line = AttributedString(TeachDraft.stepKindLabel(step.kind).uppercased() + "  ")
+        line.font = Font.system(size: 10, weight: .bold)
+        line.foregroundColor = Color("TextTertiary")
+        let text = step.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else {
+            var empty = AttributedString("Empty step. Write it here.")
+            empty.font = Font.system(size: 13)
+            empty.foregroundColor = Color("TextTertiary")
+            return line + empty
+        }
+        for part in TeachPlaceholders.split(step.text) {
+            var run = AttributedString(part.text)
+            if let name = part.name {
+                let known = isKnown(name)
+                run.font = Font.system(size: 12, design: .monospaced)
+                run.foregroundColor = known ? Color("AccentPrimary") : Theme.statusWarning
+                run.backgroundColor = (known ? Color("AccentPrimary") : Theme.statusWarning).opacity(known ? 0.12 : 0.15)
+            } else {
+                run.font = Font.system(size: 13)
+                run.foregroundColor = Color("TextPrimary")
+            }
+            line += run
+        }
+        return line
+    }
+
+    private func isKnown(_ name: String) -> Bool {
+        name.hasPrefix("profile.") || name.hasPrefix("var.") || draft.inputs.contains { $0.name == name }
+    }
+
+    private func unknownNames(in step: TeachDraft.Step) -> [String] {
+        var seen = Set<String>()
+        return TeachPlaceholders.names(in: "\(step.text) \(step.target)")
+            .filter { !isKnown($0) && seen.insert($0).inserted }
+    }
+
+    /// ProblemList's unknown_input row, with its "Add input" fix.
+    @ViewBuilder
+    private func unknownInputs(in step: TeachDraft.Step) -> some View {
+        ForEach(unknownNames(in: step), id: \.self) { name in
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    PhIcon("warning-circle-fill", size: 12)
+                    Text("{{\(name)}} has no input. Add an input named “\(name)” or fix the name.")
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .font(.system(size: 12))
+                .foregroundColor(Theme.statusError)
+                Button { draft.addInput(named: name) } label: {
+                    TeachAction(icon: "plus", title: "Add input \(name)")
+                }
+                .buttonStyle(TeachSecondaryButton())
+            }
+        }
+    }
+
+    private func iconButton(_ icon: String, label: String, disabled: Bool = false, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Image(systemName: systemName)
-                .font(.system(size: 13))
+            PhIcon(icon, size: 13)
                 .foregroundColor(Color("TextTertiary"))
                 .frame(width: 36, height: 36)
                 .contentShape(Rectangle())
@@ -841,9 +985,12 @@ private struct TeachSkillEditor: View {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(spacing: 8) {
                         TextField("name", text: $input.name)
-                            .font(.system(size: 13, design: .monospaced))
+                            .font(.system(size: 12, design: .monospaced))
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
+                            .padding(.horizontal, 10)
+                            .frame(height: 40)
+                            .teachField()
                             .accessibilityLabel("Input name")
                         Menu {
                             ForEach(TeachDraft.inputTypes, id: \.type) { option in
@@ -852,10 +999,13 @@ private struct TeachSkillEditor: View {
                         } label: {
                             HStack(spacing: 4) {
                                 Text(TeachDraft.inputTypeLabel(input.type))
-                                Image(systemName: "chevron.up.chevron.down").font(.system(size: 9))
+                                PhIcon("caret-down", size: 11)
                             }
                             .font(.system(size: 12))
-                            .foregroundColor(Color("TextSecondary"))
+                            .foregroundColor(Color("TextPrimary"))
+                            .padding(.horizontal, 8)
+                            .frame(height: 32)
+                            .teachField()
                         }
                         .accessibilityLabel("Input type")
                         iconButton("trash", label: "Delete input") {
@@ -863,7 +1013,10 @@ private struct TeachSkillEditor: View {
                         }
                     }
                     TextField("Label", text: $input.label)
-                        .font(.system(size: 13))
+                        .font(.system(size: 14))
+                        .padding(.horizontal, 12)
+                        .frame(height: 40)
+                        .teachField()
                         .accessibilityLabel("Input label")
                     if input.isSecret {
                         Text("No example for secrets")
@@ -871,17 +1024,21 @@ private struct TeachSkillEditor: View {
                             .foregroundColor(Color("TextTertiary"))
                     } else {
                         TextField("Example", text: $input.example)
-                            .font(.system(size: 13))
+                            .font(.system(size: 14))
+                            .padding(.horizontal, 12)
+                            .frame(height: 40)
+                            .teachField()
                             .accessibilityLabel("Input example")
                     }
                     inputSettings($input)
                 }
-                .padding(10)
-                .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color("FillNeutral")))
+                .padding(8)
+                .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color("BgPanel")))
+                .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(Color("BorderSubtle")))
             }
         }
         Button { draft.addInput() } label: {
-            Label("Add input", systemImage: "plus")
+            TeachAction(icon: "plus", title: "Add input")
         }
         .buttonStyle(TeachSecondaryButton())
     }
@@ -894,7 +1051,7 @@ private struct TeachSkillEditor: View {
         Toggle("Required", isOn: input.required)
             .font(.system(size: 12))
             .foregroundColor(Color("TextSecondary"))
-            .tint(Color("TextPrimary"))
+            .tint(Color(hex: "#3B82F6"))
         if value.hasFormat {
             HStack(spacing: 8) {
                 Text("Format").font(.system(size: 12)).foregroundColor(Color("TextSecondary"))
@@ -943,7 +1100,7 @@ private struct TeachSkillEditor: View {
                     .lineLimit(3...8)
                     .font(.system(size: 13))
                     .padding(8)
-                    .background(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(Color("BorderStrong")))
+                    .teachField()
                     .accessibilityLabel("Choices")
             }
         }
@@ -1238,16 +1395,59 @@ private struct TeachBadge: View {
     let text: String
 
     var body: some View {
-        HStack(spacing: 3) {
-            Image(systemName: icon).font(.system(size: 9))
+        HStack(spacing: 4) {
+            PhIcon(icon, size: 11)
             Text(text)
         }
-        .font(.system(size: 10))
+        .font(.system(size: 11))
         .foregroundColor(Color("TextSecondary"))
-        .padding(.horizontal, 6)
+        .padding(.horizontal, 8)
         .padding(.vertical, 2)
-        .background(Capsule().fill(Color("BgPanel")))
-        .overlay(Capsule().stroke(Color("BorderSubtle")))
+        .background(Capsule().fill(Color("FillNeutral")))
+    }
+}
+
+/// An action button's icon and words.
+private struct TeachAction: View {
+    let icon: String
+    let title: String
+
+    var body: some View {
+        HStack(spacing: 6) {
+            PhIcon(icon, size: 13)
+            Text(title).lineLimit(1)
+        }
+    }
+}
+
+/// `{{name}}` in a step (teach-prompt.ts splitPlaceholders, placeholderNames).
+enum TeachPlaceholders {
+    struct Part { let text: String; let name: String? }
+
+    private static let pattern = #"\{\{\s*([a-zA-Z0-9_.-]+)\s*\}\}"#
+
+    static func split(_ text: String) -> [Part] {
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return [Part(text: text, name: nil)] }
+        var parts: [Part] = []
+        var cursor = text.startIndex
+        for match in regex.matches(in: text, range: NSRange(text.startIndex..., in: text)) {
+            guard let whole = Range(match.range, in: text), let name = Range(match.range(at: 1), in: text) else { continue }
+            if cursor < whole.lowerBound { parts.append(Part(text: String(text[cursor..<whole.lowerBound]), name: nil)) }
+            parts.append(Part(text: String(text[whole]), name: String(text[name])))
+            cursor = whole.upperBound
+        }
+        if cursor < text.endIndex { parts.append(Part(text: String(text[cursor...]), name: nil)) }
+        return parts
+    }
+
+    static func names(in text: String) -> [String] { split(text).compactMap(\.name) }
+}
+
+private extension View {
+    /// `teachField`: a default-border field on the elevated surface, 8 pt corners.
+    func teachField() -> some View {
+        background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color("BgPanel")))
+            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(Color("BorderStrong"), lineWidth: 1))
     }
 }
 
@@ -1260,13 +1460,13 @@ private struct TeachBanner: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            if tone == .error { Image(systemName: "exclamationmark.triangle").font(.system(size: 12)) }
+            if tone == .error { PhIcon("warning", size: 14) }
             Text(text).font(.system(size: 12)).frame(maxWidth: .infinity, alignment: .leading)
             if let onRetry {
                 Button("Try again", action: onRetry).font(.system(size: 12, weight: .medium)).underline()
             }
             if let onDismiss {
-                Button(action: onDismiss) { Image(systemName: "xmark").font(.system(size: 11)) }
+                Button(action: onDismiss) { PhIcon("x", size: 12) }
                     .frame(width: 32, height: 32)
                     .accessibilityLabel("Dismiss")
             }
@@ -1276,6 +1476,11 @@ private struct TeachBanner: View {
         .padding(.vertical, 8)
         .background(RoundedRectangle(cornerRadius: 8, style: .continuous)
             .fill(tone == .error ? Theme.statusError.opacity(0.08) : Color("FillNeutral")))
+        .overlay {
+            if tone == .error {
+                RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(Theme.statusError.opacity(0.25), lineWidth: 1)
+            }
+        }
         .padding(.horizontal, 14)
         .padding(.top, 8)
     }
@@ -1286,9 +1491,9 @@ private struct TeachPrimaryButton: ButtonStyle {
         configuration.label
             .font(.system(size: 13, weight: .semibold))
             .foregroundColor(Color("BgPrimary"))
-            .padding(.horizontal, 14)
+            .padding(.horizontal, 12)
             .frame(minHeight: 40)
-            .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color("TextPrimary")))
+            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color("TextPrimary")))
             .opacity(configuration.isPressed ? 0.8 : 1)
     }
 }
@@ -1300,7 +1505,8 @@ private struct TeachSecondaryButton: ButtonStyle {
             .foregroundColor(Color("TextPrimary"))
             .padding(.horizontal, 12)
             .frame(minHeight: 40)
-            .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color("FillNeutral")))
+            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color("BgPanel")))
+            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(Color("BorderStrong"), lineWidth: 1))
             .opacity(configuration.isPressed ? 0.7 : 1)
     }
 }

@@ -90,6 +90,7 @@ struct ArtifactsLibraryView: View {
         }
         .fullScreenCover(item: $studio, onDismiss: { Task { await store.reload() } }) { session in
             ArtifactStudioView(studio: session)
+                .id(session.sessionId)
                 .environmentObject(modeStore)
                 .environmentObject(agentModeStore)
         }

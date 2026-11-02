@@ -220,7 +220,7 @@ struct AutomationScheduler: View {
     private func toolbarButton(icon: String, label: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: icon)
-                .font(.system(size: 11, weight: .medium))
+                .font(.system(size: 13))
                 .foregroundColor(Color("TextSecondary"))
                 .frame(width: 28, height: 28)
                 .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Color("BgPanel")))
@@ -534,7 +534,7 @@ struct AutomationScheduler: View {
                     .minimumScaleFactor(0.7)
                 }
             }
-            .padding(.vertical, 4)
+            .padding(4)
             .frame(maxWidth: .infinity, minHeight: 44, alignment: .topLeading)
             .overlay(
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
@@ -690,14 +690,14 @@ private struct SchedulerDayList: View {
         }
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
-        .presentationBackground(Color("BgPrimary"))
+        .presentationBackground(Color("BgPanel"))
     }
 
     private var list: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 2) {
                 Text(day.formatted(.dateTime.weekday(.wide).month(.wide).day()))
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(Color("TextPrimary"))
                     .padding(.bottom, 6)
                 ForEach(items) { item in
@@ -706,11 +706,11 @@ private struct SchedulerDayList: View {
                             RoundedRectangle(cornerRadius: 2).fill(colorOf(item)).frame(width: 4, height: 24)
                             VStack(alignment: .leading, spacing: 1) {
                                 Text(item.title)
-                                    .font(.system(size: 14, weight: .medium))
+                                    .font(.system(size: 12.5, weight: .medium))
                                     .foregroundColor(Color("TextPrimary"))
                                     .lineLimit(1)
                                 Text(item.timeLabel.isEmpty ? "All day" : item.timeLabel)
-                                    .font(.system(size: 12))
+                                    .font(.system(size: 11))
                                     .foregroundColor(Color("TextTertiary"))
                                     .lineLimit(1)
                             }
@@ -724,7 +724,7 @@ private struct SchedulerDayList: View {
                 }
                 Button(action: onOpenDay) {
                     Label("Open the day", systemImage: "calendar")
-                        .font(.system(size: 13))
+                        .font(.system(size: 12))
                         .foregroundColor(Color("TextSecondary"))
                         .frame(minHeight: 44)
                         .contentShape(Rectangle())

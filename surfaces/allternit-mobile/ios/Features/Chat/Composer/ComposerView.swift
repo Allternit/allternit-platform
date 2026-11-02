@@ -67,6 +67,11 @@ struct ComposerView: View {
     var showsVoice: Bool = true
     /// The + (files and photos); off where a send can't carry files.
     var showsAttach: Bool = true
+    /// In an artifact session: always the chat composer, whichever section the
+    /// app was on, with the session's own kind in the deck.
+    var artifactKind: ArtifactStudioKind? = nil
+    /// Artifacts ▾ → All artifacts, in an artifact session.
+    var onAllArtifacts: (() -> Void)? = nil
 
     @EnvironmentObject private var modeStore: AppModeStore
     @EnvironmentObject private var agentModeStore: AgentModeStore
@@ -82,7 +87,7 @@ struct ComposerView: View {
     @State private var placeholderIndex = 0
     @State private var upgradeURL: IdentifiableURL? = nil
 
-    private var mode: AppMode { modeStore.mode }
+    private var mode: AppMode { artifactKind != nil ? .chat : modeStore.mode }
     private var agentOn: Bool { agentModeStore.isAgentEnabled(for: mode) }
 
     /// Code mode keeps its terminal flavor: `❯` prompt, monospace text.
@@ -119,7 +124,7 @@ struct ComposerView: View {
                 .zIndex(1)
 
             if deck != .none, !isTerminal {
-                ComposerDeckBand(variant: deck, inputText: $inputText)
+                ComposerDeckBand(variant: deck, inputText: $inputText, sessionKind: artifactKind, onAllArtifacts: onAllArtifacts)
                     .zIndex(0)
                     .transition(.move(edge: .top).combined(with: .opacity))
             }

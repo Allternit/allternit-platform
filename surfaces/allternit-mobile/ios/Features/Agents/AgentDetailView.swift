@@ -36,6 +36,7 @@ struct AgentDetailView: View {
     @State private var isSavingModel = false
     @State private var saveError: String? = nil
     @State private var isPublishSheetPresented = false
+    @State private var isEditBotFormPresented = false
     /// Pushed Webhook Triggers panel (Webhooks card, bots only).
     @State private var isWebhooksPresented = false
     /// Fullscreen native VNC viewer (Desktop card, bots only).
@@ -71,6 +72,9 @@ struct AgentDetailView: View {
             } footer: {
                 Text("Shares a snapshot of this agent so others can install their own copy.")
             }
+        }
+        .sheet(isPresented: $isEditBotFormPresented) {
+            EditBotSheet(botId: agent.id) { Task { _ = try? await hubStore.refreshAgent(id: agent.id) } }
         }
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
@@ -230,6 +234,13 @@ struct AgentDetailView: View {
 
     private var identitySection: some View {
         Section {
+            if agent.isBot {
+                // The form Create bot uses, prefilled (name, look, role, job, tools).
+                Button { isEditBotFormPresented = true } label: {
+                    Label("Edit name, look and job", systemImage: "pencil")
+                        .foregroundColor(Color("TextPrimary"))
+                }
+            }
             modelRow
             responseStyleRow
             promptFileRows

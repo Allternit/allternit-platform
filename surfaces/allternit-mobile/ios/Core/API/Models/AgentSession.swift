@@ -56,6 +56,9 @@ struct AgentSession: Decodable, Sendable, Identifiable {
     /// (useModeOverview `archiveOverviewItem`). Archived sessions leave the
     /// open lists even while `active` is still true.
     let archived: Bool
+    /// `metadata.artifactSession.kind` — the session is bound to an artifact
+    /// (web artifact-session.ts), so it opens beside its editor, not as a chat.
+    let artifactSessionKind: String?
     // The rest of `metadata` (directory, version, permission, …) stays
     // skipped — not rendered anywhere on iOS.
 
@@ -79,7 +82,10 @@ struct AgentSession: Decodable, Sendable, Identifiable {
         case ephemeral
         case agentName
         case archived
+        case artifactSession
     }
+
+    private struct ArtifactSessionTag: Decodable { let kind: String? }
 
     /// Tolerant decode mirroring the web's `normalizeSessionPayload`: only
     /// `id` and `created_at` are required on the wire; everything else falls
@@ -103,6 +109,7 @@ struct AgentSession: Decodable, Sendable, Identifiable {
             projectId = try metadata.decodeIfPresent(String.self, forKey: .projectId)
             agentName = (try? metadata.decodeIfPresent(String.self, forKey: .agentName)) ?? nil
             archived = ((try? metadata.decodeIfPresent(Bool.self, forKey: .archived)) ?? nil) ?? false
+            artifactSessionKind = ((try? metadata.decodeIfPresent(ArtifactSessionTag.self, forKey: .artifactSession)) ?? nil)?.kind
             // The backend emits a bool; the create path carries the flag as
             // the string "true" inside the metadata bag.
             if let flag = try metadata.decodeIfPresent(Bool.self, forKey: .ephemeral) {
@@ -116,6 +123,7 @@ struct AgentSession: Decodable, Sendable, Identifiable {
             projectId = nil
             agentName = nil
             archived = false
+            artifactSessionKind = nil
             ephemeral = false
         }
     }

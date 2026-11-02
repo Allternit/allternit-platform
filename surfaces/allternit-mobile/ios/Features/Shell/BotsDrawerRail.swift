@@ -80,7 +80,13 @@ struct BotsDrawerRail: View {
         }
         .task { await store.refreshAll() }
         .sheet(isPresented: $isNewBotPresented) {
-            NewBotSheet { _ in Task { await store.refreshAll() } }
+            NewBotSheet { outcome in
+                // A new bot opens straight into its first thread (useCreateBotSubmit).
+                Task {
+                    await store.refreshAll()
+                    if let botId = outcome.botIds.first { onOpenBot(botId) }
+                }
+            }
         }
         .sheet(isPresented: $isVendorPresented) {
             NavigationStack {

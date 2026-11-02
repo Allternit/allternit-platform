@@ -54,6 +54,10 @@ struct BotAvatarView: View {
             .frame(width: size, height: size)
             .clipShape(RoundedRectangle(cornerRadius: size * 0.3, style: .continuous))
             .accessibilityLabel("\(bot.botDisplayName) avatar")
+        case .gizzi:
+            SetupGizzi(size: size * 0.86, emotion: live ? .pleased : .focused)
+                .frame(width: size, height: size)
+                .accessibilityLabel("\(bot.botDisplayName) avatar")
         case .identicon:
             ZStack {
                 RoundedRectangle(cornerRadius: size * 0.325, style: .continuous)
@@ -118,6 +122,8 @@ extension AgentRecord {
 enum BotAvatarSource: Equatable {
     case sprite(URL)
     case image(URL)
+    /// The Gizzi mascot (web BotAvatar's GizziMascot), every new bot's default look.
+    case gizzi
     case identicon
     case legacy
 
@@ -137,8 +143,22 @@ enum BotAvatarSource: Equatable {
                 if case .object(let data)? = object["data"],
                    case .string(let uri)? = data["url"], let url = webAssetURL(uri) { return .image(url) }
             }
-            // An avatar object we don't draw natively (mascot, geometric,
-            // pet vector): never show its JSON as text.
+            // Mascot looks (web AgentMascotPreview): Gizzi, or the pack character
+            // each other template stands for (mascot-characters.ts).
+            if case .string(let type)? = object["type"], type == "mascot" {
+                let template: String? = {
+                    if case .string(let t)? = object["mascotTemplate"] { return t }
+                    if case .object(let m)? = object["mascot"], case .string(let t)? = m["template"] { return t }
+                    return nil
+                }()
+                if template == nil || template == "gizzi" { return .gizzi }
+                if let art = mascotCharacters[template!] {
+                    if let sheet = art.sheet, let url = webAssetURL(sheet) { return .sprite(url) }
+                    if let portrait = art.portrait, let url = webAssetURL(portrait) { return .image(url) }
+                }
+            }
+            // An avatar object we don't draw natively (geometric, pet vector):
+            // never show its JSON as text.
             return .identicon
         }
         if let avatar = bot.avatar, avatar.hasPrefix("http"), let url = URL(string: avatar) {
@@ -155,6 +175,33 @@ enum BotAvatarSource: Equatable {
     }
 
     static let webOrigin = URL(string: "https://ai.allternit.com")!
+
+    /// allternit-ai mascot-characters.ts MASCOT_CHARACTERS, resolved to each sprite's sheet and portrait.
+    static let mascotCharacters: [String: (sheet: String?, portrait: String?)] = [
+        "bot": ("/avatar-packs/alloy-classic/bolt-sheet.webp", "/avatar-packs/alloy-classic/bolt.webp"),
+        "creature": ("/avatar-packs/creatures/fern-sheet.webp", "/avatar-packs/creatures/fern.webp"),
+        "cyber": ("/avatar-packs/cyber/neon-district-sheet.webp", "/avatar-packs/cyber/neon-district.webp"),
+        "data": ("/avatar-packs/space-corps/navigator-sheet.webp", "/avatar-packs/space-corps/navigator.webp"),
+        "education": ("/avatar-packs/creatures/otis-sheet.webp", "/avatar-packs/creatures/otis.webp"),
+        "fashion": ("/avatar-packs/creatures/milo-sheet.webp", "/avatar-packs/creatures/milo.webp"),
+        "finance": (nil, "/avatar-packs/office-professionals/theo.png"),
+        "food": (nil, "/avatar-packs/dot-friends/crumb.webp"),
+        "gaming": ("/avatar-packs/retro-pixel/bitbuddy-sheet.webp", "/avatar-packs/retro-pixel/bitbuddy.webp"),
+        "geometric": ("/avatar-packs/minimals/mark-sigma-sheet.webp", "/avatar-packs/minimals/mark-sigma.webp"),
+        "healthcare": ("/avatar-packs/alloy-classic/fable-sheet.webp", "/avatar-packs/alloy-classic/fable.webp"),
+        "legal": (nil, "/avatar-packs/office-professionals/kest.png"),
+        "magic": ("/avatar-packs/magic/emberwhelp-sheet.webp", "/avatar-packs/magic/emberwhelp.webp"),
+        "minimal": ("/avatar-packs/minimals/mark-omega-sheet.webp", "/avatar-packs/minimals/mark-omega.webp"),
+        "music": ("/avatar-packs/dot-friends/pixel-sheet.webp", "/avatar-packs/dot-friends/pixel.webp"),
+        "nature": ("/avatar-packs/nature/leafheart-sheet.webp", "/avatar-packs/nature/leafheart.webp"),
+        "orb": ("/avatar-packs/orbs/plasma-sheet.webp", "/avatar-packs/orbs/plasma.webp"),
+        "realEstate": ("/avatar-packs/alloy-classic/atlas-sheet.webp", "/avatar-packs/alloy-classic/atlas.webp"),
+        "retail": ("/avatar-packs/dot-friends/servo-sheet.webp", "/avatar-packs/dot-friends/servo.webp"),
+        "science": ("/avatar-packs/space-corps/science-officer-sheet.webp", "/avatar-packs/space-corps/science-officer.webp"),
+        "security": ("/avatar-packs/mecha/riker-sheet.webp", "/avatar-packs/mecha/riker.webp"),
+        "sports": ("/avatar-packs/dot-friends/hop-sheet.webp", "/avatar-packs/dot-friends/hop.webp"),
+        "travel": ("/avatar-packs/space-corps/commander-sheet.webp", "/avatar-packs/space-corps/commander.webp")
+    ]
 
     private static func object(_ value: JSONValue?) -> [String: JSONValue]? {
         switch value {
