@@ -2,11 +2,9 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 // -----------------------------------------------------------------------------
-// "Make a new bot" and "Import a bot" — the new-bot and import paths of
-// allternit-ai `src/components/bots/look/useBotSetup.ts`, shared by Meet your
-// bots (who leads) and the Bots rail. A new bot gets a job (a template, or
-// custom) and a name; a templated job also starts its first task in the bot's
-// main chat, like the web's `useBotTemplate(…, { runFirstTask: true })`.
+// "Import a bot": the import path of allternit-ai
+// `src/components/bots/look/useBotSetup.ts`, shared by Meet your bots (who
+// leads) and the Bots rail.
 // Import reads a team file (openmaus.team v1/v2, openmaus.package, or the
 // simple `{ name, bots: [...] }` manifest — lib/bots/team-import.ts) from Files
 // or a link and makes one bot per member, or a bot package (.zip with a
@@ -56,151 +54,7 @@ enum BotSetupMaker {
     }
 }
 
-// MARK: - New bot
-
-struct NewBotSheet: View {
-    /// Shows "Start from a team": a project with its bots and plan laid out
-    /// (the Bots home moved its templates row here).
-    var onBrowseTemplates: (() -> Void)? = nil
-    var onCreated: (BotSetupOutcome) -> Void
-
-    @Environment(\.dismiss) private var dismiss
-    @ObservedObject private var auth = AuthManager.shared
-    @State private var job = "researcher"
-    @State private var name = ""
-    @State private var lookId: String?
-    @State private var busy = false
-    @State private var error: String?
-
-    private struct Job { let id: String; let label: String; let template: String? }
-    /// useBotSetup JOBS.
-    private static let jobs: [Job] = [
-        Job(id: "researcher", label: "Researcher", template: "research-analyst"), Job(id: "inbox", label: "Inbox", template: "inbox-triage"),
-        Job(id: "sales", label: "Sales", template: "lead-qualifier"), Job(id: "writer", label: "Writer", template: "content-writer"),
-        Job(id: "custom", label: "Custom", template: nil),
-    ]
-
-    private var catalog: MeetBotCatalog { .shared }
-    private var template: MeetBotTemplate? {
-        Self.jobs.first(where: { $0.id == job })?.template.flatMap { catalog.template($0) }
-    }
-    private var defaultName: String { template?.name ?? "New bot" }
-    private var finalName: String {
-        let n = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        return n.isEmpty ? defaultName : n
-    }
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                if !auth.isSignedIn {
-                    Section { Text("Sign in to make a bot.").foregroundColor(Color("TextSecondary")) }
-                }
-                Section("Job") {
-                    Picker("Job", selection: $job) {
-                        ForEach(Self.jobs, id: \.id) { Text($0.label).tag($0.id) }
-                    }
-                    .pickerStyle(.segmented)
-                    Text(template?.tagline ?? "A bot with no set job. Tell it what to do in its chat.")
-                        .font(.footnote).foregroundColor(Color("TextSecondary"))
-                }
-                Section("Name") {
-                    TextField(defaultName, text: $name).textInputAutocapitalization(.words)
-                }
-                Section("Look") {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 60), spacing: 10)], spacing: 10) {
-                        ForEach(catalog.looks) { look in
-                            Button { lookId = lookId == look.id ? nil : look.id } label: {
-                                VStack(spacing: 4) {
-                                    MeetTemplateTile(color: look.field, spriteURL: look.spriteURL, size: 44, live: lookId == look.id, label: look.id)
-                                        .overlay(RoundedRectangle(cornerRadius: 13, style: .continuous)
-                                            .stroke(lookId == look.id ? Color("AccentPrimary") : .clear, lineWidth: 2).padding(-3))
-                                    Text(look.label).font(.caption2).foregroundColor(Color("TextPrimary")).lineLimit(1)
-                                }
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityLabel(look.label)
-                            .accessibilityAddTraits(lookId == look.id ? .isSelected : [])
-                        }
-                    }
-                    .padding(.vertical, 4)
-                    Text(lookId == nil ? "No look picked: it keeps the job’s own look." : "The bot wears this look.")
-                        .font(.caption).foregroundColor(Color("TextSecondary"))
-                }
-                if let error {
-                    Section { Text(error).font(.footnote).foregroundColor(Theme.statusError) }
-                }
-                if let onBrowseTemplates {
-                    Section {
-                        Button {
-                            dismiss()
-                            // After this sheet is gone, so the next one can present.
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { onBrowseTemplates() }
-                        } label: {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Browse team templates")
-                                    .foregroundColor(Color("TextPrimary"))
-                                Text("A project with its bots and plan already laid out")
-                                    .font(.footnote)
-                                    .foregroundColor(Color("TextSecondary"))
-                            }
-                        }
-                        .disabled(busy)
-                    } header: {
-                        Text("Or start from a team")
-                    }
-                }
-                Section {
-                    Label("Nothing is sent, posted or paid without your approval.", systemImage: "lock")
-                        .font(.caption).foregroundColor(Color("TextSecondary"))
-                }
-            }
-            .navigationTitle("Make a new bot")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() }.disabled(busy) }
-                ToolbarItem(placement: .confirmationAction) {
-                    if busy { ProgressView() } else {
-                        Button("Create") { Task { await create() } }.disabled(!auth.isSignedIn)
-                    }
-                }
-            }
-            .interactiveDismissDisabled(busy)
-        }
-    }
-
-    private func create() async {
-        busy = true
-        error = nil
-        defer { busy = false }
-        do {
-            let makeMain = await BotSetupMaker.needsMain()
-            let avatar = lookId.flatMap { id in catalog.looks.first { $0.id == id }?.avatar }
-            let botId: String
-            if let template {
-                botId = try await MeetTemplateCreate.create(template, name: finalName, makeMain: makeMain)
-                if let avatar, let bot = (try? await MeetAgentsAPI.roster())?.first(where: { $0.id == botId }) {
-                    try? await MeetMainBot.dressBot(bot, name: nil, avatar: avatar)
-                }
-                // runFirstTask: the template's first job, as the person's own message in the bot's main chat.
-                if let record = try? await AgentHubStore.shared.refreshAgent(id: botId),
-                   let session = try? await BotModeStore.shared.mainChatSessionId(for: record) {
-                    try? await BotModeClient.shared.sendUserMessage(sessionId: session, text: template.firstTask.prompt)
-                }
-            } else {
-                botId = try await MeetAgentsAPI.create(body: BotSetupMaker.plainBody(
-                    name: finalName, description: "", systemPrompt: "", tagline: "", welcome: "",
-                    color: "#B08D6E", avatar: avatar, makeMain: makeMain))
-            }
-            AgentHubStore.shared.fetchAgentsIfNeeded(force: true)
-            onCreated(BotSetupOutcome(botIds: [botId], mainBotId: makeMain ? botId : nil,
-                                      summary: "\(finalName) created · Job: \(template?.name ?? "Custom")"))
-            dismiss()
-        } catch {
-            self.error = "Couldn’t create the bot: \(FriendlyErrorMessage.from(error.localizedDescription))"
-        }
-    }
-}
+// The "New bot" sheet is Features/Bots/CreateBot/BotFormSheet.swift.
 
 // MARK: - Import
 

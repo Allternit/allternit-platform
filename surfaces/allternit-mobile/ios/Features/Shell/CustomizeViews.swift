@@ -106,22 +106,22 @@ struct CustomizeSheet: View {
                 } else {
                     Section {
                         NavigationLink { CapabilitiesSettingsView(kind: .skill) } label: {
-                            Label("Skills", systemImage: "book")
+                            Label("Skills", image: "ph-book-open")
                         }
                         Button { isConnectorsPresented = true } label: {
-                            row("Connectors", icon: "powerplug", trailing: "chevron.right")
+                            row("Connectors", icon: "plugs-connected", trailing: "chevron.right")
                         }
                         .buttonStyle(.plain)
                         NavigationLink { CapabilitiesSettingsView(kind: .plugin) } label: {
-                            Label("Plugins", systemImage: "puzzlepiece.extension")
+                            Label("Plugins", image: "ph-puzzle-piece")
                         }
                     }
                     Section("More") {
                         NavigationLink { McpServersSettingsView() } label: {
-                            Label("MCP servers", systemImage: "cpu")
+                            Label("MCP servers", image: "ph-cpu")
                         }
                         NavigationLink { WebhooksSettingsView() } label: {
-                            Label("Webhooks", systemImage: "arrow.triangle.branch")
+                            Label("Webhooks", image: "ph-webhooks-logo")
                         }
                     }
                 }
@@ -137,7 +137,7 @@ struct CustomizeSheet: View {
 
     private func row(_ title: String, icon: String, trailing: String) -> some View {
         HStack(spacing: 12) {
-            Image(systemName: icon)
+            PhIcon(icon, size: 20)
                 .frame(width: 22)
                 .foregroundColor(Color("TextSecondary"))
             Text(title).foregroundColor(Color("TextPrimary"))

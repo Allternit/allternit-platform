@@ -71,6 +71,12 @@ private struct DeckPlugin: Identifiable {
 struct ComposerDeckBand: View {
     let variant: ComposerDeckVariant
     @Binding var inputText: String
+    /// An artifact session's own kind: a fixed label in place of the mode menu,
+    /// since the session makes what it was started for.
+    var sessionKind: ArtifactStudioKind? = nil
+    /// Artifacts ▾ → All artifacts, where leaving means more than switching
+    /// the section underneath (an artifact session is a full-screen cover).
+    var onAllArtifacts: (() -> Void)? = nil
 
     @EnvironmentObject private var modeStore: AppModeStore
     @EnvironmentObject private var agentModeStore: AgentModeStore
@@ -89,7 +95,11 @@ struct ComposerDeckBand: View {
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 10) {
-                modeMenu
+                if let sessionKind {
+                    sessionKindLabel(sessionKind)
+                } else {
+                    modeMenu
+                }
                 separator
                 pluginsMenu
                 separator
@@ -125,7 +135,7 @@ struct ComposerDeckBand: View {
             .environmentObject(AuthManager.shared)
         }
         .sheet(isPresented: $isArtifactsPresented) {
-            DeckArtifactsSheet()
+            DeckArtifactsSheet(onAllArtifacts: onAllArtifacts)
                 .environmentObject(modeStore)
         }
     }
@@ -154,6 +164,20 @@ struct ComposerDeckBand: View {
         .padding(.horizontal, 4)
         .frame(minHeight: 28)
         .contentShape(Rectangle())
+    }
+
+    private func sessionKindLabel(_ kind: ArtifactStudioKind) -> some View {
+        HStack(spacing: 6) {
+            Image(kind.iconAsset)
+                .resizable()
+                .frame(width: 14, height: 14)
+            Text(kind.label)
+                .font(.system(size: 12, weight: .bold))
+        }
+        .foregroundColor(Color("TextSecondary"))
+        .padding(.horizontal, 6)
+        .frame(minHeight: 28)
+        .accessibilityElement(children: .combine)
     }
 
     // MARK: Agent mode ▾
@@ -304,6 +328,8 @@ struct ComposerTopDeckTray<Content: View>: View {
 /// Artifacts ▾ in the deck (web DeckArtifactsMenu): pinned artifacts, the
 /// three most recent, and a way into the Artifacts library.
 struct DeckArtifactsSheet: View {
+    var onAllArtifacts: (() -> Void)? = nil
+
     @EnvironmentObject private var modeStore: AppModeStore
     @Environment(\.dismiss) private var dismiss
 
@@ -346,7 +372,11 @@ struct DeckArtifactsSheet: View {
 
                     Button(action: {
                         dismiss()
-                        modeStore.selectBarItem(.artifacts)
+                        if let onAllArtifacts {
+                            onAllArtifacts()
+                        } else {
+                            modeStore.selectBarItem(.artifacts)
+                        }
                     }) {
                         HStack(spacing: 6) {
                             Text("All artifacts")

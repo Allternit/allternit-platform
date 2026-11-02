@@ -188,11 +188,11 @@ final class WaitingGamesEngine: ObservableObject {
     var wantsKeyboard: Bool { game?.keyboard ?? false }
 
     func pointer(_ x: Double, _ y: Double) { if playing { game?.pointer(x, y) } }
-    func click(_ x: Double, _ y: Double) { if playing { game?.click(x, y) } }
+    func click(_ x: Double, _ y: Double) { if playing && !needsInit { game?.click(x, y) } }
 
     /// A key the game took ("ArrowUp", "Enter", "Backspace", " " or a letter).
     @discardableResult
-    func key(_ key: String) -> Bool { playing ? (game?.key(key) ?? false) : false }
+    func key(_ key: String) -> Bool { playing && !needsInit ? (game?.key(key) ?? false) : false }
 
     func setPlaying(_ on: Bool) {
         guard on != playing else { return }
@@ -275,18 +275,52 @@ private func fishShape(_ n: Int) -> [String] {
 }
 private let FISH_COL = ["#fde68a", "#fbbf24", "#fb923c", "#f87171", "#e879f9", "#94a3b8", "#cbd5e1"]
 
+/// Big Fish sizes (web fishSpawnSize). You start at 2 because you only eat
+/// strictly smaller fish and the smallest fish is 1: at size 1 nothing was
+/// edible, so you could never grow.
+enum FishRules {
+    static let startSize = 2
+    static let maxSize = 7
+    /// Bigger fish in the tank at once: small ones get eaten and big ones don't,
+    /// so without a cap the tank fills with threats.
+    static let maxThreats = 4
+
+    /// A new fish's size for a player at `size`: 22% bigger than you (none at
+    /// the top size), the rest smaller. `r1`, `r2` are random 0–1.
+    static func spawnSize(playerSize size: Int, r1: Double, r2: Double) -> Int {
+        if r1 < 0.22 && size < maxSize { return min(maxSize, size + 1 + Int(floor(r2 * 3))) }
+        return 1 + Int(floor(r2 * Double(max(1, size - 1))))
+    }
+
+    /// Eats at the fish's full outline plus a little; a one-row fish is 13 pt
+    /// tall and small fish swim away.
+    static func bites(gapX: Double, gapY: Double, widths: Double, heights: Double) -> Bool {
+        gapX < widths / 2 && gapY < heights / 2 + 0.4
+    }
+
+    /// Gets eaten only on a clear overlap.
+    static func caught(gapX: Double, gapY: Double, widths: Double, heights: Double) -> Bool {
+        gapX < widths / 2 - 1 && gapY < heights / 2 - 0.3
+    }
+}
+
+/// Space the top bar and score line take over a game, in points.
+private let HUD_BOTTOM = 76.0
+
 private final class FishGame: WaitingGame {
     struct Me { var x, y, tx, ty: Double; var size: Int; var xp: Int; var dir: Double; var inv: Double }
     struct Npc { var x, y, v, dir: Double; var s: Int; var p: Double; var dead = false }
     struct Kelp { let x, h, p: Double }
     struct Bub { let x, y, v: Double }
-    var me = Me(x: 0, y: 0, tx: 0, ty: 0, size: 1, xp: 0, dir: 1, inv: 0)
+    struct Pop { let x, y, t: Double; let txt: String }
+    var me = Me(x: 0, y: 0, tx: 0, ty: 0, size: FishRules.startSize, xp: 0, dir: 1, inv: 0)
+    var pops: [Pop] = []
     var npc: [Npc] = []
     var kelp: [Kelp] = []
     var bub: [Bub] = []
     var score = 0
 
-    override var hint: String { "Move your finger to swim. Eat smaller fish to grow; stay away from bigger ones. Get eaten and you start small again." }
+    override var hint: String { "Move your finger to swim. Eat smaller fish to grow; stay away from bigger ones, marked !. Get eaten and you start small again." }
 
     override func initGame() {
         reset(true)
@@ -296,16 +330,16 @@ private final class FishGame: WaitingGame {
     }
 
     func reset(_ first: Bool) {
-        me = Me(x: C / 2, y: R / 2, tx: C / 2, ty: R / 2, size: 1, xp: 0, dir: 1, inv: first ? 0 : 2)
+        me = Me(x: C / 2, y: R / 2, tx: C / 2, ty: R / 2, size: FishRules.startSize, xp: 0, dir: 1, inv: 2)
         if first { score = 0 }
         npc = []
+        pops = []
         for _ in 0..<14 { spawn(true) }
     }
 
     func spawn(_ any: Bool) {
-        let big = Double.random(in: 0..<1) < 0.22
-        let size = Double(me.size)
-        let s = max(1, min(7, Int((big ? rnd(size + 1, size + 4) : rnd(1, size + 0.6)).rounded())))
+        let threats = npc.filter { $0.s > me.size }.count
+        let s = FishRules.spawnSize(playerSize: me.size, r1: threats >= FishRules.maxThreats ? 1 : Double.random(in: 0..<1), r2: Double.random(in: 0..<1))
         let dir: Double = Double.random(in: 0..<1) < 0.5 ? 1 : -1
         npc.append(Npc(x: any ? rnd(0, C) : (dir > 0 ? -12 : C + 4), y: rnd(3, R - 4),
                        v: rnd(3, 8) * (s > 5 ? 0.7 : 1) / Double(s).squareRoot(), dir: dir, s: s, p: rnd(0, TAU)))
@@ -328,18 +362,21 @@ private final class FishGame: WaitingGame {
             let fw = Double(sh[min(1, sh.count - 1)].count), fh = Double(sh.count)
             // flee or chase a little
             let ddx = me.x - f.x, ddy = me.y - f.y, dist = hypot(ddx / 2, ddy)
-            if dist < 10 {
-                if f.s < me.size { npc[i].y -= sign(ddy) * dt * 3 }
-                else if f.s > me.size { npc[i].y += sign(ddy) * dt * 1.5 }
+            if f.s < me.size {
+                if dist < 5 { npc[i].y -= sign(ddy) * dt * 1.5 }
+            } else if f.s > me.size && dist < 10 {
+                npc[i].y += sign(ddy) * dt * 1.5
             }
-            let hit = abs(me.x - (f.x + fw / 2)) < (mw + fw) / 2 - 1 && abs(me.y - (f.y + fh / 2)) < (mh + fh) / 2 - 0.3
-            if hit && !f.dead {
-                if f.s < me.size {
+            npc[i].y = max(1, min(R - 3, npc[i].y))
+            let gapX = abs(me.x - (f.x + fw / 2)), gapY = abs(me.y - (f.y + fh / 2))
+            if !f.dead {
+                if f.s < me.size && FishRules.bites(gapX: gapX, gapY: gapY, widths: mw + fw, heights: mh + fh) {
                     npc[i].dead = true
                     score += f.s * 10
                     me.xp += f.s
-                    if me.xp >= me.size * 4 && me.size < 7 { me.size += 1; me.xp = 0; flash = (t, "Bigger!", "#ffffff") }
-                } else if f.s > me.size && me.inv <= 0 {
+                    pops.append(Pop(x: f.x, y: f.y, t: t, txt: "+\(f.s * 10)"))
+                    if me.xp >= me.size * 2 && me.size < FishRules.maxSize { me.size += 1; me.xp = 0; flash = (t, "Bigger!", "#ffffff") }
+                } else if f.s > me.size && me.inv <= 0 && FishRules.caught(gapX: gapX, gapY: gapY, widths: mw + fw, heights: mh + fh) {
                     best = max(best ?? 0, Double(score))
                     flash = (t, "Eaten! Back to the start", "#ffffff")
                     score = 0
@@ -348,6 +385,7 @@ private final class FishGame: WaitingGame {
                 }
             }
         }
+        pops = pops.filter { t - $0.t < 0.7 }
         npc = npc.filter { !$0.dead && $0.x > -16 && $0.x < C + 16 }
         while npc.count < 14 { spawn(false) }
         e.setHud(["Score \(score)", "Size \(me.size) / 7", "Best \(Int(max(best ?? 0, Double(score))))"])
@@ -384,10 +422,11 @@ private final class FishGame: WaitingGame {
             let sh = fishShape(f.s).map { f.dir > 0 ? $0 : flip($0) }
             let big = f.s > me.size
             for (j, l) in sh.enumerated() { p.txt(f.x, f.y + Double(j), l, FISH_COL[f.s - 1], big ? 0.95 : 0.85) }
-            if big && hypot((me.x - f.x) / 2, me.y - f.y) < 12 {
+            if big {
                 p.txt(f.x + (f.dir > 0 ? Double(sh[0].count) : -2), f.y, "!", "#ff6b6b", 0.9)
             }
         }
+        for pop in pops { p.txt(pop.x, pop.y - (t - pop.t) * 4, pop.txt, "#fde68a", 1 - (t - pop.t) / 0.7) }
         let sh = fishShape(me.size).map { me.dir > 0 ? $0 : flip($0) }
         let blink = me.inv > 0 && Int(floor(t * 8)) % 2 == 1
         if !blink {
@@ -416,6 +455,7 @@ private final class RaceGame: WaitingGame {
     var idx = 0
     var t0 = 0.0
     var chars = 0
+    var clock = 0.0
 
     init(_ e: WaitingGamesEngine, racers: [WaitingGameRacer]) {
         lineup = [Racer(name: "You", col: "#ffffff", me: true)]
@@ -437,6 +477,8 @@ private final class RaceGame: WaitingGame {
         e.showBanner("Bot Race", "Type the word on screen. Each word moves you forward.\nStart typing to go.")
     }
 
+    override func click(_ px: Double, _ py: Double) { if state == "done" { newRace() } }
+
     override func key(_ k: String) -> Bool {
         if state == "done" { if k == "Enter" { newRace() }; return false }
         if k.count != 1 && k != "Backspace" { return false }
@@ -453,7 +495,7 @@ private final class RaceGame: WaitingGame {
                 if idx >= GOAL { finish(0) }
             }
         } else {
-            err = e.now
+            err = clock
         }
         return true
     }
@@ -467,10 +509,11 @@ private final class RaceGame: WaitingGame {
         let wpm = Int((Double(chars) / 5 / (secs / 60)).rounded())
         let ord = ["", "1st", "2nd", "3rd", "4th", "5th"]
         e.showBanner(place == 1 ? "You won!" : place > 0 ? "You came \(ord[place])" : "The bots won",
-                     "\(wpm) words per minute · Press Enter to race again")
+                     "\(wpm) words per minute · Tap or press Go to race again")
     }
 
     override func step(_ dt: Double, _ t: Double) {
+        clock = t
         guard state == "go" else { return }
         for i in racers.indices where !racers[i].me && racers[i].pos < 1 {
             racers[i].pos = min(1, racers[i].pos + dt * racers[i].rate / Double(GOAL) * (1 + 0.35 * sin(t * 1.7 + racers[i].jit)))
@@ -486,7 +529,12 @@ private final class RaceGame: WaitingGame {
             let fi = Double(i)
             p.txt(jmod(fi * 37, C), jmod(fi * 53, R), ".", "#c4b5fd", 0.15 + 0.15 * sin(t + fi))
         }
-        let top = (R * 0.12).rounded(), laneH = max(2, floor(R * 0.11)), x0 = 12.0, x1 = C - 6, len = x1 - x0
+        // The word stays at the top, under the score line, so the keyboard can
+        // never cover it. The lanes fill what's left.
+        let wordY = HUD_BOTTOM
+        let top = ((wordY + e.FS * 4.8) / chh).rounded(.up)
+        let laneH = max(2, min(floor((R - top - 1) / Double(racers.count)), floor(R * 0.11)))
+        let x0 = 12.0, x1 = C - 6, len = x1 - x0
         for (i, r) in racers.enumerated() {
             let y = top + Double(i) * laneH
             p.txt(1, y, String(r.name.padding(toLength: 8, withPad: " ", startingAt: 0).prefix(8)), r.col, 0.9)
@@ -502,7 +550,6 @@ private final class RaceGame: WaitingGame {
         }
         // the word to type
         let w = idx < words.count ? words[idx] : ""
-        let wy = (R * 0.78).rounded()
         let size = e.FS * 2.4
         let big = WaitingGamesPainter.monoWidth(size, bold: true)
         let sx = W / 2 - Double(w.count) * big / 2
@@ -510,11 +557,11 @@ private final class RaceGame: WaitingGame {
         let shake = shaking ? sin(t * 90) * 4 : 0
         for (i, ch) in w.enumerated() {
             let col = i < typed.count ? "#F2A93B" : (shaking && i == typed.count ? "#f87171" : "#ece8ff")
-            p.glyph(sx + Double(i) * big + shake, wy * chh, String(ch), col, size, bold: true)
+            p.glyph(sx + Double(i) * big + shake, wordY, String(ch), col, size, bold: true)
         }
         let nx = words.dropFirst(idx + 1).prefix(3).joined(separator: "  ")
         let nw = Double(nx.count) * cw
-        p.glyph(W / 2 - nw / 2, wy * chh + e.FS * 3.4, nx, "#ece8ff", e.FS, bold: false, 0.5)
+        p.glyph(W / 2 - nw / 2, wordY + e.FS * 3, nx, "#ece8ff", e.FS, bold: false, 0.5)
     }
 }
 
@@ -673,7 +720,7 @@ private final class BugBashGame: WaitingGame {
     }
 
     func layout() -> (size: Double, gap: Double, ox: Double, oy: Double) {
-        let gap = 14.0, top = 56.0, bottom = 84.0
+        let gap = 14.0, top = HUD_BOTTOM, bottom = 12.0
         let size = min((W - gap * 4) / 3, (H - top - bottom - gap * 2) / 3)
         return (size, gap, (W - (size * 3 + gap * 2)) / 2, top + ((H - top - bottom) - (size * 3 + gap * 2)) / 2)
     }
@@ -726,7 +773,7 @@ private final class BugBashGame: WaitingGame {
         for (i, h) in holes.enumerated() {
             let r = rect(i)
             p.roundRect(r.x, r.y, r.s, r.s, 14, Ink.color("#232733"))
-            for k in 0..<5 {
+            for k in 0..<5 where 16 + Double(k) * 14 + 5 < r.s - 30 {
                 p.rect(r.x + 14, r.y + 16 + Double(k) * 14, (r.s - 28) * Double((k * 37 + i * 13) % 60 + 30) / 100, 5, Ink.color("#2f3545"))
             }
             p.ptxt(r.x + r.s / 2, r.y + r.s - 16, h.f, "#9aa3b5", 1, 12)
@@ -864,12 +911,15 @@ private final class SnakeGame: WaitingGame {
     var over = false
     var score = 0
     var food = Cell(x: 0, y: 0)
+    /// The first playable row, clear of the top bar and score line.
+    var top = 2
 
     override var hint: String { "Tap the side you want to turn to (or use arrow keys). Each token makes the thread longer. Hit the edge or yourself and the context is full." }
 
     override func initGame() {
         gx = Int(floor(C / 2)); gy = Int(playRows)
-        let sx = gx / 3, sy = gy / 2
+        top = Int((HUD_BOTTOM / chh).rounded(.up))
+        let sx = gx / 3, sy = (top + gy) / 2
         s = [Cell(x: sx, y: sy), Cell(x: sx - 1, y: sy), Cell(x: sx - 2, y: sy)]
         d = Cell(x: 1, y: 0); nd = d; acc = 0; over = false; score = 0
         food = place()
@@ -877,12 +927,12 @@ private final class SnakeGame: WaitingGame {
     }
 
     func place() -> Cell {
-        guard gx > 2, gy > 3 else { return Cell(x: 1, y: 2) }
+        guard gx > 2, gy > top + 1 else { return Cell(x: 1, y: top) }
         for _ in 0..<500 {
-            let f = Cell(x: Int(floor(rnd(1, Double(gx - 1)))), y: Int(floor(rnd(2, Double(gy - 1)))))
+            let f = Cell(x: Int(floor(rnd(1, Double(gx - 1)))), y: Int(floor(rnd(Double(top), Double(gy - 1)))))
             if !s.contains(f) { return f }
         }
-        return Cell(x: 1, y: 2)
+        return Cell(x: 1, y: top)
     }
 
     override func key(_ k: String) -> Bool {
@@ -914,7 +964,7 @@ private final class SnakeGame: WaitingGame {
             acc -= sp
             d = nd
             let h = s[0], n = Cell(x: h.x + d.x, y: h.y + d.y)
-            if n.x < 0 || n.y < 2 || n.x >= gx || n.y >= gy || s.contains(n) {
+            if n.x < 0 || n.y < top || n.x >= gx || n.y >= gy || s.contains(n) {
                 over = true
                 e.showBanner("Context window full", "\(s.count * 4)k tokens · Tap to start a new thread")
                 return
@@ -928,7 +978,7 @@ private final class SnakeGame: WaitingGame {
     override func draw(_ p: inout WaitingGamesPainter, _ t: Double) {
         p.bg(["#111318", "#1b1e26"])
         for x in 0..<max(0, gx) {
-            p.txt(Double(x * 2), 1, "··", "#52525b", 0.6)
+            p.txt(Double(x * 2), Double(top - 1), "··", "#52525b", 0.6)
             p.txt(Double(x * 2), Double(gy), "··", "#52525b", 0.6)
         }
         for (i, c) in s.enumerated() {
@@ -961,7 +1011,7 @@ private final class MemoryGame: WaitingGame {
     }
 
     func layout() -> (cwid: Double, ch: Double, gap: Double, ox: Double, oy: Double) {
-        let gap = 10.0, top = 50.0, bottom = 70.0
+        let gap = 10.0, top = HUD_BOTTOM, bottom = 12.0
         let cwid = min((W - gap * 5) / 4, ((H - top - bottom - gap * 3) / 4) * 1.3), ch = cwid / 1.3
         return (cwid, ch, gap, (W - (cwid * 4 + gap * 3)) / 2, top + ((H - top - bottom) - (ch * 4 + gap * 3)) / 2)
     }

@@ -147,6 +147,11 @@ private struct WaitingGamesWindow: View {
     /// "empty" field still arrives.
     private static let sentinel = "\u{200B}"
     private static let fallbackRacers = ["Scout", "Pixel", "Byte", "Nova"]
+    /// What you steer swims just above the finger, where you can see it.
+    private static let fingerLift = 40.0
+
+    /// The keyboard's top on screen; nil while it's down.
+    @State private var keyboardTop: CGFloat? = nil
 
     init() {
         // The racers are read once, when the window opens: the first 4 bots.
@@ -162,19 +167,32 @@ private struct WaitingGamesWindow: View {
     var body: some View {
         GeometryReader { proxy in
             let expanded = store.expanded
+            // How much of this space the keyboard covers. Typed games sit in
+            // the room above it, so the word on top stays on screen.
+            let covered = keyboardTop.map { max(0, proxy.frame(in: .global).maxY - $0) } ?? 0
+            let aboveKeyboard = covered > 0 && engine.wantsKeyboard
             window
-                .frame(height: expanded ? nil : proxy.size.height * 0.46)
-                .frame(maxHeight: expanded ? .infinity : nil)
+                .frame(height: aboveKeyboard
+                    ? max(160, proxy.size.height - covered - (expanded ? 0 : 8))
+                    : (expanded ? nil : proxy.size.height * 0.46))
+                .frame(maxHeight: expanded && !aboveKeyboard ? .infinity : nil)
                 .clipShape(RoundedRectangle(cornerRadius: expanded ? 0 : 16, style: .continuous))
                 .overlay(RoundedRectangle(cornerRadius: expanded ? 0 : 16, style: .continuous)
                     .stroke(Color.white.opacity(expanded ? 0 : 0.10), lineWidth: 1))
                 .shadow(color: .black.opacity(expanded ? 0 : 0.35), radius: 24, y: 10)
                 .padding(.horizontal, expanded ? 0 : 8)
                 // Docked above the message box on a phone.
-                .padding(.bottom, expanded ? 0 : 168)
+                .padding(.bottom, aboveKeyboard ? covered + (expanded ? 0 : 4) : (expanded ? 0 : 168))
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
         }
-        .ignoresSafeArea(store.expanded ? .all : [], edges: .all)
+        .ignoresSafeArea(store.expanded ? .all : .keyboard, edges: .all)
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { note in
+            guard let end = note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else { return }
+            keyboardTop = end.minY < UIScreen.main.bounds.height ? end.minY : nil
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
+            keyboardTop = nil
+        }
         .onAppear {
             engine.pick(store.game)
             keys = true
@@ -253,7 +271,7 @@ private struct WaitingGamesWindow: View {
             DragGesture(minimumDistance: 0)
                 .onChanged { value in
                     let x = Double(value.location.x), y = Double(value.location.y)
-                    engine.pointer(x, y)
+                    engine.pointer(x, y - Self.fingerLift)
                     if !touching {
                         touching = true
                         engine.click(x, y)
@@ -325,7 +343,9 @@ private struct WaitingGamesWindow: View {
             .padding(.horizontal, 20).padding(.vertical, 14)
             .background(.black.opacity(0.4), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
             .padding(.horizontal, 24)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // Typed games keep the word on top: their message sits under the lanes.
+            .padding(.bottom, engine.wantsKeyboard ? 10 : 0)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: engine.wantsKeyboard ? .bottom : .center)
             .allowsHitTesting(false)
         }
     }
@@ -394,6 +414,7 @@ private struct WaitingGamesWindow: View {
     private var hiddenField: some View {
         TextField("", text: $typed)
             .focused($typing)
+            .onAppear { DispatchQueue.main.async { typing = true } }
             .textInputAutocapitalization(.never)
             .autocorrectionDisabled()
             .keyboardType(.asciiCapable)

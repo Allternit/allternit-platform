@@ -1,0 +1,12 @@
+{
+  "images": [
+    {
+      "filename": "landbot.png",
+      "idiom": "universal"
+    }
+  ],
+  "info": {
+    "author": "xcode",
+    "version": 1
+  }
+}

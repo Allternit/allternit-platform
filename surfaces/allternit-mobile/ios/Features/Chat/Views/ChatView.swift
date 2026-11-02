@@ -95,6 +95,11 @@ struct ChatContentView: View {
     var composerTopDeck: AnyView? = nil
     /// The composer's hint in place of "Reply…" ("Message Goldie…").
     var composerPlaceholder: String? = nil
+    /// The artifact session this chat belongs to. Its context and composer come
+    /// from the session, never from what's picked on the home screen.
+    var artifactStudio: ArtifactStudioSession? = nil
+    /// Artifacts ▾ → All artifacts, in an artifact session.
+    var onAllArtifacts: (() -> Void)? = nil
 
     @EnvironmentObject private var modeStore: AppModeStore
     @EnvironmentObject private var agentModeStore: AgentModeStore
@@ -125,6 +130,9 @@ struct ChatContentView: View {
     /// with. Composer-level controls only apply pre-session, so pushing
     /// this into the view model can never mutate a live session.
     private var sessionContext: SessionContext {
+        if let artifactStudio {
+            return SessionContext(originSurface: "cowork", sessionMode: "agent", agentModeId: artifactStudio.kind.modeId)
+        }
         let mode = modeStore.mode
         let agentOn = agentModeStore.isAgentEnabled(for: mode)
         return SessionContext(
@@ -337,6 +345,9 @@ struct ChatContentView: View {
                                 // Code thread empty state: terminal boot header.
                                 TerminalEmptyState(folder: codeFolder)
                                     .padding(.top, 24)
+                            } else if let artifactStudio {
+                                ArtifactSessionEmptyState(kind: artifactStudio.kind)
+                                    .padding(.top, 60)
                             } else {
                                 ChatLaunchGreeting()
                                     .padding(.top, 60)
@@ -392,7 +403,7 @@ struct ChatContentView: View {
                 // home: `❯` line, dashed rules, the full status row).
                 codeComposer(terminal: false)
             } else {
-                composer(deck: launchStyle || composerTopDeck != nil ? .compact : .none)
+                composer(deck: launchStyle || composerTopDeck != nil || artifactStudio != nil ? .compact : .none)
                     .padding(.horizontal, 14)
                     .padding(.top, 6)
                     .padding(.bottom, 8)
@@ -478,7 +489,9 @@ struct ChatContentView: View {
             placeholderOverride: composerPlaceholder,
             // A bot thread's composer (ThreadComposer) has no permission pill.
             showsPermission: chatBot == nil,
-            topDeck: composerTopDeck
+            topDeck: composerTopDeck,
+            artifactKind: artifactStudio?.kind,
+            onAllArtifacts: onAllArtifacts
         )
     }
 

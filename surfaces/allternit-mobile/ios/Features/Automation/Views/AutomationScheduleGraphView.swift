@@ -1,9 +1,9 @@
 import SwiftUI
 
 // Graph view of Automation Tasks at phone width. The web draws a React Flow
-// canvas above `sm` and "the same cards, stacked" on a phone
-// (AutomationSchedule.tsx AutomationGraph, RoutinesGraph.tsx); this is that
-// phone branch, in the same flow order.
+// canvas above `sm` and the same flow stacked on a phone (AutomationSchedule.tsx
+// AutomationGraph, RoutinesGraph.tsx): goal, who runs it, then its tasks, joined
+// by the same lines (green while active, dashed while paused).
 
 /// EmptyState (Arc) used by the graph views.
 struct AutomationGraphEmptyState: View {
@@ -110,7 +110,7 @@ struct AutomationTasksGraph: View {
             if isLoaded {
                 AutomationGraphEmptyState(
                     title: "No \(noun) yet",
-                    message: "Click New task above to add one. It shows here with its schedule, the bot that runs it and the goal it serves."
+                    message: "Tap New task to add one. It shows here with its schedule, the bot that runs it and the goal it serves."
                 )
             } else {
                 Text("Loading \(kind == nil ? "tasks" : noun)…")
@@ -118,28 +118,92 @@ struct AutomationTasksGraph: View {
                     .foregroundColor(Color("TextTertiary"))
             }
         } else {
-            VStack(spacing: 8) {
-                ForEach(Self.flowOrder(tasks: tasks, allTasks: allTasks), id: \.key) { task in
-                    Group {
-                        if task.type == .goal {
-                            goalCard(task)
-                        } else {
-                            triggerCard(task)
-                        }
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(Self.flowRows(tasks: tasks, allTasks: allTasks).enumerated()), id: \.element.id) { index, row in
+                    edge(row, first: index == 0)
+                    switch row {
+                    case .goal(let goal):
+                        tappable(goal) { goalCard(goal) }
+                    case .task(let task):
+                        tappable(task) { triggerCard(task) }
+                    case .runner(_, let agentId, let name, let count, _):
+                        runnerCard(agentId: agentId, name: name, count: count)
                     }
-                    .contentShape(Rectangle())
-                    .onTapGesture { onOpen(task) }
-                    .accessibilityElement(children: .contain)
-                    .accessibilityLabel("\(task.name): \(AutomationScheduleLogic.scheduleLine(task)). Show details")
-                    .accessibilityAction { onOpen(task) }
                 }
             }
         }
     }
 
+    /// One row of the stacked flow.
+    enum FlowRow: Identifiable {
+        case goal(AutomationTaskItem)
+        case runner(id: String, agentId: String?, name: String, count: Int, active: Bool?)
+        case task(AutomationTaskItem)
+
+        var id: String {
+            switch self {
+            case .goal(let goal): return goal.key
+            case .runner(let id, _, _, _, _): return id
+            case .task(let task): return task.key
+            }
+        }
+    }
+
+    private func tappable<Content: View>(_ task: AutomationTaskItem, @ViewBuilder content: () -> Content) -> some View {
+        content()
+            .contentShape(Rectangle())
+            .onTapGesture { onOpen(task) }
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("\(task.name): \(AutomationScheduleLogic.scheduleLine(task)). Show details")
+            .accessibilityAction { onOpen(task) }
+    }
+
+    /// The line into a row, or the gap between groups.
+    @ViewBuilder
+    private func edge(_ row: FlowRow, first: Bool) -> some View {
+        switch row {
+        case .task(let task):
+            flowLine(active: task.isActive)
+        case .runner(_, _, _, _, let active?):
+            flowLine(active: active)
+        default:
+            if !first { Color.clear.frame(height: 8) }
+        }
+    }
+
+    /// EDGE_ON / EDGE_OFF: 1.5 pt, green when active, dashed when paused.
+    private func flowLine(active: Bool) -> some View {
+        Path { path in
+            path.move(to: CGPoint(x: 0.75, y: 0))
+            path.addLine(to: CGPoint(x: 0.75, y: 12))
+        }
+        .stroke(active ? Theme.statusSuccess : Color("BorderStrong"), style: StrokeStyle(lineWidth: 1.5, dash: active ? [] : [4, 4]))
+        .frame(width: 2, height: 12)
+        .padding(.leading, 20)
+        .accessibilityHidden(true)
+    }
+
+    /// RunnerCard: who runs the tasks under it.
+    private func runnerCard(agentId: String?, name: String, count: Int) -> some View {
+        GraphCard {
+            HStack(spacing: 8) {
+                AutomationTaskMark(agentId: agentId, kind: .routine, size: 28)
+                VStack(alignment: .leading, spacing: 0) {
+                    BotNameText(name, size: 12.5)
+                        .fontWeight(.medium)
+                        .lineLimit(1)
+                    Text("\(count) task\(count == 1 ? "" : "s")")
+                        .font(.system(size: 11))
+                        .foregroundColor(Color("TextTertiary"))
+                }
+            }
+        }
+        .accessibilityElement(children: .combine)
+    }
+
     /// layoutAutomationGraph's order: goals with the tasks that serve them
     /// (grouped by who runs them), then the tasks that serve no goal.
-    static func flowOrder(tasks: [AutomationTaskItem], allTasks: [AutomationTaskItem]) -> [AutomationTaskItem] {
+    static func flowRows(tasks: [AutomationTaskItem], allTasks: [AutomationTaskItem]) -> [FlowRow] {
         let goals = allTasks.filter { $0.type == .goal }
         // On a Goals tab, pull in each goal's tasks from the full list.
         let goalIds = Set(tasks.filter { $0.type == .goal }.map(\.id))
@@ -169,9 +233,10 @@ struct AutomationTasksGraph: View {
         }
         if let loose = order.firstIndex(of: "") { order.append(order.remove(at: loose)) }
 
-        var out: [AutomationTaskItem] = []
+        var out: [FlowRow] = []
         for key in order {
-            if let goal = goalOf[key] { out.append(goal) }
+            let goal = goalOf[key]
+            if let goal { out.append(.goal(goal)) }
             var runners: [String] = []
             var byRunner: [String: [AutomationTaskItem]] = [:]
             for t in members[key] ?? [] {
@@ -179,7 +244,18 @@ struct AutomationTasksGraph: View {
                 if !runners.contains(runner) { runners.append(runner) }
                 byRunner[runner, default: []].append(t)
             }
-            for runner in runners { out.append(contentsOf: byRunner[runner] ?? []) }
+            for runner in runners {
+                let list = byRunner[runner] ?? []
+                out.append(.runner(
+                    id: "runner-\(key)-\(runner)",
+                    agentId: list.first?.agentId,
+                    name: list.first?.executorName ?? "Default model",
+                    count: list.count,
+                    // The line up to the goal, when there is one.
+                    active: goal == nil ? nil : list.contains(where: \.isActive)
+                ))
+                out.append(contentsOf: list.map { FlowRow.task($0) })
+            }
         }
         return out
     }

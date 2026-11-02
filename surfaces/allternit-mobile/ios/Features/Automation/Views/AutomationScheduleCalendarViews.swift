@@ -172,16 +172,16 @@ struct AutomationTasksCalendar: View {
 
     private var hint: String {
         if kind == .goal {
-            return "Goals sit on their target date · click a time to add a goal due that day · click one to open it"
+            return "Goals sit on their target date · tap a time to add a goal due that day · tap one to open it"
         }
         let noun = kind?.label.lowercased() ?? "task"
-        return "Click an empty time to add a \(noun) · click one to open it · drag it to move it"
+        return "Tap an empty time to add a \(noun) · tap one to open it · hold and drag it to move it"
     }
 
     var body: some View {
         let placed = placement
         let coming = upcoming
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 8) {
             AutomationScheduler(
                 items: placed.items,
                 avatar: { key, size in
@@ -217,6 +217,7 @@ struct AutomationTasksCalendar: View {
                 }
             )
             .schedulerCalendarHeight()
+            .padding(.bottom, 4)
 
             UpcomingCard(title: "Coming up", isEmpty: coming.isEmpty) {
                 ForEach(coming) { occurrence in
@@ -309,6 +310,7 @@ struct AutomationTaskDetailsSheet: View {
     let close: () -> Void
 
     @State private var isOpen = false
+    @State private var editDraft: AutomationTaskDraft? = nil
     @ObservedObject private var bots = BotModeStore.shared
 
     var body: some View {
@@ -329,6 +331,14 @@ struct AutomationTaskDetailsSheet: View {
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
                 .presentationBackground(Color("BgPanel"))
+                .sheet(item: $editDraft) { draft in
+                    if let edit = actions.edit(task) {
+                        AutomationWizardSheet(store: edit.store, draft: draft, onSaved: {
+                            edit.onSaved()
+                            close()
+                        })
+                    }
+                }
         }
     }
 
@@ -406,6 +416,9 @@ struct AutomationTaskDetailsSheet: View {
                 action("Open", icon: "arrow.up.right.square", primary: true) { isOpen = true }
                 if task.type != .goal {
                     action(isRunning ? "Running…" : "Run now", icon: "play.fill", busy: isRunning) { actions.runNow(task) }
+                }
+                if let edit = actions.edit(task) {
+                    action("Edit", icon: "pencil") { editDraft = edit.draft }
                 }
                 action(task.isActive ? "Pause" : "Resume", icon: task.isActive ? "pause" : "play") {
                     close()
@@ -504,14 +517,14 @@ struct AutomationRoutinesCalendar: View {
     var body: some View {
         let placed = placement
         let coming = upcoming
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 8) {
             AutomationScheduler(
                 items: placed.items,
                 avatar: { botId, size in
                     AnyView(AutomationTaskMark(agentId: botId, kind: .routine, size: size))
                 },
                 colorOf: { color(for: $0.botId) },
-                hint: "Click an empty time to add a routine · click one to open it · drag it to move it",
+                hint: "Tap an empty time to add a routine · tap one to open it · hold and drag it to move it",
                 label: "Routine calendar",
                 onNew: { day, minute in
                     onNew(AutomationRoutineRule.forSlot(day: day, at: minute).cron, day)
@@ -526,6 +539,7 @@ struct AutomationRoutinesCalendar: View {
                 }
             )
             .schedulerCalendarHeight()
+            .padding(.bottom, 4)
 
             UpcomingCard(title: "Upcoming runs", isEmpty: coming.isEmpty) {
                 ForEach(coming) { occurrence in

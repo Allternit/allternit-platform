@@ -114,8 +114,8 @@ struct MainWorkspaceView: View {
         // The waiting games window, over every mode (WaitingGamesLayer).
         .overlay { WaitingGamesLayer() }
         .overlay { sessionLookupCover }
-        // Recents and the overviews open a Docs, Sheets, Slides or Design
-        // session on its editor, not as a plain chat.
+        // Recents and the overviews open an artifact session in its studio,
+        // with its editor or pane, not as a plain chat.
         .onChange(of: selectedSessionId) { _, id in
             guard let id else {
                 sessionLookup = nil
@@ -125,6 +125,8 @@ struct MainWorkspaceView: View {
         }
         .fullScreenCover(item: $artifactSession) { session in
             ArtifactStudioView(studio: session)
+                // Nothing carries over from another session's view.
+                .id(session.sessionId)
         }
         .fullScreenCover(isPresented: $isOverviewPresented) {
             SessionOverviewView(
@@ -247,12 +249,11 @@ struct MainWorkspaceView: View {
         case unlinked(id: String, noun: String)
     }
 
-    /// Opens an editor session on its editor. One from another install is looked
-    /// up behind a cover, so its chat doesn't flash first.
+    /// Opens an artifact session in its studio. One from another install is
+    /// looked up behind a cover, so a plain chat doesn't flash first.
     private func openEditorSession(id: String) {
         let launcher = ArtifactStudioLauncher.shared
         if let session = launcher.session(for: id) {
-            guard session.editorRoute != nil else { return }
             selectedSessionId = nil
             artifactSession = session
             return
@@ -268,13 +269,13 @@ struct MainWorkspaceView: View {
             let result = await launcher.lookUpSession(id: id)
             guard selectedSessionId == id else { return }
             switch result {
-            case .editor(let session) where session.editorRoute != nil:
+            case .editor(let session):
                 sessionLookup = nil
                 selectedSessionId = nil
                 artifactSession = session
             case .unlinked(let noun):
                 sessionLookup = .unlinked(id: id, noun: noun)
-            default:
+            case .chat:
                 sessionLookup = nil
             }
         }

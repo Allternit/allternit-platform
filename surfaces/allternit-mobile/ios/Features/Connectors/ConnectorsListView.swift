@@ -168,13 +168,7 @@ struct ConnectorsListView: View {
 
     private func connectorRow(_ connector: Connector) -> some View {
         HStack(spacing: 12) {
-            ZStack {
-                Circle().fill(Color("AccentPrimary").opacity(0.12))
-                Text(connector.name.prefix(1).uppercased())
-                    .font(.headline)
-                    .foregroundColor(Color("AccentPrimary"))
-            }
-            .frame(width: 40, height: 40)
+            AppLogoView(id: connector.id, name: connector.name, url: connector.baseURL, size: 40)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(connector.name)

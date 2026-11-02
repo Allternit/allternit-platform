@@ -9,8 +9,9 @@ import UIKit
 /// landing (featured item, "For you", "More …").
 ///
 /// Data: skills and plugins on the user's computer (CapabilitiesClient),
-/// connectors from `/api/v1/connectors` (ConnectorsClient). More opens the
-/// native MCP servers and Webhooks screens.
+/// connectors from `/api/v1/connectors` (ConnectorsClient), drawn with the
+/// connector directory MCP Apps uses. More opens the native MCP servers and
+/// Webhooks screens. Glyphs and logos are Desktop's own artwork.
 struct CustomizeScreen: View {
     @Binding var isSidebarOpen: Bool
 
@@ -22,7 +23,7 @@ struct CustomizeScreen: View {
     @State private var sort: Sort = .recommended
     @State private var items: [CustomizeSection: [CustomizeItem]] = [:]
     @State private var loading: Set<CustomizeSection> = []
-    @State private var failures: [CustomizeSection: String] = [:]
+    @State private var failures: [CustomizeSection: SettingsLoadFailure] = [:]
     @State private var pending: Set<String> = []
     @State private var actionError: String? = nil
     @State private var path = NavigationPath()
@@ -36,6 +37,11 @@ struct CustomizeScreen: View {
     @State private var showAll = false
     /// A built-in plugin's page (web ItemDetail).
     @State private var featureDetail: CustomizeItem? = nil
+    @StateObject private var connect = DirectoryConnectModel()
+    /// A connector's page.
+    @State private var connectorDetail: DirectoryEntry? = nil
+    /// A curated collection opened from the connectors hero.
+    @State private var collection: String? = nil
 
     enum CustomizeSection: String, CaseIterable {
         case skills, connectors, plugins
@@ -48,23 +54,23 @@ struct CustomizeScreen: View {
             }
         }
 
-        /// Phosphor BookOpen / PlugsConnected / PuzzlePiece.
+        /// SECTIONS: BookOpen / PlugsConnected / PuzzlePiece.
         var icon: String {
             switch self {
-            case .skills: return "book"
-            case .connectors: return "powerplug"
-            case .plugins: return "puzzlepiece.extension"
+            case .skills: return "book-open"
+            case .connectors: return "plugs-connected"
+            case .plugins: return "puzzle-piece"
             }
         }
 
         var singular: String { String(label.lowercased().dropLast()) }
 
-        /// HERO_TINT (light); dark mode uses the same hue, quieter.
-        var heroTint: Color {
+        /// HERO_TINT (light); dark mode uses the same hues, quieter.
+        var heroStops: [Color] {
             switch self {
-            case .skills: return Color(hex: "#D0D9C7")
-            case .plugins: return Color(hex: "#CBD4E3")
-            case .connectors: return Color(hex: "#DFEFE8")
+            case .skills: return [Color(hex: "#D3DCCB"), Color(hex: "#CDD6C3")]
+            case .plugins: return [Color(hex: "#CFD8E6"), Color(hex: "#C7D1E1")]
+            case .connectors: return [Color(hex: "#D9ECE4"), Color(hex: "#E6F2EC")]
             }
         }
     }
@@ -74,7 +80,7 @@ struct CustomizeScreen: View {
         case mcps, webhooks
 
         var label: String { self == .mcps ? "MCP servers" : "Webhooks" }
-        var icon: String { self == .mcps ? "cpu" : "arrow.triangle.branch" }
+        var icon: String { self == .mcps ? "ph-cpu" : "ph-webhooks-logo" }
     }
 
     /// The "Build for the Allternit directory" pages (web Sources, Publish).
@@ -131,6 +137,19 @@ struct CustomizeScreen: View {
                         VStack(alignment: .leading, spacing: 0) {
                             header
                             Rectangle().fill(Color("BorderSubtle")).frame(height: 1).padding(.horizontal, -24)
+                            if let note = connect.note {
+                                HStack(spacing: 12) {
+                                    Text(note)
+                                        .font(.system(size: 13))
+                                        .foregroundColor(Color("TextPrimary"))
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                    Button("Dismiss") { connect.note = nil }
+                                        .font(.system(size: 13))
+                                        .foregroundColor(Color("TextSecondary"))
+                                        .underline()
+                                }
+                                .padding(.vertical, 8)
+                            }
                             landing.padding(.top, 20)
                         }
                         .padding(.horizontal, 24)
@@ -191,7 +210,9 @@ struct CustomizeScreen: View {
             ))
             .presentationDetents([.medium, .large])
         }
+        .modifier(DirectoryFlow(selected: $connectorDetail, model: connect))
         .task(id: section) { await load(section, force: false) }
+        .task { connect.onChanged = { await load(.connectors, force: true) } }
     }
 
     private func capabilityDetail(_ item: InstalledCapability) -> some View {
@@ -237,12 +258,12 @@ struct CustomizeScreen: View {
                 }
                 Menu {
                     ForEach(MoreSection.allCases, id: \.self) { more in
-                        Button { path.append(more) } label: { Label(more.label, systemImage: more.icon) }
+                        Button { path.append(more) } label: { Label(more.label, image: more.icon) }
                     }
                 } label: {
                     HStack(spacing: 4) {
                         Text("More")
-                        Image(systemName: "chevron.down").font(.system(size: 10))
+                        PhIcon("caret-down", size: 11)
                     }
                     .font(.system(size: 14))
                     .foregroundColor(Color("TextSecondary"))
@@ -262,11 +283,10 @@ struct CustomizeScreen: View {
 
     private var searchField: some View {
         HStack(spacing: 8) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 14))
+            PhIcon("magnifying-glass", size: 16)
                 .foregroundColor(Color("TextTertiary"))
             TextField("Search \(section.label.lowercased())", text: $query)
-                .font(.system(size: 14))
+                .font(.system(size: 13))
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
         }
@@ -277,8 +297,7 @@ struct CustomizeScreen: View {
     }
 
     private func iconLabel(_ icon: String, active: Bool) -> some View {
-        Image(systemName: icon)
-            .font(.system(size: 15))
+        PhIcon(icon, size: 16)
             .foregroundColor(active ? Color("TextPrimary") : Color("TextSecondary"))
             .frame(width: 36, height: 36)
             .background(RoundedRectangle(cornerRadius: 8).fill(active ? Color("FillNeutral") : Color.clear))
@@ -291,7 +310,7 @@ struct CustomizeScreen: View {
                 LibraryMenuCheck(title: c.capitalized, checked: category == c) { category = c }
             }
         } label: {
-            iconLabel("slider.horizontal.3", active: category != nil)
+            iconLabel("sliders-horizontal", active: category != nil)
         }
         .accessibilityLabel("Filter by category")
     }
@@ -301,7 +320,7 @@ struct CustomizeScreen: View {
             LibraryMenuCheck(title: "Recommended", checked: sort == .recommended) { sort = .recommended }
             LibraryMenuCheck(title: "Name", checked: sort == .name) { sort = .name }
         } label: {
-            iconLabel("arrow.up.arrow.down", active: false)
+            iconLabel("arrows-down-up", active: false)
         }
         .accessibilityLabel("Sort")
     }
@@ -311,22 +330,22 @@ struct CustomizeScreen: View {
         Menu {
             switch section {
             case .skills:
-                Button { isCreatingSkill = true } label: { Label("Create skill", systemImage: "plus") }
+                Button { isCreatingSkill = true } label: { Label("Create skill", image: "ph-plus") }
             case .connectors:
-                Button { isConnectorsPresented = true } label: { Label("Browse connectors", systemImage: "plus") }
+                Button { isConnectorsPresented = true } label: { Label("Browse connectors", image: "ph-plus") }
             case .plugins:
-                Button { isAddingSource = true } label: { Label("Add marketplace", systemImage: "plus") }
+                Button { isAddingSource = true } label: { Label("Add marketplace", image: "ph-plus") }
             }
         } label: {
             HStack(spacing: 6) {
-                Image(systemName: "plus").font(.system(size: 13, weight: .bold))
+                PhIcon("plus-bold", size: 14)
                 Text("Add").font(.system(size: 13, weight: .medium))
-                Image(systemName: "chevron.down").font(.system(size: 10))
+                PhIcon("caret-down", size: 11)
             }
-            .foregroundColor(Color("OnAccent"))
+            .foregroundColor(Color("BgPrimary"))
             .padding(.horizontal, 12)
             .frame(height: 36)
-            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color("AccentPrimary")))
+            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color("TextPrimary")))
             .fixedSize()
         }
     }
@@ -353,7 +372,7 @@ struct CustomizeScreen: View {
         HStack(spacing: 2) {
             ForEach([Scope.yours, .discover], id: \.self) { option in
                 let active = option == effectiveScope
-                Button(action: { scope = option; showAll = false }) {
+                Button(action: { scope = option; showAll = false; collection = nil }) {
                     Text(option == .yours ? "Yours" : "Discover")
                         .font(.system(size: 14, weight: active ? .medium : .regular))
                         .foregroundColor(active ? Color("TextPrimary") : Color("TextTertiary"))
@@ -379,6 +398,7 @@ struct CustomizeScreen: View {
         section = next
         scope = nil
         showAll = false
+        collection = nil
         query = ""
         category = nil
     }
@@ -394,32 +414,113 @@ struct CustomizeScreen: View {
                 .padding(.bottom, 12)
         }
         if loading.contains(section) && all.isEmpty {
-            ProgressView().frame(maxWidth: .infinity).padding(.top, 40)
+            PolishCardSkeletons(count: 6)
         } else if let failure = failures[section], all.isEmpty, effectiveScope == .yours || discoverable.isEmpty {
-            FriendlyInlineStateView(
-                style: .offline,
-                icon: "wifi.slash",
-                title: "Couldn't load your \(section.label.lowercased())",
-                message: failure
-            )
+            SettingsFailureView(failure: failure, subject: "your \(section.label.lowercased())") {
+                Task { await load(section, force: true) }
+            }
+        } else if section == .connectors && effectiveScope == .discover && collection != nil {
+            collectionPage
+        } else if section == .connectors && effectiveScope == .discover && query.isEmpty && category == nil && !showAll {
+            connectorsLanding
         } else if filtered.isEmpty {
             emptyState
         } else if effectiveScope == .yours {
             VStack(alignment: .leading, spacing: 0) {
-                Text("Installed")
+                Text(section == .connectors ? "Connected" : "Installed")
                     .font(.system(size: 13, weight: .medium))
                     .foregroundColor(Color("TextPrimary"))
                     .padding(.bottom, 4)
                 ForEach(Array(filtered.enumerated()), id: \.element.id) { index, item in
                     if index > 0 { Rectangle().fill(Color("BorderSubtle")).frame(height: 1) }
-                    installedRow(item)
+                    if section == .connectors, item.connector != nil {
+                        connectedRow(item)
+                    } else {
+                        installedRow(item)
+                    }
                 }
+            }
+        } else if section == .connectors {
+            VStack(alignment: .leading, spacing: 12) {
+                if showAll || category != nil {
+                    DirectoryBackLink(label: "Customize") { showAll = false; category = nil }
+                }
+                DirectoryGrid(list: Array(AppDirectory.ranked(entries(filtered)).prefix(120)), busy: connect.busy,
+                              onOpen: { connectorDetail = $0 }, onAdd: { entry in Task { await connect.connect(entry) } })
             }
         } else if query.isEmpty && category == nil && !showAll {
             discoverLanding(filtered)
         } else {
             cardGrid(filtered)
         }
+    }
+
+    // MARK: - Connectors
+
+    private func entries(_ list: [CustomizeItem]) -> [DirectoryEntry] {
+        list.compactMap { $0.connector.map(DirectoryEntry.init(connector:)) }
+    }
+
+    /// ConnectorsLanding, the directory MCP Apps › Discover shows too.
+    private var connectorsLanding: some View {
+        let pool = entries(all)
+        return DirectoryLanding(
+            list: pool.filter { !$0.connected }, pool: pool, total: pool.count, noun: "connectors", busy: connect.busy,
+            onOpen: { connectorDetail = $0 },
+            onAdd: { entry in Task { await connect.connect(entry) } },
+            onCategory: { category = $0 },
+            onShowAll: { showAll = true },
+            onCollection: { collection = $0 }
+        )
+    }
+
+    /// ConnectorListPage for a curated collection.
+    private var collectionPage: some View {
+        let picked = AppDirectory.collections.first { $0.id == collection }
+        let byKey = Dictionary(entries(all).filter { !$0.connected }.map { (AppDirectory.rankKey($0.id), $0) },
+                               uniquingKeysWith: { first, _ in first })
+        return VStack(alignment: .leading, spacing: 12) {
+            DirectoryBackLink(label: "Customize") { collection = nil }
+            Text(picked?.title ?? "Connectors")
+                .font(.system(size: 24, weight: .medium, design: .serif))
+                .foregroundColor(Color("TextPrimary"))
+            DirectoryGrid(list: (picked?.ids ?? []).compactMap { byKey[$0] }, busy: connect.busy,
+                          onOpen: { connectorDetail = $0 }, onAdd: { entry in Task { await connect.connect(entry) } })
+        }
+    }
+
+    /// ConnectedRow: the real logo, name, "Connected as …", ⋯.
+    private func connectedRow(_ item: CustomizeItem) -> some View {
+        let entry = item.connector.map(DirectoryEntry.init(connector:))
+        return HStack(spacing: 12) {
+            AppLogoView(id: item.id, name: item.name, url: entry?.site, size: 36)
+            Button { if let entry { connectorDetail = entry } } label: {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(item.name)
+                        .font(.system(size: 14))
+                        .foregroundColor(Color("TextPrimary"))
+                        .lineLimit(1)
+                    Text(entry?.account.map { "Connected as \($0)" } ?? item.description)
+                        .font(.system(size: 12))
+                        .foregroundColor(Color("TextTertiary"))
+                        .lineLimit(1)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            Menu {
+                Button { UIPasteboard.general.string = item.id } label: { Label("Copy ID", image: "ph-copy") }
+                Button { Task { await setEnabled(item, false) } } label: { Label("Disconnect", image: "ph-prohibit") }
+            } label: {
+                PhIcon("dots-three-vertical", size: 17)
+                    .foregroundColor(Color("TextSecondary"))
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
+            }
+            .accessibilityLabel("More actions for \(item.name)")
+        }
+        .padding(.vertical, 12)
     }
 
     private var emptyState: some View {
@@ -469,8 +570,7 @@ struct CustomizeScreen: View {
                     ForEach(keys, id: \.self) { key in
                         Button { category = key } label: {
                             HStack(spacing: 12) {
-                                Image(systemName: section.icon)
-                                    .font(.system(size: 15))
+                                PhIcon(section.icon, size: 17)
                                     .foregroundColor(Color("TextSecondary"))
                                     .frame(width: 36, height: 36)
                                     .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(Color("BorderSubtle"), lineWidth: 1))
@@ -519,7 +619,7 @@ struct CustomizeScreen: View {
                 Button { path.append(DirectoryPage.publish) } label: {
                     Text("Publish")
                         .font(.system(size: 13))
-                        .foregroundColor(Color("OnAccent"))
+                        .foregroundColor(Color("BgPrimary"))
                         .padding(.horizontal, 12)
                         .frame(height: 32)
                         .background(RoundedRectangle(cornerRadius: 8).fill(Color("TextPrimary")))
@@ -548,7 +648,7 @@ struct CustomizeScreen: View {
                     Button(action: onShowAll) {
                         HStack(spacing: 4) {
                             Text("Show all")
-                            Image(systemName: "arrow.right").font(.system(size: 11))
+                            PhIcon("arrow-right", size: 13)
                         }
                         .font(.system(size: 13))
                         .foregroundColor(Color("TextPrimary"))
@@ -563,145 +663,105 @@ struct CustomizeScreen: View {
 
     @Environment(\.colorScheme) private var colorScheme
 
+    /// DiscoverLanding's hero: the section's tint, the serif name, Add and
+    /// View, and the section's big thin glyph.
     private func heroCard(_ item: CustomizeItem) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text(item.author.map { "From \($0)" } ?? "Featured \(section.singular)")
-                .font(.system(size: 12))
-                .foregroundColor(Color("TextSecondary"))
-            Text(item.name)
-                .font(.system(size: 28, weight: .medium, design: .serif))
-                .tracking(-0.3)
-                .foregroundColor(Color("TextPrimary"))
-                .padding(.top, 6)
-            Text(item.description)
-                .font(.system(size: 13))
-                .foregroundColor(Color("TextSecondary"))
-                .lineLimit(2)
-                .padding(.top, 6)
-            HStack(spacing: 8) {
-                Button(action: { add(item) }) {
-                    HStack(spacing: 6) {
-                        if pending.contains(item.id) {
-                            ProgressView().controlSize(.mini).tint(Color("OnAccent"))
-                        } else {
-                            Image(systemName: item.enabled ? "checkmark" : "plus").font(.system(size: 12, weight: .bold))
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 0) {
+                Text(item.author.map { "From \($0)" } ?? "Featured \(section.singular)")
+                    .font(.system(size: 12))
+                    .foregroundColor(Color("TextSecondary"))
+                Text(item.name)
+                    .font(.system(size: 28, weight: .medium, design: .serif))
+                    .tracking(-0.3)
+                    .foregroundColor(Color("TextPrimary"))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 6)
+                Text(item.description)
+                    .font(.system(size: 13))
+                    .foregroundColor(Color("TextSecondary"))
+                    .lineLimit(2)
+                    .padding(.top, 6)
+                TeachChipFlow(spacing: 8) {
+                    Button(action: { add(item) }) {
+                        HStack(spacing: 6) {
+                            if pending.contains(item.id) {
+                                ProgressView().controlSize(.mini).tint(Color("BgPrimary"))
+                            } else {
+                                PhIcon(item.enabled ? "check-bold" : "plus-bold", size: 13)
+                            }
+                            Text(pending.contains(item.id) ? "Adding…" : item.enabled ? "Added" : "Add")
+                                .font(.system(size: 13, weight: .medium))
                         }
-                        Text(pending.contains(item.id) ? "Adding…" : item.enabled ? "Added" : "Add")
-                            .font(.system(size: 13, weight: .medium))
-                    }
-                    .foregroundColor(Color("OnAccent"))
-                    .padding(.horizontal, 12)
-                    .frame(height: 30)
-                    .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color("AccentPrimary")))
-                }
-                .buttonStyle(.plain)
-                .disabled(item.enabled || pending.contains(item.id))
-                if item.capability != nil {
-                    Button("View \(section.singular)") { open(item) }
-                        .font(.system(size: 13))
-                        .foregroundColor(Color("TextPrimary"))
+                        .foregroundColor(Color("BgPrimary"))
                         .padding(.horizontal, 12)
-                        .frame(height: 30)
-                        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color("BgPanel").opacity(0.6)))
+                        .frame(height: 32)
+                        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color("TextPrimary")))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(item.enabled || pending.contains(item.id))
+                    if item.capability != nil {
+                        Button("View \(section.singular)") { open(item) }
+                            .font(.system(size: 13))
+                            .foregroundColor(Color("TextPrimary"))
+                            .padding(.horizontal, 12)
+                            .frame(height: 32)
+                            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.white.opacity(colorScheme == .dark ? 0.08 : 0.6)))
+                            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(Color.primary.opacity(0.1), lineWidth: 1))
+                            .buttonStyle(.plain)
+                    }
                 }
+                .padding(.top, 16)
             }
-            .padding(.top, 16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            PhIcon("\(section.icon)-thin", size: 72)
+                .foregroundColor(colorScheme == .dark ? Color("TextSecondary") : Color(hex: "#2B2F2A"))
+                .opacity(0.8)
         }
         .padding(.horizontal, 24)
         .padding(.vertical, 28)
         .frame(maxWidth: .infinity, minHeight: 200, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(section.heroTint.opacity(colorScheme == .dark ? 0.18 : 1))
+            LinearGradient(colors: section.heroStops.map { $0.opacity(colorScheme == .dark ? 0.18 : 1) },
+                           startPoint: .topLeading, endPoint: .bottomTrailing)
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         )
     }
 
     private func cardGrid(_ list: [CustomizeItem]) -> some View {
-        LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
+        PolishCardGrid {
             ForEach(list) { itemCard($0) }
         }
     }
 
-    /// ItemCard (PreviewCard): glyph preview with a round + / ✓, status dot,
+    /// ItemCard (PreviewCard): glyph tile with a round + / ✓, status dot,
     /// name, description, "by author · Category".
     private func itemCard(_ item: CustomizeItem) -> some View {
         let isPending = pending.contains(item.id)
         let meta = [item.author.map { "by \($0)" }, item.category.map(Self.titleCase)].compactMap { $0 }.joined(separator: " · ")
-        return Button(action: { open(item) }) {
-            VStack(alignment: .leading, spacing: 0) {
-                ZStack(alignment: .topTrailing) {
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(Color("FillNeutral"))
-                        .overlay(
-                            Image(systemName: section.icon)
-                                .font(.system(size: 30, weight: .light))
-                                .foregroundColor(Color("TextSecondary"))
-                        )
-                        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Color("BorderSubtle"), lineWidth: 1))
-                    Button(action: { if !isPending && !item.enabled { add(item) } }) {
-                        Group {
-                            if isPending { ProgressView().controlSize(.mini) } else {
-                                Image(systemName: item.enabled ? "checkmark" : "plus").font(.system(size: 12, weight: .semibold))
-                            }
-                        }
-                        .foregroundColor(Color("TextSecondary"))
-                        .frame(width: 28, height: 28)
-                        .background(Circle().fill(Color("BgPanel")))
-                        .overlay(Circle().stroke(Color("BorderSubtle"), lineWidth: 1))
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(item.enabled ? "\(item.name) added" : isPending ? "Adding \(item.name)" : "Add \(item.name)")
-                    .padding(8)
-                }
-                .frame(height: 88)
-                .padding(5)
-
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Circle()
-                        .fill(item.enabled ? Theme.statusSuccess : Color("TextTertiary"))
-                        .frame(width: 7, height: 7)
-                        .accessibilityLabel(item.enabled ? "Added" : "Not added")
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(item.name)
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundColor(Color("TextPrimary"))
-                            .lineLimit(1)
-                        Text(item.description.isEmpty ? "No description." : item.description)
-                            .font(.system(size: 12.5))
-                            .foregroundColor(Color("TextSecondary"))
-                            .lineLimit(2)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                }
-                .padding(.horizontal, 10)
-                .padding(.top, 8)
-                Spacer(minLength: 8)
-                if !meta.isEmpty {
-                    Rectangle().fill(Color("BorderSubtle")).frame(height: 1).padding(.horizontal, 5)
-                    Text(meta)
-                        .font(.system(size: 12))
-                        .foregroundColor(Color("TextTertiary"))
-                        .lineLimit(1)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 8)
-                }
+        return PolishCard(
+            name: item.name,
+            description: item.description.isEmpty ? "No description." : item.description,
+            status: isPending ? .attention : item.enabled ? .ok : .idle,
+            statusLabel: isPending ? "Adding" : item.enabled ? "Added" : "Not added",
+            footer: meta.isEmpty ? nil : meta,
+            onOpen: { open(item) },
+            logo: { PhIcon(section.icon, size: 36).foregroundColor(Color("TextSecondary")) },
+            action: {
+                PolishCardAddButton(added: item.enabled, pending: isPending,
+                                    label: item.enabled ? "\(item.name) added" : isPending ? "Adding \(item.name)" : "Add \(item.name)",
+                                    action: { add(item) })
             }
-            .frame(maxWidth: .infinity, minHeight: 210, alignment: .topLeading)
-            .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color("BgPanel")))
-            .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Color("BorderSubtle"), lineWidth: 1))
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
+        )
     }
 
     /// InstalledRow: glyph, name, "from author · description", ⋯, switch.
     private func installedRow(_ item: CustomizeItem) -> some View {
         HStack(spacing: 12) {
-            Image(systemName: section.icon)
-                .font(.system(size: 15))
+            PhIcon(section.icon, size: 16)
                 .foregroundColor(Color("TextSecondary"))
                 .frame(width: 36, height: 36)
-                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color("BorderSubtle"), lineWidth: 1))
+                .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(Color("BorderSubtle"), lineWidth: 1))
             Button(action: { open(item) }) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(item.name)
@@ -720,20 +780,20 @@ struct CustomizeScreen: View {
             .buttonStyle(.plain)
             Menu {
                 if item.capability != nil {
-                    Button { open(item) } label: { Label("Edit in manager", systemImage: "arrow.up.right.square") }
+                    Button { open(item) } label: { Label("Edit in manager", image: "ph-arrow-square-out") }
                 }
-                Button { UIPasteboard.general.string = item.id } label: { Label("Copy ID", systemImage: "doc.on.doc") }
-                Button { Task { await setEnabled(item, false) } } label: { Label("Turn off", systemImage: "nosign") }
+                Button { UIPasteboard.general.string = item.id } label: { Label("Copy ID", image: "ph-copy") }
+                Button { Task { await setEnabled(item, false) } } label: { Label("Turn off", image: "ph-prohibit") }
             } label: {
-                Image(systemName: "ellipsis")
-                    .rotationEffect(.degrees(90))
-                    .font(.system(size: 15, weight: .bold))
+                PhIcon("dots-three-vertical", size: 17)
                     .foregroundColor(Color("TextSecondary"))
-                    .frame(width: 32, height: 32)
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
             }
             .accessibilityLabel("More actions for \(item.name)")
             Toggle("", isOn: Binding(get: { item.enabled }, set: { value in Task { await setEnabled(item, value) } }))
                 .labelsHidden()
+                .tint(Color(hex: "#3B82F6"))
                 .disabled(pending.contains(item.id))
                 .accessibilityLabel(item.enabled ? "Turn off \(item.name)" : "Turn on \(item.name)")
         }
@@ -749,6 +809,8 @@ struct CustomizeScreen: View {
             detail = capability
         } else if item.catalog != nil {
             add(item)
+        } else if let connector = item.connector {
+            connectorDetail = DirectoryEntry(connector: connector)
         } else {
             isConnectorsPresented = true
         }
@@ -757,9 +819,8 @@ struct CustomizeScreen: View {
     private func add(_ item: CustomizeItem) {
         if item.catalog != nil {
             Task { await installCatalog(item) }
-        } else if item.connector != nil {
-            // Connecting may need sign-in or a key: the connector manager handles it.
-            isConnectorsPresented = true
+        } else if let connector = item.connector {
+            Task { await connect.connect(DirectoryEntry(connector: connector)) }
         } else {
             Task { await setEnabled(item, true) }
         }
@@ -776,7 +837,10 @@ struct CustomizeScreen: View {
             } else if let capability = item.capability {
                 try await CapabilitiesClient.shared.setEnabled(capability, enabled: value)
             } else if item.connector != nil {
-                guard !value else { isConnectorsPresented = true; return }
+                guard !value else {
+                    if let connector = item.connector { await connect.connect(DirectoryEntry(connector: connector)) }
+                    return
+                }
                 try await ConnectorsClient().disconnect(id: item.id)
             }
             var list = items[section] ?? []
@@ -835,8 +899,9 @@ struct CustomizeScreen: View {
                 items[which] = try await ConnectorsClient().listConnectors().map(CustomizeItem.init(connector:))
             }
             failures[which] = nil
+        } catch is CancellationError {
         } catch {
-            failures[which] = FriendlyErrorMessage.from(error.localizedDescription)
+            failures[which] = SettingsLoadFailure.from(error)
         }
     }
 }

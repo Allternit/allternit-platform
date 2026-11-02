@@ -40,7 +40,7 @@ struct BotSummaryTiles: View {
         LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
             tile("Soul", icon: "heart.text.square", value: soulValue, route: .soul(bot.id))
             tile("Memory", icon: "brain", value: memoryValue, route: .memory(bot.id))
-            tile("Skills", icon: "sparkles", value: skillsValue, route: .skills(bot.id))
+            tile("Skills", icon: "puzzlepiece.extension", value: skillsValue, route: .skills(bot.id))
             tile("Usage", icon: "chart.bar", value: usageValue, route: .usage(bot.id))
         }
         .padding(.horizontal, 14)

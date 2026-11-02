@@ -4,9 +4,9 @@ import UIKit
 // MARK: - Launch composer
 
 /// The Code prompt on the phone (ChatComposer's Code terminal line): one line
-/// in a dashed frame — `+`, the coral `❯` on the text's first line, voice and
-/// the coral run key — with the cache state and the model on the frame's top
-/// edge. Under it, one icon row (folder · branch · worktree · permission mode,
+/// between two dashed rules, open at the ends — `+`, the coral `❯` on the
+/// text's first line, voice and the coral run key — with the cache state and
+/// the model on the top rule. Under it, one icon row (folder · branch · worktree · permission mode,
 /// then the context meter and the Chat/Terminal switch) and the last run's
 /// usage. The context bar sits in the icon row or above the frame
 /// (`CodeContextBarPosition`). Sending starts a code thread.
@@ -128,10 +128,8 @@ struct CodeLaunchComposer: View {
             }
             .padding(.top, 14)
             .padding(.horizontal, 6)
-            .overlay {
-                CodePromptSides()
-                    .stroke(isFocused ? ink.borderStrong : ink.border, style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
-                    .accessibilityHidden(true)
+            .overlay(alignment: .bottom) {
+                DashedHairline(strong: isFocused, terminal: terminal)
             }
             CodeDeckRow(folder: folder, terminal: terminal, context: contextState,
                         showsMeter: contextBarRaw != CodeContextBarPosition.above.rawValue, onOpenTerminal: onOpenTerminal)
@@ -146,7 +144,7 @@ struct CodeLaunchComposer: View {
                     .padding(.bottom, 10)
             }
         }
-        // The frame needs a gutter: its sides would sit on the screen edge.
+        // The same gutter as the status row under the rules.
         .padding(.horizontal, 10)
         .task(id: "\(sessionId ?? "")-\(contextRefresh)") {
             await contextState.load(sessionId: sessionId)
@@ -215,21 +213,9 @@ struct DashedHairline: View {
     }
 }
 
-// MARK: - Prompt frame
+// MARK: - Prompt rules
 
-/// The frame's sides and bottom; `CodePromptEdge` draws its top.
-private struct CodePromptSides: Shape {
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
-        path.move(to: CGPoint(x: rect.minX + 0.5, y: rect.minY))
-        path.addLine(to: CGPoint(x: rect.minX + 0.5, y: rect.maxY - 0.5))
-        path.addLine(to: CGPoint(x: rect.maxX - 0.5, y: rect.maxY - 0.5))
-        path.addLine(to: CGPoint(x: rect.maxX - 0.5, y: rect.minY))
-        return path
-    }
-}
-
-/// The frame's top edge, drawn in segments so a background shows through: the
+/// The prompt's top rule, drawn in segments so a background shows through: the
 /// prompt cache's state on the left, the model and the run dot on the right.
 private struct CodePromptEdge: View {
     var strong: Bool

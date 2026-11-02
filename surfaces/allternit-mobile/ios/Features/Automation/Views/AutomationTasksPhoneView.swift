@@ -102,7 +102,8 @@ struct AutomationTasksPhoneView: View {
                 frequency: routine.scheduleType == "cron" ? AutomationScheduleLogic.cronFrequency(routine.scheduleExpression) : "manual",
                 schedule: routine.scheduleExpression, createdAt: libraryParseDate(routine.createdAt),
                 agentId: routine.agentId, executorName: executor(routine.agentId), progress: nil, targetDate: nil,
-                goalId: routine.goalId, nextRun: routine.nextRunAt, lastRun: routine.lastRunAt
+                goalId: routine.goalId, nextRun: routine.nextRunAt, lastRun: routine.lastRunAt,
+                instructions: routine.instruction, parentGoalName: goalName(routine.goalId)
             ))
         }
         for loop in loops {
@@ -112,7 +113,8 @@ struct AutomationTasksPhoneView: View {
                 frequency: loop.scheduleType == "cron" ? "daily" : "continuous",
                 schedule: loop.scheduleExpression, createdAt: libraryParseDate(loop.createdAt),
                 agentId: loop.agentId, executorName: executor(loop.agentId), progress: nil, targetDate: nil,
-                goalId: loop.goalId, nextRun: loop.nextRunAt, lastRun: loop.lastRunAt
+                goalId: loop.goalId, nextRun: loop.nextRunAt, lastRun: loop.lastRunAt,
+                instructions: loop.instruction, parentGoalName: goalName(loop.goalId)
             ))
         }
         for job in cron.jobs {
@@ -162,6 +164,10 @@ struct AutomationTasksPhoneView: View {
         return store.routines.filter { query.isEmpty || $0.name.lowercased().contains(query) }
     }
 
+    private func goalName(_ id: String?) -> String? {
+        id.flatMap { id in store.goals.first { $0.id == id }?.title }
+    }
+
     private func executor(_ agentId: String?) -> String {
         guard let agentId else { return "Default Model" }
         return bots.bot(agentId)?.botDisplayName ?? "Default Model"
@@ -198,6 +204,7 @@ struct AutomationTasksPhoneView: View {
                 VStack(alignment: .leading, spacing: 0) {
                     if let error { errorBanner(error) }
                     if let actionError = store.actionError { errorBanner(actionError) }
+                    typeAndViewBar.padding(.bottom, 12)
                     keepAwakeBanner
                     mainContent.padding(.top, 20)
                 }
@@ -261,12 +268,21 @@ struct AutomationTasksPhoneView: View {
     /// `filtersOn`: the filter button's dot.
     private var filtersOn: Bool { activeTab != .all || sortBy != .date || routinesView != .list }
 
+    /// Desktop's tab strip and List / Graph / Calendar switch, on the screen
+    /// rather than behind the filter button.
+    private var typeAndViewBar: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            AutomationTypeTabs(selection: $activeTab)
+            AutomationViewToggle(selection: $routinesViewRaw)
+        }
+    }
+
     private var keepAwakeBanner: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
+            HStack(alignment: .center, spacing: 8) {
                 Image(systemName: "calendar.badge.checkmark")
-                    .font(.system(size: 14))
-                    .foregroundColor(Color("TextSecondary"))
+                    .font(.system(size: 16))
+                    .foregroundColor(Color("AccentPrimary"))
                 Text("Automation tasks only run while your computer is awake and online.")
                     .font(.system(size: 13))
                     .foregroundColor(Color("TextSecondary"))
@@ -276,23 +292,7 @@ struct AutomationTasksPhoneView: View {
                 Text("Keep awake")
                     .font(.system(size: 12))
                     .foregroundColor(Color("TextTertiary"))
-                Button { keepAwake.toggle() } label: {
-                    Capsule()
-                        .fill(keepAwake ? Color(hex: "#059669").opacity(0.2) : Color("FillNeutral"))
-                        .frame(width: 40, height: 22)
-                        .overlay(alignment: keepAwake ? .trailing : .leading) {
-                            Circle()
-                                .fill(keepAwake ? Color(hex: "#059669") : Color("TextTertiary"))
-                                .frame(width: 16, height: 16)
-                                .padding(.horizontal, 3)
-                        }
-                        .animation(.easeOut(duration: 0.15), value: keepAwake)
-                        .frame(height: 44)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Keep awake")
-                .accessibilityValue(keepAwake ? "On" : "Off")
+                AutomationToggleSwitch(isOn: $keepAwake, label: "Keep awake")
             }
         }
         .padding(16)
@@ -514,14 +514,18 @@ struct AutomationTasksPhoneView: View {
     private func emptyState(title: String, message: String) -> some View {
         VStack(spacing: 10) {
             Image(systemName: "clock")
-                .font(.system(size: 36, weight: .light))
+                .font(.system(size: 48))
                 .foregroundColor(Color("TextTertiary"))
+                .opacity(0.25)
+                .padding(.bottom, 6)
             Text(title)
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundColor(Color("TextPrimary"))
-            Text(message)
-                .font(.system(size: 14))
+                .font(.system(size: 16, weight: .bold))
                 .foregroundColor(Color("TextSecondary"))
+            Text(message)
+                .font(.system(size: 13))
+                .foregroundColor(Color("TextTertiary"))
+                .lineSpacing(5)
+                .frame(maxWidth: 280)
                 .multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity)
@@ -658,16 +662,17 @@ struct AutomationTaskItem: Identifiable, Hashable {
             }
         }
 
-        /// Phosphor Target / Clock / Repeat / Robot.
+        /// Phosphor Target / Clock / Repeat / Heartbeat (AutomationSchedule TYPE_ICON).
         var icon: String {
             switch self {
             case .goal: return "target"
             case .routine: return "clock"
             case .loop: return "repeat"
-            case .heartbeat: return "cpu"
+            case .heartbeat: return "waveform.path.ecg"
             }
         }
 
+        /// The badge's words (text-*-600); its fill and edge use `scheduleColor` (*-500).
         var tint: Color {
             switch self {
             case .goal: return Color(hex: "#2563EB")
@@ -695,6 +700,10 @@ struct AutomationTaskItem: Identifiable, Hashable {
     let goalId: String?
     let nextRun: String?
     let lastRun: String?
+    /// What the bot is told to do, for the details.
+    var instructions: String? = nil
+    /// The goal this task serves, by name.
+    var parentGoalName: String? = nil
 
     /// The raw cron or interval the calendar and graph read.
     var scheduleExpression: String? { schedule }
@@ -738,8 +747,8 @@ struct AutomationTaskCard: View {
                             .foregroundColor(task.type.tint)
                             .padding(.horizontal, 10)
                             .padding(.vertical, 2)
-                            .background(Capsule().fill(task.type.tint.opacity(0.1)))
-                            .overlay(Capsule().stroke(task.type.tint.opacity(0.2), lineWidth: 1))
+                            .background(Capsule().fill(task.type.scheduleColor.opacity(0.1)))
+                            .overlay(Capsule().stroke(task.type.scheduleColor.opacity(0.2), lineWidth: 1))
                         if task.type != .goal {
                             Text(task.frequency)
                                 .font(.system(size: 11))
@@ -753,7 +762,7 @@ struct AutomationTaskCard: View {
                             .foregroundColor(task.isActive ? Color(hex: "#059669") : Color("TextTertiary"))
                             .padding(.horizontal, 8)
                             .padding(.vertical, 2)
-                            .background(RoundedRectangle(cornerRadius: 6).fill(task.isActive ? Color(hex: "#10B981").opacity(0.1) : Color("FillNeutral")))
+                            .background(RoundedRectangle(cornerRadius: 6).fill(task.isActive ? Color(hex: "#10B981").opacity(0.1) : Color(hex: "#71717A").opacity(0.1)))
                             .overlay(RoundedRectangle(cornerRadius: 6).stroke(task.isActive ? Color(hex: "#10B981").opacity(0.2) : Color.clear, lineWidth: 1))
                         if task.type != .goal {
                             Button(action: onRunNow) {
@@ -782,16 +791,21 @@ struct AutomationTaskCard: View {
                 Text(task.description.isEmpty ? "No description provided." : task.description)
                     .font(.system(size: 13))
                     .foregroundColor(Color("TextSecondary"))
+                    .lineSpacing(5)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
 
-                Divider().background(Color("BorderSubtle")).padding(.top, 16)
+                Spacer(minLength: 0)
+                Rectangle().fill(Color("BorderSubtle")).frame(height: 1).padding(.top, 16)
                 HStack {
                     if task.type == .goal {
-                        Label("Progress: \(Int(task.progress ?? 0))%", systemImage: "target")
+                        HStack(spacing: 4) {
+                            Image(systemName: "target").font(.system(size: 12))
+                            Text("Progress: \(Int(task.progress ?? 0))%")
+                        }
                     } else {
                         HStack(spacing: 4) {
-                            Image(systemName: "sparkle")
+                            Image(systemName: "sparkle").font(.system(size: 12))
                             BotNameText(task.executorName, size: 11, ink: "TextTertiary").lineLimit(1)
                         }
                     }
@@ -843,84 +857,284 @@ struct AutomationTaskDetailSheet: View {
     }
 
     var body: some View {
-        NavigationStack {
-            List {
-                Section {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Label(task.type.label, systemImage: task.type.icon)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                header
+                Rectangle().fill(Color("BorderSubtle")).frame(height: 1)
+                detailsList.padding(24)
+            }
+        }
+        .background(Color("BgPanel"))
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+        .presentationBackground(Color("BgPanel"))
+        .confirmationDialog("Delete \(task.name)?", isPresented: $confirmDelete, titleVisibility: .visible) {
+            Button("Delete", role: .destructive, action: onDelete)
+        } message: {
+            Text("This can't be undone.")
+        }
+        .sheet(item: $editDraft) { draft in
+            if let edit {
+                // As on the web, a save closes the details too: its copy is now old.
+                AutomationWizardSheet(store: edit.store, draft: draft, onSaved: {
+                    edit.onSaved()
+                    dismiss()
+                })
+            }
+        }
+    }
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .top, spacing: 8) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(task.name)
+                        .font(.system(size: 18, weight: .bold))
+                        .foregroundColor(Color("TextPrimary"))
+                        .fixedSize(horizontal: false, vertical: true)
+                    HStack(spacing: 8) {
+                        Text(task.type.label)
                             .font(.system(size: 12, weight: .semibold))
-                            .foregroundColor(task.type.tint)
-                        Text(task.name)
-                            .font(.system(size: 20, weight: .semibold))
                             .foregroundColor(Color("TextPrimary"))
-                        Text(task.description.isEmpty ? "No description provided." : task.description)
-                            .font(.system(size: 14))
-                            .foregroundColor(Color("TextSecondary"))
-                    }
-                    .padding(.vertical, 4)
-                }
-                Section {
-                    Toggle("Active", isOn: $active)
-                        .onChange(of: active) { _, value in onToggle(value) }
-                    if task.type == .goal {
-                        row("Progress", "\(Int(task.progress ?? 0))%")
-                        row("Target", task.targetLine)
-                    } else {
-                        row("Schedule", task.schedule ?? "Manual")
-                        row("Runs as", task.executorName)
-                        if let next = libraryParseDate(task.nextRun), task.isActive {
-                            row("Next run", AutomationScheduleLogic.when(next))
-                        }
-                        if let last = libraryParseDate(task.lastRun) {
-                            row("Last run", AutomationScheduleLogic.when(last))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 2)
+                            .background(Capsule().fill(Color(hex: "#71717A").opacity(0.1)))
+                        if task.type != .goal, task.isActive, let next = libraryParseDate(task.nextRun) {
+                            Text("Next run: \(AutomationScheduleLogic.when(next))")
+                                .font(.system(size: 12))
+                                .foregroundColor(Color("TextTertiary"))
+                                .lineLimit(1)
                         }
                     }
                 }
-                if task.type == .loop { LoopRunHistorySection(loopId: task.id) }
-                Section {
-                    if let edit {
-                        Button { editDraft = edit.draft } label: { Label("Edit", systemImage: "pencil") }
-                    }
-                    if task.type != .goal {
-                        Button(action: onRunNow) {
-                            HStack {
-                                Label("Run Now", systemImage: "play")
-                                if isRunning { Spacer(); ProgressView() }
-                            }
-                        }
-                        .disabled(isRunning)
-                    }
-                    Button(role: .destructive) { confirmDelete = true } label: { Label("Delete", systemImage: "trash") }
+                Spacer(minLength: 0)
+                Button { dismiss() } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 16))
+                        .foregroundColor(Color("TextSecondary"))
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
+                .padding(.top, -10)
+                .padding(.trailing, -10)
+                .accessibilityLabel("Close")
             }
-            .scrollContentBackground(.hidden)
-            .background(Color("BgPrimary"))
-            .navigationTitle(task.type.label)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
-            }
-            .confirmationDialog("Delete \(task.name)?", isPresented: $confirmDelete, titleVisibility: .visible) {
-                Button("Delete", role: .destructive, action: onDelete)
-            }
-            .sheet(item: $editDraft) { draft in
+            HStack(spacing: 8) {
                 if let edit {
-                    // As on the web, a save closes the details too: its copy is now old.
-                    AutomationWizardSheet(store: edit.store, draft: draft, onSaved: {
-                        edit.onSaved()
-                        dismiss()
-                    })
+                    actionButton("Edit", icon: "pencil") { editDraft = edit.draft }
+                }
+                actionButton("Delete", icon: "trash") { confirmDelete = true }
+                if task.type != .goal {
+                    actionButton(isRunning ? "Running…" : "Run Now", icon: "play", primary: true, busy: isRunning, perform: onRunNow)
                 }
             }
         }
-        .presentationDetents([.medium, .large])
+        .padding(24)
     }
 
-    private func row(_ title: String, _ value: String) -> some View {
-        HStack {
-            Text(title).foregroundColor(Color("TextPrimary"))
-            Spacer()
-            Text(value).foregroundColor(Color("TextSecondary")).lineLimit(1)
+    private var detailsList: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            HStack {
+                Text("Status (\(active ? "Active" : "Paused"))")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(Color("TextSecondary"))
+                Spacer()
+                AutomationToggleSwitch(isOn: $active, label: "Status")
+            }
+            .padding(14)
+            .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color("BgPanel")))
+            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Color("BorderStrong"), lineWidth: 1))
+            .onChange(of: active) { _, value in onToggle(value) }
+
+            VStack(alignment: .leading, spacing: 16) {
+                item("Description", task.description.isEmpty ? "No description provided." : task.description)
+                if task.type == .goal {
+                    VStack(alignment: .leading, spacing: 4) {
+                        itemLabel("Progress")
+                        AutomationProgressBar(progress: task.progress ?? 0)
+                    }
+                    item("Target Date", task.targetLine.replacingOccurrences(of: "Target: ", with: ""))
+                } else {
+                    if let instructions = task.instructions, !instructions.isEmpty {
+                        item("Instructions / Prompt", instructions)
+                    }
+                    item("Executor", task.executorName, icon: task.agentId == nil ? "sparkle" : "cpu")
+                    if let goal = task.parentGoalName { item("Parent Goal", goal) }
+                    item("Frequency", task.frequency)
+                    if let schedule = task.schedule, !schedule.isEmpty { item("Expression", schedule) }
+                    if let last = libraryParseDate(task.lastRun) {
+                        item("Last Run", AutomationScheduleLogic.when(last))
+                    }
+                }
+            }
+
+            if task.type == .loop {
+                LoopRunHistorySection(loopId: task.id)
+            } else if task.type == .routine {
+                RoutineRunHistorySection(runs: edit?.store.routines.first { $0.id == task.id }?.recentRuns ?? [])
+            }
+        }
+    }
+
+    private func itemLabel(_ title: String) -> some View {
+        Text(title.uppercased())
+            .font(.system(size: 10, weight: .bold))
+            .tracking(0.5)
+            .foregroundColor(Color("TextTertiary"))
+    }
+
+    /// DetailItem: a small upper-case label over its value.
+    private func item(_ title: String, _ value: String, icon: String? = nil) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            itemLabel(title)
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                if let icon { Image(systemName: icon).font(.system(size: 12)) }
+                Text(value)
+                    .font(.system(size: 13))
+                    .lineSpacing(5)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .foregroundColor(Color("TextSecondary"))
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// ActionButton: one of a row of equal buttons.
+    private func actionButton(_ title: String, icon: String, primary: Bool = false, busy: Bool = false, perform: @escaping () -> Void) -> some View {
+        Button(action: perform) {
+            HStack(spacing: 6) {
+                if busy { ProgressView().controlSize(.mini) } else { Image(systemName: icon).font(.system(size: 13)) }
+                Text(title).font(.system(size: 12, weight: .semibold))
+            }
+            .foregroundColor(busy ? Color("TextTertiary") : (primary ? Color("BgPanel") : Color("TextSecondary")))
+            .frame(maxWidth: .infinity, minHeight: 36)
+            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(busy ? Color(hex: "#71717A").opacity(0.1) : (primary ? Color("TextPrimary") : Color("BgPanel"))))
+            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(primary || busy ? Color.clear : Color("BorderStrong"), lineWidth: 1))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(busy)
+    }
+}
+
+/// `ToggleSwitch` (AutomationTasksView.tsx): green when on, in a 44 pt tap area.
+struct AutomationToggleSwitch: View {
+    @Binding var isOn: Bool
+    let label: String
+
+    var body: some View {
+        Button { isOn.toggle() } label: {
+            Capsule()
+                .fill(isOn ? Color(hex: "#10B981").opacity(0.2) : Color(hex: "#71717A").opacity(0.2))
+                .frame(width: 40, height: 22)
+                .overlay(alignment: isOn ? .trailing : .leading) {
+                    Circle()
+                        .fill(isOn ? Color(hex: "#059669") : Color("TextTertiary"))
+                        .frame(width: 16, height: 16)
+                        .padding(.horizontal, 3)
+                }
+                .animation(.easeOut(duration: 0.15), value: isOn)
+                .frame(height: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+        .accessibilityValue(isOn ? "On" : "Off")
+    }
+}
+
+/// One run in the details' history: status chip, date, error (TaskDetailOverlay).
+private struct AutomationRunHistoryCard: View {
+    let status: String
+    let trailing: String?
+    let date: String
+    let detail: String?
+    let detailIsError: Bool
+    var onStop: (() -> Void)? = nil
+
+    private var tint: Color {
+        switch status {
+        case "completed", "succeeded", "success": return Color(hex: "#10B981")
+        case "failed": return Color(hex: "#EF4444")
+        default: return Color(hex: "#F59E0B")
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                Text(status.uppercased())
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(tint)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(RoundedRectangle(cornerRadius: 4, style: .continuous).fill(tint.opacity(0.1)))
+                Spacer(minLength: 0)
+                if let trailing {
+                    Text(trailing).foregroundColor(Color("TextTertiary")).lineLimit(1)
+                }
+                if let onStop {
+                    Button("Stop", action: onStop)
+                        .underline()
+                        .foregroundColor(Color("TextPrimary"))
+                        .frame(minHeight: 44)
+                        .buttonStyle(.plain)
+                }
+            }
+            Text(date).foregroundColor(Color("TextSecondary"))
+            if let detail, !detail.isEmpty {
+                Text(detail)
+                    .foregroundColor(detailIsError ? Theme.statusError : Color("TextTertiary"))
+                    .lineLimit(3)
+            }
+        }
+        .font(.system(size: 12))
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color("BgPanel")))
+        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(Color("BorderStrong"), lineWidth: 1))
+    }
+}
+
+/// The "Run history" block over a rule.
+private struct AutomationRunHistoryBlock<Content: View>: View {
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Rectangle().fill(Color("BorderSubtle")).frame(height: 1)
+            Label("Run history", systemImage: "clock")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(Color("TextPrimary"))
+            content()
+        }
+    }
+}
+
+/// A routine's run history, from the runs on its row.
+private struct RoutineRunHistorySection: View {
+    let runs: [AutomationRunTick]
+
+    var body: some View {
+        AutomationRunHistoryBlock {
+            if runs.isEmpty {
+                Text("No runs recorded yet.")
+                    .font(.system(size: 12))
+                    .foregroundColor(Color("TextSecondary"))
+            } else {
+                VStack(spacing: 8) {
+                    ForEach(runs.prefix(20)) { run in
+                        AutomationRunHistoryCard(
+                            status: run.status,
+                            trailing: nil,
+                            date: libraryParseDate(run.startedAt)?.formatted(.dateTime.month(.abbreviated).day().hour().minute()) ?? "—",
+                            detail: run.reason,
+                            detailIsError: true
+                        )
+                    }
+                }
+            }
         }
     }
 }
@@ -933,44 +1147,36 @@ private struct LoopRunHistorySection: View {
     @State private var error: String? = nil
 
     var body: some View {
-        Section("Run history") {
-            if isLoading && runs.isEmpty {
-                ProgressView()
-            } else if let error, runs.isEmpty {
+        AutomationRunHistoryBlock {
+            if let error {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(FriendlyErrorMessage.from(error))
-                        .font(.footnote)
+                        .font(.system(size: 12))
                         .foregroundColor(Theme.statusError)
                     Button("Try again") { Task { await load() } }
+                        .font(.system(size: 13, weight: .medium))
+                        .frame(minHeight: 44)
                 }
+            }
+            if isLoading && runs.isEmpty {
+                ProgressView().frame(maxWidth: .infinity).padding(.vertical, 16)
             } else if runs.isEmpty {
-                Text("No runs yet")
-                    .font(.system(size: 14))
-                    .foregroundColor(Color("TextSecondary"))
-            } else {
-                ForEach(runs.prefix(20)) { run in
-                    VStack(alignment: .leading, spacing: 3) {
-                        HStack {
-                            Circle().fill(RunStrip.color(run.status)).frame(width: 6, height: 6)
-                            Text(RunStrip.label(run.status))
-                            Spacer()
-                            if let started = libraryParseDate(run.startedAt ?? run.scheduledAt) {
-                                Text(started.formatted(.dateTime.month(.abbreviated).day().hour().minute()))
-                            }
-                        }
-                        .font(.system(size: 13))
+                if error == nil {
+                    Text("No runs recorded yet.")
+                        .font(.system(size: 12))
                         .foregroundColor(Color("TextSecondary"))
-                        if run.status == "running" {
-                            Button("Stop") { stop(run) }
-                                .font(.system(size: 13, weight: .medium))
-                                .frame(minHeight: 44)
-                        }
-                        if let detail = run.error ?? run.output, !detail.isEmpty {
-                            Text(detail)
-                                .font(.system(size: 12))
-                                .foregroundColor(run.error != nil ? Theme.statusError : Color("TextTertiary"))
-                                .lineLimit(3)
-                        }
+                }
+            } else {
+                VStack(spacing: 8) {
+                    ForEach(runs.prefix(20)) { run in
+                        AutomationRunHistoryCard(
+                            status: run.status,
+                            trailing: run.triggeredBy,
+                            date: libraryParseDate(run.startedAt ?? run.scheduledAt)?.formatted(.dateTime.month(.abbreviated).day().hour().minute()) ?? "—",
+                            detail: run.error ?? run.output,
+                            detailIsError: run.error != nil,
+                            onStop: run.status == "running" ? { stop(run) } : nil
+                        )
                     }
                 }
             }
@@ -998,6 +1204,89 @@ private struct LoopRunHistorySection: View {
         } catch {
             self.error = error.localizedDescription
         }
+    }
+}
+
+// MARK: - Type tabs and view switch
+
+/// Arc Tabs with Desktop's labels and icons: a muted strip whose selected tab
+/// is a raised card. It scrolls sideways on a narrow screen.
+private struct AutomationTypeTabs: View {
+    @Binding var selection: AutomationTasksPhoneView.TaskTab
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 4) {
+                    ForEach(AutomationTasksPhoneView.TaskTab.allCases, id: \.self) { tab in
+                        let on = selection == tab
+                        Button { selection = tab } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: tab.icon).font(.system(size: 13))
+                                Text(tab.label).font(.system(size: 13, weight: .medium)).fixedSize()
+                            }
+                            .foregroundColor(on ? Color("TextPrimary") : Color("TextTertiary"))
+                            .padding(.horizontal, 12)
+                            .frame(height: 36)
+                            .background(
+                                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                    .fill(on ? Color("BgPanel") : Color.clear)
+                                    .shadow(color: .black.opacity(on ? 0.1 : 0), radius: 1, y: 1)
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                    .stroke(on ? Color("BorderSubtle") : Color.clear, lineWidth: 1)
+                            )
+                            .contentShape(Rectangle().inset(by: -4))
+                        }
+                        .buttonStyle(.plain)
+                        .id(tab)
+                        .accessibilityAddTraits(on ? .isSelected : [])
+                    }
+                }
+                .padding(4)
+            }
+            .onChange(of: selection) { _, tab in
+                withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(tab, anchor: .center) }
+            }
+        }
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color("FillNeutral")))
+        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Color("BorderSubtle"), lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Task type")
+    }
+}
+
+/// `Toggle` in RoutinesSchedule.tsx: List, Graph, Calendar.
+private struct AutomationViewToggle: View {
+    @Binding var selection: String
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ForEach(AutomationTasksPhoneView.RoutinesView.allCases, id: \.self) { view in
+                let on = selection == view.rawValue
+                Button { selection = view.rawValue } label: {
+                    Text(view.label)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(on ? Color("TextPrimary") : Color("TextTertiary"))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .fill(on ? Color("BgPanel") : Color.clear)
+                                .shadow(color: .black.opacity(on ? 0.06 : 0), radius: 2, y: 1)
+                        )
+                        .contentShape(Rectangle().inset(by: -10))
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(on ? .isSelected : [])
+            }
+        }
+        .padding(2)
+        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color("FillNeutral")))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("View")
     }
 }
 

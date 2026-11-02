@@ -28,8 +28,10 @@ enum SettingsLoadFailure: Equatable, Sendable {
             switch api {
             case .httpError(let status, let message):
                 if status == 401 { return .signedOut }
-                if status == 502 || status == 503 || status == 504 {
-                    return .computerOffline(message ?? "")
+                // 428: cloud-api's "no data-plane node, pair a device"
+                // (data_plane_fallback.rs).
+                if status == 428 || status == 502 || status == 503 || status == 504 {
+                    return .computerOffline(status == 428 ? "" : message ?? "")
                 }
                 return .error(message ?? "Something went wrong. Try again.")
             case .transport(let inner):

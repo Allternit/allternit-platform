@@ -62,8 +62,7 @@ struct CustomizeSourcesView: View {
                 VStack(spacing: 8) {
                     ForEach(sources) { source in
                         HStack(spacing: 12) {
-                            Image(systemName: "books.vertical")
-                                .font(.system(size: 16))
+                            PhIcon("books", size: 17)
                                 .foregroundColor(Color("TextSecondary"))
                                 .frame(width: 36, height: 36)
                                 .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color("BorderSubtle"), lineWidth: 1))
@@ -82,10 +81,10 @@ struct CustomizeSourcesView: View {
                                 PersonalSources.remove(id: source.id)
                                 sources = PersonalSources.load()
                             } label: {
-                                Image(systemName: "xmark")
-                                    .font(.system(size: 12, weight: .semibold))
+                                PhIcon("x", size: 13)
                                     .foregroundColor(Color("TextTertiary"))
-                                    .frame(width: 32, height: 32)
+                                    .frame(width: 44, height: 44)
+                                    .contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)
                             .accessibilityLabel("Remove \(source.label ?? source.value)")
@@ -107,7 +106,10 @@ struct CustomizeSourcesView: View {
                     }
                 }
                 Button { isAdding = true } label: {
-                    Label("Add source", systemImage: "plus")
+                    HStack(spacing: 6) {
+                        PhIcon("plus", size: 13)
+                        Text("Add source")
+                    }
                         .font(.system(size: 13))
                         .foregroundColor(Color("TextPrimary"))
                         .padding(.horizontal, 12)
@@ -173,7 +175,7 @@ struct CustomizePublishView: View {
                     Button(action: onStart) {
                         Text("Start publishing")
                             .font(.system(size: 13, weight: .medium))
-                            .foregroundColor(Color("OnAccent"))
+                            .foregroundColor(Color("BgPrimary"))
                             .padding(.horizontal, 12)
                             .padding(.vertical, 7)
                             .background(RoundedRectangle(cornerRadius: 8).fill(Color("TextPrimary")))

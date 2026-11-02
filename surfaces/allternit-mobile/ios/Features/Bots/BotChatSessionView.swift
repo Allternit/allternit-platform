@@ -29,6 +29,9 @@ struct BotChatSessionView: View {
     @ObservedObject private var folders = ProjectFolderStore.shared
     @EnvironmentObject private var navigator: BotNavigator
     @State private var isBackgroundPresented = false
+    @State private var isEditFormPresented = false
+    @State private var isDeleteConfirmPresented = false
+    @State private var deleteError: String?
     @State private var sessionId: String? = nil
     @State private var resolveError: String? = nil
     @State private var deckTab: DeckTab = .thread
@@ -105,6 +108,19 @@ struct BotChatSessionView: View {
             .environment(\.backdropUnderneath, backdropVariant != "plain")
             .publishesRailBackdrop(backdropVariant == "plain" ? nil : RailBackdropStore.Look(
                 colors: [colors.hex(for: bot)].compactMap { $0 }, variant: backdropVariant, mode: .bots))
+            .sheet(isPresented: $isEditFormPresented) {
+                EditBotSheet(botId: bot.id) { Task { await store.refreshAll() } }
+            }
+            .confirmationDialog("Delete \(bot.botDisplayName)?", isPresented: $isDeleteConfirmPresented, titleVisibility: .visible) {
+                Button("Delete bot", role: .destructive) { deleteBot() }
+            } message: {
+                Text("Its chats, routines and files go with it. This can't be undone.")
+            }
+            .alert("Couldn't delete the bot", isPresented: Binding(get: { deleteError != nil }, set: { if !$0 { deleteError = nil } })) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(deleteError ?? "")
+            }
             .sheet(isPresented: $isBackgroundPresented) {
                 StageBackdropScopeSheet(scope: .bot(bot.id), title: "\(bot.botDisplayName)'s background",
                                         colors: [colors.hex(for: bot)])
@@ -455,8 +471,17 @@ struct BotChatSessionView: View {
             Button { isBackgroundPresented = true } label: {
                 Label("Background", systemImage: "paintbrush")
             }
+            Button { isEditFormPresented = true } label: {
+                Label("Edit bot", systemImage: "pencil")
+            }
             Button { navigator.open(.botHome(bot.id, .config)) } label: {
                 Label("Bot settings", systemImage: "gearshape")
+            }
+            // The main bot can't be deleted here (web BotActionsMenu).
+            if !bot.isPrimaryTemplateBot {
+                Button(role: .destructive) { isDeleteConfirmPresented = true } label: {
+                    Label("Delete bot", systemImage: "trash")
+                }
             }
         } label: {
             Image(systemName: "ellipsis")
@@ -465,6 +490,20 @@ struct BotChatSessionView: View {
         }
         .disabled(isActing)
         .accessibilityLabel("Thread actions")
+    }
+
+    private func deleteBot() {
+        isActing = true
+        Task {
+            defer { isActing = false }
+            do {
+                try await AgentHubStore.shared.deleteAgent(id: bot.id)
+                await store.refreshAll()
+                dismiss()
+            } catch {
+                deleteError = FriendlyErrorMessage.from(error.localizedDescription)
+            }
+        }
     }
 
     private enum ThreadAction { case approve, decline, resolve }
