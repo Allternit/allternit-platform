@@ -2,7 +2,7 @@ import Foundation
 import StoreKit
 
 /// Decides whether the app may show links that lead to purchases on the web
-/// ("Buy credits", "Get Pro", the usage wall's upgrade buttons).
+/// ("Buy credits", "Choose a plan", the usage wall's upgrade buttons).
 ///
 /// App Store rule: on the United States storefront an app may link out to its
 /// own website to buy. Everywhere else it may not, so outside the US the app
@@ -20,7 +20,7 @@ final class StorefrontGate: ObservableObject {
     /// True only on the US storefront.
     var allowsPurchaseLinks: Bool { countryCode == "USA" }
 
-    /// Where "Get Pro" goes (the backend's `upgradeUrl` default).
+    /// Where "Choose a plan" goes (the backend's `upgradeUrl` default).
     static let upgradeURL = URL(string: "https://allternit.com/pricing")!
     /// Where "Buy credits" goes: the web Billing page with the credit packs.
     static let creditsURL = URL(string: "https://ai.allternit.com/settings/billing")!

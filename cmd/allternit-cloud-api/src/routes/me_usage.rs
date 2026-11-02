@@ -3,7 +3,7 @@
 //! Desktop forwards the paired runtime device token through local
 //! `allternit-api` to this route. Clerk sessions and `allternit_*` API tokens
 //! also work. The payload is the compute meter the shell should show: plan
-//! (Free / Plus / Super / Ultra) and remaining credits or free-inference
+//! (Free / Plus / Max / Ultra) and remaining credits or free-inference
 //! allowance. Local Ollama is not this signal.
 
 use axum::{extract::State, http::HeaderMap, routing::get, Json, Router};

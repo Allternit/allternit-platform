@@ -392,7 +392,8 @@ fn cli_models_for(tool: &crate::cli_catalog::CliTool) -> Vec<&str> {
     tool.model_ids()
 }
 
-/// Per-model display metadata: (model id, description, tier, supports_effort).
+/// Per-model display metadata: (model id, description, tier, unused). Thinking
+/// levels live in `model_thinking` (model-thinking.json).
 /// Tier is flagship | standard | fast | legacy and drives picker grouping on
 /// clients (the Claude-app sheet layout). Unknown models default to
 /// (no description, "standard", false).
@@ -430,16 +431,19 @@ fn model_metadata(model: &str) -> Option<(&'static str, &'static str, bool)> {
 pub fn available_model_catalog() -> Vec<serde_json::Value> {
     let mut out = Vec::new();
     let mut push = |id: &str, name: String, provider: &str, model: &str| {
-        let (description, tier, supports_effort) = model_metadata(model)
+        let (description, tier, _) = model_metadata(model)
             .map(|(d, t, e)| (Some(d), t, e))
             .unwrap_or((None, "standard", false));
+        // Levels come from the shared thinking table; `supports_effort` stays for older clients.
+        let thinking = crate::model_thinking::thinking_json(model);
         out.push(json!({
             "id": id,
             "name": name,
             "provider": provider,
             "description": description,
             "tier": tier,
-            "supports_effort": supports_effort,
+            "supports_effort": !thinking.is_null(),
+            "thinking": thinking,
         }));
     };
     for tool in crate::cli_catalog::tools().iter().filter(|t| t.adapter != "unsupported") {

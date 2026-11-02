@@ -465,7 +465,8 @@ async fn fetch_live_local_models(state: &AppState) -> Vec<serde_json::Value> {
                 "provider": provider_id,
                 "description": serde_json::Value::Null,
                 "tier": "local",
-                "supports_effort": false,
+                "supports_effort": !crate::model_thinking::thinking_json(model_id).is_null(),
+                "thinking": crate::model_thinking::thinking_json(model_id),
             }));
         }
     }
@@ -1933,13 +1934,15 @@ async fn agent_chat_bridge(
             }
         };
 
-        // POST message to gizzi. `effort` (low|medium|high, from the mobile
-        // model picker) is forwarded verbatim — runtimes ignore it for
-        // models without reasoning support.
+        // POST message to gizzi. `effort` is the picker's thinking level. It is
+        // kept only when the model takes it (model-thinking.json) and goes to
+        // gizzi as the turn's `variant`, which gizzi turns into the vendor's
+        // own setting (Claude effort, OpenAI reasoning effort, Gemini thinking
+        // level) or the CLI's flag. gizzi ignores a bare `effort` field.
         let effort = body_json
             .get("effort")
             .and_then(|v| v.as_str())
-            .filter(|s| !s.is_empty());
+            .and_then(|level| crate::model_thinking::checked_level(&model_id, level));
 
         // Composer attachments: `attachments: [{url?, dataBase64?, mediaType,
         // name?}]` — uploaded refs (POST /api/v1/uploads) or inline data URLs.
@@ -1956,8 +1959,9 @@ async fn agent_chat_bridge(
         if let Some(pin) = &provider_routing_pin {
             gizzi_payload["provider"] = pin.clone();
         }
-        if let Some(effort) = effort {
+        if let Some(effort) = &effort {
             gizzi_payload["effort"] = json!(effort);
+            gizzi_payload["variant"] = json!(effort);
         }
         // The session's working folder (its project's folder): gizzi runs
         // the turn's tools and CLI agents there. "" clears it.

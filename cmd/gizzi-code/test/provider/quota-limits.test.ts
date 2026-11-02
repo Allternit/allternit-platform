@@ -150,9 +150,9 @@ describe("Allternit Cloud quota credentials", () => {
 })
 
 describe("plan labels", () => {
-  test("Claude: the account's rate-limit tier names the Max multiple", () => {
-    expect(claudePlanLabel({ organizationRateLimitTier: "default_claude_max_5x" })).toBe("Max (5x)")
-    expect(claudePlanLabel({ userRateLimitTier: "default_claude_max_20x", organizationRateLimitTier: "x" })).toBe("Max (20x)")
+  test("Claude: old Max 5x and 20x tiers read as the renamed Max and Ultra plans", () => {
+    expect(claudePlanLabel({ organizationRateLimitTier: "default_claude_max_5x" })).toBe("Max")
+    expect(claudePlanLabel({ userRateLimitTier: "default_claude_max_20x", organizationRateLimitTier: "x" })).toBe("Ultra")
     expect(claudePlanLabel({ subscriptionType: "pro" })).toBe("Pro")
     expect(claudePlanLabel(undefined)).toBeUndefined()
   })

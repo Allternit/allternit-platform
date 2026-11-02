@@ -187,7 +187,7 @@ pub fn summary_text(rows: &[CustomerRow], cancelled_24h: &[(String, String)], no
     lines.push(String::new());
     lines.push(format!("Total sign-ups: {}", rows.len()));
     lines.push(format!(
-        "Paying: {} (Plus {}, Super {}, Ultra {})",
+        "Paying: {} (Plus {}, Max {}, Ultra {})",
         paying.len(),
         by_plan.get("plus").copied().unwrap_or(0),
         by_plan.get("super").copied().unwrap_or(0),
@@ -287,7 +287,7 @@ mod tests {
         assert_eq!(subject, "Allternit daily: 2 new sign-ups, 3 paying");
         assert!(body.contains("New sign-ups: 2\n  - new@x.com\n  - waiting@x.com"));
         assert!(body.contains("Cancelled plans: 1\n  - gone@x.com (plus)"));
-        assert!(body.contains("Paying: 3 (Plus 1, Super 1, Ultra 1)"));
+        assert!(body.contains("Paying: 3 (Plus 1, Max 1, Ultra 1)"));
         assert!(body.contains("Payment problems (past due / unpaid): 1"));
         assert!(body.contains("Paying without a cloud computer yet: 1"));
     }

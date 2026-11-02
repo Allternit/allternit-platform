@@ -4,7 +4,7 @@ import SwiftUI
 /// routes (`/api/v1/me/usage`, `/api/v1/hosted-runtimes/entitlement`,
 /// `/api/v1/billing/credits`, `/api/v1/billing/subscription`).
 ///
-/// Purchases happen on the web. The "Get Pro" / "Buy credits" links show on
+/// Purchases happen on the web. The "Choose a plan" / "Buy credits" links show on
 /// the US App Store storefront only (StorefrontGate); elsewhere the page
 /// shows plan status with no link and no price.
 struct ComputeBillingView: View {

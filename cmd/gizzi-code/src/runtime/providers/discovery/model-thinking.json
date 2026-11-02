@@ -1,0 +1,56 @@
+{
+  "$comment": "Thinking settings per model: one table for allternit-api (catalog + checks), gizzi (vendor options + CLI flags), web and iOS (pickers). Model ids match lowercased with '.' read as '-', after any 'provider/' prefix; a trailing '*' matches a prefix; the first matching entry wins. Update an entry from the vendor's own source and name it in 'source'.",
+  "version": 1,
+  "vendors": {
+    "claude": {
+      "name": "Claude",
+      "term": "Effort",
+      "note": "Adaptive thinking: Claude decides how often to think, effort sets how hard.",
+      "labels": { "low": "Low", "medium": "Medium", "high": "High", "xhigh": "Extra high", "max": "Max" }
+    },
+    "openai": {
+      "name": "OpenAI",
+      "term": "Reasoning",
+      "note": "Reasoning effort, as in ChatGPT and Codex.",
+      "labels": { "none": "None", "minimal": "Minimal", "low": "Low", "medium": "Medium", "high": "High", "xhigh": "Extra high", "max": "Max", "ultra": "Ultra" }
+    },
+    "google": {
+      "name": "Google",
+      "term": "Thinking level",
+      "note": "Gemini thinking level.",
+      "labels": { "minimal": "Minimal", "low": "Low", "medium": "Medium", "high": "High", "max": "Max" }
+    },
+    "deepseek": {
+      "name": "DeepSeek",
+      "term": "Deep thinking",
+      "note": "Thinking can be turned off. Effort applies when it is on.",
+      "toggle": true,
+      "labels": { "low": "Low", "high": "High", "max": "Max" }
+    },
+    "zai": {
+      "name": "Z.ai",
+      "term": "Deep thinking",
+      "note": "GLM reasoning effort.",
+      "labels": { "low": "Low", "high": "High", "max": "Max" }
+    }
+  },
+  "models": [
+    { "match": ["claude-fable-5-1*"], "vendor": "claude", "levels": ["low", "medium", "high", "xhigh", "max"], "default": "high", "source": "Anthropic effort docs (Fable 5.1 supports all five levels)" },
+    { "match": ["claude-opus-5-5*"], "vendor": "claude", "levels": ["low", "medium", "high", "xhigh", "max"], "default": "medium", "source": "Anthropic effort docs (Opus 5.5 default medium)" },
+    { "match": ["claude-opus-5*", "claude-fable-5*"], "vendor": "claude", "levels": ["low", "medium", "high", "xhigh", "max"], "default": "high", "source": "Anthropic effort docs (Opus 5 default high)" },
+    { "match": ["claude-sonnet-5*", "claude-haiku-5*"], "vendor": "claude", "levels": ["low", "medium", "high", "xhigh", "max"], "default": "medium", "source": "Claude Code --effort levels; per-model support not confirmed in the API docs", "verified": false },
+    { "match": ["claude-opus-4-6*", "claude-opus-4-7*", "claude-opus-4-8*", "claude-sonnet-4-6*"], "vendor": "claude", "levels": ["low", "medium", "high", "max"], "default": "high", "source": "gizzi adaptive-effort list" },
+
+    { "match": ["gpt-6-1-sol*", "gpt-6-astra*", "gpt-6-1-terra*", "gpt-5-6-sol*"], "vendor": "openai", "levels": ["low", "medium", "high", "xhigh", "max", "ultra"], "default": "low", "fast": true, "source": "codex debug models (codex-cli 0.166.0)" },
+    { "match": ["gpt-6-sol*", "gpt-5-6-terra*"], "vendor": "openai", "levels": ["low", "medium", "high", "xhigh", "max", "ultra"], "default": "medium", "fast": true, "source": "codex debug models (codex-cli 0.166.0)" },
+    { "match": ["gpt-6-luna*", "gpt-5-6-luna*"], "vendor": "openai", "levels": ["low", "medium", "high", "xhigh", "max"], "default": "medium", "fast": true, "source": "codex debug models (codex-cli 0.166.0)" },
+
+    { "match": ["gemini-3-1*"], "vendor": "google", "levels": ["low", "medium", "high"], "default": "high", "source": "gizzi Gemini rules (thinkingLevel)", "verified": false },
+    { "match": ["gemini-3*"], "vendor": "google", "levels": ["low", "high"], "default": "high", "source": "gizzi Gemini rules (thinkingLevel)", "verified": false },
+    { "match": ["gemini-2-5*"], "vendor": "google", "levels": ["medium", "high", "max"], "default": "high", "source": "gizzi Gemini 2.5 thinking budgets" },
+
+    { "match": ["deepseek-v4*", "deepseek-reasoner*"], "vendor": "deepseek", "levels": ["low", "high", "max"], "default": "high", "source": "DeepSeek thinking-mode docs" },
+    { "match": ["glm-5-3*"], "vendor": "zai", "levels": ["low", "high", "max"], "default": "max", "source": "Z.ai deep-thinking docs" },
+    { "match": ["glm-5-2*"], "vendor": "zai", "levels": ["high", "max"], "default": "max", "source": "Z.ai deep-thinking docs (low only on GLM-5.3)" }
+  ]
+}

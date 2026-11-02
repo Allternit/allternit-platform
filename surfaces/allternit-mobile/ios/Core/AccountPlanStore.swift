@@ -96,7 +96,7 @@ final class AccountPlanStore: ObservableObject {
         return String(format: "%.1f of %d h", used, entitlement.maxHoursMonthly)
     }
 
-    /// "Get Pro" target: the backend's upgradeUrl, else allternit.com/pricing.
+    /// "Choose a plan" target: the backend's upgradeUrl, else allternit.com/pricing.
     var upgradeURL: URL {
         if let raw = entitlement?.upgradeUrl, !raw.isEmpty, let url = URL(string: raw) { return url }
         return StorefrontGate.upgradeURL

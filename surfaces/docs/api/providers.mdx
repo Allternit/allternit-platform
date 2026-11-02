@@ -213,6 +213,42 @@ In `GET /api/v1/providers/auth/status`, every CLI row has an `install` object: `
 
 `status` is `ok`, `missing` (installed, not signed in), `not_installed` or `unknown`. `signIn` is `subscription`, `api_key` or `none`. `customAllowed` is `false` on a shared hosted runtime (see below).
 
+## Thinking levels
+
+Each model takes its own thinking levels, with the vendor's own name for them. One table holds them: `cmd/gizzi-code/src/runtime/providers/discovery/model-thinking.json`. allternit-api, gizzi, the web app and the iPhone app all read it.
+
+Every row from `GET /api/v1/models` has a `thinking` object, or `null` when the model has no setting:
+
+```json
+{
+  "vendor": "claude",
+  "vendor_name": "Claude",
+  "term": "Effort",
+  "note": "Adaptive thinking: Claude decides how often to think, effort sets how hard.",
+  "toggle": false,
+  "levels": [{ "id": "low", "label": "Low" }, { "id": "max", "label": "Max" }],
+  "default": "medium",
+  "fast": false,
+  "source": "Anthropic effort docs (Opus 5.5 default medium)",
+  "verified": true
+}
+```
+
+`levels` is in order, from least to most thinking. `toggle` means the model can also turn thinking off (DeepSeek). `fast` means the account offers a faster priority tier (Codex). `verified: false` marks levels not yet confirmed on the vendor's page for that model.
+
+A chat send passes the level as `effort`. allternit-api keeps it only when the model takes it, and sends it to gizzi as the turn's `variant`. A level the model does not take is dropped, and the model's default applies. gizzi then sends the vendor's own setting:
+
+| Model runs on | What the level becomes |
+|---|---|
+| Anthropic API | `thinking: adaptive` plus `effort` |
+| OpenAI API | `reasoningEffort` |
+| Google API | `thinkingConfig.thinkingLevel` (Gemini 2.5 keeps token budgets) |
+| OpenAI-compatible API (DeepSeek, Z.ai) | `reasoning_effort` |
+| Claude Code CLI | `--effort <level>` |
+| Codex CLI | the turn's `effort` |
+
+To add or change a model, edit its entry from the vendor's own source and name that source in `source`. For Codex models, `codex debug models` lists each model's levels and default.
+
 ## Add your own coding CLI
 
 `POST /api/v1/cli-tools/custom` registers a coding CLI that isn't in the catalog. It then appears in the catalog and in `GET /api/v1/providers/auth/status?kind=cli`, installs and signs in through the same flows, and gizzi can run it as a brain.

@@ -31,7 +31,7 @@ export interface QuotaWindow {
 export interface ProviderQuota {
   providerID: string
   source: string
-  /** The subscription's name as the provider calls it ("Max (5x)", "Plus"), when known. */
+  /** The subscription's name as the provider calls it ("Max", "Ultra", "Plus"), when known. */
   plan?: string
   windows: QuotaWindow[]
   fetchedAt: number
@@ -41,11 +41,16 @@ function titleCase(value: string) {
   return value.replace(/[_-]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()).trim()
 }
 
-/** Claude's account rate-limit tier ("default_claude_max_5x") or subscription ("max") → "Max (5x)". */
+/**
+ * Claude's account rate-limit tier or subscription → the plan's current name.
+ * Anthropic renamed the plans on 2026-10-30: Max 5x is "Max", Max 20x is
+ * "Ultra". Accounts still report the old tier ids ("default_claude_max_20x").
+ */
+const CLAUDE_TIER_NAMES: Record<string, string> = { "5": "Max", "20": "Ultra" }
 export function claudePlanLabel(account: { organizationRateLimitTier?: unknown; userRateLimitTier?: unknown; subscriptionType?: unknown } | undefined) {
   const tier = String(account?.userRateLimitTier ?? account?.organizationRateLimitTier ?? "")
   const multiple = tier.match(/max_(\d+)x/)
-  if (multiple) return `Max (${multiple[1]}x)`
+  if (multiple) return CLAUDE_TIER_NAMES[multiple[1]] ?? `Max (${multiple[1]}x)`
   const kind = String(account?.subscriptionType ?? "") || (tier.match(/claude_(pro|max|team|enterprise)/)?.[1] ?? "")
   return kind ? titleCase(kind) : undefined
 }
