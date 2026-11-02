@@ -2859,7 +2859,7 @@
       "label": "System drawer (developer tool: Needs you, Bots, Workspace, Running, Problems)",
       "product": "product:ai-allternit",
       "status": "building",
-      "description": "A developer tool, off by default (Settings → Developer → System drawer, useDevToolsStore). A bottom drawer (Desktop, beside the rail) or sheet (phone layout and m.allternit.com PWA) showing what is happening across every session and mode. Needs you: agent permission requests from any surface plus Factory approvals, answered in place. Bots: every bot (agent store + useBotStatus, plus Factory Terminal bots) as one line each with Open; a Lanes switch shows the Terminal bots' hand-off lanes; a Graph switch draws the Factory campaign flow or, with no campaign, the Terminal bots as a team. Workspace: the Office view itself (OfficeView compact: the 3dfacility loft with its one panel as a bottom sheet, the bot list, then the picked bot's real chat). Running: sessions replying and dev servers with Open and Stop. Problems: failing routines, failed Terminal bots and parsed check failures from code sessions active in the last day. Opened with Cmd/Ctrl+J, the dot on the Gizzi desktop pet (hover shows a summary bubble, click opens; clicking the pet still opens quick chat), the menu bar menu's System section (right-click; left-click still opens the HUD) or the phone menu footer button; never opens by itself.",
+      "description": "A developer tool, off by default (Settings → Developer → System drawer, useDevToolsStore). A bottom drawer (Desktop, beside the rail) or sheet (phone layout and m.allternit.com PWA) showing what is happening across every session and mode. Needs you: agent permission requests from any surface plus Factory approvals, answered in place. Bots: every bot (agent store + useBotStatus, plus Factory Terminal bots) as one line each with Open; a Lanes switch shows the Terminal bots' hand-off lanes; a Graph switch draws the Factory campaign flow or, with no campaign, the Terminal bots as a team. Workspace: the compact bot floor (BotWorkspaceView: the 3dfacility loft with its one panel as a bottom sheet, the bot list, then the picked bot's real chat). Running: sessions replying and dev servers with Open and Stop. Problems: failing routines, failed Terminal bots and parsed check failures from code sessions active in the last day. Opened with Cmd/Ctrl+J, the dot on the Gizzi desktop pet (hover shows a summary bubble, click opens; clicking the pet still opens quick chat), the menu bar menu's System section (right-click; left-click still opens the HUD) or the phone menu footer button; never opens by itself.",
       "touches": [
         "allternit-ai/src/components/desktop-companion",
         "allternit-ai/src/drawers",
@@ -2897,7 +2897,7 @@
       "id": "feature:office-view",
       "label": "Office: the whole walkable Allternit facility",
       "product": "product:ai-allternit",
-      "status": "building",
+      "status": "live",
       "description": "Office opens the hosted full facility (?embed=facility): main-avatar creation, actual account bot appearances, free campus roaming, room navigation, live bot work in the existing Bots Floor, and account-scoped local visitor/position persistence. System Workspace keeps the compact BotWorkspaceView with replay, share and film. Desktop, web phone/PWA and native iPhone use the full-facility entry; physical iPhone verification is pending.",
       "touches": [
         "allternit/cmd/allternit-api/src/floor_routes.rs",
@@ -2911,7 +2911,8 @@
         "allternit-ai/src/views/code/console/WorkspaceTab.tsx",
         "allternit-ai/src/components/dispatch/FabricBotMode.tsx",
         "allternit/surfaces/allternit-mobile/ios/Features/Office/Floor/OfficeFloorView.swift",
-        "allternit/surfaces/docs/architecture/facility-workspace.mdx"
+        "allternit/surfaces/docs/architecture/facility-workspace.mdx",
+        "external:allternit-facility"
       ],
       "decisions": [
         {
@@ -2921,6 +2922,10 @@
         {
           "on": "2026-11-01",
           "note": "Eoj: Office is the whole 3dfacility, with a main avatar, roaming and account bot appearance switching. Workspace remains the bot-working room and compact System view. Hosted inside the app, not an external browser launch; cache/RAM/GPU costs remain on device. Source implemented and local journeys checked; release pending."
+        },
+        {
+          "on": "2026-11-01",
+          "note": "Full-facility web release landed in websites #86 / ai #936 / platform #2035. Visual cleanup consolidates phone actions, widens portrait walking framing, and bounds speech against controls. Browser fixture screens are facility-frame evidence, not proof of a signed-in host conversation or native-device acceptance."
         }
       ],
       "evidence": [

@@ -1142,6 +1142,41 @@
         "allternit/surfaces/allternit-mobile/ios/Features/Office/Floor/OfficeFloorView.swift",
         "allternit/surfaces/docs/architecture/facility-workspace.mdx"
       ]
+    },
+    {
+      "source": "surface:ai",
+      "target": "allternit-ai/src/views/office/OfficeFloor.tsx",
+      "kind": "Office loads the hosted facility renderer",
+      "evidence": [
+        "allternit-ai/src/views/office/OfficeView.tsx",
+        "allternit/surfaces/docs/architecture/facility-workspace.mdx"
+      ]
+    },
+    {
+      "source": "surface:desktop",
+      "target": "allternit-ai/src/views/office/OfficeFloor.tsx",
+      "kind": "Office loads the hosted facility renderer",
+      "evidence": [
+        "allternit-ai/src/views/office/OfficeView.tsx",
+        "allternit/surfaces/docs/architecture/facility-workspace.mdx"
+      ]
+    },
+    {
+      "source": "surface:pwa",
+      "target": "allternit-ai/src/views/office/OfficeFloor.tsx",
+      "kind": "Office loads the hosted facility renderer",
+      "evidence": [
+        "allternit-ai/src/views/office/OfficeView.tsx",
+        "allternit/surfaces/docs/architecture/facility-workspace.mdx"
+      ]
+    },
+    {
+      "source": "surface:ios",
+      "target": "allternit/surfaces/allternit-mobile/ios/Features/Office/Floor/OfficeFloorView.swift",
+      "kind": "Native Office webview loads the hosted facility renderer",
+      "evidence": [
+        "allternit/surfaces/allternit-mobile/ios/Features/Office/Floor/OfficeFloorView.swift"
+      ]
     }
   ]
 }
