@@ -91,7 +91,8 @@ native release must include platform PR #2035 to open the full facility.
 
 Keep `CURRENT_PROJECT_VERSION` in sync for the app, widgets, broadcast extension
 and tests in `project.yml`, then regenerate the project with XcodeGen. Run the
-signed archive/export through `scripts/build-queue run ios --repo <checkout>`.
+signed archive through `scripts/build-queue run ios --repo <checkout>`. After
+archive validation, export and upload that completed archive separately.
 Use the established local signing configuration and an export options plist
 with `method=app-store-connect` and `destination=upload`. Do not commit signing
 configuration, credentials, frameworks or archive output.

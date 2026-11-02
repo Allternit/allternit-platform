@@ -132,3 +132,13 @@ camera view offset. Phones start closed; desktop starts open. Bot selection
 opens the panel. The close control and Escape hide it without clearing the
 selected bot or draft. `chrome=none` remains controlled by its host and does
 not render an extra panel or trigger. Breakpoint changes update the layout.
+
+### TestFlight build 14
+
+Version 1.0 build 14 is the first signed release prepared after the full-facility
+native route merged. Platform PR #2041 synchronizes the app, widget, broadcast
+extension and test target build numbers. Archive validation checks packaged
+versions, the app signature and `embed=facility` in the compiled executable.
+Apple processing and membership in the existing internal tester group must be
+verified separately from archive success. The hosted facility remains remote,
+so subsequent facility UI updates do not require repackaging its 3D assets.
