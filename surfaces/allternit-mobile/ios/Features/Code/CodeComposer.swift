@@ -397,7 +397,7 @@ private struct CodeContextBar: View {
                 }
                 .frame(height: 2)
                 if let breakdown = state.breakdown {
-                    Text("\(Int((breakdown.utilization * 100).rounded()))%")
+                    Text("\(breakdown.basis == "estimated" ? "~" : "")\(Int((breakdown.utilization * 100).rounded()))%")
                         .font(.system(size: 11, design: .monospaced))
                         .foregroundColor(ink.tertiary)
                 }
@@ -549,7 +549,7 @@ struct CodeDeckRow: View {
             Button(action: { self.context.showsUsage = true }) {
                 HStack(spacing: 4) {
                     CodeUsageBlocks(fraction: context.utilization, tone: tone(context.level), terminal: terminal)
-                    Text("\(Int((context.utilization * 100).rounded()))%")
+                    Text("\(context.basis == "estimated" ? "~" : "")\(Int((context.utilization * 100).rounded()))%")
                         .font(.system(size: 12, weight: .semibold, design: .monospaced))
                         .foregroundColor(context.level == .ok ? ink.secondary : tone(context.level))
                 }
@@ -639,7 +639,7 @@ struct CodeContextRows: View {
                 Text("\(SessionContextBreakdown.format(breakdown.usedTokens)) of \(SessionContextBreakdown.format(breakdown.contextWindow))")
                     .font(.system(size: 14, weight: .semibold))
                 Spacer()
-                Text("\(Int((breakdown.utilization * 100).rounded()))%")
+                Text("\(breakdown.basis == "estimated" ? "~" : "")\(Int((breakdown.utilization * 100).rounded()))%")
                     .font(.system(size: 13, design: .monospaced))
                     .foregroundColor(Color("TextSecondary"))
             }
