@@ -2898,8 +2898,9 @@
       "label": "Office: the whole walkable Allternit facility",
       "product": "product:ai-allternit",
       "status": "building",
-      "description": "Office opens the hosted full facility (?embed=facility): main-avatar creation, actual account bot appearances, free campus roaming, room navigation, live bot work in the existing Bots Floor, and account-scoped local visitor/position persistence. System Workspace keeps the compact BotWorkspaceView with replay, share and film. Desktop, web phone/PWA and native iPhone use the full-facility entry; physical iPhone verification is pending.",
+      "description": "Office opens the hosted full facility (?embed=facility): main-avatar creation, actual account bot appearances, free campus roaming, room navigation, live bot work in the existing Bots Floor, and account-scoped local visitor/position persistence. System Workspace keeps the compact BotWorkspaceView with replay, share and film. Desktop and web phone/PWA use the full-facility entry. Native source uses it, but TestFlight build 13 still opens the legacy bot floor; a newer signed iPhone release and physical-device verification remain pending.",
       "touches": [
+        "external:allternit-facility",
         "allternit/cmd/allternit-api/src/floor_routes.rs",
         "allternit/cmd/allternit-cloud-api/src/routes/floor_shares.rs",
         "allternit/surfaces/docs/guides/office-view.mdx",
@@ -2921,6 +2922,10 @@
         {
           "on": "2026-11-01",
           "note": "Eoj: Office is the whole 3dfacility, with a main avatar, roaming and account bot appearance switching. Workspace remains the bot-working room and compact System view. Hosted inside the app, not an external browser launch; cache/RAM/GPU costs remain on device. Source implemented and local journeys checked; release pending."
+        },
+        {
+          "on": "2026-11-02",
+          "note": "Build 13 predates native full-facility route PR #2035. Legacy Office drawer compatibility fix in websites PR #88: phones start closed; Bots opens, close/Escape hides, bot selection reopens, drafts remain, camera offset follows visibility. Pill-heavy visual PRs remain drafts and are separate from this fix."
         }
       ],
       "evidence": [

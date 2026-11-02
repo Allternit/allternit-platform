@@ -13,6 +13,20 @@ The host app stores this state per account and organization on this device.
 It is not a cross-device cloud save. Standalone facility visitors have a separate
 browser-local saved character that now survives opening a new tab.
 
+## iPhone release versions
+
+TestFlight build 13 predates the native full-facility entry. It opens the older
+bot-floor Office, so it does not include free roaming or main-avatar selection.
+Those features require an iPhone build containing platform PR #2035 or later.
+A merged web release does not update an installed native app's Office route.
+
+The facility-site compatibility release for the older Office bot floor starts phone screens with
+the drawer closed. Use **Bots** to open it and **×** to hide it. Escape also
+hides it when using a keyboard. Picking a bot opens its panel again. Hiding the
+panel keeps an unsent message and restores the full floor framing. Reopen Office
+to load the current hosted page. This compatibility release does not add free
+roaming or avatar selection to build 13.
+
 ## Roam and work
 
 Use WASD, drag to look, and Shift to run on a keyboard. Phones use the facility's
