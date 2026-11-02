@@ -66,7 +66,7 @@ curl https://api.allternit.com/v1/chat/completions \
 | `tools` | array | no | Function-tool definitions. Only `type: "function"` tools are accepted. |
 | `tool_choice` | string \| object | no | Tool-selection strategy. |
 | `parallel_tool_calls` | boolean | no | Whether the model may call multiple tools in parallel. |
-| `reasoning_effort` | string | no | Reasoning control: `none`, `minimal`, `low`, `medium`, `high`, or `xhigh`. |
+| `reasoning_effort` | string | no | Reasoning control: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max` or `ultra`. Each model takes only its own levels; see [Thinking levels](/api/providers#thinking-levels). |
 | `service_tier` | string | no | Provider service tier: `auto`, `default`, `flex`, `priority`, or `scale`. |
 | `citations` | boolean | no | Ask providers that support source citations to include them. |
 | `context_cache_id` | string | no | Prepend a reusable context cache created via `/v1/context-caches`. |

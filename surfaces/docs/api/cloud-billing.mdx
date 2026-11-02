@@ -123,7 +123,7 @@ Migration `106_billing_disputes.sql`:
 
 | Method | Path | Notes |
 | --- | --- | --- |
-| GET | `/api/v1/billing/plans` | Plus, Super, Ultra. |
+| GET | `/api/v1/billing/plans` | Plus, Max (id `super`), Ultra. |
 | GET | `/api/v1/billing/subscription` | The person's current subscription, if any. |
 | POST | `/api/v1/billing/subscribe` | Subscription Checkout; reuses the person's Stripe customer. |
 | POST | `/api/v1/billing/portal` | Stripe billing portal for invoices, cards and cancellation. |
