@@ -8,6 +8,7 @@
  *   3. Maps driver AgentEvents to LanguageModelV2StreamParts.
  */
 
+import { ModelThinking } from "@/runtime/providers/discovery/model-thinking"
 import type { LanguageModelV2, LanguageModelV2StreamPart } from "@ai-sdk/provider"
 import { RuntimeService } from "@/runtime/runtime-service"
 import { RuntimeDriverFactory } from "@/runtime/runtime-driver-factory"
@@ -242,6 +243,8 @@ export class SubprocessLanguageModel implements LanguageModelV2 {
       : undefined
     // The request names an account for this CLI (cli_accounts id, or "default").
     const cliAccountId = options?.headers?.["x-gizzi-cli-account"] || undefined
+    // The thinking level, when this model takes it (model-thinking.json).
+    const effort = ModelThinking.check(this.modelId, options?.headers?.["x-gizzi-effort"])
     const task = await driver.assign({
       taskId: generateTaskId(),
       prompt: message,
@@ -270,6 +273,7 @@ export class SubprocessLanguageModel implements LanguageModelV2 {
       toolsOff,
       subagents,
       cliAccountId,
+      effort,
       // A bot turn: the CLI runs isolated from the user's own settings, with
       // the bot's tool allowlist (runtime/bots/bot-turn.ts).
       bot,

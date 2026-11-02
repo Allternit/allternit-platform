@@ -534,10 +534,10 @@ pub fn validate_request(req: &ChatCompletionRequest) -> Result<(), OpenAiErrorRe
     if let Some(effort) = req.reasoning_effort.as_deref() {
         if !matches!(
             effort,
-            "none" | "minimal" | "low" | "medium" | "high" | "xhigh"
+            "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra"
         ) {
             return Err(OpenAiErrorResponse::invalid_request(
-                "`reasoning_effort` must be one of none, minimal, low, medium, high, or xhigh.",
+                "`reasoning_effort` must be one of none, minimal, low, medium, high, xhigh, max, or ultra.",
                 Some("reasoning_effort"),
             ));
         }

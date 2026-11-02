@@ -23,7 +23,7 @@ pub const ENGINE_CLOUD: &str = "cloud";
 pub const ENGINE_PHONE: &str = "phone";
 
 /// Cloud Voice seconds included each month for a plan id (`free`, `plus`,
-/// `super`, `ultra`). Free has no Cloud Voice. Super and Ultra get at least
+/// `super`, `ultra`). Free has no Cloud Voice. Max (`super`) and Ultra get at least
 /// what Plus gets (the task fixes only Plus's number).
 pub fn included_cloud_voice_seconds(plan_id: &str) -> i64 {
     match plan_id {

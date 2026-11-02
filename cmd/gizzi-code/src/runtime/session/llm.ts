@@ -383,6 +383,9 @@ export namespace LLM {
         // Subagents are off for this agent (permission task: deny): CLI brains
         // then get no subagents of their own either (loaders/subprocess.ts).
         ...(tools.task ? {} : { "x-gizzi-subagents-off": "1" }),
+        // The picker's thinking level: CLI brains pass it as their own flag
+        // (claude --effort, codex turn effort); API models get it as options above.
+        ...(!input.small && input.user.variant ? { "x-gizzi-effort": input.user.variant } : {}),
         // Subscription Fabric: this send's human action (D16), minted by the
         // chat bridge, and the request id that keys the task's idempotency.
         ...(Provider.isFabricModel(input.model)

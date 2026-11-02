@@ -359,6 +359,7 @@ pub mod playground_routes;
 pub mod pricing;
 pub mod provider_routes;
 pub mod cli_catalog;
+pub mod model_thinking;
 pub mod cli_tools;
 pub mod queue_routes;
 pub mod rails;

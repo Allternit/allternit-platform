@@ -602,7 +602,7 @@ async fn exchange_pairing(
     // row exists: incrementing first meant a failed insert (or a desktop
     // poll retry) burned a slot even though the handshake never completed.
     // A cloud computer (provisioned or hosted) is entitled by its plan, not by
-    // the machine cap: Plus/Super/Ultra allow one machine, so a customer whose
+    // the machine cap: Plus/Max/Ultra allow one machine, so a customer whose
     // Mac is already paired could never pair the computer they paid for.
     let quota = state.quota_service.ensure_quota(&user_id).await?;
     if pairing.provisioned_instance_id.is_none() && pairing.hosted_instance_id.is_none() {

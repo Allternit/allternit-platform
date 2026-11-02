@@ -65,6 +65,8 @@ export interface AgentTask {
    * "default" for the stock home). Unset: the bot's own account, then the
    * user's default (drivers/cli-accounts.ts).
    */
+  /** Thinking level from the picker, checked against model-thinking.json. */
+  effort?: string
   cliAccountId?: string
 }
 

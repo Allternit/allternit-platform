@@ -4973,7 +4973,7 @@ pub(crate) mod pg_tests {
         let service = service(pool.clone(), backend.clone());
 
         let first = service.create("user_1", Some("sub_1")).await.unwrap();
-        assert_eq!((first.cpu_cores, first.memory_mb, first.disk_gb), (4, 8192, 40), "Super base");
+        assert_eq!((first.cpu_cores, first.memory_mb, first.disk_gb), (4, 8192, 40), "Max base");
         assert_eq!(first.plan_id.as_deref(), Some("super"));
         let spec = backend.created.lock().unwrap()[0].clone();
         assert_eq!((spec.cpu_cores, spec.memory_mb, spec.disk_gb), (4, 8192, 40));

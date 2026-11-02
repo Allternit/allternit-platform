@@ -1,4 +1,4 @@
-//! Subscription plans (Plus / Super / Ultra): plan catalog, Stripe Checkout subscription
+//! Subscription plans (Plus / Max / Ultra; the Max plan keeps the id `super`): plan catalog, Stripe Checkout subscription
 //! creation, and the Stripe customer billing portal.
 //!
 //! Plans are a static server-side catalog like `CREDIT_PACKS` in `routes::billing_checkout`:
@@ -9,7 +9,7 @@
 //!
 //! - `GET /api/v1/billing/plans` (public): the catalog WITHOUT Stripe price ids.
 //! - `GET /api/v1/billing/subscription` (Clerk session or API token): the caller's
-//!   current Free / Plus / Super / Ultra plan (active Stripe row, else Free).
+//!   current Free / Plus / Max / Ultra plan (active Stripe row, else Free).
 //! - `POST /api/v1/billing/subscribe` (Clerk session or API token): Checkout Session `mode=subscription` whose
 //!   `subscription_data[metadata]` carries `clerk_user_id` / `allternit_plan_tier` /
 //!   `allternit_plan_id` — the contract `routes::billing_webhooks` consumes.
@@ -63,7 +63,7 @@ pub struct SubscriptionPlan {
 
 const SUBSCRIPTION_PLANS: &[SubscriptionPlan] = &[
     SubscriptionPlan { id: "plus", label: "Plus", price_usd: 20.00, monthly_credits_usd: 22.00, rollover_cap_usd: 10.00, plan_tier: "pro", price_env: "STRIPE_PRICE_PLUS", photo_avatars_per_month: 5 },
-    SubscriptionPlan { id: "super", label: "Super", price_usd: 100.00, monthly_credits_usd: 110.00, rollover_cap_usd: 50.00, plan_tier: "team", price_env: "STRIPE_PRICE_SUPER", photo_avatars_per_month: 25 },
+    SubscriptionPlan { id: "super", label: "Max", price_usd: 100.00, monthly_credits_usd: 110.00, rollover_cap_usd: 50.00, plan_tier: "team", price_env: "STRIPE_PRICE_SUPER", photo_avatars_per_month: 25 },
     SubscriptionPlan { id: "ultra", label: "Ultra", price_usd: 200.00, monthly_credits_usd: 220.00, rollover_cap_usd: 100.00, plan_tier: "team", price_env: "STRIPE_PRICE_ULTRA", photo_avatars_per_month: 50 },
 ];
 
@@ -117,7 +117,7 @@ pub fn routes() -> Router<Arc<ApiState>> {
 fn product_label(plan_id: &str) -> &'static str {
     match plan_id {
         "plus" => "Plus",
-        "super" => "Super",
+        "super" => "Max",
         "ultra" => "Ultra",
         _ => "Free",
     }
@@ -202,7 +202,7 @@ async fn create_subscription(
         Ok(trusted) => trusted,
         Err(error) => return error.into_response(),
     };
-    if let Err(error) = ensure_purchase_allowed(trusted, plan.price_usd, "The Super and Ultra plans") {
+    if let Err(error) = ensure_purchase_allowed(trusted, plan.price_usd, "The Max and Ultra plans") {
         return error.into_response();
     }
     let Ok(secret_key) = std::env::var("STRIPE_SECRET_KEY") else {
@@ -842,7 +842,7 @@ mod tests {
         let _guard = ENV_LOCK.lock().unwrap();
         std::env::set_var("STRIPE_PRICE_PLUS", "price_plus");
         std::env::set_var("STRIPE_PRICE_SUPER", "price_super");
-        // Bought Plus, switched to Super in the billing portal: the metadata
+        // Bought Plus, switched to Max in the billing portal: the metadata
         // still says plus, the item's price says super.
         let switched = serde_json::json!({
             "metadata": { "allternit_plan_id": "plus", "allternit_plan_tier": "pro" },
@@ -966,15 +966,15 @@ mod tests {
 
     #[test]
     fn purchase_gate_limits_untrusted_buyers_to_the_first_purchase_max() {
-        // Untrusted: $20 Plus and $25 pack pass, $50 pack / $100 Super blocked.
-        assert!(ensure_purchase_allowed(false, 20.0, "The Super and Ultra plans").is_ok());
+        // Untrusted: $20 Plus and $25 pack pass, $50 pack / $100 Max blocked.
+        assert!(ensure_purchase_allowed(false, 20.0, "The Max and Ultra plans").is_ok());
         assert!(ensure_purchase_allowed(false, 25.0, "The $50 and $100 packs").is_ok());
         let error = ensure_purchase_allowed(false, 50.0, "The $50 and $100 packs").unwrap_err();
         assert!(error.to_string().contains("First purchases are limited to $25"), "{error}");
         assert!(error.to_string().contains("$50 and $100 packs unlock automatically"), "{error}");
-        assert!(ensure_purchase_allowed(false, 100.0, "The Super and Ultra plans").is_err());
+        assert!(ensure_purchase_allowed(false, 100.0, "The Max and Ultra plans").is_err());
         // Trusted buyers are never gated.
         assert!(ensure_purchase_allowed(true, 100.0, "The $50 and $100 packs").is_ok());
-        assert!(ensure_purchase_allowed(true, 200.0, "The Super and Ultra plans").is_ok());
+        assert!(ensure_purchase_allowed(true, 200.0, "The Max and Ultra plans").is_ok());
     }
 }

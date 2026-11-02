@@ -183,6 +183,7 @@ export class LocalCliDriver implements RuntimeDriver {
       toolsOff: task?.toolsOff,
       subagents: task?.subagents,
       model: task?.model,
+      effort: task?.effort,
     })
 
     // CLIs whose records lack what they send: their provider calls pass through BrainRelay.
@@ -1690,9 +1691,12 @@ export class LocalCliDriver implements RuntimeDriver {
       if (!threadId) throw new Error("codex app-server did not return thread.id")
       events.push({ type: "vendor_session", id: threadId })
 
+      const effort = this.tasks.get(handle.taskId)?.effort
       await request("turn/start", {
         threadId,
         input: [{ type: "text", text: prompt }],
+        // The picker's reasoning level (codex debug models lists each model's).
+        ...(effort ? { effort } : {}),
       })
       // Each MCP server's tools, for the context panel (asked while the servers are up).
       const mcpStatus = request("mcpServerStatus/list", {}).catch(() => undefined)
@@ -1891,6 +1895,8 @@ interface CliAdapter {
       subagents?: AgentTask["subagents"]
       /** The session's model (the picker's choice); the CLI validates it. */
       model?: string
+      /** The thinking level, already checked against model-thinking.json. */
+      effort?: string
     },
   ): string[]
 }
@@ -1949,6 +1955,8 @@ const CLI_ADAPTERS: Record<string, CliAdapter> = {
         // gates instead of bypassPermissions (runtime/bots/bot-turn.ts).
         ...claudePermissionFlags(ctx),
         "--disallowedTools", "AskUserQuestion",
+        // The picker's effort level (low, medium, high, xhigh, max).
+        ...(ctx.effort ? ["--effort", ctx.effort] : []),
         // An internal completion: answer from the text alone, no tools at all.
         ...(ctx.toolsOff ? ["--tools", ""] : []),
         ...claudeSessionFlags(ctx),

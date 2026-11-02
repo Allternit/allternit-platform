@@ -132,7 +132,7 @@ struct PlanUsageRows: View {
     }
 }
 
-/// "Get Pro" / "Buy credits" rows. On the US storefront they link out to
+/// "Choose a plan" / "Buy credits" rows. On the US storefront they link out to
 /// allternit.com; elsewhere the App Store doesn't allow the link, so nothing
 /// is shown (the caller shows plan status only).
 struct PayLinkRows: View {
@@ -143,7 +143,7 @@ struct PayLinkRows: View {
     var body: some View {
         if storefront.allowsPurchaseLinks {
             if plan.subscription?.isPaid != true {
-                linkRow("Get Pro", systemImage: "star") { openURL(plan.upgradeURL) }
+                linkRow("Choose a plan", systemImage: "star") { openURL(plan.upgradeURL) }
             }
             linkRow("Buy credits", systemImage: "creditcard") { openURL(StorefrontGate.creditsURL) }
             if plan.subscription?.isPaid == true {
