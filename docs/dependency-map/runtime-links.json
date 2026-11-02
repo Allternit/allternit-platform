@@ -1142,6 +1142,18 @@
         "allternit/surfaces/allternit-mobile/ios/Features/Office/Floor/OfficeFloorView.swift",
         "allternit/surfaces/docs/architecture/facility-workspace.mdx"
       ]
+    },
+    {
+      "source": "allternit-ai/src/lib/openui",
+      "target": "allternit/cmd/gizzi-code/src/runtime/session",
+      "kind": "shared answer policy: app catalog routing and runtime final-response enforcement before public text publication",
+      "evidence": [
+        "allternit-ai/src/lib/openui/answer-policy.ts",
+        "allternit-ai/scripts/sync-answer-contract.ts",
+        "allternit/cmd/gizzi-code/src/runtime/session/answer-policy.ts",
+        "allternit/cmd/gizzi-code/src/runtime/session/prompt.ts",
+        "allternit/cmd/gizzi-code/src/runtime/session/processor.ts"
+      ]
     }
   ]
 }

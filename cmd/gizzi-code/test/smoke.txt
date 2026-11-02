@@ -1,3 +1,4 @@
+# Answer-policy scenarios run in their own process in script/ci-smoke-test.sh.
 test/agent-workspace/artifacts.test.ts
 test/agent-workspace/checkpoint.test.ts
 test/agent/adaptive-run-batch.test.ts

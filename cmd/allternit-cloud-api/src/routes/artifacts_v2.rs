@@ -512,6 +512,12 @@ fn check_body_format(format: &str) -> Result<()> {
     Ok(())
 }
 
+/// Enforced on both create and append, including callers that skip model tools.
+fn check_answer_body(kind: &str, format: &str, body: &str) -> Result<()> {
+    crate::answer_contract::validate_write(kind, format, body)
+        .map_err(|reason| ArtifactError::unprocessable("invalid_answer_template", reason))
+}
+
 /// Capabilities shape + the org's connector kill switch.
 /// For a dashboard or an ops sheet, set `capabilities.connectors` from the
 /// tools its body calls (see `kinds::body_connectors`). Other kinds pass
@@ -777,6 +783,7 @@ async fn create_artifact(
         .to_string();
     check_body_format(&body_format)?;
     check_body(&request.body)?;
+    check_answer_body(&kind, &body_format, &request.body)?;
     let runtime_version = request.runtime_version.unwrap_or(2);
     match runtime_version {
         2 => {}
@@ -1098,6 +1105,7 @@ async fn append_version(
         .unwrap_or_else(|| kinds::default_body_format(&row.kind).to_string()),
     };
     let next = current + 1;
+    check_answer_body(&row.kind, &body_format, &request.body)?;
     sqlx::query(
         "INSERT INTO artifact_versions (artifact_id, version, body, body_format, meta, size_bytes, sha256, author_id) \
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",

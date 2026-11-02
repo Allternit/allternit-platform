@@ -131,6 +131,7 @@ fn tidy(s: &str) -> String {
 
 /// One card's OpenUI Lang as text; [`CARD_FALLBACK`] when nothing readable comes out.
 pub fn card_text(code: &str, style: Style) -> String {
+    if code.trim_start().starts_with('{') { return crate::answer_contract::as_text(code); }
     let program = Program::parse(code);
     let rendered = program.render(style);
     if rendered.trim().is_empty() {
@@ -1145,6 +1146,12 @@ pub fn check_reply(text: &str) -> Vec<CardCheck> {
 
 /// What in one card's OpenUI Lang can't be drawn. Empty when the card is fine.
 pub fn check_card(code: &str) -> Vec<String> {
+    return crate::answer_contract::validate(code).err().into_iter().collect();
+}
+
+/// Legacy syntax diagnostics remain available for migration tooling only.
+#[allow(dead_code)]
+fn check_legacy_card(code: &str) -> Vec<String> {
     let mut problems = Vec::new();
     let mut defined: Vec<String> = Vec::new();
     let mut nodes: Vec<(String, Node)> = Vec::new();
@@ -1434,27 +1441,22 @@ mod tests {
 
     #[test]
     fn check_finds_what_cannot_be_drawn() {
-        assert!(check_card("root = Answer(\"T\", [Metric(\"Sum\", 2 + 3)])").is_empty());
-        let p = check_card("root = Answer(\"T\", [g, Slider(\"x\", $x), m, missing])\ng = Gauge(3)\nm = Metric(\"a\", 1, \"number\", \"u\", \"n\", \"extra\")\nbad = Text(\"unclosed\" +)");
-        let joined = p.join(" | ");
-        assert!(joined.contains("Unknown component Gauge."), "{joined}");
-        assert!(joined.contains("Slider is missing min, max."), "{joined}");
-        assert!(joined.contains("Metric takes at most 5 values; 6 given."), "{joined}");
-        assert!(joined.contains("Never defined: missing."), "{joined}");
-        assert!(joined.contains("The line for `bad` couldn't be read."), "{joined}");
-        assert!(check_card("t = Text(\"x\")").iter().any(|d| d.contains("no `root")));
-        // Query/Mutation/Action are the runtime's, not unknown components.
-        assert!(check_card("root = Answer(\"D\", [Table([\"A\"], q.rows)])\nq = Query(\"crm__list\", {}, {rows: []})").is_empty());
+        let good = r#"{"version":1,"template":"quick-answer","title":"One","data":{"text":"x"}}"#;
+        assert!(check_card(good).is_empty());
+        assert!(!check_card("root = Answer(\"Bypass\", [])").is_empty());
+        let bad = r#"{"version":7,"template":"quick-answer","title":"One","data":{"text":"x"}}"#;
+        assert!(!check_card(bad).is_empty());
     }
 
     #[test]
     fn check_reply_covers_every_card_with_fallback_text() {
-        let checks = check_reply("A\n```openui\nroot = Answer(\"One\", [Text(\"x\")])\n```\nB\n```openui\nroot = Answer(\"Two\", [Nope()])\n```");
+        let text = "A\n```openui\n{\"version\":1,\"template\":\"quick-answer\",\"title\":\"One\",\"data\":{\"text\":\"x\"}}\n```\nB\n```openui\nroot = Answer(\"Two\", [Nope()])\n```";
+        let checks = check_reply(text);
         assert_eq!(checks.len(), 2);
         assert!(checks[0].diagnostics.is_empty());
         assert!(checks[0].fallback.contains("One"));
         assert_eq!(checks[1].index, 1);
-        assert_eq!(checks[1].diagnostics, vec!["Unknown component Nope.".to_string()]);
+        assert!(!checks[1].diagnostics.is_empty());
     }
 
     #[test]

@@ -5,6 +5,10 @@ description: 'For developers: the response-parts contract every brain is mapped 
 
 Every reply, from any brain, is drawn from the same six parts, and every brain gets the same answer-shape rules. This page is for developers. What people see is in [Agent steps in replies](/guides/agent-steps), [Progress](/guides/progress-pane) and [Interactive answers](/guides/interactive-answers#how-answers-are-laid-out).
 
+## Enforced interactive UI
+
+Interactive cards use a versioned template ID and validated JSON data. The application owns the layout. Writing outlines and their keyword picker remain model instructions; they are separate from the card enforcement boundary. Prose always uses the fixed Markdown answer view. See [Answer template contract](/reference/answer-template-contract) for the wire format, rejection rules, state and replay.
+
 ## Where sources and plans come from
 
 When a model cites a web page, the chat shows that page as a source pill. The pill comes from the model's own citation: Claude's citations, ChatGPT's url citations, Gemini's grounding, or Claude Code's web search results. Allternit does not guess sources from the reply text. The agent's plan always appears as one checklist in the Progress pane, whether the plan came from Claude's to-do list, Codex's plan or another CLI agent's plan. If a model returns no structured sources, Allternit reads the search tool's output instead, the same way it did before.

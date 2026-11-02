@@ -19,6 +19,7 @@ import { CLOUD_URLS } from "@/shared/constants/cloudUrls"
 import { Pairing } from "@/runtime/services/pairing/pairing"
 import type { MessageV2 } from "@/runtime/session/message-v2"
 import { Log } from "@/shared/util/log"
+import { parseAnswerEnvelope, ANSWER_BODY_FORMAT } from './answer-contract'
 
 export namespace Artifacts {
   const log = Log.create({ service: "artifacts" })
@@ -33,7 +34,7 @@ export namespace Artifacts {
     ops: ["application/vnd.allternit.ops+json"],
     motion: ["application/vnd.allternit.motion+json"],
     page: ["text/html", "text/markdown"],
-    card: ["application/vnd.allternit.openui"],
+    card: ["application/vnd.allternit.answer+json"],
     diagram: ["text/vnd.mermaid", "image/svg+xml"],
     image: ["text/uri-list"],
     code: ["text/plain"],
@@ -123,6 +124,11 @@ export namespace Artifacts {
 
   /** Returns an error message for the model, or undefined when the body/format pair is acceptable. */
   export function validate(kind: Kind, bodyFormat: string, body: string): string | undefined {
+    if (kind === 'card' || bodyFormat === ANSWER_BODY_FORMAT || bodyFormat === 'application/vnd.allternit.openui') {
+      if (bodyFormat !== ANSWER_BODY_FORMAT) return `New cards require ${ANSWER_BODY_FORMAT}, with a versioned template ID and validated data.`
+      const parsed = parseAnswerEnvelope(body)
+      if (!parsed.answer) return parsed.problems.join(' ')
+    }
     const allowed = FORMATS[kind] as readonly string[]
     if (!allowed.includes(bodyFormat)) {
       return `body_format "${bodyFormat}" isn't valid for kind "${kind}". Use one of: ${allowed.join(", ")}.`
@@ -253,6 +259,8 @@ export namespace Artifacts {
   }
 
   export async function create(input: CreateInput, abort?: AbortSignal): Promise<Payload> {
+    const invalid = validate(input.kind, input.body_format, input.body)
+    if (invalid) throw new RejectedError(422, invalid)
     const id = mintId()
     const local: Payload = {
       id,
@@ -300,6 +308,10 @@ export namespace Artifacts {
   }
 
   export async function update(input: UpdateInput, abort?: AbortSignal): Promise<Payload> {
+    if (input.known && isKind(input.known.kind)) {
+      const invalid = validate(input.known.kind, input.known.body_format, input.body)
+      if (invalid) throw new RejectedError(422, invalid)
+    }
     const meta: Record<string, unknown> = { ...(input.known?.meta ?? {}) }
     delete meta.note
     if (input.note) meta.note = input.note

@@ -429,10 +429,11 @@ function checkNotarize(jobs) {
     return;
   }
 
-  // Accepts both `process.env.APPLE_ID` and `const { APPLE_ID } = process.env`.
+  // Accepts direct reads and destructuring with all three required credentials,
+  // including an additional APPLE_KEYCHAIN_PROFILE in the same declaration.
   const checksEnv =
     /process\.env\.(APPLE_ID|APPLE_ID_PASSWORD|APPLE_TEAM_ID)/.test(source) ||
-    /\{\s*APPLE_ID\s*,\s*APPLE_ID_PASSWORD\s*,\s*APPLE_TEAM_ID\s*\}\s*=\s*process\.env/.test(
+    /\{(?=[^}]*\bAPPLE_ID\b)(?=[^}]*\bAPPLE_ID_PASSWORD\b)(?=[^}]*\bAPPLE_TEAM_ID\b)[^}]+\}\s*=\s*process\.env/.test(
       source
     );
   const checksWarn = /console\.warn/.test(source);

@@ -1,0 +1,1795 @@
+[
+  {
+    "version": 1,
+    "template": "quick-answer",
+    "title": "Example answer",
+    "data": {
+      "text": "Synthetic example; replace with verified data"
+    }
+  },
+  {
+    "version": 1,
+    "template": "comparison",
+    "title": "Choose how the team works",
+    "data": {
+      "columns": [
+        {
+          "title": "A focused pilot",
+          "points": [
+            "One team and one workflow",
+            "Two weeks of observation",
+            "Lower coordination overhead"
+          ]
+        },
+        {
+          "title": "A broader rollout",
+          "points": [
+            "Three teams in parallel",
+            "Four weeks of support",
+            "More evidence across use cases"
+          ]
+        }
+      ],
+      "recommendation": "Start with the focused pilot if learning speed is the priority. This is a synthetic planning example."
+    }
+  },
+  {
+    "version": 1,
+    "template": "decision",
+    "title": "Example decision",
+    "data": {
+      "question": "Which format?",
+      "options": [
+        "PDF",
+        "DOCX"
+      ]
+    }
+  },
+  {
+    "version": 1,
+    "template": "plan",
+    "title": "A considered launch, one step at a time",
+    "data": {
+      "items": [
+        "Confirm the audience and the first workflow",
+        "Prepare a working prototype with representative data",
+        "Run a short review on desktop and phone",
+        "Resolve the most important findings",
+        "Publish after the final review"
+      ],
+      "checked": [
+        "Confirm the audience and the first workflow"
+      ]
+    }
+  },
+  {
+    "version": 1,
+    "template": "how-to",
+    "title": "Example instructions",
+    "data": {
+      "steps": [
+        "Open settings",
+        "Check the value"
+      ],
+      "verification": "Confirm against the source."
+    }
+  },
+  {
+    "version": 1,
+    "template": "troubleshooting",
+    "title": "Example problem",
+    "data": {
+      "cause": "Example missing input",
+      "fix": [
+        "Inspect the input"
+      ],
+      "verify": "Retry the original action."
+    }
+  },
+  {
+    "version": 1,
+    "template": "status-report",
+    "title": "The launch is taking shape",
+    "data": {
+      "done": [
+        "Core flows reviewed with representative data",
+        "Release notes drafted"
+      ],
+      "inProgress": [
+        "Adapting the onboarding screens for small viewports"
+      ],
+      "blocked": [
+        "Customer walkthrough awaits the reviewed build"
+      ],
+      "next": [
+        "Complete accessibility checks",
+        "Review the final release candidate"
+      ]
+    }
+  },
+  {
+    "version": 1,
+    "template": "research-brief",
+    "title": "What we learned about onboarding",
+    "data": {
+      "findings": [
+        {
+          "text": "In the synthetic interview set, people needed clearer guidance before connecting a workspace.",
+          "url": "https://example.com/demo-interviews"
+        },
+        {
+          "text": "The synthetic task review found that explicit completion states made the next step easier to identify.",
+          "url": "https://example.com/demo-review"
+        }
+      ],
+      "openQuestions": [
+        "Does the pattern hold for returning users?",
+        "Which labels need translation before a broader trial?"
+      ]
+    }
+  },
+  {
+    "version": 1,
+    "template": "table",
+    "title": "The next few handoffs",
+    "data": {
+      "headers": [
+        "Deliverable",
+        "Owner",
+        "State"
+      ],
+      "rows": [
+        [
+          "Research brief",
+          "Elena Cruz",
+          "In review"
+        ],
+        [
+          "Mobile onboarding",
+          "Jordan Reed",
+          "In progress"
+        ],
+        [
+          "Release notes",
+          "Sam Okafor",
+          "Draft"
+        ],
+        [
+          "Launch checklist",
+          "Maya Chen",
+          "Ready"
+        ]
+      ],
+      "source": "Synthetic demonstration data · not a connected account"
+    }
+  },
+  {
+    "version": 1,
+    "template": "chart",
+    "title": "A five-week view",
+    "data": {
+      "kind": "bar",
+      "labels": [
+        "Week 1",
+        "Week 2",
+        "Week 3",
+        "Week 4",
+        "Week 5"
+      ],
+      "values": [
+        28,
+        35,
+        31,
+        42,
+        46
+      ],
+      "source": "Synthetic demonstration data · not a connected account"
+    }
+  },
+  {
+    "version": 1,
+    "template": "form",
+    "title": "Example form",
+    "data": {
+      "fields": [
+        {
+          "id": "name",
+          "type": "text",
+          "label": "Name",
+          "value": ""
+        },
+        {
+          "id": "date",
+          "type": "date",
+          "label": "Date",
+          "value": "2026-11-01"
+        },
+        {
+          "id": "count",
+          "type": "number",
+          "label": "Count",
+          "value": 1,
+          "min": 0,
+          "max": 10
+        },
+        {
+          "id": "format",
+          "type": "select",
+          "label": "Format",
+          "value": "PDF",
+          "options": [
+            "PDF",
+            "DOCX"
+          ]
+        },
+        {
+          "id": "include",
+          "type": "toggle",
+          "label": "Include details",
+          "value": true
+        }
+      ],
+      "submitLabel": "Continue"
+    }
+  },
+  {
+    "version": 1,
+    "template": "calculator",
+    "title": "Split the bill",
+    "data": {
+      "inputs": [
+        {
+          "id": "total",
+          "label": "Bill total",
+          "value": 184.6,
+          "min": 0,
+          "max": 1000,
+          "step": 0.1
+        },
+        {
+          "id": "people",
+          "label": "People",
+          "value": 4,
+          "min": 1,
+          "max": 20
+        },
+        {
+          "id": "tip",
+          "label": "Tip percent",
+          "value": 18,
+          "min": 0,
+          "max": 30
+        }
+      ],
+      "results": [
+        {
+          "label": "Each pays",
+          "value": {
+            "op": "divide",
+            "left": {
+              "op": "multiply",
+              "left": {
+                "input": "total"
+              },
+              "right": {
+                "op": "add",
+                "left": 1,
+                "right": {
+                  "op": "divide",
+                  "left": {
+                    "input": "tip"
+                  },
+                  "right": 100
+                }
+              }
+            },
+            "right": {
+              "input": "people"
+            }
+          },
+          "format": "currency",
+          "unit": "USD",
+          "note": "Synthetic inputs"
+        }
+      ]
+    }
+  },
+  {
+    "version": 1,
+    "template": "metric-grid",
+    "title": "A week of steady progress",
+    "data": {
+      "metrics": [
+        {
+          "label": "Reviewed items",
+          "value": 128,
+          "note": "Synthetic demonstration data · not a connected account"
+        },
+        {
+          "label": "Open questions",
+          "value": 14,
+          "note": "Synthetic demonstration data · not a connected account"
+        },
+        {
+          "label": "Completed handoffs",
+          "value": 32,
+          "note": "Synthetic demonstration data · not a connected account"
+        },
+        {
+          "label": "Teams involved",
+          "value": 4,
+          "note": "Synthetic demonstration data · not a connected account"
+        }
+      ]
+    }
+  },
+  {
+    "version": 1,
+    "template": "fact-sheet",
+    "title": "Fact sheet",
+    "data": {
+      "facts": [
+        {
+          "label": "Owner",
+          "value": "Example team"
+        }
+      ],
+      "status": "Draft",
+      "note": "Synthetic example; replace with verified data"
+    }
+  },
+  {
+    "version": 1,
+    "template": "progress-tracker",
+    "title": "Progress tracker",
+    "data": {
+      "goals": [
+        {
+          "label": "Reviewed",
+          "value": 3,
+          "target": 10
+        }
+      ],
+      "source": "Synthetic example; replace with verified data"
+    }
+  },
+  {
+    "version": 1,
+    "template": "timeline",
+    "title": "Timeline",
+    "data": {
+      "events": [
+        {
+          "title": "Review",
+          "time": "09:00",
+          "detail": "Example review"
+        }
+      ],
+      "source": "Synthetic example; replace with verified data"
+    }
+  },
+  {
+    "version": 1,
+    "template": "code-explanation",
+    "title": "Code explanation",
+    "data": {
+      "code": "const ready = true;",
+      "language": "typescript",
+      "explanation": "Example declaration.",
+      "notes": [
+        "Check real requirements."
+      ]
+    }
+  },
+  {
+    "version": 1,
+    "template": "source-list",
+    "title": "Source list",
+    "data": {
+      "sources": [
+        {
+          "title": "Example source",
+          "url": "https://example.com",
+          "note": "Synthetic example; replace with verified data"
+        }
+      ]
+    }
+  },
+  {
+    "version": 1,
+    "template": "image-gallery",
+    "title": "Image gallery",
+    "data": {
+      "images": [
+        {
+          "url": "https://example.com/example.png",
+          "alt": "Example image",
+          "caption": "Synthetic example; replace with verified data"
+        }
+      ]
+    }
+  },
+  {
+    "version": 1,
+    "template": "tabbed-report",
+    "title": "Tabbed report",
+    "data": {
+      "tabs": [
+        {
+          "title": "Overview",
+          "facts": [
+            {
+              "label": "State",
+              "value": "Draft"
+            }
+          ],
+          "summary": "Synthetic example; replace with verified data"
+        }
+      ]
+    }
+  },
+  {
+    "version": 1,
+    "template": "faq",
+    "title": "Questions and answers",
+    "data": {
+      "entries": [
+        {
+          "question": "How does this work?",
+          "answer": "This is a fixed template."
+        }
+      ]
+    }
+  },
+  {
+    "version": 1,
+    "template": "alert",
+    "title": "Alert",
+    "data": {
+      "severity": "warning",
+      "message": "Example review needed.",
+      "steps": [
+        "Inspect the evidence."
+      ],
+      "source": "Synthetic example; replace with verified data"
+    }
+  },
+  {
+    "version": 1,
+    "template": "option-grid",
+    "title": "Option grid",
+    "data": {
+      "options": [
+        {
+          "title": "A",
+          "body": "Example option A"
+        },
+        {
+          "title": "B",
+          "body": "Example option B"
+        }
+      ],
+      "question": "Which option?"
+    }
+  },
+  {
+    "version": 1,
+    "template": "evidence-quote",
+    "title": "Evidence quote",
+    "data": {
+      "quote": "Example quotation.",
+      "attribution": "Example author",
+      "url": "https://example.com",
+      "context": "Synthetic example; replace with verified data"
+    }
+  },
+  {
+    "version": 1,
+    "template": "weather",
+    "title": "A clear afternoon in Chicago",
+    "data": {
+      "location": "Chicago, IL",
+      "observedAt": "Sunday · 2:00 PM · synthetic observation",
+      "temperature": 21,
+      "unit": "C",
+      "conditions": "Partly cloudy",
+      "humidity": 46,
+      "wind": "NE · 11 km/h",
+      "source": "Synthetic demonstration data · not a connected account"
+    }
+  },
+  {
+    "version": 1,
+    "template": "stock",
+    "title": "Northline Industries",
+    "data": {
+      "symbol": "DEMO",
+      "company": "Northline Industries · fictional",
+      "price": 148.32,
+      "currency": "USD",
+      "asOf": "Oct 30, 2026 · synthetic observation",
+      "history": [
+        {
+          "label": "Mon",
+          "value": 142.8
+        },
+        {
+          "label": "Tue",
+          "value": 145.2
+        },
+        {
+          "label": "Wed",
+          "value": 143.9
+        },
+        {
+          "label": "Thu",
+          "value": 147.1
+        },
+        {
+          "label": "Fri",
+          "value": 148.32
+        }
+      ],
+      "source": "Synthetic demonstration data · not a connected account"
+    }
+  },
+  {
+    "version": 1,
+    "template": "task-approval",
+    "title": "Task review",
+    "data": {
+      "task": "Example task",
+      "requestedBy": "Example agent",
+      "changes": [
+        "Review one file"
+      ],
+      "risks": [
+        "Unverified input"
+      ]
+    }
+  },
+  {
+    "version": 1,
+    "template": "itinerary",
+    "title": "Your weekend in the Pacific Northwest",
+    "data": {
+      "passenger": "Morgan Ellis",
+      "reference": "DEMO-PNW",
+      "legs": [
+        {
+          "service": "Demo Air · DA 204",
+          "origin": "ORD",
+          "destination": "SEA",
+          "depart": "Fri, Nov 13 · 8:15 AM",
+          "arrive": "Fri, Nov 13 · 10:40 AM",
+          "status": "Proposed"
+        },
+        {
+          "service": "Demo Air · DA 211",
+          "origin": "SEA",
+          "destination": "ORD",
+          "depart": "Sun, Nov 15 · 5:30 PM",
+          "arrive": "Sun, Nov 15 · 11:25 PM",
+          "status": "Proposed"
+        }
+      ],
+      "source": "Synthetic demonstration data · not a connected account"
+    }
+  },
+  {
+    "version": 1,
+    "template": "flight-options",
+    "title": "Three ways to Seattle",
+    "data": {
+      "flights": [
+        {
+          "flight": "Demo Air · DA 204",
+          "route": "ORD → SEA",
+          "depart": "8:15 AM",
+          "duration": "4h 25m · nonstop",
+          "price": 248,
+          "currency": "USD"
+        },
+        {
+          "flight": "Northline · NL 306",
+          "route": "ORD → SEA",
+          "depart": "11:50 AM",
+          "duration": "4h 35m · nonstop",
+          "price": 289,
+          "currency": "USD"
+        },
+        {
+          "flight": "Demo Air · DA 418",
+          "route": "ORD → SEA",
+          "depart": "5:20 PM",
+          "duration": "6h 10m · one stop",
+          "price": 196,
+          "currency": "USD"
+        }
+      ],
+      "source": "Synthetic demonstration data · not a connected account"
+    }
+  },
+  {
+    "version": 1,
+    "template": "boarding-pass",
+    "title": "Ready for your next stop",
+    "data": {
+      "passenger": "Morgan Ellis",
+      "flight": "Demo Air · DA 204",
+      "seat": "12A",
+      "gate": "B18",
+      "boarding": "7:35 AM",
+      "reference": "DEMO-PNW",
+      "source": "Synthetic demonstration data · not a connected account"
+    }
+  },
+  {
+    "version": 1,
+    "template": "baggage-tracker",
+    "title": "Baggage tracker",
+    "data": {
+      "bag": "DEMO BAG",
+      "status": "In transit",
+      "events": [
+        {
+          "title": "Checked in",
+          "time": "Example time",
+          "detail": "Example terminal"
+        }
+      ],
+      "source": "Synthetic example; replace with verified data"
+    }
+  },
+  {
+    "version": 1,
+    "template": "seat-map",
+    "title": "Seat options",
+    "data": {
+      "seats": [
+        {
+          "label": "12A",
+          "status": "available",
+          "section": "Economy"
+        },
+        {
+          "label": "12B",
+          "status": "reserved",
+          "section": "Economy"
+        }
+      ],
+      "source": "Synthetic example; replace with verified data"
+    }
+  },
+  {
+    "version": 1,
+    "template": "loyalty-summary",
+    "title": "Loyalty summary",
+    "data": {
+      "member": "Example member",
+      "tier": "Basic",
+      "points": 100,
+      "nextTier": "Next tier",
+      "target": 500,
+      "source": "Synthetic example; replace with verified data"
+    }
+  },
+  {
+    "version": 1,
+    "template": "hotel-options",
+    "title": "A few places to settle in",
+    "data": {
+      "hotels": [
+        {
+          "name": "The Harbor House",
+          "location": "Waterfront · Seattle",
+          "nightly": 189,
+          "currency": "USD",
+          "amenities": [
+            "Breakfast",
+            "Near light rail",
+            "Free Wi-Fi"
+          ]
+        },
+        {
+          "name": "Pine & Field",
+          "location": "Capitol Hill · Seattle",
+          "nightly": 154,
+          "currency": "USD",
+          "amenities": [
+            "Kitchenette",
+            "Workspace",
+            "Pet friendly"
+          ]
+        },
+        {
+          "name": "Alder Studio",
+          "location": "South Lake Union · Seattle",
+          "nightly": 172,
+          "currency": "USD",
+          "amenities": [
+            "Gym",
+            "Late checkout",
+            "Workspace"
+          ]
+        }
+      ],
+      "source": "Synthetic demonstration data · not a connected account"
+    }
+  },
+  {
+    "version": 1,
+    "template": "restaurant-results",
+    "title": "Restaurant results",
+    "data": {
+      "restaurants": [
+        {
+          "name": "Example place",
+          "cuisine": "Example cuisine",
+          "location": "Example location",
+          "availability": "Unconfirmed",
+          "url": "https://example.com"
+        }
+      ],
+      "source": "Synthetic example; replace with verified data"
+    }
+  },
+  {
+    "version": 1,
+    "template": "reading-list",
+    "title": "Build a better research practice",
+    "data": {
+      "items": [
+        {
+          "title": "The evidence notebook",
+          "author": "Mara Fields · fictional author",
+          "reason": "A practical framework for separating observations, assumptions and open questions.",
+          "url": "https://example.com/evidence"
+        },
+        {
+          "title": "Systems in the small",
+          "author": "Leon Park · fictional author",
+          "reason": "Short case studies about making everyday tools easier to understand.",
+          "url": "https://example.com/systems"
+        },
+        {
+          "title": "Designing for the handoff",
+          "author": "Nia West · fictional author",
+          "reason": "Methods for keeping context intact as work moves between people.",
+          "url": "https://example.com/handoff"
+        }
+      ]
+    }
+  },
+  {
+    "version": 1,
+    "template": "transaction-ledger",
+    "title": "Recent activity",
+    "data": {
+      "transactions": [
+        {
+          "date": "Oct 31, 2026",
+          "description": "Northline Studio · project deposit",
+          "amount": 2400,
+          "currency": "USD",
+          "status": "Posted"
+        },
+        {
+          "date": "Oct 30, 2026",
+          "description": "Workspace tools",
+          "amount": -84,
+          "currency": "USD",
+          "status": "Posted"
+        },
+        {
+          "date": "Oct 29, 2026",
+          "description": "Cloud infrastructure",
+          "amount": -126.8,
+          "currency": "USD",
+          "status": "Pending"
+        },
+        {
+          "date": "Oct 28, 2026",
+          "description": "Field research reimbursement",
+          "amount": 142.5,
+          "currency": "USD",
+          "status": "Posted"
+        }
+      ],
+      "source": "Synthetic demonstration data · not a connected account"
+    }
+  },
+  {
+    "version": 1,
+    "template": "spending-breakdown",
+    "title": "Where this month went",
+    "data": {
+      "categories": [
+        {
+          "label": "Infrastructure",
+          "value": 480
+        },
+        {
+          "label": "Software",
+          "value": 320
+        },
+        {
+          "label": "Research",
+          "value": 210
+        },
+        {
+          "label": "Workspace",
+          "value": 590
+        }
+      ],
+      "period": "October 2026 · demo",
+      "currency": "USD",
+      "source": "Synthetic demonstration data · not a connected account"
+    }
+  },
+  {
+    "version": 1,
+    "template": "budget-usage",
+    "title": "Keep the plan in view",
+    "data": {
+      "budgets": [
+        {
+          "label": "Infrastructure",
+          "spent": 480,
+          "limit": 600
+        },
+        {
+          "label": "Software",
+          "spent": 320,
+          "limit": 400
+        },
+        {
+          "label": "Research",
+          "spent": 210,
+          "limit": 200
+        }
+      ],
+      "currency": "USD",
+      "source": "Synthetic demonstration data · not a connected account"
+    }
+  },
+  {
+    "version": 1,
+    "template": "income-expenses",
+    "title": "October, in perspective",
+    "data": {
+      "income": 12400,
+      "expenses": 6820,
+      "currency": "USD",
+      "period": "October 2026 · demo",
+      "source": "Synthetic demonstration data · not a connected account"
+    }
+  },
+  {
+    "version": 1,
+    "template": "product-grid",
+    "title": "Essentials for a focused workspace",
+    "data": {
+      "products": [
+        {
+          "sku": "DSK-101",
+          "name": "Arc desk lamp",
+          "price": 89,
+          "currency": "USD",
+          "stock": 18,
+          "description": "A compact adjustable lamp with warm and cool light."
+        },
+        {
+          "sku": "DSK-204",
+          "name": "Field notebook",
+          "price": 24,
+          "currency": "USD",
+          "stock": 42,
+          "description": "Lay-flat binding and dotted pages for daily ideas."
+        },
+        {
+          "sku": "DSK-309",
+          "name": "Studio stand",
+          "price": 64,
+          "currency": "USD",
+          "stock": 7,
+          "description": "An aluminum laptop riser with room below for a keyboard."
+        }
+      ],
+      "source": "Synthetic demonstration data · not a connected account"
+    }
+  },
+  {
+    "version": 1,
+    "template": "trading-list",
+    "title": "Trading list",
+    "data": {
+      "items": [
+        {
+          "sku": "DEMO",
+          "name": "Example item",
+          "sales": 10,
+          "margin": 20,
+          "stock": 3
+        }
+      ],
+      "source": "Synthetic example; replace with verified data"
+    }
+  },
+  {
+    "version": 1,
+    "template": "inventory-risk",
+    "title": "Inventory risk",
+    "data": {
+      "items": [
+        {
+          "sku": "DEMO",
+          "available": 3,
+          "required": 5,
+          "risk": "Shortfall",
+          "action": "Review replenishment"
+        }
+      ],
+      "source": "Synthetic example; replace with verified data"
+    }
+  },
+  {
+    "version": 1,
+    "template": "shipment-tracker",
+    "title": "Studio equipment delivery",
+    "data": {
+      "reference": "DEMO-SHP-3082",
+      "origin": "Austin, TX",
+      "destination": "Chicago, IL",
+      "status": "In transit",
+      "events": [
+        {
+          "title": "Order prepared",
+          "time": "Nov 1 · 8:10 AM",
+          "detail": "Three packages prepared for collection."
+        },
+        {
+          "title": "Collected by carrier",
+          "time": "Nov 1 · 11:40 AM",
+          "detail": "Collection recorded at the Austin warehouse."
+        },
+        {
+          "title": "At regional hub",
+          "time": "Nov 2 · 6:25 AM",
+          "detail": "Awaiting the next departure."
+        }
+      ],
+      "source": "Synthetic demonstration data · not a connected account"
+    }
+  },
+  {
+    "version": 1,
+    "template": "exception-board",
+    "title": "Exception board",
+    "data": {
+      "exceptions": [
+        {
+          "title": "Example exception",
+          "owner": "Example team",
+          "severity": "warning",
+          "impact": "Example impact",
+          "nextAction": "Review the evidence"
+        }
+      ],
+      "source": "Synthetic example; replace with verified data"
+    }
+  },
+  {
+    "version": 1,
+    "template": "tradeoff-table",
+    "title": "Trade-off table",
+    "data": {
+      "options": [
+        {
+          "name": "Example option",
+          "cost": "Example cost",
+          "benefit": "Example benefit",
+          "risk": "Example risk"
+        }
+      ],
+      "recommendation": "Review the options.",
+      "source": "Synthetic example; replace with verified data"
+    }
+  },
+  {
+    "version": 1,
+    "template": "people-directory",
+    "title": "The team behind the launch",
+    "data": {
+      "people": [
+        {
+          "name": "Maya Chen",
+          "role": "Product designer",
+          "team": "Experience",
+          "status": "Available"
+        },
+        {
+          "name": "Jordan Reed",
+          "role": "Frontend engineer",
+          "team": "Product",
+          "status": "Focus time"
+        },
+        {
+          "name": "Sam Okafor",
+          "role": "Customer success",
+          "team": "Operations",
+          "status": "Available"
+        },
+        {
+          "name": "Elena Cruz",
+          "role": "Research lead",
+          "team": "Experience",
+          "status": "In a meeting"
+        }
+      ],
+      "source": "Synthetic demonstration data · not a connected account"
+    }
+  },
+  {
+    "version": 1,
+    "template": "team-breakdown",
+    "title": "Team breakdown",
+    "data": {
+      "groups": [
+        {
+          "label": "Example level",
+          "value": 5
+        }
+      ],
+      "asOf": "Example date",
+      "source": "Synthetic example; replace with verified data"
+    }
+  },
+  {
+    "version": 1,
+    "template": "executive-brief",
+    "title": "Executive brief",
+    "data": {
+      "period": "Example period",
+      "metrics": [
+        {
+          "label": "Example metric",
+          "value": 10,
+          "note": "Synthetic example; replace with verified data"
+        }
+      ],
+      "exceptions": [
+        "Example exception"
+      ],
+      "decisions": [
+        "Example decision"
+      ]
+    }
+  },
+  {
+    "version": 1,
+    "template": "initiative-tracker",
+    "title": "Initiative tracker",
+    "data": {
+      "initiatives": [
+        {
+          "name": "Example initiative",
+          "owner": "Example owner",
+          "due": "Example date",
+          "completed": 2,
+          "total": 10,
+          "status": "In progress"
+        }
+      ],
+      "source": "Synthetic example; replace with verified data"
+    }
+  },
+  {
+    "version": 1,
+    "template": "deal-pipeline",
+    "title": "Opportunities in motion",
+    "data": {
+      "stages": [
+        {
+          "name": "Discovery",
+          "deals": [
+            {
+              "name": "Harbor Studio",
+              "owner": "Sam Okafor",
+              "value": 2400,
+              "currency": "USD"
+            },
+            {
+              "name": "Alder Works",
+              "owner": "Elena Cruz",
+              "value": 1800,
+              "currency": "USD"
+            }
+          ]
+        },
+        {
+          "name": "Proposal",
+          "deals": [
+            {
+              "name": "Pine & Field",
+              "owner": "Maya Chen",
+              "value": 4200,
+              "currency": "USD"
+            }
+          ]
+        },
+        {
+          "name": "Review",
+          "deals": [
+            {
+              "name": "Northline Lab",
+              "owner": "Sam Okafor",
+              "value": 3200,
+              "currency": "USD"
+            }
+          ]
+        }
+      ],
+      "source": "Synthetic demonstration data · not a connected account"
+    }
+  },
+  {
+    "version": 1,
+    "template": "deal-brief",
+    "title": "Deal brief",
+    "data": {
+      "account": "Example account",
+      "stage": "Review",
+      "value": 100,
+      "currency": "USD",
+      "blockers": [
+        "Unverified input"
+      ],
+      "nextSteps": [
+        "Review source"
+      ],
+      "source": "Synthetic example; replace with verified data"
+    }
+  },
+  {
+    "version": 1,
+    "template": "account-research",
+    "title": "Account research",
+    "data": {
+      "account": "Example account",
+      "facts": [
+        {
+          "label": "State",
+          "value": "Unverified"
+        }
+      ],
+      "sources": [
+        {
+          "title": "Example source",
+          "url": "https://example.com"
+        }
+      ],
+      "openQuestions": [
+        "Confirm details"
+      ]
+    }
+  },
+  {
+    "version": 1,
+    "template": "followup-review",
+    "title": "Follow-up review",
+    "data": {
+      "recipient": "Example recipient",
+      "subject": "Example follow-up",
+      "body": "Draft message for review.",
+      "evidence": [
+        "Synthetic example; replace with verified data"
+      ]
+    }
+  },
+  {
+    "version": 1,
+    "template": "sentiment-split",
+    "title": "Sentiment split",
+    "data": {
+      "groups": [
+        {
+          "label": "Positive",
+          "value": 3
+        },
+        {
+          "label": "Neutral",
+          "value": 2
+        }
+      ],
+      "method": "Example classification",
+      "caveats": [
+        "Synthetic sample"
+      ],
+      "source": "Synthetic example; replace with verified data"
+    }
+  },
+  {
+    "version": 1,
+    "template": "argument-map",
+    "title": "Argument map",
+    "data": {
+      "claims": [
+        {
+          "claim": "Example claim",
+          "support": [
+            "Example evidence"
+          ],
+          "opposition": [
+            "Example counterpoint"
+          ]
+        }
+      ],
+      "source": "Synthetic example; replace with verified data"
+    }
+  },
+  {
+    "version": 1,
+    "template": "social-posts",
+    "title": "Social evidence",
+    "data": {
+      "posts": [
+        {
+          "author": "Example author",
+          "postedAt": "Example date",
+          "excerpt": "Synthetic excerpt.",
+          "url": "https://example.com"
+        }
+      ]
+    }
+  },
+  {
+    "version": 1,
+    "template": "pdf-analysis",
+    "title": "Document analysis",
+    "data": {
+      "document": "Example document",
+      "findings": [
+        {
+          "finding": "Example finding",
+          "page": 1,
+          "quote": "Synthetic excerpt."
+        }
+      ],
+      "questions": [
+        "Verify against the original."
+      ]
+    }
+  },
+  {
+    "version": 1,
+    "template": "repo-review",
+    "title": "Repository review",
+    "data": {
+      "repository": "Example repository",
+      "revision": "Example revision",
+      "findings": [
+        {
+          "severity": "warning",
+          "path": "example.ts",
+          "finding": "Example finding",
+          "verification": "Not run"
+        }
+      ]
+    }
+  },
+  {
+    "version": 1,
+    "template": "agent-roster",
+    "title": "Your workspace crew",
+    "data": {
+      "agents": [
+        {
+          "name": "Atlas",
+          "role": "Research",
+          "status": "Working",
+          "task": "Compare source evidence for the planning brief."
+        },
+        {
+          "name": "Quill",
+          "role": "Writing",
+          "status": "Ready",
+          "task": "Waiting for the reviewed research brief."
+        },
+        {
+          "name": "Patch",
+          "role": "Development",
+          "status": "Reviewing",
+          "task": "Inspect three accessibility findings."
+        },
+        {
+          "name": "Scout",
+          "role": "Operations",
+          "status": "Waiting",
+          "task": "Needs approval to continue the scheduled review."
+        }
+      ]
+    }
+  },
+  {
+    "version": 1,
+    "template": "tool-run",
+    "title": "Tool run",
+    "data": {
+      "tool": "Example tool",
+      "status": "Complete",
+      "checks": [
+        {
+          "label": "Validation",
+          "status": "Passed",
+          "detail": "Synthetic example; replace with verified data"
+        }
+      ],
+      "result": "Example result"
+    }
+  },
+  {
+    "version": 1,
+    "template": "build-report",
+    "title": "Build report",
+    "data": {
+      "revision": "Example revision",
+      "target": "Example target",
+      "checks": [
+        {
+          "label": "Compile",
+          "status": "Not run",
+          "detail": "Example only"
+        }
+      ],
+      "outputs": [
+        "Example artifact"
+      ]
+    }
+  },
+  {
+    "version": 1,
+    "template": "deployment-report",
+    "title": "Deployment report",
+    "data": {
+      "environment": "Preview",
+      "revision": "Example revision",
+      "status": "Not deployed",
+      "checks": [],
+      "rollback": "Example rollback note"
+    }
+  },
+  {
+    "version": 1,
+    "template": "incident-report",
+    "title": "Incident report",
+    "data": {
+      "severity": "warning",
+      "impact": "Example impact",
+      "events": [],
+      "recovery": [
+        "Example recovery step"
+      ]
+    }
+  },
+  {
+    "version": 1,
+    "template": "connector-health",
+    "title": "Your connected workspace",
+    "data": {
+      "connectors": [
+        {
+          "name": "Project Drive",
+          "status": "Connected",
+          "checkedAt": "2 min ago · demo",
+          "error": ""
+        },
+        {
+          "name": "Team Calendar",
+          "status": "Connected",
+          "checkedAt": "3 min ago · demo",
+          "error": ""
+        },
+        {
+          "name": "Support Inbox",
+          "status": "Needs attention",
+          "checkedAt": "5 min ago · demo",
+          "error": "The demo authorization expired. Reconnect before reading new messages."
+        }
+      ]
+    }
+  },
+  {
+    "version": 1,
+    "template": "capability-audit",
+    "title": "Capability audit",
+    "data": {
+      "subject": "Example runtime",
+      "capabilities": [
+        {
+          "label": "Read files",
+          "status": "Verified",
+          "detail": "Synthetic example; replace with verified data"
+        }
+      ],
+      "limitations": [
+        "Example limitation"
+      ]
+    }
+  },
+  {
+    "version": 1,
+    "template": "permissions-review",
+    "title": "Permissions review",
+    "data": {
+      "requester": "Example agent",
+      "permissions": [
+        {
+          "resource": "Example folder",
+          "access": "Read",
+          "reason": "Example task"
+        }
+      ],
+      "risks": [
+        "Review scope"
+      ]
+    }
+  },
+  {
+    "version": 1,
+    "template": "invoice-review",
+    "title": "A clear draft for review",
+    "data": {
+      "client": "Harbor Studio · fictional client",
+      "currency": "USD",
+      "items": [
+        {
+          "description": "Discovery and workflow audit",
+          "quantity": 1,
+          "rate": 320
+        },
+        {
+          "description": "Interface refinement",
+          "quantity": 3,
+          "rate": 95
+        },
+        {
+          "description": "Documentation and handoff",
+          "quantity": 2,
+          "rate": 75
+        }
+      ],
+      "note": "Synthetic invoice. Draft only; no invoice is created or sent."
+    }
+  },
+  {
+    "version": 1,
+    "template": "quote-review",
+    "title": "Quote review",
+    "data": {
+      "scope": [
+        "Example scoped task"
+      ],
+      "amount": 100,
+      "currency": "USD",
+      "exclusions": [
+        "Example exclusion"
+      ],
+      "assumptions": [
+        "Audit required where applicable"
+      ]
+    }
+  },
+  {
+    "version": 1,
+    "template": "task-board",
+    "title": "Launch week, at a glance",
+    "data": {
+      "columns": [
+        {
+          "name": "To do",
+          "tasks": [
+            {
+              "title": "Prepare the customer walkthrough",
+              "owner": "Maya Chen",
+              "due": "Nov 5"
+            },
+            {
+              "title": "Review the release notes",
+              "owner": "Sam Okafor",
+              "due": "Nov 6"
+            }
+          ]
+        },
+        {
+          "name": "In progress",
+          "tasks": [
+            {
+              "title": "Finish the mobile onboarding flow",
+              "owner": "Jordan Reed",
+              "due": "Nov 4"
+            }
+          ]
+        },
+        {
+          "name": "Ready for review",
+          "tasks": [
+            {
+              "title": "Verify the sign-in empty states",
+              "owner": "Elena Cruz",
+              "due": "Nov 3"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "version": 1,
+    "template": "workflow-run",
+    "title": "From draft to reviewed brief",
+    "data": {
+      "workflow": "Weekly research digest",
+      "runId": "DEMO-RUN-042",
+      "steps": [
+        {
+          "label": "Gather sources",
+          "status": "Complete",
+          "detail": "Collected eight candidate references."
+        },
+        {
+          "label": "Check evidence",
+          "status": "Complete",
+          "detail": "Reviewed six references against the original sources."
+        },
+        {
+          "label": "Draft brief",
+          "status": "In progress",
+          "detail": "Summarizing findings and unresolved questions."
+        },
+        {
+          "label": "Human review",
+          "status": "Waiting",
+          "detail": "The draft stays unpublished until reviewed."
+        }
+      ],
+      "summary": "Synthetic run showing a workflow with completed, active and pending work."
+    }
+  },
+  {
+    "version": 1,
+    "template": "session-handoff",
+    "title": "Session handoff",
+    "data": {
+      "completed": [
+        "Example completed step"
+      ],
+      "decisions": [
+        "Example decision"
+      ],
+      "remaining": [
+        "Example next step"
+      ],
+      "references": [
+        "Example revision"
+      ]
+    }
+  },
+  {
+    "version": 1,
+    "template": "cost-breakdown",
+    "title": "Cost breakdown",
+    "data": {
+      "items": [
+        {
+          "label": "Example category",
+          "value": 2
+        }
+      ],
+      "currency": "USD",
+      "period": "Example period",
+      "source": "Synthetic example; replace with verified data"
+    }
+  },
+  {
+    "version": 1,
+    "template": "design-review",
+    "title": "Design review",
+    "data": {
+      "surface": "Example screen",
+      "findings": [
+        {
+          "area": "Example control",
+          "severity": "warning",
+          "detail": "Example finding"
+        }
+      ],
+      "accessibility": []
+    }
+  },
+  {
+    "version": 1,
+    "template": "media-shotlist",
+    "title": "Media shot list",
+    "data": {
+      "shots": [
+        {
+          "name": "Example shot",
+          "start": 0,
+          "duration": 3,
+          "visual": "Example scene",
+          "audio": "Example sound",
+          "asset": "Example asset"
+        }
+      ]
+    }
+  },
+  {
+    "version": 1,
+    "template": "decision-log",
+    "title": "Decision log",
+    "data": {
+      "decisions": [
+        {
+          "decision": "Example decision",
+          "rationale": "Example rationale",
+          "owner": "Example owner",
+          "reviewAt": "Example date"
+        }
+      ]
+    }
+  },
+  {
+    "version": 1,
+    "template": "source-verification",
+    "title": "Claims, checked against the source",
+    "data": {
+      "claims": [
+        {
+          "claim": "The export includes version history",
+          "url": "https://example.com/demo-export",
+          "status": "Needs verification",
+          "gap": "Check the actual export format before relying on this claim."
+        },
+        {
+          "claim": "The current plan includes shared editing",
+          "url": "https://example.com/demo-plan",
+          "status": "Needs verification",
+          "gap": "Confirm current plan entitlements with the authoritative source."
+        }
+      ]
+    }
+  },
+  {
+    "version": 1,
+    "template": "goal-tracker",
+    "title": "Goal tracker",
+    "data": {
+      "goal": "Example goal",
+      "current": 2,
+      "target": 10,
+      "blockers": [
+        "Example blocker"
+      ],
+      "nextSteps": [
+        "Example next action"
+      ]
+    }
+  },
+  {
+    "version": 1,
+    "template": "knowledge-map",
+    "title": "How the research fits together",
+    "data": {
+      "concepts": [
+        {
+          "name": "Customer interviews",
+          "description": "Firsthand accounts of daily workflows and recurring friction."
+        },
+        {
+          "name": "Observed behavior",
+          "description": "Concrete steps people take while completing a task."
+        },
+        {
+          "name": "Design principles",
+          "description": "Working constraints derived from recurring evidence."
+        }
+      ],
+      "relationships": [
+        {
+          "from": "Customer interviews",
+          "to": "Observed behavior",
+          "relation": "Explains"
+        },
+        {
+          "from": "Observed behavior",
+          "to": "Design principles",
+          "relation": "Informs"
+        }
+      ]
+    }
+  },
+  {
+    "version": 1,
+    "template": "file-browser",
+    "title": "File results",
+    "data": {
+      "files": [
+        {
+          "path": "example.md",
+          "type": "Markdown",
+          "size": "1 KiB",
+          "note": "Synthetic example; replace with verified data"
+        }
+      ]
+    }
+  },
+  {
+    "version": 1,
+    "template": "trend-comparison",
+    "title": "Actual results against the baseline",
+    "data": {
+      "observations": [
+        {
+          "label": "Week 1",
+          "actual": 28,
+          "baseline": 30
+        },
+        {
+          "label": "Week 2",
+          "actual": 35,
+          "baseline": 32
+        },
+        {
+          "label": "Week 3",
+          "actual": 31,
+          "baseline": 34
+        },
+        {
+          "label": "Week 4",
+          "actual": 42,
+          "baseline": 36
+        },
+        {
+          "label": "Week 5",
+          "actual": 46,
+          "baseline": 38
+        }
+      ],
+      "area": true,
+      "source": "Synthetic demonstration data · not a connected account"
+    }
+  },
+  {
+    "version": 1,
+    "template": "calendar-agenda",
+    "title": "Room to do your best work",
+    "data": {
+      "events": [
+        {
+          "title": "Product review",
+          "start": "09:00",
+          "end": "09:45",
+          "location": "Studio room · demo",
+          "owner": "Maya Chen"
+        },
+        {
+          "title": "Deep work",
+          "start": "10:00",
+          "end": "12:00",
+          "location": "Personal workspace",
+          "owner": "Jordan Reed"
+        },
+        {
+          "title": "Customer walkthrough",
+          "start": "14:00",
+          "end": "14:30",
+          "location": "Video call · demo",
+          "owner": "Sam Okafor"
+        }
+      ],
+      "timezone": "America/Chicago",
+      "source": "Synthetic demonstration data · not a connected account"
+    }
+  }
+]

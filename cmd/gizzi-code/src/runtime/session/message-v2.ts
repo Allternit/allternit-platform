@@ -405,6 +405,10 @@ export namespace MessageV2 {
     }),
     /** Token counts were estimated because the provider reported none. */
     tokensEstimated: z.boolean().optional(),
+    answerPolicy: z.object({
+      version: z.literal(1), selected: z.string().optional(), returned: z.string().optional(),
+      status: z.enum(['accepted', 'repairing', 'rejected']), attempt: z.number().int(), problems: z.array(z.string()),
+    }).optional(),
     structured: z.any().optional(),
     variant: z.string().optional(),
     finish: z.string().optional(),

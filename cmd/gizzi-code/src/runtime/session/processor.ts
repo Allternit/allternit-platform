@@ -43,6 +43,9 @@ export namespace SessionProcessor {
     fallbackModels?: { providerID: string; modelID: string }[]
     /** O12: the turn's guard. Tool calls and observations feed it; a trip ends the turn after this step. */
     guard?: Guardrails.TurnGuard
+    /** Routed answers stay private until the turn boundary validates them. */
+    holdText?: (part: MessageV2.TextPart) => MessageV2.TextPart
+    resetHeldText?: (messageID: string) => Promise<void>
   }) {
     const toolcalls: Record<string, MessageV2.ToolPart> = {}
     const toolCallOrder: Record<string, number> = {}
@@ -52,6 +55,7 @@ export namespace SessionProcessor {
     let attempt = 0
     let needsCompaction = false
     let mediaRecovery: "none" | "degraded" | "stripped" = "none"
+    const storeText = (part: MessageV2.TextPart) => Session.updatePart(input.holdText ? input.holdText(part) : part)
     let guardTripped = false
 
     // A trip lets the in-flight step finish (its tool calls already started),
@@ -163,6 +167,7 @@ export namespace SessionProcessor {
         }
         while (true) {
           try {
+            await input.resetHeldText?.(input.assistantMessage.id)
             let currentText: MessageV2.TextPart | undefined
             let currentReasoning: MessageV2.ReasoningPart | undefined
             let reasoningMap: Record<string, MessageV2.ReasoningPart> = {}
@@ -557,16 +562,18 @@ export namespace SessionProcessor {
                             })) as MessageV2.TextPart
                             // Declare the part now: bridges hold deltas for undeclared parts,
                             // so without this the whole block arrived at once at the end.
-                            Bus.publish(MessageV2.Event.PartUpdated, { part: currentText })
+                            Bus.publish(MessageV2.Event.PartUpdated, { part: input.holdText ? input.holdText(currentText) : currentText })
                           }
                           currentText.text += safeText
-                          await Session.updatePartDelta({
-                            sessionID: currentText.sessionID,
-                            messageID: currentText.messageID,
-                            partID: currentText.id,
-                            field: "text",
-                            delta: safeText,
-                          })
+                          if (!input.holdText) {
+                            await Session.updatePartDelta({
+                              sessionID: currentText.sessionID,
+                              messageID: currentText.messageID,
+                              partID: currentText.id,
+                              field: "text",
+                              delta: safeText,
+                            })
+                          } else input.holdText(currentText)
 
                           tagBuffer = tagBuffer.slice(safeText.length)
                         }
@@ -586,21 +593,23 @@ export namespace SessionProcessor {
                             })) as MessageV2.TextPart
                             // Declare the part now: bridges hold deltas for undeclared parts,
                             // so without this the whole block arrived at once at the end.
-                            Bus.publish(MessageV2.Event.PartUpdated, { part: currentText })
+                            Bus.publish(MessageV2.Event.PartUpdated, { part: input.holdText ? input.holdText(currentText) : currentText })
                           }
                           currentText.text += before
-                          await Session.updatePartDelta({
-                            sessionID: currentText.sessionID,
-                            messageID: currentText.messageID,
-                            partID: currentText.id,
-                            field: "text",
-                            delta: before,
-                          })
+                          if (!input.holdText) {
+                            await Session.updatePartDelta({
+                              sessionID: currentText.sessionID,
+                              messageID: currentText.messageID,
+                              partID: currentText.id,
+                              field: "text",
+                              delta: before,
+                            })
+                          } else input.holdText(currentText)
                         }
                         
                         // Transition to thinking
                         if (currentText && currentText.time) {
-                          await Session.updatePart({ ...currentText, time: { start: currentText.time.start, end: Date.now() } })
+                          await storeText({ ...currentText, time: { start: currentText.time.start, end: Date.now() } })
                           currentText = undefined
                         }
                         mode = "thinking"
@@ -671,7 +680,7 @@ export namespace SessionProcessor {
                         currentText = newTextPart
                         
                         Bus.publish(MessageV2.Event.PartUpdated, {
-                          part: currentText,
+                          part: input.holdText ? input.holdText(currentText) : currentText,
                         })
 
                         tagBuffer = tagBuffer.slice(closeIndex + "</think>".length)
@@ -705,11 +714,11 @@ export namespace SessionProcessor {
                       if (value.providerMetadata) currentText.metadata = { ...value.providerMetadata }
                       if (sources.length) currentText.metadata = { ...(currentText.metadata ?? {}), sources }
                     }
-                    await Session.updatePart(currentText)
+                    const publicText = await storeText(currentText)
                     lastText = currentText
 
                     Bus.publish(MessageV2.Event.PartUpdated, {
-                      part: currentText,
+                      part: publicText,
                     })
                   }
                   if (currentReasoning) {
@@ -758,8 +767,8 @@ export namespace SessionProcessor {
                     ...(target.metadata ?? {}),
                     sources: mergeSources(target.metadata?.sources as ResponseSource[] | undefined, [source]),
                   }
-                  await Session.updatePart(target)
-                  Bus.publish(MessageV2.Event.PartUpdated, { part: target })
+                  const publicText = await storeText(target)
+                  Bus.publish(MessageV2.Event.PartUpdated, { part: publicText })
                   break
                 }
 
@@ -1074,7 +1083,9 @@ export namespace SessionProcessor {
             }
           }
           input.assistantMessage.time.completed = Date.now()
-          await Session.updateMessage(input.assistantMessage)
+          await Session.updateMessage(input.holdText && !input.assistantMessage.error
+            ? { ...input.assistantMessage, finish: undefined, time: { created: input.assistantMessage.time.created } }
+            : input.assistantMessage)
           SessionTrace.append({
             sessionID: input.sessionID,
             kind: input.assistantMessage.error ? "request.failed" : "request.completed",

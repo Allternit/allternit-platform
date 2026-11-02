@@ -4,6 +4,8 @@
 //! Provides REST endpoints and WebSocket event streaming.
 
 pub mod artifacts;
+#[path = "../../allternit-api/src/answer_contract.rs"]
+pub mod answer_contract;
 pub mod auth;
 pub mod carriers;
 pub mod channels;
