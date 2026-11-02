@@ -586,6 +586,7 @@
               "guides/chat-composer",
               "guides/chat-sessions",
               "guides/interactive-answers",
+              "reference/answer-template-contract",
               "guides/write-in-my-style",
               "guides/share-location",
               "guides/agent-steps",

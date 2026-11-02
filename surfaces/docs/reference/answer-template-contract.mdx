@@ -1,0 +1,113 @@
+---
+title: 'Answer template contract'
+description: 'Versioned, data-only generative UI and its browser, model-tool and API enforcement.'
+---
+
+## Envelope
+
+Interactive replies use a JSON object inside an `openui` or `openui-lang` fence. Saved cards use `application/vnd.allternit.answer+json`.
+
+```json
+{
+  "version": 1,
+  "template": "decision",
+  "title": "Export format",
+  "data": {
+    "question": "Which format?",
+    "options": ["PDF", "DOCX"]
+  }
+}
+```
+
+`summary` is an optional string. Unknown fields, versions and template IDs are rejected. No model-provided component name, layout, CSS, HTML or executable expression is accepted.
+
+The schema source is `allternit-ai/src/lib/openui/answer-contract.ts`. It defines the twelve original answer schemas and imports the extensible registry from `answer-catalog.ts`. The combined catalog has 82 templates, strict Zod schemas, semantic checks, trusted layout compilers and the model manual. `answer-contract.schema.json` is its generated JSON Schema. The compiler alone generates OpenUI programs against the existing component library.
+
+## Enforcement boundaries
+
+| Boundary | Enforcement |
+| --- | --- |
+| Shared `InteractiveAnswer` | Parses and validates before mounting a renderer or a connector query. Raw programs get a text fallback. |
+| `InlineAppFrame` | Shows an app-owned preview until a user activates that exact source. No partial custom layout runs. |
+| Workspace artifact API and local store | Reject invalid card bodies before local inserts and writes. |
+| Gizzi artifact integration | Validates both model-tool and direct integration calls, including offline payloads. |
+| Agent bridge | `openui_text::check_card` uses the contract and records diagnostics after each reply. |
+| Cloud artifact create and append | Validates cards regardless of caller. Changing the MIME type does not bypass the kind check. |
+
+Cloud writes return HTTP 422 with `invalid_answer_template` for a rejected card. Existing versions remain readable. Newly writing the legacy `application/vnd.allternit.openui` format is rejected. Other artifact kinds retain their own formats.
+
+## Limits and semantics
+
+Envelopes are limited to 64 KiB, 32 levels and 10,000 data nodes. Prototype keys are rejected. Schemas bound titles, strings, arrays and control counts.
+
+Table rows must match headers. Chart labels must match values; pie values cannot be negative. Input IDs must be unique. Defaults must fit their bounds and select options. Calculations may refer only to declared numeric inputs. The expression tree allows only four arithmetic operations.
+
+Templates own loading, empty and error states. Each form field gets a stable generated statement ID. User state cannot replace the template, add fields or change executable behavior.
+
+## Replay and persistence
+
+The saved body contains the template ID, version and data. Opening a chat card as an artifact copies valid current input values into that envelope. Subsequent owner/editor input changes append versions through the normal artifact store, preserving concurrency checks. Invalid input state is ignored or clamped to its declared range.
+
+Transcript state stays keyed to the card source and can be saved with the message. The debounced callback flushes on unmount. Device storage is a fallback; it is not a substitute for account persistence.
+
+Legacy programs are rendered as text. Importing an older local card preserves its complete source as a code artifact when it cannot become a valid envelope. Channel fallbacks evaluate calculator data with its saved defaults and report division errors; they never expose query arguments. They are never passed into the evaluator by a model-facing card entry point. Tests of the internal application-program renderer are separate from rejection tests of that boundary.
+
+## Extending our catalog
+
+Add an application-owned entry to `CATALOG_TEMPLATES` in `answer-catalog.ts`. Each entry provides an ID, name, category, description, strict Zod data schema, synthetic example and trusted render function. An optional pinned source link records reference provenance. IDs must be unique.
+
+The render function uses the internal `Call` builder. Model data is always serialized as literal data; it cannot construct a trusted component call. Component names, layout and actions come from source code. Review buttons send the next conversation message. They do not approve access, send messages, book travel or move money.
+
+The registry automatically feeds the envelope validator, UI Forge gallery, compact model manual, generated server schema, Gizzi copy and shared server-example corpus. A developer adds entries in source and releases them with the app. An agent cannot register a template through response data.
+
+`answer-gallery.ts` combines core and extended templates. Its example data is synthetic. UI tests render every registered example through `InteractiveAnswer`, check parser errors, and ensure all existing component capabilities remain reachable. Rust tests validate the same example corpus and check readable channel fallback. Provider transport and application-backend integrations remain separate from template coverage.
+
+## Maintenance and verification
+
+Run the source synchronization command from the workspace repository, passing the platform checkout explicitly:
+
+```bash
+bun scripts/sync-answer-contract.ts --platform /path/to/allternit-platform
+bun scripts/sync-answer-contract.ts --platform /path/to/allternit-platform --check
+pnpm exec vitest run src/lib/openui src/lib/ai/tools/templates src/lib/artifacts/__tests__/answer-write.test.ts
+```
+
+The command copies the contract and turn policy into Gizzi, generates the API schema, manual and shared example corpus, copies the catalog, and verifies byte identity with `--check`. Update browser and server code together for semantic changes. Keep old data versions readable or provide a migration before changing the version.
+
+Server regression tests live in `answer_contract.rs`, `openui_text.rs`, `answer_shapes.rs` and `card_repair.rs`. Model-tool checks belong to `cmd/gizzi-code/test/tool/artifact.test.ts`. No model call is needed to verify validation, layout compilation, input updates, fallback or saved replay.
+
+Release the workspace and API/model-runtime changes together. Source preparation alone does not update installed Desktop binaries or production servers.
+
+## Required turn routing
+
+`src/lib/openui/answer-policy.ts` owns the version 1 response policy. The sync script copies the same module into Gizzi. This is separate from the eight Markdown writing outlines in `answer-shapes.ts`.
+
+Before a visual-capable Gizzi turn generates a response, `SessionPrompt` selects its policy from the current real user text. Synthetic hook and goal continuations retain that choice and its manual. A later real user message can select a new policy. `Use template: task-board` explicitly selects any of the 82 registered IDs. `Use the task-board template` is also supported. Recognized display jobs use fixed, bounded phrase rules: for example, “Compare flights” selects `flight-options`, and “Show transactions” selects `transaction-ledger`. Catalog display names provide a route for each domain entry. Domain jobs precede generic comparison rules; phrase specificity and ID order break ties. No model selects the policy.
+
+Conversation, definition questions, implementation requests, Text only, an explicit plain-text request, a selected artifact output and an existing JSON-schema output contract remain separate paths. An unmatched request may use ordinary prose. The policy applies to Gizzi turns carrying the interactive-answer manual, including app requests sent directly and requests sent through the agent-chat bridge. CLI/TUI turns and external vendor/group integrations without that capability are not forced into cards. Do not describe this as mandatory cards on every app surface or every reply.
+
+For a required template, `SessionProcessor` withholds normal response text from public text parts and deltas. Tool progress and reasoning continue normally. `AnswerTurnGuard` checks the completed response before publishing it: exactly one complete `openui` fence, a valid versioned envelope and the selected template ID. A different valid template, extra prose, a partial card and invalid data all fail. Text blocks split by a provider are combined into one public answer part after validation.
+
+At most one formatting correction is allowed. Usage limits can end the turn before that correction; the limit is not bypassed to repair formatting. Its runtime tool set is empty, and the existing tools-off path is used for subprocess providers. The original request and gathered tool results remain available. If the correction also fails, the message receives `AnswerTemplateError`, a readable failure and an error event. No rejected answer becomes public transcript text, including through delayed event consumers holding a part reference. Gateway and provider retries discard their incomplete private text before checking a fresh response. Existing refusal handoff runs before validation; the new provider still owes the same template. A formatting correction cannot start another handoff. Cancellation, provider errors and runtime limits preserve their existing error behavior, record an interrupted rejection and do not start a formatting correction.
+
+Selection writes an `answer.policy` row before generation, including the mode, selected ID or prose-exception reason. Each check writes an `answer.validation` row to the existing durable session trace. It records policy version, selected and returned IDs, attempt, status and problems. Rejected output is kept as a bounded diagnostic capture with a capture hash and truncation flag; environment secret redaction applies. Accepted/rejected outcomes also stay on assistant metadata and text-part metadata. Inspect the existing `GET /v1/session/:sessionID/replay` endpoint for these records.
+
+Regression tests exercise all 82 explicit routes and all domain display-name routes. Public `SessionPrompt.prompt` tests use a local vendor API fixture with the real runtime, event bus and storage. They cover bypass, delayed event consumption, a wrong valid template, bounded recovery, split blocks, cancellation, oversized replies, refusal handoff, synthetic continuations, usage limits, transport retries and plain-text exceptions. The release smoke script runs these scenarios in a separate process after its normal suite, with production feature flags and the remaining shared timeout budget. A missing scenario file fails the gate. Source tests prove invocation and behavior in the tested runtime. Real account and cross-device adoption still require release verification.
+
+## Application-owned visual presentation
+
+`answer-presentation.tsx` receives the validated envelope through React context. The root `Answer` component uses it for 17 fixed domain layouts: weather, itinerary, boarding details, shipment tracking, flights, hotels, transactions, connector health, agents, people, task boards, deal pipelines, products, reading lists, agendas, workflow runs and knowledge relationships. Other entries use the compiled component composition with the shared presentation styles.
+
+This context is set only after public envelope validation. Domain views render text through React and retain supplied HTTPS source links. They do not accept model CSS, component names or markup. Domain controls accept no model-defined actions. Flight discussion uses the existing conversation callback; local task updates use card persistence. They do not introduce booking, connector writes, payments or permission changes. Calculator, form, checklist and choice interactions continue through the compiled renderer.
+
+`answer-presentation-families.ts` assigns every accepted catalog ID to an application-owned visual family. Catalog tests fail when an entry lacks this assignment. Workspace styling serves tools and operations; Editorial typography serves evidence and explanations. This is presentation metadata, not deterministic turn routing. `answers.css` supplies the shared hierarchy, readable ledgers, comparison panels, keyboard-focus styles and container-based narrow layouts. The same renderer serves Desktop, the web phone layout and the PWA. `answer-gallery-fixtures.ts` supplies richer synthetic examples for UI Forge and the generated server example corpus. These fixtures never replace real user or connector data.
+
+### Extending the presentation
+
+When adding a catalog entry, assign its visual family in `answer-presentation-families.ts` as well as its schema, renderer and example. Family values are typed. The renderer sets the family after envelope validation; response data cannot override it. Shared presentation uses neutral surfaces, removes generic category ribbons and unsupported decorative product/book artwork, and keeps financial formatting and source labels explicit. Numeric outputs and filters update without decorative entrance motion.
+
+The approved interaction pass integrates local task Undo, explicit flight selection and numeric draft validation into the shared renderer. `answer-local-state.tsx` carries presentation choices inside the existing `$presentation` card-state field. `InteractiveAnswer` merges those choices with evaluator state before the normal local/transcript save. Task positions and completion are constrained to records and stages in the validated envelope. Undo keeps at most 20 in-memory snapshots and restores focus. Flight discussion requires an explicit selection, prevents duplicate pending sends, and preserves the choice after a send failure.
+
+`answer-input-validation.tsx` tracks invalid numeric drafts per mounted card. Only valid values reach evaluator state. All calculator metrics are suppressed while any numeric draft is invalid, and form submission is disabled. Declared bounds and step increments produce inline errors instead of clamping user text. Nested division errors propagate through parent expressions. Validated metric updates are immediate.
+
+Source disclosure and some alternate record-filter examples remain independent design-study controls. Required routing and response enforcement are now implemented for visual-capable Gizzi turns as described above. Release and live cross-device verification remain pending. Visual approval is not deployment approval.

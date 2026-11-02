@@ -1,0 +1,414 @@
+{
+  "upstream": "CopilotKit/CopilotKit",
+  "revision": "d168487e7a753a1527256c7e4c79344377f3d092",
+  "consolidated_examples": [
+    {
+      "name": "langgraph-python",
+      "path": "integrations/langgraph-python/",
+      "category": "Integrations"
+    },
+    {
+      "name": "langgraph-js",
+      "path": "integrations/langgraph-js/",
+      "category": "Integrations"
+    },
+    {
+      "name": "langgraph-fastapi",
+      "path": "integrations/langgraph-fastapi/",
+      "category": "Integrations"
+    },
+    {
+      "name": "mastra",
+      "path": "integrations/mastra/",
+      "category": "Integrations"
+    },
+    {
+      "name": "crewai-flows",
+      "path": "integrations/crewai-flows/",
+      "category": "Integrations"
+    },
+    {
+      "name": "llamaindex",
+      "path": "integrations/llamaindex/",
+      "category": "Integrations"
+    },
+    {
+      "name": "pydantic-ai",
+      "path": "integrations/pydantic-ai/",
+      "category": "Integrations"
+    },
+    {
+      "name": "ms-agent-framework-python",
+      "path": "integrations/ms-agent-framework-python/",
+      "category": "Integrations"
+    },
+    {
+      "name": "ms-agent-framework-dotnet",
+      "path": "integrations/ms-agent-framework-dotnet/",
+      "category": "Integrations"
+    },
+    {
+      "name": "strands-python",
+      "path": "integrations/strands-python/",
+      "category": "Integrations"
+    },
+    {
+      "name": "strands-typescript",
+      "path": "integrations/strands-typescript/",
+      "category": "Integrations"
+    },
+    {
+      "name": "mcp-apps",
+      "path": "integrations/mcp-apps/",
+      "category": "Integrations"
+    },
+    {
+      "name": "adk",
+      "path": "integrations/adk/",
+      "category": "Integrations"
+    },
+    {
+      "name": "adk-angular",
+      "path": "integrations/adk-angular/",
+      "category": "Integrations"
+    },
+    {
+      "name": "antigravity",
+      "path": "integrations/antigravity/",
+      "category": "Integrations"
+    },
+    {
+      "name": "agentcore",
+      "path": "integrations/agentcore/",
+      "category": "Integrations"
+    },
+    {
+      "name": "agent-spec",
+      "path": "integrations/agent-spec/",
+      "category": "Integrations"
+    },
+    {
+      "name": "a2a-a2ui",
+      "path": "integrations/a2a-a2ui/",
+      "category": "Integrations"
+    },
+    {
+      "name": "agno",
+      "path": "integrations/agno/",
+      "category": "Integrations"
+    },
+    {
+      "name": "crewai-crews",
+      "path": "integrations/crewai-crews/",
+      "category": "Integrations"
+    },
+    {
+      "name": "a2a-middleware",
+      "path": "integrations/a2a-middleware/",
+      "category": "Integrations"
+    },
+    {
+      "name": "claude-sdk-python",
+      "path": "integrations/claude-sdk-python/",
+      "category": "Integrations"
+    },
+    {
+      "name": "claude-sdk-typescript",
+      "path": "integrations/claude-sdk-typescript/",
+      "category": "Integrations"
+    },
+    {
+      "name": "claude-managed-agents",
+      "path": "integrations/claude-managed-agents/",
+      "category": "Integrations"
+    },
+    {
+      "name": "langgraph-python",
+      "path": "canvas/langgraph-python/",
+      "category": "Canvas"
+    },
+    {
+      "name": "llamaindex",
+      "path": "canvas/llamaindex/",
+      "category": "Canvas"
+    },
+    {
+      "name": "llamaindex-composio",
+      "path": "canvas/llamaindex-composio/",
+      "category": "Canvas"
+    },
+    {
+      "name": "pydantic-ai",
+      "path": "canvas/pydantic-ai/",
+      "category": "Canvas"
+    },
+    {
+      "name": "mastra",
+      "path": "canvas/mastra/",
+      "category": "Canvas"
+    },
+    {
+      "name": "gemini",
+      "path": "canvas/gemini/",
+      "category": "Canvas"
+    },
+    {
+      "name": "mastra-pm",
+      "path": "canvas/mastra-pm/",
+      "category": "Canvas"
+    },
+    {
+      "name": "a2ui-pdf-analyst",
+      "path": "showcases/a2ui-pdf-analyst/",
+      "category": "Showcases"
+    },
+    {
+      "name": "arcade-tools",
+      "path": "showcases/arcade-tools/",
+      "category": "Showcases"
+    },
+    {
+      "name": "claude-managed-agents",
+      "path": "showcases/claude-managed-agents/",
+      "category": "Showcases"
+    },
+    {
+      "name": "daytona-runcode",
+      "path": "showcases/daytona-runcode/",
+      "category": "Showcases"
+    },
+    {
+      "name": "reskinnable-demo",
+      "path": "showcases/reskinnable-demo/",
+      "category": "Showcases"
+    },
+    {
+      "name": "presentation",
+      "path": "showcases/presentation/",
+      "category": "Showcases"
+    },
+    {
+      "name": "deep-agents-finance-erp",
+      "path": "showcases/deep-agents-finance-erp/",
+      "category": "Showcases"
+    },
+    {
+      "name": "deep-agents-job-search",
+      "path": "showcases/deep-agents-job-search/",
+      "category": "Showcases"
+    },
+    {
+      "name": "generative-ui",
+      "path": "showcases/generative-ui/",
+      "category": "Showcases"
+    },
+    {
+      "name": "grok-generative-ui",
+      "path": "showcases/grok-generative-ui/",
+      "category": "Showcases"
+    },
+    {
+      "name": "research-canvas",
+      "path": "showcases/research-canvas/",
+      "category": "Showcases"
+    },
+    {
+      "name": "mcp-demo",
+      "path": "showcases/mcp-demo/",
+      "category": "Showcases"
+    },
+    {
+      "name": "multi-page",
+      "path": "showcases/multi-page/",
+      "category": "Showcases"
+    },
+    {
+      "name": "open-mcp-client",
+      "path": "showcases/open-mcp-client/",
+      "category": "Showcases"
+    },
+    {
+      "name": "oracle-agent-memory",
+      "path": "showcases/oracle-agent-memory/",
+      "category": "Showcases"
+    },
+    {
+      "name": "orca",
+      "path": "showcases/orca/",
+      "category": "Showcases"
+    },
+    {
+      "name": "pydantic-ai-todos",
+      "path": "showcases/pydantic-ai-todos/",
+      "category": "Showcases"
+    },
+    {
+      "name": "adk-dashboard",
+      "path": "showcases/adk-dashboard/",
+      "category": "Showcases"
+    },
+    {
+      "name": "langgraph-js-support-agents",
+      "path": "showcases/langgraph-js-support-agents/",
+      "category": "Showcases"
+    },
+    {
+      "name": "multi-agent-canvas",
+      "path": "showcases/multi-agent-canvas/",
+      "category": "Showcases"
+    },
+    {
+      "name": "enterprise-brex",
+      "path": "showcases/enterprise-brex/",
+      "category": "Showcases"
+    },
+    {
+      "name": "spreadsheet",
+      "path": "showcases/spreadsheet/",
+      "category": "Showcases"
+    },
+    {
+      "name": "todo",
+      "path": "showcases/todo/",
+      "category": "Showcases"
+    },
+    {
+      "name": "strands-crm",
+      "path": "showcases/strands-crm/",
+      "category": "Showcases"
+    },
+    {
+      "name": "manufact-mcp-apps",
+      "path": "showcases/manufact-mcp-apps/",
+      "category": "Showcases"
+    },
+    {
+      "name": "antigravity-repo-doctor",
+      "path": "showcases/antigravity-repo-doctor/",
+      "category": "Showcases"
+    },
+    {
+      "name": "deep-agents",
+      "path": "showcases/deep-agents/",
+      "category": "Showcases"
+    },
+    {
+      "name": "generative-ui-playground",
+      "path": "showcases/generative-ui-playground/",
+      "category": "Showcases"
+    },
+    {
+      "name": "mcp-apps",
+      "path": "showcases/mcp-apps/",
+      "category": "Showcases"
+    },
+    {
+      "name": "strands-file-analyzer",
+      "path": "showcases/strands-file-analyzer/",
+      "category": "Showcases"
+    },
+    {
+      "name": "microsoft-kanban",
+      "path": "showcases/microsoft-kanban/",
+      "category": "Showcases"
+    },
+    {
+      "name": "scene-creator",
+      "path": "showcases/scene-creator/",
+      "category": "Showcases"
+    },
+    {
+      "name": "chatkit-studio",
+      "path": "showcases/chatkit-studio/",
+      "category": "Showcases"
+    },
+    {
+      "name": "a2a-travel",
+      "path": "showcases/a2a-travel/",
+      "category": "Showcases"
+    }
+  ],
+  "domain_catalog_coverage": {
+    "banking": [
+      "transaction-ledger",
+      "spending-breakdown",
+      "budget-usage",
+      "income-expenses"
+    ],
+    "commerce": [
+      "product-grid",
+      "trading-list"
+    ],
+    "logistics": [
+      "inventory-risk",
+      "shipment-tracker",
+      "exception-board",
+      "tradeoff-table"
+    ],
+    "people": [
+      "people-directory",
+      "team-breakdown"
+    ],
+    "exec": [
+      "executive-brief",
+      "initiative-tracker",
+      "trend-comparison"
+    ],
+    "airline": [
+      "itinerary",
+      "flight-options",
+      "boarding-pass",
+      "baggage-tracker",
+      "seat-map",
+      "loyalty-summary"
+    ],
+    "bookstore": [
+      "reading-list"
+    ],
+    "keel": [
+      "workflow-run",
+      "task-approval",
+      "source-list",
+      "decision-log"
+    ],
+    "myelin": [
+      "plan",
+      "knowledge-map"
+    ],
+    "ledgerline": []
+  },
+  "showcase_pattern_coverage": {
+    "generative-ui-playground": [
+      "weather",
+      "stock",
+      "task-approval"
+    ],
+    "grok-generative-ui": [
+      "sentiment-split",
+      "argument-map",
+      "social-posts"
+    ],
+    "strands-crm": [
+      "deal-pipeline",
+      "deal-brief",
+      "account-research",
+      "followup-review"
+    ],
+    "mcp-apps": [
+      "flight-options",
+      "hotel-options",
+      "task-board"
+    ],
+    "a2ui-pdf-analyst": [
+      "pdf-analysis"
+    ],
+    "antigravity-repo-doctor": [
+      "repo-review",
+      "build-report"
+    ]
+  },
+  "interpretation": "Application and framework demos are separate from reusable UI templates. This catalog supplies controlled views; it does not claim to port all external services or application backends.",
+  "domain_catalog_notes": {
+    "ledgerline": "Inspected catalog is intentionally empty; Ledgerline uses in-chat tool renders rather than A2UI surfaces."
+  }
+}

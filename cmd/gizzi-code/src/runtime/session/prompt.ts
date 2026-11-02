@@ -49,6 +49,7 @@ import { ConfigMarkdown } from "@/runtime/context/config/markdown"
 import { SessionSummary } from "@/runtime/session/summary"
 import { NamedError } from "@allternit/gizzi-util/error.js"
 import { fn } from "@/shared/util/fn"
+import { AnswerTurnGuard } from "@/runtime/session/answer-policy"
 import { SessionProcessor } from "@/runtime/session/processor"
 import { Guardrails } from "@/runtime/session/guardrails"
 import { TaskTool } from "@/runtime/tools/builtins/task"
@@ -666,6 +667,7 @@ const message = await createUserMessage(input)
     // Note: On session resumption, state is reset but outputFormat is preserved
     // on the user message and will be retrieved from lastUser below
     let structuredOutput: unknown | undefined
+    let answerGuard: AnswerTurnGuard | undefined
 
     let step = 0
     // O12: one guard per turn. A durable-goal continuation is its own slice:
@@ -722,6 +724,15 @@ const message = await createUserMessage(input)
       }
 
       if (!lastUser) throw new Error("No user message found in stream. This should never happen.")
+      // A synthetic hook/goal continuation cannot replace the person's output contract.
+      const policySource = msgs.findLast(m => m.info.role === 'user' && m.parts.some(p => p.type === 'text' && !p.synthetic && !p.ignored))
+        ?? (!answerGuard ? msgs.findLast(m => m.info.role === 'user') : undefined);
+      if (policySource && answerGuard?.userID !== policySource.info.id) {
+        const text = policySource.parts.filter((p): p is MessageV2.TextPart => p.type === 'text' && !p.synthetic && !p.ignored).map(p => p.text).join('\n');
+        answerGuard = new AnswerTurnGuard(policySource.info.id, text, policySource.info as MessageV2.User);
+        answerGuard.recordSelection(sessionID);
+      }
+
       // A bot turn (allternit-api marked a user message with `bot`) runs as
       // the bot: persona first, no personal instruction files, skills or
       // workspace identity from ~/.gizzi (runtime/bots/bot-turn.ts). Resolved
@@ -752,7 +763,8 @@ const message = await createUserMessage(input)
       if (
         lastAssistant?.finish &&
         !["tool-calls", "unknown"].includes(lastAssistant.finish) &&
-        lastUser.id < lastAssistant.id
+        lastUser.id < lastAssistant.id &&
+        !answerGuard.needsRepair
       ) {
         log.info("exiting loop", { sessionID })
         break
@@ -1110,6 +1122,10 @@ const message = await createUserMessage(input)
         abort,
         fallbackModels: input.fallbackModels,
         guard,
+        ...(answerGuard.required ? {
+          holdText: (part: MessageV2.TextPart) => answerGuard!.hold(part),
+          resetHeldText: (messageID: string) => answerGuard!.restart(messageID, sessionID),
+        } : {}),
       })
       using _ = defer(() => InstructionPrompt.clear(processor.message.id))
 
@@ -1138,7 +1154,7 @@ const message = await createUserMessage(input)
         // If user provided a full system prompt override, use only that; a "+"
         // prefix (or --append-system-prompt) appends — or, on a bot turn, leads.
         const system = await composeTurnSystem({
-          userSystem: lastUser.system,
+          userSystem: lastUser.system ?? (answerGuard.required ? answerGuard.system : undefined),
           bot: botTurn,
           environment: () => SystemPrompt.environment(model),
           instructions: () => InstructionPrompt.system(),
@@ -1182,7 +1198,7 @@ const message = await createUserMessage(input)
       })()
       turnSystemPromise.catch(() => {}) // awaited below; keeps an early failure from going unhandled
 
-      const tools = await resolveTools({
+      const tools = answerGuard.needsRepair ? {} : await resolveTools({
         agent,
         session,
         model,
@@ -1241,6 +1257,7 @@ const message = await createUserMessage(input)
       // The turn-only layer (answer template, card-repair note, opt-in location) goes last among the user layers.
       const turnLayer = turnSystemLayers.get(sessionID)
       if (turnLayer) system.push(turnLayer)
+      if (answerGuard.required) system.push(answerGuard.instruction())
       const format = lastUser.format ?? { type: "text" }
       if (format.type === "json_schema") {
         system.push(STRUCTURED_OUTPUT_SYSTEM_PROMPT)
@@ -1293,7 +1310,7 @@ const message = await createUserMessage(input)
         system,
         tail,
         messages: [
-          ...MessageV2.toModelMessages(msgs, model),
+          ...MessageV2.toModelMessages(answerGuard.required ? answerGuard.context(msgs) : msgs, model),
           ...(isLastStep
             ? [
                 {
@@ -1305,11 +1322,15 @@ const message = await createUserMessage(input)
         ],
         tools,
         model,
-        toolChoice: format.type === "json_schema" ? "required" : undefined,
+        toolChoice: answerGuard.needsRepair ? "none" : format.type === "json_schema" ? "required" : undefined,
         plan,
       }).finally(() => {
         if (deadlineTimer !== undefined) clearTimeout(deadlineTimer)
       })
+
+      if (answerGuard.required && (abort.aborted || processor.message.error || guard.trip)) {
+        await answerGuard.interrupted(processor.message, abort.aborted ? 'Turn cancelled before answer validation.' : guard.trip ? 'A runtime limit ended the turn before answer validation.' : 'The provider failed before answer validation.');
+      }
 
       // If structured output was captured, save it and exit immediately
       // This takes priority because the StructuredOutput tool was called successfully
@@ -1332,7 +1353,7 @@ const message = await createUserMessage(input)
       const cloudHandoff = consumeHandoff(sessionID)
       if (cloudHandoff && !processor.message.handoff) {
         processor.message.handoff = cloudHandoff
-        await Session.updateMessage(processor.message)
+        if (!answerGuard.required) await Session.updateMessage(processor.message)
       }
 
       // Check if model finished (finish reason is not "tool-calls" or "unknown")
@@ -1345,13 +1366,14 @@ const message = await createUserMessage(input)
       if (
         modelFinished &&
         !refusalHandoff &&
+        !answerGuard.needsRepair &&
         !processor.message.error &&
         !abort.aborted &&
         !session.parentID &&
         model.providerID !== CLOUD_PROVIDER_ID
       ) {
         const parts = await MessageV2.parts(processor.message.id)
-        const text = parts
+        const text = answerGuard.required ? answerGuard.text(processor.message.id) : parts
           .filter((p): p is MessageV2.TextPart => p.type === "text" && !p.synthetic)
           .map((p) => p.text)
           .join("\n")
@@ -1364,6 +1386,7 @@ const message = await createUserMessage(input)
               from: `${model.providerID}/${model.id}`,
               refusedID: processor.message.id,
             }
+            if (answerGuard.required) await answerGuard.interrupted({ ...processor.message, finish: 'unknown', time: { created: processor.message.time.created } }, 'Refused response handed off before answer validation.');
             log.info("refused turn: handing off to the open lane", {
               sessionID,
               from: refusalHandoff.from,
@@ -1390,9 +1413,19 @@ const message = await createUserMessage(input)
           }
         }
         if (wrapUp && (modelFinished || wrapUp.left <= 0)) {
-          wrapUp.done = true
+          if (answerGuard.required && !processor.message.error && !abort.aborted) {
+            if (modelFinished || answerGuard.needsRepair) await answerGuard.complete(processor.message, false);
+            else await answerGuard.interrupted(processor.message, 'Usage limit ended the turn before answer validation.');
+          }
+          wrapUp.done = !processor.message.error
           break
         }
+      }
+
+      if (answerGuard.required && (modelFinished || answerGuard.needsRepair) && !processor.message.error && !abort.aborted) {
+        const outcome = await answerGuard.complete(processor.message);
+        if (outcome === 'repairing') continue;
+        if (outcome === 'rejected') break;
       }
 
       if (processor.message.error) {

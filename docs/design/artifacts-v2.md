@@ -25,7 +25,7 @@ Every record has a `kind` and a `runtime_version`:
 | `ops` | `application/vnd.allternit.ops+json` (header, actions, tabs of panels) | Ops sheet (dashboard runtime) | added 2026-10-20 |
 | `motion` | `application/vnd.allternit.motion+json` (scenes + props) | Motion editor | 3 |
 | `page` | `text/html` or `text/markdown` | Page viewer (sandboxed) | 1 view, 4 runtime |
-| `card` | `application/vnd.allternit.openui` (answers library) | Interactive card | 1 |
+| `card` | `application/vnd.allternit.answer+json` (versioned data-only answer template) | Interactive card | 1 |
 | `diagram` | `text/vnd.mermaid` or `image/svg+xml` | Diagram viewer | 1 |
 | `image` | `text/uri-list` (URL to the file store) | Image viewer | 1 |
 | `code` | `text/plain` + `language` in `meta` | Code viewer | 1 |

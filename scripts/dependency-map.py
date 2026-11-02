@@ -74,7 +74,7 @@ def generate(ai, strict=True):
             if not rel or any(x in SKIP or x.startswith('.hosted') for x in p.parts): continue
             full = root / rel
             if not full.is_file() or full.is_symlink(): continue
-            if p.name not in ('package.json', 'Cargo.toml') and p.suffix not in ('.ts','.tsx','.js','.jsx','.mjs','.cjs','.rs'): continue
+            if p.name not in ('package.json', 'Cargo.toml') and p.suffix not in ('.ts','.tsx','.js','.jsx','.mjs','.cjs','.rs','.swift'): continue
             key = repo + '/' + rel
             texts[key] = full.read_text(errors='replace')
             if p.name in ('package.json','Cargo.toml'):
@@ -210,6 +210,16 @@ def generate(ai, strict=True):
     def stale(msg):
         if strict: raise SystemExit(msg)
         warnings.append(msg + ' (skipped; run --validate against current main)')
+    def component_ref(ref):
+        # Curated evidence may name a file or a subfolder inside a component.
+        # Resolve only existing source paths; a typo must still fail validation.
+        if ref in nodes: return ref
+        if ref in files: return files[ref]
+        repo, _, rel = ref.partition('/')
+        if repo in roots and (roots[repo] / rel).exists():
+            parents = [n for n in nodes if ref.startswith(n + '/') and nodes[n]['kind'] not in ('feature', 'journey', 'line')]
+            if parents: return max(parents, key=len)
+        return ref
     work = json.loads((MAP/'features.json').read_text())
     for f in work['features']:
         where = 'features.json ' + f['id']
@@ -227,7 +237,7 @@ def generate(ai, strict=True):
         where = 'features.json ' + j['id']
         if not j['id'].startswith('journey:'): raise SystemExit(f'{where}: journey ids start with journey:')
         if len(j['steps']) < 2: raise SystemExit(f'{where}: a journey needs at least two steps')
-        node(j['id'], j['label'], 'journey', '', description=j['description'], steps=[[s['at'], s['says']] for s in j['steps']])
+        node(j['id'], j['label'], 'journey', '', description=j['description'], steps=[[component_ref(s['at']), s['says']] for s in j['steps']])
     for item in work['features'] + work['journeys']:
         where = 'features.json ' + item['id']
         if not item['evidence']: raise SystemExit(f'{where}: add at least one evidence path')
@@ -236,6 +246,7 @@ def generate(ai, strict=True):
             except SystemExit as ex: stale(str(ex))
         refs = [('touches', r) for r in item.get('touches', [])] + [('step', s['at']) for s in item.get('steps', [])]
         for kind, ref in refs:
+            ref = component_ref(ref)
             if ref not in nodes or nodes[ref]['kind'] in ('feature', 'journey', 'line'):
                 stale(f'{where}: unknown {kind} component {ref!r}'); continue
             edge(item['id'], ref, kind, item['evidence'][0])

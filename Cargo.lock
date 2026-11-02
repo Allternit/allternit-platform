@@ -458,6 +458,7 @@ dependencies = [
  "http-body-util",
  "hyper 1.10.1",
  "image",
+ "jsonschema",
  "jsonwebtoken",
  "lazy_static",
  "mcp-protocol",

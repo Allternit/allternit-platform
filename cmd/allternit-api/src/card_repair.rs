@@ -64,7 +64,7 @@ pub fn repair_note<'a>(texts: impl IntoIterator<Item = &'a str>) -> Option<Strin
         note.push_str(&format!("\n({} more card(s) also failed.)\n", total - MAX_CARDS));
     }
     note.push_str(
-        "\nIf this message still concerns that answer, start your reply with the corrected card: a full ```openui fence, a `root = Answer(...)` line, only catalog components with their required values, and every name defined. Otherwise apply these fixes to any card you write. Don't mention this note.",
+        "\nIf this message still concerns that answer, start your reply with a corrected ```openui fence containing a version 1 JSON answer envelope: template, title, data, and optional summary. Use the enforced answer-template schema. Never send a root = Answer program or component layout. Otherwise apply these fixes to any card you write. Don't mention this note.",
     );
     Some(note)
 }
@@ -126,7 +126,10 @@ pub fn join_turn_layers(layers: &[Option<&str>]) -> Option<String> {
 mod tests {
     use super::*;
 
-    const GOOD: &str = "Here.\n```openui\nroot = Answer(\"One\", [Text(\"x\")])\n```";
+    const GOOD: &str = r#"Here.
+```openui
+{"version":1,"template":"quick-answer","title":"One","data":{"text":"x"}}
+```"#;
     const BAD: &str = "Here.\n```openui\nroot = Answer(\"Two\", [Nope(), missing])\n```\nDone.";
 
     #[test]
@@ -149,8 +152,8 @@ mod tests {
     #[test]
     fn failing_cards_are_quoted_with_their_errors() {
         let note = repair_note([GOOD, BAD]).expect("a note");
-        assert!(note.contains("Unknown component Nope."), "{note}");
-        assert!(note.contains("Never defined: missing."), "{note}");
+        assert!(note.contains("Expected a versioned answer template"), "{note}");
+        assert!(note.contains("version 1 JSON answer envelope"), "{note}");
         assert!(note.contains("root = Answer(\"Two\""), "{note}");
         assert!(!note.contains("Answer(\"One\""), "passing card stays out: {note}");
         assert!(note.contains("Don't mention this note."));

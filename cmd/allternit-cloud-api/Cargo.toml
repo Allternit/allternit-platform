@@ -34,6 +34,7 @@ tower-http = { workspace = true, features = ["cors", "trace"] }
 # Serialization
 serde = { workspace = true }
 serde_json = { workspace = true }
+jsonschema = { version = "0.58.6", default-features = false }
 
 # Async runtime
 tokio = { workspace = true, features = ["full"] }

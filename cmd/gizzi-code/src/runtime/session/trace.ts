@@ -6,6 +6,8 @@ import { Flag } from "@/runtime/context/flag/flag"
 
 export namespace SessionTrace {
   export const Kind = z.enum([
+    "answer.policy",
+    "answer.validation",
     "message.updated",
     "message.removed",
     "part.updated",

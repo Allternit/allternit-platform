@@ -34,7 +34,7 @@
         },
         {
           "on": "2026-10-08",
-          "note": "Any file or folder can be attached (no allow-list; text sniffed by content). Cards appear at once with Reading…; video/audio/other files go as Allternit Cloud links; sent messages show chips, not extracted text. Eoj: no grey ring on the composer; the tray only shows behind a reply strip or attachment cards."
+          "note": "Any file or folder can be attached (no allow-list; text sniffed by content). Cards appear at once with Reading\u2026; video/audio/other files go as Allternit Cloud links; sent messages show chips, not extracted text. Eoj: no grey ring on the composer; the tray only shows behind a reply strip or attachment cards."
         },
         {
           "on": "2026-10-27",
@@ -63,7 +63,7 @@
       "label": "Interactive answers",
       "product": "product:ai-allternit",
       "status": "live",
-      "description": "Assistant replies can include an interactive card written in OpenUI Lang inside an openui code fence (38 components: layout, metrics, tables, line/area/bar/pie charts, tabs, checklists, inputs that recompute on the page), built up statement by statement while the reply streams; buttons and choices send a follow-up message; Query()/Mutation() read and (with an Allow each time) change data through the user's MCP connectors. When components can't do it, an ```app fence draws a small HTML/JS app inline in the reply, in the MCP sandbox proxy with no network, themed with --viz-* variables and watched by a heartbeat. allternit-api checks each finished reply's cards against the catalog (card_check frame: diagnostics + text fallback) and stores the checks and the user's card state per message (message_card_meta). The app sends the model manual with every chat turn unless Settings says Text only; channels get cards as readable text and apps as one line. Every reply also follows one answer shape (plain Markdown, never forced JSON): bottom line first, no step narration, inline source links, a table for 3+ options, one next step, a length line per Response Style, and one placement rule (reply by default at any length; a card only to pick, adjust or explore; an artifact only for something kept, edited or shared, or when asked). Eight named templates (Comparison, Plan, How-to, Troubleshooting, Status report, Research brief, Decision, Quick answer) live in answer-shapes.md + answer-templates.json, byte-identical in allternit-ai and allternit-api; a deterministic picker (whole-word triggers by priority) names one per turn in gizzi's turn-only turnSystem layer. Assistant replies render the answer layout (<Markdown answer> only: title, dateline, bottom-line callout, label lists, full tables, source pills, Contents row). A failed card queues a one-time repair note for the next turn (card_repair.rs, ALLTERNIT_CARD_REPAIR). shape-lint.ts and scripts/answer-eval/run.mjs check answer shape per brain on demand.",
+      "description": "An extensible catalog of 82 controlled templates across ten categories, with a searchable UI Forge gallery, strict data schemas, trusted fixed renderers, synthetic examples, pinned provenance and browser/model-tool/API enforcement. All 38 component capabilities remain reachable. Legacy source stays readable; custom apps require activation. Source is prepared for the shared Desktop, phone and PWA paths.",
       "touches": [
         "allternit-ai/src/lib/openui",
         "allternit-ai/src/components/ai-elements",
@@ -89,7 +89,10 @@
         "allternit/cmd/allternit-api/src/agent_*",
         "allternit/cmd/gizzi-code/src/runtime/session",
         "allternit/cmd/gizzi-code/src/runtime/drivers",
-        "allternit-ai/src/design"
+        "allternit-ai/src/design",
+        "allternit/cmd/allternit-cloud-api/src/artifacts",
+        "allternit/cmd/gizzi-code/src/runtime/integrations",
+        "allternit-ai/src/views/library"
       ],
       "decisions": [
         {
@@ -98,7 +101,7 @@
         },
         {
           "on": "2026-10-08",
-          "note": "The app (not gizzi-code) sends the manual as systemPrompt / '+' system, so each build only asks for components it renders and the TUI and channels never get it. Settings → Response style → Layout and visuals (Auto / Text only) is per device, like the Memory switches, to avoid a manual prod migration."
+          "note": "The app (not gizzi-code) sends the manual as systemPrompt / '+' system, so each build only asks for components it renders and the TUI and channels never get it. Settings \u2192 Response style \u2192 Layout and visuals (Auto / Text only) is per device, like the Memory switches, to avoid a manual prod migration."
         },
         {
           "on": "2026-10-08",
@@ -110,7 +113,7 @@
         },
         {
           "on": "2026-10-12",
-          "note": "Parity pass against ChatGPT Intelligent UI: progressive card streaming (complete statements only), per-part error boundaries with text fallback, catalog 16→38 with model-nameable design tokens, ```app inline apps through the sandbox proxy (process-isolated, heartbeat watchdog), server-side card checks and per-message card state that follows the user across devices. Model JSX and legacy sandbox parts now run in the inline-app sandbox instead of the page; the A2UI extended renderer and backend client, @allternit/ix, and the json-render and react-jsx-parser deps were removed as dead code."
+          "note": "Parity pass against ChatGPT Intelligent UI: progressive card streaming (complete statements only), per-part error boundaries with text fallback, catalog 16\u219238 with model-nameable design tokens, ```app inline apps through the sandbox proxy (process-isolated, heartbeat watchdog), server-side card checks and per-message card state that follows the user across devices. Model JSX and legacy sandbox parts now run in the inline-app sandbox instead of the page; the A2UI extended renderer and backend client, @allternit/ix, and the json-render and react-jsx-parser deps were removed as dead code."
         },
         {
           "on": "2026-10-20",
@@ -119,13 +122,40 @@
         {
           "on": "2026-10-25",
           "note": "Eoj: structured answers are deterministic and never forced JSON: shape rules every brain gets, named templates picked from the user's words before the turn, and one placement rule (reply by default, card to pick/adjust/explore, artifact to keep/edit/share). Generative UI cards stay the way to get interactive answers. Card repair is a one-time next-turn note, not a silent second turn. Answer styling applies only to assistant replies, not files, memory or artifacts."
+        },
+        {
+          "on": "2026-11-01",
+          "note": "Source prepared: strict answer v1 envelopes, twelve templates, fixed compiler, bounded expression trees, API and offline artifact write gates, user-activated custom apps, input replay and starter gallery with account storage. Source changes require coordinated workspace/API/runtime release; no deployment is claimed."
+        },
+        {
+          "on": "2026-11-01",
+          "note": "Eoj corrected the original twelve-card scope and asked for a full reference-informed and original catalog. Inventoried 65 consolidated CopilotKit examples and ten skin catalogs (nine populated and Ledgerline empty) at d168487e. Added 70 registry entries for 82 total, 36 reference-informed and 46 Allternit entries. Gallery, schemas, manuals, shared examples and per-entry rendering checks derive from the registry; no application/backend port or deployment is claimed."
+        },
+        {
+          "on": "2026-11-01",
+          "note": "Source-only visual refresh: shared category identity and container-responsive card styles across 82 templates, 17 fixed domain-specific React layouts after envelope validation, and richer synthetic gallery fixtures. Existing form, calculator and approval semantics are unchanged. This does not enforce mandatory template selection or establish production adoption."
+        },
+        {
+          "on": "2026-11-01",
+          "note": "Accepted visual mix prepared in shared source: typed presentation families cover all 82 entries; Workspace tools/operations and Editorial evidence/readings use neutral hierarchy, focus/disabled states and narrow sizing. Category ribbons, decorative product/book placeholders and long entrance animations removed. Prototype interaction polish remains separate from production action contracts. Source remains unreleased; mandatory turn selection is still unfinished."
+        },
+        {
+          "on": "2026-11-01",
+          "note": "Eoj approved the mixed visual direction and polish. Shared renderer integrates local task movement/completion with Undo, explicit flight discussion with send recovery, and numeric draft validation. Current choices persist across Desktop/web phone/PWA. Source remains unreleased; mandatory runtime selection remains unfinished."
+        },
+        {
+          "on": "2026-11-01",
+          "note": "Implemented shared deterministic response policy and central Gizzi turn enforcement for visual-capable app requests. Required text is withheld until the selected envelope validates, with one formatting correction, fail-closed output, interrupted rejection and durable answer.validation evidence. Explicit selection reaches all 82 templates; recognized display jobs use fixed rules. Conversation/Text only/artifacts and unsupported external paths are exceptions. Unreleased; live cross-device adoption remains unverified. Regression fixes retain the policy through synthetic continuations, preserve refusal handoff, respect usage limits, clear partial transport attempts and isolate pending bus text from later mutation. answer.policy records prose exceptions before generation."
         }
       ],
       "evidence": [
         "allternit/cmd/allternit-api/migrations/V251__message_card_meta.sql",
         "allternit/surfaces/docs/guides/interactive-answers.mdx",
         "allternit/surfaces/docs/guides/response-parts.mdx",
-        "allternit/surfaces/docs/release-notes.mdx"
+        "allternit/surfaces/docs/release-notes.mdx",
+        "allternit/surfaces/docs/reference/answer-template-contract.mdx",
+        "allternit/docs/design/generative-ui-catalog-coverage.md",
+        "allternit/docs/design/generative-ui-catalog-inventory.json"
       ]
     },
     {
@@ -156,7 +186,7 @@
       "label": "Share my location with bots",
       "product": "product:ai-allternit",
       "status": "building",
-      "description": "Opt-in location for bot chats, off by default (Claude Duet shares by default). When Settings → Privacy → 'Share my location with bots' is on, the client adds client_location {lat, lon (rounded to 2 decimals), accuracy_m, time_zone, at} to each chat send. allternit-api (client_location.rs) re-rounds, clamps the stated radius to at least 1 km, drops anything out of range, older than 30 minutes or with an unknown IANA zone, and sends one 'Where the user is' layer to gizzi as the turn-only turnSystem field, held in memory for the turn and appended last among the user layers. Never stored on messages, sessions or memory, never logged; invalid locations are ignored and never fail a send.",
+      "description": "Opt-in location for bot chats, off by default (Claude Duet shares by default). When Settings \u2192 Privacy \u2192 'Share my location with bots' is on, the client adds client_location {lat, lon (rounded to 2 decimals), accuracy_m, time_zone, at} to each chat send. allternit-api (client_location.rs) re-rounds, clamps the stated radius to at least 1 km, drops anything out of range, older than 30 minutes or with an unknown IANA zone, and sends one 'Where the user is' layer to gizzi as the turn-only turnSystem field, held in memory for the turn and appended last among the user layers. Never stored on messages, sessions or memory, never logged; invalid locations are ignored and never fail a send.",
       "touches": [
         "allternit/cmd/allternit-api/src/client_*",
         "allternit/cmd/allternit-api/src/v1_*",
@@ -230,19 +260,19 @@
         },
         {
           "on": "2026-10-19",
-          "note": "Routines tab gains List / Graph / Calendar views (trigger → bot → result graph on @xyflow/react; Day/Week/Month calendar expanded client-side from each routine's schedule, This bot / All bots) and a routine details panel. Bots rail ⋯ → Templates becomes Marketplace (Agents templates, Apps connector directory, Skills one-click install); no made-up install counts."
+          "note": "Routines tab gains List / Graph / Calendar views (trigger \u2192 bot \u2192 result graph on @xyflow/react; Day/Week/Month calendar expanded client-side from each routine's schedule, This bot / All bots) and a routine details panel. Bots rail \u22ef \u2192 Templates becomes Marketplace (Agents templates, Apps connector directory, Skills one-click install); no made-up install counts."
         },
         {
           "on": "2026-10-20",
-          "note": "The routines List / Graph / Calendar switch (shared RoutinesSchedule) is also on Automation Tasks (All / Routines tabs, phone screen), Cowork → Routines (RoutinesPanel) and the bot chat Routines panel (RoutinesListView); those default to every bot's routines and share one remembered view."
+          "note": "The routines List / Graph / Calendar switch (shared RoutinesSchedule) is also on Automation Tasks (All / Routines tabs, phone screen), Cowork \u2192 Routines (RoutinesPanel) and the bot chat Routines panel (RoutinesListView); those default to every bot's routines and share one remembered view."
         },
         {
           "on": "2026-10-20",
-          "note": "Routines → Calendar is now the editable scheduler (RoutineScheduler/RoutineEditor): Day default, click a slot to add, click to edit, drag to move; saves the cron in place."
+          "note": "Routines \u2192 Calendar is now the editable scheduler (RoutineScheduler/RoutineEditor): Day default, click a slot to add, click to edit, drag to move; saves the cron in place."
         },
         {
           "on": "2026-10-23",
-          "note": "Eoj asked for the routines Graph / Calendar on every Automation Tasks tab. Goals, Loops, Agent Heartbeats and All now use AutomationSchedule (cowork/AutomationSchedule.tsx): the same RoutineScheduler calendar (goals as all-day items on their target date, loops/heartbeats at run times, drag to move) and a trigger → bot → goal graph. Routines keeps RoutinesSchedule."
+          "note": "Eoj asked for the routines Graph / Calendar on every Automation Tasks tab. Goals, Loops, Agent Heartbeats and All now use AutomationSchedule (cowork/AutomationSchedule.tsx): the same RoutineScheduler calendar (goals as all-day items on their target date, loops/heartbeats at run times, drag to move) and a trigger \u2192 bot \u2192 goal graph. Routines keeps RoutinesSchedule."
         },
         {
           "on": "2026-10-21",
@@ -258,7 +288,7 @@
         },
         {
           "on": "2026-10-22",
-          "note": "Bot chat deck above the composer: [open thread] · Threads · Tasks · Bot (BotThreadTopDeck). Threads = separate chats with the bot; Tasks = the open thread's plan and hand-offs. Thread panel trimmed from 7 sections to Activity + About this thread. Bot Home tabs: Chat + threads, Artifacts, Routines, Memory, Settings (Computer and Usage fold into Settings). User bubbles wear the bot's colour. Project home uses the Bots home composer shape (To: row, team strip under it, Threads quick view)."
+          "note": "Bot chat deck above the composer: [open thread] \u00b7 Threads \u00b7 Tasks \u00b7 Bot (BotThreadTopDeck). Threads = separate chats with the bot; Tasks = the open thread's plan and hand-offs. Thread panel trimmed from 7 sections to Activity + About this thread. Bot Home tabs: Chat + threads, Artifacts, Routines, Memory, Settings (Computer and Usage fold into Settings). User bubbles wear the bot's colour. Project home uses the Bots home composer shape (To: row, team strip under it, Threads quick view)."
         },
         {
           "on": "2026-10-22",
@@ -270,15 +300,15 @@
         },
         {
           "on": "2026-10-22",
-          "note": "Thirteen stage backgrounds (Aurora default, Glass mesh, Constellation, Spotlight, Horizon, Silk, Bokeh, Grid glow, Lava, Prism, Fireflies, Dusk, Plain) behind bot chat, group chat and bot project home; chosen in Settings → Appearance or on the stage (Eoj: build all of them and choose)."
+          "note": "Thirteen stage backgrounds (Aurora default, Glass mesh, Constellation, Spotlight, Horizon, Silk, Bokeh, Grid glow, Lava, Prism, Fireflies, Dusk, Plain) behind bot chat, group chat and bot project home; chosen in Settings \u2192 Appearance or on the stage (Eoj: build all of them and choose)."
         },
         {
           "on": "2026-10-29",
-          "note": "Twenty ASCII backgrounds next to the thirteen (now the Classic set): A-block (the A-block mark's breathe, sweep, conveyor and write moves), six moods of other AI apps with no marks, and thirteen scenes. They react to the cursor (characters part and glow; a click on empty space sends a pulse). Settings → Appearance → Background gets ASCII / Classic, Show on (bot chats, group chats, bot project homes, Code mode; Code mode off by default), Movement, Colours, Characters, Character size, Density and Veil. Code mode shows it behind the session view (backdrop/ascii/, useStageBackgroundFor) (Eoj)."
+          "note": "Twenty ASCII backgrounds next to the thirteen (now the Classic set): A-block (the A-block mark's breathe, sweep, conveyor and write moves), six moods of other AI apps with no marks, and thirteen scenes. They react to the cursor (characters part and glow; a click on empty space sends a pulse). Settings \u2192 Appearance \u2192 Background gets ASCII / Classic, Show on (bot chats, group chats, bot project homes, Code mode; Code mode off by default), Movement, Colours, Characters, Character size, Density and Veil. Code mode shows it behind the session view (backdrop/ascii/, useStageBackgroundFor) (Eoj)."
         },
         {
           "on": "2026-10-29",
-          "note": "Eoj: a look picked in Settings overrode every bot; some users want a look per bot. Settings is now the default, and the brush switch on a bot stage, a group stage or Code's session toolbar (phone: pane menu → Background) saves a look for that bot, group chat or Code workspace only (BackdropScope, appearance.stageBackground.for.<scope>), with Same as Settings to undo. The rail carries the screen's own look, in Code mode too. Eoj also found text hard to read on some looks: an ASCII look whose sky is the other tone from the app theme is drawn with its lightness flipped, and the veil never goes below 20% (default 35%)."
+          "note": "Eoj: a look picked in Settings overrode every bot; some users want a look per bot. Settings is now the default, and the brush switch on a bot stage, a group stage or Code's session toolbar (phone: pane menu \u2192 Background) saves a look for that bot, group chat or Code workspace only (BackdropScope, appearance.stageBackground.for.<scope>), with Same as Settings to undo. The rail carries the screen's own look, in Code mode too. Eoj also found text hard to read on some looks: an ASCII look whose sky is the other tone from the app theme is drawn with its lightness flipped, and the veil never goes below 20% (default 35%)."
         },
         {
           "on": "2026-10-22",
@@ -294,7 +324,7 @@
         },
         {
           "on": "2026-10-22",
-          "note": "Eoj made the Bot-mode composer one standard: the same bottom deck (Agent mode | Plugins | Artifacts) on Bot Home, bot chats/threads, group chats and Project home; the top deck (Main chat · Threads · Tasks · Bot) wherever a bot is in focus, including Bot Home once To: has a bot."
+          "note": "Eoj made the Bot-mode composer one standard: the same bottom deck (Agent mode | Plugins | Artifacts) on Bot Home, bot chats/threads, group chats and Project home; the top deck (Main chat \u00b7 Threads \u00b7 Tasks \u00b7 Bot) wherever a bot is in focus, including Bot Home once To: has a bot."
         },
         {
           "on": "2026-10-22",
@@ -302,7 +332,7 @@
         },
         {
           "on": "2026-10-24",
-          "note": "Routine run rows (Eoj, from an agent-schedule clip): every routines list (bot Routines tab, Automation Tasks → Routines, bot chat Routines panel, Cowork → Routines) uses RoutineRunRow: countdown, apps read → written and brain from the last run, 14-run strip, Run now / Stop, on/off switch; open = latest output or live steps (Step n of m), instructions, Hourly/Daily/Weekdays/Weekly + time editor with cron, earlier runs, hold to delete. Server: routine_runs row written 'running' at start, GET …/live, POST …/runs/:run_id/cancel (cancelled keeps partial output, no streak/alert), ?recent_runs=N on the list, metadata model/apps/steps, orphaned running rows failed at boot; gizzi cron POST /jobs/:id/abort. Stop source → destination icons come from apps the last run used (Eoj's pick), Stop keeps partial output (Eoj's pick)."
+          "note": "Routine run rows (Eoj, from an agent-schedule clip): every routines list (bot Routines tab, Automation Tasks \u2192 Routines, bot chat Routines panel, Cowork \u2192 Routines) uses RoutineRunRow: countdown, apps read \u2192 written and brain from the last run, 14-run strip, Run now / Stop, on/off switch; open = latest output or live steps (Step n of m), instructions, Hourly/Daily/Weekdays/Weekly + time editor with cron, earlier runs, hold to delete. Server: routine_runs row written 'running' at start, GET \u2026/live, POST \u2026/runs/:run_id/cancel (cancelled keeps partial output, no streak/alert), ?recent_runs=N on the list, metadata model/apps/steps, orphaned running rows failed at boot; gizzi cron POST /jobs/:id/abort. Stop source \u2192 destination icons come from apps the last run used (Eoj's pick), Stop keeps partial output (Eoj's pick)."
         },
         {
           "on": "2026-10-25",
@@ -423,11 +453,11 @@
       "decisions": [
         {
           "on": "2026-10-17",
-          "note": "Eoj, 2026-10-17: Allternit Desktop bundles and runs the subscription gateway (subs-gateway-manager.ts; scripts/prepare-subs-gateway.cjs → resources/subs-gateway, node:sqlite so no native module, Electron's Node, ~/.allternit/subscriptions with the file secret store; skipped where ALLTERNIT_LOCAL_SUBS_GATEWAY=1 already). allternit-api ALLTERNIT_LOCAL_SUBS_GATEWAY=fallback: a bound, running, allowed Sessions computer answers first, else Desktop's own gateway; =1 (cloud computer image) stays primary; /subscriptions/status reports local, fallback and sessions_computer. D15 becomes a lane rule: phone and desktop-app lanes run on the person's own computer; browser lanes there are off until turned on (GET/PUT /v1/settings/browser-lanes; off = no browser account routes, web route offline, login 409 browser_lanes_off) and then run in the installed Google Chrome — never Chrome for Testing (OpenAI geoblocks it, too many checks) — headless=new on the account's profile, automation features off, Chrome's normal user agent (HeadlessChrome is held by Cloudflare; live check on chatgpt.com passed), attached over CDP (worker/hidden_chrome.ts). Model-picker chats (POST /v1/tasks chat.create/continue with a provider) ask the same RouteDirector at turn start; phone/desktop-app routes run through the route's AAI adapter (routes/app-route-tasks.ts) with worker-identical task events, thread → app conversation persisted (migration 0013); NO_ROUTE keeps the FabricRouter browser path. Settings → Subscriptions › Runs on shows This computer / the Sessions computer, Add a Sessions computer, and the Browser sign-ins on this computer switch. Pairing handover to a Sessions computer: Mac → Sessions computer only (approve-on-phone is a future note, not built)."
+          "note": "Eoj, 2026-10-17: Allternit Desktop bundles and runs the subscription gateway (subs-gateway-manager.ts; scripts/prepare-subs-gateway.cjs \u2192 resources/subs-gateway, node:sqlite so no native module, Electron's Node, ~/.allternit/subscriptions with the file secret store; skipped where ALLTERNIT_LOCAL_SUBS_GATEWAY=1 already). allternit-api ALLTERNIT_LOCAL_SUBS_GATEWAY=fallback: a bound, running, allowed Sessions computer answers first, else Desktop's own gateway; =1 (cloud computer image) stays primary; /subscriptions/status reports local, fallback and sessions_computer. D15 becomes a lane rule: phone and desktop-app lanes run on the person's own computer; browser lanes there are off until turned on (GET/PUT /v1/settings/browser-lanes; off = no browser account routes, web route offline, login 409 browser_lanes_off) and then run in the installed Google Chrome \u2014 never Chrome for Testing (OpenAI geoblocks it, too many checks) \u2014 headless=new on the account's profile, automation features off, Chrome's normal user agent (HeadlessChrome is held by Cloudflare; live check on chatgpt.com passed), attached over CDP (worker/hidden_chrome.ts). Model-picker chats (POST /v1/tasks chat.create/continue with a provider) ask the same RouteDirector at turn start; phone/desktop-app routes run through the route's AAI adapter (routes/app-route-tasks.ts) with worker-identical task events, thread \u2192 app conversation persisted (migration 0013); NO_ROUTE keeps the FabricRouter browser path. Settings \u2192 Subscriptions \u203a Runs on shows This computer / the Sessions computer, Add a Sessions computer, and the Browser sign-ins on this computer switch. Pairing handover to a Sessions computer: Mac \u2192 Sessions computer only (approve-on-phone is a future note, not built)."
         },
         {
           "on": "2026-10-17",
-          "note": "Deterministic route router for signed-in apps (spec P0 + the Settings API): six routes in a fixed order (android-app -> iphone-app-ictrl -> desktop-app-cdp -> desktop-app-ax -> web -> iphone-app-usb-agent), selected by a pure function of (vendor, eligible routes, order, override) and logged with its reason. A route is eligible only when signed in, online, and every capability-contract item (§3, 7 items) passed the /aai/conformance suite for the CURRENT app version — results stored per (vendor, route, app_version); an app update re-arms ineligibility until the suite re-runs. The chosen route is written into the vendor's binding; the AAI host consults the router only at turn start, so failover is strictly between-turn and a streaming turn never switches; no eligible route answers the typed NO_ROUTE (\"phone offline, no other signed-in route\") — never a weaker fallback. desktop-app-cdp applies only while the shipped app accepts its debug flag unmodified (launch-time probe per app version; never patch/re-sign/inject a vendor binary — otherwise desktop-app-ax or the phone). Settings API: GET /v1/routes + PUT /v1/routes/:vendor/override (400 unless eligible). Phone routes register now but their adapters are a follow-up task: eligible stays false with the failing items until conformance passes — never assumed. Gateway-local: services/subscription-gateway/src/routes/* (registry, contract, select, store, director), migration 0012, test/routes-router.test.ts."
+          "note": "Deterministic route router for signed-in apps (spec P0 + the Settings API): six routes in a fixed order (android-app -> iphone-app-ictrl -> desktop-app-cdp -> desktop-app-ax -> web -> iphone-app-usb-agent), selected by a pure function of (vendor, eligible routes, order, override) and logged with its reason. A route is eligible only when signed in, online, and every capability-contract item (\u00a73, 7 items) passed the /aai/conformance suite for the CURRENT app version \u2014 results stored per (vendor, route, app_version); an app update re-arms ineligibility until the suite re-runs. The chosen route is written into the vendor's binding; the AAI host consults the router only at turn start, so failover is strictly between-turn and a streaming turn never switches; no eligible route answers the typed NO_ROUTE (\"phone offline, no other signed-in route\") \u2014 never a weaker fallback. desktop-app-cdp applies only while the shipped app accepts its debug flag unmodified (launch-time probe per app version; never patch/re-sign/inject a vendor binary \u2014 otherwise desktop-app-ax or the phone). Settings API: GET /v1/routes + PUT /v1/routes/:vendor/override (400 unless eligible). Phone routes register now but their adapters are a follow-up task: eligible stays false with the failing items until conformance passes \u2014 never assumed. Gateway-local: services/subscription-gateway/src/routes/* (registry, contract, select, store, director), migration 0012, test/routes-router.test.ts."
         },
         {
           "on": "2026-10-13",
@@ -443,7 +473,7 @@
         },
         {
           "on": "2026-10-18",
-          "note": "Settings → Subscriptions becomes Connections. GET /v1/routes (subscription-gateway) gives each route an optional telemetry block {lastOkAt, lastUsedAt, latencyMs, successRate7d, tasks7d, reliability}: computed on read from the route's adapters' task_attempts and canary_runs over the last 7 days, null with no rows, absent when nothing serves the route; reliability is exact for written adapters, structured for the generic AX chat-app reader, best_effort for the USB-agent vision route and linked phones without an adapter. allternit-api serves GET /api/v1/gateway/catalog {packs, botProjects} from assets/gateway-catalog.json (the UI's VENDOR_PACKS + BOT_PROJECTS data, relayed on the web by the cloud-api data-plane fallback), and GET /providers/auth/status takes ?kind=cli|api|local (cli skips the Gizzi auth-methods call and catalog rows). Install metadata maps cursor-agent → cursor and qodercli → qoder."
+          "note": "Settings \u2192 Subscriptions becomes Connections. GET /v1/routes (subscription-gateway) gives each route an optional telemetry block {lastOkAt, lastUsedAt, latencyMs, successRate7d, tasks7d, reliability}: computed on read from the route's adapters' task_attempts and canary_runs over the last 7 days, null with no rows, absent when nothing serves the route; reliability is exact for written adapters, structured for the generic AX chat-app reader, best_effort for the USB-agent vision route and linked phones without an adapter. allternit-api serves GET /api/v1/gateway/catalog {packs, botProjects} from assets/gateway-catalog.json (the UI's VENDOR_PACKS + BOT_PROJECTS data, relayed on the web by the cloud-api data-plane fallback), and GET /providers/auth/status takes ?kind=cli|api|local (cli skips the Gizzi auth-methods call and catalog rows). Install metadata maps cursor-agent \u2192 cursor and qodercli \u2192 qoder."
         }
       ],
       "evidence": [
@@ -642,7 +672,7 @@
       "decisions": [
         {
           "on": "2026-10-09",
-          "note": "Driver spec §8: computer-use task suite (domains/computer-use/suite) — 40 tasks (20 Mac run, 20 Linux/Windows await a test machine), code-only checkers, runner with pixel/read_ui/subtask/replay modes, pass^3 and determinism report."
+          "note": "Driver spec \u00a78: computer-use task suite (domains/computer-use/suite) \u2014 40 tasks (20 Mac run, 20 Linux/Windows await a test machine), code-only checkers, runner with pixel/read_ui/subtask/replay modes, pass^3 and determinism report."
         },
         {
           "on": "2026-10-09",
@@ -654,11 +684,11 @@
         },
         {
           "on": "2026-10-07",
-          "note": "Agent cursor overlay (computer toolset P5) in every computer viewer, from vendored MIT @trycua/cursor-motion, driven by computer.action events; style in Settings → Computers."
+          "note": "Agent cursor overlay (computer toolset P5) in every computer viewer, from vendored MIT @trycua/cursor-motion, driven by computer.action events; style in Settings \u2192 Computers."
         },
         {
           "on": "2026-10-10",
-          "note": "D1b (task K5): the driver gained native guest engines — engines/atspi.py (AT-SPI reads, AT-SPI action/text/value acting, xdotool pixels, scrot+Pillow screenshots) and engines/uia.py (UIA reads on one MTA thread, invoke/value/selection/toggle patterns, user32 input, System.Drawing screenshots) — plus a hello capability report and Linux/Windows safety context. No platform-specific import crashes off-mac; guests without the deps report degraded and fail closed."
+          "note": "D1b (task K5): the driver gained native guest engines \u2014 engines/atspi.py (AT-SPI reads, AT-SPI action/text/value acting, xdotool pixels, scrot+Pillow screenshots) and engines/uia.py (UIA reads on one MTA thread, invoke/value/selection/toggle patterns, user32 input, System.Drawing screenshots) \u2014 plus a hello capability report and Linux/Windows safety context. No platform-specific import crashes off-mac; guests without the deps report degraded and fail closed."
         }
       ],
       "evidence": [
@@ -709,7 +739,7 @@
       "label": "Cloud computer backups and restore points",
       "product": "product:cloud-computers",
       "status": "live",
-      "description": "Every customer cloud computer is backed up off-site each night, encrypted. Owners can take up to 5 restore points, roll back to one, and download a full copy of the computer from Settings → Computers on every surface.",
+      "description": "Every customer cloud computer is backed up off-site each night, encrypted. Owners can take up to 5 restore points, roll back to one, and download a full copy of the computer from Settings \u2192 Computers on every surface.",
       "touches": [
         "allternit-ai/src/components/computers",
         "allternit-ai/src/lib",
@@ -859,11 +889,11 @@
         },
         {
           "on": "2026-10-19",
-          "note": "Settings → Usage adds per-brain split, daily cost/tokens chart, bot filter and Brain/Bot/Day breakdowns. /usage/summary group_by takes bot (session_metadata agentId) and day (tz_offset_minutes); older servers fall back to the four base dimensions."
+          "note": "Settings \u2192 Usage adds per-brain split, daily cost/tokens chart, bot filter and Brain/Bot/Day breakdowns. /usage/summary group_by takes bot (session_metadata agentId) and day (tz_offset_minutes); older servers fall back to the four base dimensions."
         },
         {
           "on": "2026-10-25",
-          "note": "Auto top-up (W1 of SPEC-cloud-credits-open-lane): saved card from packs/setup Checkout, off-session PaymentIntent after wallet debits when balance < threshold, one pending attempt, monthly cap, failure turns it off and notifies; migration 103, /api/v1/billing/auto-topup routes, payment_intent.* webhook events, Settings → Billing card on all surfaces."
+          "note": "Auto top-up (W1 of SPEC-cloud-credits-open-lane): saved card from packs/setup Checkout, off-session PaymentIntent after wallet debits when balance < threshold, one pending attempt, monthly cap, failure turns it off and notifies; migration 103, /api/v1/billing/auto-topup routes, payment_intent.* webhook events, Settings \u2192 Billing card on all surfaces."
         },
         {
           "on": "2026-10-25",
@@ -875,7 +905,7 @@
         },
         {
           "on": "2026-10-27",
-          "note": "Keep going on Allternit Cloud (button only, nothing charged without the tap, no automatic switching): a session paused/wrapped at the user's own subscription limit gets paused.cloud {modelID, label, funds} from gizzi (same model if /v1/models lists it, else deepseek-v4-pro, never lane open; funds from /billing/credits + /me/usage). POST /session/:id/resume {cloud:true} switches to allternit/<model>, clears the pause and continues with a 'Continued on Allternit Cloud (…) after the … was reached.' note (part metadata.cloudContinue, surfaced by allternit-api as message metadata.cloudContinue). No funds: button reads Add Cloud credits and opens billing. Strip on Chat/Code/Bot threads on all surfaces; gizzi TUI /keep-going."
+          "note": "Keep going on Allternit Cloud (button only, nothing charged without the tap, no automatic switching): a session paused/wrapped at the user's own subscription limit gets paused.cloud {modelID, label, funds} from gizzi (same model if /v1/models lists it, else deepseek-v4-pro, never lane open; funds from /billing/credits + /me/usage). POST /session/:id/resume {cloud:true} switches to allternit/<model>, clears the pause and continues with a 'Continued on Allternit Cloud (\u2026) after the \u2026 was reached.' note (part metadata.cloudContinue, surfaced by allternit-api as message metadata.cloudContinue). No funds: button reads Add Cloud credits and opens billing. Strip on Chat/Code/Bot threads on all surfaces; gizzi TUI /keep-going."
         }
       ],
       "evidence": [
@@ -930,7 +960,7 @@
         },
         {
           "on": "2026-10-24",
-          "note": "Eoj: BoardUI look pass — the per-bot lanes became a light four-column board (To do, Working, Needs you, Done) built from thread status (delegateColumn), with a Bots list under it, card details in the pane, and Ready for review → Done as the only column drag (threadApi.resolve). Board API lanes return open task threads only (ai #807)."
+          "note": "Eoj: BoardUI look pass \u2014 the per-bot lanes became a light four-column board (To do, Working, Needs you, Done) built from thread status (delegateColumn), with a Bots list under it, card details in the pane, and Ready for review \u2192 Done as the only column drag (threadApi.resolve). Board API lanes return open task threads only (ai #807)."
         }
       ],
       "evidence": [
@@ -953,7 +983,7 @@
       "decisions": [
         {
           "on": "2026-10-24",
-          "note": "Eoj: BoardUI look pass — calendar month chips with time and type tint (goals blue, routines green, loops purple, heartbeats amber), +N more day list, block names and times in Week/Day, and an anchored TaskDetailsCard on Automation Tasks with Run now / Edit / Pause; phones keep dots plus a day list and the same card as a sheet (ai #806)."
+          "note": "Eoj: BoardUI look pass \u2014 calendar month chips with time and type tint (goals blue, routines green, loops purple, heartbeats amber), +N more day list, block names and times in Week/Day, and an anchored TaskDetailsCard on Automation Tasks with Run now / Edit / Pause; phones keep dots plus a day list and the same card as a sheet (ai #806)."
         },
         {
           "on": "2026-10-31",
@@ -996,7 +1026,7 @@
         },
         {
           "on": "2026-10-15",
-          "note": "Phone drawer reorganized around the desktop mode wheel (Home · Bots · Code · ACI, from src/shell/mode-buttons.ts): it shows only the active mode's rail and recents, with the A://TERNIT wordmark (A://TERNIT BOTS / A://TERNIT ACI at a smaller size in Bots and ACI, per Eoj 2026-10-16; gizzi code lockup in Code). Code, Bots, ACI, Tasks and Customize rows left the drawer; Inbox and Phones became icons; Customize moved into phone Settings; PhoneBotDrawer merged into PhoneDrawer."
+          "note": "Phone drawer reorganized around the desktop mode wheel (Home \u00b7 Bots \u00b7 Code \u00b7 ACI, from src/shell/mode-buttons.ts): it shows only the active mode's rail and recents, with the A://TERNIT wordmark (A://TERNIT BOTS / A://TERNIT ACI at a smaller size in Bots and ACI, per Eoj 2026-10-16; gizzi code lockup in Code). Code, Bots, ACI, Tasks and Customize rows left the drawer; Inbox and Phones became icons; Customize moved into phone Settings; PhoneBotDrawer merged into PhoneDrawer."
         },
         {
           "on": "2026-10-18",
@@ -1150,7 +1180,7 @@
         },
         {
           "on": "2026-10-29",
-          "note": "Per-project trace export: GET/PUT/DELETE /v1/projects/{id}/tracing + POST .../tracing/test (scope usage; pg 113 platform_project_tracing, headers encrypted with the credential cipher). project_tracing.rs exports OTLP/HTTP protobuf GenAI spans (invoke_agent per conversation/AG-UI turn via meter_turn, call spans in calls::finish, phone run/step spans in runtime_events phone_fan_out) on a spawned task through events::post_vetted (SSRF-checked); failures only set last_error. Console: Platform → Phones page (list, history, live view iframe from POST /v1/phones/{serial}/live) and Projects → Tracing; mail added to the key scope picker."
+          "note": "Per-project trace export: GET/PUT/DELETE /v1/projects/{id}/tracing + POST .../tracing/test (scope usage; pg 113 platform_project_tracing, headers encrypted with the credential cipher). project_tracing.rs exports OTLP/HTTP protobuf GenAI spans (invoke_agent per conversation/AG-UI turn via meter_turn, call spans in calls::finish, phone run/step spans in runtime_events phone_fan_out) on a spawned task through events::post_vetted (SSRF-checked); failures only set last_error. Console: Platform \u2192 Phones page (list, history, live view iframe from POST /v1/phones/{serial}/live) and Projects \u2192 Tracing; mail added to the key scope picker."
         }
       ],
       "evidence": [
@@ -1165,7 +1195,7 @@
       "label": "Hosted computer driver",
       "product": "product:platform-api",
       "status": "building",
-      "description": "Platform API /v1/computers: hosted computers that run a model's computer and browser tool calls, with drop-in drivers for the Anthropic SDK, OpenAI and Gemini, an MCP server, approvals and per-key limits. Both published SDKs (@allternit/computer-driver, allternit-computer-driver) also expose contract v2's structured members (read_ui … skills) as typed client methods and the computer_v2 function tool.",
+      "description": "Platform API /v1/computers: hosted computers that run a model's computer and browser tool calls, with drop-in drivers for the Anthropic SDK, OpenAI and Gemini, an MCP server, approvals and per-key limits. Both published SDKs (@allternit/computer-driver, allternit-computer-driver) also expose contract v2's structured members (read_ui \u2026 skills) as typed client methods and the computer_v2 function tool.",
       "touches": [
         "allternit/cmd/allternit-cloud-api/src/routes/platform_v1",
         "allternit/sdk/computer-driver",
@@ -1225,7 +1255,7 @@
         },
         {
           "on": "2026-10-24",
-          "note": "Eoj: BoardUI look pass — Create bot is one screen: live avatar preview, colours and the four Look sources (Build, Characters, Photo, Initials) inline with Edit look expanding the editor in place, Name — Role / What it does beside it, a segmented Build a new bot / Bring a vendor's bot switch; phone sheet unchanged. The photo sprite shows BlockPulse while it is made instead of the img-fx mosaic (ai #808, #805)."
+          "note": "Eoj: BoardUI look pass \u2014 Create bot is one screen: live avatar preview, colours and the four Look sources (Build, Characters, Photo, Initials) inline with Edit look expanding the editor in place, Name \u2014 Role / What it does beside it, a segmented Build a new bot / Bring a vendor's bot switch; phone sheet unchanged. The photo sprite shows BlockPulse while it is made instead of the img-fx mosaic (ai #808, #805)."
         }
       ],
       "evidence": [
@@ -1263,7 +1293,7 @@
         },
         {
           "on": "2026-10-09",
-          "note": "D2: contract v2 (allternit.computer.v2) ships — the 17 pixel members plus read_ui/act/run_batch/verify through the driver sidecar, request_human (lease pause, live view with input enabled, POST /api/v1/computers/:id/human-done resume) and use_credential (sealed vault + macOS Keychain + Bitwarden/1Password CLI adapters + RFC 6238 TOTP; values never enter the model context or logs; optional app/domain bindings). gizzi offers the structured members as the computer_v2 function tool to every model family (Claude keeps its native toolset for the pixel members). Windows this-device input moves off the Cua CLI fallback onto the sidecar over token-gated loopback TCP."
+          "note": "D2: contract v2 (allternit.computer.v2) ships \u2014 the 17 pixel members plus read_ui/act/run_batch/verify through the driver sidecar, request_human (lease pause, live view with input enabled, POST /api/v1/computers/:id/human-done resume) and use_credential (sealed vault + macOS Keychain + Bitwarden/1Password CLI adapters + RFC 6238 TOTP; values never enter the model context or logs; optional app/domain bindings). gizzi offers the structured members as the computer_v2 function tool to every model family (Claude keeps its native toolset for the pixel members). Windows this-device input moves off the Cua CLI fallback onto the sidecar over token-gated loopback TCP."
         },
         {
           "on": "2026-10-09",
@@ -1462,11 +1492,11 @@
         },
         {
           "on": "2026-10-10",
-          "note": "Craft editors Phase 1: `pdf` joins the kind contract (default body format application/pdf) on both sides — cloud-api KINDS allow-list and the app registry. PDFs open in the workspace through the embedded PdfCraft WASM editor over the craft:1 postMessage bridge served from office.allternit.com/craft/pdf/ (see feature:craft-editors). .pdf uploads become pdf-kind records."
+          "note": "Craft editors Phase 1: `pdf` joins the kind contract (default body format application/pdf) on both sides \u2014 cloud-api KINDS allow-list and the app registry. PDFs open in the workspace through the embedded PdfCraft WASM editor over the craft:1 postMessage bridge served from office.allternit.com/craft/pdf/ (see feature:craft-editors). .pdf uploads become pdf-kind records."
         },
         {
           "on": "2026-10-24",
-          "note": "Eoj: BoardUI look pass — the chat's Artifacts pane shows generated images and videos at the top as a two-column Gallery (MediaPreview tiles) above the Files list (ai #805)."
+          "note": "Eoj: BoardUI look pass \u2014 the chat's Artifacts pane shows generated images and videos at the top as a two-column Gallery (MediaPreview tiles) above the Files list (ai #805)."
         },
         {
           "on": "2026-10-27",
@@ -1518,7 +1548,7 @@
       "label": "Project panels (.allternit/panels files as ops sheets and MCP Apps)",
       "product": "product:ai-allternit",
       "status": "building",
-      "description": "A project carries panels as JSON files in .allternit/panels/: an ops sheet (kind ops: live sources from a URL signed with the user's own connection, a built-in allternit source or a connector tool; templated status line; prompt buttons that send to the session's agent) or an MCP App (kind app: opens the user's connector's ui:// resource). Listed under Panes → Panels in Code mode and opened as a pane (pane id panel:<file>) or a strip above the composer; the user switches placement per file on the device. Optional agent rules (instructions added to the system context, guards that turn a matching allowed tool call into an ask) apply only after the user approves the file in the panel; approvals are stored by gizzi per project root + file + sha256, so an edited file needs approval again. Needs a reachable local gizzi (Desktop, or a web/phone build pointed at one); elsewhere Panels are hidden.",
+      "description": "A project carries panels as JSON files in .allternit/panels/: an ops sheet (kind ops: live sources from a URL signed with the user's own connection, a built-in allternit source or a connector tool; templated status line; prompt buttons that send to the session's agent) or an MCP App (kind app: opens the user's connector's ui:// resource). Listed under Panes \u2192 Panels in Code mode and opened as a pane (pane id panel:<file>) or a strip above the composer; the user switches placement per file on the device. Optional agent rules (instructions added to the system context, guards that turn a matching allowed tool call into an ask) apply only after the user approves the file in the panel; approvals are stored by gizzi per project root + file + sha256, so an edited file needs approval again. Needs a reachable local gizzi (Desktop, or a web/phone build pointed at one); elsewhere Panels are hidden.",
       "touches": [
         "allternit/cmd/gizzi-code/src/runtime/project",
         "allternit/cmd/gizzi-code/src/runtime/server",
@@ -1533,7 +1563,7 @@
       "decisions": [
         {
           "on": "2026-10-23",
-          "note": "Eoj approved gap 10: project panels from .allternit/panels files, as ops sheets and MCP Apps, agent rules after approval. No new panel engine: ops panels run on the ops sheet runtime (OpsView runtimeOptions: localOnly device approvals + extra panel__<source>/panel__header tools), app panels use McpAppResourceFrame. gizzi-code routes GET /project-panels, POST /project-panels/approve|revoke, GET /project-panels/source (mounted at / and /v1); URL feeds go through the egress guard and a connection: feed is only signed (MCP auth token of that name) after approval of the current sha256. Approved instructions append in InstructionPrompt.system; approved guards are checked in PermissionNext.ask (allow → ask, dontAsk → deny)."
+          "note": "Eoj approved gap 10: project panels from .allternit/panels files, as ops sheets and MCP Apps, agent rules after approval. No new panel engine: ops panels run on the ops sheet runtime (OpsView runtimeOptions: localOnly device approvals + extra panel__<source>/panel__header tools), app panels use McpAppResourceFrame. gizzi-code routes GET /project-panels, POST /project-panels/approve|revoke, GET /project-panels/source (mounted at / and /v1); URL feeds go through the egress guard and a connection: feed is only signed (MCP auth token of that name) after approval of the current sha256. Approved instructions append in InstructionPrompt.system; approved guards are checked in PermissionNext.ask (allow \u2192 ask, dontAsk \u2192 deny)."
         }
       ],
       "evidence": [
@@ -1613,7 +1643,7 @@
       "decisions": [
         {
           "on": "2026-10-24",
-          "note": "Eoj: BoardUI look pass — added GraphSankey (value-width ribbons, hover/focus/tap isolation, phone list), GraphRadar and GraphCombo (bars left axis, line right axis); Scatter left out for now. mdx_graph gained sankey, radar and combo cases and the agent prompt lists all three (ai #809)."
+          "note": "Eoj: BoardUI look pass \u2014 added GraphSankey (value-width ribbons, hover/focus/tap isolation, phone list), GraphRadar and GraphCombo (bars left axis, line right axis); Scatter left out for now. mdx_graph gained sankey, radar and combo cases and the agent prompt lists all three (ai #809)."
         }
       ],
       "evidence": [
@@ -1626,7 +1656,7 @@
       "label": "Watch your agents work (agent presence, cursors, suggestions)",
       "product": "product:ai-allternit",
       "status": "building",
-      "description": "Doc and sheet artifacts show the agents working in them on Desktop, the ai.allternit.com phone layout and the m.allternit.com PWA: agent avatars in the header presence stack with an \"N here\" count and the agents' running cost, a labelled cursor on the block or cell an agent works on (name, cost, task), agent edits as pending suggestions with Accept / Reject and \"N suggestions · $X · Accept all\", agent comments under the agent's name, and live reload when an agent saves. gizzi's artifact_suggest posts the suggestions (text, block and cell change shapes) and artifact_read / artifact_update / artifact_suggest / artifact_comment send best-effort agent presence heartbeats with the bot or agent name, a task line, the anchor and the session cost. cloud-api stores agent presence rows, comment agent_name and artifact_suggestions (migration 098); the app applies accepted changes and saves the version, the server never rewrites bodies. In the Cowork Docs pane agent edits become tracked changes under the agent's name.",
+      "description": "Doc and sheet artifacts show the agents working in them on Desktop, the ai.allternit.com phone layout and the m.allternit.com PWA: agent avatars in the header presence stack with an \"N here\" count and the agents' running cost, a labelled cursor on the block or cell an agent works on (name, cost, task), agent edits as pending suggestions with Accept / Reject and \"N suggestions \u00b7 $X \u00b7 Accept all\", agent comments under the agent's name, and live reload when an agent saves. gizzi's artifact_suggest posts the suggestions (text, block and cell change shapes) and artifact_read / artifact_update / artifact_suggest / artifact_comment send best-effort agent presence heartbeats with the bot or agent name, a task line, the anchor and the session cost. cloud-api stores agent presence rows, comment agent_name and artifact_suggestions (migration 098); the app applies accepted changes and saves the version, the server never rewrites bodies. In the Cowork Docs pane agent edits become tracked changes under the agent's name.",
       "touches": [
         "allternit/cmd/gizzi-code/src/runtime/tools",
         "allternit/cmd/gizzi-code/src/runtime/integrations",
@@ -1709,11 +1739,11 @@
         },
         {
           "on": "2026-10-10",
-          "note": "Phase 3 app-independent parts: `video` joins the kind contract — cloud-api KINDS gains the kind (default body format application/vnd.allternit.video+json) and the app registry gains the allow-list entry (interim rendering as code; no editor until the host-wiring slice). The craft_store runtime gate already admitted image|video (PR #1477), so no server gate change was needed. FilmCraft bundle rebuilt cleanly with CRAFT_FEATURES=embed (the video xtask forwards CRAFT_FEATURES to cargo --features; documented in vendor/craft/VENDOR.md for the future CI job) and published to office.allternit.com/craft/video/ plus mirrored into allternit-ai public/craft/video/. Server: cmd/allternit-cloud-api/src/artifacts/kinds.rs; app: src/lib/artifacts/{types,kinds}.ts."
+          "note": "Phase 3 app-independent parts: `video` joins the kind contract \u2014 cloud-api KINDS gains the kind (default body format application/vnd.allternit.video+json) and the app registry gains the allow-list entry (interim rendering as code; no editor until the host-wiring slice). The craft_store runtime gate already admitted image|video (PR #1477), so no server gate change was needed. FilmCraft bundle rebuilt cleanly with CRAFT_FEATURES=embed (the video xtask forwards CRAFT_FEATURES to cargo --features; documented in vendor/craft/VENDOR.md for the future CI job) and published to office.allternit.com/craft/video/ plus mirrored into allternit-ai public/craft/video/. Server: cmd/allternit-cloud-api/src/artifacts/kinds.rs; app: src/lib/artifacts/{types,kinds}.ts."
         },
         {
           "on": "2026-10-10",
-          "note": "Phase 3 host wiring: VideoCraftEditor (src/components/craft/CraftEditor.tsx) + video-io.ts. Open ladder: stored craft/source.fcproj wins, with the footage bytes re-imported under the same virtual path so a stored project's clip references resolve (the editor's file table is per-session; OPFS restore helps the same browser); first-time opens import the footage the meta.media ref points at and the host issues file.saveAs {path} so the app's own Save never prompts. Save routing by name extension (FilmCraft's adapter sends no format; meta.path is the virtual path): .fcproj -> runtime storage + a host-requested file.exportMedia {path} MP4 export; the export's save-request -> uploadAttachmentToCloud -> new text/uri-list version body with meta.media = {url, mime}; anything else (audio stems, caption sidecars) -> craft/export.<ext>. media_generate video outputs become video-kind drafts (project body + media-plane ref in meta) via from-transcript selectedToDraft; the library gains Upload video. Phone/PWA v1 is the playable view plus an Edit video entry that mounts the full FilmCraft (trim adaptation deferred, flagged). Bridge: video embeds load ?empty=1. Docs: guides/artifact-modes.mdx + docs/design/artifacts-v2.md app-contract bullet. Server untouched (the craft_store gate has admitted video since #1477). Office CSP fix (live bug the smoke caught): the #1475 _headers fix made script-src 'self' 'wasm-unsafe-eval' actually apply to /craft/* — and every vendored app's index.html boots from an INLINE script, so all three editors silently failed to boot (blank iframe, host handshake timeout; PDF/image/video alike, in-product verification had not caught it). Fixed by adding 'unsafe-inline' to the /craft/* script-src (surfaces/office.allternit.com/public/_headers): the office origin carries no credentials, apps run in opaque-origin sandboxed iframes, and connect-src 'none' + COOP/COEP remain. A live boot check (handshake -> craft:open -> command round-trip against the deployed bundle) is now documented in vendor/craft/VENDOR.md as required for the future CI job — strings|grep craft:1 does not catch a CSP-blocked boot. Live-boot fixes the smoke caught (nothing had ever booted the embed end-to-end; CSP only started applying with #1475's _headers-at-root fix): (1) office /craft/* CSP — script-src gains 'unsafe-inline' (vendored index.html files boot from inline scripts; a hash would churn per build), connect-src 'self' (the same-origin .wasm fetch), plus Access-Control-Allow-Origin:* and Cross-Origin-Resource-Policy: cross-origin (the sandboxed iframe's opaque origin module-loads its own glue/wasm). (2) bridge.ts speaks the crate's actual wire: bare kebab-case types (hello, open, save-request — no craft: prefix) and numeric command ids — the two sides were written against PROTOCOL.md independently and never integrated; PROTOCOL.md now documents the real wire. (3) Host→app posts must target '*' (explicit origins are never delivered to opaque-origin windows); app→host arrive with origin 'null' and the host pins event.source to its own iframe. (4) craft-host's wasm transport dropped EVERY [json, ArrayBuffer] message (the string-only parse returned early), so no craft:open bytes ever reached any app — fixed in the crate (Allternit-authored, not upstream) and the FilmCraft bundle rebuilt with CRAFT_FEATURES=embed. The image/pdf bundles embed the same latent transport bug and must be rebuilt the same way (same crate, no code change) before their editors can open documents — flagged follow-up, not done here to avoid redeploying live surfaces outside this slice. The future CI job must run a live boot check (handshake → open with bytes → one command), not just strings|grep craft:1."
+          "note": "Phase 3 host wiring: VideoCraftEditor (src/components/craft/CraftEditor.tsx) + video-io.ts. Open ladder: stored craft/source.fcproj wins, with the footage bytes re-imported under the same virtual path so a stored project's clip references resolve (the editor's file table is per-session; OPFS restore helps the same browser); first-time opens import the footage the meta.media ref points at and the host issues file.saveAs {path} so the app's own Save never prompts. Save routing by name extension (FilmCraft's adapter sends no format; meta.path is the virtual path): .fcproj -> runtime storage + a host-requested file.exportMedia {path} MP4 export; the export's save-request -> uploadAttachmentToCloud -> new text/uri-list version body with meta.media = {url, mime}; anything else (audio stems, caption sidecars) -> craft/export.<ext>. media_generate video outputs become video-kind drafts (project body + media-plane ref in meta) via from-transcript selectedToDraft; the library gains Upload video. Phone/PWA v1 is the playable view plus an Edit video entry that mounts the full FilmCraft (trim adaptation deferred, flagged). Bridge: video embeds load ?empty=1. Docs: guides/artifact-modes.mdx + docs/design/artifacts-v2.md app-contract bullet. Server untouched (the craft_store gate has admitted video since #1477). Office CSP fix (live bug the smoke caught): the #1475 _headers fix made script-src 'self' 'wasm-unsafe-eval' actually apply to /craft/* \u2014 and every vendored app's index.html boots from an INLINE script, so all three editors silently failed to boot (blank iframe, host handshake timeout; PDF/image/video alike, in-product verification had not caught it). Fixed by adding 'unsafe-inline' to the /craft/* script-src (surfaces/office.allternit.com/public/_headers): the office origin carries no credentials, apps run in opaque-origin sandboxed iframes, and connect-src 'none' + COOP/COEP remain. A live boot check (handshake -> craft:open -> command round-trip against the deployed bundle) is now documented in vendor/craft/VENDOR.md as required for the future CI job \u2014 strings|grep craft:1 does not catch a CSP-blocked boot. Live-boot fixes the smoke caught (nothing had ever booted the embed end-to-end; CSP only started applying with #1475's _headers-at-root fix): (1) office /craft/* CSP \u2014 script-src gains 'unsafe-inline' (vendored index.html files boot from inline scripts; a hash would churn per build), connect-src 'self' (the same-origin .wasm fetch), plus Access-Control-Allow-Origin:* and Cross-Origin-Resource-Policy: cross-origin (the sandboxed iframe's opaque origin module-loads its own glue/wasm). (2) bridge.ts speaks the crate's actual wire: bare kebab-case types (hello, open, save-request \u2014 no craft: prefix) and numeric command ids \u2014 the two sides were written against PROTOCOL.md independently and never integrated; PROTOCOL.md now documents the real wire. (3) Host\u2192app posts must target '*' (explicit origins are never delivered to opaque-origin windows); app\u2192host arrive with origin 'null' and the host pins event.source to its own iframe. (4) craft-host's wasm transport dropped EVERY [json, ArrayBuffer] message (the string-only parse returned early), so no craft:open bytes ever reached any app \u2014 fixed in the crate (Allternit-authored, not upstream) and the FilmCraft bundle rebuilt with CRAFT_FEATURES=embed. The image/pdf bundles embed the same latent transport bug and must be rebuilt the same way (same crate, no code change) before their editors can open documents \u2014 flagged follow-up, not done here to avoid redeploying live surfaces outside this slice. The future CI job must run a live boot check (handshake \u2192 open with bytes \u2192 one command), not just strings|grep craft:1."
         },
         {
           "on": "2026-10-22",
@@ -1732,7 +1762,7 @@
       "label": "PDF editor (edit in place on PDFium, keeps fonts and layout)",
       "product": "product:ai-allternit",
       "status": "live",
-      "description": "The pdf kind's editor: PDFium (WASM, @embedpdf/pdfium) in a web worker edits the PDF itself. Text edits rewrite only the touched text objects in the PDF's own font (embedded subset, else another subset of the same font in the document, else the same family from the open font library via Fontsource on jsDelivr, else a metric-compatible twin, else a standard font only after telling the user, with Undo); the rest of the line slides by the width delta so layout holds. Also: move/resize/delete objects, new text/image/signature/ink/shapes, highlights and comments as real annotations, whiteout, true redaction, AcroForm fill, page reorder/rotate/duplicate/delete/insert blank/insert PDF/extract, find, snapshot undo/redo, autosave to artifact versions. Same component on Desktop, the ai.allternit.com phone layout (bottom tool tray) and the m.allternit.com PWA. PdfCraft (feature:craft-editors) stays reachable as Advanced tools. Scanned PDFs become editable: on-device OCR (Tesseract.js, self-hosted under /ocr/ by vite-plugins/ocr-engine.ts) adds an invisible text layer; editing a scanned line matches its font from the pixels (36 open families, word-by-word overlap, weight, stem, word gap) and re-typesets only that line over a paper-colour cover. Agent tools via pane_artifact (read_page, replace_text, set_line, add_text, fill_field, highlight, delete/rotate pages). Edit mode outlines every editable line/image/shape on hover; multi-select (Shift-click, drag box, Cmd+A) moves/resizes/nudges/duplicates/deletes together; engine duplicateObjects rebuilds text (same embedded font), images (decoded bitmap) and paths; pinch, Cmd-scroll and two-finger zoom 30–400%.",
+      "description": "The pdf kind's editor: PDFium (WASM, @embedpdf/pdfium) in a web worker edits the PDF itself. Text edits rewrite only the touched text objects in the PDF's own font (embedded subset, else another subset of the same font in the document, else the same family from the open font library via Fontsource on jsDelivr, else a metric-compatible twin, else a standard font only after telling the user, with Undo); the rest of the line slides by the width delta so layout holds. Also: move/resize/delete objects, new text/image/signature/ink/shapes, highlights and comments as real annotations, whiteout, true redaction, AcroForm fill, page reorder/rotate/duplicate/delete/insert blank/insert PDF/extract, find, snapshot undo/redo, autosave to artifact versions. Same component on Desktop, the ai.allternit.com phone layout (bottom tool tray) and the m.allternit.com PWA. PdfCraft (feature:craft-editors) stays reachable as Advanced tools. Scanned PDFs become editable: on-device OCR (Tesseract.js, self-hosted under /ocr/ by vite-plugins/ocr-engine.ts) adds an invisible text layer; editing a scanned line matches its font from the pixels (36 open families, word-by-word overlap, weight, stem, word gap) and re-typesets only that line over a paper-colour cover. Agent tools via pane_artifact (read_page, replace_text, set_line, add_text, fill_field, highlight, delete/rotate pages). Edit mode outlines every editable line/image/shape on hover; multi-select (Shift-click, drag box, Cmd+A) moves/resizes/nudges/duplicates/deletes together; engine duplicateObjects rebuilds text (same embedded font), images (decoded bitmap) and paths; pinch, Cmd-scroll and two-finger zoom 30\u2013400%.",
       "touches": [
         "allternit-ai/src/lib/pdf",
         "allternit-ai/src/components/pdf-editor",
@@ -1742,7 +1772,7 @@
       "decisions": [
         {
           "on": "2026-10-21",
-          "note": "Eoj: PDFs must be editable like Acrobat/Canva, in Desktop, and edits must not change the font or layout — 'as natural as the original pdf'. Built on PDFium (MIT/Apache via EmbedPDF's build) rather than PdfCraft (no existing-text editing) or mupdf.js (AGPL). Desktop CSP gains 'wasm-unsafe-eval' (worker compiles WASM). Electron 41 has no named local-fonts permission, so system-font lookup only runs in browsers that allow it; Desktop uses the font library and metric twins."
+          "note": "Eoj: PDFs must be editable like Acrobat/Canva, in Desktop, and edits must not change the font or layout \u2014 'as natural as the original pdf'. Built on PDFium (MIT/Apache via EmbedPDF's build) rather than PdfCraft (no existing-text editing) or mupdf.js (AGPL). Desktop CSP gains 'wasm-unsafe-eval' (worker compiles WASM). Electron 41 has no named local-fonts permission, so system-font lookup only runs in browsers that allow it; Desktop uses the font library and metric twins."
         },
         {
           "on": "2026-10-21",
@@ -2007,7 +2037,7 @@
         },
         {
           "on": "2026-10-17",
-          "note": "Settings → Computers → Phones labels each lane on its own: 'Screen & control' (adb + scrcpy, status 'Screen: …') and 'Phone Link — AI apps' (status 'Apps: …'), and a linked Android row says 'Screen not connected' while no phone is online on the screen lane — a healthy Phone Link pill had read as the whole phone being connected. Post-pair adb connect retries POST_PAIR_CONNECT_ATTEMPTS (4) times for mDNS lag and stops at once on cancel."
+          "note": "Settings \u2192 Computers \u2192 Phones labels each lane on its own: 'Screen & control' (adb + scrcpy, status 'Screen: \u2026') and 'Phone Link \u2014 AI apps' (status 'Apps: \u2026'), and a linked Android row says 'Screen not connected' while no phone is online on the screen lane \u2014 a healthy Phone Link pill had read as the whole phone being connected. Post-pair adb connect retries POST_PAIR_CONNECT_ATTEMPTS (4) times for mDNS lag and stops at once on cancel."
         },
         {
           "on": "2026-10-17",
@@ -2015,7 +2045,7 @@
         },
         {
           "on": "2026-10-17",
-          "note": "Phone first (Eoj): Phone Link is the main way to connect an app; browser sign-ins are the fallback. Settings → Subscriptions opens with Link a phone and Linked phones (moved from Computers → Phones, which keeps a pointer plus the Android cable tools and the USB Agent), then Apps and channels: one row per app built only from live data (phone.devices apps + gateway accounts/providers + routes), never a UI list. The apps Phone Link looks for are data: surfaces/allternit-desktop/src/main/phone-app-catalog.json, 101 apps (the gateway's AI vendors with their provider ids, Telegram, and apps that have a connector, keyed by the connector id with its category), every store id checked against the App Store lookup API and Google Play (scripts/verify-phone-app-catalog.mjs). Desktop re-reads a healthy phone's apps every 10 min (Android replaces, iPhone only adds) and only ever probes AI chat apps by launching them. Connector detail pages say which linked phones have the app. No 'coming soon' rows. With Linked phones out of Computers → Phones, its 'Screen not connected' line is dropped; the 'Apps:' pill stays."
+          "note": "Phone first (Eoj): Phone Link is the main way to connect an app; browser sign-ins are the fallback. Settings \u2192 Subscriptions opens with Link a phone and Linked phones (moved from Computers \u2192 Phones, which keeps a pointer plus the Android cable tools and the USB Agent), then Apps and channels: one row per app built only from live data (phone.devices apps + gateway accounts/providers + routes), never a UI list. The apps Phone Link looks for are data: surfaces/allternit-desktop/src/main/phone-app-catalog.json, 101 apps (the gateway's AI vendors with their provider ids, Telegram, and apps that have a connector, keyed by the connector id with its category), every store id checked against the App Store lookup API and Google Play (scripts/verify-phone-app-catalog.mjs). Desktop re-reads a healthy phone's apps every 10 min (Android replaces, iPhone only adds) and only ever probes AI chat apps by launching them. Connector detail pages say which linked phones have the app. No 'coming soon' rows. With Linked phones out of Computers \u2192 Phones, its 'Screen not connected' line is dropped; the 'Apps:' pill stays."
         },
         {
           "on": "2026-10-17",
@@ -2118,7 +2148,7 @@
       "decisions": [
         {
           "on": "2026-10-17",
-          "note": "Phones 2.0 relay lane (approved plan): mirrors the computer_ws VNC proxy minus VNC — frames are opaque (binary video + JSON text). Read-only is enforced at the pipe (a read-only token's browser->desktop frames are dropped) because the payload is never parsed. One active stream per phone-link socket: a socket may hello many phones (all register online) but streams one serial at a time; scrcpy is one device per process, so the Desktop opens one socket per streamed phone. Full-control tokens reuse the computer_ws ACI confirmation-grant pattern."
+          "note": "Phones 2.0 relay lane (approved plan): mirrors the computer_ws VNC proxy minus VNC \u2014 frames are opaque (binary video + JSON text). Read-only is enforced at the pipe (a read-only token's browser->desktop frames are dropped) because the payload is never parsed. One active stream per phone-link socket: a socket may hello many phones (all register online) but streams one serial at a time; scrcpy is one device per process, so the Desktop opens one socket per streamed phone. Full-control tokens reuse the computer_ws ACI confirmation-grant pattern."
         }
       ],
       "evidence": [
@@ -2286,7 +2316,7 @@
       "label": "One-click install and sign-in for CLI brains",
       "product": "product:ai-allternit",
       "status": "building",
-      "description": "Settings → Connections → Coding tools installs CLI brains (Claude Code, Codex, Grok, …) on the active computer with the Factory's pinned, licence-gated installer (private Node when the machine has none), then signs in with a link and code shown on any device, so a cloud computer can run them while the user's Mac is off.",
+      "description": "Settings \u2192 Connections \u2192 Coding tools installs CLI brains (Claude Code, Codex, Grok, \u2026) on the active computer with the Factory's pinned, licence-gated installer (private Node when the machine has none), then signs in with a link and code shown on any device, so a cloud computer can run them while the user's Mac is off.",
       "touches": [
         "allternit-ai/src/components/settings",
         "allternit-ai/src/lib",
@@ -2307,7 +2337,7 @@
       "decisions": [
         {
           "on": "2026-10-16",
-          "note": "Eoj: build plan step D (Install → Sign in → Connected for any computer) so his always-on cloud computer can run CLI brains. Reuses the Factory harness installer, not a second manifest; sign-in captures the CLI's own link/code instead of opening a browser nobody sees."
+          "note": "Eoj: build plan step D (Install \u2192 Sign in \u2192 Connected for any computer) so his always-on cloud computer can run CLI brains. Reuses the Factory harness installer, not a second manifest; sign-in captures the CLI's own link/code instead of opening a browser nobody sees."
         },
         {
           "on": "2026-10-19",
@@ -2506,7 +2536,7 @@
       "decisions": [
         {
           "on": "2026-10-20",
-          "note": "Eoj approved round 4 of the prototype: real templates, A:// first and default, editable Day-first scheduler (slot to create, click to edit, drag to move) also in Bot Mode → Routines, one seen flag across setup and Bot Mode."
+          "note": "Eoj approved round 4 of the prototype: real templates, A:// first and default, editable Day-first scheduler (slot to create, click to edit, drag to move) also in Bot Mode \u2192 Routines, one seen flag across setup and Bot Mode."
         },
         {
           "on": "2026-10-20",
@@ -2553,7 +2583,7 @@
       "label": "Subagent catalog and faces",
       "product": "product:gizzi-code",
       "status": "building",
-      "description": "11 built-in subagent types (Explorer, Builder, Code Reviewer, Verifier, Web Researcher, Browser Operator, Computer Operator, Data Analyst, UI Designer, Release Engineer, Security Reviewer) with model classes small/standard/deep; planning, debugging, docs-writing and summarizing are bundled gizzi skills the main loop runs itself (folded 2026-10-27), with subagent evals in domains/agent-evals/subagents; a face per type from the Office Professionals pack on every subagent surface, Settings → Subagents to edit looks and add custom types (stored per user in subagent_types), synced into gizzi and exported to the Claude Code and Codex brains, which also get the delegation rule, config subagents and gizzi's built-in skills through the CLI bridge.",
+      "description": "11 built-in subagent types (Explorer, Builder, Code Reviewer, Verifier, Web Researcher, Browser Operator, Computer Operator, Data Analyst, UI Designer, Release Engineer, Security Reviewer) with model classes small/standard/deep; planning, debugging, docs-writing and summarizing are bundled gizzi skills the main loop runs itself (folded 2026-10-27), with subagent evals in domains/agent-evals/subagents; a face per type from the Office Professionals pack on every subagent surface, Settings \u2192 Subagents to edit looks and add custom types (stored per user in subagent_types), synced into gizzi and exported to the Claude Code and Codex brains, which also get the delegation rule, config subagents and gizzi's built-in skills through the CLI bridge.",
       "touches": [
         "allternit/cmd/gizzi-code/src/runtime/agents",
         "allternit/cmd/gizzi-code/src/runtime/loop",
@@ -2594,7 +2624,7 @@
       "label": "Agent steps in replies",
       "product": "product:ai-allternit",
       "status": "live",
-      "description": "The merged agent stream above a reply (Chat, Cowork, Code, bot and project threads): the agent's one-line plan, then a 'Using N tools · 14s' header with app logos ('Waiting for approval', '· N failed') and the tool rows on a thin rail with no card (last 6, older folded into '+N earlier'); each row ends with what it found and how long it took ('4 results · 1.2s', from tool part startedAt/finishedAt) and a check; a failed row shows its reason and Retry (latest reply); a step with a pending approval shows Deny / Always / Allow on its row and claims the request from the card and composer stack (process/inline-approvals.ts). Chips stay in view the whole time: web-search sources ('Searched 9 websites' with favicons), files made (open/download), failed steps. When done it folds to one line, '[logos] Used 4 tools · 12s' ('Thought for 12s' when it only thought), plus the chips; opening it shows the trail (tree line, plan sentence, each step with icon, verb and detail, searches grouped with their sources). Steps that reach a connected app show its logo and first finds. The task list is no longer drawn inline: it moved to the right-pane Progress (feature:progress-pane); inline source cards and plan cards are gone (sources become pills and chips through the response-parts contract). While media_generate runs, the reply shows a result-shaped frame with BlockPulse; the finished picture shows inline with Download / Open / Copy prompt. A Memory Drive Dream's Steps opens into the trail (defaultOpen). Same on Desktop, the ai.allternit.com phone layout and the m.allternit.com PWA.",
+      "description": "The merged agent stream above a reply (Chat, Cowork, Code, bot and project threads): the agent's one-line plan, then a 'Using N tools \u00b7 14s' header with app logos ('Waiting for approval', '\u00b7 N failed') and the tool rows on a thin rail with no card (last 6, older folded into '+N earlier'); each row ends with what it found and how long it took ('4 results \u00b7 1.2s', from tool part startedAt/finishedAt) and a check; a failed row shows its reason and Retry (latest reply); a step with a pending approval shows Deny / Always / Allow on its row and claims the request from the card and composer stack (process/inline-approvals.ts). Chips stay in view the whole time: web-search sources ('Searched 9 websites' with favicons), files made (open/download), failed steps. When done it folds to one line, '[logos] Used 4 tools \u00b7 12s' ('Thought for 12s' when it only thought), plus the chips; opening it shows the trail (tree line, plan sentence, each step with icon, verb and detail, searches grouped with their sources). Steps that reach a connected app show its logo and first finds. The task list is no longer drawn inline: it moved to the right-pane Progress (feature:progress-pane); inline source cards and plan cards are gone (sources become pills and chips through the response-parts contract). While media_generate runs, the reply shows a result-shaped frame with BlockPulse; the finished picture shows inline with Download / Open / Copy prompt. A Memory Drive Dream's Steps opens into the trail (defaultOpen). Same on Desktop, the ai.allternit.com phone layout and the m.allternit.com PWA.",
       "touches": [
         "allternit-ai/src/components/ai-elements",
         "allternit-ai/src/views/chat",
@@ -2615,11 +2645,11 @@
         },
         {
           "on": "2026-10-24",
-          "note": "Eoj: BoardUI look pass — generated images and videos: a result-shaped frame with the shared BlockPulse (one drawBlockPulse, also used by TeamNetwork and the photo sprite preview) replaces the pixel mosaic; finished media renders inline as GeneratedMediaCard with Download, Open and Copy prompt; reduced motion draws still squares and no fade (ai #805)."
+          "note": "Eoj: BoardUI look pass \u2014 generated images and videos: a result-shaped frame with the shared BlockPulse (one drawBlockPulse, also used by TeamNetwork and the photo sprite preview) replaces the pixel mosaic; finished media renders inline as GeneratedMediaCard with Download, Open and Copy prompt; reduced motion draws still squares and no fade (ai #805)."
         },
         {
           "on": "2026-10-25",
-          "note": "Eoj: one merged stream per turn (plan line, last 2 steps + live step, '+N earlier', timer), important things as chips the whole time (sources, files, failures, approvals), fold to 'Worked for … · N steps' with a BoardUI-style trail. Progress never inline: the checklist card and plan cards left the reply. Sources and plans come from one response-parts contract (plan, step, source, file, approval, answer) every brain is mapped into, native where the brain gives it, parsed fallback otherwise."
+          "note": "Eoj: one merged stream per turn (plan line, last 2 steps + live step, '+N earlier', timer), important things as chips the whole time (sources, files, failures, approvals), fold to 'Worked for \u2026 \u00b7 N steps' with a BoardUI-style trail. Progress never inline: the checklist card and plan cards left the reply. Sources and plans come from one response-parts contract (plan, step, source, file, approval, answer) every brain is mapped into, native where the brain gives it, parsed fallback otherwise."
         },
         {
           "on": "2026-10-27",
@@ -2772,7 +2802,7 @@
       "label": "Chat attachments open in their editor pane; the agent edits them",
       "product": "product:ai-allternit",
       "status": "live",
-      "description": "A file sent in chat with an editor here (PDF, .docx, .md, .html, video) becomes an artifact (src/lib/attachments/attachment-artifacts.ts, shared with the Artifacts view's uploads), opens in the pane, and the message carries an '[Opened in the editor pane: name → artifact id (kind)]' line; its chip reopens it. pane_artifact gains an 'open' action (artifact_id); in surfaces with no pane executor of their own the app's fallback executor (src/lib/agents/artifact-pane-agent.ts) opens the named, open or newest attached artifact and runs the request against its skill: the PDF editor's tools, or artifact-body-skill (read/replace_text/write) for docs, pages, code; video/image describe their media. The agent no longer asks the user to open files.",
+      "description": "A file sent in chat with an editor here (PDF, .docx, .md, .html, video) becomes an artifact (src/lib/attachments/attachment-artifacts.ts, shared with the Artifacts view's uploads), opens in the pane, and the message carries an '[Opened in the editor pane: name \u2192 artifact id (kind)]' line; its chip reopens it. pane_artifact gains an 'open' action (artifact_id); in surfaces with no pane executor of their own the app's fallback executor (src/lib/agents/artifact-pane-agent.ts) opens the named, open or newest attached artifact and runs the request against its skill: the PDF editor's tools, or artifact-body-skill (read/replace_text/write) for docs, pages, code; video/image describe their media. The agent no longer asks the user to open files.",
       "touches": [
         "allternit-ai/src/lib/attachments",
         "allternit-ai/src/lib/agents",
@@ -2821,7 +2851,7 @@
       "label": "All chats at a glance (session overview: list + grid + deck)",
       "product": "product:ai-allternit",
       "status": "building",
-      "description": "Every open session of the current mode as live cards (latest reply, working / needs you / new reply, last activity) in a two-column grid or a sideways deck, with a project dropdown filter and no visible scrollbars. Home = chats (including former Cowork sessions), Code = code threads by repo, ACI = agent runs; a bot's deck Threads tab uses the same component for its threads (Take it / Not now on suggestions, x marks done) and its Tasks tab became nested dropdowns (thread > step > subagent). Closing a card archives (metadata.archived / setCodeSessionArchived). Desktop: Open all recents / Open all code recents open on the cards with a List switch back to RecentsView / ThreadsView. Phone (ai.allternit.com phone layout + m.allternit.com): count button in the Chats and Code headers and See all over drawer Recents open PhoneOverviewOverlay. List · Grid · Deck is the standard switch on every overview (OverviewLayoutSwitch): built-in list rows, or the caller's own list (group chat roster rows; Desktop Recents / Code Recents list pages). Projects (ProjectView + BotProjectsListView via ProjectsOverview) and Artifacts (ArtifactsView preview cards) use the same switch. Code's session switcher (CodeSessionSwitcher, top right of the Code view) follows the mode: Threads in thread mode, Terminals in Terminal mode; See all opens the Code overview on that kind in List, Grid or Deck.",
+      "description": "Every open session of the current mode as live cards (latest reply, working / needs you / new reply, last activity) in a two-column grid or a sideways deck, with a project dropdown filter and no visible scrollbars. Home = chats (including former Cowork sessions), Code = code threads by repo, ACI = agent runs; a bot's deck Threads tab uses the same component for its threads (Take it / Not now on suggestions, x marks done) and its Tasks tab became nested dropdowns (thread > step > subagent). Closing a card archives (metadata.archived / setCodeSessionArchived). Desktop: Open all recents / Open all code recents open on the cards with a List switch back to RecentsView / ThreadsView. Phone (ai.allternit.com phone layout + m.allternit.com): count button in the Chats and Code headers and See all over drawer Recents open PhoneOverviewOverlay. List \u00b7 Grid \u00b7 Deck is the standard switch on every overview (OverviewLayoutSwitch): built-in list rows, or the caller's own list (group chat roster rows; Desktop Recents / Code Recents list pages). Projects (ProjectView + BotProjectsListView via ProjectsOverview) and Artifacts (ArtifactsView preview cards) use the same switch. Code's session switcher (CodeSessionSwitcher, top right of the Code view) follows the mode: Threads in thread mode, Terminals in Terminal mode; See all opens the Code overview on that kind in List, Grid or Deck.",
       "touches": [
         "allternit-ai/src/components",
         "allternit-ai/src/views",
@@ -2859,7 +2889,7 @@
       "label": "System drawer (developer tool: Needs you, Bots, Workspace, Running, Problems)",
       "product": "product:ai-allternit",
       "status": "building",
-      "description": "A developer tool, off by default (Settings → Developer → System drawer, useDevToolsStore). A bottom drawer (Desktop, beside the rail) or sheet (phone layout and m.allternit.com PWA) showing what is happening across every session and mode. Needs you: agent permission requests from any surface plus Factory approvals, answered in place. Bots: every bot (agent store + useBotStatus, plus Factory Terminal bots) as one line each with Open; a Lanes switch shows the Terminal bots' hand-off lanes; a Graph switch draws the Factory campaign flow or, with no campaign, the Terminal bots as a team. Workspace: the Office view itself (OfficeView compact: the 3dfacility loft with its one panel as a bottom sheet, the bot list, then the picked bot's real chat). Running: sessions replying and dev servers with Open and Stop. Problems: failing routines, failed Terminal bots and parsed check failures from code sessions active in the last day. Opened with Cmd/Ctrl+J, the dot on the Gizzi desktop pet (hover shows a summary bubble, click opens; clicking the pet still opens quick chat), the menu bar menu's System section (right-click; left-click still opens the HUD) or the phone menu footer button; never opens by itself.",
+      "description": "A developer tool, off by default (Settings \u2192 Developer \u2192 System drawer, useDevToolsStore). A bottom drawer (Desktop, beside the rail) or sheet (phone layout and m.allternit.com PWA) showing what is happening across every session and mode. Needs you: agent permission requests from any surface plus Factory approvals, answered in place. Bots: every bot (agent store + useBotStatus, plus Factory Terminal bots) as one line each with Open; a Lanes switch shows the Terminal bots' hand-off lanes; a Graph switch draws the Factory campaign flow or, with no campaign, the Terminal bots as a team. Workspace: the Office view itself (OfficeView compact: the 3dfacility loft with its one panel as a bottom sheet, the bot list, then the picked bot's real chat). Running: sessions replying and dev servers with Open and Stop. Problems: failing routines, failed Terminal bots and parsed check failures from code sessions active in the last day. Opened with Cmd/Ctrl+J, the dot on the Gizzi desktop pet (hover shows a summary bubble, click opens; clicking the pet still opens quick chat), the menu bar menu's System section (right-click; left-click still opens the HUD) or the phone menu footer button; never opens by itself.",
       "touches": [
         "allternit-ai/src/components/desktop-companion",
         "allternit-ai/src/drawers",
@@ -2878,7 +2908,7 @@
         },
         {
           "on": "2026-10-29",
-          "note": "Eoj: the drawer had drifted too complex; it is an advanced developer tool, not for regular users. Off by default behind Settings → Developer. Tabs cut to Needs you, Bots, Running, Problems (Runs tab, usage strip and filter toolbars removed); Bots added as a plain list with a Graph switch. The rail indicator is removed. Entry is option E: a dot on the Gizzi pet (hover shows the summary bubble, click the dot opens; Gizzi's own click unchanged, nothing pops up by itself) plus a System section in the menu bar right-click menu (left-click still opens the HUD)."
+          "note": "Eoj: the drawer had drifted too complex; it is an advanced developer tool, not for regular users. Off by default behind Settings \u2192 Developer. Tabs cut to Needs you, Bots, Running, Problems (Runs tab, usage strip and filter toolbars removed); Bots added as a plain list with a Graph switch. The rail indicator is removed. Entry is option E: a dot on the Gizzi pet (hover shows the summary bubble, click the dot opens; Gizzi's own click unchanged, nothing pops up by itself) plus a System section in the menu bar right-click menu (left-click still opens the HUD)."
         },
         {
           "on": "2026-10-29",
@@ -2941,7 +2971,7 @@
       "label": "Waiting games (Play in the message box)",
       "product": "product:ai-allternit",
       "status": "building",
-      "description": "A Play button in the message box (ThreadComposer, ChatComposer) shows from session open in Bot and Code mode and after about 5 s of work in Chat; it opens a floating game window (Desktop: bottom right, draggable; phone layout and m.allternit.com PWA: above the message box) with a Full screen button. Eight ASCII games on one canvas: Big Fish, Bot Race (your bots, ~200 dev words), Token Catch, Meteor Dodge, Bug Bash, Stack Deploy, Context Snake, Bot Memory. When the bot that opened it finishes, the game pauses and says the reply is ready. Settings → Appearance → Background → Waiting games (on by default).",
+      "description": "A Play button in the message box (ThreadComposer, ChatComposer) shows from session open in Bot and Code mode and after about 5 s of work in Chat; it opens a floating game window (Desktop: bottom right, draggable; phone layout and m.allternit.com PWA: above the message box) with a Full screen button. Eight ASCII games on one canvas: Big Fish, Bot Race (your bots, ~200 dev words), Token Catch, Meteor Dodge, Bug Bash, Stack Deploy, Context Snake, Bot Memory. When the bot that opened it finishes, the game pauses and says the reply is ready. Settings \u2192 Appearance \u2192 Background \u2192 Waiting games (on by default).",
       "touches": [
         "allternit-ai/src/components/waiting-games",
         "allternit-ai/src/components/threads/ThreadComposer.tsx",
@@ -2969,7 +2999,7 @@
       "label": "Pinned artifacts in the composer deck",
       "product": "product:ai-allternit",
       "status": "building",
-      "description": "Artifacts ▾ in every composer's bottom deck (after Agent mode ▾ | Plugins ▾): Pinned (up to 8), Recent (3), All artifacts…; Pin to deck / Unpin from deck in the artifact window and library cards. Pins are per user on the connected runtime (GET/PUT /api/v1/deck-pins), localStorage when signed out or on an older runtime. Desktop, ai.allternit.com (desktop + phone) and the m.allternit.com PWA.",
+      "description": "Artifacts \u25be in every composer's bottom deck (after Agent mode \u25be | Plugins \u25be): Pinned (up to 8), Recent (3), All artifacts\u2026; Pin to deck / Unpin from deck in the artifact window and library cards. Pins are per user on the connected runtime (GET/PUT /api/v1/deck-pins), localStorage when signed out or on an older runtime. Desktop, ai.allternit.com (desktop + phone) and the m.allternit.com PWA.",
       "touches": [
         "allternit-ai/src/components/composer-deck",
         "allternit-ai/src/lib/artifacts",
@@ -2995,7 +3025,7 @@
       "label": "Gizzi Code intelligence: live repo map, LSP rename, symbol edits, review verdicts",
       "product": "product:gizzi-code",
       "status": "building",
-      "description": "Empryo-gap program (Eoj 2026-10-23). Phase 1: a live per-file repo map built on the codemap scanners (exports, importer counts, git co-change, session boost) injected as a ranked slice into every Code turn's system prompt, with a Repo map context-breakdown row; LSP rename applied as one workspace edit through the edit permission/undo path; symbol_edit tool (TS compiler / LSP documentSymbol). Phase 2 adds a fresh-context reviewer with PASS/FAIL/PARTIAL verdicts, review-until-pass, goal round checks and per-job models. Gap 9: a live code map in Code mode (Panes → Code map; phone pane menu) drawn from GET /codemap/graph with read/edit lighting from codemap.activity events, plus a 'Repo map in this prompt' line under the chat.",
+      "description": "Empryo-gap program (Eoj 2026-10-23). Phase 1: a live per-file repo map built on the codemap scanners (exports, importer counts, git co-change, session boost) injected as a ranked slice into every Code turn's system prompt, with a Repo map context-breakdown row; LSP rename applied as one workspace edit through the edit permission/undo path; symbol_edit tool (TS compiler / LSP documentSymbol). Phase 2 adds a fresh-context reviewer with PASS/FAIL/PARTIAL verdicts, review-until-pass, goal round checks and per-job models. Gap 9: a live code map in Code mode (Panes \u2192 Code map; phone pane menu) drawn from GET /codemap/graph with read/edit lighting from codemap.activity events, plus a 'Repo map in this prompt' line under the chat.",
       "touches": [
         "allternit/cmd/gizzi-code/src/runtime/tools",
         "allternit/cmd/gizzi-code/src/runtime/integrations",
@@ -3021,7 +3051,7 @@
       "label": "Decision trees (branching agent questions + Tasks Decisions deck)",
       "product": "product:ai-allternit",
       "status": "live",
-      "description": "gizzi's question tool takes optional risk/context and per-option recommended/caution/then (one follow-up level); such questions draw as a branching graph (DecisionTree): ask card left, measured SVG lines to options and on to follow-ups/outcomes, other branches fade, Other… takes text, the answer is a path ('Branch → Follow-up'). The docked question card shows it compact in every thread host; Tasks (desktop TasksView + phone TasksBoardScreen) shows 'Decisions · N waiting for you' from GET /api/v1/questions across sessions. Stacks under 640px for phones/PWA. The gizzi terminal's AskUserQuestion takes the same fields: risk/context line, 'Agent's pick' and caution marks, and a picked option's follow-up as a 'Then' step; the answer is the same path.",
+      "description": "gizzi's question tool takes optional risk/context and per-option recommended/caution/then (one follow-up level); such questions draw as a branching graph (DecisionTree): ask card left, measured SVG lines to options and on to follow-ups/outcomes, other branches fade, Other\u2026 takes text, the answer is a path ('Branch \u2192 Follow-up'). The docked question card shows it compact in every thread host; Tasks (desktop TasksView + phone TasksBoardScreen) shows 'Decisions \u00b7 N waiting for you' from GET /api/v1/questions across sessions. Stacks under 640px for phones/PWA. The gizzi terminal's AskUserQuestion takes the same fields: risk/context line, 'Agent's pick' and caution marks, and a picked option's follow-up as a 'Then' step; the answer is the same path.",
       "touches": [
         "allternit-ai/src/components",
         "allternit-ai/src/lib/agents",
@@ -3093,10 +3123,10 @@
     },
     {
       "id": "feature:message-actions",
-      "label": "Actions under a reply (Retry with versions, Retry with…, feedback, follow-ups)",
+      "label": "Actions under a reply (Retry with versions, Retry with\u2026, feedback, follow-ups)",
       "product": "product:ai-allternit",
       "status": "live",
-      "description": "One shared action row under replies in Chat, Cowork, Code and bot threads: copy, reply, speak, thumbs up/down with a reason after a thumbs-down (Wrong, Too long, Wrong format, Other), Retry on the latest reply (reverts the turn through POST /agent-sessions/:id/revert, gizzi SessionRevert, and resends; the replaced reply stays as a version, flipped with ‹ 2/2 ›, kept in memory for the app session), Retry with… (model picker, that retry only), and always-visible follow-ups from follow-ups/suggestions parts or the answer's closing 'Next step:' line (no canned prompts). Messages with images and vendor-app bots don't offer Retry. Same on Desktop, the ai.allternit.com phone layout and the m.allternit.com PWA.",
+      "description": "One shared action row under replies in Chat, Cowork, Code and bot threads: copy, reply, speak, thumbs up/down with a reason after a thumbs-down (Wrong, Too long, Wrong format, Other), Retry on the latest reply (reverts the turn through POST /agent-sessions/:id/revert, gizzi SessionRevert, and resends; the replaced reply stays as a version, flipped with \u2039 2/2 \u203a, kept in memory for the app session), Retry with\u2026 (model picker, that retry only), and always-visible follow-ups from follow-ups/suggestions parts or the answer's closing 'Next step:' line (no canned prompts). Messages with images and vendor-app bots don't offer Retry. Same on Desktop, the ai.allternit.com phone layout and the m.allternit.com PWA.",
       "touches": [
         "allternit-ai/src/components/chat",
         "allternit-ai/src/lib/chat",
@@ -3109,7 +3139,7 @@
       "decisions": [
         {
           "on": "2026-10-25",
-          "note": "Eoj: Retry must be real (revert and resend, keep versions), with Retry with… for another model once; feedback asks why after a thumbs-down; follow-ups only from the answer itself, never canned."
+          "note": "Eoj: Retry must be real (revert and resend, keep versions), with Retry with\u2026 for another model once; feedback asks why after a thumbs-down; follow-ups only from the answer itself, never canned."
         }
       ],
       "evidence": [
@@ -3283,7 +3313,7 @@
       "label": "Setup checklist",
       "product": "product:ai-allternit",
       "status": "live",
-      "description": "Settings → Setup (and the end of first-run setup) lists what the user's Allternit depends on: account and plan, brain access, Google, connected accounts, notifications, computers and channels. Each row is Ready, Not checked or Needs setup from a live check, with a fix action and Check again. In the Bots app too.",
+      "description": "Settings \u2192 Setup (and the end of first-run setup) lists what the user's Allternit depends on: account and plan, brain access, Google, connected accounts, notifications, computers and channels. Each row is Ready, Not checked or Needs setup from a live check, with a fix action and Check again. In the Bots app too.",
       "touches": [
         "allternit/cmd/allternit-cloud-api",
         "allternit/cmd/allternit-api",
@@ -3332,7 +3362,7 @@
       "label": "Delete your account",
       "product": "product:ai-allternit",
       "status": "building",
-      "description": "Settings → Account → Delete account on Desktop, ai.allternit.com, the PWA and the iPhone app: type DELETE, Clerk user.delete(), sign out; cloud-api cancels billing, deletes computers and erases the data on Clerk's user.deleted webhook. Required by App Store guideline 5.1.1(v).",
+      "description": "Settings \u2192 Account \u2192 Delete account on Desktop, ai.allternit.com, the PWA and the iPhone app: type DELETE, Clerk user.delete(), sign out; cloud-api cancels billing, deletes computers and erases the data on Clerk's user.deleted webhook. Required by App Store guideline 5.1.1(v).",
       "evidence": [
         "allternit/surfaces/docs/guides/delete-account.mdx"
       ],

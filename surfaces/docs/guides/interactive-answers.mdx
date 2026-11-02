@@ -1,241 +1,124 @@
 ---
 title: 'Interactive answers'
-description: 'How every reply is laid out (answer templates, length, where an answer goes), how long answers look, and the cards and inline apps in replies: the Layout and visuals setting, live data, card repair, and how the app tells the model about them.'
+description: 'Fixed answer templates, validated data, local controls, saved state, and custom apps.'
 ---
 
-An assistant reply can include an interactive card: metrics, tables, line, area, bar and pie charts, tabs, timelines, checklists, steps, comparisons, and inputs that recompute on the page. Cards can also show live data from your connected apps and, with your approval each time, make changes through them. The model doesn't write HTML or code for a card. It picks from a fixed set of 38 Allternit components, and the app builds the card piece by piece while the reply streams.
-
-When the components can't do the job (sound, a drawing canvas, a game, a simulation), the assistant can instead put a small **inline app** in the reply: a self-contained HTML and JavaScript app that runs in a sandbox, with no network, styled to match the app.
-
-Cards work the same in Chat, Code, bot threads, the HUD and Design mode, on Desktop, ai.allternit.com (including the phone layout) and the m.allternit.com app.
+Interactive answers use templates owned by Allternit. The agent supplies data; it cannot change a card's layout, styling, component names or executable actions. The same renderer serves Desktop, the phone layout at ai.allternit.com, and the m.allternit.com PWA.
 
 ## How answers are laid out
 
-Every agent lays out answers the same way, whichever brain or model answers: installed CLI brains, Allternit Cloud models and the others.
+The app picks one of eight writing outlines from the request: quick answer, how-to, troubleshooting, comparison, decision, plan, research brief or status report. This picker uses whole-word triggers and a fixed priority order. Response style controls the requested length.
 
-- **The answer comes first**, in one line. The details come after it.
-- **A fixed layout for each kind of question.** Comparisons get criteria, a table, a recommendation and "what would change my choice". Decisions get the options in a table, a recommendation and the trade-offs. Plans get a goal, steps, risks and a first action. How-tos get steps and a check. Troubleshooting gets cause, fix and verify. Research gets findings with sources and open questions. Status updates get done, in progress, blocked and next. Quick questions get one line and up to 3 bullets.
-- **Sources are links** in the text. The agent doesn't describe its steps in the reply ("I searched…"), because the steps already show above it ([Agent steps in replies](/guides/agent-steps)).
-- **Settings → Response style sets the length.** Concise: the answer plus up to 3 bullets. Balanced: the answer plus short sections. Detailed: the full layout with reasoning and examples. Custom: your instructions set the length, and the layout stays the same.
-- **Each question gets one layout.** The app picks the layout from the words in your message before the agent starts ("vs" or "compare" gets Comparison, "should I" gets Decision, "how do I" gets How-to, "error" or "not working" gets Troubleshooting, and so on). The same question gets the same layout every time.
-- **Where an answer goes.** Answers stay in the reply, whatever their length. You get an interactive card when you need to pick, adjust or explore something. You get an artifact when the agent makes something you will keep, edit or share (a doc, deck, sheet, page or code file), or when you ask for one.
-- **Interactive cards** still show when you need to pick, adjust or explore something (Layout and visuals → Auto). Text only turns cards off. The layout above stays on either way.
+Writing outlines are instructions to the model. A model can still omit sections. The rendered interface has a separate enforcement boundary: prose uses the app's fixed Markdown answer view, and interactive cards require a supported template and valid data. Omitting a card does not create an unrestricted UI.
 
-Drafts the agent writes for you to send (emails, posts), code, files and artifacts keep their own format. For developers: the templates, the picker and the shape lint are in [Response parts and answer shapes](/guides/response-parts#answer-shapes-and-templates).
+Draft emails, source code, documents and other standalone artifacts keep their own formats.
+
+## Full template catalog
+
+The current catalog contains **82 registered templates in ten categories**. UI Forge provides search, category filters, synthetic examples, live previews and source references. There are 36 CopilotKit-reference entries and 46 Allternit entries. These are UI pattern implementations; external apps and backend services keep their own integrations.
+
+| Category | Templates |
+| --- | --- |
+| Display | 10 |
+| Planning | 16 |
+| Development | 7 |
+| Operations | 7 |
+| Research | 11 |
+| Travel | 9 |
+| Finance | 7 |
+| Agents | 6 |
+| Commerce | 7 |
+| People | 2 |
+
+The catalog includes weather, stock summaries, task review, itineraries, flights, boarding details, bags, seats, hotels, restaurants, books, banking records, budgets, product grids, inventory risk, shipments, people, executive briefs, CRM pipelines, social evidence, document analysis and repository reviews. Allternit adds agent rosters, tool runs, builds, deployments, incidents, connector health, capability and permission reviews, invoice and quote review, handoffs, cost reports, design reviews, shot lists, knowledge relationships and agendas.
+
+## Core answer templates
+
+| Template | What it shows |
+| --- | --- |
+| Quick answer | A title and text |
+| Comparison | Options, their points, and an optional recommendation |
+| Decision | A question and two to nine choices |
+| Plan | A checklist that keeps checked items |
+| How-to | Ordered steps and a verification note |
+| Troubleshooting | Cause, fix steps and verification |
+| Status report | Done, in progress, blocked and next |
+| Research brief | Findings with HTTPS source links and open questions |
+| Table | Records, headers and a source; optional read-only connector query |
+| Chart | A bar, line, area or pie chart with a source |
+| Form | Labelled fields and a button that sends current values into the conversation |
+| Calculator | Bounded numeric inputs and arithmetic results that update locally |
+
+A card cannot add arbitrary HTML, CSS, JavaScript or component trees. Calculator expressions support only numbers, declared inputs, and addition, subtraction, multiplication and division. Division by zero shows an explanation.
+
+## When a template is required
+
+In a visual-capable app chat, requests such as **Show transactions**, **Compare flights** and **Create a task board** select a template through fixed application rules. You can name any catalog entry with **Use template: task-board**. The app checks the final answer against the selected template before showing it.
+
+A missing card, a different template or invalid data gets one correction attempt. If that also fails, the chat shows a validation failure. It does not show the rejected answer. Stopping a turn does not trigger a formatting retry.
+
+Ordinary conversation, definition questions and code changes can use prose. Text only and an explicit request for plain text also use prose. A selected artifact output keeps its own format. External vendor and group paths that do not advertise interactive-answer support remain outside this required-card policy.
+
+Required-template enforcement needs both the updated app and an updated paired Gizzi runtime. Keep Desktop, the web app and the PWA on the coordinated release; an older runtime does not gain this response policy from a browser refresh.
+
+## Local controls and recovery
+
+Calculator and numeric form fields keep your draft as you type. Empty, non-finite, out-of-range and step-invalid values show an inline error. Calculator results are hidden until all numeric fields are valid. A form cannot submit invalid numeric values. Only valid values enter saved calculation state; unfinished drafts stay in the mounted card.
+
+Task boards let you move tasks between supplied stages and mark them complete in the card. Undo restores the last local change and returns keyboard focus to that task. These changes stay with the card and do not update an external task service. The current board state survives reload; the temporary Undo history does not.
+
+Flight cards start without a selection. Choose a flight, then use **Discuss selected flight** to send its supplied details into the conversation. This does not book a flight. The selected option survives reload. A failed send keeps the choice and offers a retry; a pending send blocks duplicate actions.
 
 ## How long answers are laid out
 
-Long replies read like a short page:
+Long prose stays in the fixed answer view, with Markdown headings, source links and tables. Length does not make a reply an artifact. Interactive template layouts do not change with model verbosity.
 
-- **Title and date.** A first-level heading is the answer's title, set in the same serif as page titles. A short line right under it (for example "Comparison as of October 25, 2026 · USD") shows small and grey.
-- **Bottom line first.** A paragraph that starts with "Bottom line:", "TL;DR:", "Recommendation:", "Verdict:" or "In short:" shows as a quiet callout with a rule on the left.
-- **Sections.** Section headings are clearly larger than sub-headings. When an answer has four or more sections, a **Contents** row at the top lists them; click one to jump to it. Click **Contents** to hide the list.
-- **Lists.** Items sit close together. An item that starts with a short label ("License: …") shows the label in bold.
-- **Tables show every row.** Wide tables scroll sideways. Click a table (or Tab to it) to show its copy, download and full-screen buttons; on a phone they are always shown.
-- **Sources.** Links the agent cites show as small pills with the site's icon and name, like "github". Several sources in a row become one pill, "github +2"; click **+2** to see them all. Opening a source asks first, as other links in answers do. Citation text without a link (such as "GitHub+3" pasted from another app) stays plain text.
+## Streaming, empty data and errors
 
-This styling applies only to the agent's replies (in Chat, Code and bot threads). Files, Memory Drive notes and artifacts keep their Markdown as written. The same layout applies on Desktop, ai.allternit.com, the phone layout and the m.allternit.com app, in light and dark mode.
+A streaming card holds a fixed loading state until its JSON envelope is complete. Partial inputs and queries do not mount. Empty datasets get the template's empty view.
 
-## Using cards
+The app and server check the version, template ID, field types, limits, table dimensions, chart dimensions, input IDs and calculation references. An invalid card gets readable fallback text and diagnostics. It cannot run as a custom layout. Saved legacy OpenUI programs remain available as readable text.
 
-- **Inputs update instantly.** Moving a slider or changing a number recomputes the card on your device. Nothing is sent to the model.
-- **Buttons and numbered choices** send their label to the assistant as your next message.
-- **What you set is remembered.** Reopen the chat and the card is as you left it, on any device you're signed in on: what you set is saved with the message. The device you used keeps a copy too, so it also works offline and on older servers.
-- **A card that can't be drawn still says what it meant.** If part of a card can't be shown, the rest still renders and a short note lists what was left out. If nothing can be drawn, the card's text appears instead (its title, numbers, rows and options), never a blank box or raw code. Allternit also tells the brain what went wrong, once, with your next message: if you're still on the same topic, the reply starts with the fixed card. It tries this one time only, and it never adds an extra message to your chat.
-- **Live data** comes from your connected apps (Settings → Connectors). A card that reads data loads it when it opens. A card that changes data only does so when you press its button, and shows an **Allow** bar with the exact tool and arguments first. Nothing changes until you approve. **Cancel** leaves everything as it was.
-- **Numbers say where they come from.** Every metric carries a note: your input, an estimate, or a named source.
+The bridge checks completed cards and stores diagnostics with the message. A failed card can add one bounded repair note to the next agent turn. This is not a silent second model call or a guarantee that the agent will correct it.
 
-### Turning cards off
+## Controls and saved state
 
-Settings → **Response style** → **Layout and visuals**:
+Sliders, form fields and checklists update locally. Choosing a decision option or submitting a form sends the current choice or values as the next message. A form does not directly perform connector writes.
 
-| Option | What happens |
-| --- | --- |
-| **Auto** (default) | The assistant can answer with a card when you need to pick, adjust or explore something. Plain text stays the default. |
-| **Text only** | The assistant isn't told about cards, so replies stay plain text. Cards already in a chat still show. The answer layout still applies. |
+Chat cards retain per-card state on the device and, when the transcript supports it, with the stored message. Pending transcript saves flush when a card closes. Opening a valid card as an artifact carries the current inputs into its versioned data. Owners and editors save later input changes as artifact versions. Read-only viewers keep local changes.
 
-The setting is saved on each device, like the Memory switches. On phones it's in the same Settings section.
+## Connected data
 
-### In Slack, Telegram, email and other channels
+The table template can query a connected tool marked read-only. Tool names and argument schemas come from the user's connectors. The runtime checks read-only status again before execution. Connector permissions still apply.
 
-Channels can't show cards, so a card in a bot's reply is sent there as readable text: the title, numbers (worked out from the card's starting values), table rows, chart values, steps, and numbered options with "Reply with a number or the option." Voice calls read the card aloud the same way. If a card can't be read, it becomes one line saying to open the reply in Allternit. An inline app always becomes one line naming it. The raw card code and app source are never posted. This covers Slack, Discord, Telegram, WhatsApp, Teams, SMS, email and voice (allternit-api `openui_text.rs`).
+Writes use the product's existing approval flows, such as ops-sheet actions. A card cannot supply a model-written Mutation or Action expression.
 
-## For developers
+## Custom apps
 
-Source: `allternit-ai/src/lib/openui/`:
+A requested game, canvas or simulation can still be a custom sandboxed app. Its reply first shows a fixed preview card. No model markup or script runs until the user selects **Run app**. Changed app source requires another click. Partial apps cannot run.
 
-| File | Role |
-| --- | --- |
-| `answers-library.tsx` | The component library, plus `interactiveAnswersPrompt()`, the model manual generated from the same schemas. |
-| `answers-more.tsx` | The layout, display, chart and extra input components, and the design tokens the model can name. |
-| `InteractiveAnswer.tsx` | Renders one card: progressive streaming, actions, saved state, tool calls, the **Allow** bar, failure fallback. |
-| `card-stream.ts` | Cuts a streaming card after its last complete statement. |
-| `card-text.ts` | A card as readable text (the fallback when it can't be drawn) and the parser's diagnostics. |
-| `card-meta.tsx` | The server's checks and the state saved with each message, provided per message by the transcript. |
-| `catalog.json` | The catalog as the server sees it (names, parameter order, required parameters); a test keeps it in step with the library. |
-| `openui-fences.ts` | Splits reply text into markdown and card fences (also while streaming). |
-| `answer-instructions.ts` | Builds the manual sent with each chat turn (empty when Settings says Text only) and `answerShapesInstructions()`, the answer-shape block sent on every send path either way. |
-| `answer-shapes.md`, `answer-templates.json`, `answer-shapes.ts` | The answer-shape rules, the named templates and the deterministic template picker. See [Response parts and answer shapes](/guides/response-parts#answer-shapes-and-templates). |
-| `card-tools.ts` | The user's connector tools for `Query()`/`Mutation()` and the rules for running them. |
-| `card-state.ts` | Per-card saved state on the device. |
-| `answer-prefs.ts` | The Layout and visuals setting. |
+The existing sandbox, network restrictions and heartbeat watchdog still apply after activation. An app fence cannot bypass the default answer-template renderer.
 
-The long-answer layout lives in `allternit-ai/src/components/ai-elements/`:
+## Design
 
-| File | Role |
-| --- | --- |
-| `markdown.tsx` | The renderer. The `answer` prop (set by assistant replies in chat and bot threads only) turns on the answer marks, source pills and Contents row; also the rehype order, `tableMaxHeight={0}` (Streamdown's 300 px table cap is gone), `cite` to source pills, and a `data-answer-root` wrapper (`display: contents`) for per-answer actions. |
-| `answer-structure.ts` | Rehype marks: `answer-short` (dateline), `answer-lead`, `answer-label`, focusable tables; `sectionTitles()` for Contents. |
-| `source-pills.ts`, `SourcePills.tsx` | Which links are citations, grouping runs into one `cite.source-pills`, favicon and short site name; the pill and its "+N" list (portalled, Escape or outside click closes, Streamdown's link check kept). |
-| `AnswerContents.tsx` | The Contents row for answers with 4 or more `##` sections. |
-| `app-source-links.ts` | App link chips; skips links already turned into source pills. |
-| `src/design/theme.css` (`.allternit-markdown`, `.source-pills*`, `.answer-contents*`) | Hierarchy, dateline, lead callout, list rhythm, pills, Contents, phone sizes. |
-| `preview-answer.html`, `src/dev/AnswerPreview.tsx` | Dev preview (`?theme=dark`, `?stream=1`, `?w=390`). |
+Design previews use the same validated answer envelopes. DESIGN.md tokens can style the application-owned components; they do not allow an agent to add layout code to a card.
 
-Inline apps: `allternit-ai/src/lib/apps/inline-app.ts` (document, theme variables, manual) and `src/components/ai-elements/InlineAppFrame.tsx` (the frame, previews and watchdog). Server side: allternit-api `openui_text.rs` (card text, `check_reply`/`check_card`), `card_meta.rs` (checks and card state per message, migration `V251__message_card_meta.sql`) and the `card_check` frame in the chat bridge (`v1_routes.rs`).
+## UI Forge
 
-Built on [OpenUI](https://www.openui.com/docs) (`@openuidev/react-lang`, MIT).
+UI Forge lists the complete catalog with search and category filters. Selecting an entry loads its synthetic example and fixed preview. Reference-derived entries link to the inspected upstream source. UI Forge edits **Template JSON** and previews the same validated cards as chat. Its model manual lists the data contract and available read-only query tools. Invalid JSON gets the same fallback as a chat card.
 
-### Format
+## Starter examples
 
-The model writes OpenUI Lang in a fenced block tagged `openui` (`openui-lang` is accepted too), anywhere in its markdown:
+Artifacts → **Make something new** includes **Start from an example**. Choose one of the twelve registered starters and select **Open starter**. The app copies the registered source directly, without an agent call. Plan and organization restrictions still apply.
 
-````markdown
-Here's the split:
+The HTML starters include a kanban board, regex tester, Markdown editor, JSON formatter, KPI dashboard, invoice generator, data table and budget tracker. The Mermaid starters include an ER diagram, org chart, user journey and class diagram.
 
-```openui
-root = Answer("Split the bill", [r, m, ask])
-$people = 4
-$tip = 18
-r = Row([s1, s2])
-s1 = Slider("People", $people, 1, 12)
-s2 = Slider("Tip", $tip, 0, 30, 1, "percent")
-m = Metric("Each pays", 184.6 * (1 + $tip / 100) / $people, "currency", "USD", "from your input")
-ask = Button("Round up each share")
-```
-````
+Starters label their sample data. Replace it before use. The kanban and budget examples use the artifact's account storage bridge. If saving is unavailable or fails, the page states where changes are kept; it does not claim they were saved.
 
-Text before and after the fence renders as normal markdown. While a fence is still streaming, the card is drawn up to its last complete statement (every bracket closed, no string left open), so components appear whole, one at a time, and a number never shows half-typed. Until the `root = …` line has arrived, the card's shape holds its place. Unknown components and broken lines are skipped; the rest of the card still renders.
+For the wire contract, validation boundaries and maintenance commands, see [Answer template contract](/reference/answer-template-contract).
 
-### Live data: Query and Mutation
+## Catalog presentation
 
-When the user has connectors, the manual lists their tools as `<connector>__<tool>` (for example `crm__list_deals`), read-only tools first, at most 24. A card can then use them:
+The prepared visual refresh gives tools compact layouts and gives evidence and explanations more reading space. Cards use a clear title, readable results and grouped supporting details. Travel views include journey routes and boarding details. Agents and people use profile cards. Products use catalogue tiles. Tasks and deals use stage boards. Transactions use a ledger, and research includes reading lists and concept relationships.
 
-````markdown
-```openui
-root = Answer("Open deals", [tbl, add])
-$title = "Acme"
-deals = Query("crm__list_deals", {stage: "open"}, {rows: []})
-create = Mutation("crm__create_deal", {title: $title})
-tbl = Table(["Title", "Stage"], deals.rows)
-add = Button("Add Acme", Action([@Run(create), @Run(deals)]))
-```
-````
-
-- `Query(tool, args, defaults, refreshSeconds?)` runs when the card opens and again when a `$variable` in its args changes. Built-ins such as `@Count`, `@Filter`, `@Sort` and `@Sum` work on its results.
-- `Mutation(tool, args)` runs only from a `Button` action (`Action([@Run(m), @Run(q), @Set($x, v), @Reset($x)])`).
-- Calls go through the MCP Apps host bridge (`POST /api/mcp/apps`, `tools/call`) with the user's own connector credentials, never to a provider directly. The model never sees the results; they go straight into the card.
-
-The rules are enforced in `card-tools.ts`, not only in the prompt:
-
-1. A `Query()` may only use a tool its connector marks read-only (`readOnlyHint`). Any other tool is refused before it runs.
-2. A tool that changes something must be declared as a `Mutation()` in the card. Every call shows the **Allow** bar with the tool and its arguments, whatever the connector's install permission mode.
-3. The install permission mode still applies to reads: **Always ask** asks before reads too.
-
-`Table` rows may be arrays (in header order) or objects (cells picked by header, ignoring case, spaces and underscores), so a `Query` result's rows can be passed straight in.
-
-### Design
-
-Cards follow common inline-card guidelines for chat apps, on Allternit's neutral polish tokens: system type within body and body-small sizes, a title, at most two actions in the footer, no scrolling inside the card, WCAG AA contrast, light and dark themes, and 44 px touch targets on phones. Each card has two zones: a controls panel (a Section holding inputs, shown as a soft inset with white fields) and the result, where the first Metric in a row is shown large as the answer and the rest are listed beside it. Number fields show grouped values (10,000) and whole currency amounts drop the cents. Result numbers animate only right after you change an input; the first paint and data refreshes show the value at once. While a card streams in, each new component slides in, text fades in, bars grow, lines draw and the card's height eases to fit, with a mono working beam after 1.5 s; a card loaded from history appears at once. Nothing animates with reduced motion on. Spacing, radius and chart colours are design tokens (`gap: "xs" | "sm" | "md" | "lg"`, `--iu-series-1…6`), so the model never writes pixels or colours. The manual asks for one short sentence before the card, and tells the model not to repeat the card's numbers in its text.
-
-### What runs where
-
-- **On the page (deterministic):** `$name` state, expressions (`+ - * /`, comparisons, `?:`) and `@` built-ins are evaluated by the OpenUI runtime. No `eval`, no network, no model call.
-- **Through the user's connectors:** `Query()` and `Mutation()`, under the rules above.
-- **Back to the model:** a `Button` without an action, and `Choice`, send their label as the next user message.
-- Links open only when they are `http(s)`; `Image` and `Link` components take `https` URLs only, and images load with no referrer. No other card code runs.
-- **Inline apps** (below) are the one place model-written code runs, and only in the sandbox.
-
-### Server check
-
-At the end of every chat turn, allternit-api checks each card the reply wrote against the catalog (`openui_catalog.json`, a copy of the app's `catalog.json`): unknown components, too many or too few values, names used but never defined, a missing `root`, lines that can't be read. It sends the result to the app as a `card_check` frame (per card: its key, the diagnostics and the card as text) and stores it with the message, so a reload shows the same. A failed card also queues a one-time repair note for the next turn: the [card repair loop](/guides/response-parts#card-repair-loop).
-
-What the user sets on a card is saved with the message through `PUT /api/v1/agent-sessions/:id/messages/:messageId/card-state` (merged per card, at most 32 cards and 16 KB per card), and comes back with the history from `GET /api/v1/agent-sessions/:id/card-meta`. Rows belong to the user who wrote them.
-
-### Inline apps
-
-When a card's components can't do it, the model writes a fenced block tagged `app` with a title:
-
-````markdown
-```app title="Drum machine"
-<div class="pads">…</div>
-<style>.pads { color: var(--viz-text); background: var(--viz-panel); }</style>
-<script>/* Web Audio … */</script>
-```
-````
-
-- It runs inline in the reply through the MCP sandbox proxy: another site (so another process under site isolation), an opaque origin, `connect-src 'none'`, scripts and styles only inline or from the library CDNs pages may use.
-- It gets the app's theme as CSS variables (`--viz-text`, `--viz-text-2`, `--viz-text-3`, `--viz-card`, `--viz-panel`, `--viz-panel-2`, `--viz-border`, `--viz-border-strong`, `--viz-accent`, the status colours, `--font-sans`, `--font-mono`, and the MCP Apps `--color-*` names), updated live when you switch light or dark. HTML artifacts that use these variables follow the theme in the artifact window too.
-- The frame grows with the app. While the reply streams, its markup and styles show as a preview with scripts removed; the app starts once the fence closes.
-- A heartbeat watchdog closes an app that stops responding (an endless loop) and offers **Restart**. It only judges an app that's on screen in a visible tab.
-- Model-made JSX previews and the older `sandbox` reply parts run the same way, never in the app's own page.
-
-### Components
-
-| Component | Signature | Use |
-| --- | --- | --- |
-| `Answer` | `(title?, children?, actions?)` | The root card. Exactly one, as `root`. `actions`: up to two Buttons in the footer; the first is primary. |
-| `Section` | `(title, children)` | Groups parts under a short sentence-case label. A Section with inputs becomes the card's controls panel. |
-| `Row` | `(children)` | Side by side; one column on phones. |
-| `Text` | `(content, tone?)` | `body`, `muted`, `heading`. |
-| `Metric` | `(label, value, format?, unit?, note?)` | `format`: `number`, `currency`, `percent`. `note` says where the number comes from. |
-| `Table` | `(headers, rows)` | Rows are arrays or objects. Numeric columns right-align; more than 6 rows show **Show all**. |
-| `BarChart` | `(labels, values, format?, unit?)` | 2–12 values. |
-| `Steps` | `(items)` | A real sequence. |
-| `Compare` | `(columns)` | `[{ "title", "points": [] }]`, 2–4 columns. |
-| `Callout` | `(content, tone?)` | `info`, `success`, `warning`, `danger`. |
-| `Slider` | `(label, $value, min, max, step?, format?, unit?)` | Writes a number. |
-| `NumberField` | `(label, $value, step?, format?, unit?, min?, max?)` | Writes a number. − / + steppers; `currency` shows the currency sign, `percent` shows %. |
-| `Select` | `(label, $value, options)` | Writes a string. Up to four short options show as a segmented control. |
-| `Toggle` | `(label, $value)` | Writes `true`/`false`. |
-| `Button` | `(label, action?, variant?)` | No action: sends the label to the model. With `Action([...])`: runs those steps. Put buttons in `Answer`'s actions. |
-| `Choice` | `(question, options)` | Numbered options; the pick is sent to the model. |
-| `Stack` | `(children, direction?, gap?)` | `vertical` (default) or `horizontal`; `gap`: `xs`, `sm`, `md`, `lg`. |
-| `Grid` | `(children, columns?, gap?)` | 2–4 equal columns; one column on phones. |
-| `Panel` | `(title?, children)` | A soft inset box, e.g. one option in a Grid. |
-| `Divider` | `()` | A thin line. |
-| `Tabs` / `Tab` | `(tabs)` / `(title, children)` | 2–5 views; switching is local. |
-| `Collapsible` | `(title, children, open?)` | Details the user can open. |
-| `Badge` | `(label, tone?)` | `neutral`, `info`, `success`, `warning`, `danger`. |
-| `KeyValue` | `(items, format?, unit?)` | `[{ "label", "value" }]`; values may be expressions. |
-| `List` | `(items)` | Bullets. |
-| `Quote` | `(content, cite?)` | A quotation. |
-| `Code` | `(content, language?)` | A snippet in monospace; never run. |
-| `Timeline` | `(items)` | `[{ "time", "title", "detail" }]`. |
-| `Image` | `(src, alt, caption?, ratio?)` | `https` only; `wide`, `square`, `tall`. |
-| `Link` | `(label, url)` | `https` only; opens in a new tab. |
-| `Progress` | `(label, value, max?, format?, unit?)` | Progress toward a goal. |
-| `LineChart` / `AreaChart` | `(labels, values?, series?, format?, unit?)` | One line from `values`, or up to 6 from `series: [{ "name", "values" }]`; hover shows values. |
-| `PieChart` | `(labels, values, format?, unit?)` | 2–6 slices as a ring with a legend and percentages. |
-| `TextField` | `(label, $value, placeholder?)` | Writes a string. |
-| `DateField` | `(label, $value)` | Writes `YYYY-MM-DD`. |
-| `Checklist` | `(label?, items, $value)` | Writes the ticked items; `@Count($done)` works in expressions. |
-
-### Model instructions
-
-The app, not gizzi-code, sends the manual. On every chat turn it builds `interactiveAnswersPrompt({ tools })` and adds it to the request's `systemPrompt` (the `/api/agent-chat` and Desktop `/api/v1/ai/chat` bridges) or, for direct gizzi sessions, to the message's `system` field with the `+` prefix, which appends to gizzi's own system prompt instead of replacing it. Because of this:
-
-- Each build only asks for the components it can render, and older Desktop builds never get instructions they can't show.
-- The terminal (`gizzi` TUI) and channels never get the manual.
-- **Text only** sends no card manual and no inline-apps manual. The answer-shape block (the rules, the length line and the placement rule) is sent either way, and allternit-api adds its own copy for callers that don't send one; see [Response parts and answer shapes](/guides/response-parts#answer-shapes-and-templates).
-- With the same tools, the text is byte-identical turn to turn, so it stays in the provider's prompt cache. A send waits at most 1.5 s for the connector tool list, then goes without tools.
-
-The manual is generated from the component schemas, so it can't drift from the renderer. The same manual and a live preview are in **UI Forge**, a playground for writing and checking cards.
-
-### Design mode
-
-Design mode's preview tab shows the latest card in the reply, re-skinned with the project's DESIGN.md: `background`, `text`, `primary` and `fontFamily` set the card's surface, text and accent colours and its font. Only tokens DESIGN.md actually names are applied.
-
-### Privacy
-
-OpenUI's renderer runs entirely in the app. Its observability stream is turned off (`publishObservability={false}`), and its runtime telemetry is opt-in and never runs in a browser. Its package install script is blocked by pnpm's build-script allow-list, so it doesn't run either.
+The layouts adapt to their card container, including narrow chat columns and phone screens. UI Forge uses labelled synthetic examples. Product examples show the supplied SKU, description, price and availability without invented product photographs. This visual refresh remains in the source worktree until released.

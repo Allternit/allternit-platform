@@ -97,6 +97,7 @@ pub mod discord_gateway;
 pub mod channel_discord_app;
 pub mod channel_gateway;
 pub mod openui_text;
+pub mod answer_contract;
 pub mod card_meta;
 pub mod card_repair;
 pub mod client_location;

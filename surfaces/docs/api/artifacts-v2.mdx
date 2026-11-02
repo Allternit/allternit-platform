@@ -39,7 +39,7 @@ See [Authentication](/api/authentication).
 | `ops` | `application/vnd.allternit.ops+json` | |
 | `motion` | `application/vnd.allternit.motion+json` | |
 | `page` | `text/html` | `text/markdown` |
-| `card` | `application/vnd.allternit.openui` | |
+| `card` | `application/vnd.allternit.answer+json` | Legacy OpenUI versions remain readable as text; new writes require a validated template. |
 | `diagram` | `text/vnd.mermaid` | `image/svg+xml` |
 | `image` | `text/uri-list` | |
 | `code` | `text/plain` (`meta.language` names the language) | |
@@ -196,7 +196,7 @@ A `dashboard` artifact's body is JSON with `body_format` `application/vnd.allter
 
 A tool result is read as a table: an array of objects, `{ "columns": [], "rows": [[]] }`, or JSON or CSV text.
 
-Dashboards run as the viewer: each call goes through the viewer's own connectors, and a tool that is not read-only is refused (a SQL tool is allowed for a single read-only statement). The owner's client sets `capabilities.connectors` to the connectors and tools the tiles call, so `visibility: "link"` is refused for a dashboard (see [Sharing](#sharing)). Dashboards saved before this format, with `application/vnd.allternit.openui`, still open as cards.
+Dashboards run as the viewer: each call goes through the viewer's own connectors, and a tool that is not read-only is refused (a SQL tool is allowed for a single read-only statement). The owner's client sets `capabilities.connectors` to the connectors and tools the tiles call, so `visibility: "link"` is refused for a dashboard (see [Sharing](#sharing)). Dashboards saved before this format, with `application/vnd.allternit.openui`, remain readable as text. New cards use the [answer template contract](/reference/answer-template-contract).
 
 Tiles may also use the built-in read tools `allternit__computers_list`, `allternit__computer_get` and `allternit__computer_history`. They read the viewer's own computers and need no connector.
 
