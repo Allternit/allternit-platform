@@ -81,3 +81,24 @@ Debug defaults point at local dev servers (`127.0.0.1`). Release defaults point 
 ## Contributing
 
 See [`CONTRIBUTING.md`](./CONTRIBUTING.md).
+
+## TestFlight release
+
+Build from current `origin/main`, including the intended native route changes.
+An update to the hosted facility does not change the Office route compiled into
+an older installed iPhone app. Build 13 uses the legacy bot floor; the next
+native release must include platform PR #2035 to open the full facility.
+
+Keep `CURRENT_PROJECT_VERSION` in sync for the app, widgets, broadcast extension
+and tests in `project.yml`, then regenerate the project with XcodeGen. Run the
+signed archive/export through `scripts/build-queue run ios --repo <checkout>`.
+Use the established local signing configuration and an export options plist
+with `method=app-store-connect` and `destination=upload`. Do not commit signing
+configuration, credentials, frameworks or archive output.
+
+Treat archive success, upload success and TestFlight availability as separate
+states. Verify the archive's bundle version, included Office source, all
+extension versions and signing before uploading. Keep the exact source commit
+and Apple's upload result in the release record. Check processing before saying
+the build is available to testers. A TestFlight upload does not authorize a
+public App Store release.
