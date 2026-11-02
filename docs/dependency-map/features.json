@@ -2928,7 +2928,7 @@
       "label": "Office: the whole walkable Allternit facility",
       "product": "product:ai-allternit",
       "status": "building",
-      "description": "Office opens the hosted full facility (?embed=facility): main-avatar creation, actual account bot appearances, free campus roaming, room navigation, live bot work in the existing Bots Floor, and account-scoped local visitor/position persistence. System Workspace keeps the compact BotWorkspaceView with replay, share and film. Desktop and web phone/PWA use the full-facility entry. Native source uses it, but TestFlight build 13 still opens the legacy bot floor; a newer signed iPhone release and physical-device verification remain pending.",
+      "description": "Office opens the hosted full facility (?embed=facility): main-avatar creation, actual account bot appearances, free campus roaming, room navigation, live bot work in the existing Bots Floor, and account-scoped local visitor/position persistence. System Workspace keeps the compact BotWorkspaceView with replay, share and film. Desktop and web phone/PWA use the full-facility entry. TestFlight build 14 uses the full-facility entry; build 13 retains the legacy bot floor. Physical-device verification remains in beta testing.",
       "touches": [
         "external:allternit-facility",
         "allternit/cmd/allternit-api/src/floor_routes.rs",
@@ -2956,6 +2956,10 @@
         {
           "on": "2026-11-02",
           "note": "Build 13 predates native full-facility route PR #2035. Legacy Office drawer compatibility fix in websites PR #88: phones start closed; Bots opens, close/Escape hides, bot selection reopens, drafts remain, camera offset follows visibility. Pill-heavy visual PRs remain drafts and are separate from this fix."
+        },
+        {
+          "on": "2026-11-02",
+          "note": "iPhone 1.0 build 14 uses the full-facility Office route. Version metadata merged in PR #2041; signed archive verifies app/extensions at 14, signature and compiled facility route. Browser fixture checks do not replace physical signed-in iPhone QA. Rejected visual PRs remain drafts."
         }
       ],
       "evidence": [
