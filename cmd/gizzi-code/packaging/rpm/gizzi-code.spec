@@ -1,5 +1,5 @@
 Name:           gizzi-code
-Version:        2.2.8
+Version:        2.2.16
 Release:        1%{?dist}
 Summary:        AI-powered terminal interface for the Allternit ecosystem
 
@@ -29,6 +29,9 @@ install -m 755 gizzi-code %{buildroot}/usr/local/bin/gizzi-code
 /usr/local/bin/gizzi-code
 
 %changelog
+* Mon Nov 02 2026 Allternit Technologies <team@allternit.io> - 2.2.16-1
+- Update to 2.2.16
+
 * Sun Oct 18 2026 Allternit Technologies <team@allternit.io> - 2.2.8-1
 - Update to 2.2.8
 
