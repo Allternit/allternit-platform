@@ -175,6 +175,10 @@ struct FriendlyInlineStateView: View {
 enum FriendlyErrorMessage {
     static func from(_ error: String) -> String {
         let lowered = error.lowercased()
+        // cloud-api 428 (routes/beta.rs): the account has no computer yet.
+        if lowered.contains("data-plane node") {
+            return "Connect a computer or start Allternit Cloud to use this."
+        }
         if lowered.contains("could not connect") || lowered.contains("failed to connect") {
             return "Could not connect to the server. Check your connection and try again."
         }
