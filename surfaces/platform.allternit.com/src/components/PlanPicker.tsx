@@ -25,7 +25,6 @@ interface Plan {
   art: string;
 }
 
-const MONO = "ui-monospace, 'SF Mono', Menlo, monospace";
 
 /** Card text per tier, on the engraved Gizzi art (same as the app's PlanCard). */
 const TIER_INK: Record<PlanId, { text: string; sub: string; stamp: [string, string]; light: boolean }> = {
@@ -56,14 +55,14 @@ function MemberCard({ plan, member, renewsAt, status }: { plan: Plan; member: st
       )}
       <div className="absolute left-[5.5%] top-[8%] flex items-center gap-2">
         <img src={`/billing/wordmark-${ink.light ? "light" : "ink"}.svg`} alt="A://TERNIT" style={{ height: 11 }} />
-        <span style={{ fontFamily: MONO, fontSize: 10, fontWeight: 700, letterSpacing: ".14em", padding: "2px 5px", borderRadius: 3, background: ink.stamp[0], color: ink.stamp[1] }}>{plan.label}</span>
+        <span className="font-mono" style={{ fontSize: 10, fontWeight: 700, letterSpacing: ".14em", padding: "2px 5px", borderRadius: 3, background: ink.stamp[0], color: ink.stamp[1] }}>{plan.label}</span>
       </div>
       {stamp && (
-        <div className="absolute left-[5.5%] top-[32%] -rotate-6" style={{ fontFamily: MONO, fontWeight: 700, fontSize: 11, letterSpacing: ".1em", color: "#d4483a", border: "1.5px solid #d4483a", borderRadius: 4, padding: "2px 6px", background: "rgba(255,255,255,.55)" }}>
+        <div className="absolute left-[5.5%] top-[32%] -rotate-6 font-mono" style={{ fontWeight: 700, fontSize: 11, letterSpacing: ".1em", color: "#d4483a", border: "1.5px solid #d4483a", borderRadius: 4, padding: "2px 6px", background: "rgba(255,255,255,.55)" }}>
           {stamp}
         </div>
       )}
-      <div className="absolute bottom-[7%] left-[5.5%]" style={{ fontFamily: MONO }}>
+      <div className="absolute bottom-[7%] left-[5.5%] font-mono">
         <div style={{ fontSize: 9, letterSpacing: ".16em", color: ink.sub }}>MEMBER</div>
         <div className="truncate" style={{ maxWidth: 170, fontSize: 15, letterSpacing: ".05em", marginTop: 2 }}>{member.toUpperCase()}</div>
         {renews && plan.id !== "free" && (
@@ -259,9 +258,9 @@ export function PlanPicker({
             >
               <div className="min-w-0 flex-1 px-4 py-3.5">
                 <div className="flex items-baseline gap-2">
-                  <span style={{ fontFamily: MONO, fontSize: 11, fontWeight: 700, letterSpacing: ".14em", padding: "2px 6px", borderRadius: 3, background: ink.stamp[0], color: ink.stamp[1] }}>{plan.label}</span>
+                  <span className="font-mono" style={{ fontSize: 11, fontWeight: 700, letterSpacing: ".14em", padding: "2px 6px", borderRadius: 3, background: ink.stamp[0], color: ink.stamp[1] }}>{plan.label}</span>
                   {plan.bonus && <span className="text-[9px] font-semibold tracking-[0.12em]" style={{ color: ink.sub }}>10% BONUS</span>}
-                  <span className="ml-auto" style={{ fontFamily: MONO, fontSize: 24 }}>{livePlan ? formatLivePrice(livePlan.price_usd) : plan.price}</span>
+                  <span className="ml-auto font-mono" style={{ fontSize: 24 }}>{livePlan ? formatLivePrice(livePlan.price_usd) : plan.price}</span>
                   <span className="text-[10px]" style={{ color: ink.sub }}>/MO</span>
                 </div>
                 <ul className="mt-3 space-y-1 text-[11px] font-medium tracking-[0.06em]">
