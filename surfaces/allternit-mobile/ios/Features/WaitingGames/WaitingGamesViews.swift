@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import WebKit
 
 /// The game window opened from a message box, busy or not (web
 /// waiting-games.store.ts). Only the Play button that opened it reports the
@@ -107,19 +108,25 @@ struct WaitingGamesPlayButton: View {
 
 // MARK: - Window
 
-/// Mounted once at the app root (WorkspaceShell). Shows the window while a
-/// game is open.
+/// Mounted once at the app root (WorkspaceShell). Once a game is opened the
+/// window stays mounted and is only hidden when closed, so every game picks up
+/// where you left it (web WaitingGamesLayer).
 struct WaitingGamesLayer: View {
     @ObservedObject private var store = WaitingGamesStore.shared
+    @State private var started = false
 
     var body: some View {
         ZStack {
-            if store.open {
+            if store.open || started {
                 WaitingGamesWindow()
-                    .transition(.scale(scale: 0.95).combined(with: .opacity))
+                    .opacity(store.open ? 1 : 0)
+                    .scaleEffect(store.open ? 1 : 0.95)
+                    .allowsHitTesting(store.open)
+                    .accessibilityHidden(!store.open)
             }
         }
         .animation(.easeOut(duration: 0.2), value: store.open)
+        .onChange(of: store.open) { _, open in if open { started = true } }
         #if DEBUG
         // `-open-waiting-game <id or name>` opens the window (screenshots).
         .task {
@@ -163,6 +170,10 @@ private struct WaitingGamesWindow: View {
     }
 
     private var ready: Bool { store.work == .done && !readyDismissed }
+    /// On screen and not waiting on "reply ready": the game runs.
+    private var live: Bool { store.open && !ready }
+    /// Site games stay loaded once played, so switching back resumes too.
+    @State private var visited: [WaitingGameID] = []
 
     var body: some View {
         GeometryReader { proxy in
@@ -195,13 +206,23 @@ private struct WaitingGamesWindow: View {
         }
         .onAppear {
             engine.pick(store.game)
+            if store.game.site != nil { visited = [store.game] }
             keys = true
         }
         .onChange(of: store.game) { _, game in
             engine.pick(game)
+            if game.site != nil && !visited.contains(game) { visited.append(game) }
             if engine.wantsKeyboard { typing = true } else { keys = true }
         }
-        .onChange(of: ready) { _, ready in engine.setPlaying(!ready) }
+        .onChange(of: live) { _, live in engine.setPlaying(live) }
+        .onChange(of: store.open) { _, open in
+            if open {
+                if engine.wantsKeyboard { typing = true } else { keys = true }
+            } else {
+                typing = false
+                keys = false
+            }
+        }
         .onChange(of: store.work) { _, work in if work == .working { readyDismissed = false } }
         .onDisappear { engine.setPlaying(false) }
     }
@@ -209,13 +230,24 @@ private struct WaitingGamesWindow: View {
     private var window: some View {
         VStack(spacing: 0) {
             ZStack(alignment: .top) {
-                canvas
+                ForEach(visited) { id in
+                    if let site = id.site {
+                        WaitingSiteGameView(site: site, playing: live && id == store.game)
+                            .padding(.top, 44)
+                            .opacity(id == store.game ? 1 : 0)
+                            .allowsHitTesting(id == store.game)
+                            .accessibilityHidden(id != store.game)
+                    }
+                }
+                if store.game.site == nil {
+                    canvas
+                }
                 overlays
                 topBar
-                if engine.wantsKeyboard { hiddenField }
+                if engine.wantsKeyboard && store.game.site == nil { hiddenField }
             }
-            if !engine.hint.isEmpty {
-                Text(engine.hint)
+            if !hint.isEmpty {
+                Text(hint)
                     .font(.system(size: 11.5))
                     .foregroundColor(.white.opacity(0.6))
                     .lineLimit(1)
@@ -252,6 +284,8 @@ private struct WaitingGamesWindow: View {
             return engine.key(name) ? .handled : .ignored
         }
     }
+
+    private var hint: String { store.game.site?.hint ?? engine.hint }
 
     private var safeTop: CGFloat {
         (UIApplication.shared.connectedScenes.first as? UIWindowScene)?.keyWindow?.safeAreaInsets.top ?? 0
@@ -332,7 +366,7 @@ private struct WaitingGamesWindow: View {
             .background(.black.opacity(0.5), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
             .padding(.horizontal, 24)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else if let banner = engine.banner {
+        } else if store.game.site == nil, let banner = engine.banner {
             VStack(spacing: 4) {
                 Text(banner.title).font(.system(size: 20, weight: .bold))
                 if !banner.sub.isEmpty { Text(banner.sub) }
@@ -436,5 +470,82 @@ private struct WaitingGamesWindow: View {
             .opacity(0.01)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
             .accessibilityLabel("Type the word")
+    }
+}
+
+// MARK: - Site games
+
+/// Gizzi RPG and Gizzi Brawl are their own sites (web SiteGameFrame). A
+/// landscape-only game in a window taller than wide is turned on its side
+/// in UIKit, so touches land where the game drew them.
+private struct WaitingSiteGameView: UIViewRepresentable {
+    let site: WaitingSiteGame
+    /// Off screen or waiting on "reply ready": the game is told to pause
+    /// (`allternit:pause`), and to resume when it's back in play.
+    let playing: Bool
+
+    func makeUIView(context: Context) -> Host {
+        let config = WKWebViewConfiguration()
+        config.allowsInlineMediaPlayback = true
+        config.mediaTypesRequiringUserActionForPlayback = []
+        let web = WKWebView(frame: .zero, configuration: config)
+        web.isOpaque = false
+        web.backgroundColor = .black
+        web.scrollView.isScrollEnabled = false
+        web.scrollView.bounces = false
+        web.scrollView.contentInsetAdjustmentBehavior = .never
+        web.load(URLRequest(url: site.url))
+        let host = Host(web: web, landscape: site.landscape, origin: site.url)
+        web.navigationDelegate = host
+        host.playing = playing
+        host.backgroundColor = .black
+        host.clipsToBounds = true
+        return host
+    }
+
+    func updateUIView(_ host: Host, context: Context) { host.playing = playing }
+
+    static func dismantleUIView(_ host: Host, coordinator: ()) {
+        host.web.stopLoading()
+        // Stops the game's sound when the window closes or the game changes.
+        host.web.loadHTMLString("", baseURL: nil)
+    }
+
+    final class Host: UIView, WKNavigationDelegate {
+        let web: WKWebView
+        let landscape: Bool
+        private let origin: String
+        var playing = true {
+            didSet { if playing != oldValue { tell() } }
+        }
+
+        init(web: WKWebView, landscape: Bool, origin url: URL) {
+            self.web = web
+            self.landscape = landscape
+            self.origin = "\(url.scheme ?? "https")://\(url.host ?? "")"
+            super.init(frame: .zero)
+            addSubview(web)
+        }
+
+        /// The game listens for messages from its parent; in a web view the
+        /// page is its own parent, so the message is posted on the page itself.
+        private func tell() {
+            let type = playing ? "allternit:resume" : "allternit:pause"
+            web.evaluateJavaScript("window.postMessage({type:'\(type)', from:'allternit-ios'}, '\(origin)')")
+        }
+
+        // Sent again once the game has loaded: it can't hear a message sent before it started.
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { tell() }
+
+        required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            let turn = landscape && bounds.height > bounds.width
+            web.transform = .identity
+            web.bounds = CGRect(origin: .zero, size: turn ? CGSize(width: bounds.height, height: bounds.width) : bounds.size)
+            web.center = CGPoint(x: bounds.midX, y: bounds.midY)
+            web.transform = turn ? CGAffineTransform(rotationAngle: .pi / 2) : .identity
+        }
     }
 }
