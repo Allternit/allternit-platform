@@ -59,6 +59,7 @@ repo-review: Ranked findings with file paths and verification status. Data: {"re
 agent-roster: Agents, assignments, states and current work. Data: {"agents":[{"name":"string","role":"string","status":"string","task":"string"}]}
 tool-run: A tool invocation summary with checks and result. Data: {"tool":"string","status":"string","checks":[{"label":"string","status":"string","detail":"string"}],"result":"string"}
 build-report: Build source, target, checks and outputs. Data: {"revision":"string","target":"string","checks":[{"label":"string","status":"string","detail":"string"}],"outputs":["string"]}
+pull-request: Live GitHub PR checks, failure details, repair requests and reviewed actions. Supply verified identity only; the app loads current facts. Data: {"owner":"string","repository":"string","pullRequest":"integer","connectionId?":"string"}
 deployment-report: Environment, revision, checks and rollback notes. Data: {"environment":"string","revision":"string","status":"string","checks":[{"label":"string","status":"string","detail":"string"}],"rollback":"string"}
 incident-report: Severity, impact, timeline and recovery actions. Data: {"severity":["neutral","info","success","warning","danger"],"impact":"string","events":[{"title":"string","time":"string","detail":"string"}],"recovery":["string"]}
 connector-health: Connection states, last checks and actionable errors. Data: {"connectors":[{"name":"string","status":"string","checkedAt":"string","error":"string"}]}

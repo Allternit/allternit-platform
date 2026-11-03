@@ -63,7 +63,7 @@
       "label": "Interactive answers",
       "product": "product:ai-allternit",
       "status": "live",
-      "description": "An extensible catalog of 82 controlled templates across ten categories, with a searchable UI Forge gallery, strict data schemas, trusted fixed renderers, synthetic examples, pinned provenance and browser/model-tool/API enforcement. All 38 component capabilities remain reachable. Legacy source stays readable; custom apps require activation. Source is prepared for the shared Desktop, phone and PWA paths.",
+      "description": "An extensible catalog of 83 controlled templates across ten categories, with a searchable UI Forge gallery, strict data schemas, trusted fixed renderers, synthetic examples, pinned provenance and browser/model-tool/API enforcement. All 38 component capabilities remain reachable. Legacy source stays readable; custom apps require activation. Source is prepared for the shared Desktop, phone and PWA paths. Prepared live PR/CI identity-only cards, revision-bound reviewed actions, and vendor/group turn admission; coordinated release required.",
       "touches": [
         "allternit-ai/src/lib/openui",
         "allternit-ai/src/components/ai-elements",
@@ -92,7 +92,12 @@
         "allternit-ai/src/design",
         "allternit/cmd/allternit-cloud-api/src/artifacts",
         "allternit/cmd/gizzi-code/src/runtime/integrations",
-        "allternit-ai/src/views/library"
+        "allternit-ai/src/views/library",
+        "allternit/cmd/allternit-api/src/github_ci.rs",
+        "allternit/cmd/allternit-api/src/gateway_runner.rs",
+        "allternit-ai/src/components/gateway",
+        "allternit-ai/src/lib/bots",
+        "allternit-ai/src/views/bots/GroupChatRows.tsx"
       ],
       "decisions": [
         {
@@ -146,6 +151,10 @@
         {
           "on": "2026-11-01",
           "note": "Implemented shared deterministic response policy and central Gizzi turn enforcement for visual-capable app requests. Required text is withheld until the selected envelope validates, with one formatting correction, fail-closed output, interrupted rejection and durable answer.validation evidence. Explicit selection reaches all 82 templates; recognized display jobs use fixed rules. Conversation/Text only/artifacts and unsupported external paths are exceptions. Unreleased; live cross-device adoption remains unverified. Regression fixes retain the policy through synthetic continuations, preserve refusal handoff, respect usage limits, clear partial transport attempts and isolate pending bus text from later mutation. answer.policy records prose exceptions before generation."
+        },
+        {
+          "date": "2026-11-03",
+          "note": "Eoj approved the live CI reference and interaction polish. Added an identity-only pull-request template backed by authenticated GitHub facts, reviewed revision/run-bound rerun and merge, same-card polling and repair handoff. Vendor/group responses are admitted before publication with durable turn policies; group and vendor skins render validated cards and retain complete envelopes in bounded projections. Source remains unshipped pending verification and release approval."
         }
       ],
       "evidence": [

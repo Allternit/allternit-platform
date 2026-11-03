@@ -99,6 +99,7 @@ pub fn connector_router() -> Router<Arc<AppState>> {
     // callback lives in the public router (`connector_public_router`, mounted
     // unauthenticated in main.rs) alongside the sidecar's `/oauth/callback`.
     Router::new()
+        .merge(crate::github_ci::router())
         .route("/connectors", get(list_connectors))
         .route("/connectors/setup-status", get(connectors_setup_status))
         .route("/connectors/mcp", post(mcp_proxy))
