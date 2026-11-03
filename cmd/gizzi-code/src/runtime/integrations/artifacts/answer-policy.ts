@@ -13,7 +13,8 @@ const core = [
 export const ANSWER_POLICY_TEMPLATES = [...core.map(([id, name]) => ({ id, name })), ...CATALOG_TEMPLATES.map(({ id, name }) => ({ id, name }))];
 const normalize = (text: string) => text.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 const contains = (text: string, phrase: string) => ` ${text} `.includes(` ${normalize(phrase)} `);
-const aliases: Record<string, string[]> = {
+export const ANSWER_POLICY_ALIASES: Record<string, string[]> = {
+  'pull-request': ['pull request', 'pull requests', 'pr checks', 'ci checks', 'ci status', 'check this pr', 'track this pr', 'create pr', 'create a pr', 'open pr', 'open a pr'],
   weather: ['weather', 'temperature forecast'], stock: ['stock price', 'stock summary'],
   'flight-options': ['flights', 'flight options'], 'hotel-options': ['hotels', 'hotel options'],
   'restaurant-results': ['restaurants'], 'transaction-ledger': ['transactions', 'transaction history'],
@@ -49,11 +50,12 @@ export function selectAnswerPolicy(message: string, options: { visuals: boolean;
   const naturalExplicit = ANSWER_POLICY_TEMPLATES.find(t => [t.id, t.name].some(label =>
     ['use', 'render', 'show', 'select'].some(verb => contains(normalized, `${verb} ${label} template`) || contains(normalized, `${verb} the ${label} template`))));
   if (naturalExplicit) return { version: 1, mode: 'template', template: naturalExplicit.id as AnswerTemplateId, reason: 'explicit' };
+  if (/\b(?:show|display|track|check|create|open|review)\b/.test(normalized) && (ANSWER_POLICY_ALIASES['pull-request'].some(phrase => contains(normalized, phrase)) || /https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/pull\/\d+/.test(request))) return { version: 1, mode: 'template', template: 'pull-request', reason: 'job' };
   if (/\b(?:implement|refactor|debug|fix|css|component|write code)\b/.test(normalized)) return exempt('conversation');
   if (!/\b(?:show|display|list|compare|summarize|calculate|track|find|give|make|create|prepare|review|analyze|check|plan)\b/.test(normalized) && !/^(?:what is|what s|how is|how s) (?:the )?(?:weather|temperature|stock price)\b/.test(normalized)) return exempt('conversation');
   const matches = ANSWER_POLICY_TEMPLATES.flatMap(t => {
     // Names give every catalog template a deterministic natural-language route.
-    const phrases = [...(aliases[t.id] ?? []), ...(core.some(([id]) => id === t.id) ? [] : [t.name, t.id])];
+    const phrases = [...(ANSWER_POLICY_ALIASES[t.id] ?? []), ...(core.some(([id]) => id === t.id) ? [] : [t.name, t.id])];
     return phrases.filter(phrase => contains(normalized, phrase)).map(phrase => ({ id: t.id, phrase, priority: core.some(([id]) => id === t.id) ? 1 : 0 }));
   }).sort((a, b) => a.priority - b.priority || normalize(b.phrase).length - normalize(a.phrase).length || a.id.localeCompare(b.id));
   return matches.length ? { version: 1, mode: 'template', template: matches[0].id as AnswerTemplateId, reason: 'job' } : exempt('conversation');

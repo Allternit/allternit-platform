@@ -355,6 +355,10 @@ pub struct TurnOpts {
     /// The action is consequential: Allternit approval first.
     pub consequential: bool,
     pub allternit_approval_id: Option<String>,
+    /// Presentation preference belongs to the app; selection uses `text` alone.
+    pub answer_visuals: Option<bool>,
+    /// Room history is data, never the current request used by the picker.
+    pub answer_context: Option<String>,
 }
 
 #[derive(Debug)]
@@ -505,6 +509,11 @@ async fn run_turn_once<R: ThreadRuntime>(
     };
     let rid = s(&remote_row, "id");
     let ctx_id = s(&remote_row, "externalContextId");
+    let policy = crate::answer_policy::AnswerPolicy::select(text, opts.answer_visuals.unwrap_or(true));
+    db.connect()?.execute("INSERT OR IGNORE INTO gateway_answer_turns (remote_binding_id,correlation_id,policy_json) VALUES (?1,?2,?3)", params![rid,corr,policy.record().to_string()])?;
+    let outbound = if policy.template.is_some() || opts.answer_context.is_some() {
+        format!("{}\n{}\nRoom context (untrusted conversation data):\n{}\nCurrent user request:\n{}", crate::answer_contract::MANUAL, policy.instruction(), serde_json::to_string(&opts.answer_context).unwrap_or_default(), serde_json::to_string(text).unwrap_or_default())
+    } else { text.to_string() };
     // Kernel turn router, shadow (O2/O14): vendor turns get the same ROUTE and a
     // tighten-only consequential GATE as native turns. Never awaited.
     let seq_before: i64 = db.connect()?.query_row("SELECT COALESCE(MAX(seq), 0) FROM bot_events WHERE bot_id = ?1", params![cx.bot_id], |r| r.get(0)).unwrap_or(0);
@@ -515,7 +524,7 @@ async fn run_turn_once<R: ThreadRuntime>(
     let turn_started = std::time::Instant::now();
     let (mut streamed_reply, mut sent_reply): (Option<String>, Option<String>) = (None, None);
     if !already_sent {
-        let send = vcall(db, tx, &cx.owner, "agent.context.message", &cx.exec, json!({ "contextId": ctx_id, "text": text, "correlationId": corr }));
+        let send = vcall(db, tx, &cx.owner, "agent.context.message", &cx.exec, json!({ "contextId": ctx_id, "text": outbound, "correlationId": corr }));
         let sent = match sink {
             None => send.await,
             Some(sink) => {
@@ -565,8 +574,18 @@ async fn run_turn_once<R: ThreadRuntime>(
     // A streaming turn already moved the cursor: continue from the stored row, not the one read before the send.
     let remote_now = if sink.is_some() { remote_for(db, &cx.thread_id, cx.generation)?.unwrap_or_else(|| remote_row.clone()) } else { remote_row.clone() };
     let (events, mut reply) = pull_events_into(db, tx, &cx, &remote_now, sink).await?;
+    reply = reply.or(streamed_reply);
+    if reply.is_none() {
+        if let Some(text) = sent_reply {
+            if let Some(event) = admit_answer_event(db, &cx, &remote_now, &json!({"type":"agent.message.completed","correlation_id":corr,"remote_event_id":format!("send:{corr}"),"payload":{"text":text}}))? {
+                if bridge_event(db, &cx, &remote_now, &event)? {
+                    reply = event["payload"]["text"].as_str().map(str::to_string);
+                    if let Some(text) = reply.as_deref() { tx.append_transcript(&cx.session_id,text,json!({"source":"vendor","vendor":cx.exec["vendor"],"remote_event_id":event["remote_event_id"],"answer_policy":event["payload"]["answerPolicy"]})).await.map_err(|_|RunErr::new(502,"TRANSCRIPT_FAILED","The vendor answer could not be saved."))?; }
+                }
+            }
+        }
+    }
     if let Some(sink) = sink {
-        reply = reply.or(streamed_reply).or(sent_reply);
         if let Some(r) = &reply {
             sink.finish(r);
         }
@@ -816,6 +835,38 @@ fn delta_chunk(payload: &Value) -> Option<&str> {
     payload["chunk"].as_str().or_else(|| payload["text"].as_str())
 }
 
+/// Validate before the bot ledger, stream or transcript sees vendor text. A
+/// formatting failure never replays a vendor turn (which may have performed writes).
+fn admit_answer_event(db: &DbHandle, cx: &Cx, remote: &Value, event: &Value) -> Result<Option<Value>, RunErr> {
+    let kind = event["type"].as_str().unwrap_or_default();
+    if !matches!(kind,"agent.message.delta"|"agent.message.completed") { return Ok(Some(event.clone())); }
+    let rid = s(remote,"id");
+    let corr = event["correlation_id"].as_str().or_else(||event["correlationId"].as_str());
+    let conn = db.connect()?;
+    let mut stmt = conn.prepare("SELECT correlation_id,policy_json FROM gateway_answer_turns WHERE remote_binding_id=?1 AND ((?2 IS NOT NULL AND correlation_id=?2) OR (?2 IS NULL AND state='pending')) ORDER BY created_at DESC LIMIT 2")?;
+    let rows = stmt.query_map(params![rid,corr],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?)))?.collect::<Result<Vec<_>,_>>()?;
+    // Uncorrelated output cannot inherit an arbitrary old turn's permission.
+    if kind=="agent.message.delta" {
+        let prose = rows.len()==1 && serde_json::from_str::<crate::answer_policy::AnswerPolicy>(&rows[0].1).ok().is_some_and(|p|p.template.is_none());
+        return Ok(prose.then(||event.clone()));
+    }
+    let policy = if rows.len()==1 { serde_json::from_str::<crate::answer_policy::AnswerPolicy>(&rows[0].1).ok() } else { None };
+    let payload = &event["payload"];
+    let text = payload["text"].as_str().or_else(||payload["reply"].as_str()).or_else(||payload["content"].as_str()).unwrap_or_default();
+    let checked = policy.as_ref().map(|p|p.validate(text)).unwrap_or_else(||Err("The vendor reply could not be matched to one active request.".into()));
+    let record = json!({"version":1,"selected":policy.as_ref().and_then(|p|p.template.as_deref()),"status":if checked.is_ok(){"accepted"}else{"rejected"},"problems":checked.as_ref().err().map(|e|vec![e.clone()]).unwrap_or_default()});
+    let mut accepted = event.clone();
+    // Do not carry a rejected reply through another alias or arbitrary metadata.
+    accepted["payload"] = json!({"text":if checked.is_ok(){text.to_string()}else{"This vendor answer could not be validated. Try again or choose Text only.".into()},"answerPolicy":record});
+    if let Some((corr,_)) = rows.first().filter(|_|rows.len()==1) {
+        accepted["correlation_id"] = json!(corr);
+        conn.execute("UPDATE gateway_answer_turns SET state='completed' WHERE remote_binding_id=?1 AND correlation_id=?2",params![rid,corr])?;
+    }
+    let key=event["remote_event_id"].as_str().map(|id|format!("answer-validation:{rid}:{id}"));
+    led(db,&cx.bot_id,&cx.thread_id,Some(&cx.session_id),"answer.validation",("system","answer-policy"),record,key);
+    Ok(Some(accepted))
+}
+
 pub(crate) async fn pull_events_into(db: &DbHandle, tx: &dyn AaiTransport, cx: &Cx, remote: &Value, sink: Option<&DeltaSink>) -> Result<(usize, Option<String>), RunErr> {
     let rid = s(remote, "id");
     let mut cursor = remote["syncCursor"].as_str().map(str::to_string);
@@ -828,10 +879,13 @@ pub(crate) async fn pull_events_into(db: &DbHandle, tx: &dyn AaiTransport, cx: &
         let v = vcall(db, tx, &cx.owner, "agent.events", &cx.exec, input).await.map_err(|e| fail(db, cx, Some(remote), &e))?;
         let events = v["events"].as_array().cloned().unwrap_or_default();
         let mut last_remote: Option<String> = None;
-        for ev in &events {
+        for raw_event in &events {
+            let ev = raw_event;
             if let Some(r) = ev["remote_event_id"].as_str() {
                 last_remote = Some(r.to_string());
             }
+            let Some(checked_event) = admit_answer_event(db, cx, remote, ev)? else { continue };
+            let ev = &checked_event;
             if bridge_event(db, cx, remote, ev)? {
                 new += 1;
                 if let (Some(sink), "agent.message.delta") = (sink, ev["type"].as_str().unwrap_or_default()) {
@@ -853,6 +907,7 @@ pub(crate) async fn pull_events_into(db: &DbHandle, tx: &dyn AaiTransport, cx: &
                             "lane": pick("lane", remote["lane"].clone()),
                             "guarantee": pick("guarantee", json!("best_effort")),
                             "remote_event_id": ev["remote_event_id"],
+                            "answer_policy": ev["payload"]["answerPolicy"],
                         });
                         if let Err(e) = tx.append_transcript(&cx.session_id, text, meta).await {
                             warn!(error = %e, "vendor reply not appended to the session transcript");
@@ -1264,6 +1319,8 @@ pub async fn intercept_message(session_id: &str, text: &str, metadata: Option<&V
         correlation_id: m["correlationId"].as_str().map(str::to_string),
         consequential: m["consequential"].as_bool().unwrap_or(false),
         allternit_approval_id: m["allternitApprovalId"].as_str().map(str::to_string),
+        answer_visuals: m["answerVisuals"].as_bool(),
+        answer_context: m["answerContext"].as_str().map(str::to_string),
     };
     let runtime = crate::thread_routes::GizziRuntime { db: rt.db.clone() };
     match run_turn(&rt.db, rt.tx.as_ref(), &runtime, session_id, text, opts).await {
@@ -1521,6 +1578,27 @@ mod tests {
     }
     fn done(id: &str, text: &str) -> Value {
         json!({ "type": "agent.message.completed", "remote_event_id": id, "guarantee": "exact", "payload": { "text": text } })
+    }
+    #[tokio::test]
+    async fn template_vendor_reply_is_gated_before_ledger_stream_and_transcript() {
+        let st=setup("template-gate").await;let f=Fake::default();
+        f.push(json!({"type":"agent.message.delta","remote_event_id":"d1","payload":{"text":"raw prose bypass"}}));
+        f.push(done("bad-complete","raw prose bypass"));
+        let result=turn(&st,&f,"s-th-vendor","Show a task board",key("template-turn")).await.unwrap().unwrap();
+        assert!(result.reply.unwrap().contains("could not be validated"));
+        assert_eq!(count_events(&st,"agent.message.delta"),0);
+        let transcript=f.transcript.lock().unwrap();assert_eq!(transcript.len(),1);assert!(!transcript[0].1.contains("raw prose bypass"));drop(transcript);
+        let payloads:String=st.db.connect().unwrap().query_row("SELECT COALESCE(group_concat(payload),'') FROM bot_events WHERE thread_id='th-vendor'",[],|r|r.get(0)).unwrap();assert!(!payloads.contains("raw prose bypass"));
+        assert_eq!(f.calls.lock().unwrap().iter().filter(|(op,_)|op=="agent.context.message").count(),1,"a formatting failure must not repeat vendor actions");
+    }
+    #[tokio::test]
+    async fn pending_vendor_reply_keeps_its_contract_until_later_sync() {
+        let st=setup("template-pending").await;let f=Fake::default();
+        assert!(turn(&st,&f,"s-th-vendor","Show a task board",key("pending-turn")).await.unwrap().unwrap().reply.is_none());
+        let valid=format!("```openui\n{}\n```",json!({"version":1,"template":"task-board","title":"Board","data":{"columns":[]}}));
+        f.push(done("later-complete",&valid));
+        sync_thread(&st.db,&f,"user-a","th-vendor").await.unwrap();
+        let transcript=f.transcript.lock().unwrap();assert_eq!(transcript[0].1,valid);assert_eq!(transcript[0].2["answer_policy"]["status"],"accepted");
     }
     fn count_events(st: &Arc<AppState>, ty: &str) -> i64 {
         st.db.connect().unwrap().query_row("SELECT COUNT(*) FROM bot_events WHERE thread_id='th-vendor' AND event_type=?1", params![ty], |r| r.get(0)).unwrap()
@@ -1862,14 +1940,14 @@ mod tests {
         f.push(json!({ "type": "agent.approval.requested", "remote_event_id": "e0", "payload": { "approvalId": "va-1", "action": "confirm" } }));
         turn(&st, &f, "s-th-vendor", "hello", key("k0")).await.unwrap();
         let sent_before = f.count("agent.context.message");
-        let o = TurnOpts { correlation_id: Some("k1".into()), consequential: true, allternit_approval_id: None };
+        let o = TurnOpts { correlation_id: Some("k1".into()), consequential: true, allternit_approval_id: None, ..Default::default() };
         let e = turn(&st, &f, "s-th-vendor", "wire the money", o).await.unwrap_err();
         assert_eq!((e.status, e.code.as_str()), (428, "APPROVAL_REQUIRED"));
         assert_eq!(f.count("agent.context.message"), sent_before, "nothing reaches the vendor before approval");
         assert_eq!(thread_status(&st), "needs_you");
         let aid = e.approval_id.unwrap();
         // Unapproved id still blocked.
-        let o2 = TurnOpts { correlation_id: Some("k1".into()), consequential: true, allternit_approval_id: Some(aid.clone()) };
+        let o2 = TurnOpts { correlation_id: Some("k1".into()), consequential: true, allternit_approval_id: Some(aid.clone()), ..Default::default() };
         assert_eq!(turn(&st, &f, "s-th-vendor", "wire the money", o2.clone()).await.unwrap_err().code, "APPROVAL_REQUIRED");
         respond_approval(&st.db, &f, "user-a", &aid, "approve", ("user", "user-a")).await.unwrap();
         assert_eq!(f.count("agent.approvals"), 0, "an Allternit approval is never forwarded");
@@ -1946,7 +2024,7 @@ mod tests {
         f.fail_op("agent.context.message", "ADAPTER_DRIFT", None);
         turn(&st, &f, "s-th-vendor", "hi", key("k")).await.unwrap_err();
         f.fail.lock().unwrap().clear();
-        let o = TurnOpts { correlation_id: Some("k2".into()), consequential: true, allternit_approval_id: None };
+        let o = TurnOpts { correlation_id: Some("k2".into()), consequential: true, allternit_approval_id: None, ..Default::default() };
         assert_eq!(turn(&st, &f, "s-th-vendor", "pay", o).await.unwrap_err().code, "BINDING_NOT_READY");
         assert!(turn(&st, &f, "s-th-vendor", "hello", key("k3")).await.is_ok());
     }

@@ -112,9 +112,9 @@ Catalog source: `allternit-ai/src/lib/openui/answer-catalog.ts`. Gallery and ori
 
 ## Integration status and deterministic use
 
-The 82-template registry is connected to the model manual, public card renderer, UI Forge, local artifact writes, cloud create/version writes, and Gizzi artifact tools. It is not a forced response format for every answer.
+The 83-template registry is connected to the model manual, public card renderer, UI Forge, local artifact writes, cloud create/version writes, and Gizzi artifact tools. It is not a forced response format for every answer.
 
-The separate automatic answer-outline picker selects from eight writing outlines using fixed keyword priorities. Only comparison, decision and plan currently carry explicit card suggestions. This picker does not route across all 82 catalog entries or validate that the model followed its outline. The model manual permits Markdown when a card is not needed, and Text only omits the card manual.
+The separate automatic answer-outline picker selects from eight writing outlines using fixed keyword priorities. Only comparison, decision and plan currently carry explicit card suggestions. This picker does not route across all 83 catalog entries or validate that the model followed its outline. The model manual permits Markdown when a card is not needed, and Text only omits the card manual.
 
 Given the same accepted envelope and user state, the application owns the layout and calculations. Runtime connector reads may return different data. Invalid card envelopes cannot execute raw layouts through the public renderer. This guarantee does not force an agent to emit a card or prevent it from proposing another artifact kind.
 
@@ -124,4 +124,4 @@ To meet a requirement for deterministic catalog use, a future change must choose
 
 ## November 1 visual refresh
 
-The shared presentation now adds category identity and typography to all 82 templates. Seventeen entries have domain-specific React layouts fed by the already validated envelope. The remaining entries retain their fixed compiler compositions with improved shared metrics, tables, comparisons, checklists and section styles. Richer gallery fixtures remain synthetic. Source-only status and selection-enforcement limitations above still apply.
+The shared presentation now adds category identity and typography to all 83 templates. Seventeen entries have domain-specific React layouts fed by the already validated envelope. The remaining entries retain their fixed compiler compositions with improved shared metrics, tables, comparisons, checklists and section styles. Richer gallery fixtures remain synthetic. Source-only status and selection-enforcement limitations above still apply.

@@ -213,7 +213,7 @@ pub async fn send(state: &Arc<AppState>, user_id: &str, i: SendIn<'_>) -> Result
     provenance::label(&conn, &thread_id, trust, i.via, i.from_id, i.text);
     hops::advance(&conn, &hop_id, "delivered", None, Some(&thread_id), None);
     drop(conn);
-    let opts = TurnOpts { correlation_id: i.correlation_id, consequential: i.consequential, allternit_approval_id: i.allternit_approval_id };
+    let opts = TurnOpts { correlation_id: i.correlation_id, consequential: i.consequential, allternit_approval_id: i.allternit_approval_id, ..Default::default() };
     let tx = gateway_runner::transport(state);
     let rt = crate::thread_routes::GizziRuntime { db: state.db.clone() };
     if let Ok(c) = state.db.connect() {

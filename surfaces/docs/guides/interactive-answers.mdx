@@ -15,7 +15,7 @@ Draft emails, source code, documents and other standalone artifacts keep their o
 
 ## Full template catalog
 
-The current catalog contains **82 registered templates in ten categories**. UI Forge provides search, category filters, synthetic examples, live previews and source references. There are 36 CopilotKit-reference entries and 46 Allternit entries. These are UI pattern implementations; external apps and backend services keep their own integrations.
+The current catalog contains **83 registered templates in ten categories**. UI Forge provides search, category filters, synthetic examples, live previews and source references. There are 36 CopilotKit-reference entries and 47 Allternit entries. These are UI pattern implementations; external apps and backend services keep their own integrations.
 
 | Category | Templates |
 | --- | --- |
@@ -57,7 +57,7 @@ In a visual-capable app chat, requests such as **Show transactions**, **Compare 
 
 A missing card, a different template or invalid data gets one correction attempt. If that also fails, the chat shows a validation failure. It does not show the rejected answer. Stopping a turn does not trigger a formatting retry.
 
-Ordinary conversation, definition questions and code changes can use prose. Text only and an explicit request for plain text also use prose. A selected artifact output keeps its own format. External vendor and group paths that do not advertise interactive-answer support remain outside this required-card policy.
+Ordinary conversation, definition questions and code changes can use prose. Text only and an explicit request for plain text also use prose. A selected artifact output keeps its own format. Vendor app turns use the same picker and a durable gateway contract. Group turns keep the real request separate from room history. Replies are validated before transcript and event publication; unsupported vendor output fails visibly rather than becoming a prose fallback.
 
 Required-template enforcement needs both the updated app and an updated paired Gizzi runtime. Keep Desktop, the web app and the PWA on the coordinated release; an older runtime does not gain this response policy from a browser refresh.
 
@@ -124,3 +124,15 @@ For the wire contract, validation boundaries and maintenance commands, see [Answ
 The prepared visual refresh gives tools compact layouts and gives evidence and explanations more reading space. Cards use a clear title, readable results and grouped supporting details. Travel views include journey routes and boarding details. Agents and people use profile cards. Products use catalogue tiles. Tasks and deals use stage boards. Transactions use a ledger, and research includes reading lists and concept relationships.
 
 The layouts adapt to their card container, including narrow chat columns and phone screens. UI Forge uses labelled synthetic examples. Product examples show the supplied SKU, description, price and availability without invented product photographs. The visual refresh ships with the coordinated app and paired-runtime release.
+
+## Live PR and CI cards
+
+Connect GitHub in Settings on the selected computer. Ask “Show CI checks for https://github.com/OWNER/REPO/pull/128” or “Create a PR”. The fixed picker selects `pull-request`; the assistant gathers the real repository and PR identity. The application reads status from your GitHub connection. The model cannot supply passing checks or invented progress.
+
+The same card refreshes every ten seconds while visible. It follows new revisions and workflow attempts, survives reopening the conversation, and shows merged or closed state from GitHub. Desktop, the web phone layout and the PWA use the same renderer and selected-computer relay. Network failures mark displayed results out of date and disable actions. Missing permissions, missing PRs and an outdated runtime produce readable errors.
+
+Expand the card, filter All, Failed or Running, and open a check for its summary, duration and link to GitHub logs. **Ask agent to fix** sends the exact PR, observed revision and failed check to the current conversation. Normal edit, push and merge approvals still apply. The card follows results when the agent pushes a new revision; it does not claim a repair succeeded before GitHub reports it.
+
+**Rerun failed** and **Review merge** show the repository, revision and workflow attempt before confirmation. Reruns may use billed GitHub Actions minutes. A merge changes the repository and may trigger deployment. GitHub repository protections still apply. If the revision or attempt changes, review the action again. A lost acknowledgement is not automatically retried.
+
+The new card requires the matching runtime release. Source preparation does not deploy it.

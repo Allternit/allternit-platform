@@ -528,6 +528,18 @@
       "label": "V284__skill_use",
       "kind": "module",
       "path": "allternit/cmd/allternit-api/migrations/V284__skill_use.sql"
+    },
+    {
+      "id": "allternit/cmd/allternit-api/src/github_ci.rs",
+      "label": "Live PR and CI provider capability",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-api/src/github_ci.rs"
+    },
+    {
+      "id": "allternit/cmd/allternit-api/src/gateway_runner.rs",
+      "label": "Vendor contract admission",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-api/src/gateway_runner.rs"
     }
   ],
   "edges": [
@@ -1153,6 +1165,22 @@
         "allternit/cmd/gizzi-code/src/runtime/session/answer-policy.ts",
         "allternit/cmd/gizzi-code/src/runtime/session/prompt.ts",
         "allternit/cmd/gizzi-code/src/runtime/session/processor.ts"
+      ]
+    },
+    {
+      "source": "allternit-ai/src/lib/openui",
+      "target": "allternit/cmd/allternit-api/src/github_ci.rs",
+      "kind": "uses",
+      "evidence": [
+        "allternit/surfaces/docs/reference/answer-template-contract.mdx"
+      ]
+    },
+    {
+      "source": "allternit-ai/src/lib/bots",
+      "target": "allternit/cmd/allternit-api/src/gateway_runner.rs",
+      "kind": "uses",
+      "evidence": [
+        "allternit/surfaces/docs/reference/answer-template-contract.mdx"
       ]
     }
   ]

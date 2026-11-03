@@ -1349,6 +1349,16 @@
   },
   {
     "version": 1,
+    "template": "pull-request",
+    "title": "Live pull request",
+    "data": {
+      "owner": "example",
+      "repository": "demo",
+      "pullRequest": 128
+    }
+  },
+  {
+    "version": 1,
     "template": "deployment-report",
     "title": "Deployment report",
     "data": {
