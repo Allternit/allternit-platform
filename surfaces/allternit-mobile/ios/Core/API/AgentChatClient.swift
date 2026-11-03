@@ -254,6 +254,8 @@ final class AgentChatClient: ObservableObject, @unchecked Sendable {
         let systemPrompt: String?
         let runtimeModelId: String?
         let effort: String?
+        /// Fast (priority tier); the server keeps it only for models that offer it.
+        let fast: Bool?
         let attachments: [AttachmentRef]?
         let metadata: Metadata?
         /// The session's working folder (its project's); "" clears it.
@@ -294,6 +296,7 @@ final class AgentChatClient: ObservableObject, @unchecked Sendable {
                         systemPrompt: systemPrompt,
                         runtimeModelId: runtimeModelId,
                         effort: effort,
+                        fast: UserDefaults.standard.bool(forKey: "allternit-model-fast") ? true : nil,
                         attachments: attachments,
                         metadata: tools.map { AgentChatRequest.Metadata(tools: $0) },
                         workdir: workdir

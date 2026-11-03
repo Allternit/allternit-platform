@@ -24,6 +24,12 @@ final class ModelStore: ObservableObject {
         didSet { defaults.set(selectedEffort, forKey: Keys.selectedEffort) }
     }
 
+    /// Fast (Codex priority tier). Sent only for models that offer it; the
+    /// server checks again (model-thinking.json `fast`).
+    @Published var fastMode: Bool {
+        didSet { defaults.set(fastMode, forKey: Keys.fastMode) }
+    }
+
     @Published private(set) var models: [RuntimeModel] = []
     @Published private(set) var isLoading = false
     @Published private(set) var loadError: String? = nil
@@ -35,6 +41,7 @@ final class ModelStore: ObservableObject {
     private enum Keys {
         static let selectedModelId = "allternit-runtime-model-id"
         static let selectedEffort = "allternit-model-effort"
+        static let fastMode = "allternit-model-fast"
     }
 
     init(defaults: UserDefaults = .standard, chatClient: AgentChatClient = AgentChatClient()) {
@@ -42,6 +49,7 @@ final class ModelStore: ObservableObject {
         self.chatClient = chatClient
         self.selectedModelId = defaults.string(forKey: Keys.selectedModelId)
         self.selectedEffort = defaults.string(forKey: Keys.selectedEffort) ?? "medium"
+        self.fastMode = defaults.bool(forKey: Keys.fastMode)
     }
 
     /// Composer pill label: the selected model's short name (derived from

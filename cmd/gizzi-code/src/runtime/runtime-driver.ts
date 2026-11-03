@@ -67,6 +67,8 @@ export interface AgentTask {
    */
   /** Thinking level from the picker, checked against model-thinking.json. */
   effort?: string
+  /** "priority" when the picker's Fast is on (Codex service tier). */
+  serviceTier?: string
   cliAccountId?: string
 }
 

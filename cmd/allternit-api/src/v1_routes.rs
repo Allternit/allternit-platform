@@ -2019,6 +2019,17 @@ async fn agent_chat_bridge(
             }
             gizzi_payload["metadata"]["subscription"] = json!({ "action_id": action_id });
         }
+        // Fast (the picker's tile): the account's priority tier, only for a
+        // model whose account offers one (model-thinking.json `fast`, Codex).
+        // gizzi sends it as the turn's service tier.
+        if body_json.get("fast").and_then(|v| v.as_bool()) == Some(true)
+            && crate::model_thinking::offers_fast(&model_id)
+        {
+            if !gizzi_payload["metadata"].is_object() {
+                gizzi_payload["metadata"] = json!({});
+            }
+            gizzi_payload["metadata"]["service_tier"] = json!("priority");
+        }
 
         // The user's MCP connectors reach gizzi only through the per-user proxy:
         // one turn-scoped server entry with a short-lived token bound to this

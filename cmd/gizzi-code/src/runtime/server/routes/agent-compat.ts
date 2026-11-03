@@ -49,6 +49,7 @@
 //!   gizzi's session table has no columns for them). A process restart
 //!   forgets the flags; abandoned ephemeral sessions would reappear in list
 //!   responses until deleted.
+import { ModelThinking } from "@/runtime/providers/discovery/model-thinking"
 import { VendorMessage } from "@/runtime/session/vendor-message"
 import { Hono } from "hono"
 import { streamSSE } from "hono/streaming"
@@ -665,9 +666,7 @@ export const AgentCompatRoutes = () =>
 
       // runtimeModelId ("provider/model" or the frontend's "provider::model"
       // convention) wins; without one the engine default applies. `effort`
-      // has no PromptInput equivalent — the Rust bridge forwards it into the
-      // gizzi payload where the engine drops unknown fields, so dropping it
-      // here matches the effective behavior.
+      // becomes the turn's variant when the model takes it (model-thinking.json).
       const rawModel =
         (typeof body.runtimeModelId === "string" && body.runtimeModelId) ||
         (typeof body.modelId === "string" && body.modelId) ||
@@ -734,7 +733,15 @@ export const AgentCompatRoutes = () =>
       // Composer tool options (metadata.tools) — stashed into the prompt
       // metadata like the bridge does (runtime may ignore them).
       const tools = body?.metadata?.tools
-      const metadata = tools && typeof tools === "object" ? { tools } : undefined
+      // Fast (the picker's tile): the priority tier, only for a model whose
+      // account offers one (model-thinking.json `fast`); llm.ts sends it on.
+      const fast = body?.fast === true && modelRef && ModelThinking.of(modelRef.modelID)?.fast === true
+      const metadata =
+        (tools && typeof tools === "object") || fast
+          ? { ...(tools && typeof tools === "object" ? { tools } : {}), ...(fast ? { service_tier: "priority" } : {}) }
+          : undefined
+      // The picker's thinking level, kept only when this model takes it.
+      const variant = modelRef && typeof body?.effort === "string" ? ModelThinking.check(modelRef.modelID, body.effort) : undefined
       // The caller's per-user connector proxy for this turn (allternit-api's `mcpProxy`), if any. It
       // goes to the prompt as its own field — never into `metadata`, which is stored on the message.
       const mcpProxy = McpUserProxy.parse(body?.mcpProxy)
@@ -909,7 +916,7 @@ export const AgentCompatRoutes = () =>
         // The session's working folder (its project's folder), same field
         // allternit-api's bridge forwards.
         const workdir = typeof body.workdir === "string" ? body.workdir : undefined
-        const turn = SessionPrompt.prompt({ sessionID, parts, model: modelRef, metadata, workdir, mcpProxy })
+        const turn = SessionPrompt.prompt({ sessionID, parts, model: modelRef, metadata, workdir, mcpProxy, ...(variant ? { variant } : {}) })
           .then(() => push(finish("complete")))
           .catch((err: any) => {
             // Pass the engine's structured error through so clients can

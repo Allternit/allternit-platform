@@ -149,6 +149,26 @@ struct ModelPickerSheet: View {
                 ThinkingSliderView(thinking: thinking, value: thinking.level(modelStore.selectedEffort)) { level in
                     modelStore.selectedEffort = level
                 }
+                if thinking.fast {
+                    Toggle(isOn: $modelStore.fastMode) {
+                        HStack(spacing: 10) {
+                            Image(systemName: "bolt.fill")
+                                .font(.system(size: 13))
+                                .foregroundColor(modelStore.fastMode ? .white : Color("TextSecondary"))
+                                .frame(width: 28, height: 28)
+                                .background(modelStore.fastMode ? Color(red: 0.851, green: 0.467, blue: 0.341) : Color("FillNeutral"), in: Circle())
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text("Fast").font(.system(size: 13, weight: .semibold)).foregroundColor(Color("TextPrimary"))
+                                Text(modelStore.fastMode ? "Priority · faster replies, more usage" : "Standard speed")
+                                    .font(.system(size: 11)).foregroundColor(Color("TextTertiary"))
+                            }
+                        }
+                    }
+                    .tint(Color(red: 0.851, green: 0.467, blue: 0.341))
+                    .padding(10)
+                    .background(Color("FillNeutral"), in: RoundedRectangle(cornerRadius: 14))
+                    .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color("BorderSubtle"), lineWidth: 1))
+                }
             } else {
                 Text("This model has no thinking setting.")
                     .font(.system(size: 12))

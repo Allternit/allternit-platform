@@ -86,6 +86,11 @@ pub fn checked_level(model_id: &str, level: &str) -> Option<String> {
     entry(model_id).and_then(|e| e.levels.iter().find(|l| **l == level).cloned())
 }
 
+/// Whether the model's account offers a faster priority tier (Codex "Fast").
+pub fn offers_fast(model_id: &str) -> bool {
+    entry(model_id).map(|e| e.fast).unwrap_or(false)
+}
+
 /// The `thinking` object for a catalog row, or `null` for a model with no setting.
 pub fn thinking_json(model_id: &str) -> Value {
     let Some(e) = entry(model_id) else { return Value::Null };
@@ -126,6 +131,8 @@ mod tests {
         assert_eq!(levels("glm-5.2"), ["high", "max"]);
         assert!(levels("kimi-k3").is_empty());
         assert!(thinking_json("kimi-k3").is_null());
+        assert!(offers_fast("codex-cli/gpt-6.1-sol"));
+        assert!(!offers_fast("claude-opus-5-5"));
     }
 
     #[test]

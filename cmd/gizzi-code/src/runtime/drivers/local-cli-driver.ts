@@ -1692,11 +1692,14 @@ export class LocalCliDriver implements RuntimeDriver {
       events.push({ type: "vendor_session", id: threadId })
 
       const effort = this.tasks.get(handle.taskId)?.effort
+      const serviceTier = this.tasks.get(handle.taskId)?.serviceTier
       await request("turn/start", {
         threadId,
         input: [{ type: "text", text: prompt }],
         // The picker's reasoning level (codex debug models lists each model's).
         ...(effort ? { effort } : {}),
+        // The picker's Fast: Codex's priority service tier for this turn.
+        ...(serviceTier ? { serviceTier } : {}),
       })
       // Each MCP server's tools, for the context panel (asked while the servers are up).
       const mcpStatus = request("mcpServerStatus/list", {}).catch(() => undefined)
