@@ -44,12 +44,15 @@ struct BillingSubscription: Decodable, Equatable, Sendable {
     let label: String
     let planTier: String
     let status: String
+    /// When the plan renews (RFC 3339), once Stripe has reported it.
+    var renewsAt: String? = nil
 
     enum CodingKeys: String, CodingKey {
         case planId = "plan_id"
         case label
         case planTier = "plan_tier"
         case status
+        case renewsAt = "renews_at"
     }
 
     /// A paid plan that still bills (or is trying to).

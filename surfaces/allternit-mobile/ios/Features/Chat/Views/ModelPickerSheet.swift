@@ -1,29 +1,22 @@
 import SwiftUI
 
-/// "Choose a model" (web ModelPickerPopover, phone sheet): search and filter
-/// chips on top, a provider rail (Suggested · Favorites · each provider ·
-/// Connect account) beside the model list grouped by provider, and a detail
-/// footer with the Effort control for the model in focus. Rows come from the
-/// backend catalog (`GET /api/v1/models`).
+/// The model sheet (web ModelPickerPopover, phone layout): search, the
+/// provider overview strip with each account's limit ring, the current model
+/// with its own thinking slider, then every model grouped by provider with no
+/// cap. Rows come from the catalog (`GET /api/v1/models`), each carrying its
+/// thinking levels (model-thinking.json).
 struct ModelPickerSheet: View {
     @ObservedObject var modelStore: ModelStore
+    @ObservedObject private var quotas = ProviderQuotaStore.shared
+    @ObservedObject private var usage = UsageStore.shared
     @Environment(\.dismiss) private var dismiss
 
-    private enum RailSelection: Hashable { case suggested, favorites, provider(String) }
-    private enum Filter: String, CaseIterable { case reasoning = "Reasoning", local = "Local" }
+    private enum Scope: Hashable { case all, favorites, provider(String) }
 
     @State private var query = ""
-    @State private var filters: Set<Filter> = []
-    @State private var rail: RailSelection = .suggested
-    /// Phone: the rail can collapse to icons for a wider list.
-    @State private var isRailOpen = true
+    @State private var scope: Scope = .all
     @State private var favorites: [String] = ModelFavorites.load()
-    /// The row last touched — the footer describes it (else the selection).
-    @State private var focusId: String? = nil
     @State private var isConnectPresented = false
-
-    private static let defaultVisible = 20
-    private static let searchLimit = 60
 
     var body: some View {
         VStack(spacing: 0) {
@@ -32,26 +25,29 @@ struct ModelPickerSheet: View {
                 .frame(width: 36, height: 5)
                 .padding(.top, 8)
                 .padding(.bottom, 6)
-
-            searchHeader
-
-            HStack(spacing: 0) {
-                providerRail
-                    .frame(width: isRailOpen ? 148 : 48)
-                Rectangle().fill(Color("BorderSubtle")).frame(width: 1)
-                modelList
+            header
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    if !searching, scope == .all, let current = modelStore.selectedModel {
+                        currentModel(current)
+                            .padding(.bottom, 6)
+                    }
+                    modelList
+                }
+                .padding(.horizontal, 10)
+                .padding(.bottom, 24)
             }
-            .frame(maxHeight: .infinity)
-
-            Rectangle().fill(Color("BorderSubtle")).frame(height: 1)
-            detailFooter
-                .frame(height: 150, alignment: .top)
         }
         .background(Color("BgPrimary").ignoresSafeArea())
         .presentationDetents([.fraction(0.86), .large])
         .presentationCornerRadius(28)
         .presentationDragIndicator(.hidden)
-        .onAppear { modelStore.fetchModelsIfNeeded() }
+        .onAppear {
+            modelStore.fetchModelsIfNeeded()
+            usage.fetchUsageIfNeeded()
+            quotas.load(providerIds)
+        }
+        .onChange(of: modelStore.models) { _, _ in quotas.load(providerIds) }
         .sheet(isPresented: $isConnectPresented) {
             NavigationStack {
                 ModelManagementView()
@@ -64,127 +60,115 @@ struct ModelPickerSheet: View {
         }
     }
 
-    // MARK: - Search + filters
+    // MARK: - Header: search + provider overview
 
-    private var searchHeader: some View {
-        VStack(alignment: .leading, spacing: 8) {
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
                 Image(systemName: "magnifyingglass")
                     .font(.system(size: 15))
                     .foregroundColor(Color("TextSecondary"))
-                TextField("Search models, providers, capabilities", text: $query)
+                TextField("Search every model", text: $query)
                     .font(.system(size: 16))
                     .foregroundColor(Color("TextPrimary"))
                     .autocorrectionDisabled()
                     .textInputAutocapitalization(.never)
                     .accessibilityLabel("Search models")
             }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 9)
+            .background(Color("FillNeutral"), in: Capsule())
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(Filter.allCases, id: \.self) { filter in
-                        let on = filters.contains(filter)
-                        Button(action: {
-                            if on { filters.remove(filter) } else { filters.insert(filter) }
-                        }) {
-                            Text(filter.rawValue)
-                                .font(.system(size: 11))
-                                .foregroundColor(on ? Color("TextPrimary") : Color("TextSecondary"))
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 3)
-                                .background(on ? Color("FillNeutral") : Color.clear, in: Capsule())
-                                .overlay(Capsule().stroke(on ? Color("BorderStrong") : Color("BorderSubtle"), lineWidth: 1))
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityAddTraits(on ? [.isSelected] : [])
+                HStack(spacing: 7) {
+                    overviewChip(icon: AnyView(Image(systemName: "square.grid.2x2").font(.system(size: 14))), title: "All", detail: "\(modelStore.models.count) models", active: scope == .all) { scope = .all }
+                    overviewChip(icon: AnyView(Image(systemName: "star.fill").font(.system(size: 13)).foregroundColor(Color("AccentPrimary"))), title: "Favorites", detail: "\(favorites.count)", active: scope == .favorites) { scope = .favorites }
+                    ForEach(providerIds, id: \.self) { pid in
+                        let worst = quotas.worst(pid)
+                        let count = modelStore.models.filter { $0.provider == pid }.count
+                        overviewChip(
+                            icon: AnyView(LimitRingView(window: worst, size: 28) { ModelProviderMark(providerId: pid, size: 15) }),
+                            title: ModelProviderNames.name(pid),
+                            detail: worst.map { $0.usedRatio >= 0.95 ? "limit reached" : "\(count) · \(Int(((1 - $0.usedRatio) * 100).rounded()))% left" } ?? "\(count) models",
+                            active: scope == .provider(pid)
+                        ) { scope = .provider(pid) }
                     }
+                    overviewChip(icon: AnyView(Image(systemName: "plus").font(.system(size: 13))), title: "Connect", detail: "account", active: false) { isConnectPresented = true }
                 }
             }
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .overlay(alignment: .bottom) {
-            Rectangle().fill(Color("BorderSubtle")).frame(height: 1)
-        }
+        .padding(.bottom, 10)
+        .overlay(alignment: .bottom) { Rectangle().fill(Color("BorderSubtle")).frame(height: 1) }
     }
 
-    // MARK: - Provider rail
-
-    private var providerRail: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 2) {
-                railItem(
-                    icon: AnyView(Image(systemName: "sidebar.left").font(.system(size: 15))),
-                    label: isRailOpen ? "Hide provider names" : "Show provider names",
-                    active: false
-                ) {
-                    withAnimation(.easeInOut(duration: 0.2)) { isRailOpen.toggle() }
-                }
-                railItem(icon: AnyView(Image(systemName: "square.grid.2x2").font(.system(size: 13))), label: "Suggested", active: rail == .suggested) {
-                    rail = .suggested
-                }
-                railItem(icon: AnyView(Image(systemName: "star.fill").font(.system(size: 13))), label: "Favorites", active: rail == .favorites) {
-                    rail = .favorites
-                }
-                railHeading("Providers")
-                ForEach(providerIds, id: \.self) { pid in
-                    railItem(icon: AnyView(ModelProviderMark(providerId: pid, size: 18)), label: ModelProviderNames.name(pid), active: rail == .provider(pid)) {
-                        rail = .provider(pid)
-                    }
-                }
-                railHeading("Manage")
-                railItem(icon: AnyView(Image(systemName: "plus").font(.system(size: 13))), label: "Connect account", active: false) {
-                    isConnectPresented = true
-                }
-            }
-            .padding(isRailOpen ? 6 : 4)
-        }
-        .background(Color("FillNeutral").opacity(0.3))
-    }
-
-    @ViewBuilder
-    private func railHeading(_ label: String) -> some View {
-        if isRailOpen {
-            Text(label.uppercased())
-                .font(.system(size: 10.5, weight: .semibold))
-                .tracking(0.8)
-                .foregroundColor(Color("TextTertiary"))
-                .padding(.horizontal, 8)
-                .padding(.top, 10)
-                .padding(.bottom, 4)
-        } else {
-            Rectangle().fill(Color("BorderSubtle")).frame(height: 1).padding(.horizontal, 8).padding(.vertical, 6)
-        }
-    }
-
-    private func railItem(icon: AnyView, label: String, active: Bool, action: @escaping () -> Void) -> some View {
+    private func overviewChip(icon: AnyView, title: String, detail: String, active: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack(spacing: 8) {
-                icon
-                    .foregroundColor(Color("TextPrimary"))
-                    .frame(width: 18)
-                if isRailOpen {
-                    Text(label)
-                        .font(.system(size: 12.5))
-                        .foregroundColor(Color("TextPrimary"))
-                        .lineLimit(1)
-                    Spacer(minLength: 0)
+                icon.frame(width: 28, height: 28).foregroundColor(Color("TextPrimary"))
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(title).font(.system(size: 12, weight: .semibold)).foregroundColor(Color("TextPrimary"))
+                    Text(detail).font(.system(size: 10.5)).foregroundColor(Color("TextTertiary"))
                 }
             }
-            .padding(.horizontal, isRailOpen ? 8 : 0)
-            .frame(maxWidth: .infinity, minHeight: isRailOpen ? 32 : 40)
-            .background(active ? Color("FillNeutral") : Color.clear, in: RoundedRectangle(cornerRadius: 8))
-            .contentShape(Rectangle())
+            .padding(.leading, 6)
+            .padding(.trailing, 10)
+            .padding(.vertical, 6)
+            .background(Color("FillNeutral"), in: RoundedRectangle(cornerRadius: 14))
+            .overlay(RoundedRectangle(cornerRadius: 14).stroke(active ? Color("AccentPrimary") : Color("BorderSubtle"), lineWidth: 1))
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(label)
+        .accessibilityAddTraits(active ? [.isSelected] : [])
     }
 
-    // MARK: - Model list
+    // MARK: - Current model + its thinking levels
+
+    private func currentModel(_ model: RuntimeModel) -> some View {
+        let windows = model.provider == "allternit" ? [ProviderQuotaStore.cloudWindow()].compactMap { $0 } : (quotas.byProvider[model.provider]?.windows ?? [])
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 12) {
+                LimitRingView(window: windows.max { $0.usedRatio < $1.usedRatio }, size: 52) {
+                    ModelProviderMark(providerId: model.provider, size: 22)
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(model.name).font(.system(size: 15, weight: .semibold)).foregroundColor(Color("TextPrimary"))
+                    Text(accountSummary(model.provider)).font(.system(size: 11.5)).foregroundColor(Color("TextTertiary")).lineLimit(2)
+                    ForEach(windows) { w in
+                        VStack(alignment: .leading, spacing: 3) {
+                            HStack {
+                                Text(w.displayLabel).font(.system(size: 11)).foregroundColor(Color("TextSecondary"))
+                                Spacer()
+                                Text("\(Int((w.usedRatio * 100).rounded()))%\(w.resetDate.map { " · resets " + $0.formatted(.dateTime.weekday().hour().minute()) } ?? "")")
+                                    .font(.system(size: 11)).foregroundColor(Color("TextPrimary")).monospacedDigit()
+                            }
+                            ProgressView(value: w.usedRatio).tint(LimitRingView<EmptyView>.color(w.usedRatio))
+                        }
+                    }
+                }
+            }
+            if let thinking = model.effectiveThinking {
+                ThinkingSliderView(thinking: thinking, value: thinking.level(modelStore.selectedEffort)) { level in
+                    modelStore.selectedEffort = level
+                }
+            } else {
+                Text("This model has no thinking setting.")
+                    .font(.system(size: 12))
+                    .foregroundColor(Color("TextTertiary"))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(12)
+                    .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color("BorderSubtle"), lineWidth: 1))
+            }
+        }
+        .padding(12)
+        .background(Color("FillNeutral").opacity(0.5), in: RoundedRectangle(cornerRadius: 18))
+        .overlay(RoundedRectangle(cornerRadius: 18).stroke(Color("BorderSubtle"), lineWidth: 1))
+        .padding(.top, 10)
+    }
+
+    // MARK: - Every model, grouped by provider
 
     private var providerIds: [String] {
         var ids: [String] = []
         for model in modelStore.models where !ids.contains(model.provider) { ids.append(model.provider) }
-        // Allternit Cloud first, local last.
         return ids.sorted { a, b in
             let ra = ModelProviderNames.rank(a), rb = ModelProviderNames.rank(b)
             return ra != rb ? ra < rb : ModelProviderNames.name(a) < ModelProviderNames.name(b)
@@ -193,98 +177,70 @@ struct ModelPickerSheet: View {
 
     private var searching: Bool { !query.trimmingCharacters(in: .whitespaces).isEmpty }
 
-    /// Visible rows and how many more a search would reach (web: the
-    /// selection, favorites, then the catalog — Cloud first — capped).
-    private var filtered: (visible: [RuntimeModel], hidden: Int) {
+    /// Every model in scope that matches the search. Nothing is hidden.
+    private var matches: [RuntimeModel] {
         let q = query.trimmingCharacters(in: .whitespaces).lowercased()
-        let matches = modelStore.models.filter { model in
-            switch rail {
+        return modelStore.models.filter { model in
+            switch scope {
             case .favorites: if !favorites.contains(model.id) { return false }
             case .provider(let pid): if model.provider != pid { return false }
-            case .suggested: break
+            case .all: break
             }
-            if filters.contains(.reasoning), !model.supportsEffort { return false }
-            if filters.contains(.local), ModelProviderNames.rank(model.provider) != 2 { return false }
             guard !q.isEmpty else { return true }
-            let hay = "\(model.name) \(model.id) \(ModelProviderNames.name(model.provider)) \(model.supportsEffort ? "reasoning" : "")".lowercased()
+            let hay = "\(model.name) \(model.id) \(ModelProviderNames.name(model.provider)) \(model.thinking?.term ?? "")".lowercased()
             return hay.contains(q)
         }
-        if !q.isEmpty { return (Array(matches.prefix(Self.searchLimit)), max(0, matches.count - Self.searchLimit)) }
-        if rail == .favorites { return (matches, 0) }
-        var ordered: [RuntimeModel] = []
-        func push(_ model: RuntimeModel?) {
-            if let model, !ordered.contains(model) { ordered.append(model) }
-        }
-        push(matches.first { $0.id == modelStore.selectedModelId })
-        favorites.forEach { id in push(matches.first { $0.id == id }) }
-        matches.sorted { ModelProviderNames.rank($0.provider) < ModelProviderNames.rank($1.provider) }.forEach(push)
-        return (Array(ordered.prefix(Self.defaultVisible)), max(0, ordered.count - Self.defaultVisible))
     }
 
     private var groups: [(provider: String, rows: [RuntimeModel])] {
-        var order: [String] = []
-        var rows: [String: [RuntimeModel]] = [:]
-        for model in filtered.visible {
-            if rows[model.provider] == nil { order.append(model.provider) }
-            rows[model.provider, default: []].append(model)
-        }
-        return order
-            .sorted { ModelProviderNames.rank($0) < ModelProviderNames.rank($1) }
-            .map { ($0, rows[$0] ?? []) }
+        let rows = Dictionary(grouping: matches, by: \.provider)
+        return providerIds.compactMap { pid in rows[pid].map { (pid, $0) } }
     }
 
+    @ViewBuilder
     private var modelList: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 0) {
-                if modelStore.isLoading && modelStore.models.isEmpty {
-                    ProgressView()
-                        .frame(maxWidth: .infinity)
-                        .padding(.top, 32)
-                } else if modelStore.models.isEmpty, let loadError = modelStore.loadError {
-                    FriendlyStateView(
-                        style: .offline,
-                        icon: "wifi.slash",
-                        title: "Couldn't load models",
-                        message: FriendlyErrorMessage.from(loadError),
-                        actionTitle: "Retry",
-                        action: { modelStore.fetchModelsIfNeeded(force: true) }
-                    )
-                } else if groups.isEmpty {
-                    Text("No models match")
-                        .font(.system(size: 14))
+        if modelStore.isLoading && modelStore.models.isEmpty {
+            ProgressView().frame(maxWidth: .infinity).padding(.top, 32)
+        } else if modelStore.models.isEmpty, let loadError = modelStore.loadError {
+            FriendlyStateView(
+                style: .offline,
+                icon: "wifi.slash",
+                title: "Couldn't load models",
+                message: FriendlyErrorMessage.from(loadError),
+                actionTitle: "Retry",
+                action: { modelStore.fetchModelsIfNeeded(force: true) }
+            )
+        } else if groups.isEmpty {
+            Text(scope == .favorites ? "Star a model to keep it here." : "No models match")
+                .font(.system(size: 14))
+                .foregroundColor(Color("TextSecondary"))
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 24)
+        } else {
+            ForEach(groups, id: \.provider) { group in
+                HStack(spacing: 6) {
+                    ModelProviderMark(providerId: group.provider, size: 15)
+                    Text(groupTitle(group.provider).uppercased())
+                        .font(.system(size: 11, weight: .semibold))
+                        .tracking(0.8)
                         .foregroundColor(Color("TextSecondary"))
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 24)
-                } else {
-                    ForEach(groups, id: \.provider) { group in
-                        HStack(spacing: 6) {
-                            ModelProviderMark(providerId: group.provider, size: 15)
-                            Text(groupTitle(group.provider).uppercased())
-                                .font(.system(size: 11, weight: .semibold))
-                                .tracking(0.8)
-                                .foregroundColor(Color("TextSecondary"))
-                                .lineLimit(1)
-                        }
-                        .padding(.horizontal, 8)
-                        .padding(.top, 10)
-                        .padding(.bottom, 4)
-                        ForEach(group.rows) { model in
-                            modelRow(model)
+                        .lineLimit(1)
+                    Spacer()
+                    Text("\(group.rows.count)").font(.system(size: 11)).foregroundColor(Color("TextTertiary"))
+                }
+                .padding(.horizontal, 6)
+                .padding(.top, 14)
+                .padding(.bottom, 4)
+                VStack(spacing: 0) {
+                    ForEach(group.rows) { model in
+                        modelRow(model)
+                        if model.id != group.rows.last?.id {
+                            Rectangle().fill(Color("BorderSubtle")).frame(height: 1).padding(.leading, 44)
                         }
                     }
                 }
-                if filtered.hidden > 0 {
-                    Text(searching ? "More matches — keep typing to narrow the search" : "Type in the search bar to find more models")
-                        .font(.system(size: 11.5))
-                        .foregroundColor(Color("TextSecondary"))
-                        .multilineTextAlignment(.center)
-                        .frame(maxWidth: .infinity)
-                        .padding(.top, 12)
-                        .padding(.bottom, 8)
-                }
+                .background(Color("FillNeutral").opacity(0.5), in: RoundedRectangle(cornerRadius: 14))
             }
-            .padding(.horizontal, 6)
-            .padding(.vertical, 4)
         }
     }
 
@@ -296,59 +252,48 @@ struct ModelPickerSheet: View {
         let selected = modelStore.selectedModelId == model.id
         let favorite = favorites.contains(model.id)
         return HStack(spacing: 10) {
-            ModelProviderMark(providerId: model.provider, size: 22)
-            VStack(alignment: .leading, spacing: 1) {
+            ModelProviderMark(providerId: model.provider, size: 24)
+            VStack(alignment: .leading, spacing: 2) {
                 Text(model.name)
-                    .font(.system(size: 13))
+                    .font(.system(size: 14))
                     .foregroundColor(Color("TextPrimary"))
                     .lineLimit(1)
-                Text(subtitle(model))
-                    .font(.system(size: 11))
-                    .foregroundColor(Color("TextSecondary"))
-                    .lineLimit(1)
+                HStack(spacing: 6) {
+                    Text(model.shortName)
+                        .font(.system(size: 10.5, design: .monospaced))
+                        .foregroundColor(Color("TextTertiary"))
+                        .lineLimit(1)
+                    if let thinking = model.thinking { ThinkingChip(thinking: thinking) }
+                }
             }
             Spacer(minLength: 4)
-            if model.supportsEffort {
-                Text("Reasoning")
-                    .font(.system(size: 10))
-                    .foregroundColor(Color("TextSecondary"))
-                    .padding(.horizontal, 4)
-                    .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color("BorderSubtle"), lineWidth: 1))
+            if selected {
+                Image(systemName: "checkmark").font(.system(size: 13, weight: .semibold)).foregroundColor(Color("AccentPrimary"))
             }
             Button(action: { toggleFavorite(model.id) }) {
                 Image(systemName: favorite ? "star.fill" : "star")
-                    .font(.system(size: 13))
-                    .foregroundColor(favorite ? Color("TextPrimary") : Color("TextTertiary"))
-                    .frame(width: 28, height: 28)
+                    .font(.system(size: 14))
+                    .foregroundColor(favorite ? Color("AccentPrimary") : Color("TextTertiary"))
+                    .frame(width: 30, height: 30)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .accessibilityLabel(favorite ? "Unfavorite \(model.name)" : "Favorite \(model.name)")
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
-        .background(selected ? Color("FillNeutral") : Color.clear, in: RoundedRectangle(cornerRadius: 9))
-        .overlay(alignment: .leading) {
-            if selected {
-                Rectangle().fill(Color("AccentPrimary")).frame(width: 2).padding(.vertical, 4)
-            }
-        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
         .contentShape(Rectangle())
         .onTapGesture { choose(model) }
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(selected ? [.isButton, .isSelected] : [.isButton])
     }
 
-    private func subtitle(_ model: RuntimeModel) -> String {
-        if let description = model.description, !description.isEmpty, description != "Allternit Cloud" { return description }
-        return model.provider == "allternit" ? "via Allternit Cloud" : ModelProviderNames.name(model.provider)
-    }
-
     private func choose(_ model: RuntimeModel) {
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        focusId = model.id
         modelStore.userSelectedModel(model.id)
-        dismiss()
+        // Stay open on a pick from the full list so the level can be set too.
+        scope = .all
+        query = ""
     }
 
     private func toggleFavorite(_ id: String) {
@@ -356,78 +301,17 @@ struct ModelPickerSheet: View {
         ModelFavorites.save(favorites)
     }
 
-    // MARK: - Detail footer
-
-    private var detailModel: RuntimeModel? {
-        if let focusId, let model = modelStore.models.first(where: { $0.id == focusId }) { return model }
-        return modelStore.selectedModel
-    }
-
-    @ViewBuilder
-    private var detailFooter: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if let model = detailModel {
-                HStack(spacing: 8) {
-                    ModelProviderMark(providerId: model.provider, size: 18)
-                    Text(model.name)
-                        .font(.system(size: 11.5, weight: .semibold))
-                        .foregroundColor(Color("TextPrimary"))
-                        .lineLimit(1)
-                    Spacer(minLength: 8)
-                    Text("Effort")
-                    if model.supportsEffort {
-                        HStack(spacing: 0) {
-                            ForEach(ModelEffort.allCases, id: \.self) { effort in
-                                let on = modelStore.selectedModelId == model.id && modelStore.selectedEffort == effort
-                                Button(action: {
-                                    modelStore.userSelectedModel(model.id)
-                                    modelStore.selectedEffort = effort
-                                }) {
-                                    Text(effort.label)
-                                        .font(.system(size: 11.5))
-                                        .foregroundColor(on ? Color("TextPrimary") : Color("TextSecondary"))
-                                        .padding(.horizontal, 8)
-                                        .padding(.vertical, 3)
-                                        .background(on ? Color("FillNeutral") : Color.clear)
-                                }
-                                .buttonStyle(.plain)
-                                .accessibilityAddTraits(on ? [.isSelected] : [])
-                            }
-                        }
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
-                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color("BorderSubtle"), lineWidth: 1))
-                        .accessibilityLabel("Thinking effort")
-                    } else {
-                        Text("Not adjustable")
-                            .foregroundColor(Color("TextTertiary"))
-                    }
-                }
-                Rectangle().fill(Color("BorderSubtle")).frame(height: 1)
-                Text("ACCOUNT · \(ModelProviderNames.name(model.provider).uppercased())")
-                    .font(.system(size: 11, weight: .semibold))
-                    .tracking(0.8)
-                    .lineLimit(1)
-                Text(accountSummary(model.provider))
-                    .lineLimit(2)
-            } else {
-                Text("Pick a model to see its details.")
-            }
-        }
-        .font(.system(size: 11.5))
-        .foregroundColor(Color("TextSecondary"))
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-    }
-
     private func accountSummary(_ pid: String) -> String {
         if pid == "allternit" {
-            let usage = UsageStore.shared
             let left = usage.percentUsed.map { "\(max(0, 100 - Int($0.rounded())))% of allowance left" }
-            let parts = [usage.planLabel, left].compactMap { $0 }
-            return parts.isEmpty ? "Usage unavailable" : parts.joined(separator: " · ")
+            let parts = ["Allternit Cloud", usage.planLabel, left].compactMap { $0 }
+            return parts.joined(separator: " · ")
         }
-        if ModelProviderNames.rank(pid) == 2 { return "No limits · runs on this computer" }
-        return "Usage limits aren’t reported for this account yet"
+        if ModelProviderNames.rank(pid) == 2 { return "Runs on this computer · no limits" }
+        let plan = quotas.byProvider[pid]?.plan
+        let name = ModelProviderNames.name(pid)
+        if quotas.byProvider[pid] == nil { return "\(name) · limits not reported" }
+        return [name, plan].compactMap { $0 }.joined(separator: " · ")
     }
 }
 
