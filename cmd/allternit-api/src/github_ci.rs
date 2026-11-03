@@ -243,9 +243,7 @@ impl CiService {
     ) -> Result<Value, Error> {
         let action=self.db.connect().map_err(internal)?.query_row("SELECT action,head_sha,run_id,run_attempt FROM live_ci_actions WHERE id=?1 AND user_id=?2 AND connection_id=?3 AND repository=?4 AND pull_number=?5 AND state='pending' AND expires_at>?6",params![approval,user,connection,repo,number,now()],|r|Ok(Action{action:r.get(0)?,head_sha:r.get(1)?,run_id:r.get(2)?,run_attempt:r.get(3)?})).optional().map_err(internal)?.ok_or_else(stale)?;
         validate_action(&self.snapshot(token, repo, number).await?, &action)?;
-        if self.db.connect().map_err(internal)?.execute("UPDATE live_ci_actions SET state='dispatching' WHERE id=?1 AND state='pending' AND expires_at>?2",params![approval,now()]).map_err(|_|stale())?!=1{return Err(stale());}
-        // Consume before dispatch: a timeout can never automatically repeat the write.
-        let result = if action.action == "rerun-failed" {
+        if action.action == "rerun-failed" {
             let run = self
                 .read(
                     token,
@@ -261,6 +259,10 @@ impl CiService {
             {
                 return Err(stale());
             }
+        }
+        if self.db.connect().map_err(internal)?.execute("UPDATE live_ci_actions SET state='dispatching' WHERE id=?1 AND state='pending' AND expires_at>?2",params![approval,now()]).map_err(|_|stale())?!=1{return Err(stale());}
+        // Consume before dispatch: a timeout can never automatically repeat the write.
+        let result = if action.action == "rerun-failed" {
             self.request(
                 token,
                 reqwest::Method::POST,
