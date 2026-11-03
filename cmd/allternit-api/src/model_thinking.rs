@@ -70,6 +70,11 @@ fn entry(model_id: &str) -> Option<&'static Entry> {
     TABLE.1.iter().find(|e| e.patterns.iter().any(|p| matches(p, &id)))
 }
 
+/// The whole table, for clients that match models themselves.
+pub fn table_json() -> Value {
+    serde_json::from_str(TABLE_JSON).unwrap_or(Value::Null)
+}
+
 /// The levels a model takes, in order (empty: no thinking setting).
 pub fn levels(model_id: &str) -> Vec<String> {
     entry(model_id).map(|e| e.levels.clone()).unwrap_or_default()

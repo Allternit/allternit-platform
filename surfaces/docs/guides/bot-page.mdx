@@ -1,6 +1,6 @@
 ---
 title: "Bot page"
-description: "The four tiles at the top of a bot: Soul, Memory, Skills and Usage, and the Model row, on Desktop, the phone layout, the app on your phone and iOS."
+description: "The four tiles at the top of a bot: Soul, Memory, Capabilities and Usage, and the Model row, on Desktop, the phone layout, the app on your phone and iOS."
 ---
 
 Open a bot and you see four tiles above its settings rows, then a **Model** row.
@@ -9,9 +9,22 @@ Open a bot and you see four tiles above its settings rows, then a **Model** row.
 | --- | --- | --- |
 | **Soul** | When the Soul was last edited | The [Soul page](/guides/bot-soul) |
 | **Memory** | How many memories this bot owns | [Memory and Learning](/guides/memory-and-learning) |
-| **Skills** | How many skills are on | The bot's skills, each with an on/off switch |
+| **Capabilities** | How many skills are on | Everything the bot may use, with an on/off switch each (see below) |
 | **Usage** | Spend, when a real figure exists, otherwise the number of sessions in the last 30 days | The usage numbers |
 
 A tile only shows a value that is real. While the numbers load the tile shows a quiet placeholder, and if they cannot be loaded the tile stays with no value. Spend is not recorded today, so Usage shows sessions.
+
+## Capabilities
+
+The Capabilities page lists what this bot may use in four groups, each with a count of what is on:
+
+- **Skills**: the skills turned on in [Customize](/guides/customize).
+- **Connectors**: the catalog connectors you connected, such as GitHub or Slack.
+- **MCP**: your own MCP servers, from ACI › MCP Apps.
+- **Tools**: built-in tools such as web search and file read.
+
+Everything starts on. Turning one off changes this bot only. Things you install later start on for the bot. When you turn everything in a group back on, the group goes back to "all", so new installs keep starting on. The bot is refused a connector that is off and is never offered an MCP server that is off.
+
+For developers: the lists are the agent's `allowed_skills`, `config.connectorBindings` (by `provider`), `mcp_connector_ids` (set with `PUT /agents/:id/toolset`) and `allowed_tools`. allternit-api puts them on the bot marker as `allowedSkills`, `allowedConnectors` and `allowedMcp` (`bot_turn_marker`), and gizzi enforces them in `SessionPrompt` with `BotTurn.connectorOnForBot` and `BotTurn.mcpOnForBot`. Page: allternit-ai `src/views/bots/hub/BotCapabilitiesPage.tsx`.
 
 The existing rows under the tiles are unchanged. On iOS the Usage page has no purchase button.

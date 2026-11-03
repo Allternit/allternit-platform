@@ -2857,11 +2857,20 @@ pub(crate) fn bot_job_payload(db: &DbHandle, user_id: &str, target: &str, descri
 /// `None` and keep today's behavior.
 pub(crate) fn bot_turn_marker(db: &DbHandle, agent_id: &str, session_id: Option<&str>) -> Option<serde_json::Value> {
     let conn = db.connect().ok()?;
-    let (name, is_bot, config, allowed, perms, skills): (String, i64, Option<String>, Option<String>, Option<String>, Option<String>) = conn
+    #[allow(clippy::type_complexity)]
+    let (name, is_bot, config, allowed, perms, skills, mcp_ids): (
+        String,
+        i64,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    ) = conn
         .query_row(
-            "SELECT name, is_bot, config, allowed_tools, tool_permissions, allowed_skills FROM agents WHERE id = ?1",
+            "SELECT name, is_bot, config, allowed_tools, tool_permissions, allowed_skills, mcp_connector_ids FROM agents WHERE id = ?1",
             params![agent_id],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?)),
         )
         .ok()?;
     let parse = |raw: Option<String>| raw.and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok()).unwrap_or(serde_json::Value::Null);
@@ -2898,6 +2907,30 @@ pub(crate) fn bot_turn_marker(db: &DbHandle, agent_id: &str, session_id: Option<
     // The bot's Skills page; gizzi hides anything not on a non-empty list.
     if let Some(list) = parse(skills).as_array().filter(|l| !l.is_empty()) {
         marker["allowedSkills"] = json!(list);
+    }
+    // The bot's Capabilities page: catalog connectors (its connector bindings,
+    // kept in `config.connectorBindings`) and the user's MCP connectors it may
+    // use. Absent = all; gizzi enforces.
+    let apps: Vec<String> = config
+        .get("connectorBindings")
+        .and_then(serde_json::Value::as_array)
+        .map(|list| {
+            list.iter()
+                .filter_map(|b| b.get("provider").or_else(|| b.get("connectorId")).and_then(serde_json::Value::as_str))
+                .map(|id| id.trim().to_lowercase())
+                .filter(|id| !id.is_empty())
+                .collect()
+        })
+        .unwrap_or_default();
+    if !apps.is_empty() {
+        marker["allowedConnectors"] = json!(apps);
+    }
+    let mcp: Vec<String> = parse(mcp_ids)
+        .as_array()
+        .map(|list| list.iter().filter_map(serde_json::Value::as_str).map(str::to_string).filter(|id| !id.is_empty()).collect())
+        .unwrap_or_default();
+    if !mcp.is_empty() {
+        marker["allowedMcp"] = json!(mcp);
     }
     bot_account_fields(&config, &mut marker);
     Some(marker)

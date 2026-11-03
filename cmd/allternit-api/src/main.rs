@@ -1145,6 +1145,7 @@ async fn main() {
         .merge(allternit_api::sandbox_template_routes::router())
         .merge(allternit_api::skills_routes::skills_router())
         .merge(allternit_api::skill_catalog_install::skill_catalog_router())
+        .merge(allternit_api::agent_capability_import::agent_import_router())
         .merge(allternit_api::long_running_task_routes::long_running_task_router())
         .merge(allternit_api::bot_desktop_templates::router())
         .merge(allternit_api::bot_desktop_capacity::router())

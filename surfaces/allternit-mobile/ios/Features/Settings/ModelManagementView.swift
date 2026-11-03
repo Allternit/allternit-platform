@@ -87,13 +87,17 @@ struct ModelManagementListContent: View {
                 }
                 .font(.subheadline)
 
-                Picker("Reasoning effort", selection: $modelStore.selectedEffort) {
-                    ForEach(ModelEffort.allCases, id: \.self) { effort in
-                        Text(effort.label).tag(effort)
+                if let thinking = modelStore.selectedModel?.effectiveThinking {
+                    Picker(thinking.term, selection: Binding(
+                        get: { thinking.level(modelStore.selectedEffort) },
+                        set: { modelStore.selectedEffort = $0 }
+                    )) {
+                        ForEach(thinking.levels, id: \.id) { level in
+                            Text(level.label).tag(level.id)
+                        }
                     }
+                    .font(.subheadline)
                 }
-                .font(.subheadline)
-                .disabled(modelStore.selectedModel?.supportsEffort != true)
             }
         } header: {
             Text("Default Model")

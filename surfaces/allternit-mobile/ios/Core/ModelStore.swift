@@ -18,9 +18,10 @@ final class ModelStore: ObservableObject {
         didSet { defaults.set(selectedModelId, forKey: Keys.selectedModelId) }
     }
 
-    /// Reasoning effort for effort-capable models (persisted, default Medium).
-    @Published var selectedEffort: ModelEffort {
-        didSet { defaults.set(selectedEffort.rawValue, forKey: Keys.selectedEffort) }
+    /// The picked thinking level (persisted). Each model offers its own levels;
+    /// `level(for:)` falls back to the model's default when it doesn't take this one.
+    @Published var selectedEffort: String {
+        didSet { defaults.set(selectedEffort, forKey: Keys.selectedEffort) }
     }
 
     @Published private(set) var models: [RuntimeModel] = []
@@ -40,7 +41,7 @@ final class ModelStore: ObservableObject {
         self.defaults = defaults
         self.chatClient = chatClient
         self.selectedModelId = defaults.string(forKey: Keys.selectedModelId)
-        self.selectedEffort = ModelEffort(rawValue: defaults.string(forKey: Keys.selectedEffort) ?? "") ?? .medium
+        self.selectedEffort = defaults.string(forKey: Keys.selectedEffort) ?? "medium"
     }
 
     /// Composer pill label: the selected model's short name (derived from
@@ -50,9 +51,8 @@ final class ModelStore: ObservableObject {
     var pillLabel: String {
         guard let selectedModelId, !selectedModelId.isEmpty else { return "Default Model" }
         let short = selectedModelId.split(separator: "/", maxSplits: 1).last.map(String.init) ?? selectedModelId
-        let selected = models.first { $0.id == selectedModelId }
-        guard selected?.supportsEffort == true else { return short }
-        return "\(short) \(selectedEffort.label)"
+        guard let thinking = models.first(where: { $0.id == selectedModelId })?.effectiveThinking else { return short }
+        return "\(short) \(thinking.label(thinking.level(selectedEffort)))"
     }
 
     /// The currently selected catalog entry, when the catalog is loaded.
@@ -64,7 +64,12 @@ final class ModelStore: ObservableObject {
     /// actually supports it (the runtime rejects unknown parameters on some
     /// providers, so we never send it speculatively).
     var effortForSend: String? {
-        selectedModel?.supportsEffort == true ? selectedEffort.rawValue : nil
+        selectedModel?.effectiveThinking.map { $0.level(selectedEffort) }
+    }
+
+    /// The level shown for `model`: the picked one when it takes it, else its default.
+    func level(for model: RuntimeModel) -> String? {
+        model.effectiveThinking.map { $0.level(selectedEffort) }
     }
 
     /// True once the user picks a model in the picker this launch. Until

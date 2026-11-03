@@ -823,6 +823,39 @@
       ]
     },
     {
+      "id": "feature:customize",
+      "label": "Customize directory (skills, connectors, plugins) with the A://TERNIT OFFICIAL shelf, Add from Git, Import an agent, and per-bot Capabilities",
+      "product": "product:ai-allternit",
+      "status": "live",
+      "description": "Customize: Skills, Connectors, Plugins and More, each with Yours and Discover. Discover leads with an ink section hero (A://TERNIT <SECTION> lockup), then the A://TERNIT OFFICIAL shelf of Allternit-made skills and plugins with versioned covers. Connector icons are the vendor's App Store icon, else a brand tile, shared with MCP Apps; a 'Has a screen' tag opens the app in ACI MCP Apps.",
+      "touches": [
+        "allternit-ai/src/views/customize",
+        "allternit-ai/src/components/connectors/ConnectorLogo.tsx",
+        "allternit-ai/src/lib/design/connector-tile.ts",
+        "allternit-ai/src/components/brand/block-type.ts",
+        "allternit-ai/src/components/brand/BlockText.tsx",
+        "allternit-ai/src/components/AProtocolWordmark.tsx",
+        "allternit-ai/scripts/gen-store-icons.mjs",
+        "allternit-ai/public/official-covers",
+        "allternit-ai/public/app-icons/store",
+        "allternit-ai/src/views/bots/hub/BotCapabilitiesPage.tsx",
+        "allternit/cmd/allternit-api/src/skill_catalog_install.rs",
+        "allternit/cmd/allternit-api/src/agent_capability_import.rs",
+        "allternit/cmd/gizzi-code/src/runtime/bots/bot-turn.ts",
+        "allternit/cmd/gizzi-code/src/runtime/tools/builtins/task.ts"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-02",
+          "note": "Eoj: keep the Customize layout; add the A://TERNIT OFFICIAL shelf (covers: ink frame, block-type name, art from one fixed prompt), ink section heroes, App Store connector icons with brand-tile fallback; MCP Apps stays in ACI."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/customize.mdx",
+        "allternit/surfaces/docs/guides/connectors.mdx"
+      ]
+    },
+    {
       "id": "feature:mcp-apps",
       "label": "MCP Apps and events",
       "product": "product:mcp-apps",
@@ -2400,7 +2433,7 @@
       "label": "Sign-in screen",
       "product": "product:ai-allternit",
       "status": "live",
-      "description": "The sign-in and sign-up pages on the web, the Desktop first-run, terminal login and the phone/PWA sign-in screen, with the sign-in stage (an auto-looping preview of the four real views: Home, Bots, Code, ACI) beside the real Clerk sign-in rail.",
+      "description": "Shared dark sign-in with the offline wordmark/Gizzi/cast loop and real Clerk authentication on web, Desktop and native iPhone.",
       "touches": [
         "allternit-ai/src/components/auth",
         "allternit-ai/src/pages",
@@ -2408,19 +2441,27 @@
         "allternit-ai/src/fabric-session",
         "surface:ai",
         "surface:pwa",
-        "surface:desktop"
+        "surface:desktop",
+        "allternit/surfaces/allternit-mobile/ios/App/AllternitApp.swift",
+        "allternit/surfaces/allternit-mobile/ios/Features/Onboarding/SignInStage/LoginArrivalView.swift"
       ],
       "decisions": [
         {
           "on": "2026-10-16",
           "note": "AuthPreview replaced by the approved sign-in stage (the earlier SignInShowcase, ai #573, was superseded before merging): SignInStage loops the four real views (Home, Bots, Code, ACI) with the A://TERNIT lockup beside SignInRail, Clerk styled with variant=\"stage\"; phone puts the stage on top. Desktop shell keeps Continue in browser."
+        },
+        {
+          "on": "2026-11-02",
+          "note": "Eoj approved the full wordmark assembly, Gizzi arrival, website cast joining/leaving, Gizzi spark catch and dissolve loop. Replace sign-in product-demo scenes on iOS and shared web/PWA. Ship byte-identical self-contained network-free illustration assets; keep native/web Clerk authentication and a usable static fallback."
         }
       ],
       "evidence": [
         "allternit/surfaces/docs/surfaces/sign-in.mdx",
         "allternit-ai/src/components/auth/sign-in-stage/SignInStage.tsx",
         "allternit-ai/src/components/auth/sign-in-stage/SignInLayout.tsx",
-        "allternit-ai/src/lib/platform-auth-client.tsx"
+        "allternit-ai/src/lib/platform-auth-client.tsx",
+        "allternit/surfaces/allternit-mobile/shared/login-arrival/README.md",
+        "allternit-ai/src/components/auth/sign-in-stage/LoginArrival.tsx"
       ]
     },
     {

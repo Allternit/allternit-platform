@@ -52,7 +52,7 @@ const MAX_ARCHIVED_VERSIONS: usize = 10;
 
 enum Source {
     Embedded(&'static Dir<'static>),
-    GitHub { repo: &'static str, git_ref: &'static str, path: String },
+    GitHub { repo: String, git_ref: String, path: String },
 }
 
 /// Directory id → (installed folder name, source).
@@ -70,7 +70,7 @@ fn resolve(id: &str) -> Option<(String, Source)> {
             }
             Some((
                 name.to_string(),
-                Source::GitHub { repo: ANTHROPIC_REPO, git_ref: ANTHROPIC_REF, path: format!("skills/{name}") },
+                Source::GitHub { repo: ANTHROPIC_REPO.to_string(), git_ref: ANTHROPIC_REF.to_string(), path: format!("skills/{name}") },
             ))
         }
     }
@@ -102,6 +102,59 @@ fn source_info(source: &Source, commit: Option<&str>) -> Value {
     }
 }
 
+fn github_client() -> Result<reqwest::Client, String> {
+    reqwest::Client::builder()
+        .user_agent("allternit-desktop")
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| e.to_string())
+}
+
+/// One commit of a GitHub repo: the sha `git_ref` resolves to and every file
+/// path in it (one consistent snapshot for listing and downloads).
+async fn github_snapshot(client: &reqwest::Client, repo: &str, git_ref: &str) -> Result<(String, Vec<String>), String> {
+    let commit: Value = client
+        .get(format!("https://api.github.com/repos/{repo}/commits/{git_ref}"))
+        .header("Accept", "application/vnd.github+json")
+        .send()
+        .await
+        .map_err(|e| format!("GitHub unreachable: {e}"))?
+        .error_for_status()
+        .map_err(|e| format!("GitHub refused {git_ref}: {e}"))?
+        .json()
+        .await
+        .map_err(|e| e.to_string())?;
+    let sha = commit
+        .get("sha")
+        .and_then(|v| v.as_str())
+        .filter(|s| s.len() >= 7 && s.chars().all(|c| c.is_ascii_hexdigit()))
+        .ok_or_else(|| format!("GitHub returned no commit for {git_ref}"))?
+        .to_string();
+    let tree: Value = client
+        .get(format!("https://api.github.com/repos/{repo}/git/trees/{sha}?recursive=1"))
+        .send()
+        .await
+        .map_err(|e| format!("GitHub unreachable: {e}"))?
+        .error_for_status()
+        .map_err(|e| format!("GitHub refused the listing: {e}"))?
+        .json()
+        .await
+        .map_err(|e| e.to_string())?;
+    let blobs = tree
+        .get("tree")
+        .and_then(|t| t.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter(|i| i.get("type").and_then(|t| t.as_str()) == Some("blob"))
+                .filter_map(|i| i.get("path").and_then(|p| p.as_str()))
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+    Ok((sha, blobs))
+}
+
 /// Files (relative path → bytes) for one skill, plus the commit a GitHub ref
 /// resolved to (the listing and every download use that commit, so the files
 /// are one consistent snapshot).
@@ -122,54 +175,13 @@ async fn collect_files(source: &Source) -> Result<(Vec<(PathBuf, Vec<u8>)>, Opti
             Ok((out, None))
         }
         Source::GitHub { repo, git_ref, path } => {
-            let client = reqwest::Client::builder()
-                .user_agent("allternit-desktop")
-                .timeout(std::time::Duration::from_secs(30))
-                .build()
-                .map_err(|e| e.to_string())?;
-            let commit: Value = client
-                .get(format!("https://api.github.com/repos/{repo}/commits/{git_ref}"))
-                .header("Accept", "application/vnd.github+json")
-                .send()
-                .await
-                .map_err(|e| format!("GitHub unreachable: {e}"))?
-                .error_for_status()
-                .map_err(|e| format!("GitHub refused {git_ref}: {e}"))?
-                .json()
-                .await
-                .map_err(|e| e.to_string())?;
-            let sha = commit
-                .get("sha")
-                .and_then(|v| v.as_str())
-                .filter(|s| s.len() >= 7 && s.chars().all(|c| c.is_ascii_hexdigit()))
-                .ok_or_else(|| format!("GitHub returned no commit for {git_ref}"))?
-                .to_string();
-            let tree: Value = client
-                .get(format!("https://api.github.com/repos/{repo}/git/trees/{sha}?recursive=1"))
-                .send()
-                .await
-                .map_err(|e| format!("GitHub unreachable: {e}"))?
-                .error_for_status()
-                .map_err(|e| format!("GitHub refused the listing: {e}"))?
-                .json()
-                .await
-                .map_err(|e| e.to_string())?;
-            let prefix = format!("{path}/");
-            let blobs: Vec<String> = tree
-                .get("tree")
-                .and_then(|t| t.as_array())
-                .map(|items| {
-                    items
-                        .iter()
-                        .filter(|i| i.get("type").and_then(|t| t.as_str()) == Some("blob"))
-                        .filter_map(|i| i.get("path").and_then(|p| p.as_str()))
-                        .filter(|p| p.starts_with(&prefix))
-                        .map(str::to_string)
-                        .collect()
-                })
-                .unwrap_or_default();
-            if !blobs.iter().any(|b| b == &format!("{path}/SKILL.md")) {
-                return Err(format!("{repo} has no skill at {path}"));
+            let client = github_client()?;
+            let (sha, all_blobs) = github_snapshot(&client, repo, git_ref).await?;
+            // A skill at the repo root has an empty path: every file is under it.
+            let prefix = if path.is_empty() { String::new() } else { format!("{path}/") };
+            let blobs: Vec<String> = all_blobs.into_iter().filter(|p| p.starts_with(&prefix)).collect();
+            if !blobs.iter().any(|b| b == &format!("{prefix}SKILL.md")) {
+                return Err(format!("{repo} has no skill at {}", if path.is_empty() { "its root" } else { path }));
             }
             let mut out = Vec::new();
             let mut total = 0usize;
@@ -201,7 +213,7 @@ fn marker_of(dir: &Path) -> Option<Value> {
     std::fs::read_to_string(dir.join(MARKER)).ok().and_then(|s| serde_json::from_str(&s).ok())
 }
 
-fn versions_root() -> Option<PathBuf> {
+pub(crate) fn versions_root() -> Option<PathBuf> {
     if let Ok(dir) = std::env::var("ALLTERNIT_SKILL_VERSIONS_DIR") {
         return Some(PathBuf::from(dir));
     }
@@ -406,7 +418,7 @@ pub fn restore_version(root: &Path, versions: &Path, id: &str, name: &str, versi
 
 /// Ask gizzi-code to rescan skill roots. Best effort: a restart also picks
 /// the skill up.
-async fn reload_gizzi_skills(headers: &HeaderMap) -> bool {
+pub(crate) async fn reload_gizzi_skills(headers: &HeaderMap) -> bool {
     crate::agent_session_routes::gizzi_client(headers)
         .post(format!("{}/v1/skill/reload", crate::v1_routes::gizzi_base()))
         .timeout(std::time::Duration::from_secs(10))
@@ -630,9 +642,161 @@ async fn folder_archive(axum::extract::Query(q): axum::extract::Query<ArchiveQue
     }
 }
 
+/// A GitHub URL or `owner/repo` → (repo, ref, path). Accepts
+/// `https://github.com/o/r`, `…/tree/<ref>/<path>`, `…/blob/<ref>/<path>/SKILL.md`
+/// and `o/r`. The ref defaults to `HEAD` (the default branch).
+pub(crate) fn parse_git_url(raw: &str) -> Option<(String, String, String)> {
+    let raw = raw.trim().trim_end_matches('/').trim_end_matches(".git");
+    let rest = raw
+        .strip_prefix("https://github.com/")
+        .or_else(|| raw.strip_prefix("http://github.com/"))
+        .or_else(|| raw.strip_prefix("github.com/"))
+        .unwrap_or(raw);
+    let parts: Vec<&str> = rest.split('/').filter(|p| !p.is_empty()).collect();
+    let ok = |p: &str| !p.is_empty() && p.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'));
+    let (owner, repo) = (*parts.first()?, *parts.get(1)?);
+    if !ok(owner) || !ok(repo) || (raw.contains("://") && !raw.contains("github.com/")) {
+        return None;
+    }
+    let (git_ref, path) = match parts.get(2) {
+        Some(&"tree") | Some(&"blob") => {
+            let r = *parts.get(3)?;
+            if !ok(r) {
+                return None;
+            }
+            let mut path: Vec<&str> = parts[4..].to_vec();
+            if path.last().is_some_and(|f| f.eq_ignore_ascii_case("SKILL.md")) {
+                path.pop();
+            }
+            (r.to_string(), path.join("/"))
+        }
+        None => ("HEAD".to_string(), String::new()),
+        Some(_) => return None,
+    };
+    if path.split('/').any(|seg| seg == ".." || seg == ".") {
+        return None;
+    }
+    Some((format!("{owner}/{repo}"), git_ref, path))
+}
+
+#[derive(Deserialize)]
+struct FromGitBody {
+    url: String,
+    /// true: only list what the repo holds.
+    #[serde(default)]
+    dry_run: bool,
+    /// Skill folders (repo paths from a dry run) to install; absent = all found.
+    paths: Option<Vec<String>>,
+}
+
+/// Most skills one repo install takes.
+const MAX_GIT_SKILLS: usize = 25;
+
+/// `POST /skills/install-from-git` — find the skills (folders with SKILL.md)
+/// in a GitHub repo under the URL's path, and install them like catalog skills
+/// (versioned, archived on change). `dry_run` lists them, plus whether the repo
+/// is a Claude plugin (`.claude-plugin/plugin.json`), without writing anything.
+async fn install_from_git(headers: HeaderMap, Json(body): Json<FromGitBody>) -> (StatusCode, Json<Value>) {
+    let Some((repo, git_ref, base)) = parse_git_url(&body.url) else {
+        return fail(StatusCode::BAD_REQUEST, "Paste a GitHub repository link, like https://github.com/owner/repo");
+    };
+    let client = match github_client() {
+        Ok(c) => c,
+        Err(e) => return fail(StatusCode::INTERNAL_SERVER_ERROR, e),
+    };
+    let (sha, blobs) = match github_snapshot(&client, &repo, &git_ref).await {
+        Ok(v) => v,
+        Err(e) => return fail(StatusCode::BAD_GATEWAY, e),
+    };
+    let under = if base.is_empty() { String::new() } else { format!("{base}/") };
+    let mut found: Vec<String> = blobs
+        .iter()
+        .filter(|b| b.starts_with(&under) && (b.ends_with("/SKILL.md") || b.as_str() == "SKILL.md"))
+        .map(|b| b.strip_suffix("SKILL.md").unwrap_or(b).trim_end_matches('/').to_string())
+        .collect();
+    found.sort();
+    found.truncate(MAX_GIT_SKILLS);
+    let plugin = blobs.iter().any(|b| b == &format!("{under}.claude-plugin/plugin.json"));
+    let skill_name = |folder: &str| -> String {
+        let last = folder.rsplit('/').next().filter(|n| !n.is_empty()).unwrap_or_else(|| repo.rsplit('/').next().unwrap_or("skill"));
+        last.chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c.to_ascii_lowercase() } else { '-' }).collect()
+    };
+    let listed: Vec<Value> = found.iter().map(|f| json!({ "path": f, "name": skill_name(f) })).collect();
+    if body.dry_run {
+        return (StatusCode::OK, Json(json!({ "repo": repo, "ref": git_ref, "commit": sha, "skills": listed, "plugin": plugin })));
+    }
+    let wanted: Vec<String> = match &body.paths {
+        Some(p) => found.iter().filter(|f| p.contains(f)).cloned().collect(),
+        None => found.clone(),
+    };
+    if wanted.is_empty() {
+        return fail(StatusCode::NOT_FOUND, "No skills (folders with a SKILL.md) were found at that link.");
+    }
+    let (Some(root), Some(versions)) = (skills_root(), versions_root()) else {
+        return fail(StatusCode::INTERNAL_SERVER_ERROR, "no home directory");
+    };
+    if let Err(e) = std::fs::create_dir_all(&root) {
+        return fail(StatusCode::INTERNAL_SERVER_ERROR, e.to_string());
+    }
+    let mut results = Vec::new();
+    let mut changed = false;
+    for folder in wanted {
+        let name = skill_name(&folder);
+        let id = format!("git-{}-{}", repo.replace('/', "-").to_ascii_lowercase(), name);
+        // Pin the files to the commit we listed.
+        let source = Source::GitHub { repo: repo.clone(), git_ref: sha.clone(), path: folder.clone() };
+        let entry = match collect_files(&source).await {
+            Ok((files, commit)) => {
+                let info = source_info(&source, commit.as_deref());
+                let (root, versions, id2, name2) = (root.clone(), versions.clone(), id.clone(), name.clone());
+                match tokio::task::spawn_blocking(move || write_skill(&root, &versions, &id2, &name2, &files, info)).await {
+                    Ok(Ok(outcome)) => {
+                        changed |= !outcome.unchanged;
+                        json!({ "path": folder, "name": name, "id": id, "installed": true, "unchanged": outcome.unchanged })
+                    }
+                    Ok(Err((_, message))) => json!({ "path": folder, "name": name, "installed": false, "error": message }),
+                    Err(e) => json!({ "path": folder, "name": name, "installed": false, "error": e.to_string() }),
+                }
+            }
+            Err(e) => json!({ "path": folder, "name": name, "installed": false, "error": e }),
+        };
+        results.push(entry);
+    }
+    let reloaded = changed && reload_gizzi_skills(&headers).await;
+    (StatusCode::OK, Json(json!({ "repo": repo, "commit": sha, "plugin": plugin, "results": results, "agentReloaded": reloaded })))
+}
+
+#[cfg(test)]
+mod git_url_tests {
+    use super::parse_git_url;
+
+    #[test]
+    fn parses_repo_tree_blob_and_short_forms() {
+        assert_eq!(parse_git_url("https://github.com/anthropics/skills"), Some(("anthropics/skills".into(), "HEAD".into(), "".into())));
+        assert_eq!(parse_git_url("anthropics/skills.git"), Some(("anthropics/skills".into(), "HEAD".into(), "".into())));
+        assert_eq!(
+            parse_git_url("https://github.com/o/r/tree/main/skills/pdf/"),
+            Some(("o/r".into(), "main".into(), "skills/pdf".into()))
+        );
+        assert_eq!(
+            parse_git_url("github.com/o/r/blob/v2/skills/pdf/SKILL.md"),
+            Some(("o/r".into(), "v2".into(), "skills/pdf".into()))
+        );
+    }
+
+    #[test]
+    fn rejects_other_hosts_and_traversal() {
+        assert_eq!(parse_git_url("https://gitlab.com/o/r"), None);
+        assert_eq!(parse_git_url("https://github.com/o/r/tree/main/../x"), None);
+        assert_eq!(parse_git_url("https://github.com/o/r/issues/1"), None);
+        assert_eq!(parse_git_url("o"), None);
+    }
+}
+
 pub fn skill_catalog_router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/skills/catalog/install", post(install))
+        .route("/skills/install-from-git", post(install_from_git))
         .route("/skills/catalog/installed", get(installed))
         .route("/skills/catalog/:id", delete(uninstall))
         .route("/skills/catalog/:id/versions", get(versions))

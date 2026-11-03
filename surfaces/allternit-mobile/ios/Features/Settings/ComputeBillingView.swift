@@ -12,9 +12,45 @@ struct ComputeBillingView: View {
     @ObservedObject private var plan = AccountPlanStore.shared
     @ObservedObject private var storefront = StorefrontGate.shared
     var title: String = "Billing"
+    @State private var plans: [CatalogPlan] = []
+
+    /// `GET /api/v1/billing/plans` (Plus, Max, Ultra; Max keeps id `super`).
+    struct CatalogPlan: Decodable, Identifiable {
+        let id: String
+        let label: String
+        let priceUsd: Double
+        let monthlyCreditsUsd: Double
+        let rolloverCapUsd: Double
+        enum CodingKeys: String, CodingKey {
+            case id, label
+            case priceUsd = "price_usd"
+            case monthlyCreditsUsd = "monthly_credits_usd"
+            case rolloverCapUsd = "rollover_cap_usd"
+        }
+    }
+    private struct PlansWire: Decodable { let plans: [CatalogPlan] }
+
+    private var memberName: String {
+        let first = AuthManager.shared.currentSession?.user?.firstName?.trimmingCharacters(in: .whitespaces) ?? ""
+        return first.isEmpty ? "Member" : first
+    }
 
     var body: some View {
         List {
+            if title != "Usage" {
+                Section {
+                    MemberCardView(
+                        planId: plan.subscription?.planId ?? "free",
+                        member: memberName,
+                        renewsAt: plan.subscription?.isPaid == true ? plan.subscription?.renewsAt : nil,
+                        status: plan.subscription?.status,
+                        width: 320
+                    )
+                    .frame(maxWidth: .infinity)
+                    .listRowBackground(Color.clear)
+                    .listRowInsets(EdgeInsets(top: 8, leading: 0, bottom: 8, trailing: 0))
+                }
+            }
             Section {
                 HStack {
                     Text("Current plan")
@@ -42,10 +78,47 @@ struct ComputeBillingView: View {
                 Text("Plan")
             }
 
+            if title == "Usage" {
+                Section {
+                    AccountUsageCardsView()
+                        .listRowBackground(Color.clear)
+                        .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
+                } header: {
+                    Text("Accounts")
+                } footer: {
+                    Text("Heads-up at 80% · tasks wrap up at 95%")
+                }
+            }
+
             Section {
                 PlanUsageRows()
             } header: {
                 Text("Usage")
+            }
+
+            // Plan tickets link out to checkout on the web (US storefront only).
+            if storefront.allowsPurchaseLinks && title != "Usage" && !plans.isEmpty {
+                Section {
+                    ForEach(plans) { p in
+                        let current = plan.subscription?.planId == p.id
+                        PlanTicketView(
+                            planId: p.id,
+                            label: p.label,
+                            price: String(format: "$%.0f", p.priceUsd),
+                            lines: [
+                                String(format: "$%.0f in Allternit Cloud credits each month", p.monthlyCreditsUsd),
+                                String(format: "Unused credits roll over, up to $%.0f", p.rolloverCapUsd),
+                            ],
+                            current: current,
+                            actionTitle: plan.subscription?.isPaid == true ? "Switch on the web" : "Choose",
+                            action: { UIApplication.shared.open(plan.upgradeURL) }
+                        )
+                        .listRowBackground(Color.clear)
+                        .listRowInsets(EdgeInsets(top: 5, leading: 0, bottom: 5, trailing: 0))
+                    }
+                } header: {
+                    Text(plan.subscription?.isPaid == true ? "Change plan" : "Choose a plan")
+                }
             }
 
             if storefront.allowsPurchaseLinks && title != "Usage" {
@@ -62,6 +135,7 @@ struct ComputeBillingView: View {
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
         .task {
+            if let wire: PlansWire = try? await APIClient.shared.get(path: "billing/plans") { plans = wire.plans }
             UsageStore.shared.fetchUsageIfNeeded(force: true)
             AccountPlanStore.shared.load(force: true)
             StorefrontGate.shared.refresh()
