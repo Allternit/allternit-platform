@@ -124,7 +124,7 @@ Migration `106_billing_disputes.sql`:
 | Method | Path | Notes |
 | --- | --- | --- |
 | GET | `/api/v1/billing/plans` | Plus, Max (id `super`), Ultra. |
-| GET | `/api/v1/billing/subscription` | The person's current subscription, if any. |
+| GET | `/api/v1/billing/subscription` | The person's current subscription, if any: `plan_id`, `label`, `plan_tier`, `status`, and `renews_at` (RFC 3339) once a Stripe event has reported the period end. |
 | POST | `/api/v1/billing/subscribe` | Subscription Checkout; reuses the person's Stripe customer. |
 | POST | `/api/v1/billing/portal` | Stripe billing portal for invoices, cards and cancellation. |
 
