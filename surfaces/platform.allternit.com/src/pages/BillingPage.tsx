@@ -153,6 +153,7 @@ export function BillingPage() {
   const [currentSubscription, setCurrentSubscription] = useState<{
     plan_id: string;
     status: string;
+    renews_at?: string;
   } | null>(null);
   const [planNotice, setPlanNotice] = useState<string | null>(null);
   // `?plan=plus|super|ultra` (the website's Subscribe buttons) starts that
@@ -257,10 +258,11 @@ export function BillingPage() {
           const payload = (await subscriptionResponse.json().catch(() => null)) as {
             plan_id?: string;
             status?: string;
+            renews_at?: string;
           } | null;
           setCurrentSubscription(
             payload?.plan_id && payload.status
-              ? { plan_id: payload.plan_id, status: payload.status }
+              ? { plan_id: payload.plan_id, status: payload.status, renews_at: payload.renews_at }
               : null,
           );
         }
@@ -762,6 +764,9 @@ export function BillingPage() {
         onSwitch={() => void handleOpenPortal()}
         livePlans={billingAvailable && plans.length > 0 ? plans : undefined}
         busyPlanId={subscribingPlanId}
+        memberName={user?.firstName || (email !== "—" ? email.split("@")[0] : null)}
+        renewsAt={currentSubscription?.renews_at}
+        status={currentSubscription?.status}
       />
 
       {planNotice && <p className="text-[13px] text-[var(--text-secondary)]">{planNotice}</p>}
