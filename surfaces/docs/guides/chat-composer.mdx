@@ -14,6 +14,25 @@ The text box is a white card. When you reply to something, or attach files on De
 - The **microphone** starts voice mode.
 - The **send** button stays grey until there is something to send.
 
+## The model picker
+
+The picker lists every model you can use, grouped by provider. Search narrows the list. Nothing is hidden behind the search.
+
+- **Desktop and the web:** the providers are on the left, each with a ring for its usage limit. The ring is green, then amber at 80%, then red at 95%. The models are in the middle. The model you point at is shown below, with its thinking setting and its account.
+- **Phone and the PWA:** a strip across the top shows each provider with its ring. Tap one to see only its models. Your current model and its thinking setting are at the top of the list.
+
+Each model shows its vendor's own thinking setting, with the vendor's word and levels:
+
+| Vendor | Setting | Levels |
+|---|---|---|
+| Claude | Effort | Low, Medium, High, Extra high, Max |
+| OpenAI (Codex) | Reasoning | low to max, and ultra on some models |
+| Google Gemini | Thinking level | low to high |
+| DeepSeek | Deep thinking (can be off) | Low, High, Max |
+| Z.ai GLM | Deep thinking | Low, High, Max |
+
+Drag the slider, click a level, or use the arrow keys. A model chip in the list, such as **Effort · 5**, says how many levels the model has. A model without a thinking setting says so. The level you pick goes with every message to that model. Picking a different model starts at that model's default. For the full table, see [Thinking levels](/api/providers#thinking-levels).
+
 ## Reply to part of a reply
 
 Choose **Reply** under any reply, or select some text in a reply and choose **Reply** in the bar that appears. A **Replying to** strip shows the quote above the text box. Press **✕** to cancel it.
