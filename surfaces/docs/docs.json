@@ -48,6 +48,7 @@
             "pages": [
               "factory/overview",
               "factory/how-work-moves",
+              "factory/flow",
               "factory/agents",
               "factory/trees",
               "factory/orchestration",
