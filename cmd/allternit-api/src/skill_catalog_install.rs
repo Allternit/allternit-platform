@@ -40,6 +40,10 @@ static ALABS_COURSE_PIPELINE: Dir = include_dir!("$CARGO_MANIFEST_DIR/../../.age
 static CODEBASE_TO_COURSE: Dir = include_dir!("$CARGO_MANIFEST_DIR/../../.agents/skills/allternit-codebase-to-course");
 static CLONE_WEBSITE: Dir = include_dir!("$CARGO_MANIFEST_DIR/../../.agents/skills/clone-website");
 static MOBILE_APP_DESIGN: Dir = include_dir!("$CARGO_MANIFEST_DIR/../../.agents/skills/mobile-app-design");
+static DOCX: Dir = include_dir!("$CARGO_MANIFEST_DIR/../../.agents/skills/docx");
+static POWERPOINT: Dir = include_dir!("$CARGO_MANIFEST_DIR/../../.agents/skills/powerpoint");
+static AGENT_ORCHESTRATOR: Dir = include_dir!("$CARGO_MANIFEST_DIR/../../.agents/skills/agent-orchestrator");
+static STEER_PARALLEL_AGENT: Dir = include_dir!("$CARGO_MANIFEST_DIR/../../.agents/skills/steer-parallel-agent");
 
 const MARKER: &str = ".allternit-install.json";
 const ANTHROPIC_REPO: &str = "anthropics/skills";
@@ -63,6 +67,10 @@ fn resolve(id: &str) -> Option<(String, Source)> {
         "allternit-allternit-codebase-to-course" => embedded("allternit-codebase-to-course", &CODEBASE_TO_COURSE),
         "codex-clone-website" => embedded("clone-website", &CLONE_WEBSITE),
         "codex-mobile-app-design" => embedded("mobile-app-design", &MOBILE_APP_DESIGN),
+        "allternit-docx" => embedded("docx", &DOCX),
+        "allternit-powerpoint" => embedded("powerpoint", &POWERPOINT),
+        "allternit-agent-orchestrator" => embedded("agent-orchestrator", &AGENT_ORCHESTRATOR),
+        "allternit-steer-parallel-agent" => embedded("steer-parallel-agent", &STEER_PARALLEL_AGENT),
         _ => {
             let name = id.strip_prefix("claude-")?;
             if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
@@ -793,12 +801,46 @@ mod git_url_tests {
     }
 }
 
+/// Largest file whose text the preview returns (bigger files list with size only).
+const MAX_PREVIEW_TEXT_BYTES: usize = 200 * 1024;
+
+/// `GET /skills/catalog/:id/files` → the skill's files before it is installed,
+/// so Customize can show its SKILL.md and folder on the detail page. Text
+/// files come back with their contents; binaries list with their size only.
+async fn files(AxPath(id): AxPath<String>) -> (StatusCode, Json<Value>) {
+    let Some((name, source)) = resolve(&id) else {
+        return fail(StatusCode::NOT_FOUND, format!("no installable skill with id {id}"));
+    };
+    let (mut files, commit) = match collect_files(&source).await {
+        Ok(v) => v,
+        Err(e) => return fail(StatusCode::BAD_GATEWAY, e),
+    };
+    files.sort_by(|a, b| a.0.cmp(&b.0));
+    let list: Vec<Value> = files
+        .iter()
+        .map(|(path, bytes)| {
+            let text = (bytes.len() <= MAX_PREVIEW_TEXT_BYTES)
+                .then(|| std::str::from_utf8(bytes).ok())
+                .flatten();
+            json!({ "path": path.to_string_lossy().replace('\\', "/"), "size": bytes.len(), "text": text })
+        })
+        .collect();
+    (StatusCode::OK, Json(json!({
+        "id": id,
+        "name": name,
+        "version": declared_version(&files),
+        "source": source_info(&source, commit.as_deref()),
+        "files": list,
+    })))
+}
+
 pub fn skill_catalog_router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/skills/catalog/install", post(install))
         .route("/skills/install-from-git", post(install_from_git))
         .route("/skills/catalog/installed", get(installed))
         .route("/skills/catalog/:id", delete(uninstall))
+        .route("/skills/catalog/:id/files", get(files))
         .route("/skills/catalog/:id/versions", get(versions))
         .route("/skills/catalog/:id/versions/:version_id/restore", post(restore))
         .route("/skills/folder-archive", get(folder_archive))
@@ -818,7 +860,7 @@ mod tests {
 
     #[test]
     fn embedded_skills_ship_their_skill_md() {
-        for id in ["allternit-alabs-course-pipeline", "allternit-allternit-codebase-to-course", "codex-clone-website", "codex-mobile-app-design"] {
+        for id in ["allternit-alabs-course-pipeline", "allternit-allternit-codebase-to-course", "codex-clone-website", "codex-mobile-app-design", "allternit-docx", "allternit-powerpoint", "allternit-agent-orchestrator", "allternit-steer-parallel-agent"] {
             let Some((_, Source::Embedded(dir))) = resolve(id) else { panic!("{id} not embedded") };
             assert!(dir.get_file("SKILL.md").is_some(), "{id} has no SKILL.md");
         }

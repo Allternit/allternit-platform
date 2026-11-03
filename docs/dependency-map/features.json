@@ -153,7 +153,7 @@
           "note": "Implemented shared deterministic response policy and central Gizzi turn enforcement for visual-capable app requests. Required text is withheld until the selected envelope validates, with one formatting correction, fail-closed output, interrupted rejection and durable answer.validation evidence. Explicit selection reaches all 82 templates; recognized display jobs use fixed rules. Conversation/Text only/artifacts and unsupported external paths are exceptions. Unreleased; live cross-device adoption remains unverified. Regression fixes retain the policy through synthetic continuations, preserve refusal handoff, respect usage limits, clear partial transport attempts and isolate pending bus text from later mutation. answer.policy records prose exceptions before generation."
         },
         {
-          "date": "2026-11-03",
+          "on": "2026-11-03",
           "note": "Eoj approved the live CI reference and interaction polish. Added an identity-only pull-request template backed by authenticated GitHub facts, reviewed revision/run-bound rerun and merge, same-card polling and repair handoff. Vendor/group responses are admitted before publication with durable turn policies; group and vendor skins render validated cards and retain complete envelopes in bounded projections. Source remains unshipped pending verification and release approval."
         }
       ],
@@ -844,7 +844,7 @@
       "label": "Customize directory (skills, connectors, plugins) with the A://TERNIT OFFICIAL shelf, Add from Git, Import an agent, and per-bot Capabilities",
       "product": "product:ai-allternit",
       "status": "live",
-      "description": "Customize: Skills, Connectors, Plugins and More, each with Yours and Discover. Discover leads with an ink section hero (A://TERNIT <SECTION> lockup), then the A://TERNIT OFFICIAL shelf of Allternit-made skills and plugins with versioned covers. Connector icons are the vendor's App Store icon, else a brand tile, shared with MCP Apps; a 'Has a screen' tag opens the app in ACI MCP Apps.",
+      "description": "Customize: Skills, Connectors, Plugins and More, each with Yours and Discover. Discover leads with an ink section hero (A://TERNIT <SECTION> lockup), then the A://TERNIT OFFICIAL shelf of Allternit-made skills and plugins with versioned covers. Connector icons are the vendor's App Store icon, else a brand tile, shared with MCP Apps; a 'Has a screen' tag opens the app in ACI MCP Apps. Every card, official cover and hero opens an item page before install (skills read their files from GET /skills/catalog/:id/files). MCP servers, Commands, CLI tools and Webhooks have official shelves too (section-official.ts); Add writes where gizzi reads (mcp in ~/.config/gizzi-code/gizzi.json, command/<name>.md) and webhooks are API triggers.",
       "touches": [
         "allternit-ai/src/views/customize",
         "allternit-ai/src/components/connectors/ConnectorLogo.tsx",
@@ -859,12 +859,22 @@
         "allternit/cmd/allternit-api/src/skill_catalog_install.rs",
         "allternit/cmd/allternit-api/src/agent_capability_import.rs",
         "allternit/cmd/gizzi-code/src/runtime/bots/bot-turn.ts",
-        "allternit/cmd/gizzi-code/src/runtime/tools/builtins/task.ts"
+        "allternit/cmd/gizzi-code/src/runtime/tools/builtins/task.ts",
+        "allternit-ai/src/plugins/capabilityWriter.ts",
+        "allternit-ai/src/plugins/fileSystem.ts",
+        "allternit-ai/src/lib/skills/skill-catalog-install.ts",
+        "allternit-ai/src/plugins/catalog/native-plugins.ts",
+        "allternit-ai/src/lib/webhook-api.ts",
+        "allternit/cmd/gizzi-code/src/runtime/context/config/config.ts"
       ],
       "decisions": [
         {
           "on": "2026-11-02",
           "note": "Eoj: keep the Customize layout; add the A://TERNIT OFFICIAL shelf (covers: ink frame, block-type name, art from one fixed prompt), ink section heroes, App Store connector icons with brand-tile fallback; MCP Apps stays in ACI."
+        },
+        {
+          "on": "2026-11-03",
+          "note": "Eoj: item pages before install; official skills are the repo's own (.agents/skills: docx, powerpoint, clone-website, mobile-app-design, agent-orchestrator, steer-parallel-agent); fix the More sections' Add paths so added items run, then give them official shelves."
         }
       ],
       "evidence": [
