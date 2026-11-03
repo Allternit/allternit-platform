@@ -223,15 +223,10 @@ struct AllternitApp: App {
     }
 }
 
-/// The sign-in screen: the native port of m.allternit.com's phone sign-in
-/// (allternit-ai fabric-session `SignInScreen`: the phone SignInStage, then
-/// the compact SignInRail around Clerk's stage form). Top to bottom: the
-/// A://TERNIT lockup and counter, the self-building preview of Home / Bots /
-/// Code / ACI, its caption, then "Sign in to Allternit", the social buttons,
-/// "or", the Email field and Continue, "Secured by Clerk" and the legal line.
-/// Like the PWA there is no separate sign-up link: an email Clerk doesn't
-/// know continues into sign-up. Sign in with Apple sits with the social
-/// buttons (App Store 4.8). The page scrolls on small phones.
+/// Native sign-in with the approved offline wordmark/Gizzi/cast loop above
+/// real Apple, Google, GitHub and Clerk email authentication. The illustration
+/// never receives credentials. Small phones scroll; authentication is usable
+/// immediately, including when the animation has not loaded.
 struct LoginGateView: View {
     @EnvironmentObject var auth: AuthManager
     @Environment(\.colorScheme) private var colorScheme
@@ -239,6 +234,7 @@ struct LoginGateView: View {
     var onSkipAuth: (() -> Void)? = nil
 
     @State private var email = ""
+    @State private var showEmail = false
     /// Clerk's own sheet for the email steps (password or code), started from the Email field.
     @State private var emailAuth: EmailAuth?
     @FocusState private var emailFocused: Bool
@@ -248,12 +244,40 @@ struct LoginGateView: View {
         let identifier: String
     }
 
-    private var palette: SignInPalette { SignInPalette(colorScheme) }
+    private var palette: SignInPalette { SignInPalette(.dark) }
+
+    private var arrivalTheme: ClerkTheme {
+        var theme = ClerkTheme.default
+        theme.colors.background = Color(hex: "#141413")
+        theme.colors.input = Color(hex: "#20201D")
+        theme.colors.foreground = Color(hex: "#F0EEE6")
+        theme.colors.mutedForeground = Color(hex: "#AAA9A1")
+        theme.colors.primary = Color(hex: "#F0EEE6")
+        theme.colors.primaryForeground = Color(hex: "#141413")
+        theme.colors.inputForeground = Color(hex: "#F0EEE6")
+        theme.colors.secondaryButtonBackground = Color(hex: "#20201D")
+        theme.colors.secondaryButtonForeground = Color(hex: "#F0EEE6")
+        theme.colors.border = Color(hex: "#4B4A43")
+        return theme
+    }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
-                SignInStageView()
+                LoginArrivalView(paused: emailAuth != nil || emailFocused || showEmail || auth.signingInWith != nil || auth.isSigningInWithApple)
+                Text("Your bots.\nYour workspace.")
+                    .font(.system(size: 29, weight: .semibold))
+                    .tracking(-1)
+                    .multilineTextAlignment(.center)
+                    .foregroundStyle(palette.ink)
+                    .frame(maxWidth: .infinity)
+                    .accessibilityAddTraits(.isHeader)
+                Text("Chat, build and work together.\nAll in one place.")
+                    .font(.system(size: 13))
+                    .multilineTextAlignment(.center)
+                    .foregroundStyle(palette.sub)
+                    .frame(maxWidth: .infinity)
+                    .padding(.bottom, 16)
                 rail
             }
             .padding(.horizontal, 16)
@@ -264,11 +288,15 @@ struct LoginGateView: View {
         }
         .scrollBounceBehavior(.basedOnSize)
         .scrollDismissesKeyboard(.interactively)
-        .background(palette.page.ignoresSafeArea())
+        .background(Color(hex: "#141413").ignoresSafeArea())
+        .environment(\.colorScheme, .dark)
         .sheet(item: $emailAuth, onDismiss: { auth.refreshAuthState() }) { start in
             if auth.isClerkConfigured {
                 emailAuthView(start.identifier)
                     .environment(Clerk.shared)
+                    .environment(\.clerkTheme, arrivalTheme)
+                    .preferredColorScheme(.dark)
+                    .presentationBackground(Color(hex: "#141413"))
                     .task(id: Clerk.shared.session?.status) {
                         await auth.finishOrganizationTaskIfNeeded()
                     }
@@ -288,12 +316,6 @@ struct LoginGateView: View {
     /// The compact sign-in rail (web .ast-rail-compact + the stage Clerk form).
     private var rail: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("Sign in to Allternit")
-                .font(.system(size: 21, weight: .bold))
-                .tracking(-0.42)
-                .foregroundStyle(palette.ink)
-                .padding(.bottom, 12)
-                .accessibilityAddTraits(.isHeader)
 
             if !auth.isClerkConfigured {
                 Text("Set CLERK_PUBLISHABLE_KEY in Info.plist to enable sign-in.")
@@ -304,10 +326,10 @@ struct LoginGateView: View {
 
             VStack(alignment: .leading, spacing: 16) {
                 VStack(spacing: 10) {
-                    ForEach(AuthManager.SocialProvider.allCases) { provider in
+                    SignInWithAppleRow()
+                    ForEach(AuthManager.SocialProvider.allCases.sorted { $0 == .google && $1 != .google }) { provider in
                         SignInSocialButton(provider: provider)
                     }
-                    SignInWithAppleRow()
 
                     if let error = auth.socialSignInError {
                         Text(error)
@@ -317,9 +339,15 @@ struct LoginGateView: View {
                     }
                 }
 
-                orDivider
-
-                emailForm
+                if showEmail {
+                    emailForm
+                    Button("All sign-in options") { showEmail = false; emailFocused = false }
+                        .font(.system(size: 12))
+                        .foregroundStyle(palette.sub)
+                } else {
+                    Button("Continue with email") { showEmail = true; emailFocused = true }
+                        .buttonStyle(SignInButtonStyle(kind: .outline))
+                }
             }
             .disabled(!auth.isClerkConfigured)
             .opacity(auth.isClerkConfigured ? 1 : 0.5)
