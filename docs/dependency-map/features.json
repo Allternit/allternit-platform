@@ -546,11 +546,16 @@
         {
           "on": "2026-10-29",
           "note": "Team view opens on hand-off lanes (bot cards, one lane per team link, Take over to a running Terminal pane); Graph and List stay as switches. Bot thread Tasks tab shows subagent lanes."
+        },
+        {
+          "on": "2026-11-02",
+          "note": "Broad-belt Flow presentation: original deterministic obstacle routing in the shared workspace graph; phone list retains prerequisite, retry and human-gate meaning. Belts are static relationships; execution and approval remain authoritative."
         }
       ],
       "evidence": [
         "allternit/surfaces/docs/factory/agents.mdx",
-        "allternit/surfaces/docs/factory/how-work-moves.mdx"
+        "allternit/surfaces/docs/factory/how-work-moves.mdx",
+        "allternit/surfaces/docs/factory/flow.mdx"
       ]
     },
     {

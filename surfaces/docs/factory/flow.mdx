@@ -1,0 +1,46 @@
+---
+title: "Read the work flow"
+description: "Trace prerequisites, failure returns and human gates in Factory's Flow view."
+---
+
+Factory's **Flow** view shows the steps in a campaign or workflow template. Each card names the step, its assignee, current status and proof count. Select a live step to open its node page.
+
+## Follow prerequisites
+
+Belts connect prerequisite steps to the steps that depend on them. A split means more than one step depends on the source. When a step has several prerequisites, all of them still apply; the drawing does not change the workflow's execution rules.
+
+Broad belts have a visible body and directional marks. They show relationships, not live data traffic. A stationary belt is not evidence that an agent has stopped. Read the card's status and the node's delivery and proof records to understand what is happening.
+
+The layout places cards automatically. Routing reserves space around cards and separates return paths. Crossings do not add dependencies or join unrelated steps.
+
+## Follow a failure return
+
+A warning-colored **on fail** route returns work to the step named by the workflow. Follow its direction rather than assuming that every connection goes left to right. The workflow's retry limit still controls whether work can run again. See [Workflows](/factory/workflows).
+
+## Recognize a human gate
+
+A hand badge identifies a human gate. A **needs you** status means the step needs attention. Select the step to inspect the spec and evidence before acting. Opening or following a belt does not grant approval. See [Approvals](/factory/approvals).
+
+## Read the flow on a phone
+
+Desktop shows the graph. On narrow web and PWA screens, the same steps appear as an ordered list. Each step identifies its prerequisites, and failure returns name their target step. Status, proof and gate badges keep the same meaning. Select a live step to open its details.
+
+## Routing limits
+
+Dense graphs may exceed the router's bounded search. If a belt cannot be drawn safely, the **Relationships** disclosure opens and names its source and target with a reason. It retains the dependency even when there is no line. The phone prerequisite and retry labels retain the same relationship.
+
+## For developers
+
+The workspace owns the presentation in `src/components/factory/views/FlowGraph.tsx`. Its input comes from the existing DAG and template adapters in `src/lib/factory/layout.ts`. Keep geometry separate from current status, assignee and proof: a status update must not rearrange the graph.
+
+Card rectangles, port positions, belt width and clearance belong to one routing contract. Check the outer stroke, not only the path center, when testing obstacle avoidance. Equivalent node and edge input must produce deterministic routes regardless of server order. Backward dependencies, same-column links, fan-in, fan-out and failure returns need the same guarantees.
+
+The default geometry budgets allow 12,000 visited states and 40,000 grid points per edge, with 400,000 obstacle/lane checks for the graph. Geometry is routed for at most 256 cards and 128 sorted unique relationships; relationships beyond those bounds remain listed. A caller can lower these limits.
+
+The graph is a projection. The Gate, ledger, approvals and workflow execution remain authoritative. Do not create execution events to make the drawing move.
+
+## Related
+
+- [How work moves](/factory/how-work-moves)
+- [Workspace and node details](/factory/workspace)
+- [Determinism contract](/factory/determinism)
