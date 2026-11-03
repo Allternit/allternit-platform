@@ -188,6 +188,8 @@ for (const mdxPath of collectMdxFiles(DOCS_DIR)) {
       // named subscription/key lanes and quote their on-screen button labels.
       if (mdxPath.endsWith('guides/vendor-bots.mdx')) continue;
       if (mdxPath.endsWith('guides/bot-avatars.mdx')) continue;
+      // Customize's import paths name the tools agents and instructions come from (Claude Code, Codex, CLAUDE.md, AGENTS.md).
+      if (mdxPath.endsWith('guides/customize.mdx')) continue;
       // Porting an MCP App from another host has to name that host and its globals.
       if (mdxPath.endsWith('plugins/guides/porting.mdx')) continue;
       // Connecting AI apps (approvals, MCP Events subscriptions) has to name the apps people connect.
