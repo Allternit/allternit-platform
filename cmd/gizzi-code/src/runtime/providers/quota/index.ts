@@ -5,7 +5,8 @@
  * models.dev declares for the provider), never prompts or refreshes them.
  * Fetchers only exist for providers with a real quota source — a documented
  * quota/credits endpoint, or the limits a CLI records locally for its own
- * sessions (Codex rollout `rate_limits`, Claude Code `quotaLimits`);
+ * sessions (Codex rollout `rate_limits`, Claude Code `quotaLimits`), or the
+ * plan usage endpoint a CLI's own usage view reads (Claude Code `/usage`);
  * everything else returns { status: "unsupported" } so the client can render
  * an explicit "quota n/a" — never a fabricated window.
  */
@@ -243,10 +244,10 @@ const openrouter: Fetcher = async () => {
 }
 
 // ── Local CLI records (no credentials, no network) ─────────────────────────
-// The newest file under a CLI's session directory, and its last `maxBytes`.
-async function newestFile(root: string, match: (name: string) => boolean, depth = 4): Promise<string | undefined> {
+// The files under a CLI's session directory, newest first, and a file's last `maxBytes`.
+async function newestFiles(root: string, match: (name: string) => boolean, depth = 4, limit = 12): Promise<string[]> {
   const { readdir, stat } = await import("node:fs/promises")
-  let best: { path: string; mtime: number } | undefined
+  const found: { path: string; mtime: number }[] = []
   async function walk(dir: string, d: number) {
     let entries: import("node:fs").Dirent[]
     try {
@@ -259,12 +260,15 @@ async function newestFile(root: string, match: (name: string) => boolean, depth 
       if (e.isDirectory() && d > 0) await walk(full, d - 1)
       else if (e.isFile() && match(e.name)) {
         const m = (await stat(full).catch(() => undefined))?.mtimeMs ?? 0
-        if (!best || m > best.mtime) best = { path: full, mtime: m }
+        found.push({ path: full, mtime: m })
       }
     }
   }
   await walk(root, depth)
-  return best?.path
+  return found
+    .sort((a, b) => b.mtime - a.mtime)
+    .slice(0, limit)
+    .map((f) => f.path)
 }
 
 async function tail(file: string, maxBytes = 512 * 1024): Promise<string> {
@@ -281,8 +285,8 @@ async function tail(file: string, maxBytes = 512 * 1024): Promise<string> {
   }
 }
 
-/** The last JSON object value of `"key": {...}` in a JSONL tail. */
-function lastObject(text: string, key: string): any {
+/** The last JSON object value of `"key": {...}` in a JSONL tail that passes `accept`. */
+function lastObject(text: string, key: string, accept: (value: any) => boolean = () => true): any {
   const needle = `"${key}":{`
   let i = text.lastIndexOf(needle)
   while (i >= 0) {
@@ -292,10 +296,10 @@ function lastObject(text: string, key: string): any {
       if (text[j] === "{") depth++
       else if (text[j] === "}" && --depth === 0) {
         try {
-          return JSON.parse(text.slice(from, j + 1))
-        } catch {
-          break
-        }
+          const value = JSON.parse(text.slice(from, j + 1))
+          if (accept(value)) return value
+        } catch {}
+        break
       }
     }
     i = text.lastIndexOf(needle, i - 1)
@@ -319,12 +323,29 @@ export function parseCodexRateLimits(limits: any): QuotaWindow[] {
   return out
 }
 
+/**
+ * A rollout records several `rate_limits` objects: the Codex plan's
+ * (`limit_id: "codex"`, with windows) and others such as `premium` whose
+ * windows are null. A rollout opened without a turn records none.
+ */
+export function hasCodexWindows(limits: any): boolean {
+  return Boolean(limits?.primary || limits?.secondary)
+}
+
 const codex: Fetcher = async () => {
   const home = process.env.CODEX_HOME ?? path.join(homedir(), ".codex")
-  const file = await newestFile(path.join(home, "sessions"), (n) => n.startsWith("rollout-") && n.endsWith(".jsonl"))
-  if (!file) return { status: "signed-out", message: "Run Codex once to see its plan usage." }
+  const files = await newestFiles(path.join(home, "sessions"), (n) => n.startsWith("rollout-") && n.endsWith(".jsonl"))
+  if (files.length === 0) return { status: "signed-out", message: "Run Codex once to see its plan usage." }
   try {
-    const limits = lastObject(await tail(file), "rate_limits")
+    let limits: any
+    let fallback: any
+    for (const file of files) {
+      const text = await tail(file)
+      limits = lastObject(text, "rate_limits", hasCodexWindows)
+      if (limits) break
+      fallback ??= lastObject(text, "rate_limits")
+    }
+    limits ??= fallback
     return {
       status: "ok",
       quota: {
@@ -360,15 +381,89 @@ export function parseClaudeQuotaLimits(q: any, now = Date.now()): QuotaWindow[] 
   return [{ id: label === "Weekly" ? "7d" : label === "5-hour" ? "5h" : "usage", label, usedRatio, resetAt: resetAt.toISOString() }]
 }
 
-const claude: Fetcher = async () => {
-  const root = path.join(process.env.CLAUDE_CONFIG_DIR ?? path.join(homedir(), ".claude"), "projects")
-  const file = await newestFile(root, (n) => n.endsWith(".jsonl"), 1)
-  if (!file) return { status: "signed-out", message: "Run Claude Code once to see its plan usage." }
+// Claude plan usage: the endpoint Claude Code's `/usage` reads, with the
+// sign-in Claude Code stored (macOS Keychain, else ~/.claude/.credentials.json).
+// Unknown keys in the response are internal programs, not plan windows.
+const CLAUDE_USAGE_WINDOWS: [key: string, id: string, label: string][] = [
+  ["five_hour", "5h", "5-hour"],
+  ["seven_day", "7d", "Weekly"],
+  ["seven_day_opus", "7d-opus", "Weekly Opus"],
+  ["seven_day_sonnet", "7d-sonnet", "Weekly Sonnet"],
+]
+
+export function parseClaudeUsage(payload: any): QuotaWindow[] {
+  const out: QuotaWindow[] = []
+  for (const [key, id, label] of CLAUDE_USAGE_WINDOWS) {
+    const w = payload?.[key]
+    if (!w || typeof w.utilization !== "number") continue
+    const resetAt = typeof w.resets_at === "string" && !Number.isNaN(Date.parse(w.resets_at)) ? new Date(w.resets_at).toISOString() : undefined
+    out.push({ id, label, usedRatio: Math.min(1, Math.max(0, w.utilization / 100)), ...(resetAt ? { resetAt } : {}) })
+  }
+  return out
+}
+
+async function claudeAccessToken(): Promise<string | undefined> {
+  const read = (raw: string | undefined) => {
+    try {
+      const auth = JSON.parse(raw ?? "")?.claudeAiOauth
+      if (typeof auth?.accessToken !== "string") return undefined
+      if (typeof auth.expiresAt === "number" && auth.expiresAt < Date.now()) return undefined
+      return auth.accessToken as string
+    } catch {
+      return undefined
+    }
+  }
+  if (process.platform === "darwin" && !process.env.CLAUDE_CONFIG_DIR) {
+    const { execFile } = await import("node:child_process")
+    const raw = await new Promise<string | undefined>((resolve) =>
+      execFile("security", ["find-generic-password", "-s", "Claude Code-credentials", "-w"], { timeout: 3000 }, (err, stdout) =>
+        resolve(err ? undefined : stdout.trim()),
+      ),
+    )
+    const token = read(raw)
+    if (token) return token
+  }
+  const dir = process.env.CLAUDE_CONFIG_DIR ?? path.join(homedir(), ".claude")
+  return read(await readFile(path.join(dir, ".credentials.json"), "utf8").catch(() => undefined))
+}
+
+async function claudeUsageWindows(): Promise<QuotaWindow[] | undefined> {
+  const token = await claudeAccessToken()
+  if (!token) return undefined
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 8000)
   try {
-    const q = lastObject(await tail(file), "quotaLimits")
+    const res = await fetch("https://api.anthropic.com/api/oauth/usage", {
+      headers: { Authorization: `Bearer ${token}`, "anthropic-beta": "oauth-2025-04-20" },
+      signal: controller.signal,
+    })
+    if (!res.ok) return undefined
+    return parseClaudeUsage(await res.json())
+  } catch {
+    return undefined
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+const claude: Fetcher = async () => {
+  const live = await claudeUsageWindows()
+  if (live) {
+    return { status: "ok", quota: { providerID: "claude-cli", source: "Claude", plan: await claudePlan(), windows: live, fetchedAt: Date.now() } }
+  }
+  // Fallback: transcripts carry `quotaLimits` only near or at a limit.
+  const root = path.join(process.env.CLAUDE_CONFIG_DIR ?? path.join(homedir(), ".claude"), "projects")
+  const files = await newestFiles(root, (n) => n.endsWith(".jsonl"), 1, 8)
+  if (files.length === 0) return { status: "signed-out", message: "Run Claude Code once to see its plan usage." }
+  try {
+    let windows: QuotaWindow[] = []
+    for (const file of files) {
+      windows = parseClaudeQuotaLimits(lastObject(await tail(file), "quotaLimits"))
+      if (windows.length > 0) break
+    }
     return {
       status: "ok",
-      quota: { providerID: "claude-cli", source: "Claude", plan: await claudePlan(), windows: parseClaudeQuotaLimits(q), fetchedAt: Date.now() },
+      quota: { providerID: "claude-cli", source: "Claude", plan: await claudePlan(), windows, fetchedAt: Date.now() },
     }
   } catch (err) {
     log.warn("claude quota read failed", { error: err instanceof Error ? err.message : String(err) })

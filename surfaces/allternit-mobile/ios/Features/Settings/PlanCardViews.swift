@@ -163,7 +163,8 @@ struct PlanTicketView: View {
     }
 }
 
-/// Settings → Usage: one card per connected account with its ring, plan and
+/// Settings → Usage: one card per connected account that reports a plan or
+/// limit windows, with its ring, plan and
 /// windows (`/api/v1/providers/:id/quota`), plus Allternit Cloud's allowance.
 struct AccountUsageCardsView: View {
     @ObservedObject private var quotas = ProviderQuotaStore.shared
@@ -176,9 +177,16 @@ struct AccountUsageCardsView: View {
         return ids
     }
 
+    private func hasSomethingToShow(_ pid: String) -> Bool {
+        if pid == "allternit" { return true }
+        guard let q = quotas.byProvider[pid] else { return false }
+        return q.plan != nil || !q.windows.isEmpty
+    }
+
     var body: some View {
         VStack(spacing: 10) {
-            ForEach(providerIds, id: \.self) { pid in
+            // A card only when the account has something to show: a plan or a limit window.
+            ForEach(providerIds.filter(hasSomethingToShow), id: \.self) { pid in
                 card(pid)
             }
         }

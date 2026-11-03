@@ -30,7 +30,7 @@ http://127.0.0.1:8013/api/v1
 | `GET` | `/api/v1/providers` | List providers |
 | `GET` | `/api/v1/providers/:id` | Get a provider |
 | `GET` | `/api/v1/providers/:id/auth/status` | Get provider auth status |
-| `GET` | `/api/v1/providers/:id/quota` | Plan usage windows (5-hour, weekly) for a subscription provider, relayed from the Gizzi runtime. Always `200` with a `status` field (`signed out` / `unsupported` instead of an error). |
+| `GET` | `/api/v1/providers/:id/quota` | Plan usage windows (5-hour, weekly) for a subscription provider, relayed from the Gizzi runtime. Claude Code: the usage Claude Code's `/usage` shows, read with its stored sign-in. Codex: the newest limits Codex recorded for its plan. Always `200` with a `status` field (`signed out` / `unsupported` instead of an error). |
 | `GET` | `/api/v1/providers/:id/models` | Discover provider models |
 | `POST` | `/api/v1/providers/:id/connect` | Start a provider connect flow |
 | `GET` | `/api/v1/providers/:id/connect/status` | Check connect status |

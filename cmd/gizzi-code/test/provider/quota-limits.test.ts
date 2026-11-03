@@ -162,3 +162,25 @@ describe("plan labels", () => {
     expect(codexPlanLabel({})).toBeUndefined()
   })
 })
+
+describe("plan usage readers", () => {
+  test("Claude /usage response: named windows only, utilization in percent", async () => {
+    const { parseClaudeUsage } = await import("../../src/runtime/providers/quota")
+    const windows = parseClaudeUsage({
+      five_hour: { utilization: 70, resets_at: "2026-11-03T19:49:59.855558+00:00" },
+      seven_day: { utilization: 10, resets_at: "2026-11-10T11:59:59+00:00" },
+      seven_day_opus: null,
+      some_program: { utilization: 100, resets_at: "2026-11-05T07:59:00+00:00" },
+    })
+    expect(windows.map((w) => [w.id, w.usedRatio])).toEqual([
+      ["5h", 0.7],
+      ["7d", 0.1],
+    ])
+  })
+
+  test("Codex: a rate_limits record with null windows is skipped", async () => {
+    const { hasCodexWindows } = await import("../../src/runtime/providers/quota")
+    expect(hasCodexWindows({ limit_id: "premium", primary: null, secondary: null })).toBe(false)
+    expect(hasCodexWindows({ limit_id: "codex", primary: { used_percent: 70 } })).toBe(true)
+  })
+})
