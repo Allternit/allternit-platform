@@ -140,6 +140,14 @@ export namespace LLM {
       mergeDeep(input.agent.options),
       mergeDeep(variant),
     )
+    // Fast on the OpenAI API: the priority service tier.
+    if (
+      !input.small &&
+      input.model.api.npm === "@ai-sdk/openai" &&
+      (input.user.metadata as { service_tier?: unknown } | undefined)?.service_tier === "priority"
+    ) {
+      options.serviceTier = "priority"
+    }
     if (isCodex) {
       options.instructions = bot ? SystemPrompt.bot(input.mode).join("\n") : SystemPrompt.instructions()
     }
@@ -386,6 +394,11 @@ export namespace LLM {
         // The picker's thinking level: CLI brains pass it as their own flag
         // (claude --effort, codex turn effort); API models get it as options above.
         ...(!input.small && input.user.variant ? { "x-gizzi-effort": input.user.variant } : {}),
+        // Fast: the account's priority tier (allternit-api sets it only for
+        // models that offer one). CLI brains pass it on (codex turn serviceTier).
+        ...(!input.small && (input.user.metadata as { service_tier?: unknown } | undefined)?.service_tier === "priority"
+          ? { "x-gizzi-service-tier": "priority" }
+          : {}),
         // Subscription Fabric: this send's human action (D16), minted by the
         // chat bridge, and the request id that keys the task's idempotency.
         ...(Provider.isFabricModel(input.model)

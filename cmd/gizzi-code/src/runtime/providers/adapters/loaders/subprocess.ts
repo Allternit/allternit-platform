@@ -245,6 +245,7 @@ export class SubprocessLanguageModel implements LanguageModelV2 {
     const cliAccountId = options?.headers?.["x-gizzi-cli-account"] || undefined
     // The thinking level, when this model takes it (model-thinking.json).
     const effort = ModelThinking.check(this.modelId, options?.headers?.["x-gizzi-effort"])
+    const serviceTier = options?.headers?.["x-gizzi-service-tier"] === "priority" ? "priority" : undefined
     const task = await driver.assign({
       taskId: generateTaskId(),
       prompt: message,
@@ -274,6 +275,7 @@ export class SubprocessLanguageModel implements LanguageModelV2 {
       subagents,
       cliAccountId,
       effort,
+      serviceTier,
       // A bot turn: the CLI runs isolated from the user's own settings, with
       // the bot's tool allowlist (runtime/bots/bot-turn.ts).
       bot,
