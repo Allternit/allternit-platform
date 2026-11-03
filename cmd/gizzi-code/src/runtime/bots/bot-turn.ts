@@ -40,6 +40,10 @@ export const BotTurnInfo = z.object({
   allowedTools: z.array(z.string()).optional(),
   /** The bot's skill list from its Skills page; absent or empty means every skill it can see. */
   allowedSkills: z.array(z.string()).optional(),
+  /** Catalog connectors (app ids, e.g. "github") from its Capabilities page; absent or empty means all. */
+  allowedConnectors: z.array(z.string()).optional(),
+  /** The user's MCP connectors (ids) from its Capabilities page; absent or empty means all. */
+  allowedMcp: z.array(z.string()).optional(),
   /** Tools a person approves each time (`tool_permissions` = always_ask). */
   askTools: z.array(z.string()).optional(),
   /**
@@ -126,6 +130,20 @@ export function skillOnForBot(bot: BotTurnInfo | undefined, name: string): boole
   const list = bot?.allowedSkills
   if (!list || list.length === 0) return true
   return list.some((allowed) => allowed.toLowerCase() === name.toLowerCase())
+}
+
+/** Whether this bot's connector list leaves a catalog connector app on (case-insensitive). */
+export function connectorOnForBot(bot: BotTurnInfo | undefined, app: string): boolean {
+  const list = bot?.allowedConnectors
+  if (!list || list.length === 0) return true
+  return list.some((allowed) => allowed.toLowerCase() === app.toLowerCase())
+}
+
+/** Whether this bot's MCP list leaves one of the user's MCP connectors on. A tool with no connector id is left on. */
+export function mcpOnForBot(bot: BotTurnInfo | undefined, connectorId: string | undefined): boolean {
+  const list = bot?.allowedMcp
+  if (!list || list.length === 0 || !connectorId) return true
+  return list.includes(connectorId)
 }
 
 /* -------------------------------------------------------------------------- */

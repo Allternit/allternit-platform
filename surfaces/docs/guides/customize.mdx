@@ -1,0 +1,44 @@
+---
+title: Customize
+description: The Skills, Connectors and Plugins directory, its section heroes, and the A://TERNIT OFFICIAL shelf of items Allternit makes itself.
+---
+
+**Customize** is where you choose what your chats and bots can use: **Skills**, **Connectors** and **Plugins**, plus MCP servers, commands, CLI tools and webhooks under **More**. Each section has **Yours** (what you turned on) and **Discover** (what you can add).
+
+## Discover
+
+Discover opens with the section's hero: an ink panel led by the section lockup, such as **A://TERNIT SKILLS**, then one featured item with **Add** and **View**. Connectors' hero is a set of curated collections you can page through.
+
+Below the hero:
+
+- **A://TERNIT OFFICIAL** (Skills and Plugins): the skills and plugins Allternit makes and maintains. Each card has a cover with its name, kind and version, a short description and **Add**. An item already added shows **Added**.
+- **For you** and **More**: other items you can add, by author and category.
+- **Categories**: open one to see everything in it.
+
+On a phone, ai.allternit.com and the m.allternit.com app show the same page, sized for the screen.
+
+## Add from a Git repo
+
+In Skills or Plugins, choose **Add › From a Git repo** and paste a GitHub link to a repo or a folder (for example `https://github.com/anthropics/skills/tree/main/skills/pdf`). Press **Look** to see the skills it holds: every folder with a SKILL.md. Untick any you don't want and press **Install**. The skills install on the computer Allternit runs on, are versioned like directory skills, and are switched on. A Claude plugin repo installs its skills; its commands and MCP servers are not added.
+
+## Import an agent
+
+**Add › Import an agent** finds Claude Code, Codex, OpenClaw and Hermes on this computer and shows what each has:
+
+- **Skills**: copied into Allternit.
+- **MCP servers** with a web address: added as your MCP connectors. Secret values are never read; the dialog names the keys or sign-in to add in ACI › MCP Apps. Servers that run a local command are listed and not added.
+- **Instructions** (CLAUDE.md, AGENTS.md or SOUL.md): put in a bot's Soul, added below what it has or replacing it. The old Soul is kept as `SOUL.pre-import.md`.
+- **Memory**: brought into [Memory Drive](/guides/memory-drive).
+
+## Official covers
+
+Every official cover uses the same frame: ink, the A://TERNIT wordmark, the item's short name in the wordmark's block type, and its kind and version. The picture on the right is generated from one fixed prompt, so all covers match. A cover whose picture fails to load keeps the frame without the picture.
+
+## For developers
+
+- Shelf and covers: allternit-ai `src/views/customize/OfficialShelf.tsx`. Official skills are the skill catalog entries with `origin: "allternit"` (`src/plugins/catalog/native-plugins.ts`) and install through the catalog installer. Official plugins are registry plugins whose author is Allternit.
+- New cover: generate art with the prompt in `public/official-covers/PROMPT.md`, save it in that folder and add the item to `OFFICIAL_COVERS`, keyed by its display name without "Allternit" (for example `excel`). An item with no entry still gets a cover: its first word in block type, no picture.
+- Section hero: `src/views/customize/SectionHero.tsx`; Connectors: `ConnectorHero.tsx`.
+- Add from a Git repo: `AddFromGitDialog.tsx` → `POST /api/v1/skills/install-from-git` (`{url, dry_run}` lists `{skills, plugin}`; `{url, paths}` installs, pinned to the listed commit), in allternit-api `skill_catalog_install.rs`.
+- Import an agent: `ImportAgentDialog.tsx` → `GET /api/v1/agent-import/scan` and `POST /api/v1/agent-import/skills` (allternit-api `agent_capability_import.rs`); MCP servers through `POST /mcp/connectors`, the Soul through the bot workspace file API, memory through `/memory/drive/import-agents`.
+- Block type: `src/components/brand/block-type.ts` holds the full A:// alphabet (letters, digits, punctuation), copied from the brand master `Brand/Allternit/block-type/glyphs.json`. `AProtocolWordmark` (lockups such as A://TERNIT OFFICIAL) and `BlockText` (a word without the mark) both use it. Change the master first.

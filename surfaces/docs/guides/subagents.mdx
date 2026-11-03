@@ -61,6 +61,8 @@ The older names still work: `general` runs Builder and `explore` runs Explorer.
 
 If a class has no model on your provider, the subagent uses the parent's model. A spawn never fails because of the class.
 
+An agent can also pick the class for one task: the `task` tool takes an optional `model` (`small`, `standard`, `deep` or `inherit`). It wins over the subagent type's own model and class, so quick lookups can run small and hard reasoning deep in the same session.
+
 ## See subagents at work
 
 - **Chat and bot threads.** The [agent run tree](/guides/agent-run-tree) shows each subagent's face, name, status, model, cost and time. The face blinks while the subagent runs.

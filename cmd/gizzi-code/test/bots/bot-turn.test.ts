@@ -202,3 +202,19 @@ describe("tool decisions for a bot with no allowlist", () => {
     expect(BotTurn.claudeToolDecision({ id: "a", allowedTools: ["file_read"] }, "Bash")).toBe("deny")
   })
 })
+
+describe("bot connector lists (Capabilities page)", () => {
+  test("a catalog connector off for the bot is refused; no list allows all", () => {
+    const bot = { id: "b1", allowedConnectors: ["github"] }
+    expect(BotTurn.connectorOnForBot(bot, "GitHub")).toBe(true)
+    expect(BotTurn.connectorOnForBot(bot, "slack")).toBe(false)
+    expect(BotTurn.connectorOnForBot({ id: "b2" }, "slack")).toBe(true)
+  })
+  test("an MCP connector off for the bot is not offered; tools with no connector stay", () => {
+    const bot = { id: "b1", allowedMcp: ["conn-1"] }
+    expect(BotTurn.mcpOnForBot(bot, "conn-1")).toBe(true)
+    expect(BotTurn.mcpOnForBot(bot, "conn-2")).toBe(false)
+    expect(BotTurn.mcpOnForBot(bot, undefined)).toBe(true)
+    expect(BotTurn.mcpOnForBot(undefined, "conn-2")).toBe(true)
+  })
+})

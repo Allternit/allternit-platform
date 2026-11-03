@@ -818,6 +818,39 @@
       ]
     },
     {
+      "id": "feature:customize",
+      "label": "Customize directory (skills, connectors, plugins) with the A://TERNIT OFFICIAL shelf, Add from Git, Import an agent, and per-bot Capabilities",
+      "product": "product:ai-allternit",
+      "status": "live",
+      "description": "Customize: Skills, Connectors, Plugins and More, each with Yours and Discover. Discover leads with an ink section hero (A://TERNIT <SECTION> lockup), then the A://TERNIT OFFICIAL shelf of Allternit-made skills and plugins with versioned covers. Connector icons are the vendor's App Store icon, else a brand tile, shared with MCP Apps; a 'Has a screen' tag opens the app in ACI MCP Apps.",
+      "touches": [
+        "allternit-ai/src/views/customize",
+        "allternit-ai/src/components/connectors/ConnectorLogo.tsx",
+        "allternit-ai/src/lib/design/connector-tile.ts",
+        "allternit-ai/src/components/brand/block-type.ts",
+        "allternit-ai/src/components/brand/BlockText.tsx",
+        "allternit-ai/src/components/AProtocolWordmark.tsx",
+        "allternit-ai/scripts/gen-store-icons.mjs",
+        "allternit-ai/public/official-covers",
+        "allternit-ai/public/app-icons/store",
+        "allternit-ai/src/views/bots/hub/BotCapabilitiesPage.tsx",
+        "allternit/cmd/allternit-api/src/skill_catalog_install.rs",
+        "allternit/cmd/allternit-api/src/agent_capability_import.rs",
+        "allternit/cmd/gizzi-code/src/runtime/bots/bot-turn.ts",
+        "allternit/cmd/gizzi-code/src/runtime/tools/builtins/task.ts"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-02",
+          "note": "Eoj: keep the Customize layout; add the A://TERNIT OFFICIAL shelf (covers: ink frame, block-type name, art from one fixed prompt), ink section heroes, App Store connector icons with brand-tile fallback; MCP Apps stays in ACI."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/customize.mdx",
+        "allternit/surfaces/docs/guides/connectors.mdx"
+      ]
+    },
+    {
       "id": "feature:mcp-apps",
       "label": "MCP Apps and events",
       "product": "product:mcp-apps",
