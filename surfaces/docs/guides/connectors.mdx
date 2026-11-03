@@ -25,7 +25,13 @@ Open a connector to see its description, its **Tools** (green dot: only reads; o
 | On your phone | The linked phones that have this app installed (Allternit Desktop). See [Phone Link](/guides/phone-link). |
 | Connector URL, More info | The connector's address and the vendor's docs, when known. |
 
+A connector that has its own screen (an MCP App) shows **Has a screen ↗** next to its name. Press it to open that app's page in ACI › MCP Apps, where you add, open and pin apps you use by hand.
+
 Only connect apps from developers you trust: Allternit does not control which tools a developer offers.
+
+## Icons
+
+A connector's icon is the vendor's own App Store icon when one matches it. Otherwise it is the vendor's mark in white on its brand colour, or its mark on a white tile. The same icon is used in Customize, MCP Apps and bot settings.
 
 ## Connect
 
@@ -41,4 +47,4 @@ The phone apps Phone Link looks for use the same ids and categories as these con
 
 ## For developers
 
-The directory is `GET /api/v1/connectors` (see [Connectors API](/api/connectors)), loaded once per session by allternit-ai `src/lib/connectors/connector-directory.ts`. The catalog ships in `cmd/allternit-api/assets/open-design/connectors.json`; the Customize screens are `src/views/customize/ConnectorsDirectory.tsx`. The "On your phone" line matches the connector id against `phone.devices` apps from Desktop's phone app catalog (`surfaces/allternit-desktop/src/main/phone-app-catalog.json`).
+The directory is `GET /api/v1/connectors` (see [Connectors API](/api/connectors)), loaded once per session by allternit-ai `src/lib/connectors/connector-directory.ts`. The catalog ships in `cmd/allternit-api/assets/open-design/connectors.json`; the Customize screens are `src/views/customize/ConnectorsDirectory.tsx`. Icons: `src/components/connectors/ConnectorLogo.tsx` picks the tile with `src/lib/design/connector-tile.ts`. `scripts/gen-store-icons.mjs` saves App Store icons to `public/app-icons/store` from Apple's public search API (strict name and developer match, results cached, a reviewed deny list for same-name apps) and writes `app-store-icons.ts` and `app-brand-colors.ts`; logos that are already app icons are shown as they are. "Has a screen" opens `mini-apps` with `{ tab: "discover", app: <id> }`. The "On your phone" line matches the connector id against `phone.devices` apps from Desktop's phone app catalog (`surfaces/allternit-desktop/src/main/phone-app-catalog.json`).

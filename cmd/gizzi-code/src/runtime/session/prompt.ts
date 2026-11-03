@@ -1774,8 +1774,11 @@ const message = await createUserMessage(input)
         },
       })
     }
+    // A bot's Capabilities page: MCP connectors it has off are not offered to it.
+    const turnBot = BotTurn.get(input.session.id)
     for (const [key, item] of mcpTools) {
       if (dynamicSelection && !loadedMcpTools.has(key)) continue
+      if (!BotTurn.mcpOnForBot(turnBot, mcpCatalog.descriptors[key]?.connectorId)) continue
       const execute = item.execute
       if (!execute) continue
 
@@ -1805,6 +1808,13 @@ const message = await createUserMessage(input)
         if (offConnector) {
           throw new Error(
             `The ${offConnector} connector is turned off for this session. Tell the user it's off; they can turn it on from the + menu → Connectors.`,
+          )
+        }
+        // A bot's Capabilities page: a catalog connector it has off can't be used by it.
+        const botApp = connectorAppOf(args)
+        if (botApp && !BotTurn.connectorOnForBot(turnBot, botApp)) {
+          throw new Error(
+            `The ${botApp} connector is off for this bot. Tell the user; they can turn it on from the bot's page → Capabilities.`,
           )
         }
 
@@ -2002,6 +2012,12 @@ const message = await createUserMessage(input)
    *
    * @internal Exported for testing
    */
+  export function connectorAppOf(args: unknown): string | undefined {
+    if (!args || typeof args !== "object") return undefined
+    const actionId = (args as { actionId?: unknown }).actionId
+    return typeof actionId === "string" ? actionId.split(".")[0]?.toLowerCase() || undefined : undefined
+  }
+
   export function disabledConnectorFor(options: MobileToolOptions | undefined, args: unknown): string | undefined {
     const disabled = options?.disabledConnectors
     if (!disabled?.length || !args || typeof args !== "object") return undefined
