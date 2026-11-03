@@ -32,6 +32,10 @@ packages:
   LiveKit:
     url: https://github.com/livekit/client-sdk-swift
     exactVersion: "2.19.0"
+  # Live mode's Ring (voice-ring's SwiftUI port), vendored at a fixed
+  # commit in Packages/VoiceRingKit (see its Package.swift).
+  VoiceRingKit:
+    path: Packages/VoiceRingKit
 targets:
   Allternit:
     type: application
@@ -152,6 +156,7 @@ targets:
         product: TreeSitterBashRunestone
       - package: TreeSitterLanguages
         product: TreeSitterSwiftRunestone
+      - package: VoiceRingKit
       - package: SwiftTerm
         product: SwiftTerm
       - target: AllternitWidgets

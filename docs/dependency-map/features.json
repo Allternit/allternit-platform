@@ -637,13 +637,21 @@
         {
           "on": "2026-10-18",
           "note": "Calls on a bot's own linked phone run through the same voice worker: POST /api/v1/voice/linked-calls creates the room (voice_linked_call_rooms), GET /api/v1/voice/calls/live lists live calls for web/PWA, runtime thread key linked:<deviceId>:<caller>, billed as Cloud Voice minutes (engine cloud) under ALLTERNIT_VOICE_BILLING_MODE."
+        },
+        {
+          "on": "2026-11-03",
+          "note": "Live mode speaker: the bot's avatar at full size inside a voice-reactive look (voice-ring 0.1.2 Motion set + Blocks/ASCII/Glow/Still), picked in Settings > Voice or per bot (Look on the stage), with a ring colour (Bot's colour default) and caption size. Wide screens show the transcript beside the bot; phones and the docked bar get TV-style captions. Replaces the dark avatar tile (VoiceBotAvatar)."
         }
       ],
       "evidence": [
         "allternit/surfaces/docs/guides/voice.mdx",
         "allternit/surfaces/docs/api/voice-tickets.mdx",
         "allternit/surfaces/docs/surfaces/voice.mdx",
-        "allternit-ai/src/components/voice/VoiceBotAvatar.tsx",
+        "allternit-ai/src/components/voice/VoiceSpeaker.tsx",
+        "allternit-ai/src/components/voice/VoiceCaptions.tsx",
+        "allternit-ai/src/components/voice/VoiceTranscript.tsx",
+        "allternit-ai/src/components/voice/SpeakerLookPicker.tsx",
+        "allternit-ai/src/lib/voice/speaker-style.ts",
         "allternit-ai/src/components/voice/useTypewriter.ts",
         "allternit-ai/src/components/voice/useVoiceLevelChannel.ts",
         "allternit-ai/src/components/voice/VoiceIntroSheet.tsx",
