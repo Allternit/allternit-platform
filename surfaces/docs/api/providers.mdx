@@ -234,6 +234,8 @@ Every row from `GET /api/v1/models` has a `thinking` object, or `null` when the 
 }
 ```
 
+`GET /api/v1/models/thinking` returns the whole table (`vendors` and `models`), for pickers that list models from other sources. Match a model id the way the server does: lowercase, `.` read as `-`, any `provider/` prefix dropped, a trailing `*` in a pattern matches a prefix, and the first match wins.
+
 `levels` is in order, from least to most thinking. `toggle` means the model can also turn thinking off (DeepSeek). `fast` means the account offers a faster priority tier (Codex). `verified: false` marks levels not yet confirmed on the vendor's page for that model.
 
 A chat send passes the level as `effort`. allternit-api keeps it only when the model takes it, and sends it to gizzi as the turn's `variant`. A level the model does not take is dropped, and the model's default applies. gizzi then sends the vendor's own setting:

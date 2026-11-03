@@ -386,6 +386,7 @@ pub fn v1_router() -> Router<Arc<AppState>> {
         .route("/health", get(health))
         .route("/models", get(list_available_models))
         .route("/models/recommend", get(recommend_models))
+        .route("/models/thinking", get(model_thinking_table))
         .route("/voice/voices", get(list_voice_presets))
         .route("/voice/tts/stream", post(proxy_voice_tts_stream))
         .route("/voice/stt/stream", post(proxy_voice_stt_stream))
@@ -409,6 +410,14 @@ async fn health() -> impl IntoResponse {
 /// backend redeploy. Falls back to the static-only list if gizzi is
 /// unreachable — this endpoint must never hard-fail just because the
 /// harness happens to be down.
+/// GET /api/v1/models/thinking — the shared thinking table (model-thinking.json):
+/// each vendor's word and level labels, and the levels and default per model
+/// pattern. Pickers match a model id to it the same way the server does
+/// (lowercase, '.' read as '-', provider prefix dropped, trailing '*' a prefix).
+async fn model_thinking_table() -> impl IntoResponse {
+    Json(crate::model_thinking::table_json())
+}
+
 async fn list_available_models(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let mut catalog = crate::provider_routes::available_model_catalog();
     catalog.extend(fetch_live_local_models(&state).await);

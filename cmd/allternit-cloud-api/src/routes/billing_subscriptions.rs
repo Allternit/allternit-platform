@@ -104,6 +104,9 @@ pub struct CurrentSubscriptionResponse {
     label: String,
     plan_tier: String,
     status: String,
+    /// When the plan renews (RFC 3339), once a Stripe event has reported it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    renews_at: Option<String>,
 }
 
 pub fn routes() -> Router<Arc<ApiState>> {
@@ -136,11 +139,13 @@ async fn get_current_subscription(
             label: "Ultra".to_string(),
             plan_tier: "team".to_string(),
             status: "active".to_string(),
+            renews_at: None,
         }));
     }
     let row: Option<BillingSubscription> = sqlx::query_as(
         r#"
-        SELECT user_id, plan_id, plan_tier, status, stripe_customer_id
+        SELECT user_id, plan_id, plan_tier, status, stripe_customer_id,
+               EXTRACT(EPOCH FROM current_period_end)::BIGINT AS renews_at_epoch
         FROM billing_subscriptions
         WHERE user_id = $1 AND status IN ('active', 'trialing', 'past_due', 'unpaid')
         ORDER BY (status IN ('active', 'trialing')) DESC, updated_at DESC
@@ -156,12 +161,17 @@ async fn get_current_subscription(
             plan_id: sub.plan_id,
             plan_tier: sub.plan_tier,
             status: sub.status,
+            renews_at: sub
+                .renews_at_epoch
+                .and_then(|secs| chrono::DateTime::<chrono::Utc>::from_timestamp(secs, 0))
+                .map(|at| at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)),
         },
         None => CurrentSubscriptionResponse {
             plan_id: "free".to_string(),
             label: "Free".to_string(),
             plan_tier: "free".to_string(),
             status: "none".to_string(),
+            renews_at: None,
         },
     }))
 }
@@ -460,6 +470,16 @@ pub(crate) struct BillingSubscription {
     pub plan_tier: String,
     pub status: String,
     pub stripe_customer_id: Option<String>,
+    /// `current_period_end` as unix seconds (NULL until a Stripe event reports it).
+    pub renews_at_epoch: Option<i64>,
+}
+
+/// A subscription's `current_period_end` (unix seconds). Newer Stripe API
+/// versions report it per item rather than on the subscription.
+pub(crate) fn subscription_period_end(subscription: &serde_json::Value) -> Option<i64> {
+    subscription["current_period_end"]
+        .as_i64()
+        .or_else(|| subscription["items"]["data"][0]["current_period_end"].as_i64())
 }
 
 /// Upsert the local mirror of a Stripe subscription from a `customer.subscription.*` event.
@@ -471,18 +491,21 @@ pub(crate) async fn upsert_billing_subscription(
     plan_tier: &str,
     status: &str,
     stripe_customer_id: Option<&str>,
+    current_period_end: Option<i64>,
 ) -> Result<(), ApiError> {
     sqlx::query(
         r#"
         INSERT INTO billing_subscriptions (
-            stripe_subscription_id, user_id, plan_id, plan_tier, status, stripe_customer_id, updated_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP)
+            stripe_subscription_id, user_id, plan_id, plan_tier, status, stripe_customer_id,
+            current_period_end, updated_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, to_timestamp($7::BIGINT), CURRENT_TIMESTAMP)
         ON CONFLICT (stripe_subscription_id) DO UPDATE SET
             user_id = excluded.user_id,
             plan_id = excluded.plan_id,
             plan_tier = excluded.plan_tier,
             status = excluded.status,
             stripe_customer_id = excluded.stripe_customer_id,
+            current_period_end = COALESCE(excluded.current_period_end, billing_subscriptions.current_period_end),
             updated_at = CURRENT_TIMESTAMP
         "#,
     )
@@ -492,6 +515,7 @@ pub(crate) async fn upsert_billing_subscription(
     .bind(plan_tier)
     .bind(status)
     .bind(stripe_customer_id)
+    .bind(current_period_end)
     .execute(db)
     .await
     .map_err(ApiError::DatabaseError)?;
@@ -562,7 +586,8 @@ pub(crate) async fn billing_subscription_for(
 ) -> Result<Option<BillingSubscription>, ApiError> {
     sqlx::query_as::<_, BillingSubscription>(
         r#"
-        SELECT user_id, plan_id, plan_tier, status, stripe_customer_id
+        SELECT user_id, plan_id, plan_tier, status, stripe_customer_id,
+               EXTRACT(EPOCH FROM current_period_end)::BIGINT AS renews_at_epoch
         FROM billing_subscriptions
         WHERE stripe_subscription_id = $1
         "#,
@@ -649,6 +674,17 @@ pub(crate) fn ensure_purchase_allowed(trusted: bool, price_usd: f64, unlock_hint
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn period_end_reads_the_subscription_or_its_first_item() {
+        assert_eq!(subscription_period_end(&serde_json::json!({ "current_period_end": 1798761600 })), Some(1798761600));
+        // Newer Stripe API versions report it per item.
+        assert_eq!(
+            subscription_period_end(&serde_json::json!({ "items": { "data": [{ "current_period_end": 1798761601 }] } })),
+            Some(1798761601)
+        );
+        assert_eq!(subscription_period_end(&serde_json::json!({})), None);
+    }
+
     use super::*;
     use std::sync::Mutex;
 
