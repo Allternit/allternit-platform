@@ -24,6 +24,7 @@ struct ComposerPlusSheet: View {
     @State private var isPhotosPickerPresented = false
     @State private var isCameraPresented = false
     @State private var isFilePickerPresented = false
+    @State private var isSketchPresented = false
     /// Files: iOS offers the same three sources a web file input does.
     @State private var isFileSourceDialogPresented = false
     @State private var isConnectorsPresented = false
@@ -152,6 +153,9 @@ struct ComposerPlusSheet: View {
         .sheet(isPresented: $isFilePickerPresented) {
             DocumentPicker { url in stageFile(url) }
         }
+        .fullScreenCover(isPresented: $isSketchPresented) {
+            SketchSheet { image in stageSketch(image) }
+        }
         .sheet(isPresented: $isConnectorsPresented) {
             ConnectorsListView()
         }
@@ -228,6 +232,9 @@ struct ComposerPlusSheet: View {
             }
             gridButton(icon: "bolt", label: "Connectors") {
                 isConnectorsPresented = true
+            }
+            gridButton(icon: "scribble.variable", label: "Sketch") {
+                isSketchPresented = true
             }
         }
     }
@@ -564,6 +571,17 @@ struct ComposerPlusSheet: View {
             data: data,
             filename: "camera.jpg",
             mediaType: "image/jpeg"
+        ))
+        dismiss()
+    }
+
+    private func stageSketch(_ image: UIImage) {
+        guard let data = image.pngData() else { return }
+        attachmentStore.add(StagedAttachment(
+            thumbnail: image,
+            data: data,
+            filename: "sketch.png",
+            mediaType: "image/png"
         ))
         dismiss()
     }
