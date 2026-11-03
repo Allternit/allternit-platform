@@ -35,6 +35,19 @@ There is no separate voice path to the model.
 
 UI lives in `src/components/voice/` (`VoiceSession` hosts `VoiceBar` and `VoiceFullScreen`; `VoiceOrb` wraps the brand `AllternitOrb`; `SpokenLabel`) and `src/components/settings/VoiceSettingsPanel.tsx`.
 
+### Live mode speaker (bot conversations)
+
+- `VoiceSpeaker` draws the bot's avatar at full size (208 px desktop, 148 px phone) with a speaker look around it. The look's square is `SPEAKER_SCALE` (1.78) times the face.
+- Looks: the six `voice-ring` (npm, MIT, pinned 0.1.2) `VoiceOrb` types (`ring` is its `aura`/`VoiceRing`; `orbit`, `sash`, `signal`, `swell`, `pixel` take `color`), and three canvas looks of our own (`blocks`, `ascii`, `glow`). `still` draws nothing.
+- Each look renders once into a hidden source canvas. Every frame it is copied to a back canvas behind the face and a front canvas masked to the lower part of the face, so the look passes in front of the body. `VoiceOrb`'s canvas is wider than its box (room to lean), so the copy uses the canvas's real box.
+- `voice-ring` paints the Ring in its own spectrum; a palette recolours it in the copy (`color` blend, then `destination-in` with the source).
+- Levels come from the session getters (`level` while you talk, `outputLevel` while the bot speaks). No microphone is opened for the look. `--voice-lv` drives the rim light and contact shadow. Reduced motion pauses the looks and the recolour.
+- Settings (`src/lib/voice/speaker-style.ts`, `useSettingsValue` keys): `voice.speakerStyle`, `voice.ringPalette`, `voice.captionSize`, and per bot `voice.speakerStyle.for.bot:<id>` / `voice.ringPalette.for.bot:<id>` (`null` = Same as Settings). `useSpeakerLookFor(botId)` resolves the look.
+- `VoiceCaptions` is the phone caption band (paced word reveal, roll-up past two lines). `VoiceTranscript` + `useVoiceTurns` is the wide transcript built from the session's turns. `SpeakerLookPicker` holds the Settings tiles, colour swatches and the `SpeakerLookSwitch` popover on the stage.
+- iPhone (`surfaces/allternit-mobile/ios`): `VoiceSpeakerView` draws the Ring with the vendored `VoiceRingKit` (Packages/VoiceRingKit, pinned commit) and Orbit, Sash, Signal, Swell and Pixel with `OrbView` (our port of the five ink types in `OrbTypes.swift`); Blocks, ASCII and Glow are SwiftUI canvases. Levels come from `VoiceLevels` (the existing mic taps and the voice session's playback mix). A palette tints the look (light ink, then the colour multiplied in). Settings live in `SpeakerLookStore` (same keys as the web).
+- Dev preview with a scripted call: `/preview-live-mode.html` (`?phone=1`, `?theme=dark`, `?look=`, `?palette=`, `?panel=settings`, `?bar=1`).
+
+
 ## Voice identity and preview (design doc §4.6)
 
 `VOICE_NAMES` (in `settings.ts`) maps every Kokoro speaker id (`src/lib/voice/local/voices.ts`) to a plain texture name ("Gentle", "Crisp", "Calm"); the test suite fails if the engine gains an id the map doesn't name. Settings rows show the mapped name with the accent (`af_`/`am_` American, `bf_`/`bm_` British) and the raw id in small type. Custom voices (`custom:<id>`) keep their owner-given name and stay in the same Voice list, with a disabled Preview button and its reason.

@@ -62,7 +62,12 @@ final class VoiceAudioIO: @unchecked Sendable {
         }
         converter = AVAudioConverter(from: hardwareFormat, to: capture)
         input.installTap(onBus: 0, bufferSize: 1_024, format: hardwareFormat) { [weak self] buffer, _ in
+            VoiceLevels.shared.pushMic(buffer)
             self?.handleCapture(buffer)
+        }
+        // The bot's spoken audio, as played, for live mode's speaker look.
+        engine.mainMixerNode.installTap(onBus: 0, bufferSize: 1_024, format: nil) { buffer, _ in
+            VoiceLevels.shared.pushOutput(buffer)
         }
 
         engine.prepare()
@@ -76,6 +81,7 @@ final class VoiceAudioIO: @unchecked Sendable {
         guard running else { return }
         running = false
         engine.inputNode.removeTap(onBus: 0)
+        engine.mainMixerNode.removeTap(onBus: 0)
         player.stop()
         engine.stop()
         engine.detach(player)

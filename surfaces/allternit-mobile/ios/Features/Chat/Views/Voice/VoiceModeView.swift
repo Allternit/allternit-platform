@@ -18,20 +18,110 @@ struct VoiceModeView: View {
     /// Called with the session length in seconds when the user ends voice
     /// mode — the host files the VoiceSummary feed card.
     let onEnd: (Int) -> Void
+    /// Bot conversations: the bot's avatar is the speaker, in its live mode look.
+    let bot: AgentRecord?
 
+    @ObservedObject private var looks = SpeakerLookStore.shared
+    @ObservedObject private var botColors = BotColorStore.shared
     @State private var isSettingsPresented = false
     /// Slow breathing pulse for the gradient while listening/speaking.
     @State private var pulse = false
     /// PTT/tap disambiguation on the mic button (tap = mute, hold = talk).
     @State private var pressStartedAt: Date? = nil
 
-    init(host: VoiceHost, viewModel: VoiceModeViewModel, onEnd: @escaping (Int) -> Void) {
+    init(host: VoiceHost, viewModel: VoiceModeViewModel, bot: AgentRecord? = nil, onEnd: @escaping (Int) -> Void) {
         self.host = host
         self.viewModel = viewModel
+        self.bot = bot
         self.onEnd = onEnd
     }
 
     var body: some View {
+        Group {
+            if let bot { botStage(bot) } else { plainStage }
+        }
+        .sheet(isPresented: $isSettingsPresented) {
+            VoiceSettingsSheet(bot: bot)
+        }
+        .onAppear {
+            pulse = true
+            #if DEBUG
+            // `-open-voice-settings` (DEBUG only): opens the voice settings
+            // sheet straight away for screenshot verification.
+            if launchArgumentEnabled("open-voice-settings") {
+                isSettingsPresented = true
+            }
+            #endif
+        }
+    }
+
+    // MARK: - Bot stage (live mode)
+
+    private var speakerPhase: VoiceSpeakerView<BotAvatarView>.Phase {
+        if viewModel.isConnecting { return .connecting }
+        switch viewModel.state {
+        case .idle: return .idle
+        case .listening: return .listening
+        case .thinking: return .thinking
+        case .speaking: return .speaking
+        }
+    }
+
+    private func botStage(_ bot: AgentRecord) -> some View {
+        let look = looks.look(for: bot.id)
+        let _ = looks.botRevision
+        let color = botColors.hex(for: bot).map { Color(hex: $0) }
+        let youTalking = viewModel.state == .listening && !viewModel.liveTranscript.isEmpty
+        let captionText = youTalking ? viewModel.liveTranscript
+            : (viewModel.state == .speaking || viewModel.state == .thinking) ? viewModel.replyText : ""
+        let quiet: String? = viewModel.isConnecting ? "Connecting"
+            : viewModel.state == .thinking && viewModel.replyText.isEmpty ? "\(bot.botDisplayName) is thinking" : nil
+        return ZStack {
+            Color("BgPrimary").ignoresSafeArea()
+            VStack(spacing: 0) {
+                Text("Talking with \(bot.botDisplayName)")
+                    .font(.subheadline.weight(.medium))
+                    .foregroundColor(Color("TextSecondary"))
+                    .padding(.top, 12)
+                Spacer(minLength: 0)
+                VoiceSpeakerView(phase: speakerPhase, muted: viewModel.isMuted, style: look.style, palette: look.palette, botColor: color, size: 148) {
+                    BotAvatarView(bot: bot, size: 148, live: true)
+                }
+                .contentShape(Rectangle())
+                .onTapGesture { viewModel.interrupt() }
+                Text(statusLabel.uppercased())
+                    .font(.system(size: 12, weight: .semibold))
+                    .tracking(1.6)
+                    .foregroundColor(Color("TextSecondary"))
+                    .padding(.top, 8)
+                    .accessibilityLabel(statusLabel)
+                if let engine = viewModel.engineLabel {
+                    Text(engine).font(.caption2).foregroundColor(Color("TextSecondary")).padding(.top, 6)
+                }
+                if let statusLine = viewModel.statusLine {
+                    Text(statusLine)
+                        .font(.caption)
+                        .foregroundColor(Theme.statusWarning)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 32)
+                        .padding(.top, 6)
+                }
+                Spacer(minLength: 0)
+                VoiceCaptionsView(you: youTalking, name: bot.botDisplayName, color: color, text: captionText, quiet: quiet, size: looks.captionSize) {
+                    BotAvatarView(bot: bot, size: 18)
+                }
+                .padding(.horizontal, 14)
+                .padding(.bottom, 14)
+                .onTapGesture { viewModel.interrupt() }
+                controlsRow
+                    .padding(.bottom, 20)
+            }
+        }
+    }
+
+    // MARK: - Plain chat stage
+
+    private var plainStage: some View {
         ZStack {
             ambientBackground
 
@@ -70,19 +160,6 @@ struct VoiceModeView: View {
                 controlsRow
                     .padding(.bottom, 20)
             }
-        }
-        .sheet(isPresented: $isSettingsPresented) {
-            VoiceSettingsSheet()
-        }
-        .onAppear {
-            pulse = true
-            #if DEBUG
-            // `-open-voice-settings` (DEBUG only): opens the voice settings
-            // sheet straight away for screenshot verification.
-            if launchArgumentEnabled("open-voice-settings") {
-                isSettingsPresented = true
-            }
-            #endif
         }
     }
 

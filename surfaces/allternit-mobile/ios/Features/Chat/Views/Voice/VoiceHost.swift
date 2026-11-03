@@ -81,15 +81,27 @@ extension View {
 /// composer while a voice conversation runs.
 struct VoiceQuickBar: View {
     @ObservedObject var viewModel: VoiceModeViewModel
+    /// Bot conversations: the bot's face in a small version of its live mode look.
+    var bot: AgentRecord? = nil
     let onExpand: () -> Void
     let onEnd: () -> Void
+    @ObservedObject private var looks = SpeakerLookStore.shared
 
     var body: some View {
         HStack(spacing: 12) {
-            ThinkingOrb(state: orbState, size: .avatar, paused: viewModel.state == .idle)
-                .scaleEffect(0.5)
+            if let bot {
+                let look = looks.look(for: bot.id)
+                VoiceSpeakerView(phase: speakerPhase, muted: viewModel.isMuted, style: look.style, palette: look.palette,
+                                 botColor: BotColorStore.shared.hex(for: bot).map { Color(hex: $0) }, size: 28, compact: true) {
+                    BotAvatarView(bot: bot, size: 28)
+                }
                 .frame(width: 34, height: 34)
-                .accessibilityHidden(true)
+            } else {
+                ThinkingOrb(state: orbState, size: .avatar, paused: viewModel.state == .idle)
+                    .scaleEffect(0.5)
+                    .frame(width: 34, height: 34)
+                    .accessibilityHidden(true)
+            }
 
             VStack(alignment: .leading, spacing: 1) {
                 Text(statusText)
@@ -120,6 +132,16 @@ struct VoiceQuickBar: View {
         .overlay(RoundedRectangle(cornerRadius: Theme.radiusMD).stroke(Theme.borderWarmDefault, lineWidth: 1))
         .padding(.horizontal, 12)
         .padding(.bottom, 6)
+    }
+
+    private var speakerPhase: VoiceSpeakerView<BotAvatarView>.Phase {
+        if viewModel.isConnecting { return .connecting }
+        switch viewModel.state {
+        case .idle: return .idle
+        case .listening: return .listening
+        case .thinking: return .thinking
+        case .speaking: return .speaking
+        }
     }
 
     private var orbState: ThinkingOrbState {

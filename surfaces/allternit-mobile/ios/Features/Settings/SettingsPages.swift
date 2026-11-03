@@ -515,6 +515,9 @@ struct VoiceSettingsPage: View {
                 }
             }
 
+            LiveModeLookSection(inset: 0)
+                .padding(.top, 16)
+
             Text("Privacy: with voice on this device, your audio is processed on this device and isn't sent to Allternit. With Allternit Cloud, audio is sent to Allternit's servers to run the conversation.")
                 .font(.system(size: 13))
                 .foregroundColor(Color("TextSecondary"))

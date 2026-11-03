@@ -183,7 +183,7 @@ struct ChatContentView: View {
             set: { if !$0, voiceHost.presentation == .full { voiceHost.presentation = voiceHost.isActive ? .bar : .none } }
         )) {
             if let voiceModel = voiceHost.viewModel {
-                VoiceModeView(host: voiceHost, viewModel: voiceModel, onEnd: { durationSeconds in
+                VoiceModeView(host: voiceHost, viewModel: voiceModel, bot: chatBot, onEnd: { durationSeconds in
                     // Files the "Voice chat ended · Ns" card into the feed; the
                     // conversation itself is already in the thread.
                     viewModel.appendVoiceSummary(durationSeconds: durationSeconds)
@@ -386,6 +386,7 @@ struct ChatContentView: View {
             if voiceHost.presentation == .bar, let voiceModel = voiceHost.viewModel {
                 VoiceQuickBar(
                     viewModel: voiceModel,
+                    bot: chatBot,
                     onExpand: { voiceHost.presentation = .full },
                     onEnd: {
                         if let seconds = voiceHost.end() {
