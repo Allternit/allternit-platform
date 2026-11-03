@@ -1,6 +1,6 @@
 ---
 title: "Waiting games"
-description: "Eight small games, a click away in Bot and Code mode, in a floating window you can make full screen."
+description: "Eight small games plus Gizzi RPG and Gizzi Brawl, a click away in Bot and Code mode, in a floating window you can make full screen."
 ---
 
 You can play a small game in Bot mode and Code mode at any time, or while a reply takes a while in Chat. Nothing starts by itself.
@@ -22,6 +22,8 @@ The top bar of the window has:
 
 If you opened the game while a bot was working, or a bot starts working while you play, the top bar shows **Working…**. With nothing running it shows no status. When the reply is ready, the game pauses and says so. **Back to chat** closes the game. **Keep playing** goes on. Best scores are kept on this device.
 
+Every game picks up where you left it. Closing the window, switching to another game or a ready reply pauses it, and it carries on when you come back. Reloading the app starts the small games again. Gizzi RPG keeps its own saves.
+
 ## The games
 
 | Game | You do |
@@ -34,6 +36,10 @@ If you opened the game while a bot was working, or a bot starts working while yo
 | Stack Deploy | Click or press Space to drop each release on the stack. Only the part that lands stays. Three perfect drops in a row widen it again |
 | Context Snake | Steer a thread with the arrow keys or WASD (on phones, tap the side to turn to). Each token makes it longer. Hit the edge or yourself and the context is full |
 | Bot Memory | Flip cards to match eight pairs of bot faces in as few moves as you can |
+| Gizzi RPG | The full Gizzi game, *Gizzi: The Assistants*: six chapters of levels, bosses and story. Use Full screen for the most room. Your save stays in the game between visits |
+| Gizzi Brawl | The 1v1 mascot brawler: pick a fighter and beat the AI. It only plays wider than tall, so in a tall window (a phone) the game turns sideways: hold your phone sideways to play |
+
+Gizzi RPG and Gizzi Brawl are the live games from [gizzirpg.allternit.com](https://gizzirpg.allternit.com) and [brawl.allternit.com](https://brawl.allternit.com), shown inside the window. They need a connection.
 
 ## Turning it off
 
@@ -42,9 +48,11 @@ If you opened the game while a bot was working, or a bot starts working while yo
 ## For developers
 
 - `src/components/waiting-games/` in allternit-ai:
-  - `waiting-games-engine.ts`: the eight games on one canvas. `createWaitingGames(canvas, ui, racers)` returns `pick`, `pointer`, `click`, `key`, `setPlaying`, `resize` and `destroy`. Best scores are stored in `allternit.waitingGames.best`.
+  - `waiting-games-engine.ts`: the eight canvas games, plus `SITE_GAMES` (Gizzi RPG and Gizzi Brawl: `url`, `hint`, `landscape`). `createWaitingGames(canvas, ui, racers)` returns `pick`, `pointer`, `click`, `key`, `setPlaying`, `resize` and `destroy`. Best scores are stored in `allternit.waitingGames.best`.
   - `waiting-games.store.ts`: `useWaitingGames` (open, expanded, game, work, owner) and `useWaitingGamesEnabled` (`appearance.waitingGames`).
   - `WaitingGamesPlayButton.tsx`: the Play button. `anytime` shows it from mount (Bot and Code); without it, it shows after 5 s of work. It stays mounted and calls `report(id, busy)`. Only the button that opened the game can mark the reply ready.
-  - `WaitingGamesLayer.tsx`: the window, portalled to `document.body`. It is mounted beside `BotCarryLayer` in `ShellApp` and `PhoneProviders`. Esc is handled in the capture phase, because app-wide shortcuts take it first.
+  - `WaitingGamesLayer.tsx`: the window, portalled to `document.body`. It is mounted beside `BotCarryLayer` in `ShellApp` and `PhoneProviders`. Esc is handled in the capture phase, because app-wide shortcuts take it first. Once opened it stays mounted and is only hidden when closed, so the canvas game and the site games keep their place. For a site game it shows `SiteGameFrame` (an iframe under the top bar) instead of the canvas; a `landscape` game in a window taller than wide gets the iframe rotated 90°. While focus is inside the frame, Esc goes to the game, so use ✕ or Full screen. A site game stays loaded once played; the window posts `{type: "allternit:pause"}` to it when it's off screen, closed or waiting on Reply ready, and `{type: "allternit:resume"}` when it's back. Gizzi RPG (`js/gizzi.js`) and Gizzi Brawl (`main.js`, `HostPause`) only accept these from their parent window, or from the page itself tagged `from: "allternit-ios"`.
 - The Play button is placed in `ThreadComposer` (bot and group chats) and `ChatComposer` (Chat and Code; full, compact and terminal layouts).
+- The site games' hosts are in the CSP `frame-src` in `public/_headers` (ai.allternit.com) and `fabric-session-pwa-functions/_site-headers.js` (m.allternit.com). Desktop already allows `https:` frames (`surfaces/allternit-desktop/src/main/security.ts`). A new site game needs its host in both files.
+- iPhone: `Features/WaitingGames/` in `surfaces/allternit-mobile/ios`. `WaitingGameID.site` gives the URL and hint, and `WaitingSiteGameView` shows it in a `WKWebView`, turned in UIKit for a landscape game so touches line up. The window stays mounted once opened, and the web view posts the same pause and resume messages on the page itself.
 - Bot Race uses the first four of your bots (`isBot` agents) as racers. With none, it uses four stand-in names.

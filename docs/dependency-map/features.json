@@ -3034,16 +3034,23 @@
       "label": "Waiting games (Play in the message box)",
       "product": "product:ai-allternit",
       "status": "building",
-      "description": "A Play button in the message box (ThreadComposer, ChatComposer) shows from session open in Bot and Code mode and after about 5 s of work in Chat; it opens a floating game window (Desktop: bottom right, draggable; phone layout and m.allternit.com PWA: above the message box) with a Full screen button. Eight ASCII games on one canvas: Big Fish, Bot Race (your bots, ~200 dev words), Token Catch, Meteor Dodge, Bug Bash, Stack Deploy, Context Snake, Bot Memory. When the bot that opened it finishes, the game pauses and says the reply is ready. Settings \u2192 Appearance \u2192 Background \u2192 Waiting games (on by default).",
+      "description": "A Play button in the message box (ThreadComposer, ChatComposer) shows from session open in Bot and Code mode and after about 5 s of work in Chat; it opens a floating game window (Desktop: bottom right, draggable; phone layout and m.allternit.com PWA: above the message box) with a Full screen button. Eight ASCII games on one canvas: Big Fish, Bot Race (your bots, ~200 dev words), Token Catch, Meteor Dodge, Bug Bash, Stack Deploy, Context Snake, Bot Memory; plus the two full Gizzi games shown from their live sites in a frame: Gizzi RPG (gizzirpg.allternit.com) and Gizzi Brawl (brawl.allternit.com, turned sideways in a tall window because it is landscape-only). The iPhone app has the same ten (WKWebView for the two Gizzi games). When the bot that opened it finishes, the game pauses and says the reply is ready. Closing the window or switching games pauses a game; reopening picks up where you left it. Settings \u2192 Appearance \u2192 Background \u2192 Waiting games (on by default).",
       "touches": [
         "allternit-ai/src/components/waiting-games",
         "allternit-ai/src/components/threads/ThreadComposer.tsx",
         "allternit-ai/src/views/chat/ChatComposer.tsx",
         "allternit-ai/src/shell/ShellApp.tsx",
         "allternit-ai/src/fabric-session/PhoneProviders.tsx",
-        "allternit-ai/src/components/bots/stage/backdrop/StageBackdropPicker.tsx"
+        "allternit-ai/src/components/bots/stage/backdrop/StageBackdropPicker.tsx",
+        "allternit-ai/public/_headers",
+        "allternit-ai/fabric-session-pwa-functions/_site-headers.js",
+        "allternit/surfaces/allternit-mobile/ios/Features/WaitingGames"
       ],
       "decisions": [
+        {
+          "on": "2026-11-03",
+          "note": "Eoj asked for Gizzi RPG and Gizzi Brawl in the waiting games. They are not ported to the canvas: the window shows the live sites (one copy of each game, fixes land everywhere). Their hosts were added to the CSP frame-src. Brawl only plays landscape and the PWA is locked to portrait, so a tall window turns the frame 90 degrees. Eoj asked that games pick up where they left off: the window now stays mounted once opened (hidden when closed), and the Gizzi games pause and resume on allternit:pause / allternit:resume messages (added to both game sites)."
+        },
         {
           "on": "2026-11-01",
           "note": "Eoj could not find the games because Play only showed after 5 s of work. Play now shows from session open in Bot and Code mode, with nothing running. The game window still never opens by itself. Chat keeps the 5 s rule."

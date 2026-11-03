@@ -9,7 +9,7 @@ import UIKit
 /// the web port of the prototype (artifacts.allternit.com/Waiting-games.html)
 /// line for line, so rules, speeds and scoring match.
 enum WaitingGameID: String, CaseIterable, Identifiable {
-    case fish, race, `catch`, dodge, bash, stack, snake, memory
+    case fish, race, `catch`, dodge, bash, stack, snake, memory, rpg, brawl
     var id: String { rawValue }
 
     var name: String {
@@ -22,6 +22,33 @@ enum WaitingGameID: String, CaseIterable, Identifiable {
         case .stack: return "Stack Deploy"
         case .snake: return "Context Snake"
         case .memory: return "Bot Memory"
+        case .rpg: return "Gizzi RPG"
+        case .brawl: return "Gizzi Brawl"
+        }
+    }
+}
+
+/// The two full Gizzi games are their own live sites (web SITE_GAMES): the
+/// window shows them in a web view instead of on the canvas. `landscape`: the
+/// game only plays wider than tall, so a tall window turns it on its side.
+struct WaitingSiteGame {
+    let url: URL
+    let hint: String
+    var landscape = false
+}
+
+extension WaitingGameID {
+    var site: WaitingSiteGame? {
+        switch self {
+        case .rpg:
+            return WaitingSiteGame(url: URL(string: "https://gizzirpg.allternit.com/")!,
+                                   hint: "Gizzi: The Assistants, all six chapters. Full screen gives it the most room. Your save stays in the game.")
+        case .brawl:
+            return WaitingSiteGame(url: URL(string: "https://brawl.allternit.com/")!,
+                                   hint: "1v1 mascot brawler: pick a fighter and beat the AI. The game turns sideways, so hold your phone sideways.",
+                                   landscape: true)
+        default:
+            return nil
         }
     }
 }
