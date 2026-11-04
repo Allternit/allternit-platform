@@ -1,5 +1,7 @@
 import AVFoundation
 import Foundation
+import os
+import Speech
 
 /// Silero VAD on sherpa-onnx 1.13.8 (same model + thresholds as the native
 /// engine, `services/voice/src/stt.rs`).
@@ -126,10 +128,228 @@ final class SystemSpeechSynthesizer: LocalSynthesizer, @unchecked Sendable {
 
 /// Builds the on-device engine from an installed pack.
 enum LocalVoiceEngineFactory {
-    static func make(paths: VoicePackPaths) -> LocalVoiceEngine {
-        LocalVoiceEngine(
+    static func make(paths: VoicePackPaths, listening: ListeningPreference = .automatic) -> LocalVoiceEngine {
+        let moonshine = { SherpaMoonshineRecognizer(paths: paths) as LocalRecognizer }
+        let recognizer: LocalRecognizer = switch listening {
+        case .automatic: SystemFirstRecognizer(native: AppleSpeech.makeTranscriber(), moonshine: moonshine)
+        case .allternit: moonshine()
+        }
+        return LocalVoiceEngine(
             detector: SherpaSpeechDetector(modelPath: paths.vad),
-            recognizer: SherpaMoonshineRecognizer(paths: paths),
+            recognizer: recognizer,
             synthesizer: SystemSpeechSynthesizer())
+    }
+}
+
+// MARK: - Listening on Apple's on-device recognizer
+
+private let speechLog = Logger(subsystem: "com.allternit.app", category: "voice-stt")
+
+/// Transcribes one finished VAD segment (16 kHz mono floats). Throws when the
+/// system recognizer can't serve it, so the caller falls back to Moonshine.
+protocol NativeSegmentTranscriber: AnyObject, Sendable {
+    /// False while the model is still being prepared or permission is missing.
+    var isReady: Bool { get }
+    func transcribe(_ samples: [Float]) throws -> String
+}
+
+/// "Listening: Automatic": Apple's on-device recognizer when it can run on
+/// this phone, Moonshine otherwise. Only the recognizer changes: Silero VAD,
+/// turn-taking and barge-in stay in `LocalVoiceEngine`, and segments still
+/// come from the echo-cancelled mic, so the bot's own voice isn't
+/// transcribed. Any native failure drops to Moonshine for the rest of the
+/// session, with one log line.
+final class SystemFirstRecognizer: LocalRecognizer {
+    private let native: NativeSegmentTranscriber?
+    private let makeMoonshine: () -> LocalRecognizer
+    private var moonshine: LocalRecognizer?
+    private var nativeFailed = false
+    private var loggedNotReady = false
+
+    init(native: NativeSegmentTranscriber?, moonshine: @escaping () -> LocalRecognizer) {
+        self.native = native
+        self.makeMoonshine = moonshine
+        if native == nil { speechLog.info("system recognizer unavailable; listening on Moonshine") }
+    }
+
+    func transcribe(_ samples: [Float]) -> String {
+        if let native, !nativeFailed, native.isReady {
+            do { return try native.transcribe(samples) } catch {
+                nativeFailed = true
+                speechLog.error("system recognizer failed, falling back to Moonshine: \(String(describing: error), privacy: .public)")
+            }
+        } else if native != nil, !nativeFailed, !loggedNotReady {
+            loggedNotReady = true
+            speechLog.info("system recognizer not ready (model or permission); using Moonshine for now")
+        }
+        if moonshine == nil { moonshine = makeMoonshine() }
+        return moonshine?.transcribe(samples) ?? ""
+    }
+}
+
+enum AppleSpeechError: Error { case format, timeout, notReady }
+
+enum AppleSpeech {
+    /// SpeechAnalyzer/SpeechTranscriber on iOS 26+, else SFSpeechRecognizer
+    /// when it can recognize on-device for this locale, else nil (Moonshine).
+    static func makeTranscriber() -> NativeSegmentTranscriber? {
+        if #available(iOS 26.0, *), SpeechTranscriber.isAvailable { return AnalyzerSegmentTranscriber() }
+        return LegacySegmentTranscriber()
+    }
+
+    static let engineFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16_000, channels: 1, interleaved: false)!
+
+    /// The segment as a PCM buffer in `format` (converted when it isn't 16 kHz float).
+    static func buffer(_ samples: [Float], format: AVAudioFormat) -> AVAudioPCMBuffer? {
+        guard !samples.isEmpty,
+              let source = AVAudioPCMBuffer(pcmFormat: engineFormat, frameCapacity: AVAudioFrameCount(samples.count)),
+              let channel = source.floatChannelData?[0] else { return nil }
+        source.frameLength = AVAudioFrameCount(samples.count)
+        samples.withUnsafeBufferPointer { channel.update(from: $0.baseAddress!, count: samples.count) }
+        if format == engineFormat { return source }
+        guard let converter = AVAudioConverter(from: engineFormat, to: format) else { return nil }
+        let capacity = AVAudioFrameCount(Double(samples.count) * format.sampleRate / 16_000) + 16
+        guard let out = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: capacity) else { return nil }
+        nonisolated(unsafe) var supplied = false
+        var error: NSError?
+        converter.convert(to: out, error: &error) { _, status in
+            if supplied { status.pointee = .endOfStream; return nil }
+            supplied = true; status.pointee = .haveData; return source
+        }
+        return error == nil && out.frameLength > 0 ? out : nil
+    }
+
+    /// Runs async recognition from the engine's serial queue (never the main
+    /// thread), with a timeout so a stuck recognizer can't stall the turn.
+    static func blocking<T: Sendable>(timeout: TimeInterval = 10, _ work: @escaping @Sendable () async throws -> T) throws -> T {
+        let box = OnceBox<T>()
+        let task = Task.detached(priority: .userInitiated) {
+            do { box.set(.success(try await work())) } catch { box.set(.failure(error)) }
+        }
+        guard let result = box.wait(timeout: timeout) else { task.cancel(); throw AppleSpeechError.timeout }
+        return try result.get()
+    }
+}
+
+/// First result wins; `wait` blocks until it arrives.
+final class OnceBox<T>: @unchecked Sendable {
+    private let lock = NSLock()
+    private let done = DispatchSemaphore(value: 0)
+    private var value: Result<T, Error>?
+
+    func set(_ result: Result<T, Error>) {
+        let first: Bool = lock.withLock {
+            guard value == nil else { return false }
+            value = result
+            return true
+        }
+        if first { done.signal() }
+    }
+
+    func wait(timeout: TimeInterval) -> Result<T, Error>? {
+        guard done.wait(timeout: .now() + timeout) == .success else { return nil }
+        return lock.withLock { value }
+    }
+}
+
+/// iOS 26+: SpeechAnalyzer + SpeechTranscriber, fully on-device. The locale's
+/// model is an Apple system asset, installed once in the background; until it
+/// is ready, segments go to Moonshine.
+@available(iOS 26.0, *)
+final class AnalyzerSegmentTranscriber: NativeSegmentTranscriber, @unchecked Sendable {
+    private let lock = NSLock()
+    private var locale: Locale?
+    private var format: AVAudioFormat?
+
+    init() {
+        Task.detached(priority: .utility) { [weak self] in await self?.prepare() }
+    }
+
+    var isReady: Bool { lock.withLock { locale != nil && format != nil } }
+
+    private func prepare() async {
+        guard let locale = await SpeechTranscriber.supportedLocale(equivalentTo: Locale.current) else {
+            speechLog.info("SpeechTranscriber has no model for \(Locale.current.identifier, privacy: .public); listening on Moonshine")
+            return
+        }
+        let probe = SpeechTranscriber(locale: locale, preset: .transcription)
+        do {
+            if let request = try await AssetInventory.assetInstallationRequest(supporting: [probe]) {
+                try await request.downloadAndInstall()
+            }
+        } catch {
+            speechLog.error("SpeechTranscriber model install failed: \(String(describing: error), privacy: .public)")
+            return
+        }
+        let format = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [probe]) ?? AppleSpeech.engineFormat
+        lock.withLock { self.locale = locale; self.format = format }
+    }
+
+    func transcribe(_ samples: [Float]) throws -> String {
+        let (locale, format) = lock.withLock { (self.locale, self.format) }
+        guard let locale, let format else { throw AppleSpeechError.notReady }
+        guard let pcm = AppleSpeech.buffer(samples, format: format) else { throw AppleSpeechError.format }
+        let input = AnalyzerInput(buffer: pcm)
+        return try AppleSpeech.blocking {
+            let transcriber = SpeechTranscriber(locale: locale, preset: .transcription)
+            let analyzer = SpeechAnalyzer(modules: [transcriber],
+                                          options: .init(priority: .userInitiated, modelRetention: .processLifetime))
+            let collect = Task {
+                var text = ""
+                for try await result in transcriber.results { text += String(result.text.characters) }
+                return text
+            }
+            let (stream, continuation) = AsyncStream.makeStream(of: AnalyzerInput.self)
+            continuation.yield(input)
+            continuation.finish()
+            if let end = try await analyzer.analyzeSequence(stream) {
+                try await analyzer.finalizeAndFinish(through: end)
+            } else {
+                await analyzer.cancelAndFinishNow()
+            }
+            return try await collect.value.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+    }
+}
+
+/// iOS 17–25: SFSpeechRecognizer with `requiresOnDeviceRecognition`, used only
+/// when the locale supports on-device recognition (audio never leaves the phone).
+final class LegacySegmentTranscriber: NativeSegmentTranscriber, @unchecked Sendable {
+    private let recognizer: SFSpeechRecognizer
+    private let callbacks = OperationQueue()
+
+    init?() {
+        guard let recognizer = SFSpeechRecognizer(locale: Locale.current) ?? SFSpeechRecognizer(locale: Locale(identifier: "en-US")),
+              recognizer.supportsOnDeviceRecognition else { return nil }
+        self.recognizer = recognizer
+        recognizer.queue = callbacks
+        if SFSpeechRecognizer.authorizationStatus() == .notDetermined {
+            SFSpeechRecognizer.requestAuthorization { _ in }
+        }
+    }
+
+    var isReady: Bool {
+        SFSpeechRecognizer.authorizationStatus() == .authorized && recognizer.isAvailable
+    }
+
+    func transcribe(_ samples: [Float]) throws -> String {
+        guard let pcm = AppleSpeech.buffer(samples, format: AppleSpeech.engineFormat) else { throw AppleSpeechError.format }
+        let request = SFSpeechAudioBufferRecognitionRequest()
+        request.requiresOnDeviceRecognition = true
+        request.shouldReportPartialResults = false
+        request.append(pcm)
+        request.endAudio()
+        let box = OnceBox<String>()
+        let task = recognizer.recognitionTask(with: request) { result, error in
+            if let result, result.isFinal {
+                box.set(.success(result.bestTranscription.formattedString))
+            } else if let error {
+                // 1110 = no speech in the segment: an empty turn, not a failure.
+                let nsError = error as NSError
+                box.set(nsError.code == 1110 ? .success("") : .failure(error))
+            }
+        }
+        guard let result = box.wait(timeout: 10) else { task.cancel(); throw AppleSpeechError.timeout }
+        return try result.get()
     }
 }

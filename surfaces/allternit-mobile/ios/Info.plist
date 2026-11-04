@@ -117,7 +117,7 @@
 	<key>NSRemindersFullAccessUsageDescription</key>
 	<string>Allternit lets your bots read your reminders and add new ones, only after you turn on Device Access. Each new reminder needs your approval.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>Allternit uses speech recognition to transcribe your dictation into chat text.</string>
+	<string>Allternit uses speech recognition to turn your dictation and voice chat into text. Voice chat uses on-device recognition only.</string>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
 	<key>UIBackgroundModes</key>

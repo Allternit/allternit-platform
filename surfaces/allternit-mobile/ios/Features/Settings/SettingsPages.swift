@@ -504,6 +504,20 @@ struct VoiceSettingsPage: View {
                 }
             }
 
+            SettingsSectionHeading(text: "Speech to text")
+                .padding(.top, 16)
+            SettingsDescription(text: "How speech becomes text when voice runs on this device. Both stay on this device.")
+            VStack(spacing: 8) {
+                SettingsRadioCard(title: "Automatic (recommended)",
+                                  detail: "Uses Apple's on-device speech recognition when this iPhone has it, otherwise Allternit's.",
+                                  isSelected: settings.listening == .automatic,
+                                  action: { settings.listening = .automatic })
+                SettingsRadioCard(title: "Allternit on-device",
+                                  detail: "Always uses Allternit's own recognizer (Moonshine, English).",
+                                  isSelected: settings.listening == .allternit,
+                                  action: { settings.listening = .allternit })
+            }
+
             SettingsSectionHeading(text: "Voice")
                 .padding(.top, 16)
             SettingsDescription(text: "How your bots sound with Allternit Cloud.")
