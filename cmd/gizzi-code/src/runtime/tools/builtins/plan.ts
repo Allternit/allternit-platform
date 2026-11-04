@@ -43,7 +43,11 @@ export function approvedStepsText(steps: Question.PlanStep[], edited: boolean): 
 export function stepsFromMarkdown(markdown: string): Question.PlanStep[] {
   const numbered: string[] = []
   const bullets: string[] = []
+  let fence = false
   for (const line of markdown.split("\n")) {
+    // Lists inside code blocks are code, not steps.
+    if (/^\s*(`{3,}|~{3,})/.test(line)) fence = !fence
+    if (fence) continue
     const m = /^(\d+[.)]|[-*+])\s+(?:\[[ xX]\]\s+)?(.+)$/.exec(line)
     if (!m) continue
     const title = m[2].replace(/\*\*/g, "").trim()
@@ -51,7 +55,7 @@ export function stepsFromMarkdown(markdown: string): Question.PlanStep[] {
   }
   // Numbered items are the steps; bullets count only when nothing is numbered.
   const items = numbered.length >= 2 ? numbered : bullets
-  return items.length >= 2 ? (Question.readPlan(items.map((title) => ({ title }))) ?? []) : []
+  return items.length >= 2 ? (Question.readPlan(items.slice(0, Question.MAX_PLAN_STEPS).map((title) => ({ title }))) ?? []) : []
 }
 
 function sameSteps(a: Question.PlanStep[], b: Question.PlanStep[]) {

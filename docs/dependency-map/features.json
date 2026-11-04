@@ -3186,13 +3186,14 @@
       "label": "Editable plan card (approve an agent's plan, then watch it run)",
       "product": "product:ai-allternit",
       "status": "building",
-      "description": "gizzi's plan_exit takes steps [{title, detail?}] (else reads the plan file's top-level numbered items, or bullets); its Build Agent question carries plan.steps. Every question host (composer stack, inline card, native dock, Tasks Decisions) draws PlanApproval: edit, add, remove and reorder steps, then Approve / Approve + allow sends / Keep planning. The reply's plan (max 50 steps, 500 chars) goes through allternit-api (agent_session_routes question_plan, fabric harness reply) to gizzi, which writes the approved steps as the session to-do list (todo.updated -> the chat's live plan frame) and tells the build agent to run the edited list. Terminal UI, iOS and bot channels answer the same question with plain options.",
+      "description": "gizzi's plan_exit takes steps [{title, detail?}] (else reads the plan file's top-level numbered items, or bullets); its Build Agent question carries plan.steps. Every question host (composer stack, inline card, native dock, Tasks Decisions) draws PlanApproval: edit, add, remove and reorder steps, then Approve / Approve + allow sends / Keep planning. The reply's plan (max 50 steps, 500 chars) goes through allternit-api (agent_session_routes question_plan, fabric harness reply) to gizzi, which writes the approved steps as the session to-do list (todo.updated -> the chat's live plan frame) and tells the build agent to run the edited list. Terminal UI, iOS and bot channels answer the same question with plain options. Plan pages (answer-me) are a second view of the same plan: the gizzi plugin passes plan.steps to the page's step editor, replies with the edited steps, and links the page to the card (POST /question/:id/plan-page -> plan.page, shown as Open full plan). Inside Desktop the page does not open a browser tab.",
       "touches": [
         "allternit-ai/src/components",
         "allternit-ai/src/lib/agents",
         "allternit/cmd/allternit-api/src",
         "allternit/cmd/gizzi-code/src/runtime/integrations",
-        "allternit/cmd/gizzi-code/src/runtime/tools"
+        "allternit/cmd/gizzi-code/src/runtime/tools",
+        "allternit/cmd/gizzi-code/src/runtime/server"
       ],
       "evidence": [
         "allternit/surfaces/docs/guides/plan-approval.mdx",
@@ -3203,6 +3204,10 @@
         {
           "on": "2026-11-04",
           "note": "Eoj asked for an editable action-plan card like the one in the generative-UI post (pitus_ #7). Built on gizzi's plan_exit question rather than the Operator runner's PlanPreview (its backend is not deployed). The live progress is the existing to-do plan frame, seeded with the approved steps."
+        },
+        {
+          "on": "2026-11-04",
+          "note": "Eoj: integrate the card with answer-me plan pages (all 4 parts): the page edits the same steps, the plugin replies with them, the card links to the page (Open full plan), Desktop opens no extra browser tab, and Claude Code plan pages get the step editor too."
         }
       ]
     },

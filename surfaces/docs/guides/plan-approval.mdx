@@ -31,6 +31,12 @@ Empty steps are dropped when you approve. A plan holds at most 50 steps, and eac
 - **Approve + allow sends**: the same, and the plan's messages and file uploads go out without asking again for this task. Payments, signatures and deletions still ask.
 - **Keep planning**: the agent stays in plan mode. Reply with notes to revise the plan.
 
+## Open the full plan
+
+The card shows only the steps. When the plan is also open as a plan page, the card has an **Open full plan** link. The page shows the whole plan with its sections, and it has the same step list to edit. You can answer on the card or on the page. The first answer counts, and the other one closes.
+
+On Desktop, the plan page doesn't open a browser tab by itself. Open it from the card when you want it.
+
 ## Watch the steps run
 
 The approved steps become the session's to-do list. The thread's live plan shows each step as pending, running or done while the agent works, and the Console **Plan** tab in Code shows the same list.
@@ -41,4 +47,6 @@ If you changed the plan, the agent is told that you edited it and runs your list
 
 - The agent passes `steps` (`[{ title, detail? }]`) to Gizzi's `plan_exit` tool. Without `steps`, Gizzi reads the plan file's top-level numbered items (or bullets if nothing is numbered). Fewer than two items gives the plain question with no step list.
 - The question carries `plan: { steps }`. The reply to `POST /api/v1/questions/{id}/reply` may carry `plan: [{ title, detail? }]` with the edited steps. allternit-api forwards only well-formed steps within the limits above, and Gizzi checks them again.
+- `POST /v1/question/{id}/plan-page` with `{ url }` on Gizzi links a pending plan question to a page that shows the same plan. Only http and https links of at most 2,000 characters are kept. The link appears as `plan.page` in the question list, and the card shows it as **Open full plan**. On ai.allternit.com, a link to `127.0.0.1` shows only in a browser on the same machine.
+- The answer-me plan bridge (a Gizzi plugin) uses this route. It shows the question's `plan.steps` as an editable list on its page, and its reply carries the edited steps as `plan`.
 - Clients that don't draw the card (the terminal UI, iOS, bot channels) answer the same question with its options, and the agent runs the steps as proposed.

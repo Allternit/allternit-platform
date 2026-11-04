@@ -67,6 +67,37 @@ export const QuestionRoutes = lazy(() =>
       },
     )
     .post(
+      "/:requestID/plan-page",
+      describeRoute({
+        summary: "Link a plan question to its plan page",
+        description: "Sets the http(s) link to the full plan for a pending plan-approval question.",
+        operationId: "question.planPage",
+        responses: {
+          200: {
+            description: "Whether the link was set",
+            content: {
+              "application/json": {
+                schema: resolver(z.boolean()),
+              },
+            },
+          },
+          ...errors(400, 404),
+        },
+      }),
+      validator(
+        "param",
+        z.object({
+          requestID: z.string(),
+        }),
+      ),
+      validator("json", z.object({ url: z.string() })),
+      async (c) => {
+        const params = c.req.valid("param")
+        const json = c.req.valid("json")
+        return c.json(await Question.setPlanPage(params.requestID, json.url))
+      },
+    )
+    .post(
       "/:requestID/reject",
       describeRoute({
         summary: "Reject question request",

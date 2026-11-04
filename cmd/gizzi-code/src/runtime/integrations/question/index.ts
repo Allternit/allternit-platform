@@ -44,7 +44,10 @@ export namespace Question {
       risk: z.enum(["low", "medium", "high"]).optional().describe("Decision tree: how much is at stake"),
       context: z.string().optional().describe("Decision tree: the facts behind the question, one or two short lines"),
       plan: z
-        .object({ steps: z.array(PlanStep) })
+        .object({
+          steps: z.array(PlanStep),
+          page: z.string().optional().describe("Link to the full plan as a page (set by the answer-me plan bridge)"),
+        })
         .optional()
         .describe("Plan approval: steps the person can edit, add, remove and reorder before answering"),
     })
@@ -66,6 +69,17 @@ export namespace Question {
       steps.push(detail ? { title, detail } : { title })
     }
     return steps
+  }
+
+  /** A plan page link: an http(s) URL of bounded length, or undefined. */
+  export function planPageUrl(value: unknown): string | undefined {
+    if (typeof value !== "string" || value.length > 2000) return undefined
+    try {
+      const url = new URL(value)
+      return url.protocol === "https:" || url.protocol === "http:" ? url.toString() : undefined
+    } catch {
+      return undefined
+    }
   }
 
   /** A decision tree: any option has a follow-up, or the question carries risk/context. */
@@ -181,6 +195,24 @@ export namespace Question {
     })
 
     existing.resolve(input.answers, readPlan(input.plan))
+  }
+
+  /**
+   * Links a pending plan question to the same plan shown as a page (the
+   * answer-me plan bridge). Apps show it as "Open full plan". Returns false for
+   * an unknown request, a question without a plan, or a bad URL.
+   */
+  export async function setPlanPage(requestID: string, value: unknown): Promise<boolean> {
+    const url = planPageUrl(value)
+    const existing = (await state()).pending[requestID]
+    if (!url || !existing) return false
+    let set = false
+    for (const q of existing.info.questions) {
+      if (!q.plan) continue
+      q.plan.page = url
+      set = true
+    }
+    return set
   }
 
   export async function reject(requestID: string): Promise<void> {
