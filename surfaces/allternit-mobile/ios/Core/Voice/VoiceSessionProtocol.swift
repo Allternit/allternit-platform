@@ -10,6 +10,10 @@ import Foundation
 /// Where a session's engine runs (`session.ready.engine`).
 enum VoiceEngineKind: String, Sendable, Equatable {
     case device
+    /// The user's own OpenAI account (`ByokVoiceTransport`).
+    case openai
+    /// The user's own ElevenLabs account reads replies; listening on this phone.
+    case elevenlabs
 }
 
 /// A server → client event. Unknown event types and fields are ignored per

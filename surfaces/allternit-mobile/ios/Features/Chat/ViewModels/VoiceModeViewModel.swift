@@ -130,14 +130,15 @@ final class VoiceModeViewModel: ObservableObject {
                 if let notice { statusLine = notice }
                 startLegacy()
                 return
-            case .device:
+            case .device, .openai, .elevenlabs:
                 do {
-                    try await startSession(route: .device)
+                    try await startSession(route: route)
                     if let notice { statusLine = notice }
                     return
                 } catch {
                     guard isActive else { return }
-                    notice = VoiceRouter.fallbackNotice(for: error)
+                    // Keep the first reason (e.g. a bad OpenAI key) over later ones.
+                    notice = notice ?? VoiceRouter.fallbackNotice(for: error, from: route)
                 }
             }
         }
@@ -155,7 +156,7 @@ final class VoiceModeViewModel: ObservableObject {
         }
     }
 
-    /// Starts a Voice Session on `route` (.device). Throws when it
+    /// Starts a Voice Session on `route` (.device, .openai, .elevenlabs). Throws when it
     /// can't (the caller falls back or surfaces the error).
     private func startSession(route: VoiceRoute) async throws {
         guard await Self.ensureMicPermission() else {
@@ -167,7 +168,13 @@ final class VoiceModeViewModel: ObservableObject {
         options.language = SettingsStore.shared.speechLanguage?.rawValue
             ?? Locale.current.language.languageCode?.identifier ?? "en"
         switch route {
-        case .device:
+        case .openai:
+            options.voice = SettingsStore.shared.voiceIdentifier
+            try ByokVoiceTransport.requireKey(.openai)  // no key: the router falls back now
+            factory = { try ByokVoiceTransport.openAI() }
+            engineLabel = "On your OpenAI account"
+        case .device, .elevenlabs:
+            if route == .elevenlabs { try ByokVoiceTransport.requireKey(.elevenlabs) }
             let packs = VoicePackManager.shared
             if !packs.isReady {
                 statusLine = "Downloading the voice model…"
@@ -186,9 +193,15 @@ final class VoiceModeViewModel: ObservableObject {
                 throw VoiceClientError.server(code: "pack", message: "The on-device voice model isn't installed.")
             }
             options.voice = SettingsStore.shared.voiceIdentifier
-            let engine = LocalVoiceEngineFactory.make(paths: paths, listening: SettingsStore.shared.listening)
-            factory = { engine }
-            engineLabel = "On this device"
+            let listening = SettingsStore.shared.listening
+            if route == .elevenlabs {
+                factory = { try ByokVoiceTransport.elevenLabs(paths: paths, listening: listening) }
+                engineLabel = "Voice by your ElevenLabs account"
+            } else {
+                let engine = LocalVoiceEngineFactory.make(paths: paths, listening: listening)
+                factory = { engine }
+                engineLabel = "On this device"
+            }
         case .legacy:
             return
         }

@@ -60,13 +60,13 @@ Allternit doesn't run voice on its own servers. Voice runs on your device, or on
 
 If this device can't run voice yet, voice says so and points you to Settings › Voice, where you can download the voice to this device or connect your own provider.
 
-In the Allternit iPhone app, **Automatic** and **This device** run on the phone: the voice model downloads once, and until it's ready the iPhone's built-in voice is used. Your own OpenAI or ElevenLabs isn't in the iPhone app yet; use ai.allternit.com, the phone web app or Desktop for it.
+In the Allternit iPhone app, **Automatic** and **This device** run on the phone: the voice model downloads once, and until it's ready the iPhone's built-in voice is used. **Your own OpenAI** and **Your own ElevenLabs** work in the iPhone app too. If your key is missing or not accepted, or your account is out of credit, voice says so, points you to Settings › Voice and uses voice on the phone for that conversation.
 
 ### Your own provider
 
 Optional. Paste your **OpenAI API key** or **ElevenLabs API key**, then choose **Your own OpenAI** or **Your own ElevenLabs** under **Where voice runs**. For ElevenLabs you can also paste a **voice ID** from your ElevenLabs voice library; without one, replies use Rachel, a voice every ElevenLabs account has.
 
-- Your key is kept only on this device, in the app's local storage, the same way your image and video provider keys are. It's never sent to Allternit.
+- Your key is kept only on this device: in the app's local storage on the web and Desktop (the same way your image and video provider keys are), and in the iPhone's Keychain in the iPhone app. It's never sent to Allternit. **Remove** next to a saved key deletes it from this device.
 - Calls go straight from this device to OpenAI (api.openai.com) or ElevenLabs (api.elevenlabs.io). For OpenAI listening, the app uses your key to get a short-lived session key, and only that short-lived key opens the live connection.
 - You pay OpenAI or ElevenLabs for what you use, under your agreement with them. Allternit doesn't add a charge.
 - **Remove** deletes the key from this device. A key saved on one device isn't copied to your other devices.
