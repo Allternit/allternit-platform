@@ -1047,6 +1047,10 @@
       ],
       "decisions": [
         {
+          "on": "2026-11-03",
+          "note": "Cloud by default: new routines run on the account cloud computer when one exists (web cloud-default.ts picks the first wakeable runtime; Runs on picker; Run in the cloud for local routines), the main bot is Always on by default unless the user chose (availability.userSet), and the bot is copied first via GET/PUT /agents/:id/package (agent_package_routes.rs; no secrets, channels or availability). A cloud routine that no scheduler takes now fails 502 instead of saving."
+        },
+        {
           "on": "2026-10-24",
           "note": "Eoj: BoardUI look pass \u2014 calendar month chips with time and type tint (goals blue, routines green, loops purple, heartbeats amber), +N more day list, block names and times in Week/Day, and an anchored TaskDetailsCard on Automation Tasks with Run now / Edit / Pause; phones keep dots plus a day list and the same card as a sheet (ai #806)."
         },
