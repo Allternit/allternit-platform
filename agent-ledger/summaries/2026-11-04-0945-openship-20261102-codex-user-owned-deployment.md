@@ -13,3 +13,11 @@ Limits: no user-owned OpenShip installation was supplied, so live provider deplo
 At attestation: PWA and docs production deployment jobs are running; ai web fallback workflow dispatched. Desktop build queue need returned exit 3: no finished or pending Desktop build contains the app merge. Desktop follows the normal release train; no competing heavy build was started. Production deployment status will be recorded in the session artifact.
 
 Agent: Codex. No provider tokens are stored in the panel. No Allternit hosting subsidy.
+
+## Final deployment and cleanup evidence
+
+Cloudflare Git check confirms ai-allternit success for app merge 894cf89da (deployment b653e01c-7842-403a-9bcd-6c1c4056a245). Docs production workflow 41859662199 succeeded (bf808156.allternit-docs.pages.dev). Wrangler production deployment list confirms allternit-m source 894cf89 succeeded: 4dad0672.allternit-m.pages.dev; its status changed from Active to an elapsed success time. GitHub PWA check lagged this result. The duplicate ai web fallback run 41860232645 was cancelled after its typecheck/build passed, once the automatic Git deployment succeeded.
+
+Both owned worktrees and session branches were removed locally and remotely. Shared platform main was at ledger commit 914b65176 and app main at 894cf89da, synced to origin. No tracked modifications remain apart from this final ledger update. Factory task evidence is archived in /Users/joe/.answer-me-with-html/internal/openship-release/worktree-state.
+
+Final repository-wide discipline returned FAIL because 29 pre-existing unmerged stale branches are present. These are unrelated work and were preserved. This is not a clean repository-wide PASS. Live provider acceptance and Desktop delivery remain unverified as above.
