@@ -13,7 +13,6 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use reqwest::Client;
 use rusqlite::params;
 use rusqlite::OptionalExtension;
 use serde::{Deserialize, Serialize};

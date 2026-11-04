@@ -651,6 +651,25 @@ pub(crate) async fn guarded_client(raw: &str, allow_private: bool) -> Result<req
 // ─── MCP session ─────────────────────────────────────────────────────────────
 
 pub(crate) async fn open_session(connector: &Connector, allow_private: bool) -> Result<McpClient, AppsError> {
+    if crate::mcp_breaker::is_open(&connector.id) {
+        return Err(AppsError::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "connector_unavailable",
+            "the connector failed several times in a row; try again in a minute",
+        ));
+    }
+    let result = open_session_inner(connector, allow_private).await;
+    match &result {
+        Ok(_) => crate::mcp_breaker::record(&connector.id, true),
+        Err(e) if matches!(e.code, "connector_timeout" | "connector_unreachable" | "connector_http_error" | "connector_error") => {
+            crate::mcp_breaker::record(&connector.id, false)
+        }
+        Err(_) => {}
+    }
+    result
+}
+
+async fn open_session_inner(connector: &Connector, allow_private: bool) -> Result<McpClient, AppsError> {
     if connector.auth_failed {
         return Err(unauthorized());
     }

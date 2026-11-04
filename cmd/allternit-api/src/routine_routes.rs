@@ -311,10 +311,10 @@ async fn run_routine_now(
 /// The routines tick: submit one canonical intent per due routine and
 /// advance its schedule. Called from the api's background task loop.
 pub fn run_due_routines(db: &crate::db::DbHandle) -> usize {
-    let due: Vec<(String, String, String, Option<String>, String, String, String)> = {
+    let due: Vec<(String, String, String, Option<String>, String, String, String, String)> = {
         let Ok(conn) = db.connect() else { return 0 };
         let mut stmt = match conn.prepare(
-            "SELECT id, user_id, workspace, principal, name, message, schedule
+            "SELECT id, user_id, workspace, principal, name, message, schedule, next_run_at
              FROM cowork_routines WHERE enabled = 1 AND next_run_at IS NOT NULL AND next_run_at <= ?1",
         ) {
             Ok(stmt) => stmt,
@@ -330,6 +330,7 @@ pub fn run_due_routines(db: &crate::db::DbHandle) -> usize {
                 r.get::<_, String>(4)?,
                 r.get::<_, String>(5)?,
                 r.get::<_, String>(6)?,
+                r.get::<_, String>(7)?,
             ))
         })
         .map(|rows| rows.filter_map(|r| r.ok()).collect())
@@ -337,7 +338,7 @@ pub fn run_due_routines(db: &crate::db::DbHandle) -> usize {
     };
 
     let mut fired = 0;
-    for (id, user_id, workspace, principal, name, message, schedule) in due {
+    for (id, user_id, workspace, principal, name, message, schedule, slot) in due {
         // Target: the routine's principal override, else the same
         // delegation-rule lookup Al uses for a chat turn (first-word
         // action type of the routine's message). A special `routine`
@@ -366,7 +367,10 @@ pub fn run_due_routines(db: &crate::db::DbHandle) -> usize {
             let cloud = crate::cowork_preferences_routes::cloud_continuation_enabled(&conn, &user_id);
             let envelope = allternit_cowork_runtime::IntentEnvelope {
                 version: "a/0.1".to_string(),
-                intent_id: format!("{id}_{}", uuid::Uuid::new_v4()),
+                // Keyed by the scheduled slot, so a crash between submit and
+                // advancing next_run_at re-submits the SAME intent, which
+                // `submit_intent` answers with the existing run (created:false).
+                intent_id: format!("{id}_{slot}"),
                 workspace: format!("a://workspace/{workspace}"),
                 initiator: user_id.clone(),
                 delegator: Some(al_principal.clone()),
