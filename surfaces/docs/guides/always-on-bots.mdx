@@ -1,9 +1,9 @@
 ---
 title: Keep a bot answering
-description: Stay on when your computer sleeps, and answer on a backup brain when a vendor sign-in needs a check. Both are opt-in, per bot.
+description: Stay on when your computer sleeps, and answer on a backup brain when a vendor sign-in needs a check. Per bot; your main bot is always on by default when you have a cloud computer.
 ---
 
-Two settings keep a bot answering when something goes wrong. Both are off until you turn them on, and both are shown to you every time they happen.
+Two settings keep a bot answering when something goes wrong. Both are off until you turn them on, with one exception below, and both are shown to you every time they happen.
 
 Open the bot, then **Settings → Stay on**. The card is the same on Desktop, on ai.allternit.com (phone layout) and on the m.allternit.com app.
 
@@ -15,6 +15,7 @@ When your computer is asleep or offline, texts and channel messages for the bot 
 - The switch happens only while your computer is offline. When it sends its next heartbeat (within a minute of waking), messages go back to it.
 - Every switch is written to the bot's thread as a "Moved to your cloud computer while your computer was offline" line, so you can see which computer answered.
 - The cloud computer needs your model sign-ins to answer. Vendor accounts you already host there keep working.
+- **Your main bot is always on by default** when your account has a cloud computer: when a bot becomes your main bot, and once for your existing main bot when the cloud computer is ready. If you ever turn Always on off (or pick a different computer) on its card, your choice stays and is never switched back.
 - No cloud computer yet? The picker says so, and messages wait for your computer as before (the cloud still tells you when texts are waiting).
 
 ## Fallback brain: a vendor session needs a check
@@ -37,7 +38,8 @@ The fallback brain uses your own provider usage, which is billed to you like any
 
 ## For developers
 
-- Settings live in the bot's `config`: `availability = {alwaysOn, failoverRuntimeId}` and `fallbackBrain`. No column.
+- Settings live in the bot's `config`: `availability = {alwaysOn, failoverRuntimeId, userSet}` and `fallbackBrain`. No column. `userSet: true` marks a choice made on the Stay on card; the main-bot default (`useMainBotCloudDefault`, mounted in the desktop and phone shells) only writes `alwaysOn: true` with the first `wakeable` runtime when `userSet` is not set.
+- Routines are separate: new ones run on the cloud computer by default. See [Bot routines](/guides/bot-routines#where-routines-run).
 - The runtime reports `failovers: [{botId, failoverRuntimeId, accounts}]` in its 60 s heartbeat (`POST /api/v1/runtime-presence/heartbeat`), one entry per always-on bot. `accounts` lists the channel connections whose default bot it is. The cloud keeps the list on `runtime_devices.bot_failovers` (migration `092`; the single `failover_runtime_id` from `091` stays for older runtimes). For each queued channel message it picks the delivery computer by the route's `bot_id`, else by the route's connection (its label), and records each switch per bot in `runtime_failovers.bot_id`. The next heartbeat's reply carries finished failovers (with `botId`); the runtime writes `bot_failovers` (V263) and a `bot.failover` event on that bot's standing threads.
 - `GET /api/v1/runtime-presence` reports `wakeable: true` for cloud computers.
 - Fallback lives in `gateway_runner::run_with_fallback`; it writes `lane.fallback {from, to, reason}`.

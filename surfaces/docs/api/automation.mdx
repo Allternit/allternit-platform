@@ -58,7 +58,7 @@ All automation routes require a valid bearer token. See [Authentication](/api/au
 | `schedule_type` | string | `cron`, `interval`, `manual`, or `once`. |
 | `schedule_expression` | string | Cron expression or interval shorthand. |
 | `timezone` | string | Optional timezone. |
-| `execution_domain` | string | `local` or `cloud`. |
+| `execution_domain` | string | `local` or `cloud`. On an Allternit cloud computer every routine is stored as `local`: that computer is always on, so its own scheduler runs it. |
 | `config` | object | Routine configuration including `jobType`. |
 | `max_runs` | integer | Optional maximum run count. |
 | `timeout_seconds` | integer | Optional per-run timeout. |
@@ -209,7 +209,7 @@ POST /api/v1/automation/routines
 | `goal_id` | string | No | Parent goal. |
 | `description` | string | No | Description. |
 | `timezone` | string | No | Timezone. |
-| `execution_domain` | string | No | `local` or `cloud`; defaults to `local`. |
+| `execution_domain` | string | No | `local` or `cloud`; defaults to `local`. The apps send no domain by default and pick it themselves (see [Cloud by default](#cloud-by-default)). On a cloud computer, `cloud` is stored as `local`. On any other computer, `cloud` registers a job with the always-on cron daemon; if it isn't answering, the create fails with `502 cloud_scheduler_unavailable` instead of saving a routine that would never run. |
 | `config` | object | No | Routine config; include `jobType` to control daemon job type. |
 | `tags` | string[] | No | Tags. |
 | `metadata` | object | No | Metadata. |
@@ -405,3 +405,15 @@ A routine or loop created from inside a bot thread belongs to that thread. On cr
 - [Sessions API](/api/sessions)
 - [Bot routines](/guides/bot-routines)
 - [Authentication](/api/authentication)
+
+## Cloud by default
+
+When the account has a cloud computer (paid plans; free accounts don't get one), the apps (Desktop, ai.allternit.com, m.allternit.com) create new routines on the cloud computer, so they run with your own computer closed:
+
+- The cloud computer is the first `wakeable` runtime in `GET /api/v1/runtime-presence`, the same list the bot's Stay on picker uses.
+- The routine is created on that computer's own API. When the page talks to another computer, the request goes through the cloud relay (`POST /api/v1/runtime-devices/:id/proxy`). The routine list shows both computers' routines, and calls for a cloud routine (run, runs, live, stop, metrics, edit, delete) go to the cloud computer.
+- Changing **Runs on** for a routine moves it: it is created on the other computer and removed from the first. Its run history stays behind.
+- Event-triggered routines and phone-skill replays stay on this computer, since they depend on it.
+- The bot has to exist on the cloud computer. If it doesn't, the create fails with `agent_not_found` and the app says to pick This computer.
+- A run on the cloud computer that finds a brain signed out fails with reason `lane_blocked`, and the app shows "Something needs fixing" as for any failed run.
+
