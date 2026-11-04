@@ -347,7 +347,7 @@ const sessionQuestionsListExecutor: CapabilityExecutor<unknown, unknown> = {
 }
 
 const sessionQuestionsReplyExecutor: CapabilityExecutor<
-  { requestID: string; answers: string[][] },
+  { requestID: string; answers: string[][]; plan?: unknown },
   unknown
 > = {
   capability: "harness.session.questions.reply",
@@ -355,6 +355,7 @@ const sessionQuestionsReplyExecutor: CapabilityExecutor<
     await Question.reply({
       requestID: String(input.requestID),
       answers: input.answers,
+      plan: input.plan,
     })
     return true
   },

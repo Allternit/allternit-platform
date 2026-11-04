@@ -27,6 +27,13 @@ export namespace Question {
 
   export type Option = z.infer<typeof Option>
 
+  /** One step of a plan shown for approval (`plan_exit`). */
+  export const PlanStep = z.object({
+    title: z.string().describe("The step, one short line"),
+    detail: z.string().optional().describe("Optional extra line under the step"),
+  })
+  export type PlanStep = z.infer<typeof PlanStep>
+
   export const Info = z
     .object({
       question: z.string().describe("Complete question"),
@@ -36,9 +43,30 @@ export namespace Question {
       custom: z.boolean().optional().describe("Allow typing a custom answer (default: true)"),
       risk: z.enum(["low", "medium", "high"]).optional().describe("Decision tree: how much is at stake"),
       context: z.string().optional().describe("Decision tree: the facts behind the question, one or two short lines"),
+      plan: z
+        .object({ steps: z.array(PlanStep) })
+        .optional()
+        .describe("Plan approval: steps the person can edit, add, remove and reorder before answering"),
     })
 
   export type Info = z.infer<typeof Info>
+
+  export const MAX_PLAN_STEPS = 50
+  export const MAX_PLAN_TEXT = 500
+
+  /** An edited plan from a reply, kept only when it is a valid, bounded step list. */
+  export function readPlan(value: unknown): PlanStep[] | undefined {
+    if (!Array.isArray(value) || value.length > MAX_PLAN_STEPS) return undefined
+    const steps: PlanStep[] = []
+    for (const item of value) {
+      if (!item || typeof item !== "object") return undefined
+      const title = typeof (item as any).title === "string" ? (item as any).title.trim().slice(0, MAX_PLAN_TEXT) : ""
+      if (!title) continue
+      const detail = typeof (item as any).detail === "string" ? (item as any).detail.trim().slice(0, MAX_PLAN_TEXT) : ""
+      steps.push(detail ? { title, detail } : { title })
+    }
+    return steps
+  }
 
   /** A decision tree: any option has a follow-up, or the question carries risk/context. */
   export function isTree(q: Info) {
@@ -73,6 +101,7 @@ export namespace Question {
     answers: z
       .array(Answer)
       .describe("User answers in order of questions (each answer is an array of selected labels)"),
+    plan: z.array(PlanStep).optional().describe("The plan as the person left it, for a question that carries `plan`"),
   })
   export type Reply = z.infer<typeof Reply>
 
@@ -100,7 +129,7 @@ export namespace Question {
       string,
       {
         info: Request
-        resolve: (answers: Answer[]) => void
+        resolve: (answers: Answer[], plan?: PlanStep[]) => void
         reject: (e: any) => void
       }
     > = {}
@@ -115,28 +144,26 @@ export namespace Question {
     questions: Info[]
     tool?: { messageID: string; callID: string }
   }): Promise<Answer[]> {
+    return (await askWithPlan(input)).answers
+  }
+
+  /** Like `ask`, and also returns the plan as the person edited it (plan questions). */
+  export async function askWithPlan(input: {
+    sessionID: string
+    questions: Info[]
+    tool?: { messageID: string; callID: string }
+  }): Promise<{ answers: Answer[]; plan?: PlanStep[] }> {
     const s = await state()
     const id = Identifier.ascending("question")
-
     log.info("asking", { id, questions: input.questions.length })
-
-    return new Promise<Answer[]>((resolve, reject) => {
-      const info: Request = {
-        id,
-        sessionID: input.sessionID,
-        questions: input.questions,
-        tool: input.tool,
-      }
-      s.pending[id] = {
-        info,
-        resolve,
-        reject,
-      }
+    return new Promise((resolve, reject) => {
+      const info: Request = { id, sessionID: input.sessionID, questions: input.questions, tool: input.tool }
+      s.pending[id] = { info, resolve: (answers, plan) => resolve({ answers, plan }), reject }
       Bus.publish(Event.Asked, info)
     })
   }
 
-  export async function reply(input: { requestID: string; answers: Answer[] }): Promise<void> {
+  export async function reply(input: { requestID: string; answers: Answer[]; plan?: unknown }): Promise<void> {
     const s = await state()
     const existing = s.pending[input.requestID]
     if (!existing) {
@@ -153,7 +180,7 @@ export namespace Question {
       answers: input.answers,
     })
 
-    existing.resolve(input.answers)
+    existing.resolve(input.answers, readPlan(input.plan))
   }
 
   export async function reject(requestID: string): Promise<void> {
