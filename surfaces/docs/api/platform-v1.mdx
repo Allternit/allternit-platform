@@ -29,7 +29,7 @@ All routes require a valid bearer token in the `Authorization` header. The chat 
 |--------|------|-------------|
 | `POST` | `/ai/chat` | Bridge a chat message to a Gizzi session with streaming response. |
 | `GET` | `/health` | Platform health check. |
-| `GET` | `/models` | List available models, including live local models. |
+| `GET` | `/models` | List the models of connected providers (live; `503` when unavailable). |
 | `GET` | `/models/recommend` | Rank models for a task and priority. |
 | `GET` | `/voice/voices` | List voice presets. |
 | `POST` | `/voice/tts/stream` | Stream text-to-speech audio. |
@@ -74,7 +74,22 @@ curl https://api.allternit.com/api/v1/models \
 ]
 ```
 
-The endpoint merges a static provider catalog with Gizzi's live `GET /provider` connected list so that newly-installed local models appear without restarting the API.
+The list is live. It holds the models of every provider that Gizzi's `GET /provider` reports as `connected`: CLI brains it found on the machine, API-key providers, local providers and Allternit Cloud. There is no built-in fallback list, so a model appears only when it can run right now, and a newly installed model appears without restarting the API.
+
+`tier` comes from the server's model metadata for known models and is `standard` for other remote models. Models of local providers (`sidecar`, `ollama`, `lmstudio`, `bonsai`, `omlx`, and any id starting with `local`) are always `local`.
+
+### Unavailable
+
+If Gizzi can't be reached or returns an error, the endpoint returns `503`:
+
+```json
+{
+  "error": "models_unavailable",
+  "message": "The model list is unavailable right now. Try again in a moment."
+}
+```
+
+Show a retry; don't substitute a model list of your own.
 
 ## Recommend models
 
@@ -109,6 +124,8 @@ curl "https://api.allternit.com/api/v1/models/recommend?task=code&priority=quali
   ]
 }
 ```
+
+Recommendations rank the same live list as `GET /models` and return the same `503 models_unavailable` when it can't be read.
 
 ## Agent chat bridge
 

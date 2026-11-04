@@ -416,7 +416,7 @@ static MODEL_METADATA: &[(&str, &str, &str, bool)] = &[
     ("qwen-plus", "Qwen Plus", "standard", false),
 ];
 
-fn model_metadata(model: &str) -> Option<(&'static str, &'static str, bool)> {
+pub(crate) fn model_metadata(model: &str) -> Option<(&'static str, &'static str, bool)> {
     MODEL_METADATA
         .iter()
         .find(|(id, _, _, _)| *id == model)
