@@ -248,6 +248,7 @@ enum MeetMainBot {
             body["enabled_modes"] = .array(modes.map { .string($0) })
         }
         try await MeetAgentsAPI.update(id: botId, body: body)
+        Task { await MainBotReachOut.run(botId: botId, botName: target.displayName) }
     }
 
     /// Set up A:// as the main bot: reuse the A:// bot when there is one,
@@ -566,9 +567,14 @@ enum MeetFinish {
     /// real turn in the bot's main thread. Paused routines are created, then
     /// paused (removed again if the pause fails), so they never fire between.
     static func installRoutine(botId: String, botName: String, title: String, prompt: String,
-                               cron: String?, event: String?, enabled: Bool) async throws {
+                               cron: String?, event: String?, enabled: Bool, checkIn: Bool = false) async throws {
         var config = ["jobType": "agent", "prompt": prompt]
         if cron == nil, let event { config["trigger"] = event }
+        var metadata: [String: JSONValue] = [
+            "source": .string("bot-routine"), "botName": .string(botName),
+            "title": .string(title), "fromTemplate": .bool(true),
+        ]
+        if checkIn { metadata["checkIn"] = .bool(true) }
         let request = CreateAutomationRoutineRequest(
             name: "[bot:\(botName)] \(title)",
             description: prompt,
@@ -578,10 +584,7 @@ enum MeetFinish {
             timezone: TimeZone.current.identifier,
             executionDomain: "local",
             config: config,
-            metadata: [
-                "source": .string("bot-routine"), "botName": .string(botName),
-                "title": .string(title), "fromTemplate": .bool(true),
-            ]
+            metadata: metadata
         )
         let row = try await AutomationClient.shared.createRoutine(request)
         guard !enabled else { return }
@@ -591,6 +594,28 @@ enum MeetFinish {
             try? await AutomationClient.shared.deleteRoutine(id: row.id)
             throw error
         }
+    }
+}
+
+/// The main bot reaches out first (web lib/bots/main-bot-reach-out.ts,
+/// server main_bot_reach_out.rs): the server posts its hello + offers once per
+/// bot and pushes; the first time, the bot also gets its "Morning check-in".
+@MainActor
+enum MainBotReachOut {
+    private struct Reply: Decodable { let status: String }
+    static let checkInTitle = "Morning check-in"
+    static let checkInCron = "0 9 * * *"
+    static let checkInPrompt = "Morning check-in. Review my open tasks and threads and my Inbox (what needs me). "
+        + "Then use suggest_task to offer 1 to 3 concrete pieces of work you could take off my plate today, each with a short reason. "
+        + "Don't start any of it until I say go ahead. If nothing is worth offering, say so in one line."
+
+    /// Best effort; never throws (setting the main bot must not fail because of it).
+    static func run(botId: String, botName: String) async {
+        let id = botId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? botId
+        guard let reply: Reply = try? await APIClient.shared.post(path: "bots/\(id)/reach-out", body: [String: String]()),
+              reply.status == "posted" else { return }
+        try? await MeetFinish.installRoutine(botId: botId, botName: botName, title: checkInTitle, prompt: checkInPrompt,
+                                             cron: checkInCron, event: nil, enabled: true, checkIn: true)
     }
 }
 

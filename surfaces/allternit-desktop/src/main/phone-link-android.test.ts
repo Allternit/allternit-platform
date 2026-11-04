@@ -20,14 +20,16 @@ import {
 import { AndroidHelperUnavailableError, type AndroidHelper } from './phone-android-helper.js';
 
 const instant = () => Promise.resolve();
-const PKG = 'com.allternit.phonelink';
-const SERVICE = `${PKG}/.PhoneLinkAccessibilityService`;
+const PKG = 'com.allternit.app';
+const LEGACY_PKG = 'com.allternit.phonelink';
+const SERVICE = `${PKG}/com.allternit.phonelink.PhoneLinkAccessibilityService`;
 const DEVICE_ID = 'dev-android-1';
 
 interface World {
   phonePresent: boolean;
   unauthorizedFirst: boolean;
   installedVersionCode: number | null;
+  legacyInstalled: boolean;
   installShouldFail: boolean;
   existingAccessibility: string;
   accessibilityBinds: boolean;
@@ -52,6 +54,7 @@ function world(over: Partial<World> = {}): World {
     phonePresent: true,
     unauthorizedFirst: false,
     installedVersionCode: null,
+    legacyInstalled: false,
     installShouldFail: false,
     existingAccessibility: 'null',
     accessibilityBinds: true,
@@ -61,7 +64,7 @@ function world(over: Partial<World> = {}): World {
     lanHost: '10.0.0.7:8200',
     wifiDeviceId: DEVICE_ID,
     listApps: ['com.openai.chatgpt', 'com.android.chrome'],
-    helper: { apk: '/helpers/phone-link.apk', manifest: { version: '1.0.0', versionCode: 7, apk: { file: 'p.apk', sha256: 'a'.repeat(64), size: 1 } } },
+    helper: { apk: '/helpers/phone-link.apk', manifest: { version: '1.0.0', versionCode: 7, packageName: PKG, apk: { file: 'p.apk', sha256: 'a'.repeat(64), size: 1 } } },
     ran: [],
     accessibilityPut: [],
     forwardsRemoved: [],
@@ -89,8 +92,15 @@ function fakeAdb(w: World): AdbCall {
     }
     if (inner.includes('ro.product.model')) return out('Pixel 8\n');
     if (inner.includes('ro.build.version.release')) return out('15\n');
+    if (inner === `dumpsys package ${LEGACY_PKG}`) {
+      return out(w.legacyInstalled ? `Packages:\n  Package [${LEGACY_PKG}] (abc):\n    versionCode=8 minSdk=26\n` : '');
+    }
     if (inner.startsWith('dumpsys package')) {
       return out(w.installedVersionCode === null ? '' : `Packages:\n  Package [${PKG}] (abc):\n    versionCode=${w.installedVersionCode} minSdk=26\n`);
+    }
+    if (cmd === `uninstall ${LEGACY_PKG}`) {
+      w.legacyInstalled = false;
+      return out('Success\n');
     }
     if (cmd.startsWith('install -r -g')) return w.installShouldFail ? out('Failure [INSTALL_FAILED_USER_RESTRICTED]', 1) : out('Success\n');
     if (inner === 'settings get secure enabled_accessibility_services') return out(`${w.existingAccessibility}\n`);
@@ -102,8 +112,8 @@ function fakeAdb(w: World): AdbCall {
     if (inner.startsWith('dumpsys accessibility')) return out(
         w.accessibilityBinds
           ? // Real Android 14 output (moto g play, 2026-10-17): the full class name, bound by label.
-            '     Bound services:{Service[label=Allternit Phone Link, feedbackType[FEEDBACK_GENERIC], capabilities=161]}\n     Enabled services:{{com.allternit.phonelink/com.allternit.phonelink.PhoneLinkAccessibilityService}}\n'
-          : '     Bound services:{}\n     Enabled services:{{com.allternit.phonelink/com.allternit.phonelink.PhoneLinkAccessibilityService}}\n',
+            `     Bound services:{Service[label=Allternit Phone Link, feedbackType[FEEDBACK_GENERIC], capabilities=161]}\n     Enabled services:{{${w.accessibilityPut.at(-1) ?? SERVICE}}}\n`
+          : `     Bound services:{}\n     Enabled services:{{${w.accessibilityPut.at(-1) ?? SERVICE}}}\n`,
       );
     if (cmd === 'forward tcp:0 tcp:8200') return out('52123\n');
     if (cmd.startsWith('forward --remove')) {
@@ -197,6 +207,23 @@ describe('parsers', () => {
 });
 
 describe('Android Phone Link', () => {
+  it('removes the pre-0.4.0 app (com.allternit.phonelink) before installing com.allternit.app', async () => {
+    const w = world({ legacyInstalled: true });
+    await waitFor(start(w), 'ready_wifi');
+    const uninstall = w.ran.indexOf(`uninstall ${LEGACY_PKG}`);
+    const install = w.ran.findIndex((c) => c.startsWith('install -r -g'));
+    expect(uninstall).toBeGreaterThan(-1);
+    expect(install).toBeGreaterThan(uninstall);
+    expect(w.legacyInstalled).toBe(false);
+  });
+
+  it('keeps com.allternit.phonelink while the pinned helper is a pre-0.4.0 APK', async () => {
+    const w = world({ legacyInstalled: true, helper: { apk: '/helpers/phone-link.apk', manifest: { version: '0.3.4', versionCode: 8, apk: { file: 'p.apk', sha256: 'a'.repeat(64), size: 1 } } } });
+    await waitFor(start(w), 'ready_wifi');
+    expect(w.ran.some((c) => c.startsWith('uninstall'))).toBe(false);
+    expect(w.accessibilityPut).toEqual([`${LEGACY_PKG}/com.allternit.phonelink.PhoneLinkAccessibilityService`]);
+  });
+
   it('walks USB debugging → install → provision → pair → Wi-Fi', async () => {
     const w = world({ unauthorizedFirst: true });
     const manager = start(w);
@@ -217,7 +244,10 @@ describe('Android Phone Link', () => {
     expect(w.accessibilityPut).toEqual([SERVICE]);
     // The provisioning broadcast carries the device name quoted for the phone shell.
     const broadcast = w.ran.find((c) => c.includes('am broadcast'));
-    expect(broadcast).toContain(`-a ${PKG}.PROVISION`);
+    expect(broadcast).toContain(`-a ${LEGACY_PKG}.PROVISION`);
+    expect(broadcast).toContain(`-n ${PKG}/com.allternit.phonelink.ProvisionReceiver`);
+    // A phone without the old app is never told to uninstall anything.
+    expect(w.ran.some((c) => c.startsWith('uninstall'))).toBe(false);
     expect(broadcast).toContain(`--es device_name 'Pixel 8'`);
     // Paired under the android:<device id> key, then verified and listed over Wi-Fi with that key.
     expect(w.storeKeys[0]).toBe(ictrlStoreKey(`android:${DEVICE_ID}`));
@@ -419,7 +449,7 @@ describe('Android Phone Link', () => {
 });
 
 describe('accessibilityBound', () => {
-  const enabled = '     Enabled services:{{com.allternit.phonelink/com.allternit.phonelink.PhoneLinkAccessibilityService}}';
+  const enabled = '     Enabled services:{{com.allternit.app/com.allternit.phonelink.PhoneLinkAccessibilityService}}';
   it('needs the full class name enabled and the service bound by label', () => {
     expect(accessibilityBound(`     Bound services:{Service[label=Allternit Phone Link, capabilities=161]}\n${enabled}\n`)).toBe(true);
   });
@@ -427,6 +457,6 @@ describe('accessibilityBound', () => {
     expect(accessibilityBound(`     Bound services:{}\n${enabled}\n`)).toBe(false);
   });
   it('does not accept the short component form, which dumpsys never prints', () => {
-    expect(accessibilityBound('     Bound services:{Service[label=Allternit Phone Link]}\n     Enabled services:{{com.allternit.phonelink/.PhoneLinkAccessibilityService}}\n')).toBe(false);
+    expect(accessibilityBound('     Bound services:{Service[label=Allternit Phone Link]}\n     Enabled services:{{com.allternit.app/.PhoneLinkAccessibilityService}}\n')).toBe(false);
   });
 });

@@ -37,6 +37,7 @@ pub mod agent_runtime_routes;
 pub mod agent_session_routes;
 pub mod agent_workspace_paths;
 pub mod agent_workspace_routes;
+pub mod agent_package_routes;
 pub mod bot_hub_routes;
 pub mod memory_map_routes;
 pub mod skill_use;
@@ -138,6 +139,7 @@ pub mod placement;
 pub mod coordinator_routes;
 pub mod delegate_routes;
 pub mod morning_brief;
+pub mod main_bot_reach_out;
 // One source with cloud-api's eval (`evals/triage` measures this exact code).
 #[path = "../../allternit-cloud-api/src/routes/mail_triage.rs"]
 pub mod mail_triage;

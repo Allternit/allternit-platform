@@ -308,7 +308,7 @@ async fn issue(state: &ApiState, user_id: &str, org: &str, config: Option<&Confi
     let Some(key) = es256::key_from_env() else { return Err(IssueError::Refused(Refusal::IdjagNotConfigured)) };
     let role = match known_role {
         Some(r) => Some(r),
-        None => crate::services::user_trust::clerk_org_memberships_checked(user_id).await.ok_or(IssueError::Unavailable("Organization membership could not be checked right now."))?.into_iter().find(|m| m.id == org).map(|m| m.role),
+        None => crate::services::user_trust::clerk_org_memberships_for(user_id, org).await.ok_or(IssueError::Unavailable("Organization membership could not be checked right now."))?.into_iter().find(|m| m.id == org).map(|m| m.role),
     };
     // Skip the email lookup for a refusal that doesn't need it.
     decide(config, &Subject { role: role.as_deref(), primary_email: Some(("-", true)) }).map_err(IssueError::Refused)?;
@@ -484,7 +484,11 @@ async fn runtime_idjag(State(state): State<Arc<ApiState>>, headers: HeaderMap, b
     let Ok(req) = serde_json::from_slice::<IdJagBody>(&body) else {
         return coded(StatusCode::BAD_REQUEST, "invalid_request", "Body must be {\"connector_id\", \"org_id\"?}.");
     };
-    let Some(memberships) = crate::services::user_trust::clerk_org_memberships_checked(&user_id).await else {
+    let looked_up = match req.org_id.as_deref().filter(|o| !o.is_empty()) {
+        Some(org) => crate::services::user_trust::clerk_org_memberships_for(&user_id, org).await,
+        None => crate::services::user_trust::clerk_org_memberships_checked(&user_id).await,
+    };
+    let Some(memberships) = looked_up else {
         return unavailable("Organization membership could not be checked right now.");
     };
     let orgs: Vec<String> = match req.org_id.as_deref().filter(|o| !o.is_empty()) {
@@ -550,7 +554,7 @@ pub(crate) async fn org_caller(headers: &HeaderMap, org: &str) -> Result<OrgCall
     let user = crate::auth::clerk::user_from_headers(headers).await.map_err(|_| coded(StatusCode::UNAUTHORIZED, "unauthorized", "Sign in to Allternit."))?;
     let role = match (user.organization_id.as_deref(), user.org_role.as_deref()) {
         (Some(o), Some(r)) if o == org => Some(r.to_string()),
-        _ => crate::services::user_trust::clerk_org_memberships_checked(&user.id)
+        _ => crate::services::user_trust::clerk_org_memberships_for(&user.id, org)
             .await
             .ok_or_else(|| unavailable("Organization membership could not be checked right now."))?
             .into_iter()

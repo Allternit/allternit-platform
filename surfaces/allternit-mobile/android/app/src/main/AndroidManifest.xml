@@ -41,18 +41,51 @@
         android:supportsRtl="true"
         tools:targetApi="35">
 
+        <!-- Digital Asset Links back to m.allternit.com (its assetlinks.json names
+             this app ID and the release cert), so Chrome shows the site full-screen. -->
+        <meta-data
+            android:name="asset_statements"
+            android:resource="@string/asset_statements" />
+
+        <!-- The Allternit app: m.allternit.com as a Trusted Web Activity. Without
+             a TWA-capable browser it opens as a Custom Tab instead. -->
         <activity
-            android:name=".MainActivity"
-            android:exported="true"
-            android:launchMode="singleTop">
+            android:name="com.google.androidbrowserhelper.trusted.LauncherActivity"
+            android:exported="true">
+            <meta-data
+                android:name="android.support.customtabs.trusted.DEFAULT_URL"
+                android:value="https://m.allternit.com/" />
+            <meta-data
+                android:name="android.support.customtabs.trusted.STATUS_BAR_COLOR"
+                android:resource="@color/twa_bar" />
+            <meta-data
+                android:name="android.support.customtabs.trusted.NAVIGATION_BAR_COLOR"
+                android:resource="@color/twa_bar" />
+            <meta-data
+                android:name="android.app.shortcuts"
+                android:resource="@xml/shortcuts" />
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" android:host="m.allternit.com" />
+            </intent-filter>
         </activity>
 
+        <!-- Phone Link status (sessions, Stop/Start, Revoke): opened from its
+             notification and from the "Phone Link" shortcut on the app icon. -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:label="@string/phone_link_label"
+            android:launchMode="singleTop" />
+
         <!-- The hands and eyes. Enabled over adb with
-             settings put secure enabled_accessibility_services com.allternit.phonelink/.PhoneLinkAccessibilityService -->
+             settings put secure enabled_accessibility_services com.allternit.app/com.allternit.phonelink.PhoneLinkAccessibilityService -->
         <service
             android:name=".PhoneLinkAccessibilityService"
             android:exported="true"

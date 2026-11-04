@@ -42,8 +42,8 @@ object ShellServerProtocol {
     const val MAX_LINE = 8192
     /** Reply lines: SMSREAD's base64 stdout. */
     const val MAX_REPLY = 512 * 1024
-    /** The app's accessibility service, as `enabled_accessibility_services` lists it. */
-    const val ACCESSIBILITY_COMPONENT = "com.allternit.phonelink/.PhoneLinkAccessibilityService"
+    /** The app's accessibility service, as `enabled_accessibility_services` lists it: app ID / full class name (the classes keep the old package). */
+    const val ACCESSIBILITY_COMPONENT = "com.allternit.app/com.allternit.phonelink.PhoneLinkAccessibilityService"
     /** scrcpy-server's own pinned version; the jar Desktop pushes must match it. */
     const val SCRCPY_VERSION = "5.0.1"
     const val SCRCPY_JAR = "/data/local/tmp/allternit-scrcpy-server.jar"

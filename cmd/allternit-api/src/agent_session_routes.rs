@@ -1408,6 +1408,28 @@ async fn send_message(
 /// The app sends `[{ questionIndex, answer }]` (answer a label or labels);
 /// gizzi wants one label list per question, in order. A body that is already
 /// `string[][]` passes through.
+/// The edited plan on a plan-approval reply (`plan: [{ title, detail? }]`),
+/// kept to gizzi's bounds (50 steps, 500 characters per field). gizzi checks
+/// it again; anything else in the body is not forwarded.
+pub(crate) fn question_plan(body: &serde_json::Value) -> Option<serde_json::Value> {
+    let steps = body.get("plan")?.as_array()?;
+    if steps.len() > 50 {
+        return None;
+    }
+    let clip = |v: Option<&serde_json::Value>| v.and_then(|x| x.as_str()).map(|t| t.trim().chars().take(500).collect::<String>());
+    let out: Vec<serde_json::Value> = steps
+        .iter()
+        .filter_map(|step| {
+            let title = clip(step.get("title")).filter(|t| !t.is_empty())?;
+            Some(match clip(step.get("detail")).filter(|d| !d.is_empty()) {
+                Some(detail) => json!({ "title": title, "detail": detail }),
+                None => json!({ "title": title }),
+            })
+        })
+        .collect();
+    Some(serde_json::Value::Array(out))
+}
+
 fn question_answers(body: &serde_json::Value) -> Vec<Vec<String>> {
     let Some(items) = body.get("answers").and_then(|v| v.as_array()) else {
         return Vec::new();
@@ -1466,7 +1488,10 @@ async fn reply_question(
         None
     };
     let path = format!("/v1/question/{}/reply", urlencoding::encode(&request_id));
-    let payload = json!({ "answers": answers });
+    let mut payload = json!({ "answers": answers });
+    if let Some(plan) = question_plan(&body) {
+        payload["plan"] = plan;
+    }
     match gizzi_json::<serde_json::Value>(&client, reqwest::Method::POST, &path, Some(payload)).await {
         Ok(value) => {
             if let (Some(session), Some(axum::extract::Extension(user))) = (session_id, user) {
@@ -3466,6 +3491,19 @@ mod surface_normalize_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn question_plan_keeps_only_bounded_steps() {
+        assert_eq!(question_plan(&json!({ "answers": [] })), None);
+        assert_eq!(question_plan(&json!({ "plan": "x" })), None);
+        let many: Vec<_> = (0..51).map(|_| json!({ "title": "a" })).collect();
+        assert_eq!(question_plan(&json!({ "plan": many })), None);
+        let long = "y".repeat(900);
+        assert_eq!(
+            question_plan(&json!({ "plan": [{ "title": " a " }, { "title": "" }, { "title": "b", "detail": "d", "x": 1 }, { "title": long }] })),
+            Some(json!([{ "title": "a" }, { "title": "b", "detail": "d" }, { "title": "y".repeat(500) }]))
+        );
+    }
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
     use serde_json::{json, Value};
@@ -4119,6 +4157,7 @@ mod run_telemetry_tests {
 
 #[cfg(test)]
 mod session_status_tests {
+
     use super::session_status_kind;
     use serde_json::json;
 

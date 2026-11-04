@@ -11,3 +11,5 @@ Do NOT call this tool:
 - Before you have created or finalized the plan
 - If you still have unanswered questions about the implementation
 - If the user has indicated they want to continue planning
+
+Pass the plan's steps in `steps`, in order, one short line each (add `detail` only when a step needs a second line). The user sees them as an editable card: they can change, add, remove or reorder steps before approving. If they approve an edited list, run that list.
