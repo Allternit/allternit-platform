@@ -84,14 +84,28 @@ export const WorkspaceCommand = cmd({
               note: { type: "string", describe: "a note written into the node's PROGRESS.md" },
             },
           },
-          { command: "close <node>", describe: "close a node", mutation: true },
+          {
+            // The engine closes the claim (WIH), not the node id: `node show <dag> <node>` prints wih.id.
+            command: "close <wih> <status> [evidence..]",
+            describe: "close a claimed node by its WIH id (from `node show`), e.g. close wih_12 DONE <PR url>",
+            mutation: true,
+            options: {
+              output: { type: "string", describe: "file whose text becomes the node output (counts as evidence)" },
+              actor: { type: "string", describe: "who is closing: user:<id> or agent:<id> (unset = the worker)" },
+            },
+          },
         ]),
       )
       .command(engineVerb(P, { command: "approve <node>", describe: "approve what's waiting on you", mutation: true }))
       .command(
         engineGroup(P, "proof", "proof receipts", [
-          { command: "add <node>", describe: "attach proof to a node", mutation: true },
-          { command: "show <node>", describe: "show a node's proof" },
+          {
+            command: "add <node> <line> <file>",
+            describe: "copy a file into the node's proof/ as evidence for one Proof contract line (text or 1-based number)",
+            mutation: true,
+            options: { dag: { type: "string", describe: "the node's DAG" } },
+          },
+          { command: "show <node>", describe: "show a node's proof", options: { dag: { type: "string", describe: "the node's DAG" } } },
         ]),
       )
       .command(
