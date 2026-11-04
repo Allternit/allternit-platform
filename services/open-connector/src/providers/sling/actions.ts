@@ -1,7 +1,7 @@
 import type { ActionDefinition } from "../../core/types.ts";
 
 import { s } from "../../core/json-schema.ts";
-import { defineProviderAction } from "../../core/provider-definition.ts";
+import { defineProviderAction, withSavedConnectionInputs } from "../../core/provider-definition.ts";
 
 const service = "sling";
 
@@ -107,136 +107,139 @@ export type SlingActionName =
   | "list_tasks"
   | "get_task";
 
-export const slingActions: ActionDefinition[] = [
-  defineProviderAction(service, {
-    name: "get_current_session",
-    description: "Retrieve the current Sling API session, including user and organization details.",
-    inputSchema: emptyInputSchema,
-    outputSchema: s.object("The current Sling session returned by the connector.", {
-      session: rawObject("The Sling session record returned by the API."),
+export const slingActions: ActionDefinition[] = withSavedConnectionInputs(
+  [
+    defineProviderAction(service, {
+      name: "get_current_session",
+      description: "Retrieve the current Sling API session, including user and organization details.",
+      inputSchema: emptyInputSchema,
+      outputSchema: s.object("The current Sling session returned by the connector.", {
+        session: rawObject("The Sling session record returned by the API."),
+      }),
     }),
-  }),
-  defineProviderAction(service, {
-    name: "list_users",
-    description: "List Sling users in the current organization with optional filters.",
-    inputSchema: listUsersInputSchema,
-    outputSchema: listUsersOutputSchema,
-  }),
-  defineProviderAction(service, {
-    name: "get_user",
-    description: "Retrieve one Sling user by id.",
-    inputSchema: s.object("Input parameters for retrieving one Sling user.", {
-      userId: s.positiveInteger("The Sling user identifier."),
+    defineProviderAction(service, {
+      name: "list_users",
+      description: "List Sling users in the current organization with optional filters.",
+      inputSchema: listUsersInputSchema,
+      outputSchema: listUsersOutputSchema,
     }),
-    outputSchema: s.object("The Sling user returned by the connector.", {
-      user: rawObject("The Sling user record returned by the API."),
+    defineProviderAction(service, {
+      name: "get_user",
+      description: "Retrieve one Sling user by id.",
+      inputSchema: s.object("Input parameters for retrieving one Sling user.", {
+        userId: s.positiveInteger("The Sling user identifier."),
+      }),
+      outputSchema: s.object("The Sling user returned by the connector.", {
+        user: rawObject("The Sling user record returned by the API."),
+      }),
     }),
-  }),
-  defineProviderAction(service, {
-    name: "list_groups",
-    description: "List Sling groups in the current organization with optional filters.",
-    inputSchema: listGroupsInputSchema,
-    outputSchema: s.object("The Sling groups returned by the connector.", {
-      groups: rawObjectList("The Sling group records returned by the API.", "One Sling group record."),
+    defineProviderAction(service, {
+      name: "list_groups",
+      description: "List Sling groups in the current organization with optional filters.",
+      inputSchema: listGroupsInputSchema,
+      outputSchema: s.object("The Sling groups returned by the connector.", {
+        groups: rawObjectList("The Sling group records returned by the API.", "One Sling group record."),
+      }),
     }),
-  }),
-  defineProviderAction(service, {
-    name: "get_group",
-    description: "Retrieve one Sling group by id.",
-    inputSchema: s.object("Input parameters for retrieving one Sling group.", {
-      groupId: s.positiveInteger("The Sling group identifier."),
+    defineProviderAction(service, {
+      name: "get_group",
+      description: "Retrieve one Sling group by id.",
+      inputSchema: s.object("Input parameters for retrieving one Sling group.", {
+        groupId: s.positiveInteger("The Sling group identifier."),
+      }),
+      outputSchema: s.object("The Sling group returned by the connector.", {
+        group: rawObject("The Sling group record returned by the API."),
+      }),
     }),
-    outputSchema: s.object("The Sling group returned by the connector.", {
-      group: rawObject("The Sling group record returned by the API."),
+    defineProviderAction(service, {
+      name: "list_calendar_events",
+      description: "List Sling calendar events for one user and organization within an ISO interval.",
+      inputSchema: calendarEventsInputSchema,
+      outputSchema: s.object("The Sling calendar events returned by the connector.", {
+        events: rawObjectList(
+          "The Sling calendar event records returned by the API.",
+          "One Sling calendar event record.",
+        ),
+      }),
     }),
-  }),
-  defineProviderAction(service, {
-    name: "list_calendar_events",
-    description: "List Sling calendar events for one user and organization within an ISO interval.",
-    inputSchema: calendarEventsInputSchema,
-    outputSchema: s.object("The Sling calendar events returned by the connector.", {
-      events: rawObjectList(
-        "The Sling calendar event records returned by the API.",
-        "One Sling calendar event record.",
+    defineProviderAction(service, {
+      name: "get_shift",
+      description: "Retrieve one Sling shift by id.",
+      inputSchema: s.object(
+        "Input parameters for retrieving one Sling shift.",
+        {
+          shiftId: s.nonEmptyString("The Sling shift or event identifier."),
+          includeTimesheets: s.stringEnum("How much timesheet data Sling should include.", ["true", "full"]),
+        },
+        { optional: ["includeTimesheets"] },
       ),
+      outputSchema: shiftOutputSchema,
     }),
-  }),
-  defineProviderAction(service, {
-    name: "get_shift",
-    description: "Retrieve one Sling shift by id.",
-    inputSchema: s.object(
-      "Input parameters for retrieving one Sling shift.",
-      {
-        shiftId: s.nonEmptyString("The Sling shift or event identifier."),
-        includeTimesheets: s.stringEnum("How much timesheet data Sling should include.", ["true", "full"]),
-      },
-      { optional: ["includeTimesheets"] },
-    ),
-    outputSchema: shiftOutputSchema,
-  }),
-  defineProviderAction(service, {
-    name: "get_detailed_shift",
-    description: "Retrieve supplementary details for one Sling shift.",
-    inputSchema: shiftIdInputSchema,
-    outputSchema: shiftOutputSchema,
-  }),
-  defineProviderAction(service, {
-    name: "list_shift_coworkers",
-    description: "List coworkers for one Sling shift.",
-    inputSchema: shiftIdInputSchema,
-    outputSchema: s.object("The Sling shift coworkers returned by the connector.", {
-      coworkers: rawObjectList("The Sling coworker records returned by the API.", "One Sling coworker record."),
+    defineProviderAction(service, {
+      name: "get_detailed_shift",
+      description: "Retrieve supplementary details for one Sling shift.",
+      inputSchema: shiftIdInputSchema,
+      outputSchema: shiftOutputSchema,
     }),
-  }),
-  defineProviderAction(service, {
-    name: "get_current_shift",
-    description: "Retrieve the current shift for the connected Sling user.",
-    inputSchema: emptyInputSchema,
-    outputSchema: shiftOutputSchema,
-  }),
-  defineProviderAction(service, {
-    name: "get_next_shift",
-    description: "Retrieve the next shift for the connected Sling user.",
-    inputSchema: s.object(
-      "Input parameters for retrieving the next Sling shift for the current user.",
-      { referenceDate: s.nonEmptyString("Only return the first shift after this ISO timestamp.") },
-      { optional: ["referenceDate"] },
-    ),
-    outputSchema: shiftOutputSchema,
-  }),
-  defineProviderAction(service, {
-    name: "list_working_users",
-    description: "List Sling users working on a specific date.",
-    inputSchema: s.object("Input parameters for listing users working on a day.", {
-      date: s.nonEmptyString("The ISO date for the working-users query."),
+    defineProviderAction(service, {
+      name: "list_shift_coworkers",
+      description: "List coworkers for one Sling shift.",
+      inputSchema: shiftIdInputSchema,
+      outputSchema: s.object("The Sling shift coworkers returned by the connector.", {
+        coworkers: rawObjectList("The Sling coworker records returned by the API.", "One Sling coworker record."),
+      }),
     }),
-    outputSchema: listUsersOutputSchema,
-  }),
-  defineProviderAction(service, {
-    name: "list_tasks",
-    description: "List Sling tasks with optional type and cursor-like id filters.",
-    inputSchema: s.object(
-      "Input parameters for listing Sling tasks.",
-      {
-        filter: s.nonEmptyString("Only return tasks that belong to this Sling task type."),
-        since: s.positiveInteger("Only return tasks with an id greater than this value."),
-        before: s.positiveInteger("Only return tasks with an id less than this value."),
-        pageSize: s.integer("The number of task results to return.", { minimum: 1 }),
-      },
-      { optional: ["filter", "since", "before", "pageSize"] },
-    ),
-    outputSchema: s.object("The Sling tasks returned by the connector.", {
-      tasks: rawObjectList("The Sling task records returned by the API.", "One Sling task record."),
+    defineProviderAction(service, {
+      name: "get_current_shift",
+      description: "Retrieve the current shift for the connected Sling user.",
+      inputSchema: emptyInputSchema,
+      outputSchema: shiftOutputSchema,
     }),
-  }),
-  defineProviderAction(service, {
-    name: "get_task",
-    description: "Retrieve one Sling task by id.",
-    inputSchema: s.object("Input parameters for retrieving one Sling task.", {
-      taskId: s.positiveInteger("The Sling task identifier."),
+    defineProviderAction(service, {
+      name: "get_next_shift",
+      description: "Retrieve the next shift for the connected Sling user.",
+      inputSchema: s.object(
+        "Input parameters for retrieving the next Sling shift for the current user.",
+        { referenceDate: s.nonEmptyString("Only return the first shift after this ISO timestamp.") },
+        { optional: ["referenceDate"] },
+      ),
+      outputSchema: shiftOutputSchema,
     }),
-    outputSchema: s.object("The Sling task returned by the connector.", {
-      task: rawObject("The Sling task record returned by the API."),
+    defineProviderAction(service, {
+      name: "list_working_users",
+      description: "List Sling users working on a specific date.",
+      inputSchema: s.object("Input parameters for listing users working on a day.", {
+        date: s.nonEmptyString("The ISO date for the working-users query."),
+      }),
+      outputSchema: listUsersOutputSchema,
     }),
-  }),
-];
+    defineProviderAction(service, {
+      name: "list_tasks",
+      description: "List Sling tasks with optional type and cursor-like id filters.",
+      inputSchema: s.object(
+        "Input parameters for listing Sling tasks.",
+        {
+          filter: s.nonEmptyString("Only return tasks that belong to this Sling task type."),
+          since: s.positiveInteger("Only return tasks with an id greater than this value."),
+          before: s.positiveInteger("Only return tasks with an id less than this value."),
+          pageSize: s.integer("The number of task results to return.", { minimum: 1 }),
+        },
+        { optional: ["filter", "since", "before", "pageSize"] },
+      ),
+      outputSchema: s.object("The Sling tasks returned by the connector.", {
+        tasks: rawObjectList("The Sling task records returned by the API.", "One Sling task record."),
+      }),
+    }),
+    defineProviderAction(service, {
+      name: "get_task",
+      description: "Retrieve one Sling task by id.",
+      inputSchema: s.object("Input parameters for retrieving one Sling task.", {
+        taskId: s.positiveInteger("The Sling task identifier."),
+      }),
+      outputSchema: s.object("The Sling task returned by the connector.", {
+        task: rawObject("The Sling task record returned by the API."),
+      }),
+    }),
+  ],
+  { orgId: ["orgId"] },
+);

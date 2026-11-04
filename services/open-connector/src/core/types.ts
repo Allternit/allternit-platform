@@ -181,6 +181,12 @@ export type ActionDefinition = {
   outputSchema: JsonSchema;
   /** Related actions that are useful after this action completes. */
   followUpActions?: string[];
+  /**
+   * Inputs the runtime fills from the selected connection when the caller omits
+   * them. Maps an input key to the saved credential value or validation
+   * metadata fields that hold it, checked in order.
+   */
+  savedConnectionInputs?: Record<string, string[]>;
   /** Action ids that model a start/status/cancel async workflow. */
   asyncLifecycle?: {
     /** Action used to start an async provider operation. */

@@ -1,7 +1,7 @@
 import type { ActionDefinition } from "../../core/types.ts";
 
 import { s } from "../../core/json-schema.ts";
-import { defineProviderAction } from "../../core/provider-definition.ts";
+import { defineProviderAction, withSavedConnectionInputs } from "../../core/provider-definition.ts";
 
 const service = "agility";
 
@@ -121,45 +121,48 @@ const getNestedSitemapOutputSchema = s.object("Agility CMS nested sitemap respon
   raw: rawPayloadSchema,
 });
 
-export const agilityActions: ActionDefinition[] = [
-  defineProviderAction(service, {
-    name: "list_content_models",
-    description: "List content models for an Agility CMS instance using the Content Fetch API.",
-    inputSchema: listContentModelsInputSchema,
-    outputSchema: listContentModelsOutputSchema,
-  }),
-  defineProviderAction(service, {
-    name: "get_content_list",
-    description:
-      "Retrieve an Agility CMS content list by reference name with optional pagination, filtering, sorting, and linked-content expansion.",
-    inputSchema: getContentListInputSchema,
-    outputSchema: getContentListOutputSchema,
-  }),
-  defineProviderAction(service, {
-    name: "get_content_item",
-    description: "Retrieve an Agility CMS content item by content ID for a locale.",
-    inputSchema: getContentItemInputSchema,
-    outputSchema: getContentItemOutputSchema,
-  }),
-  defineProviderAction(service, {
-    name: "get_page",
-    description: "Retrieve an Agility CMS page by page ID for a locale.",
-    inputSchema: getPageInputSchema,
-    outputSchema: getPageOutputSchema,
-  }),
-  defineProviderAction(service, {
-    name: "get_flat_sitemap",
-    description: "Retrieve an Agility CMS flat sitemap keyed by page path for a channel.",
-    inputSchema: getFlatSitemapInputSchema,
-    outputSchema: getFlatSitemapOutputSchema,
-  }),
-  defineProviderAction(service, {
-    name: "get_nested_sitemap",
-    description: "Retrieve an Agility CMS nested sitemap for generating menus or navigation.",
-    inputSchema: getNestedSitemapInputSchema,
-    outputSchema: getNestedSitemapOutputSchema,
-  }),
-];
+export const agilityActions: ActionDefinition[] = withSavedConnectionInputs(
+  [
+    defineProviderAction(service, {
+      name: "list_content_models",
+      description: "List content models for an Agility CMS instance using the Content Fetch API.",
+      inputSchema: listContentModelsInputSchema,
+      outputSchema: listContentModelsOutputSchema,
+    }),
+    defineProviderAction(service, {
+      name: "get_content_list",
+      description:
+        "Retrieve an Agility CMS content list by reference name with optional pagination, filtering, sorting, and linked-content expansion.",
+      inputSchema: getContentListInputSchema,
+      outputSchema: getContentListOutputSchema,
+    }),
+    defineProviderAction(service, {
+      name: "get_content_item",
+      description: "Retrieve an Agility CMS content item by content ID for a locale.",
+      inputSchema: getContentItemInputSchema,
+      outputSchema: getContentItemOutputSchema,
+    }),
+    defineProviderAction(service, {
+      name: "get_page",
+      description: "Retrieve an Agility CMS page by page ID for a locale.",
+      inputSchema: getPageInputSchema,
+      outputSchema: getPageOutputSchema,
+    }),
+    defineProviderAction(service, {
+      name: "get_flat_sitemap",
+      description: "Retrieve an Agility CMS flat sitemap keyed by page path for a channel.",
+      inputSchema: getFlatSitemapInputSchema,
+      outputSchema: getFlatSitemapOutputSchema,
+    }),
+    defineProviderAction(service, {
+      name: "get_nested_sitemap",
+      description: "Retrieve an Agility CMS nested sitemap for generating menus or navigation.",
+      inputSchema: getNestedSitemapInputSchema,
+      outputSchema: getNestedSitemapOutputSchema,
+    }),
+  ],
+  { guid: ["guid"] },
+);
 
 export type AgilityActionName =
   | "list_content_models"
