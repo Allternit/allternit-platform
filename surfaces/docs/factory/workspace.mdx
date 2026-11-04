@@ -35,8 +35,11 @@ gizzi workspace node list --ready         # only nodes ready to claim
 gizzi workspace node list --mine
 gizzi workspace node claim <node>
 gizzi workspace node handoff <dag>/<node> --to checker@product-build --note "build passes; please review"
-gizzi workspace node close <node>
+gizzi workspace node show <dag> <node>    # prints the claim's wih.id
+gizzi workspace node close <wih> DONE <PR url> --output notes.md
 ```
+
+`node close` takes the claim's WIH id, not the node id: `node show` prints it as `wih.id`. The status is `DONE` or another final status. Evidence follows as URLs or paths; `--output <file>` stores the file's text as the node output with a receipt.
 
 `node list` shows every open node with its state: `ready` (nothing blocks it), `claimed` (someone holds it) or `waiting` (blocked by another node or a wait-gate). Done, failed, cancelled and closed nodes are left out. Add `--dag <dag>` for one plan.
 
@@ -84,8 +87,8 @@ Any ```` ```mermaid ```` block in `SPEC.md`, `PROGRESS.md` or a Campaign doc ren
 ## Proof and the judge
 
 ```bash
-gizzi workspace proof add <node> --line 2 screenshot.png
-gizzi workspace proof show <node>
+gizzi workspace proof add <node> 2 screenshot.png --dag <dag>
+gizzi workspace proof show <node> --dag <dag>
 gizzi workspace judge show <node>
 gizzi workspace judge resolve <node> --line 3 accomplished
 ```
