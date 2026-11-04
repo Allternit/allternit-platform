@@ -110,6 +110,8 @@ pub fn connector_router() -> Router<Arc<AppState>> {
         .route("/connectors/:id/execute", post(execute_connector))
         .route("/connectors/:id/disconnect", delete(disconnect_connector))
         .route("/connectors/:id/accounts", get(list_accounts_route))
+        .route("/managed-auth/configs", get(managed_configs_route))
+        .route("/managed-auth/id-jag", post(managed_idjag_route))
         .route(
             "/connectors/:id/accounts/:conn_id",
             patch(update_account_route).delete(delete_account_route),
@@ -1523,7 +1525,7 @@ fn fetch_connection_rows(db: &crate::db::DbHandle, user_id: &str) -> ConnRows {
         .ok()
         .and_then(|conn| {
             let mut stmt = conn
-                .prepare("SELECT connector_id, id, status, COALESCE(account,''), is_default FROM connector_connections WHERE user_id=?1 ORDER BY connector_id, is_default DESC, updated_at DESC")
+                .prepare("SELECT connector_id, id, status, COALESCE(account,''), is_default, auth_type FROM connector_connections WHERE user_id=?1 ORDER BY connector_id, is_default DESC, updated_at DESC")
                 .ok()?;
             let mut out: ConnRows = std::collections::HashMap::new();
             let rows = stmt
@@ -1534,18 +1536,20 @@ fn fetch_connection_rows(db: &crate::db::DbHandle, user_id: &str) -> ConnRows {
                         row.get::<_, String>(2)?,
                         row.get::<_, String>(3)?,
                         row.get::<_, i64>(4)? != 0,
+                        row.get::<_, String>(5)?,
                     ))
                 })
                 .ok()?;
-            for (connector_id, id, status, account, is_default) in rows.filter_map(|r| r.ok()) {
+            for (connector_id, id, status, account, is_default, auth_type) in rows.filter_map(|r| r.ok()) {
                 // Default row first: it is what the single `connection` shows.
                 let entry = out.entry(connector_id).or_insert_with(|| ConnSummary {
                     status: status.clone(),
                     account: account.clone(),
                     accounts: Vec::new(),
                 });
+                // `auth_type` lets Settings say "Signed in by your organization" for `managed`.
                 entry.accounts.push(json!({
-                    "id": id, "account": account, "status": status, "is_default": is_default,
+                    "id": id, "account": account, "status": status, "is_default": is_default, "auth_type": auth_type,
                 }));
             }
             Some(out)
@@ -1640,6 +1644,12 @@ fn merge(
         }
         if auth_type == "local_cli" {
             obj.insert("availability".to_string(), detect_local_cli(&m));
+        }
+        // Optional `managed: { as_issuer, token_endpoint, resource }` in the meta: the
+        // vendor's own docs confirm it trusts outside ID-JAG issuers. A hint for the
+        // admin's Managed authorization form; whether it is on is cloud-api's org config.
+        if let Some(hint) = managed_hint(&m) {
+            obj.insert("managed".to_string(), hint);
         }
         obj.insert(
             "connection".to_string(),
@@ -2056,6 +2066,19 @@ async fn connect_connector(
     if id == ALLTERNIT_MAIL_ID {
         return connect_allternit_mail(&state, &user_id, body).await;
     }
+    // Managed sign-in wins when the user's org turned it on for this connector.
+    // An explicit `via` (e.g. "oauth2" from "Connect with sign-in instead") is
+    // the user's choice and is honoured as is.
+    match body.via.as_deref() {
+        Some("managed") => return connect_managed(&state, &user_id, &id, &c, &m, None).await,
+        None => {
+            let cloud = crate::managed_auth::cloud();
+            if let Some(cfg) = crate::managed_auth::applicable_config(cloud.as_ref(), &user_id, &id).await {
+                return connect_managed(&state, &user_id, &id, &c, &m, Some(cfg)).await;
+            }
+        }
+        Some(_) => {}
+    }
     if !is_curated(&id) {
         return connect_sidecar(&state, &user_id, &id, &c, body).await;
     }
@@ -2388,6 +2411,9 @@ async fn refresh_connector(
         }
     };
 
+    if stored_auth == "managed" {
+        return connect_managed(&state, &user_id, &id, &c, &m, None).await;
+    }
     if !is_curated(&id) {
         // Sidecar-backed: oauth2 re-opens the sidecar authorization; api_key
         // rotation is a fresh /connect, same as the rust-native rule.
@@ -2431,6 +2457,185 @@ async fn refresh_connector(
             StatusCode::BAD_REQUEST,
             Json(json!({ "error": "unsupported_auth_type", "via": other })),
         ),
+    }
+}
+
+fn managed_error_response(status: StatusCode, e: &crate::managed_auth::ManagedError) -> axum::response::Response {
+    (status, Json(json!({ "error": { "code": e.code, "message": e.message } }))).into_response()
+}
+
+/// `GET /api/v1/managed-auth/configs`: the managed configs this user may use
+/// (no secrets), so Settings can show which connectors sign in through the org.
+async fn managed_configs_route(headers: axum::http::HeaderMap) -> axum::response::Response {
+    let user_id = caller(&headers);
+    let cloud = crate::managed_auth::cloud();
+    match crate::managed_auth::configs(cloud.as_ref(), &user_id).await {
+        Ok(list) => Json(json!({ "configs": list })).into_response(),
+        Err(e) if e.code == "not_paired" || e.code == "other_account" => Json(json!({ "configs": [], "reason": e.message })).into_response(),
+        Err(e) => managed_error_response(StatusCode::BAD_GATEWAY, &e),
+    }
+}
+
+#[derive(Deserialize)]
+struct LocalIdJagBody {
+    connector_id: Option<String>,
+    /// The MCP server URL a client (gizzi) is connecting to; matched against each config's `resource`.
+    server_url: Option<String>,
+    org_id: Option<String>,
+}
+
+/// `POST /api/v1/managed-auth/id-jag` (local, for gizzi's `allternit` IdP mode):
+/// an ID-JAG for a connector or MCP server URL, fetched from cloud-api with this
+/// runtime's device credential, plus the vendor client credentials gizzi needs for
+/// the JWT-bearer step. Only for the user this runtime is paired as; `not_configured`
+/// (404) tells the client to use its normal sign-in. Never cached.
+async fn managed_idjag_route(headers: axum::http::HeaderMap, Json(body): Json<LocalIdJagBody>) -> axum::response::Response {
+    let user_id = caller(&headers);
+    let cloud = crate::managed_auth::cloud();
+    // 503: whether this server is managed can't be known right now (not paired,
+    // cloud down); the client keeps its normal sign-in. 404: not managed.
+    let list = match crate::managed_auth::configs(cloud.as_ref(), &user_id).await {
+        Ok(list) => list,
+        Err(e) => return managed_error_response(StatusCode::SERVICE_UNAVAILABLE, &e),
+    };
+    let cfg = list.iter().find(|c| {
+        body.org_id.as_deref().map_or(true, |o| c.org_id == o)
+            && match (&body.connector_id, &body.server_url) {
+                (Some(id), _) => &c.connector_id == id,
+                (None, Some(url)) => crate::managed_auth::same_resource(&c.resource, url),
+                (None, None) => false,
+            }
+    });
+    let Some(cfg) = cfg else {
+        let e = crate::managed_auth::ManagedError::from_cloud(404, &json!({ "error": { "code": "not_configured" } }));
+        return managed_error_response(StatusCode::NOT_FOUND, &e);
+    };
+    match crate::managed_auth::request_id_jag(cloud.as_ref(), &user_id, &cfg.connector_id, Some(&cfg.org_id)).await {
+        Ok(jag) => (
+            [(axum::http::header::CACHE_CONTROL, "no-store")],
+            Json(json!({
+                "id_jag": jag.id_jag,
+                "token_endpoint": jag.token_endpoint,
+                "client_id": jag.client_id,
+                "client_secret": jag.client_secret,
+                "expires_in": jag.expires_in,
+                "connector_id": cfg.connector_id,
+                "org_id": cfg.org_id,
+                "as_issuer": cfg.as_issuer,
+                "resource": cfg.resource,
+                "scopes": cfg.scopes,
+            })),
+        )
+            .into_response(),
+        Err(e) => {
+            let status = if e.code.starts_with("cloud_") { StatusCode::BAD_GATEWAY } else { StatusCode::FORBIDDEN };
+            managed_error_response(status, &e)
+        }
+    }
+}
+
+/// The meta's `managed` block, when complete.
+fn managed_hint(m: &Value) -> Option<Value> {
+    let b = m.get("managed")?;
+    let field = |k: &str| b.get(k).and_then(|v| v.as_str()).filter(|v| v.starts_with("https://"));
+    Some(json!({ "as_issuer": field("as_issuer")?, "token_endpoint": field("token_endpoint")?, "resource": field("resource")? }))
+}
+
+/// Whether the connector also has a normal sign-in to offer after a managed
+/// failure ("Connect with sign-in instead"). Sidecar connectors run their own
+/// OAuth; curated ones say so in their meta.
+fn has_sign_in(id: &str, m: &Value) -> bool {
+    if !is_curated(id) {
+        return true;
+    }
+    let alt = m.get("alt").and_then(|a| a.as_array()).cloned().unwrap_or_default();
+    m.get("auth_type").and_then(|v| v.as_str()) == Some("oauth2") || alt.iter().any(|a| a.as_str() == Some("oauth2"))
+}
+
+/// Managed sign-in (`managed_auth`): org config → ID-JAG from cloud-api → RFC 7523
+/// grant at the vendor. No browser. A failure is a plain error with the normal
+/// sign-in offered as a separate button — never a silent fallback.
+async fn connect_managed(
+    state: &Arc<AppState>,
+    user_id: &str,
+    id: &str,
+    c: &Value,
+    m: &Value,
+    cfg: Option<crate::managed_auth::ManagedConfig>,
+) -> (StatusCode, Json<Value>) {
+    let cloud = crate::managed_auth::cloud();
+    let fallback = has_sign_in(id, m);
+    let refused = |e: crate::managed_auth::ManagedError| (StatusCode::CONFLICT, Json(e.to_json(id, fallback)));
+    let cfg = match cfg {
+        Some(cfg) => cfg,
+        None => match crate::managed_auth::configs(cloud.as_ref(), user_id).await {
+            Ok(list) => match crate::managed_auth::pick_config(&list, id, None) {
+                Some(cfg) => cfg.clone(),
+                None => return refused(crate::managed_auth::ManagedError::from_cloud(404, &json!({ "error": { "code": "not_configured" } }))),
+            },
+            Err(e) => return refused(e),
+        },
+    };
+    let allow_private = crate::mcp_apps::allow_private_hosts();
+    let tokens = match crate::managed_auth::grant(cloud.as_ref(), user_id, &cfg, allow_private).await {
+        Ok(t) => t,
+        Err(e) => {
+            tracing::warn!(connector_id = id, code = %e.code, "managed connect refused");
+            return refused(e);
+        }
+    };
+    let name = c.get("name").and_then(|v| v.as_str()).unwrap_or(id).to_string();
+    let (db, uid, cfg2) = (state.db.clone(), user_id.to_string(), cfg.clone());
+    let saved = tokio::task::spawn_blocking(move || db.connect().and_then(|conn| crate::managed_auth::store(&conn, &uid, &name, &cfg2, &tokens))).await;
+    match saved {
+        Ok(Ok(mcp_connector_id)) => (
+            StatusCode::OK,
+            Json(json!({
+                "status": "connected",
+                "connector": id,
+                "auth_type": "managed",
+                "owned": true,
+                "org_id": cfg.org_id,
+                "mcp_connector_id": mcp_connector_id,
+            })),
+        ),
+        Ok(Err(e)) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() }))),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": format!("db task: {e}") }))),
+    }
+}
+
+/// The user's default account of `id` when it is a managed one: its config.
+async fn managed_default(db: &crate::db::DbHandle, user_id: &str, id: &str) -> Option<crate::managed_auth::ManagedConfig> {
+    let (db, uid, id_s) = (db.clone(), user_id.to_string(), id.to_string());
+    let meta: Option<String> = tokio::task::spawn_blocking(move || {
+        db.connect().ok()?.query_row(
+            "SELECT s.metadata FROM connector_connections c
+               JOIN mcp_oauth_sessions s ON s.mcp_connector_id = json_extract(c.metadata, '$.managed.mcp_connector_id')
+              WHERE c.connector_id=?1 AND c.user_id=?2 AND c.is_default=1 AND c.auth_type='managed'
+                AND s.state LIKE 'managed:%' LIMIT 1",
+            params![id_s, uid],
+            |r| r.get(0),
+        )
+        .ok()
+    })
+    .await
+    .ok()
+    .flatten();
+    let (_, cfg) = crate::managed_auth::config_from_session(&serde_json::from_str(&meta?).ok()?)?;
+    Some(cfg)
+}
+
+/// New managed token for the REST execute path (both copies updated).
+async fn regrant_execute(state: &Arc<AppState>, user_id: &str, id: &str, c: &Value) -> Result<String, (StatusCode, Json<Value>)> {
+    let m = meta_for(id);
+    let Some(cfg) = managed_default(&state.db, user_id, id).await else {
+        return Err((StatusCode::CONFLICT, Json(json!({ "error": "not_connected", "id": id }))));
+    };
+    let name = c.get("name").and_then(|v| v.as_str()).unwrap_or(id).to_string();
+    let cloud = crate::managed_auth::cloud();
+    match crate::managed_auth::regrant(state, cloud.as_ref(), user_id, None, &name, &cfg, crate::mcp_apps::allow_private_hosts()).await {
+        Ok(tokens) => Ok(tokens["access_token"].as_str().unwrap_or_default().to_string()),
+        Err(e) => Err((StatusCode::CONFLICT, Json(e.to_json(id, has_sign_in(id, &m))))),
     }
 }
 
@@ -2796,6 +3001,17 @@ async fn execute_connector(
     let user_id = caller(&headers);
 
     if !is_curated(&id) {
+        if managed_default(&state.db, &user_id, &id).await.is_some() {
+            let name = c.get("name").and_then(|v| v.as_str()).unwrap_or(&id).to_string();
+            return (
+                StatusCode::CONFLICT,
+                Json(json!({
+                    "error": "managed_use_mcp",
+                    "id": id,
+                    "message": format!("{name} is signed in through your organization and runs through its MCP server. Use it from a chat or a bot."),
+                })),
+            );
+        }
         return execute_sidecar(&state, &user_id, &id, &c, body).await;
     }
 
@@ -2812,9 +3028,9 @@ async fn execute_connector(
             Ok(None) => Err(rusqlite::Error::QueryReturnedNoRows),
             Ok(Some(r)) => conn
                 .query_row(
-                    "SELECT status, COALESCE(access_token,'') FROM connector_connections WHERE id=?1",
+                    "SELECT status, COALESCE(access_token,''), auth_type, expires_at FROM connector_connections WHERE id=?1",
                     params![r.id],
-                    |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+                    |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, Option<String>>(3)?)),
                 )
                 .map(Ok),
         }
@@ -2827,7 +3043,7 @@ async fn execute_connector(
         Err(e) => Err(e),
     };
 
-    let (status, token) = match row {
+    let (status, token, auth_type, expires_at) = match row {
         Ok(Ok(v)) => v,
         _ => {
             return (
@@ -2838,7 +3054,19 @@ async fn execute_connector(
             )
         }
     };
-    let token = crate::token_crypto::open(&token);
+    let mut token = crate::token_crypto::open(&token);
+    // Managed sign-in renews itself: an expired token is re-granted before use.
+    let managed = auth_type == "managed";
+    let expired = expires_at
+        .as_deref()
+        .and_then(|e| chrono::DateTime::parse_from_rfc3339(e).ok())
+        .is_some_and(|e| e.timestamp() <= chrono::Utc::now().timestamp() + 60);
+    if managed && (expired || token.is_empty()) {
+        match regrant_execute(&state, &user_id, &id, &c).await {
+            Ok(t) => token = t,
+            Err(resp) => return resp,
+        }
+    }
     if status != "connected" || token.is_empty() {
         return (
             StatusCode::CONFLICT,
@@ -2913,22 +3141,32 @@ async fn execute_connector(
         }
     };
 
-    let mut req = match method.to_uppercase().as_str() {
-        "POST" => client.post(&url),
-        "PUT" => client.put(&url),
-        "PATCH" => client.patch(&url),
-        "DELETE" => client.delete(&url),
-        _ => client.get(&url),
+    let build = |token: &str| {
+        let mut req = match method.to_uppercase().as_str() {
+            "POST" => client.post(&url),
+            "PUT" => client.put(&url),
+            "PATCH" => client.patch(&url),
+            "DELETE" => client.delete(&url),
+            _ => client.get(&url),
+        };
+        req = req
+            .header("Authorization", format!("Bearer {}", token))
+            .header("User-Agent", "Allternit-Connectors/1.0")
+            .header("Accept", "application/vnd.github+json, application/json");
+        if let Some(b) = &req_body {
+            req = req.json(b);
+        }
+        req
     };
-    req = req
-        .header("Authorization", format!("Bearer {}", token))
-        .header("User-Agent", "Allternit-Connectors/1.0")
-        .header("Accept", "application/vnd.github+json, application/json");
-    if let Some(b) = req_body {
-        req = req.json(&b);
-    }
 
-    let resp = req.send().await;
+    let mut resp = build(&token).send().await;
+    // A managed token the provider stopped accepting: re-grant once and retry, no UI.
+    if managed && matches!(&resp, Ok(r) if r.status() == reqwest::StatusCode::UNAUTHORIZED) {
+        match regrant_execute(&state, &user_id, &id, &c).await {
+            Ok(t) => resp = build(&t).send().await,
+            Err(refused) => return refused,
+        }
+    }
     match resp {
         Ok(r) => {
             let code = StatusCode::from_u16(r.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
@@ -3118,7 +3356,7 @@ async fn disconnect_connector(
             ),
         };
     }
-    if !is_curated(&id) {
+    if !is_curated(&id) && !only_managed_accounts(&state.db, &user_id, &id).await {
         // Proxy the real disconnect to the sidecar first, once per account
         // (the default/legacy name always, plus each added account's). If it
         // is down, bail so the user can retry — otherwise the sidecar would
@@ -3142,6 +3380,8 @@ async fn disconnect_connector(
     let id_s = id.clone();
     let res = tokio::task::spawn_blocking(move || {
         let conn = db.connect()?;
+        // A managed account also signed in the vendor's MCP server: remove that too.
+        crate::managed_auth::forget(&conn, &user_id, &id_s)?;
         // Every account of this connector for this user.
         let n = conn.execute(
             "DELETE FROM connector_connections WHERE connector_id=?1 AND user_id=?2",
@@ -3164,6 +3404,23 @@ async fn disconnect_connector(
             Json(json!({ "error": format!("db task: {}", e) })),
         ),
     }
+}
+
+/// Every account of this connector is a managed one (nothing lives in the sidecar).
+async fn only_managed_accounts(db: &crate::db::DbHandle, user_id: &str, id: &str) -> bool {
+    let (db, uid, id_s) = (db.clone(), user_id.to_string(), id.to_string());
+    tokio::task::spawn_blocking(move || {
+        db.connect().ok()?.query_row(
+            "SELECT COUNT(*) > 0 AND SUM(auth_type <> 'managed') = 0 FROM connector_connections WHERE connector_id=?1 AND user_id=?2",
+            params![id_s, uid],
+            |r| r.get::<_, bool>(0),
+        )
+        .ok()
+    })
+    .await
+    .ok()
+    .flatten()
+    .unwrap_or(false)
 }
 
 /// Sidecar connection names to clear for a connector: the user's default name

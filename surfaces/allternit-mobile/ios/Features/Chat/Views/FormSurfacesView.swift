@@ -36,7 +36,7 @@ private struct FormSchemaListView: View {
             description: "Configure agent behavior and model settings",
             fields: [
                 FormField(name: "agentName", label: "Agent Name", type: .text, required: true, placeholder: "e.g., code-reviewer, chat-support", options: nil, min: nil, max: nil, defaultValue: nil),
-                FormField(name: "model", label: "Model", type: .select, required: true, placeholder: nil, options: ["claude-sonnet-4-6", "claude-haiku-4-5", "gpt-4o", "gpt-4o-mini"], min: nil, max: nil, defaultValue: .string("claude-sonnet-4-6")),
+                FormField(name: "model", label: "Model", type: .select, required: true, placeholder: nil, options: nil, min: nil, max: nil, defaultValue: nil, optionsSource: .modelCatalog),
                 FormField(name: "maxTokens", label: "Max Tokens", type: .number, required: false, placeholder: "4096", options: nil, min: nil, max: nil, defaultValue: .number(4096)),
                 FormField(name: "temperature", label: "Temperature", type: .slider, required: false, placeholder: nil, options: nil, min: 0, max: 1, defaultValue: .number(0.7)),
                 FormField(name: "systemPrompt", label: "System Prompt", type: .textarea, required: false, placeholder: "Enter system prompt...", options: nil, min: nil, max: nil, defaultValue: nil),
@@ -164,6 +164,7 @@ private struct FormSchemaDetailView: View {
     let onBack: () -> Void
 
     @State private var formData: [String: FormValue] = [:]
+    @ObservedObject private var modelStore = ModelStore.shared
 
     var body: some View {
         VStack(spacing: 0) {
@@ -194,7 +195,7 @@ private struct FormSchemaDetailView: View {
                         .foregroundColor(Color("TextSecondary"))
 
                     ForEach(schema.fields) { field in
-                        FormFieldRow(field: field, value: binding(for: field))
+                        FormFieldRow(field: field, value: binding(for: field), modelStore: modelStore)
                     }
 
                     Button(action: {}) {
@@ -219,15 +220,33 @@ private struct FormSchemaDetailView: View {
             }
         }
         .background(Color("BgPrimary").edgesIgnoringSafeArea(.all))
+        .task {
+            if schema.fields.contains(where: { $0.optionsSource == .modelCatalog }) {
+                modelStore.fetchModelsIfNeeded()
+            }
+        }
     }
 
     private func binding(for field: FormField) -> Binding<FormValue> {
         Binding(
             get: {
-                formData[field.name] ?? field.defaultValue ?? Self.emptyValue(for: field.type)
+                formData[field.name] ?? defaultValue(for: field) ?? Self.emptyValue(for: field.type)
             },
             set: { formData[field.name] = $0 }
         )
+    }
+
+    /// Live-sourced fields default from the same store at display time: the
+    /// user's selected model when the catalog lists it, else the first entry.
+    private func defaultValue(for field: FormField) -> FormValue? {
+        switch field.optionsSource {
+        case .modelCatalog:
+            let models = modelStore.models
+            let id = models.first(where: { $0.id == modelStore.selectedModelId })?.id ?? models.first?.id
+            return id.map { .string($0) }
+        case nil:
+            return field.defaultValue
+        }
     }
 
     private static func emptyValue(for type: FormFieldType) -> FormValue {
@@ -245,6 +264,7 @@ private struct FormSchemaDetailView: View {
 private struct FormFieldRow: View {
     let field: FormField
     @Binding var value: FormValue
+    @ObservedObject var modelStore: ModelStore
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -295,8 +315,20 @@ private struct FormFieldRow: View {
                     get: { value.stringValue },
                     set: { value = .string($0) }
                 )) {
-                    ForEach(field.options ?? [], id: \.self) { option in
-                        Text(option).tag(option)
+                    if field.optionsSource == .modelCatalog {
+                        if modelStore.models.isEmpty {
+                            Text(modelStore.isLoading ? "Loading models…" : "Models unavailable")
+                                .tag(value.stringValue)
+                                .selectionDisabled()
+                        } else {
+                            ForEach(modelStore.models) { model in
+                                Text(model.name).tag(model.id)
+                            }
+                        }
+                    } else {
+                        ForEach(field.options ?? [], id: \.self) { option in
+                            Text(option).tag(option)
+                        }
                     }
                 }
                 .pickerStyle(.menu)

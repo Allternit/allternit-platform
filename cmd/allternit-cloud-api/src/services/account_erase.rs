@@ -170,6 +170,7 @@ pub const ERASE: &[(&str, &str)] = &[
     ("provider_tokens", USER),
     ("user_inference_keys", USER),
     ("mcp_oauth_approvals", USER),
+    ("idjag_issuance_log", USER),
     ("user_sessions", USER),
     ("wizard_sessions", USER),
     ("team_sessions", USER),
@@ -195,6 +196,9 @@ const SCRUB: &[&str] = &[
     "UPDATE artifact_versions SET author_id = 'deleted' WHERE author_id = $1",
     "UPDATE artifact_shares SET invited_by = 'deleted' WHERE invited_by = $1",
     "UPDATE phone_invites SET joined_user_id = NULL WHERE joined_user_id = $1",
+    // Org-owned managed-auth settings stay with the org; only who made them goes.
+    "UPDATE managed_auth_configs SET created_by = 'deleted' WHERE created_by = $1",
+    "UPDATE mcp_trusted_issuers SET created_by = 'deleted' WHERE created_by = $1",
     "UPDATE audit_log SET user_email = NULL, ip_address = NULL, user_agent = NULL WHERE user_id = $1",
     "UPDATE audit_logs SET ip_address = NULL WHERE user_id = $1",
     "UPDATE users SET email = NULL, name = NULL, avatar_url = NULL, tenant_id = NULL, status = 'inactive' WHERE id = $1",
