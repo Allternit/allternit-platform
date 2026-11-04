@@ -540,6 +540,30 @@
       "label": "Vendor contract admission",
       "kind": "module",
       "path": "allternit/cmd/allternit-api/src/gateway_runner.rs"
+    },
+    {
+      "id": "allternit/cmd/allternit-cloud-api/src/routes/connect_return.rs",
+      "label": "connect return",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-cloud-api/src/routes/connect_return.rs"
+    },
+    {
+      "id": "allternit/cmd/allternit-api/src/oauth_return.rs",
+      "label": "oauth return",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-api/src/oauth_return.rs"
+    },
+    {
+      "id": "allternit/cmd/allternit-api/src/connector_routes.rs",
+      "label": "connector routes",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-api/src/connector_routes.rs"
+    },
+    {
+      "id": "allternit/cmd/allternit-api/src/mcp_directory_routes.rs",
+      "label": "mcp directory routes",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-api/src/mcp_directory_routes.rs"
     }
   ],
   "edges": [
@@ -1199,6 +1223,26 @@
       "evidence": [
         "allternit-ai/src/components/deployments/OpenShipPanel.tsx",
         "allternit-ai/src/integration/api-client.ts"
+      ]
+    },
+    {
+      "source": "allternit/cmd/allternit-cloud-api/src/routes/connect_return.rs",
+      "target": "allternit/cmd/allternit-api/src/oauth_return.rs",
+      "kind": "public OAuth sign-in return: api.allternit.com/connect/return/{connectors,mcp,sidecar/oauth/callback} relays the GET over the runtime socket to the runtime named in the OAuth state; only the three callback paths",
+      "evidence": [
+        "allternit/cmd/allternit-cloud-api/src/routes/connect_return.rs",
+        "allternit/cmd/allternit-api/src/oauth_return.rs",
+        "allternit/surfaces/allternit-desktop/src/main/connector-sidecar-manager.ts"
+      ]
+    },
+    {
+      "source": "allternit/cmd/allternit-api/src/connector_routes.rs",
+      "target": "allternit/cmd/allternit-api/src/mcp_directory_routes.rs",
+      "kind": "catalog Connect falls back to the vendor's official MCP server (DCR/CIMD) from assets/official-mcp-servers.json, generated from allternit-ai official-servers.ts",
+      "evidence": [
+        "allternit/cmd/allternit-api/src/official_mcp.rs",
+        "allternit/scripts/gen-official-mcp-servers.mjs",
+        "allternit-ai/src/views/mini-apps/official-servers.ts"
       ]
     }
   ]

@@ -24,6 +24,16 @@ http://127.0.0.1:8013/api/v1/connectors/oauth/callback
 http://127.0.0.1:8013/oauth/callback
 ```
 
+A node paired with the cloud uses cloud-api return URLs instead, so a sign-in started from a phone or another computer can finish. cloud-api relays them to the callbacks above, picking the node from the OAuth `state` (`art.<runtime_id>.<random>`):
+
+```
+https://api.allternit.com/connect/return/connectors              -> /api/v1/connectors/oauth/callback
+https://api.allternit.com/connect/return/mcp                     -> /mcp/oauth/callback
+https://api.allternit.com/connect/return/sidecar/oauth/callback  -> /oauth/callback
+```
+
+When a connector has no way to issue a sign-in and the vendor runs an official MCP server with dynamic client registration or CIMD, `POST /connectors/:id/connect` signs in to that server instead and answers `{"status": "authorization_required", "authorize_url": "...", "backend": "official_mcp", "mcp_connector_id": "..."}`. See [Connectors › For developers](/guides/connectors#for-developers).
+
 ## Authentication
 
 - Connector management routes require a valid bearer token via the platform auth middleware.

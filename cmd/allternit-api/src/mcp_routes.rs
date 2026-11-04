@@ -193,6 +193,8 @@ async fn complete_oauth_callback(
                 "UPDATE mcp_oauth_sessions SET tokens = ?1, is_authenticated = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?2",
                 [&tokens_json, &session_id],
             );
+            // A catalog connector signed in through this server now shows as connected.
+            let _ = crate::official_mcp::mark_connected(&conn, &connector_id);
 
             info!(
                 connector_name = conn_name,
@@ -576,6 +578,11 @@ pub(crate) async fn delete_connector_with(
         // A managed sign-in's index row points at this server; it goes with it.
         tx.execute(
             "DELETE FROM connector_connections WHERE user_id = ?1 AND auth_type = 'managed' AND json_extract(metadata, '$.managed.mcp_connector_id') = ?2",
+            params![uid, cid],
+        )?;
+        // So does a catalog connector signed in through this (official) server.
+        tx.execute(
+            "DELETE FROM connector_connections WHERE user_id = ?1 AND auth_type = 'official_mcp' AND json_extract(metadata, '$.official_mcp.mcp_connector_id') = ?2",
             params![uid, cid],
         )?;
         // Unbind it from this user's agents (`mcp_connector_ids` is a JSON array of ids).

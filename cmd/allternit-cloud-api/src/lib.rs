@@ -354,6 +354,9 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         // Channels hybrid relay: management routes check the Clerk session;
         // /channels/in/:key is public, the unguessable key is the credential.
         .merge(routes::channel_inbound::routes())
+        // Connector sign-ins that run on a user's runtime return here: the OAuth `state`
+        // names the runtime; only its three OAuth callbacks are relayed.
+        .merge(routes::connect_return::routes())
         // Public MCP edge (Clerk OAuth checked in the handler, then relayed to the
         // owner's runtime). Inert (503) until MCP_PUBLIC_URL is set.
         .merge(routes::mcp_edge::routes())

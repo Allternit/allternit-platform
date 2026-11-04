@@ -139,7 +139,7 @@ The MCP endpoint exposes a discovery-oriented tool set:
 |----------|---------|---------|
 | `PORT` | `3000` | HTTP server port |
 | `HOST` | `127.0.0.1` | Bind address |
-| `OOMOL_CONNECT_ORIGIN` | `http://localhost:<PORT>` | OAuth redirect origin |
+| `OOMOL_CONNECT_ORIGIN` | `http://localhost:<PORT>` | OAuth redirect origin. Allternit Desktop sets `https://api.allternit.com/connect/return/sidecar` when it is paired, so the redirect is `…/connect/return/sidecar/oauth/callback` and cloud-api relays it back. |
 | `OOMOL_CONNECT_DATA_DIR` | `./data` | SQLite and transit file directory |
 | `OOMOL_CONNECT_ENCRYPTION_KEY` | unset | AES-256-GCM credential encryption |
 | `OOMOL_CONNECT_ADMIN_TOKEN` | unset | Admin API bearer token |

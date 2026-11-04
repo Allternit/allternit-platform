@@ -57,6 +57,7 @@ pub mod floor_shares;
 pub mod runtime_presence;
 pub mod mesh;
 pub mod channel_inbound;
+pub mod connect_return;
 pub mod phone;
 pub mod photo_avatars;
 pub mod bot_email;

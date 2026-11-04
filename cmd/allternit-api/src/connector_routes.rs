@@ -768,7 +768,11 @@ async fn sidecar_oauth_callback(
 ) -> impl IntoResponse {
     use crate::oauth_result_page::{render, Outcome};
     // The sidecar's own page is unbranded: keep its status, show ours (its text, as plain text, on failure).
-    match crate::open_connector_proxy::proxy_oauth_callback(&query.unwrap_or_default()).await {
+    // A state tagged for the cloud return goes back to the sidecar as it issued it.
+    let query = crate::oauth_return::map_state_in_query(&query.unwrap_or_default(), |s| {
+        crate::oauth_return::unwrap_state(s).to_string()
+    });
+    match crate::open_connector_proxy::proxy_oauth_callback(&query).await {
         Ok((status, html)) => {
             let code = StatusCode::from_u16(status).unwrap_or(StatusCode::OK);
             let page = if code.is_success() {
@@ -1645,6 +1649,13 @@ fn merge(
         if auth_type == "local_cli" {
             obj.insert("availability".to_string(), detect_local_cli(&m));
         }
+        // Connect falls back to the vendor's official MCP server when no Allternit
+        // OAuth app is set (`connect_official`).
+        if let Some(server) = crate::official_mcp::signin_server(id) {
+            obj.insert("official_server".to_string(), json!({ "url": server.url, "auth": server.auth }));
+            obj.insert("connectable".to_string(), json!(true));
+            obj.remove("setup");
+        }
         // Optional `managed: { as_issuer, token_endpoint, resource }` in the meta: the
         // vendor's own docs confirm it trusts outside ID-JAG issuers. A hint for the
         // admin's Managed authorization form; whether it is on is cloud-api's org config.
@@ -1741,6 +1752,17 @@ fn merge_sidecar(
                     "one_click": false,
                     "message": "This catalog entry has no matching provider in the vendored open-connector catalog yet.",
                 }));
+            }
+        }
+        // The sidecar can't sign this one in, but the vendor's official MCP server
+        // can: Connect falls back to it (`connect_official`), so offer Connect.
+        if let Some(server) = crate::official_mcp::signin_server(id) {
+            obj.insert("official_server".to_string(), json!({ "url": server.url, "auth": server.auth }));
+            if obj.get("connectable").and_then(Value::as_bool) != Some(true) {
+                obj.insert("auth".to_string(), json!({ "type": "oauth2", "owned": true, "synthesized": false }));
+                obj.insert("auth_type".to_string(), json!("oauth2"));
+                obj.insert("connectable".to_string(), json!(true));
+                obj.remove("setup");
             }
         }
         // Live sidecar status wins over the index row; lazily sync the row so
@@ -2047,7 +2069,75 @@ async fn connect_connector(
     headers: axum::http::HeaderMap,
     Path(id): Path<String>,
     body: Option<Json<ConnectBody>>,
-) -> impl IntoResponse {
+) -> axum::response::Response {
+    let user_id = caller(&headers);
+    let (status, Json(out)) = connect_catalog(&state, &headers, &id, body).await;
+    // No way to issue a sign-in on the catalog path: use the vendor's official MCP
+    // server when it registers clients itself (see `official_mcp`).
+    if let Some(server) = crate::official_mcp::fallback_for(&id, &out) {
+        return connect_official(&state, &user_id, &id, server).await;
+    }
+    (status, Json(out)).into_response()
+}
+
+/// Sign in to `server` for catalog connector `id`: the user's MCP connector for its
+/// URL (reused or created), a pending `official_mcp` index row, and the MCP OAuth
+/// start's `authorize_url` in the shape every client already handles.
+async fn connect_official(
+    state: &Arc<AppState>,
+    user_id: &str,
+    id: &str,
+    server: &'static crate::official_mcp::OfficialServer,
+) -> axum::response::Response {
+    let (db, uid) = (state.db.clone(), user_id.to_string());
+    let mcp_id = match tokio::task::spawn_blocking(move || {
+        let conn = db.connect()?;
+        crate::official_mcp::ensure_mcp_connector(&conn, &uid, server)
+    })
+    .await
+    {
+        Ok(Ok(mcp_id)) => mcp_id,
+        Ok(Err(e)) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() }))).into_response(),
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": format!("db task: {e}") }))).into_response(),
+    };
+    let start = match crate::mcp_directory_routes::start_oauth(state, user_id, &mcp_id, false).await {
+        Ok(s) => s,
+        Err(e) => return e.into_response(),
+    };
+    let meta = json!({ "official_mcp": { "mcp_connector_id": mcp_id, "url": server.url } }).to_string();
+    match start {
+        crate::mcp_directory_routes::OAuthStart::Authorize(url) => {
+            if let Err(e) = persist_pending(&state.db, user_id, id, crate::official_mcp::AUTH_TYPE, meta, false).await {
+                return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e }))).into_response();
+            }
+            (
+                StatusCode::OK,
+                Json(json!({
+                    "status": "authorization_required",
+                    "auth_type": "oauth2",
+                    "owned": true,
+                    "connector": id,
+                    "authorize_url": url,
+                    "backend": "official_mcp",
+                    "mcp_connector_id": mcp_id,
+                    "server_url": server.url,
+                    "instructions": format!("Open authorize_url and approve Allternit in {}; the sign-in returns to Allternit to finish.", server.name),
+                })),
+            )
+                .into_response()
+        }
+        // Managed sign-in finished without a browser (or refused): that answer as is.
+        crate::mcp_directory_routes::OAuthStart::Done(r) => r,
+    }
+}
+
+async fn connect_catalog(
+    state: &Arc<AppState>,
+    headers: &axum::http::HeaderMap,
+    id: &str,
+    body: Option<Json<ConnectBody>>,
+) -> (StatusCode, Json<Value>) {
+    let id = id.to_string();
     // Legacy 181-entry catalog first; falls through to a bare `{id}` stub for
     // the ~950 sidecar-only providers (never in that catalog by design — see
     // `sidecar_only_entries`). `connect_sidecar` verifies real existence via
@@ -2189,11 +2279,12 @@ async fn connect_sidecar(
                     );
                 }
             };
-            let authorize_url = auth
-                .get("authorizationUrl")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
+            // A sidecar started with the cloud return origin: tag its state with this
+            // runtime so api.allternit.com can carry the browser back here.
+            let authorize_url = crate::oauth_return::tag_sidecar_authorize_url(
+                auth.get("authorizationUrl").and_then(|v| v.as_str()).unwrap_or(""),
+                &crate::oauth_return::ReturnPlan::current(),
+            );
             if authorize_url.is_empty() {
                 return (
                     StatusCode::BAD_GATEWAY,
@@ -2380,7 +2471,35 @@ async fn refresh_connector(
     State(state): State<Arc<AppState>>,
     headers: axum::http::HeaderMap,
     Path(id): Path<String>,
-) -> impl IntoResponse {
+) -> axum::response::Response {
+    // Signed in through the vendor's official MCP server: refresh is that sign-in again.
+    let (db, uid, id_s) = (state.db.clone(), caller(&headers), id.clone());
+    let official = tokio::task::spawn_blocking(move || {
+        db.connect().ok().and_then(|conn| {
+            conn.query_row(
+                "SELECT auth_type FROM connector_connections WHERE connector_id=?1 AND user_id=?2 ORDER BY is_default DESC, updated_at DESC LIMIT 1",
+                params![id_s, uid],
+                |r| r.get::<_, String>(0),
+            )
+            .ok()
+        })
+    })
+    .await
+    .ok()
+    .flatten()
+    .as_deref()
+        == Some(crate::official_mcp::AUTH_TYPE);
+    if let Some(server) = crate::official_mcp::signin_server(&id).filter(|_| official) {
+        return connect_official(&state, &caller(&headers), &id, server).await;
+    }
+    refresh_catalog(state, headers, id).await.into_response()
+}
+
+async fn refresh_catalog(
+    state: Arc<AppState>,
+    headers: axum::http::HeaderMap,
+    id: String,
+) -> (StatusCode, Json<Value>) {
     // See `connect_connector` for why this falls back to a bare stub instead
     // of 404ing for sidecar-only ids.
     let c = find_catalog(&id).unwrap_or_else(|| json!({ "id": id }));
@@ -3356,6 +3475,19 @@ async fn disconnect_connector(
             ),
         };
     }
+    // A sign-in through the vendor's official MCP server: remove that MCP connector
+    // (its tokens, sessions and bot bindings) along with the catalog rows.
+    let (db, uid, id_s) = (state.db.clone(), user_id.clone(), id.clone());
+    let linked = tokio::task::spawn_blocking(move || {
+        db.connect().ok().and_then(|c| crate::official_mcp::linked_mcp_connectors(&c, &uid, &id_s).ok()).unwrap_or_default()
+    })
+    .await
+    .unwrap_or_default();
+    for mcp_id in linked {
+        if let Err(e) = crate::mcp_routes::delete_connector_with(&state, &crate::mcp_events_client::Ctx::production(), &user_id, &mcp_id).await {
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": "official_mcp_delete_failed", "id": id, "message": e })));
+        }
+    }
     if !is_curated(&id) && !only_managed_accounts(&state.db, &user_id, &id).await {
         // Proxy the real disconnect to the sidecar first, once per account
         // (the default/legacy name always, plus each added account's). If it
@@ -3406,12 +3538,12 @@ async fn disconnect_connector(
     }
 }
 
-/// Every account of this connector is a managed one (nothing lives in the sidecar).
+/// Every account of this connector is a managed or official-MCP one (nothing lives in the sidecar).
 async fn only_managed_accounts(db: &crate::db::DbHandle, user_id: &str, id: &str) -> bool {
     let (db, uid, id_s) = (db.clone(), user_id.to_string(), id.to_string());
     tokio::task::spawn_blocking(move || {
         db.connect().ok()?.query_row(
-            "SELECT COUNT(*) > 0 AND SUM(auth_type <> 'managed') = 0 FROM connector_connections WHERE connector_id=?1 AND user_id=?2",
+            "SELECT COUNT(*) > 0 AND SUM(auth_type NOT IN ('managed', 'official_mcp')) = 0 FROM connector_connections WHERE connector_id=?1 AND user_id=?2",
             params![id_s, uid],
             |r| r.get::<_, bool>(0),
         )
@@ -3645,15 +3777,6 @@ async fn delete_account_route(
     }
 }
 
-const CALLBACK_PATH: &str = "/api/v1/connectors/oauth/callback";
-
-fn public_base() -> String {
-    std::env::var("ALLTERNIT_PUBLIC_BASE_URL")
-        .unwrap_or_else(|_| "http://127.0.0.1:8013".to_string())
-}
-fn redirect_uri() -> String {
-    format!("{}{}", public_base(), CALLBACK_PATH)
-}
 fn env_name(id: &str, suffix: &str) -> String {
     format!(
         "ALLTERNIT_{}_{}",
@@ -3784,8 +3907,11 @@ async fn connect_oauth2(
             })),
         );
     }
-    let redirect = redirect_uri();
-    let oauth_state = uuid::Uuid::new_v4().to_string();
+    // Paired runtimes return through api.allternit.com (see `oauth_return`), so a
+    // sign-in started from a phone or another computer can finish.
+    let plan = crate::oauth_return::ReturnPlan::current();
+    let redirect = plan.redirect_uri(crate::oauth_return::Target::Connectors);
+    let oauth_state = plan.wrap_state(&uuid::Uuid::new_v4().to_string());
     let meta_json = json!({ "state": oauth_state, "token_url": token_url, "redirect_uri": redirect, "client_id": client_id, "client_secret": client_secret }).to_string();
     if let Err(e) = persist_pending(&state.db, user_id, id, "oauth2", meta_json, add).await {
         return (
@@ -3814,7 +3940,7 @@ async fn connect_oauth2(
             "authorize_url": url,
             "redirect_uri": redirect,
             "state": oauth_state,
-            "instructions": "Open authorize_url, approve Allternit; the provider redirects back to the Allternit loopback callback to finish. No third-party key.",
+            "instructions": "Open authorize_url, approve Allternit; the provider redirects back to Allternit (through api.allternit.com when this computer is paired) to finish. No third-party key.",
         })),
     )
 }
