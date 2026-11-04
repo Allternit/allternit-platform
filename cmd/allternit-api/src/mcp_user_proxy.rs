@@ -63,6 +63,9 @@ pub const SESSION_HEADER: &str = "x-allternit-session";
 /// Upper bound on a proxy token's life (the task's ≤ 15 minutes).
 pub const TOKEN_TTL_SECS: i64 = 15 * 60;
 const PER_CONNECTOR_TIMEOUT: Duration = Duration::from_secs(25);
+/// The edge relay's whole call must finish inside cloud-api's 25 s budget, so one
+/// slow connector is dropped from an outside app's list sooner.
+const EDGE_PER_CONNECTOR_TIMEOUT: Duration = Duration::from_secs(20);
 
 pub fn mcp_user_proxy_router() -> Router<Arc<AppState>> {
     Router::new().route("/mcp/user-proxy", post(proxy_post).delete(proxy_delete))
@@ -317,8 +320,29 @@ async fn proxy_post(State(state): State<Arc<AppState>>, headers: HeaderMap, Json
     }
 }
 
+/// Who is asking. A chat turn (HMAC proxy token bound to `{user, session}`) can carry
+/// gizzi's per-call approval; an outside AI app relayed by the MCP edge never can.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum RpcCaller<'a> {
+    Turn { session_id: &'a str },
+    Edge,
+}
+
 /// One JSON-RPC message from an authenticated caller. `None` for notifications.
 async fn handle_rpc(state: &Arc<AppState>, claims: &ProxyClaims, body: &Value, allow_private: bool) -> Option<Value> {
+    dispatch_rpc(state, &claims.user_id, RpcCaller::Turn { session_id: &claims.session_id }, body, allow_private).await
+}
+
+/// The connector union for `user_id`: the same tools for a chat turn and for the
+/// MCP edge (`/webhooks/mcp-edge/connectors`). Only a turn's approval flag counts;
+/// an edge call to a tool that needs confirmation is refused in plain words.
+pub(crate) async fn dispatch_rpc(
+    state: &Arc<AppState>,
+    user_id: &str,
+    caller: RpcCaller<'_>,
+    body: &Value,
+    allow_private: bool,
+) -> Option<Value> {
     let id = body.get("id").cloned()?;
     let method = body.get("method").and_then(|m| m.as_str()).unwrap_or("");
     let params = body.get("params").cloned().unwrap_or(Value::Null);
@@ -331,9 +355,13 @@ async fn handle_rpc(state: &Arc<AppState>, claims: &ProxyClaims, body: &Value, a
 
     let (payload, tool, outcome) = match method {
         "tools/list" => {
-            let connectors = load_user_connectors(state, &claims.user_id, allow_private).await;
-            let modes = load_install_modes(state, &claims.user_id).await;
-            (rpc_result(&id, list_tools(state, &claims.user_id, &connectors, &modes, allow_private).await), None, "ok")
+            let connectors = load_user_connectors(state, user_id, allow_private).await;
+            let modes = load_install_modes(state, user_id).await;
+            let budget = match caller {
+                RpcCaller::Turn { .. } => PER_CONNECTOR_TIMEOUT,
+                RpcCaller::Edge => EDGE_PER_CONNECTOR_TIMEOUT,
+            };
+            (rpc_result(&id, list_tools(state, user_id, &connectors, &modes, budget, allow_private).await), None, "ok")
         }
         "tools/call" => {
             let name = params.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string();
@@ -342,21 +370,30 @@ async fn handle_rpc(state: &Arc<AppState>, claims: &ProxyClaims, body: &Value, a
                 Some(v @ Value::Object(_)) => v.clone(),
                 Some(_) => return Some(rpc_error(&id, -32602, "arguments must be an object", None)),
             };
-            let approved = params["_meta"][APPROVED_META_KEY] == json!(true);
-            let connectors = load_user_connectors(state, &claims.user_id, allow_private).await;
-            let modes = load_install_modes(state, &claims.user_id).await;
-            let result = call_tool(&connectors, &modes, &name, arguments, approved, allow_private).await;
+            let edge = matches!(caller, RpcCaller::Edge);
+            let gate = if edge {
+                Gate::Edge
+            } else {
+                Gate::Turn { approved: params["_meta"][APPROVED_META_KEY] == json!(true) }
+            };
+            let connectors = load_user_connectors(state, user_id, allow_private).await;
+            let modes = load_install_modes(state, user_id).await;
+            let result = call_tool(state, &connectors, &modes, &name, arguments, gate, allow_private).await;
             let outcome = if result.is_ok() { "ok" } else { "error" };
             let payload = match result {
                 Ok(v) => rpc_result(&id, v),
+                // Outside apps show `error.message`: the plain reason, not the bare code.
+                Err(e) if edge && e.code == "confirmation_required" => {
+                    rpc_error(&id, -32001, &e.message, Some(json!({ "code": e.code, "message": e.message })))
+                }
                 Err(e) => rpc_from_apps_error(&id, &e),
             };
             (payload, Some(name), outcome)
         }
         "resources/read" => {
             let uri = params.get("uri").and_then(|u| u.as_str()).unwrap_or("").to_string();
-            let connectors = load_user_connectors(state, &claims.user_id, allow_private).await;
-            let result = read_ui_resource(&connectors, &uri, allow_private).await;
+            let connectors = load_user_connectors(state, user_id, allow_private).await;
+            let result = read_ui_resource(state, &connectors, &uri, allow_private).await;
             let outcome = if result.is_ok() { "ok" } else { "error" };
             let payload = match result {
                 Ok(v) => rpc_result(&id, v),
@@ -367,9 +404,14 @@ async fn handle_rpc(state: &Arc<AppState>, claims: &ProxyClaims, body: &Value, a
         other => (rpc_error(&id, -32601, &format!("method '{other}' not found"), None), None, "unsupported"),
     };
 
+    let (via, session_id) = match caller {
+        RpcCaller::Turn { session_id } => ("turn", session_id),
+        RpcCaller::Edge => ("edge", ""),
+    };
     info!(
-        user_id = %claims.user_id,
-        session_id = %claims.session_id,
+        user_id = %user_id,
+        session_id = %session_id,
+        via,
         method,
         tool = tool.as_deref().unwrap_or(""),
         outcome,
@@ -427,6 +469,31 @@ fn requires_confirmation(mode: PermissionMode, tool: &Value) -> bool {
     }
 }
 
+/// What may approve a `tools/call`: a turn's verified flag, or nothing (edge).
+#[derive(Debug, Clone, Copy)]
+enum Gate {
+    Turn { approved: bool },
+    Edge,
+}
+
+/// Why a call was held, in plain words, naming the connector setting that would
+/// let it run. Outside AI apps can't show Allternit's approval prompt, so this is
+/// all their user sees.
+fn confirmation_message(connector: &str, tool_name: &str, mode: PermissionMode, tool: &Value) -> String {
+    if is_important_tool(tool) {
+        return format!(
+            "{connector} asks before running '{tool_name}' because it is an important change. Run it from Allternit, where you can approve it."
+        );
+    }
+    let setting = match mode {
+        PermissionMode::AlwaysAsk if tool["annotations"]["readOnlyHint"] == json!(true) => "Ask before changes",
+        _ => "Ask before important changes",
+    };
+    format!(
+        "{connector} asks before running '{tool_name}'. To let it run without asking, set {connector}'s permission to \"{setting}\" in Allternit (Apps), or run it from Allternit, where you can approve it."
+    )
+}
+
 /// Permission mode per connector id for `user_id`'s installs. When a connector has
 /// several installs the newest wins (the order the web host reads them in). A
 /// connector with no install, or an unreadable table, gets the default mode.
@@ -456,12 +523,20 @@ fn mode_for(modes: &std::collections::HashMap<String, PermissionMode>, connector
 
 // ─── tools ───────────────────────────────────────────────────────────────────
 
-async fn with_session<T, F, Fut>(connector: &Connector, allow_private: bool, f: F) -> Result<T, AppsError>
+async fn with_session<T, F, Fut>(state: &Arc<AppState>, connector: &Connector, allow_private: bool, f: F) -> Result<T, AppsError>
 where
     F: FnOnce(McpClient) -> Fut,
     Fut: std::future::Future<Output = (McpClient, Result<T, AppsError>)>,
 {
-    let client = open_session(connector, allow_private).await?;
+    let client = match open_session(connector, allow_private).await {
+        // A managed token the server stopped accepting: re-grant once, no UI.
+        Err(e) if e.code == "connector_unauthorized" && connector.is_managed() && !connector.auth_failed() => {
+            let mut fresh = connector.clone();
+            crate::mcp_apps::regrant_managed(state, &mut fresh, allow_private).await;
+            open_session(&fresh, allow_private).await?
+        }
+        other => other?,
+    };
     let (client, result) = f(client).await;
     close_session(client).await;
     result
@@ -474,15 +549,16 @@ async fn list_tools(
     user_id: &str,
     connectors: &[Connector],
     modes: &std::collections::HashMap<String, PermissionMode>,
+    budget: Duration,
     allow_private: bool,
 ) -> Value {
     let prefixes = connector_prefixes(connectors);
     let listed = futures::future::join_all(connectors.iter().map(|connector| async move {
-        let work = with_session(connector, allow_private, |client| async move {
+        let work = with_session(state, connector, allow_private, |client| async move {
             let tools = list_all_tools(&client).await;
             (client, tools)
         });
-        tokio::time::timeout(PER_CONNECTOR_TIMEOUT, work).await
+        tokio::time::timeout(budget, work).await
     }))
     .await;
 
@@ -519,19 +595,21 @@ async fn list_tools(
 }
 
 async fn call_tool(
+    state: &Arc<AppState>,
     connectors: &[Connector],
     modes: &std::collections::HashMap<String, PermissionMode>,
     namespaced_name: &str,
     arguments: Value,
-    approved: bool,
+    gate: Gate,
     allow_private: bool,
 ) -> Result<Value, AppsError> {
     let (connector, tool_name) = resolve_namespaced(connectors, namespaced_name).ok_or_else(|| {
         AppsError::new(StatusCode::NOT_FOUND, "tool_not_found", format!("unknown tool '{namespaced_name}'"))
     })?;
     let tool_name = tool_name.to_string();
+    let connector_name = connector.name.clone();
     let mode = mode_for(modes, connector);
-    with_session(connector, allow_private, |client| async move {
+    with_session(state, connector, allow_private, |client| async move {
         let result = async {
             // Visibility is only knowable from the connector's own list: app-only
             // tools are not callable by the model, whatever name it asks for.
@@ -549,11 +627,15 @@ async fn call_tool(
                     format!("tool '{tool_name}' is not callable by the model"),
                 ));
             }
-            if !approved && requires_confirmation(mode, tool) {
+            if !matches!(gate, Gate::Turn { approved: true }) && requires_confirmation(mode, tool) {
                 return Err(AppsError::new(
                     StatusCode::FORBIDDEN,
                     "confirmation_required",
-                    format!("tool '{tool_name}' needs the user's approval for this call"),
+                    if matches!(gate, Gate::Edge) {
+                        confirmation_message(&connector_name, &tool_name, mode, tool)
+                    } else {
+                        format!("tool '{tool_name}' needs the user's approval for this call")
+                    },
                 ));
             }
             client
@@ -569,12 +651,12 @@ async fn call_tool(
 
 /// `resources/read` for a `ui://` URI: served by the connector that declares it
 /// on one of its tools.
-async fn read_ui_resource(connectors: &[Connector], uri: &str, allow_private: bool) -> Result<Value, AppsError> {
+async fn read_ui_resource(state: &Arc<AppState>, connectors: &[Connector], uri: &str, allow_private: bool) -> Result<Value, AppsError> {
     if !uri.starts_with("ui://") {
         return Err(AppsError::new(StatusCode::FORBIDDEN, "resource_not_allowed", "only ui:// resources are served"));
     }
     for connector in connectors {
-        let read = with_session(connector, allow_private, |client| async move {
+        let read = with_session(state, connector, allow_private, |client| async move {
             let result = async {
                 let tools = list_all_tools(&client).await?;
                 if !tools.iter().any(|t| ui_resource_uri(t).as_deref() == Some(uri)) {
@@ -886,6 +968,34 @@ mod e2e {
         assert_eq!(destructive["error"]["data"]["code"], "confirmation_required");
     }
 
+    async fn edge_rpc(state: &Arc<AppState>, user: &str, method: &str, params: Value) -> Value {
+        let body = json!({ "jsonrpc": "2.0", "id": 1, "method": method, "params": params });
+        dispatch_rpc(state, user, RpcCaller::Edge, &body, true).await.expect("response")
+    }
+
+    #[tokio::test]
+    async fn the_edge_serves_the_same_union_but_can_never_approve() {
+        let (state, server, _) = fixture().await;
+        let turn = tool_names(&rpc(&state, "user-1", "tools/list", json!({})).await);
+        assert_eq!(tool_names(&edge_rpc(&state, "user-1", "tools/list", json!({})).await), turn);
+
+        // An outside app sending the approval flag is still refused, in plain words naming the setting.
+        let name = "dash-server__show_dashboard";
+        let refused = edge_rpc(&state, "user-1", "tools/call", approved(name, json!({}))).await;
+        assert_eq!(refused["error"]["data"]["code"], "confirmation_required");
+        let msg = refused["error"]["message"].as_str().unwrap();
+        assert!(msg.contains("Ask before important changes") && msg.contains("Name conn-1"), "{msg}");
+        // A destructive tool can only run from Allternit, whatever the setting.
+        install(&state, "user-1", "conn-1", "ask_before_important_changes");
+        let destructive = edge_rpc(&state, "user-1", "tools/call", approved("dash-server__plain", json!({}))).await;
+        assert!(destructive["error"]["message"].as_str().unwrap().contains("important change"), "{destructive}");
+        assert!(server.called_tools().is_empty(), "nothing ran");
+        // What the owner's setting allows runs.
+        let ok = edge_rpc(&state, "user-1", "tools/call", json!({ "name": name, "arguments": {} })).await;
+        assert!(ok.get("result").is_some(), "{ok}");
+        assert_eq!(server.called_tools(), ["show_dashboard"]);
+    }
+
     #[tokio::test]
     async fn install_modes_do_not_cross_users() {
         let (state, _server, url) = fixture().await;
@@ -1183,6 +1293,51 @@ mod e2e {
         assert_eq!(forms.len(), 1, "{forms:?}");
         assert!(forms[0].starts_with("AS "), "went to the discovered endpoint instead: {}", forms[0]);
         assert!(forms[0].contains("resource="), "{}", forms[0]);
+    }
+
+    #[tokio::test]
+    async fn a_managed_connector_is_regranted_on_expiry_and_on_401_with_no_ui() {
+        use crate::managed_auth::{session_metadata, tests::FakeCloud, ManagedConfig};
+        let (state, _server, log) = expired_fixture(false).await;
+        let conn = state.db.connect().unwrap();
+        let url: String = conn.query_row("SELECT url FROM mcp_connectors WHERE id = 'conn-r'", [], |r| r.get(0)).unwrap();
+        let origin = url.trim_end_matches("/mcp").to_string();
+        let cfg = ManagedConfig {
+            org_id: "org_A".into(),
+            connector_id: "refreshable".into(),
+            as_issuer: origin.clone(),
+            token_endpoint: format!("{origin}/as/token"),
+            resource: url.clone(),
+            scopes: vec![],
+        };
+        conn.execute("UPDATE mcp_oauth_sessions SET metadata = ?1 WHERE id = 's-r'", params![session_metadata("user-1", &cfg).to_string()]).unwrap();
+        let fake = Arc::new(FakeCloud {
+            owner: Some("user-1".into()),
+            configs: json!({ "configs": [] }),
+            idjag: (200, json!({ "id_jag": "jag-1", "token_endpoint": cfg.token_endpoint, "client_id": "c1", "client_secret": "s1" })),
+            idjag_bodies: Mutex::new(Vec::new()),
+        });
+        let _cloud = crate::managed_auth::set_test_cloud(fake.clone());
+
+        // Expired: a new ID-JAG and a JWT-bearer grant, never the refresh token.
+        let list = rpc(&state, "user-1", "tools/list", json!({})).await;
+        assert!(tool_names(&list).contains(&"refreshable__show_dashboard".to_string()), "{list}");
+        let forms = log.forms.lock().unwrap().clone();
+        assert_eq!(forms.len(), 1, "{forms:?}");
+        assert!(forms[0].starts_with("AS ") && forms[0].contains("assertion=jag-1") && forms[0].contains("jwt-bearer"), "{}", forms[0]);
+        assert!(!forms[0].contains("refresh_token"));
+        assert_eq!(fake.idjag_bodies.lock().unwrap().clone(), vec![json!({ "connector_id": "refreshable", "org_id": "org_A" })]);
+        let managed_row: String = conn
+            .query_row("SELECT auth_type FROM connector_connections WHERE connector_id = 'refreshable' AND user_id = 'user-1' AND is_default = 1", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(managed_row, "managed", "both copies written");
+
+        // Not expired but dead (the server answers 401): re-granted once, the call still works.
+        let dead = json!({ "access_token": "dead", "expires_in": 3600, "obtained_at": chrono::Utc::now().timestamp() });
+        conn.execute("UPDATE mcp_oauth_sessions SET tokens = ?1 WHERE state = 'managed:conn-r'", params![crate::token_crypto::seal(&dead.to_string())]).unwrap();
+        let list = rpc(&state, "user-1", "tools/list", json!({})).await;
+        assert!(tool_names(&list).contains(&"refreshable__show_dashboard".to_string()), "{list}");
+        assert_eq!(fake.idjag_bodies.lock().unwrap().len(), 2);
     }
 
     #[tokio::test]

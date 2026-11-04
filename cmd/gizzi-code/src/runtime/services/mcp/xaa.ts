@@ -347,7 +347,8 @@ export async function exchangeJwtAuthGrant(opts: {
   tokenEndpoint: string
   assertion: string
   clientId: string
-  clientSecret: string
+  /** Absent for a public client: `client_id` goes in the body, no client auth. */
+  clientSecret?: string
   authMethod?: 'client_secret_basic' | 'client_secret_post'
   scope?: string
   fetchFn?: FetchLike
@@ -366,7 +367,9 @@ export async function exchangeJwtAuthGrant(opts: {
   const headers: Record<string, string> = {
     'Content-Type': 'application/x-www-form-urlencoded',
   }
-  if (authMethod === 'client_secret_basic') {
+  if (!opts.clientSecret) {
+    params.set('client_id', opts.clientId)
+  } else if (authMethod === 'client_secret_basic') {
     const basicAuth = Buffer.from(
       `${encodeURIComponent(opts.clientId)}:${encodeURIComponent(opts.clientSecret)}`,
     ).toString('base64')
