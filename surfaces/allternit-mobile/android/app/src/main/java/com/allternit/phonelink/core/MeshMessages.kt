@@ -76,6 +76,6 @@ object MeshMessages {
             if (i <= 0) null else line.substring(0, i) to dec(line.substring(i + 1))
         }.toMap()
 
-    private fun enc(v: String): String = URLEncoder.encode(v, Charsets.UTF_8)
-    private fun dec(v: String): String = URLDecoder.decode(v, Charsets.UTF_8)
+    private fun enc(v: String): String = URLEncoder.encode(v, "UTF-8") // String charset: the Charset overload is API 33+, minSdk is 26
+    private fun dec(v: String): String = URLDecoder.decode(v, "UTF-8")
 }

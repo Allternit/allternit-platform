@@ -33,7 +33,7 @@ app/src/main/java/com/allternit/phonelink/
   PairingNotifier.kt            Allow/Deny notification (60 s), PairingActionReceiver
   KeystoreSealer.kt             Android Keystore AES-256-GCM
   GomobileMeshNode.kt           MeshNodeApi backed by the gomobile tsnet AAR
-  MainActivity.kt               status screen (sessions, Stop/Start, Revoke) + TWA design note
+  MainActivity.kt               status screen (sessions, Stop/Start, Revoke); the launcher is the TWA
 scripts/provision.sh            the adb setup sequence below
 scripts/conformance.sh          live run of ictrl_rpc.py against a phone
 ```
@@ -62,7 +62,7 @@ export ANDROID_HOME=$HOME/Library/Android/sdk     # or write sdk.dir in local.pr
 
 Toolchain: AGP 8.7.3, Kotlin 2.0.21, Gradle 8.10.2, minSdk 26, target/compileSdk 35.
 
-The app has no runtime dependencies beyond the Kotlin stdlib and the mesh AAR (tsnet/userspace WireGuard, built in-tree). Tests use JUnit 4.13.2 (EPL-1.0, test only) and `org.json:json:20240303` (public domain, test only, because android.jar ships only stubs of org.json). Everything else is in-tree. NanoHTTPD was not needed, and the X25519 code is written from RFC 7748 rather than vendored.
+The app has no runtime dependencies beyond the Kotlin stdlib, the mesh AAR and `androidbrowserhelper` (the TWA launcher, Apache-2.0) (tsnet/userspace WireGuard, built in-tree). Tests use JUnit 4.13.2 (EPL-1.0, test only) and `org.json:json:20240303` (public domain, test only, because android.jar ships only stubs of org.json). Everything else is in-tree. NanoHTTPD was not needed, and the X25519 code is written from RFC 7748 rather than vendored.
 
 **APK size.** The universal debug APK is ~91 MB with the mesh included; `libgojni.so` (the Go runtime + tsnet) is 94 MB uncompressed across the four ABIs (23.5 MB arm64). A single-ABI release build pays roughly one ABI's worth (~20 MB compressed). `stripDebugDebugSymbols` cannot strip gomobile's `libgojni.so`.
 
@@ -217,14 +217,13 @@ What had to adapt:
 - Some OEMs (Samsung, Xiaomi) add their own background killers on top of Doze. The `deviceidle` exemption covers stock Android and Motorola. Others may need their battery setting changed by hand.
 - QUICKBOOT_POWERON isn't a protected broadcast, so any app can send it. The worst it does is start the server on a phone that is already provisioned.
 
-## Later: Trusted Web Activity (not built)
+## The Allternit app (Trusted Web Activity, 0.5.0+)
 
-The plan is to wrap m.allternit.com as a TWA in this same app, so one install gives the Allternit phone UI plus Phone Link. This needs three things:
-- `https://m.allternit.com/.well-known/assetlinks.json` with `com.allternit.app` and the release signing certificate's SHA-256;
-- an `asset_statements` resource;
-- `androidx.browser` with a LauncherActivity as the launcher, with this status screen moved behind a "Phone Link" entry.
-
-It waits on the release signing key and the assetlinks deploy. The design note is in `MainActivity.kt`.
+The launcher icon, labelled **Allternit**, opens m.allternit.com full-screen as a Trusted Web Activity. One install gives the Allternit phone UI and Phone Link.
+- The launcher is `com.google.androidbrowserhelper.trusted.LauncherActivity`, from `androidbrowserhelper` 2.5.0 (Apache-2.0). Without a TWA-capable browser it opens a Custom Tab, which shows the URL bar.
+- `https://m.allternit.com/.well-known/assetlinks.json` (allternit-ai `public/.well-known/`) names `com.allternit.app` and the release cert `3F:8A:39:51:…:E0:67`. The app's `asset_statements` string points back at the site. The VIEW filter for `https://m.allternit.com` has `autoVerify`, so links to the site open in the app.
+- This status screen (`MainActivity`) is no longer a launcher entry. It opens from the Phone Link notification and from the icon's long-press **Phone Link** shortcut (`res/xml/shortcuts.xml`).
+- Only the release key passes the asset-links check. A debug-signed build shows the URL bar.
 
 ## Live conformance
 

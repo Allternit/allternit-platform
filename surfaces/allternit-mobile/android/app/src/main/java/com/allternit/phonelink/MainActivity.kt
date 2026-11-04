@@ -18,18 +18,10 @@ import java.util.Date
  * Status screen: is the server up, which computers are paired, Stop / Start,
  * Revoke. Plain framework views on purpose (no AppCompat dependency).
  *
- * TODO(twa): wrap m.allternit.com in this same app as a Trusted Web Activity
- * (androidx.browser + a LauncherActivity), so one install gives both the
- * Allternit phone UI and Phone Link. Needs:
- *   1. https://m.allternit.com/.well-known/assetlinks.json listing
- *      com.allternit.app with the release signing cert SHA-256
- *      (delegate_permission/common.handle_all_urls);
- *   2. an asset_statements string resource pointing back at m.allternit.com;
- *   3. this status screen moved behind a "Phone Link" entry (TWA becomes the
- *      launcher activity), keeping it reachable from the notification.
- * Not built now: the release signing key and the assetlinks deploy are
- * decisions for the release, and a debug-signed TWA falls back to a Custom Tab
- * with the URL bar showing.
+ * Since 0.5.0 the launcher icon opens the Allternit app (m.allternit.com as a
+ * Trusted Web Activity, androidbrowserhelper's LauncherActivity). This screen
+ * is reached from the Phone Link notification and the icon's "Phone Link"
+ * shortcut.
  */
 class MainActivity : Activity() {
     private lateinit var root: LinearLayout

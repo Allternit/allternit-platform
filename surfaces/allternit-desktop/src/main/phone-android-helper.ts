@@ -39,8 +39,11 @@ export const PINNED_ANDROID_MANIFESTS: Record<string, string> = {
   // 0.4.0: app ID com.allternit.app (manifest packageName). Setup removes the
   // old com.allternit.phonelink app first; same release key (cert 3f8a3951…).
   '0.4.0': '23fe9197436f6273a50c01c0f7ec0b4b46d7aeb18c5b04174bf754bb88a70b27',
+  // 0.5.0: the launcher opens the Allternit app (m.allternit.com as a Trusted
+  // Web Activity); Phone Link status moves to the notification + icon shortcut.
+  '0.5.0': '7c60640fa009db79d7776ff2e8d3d57705efd9a38472eb2a88bc1c02e2469164',
 };
-export const ANDROID_HELPER_VERSION: string | null = '0.4.0';
+export const ANDROID_HELPER_VERSION: string | null = '0.5.0';
 
 export interface AndroidHelperManifest {
   version: string;
