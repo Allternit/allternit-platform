@@ -37,6 +37,7 @@ pub mod agent_runtime_routes;
 pub mod agent_session_routes;
 pub mod agent_workspace_paths;
 pub mod agent_workspace_routes;
+pub mod agent_package_routes;
 pub mod bot_hub_routes;
 pub mod memory_map_routes;
 pub mod skill_use;

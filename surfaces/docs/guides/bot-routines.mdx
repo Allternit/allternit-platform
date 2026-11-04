@@ -13,7 +13,17 @@ If you have no bots yet, the forms tell you to create one first. The API refuses
 
 ## Reading routine status
 
-A routine row identifies the bot and whether it runs in the cloud or on a computer.
+A routine row identifies the bot and where it runs: **Runs on: Cloud computer** or **Runs on: This computer**.
+
+## Where routines run
+
+If your account has a cloud computer (it comes with paid plans), new routines run on it by default, so they keep running with your computer closed or asleep. Without one, routines run on your computer, as before. The create and edit forms have a **Runs on** choice to change it. Routines started by an event on your computer, and phone-skill replays, always run on your computer.
+
+Routines you made before you had a cloud computer stay where they are. The Routines list shows **Run in the cloud** next to each scheduled routine on your computer; one tap moves it to the cloud computer. Its run history stays with the old copy.
+
+Bots live on each computer, so when you save a cloud routine Allternit copies the bot to your cloud computer first, and refreshes that copy each time. The copy carries the bot's persona (Soul), instructions, memory file and settings. It does not carry channels, email addresses, phone numbers or sign-ins; those stay on your computer. If the copy fails, the routine isn't saved and you see "Couldn't copy" followed by the bot's name and the reason.
+
+The cloud computer needs its own model sign-in for the bot's brain. If a sign-in is missing when a run starts, the run fails and you get a "Something needs fixing" message, the same as any failed run.
 The next run uses the routine's saved timezone; its zone appears beside the schedule.
 **Waiting for scheduler** means the recorded next-run time has arrived and the server has not yet reported a running job.
 
@@ -140,7 +150,7 @@ A run that takes longer than the routine's time limit is cut off and fails with 
 
 ### Missed runs
 
-If your computer was off or asleep when a run was due, the routine runs once when Allternit is back, and the history shows a **Skipped** row for each run that was missed (up to 30 per gap). You get a "Something needs fixing" message saying how many runs were missed, or how late the run started. A run counts as missed when it starts more than 5 minutes late, or more than a tenth of its interval late if that is longer. The message closes when a later run starts on time.
+This applies to routines that run on your computer. A routine on your cloud computer doesn't miss runs while your computer sleeps. If your computer was off or asleep when a run was due, the routine runs once when Allternit is back, and the history shows a **Skipped** row for each run that was missed (up to 30 per gap). You get a "Something needs fixing" message saying how many runs were missed, or how late the run started. A run counts as missed when it starts more than 5 minutes late, or more than a tenth of its interval late if that is longer. The message closes when a later run starts on time.
 
 ### Automatic pause after 3 failures
 
