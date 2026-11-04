@@ -24,4 +24,12 @@ Action definitions also declare provider-native `requiredScopes` and `providerPe
 runtime exposes those fields through HTTP and MCP discovery together with the current connection
 profile, so agents can see both the capability they are about to use and the account it will run as.
 
+Some actions take an input that the connection already holds, such as a workspace slug, account id,
+or developer token entered at connect time or recorded by credential validation. Providers wrap their
+actions with `withSavedConnectionInputs` (`src/core/provider-definition.ts`): the input stays in the
+schema but is no longer required, and the action records `savedConnectionInputs`, a map from the
+input key to the credential value or metadata fields that hold it. When a caller omits the input, the
+runtime fills it from the selected connection before running the executor; an explicit input always
+wins. If the input is neither passed nor saved, the run fails with `invalid_input`.
+
 For the full contribution workflow, see `.codex/skills/add-provider/SKILL.md`.

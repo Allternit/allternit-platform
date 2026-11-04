@@ -259,6 +259,8 @@ Executes a tool or action against a connected connector.
 
 The account is chosen in this order: `connection_id` or `account` if given, else the default, else the most recently used. An account that matches nothing returns `404` with `{ "error": "account_not_found", "accounts": [...] }`; it never falls back to another account. The model-facing connector tools take the same optional `account` string ("Which connected account to use, by email or name. Omit for the default."). A bot's connector binding may carry a `connectionId`; a tool call with no explicit `account` uses it (a bot runtime sends the binding's id in the `x-allternit-connection-id` header of its MCP requests).
 
+Some sidecar actions take a value the connection already saved: a field entered at connect time or an account id recorded when the credential was checked. These inputs are optional in the action schema. Leave them out of `input` and the sidecar uses the saved value of the chosen account; a value you pass wins. If the input is neither passed nor saved, the call fails with `invalid_input`. Current list (provider, input): `googleads` `developerToken` and `customerId`; `sentry` `organizationIdOrSlug`; `agility` `guid`; `personal_ai` `domainName`; `aws_s3` and `aliyun_oss` `bucket` (on `list_objects`); `bugsnag` `organizationId`; `callrail` `accountId`; `bird` `workspaceId`; `devin` `orgId`; `sling` `orgId`; `roboflow` `workspace`; `beeminder` `username`; `calendly` `organizationUri` (on actions that required it); `wit_ai` `appId`. Providers declare these with `withSavedConnectionInputs` in `services/open-connector/src/core/provider-definition.ts`.
+
 ### Example request
 
 ```bash

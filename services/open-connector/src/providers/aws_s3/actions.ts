@@ -1,7 +1,7 @@
 import type { ActionDefinition } from "../../core/types.ts";
 
 import { s } from "../../core/json-schema.ts";
-import { defineProviderAction } from "../../core/provider-definition.ts";
+import { defineProviderAction, withSavedConnectionInputs } from "../../core/provider-definition.ts";
 
 const service = "aws_s3";
 
@@ -92,128 +92,133 @@ putObjectInputSchema.oneOf = [
   { required: ["contentBase64"] },
 ];
 
-export const awsActions: ActionDefinition[] = [
-  defineProviderAction(service, {
-    name: "list_buckets",
-    description: "List Amazon S3 buckets visible to the connected AWS credential.",
-    inputSchema: s.object(
-      "The input payload for this action.",
-      {
-        region: regionField,
-        prefix: s.string("Filter buckets by name prefix."),
-        marker: s.string("Continue listing buckets from the continuation token returned by S3."),
-        maxKeys: maxBucketKeysField,
-      },
-      { optional: ["region", "prefix", "marker", "maxKeys"] },
-    ),
-    outputSchema: s.object("The output payload for this action.", {
-      buckets: s.array("The returned bucket summaries.", bucketSchema),
-      owner: s.nullable(ownerSchema),
-      isTruncated: s.boolean("Whether more buckets are available."),
-      nextMarker: s.nullable(s.string("The continuation token for the next page, or null when the list is complete.")),
-    }),
-  }),
-  defineProviderAction(service, {
-    name: "list_objects",
-    description: "List objects in an S3 bucket with the ListObjectsV2 API.",
-    inputSchema: s.object(
-      "The input payload for this action.",
-      {
-        bucket: bucketNameField,
-        region: regionField,
-        prefix: s.string("Filter objects by key prefix."),
-        delimiter: s.string("Group keys by this delimiter, for example `/` to emulate folders."),
-        continuationToken: s.string("Continue listing from the continuation token returned by S3."),
-        startAfter: s.string("Start listing after this object key."),
-        fetchOwner: s.boolean("Whether to include owner information for each object."),
-        maxKeys: maxObjectKeysField,
-      },
-      {
-        optional: ["region", "prefix", "delimiter", "continuationToken", "startAfter", "fetchOwner", "maxKeys"],
-      },
-    ),
-    outputSchema: s.object("The output payload for this action.", {
-      objects: s.array("The listed objects.", objectSchema),
-      prefixes: s.array("The common prefixes returned by S3.", s.string("One common prefix.")),
-      isTruncated: s.boolean("Whether more objects are available."),
-      keyCount: s.integer("The number of keys returned in this page."),
-      continuationToken: s.nullable(s.string("The continuation token echoed by S3, or null when absent.")),
-      nextContinuationToken: s.nullable(
-        s.string("The continuation token for the next page, or null when the list is complete."),
+export const awsActions: ActionDefinition[] = withSavedConnectionInputs(
+  [
+    defineProviderAction(service, {
+      name: "list_buckets",
+      description: "List Amazon S3 buckets visible to the connected AWS credential.",
+      inputSchema: s.object(
+        "The input payload for this action.",
+        {
+          region: regionField,
+          prefix: s.string("Filter buckets by name prefix."),
+          marker: s.string("Continue listing buckets from the continuation token returned by S3."),
+          maxKeys: maxBucketKeysField,
+        },
+        { optional: ["region", "prefix", "marker", "maxKeys"] },
       ),
+      outputSchema: s.object("The output payload for this action.", {
+        buckets: s.array("The returned bucket summaries.", bucketSchema),
+        owner: s.nullable(ownerSchema),
+        isTruncated: s.boolean("Whether more buckets are available."),
+        nextMarker: s.nullable(
+          s.string("The continuation token for the next page, or null when the list is complete."),
+        ),
+      }),
     }),
-  }),
-  defineProviderAction(service, {
-    name: "head_object",
-    description: "Fetch structured metadata for one S3 object.",
-    inputSchema: s.object(
-      "The input payload for this action.",
-      {
-        bucket: bucketNameField,
-        objectKey: objectKeyField,
-        region: regionField,
-        versionId: s.string("The optional object version ID."),
-      },
-      { optional: ["bucket", "region", "versionId"] },
-    ),
-    outputSchema: s.object("The output payload for this action.", {
-      object: objectMetadataSchema,
+    defineProviderAction(service, {
+      name: "list_objects",
+      description: "List objects in an S3 bucket with the ListObjectsV2 API.",
+      inputSchema: s.object(
+        "The input payload for this action.",
+        {
+          bucket: bucketNameField,
+          region: regionField,
+          prefix: s.string("Filter objects by key prefix."),
+          delimiter: s.string("Group keys by this delimiter, for example `/` to emulate folders."),
+          continuationToken: s.string("Continue listing from the continuation token returned by S3."),
+          startAfter: s.string("Start listing after this object key."),
+          fetchOwner: s.boolean("Whether to include owner information for each object."),
+          maxKeys: maxObjectKeysField,
+        },
+        {
+          optional: ["region", "prefix", "delimiter", "continuationToken", "startAfter", "fetchOwner", "maxKeys"],
+        },
+      ),
+      outputSchema: s.object("The output payload for this action.", {
+        objects: s.array("The listed objects.", objectSchema),
+        prefixes: s.array("The common prefixes returned by S3.", s.string("One common prefix.")),
+        isTruncated: s.boolean("Whether more objects are available."),
+        keyCount: s.integer("The number of keys returned in this page."),
+        continuationToken: s.nullable(s.string("The continuation token echoed by S3, or null when absent.")),
+        nextContinuationToken: s.nullable(
+          s.string("The continuation token for the next page, or null when the list is complete."),
+        ),
+      }),
     }),
-  }),
-  defineProviderAction(service, {
-    name: "put_object",
-    description: "Upload one object to S3 from a public URL, plain text, or base64-encoded content.",
-    inputSchema: putObjectInputSchema,
-    outputSchema: s.object("The output payload for this action.", {
-      bucket: s.string("The bucket that received the object."),
-      objectKey: s.string("The uploaded object key."),
-      url: s.string("The canonical S3 URL for the uploaded object."),
-      etag: s.nullable(s.string("The uploaded object ETag, or null when S3 omitted it.")),
+    defineProviderAction(service, {
+      name: "head_object",
+      description: "Fetch structured metadata for one S3 object.",
+      inputSchema: s.object(
+        "The input payload for this action.",
+        {
+          bucket: bucketNameField,
+          objectKey: objectKeyField,
+          region: regionField,
+          versionId: s.string("The optional object version ID."),
+        },
+        { optional: ["bucket", "region", "versionId"] },
+      ),
+      outputSchema: s.object("The output payload for this action.", {
+        object: objectMetadataSchema,
+      }),
     }),
-  }),
-  defineProviderAction(service, {
-    name: "delete_object",
-    description: "Delete one S3 object.",
-    inputSchema: s.object(
-      "The input payload for this action.",
-      {
-        bucket: bucketNameField,
-        objectKey: objectKeyField,
-        region: regionField,
-        versionId: s.string("The optional object version ID."),
-      },
-      { optional: ["bucket", "region", "versionId"] },
-    ),
-    outputSchema: s.object("The output payload for this action.", {
-      bucket: s.string("The bucket that contained the deleted object."),
-      objectKey: s.string("The deleted object key."),
-      deleted: s.boolean("Whether the delete request completed successfully."),
+    defineProviderAction(service, {
+      name: "put_object",
+      description: "Upload one object to S3 from a public URL, plain text, or base64-encoded content.",
+      inputSchema: putObjectInputSchema,
+      outputSchema: s.object("The output payload for this action.", {
+        bucket: s.string("The bucket that received the object."),
+        objectKey: s.string("The uploaded object key."),
+        url: s.string("The canonical S3 URL for the uploaded object."),
+        etag: s.nullable(s.string("The uploaded object ETag, or null when S3 omitted it.")),
+      }),
     }),
-  }),
-  defineProviderAction(service, {
-    name: "generate_presigned_url",
-    description: "Generate a pre-signed S3 URL for reading, uploading, or deleting one object.",
-    inputSchema: s.object(
-      "The input payload for this action.",
-      {
-        bucket: bucketNameField,
-        objectKey: objectKeyField,
-        region: regionField,
-        method: s.stringEnum("The HTTP method that the signed URL should allow.", ["GET", "PUT", "DELETE"]),
-        expiresSeconds: s.integer("How long the signed URL remains valid, in seconds.", {
-          minimum: 1,
-          maximum: 604800,
-        }),
-        contentType: s.string("The Content-Type that must be used with the signed request."),
-      },
-      { optional: ["bucket", "region", "method", "expiresSeconds", "contentType"] },
-    ),
-    outputSchema: s.object("The output payload for this action.", {
-      bucket: s.string("The bucket used to build the signed URL."),
-      objectKey: s.string("The object key used to build the signed URL."),
-      method: s.string("The signed HTTP method."),
-      expiresSeconds: s.integer("The URL validity duration in seconds."),
-      url: s.string("The generated pre-signed URL."),
+    defineProviderAction(service, {
+      name: "delete_object",
+      description: "Delete one S3 object.",
+      inputSchema: s.object(
+        "The input payload for this action.",
+        {
+          bucket: bucketNameField,
+          objectKey: objectKeyField,
+          region: regionField,
+          versionId: s.string("The optional object version ID."),
+        },
+        { optional: ["bucket", "region", "versionId"] },
+      ),
+      outputSchema: s.object("The output payload for this action.", {
+        bucket: s.string("The bucket that contained the deleted object."),
+        objectKey: s.string("The deleted object key."),
+        deleted: s.boolean("Whether the delete request completed successfully."),
+      }),
     }),
-  }),
-];
+    defineProviderAction(service, {
+      name: "generate_presigned_url",
+      description: "Generate a pre-signed S3 URL for reading, uploading, or deleting one object.",
+      inputSchema: s.object(
+        "The input payload for this action.",
+        {
+          bucket: bucketNameField,
+          objectKey: objectKeyField,
+          region: regionField,
+          method: s.stringEnum("The HTTP method that the signed URL should allow.", ["GET", "PUT", "DELETE"]),
+          expiresSeconds: s.integer("How long the signed URL remains valid, in seconds.", {
+            minimum: 1,
+            maximum: 604800,
+          }),
+          contentType: s.string("The Content-Type that must be used with the signed request."),
+        },
+        { optional: ["bucket", "region", "method", "expiresSeconds", "contentType"] },
+      ),
+      outputSchema: s.object("The output payload for this action.", {
+        bucket: s.string("The bucket used to build the signed URL."),
+        objectKey: s.string("The object key used to build the signed URL."),
+        method: s.string("The signed HTTP method."),
+        expiresSeconds: s.integer("The URL validity duration in seconds."),
+        url: s.string("The generated pre-signed URL."),
+      }),
+    }),
+  ],
+  { bucket: ["bucket"] },
+);

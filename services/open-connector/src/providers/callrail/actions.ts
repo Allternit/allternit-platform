@@ -1,7 +1,7 @@
 import type { ActionDefinition, JsonSchema } from "../../core/types.ts";
 
 import { s } from "../../core/json-schema.ts";
-import { defineProviderAction } from "../../core/provider-definition.ts";
+import { defineProviderAction, withSavedConnectionInputs } from "../../core/provider-definition.ts";
 
 const service = "callrail";
 
@@ -95,120 +95,132 @@ export type CallrailActionName =
   | "list_form_submissions"
   | "get_form_submission";
 
-export const callrailActions: ActionDefinition[] = [
-  defineProviderAction(service, {
-    name: "list_accounts",
-    description: "List CallRail accounts visible to the API key.",
-    requiredScopes: [],
-    inputSchema: s.object(
-      "The input payload for listing CallRail accounts.",
-      {
-        ...paginationInputFields,
-        hipaaAccount: s.boolean("Filter accounts by HIPAA account status."),
-      },
-      { optional: ["page", "perPage", "hipaaAccount"] },
-    ),
-    outputSchema: s.object("The response returned when listing CallRail accounts.", {
-      ...paginationOutputFields,
-      accounts: s.array("The CallRail accounts returned by the API.", accountSchema),
-      raw: rawObjectSchema,
+export const callrailActions: ActionDefinition[] = withSavedConnectionInputs(
+  [
+    defineProviderAction(service, {
+      name: "list_accounts",
+      description: "List CallRail accounts visible to the API key.",
+      requiredScopes: [],
+      inputSchema: s.object(
+        "The input payload for listing CallRail accounts.",
+        {
+          ...paginationInputFields,
+          hipaaAccount: s.boolean("Filter accounts by HIPAA account status."),
+        },
+        { optional: ["page", "perPage", "hipaaAccount"] },
+      ),
+      outputSchema: s.object("The response returned when listing CallRail accounts.", {
+        ...paginationOutputFields,
+        accounts: s.array("The CallRail accounts returned by the API.", accountSchema),
+        raw: rawObjectSchema,
+      }),
     }),
-  }),
-  defineProviderAction(service, {
-    name: "list_companies",
-    description: "List CallRail companies for one account.",
-    requiredScopes: [],
-    inputSchema: s.object(
-      "The input payload for listing CallRail companies.",
-      {
+    defineProviderAction(service, {
+      name: "list_companies",
+      description: "List CallRail companies for one account.",
+      requiredScopes: [],
+      inputSchema: s.object(
+        "The input payload for listing CallRail companies.",
+        {
+          accountId: accountIdSchema,
+          ...paginationInputFields,
+        },
+        { optional: ["page", "perPage"] },
+      ),
+      outputSchema: s.object("The response returned when listing CallRail companies.", {
+        ...paginationOutputFields,
+        companies: s.array("The CallRail companies returned by the API.", companySchema),
+        raw: rawObjectSchema,
+      }),
+    }),
+    defineProviderAction(service, {
+      name: "list_calls",
+      description: "List CallRail calls for one account with optional company, tracker, date, and field filters.",
+      requiredScopes: [],
+      inputSchema: s.object(
+        "The input payload for listing CallRail calls.",
+        {
+          accountId: accountIdSchema,
+          companyId: companyIdSchema,
+          trackerId: nonEmptyString("Only return calls for this CallRail tracker ID."),
+          startDate: s.date("Only return calls on or after this date."),
+          endDate: s.date("Only return calls on or before this date."),
+          fields: fieldsSchema,
+          ...paginationInputFields,
+          relativePagination: s.boolean("Whether to request CallRail relative pagination."),
+        },
+        {
+          optional: [
+            "companyId",
+            "trackerId",
+            "startDate",
+            "endDate",
+            "fields",
+            "page",
+            "perPage",
+            "relativePagination",
+          ],
+        },
+      ),
+      outputSchema: s.object("The response returned when listing CallRail calls.", {
+        ...paginationOutputFields,
+        calls: s.array("The CallRail calls returned by the API.", callSchema),
+        raw: rawObjectSchema,
+      }),
+    }),
+    defineProviderAction(service, {
+      name: "get_call",
+      description: "Retrieve one CallRail call by account ID and call ID.",
+      requiredScopes: [],
+      inputSchema: s.object(
+        "The input payload for retrieving one CallRail call.",
+        {
+          accountId: accountIdSchema,
+          callId: callIdSchema,
+          fields: fieldsSchema,
+        },
+        { optional: ["fields"] },
+      ),
+      outputSchema: s.object("The response returned when retrieving one CallRail call.", {
+        call: callSchema,
+        raw: rawObjectSchema,
+      }),
+    }),
+    defineProviderAction(service, {
+      name: "list_form_submissions",
+      description: "List CallRail form submissions for one account with optional company, date, and field filters.",
+      requiredScopes: [],
+      inputSchema: s.object(
+        "The input payload for listing CallRail form submissions.",
+        {
+          accountId: accountIdSchema,
+          companyId: companyIdSchema,
+          startDate: s.date("Only return submissions on or after this date."),
+          endDate: s.date("Only return submissions on or before this date."),
+          fields: fieldsSchema,
+          ...paginationInputFields,
+        },
+        { optional: ["companyId", "startDate", "endDate", "fields", "page", "perPage"] },
+      ),
+      outputSchema: s.object("The response returned when listing CallRail form submissions.", {
+        ...paginationOutputFields,
+        formSubmissions: s.array("The CallRail form submissions returned by the API.", formSubmissionSchema),
+        raw: rawObjectSchema,
+      }),
+    }),
+    defineProviderAction(service, {
+      name: "get_form_submission",
+      description: "Retrieve one CallRail form submission by account ID and form submission ID.",
+      requiredScopes: [],
+      inputSchema: s.object("The input payload for retrieving one CallRail form submission.", {
         accountId: accountIdSchema,
-        ...paginationInputFields,
-      },
-      { optional: ["page", "perPage"] },
-    ),
-    outputSchema: s.object("The response returned when listing CallRail companies.", {
-      ...paginationOutputFields,
-      companies: s.array("The CallRail companies returned by the API.", companySchema),
-      raw: rawObjectSchema,
+        formSubmissionId: formSubmissionIdSchema,
+      }),
+      outputSchema: s.object("The response returned when retrieving one CallRail form submission.", {
+        formSubmission: formSubmissionSchema,
+        raw: rawObjectSchema,
+      }),
     }),
-  }),
-  defineProviderAction(service, {
-    name: "list_calls",
-    description: "List CallRail calls for one account with optional company, tracker, date, and field filters.",
-    requiredScopes: [],
-    inputSchema: s.object(
-      "The input payload for listing CallRail calls.",
-      {
-        accountId: accountIdSchema,
-        companyId: companyIdSchema,
-        trackerId: nonEmptyString("Only return calls for this CallRail tracker ID."),
-        startDate: s.date("Only return calls on or after this date."),
-        endDate: s.date("Only return calls on or before this date."),
-        fields: fieldsSchema,
-        ...paginationInputFields,
-        relativePagination: s.boolean("Whether to request CallRail relative pagination."),
-      },
-      {
-        optional: ["companyId", "trackerId", "startDate", "endDate", "fields", "page", "perPage", "relativePagination"],
-      },
-    ),
-    outputSchema: s.object("The response returned when listing CallRail calls.", {
-      ...paginationOutputFields,
-      calls: s.array("The CallRail calls returned by the API.", callSchema),
-      raw: rawObjectSchema,
-    }),
-  }),
-  defineProviderAction(service, {
-    name: "get_call",
-    description: "Retrieve one CallRail call by account ID and call ID.",
-    requiredScopes: [],
-    inputSchema: s.object(
-      "The input payload for retrieving one CallRail call.",
-      {
-        accountId: accountIdSchema,
-        callId: callIdSchema,
-        fields: fieldsSchema,
-      },
-      { optional: ["fields"] },
-    ),
-    outputSchema: s.object("The response returned when retrieving one CallRail call.", {
-      call: callSchema,
-      raw: rawObjectSchema,
-    }),
-  }),
-  defineProviderAction(service, {
-    name: "list_form_submissions",
-    description: "List CallRail form submissions for one account with optional company, date, and field filters.",
-    requiredScopes: [],
-    inputSchema: s.object(
-      "The input payload for listing CallRail form submissions.",
-      {
-        accountId: accountIdSchema,
-        companyId: companyIdSchema,
-        startDate: s.date("Only return submissions on or after this date."),
-        endDate: s.date("Only return submissions on or before this date."),
-        fields: fieldsSchema,
-        ...paginationInputFields,
-      },
-      { optional: ["companyId", "startDate", "endDate", "fields", "page", "perPage"] },
-    ),
-    outputSchema: s.object("The response returned when listing CallRail form submissions.", {
-      ...paginationOutputFields,
-      formSubmissions: s.array("The CallRail form submissions returned by the API.", formSubmissionSchema),
-      raw: rawObjectSchema,
-    }),
-  }),
-  defineProviderAction(service, {
-    name: "get_form_submission",
-    description: "Retrieve one CallRail form submission by account ID and form submission ID.",
-    requiredScopes: [],
-    inputSchema: s.object("The input payload for retrieving one CallRail form submission.", {
-      accountId: accountIdSchema,
-      formSubmissionId: formSubmissionIdSchema,
-    }),
-    outputSchema: s.object("The response returned when retrieving one CallRail form submission.", {
-      formSubmission: formSubmissionSchema,
-      raw: rawObjectSchema,
-    }),
-  }),
-];
+  ],
+  { accountId: ["accountId"] },
+);

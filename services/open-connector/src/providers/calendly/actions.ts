@@ -1,7 +1,7 @@
 import type { ActionDefinition, JsonSchema } from "../../core/types.ts";
 
 import { s } from "../../core/json-schema.ts";
-import { defineProviderAction } from "../../core/provider-definition.ts";
+import { defineProviderAction, withSavedConnectionInputs } from "../../core/provider-definition.ts";
 
 const service = "calendly";
 
@@ -159,476 +159,482 @@ export const calendlyProviderScopes: string[] = [
   "webhooks:write",
 ];
 
-export const calendlyActions: ActionDefinition[] = [
-  action(
-    "get_current_user",
-    "Retrieve the authenticated Calendly user for the connected credential.",
-    s.actionInput({}, [], "The input payload for retrieving the authenticated Calendly user."),
-    s.actionOutput(
-      { currentUser: raw("A Calendly user resource.") },
-      "The response wrapper for the authenticated Calendly user.",
+export const calendlyActions: ActionDefinition[] = withSavedConnectionInputs(
+  [
+    action(
+      "get_current_user",
+      "Retrieve the authenticated Calendly user for the connected credential.",
+      s.actionInput({}, [], "The input payload for retrieving the authenticated Calendly user."),
+      s.actionOutput(
+        { currentUser: raw("A Calendly user resource.") },
+        "The response wrapper for the authenticated Calendly user.",
+      ),
+      ["users:read"],
     ),
-    ["users:read"],
-  ),
-  action(
-    "get_user",
-    "Retrieve one Calendly user by user URI.",
-    input({ userUri }, ["userUri"]),
-    resourceOutput("user", "A Calendly user resource."),
-    ["users:read"],
-  ),
-  action(
-    "get_organization",
-    "Retrieve one Calendly organization by organization URI.",
-    input({ organizationUri }, ["organizationUri"]),
-    resourceOutput("organization", "A Calendly organization resource."),
-    ["organizations:write"],
-  ),
-  action(
-    "list_organization_memberships",
-    "List Calendly organization memberships for one organization or one user.",
-    input({
-      organizationUri,
-      userUri,
-      email: s.email("The email filter applied to organization memberships."),
-      count,
-      pageToken,
-    }),
-    listOutput("organizationMemberships", "The organization memberships returned by Calendly."),
-    ["organizations:write"],
-  ),
-  action(
-    "get_organization_membership",
-    "Retrieve one Calendly organization membership by membership URI.",
-    input({ organizationMembershipUri }, ["organizationMembershipUri"]),
-    resourceOutput("organizationMembership", "A Calendly organization membership resource."),
-    ["organizations:write"],
-  ),
-  action(
-    "delete_organization_membership",
-    "Delete one Calendly organization membership by membership URI.",
-    input({ organizationMembershipUri }, ["organizationMembershipUri"]),
-    booleanOutput("deleted", "The response wrapper for deleting one Calendly organization membership."),
-    ["organizations:write"],
-  ),
-  action(
-    "list_organization_invitations",
-    "List organization invitations for one Calendly organization.",
-    input(
-      {
+    action(
+      "get_user",
+      "Retrieve one Calendly user by user URI.",
+      input({ userUri }, ["userUri"]),
+      resourceOutput("user", "A Calendly user resource."),
+      ["users:read"],
+    ),
+    action(
+      "get_organization",
+      "Retrieve one Calendly organization by organization URI.",
+      input({ organizationUri }, ["organizationUri"]),
+      resourceOutput("organization", "A Calendly organization resource."),
+      ["organizations:write"],
+    ),
+    action(
+      "list_organization_memberships",
+      "List Calendly organization memberships for one organization or one user.",
+      input({
         organizationUri,
-        email: s.email("The email filter applied to organization invitations."),
-        status: s.stringEnum(["pending", "accepted", "declined"], {
-          description: "The invitation status filter accepted by Calendly.",
-        }),
+        userUri,
+        email: s.email("The email filter applied to organization memberships."),
+        count,
+        pageToken,
+      }),
+      listOutput("organizationMemberships", "The organization memberships returned by Calendly."),
+      ["organizations:write"],
+    ),
+    action(
+      "get_organization_membership",
+      "Retrieve one Calendly organization membership by membership URI.",
+      input({ organizationMembershipUri }, ["organizationMembershipUri"]),
+      resourceOutput("organizationMembership", "A Calendly organization membership resource."),
+      ["organizations:write"],
+    ),
+    action(
+      "delete_organization_membership",
+      "Delete one Calendly organization membership by membership URI.",
+      input({ organizationMembershipUri }, ["organizationMembershipUri"]),
+      booleanOutput("deleted", "The response wrapper for deleting one Calendly organization membership."),
+      ["organizations:write"],
+    ),
+    action(
+      "list_organization_invitations",
+      "List organization invitations for one Calendly organization.",
+      input(
+        {
+          organizationUri,
+          email: s.email("The email filter applied to organization invitations."),
+          status: s.stringEnum(["pending", "accepted", "declined"], {
+            description: "The invitation status filter accepted by Calendly.",
+          }),
+          count,
+          pageToken,
+          sort,
+        },
+        ["organizationUri"],
+      ),
+      listOutput("organizationInvitations", "The organization invitations returned by Calendly."),
+      ["organizations:write"],
+    ),
+    action(
+      "create_organization_invitation",
+      "Create one organization invitation for a Calendly organization.",
+      input(
+        {
+          organizationUri,
+          email: s.email("The email address to invite to the organization."),
+        },
+        ["organizationUri", "email"],
+      ),
+      resourceOutput("organizationInvitation", "A Calendly organization invitation resource."),
+      ["organizations:write"],
+    ),
+    action(
+      "revoke_organization_invitation",
+      "Revoke one organization invitation from a Calendly organization.",
+      input({ organizationUri, organizationInvitationUri }, ["organizationUri", "organizationInvitationUri"]),
+      booleanOutput("revoked", "The response wrapper for revoking one Calendly organization invitation."),
+      ["organizations:write"],
+    ),
+    action(
+      "list_event_types",
+      "List Calendly event types for exactly one user or one organization, including scheduling URLs.",
+      input({
+        userUri,
+        organizationUri,
         count,
         pageToken,
         sort,
-      },
-      ["organizationUri"],
+        active: s.boolean({ description: "Whether to filter event types by active state." }),
+        adminManaged: s.boolean({ description: "Whether to filter event types by admin-managed status." }),
+        userAvailabilityScheduleUri: availabilityScheduleUri,
+      }),
+      listOutput("eventTypes", "The event types returned by Calendly."),
+      ["event_types:read"],
     ),
-    listOutput("organizationInvitations", "The organization invitations returned by Calendly."),
-    ["organizations:write"],
-  ),
-  action(
-    "create_organization_invitation",
-    "Create one organization invitation for a Calendly organization.",
-    input(
-      {
+    action(
+      "get_event_type",
+      "Retrieve one Calendly event type by event type URI.",
+      input({ eventTypeUri }, ["eventTypeUri"]),
+      resourceOutput("eventType", "A Calendly event type resource."),
+      ["event_types:read"],
+    ),
+    action(
+      "create_single_use_scheduling_link",
+      "Create one single-use scheduling link from an existing Calendly event type without customization.",
+      input({ eventTypeUri }, ["eventTypeUri"]),
+      resourceOutput("schedulingLink", "A Calendly single-use scheduling link resource."),
+      ["scheduling_links:write"],
+    ),
+    action(
+      "create_share",
+      "Create one customized single-use share from an existing Calendly event type.",
+      input(
+        {
+          eventTypeUri,
+          name: s.nonEmptyString("The custom display name to use for the share."),
+          duration: s.integer({
+            minimum: 1,
+            maximum: 720,
+            description: "The custom meeting duration to use for the share.",
+          }),
+          durationOptions: s.array(
+            s.integer({ minimum: 1, maximum: 720, description: "One allowed duration option to expose on the share." }),
+            {
+              maxItems: 4,
+              description: "The allowed duration options to expose on the share.",
+            },
+          ),
+          periodType: s.stringEnum(["available_moving", "moving", "fixed", "unlimited"], {
+            description: "The booking window type to apply to the share.",
+          }),
+          startDate: s.date("The first bookable date."),
+          endDate: s.date("The last bookable date."),
+          maxBookingTime: s.integer({ minimum: 1, description: "The maximum booking window to apply to the share." }),
+          hideLocation: s.boolean({ description: "Whether the share hides the location until booking time." }),
+          locationConfigurations: s.array(shareLocationConfiguration, {
+            description: "The location configurations to apply to the share.",
+          }),
+          availabilityRule: availabilityRuleInput,
+        },
+        ["eventTypeUri"],
+      ),
+      resourceOutput("share", "The share resource returned by Calendly."),
+      ["shares:write"],
+    ),
+    action(
+      "create_event_invitee",
+      "Create one Calendly invitee booking for a confirmed available start time.",
+      input(
+        {
+          eventTypeUri,
+          startTime: isoDateTime("The scheduled start time to book in ISO 8601 format."),
+          invitee: inviteeInput,
+          eventGuests: s.stringArray("The guest email addresses to add to the booking.", {
+            itemDescription: "One guest email address to add to the booking.",
+          }),
+          questionsAndAnswers: s.array(questionAndAnswerInput, {
+            description: "The answers to custom questions to submit with the booking.",
+          }),
+          tracking,
+          location: locationInput,
+        },
+        ["eventTypeUri", "startTime", "invitee"],
+      ),
+      resourceOutput("invitee", "A Calendly invitee resource."),
+      ["scheduled_events:write"],
+    ),
+    action(
+      "list_event_type_available_times",
+      "List available time slots for one Calendly event type within a 7-day window.",
+      input(
+        {
+          eventTypeUri,
+          startTime: isoDateTime("The inclusive start of the availability window in ISO 8601 format."),
+          endTime: isoDateTime("The exclusive end of the availability window in ISO 8601 format."),
+        },
+        ["eventTypeUri", "startTime", "endTime"],
+      ),
+      s.actionOutput(
+        {
+          availableTimes: rawArray(
+            "The available time slots returned by Calendly.",
+            "One Calendly available time slot.",
+          ),
+        },
+        "The response wrapper for event-type available times.",
+      ),
+      ["availability:write"],
+    ),
+    action(
+      "list_event_type_availability_schedules",
+      "List the official Calendly availability schedules attached to one event type.",
+      input({ eventTypeUri }, ["eventTypeUri"]),
+      s.actionOutput(
+        {
+          collection: rawArray(
+            "The event type availability schedules returned by Calendly.",
+            "One event type availability schedule returned by Calendly.",
+          ),
+          pagination: officialPagination,
+        },
+        "The official response wrapper for event type availability schedules.",
+      ),
+      ["availability:write"],
+    ),
+    action(
+      "update_event_type_availability_schedule",
+      "Update the official Calendly availability schedule for one event type.",
+      input(
+        {
+          eventTypeUri,
+          availability_rule: availabilityRuleInput,
+          availability_setting: s.stringEnum(["host"], {
+            description: "The event type availability setting to apply to the event type.",
+          }),
+        },
+        ["eventTypeUri", "availability_rule"],
+      ),
+      resourceOutput("resource", "One event type availability schedule returned by Calendly."),
+      ["availability:write"],
+    ),
+    action(
+      "list_scheduled_events",
+      "List Calendly scheduled events for exactly one user or one organization.",
+      input({
+        userUri,
         organizationUri,
-        email: s.email("The email address to invite to the organization."),
-      },
-      ["organizationUri", "email"],
-    ),
-    resourceOutput("organizationInvitation", "A Calendly organization invitation resource."),
-    ["organizations:write"],
-  ),
-  action(
-    "revoke_organization_invitation",
-    "Revoke one organization invitation from a Calendly organization.",
-    input({ organizationUri, organizationInvitationUri }, ["organizationUri", "organizationInvitationUri"]),
-    booleanOutput("revoked", "The response wrapper for revoking one Calendly organization invitation."),
-    ["organizations:write"],
-  ),
-  action(
-    "list_event_types",
-    "List Calendly event types for exactly one user or one organization, including scheduling URLs.",
-    input({
-      userUri,
-      organizationUri,
-      count,
-      pageToken,
-      sort,
-      active: s.boolean({ description: "Whether to filter event types by active state." }),
-      adminManaged: s.boolean({ description: "Whether to filter event types by admin-managed status." }),
-      userAvailabilityScheduleUri: availabilityScheduleUri,
-    }),
-    listOutput("eventTypes", "The event types returned by Calendly."),
-    ["event_types:read"],
-  ),
-  action(
-    "get_event_type",
-    "Retrieve one Calendly event type by event type URI.",
-    input({ eventTypeUri }, ["eventTypeUri"]),
-    resourceOutput("eventType", "A Calendly event type resource."),
-    ["event_types:read"],
-  ),
-  action(
-    "create_single_use_scheduling_link",
-    "Create one single-use scheduling link from an existing Calendly event type without customization.",
-    input({ eventTypeUri }, ["eventTypeUri"]),
-    resourceOutput("schedulingLink", "A Calendly single-use scheduling link resource."),
-    ["scheduling_links:write"],
-  ),
-  action(
-    "create_share",
-    "Create one customized single-use share from an existing Calendly event type.",
-    input(
-      {
-        eventTypeUri,
-        name: s.nonEmptyString("The custom display name to use for the share."),
-        duration: s.integer({
-          minimum: 1,
-          maximum: 720,
-          description: "The custom meeting duration to use for the share.",
-        }),
-        durationOptions: s.array(
-          s.integer({ minimum: 1, maximum: 720, description: "One allowed duration option to expose on the share." }),
-          {
-            maxItems: 4,
-            description: "The allowed duration options to expose on the share.",
-          },
-        ),
-        periodType: s.stringEnum(["available_moving", "moving", "fixed", "unlimited"], {
-          description: "The booking window type to apply to the share.",
-        }),
-        startDate: s.date("The first bookable date."),
-        endDate: s.date("The last bookable date."),
-        maxBookingTime: s.integer({ minimum: 1, description: "The maximum booking window to apply to the share." }),
-        hideLocation: s.boolean({ description: "Whether the share hides the location until booking time." }),
-        locationConfigurations: s.array(shareLocationConfiguration, {
-          description: "The location configurations to apply to the share.",
-        }),
-        availabilityRule: availabilityRuleInput,
-      },
-      ["eventTypeUri"],
-    ),
-    resourceOutput("share", "The share resource returned by Calendly."),
-    ["shares:write"],
-  ),
-  action(
-    "create_event_invitee",
-    "Create one Calendly invitee booking for a confirmed available start time.",
-    input(
-      {
-        eventTypeUri,
-        startTime: isoDateTime("The scheduled start time to book in ISO 8601 format."),
-        invitee: inviteeInput,
-        eventGuests: s.stringArray("The guest email addresses to add to the booking.", {
-          itemDescription: "One guest email address to add to the booking.",
-        }),
-        questionsAndAnswers: s.array(questionAndAnswerInput, {
-          description: "The answers to custom questions to submit with the booking.",
-        }),
-        tracking,
-        location: locationInput,
-      },
-      ["eventTypeUri", "startTime", "invitee"],
-    ),
-    resourceOutput("invitee", "A Calendly invitee resource."),
-    ["scheduled_events:write"],
-  ),
-  action(
-    "list_event_type_available_times",
-    "List available time slots for one Calendly event type within a 7-day window.",
-    input(
-      {
-        eventTypeUri,
-        startTime: isoDateTime("The inclusive start of the availability window in ISO 8601 format."),
-        endTime: isoDateTime("The exclusive end of the availability window in ISO 8601 format."),
-      },
-      ["eventTypeUri", "startTime", "endTime"],
-    ),
-    s.actionOutput(
-      {
-        availableTimes: rawArray("The available time slots returned by Calendly.", "One Calendly available time slot."),
-      },
-      "The response wrapper for event-type available times.",
-    ),
-    ["availability:write"],
-  ),
-  action(
-    "list_event_type_availability_schedules",
-    "List the official Calendly availability schedules attached to one event type.",
-    input({ eventTypeUri }, ["eventTypeUri"]),
-    s.actionOutput(
-      {
-        collection: rawArray(
-          "The event type availability schedules returned by Calendly.",
-          "One event type availability schedule returned by Calendly.",
-        ),
-        pagination: officialPagination,
-      },
-      "The official response wrapper for event type availability schedules.",
-    ),
-    ["availability:write"],
-  ),
-  action(
-    "update_event_type_availability_schedule",
-    "Update the official Calendly availability schedule for one event type.",
-    input(
-      {
-        eventTypeUri,
-        availability_rule: availabilityRuleInput,
-        availability_setting: s.stringEnum(["host"], {
-          description: "The event type availability setting to apply to the event type.",
-        }),
-      },
-      ["eventTypeUri", "availability_rule"],
-    ),
-    resourceOutput("resource", "One event type availability schedule returned by Calendly."),
-    ["availability:write"],
-  ),
-  action(
-    "list_scheduled_events",
-    "List Calendly scheduled events for exactly one user or one organization.",
-    input({
-      userUri,
-      organizationUri,
-      inviteeEmail: s.email("The invitee email used to filter scheduled events."),
-      status: s.stringEnum(["active", "canceled"], {
-        description: "The scheduled-event status filter accepted by Calendly.",
-      }),
-      minStartTime: isoDateTime("The minimum scheduled start time filter in ISO 8601 format."),
-      maxStartTime: isoDateTime("The maximum scheduled start time filter in ISO 8601 format."),
-      count,
-      pageToken,
-      sort: s.stringEnum(["start_time:asc", "start_time:desc"], {
-        description: "The sort expression accepted by Calendly for scheduled events.",
-      }),
-    }),
-    listOutput("scheduledEvents", "The scheduled events returned by Calendly."),
-    ["scheduled_events:write"],
-  ),
-  action(
-    "get_scheduled_event",
-    "Retrieve one Calendly scheduled event by scheduled-event URI.",
-    input({ scheduledEventUri }, ["scheduledEventUri"]),
-    resourceOutput("scheduledEvent", "A Calendly scheduled event resource."),
-    ["scheduled_events:write"],
-  ),
-  action(
-    "cancel_scheduled_event",
-    "Cancel one Calendly scheduled event by scheduled-event URI.",
-    input(
-      {
-        scheduledEventUri,
-        reason: s.nonEmptyString("The human-readable reason to cancel the scheduled event."),
-      },
-      ["scheduledEventUri", "reason"],
-    ),
-    booleanOutput("canceled", "The response wrapper for a Calendly scheduled-event cancellation."),
-    ["scheduled_events:write"],
-  ),
-  action(
-    "list_event_invitees",
-    "List invitees for one Calendly scheduled event.",
-    input(
-      {
-        scheduledEventUri,
-        email: s.email("The invitee email filter."),
+        inviteeEmail: s.email("The invitee email used to filter scheduled events."),
         status: s.stringEnum(["active", "canceled"], {
-          description: "The invitee status filter accepted by Calendly.",
+          description: "The scheduled-event status filter accepted by Calendly.",
         }),
+        minStartTime: isoDateTime("The minimum scheduled start time filter in ISO 8601 format."),
+        maxStartTime: isoDateTime("The maximum scheduled start time filter in ISO 8601 format."),
         count,
         pageToken,
-        sort: s.stringEnum(["created_at:asc", "created_at:desc"], {
-          description: "The sort expression accepted by Calendly for invitees.",
+        sort: s.stringEnum(["start_time:asc", "start_time:desc"], {
+          description: "The sort expression accepted by Calendly for scheduled events.",
         }),
-      },
-      ["scheduledEventUri"],
+      }),
+      listOutput("scheduledEvents", "The scheduled events returned by Calendly."),
+      ["scheduled_events:write"],
     ),
-    listOutput("invitees", "The invitees returned by Calendly."),
-    ["scheduled_events:write"],
-  ),
-  action(
-    "get_event_invitee",
-    "Retrieve one Calendly invitee by invitee URI.",
-    input({ scheduledEventUri, inviteeUri }, ["scheduledEventUri", "inviteeUri"]),
-    resourceOutput("invitee", "A Calendly invitee resource."),
-    ["scheduled_events:write"],
-  ),
-  action(
-    "create_invitee_no_show",
-    "Mark one Calendly invitee as a no-show by invitee URI.",
-    input({ inviteeUri }, ["inviteeUri"]),
-    resourceOutput("inviteeNoShow", "A Calendly invitee no-show resource."),
-    ["scheduled_events:write"],
-  ),
-  action(
-    "get_invitee_no_show",
-    "Retrieve one Calendly invitee no-show by no-show URI.",
-    input({ inviteeNoShowUri }, ["inviteeNoShowUri"]),
-    resourceOutput("inviteeNoShow", "A Calendly invitee no-show resource."),
-    ["scheduled_events:write"],
-  ),
-  action(
-    "delete_invitee_no_show",
-    "Delete one Calendly invitee no-show by no-show URI.",
-    input({ inviteeNoShowUri }, ["inviteeNoShowUri"]),
-    booleanOutput("deleted", "The response wrapper for deleting one Calendly invitee no-show."),
-    ["scheduled_events:write"],
-  ),
-  action(
-    "list_routing_forms",
-    "List Calendly routing forms for one organization.",
-    input(
-      {
-        organizationUri,
-        count,
-        pageToken,
-        sort: s.stringEnum(["created_at:asc", "created_at:desc"], {
-          description: "The sort expression accepted by Calendly for routing forms.",
-        }),
-      },
-      ["organizationUri"],
+    action(
+      "get_scheduled_event",
+      "Retrieve one Calendly scheduled event by scheduled-event URI.",
+      input({ scheduledEventUri }, ["scheduledEventUri"]),
+      resourceOutput("scheduledEvent", "A Calendly scheduled event resource."),
+      ["scheduled_events:write"],
     ),
-    listOutput("routingForms", "The routing forms returned by Calendly."),
-    ["routing_forms:read"],
-  ),
-  action(
-    "get_routing_form",
-    "Retrieve one Calendly routing form by routing-form URI.",
-    input({ routingFormUri }, ["routingFormUri"]),
-    resourceOutput("routingForm", "A Calendly routing form resource."),
-    ["routing_forms:read"],
-  ),
-  action(
-    "list_routing_form_submissions",
-    "List Calendly routing form submissions for one routing form.",
-    input(
-      {
-        routingFormUri,
-        count,
-        pageToken,
-        sort: s.stringEnum(["created_at:asc", "created_at:desc"], {
-          description: "The sort expression accepted by Calendly for routing form submissions.",
-        }),
-      },
-      ["routingFormUri"],
+    action(
+      "cancel_scheduled_event",
+      "Cancel one Calendly scheduled event by scheduled-event URI.",
+      input(
+        {
+          scheduledEventUri,
+          reason: s.nonEmptyString("The human-readable reason to cancel the scheduled event."),
+        },
+        ["scheduledEventUri", "reason"],
+      ),
+      booleanOutput("canceled", "The response wrapper for a Calendly scheduled-event cancellation."),
+      ["scheduled_events:write"],
     ),
-    listOutput("routingFormSubmissions", "The routing form submissions returned by Calendly."),
-    ["routing_forms:read"],
-  ),
-  action(
-    "get_routing_form_submission",
-    "Retrieve one Calendly routing form submission by submission URI.",
-    input({ routingFormSubmissionUri }, ["routingFormSubmissionUri"]),
-    resourceOutput("routingFormSubmission", "A Calendly routing form submission resource."),
-    ["routing_forms:read"],
-  ),
-  action(
-    "list_user_meeting_locations",
-    "List the configured meeting locations for one Calendly user.",
-    input({ userUri }, ["userUri"]),
-    s.actionOutput(
-      {
-        meetingLocations: rawArray(
-          "The configured meeting locations returned by Calendly.",
-          "One meeting location returned by Calendly.",
-        ),
-      },
-      "The response wrapper for Calendly user meeting locations.",
+    action(
+      "list_event_invitees",
+      "List invitees for one Calendly scheduled event.",
+      input(
+        {
+          scheduledEventUri,
+          email: s.email("The invitee email filter."),
+          status: s.stringEnum(["active", "canceled"], {
+            description: "The invitee status filter accepted by Calendly.",
+          }),
+          count,
+          pageToken,
+          sort: s.stringEnum(["created_at:asc", "created_at:desc"], {
+            description: "The sort expression accepted by Calendly for invitees.",
+          }),
+        },
+        ["scheduledEventUri"],
+      ),
+      listOutput("invitees", "The invitees returned by Calendly."),
+      ["scheduled_events:write"],
     ),
-    ["locations:read"],
-  ),
-  action(
-    "create_webhook_subscription",
-    "Create one Calendly webhook subscription for an organization or one user.",
-    input(
-      {
-        url: s.url("The callback URL that should receive Calendly webhook deliveries."),
-        scope: s.stringEnum(["organization", "user"], { description: "The webhook subscription scope to create." }),
-        organizationUri,
-        userUri,
-        events: s.array(webhookEvent, {
-          minItems: 1,
-          description: "The webhook event values to subscribe to.",
-        }),
-      },
-      ["url", "scope", "organizationUri", "events"],
+    action(
+      "get_event_invitee",
+      "Retrieve one Calendly invitee by invitee URI.",
+      input({ scheduledEventUri, inviteeUri }, ["scheduledEventUri", "inviteeUri"]),
+      resourceOutput("invitee", "A Calendly invitee resource."),
+      ["scheduled_events:write"],
     ),
-    resourceOutput("webhookSubscription", "One Calendly webhook subscription returned by the API."),
-    ["webhooks:write"],
-  ),
-  action(
-    "list_webhook_subscriptions",
-    "List Calendly webhook subscriptions for an organization or one user.",
-    input(
-      {
-        scope: s.stringEnum(["organization", "user"], { description: "The webhook subscription scope to list." }),
-        organizationUri,
-        userUri,
-        count,
-        pageToken,
-        sort: s.stringEnum(["created_at:asc", "created_at:desc"], {
-          description: "The sort expression accepted by Calendly for webhook subscriptions.",
-        }),
-      },
-      ["scope", "organizationUri"],
+    action(
+      "create_invitee_no_show",
+      "Mark one Calendly invitee as a no-show by invitee URI.",
+      input({ inviteeUri }, ["inviteeUri"]),
+      resourceOutput("inviteeNoShow", "A Calendly invitee no-show resource."),
+      ["scheduled_events:write"],
     ),
-    listOutput("webhookSubscriptions", "The webhook subscriptions returned by Calendly."),
-    ["webhooks:write"],
-  ),
-  action(
-    "get_webhook_subscription",
-    "Retrieve one Calendly webhook subscription by URI.",
-    input({ webhookSubscriptionUri }, ["webhookSubscriptionUri"]),
-    resourceOutput("webhookSubscription", "One Calendly webhook subscription returned by the API."),
-    ["webhooks:write"],
-  ),
-  action(
-    "delete_webhook_subscription",
-    "Delete one Calendly webhook subscription by URI.",
-    input({ webhookSubscriptionUri }, ["webhookSubscriptionUri"]),
-    booleanOutput("deleted", "The response wrapper for deleting one Calendly webhook subscription."),
-    ["webhooks:write"],
-  ),
-  action(
-    "list_user_availability_schedules",
-    "List user availability schedules for one Calendly user.",
-    input({ userUri }, ["userUri"]),
-    listOutput("availabilitySchedules", "The availability schedules returned by Calendly."),
-    ["availability:write"],
-  ),
-  action(
-    "get_user_availability_schedule",
-    "Retrieve one Calendly user availability schedule by schedule URI.",
-    input({ availabilityScheduleUri }, ["availabilityScheduleUri"]),
-    resourceOutput("availabilitySchedule", "A Calendly user availability schedule resource."),
-    ["availability:write"],
-  ),
-  action(
-    "list_user_busy_times",
-    "List busy time slots for one Calendly user within a 7-day window.",
-    input(
-      {
-        userUri,
-        startTime: isoDateTime("The inclusive start of the busy-times window in ISO 8601 format."),
-        endTime: isoDateTime("The exclusive end of the busy-times window in ISO 8601 format."),
-      },
-      ["userUri", "startTime", "endTime"],
+    action(
+      "get_invitee_no_show",
+      "Retrieve one Calendly invitee no-show by no-show URI.",
+      input({ inviteeNoShowUri }, ["inviteeNoShowUri"]),
+      resourceOutput("inviteeNoShow", "A Calendly invitee no-show resource."),
+      ["scheduled_events:write"],
     ),
-    s.actionOutput(
-      {
-        busyTimes: rawArray("The busy-time slots returned by Calendly.", "One Calendly busy-time slot."),
-        pagination,
-      },
-      "The response wrapper for Calendly busy-time results.",
+    action(
+      "delete_invitee_no_show",
+      "Delete one Calendly invitee no-show by no-show URI.",
+      input({ inviteeNoShowUri }, ["inviteeNoShowUri"]),
+      booleanOutput("deleted", "The response wrapper for deleting one Calendly invitee no-show."),
+      ["scheduled_events:write"],
     ),
-    ["availability:write"],
-  ),
-];
+    action(
+      "list_routing_forms",
+      "List Calendly routing forms for one organization.",
+      input(
+        {
+          organizationUri,
+          count,
+          pageToken,
+          sort: s.stringEnum(["created_at:asc", "created_at:desc"], {
+            description: "The sort expression accepted by Calendly for routing forms.",
+          }),
+        },
+        ["organizationUri"],
+      ),
+      listOutput("routingForms", "The routing forms returned by Calendly."),
+      ["routing_forms:read"],
+    ),
+    action(
+      "get_routing_form",
+      "Retrieve one Calendly routing form by routing-form URI.",
+      input({ routingFormUri }, ["routingFormUri"]),
+      resourceOutput("routingForm", "A Calendly routing form resource."),
+      ["routing_forms:read"],
+    ),
+    action(
+      "list_routing_form_submissions",
+      "List Calendly routing form submissions for one routing form.",
+      input(
+        {
+          routingFormUri,
+          count,
+          pageToken,
+          sort: s.stringEnum(["created_at:asc", "created_at:desc"], {
+            description: "The sort expression accepted by Calendly for routing form submissions.",
+          }),
+        },
+        ["routingFormUri"],
+      ),
+      listOutput("routingFormSubmissions", "The routing form submissions returned by Calendly."),
+      ["routing_forms:read"],
+    ),
+    action(
+      "get_routing_form_submission",
+      "Retrieve one Calendly routing form submission by submission URI.",
+      input({ routingFormSubmissionUri }, ["routingFormSubmissionUri"]),
+      resourceOutput("routingFormSubmission", "A Calendly routing form submission resource."),
+      ["routing_forms:read"],
+    ),
+    action(
+      "list_user_meeting_locations",
+      "List the configured meeting locations for one Calendly user.",
+      input({ userUri }, ["userUri"]),
+      s.actionOutput(
+        {
+          meetingLocations: rawArray(
+            "The configured meeting locations returned by Calendly.",
+            "One meeting location returned by Calendly.",
+          ),
+        },
+        "The response wrapper for Calendly user meeting locations.",
+      ),
+      ["locations:read"],
+    ),
+    action(
+      "create_webhook_subscription",
+      "Create one Calendly webhook subscription for an organization or one user.",
+      input(
+        {
+          url: s.url("The callback URL that should receive Calendly webhook deliveries."),
+          scope: s.stringEnum(["organization", "user"], { description: "The webhook subscription scope to create." }),
+          organizationUri,
+          userUri,
+          events: s.array(webhookEvent, {
+            minItems: 1,
+            description: "The webhook event values to subscribe to.",
+          }),
+        },
+        ["url", "scope", "organizationUri", "events"],
+      ),
+      resourceOutput("webhookSubscription", "One Calendly webhook subscription returned by the API."),
+      ["webhooks:write"],
+    ),
+    action(
+      "list_webhook_subscriptions",
+      "List Calendly webhook subscriptions for an organization or one user.",
+      input(
+        {
+          scope: s.stringEnum(["organization", "user"], { description: "The webhook subscription scope to list." }),
+          organizationUri,
+          userUri,
+          count,
+          pageToken,
+          sort: s.stringEnum(["created_at:asc", "created_at:desc"], {
+            description: "The sort expression accepted by Calendly for webhook subscriptions.",
+          }),
+        },
+        ["scope", "organizationUri"],
+      ),
+      listOutput("webhookSubscriptions", "The webhook subscriptions returned by Calendly."),
+      ["webhooks:write"],
+    ),
+    action(
+      "get_webhook_subscription",
+      "Retrieve one Calendly webhook subscription by URI.",
+      input({ webhookSubscriptionUri }, ["webhookSubscriptionUri"]),
+      resourceOutput("webhookSubscription", "One Calendly webhook subscription returned by the API."),
+      ["webhooks:write"],
+    ),
+    action(
+      "delete_webhook_subscription",
+      "Delete one Calendly webhook subscription by URI.",
+      input({ webhookSubscriptionUri }, ["webhookSubscriptionUri"]),
+      booleanOutput("deleted", "The response wrapper for deleting one Calendly webhook subscription."),
+      ["webhooks:write"],
+    ),
+    action(
+      "list_user_availability_schedules",
+      "List user availability schedules for one Calendly user.",
+      input({ userUri }, ["userUri"]),
+      listOutput("availabilitySchedules", "The availability schedules returned by Calendly."),
+      ["availability:write"],
+    ),
+    action(
+      "get_user_availability_schedule",
+      "Retrieve one Calendly user availability schedule by schedule URI.",
+      input({ availabilityScheduleUri }, ["availabilityScheduleUri"]),
+      resourceOutput("availabilitySchedule", "A Calendly user availability schedule resource."),
+      ["availability:write"],
+    ),
+    action(
+      "list_user_busy_times",
+      "List busy time slots for one Calendly user within a 7-day window.",
+      input(
+        {
+          userUri,
+          startTime: isoDateTime("The inclusive start of the busy-times window in ISO 8601 format."),
+          endTime: isoDateTime("The exclusive end of the busy-times window in ISO 8601 format."),
+        },
+        ["userUri", "startTime", "endTime"],
+      ),
+      s.actionOutput(
+        {
+          busyTimes: rawArray("The busy-time slots returned by Calendly.", "One Calendly busy-time slot."),
+          pagination,
+        },
+        "The response wrapper for Calendly busy-time results.",
+      ),
+      ["availability:write"],
+    ),
+  ],
+  { organizationUri: ["organizationUri"] },
+);
 
 function action(
   name: CalendlyActionName,
