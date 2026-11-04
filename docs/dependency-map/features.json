@@ -907,6 +907,9 @@
       "touches": [
         "allternit-ai/src/views/mini-apps",
         "allternit-ai/src/components/mcp",
+        "allternit-ai/src/components/ai-elements/McpAppFrame.tsx",
+        "allternit-ai/src/components/ai-elements/VendorAppUI.tsx",
+        "allternit-ai/src/lib/ai/mcp",
         "allternit/cmd/allternit-api/src/mcp_*",
         "allternit/cmd/allternit-api/src/events_*",
         "allternit/sdk/apps-server",
@@ -932,6 +935,10 @@
         {
           "on": "2026-10-08",
           "note": "Event automation extension in review: independent rules snapshot task intent; runtime queues and approvals drive real bot sessions; delivery retry and task execution have separate recovery semantics."
+        },
+        {
+          "on": "2026-11-04",
+          "note": "Vendor MCP Apps UI: show a vendor's own View wherever its server ships one; expand to full screen (desktop) or sheet (phone/PWA); ui/message and model context reach the chat; links and downloads ask first; VendorAppUI for app pages."
         }
       ],
       "evidence": [

@@ -1,24 +1,43 @@
 ---
 title: MCP Apps integration status
-description: Distinguish existing MCP tools from the merged interactive app host and pending developer documentation.
+description: What works today when a connected app ships its own MCP Apps UI, on Desktop, ai.allternit.com and the m.allternit.com app.
 ---
 
-MCP tools are already documented in the [MCP guide](/tools/mcp). The expanded **MCP Apps** program adds interactive tool-result views, a sandboxed host, connector proxying, a directory review flow, and Allternit-specific app extensions. The package name is **Allternit Plugin**; the user-facing interactive view is an **MCP App**.
+MCP tools are documented in the [MCP guide](/tools/mcp). **MCP Apps** is the open standard that lets an app's MCP server ship its own interface (a *View*) with a tool. When a tool you call in chat has one, Allternit shows the app's own UI in the conversation instead of plain text. Asana, Figma, Slack, Canva, Box, monday.com, Hex, Amplitude, Clay and Excalidraw are among the apps whose servers ship Views. To build one, see [Build: MCP App UI](/plugins/develop/mcp-app-ui).
 
-## September 30 status
+## What you see
 
-The backend and workspace integrations merged on September 30, 2026. Their public developer-docs PR remains open. Source availability and installation readiness are separate:
+- **In chat.** When a connected app's tool returns and the tool has a View, the View appears as a card under the reply, in Allternit's light or dark theme.
+- **Expand.** The expand button in the card's header opens the app full screen. On a phone (the ai.allternit.com phone layout and m.allternit.com) it opens as a full-height sheet from the bottom of the screen. **Back to chat**, the close button, Escape or a tap outside returns it to the card without reloading it.
+- **Changes ask first.** If the app's UI tries to run a tool that changes data, Allternit shows a sheet naming the app, the tool and what it sends, with **Deny** and **Allow once**. Which tools ask follows the app's permission mode in MCP Apps; by default, every tool not marked read-only asks.
+- **Links and files ask first.** A link to a site the app did not declare as its own, or a file the app wants to save to your device, is shown to you before it opens or saves.
+- **The app can talk to the chat.** An app can send a message to the chat as you (for example "Show me the overdue tasks"), and it can tell the model what you are looking at, such as which row you selected. That context reaches the model with your next message and is not shown in the transcript.
 
-| Repository / PR | Status and contents |
+## Status (November 4, 2026)
+
+| Part | Status |
 | --- | --- |
-| [allternit-platform #1015](https://github.com/Allternit/allternit-platform/pull/1015) | Merged — backend host support, per-user connector proxy, directory backend, Agents MCP server, commerce, and operations docs. |
-| [allternit-ai #298](https://github.com/Allternit/allternit-ai/pull/298) | Merged — workspace app host, directory UI, vendor packs, and extension wiring. |
-| [allternit-platform #1016](https://github.com/Allternit/allternit-platform/pull/1016) | Open — public Plugins & MCP Apps developer documentation, intended to follow the backend and workspace integrations. |
+| Views from your connectors in chat (server: `allternit-api` `mcp_apps.rs`, sandbox proxy on its own origin) | Live |
+| Theme passed to the View (Allternit's light and dark tokens as `hostContext.styles`) | Live |
+| Tool calls from a View through your own connector credentials, app-only tools hidden from the model | Live |
+| Expand to full screen (desktop) and sheet (phone and PWA) | In review: allternit-ai `feat/vendor-mcp-apps-ui` |
+| `ui/message` and `ui/update-model-context` reaching the chat and the model | In review: same branch. Before it, both were accepted and dropped. |
+| Ask before links to undeclared sites, and `ui/download-file` | In review: same branch |
+| A vendor's View on the app's own page in MCP Apps (`VendorAppUI`) | Component ready in the same branch; the app page wiring is pending |
+| Picture-in-picture display mode | Not supported |
 
-Using the merged host requires deployment or Desktop packaging, configuration, and a live end-to-end app check. The separate developer-docs package still requires merge and publication. The presence of a running sandbox does not establish that the full product flow is available.
+Checked against Excalidraw's public MCP server (`https://mcp.excalidraw.com/mcp`, no sign-in): its diagram View renders inline and full screen, its export button asks before running the app-only `export_to_excalidraw` tool, and its menu links ask before opening. Apps that need sign-in (Asana, Figma and the rest) use the same path once connected; they have not been checked with a live account yet.
 
-## Developer documentation prepared with the program
+## For developers: showing a vendor's View outside chat
 
-The pending documentation includes building an MCP App, submitting it to the directory, using `window.allternit`, and selling through an app. It accompanies the integration so its examples and permission behavior match the host that runs them.
+An app's page can render a vendor's own View for a tool with the component and helper in `allternit-ai`:
 
-Until the expanded developer documentation is published, use the existing [MCP tools](/tools/mcp) and [plugin adapters](/tools/plugin-adapters) references for current integrations. Directory acceptance and commerce availability should be checked against the released host rather than inferred from this roadmap.
+```tsx
+import { VendorAppUI } from "@/components/ai-elements/VendorAppUI";
+import { vendorUiTools } from "@/lib/ai/mcp/vendor-ui-tools";
+
+const tools = await vendorUiTools(connectorId); // tools with a ui:// View, read-only first
+<VendorAppUI connectorId={connectorId} connectorName="Asana" tool={tools[0].name} args={{}} />
+```
+
+`vendorUiTools` lists the connector's tools that declare `_meta.ui.resourceUri` and that a View may call. Each entry says whether the tool is read-only, destructive, visible to the model, and whether it needs arguments. `VendorAppUI` calls the tool through the host bridge with the user's credentials, asks first in the same sheet when the tool is not read-only, then renders the View in the same frame chat uses. Pass `sessionId` to connect the View's messages and context to a chat; without it, the View is page-only. Pass `fallback` to render something else when the tool has no View.
