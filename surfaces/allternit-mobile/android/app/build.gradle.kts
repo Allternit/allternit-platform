@@ -8,11 +8,12 @@ android {
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.allternit.phonelink"
+        // Since 0.4.0. The Kotlin namespace above keeps the old name so no classes move.
+        applicationId = "com.allternit.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 8
-        versionName = "0.3.4"
+        versionCode = 10
+        versionName = "0.5.0"
     }
 
     buildTypes {
@@ -56,6 +57,9 @@ dependencies {
     //   infrastructure/mesh/tsnet-ios/build-android.sh   (output: Mesh.aar,
     //   copied to app/libs/, gitignored; ARM only (arm64-v8a, armeabi-v7a), stripped, ~15 MB)
     implementation(files("libs/Mesh.aar"))
+    // The Allternit app as a Trusted Web Activity around m.allternit.com
+    // (LauncherActivity, Custom Tab fallback). Apache-2.0, Google.
+    implementation("com.google.androidbrowserhelper:androidbrowserhelper:2.5.0")
     testImplementation("junit:junit:4.13.2")
     // Real org.json for JVM tests (android.jar only ships stubs). Public domain
     // since 20231013.

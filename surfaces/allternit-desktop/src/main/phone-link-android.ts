@@ -1,6 +1,6 @@
 /**
  * Phone Link, Android: the cable setup that installs the Phone Link app
- * (com.allternit.phonelink) and leaves it reachable over Wi-Fi.
+ * (com.allternit.app) and leaves it reachable over Wi-Fi.
  *
  *   usb_debugging → installing → pairing → ready_wifi
  *
@@ -40,19 +40,38 @@ import {
 /** Catalog id → Android packages (phone-app-catalog.json). */
 export const ANDROID_VENDOR_PACKAGES = ANDROID_APP_PACKAGES;
 
-export const PHONE_LINK_PACKAGE = 'com.allternit.phonelink';
-const ACCESSIBILITY_SERVICE = `${PHONE_LINK_PACKAGE}/.PhoneLinkAccessibilityService`;
-/** How `dumpsys accessibility` spells the service once enabled (full class name, not the short form). */
-const ACCESSIBILITY_SERVICE_FULL = `${PHONE_LINK_PACKAGE}/${PHONE_LINK_PACKAGE}.PhoneLinkAccessibilityService`;
+/** The app's Android application ID from Phone Link 0.4.0 on. */
+export const PHONE_LINK_PACKAGE = 'com.allternit.app';
+/**
+ * The app's ID before 0.4.0. Android treats a new application ID as a
+ * different app, so setup removes this one before it installs the new one.
+ */
+export const LEGACY_PHONE_LINK_PACKAGE = 'com.allternit.phonelink';
+/** The Kotlin package the app's classes live in. It did not change with the ID. */
+const PHONE_LINK_CLASSES = 'com.allternit.phonelink';
+
+/**
+ * Which ID the APK Desktop is about to install carries: the manifest says so
+ * from 0.4.0 on; a pinned manifest without it is an old com.allternit.phonelink
+ * build; a dev APK (no manifest) is built from this source.
+ */
+export function phoneLinkAppId(manifest: AndroidHelper['manifest']): string {
+  if (!manifest) return PHONE_LINK_PACKAGE;
+  return manifest.packageName ?? LEGACY_PHONE_LINK_PACKAGE;
+}
+
+/** `appId/full.Class`: the short `appId/.Class` form would look for the class under the new ID. */
+const component = (appId: string, cls: string) => `${appId}/${PHONE_LINK_CLASSES}.${cls}`;
 
 /**
  * Enabled is not enough: the system must also have bound the service, which
  * `dumpsys accessibility` lists by label under "Bound services".
  */
-export function accessibilityBound(dumpsys: string): boolean {
-  return dumpsys.includes(ACCESSIBILITY_SERVICE_FULL) && /Bound services:\{[^\n]*label=Allternit Phone Link/.test(dumpsys);
+export function accessibilityBound(dumpsys: string, appId = PHONE_LINK_PACKAGE): boolean {
+  return dumpsys.includes(component(appId, 'PhoneLinkAccessibilityService')) && /Bound services:\{[^\n]*label=Allternit Phone Link/.test(dumpsys);
 }
-const PROVISION_ACTION = `${PHONE_LINK_PACKAGE}.PROVISION`;
+/** The broadcast action is a plain string in the app's manifest; it keeps the old prefix. */
+const PROVISION_ACTION = `${PHONE_LINK_CLASSES}.PROVISION`;
 /** Where the app's shell server runs scrcpy-server from (ShellServerProtocol.SCRCPY_JAR). */
 export const HELPER_SCRCPY_JAR = '/data/local/tmp/allternit-scrcpy-server.jar';
 const POLL_MS = 1500;
@@ -199,6 +218,8 @@ class SetupStop extends Error {}
 
 export class AndroidDriver implements PhoneLinkDriver {
   private adb: AdbCall | null = null;
+  /** The app ID of the helper this run installs (set once the helper is resolved). */
+  private appId: string = PHONE_LINK_PACKAGE;
   private forwardPort: string | null = null;
   private base: Base = {};
 
@@ -307,7 +328,15 @@ export class AndroidDriver implements PhoneLinkDriver {
         false,
       );
     }
-    const installedCode = parsePackageVersionCode((await adb(['shell', 'dumpsys', 'package', PHONE_LINK_PACKAGE], { serial })).stdout);
+    const appId = phoneLinkAppId(helper.manifest);
+    this.appId = appId;
+    // A phone with the pre-0.4.0 app (com.allternit.phonelink) gets it removed first, so it doesn't run beside the new one.
+    if (appId !== LEGACY_PHONE_LINK_PACKAGE && parsePackageVersionCode((await adb(['shell', 'dumpsys', 'package', LEGACY_PHONE_LINK_PACKAGE], { serial })).stdout) !== null) {
+      this.set(ctx, 'installing', 'Replacing the old Allternit helper on your phone…', { progress: 0.1 });
+      await adb(['uninstall', LEGACY_PHONE_LINK_PACKAGE], { serial }).catch(() => {});
+      this.check(ctx);
+    }
+    const installedCode = parsePackageVersionCode((await adb(['shell', 'dumpsys', 'package', appId], { serial })).stdout);
     if (!(helper.manifest && installedCode !== null && installedCode >= helper.manifest.versionCode)) {
       const install = await adb(['install', '-r', '-g', helper.apk], { serial });
       this.check(ctx);
@@ -318,20 +347,20 @@ export class AndroidDriver implements PhoneLinkDriver {
 
     // 3. Provision the app exactly like its own provisioning script does.
     this.set(ctx, 'installing', 'Turning on the Allternit helper on your phone…', { progress: 0.4 });
-    await adb(['shell', 'appops', 'set', PHONE_LINK_PACKAGE, 'ACCESS_RESTRICTED_SETTINGS', 'allow'], { serial }).catch(() => {});
+    await adb(['shell', 'appops', 'set', appId, 'ACCESS_RESTRICTED_SETTINGS', 'allow'], { serial }).catch(() => {});
     const current = (await adb(['shell', 'settings', 'get', 'secure', 'enabled_accessibility_services'], { serial })).stdout.trim();
     const services = current === 'null' || current === '' ? [] : current.split(':').filter(Boolean);
-    if (!services.includes(ACCESSIBILITY_SERVICE)) services.push(ACCESSIBILITY_SERVICE);
+    if (!services.includes(component(appId, 'PhoneLinkAccessibilityService'))) services.push(component(appId, 'PhoneLinkAccessibilityService'));
     this.check(ctx);
     await adb(['shell', 'settings', 'put', 'secure', 'enabled_accessibility_services', services.join(':')], { serial });
     await adb(['shell', 'settings', 'put', 'secure', 'accessibility_enabled', '1'], { serial });
-    await adb(['shell', 'cmd', 'deviceidle', 'whitelist', `+${PHONE_LINK_PACKAGE}`], { serial });
-    await adb(['shell', 'pm', 'grant', PHONE_LINK_PACKAGE, 'android.permission.POST_NOTIFICATIONS'], { serial }).catch(() => {});
-    await adb(['shell', 'am', 'start-foreground-service', '-n', `${PHONE_LINK_PACKAGE}/.PhoneLinkService`], { serial });
+    await adb(['shell', 'cmd', 'deviceidle', 'whitelist', `+${appId}`], { serial });
+    await adb(['shell', 'pm', 'grant', appId, 'android.permission.POST_NOTIFICATIONS'], { serial }).catch(() => {});
+    await adb(['shell', 'am', 'start-foreground-service', '-n', component(appId, 'PhoneLinkService')], { serial });
     const quotedName = `'${deviceName.replace(/'/g, '')}'`;
     const provision = await adb(
       [
-        'shell', 'am', 'broadcast', '-a', PROVISION_ACTION, '-n', `${PHONE_LINK_PACKAGE}/.ProvisionReceiver`,
+        'shell', 'am', 'broadcast', '-a', PROVISION_ACTION, '-n', component(appId, 'ProvisionReceiver'),
         '--ez', 'arm_pairing', 'true', '--ez', 'allow_remote_access', 'true', '--ei', 'listen_port', String(ICTRL_PORT),
         '--es', 'device_name', quotedName,
       ],
@@ -347,7 +376,7 @@ export class AndroidDriver implements PhoneLinkDriver {
     for (let waited = 0; waited < BIND_TIMEOUT_MS; waited += 500) {
       this.check(ctx);
       const out = await adb(['shell', 'dumpsys', 'accessibility'], { serial });
-      if (accessibilityBound(out.stdout)) {
+      if (accessibilityBound(out.stdout, appId)) {
         bound = true;
         break;
       }
@@ -458,7 +487,7 @@ export class AndroidDriver implements PhoneLinkDriver {
    * Wireless debugging.
    */
   private async prepareScreenService(adb: AdbCall, serial: string): Promise<void> {
-    const grant = await adb(['shell', 'pm', 'grant', PHONE_LINK_PACKAGE, 'android.permission.WRITE_SECURE_SETTINGS'], { serial }).catch(() => null);
+    const grant = await adb(['shell', 'pm', 'grant', this.appId, 'android.permission.WRITE_SECURE_SETTINGS'], { serial }).catch(() => null);
     if (!grant || grant.code !== 0) this.log(`screen service: WRITE_SECURE_SETTINGS not granted (${(grant?.stderr || grant?.stdout || 'adb failed').trim().slice(0, 160)})`);
     if (!this.deps.scrcpyServer) return;
     try {
@@ -498,7 +527,7 @@ export class AndroidDriver implements PhoneLinkDriver {
       // viaMesh rules refuse. Re-provisioning keeps the stored mesh settings.
       await adb(
         [
-          'shell', 'am', 'broadcast', '-a', PROVISION_ACTION, '-n', `${PHONE_LINK_PACKAGE}/.ProvisionReceiver`,
+          'shell', 'am', 'broadcast', '-a', PROVISION_ACTION, '-n', component(this.appId, 'ProvisionReceiver'),
           '--ez', 'arm_pairing', 'false', '--ez', 'allow_remote_access', 'true', '--ei', 'listen_port', String(ICTRL_PORT),
           '--es', 'mesh_control_url', shellQuote(enrollment.controlUrl),
           '--es', 'mesh_auth_key', shellQuote(enrollment.authKey),

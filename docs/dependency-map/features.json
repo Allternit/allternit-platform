@@ -2175,6 +2175,10 @@
         {
           "on": "2026-10-20",
           "note": "Phones on the Platform API: allternit-api adds POST /api/v1/phones/:serial/tool (one gateway call, approval kept) and background task/skill runs; every recorded step and run end writes phone.step / phone.run.completed to the owner ledger for the cloud forwarder (no frames, screen text or typed values)."
+        },
+        {
+          "on": "2026-11-03",
+          "note": "Android Phone Link app ID moves to com.allternit.app (Eoj, 2026-11-03), so it can later host the Allternit app as a TWA. The Kotlin classes keep com.allternit.phonelink. Desktop reads the ID from the helper manifest (packageName; absent = old com.allternit.phonelink APK) and uninstalls the old app before installing the new one. Users relink once. 0.5.0 (same release key) makes the launcher the Allternit app: m.allternit.com as a Trusted Web Activity (androidbrowserhelper LauncherActivity, assetlinks in allternit-ai public/.well-known), sideloaded from allternit.com/android (websites _redirects); Phone Link status moves to the notification + icon shortcut. Docs: guides/android-app."
         }
       ],
       "evidence": [

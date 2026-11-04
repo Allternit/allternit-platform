@@ -32,7 +32,7 @@ class BootReceiver : BroadcastReceiver() {
  * can reach it, i.e. `adb shell` and the system; no app can arm a pairing.
  *
  *   adb shell am broadcast -a com.allternit.phonelink.PROVISION \
- *     -n com.allternit.phonelink/.ProvisionReceiver \
+ *     -n com.allternit.app/com.allternit.phonelink.ProvisionReceiver \
  *     --ez arm_pairing true --ez allow_remote_access true --es device_name "Joe's moto"
  */
 class ProvisionReceiver : BroadcastReceiver() {

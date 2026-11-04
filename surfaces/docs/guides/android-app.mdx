@@ -1,0 +1,36 @@
+---
+title: Allternit for Android
+description: "Install the Allternit app on an Android phone from allternit.com/android. It opens your workspace full-screen and carries Phone Link, so your bots can use the phone's apps."
+---
+
+Allternit for Android is the app version of [m.allternit.com](https://m.allternit.com). It uses the same account as ai.allternit.com, Allternit Desktop and the iPhone app, so your chats, bots, projects and settings are the same everywhere. It needs Android 8 or later and Chrome, or another browser that supports Trusted Web Activities.
+
+The app is not on Google Play. You install it straight from Allternit.
+
+## Install
+
+1. On the phone, open [allternit.com/android](https://allternit.com/android). The download starts.
+2. Open the downloaded file. If Android asks, allow your browser to **Install unknown apps**, then go back and tap **Install**.
+3. Open **Allternit** from your home screen and sign in.
+
+The app opens your workspace full-screen, with no address bar. Links to m.allternit.com open in the app too. Without a browser that supports Trusted Web Activities, it opens the same page with the address bar showing.
+
+## Phone Link
+
+The same app is the Phone Link helper. Phone Link lets your bots use the apps that are signed in on this phone. To turn it on, connect the phone to your computer with a USB cable and follow **Link a phone** in Allternit Desktop. See [Phone Link](/guides/phone-link).
+
+To see Phone Link's status (paired computers, **Stop** and **Start**, **Revoke**), tap its notification. You can also long-press the Allternit icon and tap **Phone Link**.
+
+## Updates
+
+Allternit Desktop updates the app when it sets up or relinks the phone. To update it yourself, open [allternit.com/android](https://allternit.com/android) again and install over the old version. Your sign-in stays.
+
+## Moving from the old Phone Link app
+
+Phone Link before version 0.4.0 was a separate app called **Allternit Phone Link**. When Allternit Desktop next sets up the phone, it removes the old app, installs this one and links the phone again. If you installed this app yourself first, uninstall **Allternit Phone Link** in **Settings → Apps**.
+
+## For developers
+
+- App ID `com.allternit.app`. The Kotlin classes keep the `com.allternit.phonelink` package. Source: `surfaces/allternit-mobile/android`.
+- The launcher is `LauncherActivity` from `androidbrowserhelper` (a Trusted Web Activity around `https://m.allternit.com/`). Its asset links are served from allternit-ai `public/.well-known/assetlinks.json`, with release cert `3F:8A:39:51:…:E0:67`.
+- Each build is published under `runtime.allternit.com/phone-link/android/<version>/` and pinned in Desktop's `phone-android-helper.ts`. The `/android` redirect in the www site's `public/_redirects` points at the current build. Move it with every new pin.
