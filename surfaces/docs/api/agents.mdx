@@ -343,6 +343,21 @@ Deletes the agent and its database row. Best-effort cleanup of related runtime s
 }
 ```
 
+### Copy a bot to another computer
+
+Bots are stored per computer. The apps use these two routes to put a bot on the account's cloud computer before a cloud routine or Always on failover needs it.
+
+```http
+GET /api/v1/agents/:id/package
+PUT /api/v1/agents/:id/package
+```
+
+`GET` returns `{id, agent, files, version}`. `agent` holds the bot's row fields: name, description, type, brain (`provider`, `model`), system prompt, tools, skills, `owns`, avatar, character, tags, modes and `config` (including `botBrain` and `availability`). `files` maps workspace paths to text: `SOUL.md`, `USER.md`, `AGENTS.md`, `TOOLS.md`, `HEARTBEAT.md`, `MEMORY.md`, `memory/MEMORY.md`, `GIZZI.md`, `.claude/CLAUDE.md`, `SYSTEM_LAW.md` and `.md`/`.json`/`.txt` files in `.allternit/bot/` (1 MB per file, 64 files).
+
+Never in a package: credentials, the identity key, inbound email addresses, phone numbers, channel and connector bindings, and sign-ins. Config keys that name any of these (`secret`, `token`, `password`, `credential`, `api_key`, `phone`, `email`, `channel`, `binding`, `messaging`, `webhook`, `vmOperator`, `session`) are removed. They stay on the home computer.
+
+`PUT` takes the same body and creates or updates the bot with the same `id` for the signed-in user, then writes the files. On update, the receiving computer keeps its own private config keys. Returns `{ok, id, files}`; `409 agent_id_taken` when another account owns that id on this computer.
+
 ## Subagents
 
 Subagents are agents whose `mode` is `subagent` and whose `parent_agent_id` points to an orchestrator or the primary Companion. They are created through the same checklist as any other agent.
