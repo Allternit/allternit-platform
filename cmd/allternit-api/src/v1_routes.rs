@@ -398,18 +398,6 @@ async fn health() -> impl IntoResponse {
     Json(json!({ "status": "ok" }))
 }
 
-/// GET /api/v1/models — flattened `{id, name, provider}` catalog for the
-/// agent-creation wizard's model picker. Sourced from the same provider specs
-/// as the /providers endpoints; previously fell through to the 501 fallback.
-///
-/// The static catalog only covers compile-time-known providers/models — it
-/// can never include user-installed local models (Sidecar's HF-downloaded
-/// GGUF pulls), which only exist at runtime, one deployment at a time. This
-/// merges in gizzi-code's live `GET /provider` `connected` list on top of
-/// the static entries, so newly-installed local models show up without a
-/// backend redeploy. Falls back to the static-only list if gizzi is
-/// unreachable — this endpoint must never hard-fail just because the
-/// harness happens to be down.
 /// GET /api/v1/models/thinking — the shared thinking table (model-thinking.json):
 /// each vendor's word and level labels, and the levels and default per model
 /// pattern. Pickers match a model id to it the same way the server does
@@ -418,68 +406,122 @@ async fn model_thinking_table() -> impl IntoResponse {
     Json(crate::model_thinking::table_json())
 }
 
-async fn list_available_models(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    let mut catalog = crate::provider_routes::available_model_catalog();
-    catalog.extend(fetch_live_local_models(&state).await);
-    Json(catalog)
+/// GET /api/v1/models — flattened `{id, name, provider, description, tier,
+/// supports_effort, thinking}` catalog for model pickers.
+///
+/// Live only: the list is the models of the providers gizzi-code reports as
+/// `connected` in its `GET /provider` response (discovered CLI brains,
+/// API-key providers, local providers and Allternit Cloud). There is no
+/// hand-written fallback: if gizzi is unreachable or answers badly, this
+/// returns 503 `models_unavailable` so clients show a retry, never a list of
+/// models the user can't actually run.
+async fn list_available_models(State(state): State<Arc<AppState>>) -> Response {
+    match fetch_live_model_catalog(&state).await {
+        Some(catalog) => Json(catalog).into_response(),
+        None => models_unavailable(),
+    }
 }
 
-/// Fetches gizzi-code's live provider list and flattens any `connected`
-/// (i.e. actually-available-right-now) provider's models into the same
-/// `{id, name, provider, description, tier, supports_effort}` shape the
-/// static catalog uses. Currently only `sidecar` is a locally-hosted
-/// provider in practice, but this isn't sidecar-specific — any connected
-/// provider the static list doesn't already know about gets included.
-async fn fetch_live_local_models(state: &AppState) -> Vec<serde_json::Value> {
+/// 503 body shared by /models and /models/recommend when the live list
+/// can't be read.
+fn models_unavailable() -> Response {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        Json(json!({
+            "error": "models_unavailable",
+            "message": "The model list is unavailable right now. Try again in a moment.",
+        })),
+    )
+        .into_response()
+}
+
+/// Reads gizzi-code's live `GET {terminal_server_url}/provider` and maps it
+/// with [`live_model_catalog`]. `None` when gizzi is unreachable, answers
+/// non-2xx, or the body isn't the expected JSON shape.
+async fn fetch_live_model_catalog(state: &AppState) -> Option<Vec<serde_json::Value>> {
     let base = state.config.terminal_server_url();
-    let client = match reqwest::Client::builder()
+    let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(3))
         .build()
+        .ok()?;
+    let resp = match client
+        .get(format!("{}/provider", base.trim_end_matches('/')))
+        .send()
+        .await
     {
-        Ok(client) => client,
-        Err(_) => return Vec::new(),
+        Ok(resp) => resp,
+        Err(err) => {
+            warn!(error = %err, "gizzi /provider unreachable; model list unavailable");
+            return None;
+        }
     };
+    if !resp.status().is_success() {
+        warn!(status = %resp.status(), "gizzi /provider returned an error; model list unavailable");
+        return None;
+    }
+    let body: serde_json::Value = resp.json().await.ok()?;
+    let catalog = live_model_catalog(&body);
+    if catalog.is_none() {
+        warn!("gizzi /provider body was not the expected shape; model list unavailable");
+    }
+    catalog
+}
 
-    let resp = match client.get(format!("{}/provider", base.trim_end_matches('/'))).send().await {
-        Ok(resp) if resp.status().is_success() => resp,
-        _ => return Vec::new(),
-    };
+/// Providers that run on the user's own machine. Matched on the gizzi
+/// provider id: these exact ids, or any id starting with `local`.
+fn is_local_provider(provider_id: &str) -> bool {
+    matches!(provider_id, "sidecar" | "ollama" | "lmstudio" | "bonsai" | "omlx")
+        || provider_id.starts_with("local")
+}
 
-    let body: serde_json::Value = match resp.json().await {
-        Ok(body) => body,
-        Err(_) => return Vec::new(),
-    };
-
-    let connected: std::collections::HashSet<String> = body
-        .get("connected")
-        .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
-        .unwrap_or_default();
-
-    let all = body.get("all").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+/// Maps a gizzi `GET /provider` body
+/// (`{all: [{id, name, models: {modelId: {name, ..}}}], connected: [ids]}`)
+/// to the `/api/v1/models` catalog. Only providers listed in `connected` are
+/// included. Returns `None` when `all` or `connected` isn't an array.
+///
+/// Tier rule: models of a local provider (see [`is_local_provider`]) are
+/// always `local`; a remote provider's model takes its tier from
+/// `model_metadata` when known, else `standard`. `description` comes from
+/// `model_metadata` (or `null`), `thinking` from the shared thinking table.
+fn live_model_catalog(body: &serde_json::Value) -> Option<Vec<serde_json::Value>> {
+    let connected: std::collections::HashSet<&str> = body
+        .get("connected")?
+        .as_array()?
+        .iter()
+        .filter_map(|v| v.as_str())
+        .collect();
+    let all = body.get("all")?.as_array()?;
 
     let mut out = Vec::new();
     for provider in all {
-        let provider_id = match provider.get("id").and_then(|v| v.as_str()) {
-            Some(id) if connected.contains(id) => id.to_string(),
-            _ => continue,
-        };
-        let provider_name = provider.get("name").and_then(|v| v.as_str()).unwrap_or(&provider_id).to_string();
+        let Some(provider_id) = provider.get("id").and_then(|v| v.as_str()) else { continue };
+        if !connected.contains(provider_id) {
+            continue;
+        }
+        let provider_name = provider.get("name").and_then(|v| v.as_str()).unwrap_or(provider_id);
+        let local = is_local_provider(provider_id);
         let Some(models) = provider.get("models").and_then(|v| v.as_object()) else { continue };
         for (model_id, model) in models {
             let model_name = model.get("name").and_then(|v| v.as_str()).unwrap_or(model_id);
+            let meta = crate::provider_routes::model_metadata(model_id);
+            let tier = if local {
+                "local"
+            } else {
+                meta.map(|(_, t, _)| t).unwrap_or("standard")
+            };
+            let thinking = crate::model_thinking::thinking_json(model_id);
             out.push(json!({
                 "id": format!("{}/{}", provider_id, model_id),
                 "name": format!("{} ({})", model_name, provider_name),
                 "provider": provider_id,
-                "description": serde_json::Value::Null,
-                "tier": "local",
-                "supports_effort": !crate::model_thinking::thinking_json(model_id).is_null(),
-                "thinking": crate::model_thinking::thinking_json(model_id),
+                "description": meta.map(|(d, _, _)| d),
+                "tier": tier,
+                "supports_effort": !thinking.is_null(),
+                "thinking": thinking,
             }));
         }
     }
-    out
+    Some(out)
 }
 
 /// GET /api/v1/models/recommend — ranks available models for a task + priority.
@@ -501,12 +543,13 @@ struct RecommendQuery {
 async fn recommend_models(
     State(state): State<Arc<AppState>>,
     Query(query): Query<RecommendQuery>,
-) -> impl IntoResponse {
+) -> Response {
     let task = query.task.as_deref().unwrap_or("balanced").to_lowercase();
     let priority = query.priority.as_deref().unwrap_or("quality").to_lowercase();
 
-    let mut catalog = crate::provider_routes::available_model_catalog();
-    catalog.extend(fetch_live_local_models(&state).await);
+    let Some(catalog) = fetch_live_model_catalog(&state).await else {
+        return models_unavailable();
+    };
 
     let mut recommendations: Vec<serde_json::Value> = catalog
         .into_iter()
@@ -525,7 +568,7 @@ async fn recommend_models(
         b_score.partial_cmp(&a_score).unwrap_or(std::cmp::Ordering::Equal)
     });
 
-    Json(json!({ "task": task, "priority": priority, "recommendations": recommendations }))
+    Json(json!({ "task": task, "priority": priority, "recommendations": recommendations })).into_response()
 }
 
 fn tier_base_weight(tier: &str) -> f64 {
@@ -3464,5 +3507,66 @@ mod tests {
         assert_eq!(question["summary"], "ChatGPT asks: Continue generating?");
         assert!(question["details"]["consequence"].as_str().unwrap().contains("Nothing is answered for you"));
         assert_eq!(question["requestId"], "perm_q1");
+    }
+
+    #[test]
+    fn model_catalog_lists_only_connected_gizzi_providers() {
+        let body = json!({
+            "all": [
+                { "id": "claude-cli", "name": "Claude Code", "source": "cli",
+                  "models": { "claude-opus-5": { "name": "Claude Opus 5" } } },
+                { "id": "allternit", "name": "Allternit Cloud", "source": "api",
+                  "models": { "some-new-model": { "name": "Some New Model" } } },
+                { "id": "sidecar", "name": "Sidecar", "source": "local",
+                  "models": { "claude-opus-5": { "name": "Local Opus" }, "qwen-coder": {} } },
+                { "id": "openai", "name": "OpenAI", "source": "env",
+                  "models": { "gpt-5": { "name": "GPT-5" } } }
+            ],
+            "connected": ["claude-cli", "allternit", "sidecar"],
+            "default": {}
+        });
+        let catalog = super::live_model_catalog(&body).expect("valid body");
+        let ids: Vec<&str> = catalog.iter().filter_map(|m| m["id"].as_str()).collect();
+        assert_eq!(ids.len(), 4);
+        assert!(ids.contains(&"claude-cli/claude-opus-5"));
+        assert!(ids.contains(&"allternit/some-new-model"));
+        assert!(ids.contains(&"sidecar/qwen-coder"));
+        assert!(!ids.iter().any(|id| id.starts_with("openai/")), "not connected, not listed");
+
+        let find = |id: &str| catalog.iter().find(|m| m["id"] == id).unwrap().clone();
+        let opus = find("claude-cli/claude-opus-5");
+        assert_eq!(opus["name"], "Claude Opus 5 (Claude Code)");
+        assert_eq!(opus["provider"], "claude-cli");
+        assert_eq!(opus["tier"], "flagship", "known model keeps its metadata tier");
+        assert_eq!(opus["description"], "For your toughest challenges");
+        assert_eq!(opus["supports_effort"], json!(!opus["thinking"].is_null()));
+
+        let unknown = find("allternit/some-new-model");
+        assert_eq!(unknown["tier"], "standard", "unknown remote model defaults to standard");
+        assert!(unknown["description"].is_null());
+
+        assert_eq!(find("sidecar/claude-opus-5")["tier"], "local", "local providers are always local");
+        let qwen = find("sidecar/qwen-coder");
+        assert_eq!(qwen["name"], "qwen-coder (Sidecar)", "model id stands in for a missing name");
+        assert_eq!(qwen["tier"], "local");
+    }
+
+    #[test]
+    fn model_catalog_rejects_bad_gizzi_bodies() {
+        assert!(super::live_model_catalog(&json!({})).is_none());
+        assert!(super::live_model_catalog(&json!({ "all": [] })).is_none());
+        assert!(super::live_model_catalog(&json!({ "connected": [] })).is_none());
+        assert!(super::live_model_catalog(&json!("nope")).is_none());
+        assert_eq!(super::live_model_catalog(&json!({ "all": [], "connected": [] })), Some(vec![]));
+    }
+
+    #[test]
+    fn local_provider_rule() {
+        for id in ["sidecar", "ollama", "lmstudio", "bonsai", "omlx", "local-mlx", "localai"] {
+            assert!(super::is_local_provider(id), "{id}");
+        }
+        for id in ["allternit", "claude-cli", "openai", "codex-cli"] {
+            assert!(!super::is_local_provider(id), "{id}");
+        }
     }
 }
