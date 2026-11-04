@@ -8,7 +8,7 @@ description: 'Local speech-to-text and text-to-speech sidecar (sherpa-onnx: Sile
 The **Allternit Voice Service** (`services/voice`, crate `voice-service`) is a Rust HTTP sidecar used by Gizzi Code and Allternit Desktop. Both directions are real and run on [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) inside the single binary — no cloud voice APIs, no Python, no whisper.cpp:
 
 - **STT:** Silero VAD finds speech segments; **Moonshine tiny** (English, default) or **Parakeet TDT 0.6B v3** (accurate) transcribes them. Any sample rate is accepted (resampled to 16 kHz); 8 kHz phone audio including G.711 μ-law WAV works.
-- **TTS:** **Kokoro-82M v1.0** (fp32, Apache-2.0), 28 English voices (default `af_heart`), 24 kHz, run by the separate program `allternit-tts` (GPL-3.0-or-later, `services/voice-tts`), which the service starts as a child process.
+- **TTS:** **Kokoro-82M v1.0** (fp32, Apache-2.0), 28 English voices (default `af_heart`), 24 kHz, run by the separate program `allternit-tts` (GPL-3.0-or-later, `services/voice-tts`), which the service starts as a child process. The in-browser engine (web app and m.allternit.com) uses the int8 build of the same model instead (`kokoro-int8-multi-lang-v1_0`, 114 MB model, 166 MB pack, same voices).
 
 Voice cloning is not part of this service. The remaining product surfaces (Desktop speak button, voice picker UI, Gizzi `/speak`) are specified in `docs/specs/tts-product.md`.
 

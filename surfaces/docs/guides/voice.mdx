@@ -63,7 +63,7 @@ The first time you use on-device voice, Allternit Desktop downloads a voice pack
 
 ### Voice in your browser
 
-On the web app and the phone app, **This device** runs the voice engine inside the browser tab. The first time, it downloads the voice models once (about 420 MB: about 45 MB for listening and 378 MB for the voice), checks them against published checksums and keeps them in your browser, so later sessions start quickly and work offline. **Remove downloaded models** frees the space. Your audio stays in the tab. **Automatic** only uses it when the models are already downloaded and your computer keeps up, and never on phones unless you choose **This device**; otherwise Allternit Cloud does the talking. The in-browser voice engine includes GPL-3.0 code (espeak-ng); its source is at https://github.com/Allternit/allternit-tts.
+On the web app and the phone app, **This device** runs the voice engine inside the browser tab. The first time you use voice, it downloads the voice models by itself, with progress on the voice screen (about 210 MB: about 45 MB for listening and 166 MB for the voice), checks them against published checksums and keeps them in your browser, so later sessions start quickly and work offline. **Remove downloaded models** frees the space. Your audio stays in the tab. **Automatic** uses it on any device that can run it, phones included, as long as the device keeps up. A browser too old for WebAssembly SIMD, or a device with under 2 GB of memory, shows a message saying why instead. The in-browser voice engine includes GPL-3.0 code (espeak-ng); its source is at https://github.com/Allternit/allternit-tts.
 
 ### Voice
 
