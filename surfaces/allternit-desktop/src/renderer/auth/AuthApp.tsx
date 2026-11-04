@@ -3,6 +3,7 @@ import {
   ClerkProvider,
   SignIn,
   SignUp,
+  TaskChooseOrganization,
   useAuth,
   useClerk,
   useSignIn,
@@ -15,11 +16,19 @@ function AuthFlow() {
   // so deriving the mode from the hash would fight that and snap back.
   const [isSignUp, setIsSignUp] = useState(false);
   const { isSignedIn } = useAuth();
+  const { session } = useClerk();
 
   const toggle = () => setIsSignUp((current) => !current);
 
   if (isSignedIn) {
     return <SignedInView />;
+  }
+
+  // Organizations are on: a session with no active organization is pending
+  // (no token). TokenBridge picks the user's organization; with none, choose
+  // or create one here instead of a blank window.
+  if (session?.status === 'pending') {
+    return <TaskChooseOrganization redirectUrlComplete={selfRedirectUrl} appearance={clerkAppearance} />;
   }
 
   return (
@@ -327,7 +336,12 @@ function TokenBridge() {
       clerk.client?.activeSessions?.[0]?.id ??
       clerk.client?.sessions?.[0]?.id;
     if (!sessionId) return;
-    void clerk.setActive({ session: sessionId }).catch((err) => {
+    // Re-activating without an organization leaves the session pending, so
+    // the hidden refresh timed out every 15 minutes. Use the user's own.
+    const session = clerk.client?.sessions?.find((s) => s.id === sessionId);
+    const organization =
+      session?.lastActiveOrganizationId ?? session?.user?.organizationMemberships?.[0]?.organization.id;
+    void clerk.setActive({ session: sessionId, ...(organization ? { organization } : {}) }).catch((err) => {
       console.warn('[TokenBridge] Failed to activate existing Clerk session:', err);
     });
   }, [clerk, isSignedIn]);
