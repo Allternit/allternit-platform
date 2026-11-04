@@ -111,7 +111,7 @@
 	<key>NSCameraUsageDescription</key>
 	<string>Allternit uses the camera so you can take photos and attach them to your chat.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Allternit uses the microphone so you can talk to your agent (voice chat) and dictate messages in chat. Audio is sent to Allternit Cloud Voice only when you choose it; "This device" keeps your speech on the phone.</string>
+	<string>Allternit uses the microphone so you can talk to your agent (voice chat) and dictate messages in chat. Voice runs on this phone; your speech isn't sent to Allternit.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Allternit accesses your photo library so you can attach photos and see recent ones in the composer.</string>
 	<key>NSRemindersFullAccessUsageDescription</key>

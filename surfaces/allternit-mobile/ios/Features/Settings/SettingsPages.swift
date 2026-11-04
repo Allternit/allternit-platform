@@ -441,54 +441,22 @@ private struct ThemeSegment: View {
 
 // MARK: - Voice
 
-/// Settings → Voice (the web's VoiceSettings panel): where voice runs and
-/// how your bots sound. The Kokoro voice ids are the ones Cloud Voice speaks
-/// with (`SettingsStore.cloudVoiceId`, read by VoiceModeViewModel).
+/// Settings → Voice (the web's VoiceSettings panel): where voice runs.
+/// Allternit hosts no voice; both choices run on this phone.
 struct VoiceSettingsPage: View {
     @ObservedObject private var settings = SettingsStore.shared
-
-    private struct VoiceOption: Identifiable {
-        let name: String
-        let accent: String
-        let id: String
-        init(_ name: String, _ accent: String, _ id: String) {
-            self.name = name
-            self.accent = accent
-            self.id = id
-        }
-    }
-
-    /// The web's voice list: friendly name, accent, Kokoro id.
-    private static let voices: [VoiceOption] = [
-        VoiceOption("Steady", "American English", "af_alloy"), VoiceOption("Bright", "American English", "af_aoede"),
-        VoiceOption("Warm", "American English", "af_bella"), VoiceOption("Gentle", "American English", "af_heart"),
-        VoiceOption("Easy", "American English", "af_jessica"), VoiceOption("Light", "American English", "af_kore"),
-        VoiceOption("Soft", "American English", "af_nicole"), VoiceOption("Clear", "American English", "af_nova"),
-        VoiceOption("Calm", "American English", "af_river"), VoiceOption("Lively", "American English", "af_sarah"),
-        VoiceOption("Airy", "American English", "af_sky"), VoiceOption("Level", "American English", "am_adam"),
-        VoiceOption("Crisp", "American English", "am_echo"), VoiceOption("Plain", "American English", "am_eric"),
-        VoiceOption("Deep", "American English", "am_fenrir"), VoiceOption("Young", "American English", "am_liam"),
-        VoiceOption("Firm", "American English", "am_michael"), VoiceOption("Low", "American English", "am_onyx"),
-        VoiceOption("Quick", "American English", "am_puck"), VoiceOption("Gravel", "American English", "am_santa"),
-        VoiceOption("Neat", "British English", "bf_alice"), VoiceOption("Mellow", "British English", "bf_emma"),
-        VoiceOption("Smooth", "British English", "bf_isabella"), VoiceOption("Mild", "British English", "bf_lily"),
-        VoiceOption("Direct", "British English", "bm_daniel"), VoiceOption("Story", "British English", "bm_fable"),
-        VoiceOption("Elder", "British English", "bm_george"), VoiceOption("Slow", "British English", "bm_lewis"),
-    ]
 
     private static func routeTitle(_ route: VoiceRoutePreference) -> String {
         switch route {
         case .automatic: return "Automatic (recommended)"
         case .device: return "This device"
-        case .cloud: return "Allternit Cloud"
         }
     }
 
     private static func routeDetail(_ route: VoiceRoutePreference) -> String {
         switch route {
-        case .automatic: return "Uses this device when its voice engine is ready and fast enough, otherwise Allternit Cloud. Phones use Cloud unless you choose This device."
-        case .device: return "Free on every plan. Your audio stays on this device."
-        case .cloud: return "Runs on Allternit servers: easier on battery and slower devices. Uses Cloud Voice minutes."
+        case .automatic: return "Voice runs on this phone. The voice model downloads once; until it's ready, the iPhone's built-in voice is used. Free, and your audio stays on this phone."
+        case .device: return "The same, chosen on purpose: your audio stays on this phone."
         }
     }
 
@@ -504,21 +472,10 @@ struct VoiceSettingsPage: View {
                 }
             }
 
-            SettingsSectionHeading(text: "Voice")
-                .padding(.top, 16)
-            SettingsDescription(text: "How your bots sound with Allternit Cloud.")
-            VStack(spacing: 8) {
-                ForEach(Self.voices) { voice in
-                    SettingsRadioCard(title: voice.name, detail: "\(voice.accent) · \(voice.id)",
-                                      isSelected: settings.cloudVoiceId == voice.id,
-                                      action: { settings.cloudVoiceId = voice.id })
-                }
-            }
-
             LiveModeLookSection(inset: 0)
                 .padding(.top, 16)
 
-            Text("Privacy: with voice on this device, your audio is processed on this device and isn't sent to Allternit. With Allternit Cloud, audio is sent to Allternit's servers to run the conversation.")
+            Text("Privacy: voice runs on this phone. Your audio is processed here and isn't sent to Allternit; what you say becomes a normal message in the thread.")
                 .font(.system(size: 13))
                 .foregroundColor(Color("TextSecondary"))
                 .fixedSize(horizontal: false, vertical: true)
