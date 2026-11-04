@@ -236,9 +236,14 @@
         "allternit-ai/src/views/automation",
         "allternit-ai/src/views/tasks",
         "allternit/cmd/allternit-api",
-        "allternit/cmd/gizzi-code"
+        "allternit/cmd/gizzi-code",
+        "allternit/surfaces/allternit-mobile/ios/Features/Onboarding"
       ],
       "decisions": [
+        {
+          "on": "2026-11-03",
+          "note": "The main bot reaches out first: POST /bots/:id/reach-out posts a hello + 2-3 offers (bot_suggestions, no model call) once per bot, pushes bot.message.posted (quiet hours apply), and adds a 9:00 Morning check-in routine (metadata.checkIn pushes after a good run). Web main-bot.ts and iOS MeetMainBot/BotFormModel call it."
+        },
         {
           "on": "2026-09-28",
           "note": "Bot templates shipped and the old Bot Hub was removed (ai #209, #210)."
