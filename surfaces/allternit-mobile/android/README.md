@@ -1,6 +1,6 @@
 # Allternit Phone Link for Android
 
-`com.allternit.phonelink` lets Allternit bots use the AI apps (ChatGPT, Claude, Gemini, Grok, Telegram and others) that are already signed in on the user's own Android phone. It is the `android-app` route in `SPEC-signed-in-apps-routing-2026-10-16.md`.
+Allternit Phone Link (app ID `com.allternit.app` since 0.4.0, `com.allternit.phonelink` before) lets Allternit bots use the AI apps (ChatGPT, Claude, Gemini, Grok, Telegram and others) that are already signed in on the user's own Android phone. It is the `android-app` route in `SPEC-signed-in-apps-routing-2026-10-16.md`.
 
 The phone runs a small HTTP server on port 8200. It speaks the iCTRL protocol (protocol_version 1), the same one as the iPhone runner, so Allternit Desktop's `ictrl-client.ts` and iCTRL's `ictrl_rpc.py` work against it unchanged. An AccessibilityService reads the screen and taps and types. Setup is done once over the USB cable. After that the phone needs no Developer options, and it keeps working after restarts.
 
@@ -84,22 +84,23 @@ The unit tests cover:
 Allternit Desktop runs the steps below over adb. `scripts/provision.sh` does the same thing. USB debugging has to be on for this one session, and it can be switched off afterwards.
 
 ```sh
-PKG=com.allternit.phonelink
+PKG=com.allternit.app
+CLS=com.allternit.phonelink   # the classes keep the old Kotlin package
 # 1. install (adb install => PACKAGE_SOURCE_UNSPECIFIED: not a "restricted settings" app)
 adb install -r -g app-debug.apk
 # 2. only needed if the APK was ever opened from a file manager/browser (see below); harmless otherwise
 adb shell appops set $PKG ACCESS_RESTRICTED_SETTINGS allow
 # 3. enable the accessibility service (append to any already enabled, colon-separated)
-adb shell settings put secure enabled_accessibility_services $PKG/.PhoneLinkAccessibilityService
+adb shell settings put secure enabled_accessibility_services $PKG/$CLS.PhoneLinkAccessibilityService
 adb shell settings put secure accessibility_enabled 1
 # 4. Doze/app-standby exemption so the server answers while the phone idles
 adb shell cmd deviceidle whitelist +$PKG
 # 5. notifications (Android 13+ runtime permission)
 adb shell pm grant $PKG android.permission.POST_NOTIFICATIONS
 # 6. start the foreground service
-adb shell am start-foreground-service -n $PKG/.PhoneLinkService
+adb shell am start-foreground-service -n $PKG/$CLS.PhoneLinkService
 # 7. provision: arm ONE auto-approved pairing (loopback only, 10 min), LAN on, name
-adb shell am broadcast -a com.allternit.phonelink.PROVISION -n $PKG/.ProvisionReceiver \
+adb shell am broadcast -a com.allternit.phonelink.PROVISION -n $PKG/$CLS.ProvisionReceiver \
     --ez arm_pairing true --ez allow_remote_access true --es device_name "'Joe moto'" --ei listen_port 8200
 #    -> "Broadcast completed: result=-1, data="provisioned device_id=… remote=true port=8200 armed=true""
 # 8. reach the phone's server from the computer and pair through the forward
@@ -108,14 +109,14 @@ python3 ictrl_rpc.py --host 127.0.0.1:52100 pair --name "$(hostname)"   # or Des
 # 9. from now on use the phone's Wi-Fi address with the same key: <phone-ip>:8200
 ```
 
-You can check the result with `adb shell dumpsys accessibility | grep -A3 "Bound services"`. It should list `com.allternit.phonelink/.PhoneLinkAccessibilityService`.
+You can check the result with `adb shell dumpsys accessibility | grep -A3 "Bound services"`. It should list `com.allternit.app/com.allternit.phonelink.PhoneLinkAccessibilityService`.
 
 ## Away from home: the mesh
 
 On the same Wi-Fi the phone is reachable at its LAN address. Away from that Wi-Fi, the phone can instead join the customer's private Allternit mesh (a Headscale tailnet): provisioning passes two optional extras, and the app embeds a userspace WireGuard node (`tsnet` via gomobile — no OS VPN slot, so it cannot collide with an always-on VPN) that serves the same iCTRL server on the tailnet at `<meshIP>:8200`.
 
 ```sh
-adb shell am broadcast -a com.allternit.phonelink.PROVISION -n $PKG/.ProvisionReceiver \
+adb shell am broadcast -a com.allternit.phonelink.PROVISION -n $PKG/$CLS.ProvisionReceiver \
     --ez arm_pairing true --ez allow_remote_access true \
     --es mesh_control_url "'https://mail.news.allternit.com:8444'" \
     --es mesh_auth_key "'<preauth-key from Desktop>'"
@@ -219,7 +220,7 @@ What had to adapt:
 ## Later: Trusted Web Activity (not built)
 
 The plan is to wrap m.allternit.com as a TWA in this same app, so one install gives the Allternit phone UI plus Phone Link. This needs three things:
-- `https://m.allternit.com/.well-known/assetlinks.json` with `com.allternit.phonelink` and the release signing certificate's SHA-256;
+- `https://m.allternit.com/.well-known/assetlinks.json` with `com.allternit.app` and the release signing certificate's SHA-256;
 - an `asset_statements` resource;
 - `androidx.browser` with a LauncherActivity as the launcher, with this status screen moved behind a "Phone Link" entry.
 

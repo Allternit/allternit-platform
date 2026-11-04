@@ -138,10 +138,10 @@ describe('phone-link-mesh helpers (real wire shapes)', () => {
 
 const ADB_DEVICE_ID = '61f06513-9e3a-4c39-8b02-9d4af1c2e801';
 const ADB_LAN = '10.0.0.7:8200';
-const PKG = 'com.allternit.phonelink';
+const PROVISION_PREFIX = 'com.allternit.phonelink'; // the app's classes keep the old Kotlin package
 const HELPER: AndroidHelper = {
   apk: '/helpers/phone-link.apk',
-  manifest: { version: '1.0.0', versionCode: 7, apk: { file: 'p.apk', sha256: 'a'.repeat(64), size: 1 } },
+  manifest: { version: '1.0.0', versionCode: 7, packageName: 'com.allternit.app', apk: { file: 'p.apk', sha256: 'a'.repeat(64), size: 1 } },
 };
 
 interface AdbWorld {
@@ -187,7 +187,7 @@ function meshFakeAdb(w: AdbWorld): AdbCall {
       return out(`Broadcast completed: result=0, data="provisioned device_id=${ADB_DEVICE_ID} name='moto g play 2024' remote=true port=8200 armed=true"`);
     }
     if (inner.startsWith('dumpsys accessibility')) {
-      return out('     Bound services:{Service[label=Allternit Phone Link, capabilities=161]}\n     Enabled services:{{com.allternit.phonelink/com.allternit.phonelink.PhoneLinkAccessibilityService}}\n');
+      return out('     Bound services:{Service[label=Allternit Phone Link, capabilities=161]}\n     Enabled services:{{com.allternit.app/com.allternit.phonelink.PhoneLinkAccessibilityService}}\n');
     }
     if (cmd === 'forward tcp:0 tcp:8200') return out('52123\n');
     if (cmd.startsWith('forward --remove')) return out('');
@@ -285,7 +285,7 @@ describe('Android setup enrolls the phone on the mesh (switch on)', () => {
     // phone shell, pairing NOT re-armed.
     expect(w.broadcasts).toHaveLength(2);
     const meshProvision = w.broadcasts[1];
-    expect(meshProvision).toContain(`-a ${PKG}.PROVISION`);
+    expect(meshProvision).toContain(`-a ${PROVISION_PREFIX}.PROVISION`);
     expect(meshProvision).toContain('--ez arm_pairing false');
     expect(meshProvision).toContain('--ez allow_remote_access true');
     expect(meshProvision).toContain('--ei listen_port 8200');

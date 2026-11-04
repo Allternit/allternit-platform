@@ -42,6 +42,8 @@ export const ANDROID_HELPER_VERSION: string | null = '0.3.4';
 export interface AndroidHelperManifest {
   version: string;
   versionCode: number;
+  /** The APK's application ID. Absent before 0.4.0, whose APKs are all com.allternit.phonelink. */
+  packageName?: string;
   apk: { file: string; sha256: string; size: number };
 }
 
@@ -66,7 +68,8 @@ export function parseAndroidHelperManifest(text: string): AndroidHelperManifest 
     !/^[\w.-]+\.apk$/.test(m.apk.file) ||
     !/^[0-9a-f]{64}$/.test(m.apk?.sha256 ?? '') ||
     !Number.isInteger(m.apk?.size) ||
-    (m.apk?.size ?? 0) <= 0
+    (m.apk?.size ?? 0) <= 0 ||
+    (m.packageName !== undefined && (typeof m.packageName !== 'string' || !/^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/.test(m.packageName)))
   ) {
     throw new AndroidHelperUnavailableError('The Android helper manifest is malformed.');
   }

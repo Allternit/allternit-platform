@@ -8,8 +8,9 @@
 # Every command here is allowed for the adb `shell` user; see README "Provisioning".
 set -euo pipefail
 
-PKG=com.allternit.phonelink
-SERVICE="$PKG/.PhoneLinkAccessibilityService"
+PKG=com.allternit.app
+CLS=com.allternit.phonelink   # the classes keep the old Kotlin package
+SERVICE="$PKG/$CLS.PhoneLinkAccessibilityService"
 SERIAL="" APK="" NAME="" REMOTE=true PORT=8200 FORWARD="" MESH_URL="" MESH_KEY=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -52,7 +53,7 @@ sh cmd deviceidle whitelist "+$PKG"
 sh pm grant "$PKG" android.permission.POST_NOTIFICATIONS 2>/dev/null || true
 
 # 6. Start the foreground service, then provision (arms ONE auto-approved pairing over loopback).
-sh am start-foreground-service -n "$PKG/.PhoneLinkService"
+sh am start-foreground-service -n "$PKG/$CLS.PhoneLinkService"
 EXTRA=(--ez arm_pairing true --ez allow_remote_access "$REMOTE" --ei listen_port "$PORT")
 # adb shell re-joins arguments into one command line: single-quote the name for the phone's shell.
 if [[ -n "$NAME" ]]; then Q="$(printf '%s' "$NAME" | sed "s/'/'\\\\''/g")"; EXTRA+=(--es device_name "'$Q'"); fi
@@ -61,7 +62,7 @@ if [[ -n "$NAME" ]]; then Q="$(printf '%s' "$NAME" | sed "s/'/'\\\\''/g")"; EXTR
 # used once, and dropped after the first successful join.
 if [[ -n "$MESH_URL" ]]; then Q="$(printf '%s' "$MESH_URL" | sed "s/'/'\\\\''/g")"; EXTRA+=(--es mesh_control_url "'$Q'"); fi
 if [[ -n "$MESH_KEY" ]]; then Q="$(printf '%s' "$MESH_KEY" | sed "s/'/'\\\\''/g")"; EXTRA+=(--es mesh_auth_key "'$Q'"); fi
-sh am broadcast -a com.allternit.phonelink.PROVISION -n "$PKG/.ProvisionReceiver" "${EXTRA[@]}"
+sh am broadcast -a com.allternit.phonelink.PROVISION -n "$PKG/$CLS.ProvisionReceiver" "${EXTRA[@]}"
 
 # 7. Optional: forward a local port to the phone's loopback server for the first pairing.
 if [[ -n "$FORWARD" ]]; then

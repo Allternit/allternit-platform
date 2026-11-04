@@ -52,7 +52,7 @@
         </activity>
 
         <!-- The hands and eyes. Enabled over adb with
-             settings put secure enabled_accessibility_services com.allternit.phonelink/.PhoneLinkAccessibilityService -->
+             settings put secure enabled_accessibility_services com.allternit.app/com.allternit.phonelink.PhoneLinkAccessibilityService -->
         <service
             android:name=".PhoneLinkAccessibilityService"
             android:exported="true"

@@ -22,7 +22,7 @@ import java.util.Date
  * (androidx.browser + a LauncherActivity), so one install gives both the
  * Allternit phone UI and Phone Link. Needs:
  *   1. https://m.allternit.com/.well-known/assetlinks.json listing
- *      com.allternit.phonelink with the release signing cert SHA-256
+ *      com.allternit.app with the release signing cert SHA-256
  *      (delegate_permission/common.handle_all_urls);
  *   2. an asset_statements string resource pointing back at m.allternit.com;
  *   3. this status screen moved behind a "Phone Link" entry (TWA becomes the
