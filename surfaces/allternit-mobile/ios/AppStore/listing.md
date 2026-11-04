@@ -71,7 +71,7 @@ First release of Allternit for iPhone.
 >
 > Screen sharing: Settings → Computers → Let your bots use this iPhone pairs the app with the person's own Allternit Desktop. A broadcast starts only from the system picker (RPSystemBroadcastPickerView, limited to the com.allternit.mobile.screen extension); a bot can only ask the app to show the picker. While it runs, the app shows "Your bot can see this screen" with Stop, and iOS shows its recording indicator. While a bot uses the app's browser, it shows "Bot is using the browser" with Stop.
 >
-> What a bot can do on this iPhone: see the screen while the person broadcasts, and use the app's own browser. It can't tap, type in or open other apps; the app uses only public APIs (ReplayKit, WebKit). Testing this needs a paired Allternit Desktop, so a screen recording of the whole flow is attached.
+> What a bot can do on this iPhone: see the screen while the person broadcasts, and use the app's own browser. It can't tap, type in or open other apps; the app uses only public APIs (ReplayKit, WebKit). Testing this needs a paired Allternit Desktop; we can send a screen recording of the whole flow on request.
 >
 > Encryption: the app uses HTTPS, a WireGuard connection to the person's own computers, and OpenSSL with libssh2 inside libgit2 for git over HTTPS and SSH. All are standard algorithms in a mass-market app (ECCN 5D992).
 
@@ -99,7 +99,10 @@ No tracking. No third-party advertising.
 - [x] Privacy policy at allternit.com/privacy covers the iPhone app, push tokens, screen sharing and account deletion (websites PR, 2026-11-04).
 - [x] allternit.com/support exists (websites PR, 2026-11-04) and support@/privacy@ forward to allternitpbc@gmail.com.
 - [x] Export compliance (Eoj, 2026-11-04): "Standard encryption algorithms", France left out of the storefronts (add it later with an ANSSI declaration). `ITSAppUsesNonExemptEncryption = YES`, so each build asks the encryption questions: answer Standard algorithms, France no.
-- [ ] Attach the screen-sharing screen recording in App Review → Attachments.
+- [ ] Record the screen-sharing flow (pair, broadcast, Stop) and attach it in App Review → Attachments; then change the notes' "on request" to "attached".
+- [x] France removed from the storefronts in App Store Connect (2026-11-04).
+- [ ] EU Digital Services Act trader status: 26 EU storefronts show TRADER_STATUS_NOT_PROVIDED and won't list the app until it is declared (App Store Connect → Business). A trader's address, phone and email are shown on the product page. Eoj decides, after the Individual → Allternit LLC conversion.
+- [x] Review notes in App Store Connect updated to this text (2026-11-04).
 - [ ] Select the newest build (21+, bigger A icon) on version 1.0; it's on build 14.
 - [ ] Clerk: Sign in with Apple on; users can delete their own account.
 - [ ] Server decision on what deletion does (today: account closed, data kept until privacy@ request; paid plans not cancelled) — the delete screen says this plainly.
