@@ -123,7 +123,8 @@ export function approvePins(server: string, tools: PinnableTool[], path = pinsPa
   savePins(store, path)
 }
 
-function runtimeCredentials(): { base: string; token: string } | null {
+/** The local Allternit runtime and its token, when gizzi is signed in to Allternit. */
+export function runtimeCredentials(): { base: string; token: string } | null {
   const base = (process.env.ALLTERNIT_API_URL ?? process.env.Allternit_API_URL)?.trim().replace(/\/+$/, '')
   if (!base) return null
   let token = (process.env.ALLTERNIT_API_TOKEN ?? process.env.Allternit_API_TOKEN)?.trim()

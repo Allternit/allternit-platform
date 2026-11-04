@@ -1,0 +1,55 @@
+---
+title: Use your Allternit connectors in other AI apps
+description: "Add one address to Claude, ChatGPT, Codex, Claude Code or Gemini and use every connector you connected in Allternit from there."
+---
+
+Every connector you connected in Allternit can be used from another AI app through one MCP address:
+
+```text
+https://mcp.allternit.com/mcp/connectors
+```
+
+The other app sees one MCP server. Its tools are your connected connectors' tools, named `<connector>__<tool>` (for example `linear__create_issue`), the same list your Allternit chats get. Your connector sign-ins stay in Allternit; the other app never sees them.
+
+## Add it
+
+Sign in to Allternit when the app asks: the address uses normal OAuth with your Allternit account.
+
+- **Claude** (Pro and Max): open **Customize › Connectors**, press **+ Add**, then **Add custom connector**. Enter a name and the address above, press **Continue**, and sign in.
+- **Claude Team and Enterprise:** an Owner adds it under **Organization settings › Connectors** (**Add**, then **Custom › Web**). Members then open **Customize › Connectors** and press **Connect**. If your Allternit org trusts your Claude org, members connect without a second sign-in; see [Managed authorization for your organization](/guides/managed-authorization).
+- **Claude Code:**
+
+  ```bash
+  claude mcp add --transport http allternit https://mcp.allternit.com/mcp/connectors
+  ```
+
+  Then run `/mcp` in Claude Code and follow the sign-in in your browser.
+- **Codex:** add the server to `~/.codex/config.toml`:
+
+  ```toml
+  [mcp_servers.allternit]
+  url = "https://mcp.allternit.com/mcp/connectors"
+  ```
+
+- **Gemini CLI:** add the server to `settings.json`, then run `/mcp auth allternit`:
+
+  ```json
+  { "mcpServers": { "allternit": { "httpUrl": "https://mcp.allternit.com/mcp/connectors" } } }
+  ```
+
+- **ChatGPT and other apps:** add a custom MCP connector with the address above and sign in to Allternit when asked.
+- **gizzi:** nothing to add. gizzi already uses your connectors in Allternit chats.
+
+The first time an app connects, Allternit asks you to approve that app once. You can see and revoke apps later.
+
+## What the other app can do
+
+- **Only connectors you connected and turned on.** Connect, turn off or remove a connector in [Customize › Connectors](/guides/connectors); the other app's list follows on its next request.
+- **Your permission settings apply.** Each connector's permission (**Always ask**, **Ask before changes**, **Ask before important changes**) decides which of its tools need your OK. An outside app can't show Allternit's approval prompt, so a tool that needs your OK is refused there with a plain message naming the setting that would allow it. Allternit never approves on your behalf. A tool marked as an important change (for example a delete) only runs from Allternit.
+- **Your computer answers.** The tools run on your Allternit computer (Desktop or cloud computer), like your bots. If it is asleep it is woken; if it takes longer than about 25 seconds, the app gets a plain "offline, try again in a minute" message.
+
+## For developers
+
+- The edge (`cmd/allternit-cloud-api/src/routes/mcp_edge.rs`, target `connectors`) checks the token's `aud` (`<MCP_PUBLIC_URL>/connectors`) and scope `connectors:use`, then relays the JSON-RPC body to the owner's runtime at `POST /webhooks/mcp-edge/connectors`, signed like the bot relay, with the user in `x-allternit-owner`.
+- The runtime (`cmd/allternit-api/src/mcp_edge_relay.rs`) serves it with the same dispatch as the per-turn proxy (`mcp_user_proxy::dispatch_rpc`). The difference: an edge call never counts `_meta["allternit/approved"]`, so a `tools/call` that needs confirmation answers JSON-RPC error `-32001` with `data.code = "confirmation_required"` and a plain `message`. Each connector's tool listing is cut off after 20 seconds so the whole answer fits the edge's 25-second budget.
+- Protected resource metadata: `https://mcp.allternit.com/.well-known/oauth-protected-resource/mcp/connectors`.

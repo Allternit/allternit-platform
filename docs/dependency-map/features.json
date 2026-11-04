@@ -2834,6 +2834,36 @@
       ]
     },
     {
+      "id": "feature:managed-connector-auth",
+      "label": "Managed connector sign-in (ID-JAG) and your connectors in other AI apps",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "Org admins turn on managed authorization per connector: the runtime gets an ID-JAG from the org's Allternit issuer (cloud-api, device credential) and runs the RFC 7523 JWT-bearer grant at the vendor, no browser, re-granting on expiry or 401; failures are plain errors with 'Connect with sign-in instead', never a silent fallback. mcp.allternit.com/mcp/connectors serves the user's connector union to Claude, ChatGPT, Codex and others through the edge relay; tools needing confirmation are refused there, never auto-approved. Trusted outside issuers (Claude org, Okta) map members by verified email. gizzi gets an 'allternit' IdP mode.",
+      "touches": [
+        "allternit/cmd/allternit-api/src/managed_auth.rs",
+        "allternit/cmd/allternit-api/src/connector_routes.rs",
+        "allternit/cmd/allternit-api/src/mcp_apps.rs",
+        "allternit/cmd/allternit-api/src/mcp_user_proxy.rs",
+        "allternit/cmd/allternit-api/src/mcp_edge_relay.rs",
+        "allternit/cmd/allternit-cloud-api/src/routes/mcp_edge.rs",
+        "allternit/cmd/gizzi-code/src/runtime/services/mcp"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-03",
+          "note": "Eoj approved the spec (docs/MANAGED_AUTH_MAP.md). No directory vendor is marked managed until its docs confirm third-party issuer support. Runtime tokens are written to connector_connections and to the vendor MCP server's mcp_oauth_sessions together, because the chat proxy and the edge read the latter. Not merged or deployed."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/connectors-in-other-apps.mdx",
+        "allternit/surfaces/docs/guides/managed-authorization.mdx",
+        "allternit/surfaces/docs/security/allternit-idjag-issuer.mdx",
+        "allternit/surfaces/docs/security/trusting-outside-issuers.mdx",
+        "allternit/cmd/allternit-api/src/managed_auth.rs",
+        "allternit/cmd/gizzi-code/src/runtime/services/mcp/xaaAllternit.ts"
+      ]
+    },
+    {
       "id": "feature:agent-avatar-cursor",
       "label": "Bot avatar rides the agent cursor",
       "product": "product:computer-use",

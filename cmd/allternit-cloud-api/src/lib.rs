@@ -360,6 +360,12 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         // Keys for the allternit-bot CLI (issue/list/revoke by the owner; instructions by key). Part of the MCP edge: 503 until MCP_PUBLIC_URL is set.
         .merge(routes::vendor_bot_keys::routes())
         .merge(routes::mcp_oauth_approvals::routes())
+        // Managed connector auth: the org ID-JAG issuer, its admin and runtime
+        // routes, and the edge's trusted issuers + JWT-bearer authorization
+        // server. Each handler checks its own credential; 503 without
+        // ALLTERNIT_IDJAG_ES256_PEM.
+        .merge(routes::managed_auth::routes())
+        .merge(routes::edge_auth::routes())
         // The event registry in plain words (signed-in users; Settings › Connected apps).
         .merge(routes::allternit_events::routes())
         // Runtimes forward their bot_events ledger into the event backbone (relay-signature auth in the handler).
@@ -835,9 +841,10 @@ mod migration_tests {
     /// proves the macro resolves the directory relative to the crate root.
     #[tokio::test]
     async fn migrations_pg_applies_cleanly() {
-        let pool = sqlx::PgPool::connect(
-            "postgres://allternit:allternit_pg_2026@localhost:5432/allternit_test",
-        )
+        // CI's Postgres service; TEST_DATABASE_URL points a local run elsewhere (as test_support does).
+        let url = std::env::var("TEST_DATABASE_URL")
+            .unwrap_or_else(|_| "postgres://allternit:allternit_pg_2026@localhost:5432/allternit_test".to_string());
+        let pool = sqlx::PgPool::connect(&url)
         .await
         .expect("connect to the local PG test database (allternit_test)");
         sqlx::migrate!("./migrations_pg")
