@@ -235,7 +235,7 @@ async fn notify_push(
         "data": body.data,
     });
 
-    match reqwest::Client::new().post(url).json(&payload).send().await {
+    match crate::net_client::client().post(url).json(&payload).send().await {
         Ok(response) => {
             let status = StatusCode::from_u16(response.status().as_u16())
                 .unwrap_or(StatusCode::BAD_GATEWAY);

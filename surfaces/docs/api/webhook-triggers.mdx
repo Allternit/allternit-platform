@@ -1,37 +1,78 @@
 ---
 title: 'Webhook triggers API'
-description: 'Wake a bot from any signed HTTP webhook: a trigger maps a source and event type to a bot, and each verified delivery becomes a Rails ticket for it.'
+description: 'Start a bot from any app: a trigger maps a source and its events to a bot, gets a public address on Allternit cloud, checks the sender signature and starts the bot on a task thread.'
 ---
 
 ## Overview
 
-A webhook trigger gives an external system a URL that wakes one of your bots. Each verified delivery is recorded and becomes a Rails ticket assigned to the bot. [Connector events](/api/connector-events) create the same ticket for MCP Events from a connected app.
+A webhook trigger lives on the runtime that runs the bot (Desktop or a cloud computer). Its public address is a cloud-api channel route with provider `webhook_trigger`. The route queues deliveries while the runtime sleeps and relays them signed with the runtime's device token. The runtime checks the sender's own signature, keeps only the trigger's events, logs each delivery and starts the bot on a task thread. Every tool in that run asks first. For the user guide, see [Start a bot from another app](/guides/webhook-triggers).
 
 ## Manage triggers (Clerk session)
 
 | Method | Path | |
 |---|---|---|
 | `GET` | `/api/v1/webhook-triggers` | `{"triggers": [...], "total"}` |
-| `POST` | `/api/v1/webhook-triggers` | Create. `201 {"trigger"}` |
+| `POST` | `/api/v1/webhook-triggers` | Create. `201 {"trigger", "secret"}`; `secret` is returned only here. |
 | `GET` / `PATCH` / `DELETE` | `/api/v1/webhook-triggers/:id` | Read, update, delete. |
-| `GET` | `/api/v1/webhook-triggers/:id/deliveries` | `{"deliveries": [...], "total"}` with `status` `accepted`, `rejected` or `failed` and the `ticket_id`. |
+| `GET` | `/api/v1/webhook-triggers/:id/deliveries` | The last 100 deliveries, newest first. |
+| `POST` | `/api/v1/webhook-triggers/:id/test` | A sample event for the trigger's source, through the same filter, log and bot run. |
 
-Create body (snake_case):
+Create body (snake_case). Only `name` and the bot are required:
 
 ```json
-{ "name": "Deploy finished", "source": "ci", "event_type": "deploy.finished", "target_agent_id": "bot_1",
-  "prompt_template": "Check the deploy and post a summary.", "execution_mode": "REQUIRE_APPROVAL", "secret": "a long random string" }
+{ "name": "GitHub → Reviewer", "target_bot_id": "bot_1",
+  "source": "github", "event_type": "pull_request.opened, issues.opened",
+  "prompt_template": "Review the change and list problems most severe first.",
+  "execution_mode": "REQUIRE_APPROVAL" }
 ```
 
-`execution_mode` is one of `PLAN_ONLY`, `REQUIRE_APPROVAL` (default; the ticket is labelled `approval-required`), `ACCEPT_EDITS`, `BYPASS_PERMISSIONS`. Only a hash of `secret` is stored.
+| Field | Default | |
+|---|---|---|
+| `target_bot_id` or `target_agent_id` | required | The bot to start. |
+| `source` | `custom` | `github`, `stripe`, `linear`, `shopify`, `zapier`, `make`, `n8n`, `form`, `custom`, or any name. |
+| `event_type` | `*` | Comma list. `*` or empty: every event. `pull_request` also matches `pull_request.opened`. |
+| `verify` | from `source` | `github`, `stripe`, `linear`, `shopify`, `allternit` (custom) or `address` (zapier, make, n8n, forms). |
+| `secret` | made by the runtime (`whsec_…`) | Not made for `stripe`, `linear` and `shopify` (the vendor makes it; `PATCH` it in) or `address`. |
+| `execution_mode` | `REQUIRE_APPROVAL` | `PLAN_ONLY` denies every tool. Any other mode asks before each tool; a webhook never bypasses that. |
+| `route_id`, `public_url` | none | Set by the app after it makes the public address (below). |
 
-## Deliver: `POST /webhooks/inbound/:id`
+A trigger in responses carries `verify`, `route_id`, `public_url` and `has_secret`, never the secret.
+
+## Public address (cloud-api)
 
 ```http
-X-Allternit-Trigger-Secret: <the trigger's secret>
-X-Allternit-Signature: <hex HMAC-SHA256(secret, raw body)>
+POST https://api.allternit.com/api/v1/channel-inbound-routes
+{ "runtimeId": "<runtime>", "provider": "webhook_trigger", "label": "GitHub → Reviewer", "botId": "bot_1" }
+→ 201 { "id": "<route id>", "url": "https://api.allternit.com/channels/in/<key>" }
 ```
 
-The event name is the body's `event` (or `type`) field. Both headers are required: the secret must be the trigger's own and the signature must match the body. Anything else is recorded as `rejected` (`signature required` or `signature invalid`) and creates no ticket. The answer is `200` with `{"status": "accepted", "delivery_id", "ticket_id"}`, `{"status": "rejected" | "ignored" | "failed", "reason"}`.
+Then `PATCH /api/v1/webhook-triggers/:id` with `{"route_id", "public_url"}`. Senders post to the `url`. cloud-api takes `POST` only, answers `200` at once, keeps the sender's signature headers (`X-Hub-Signature-256`, `X-GitHub-Event`, `Stripe-Signature`, `Linear-Signature`, `X-Shopify-Hmac-Sha256`, `X-Shopify-Topic`, `X-Allternit-Signature`, `X-Allternit-Event`) and relays to the runtime at `POST /webhooks/relayed/<route id>`, signed with the device token (`relay_auth`).
 
-Unsigned deliveries used to be accepted for local testing; since October 2026 they are rejected.
+## Deliver straight to a runtime: `POST /webhooks/inbound/:id`
+
+For a runtime the sender can reach directly. The sender's signature is required here; an `address` trigger is refused, because only the relay proves the delivery came through its address.
+
+```http
+X-Allternit-Signature: <hex HMAC-SHA256(secret, raw body)>
+X-Allternit-Event: deploy.finished        (optional; else the body's "event" or "type")
+```
+
+Triggers made before November 2026 have no stored secret; for them, the old `X-Allternit-Trigger-Secret` header with the signature still works.
+
+## Answers and delivery status
+
+| Answer | When | Delivery `status` |
+|---|---|---|
+| `202 {"status":"accepted","delivery_id"}` | Signature good, event wanted. The bot starts. | `pending`, then `accepted` with `thread_id`, or `failed` with `error` |
+| `200 {"status":"accepted","reason"}` | A GitHub `ping` (connection check, no bot run). | `accepted` |
+| `200 {"status":"rejected","reason":"Skipped: …"}` | Event not in `event_type`, or the trigger is off. | `rejected` |
+| `401 {"status":"rejected","reason"}` | Signature missing or wrong. | `rejected`, `signature_valid: false` |
+| `429` | More than 120 bot runs in the last hour for this trigger. | `rejected` |
+
+Through the public address the sender always gets cloud-api's `200`; the delivery list holds the outcome.
+
+## The bot run
+
+The runtime creates a `task` thread for the bot (`created_by: "webhook"`, `origin: {webhookTriggerId, deliveryId, source, event}`). It restricts the session's tools to ask (`PLAN_ONLY`: deny) and sends one turn with the instructions and the event JSON. The JSON is marked as untrusted data, and is cut at 60,000 characters. A bot bound to another vendor can't take webhook events: the delivery fails with that reason.
+
+[Connector events](/api/connector-events) still create a Rails ticket for MCP Events from a connected app.

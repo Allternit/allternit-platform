@@ -174,7 +174,7 @@ async fn teams_connect_h(
     let Some(auth) = auth else {
         return (StatusCode::UNAUTHORIZED, Json(json!({ "error": "not_signed_in", "message": "Sign in to Allternit on this computer first." }))).into_response();
     };
-    let client = reqwest::Client::new();
+    let client = crate::net_client::client();
     if let Some(rt) = body.and_then(|Json(b)| b.runtime_id).filter(|r| !r.trim().is_empty()) {
         let _ = client
             .post(format!("{base}/api/v1/channels/teams/register"))

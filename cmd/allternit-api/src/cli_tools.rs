@@ -418,7 +418,7 @@ pub(crate) fn resolve_binary(binary: &str) -> Option<PathBuf> {
 /// installed or signed in shows up in the model picker.
 pub(crate) async fn reload_gizzi() {
     let url = format!("{}/instance/dispose", crate::agent_session_routes::gizzi_base());
-    if let Err(error) = reqwest::Client::new().post(url).timeout(Duration::from_secs(10)).send().await {
+    if let Err(error) = crate::net_client::client().post(url).timeout(Duration::from_secs(10)).send().await {
         tracing::warn!(%error, "could not reload gizzi after a CLI install or sign-in");
     }
 }

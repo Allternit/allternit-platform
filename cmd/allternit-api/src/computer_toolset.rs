@@ -915,7 +915,7 @@ async fn browser_call(target: &Target, member: &str, input: &Value, run_id: &str
         return Err("not a browser target".into());
     };
     let body = json!({ "session_id": session_id, "member": member, "input": input, "run_id": run_id, "public_only": public_only });
-    let resp = reqwest::Client::new()
+    let resp = crate::net_client::client()
         .post(format!("{base}/v1/toolset/browser"))
         .timeout(Duration::from_secs(90))
         .json(&body)
@@ -2488,7 +2488,7 @@ pub struct SchemaQuery {
 }
 
 async fn gateway_healthy(base: &str) -> bool {
-    reqwest::Client::new()
+    crate::net_client::client()
         .get(format!("{base}/health"))
         .timeout(Duration::from_secs(2))
         .send()

@@ -302,7 +302,7 @@ mod tests {
     #[tokio::test]
     async fn the_check_route_wants_the_same_token_as_the_viewer() {
         let addr = serve(Arc::new(StaticRelaySecret { token: TOKEN.into(), owner: OWNER.into() })).await;
-        let http = reqwest::Client::new();
+        let http = crate::net_client::client();
         let status = |q: String| {
             let http = http.clone();
             async move { http.get(format!("http://{addr}/api/v1/runtime-viewer/vnc-check?token={q}")).send().await.unwrap().status().as_u16() }

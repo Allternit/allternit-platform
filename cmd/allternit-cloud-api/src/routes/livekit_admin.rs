@@ -168,7 +168,7 @@ pub struct LiveKitHttpAdmin {
 
 impl LiveKitHttpAdmin {
     pub fn new(config: LiveKitConfig) -> Self {
-        Self { config, client: reqwest::Client::new() }
+        Self { config, client: crate::net_client::client() }
     }
 
     /// Egress guard, same rule as the channel transports: only http(s), no

@@ -503,7 +503,7 @@ impl StripeHttp {
         Self {
             secret_key: cfg.secret_key.clone(),
             base_url: cfg.stripe_base_url.trim_end_matches('/').to_string(),
-            client: reqwest::Client::new(),
+            client: crate::net_client::client(),
         }
     }
 

@@ -48,7 +48,7 @@ async fn clerk_users() -> Result<Vec<serde_json::Value>, ApiError> {
     let Some(secret) = config.clerk_secret_key.as_deref() else {
         return Err(ApiError::ServiceUnavailable("CLERK_SECRET_KEY is not set".to_string()));
     };
-    let client = reqwest::Client::new();
+    let client = crate::net_client::client();
     let mut users = Vec::new();
     for page in 0..4 {
         let url = format!(

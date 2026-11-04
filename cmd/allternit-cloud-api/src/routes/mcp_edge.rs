@@ -427,7 +427,13 @@ enum Outcome {
     /// Every reachable runtime said it doesn't hold the bot.
     NotFound,
     Unreachable,
+    /// The runtime has no connector gateway route yet (Allternit before
+    /// managed connector auth): it answered the relay with 404/405.
+    RuntimeTooOld,
 }
+
+/// Said to the outside app when the owner's Allternit predates the gateway.
+const RUNTIME_TOO_OLD_MESSAGE: &str = "Your Allternit app needs an update before other apps can use your connectors. Open Allternit and update it, then try again.";
 
 async fn deliver(backend: &dyn EdgeBackend, target: &Target, caller: &Caller, body: &[u8]) -> Outcome {
     let runtimes = match backend.runtimes(&caller.user_id).await {
@@ -465,6 +471,9 @@ async fn deliver(backend: &dyn EdgeBackend, target: &Target, caller: &Caller, bo
                     if (200..300).contains(&status) {
                         remember_holder(&caller.user_id, bot, runtime_id);
                     }
+                }
+                if matches!(target, Target::Connectors) && (status == 404 || status == 405) {
+                    return Outcome::RuntimeTooOld;
                 }
                 return Outcome::Answer(status, reply);
             }
@@ -621,6 +630,7 @@ async fn serve(backend: &dyn EdgeBackend, base: &str, target: Target, method: &M
     };
     match outcome {
         Outcome::Unreachable => rpc_error(id, OFFLINE_MESSAGE),
+        Outcome::RuntimeTooOld => rpc_error(id, RUNTIME_TOO_OLD_MESSAGE),
         Outcome::NotFound => (StatusCode::NOT_FOUND, Json(json!({ "error": "not_found" }))).into_response(),
         Outcome::Answer(status, reply) => {
             let reply = if rpc_method == "initialize" && status == 200 && target != Target::Connectors { advertise_events(reply) } else { reply };
@@ -1523,6 +1533,18 @@ mod tests {
     // ── connector gateway and edge-issued tokens ─────────────────────────────
 
     const CONNECTORS: &str = "https://mcp.allternit.com/mcp/connectors";
+
+    #[tokio::test]
+    async fn a_runtime_without_the_gateway_route_gets_an_update_message_not_a_bare_405() {
+        // Live test 2026-11-04: a pre-gateway runtime answered the relay 405 and
+        // the outside app saw an empty 405.
+        for old in [404u16, 405] {
+            let f = Fake::new(&["rt1"]).token("conn", claims(CONNECTORS, CONNECTORS_SCOPE, "user_c")).reply("rt1", Ok((old, "")));
+            let (status, _, body) = post(&f, Target::Connectors, &bearer("conn"), LIST).await;
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(body["error"]["message"], RUNTIME_TOO_OLD_MESSAGE);
+        }
+    }
 
     #[tokio::test]
     async fn the_connector_gateway_relays_to_the_best_runtime_with_its_own_scope_and_approval() {

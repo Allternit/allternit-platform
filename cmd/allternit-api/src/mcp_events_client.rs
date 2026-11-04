@@ -97,7 +97,7 @@ impl HttpCloud {
         let (Some(token), Some(owner), Some(runtime_id)) = (self.secret.device_token(), self.secret.paired_owner(), self.secret.runtime_id()) else {
             return Err("not_paired".into());
         };
-        let mut req = reqwest::Client::new()
+        let mut req = crate::net_client::client()
             .request(method.clone(), format!("{}{path}", self.base))
             .timeout(Duration::from_secs(20))
             .header("content-type", "application/json");
@@ -1012,6 +1012,10 @@ pub async fn ingest(state: &Arc<AppState>, owner: &str, body: &Value) -> Result<
         active: true,
         created_at: row.created_at.clone(),
         updated_at: row.updated_at.clone(),
+        verify: "address".into(),
+        route_id: None,
+        public_url: None,
+        has_secret: false,
     };
     let mut automation_payload=payload.clone();
     automation_payload["data"]=event.get("data").cloned().unwrap_or(Value::Null);
