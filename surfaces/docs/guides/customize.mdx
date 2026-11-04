@@ -12,8 +12,10 @@ Discover opens with the section's hero: an ink panel led by the section lockup, 
 Below the hero:
 
 - **A://TERNIT OFFICIAL** (Skills and Plugins): the skills and plugins Allternit makes and maintains. Each card has a cover with its name, kind and version, a short description and **Add**. An item already added shows **Added**. Official skills: ALabs Course Pipeline, Codebase To Course, Clone Website, Mobile App Design, Word Documents, PowerPoint Decks, Agent Orchestrator and Steer Parallel Agent.
-- **For you** and **More**: other items you can add, by author and category. Allternit's own items show their cover; the rest show their category's icon.
+- **For you** and **More**: other items you can add, by author and category, one full row each (as many cards as fit across). Allternit's own items show their cover; directory items show their maker's logo; the rest show their category's icon.
 - **Categories**: each with its own icon. Open one to see everything in it.
+
+In **Connectors**, **Messaging** lists Telegram, Email, Phone number, Discord, Slack, Microsoft Teams and WhatsApp as the same cards as every other connector. A card opens the channel's page: **Connect** (or **Connect another**), and under **Your connections**, who can message each connection and which bot answers new chats there.
 
 ## Item pages
 
@@ -23,14 +25,14 @@ On a phone, ai.allternit.com and the m.allternit.com app show the same page, siz
 
 ## MCP servers, commands, CLI tools and webhooks
 
-The sections under **More** have the same hero and A://TERNIT OFFICIAL shelf. Add does the real thing in each:
+The sections under **More** have the same hero and A://TERNIT OFFICIAL shelf, then a directory of more items. Add does the real thing in each:
 
-| Section | Official items | What Add does |
-| --- | --- | --- |
-| MCP servers | Lens Vault (search your synced context vault) | Adds the server to `mcp` in `~/.config/gizzi-code/gizzi.json`. Its tools are available from the next message. |
-| Commands | `/review`, `/handoff`, `/standup`, `/explain` | Writes the prompt to `~/.config/gizzi-code/command/<name>.md`. Type the command in any chat. |
-| CLI tools | gizzi | Nothing: Allternit Desktop links gizzi at `~/.local/bin/gizzi`. Its page shows how to install it on another computer. |
-| Webhooks | Inbound trigger | Opens **Settings › Webhooks**, which makes a signed inbound URL that starts a bot. |
+| Section | Official items | Directory | What Add does |
+| --- | --- | --- | --- |
+| MCP servers | Lens Vault (search your synced context vault) | 15 servers. Remote, nothing to install: Context7, DeepWiki, GitMCP, Microsoft Learn, Cloudflare Docs, AWS Knowledge, Hugging Face. Local: Playwright, Chrome DevTools, Filesystem, Memory, Sequential Thinking (need Node.js), Fetch, Git, Time (need uv). | Adds the server to `mcp` in `~/.config/gizzi-code/gizzi.json`. Its tools are available from the next message. Local servers are pinned to a checked version. |
+| Commands | `/review`, `/handoff`, `/standup`, `/explain` | `/test`, `/fix`, `/commit`, `/pr`, `/plan`, `/refactor`, `/docs`, `/security`, `/debug`, `/changelog`, `/onboard`, `/todo` | Writes the prompt to `~/.config/gizzi-code/command/<name>.md`. Type the command in any chat. |
+| CLI tools | gizzi | The coding agents Allternit can run as brains (Claude Code, Codex, Gemini CLI, Cursor Agent and the rest of the CLI catalog) | gizzi: nothing, Allternit Desktop links it at `~/.local/bin/gizzi`. A coding agent's page shows **Install** (after you accept its maker's terms) or **Sign in**, the same steps as **Settings › Coding tools**. |
+| Webhooks | Inbound trigger | None yet | Opens **Settings › Webhooks**. Inbound deliveries can't reach a trigger yet: the inbound address has no public route. |
 
 Each item's page shows exactly what Add writes or opens. **Add › Add MCP server** and **Add › Create command** write to the same places. **Add › Create webhook** opens Settings › Webhooks. The Webhooks list shows your webhook triggers, and its switch turns a trigger on or off.
 
@@ -56,7 +58,9 @@ Every official cover uses the same frame: ink, the A://TERNIT wordmark, the item
 ## For developers
 
 - Page before install: `DirectoryDetail` in allternit-ai `src/views/customize/CustomizeView.tsx` reads `GET /api/v1/skills/catalog/:id/files` (allternit-api `skill_catalog_install.rs`): `{version, source, files: [{path, size, text}]}`, text only for UTF-8 files up to 200 KB. Same sources as install, nothing written to disk.
-- More sections: official items are in `src/views/customize/section-official.ts`. Add goes through `createMcp` / `createCommand` in `src/plugins/capabilityWriter.ts` (`writeGizziMcp`, `writeGizziCommand`). The scanner (`src/plugins/fileSystem.ts`) reads gizzi's `gizzi.json`, its `command/` folder, and `~/.allternit/cli-tools`. Webhooks list `GET /api/v1/webhook-triggers` and toggle with `PATCH` (`src/lib/webhook-api.ts`).
+- More sections: official items are in `src/views/customize/section-official.ts`; the MCP server and command directories in `section-directory.ts` (each remote server answered `initialize` without sign-in, each local package is pinned to the version checked on 2026-11-03). CLI tools read `GET /api/v1/cli-tools/catalog` and install through `CliConnectFlow`.
+- Load: every `useFileSystem` on a page shares one capability scan (reused for 30 s unless capabilities change), the home folder comes from listing `~` through the files API, and a folder's files other than SKILL.md, config.json, plugin.json, package.json and .mcp.json are read when opened.
+- Messaging: `MessagingConnectorsSection` and `MessagingDetail` in allternit-ai `src/components/gateway/MessagingConnectors.tsx`; a channel page's route id is `messaging:<provider>`. Add goes through `createMcp` / `createCommand` in `src/plugins/capabilityWriter.ts` (`writeGizziMcp`, `writeGizziCommand`). The scanner (`src/plugins/fileSystem.ts`) reads gizzi's `gizzi.json`, its `command/` folder, and `~/.allternit/cli-tools`. Webhooks list `GET /api/v1/webhook-triggers` and toggle with `PATCH` (`src/lib/webhook-api.ts`).
 - Shelf and covers: allternit-ai `src/views/customize/OfficialShelf.tsx`. Official skills are the skill catalog entries with `origin: "allternit"` (`src/plugins/catalog/native-plugins.ts`, edited by hand) and install through the catalog installer. A new official skill also needs its folder in the platform repo's `.agents/skills/` and a line in `resolve()` in `skill_catalog_install.rs`, which bundles it into the API. Official plugins are registry plugins whose author is Allternit.
 - New cover: generate art with the prompt in `public/official-covers/PROMPT.md`, save it in that folder and add the item to `OFFICIAL_COVERS`, keyed by its display name without "Allternit" (for example `excel`). An item with no entry still gets a cover: its first word in block type, no picture.
 - Section hero: `src/views/customize/SectionHero.tsx`; Connectors: `ConnectorHero.tsx`.
