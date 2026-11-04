@@ -1182,6 +1182,24 @@
       "evidence": [
         "allternit/surfaces/docs/reference/answer-template-contract.mdx"
       ]
+    },
+    {
+      "source": "allternit-ai/src/lib/deployments",
+      "target": "allternit/cmd/allternit-api/src/mcp_*",
+      "kind": "authenticated user-scoped OpenShip tools through POST /api/mcp/apps",
+      "evidence": [
+        "allternit-ai/src/lib/deployments/openship.ts",
+        "allternit/cmd/allternit-api/src/mcp_apps.rs"
+      ]
+    },
+    {
+      "source": "allternit-ai/src/components/deployments",
+      "target": "allternit/cmd/allternit-api/src/mcp_*",
+      "kind": "saved connector discovery and OAuth sign-in through the selected runtime",
+      "evidence": [
+        "allternit-ai/src/components/deployments/OpenShipPanel.tsx",
+        "allternit-ai/src/integration/api-client.ts"
+      ]
     }
   ]
 }
