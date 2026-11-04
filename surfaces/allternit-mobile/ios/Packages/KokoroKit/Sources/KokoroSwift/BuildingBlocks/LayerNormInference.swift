@@ -3,7 +3,6 @@
 //
 import Foundation
 import MLX
-import MLXFast
 import MLXNN
 
 class LayerNormInference: Module {
