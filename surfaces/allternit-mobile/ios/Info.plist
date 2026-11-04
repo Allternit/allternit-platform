@@ -86,9 +86,9 @@
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
 	<string>$(MARKETING_VERSION)</string>
-	<!-- Export compliance (Eoj, 2026-11-04): the app ships its own standard encryption (WireGuard in Mesh.xcframework, OpenSSL/libssh2 in libgit2) besides Apple's, so App Store Connect's answer is "Standard encryption algorithms", not "None". Mass market (ECCN 5D992), not sold in France (no ANSSI declaration). YES makes App Store Connect ask the encryption questions for each build: answer Standard algorithms, France no. See AppStore/listing.md. -->
+	<!-- Export compliance (2026-11-04): the app ships standard encryption besides Apple's (WireGuard in Mesh.xcframework, OpenSSL/libssh2 in libgit2): mass market, ECCN 5D992. It is not sold in France, so Apple needs no export documentation; App Store Connect refuses a declaration for standard algorithms unless the app is in France. NO is the correct value. When France is added (after the ANSSI declaration), create the declaration in App Store Connect, set YES and add ITSEncryptionExportComplianceCode. See AppStore/listing.md. -->
 	<key>ITSAppUsesNonExemptEncryption</key>
-	<true/>
+	<false/>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>CLERK_PUBLISHABLE_KEY</key>
