@@ -190,7 +190,7 @@ Update download links in:
 
 ## Mac signing with a Developer ID
 
-`scripts/build-local.cjs` looks for a `Developer ID Application` certificate in the keychain. If it finds one, the build signs with it and notarizes with the `allternit` notarytool profile. With no certificate, the build stays ad-hoc signed.
+`scripts/build-local.cjs` looks for a `Developer ID Application` certificate in the keychain. If it finds one, the build signs with it. Only a release build (`build-desktop.sh --release`) also notarizes, with the `allternit` notarytool profile; a local build skips notarization unless you set `ALLTERNIT_NOTARIZE=1`. Gatekeeper checks only downloaded apps, and a slow Apple notary queue used to fail every local build. With no certificate, the build stays ad-hoc signed.
 
 One-time setup on the build Mac:
 
