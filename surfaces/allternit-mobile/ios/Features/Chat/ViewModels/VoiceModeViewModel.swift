@@ -207,7 +207,7 @@ final class VoiceModeViewModel: ObservableObject {
                 throw VoiceClientError.server(code: "pack", message: "The on-device voice model isn't installed.")
             }
             options.voice = SettingsStore.shared.voiceIdentifier
-            let engine = LocalVoiceEngineFactory.make(paths: paths)
+            let engine = LocalVoiceEngineFactory.make(paths: paths, listening: SettingsStore.shared.listening)
             factory = { engine }
             engineLabel = "On this device"
         case .legacy:

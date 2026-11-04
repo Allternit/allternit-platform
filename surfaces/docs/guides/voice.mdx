@@ -65,6 +65,16 @@ The first time you use on-device voice, Allternit Desktop downloads a voice pack
 
 On the web app and the phone app, **This device** runs the voice engine inside the browser tab. The first time, it downloads the voice models once (about 420 MB: about 45 MB for listening and 378 MB for the voice), checks them against published checksums and keeps them in your browser, so later sessions start quickly and work offline. **Remove downloaded models** frees the space. Your audio stays in the tab. **Automatic** only uses it when the models are already downloaded and your computer keeps up, and never on phones unless you choose **This device**; otherwise Allternit Cloud does the talking. The in-browser voice engine includes GPL-3.0 code (espeak-ng); its source is at https://github.com/Allternit/allternit-tts.
 
+### Speech to text
+
+When voice runs on this device, **Automatic (system when available)** turns your speech into text with your device's own recognizer where it is good and private, and with Allternit's recognizer (Moonshine) everywhere else. **Allternit on-device** always uses Allternit's.
+
+- **iPhone and iPad app**: Automatic uses Apple's on-device speech recognition, in your device's language. On iOS 26 and later the first conversation may download Apple's speech model in the background; until it's ready, Allternit's recognizer listens. The first time, iOS asks to allow Speech Recognition on iOS 17 to 25. Audio never leaves the phone.
+- **Safari and iPhone/iPad browsers**: Automatic uses Safari's built-in speech recognition (Apple's speech engine) and shows your words as you talk. Apple decides whether Safari recognizes speech on the device or on Apple's servers.
+- **Chrome, Edge, Firefox and the Desktop app** always use Allternit's recognizer. Chrome and Edge's built-in recognition sends audio to Google, so Allternit doesn't use it. The option isn't shown there.
+
+If the system recognizer is turned off, denied permission or stops working, voice switches to Allternit's recognizer for the rest of the conversation without interrupting you. Replies are always read by Allternit's own voice.
+
 ### Voice
 
 Pick how your bots sound. Voices have plain names that say how they sound — Gentle, Crisp, Calm, Warm — with the engine's voice id in small type under each. Press a voice's **Preview** button to hear one short sentence through the voice engine on this device; on the web the first preview downloads the voice models first (this happens once). Only one preview plays at a time. Custom voices (made from a recording with the speaker's recorded, written permission) run on Allternit Cloud and can't be previewed here yet.
@@ -91,6 +101,7 @@ Plus includes 100 Cloud Voice minutes a month, then $0.08 a minute. This card sh
 ## Privacy
 
 - **On this device**, audio is turned into text on your computer. Only the text of your message is sent, the same as if you'd typed it.
+- **In Safari with Speech to text on Automatic**, Safari's own recognizer does the listening and Apple may process the audio. Choose **Allternit on-device** to keep it in the tab.
 - **On Allternit Cloud**, audio is sent to Allternit's servers over an encrypted connection to run the conversation.
 - Either way, your spoken message is saved in the thread like any typed message.
 
