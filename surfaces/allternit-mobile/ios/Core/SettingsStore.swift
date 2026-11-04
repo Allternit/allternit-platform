@@ -50,26 +50,24 @@ enum ListeningPreference: String, CaseIterable, Sendable {
     case allternit
 }
 
-/// "Where voice runs" — which engine serves a voice conversation.
-/// Automatic tries Cloud Voice first and falls back to this device.
+/// "Where voice runs" — which engine serves a voice conversation. Both run
+/// on this phone (Allternit hosts no voice); a stored "cloud" from older
+/// builds reads as Automatic.
 enum VoiceRoutePreference: String, CaseIterable, Sendable {
     case automatic
     case device
-    case cloud
 
     var label: String {
         switch self {
         case .automatic: return "Automatic"
         case .device: return "This device"
-        case .cloud: return "Cloud"
         }
     }
 
     var detail: String {
         switch self {
-        case .automatic: return "Cloud Voice when you have minutes, otherwise this device"
+        case .automatic: return "On this phone, with the iPhone's built-in voice as a backup"
         case .device: return "Your speech is transcribed on this phone; replies use the system voice"
-        case .cloud: return "Allternit Cloud Voice: natural voices, uses your Cloud Voice minutes"
         }
     }
 }
@@ -142,19 +140,13 @@ final class SettingsStore: ObservableObject {
         didSet { defaults.set(voiceInteractionMode.rawValue, forKey: Keys.voiceInteractionMode) }
     }
 
-    /// Where voice runs (Automatic / This device / Cloud).
+    /// Where voice runs (Automatic / This device).
     @Published var voiceRoute: VoiceRoutePreference {
         didSet { defaults.set(voiceRoute.rawValue, forKey: Keys.voiceRoute) }
     }
     /// Listening on this device (Automatic = Apple's recognizer when available).
     @Published var listening: ListeningPreference {
         didSet { defaults.set(listening.rawValue, forKey: Keys.listening) }
-    }
-    /// Cloud Voice voice id (Kokoro, e.g. `af_heart`) — used when the
-    /// session runs on Allternit Cloud.
-    @Published var cloudVoiceId: String {
-        didSet { defaults.set(cloudVoiceId, forKey: Keys.cloudVoiceId) }
-    }
 
     // MARK: - Data controls
 
@@ -260,7 +252,6 @@ final class SettingsStore: ObservableObject {
         static let voiceInteractionMode = "allternit-settings-voice-interaction-mode"
         static let voiceRoute = "allternit-settings-voice-route"
         static let listening = "allternit-settings-voice-listening"
-        static let cloudVoiceId = "allternit-settings-cloud-voice-id"
         static let improveModel = "allternit-settings-improve-model"
         static let displayLanguage = "allternit-settings-display-language"
         static let timezone = "allternit-settings-timezone"
@@ -301,7 +292,6 @@ final class SettingsStore: ObservableObject {
             .flatMap(VoiceRoutePreference.init(rawValue:)) ?? .automatic
         self.listening = defaults.string(forKey: Keys.listening)
             .flatMap(ListeningPreference.init(rawValue:)) ?? .automatic
-        self.cloudVoiceId = defaults.string(forKey: Keys.cloudVoiceId) ?? "af_heart"
         self.improveModel = defaults.object(forKey: Keys.improveModel) as? Bool ?? true
         self.displayLanguage = defaults.string(forKey: Keys.displayLanguage) ?? "English"
         self.timezone = defaults.string(forKey: Keys.timezone) ?? "UTC"

@@ -130,19 +130,6 @@ final class VoiceModeViewModel: ObservableObject {
                 if let notice { statusLine = notice }
                 startLegacy()
                 return
-            case .cloud:
-                do {
-                    try await startSession(route: .cloud)
-                    return
-                } catch {
-                    guard isActive else { return }
-                    if preference == .cloud {
-                        statusLine = error.localizedDescription
-                        state = .idle
-                        return
-                    }
-                    notice = VoiceRouter.fallbackNotice(for: error)
-                }
             case .device:
                 do {
                     try await startSession(route: .device)
@@ -150,7 +137,7 @@ final class VoiceModeViewModel: ObservableObject {
                     return
                 } catch {
                     guard isActive else { return }
-                    notice = error.localizedDescription
+                    notice = VoiceRouter.fallbackNotice(for: error)
                 }
             }
         }
@@ -168,7 +155,7 @@ final class VoiceModeViewModel: ObservableObject {
         }
     }
 
-    /// Starts a Voice Session on `route` (.cloud or .device). Throws when it
+    /// Starts a Voice Session on `route` (.device). Throws when it
     /// can't (the caller falls back or surfaces the error).
     private func startSession(route: VoiceRoute) async throws {
         guard await Self.ensureMicPermission() else {
@@ -180,14 +167,6 @@ final class VoiceModeViewModel: ObservableObject {
         options.language = SettingsStore.shared.speechLanguage?.rawValue
             ?? Locale.current.language.languageCode?.identifier ?? "en"
         switch route {
-        case .cloud:
-            options.voice = SettingsStore.shared.cloudVoiceId
-            options.sttModel = "light"
-            factory = {
-                let ticket = try await VoiceCloudClient.shared.mintTicket()
-                return WebSocketVoiceTransport(url: ticket.connectURL)
-            }
-            engineLabel = "Cloud voice"
         case .device:
             let packs = VoicePackManager.shared
             if !packs.isReady {

@@ -1,6 +1,6 @@
 ---
 title: "Talk to your bots"
-description: "Voice in any session on Allternit Desktop, ai.allternit.com and the Allternit phone app: quick voice, full-screen voice, where voice runs, and listening in on phone calls."
+description: "Voice in any session on Allternit Desktop, ai.allternit.com and the Allternit phone app: quick voice, full-screen voice, where voice runs, your own OpenAI or ElevenLabs key, and listening in on phone calls."
 ---
 
 You can talk to a bot instead of typing, in any session. What you say becomes a normal message in the thread, so the bot's tools, approvals and memory work exactly as they do when you type. The bot's reply is read aloud while it appears on screen.
@@ -12,13 +12,13 @@ Voice works the same on Allternit Desktop, on ai.allternit.com, and in the Allte
 1. In a session, with the message box empty, press the **voice** button (the waveform) next to Send. Or click the bot on its [stage](/guides/bot-avatars#your-bots-stage).
 2. The message box turns into the voice bar. Start talking.
 
-The first time you start voice — from the voice button, a bot's **Talk** button, or full-screen — a short sheet explains what voice mode is: where it runs, that the microphone is needed, that Allternit Cloud voice uses plan minutes, and that you can talk any time to interrupt. It shows once; **Choose where voice runs** opens Settings › Voice from it.
+The first time you start voice — from the voice button, a bot's **Talk** button, or full-screen — a short sheet explains what voice mode is: where it runs, that the microphone is needed, that you can connect your own OpenAI or ElevenLabs account for a different voice, and that you can talk any time to interrupt. It shows once; **Choose where voice runs** opens Settings › Voice from it.
 
 The bar shows:
 
 - **The Allternit mark**, or the bot's own avatar when you talk with a bot. It moves to show what's happening: listening, thinking, or speaking.
 - **A status line**: "Listening", "Thinking…", or while the bot talks, "Talk any time. Start speaking to interrupt."
-- **Where voice runs**: "Voice on this device" or "Voice on Allternit Cloud".
+- **Where voice runs**: "Voice on this device", "Voice on your OpenAI account" or "Voice by your ElevenLabs account".
 - **Mute**, **Type instead** (ends voice and puts you back in the message box), the **full-screen** button, and **End voice**.
 
 While you talk, your words appear in a dashed bubble at the bottom of the thread ("Hearing you…"). When you finish, your message is sent and labeled **Spoken** in the thread.
@@ -51,11 +51,26 @@ On a phone the controls are larger and sit clear of the home indicator. If your 
 
 ### Where voice runs
 
-- **Automatic (recommended)**: uses this device when its voice engine is ready and keeps up with you, and Allternit Cloud otherwise.
-- **This device**: free on every plan. Your audio is processed on your computer and isn't sent to Allternit.
-- **Allternit Cloud**: runs on Allternit's servers. Easier on battery and on slower computers. Uses Cloud Voice minutes, and you need to be signed in.
+Allternit doesn't run voice on its own servers. Voice runs on your device, or on your own OpenAI or ElevenLabs account if you connect one.
 
-On-device voice runs in Allternit Desktop. In a web browser or the phone app, voice runs on Allternit Cloud for now.
+- **Automatic (recommended)**: voice runs on this device once its voice engine is ready. It's free, and your audio stays on this device.
+- **This device**: the same, chosen on purpose. In a browser, this starts the one-time voice download if it hasn't happened yet.
+- **Your own OpenAI**: OpenAI Realtime listens to you and OpenAI speech reads the replies, using your own OpenAI API key. Easier on slower devices. OpenAI bills you directly.
+- **Your own ElevenLabs**: an ElevenLabs voice reads the replies, using your own ElevenLabs API key. Listening stays on this device. ElevenLabs bills you directly.
+
+If this device can't run voice yet, voice says so and points you to Settings › Voice, where you can download the voice to this device or connect your own provider.
+
+In the Allternit iPhone app, **Automatic** and **This device** run on the phone: the voice model downloads once, and until it's ready the iPhone's built-in voice is used. Your own OpenAI or ElevenLabs isn't in the iPhone app yet; use ai.allternit.com, the phone web app or Desktop for it.
+
+### Your own provider
+
+Optional. Paste your **OpenAI API key** or **ElevenLabs API key**, then choose **Your own OpenAI** or **Your own ElevenLabs** under **Where voice runs**. For ElevenLabs you can also paste a **voice ID** from your ElevenLabs voice library; without one, replies use Rachel, a voice every ElevenLabs account has.
+
+- Your key is kept only on this device, in the app's local storage, the same way your image and video provider keys are. It's never sent to Allternit.
+- Calls go straight from this device to OpenAI (api.openai.com) or ElevenLabs (api.elevenlabs.io). For OpenAI listening, the app uses your key to get a short-lived session key, and only that short-lived key opens the live connection.
+- You pay OpenAI or ElevenLabs for what you use, under your agreement with them. Allternit doesn't add a charge.
+- **Remove** deletes the key from this device. A key saved on one device isn't copied to your other devices.
+- The bot's own model still writes every reply, so what you hear is what's in the thread.
 
 ### Voice pack on this device
 
@@ -77,7 +92,7 @@ If the system recognizer is turned off, denied permission or stops working, voic
 
 ### Voice
 
-Pick how your bots sound. Voices have plain names that say how they sound — Gentle, Crisp, Calm, Warm — with the engine's voice id in small type under each. Press a voice's **Preview** button to hear one short sentence through the voice engine on this device; on the web the first preview downloads the voice models first (this happens once). Only one preview plays at a time. Custom voices (made from a recording with the speaker's recorded, written permission) run on Allternit Cloud and can't be previewed here yet.
+Pick how your bots sound. Voices have plain names that say how they sound — Gentle, Crisp, Calm, Warm — with the engine's voice id in small type under each. Press a voice's **Preview** button to hear one short sentence through the voice engine on this device; on the web the first preview downloads the voice models first (this happens once). Only one preview plays at a time. With **Your own OpenAI**, voices whose names match an OpenAI voice (Steady, Clear, Crisp, Low, Story) use that OpenAI voice; the others use Alloy. With **Your own ElevenLabs**, the ElevenLabs voice ID decides.
 
 ### Live mode
 
@@ -94,15 +109,13 @@ In the Allternit iPhone app, live mode with a bot shows the same avatar, all ten
 - **Let me interrupt the bot by talking**
 - **Show live transcript**: shows your words as you speak, in the thread and in full-screen captions.
 
-### Cloud Voice this month
-
-Plus includes 100 Cloud Voice minutes a month, then $0.08 a minute. This card shows how many you've used this calendar month (UTC). The Free plan doesn't include Cloud Voice; use voice on this device instead.
-
 ## Privacy
 
 - **On this device**, audio is turned into text on your computer. Only the text of your message is sent, the same as if you'd typed it.
 - **In Safari with Speech to text on Automatic**, Safari's own recognizer does the listening and Apple may process the audio. Choose **Allternit on-device** to keep it in the tab.
-- **On Allternit Cloud**, audio is sent to Allternit's servers over an encrypted connection to run the conversation.
+- **With your own OpenAI**, your audio and the bot's replies go from your device to OpenAI over an encrypted connection.
+- **With your own ElevenLabs**, listening stays on your device; the bot's replies go to ElevenLabs to be read aloud.
+- Allternit never receives your audio or your provider key.
 - Either way, your spoken message is saved in the thread like any typed message.
 
 ## When something isn't working
@@ -110,10 +123,12 @@ Plus includes 100 Cloud Voice minutes a month, then $0.08 a minute. This card sh
 | What you see | What to do |
 | --- | --- |
 | "Microphone access is blocked." | Allow the microphone for Allternit. In a browser, use the lock icon in the address bar. On Desktop, open System Settings › Privacy & Security › Microphone. Then press **Try again**. |
-| "Voice engine not installed" | Update Allternit Desktop, or choose **Allternit Cloud** in Settings › Voice. |
-| "The voice pack is still downloading." | Wait for the download in Settings › Voice, or use Allternit Cloud meanwhile. |
-| "Sign in to use Allternit Cloud Voice." | Sign in, or use voice on this device in Allternit Desktop. |
-| "You have no Cloud Voice minutes left this month." | Add minutes in Billing, or use voice on this device. |
+| "Voice engine not installed" | Update Allternit Desktop, or connect your own OpenAI account in Settings › Voice. |
+| "The voice pack is still downloading." | Wait for the download in Settings › Voice. |
+| "Voice on this device needs a one-time download." | Choose **This device** in Settings › Voice to download it, or connect your own provider. |
+| "Add your OpenAI API key in Settings › Voice." | Paste your key under **Your own provider**, or switch back to **Automatic**. |
+| "OpenAI did not accept your API key." / "ElevenLabs did not accept your API key." | Check or replace the key under **Your own provider**. |
+| "Your … account is out of credit or over its rate limit." | Add credit or wait, in your OpenAI or ElevenLabs account. |
 | "Reconnecting…" | The connection dropped. Voice reconnects by itself; the bot's reply keeps appearing in the thread. |
 
 ## Phone calls: Listen and Take over
@@ -133,7 +148,7 @@ Allternit says at the start of every call that the caller is talking to an AI, a
 | What | Price |
 | --- | --- |
 | Voice on this device | Free on every plan |
-| Cloud Voice | $0.08 a minute. Plus includes 100 minutes a month. |
+| Your own OpenAI or ElevenLabs | Billed to you by OpenAI or ElevenLabs. Allternit adds no charge. |
 | Bot phone number | $0.08 a minute on calls, plus $2 a month for each number |
 | Bot talking on its own phone (call cable) | Counts as Cloud Voice minutes |
 
