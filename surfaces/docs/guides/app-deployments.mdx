@@ -1,0 +1,66 @@
+---
+title: 'Deploy projects with OpenShip'
+description: 'Connect an OpenShip installation, review GitHub releases, and inspect deployment status from Desktop or phone.'
+---
+
+## Before you start
+
+You need an OpenShip installation with an HTTPS address reachable from your Allternit runtime. OpenShip runs your applications on a server you own or rent. Server, storage and backup costs remain your responsibility.
+
+Allternit provides the deployment controls. You own the hosting account and pay your infrastructure provider directly. This feature does not include Allternit-funded hosting or a hosting allowance.
+
+If you do not have an installation yet, follow the [official OpenShip setup guide](https://openship.io/docs). Configure its server, connect GitHub, and review the project build commands, environment variables and domains there first. Allternit does not purchase a server or install OpenShip through this panel.
+
+On the web and phone, select a paired Allternit computer or runtime. That runtime stores the connection and calls OpenShip. Keep it online while using the panel. See [BYOC Runtime](/byoc/overview).
+
+## Connect
+
+1. Open **Settings → Infrastructure → App deployments**. The same panel is available in Desktop, the web phone layout and the PWA.
+2. Enter your OpenShip HTTPS address and select **Add connection**.
+3. Open **Continue to OpenShip sign-in**. Grant the workspace and project access you intend to use.
+4. Return to Allternit, select the saved connection, and select **Connect**.
+5. Choose the OpenShip workspace if your sign-in can access more than one.
+
+You do not paste a provider token into this panel. Allternit uses its existing connector sign-in flow. To change or renew grants, select **Sign in again**, finish consent, then select **Connect** to reload available actions.
+
+## Add a project
+
+Select an existing GitHub-backed OpenShip project. If your grants permit project creation and destination discovery, expand **Add a GitHub project**. Supply the project name, GitHub owner, repository, branch and destination server. Review the record and select **Approve and add project**.
+
+Adding the project does not deploy it. Review build settings, secrets and domains in OpenShip before its first release. This integration accepts GitHub sources; it does not upload a folder from your desktop or phone.
+
+The project selector shows 50 projects per page. Use the page buttons to see more.
+
+## Deploy
+
+1. Select the project and branch.
+2. Choose **Preview** or **Production**. Preview is selected initially.
+3. Select **Review deployment**.
+4. Check the connection, workspace, project, Git source, destination and environment.
+5. Select **Approve and deploy** to submit the release.
+
+OpenShip resolves the selected branch when the build starts. The review does not pin an immutable commit. The request uses your existing infrastructure and its billing.
+
+A returned deployment ID means submission was accepted. It does not mean the app is ready. Allternit polls persisted OpenShip build status while the panel is visible. **OpenShip reports this release is ready** appears only for a successful terminal status. Check the app and its domain before sharing it with users.
+
+## Inspect and recover
+
+- **Refresh history** reloads the latest 20 releases. Open the OpenShip dashboard for older history.
+- **Inspect** follows a release's saved status. **Refresh status** retries an interrupted observation.
+- **Read logs** fetches up to 200 log entries. Logs are shown as plain text.
+- **Review cancellation** requests cancellation of a queued, building or deploying release, when your grants allow it. Cancellation may not undo a release already activated.
+- **Review rollback** first reads the selected successful release's restore plan. **Approve rollback** requests that release as the active application version. Rollback does not restore database contents.
+
+If a request loses its response, it may still have reached OpenShip. Allternit blocks another mutation until you inspect OpenShip and explicitly refresh history or projects. It does not automatically retry writes.
+
+An **action_required** or **partial_failure** status needs review in the OpenShip dashboard. Use the dashboard link to resolve the provider's pending decision, then refresh status here. A connection without write or administrator grants can still inspect the operations its read grants permit.
+
+## Troubleshooting
+
+- **No workspaces or projects:** check which workspace and resources you granted during sign-in.
+- **Deploy unavailable:** the selected project needs a GitHub source, branch, deployment trigger and status/history access.
+- **Rollback unavailable:** this needs deployment administrator access, restore-plan access and a prior successful release that is not active.
+- **Connection unreachable:** check HTTPS, public DNS, the Allternit runtime connection and the OpenShip host. The gateway rejects private network destinations by default.
+- **Server needs setup:** use the official OpenShip guide; the panel does not provision paid infrastructure.
+
+For implementation details, see [OpenShip integration](/api/openship-integration).

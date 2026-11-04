@@ -3699,6 +3699,39 @@
         "allternit/surfaces/docs/guides/memory-and-learning.mdx",
         "allternit/surfaces/docs/api/bot-hub.mdx"
       ]
+    },
+    {
+      "id": "feature:project-deployment-openship",
+      "label": "Project deployment with OpenShip",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "Connect an existing user-owned OpenShip installation through scoped MCP OAuth, review GitHub deployments, inspect saved status and logs, and approve rollback from the shared Desktop/web/phone settings panel. Live provider verification and release are pending.",
+      "touches": [
+        "allternit-ai/src/components/deployments",
+        "allternit-ai/src/lib/deployments",
+        "allternit-ai/src/views/settings/InfrastructureSettings.tsx",
+        "allternit-ai/src/views/code/CodeProjectView.tsx",
+        "allternit-ai/src/integration/api-client.ts",
+        "allternit/cmd/allternit-api/src/mcp_apps.rs",
+        "allternit/cmd/allternit-api/src/mcp_routes.rs",
+        "allternit-ai/src/fabric-session/phone/phone-nav.ts",
+        "allternit-ai/src/fabric-session/phone/PhoneShell.tsx",
+        "allternit-ai/src/fabric-session/phone/screens/SettingsScreen.tsx"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-02",
+          "note": "Eoj requested delivery in less than four hours. Reuse the existing per-user MCP OAuth and tool bridge; require explicit action review; start with GitHub projects and user-owned OpenShip infrastructure. No managed hosting or paid server provisioning."
+        },
+        {
+          "on": "2026-11-03",
+          "note": "Eoj clarified Allternit supplies deployment integration only. Users own and pay for hosting; no Allternit infrastructure purchases or subsidies."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/app-deployments.mdx",
+        "allternit/surfaces/docs/api/openship-integration.mdx"
+      ]
     }
   ],
   "journeys": [
