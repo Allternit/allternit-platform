@@ -865,7 +865,10 @@
         "allternit-ai/src/lib/skills/skill-catalog-install.ts",
         "allternit-ai/src/plugins/catalog/native-plugins.ts",
         "allternit-ai/src/lib/webhook-api.ts",
-        "allternit/cmd/gizzi-code/src/runtime/context/config/config.ts"
+        "allternit/cmd/gizzi-code/src/runtime/context/config/config.ts",
+        "allternit-ai/src/views/customize/section-directory.ts",
+        "allternit-ai/src/components/webhooks",
+        "allternit-ai/src/lib/webhooks"
       ],
       "decisions": [
         {
@@ -875,6 +878,10 @@
         {
           "on": "2026-11-03",
           "note": "Eoj: item pages before install; official skills are the repo's own (.agents/skills: docx, powerpoint, clone-website, mobile-app-design, agent-orchestrator, steer-parallel-agent); fix the More sections' Add paths so added items run, then give them official shelves."
+        },
+        {
+          "on": "2026-11-03",
+          "note": "Eoj: Messaging channels are connector cards with their own page; plugin covers fill the card; Discover catalogs for MCP servers (15, each connected in gizzi), commands (12) and CLI tools (the coding-CLI catalog with install and sign-in); one shared capability scan per page. MCP Apps: own look, full list with 'Has a screen' first; Allternit draws screens for apps that ship none (vendor look packs + per-tool screen maps), depth pending Eoj's pick."
         }
       ],
       "evidence": [
@@ -1043,7 +1050,11 @@
         "allternit-ai/src/views/tasks",
         "allternit-ai/src/views/bots",
         "allternit/cmd/allternit-api/src/routine_*",
-        "allternit/cmd/allternit-api/src/automation_*"
+        "allternit/cmd/allternit-api/src/automation_*",
+        "allternit/cmd/allternit-api/src/webhook_trigger_routes.rs",
+        "allternit/cmd/allternit-cloud-api/src/routes/channel_inbound.rs",
+        "allternit-ai/src/components/webhooks",
+        "allternit-ai/src/lib/webhook-api.ts"
       ],
       "decisions": [
         {
@@ -1057,6 +1068,10 @@
         {
           "on": "2026-10-27",
           "note": "Routine rows expose exact next-run time in the saved timezone, bot and execution location, explicit last result, failed-run review and Run history. Scheduler mutations are serialized and disable conflicting controls. Shared row covers Desktop, web phone and PWA."
+        },
+        {
+          "on": "2026-11-03",
+          "note": "Eoj: webhooks must work end to end. Triggers get a public address (cloud-api channel route provider webhook_trigger, relayed signed to /webhooks/relayed/<route>), the runtime checks GitHub, Stripe, Linear, Shopify or Allternit signatures with a stored secret, filters events, and starts the bot on a task thread (tools ask). One guided setup (components/webhooks) replaced three forms that all returned 422."
         }
       ],
       "evidence": [

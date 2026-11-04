@@ -1012,6 +1012,10 @@ pub async fn ingest(state: &Arc<AppState>, owner: &str, body: &Value) -> Result<
         active: true,
         created_at: row.created_at.clone(),
         updated_at: row.updated_at.clone(),
+        verify: "address".into(),
+        route_id: None,
+        public_url: None,
+        has_secret: false,
     };
     let mut automation_payload=payload.clone();
     automation_payload["data"]=event.get("data").cloned().unwrap_or(Value::Null);
