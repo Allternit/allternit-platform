@@ -147,6 +147,7 @@ final class SettingsStore: ObservableObject {
     /// Listening on this device (Automatic = Apple's recognizer when available).
     @Published var listening: ListeningPreference {
         didSet { defaults.set(listening.rawValue, forKey: Keys.listening) }
+    }
 
     // MARK: - Data controls
 
