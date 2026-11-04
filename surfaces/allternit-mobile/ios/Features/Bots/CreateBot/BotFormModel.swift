@@ -567,6 +567,7 @@ final class BotFormModel: ObservableObject {
             }
             await look.syncAsset(botId: botId)
             AgentHubStore.shared.fetchAgentsIfNeeded(force: true)
+            if makeMain { Task { await MainBotReachOut.run(botId: botId, botName: name) } }
             return BotSetupOutcome(botIds: [botId], mainBotId: makeMain ? botId : nil, summary: "\(name) created")
         } catch {
             self.error = "Couldn’t create the bot: \(FriendlyErrorMessage.from(error.localizedDescription))"

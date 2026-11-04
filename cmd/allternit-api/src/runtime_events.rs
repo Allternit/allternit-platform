@@ -422,6 +422,7 @@ mod tests {
             ("channel.message.received", json!({ "text": "hi" }), Some("message.received")),
             ("channel.message.received", json!({ "own": true }), None),
             ("channel.message.sent", json!({}), None),
+            ("bot.message.posted", json!({ "text": "Goldie sent you a message" }), Some("message.received")),
             ("channel.message.pending", json!({}), None),
             ("call.started", json!({}), None),
             ("call.transcript.delta", json!({}), None),
