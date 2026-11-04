@@ -91,7 +91,7 @@ fn sha256_hex(bytes: &[u8]) -> String {
 /// download can't leave a truncated file that looks cached), checking the
 /// pinned digest when there is one.
 async fn fetch_model(m: &ModelFile, dest: &Path) -> Result<(), String> {
-    let bytes = reqwest::Client::new()
+    let bytes = crate::net_client::client()
         .get(m.url)
         .timeout(MODEL_DOWNLOAD_TIMEOUT)
         .send()

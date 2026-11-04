@@ -367,6 +367,9 @@ impl CooldownTracker {
         if let Some(duration) = cooldown {
             record.cooldown_until = Some(now + duration);
             crate::metrics::record_llm_failover_cooldown(provider_id, model_id);
+            if reason == "failure_streak" {
+                raise_alert("llm_provider_cooldown", provider_id, format!("LLM provider {provider_id} is failing ({model_id}); requests are routed away from it for {}s.", duration.as_secs()));
+            }
         }
         drop(records);
 
@@ -424,6 +427,58 @@ impl CooldownTracker {
             .get(&(provider_id.to_string(), model_id.to_string()))
             .map(|r| r.fail_timestamps.len())
             .unwrap_or(0)
+    }
+}
+
+type AlertSink = Box<dyn Fn(&'static str, &str, String) + Send + Sync>;
+static ALERT_SINK: std::sync::OnceLock<AlertSink> = std::sync::OnceLock::new();
+
+/// Install the attention-item sink (called once at startup with the database).
+/// One open item per (kind, provider); alerts run off the request path and are never fatal.
+pub fn install_alert_sink(db: DbHandle) {
+    let _ = ALERT_SINK.set(Box::new(move |kind, provider, summary| {
+        let Ok(handle) = tokio::runtime::Handle::try_current() else { return };
+        let (db, provider) = (db.clone(), provider.to_string());
+        handle.spawn_blocking(move || {
+            let conn = match db.connect() {
+                Ok(c) => c,
+                Err(e) => return warn!("failover alert: no db connection: {e}"),
+            };
+            // Provider health is operator data, never another customer's. The owner is
+            // ALLTERNIT_OPS_ALERT_OWNER, or the single user of a one-user runtime
+            // (Desktop, a bot's computer). A shared runtime with no owner set only logs.
+            let owner = std::env::var("ALLTERNIT_OPS_ALERT_OWNER").ok().filter(|v| !v.trim().is_empty()).or_else(|| {
+                let users: Vec<String> = conn
+                    .prepare("SELECT DISTINCT user_id FROM runtime_user_events LIMIT 2")
+                    .and_then(|mut st| st.query_map([], |r| r.get::<_, String>(0))?.collect())
+                    .unwrap_or_default();
+                (users.len() == 1).then(|| users[0].clone())
+            });
+            let Some(owner) = owner else {
+                return warn!("failover alert {kind} for {provider}: no ALLTERNIT_OPS_ALERT_OWNER on a shared runtime; not raised");
+            };
+            {
+                crate::netops::alerts::open(
+                    &conn,
+                    &crate::netops::alerts::Item {
+                        owner,
+                        kind: kind.into(),
+                        severity: "warn".into(),
+                        source: "llm_gateway".into(),
+                        source_id: provider.clone(),
+                        summary: summary.clone(),
+                        detail: serde_json::json!({ "provider": provider }),
+                        ..Default::default()
+                    },
+                );
+            }
+        });
+    }));
+}
+
+fn raise_alert(kind: &'static str, provider: &str, summary: String) {
+    if let Some(sink) = ALERT_SINK.get() {
+        sink(kind, provider, summary);
     }
 }
 
@@ -503,6 +558,7 @@ pub fn select_fallback_healthy_at(
         "Failover fail-open: all fallback candidates cooling down; attempting soonest-expiring"
     );
     crate::metrics::record_llm_failover_cooldown(&picked.provider_id, &picked.model_id);
+    raise_alert("llm_chain_exhausted", &picked.provider_id, format!("Every LLM provider in the failover chain is cooling down; retrying {} anyway.", picked.provider_id));
     Some(picked.clone())
 }
 

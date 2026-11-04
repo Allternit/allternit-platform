@@ -1207,7 +1207,7 @@ async fn telegram_managed_available_h(State(state): State<Arc<AppState>>) -> Res
     let available = match state.config.cloud_api_url() {
         Some(base) => {
             let url = format!("{}/api/v1/channel-onboarding/telegram/available", base.trim_end_matches('/'));
-            match reqwest::Client::new().get(&url).timeout(std::time::Duration::from_secs(5)).send().await {
+            match crate::net_client::client().get(&url).timeout(std::time::Duration::from_secs(5)).send().await {
                 Ok(response) if response.status().is_success() => {
                     response.json::<Value>().await.ok().and_then(|v| v["available"].as_bool()).unwrap_or(false)
                 }
@@ -1472,7 +1472,7 @@ impl ChannelTransport for SlackTransport {
         if let Some(t) = &out.thread {
             body["thread_ts"] = json!(t);
         }
-        let resp = reqwest::Client::new()
+        let resp = crate::net_client::client()
             .post("https://slack.com/api/chat.postMessage")
             .bearer_auth(token)
             .timeout(std::time::Duration::from_secs(15))
@@ -1500,7 +1500,7 @@ impl ChannelTransport for SlackTransport {
         if let Some(c) = cursor {
             q.push(("oldest", c.to_string()));
         }
-        let v: Value = reqwest::Client::new()
+        let v: Value = crate::net_client::client()
             .get("https://slack.com/api/conversations.replies")
             .bearer_auth(token)
             .query(&q)

@@ -204,7 +204,7 @@ impl GenericOpenAiProvider {
     pub fn new(config: GenericOpenAiConfig) -> Arc<Self> {
         Arc::new(Self {
             config,
-            client: reqwest::Client::new(),
+            client: crate::net_client::client(),
             cache: RwLock::new(None),
         })
     }

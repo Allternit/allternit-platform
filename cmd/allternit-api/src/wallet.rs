@@ -69,7 +69,7 @@ impl ReqwestWalletClient {
         Self {
             base_url: base_url.into().trim_end_matches('/').to_string(),
             secret: secret.into(),
-            client: reqwest::Client::new(),
+            client: crate::net_client::client(),
         }
     }
 

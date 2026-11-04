@@ -349,7 +349,7 @@ impl PhoneDirectory for HttpPhoneDirectory {
             return Err(DirectoryError::NotPaired);
         }
         let url = format!("{cloud_url}/api/v1/runtime-devices/me/registered-phones");
-        let resp = reqwest::Client::new()
+        let resp = crate::net_client::client()
             .get(&url)
             .bearer_auth(bearer)
             .timeout(Duration::from_secs(15))
@@ -387,7 +387,7 @@ impl PhoneDirectory for HttpPhoneDirectory {
             return Err(DirectoryError::NotPaired);
         }
         let url = format!("{cloud_url}/api/v1/runtime-devices/me/registered-phones");
-        let resp = reqwest::Client::new()
+        let resp = crate::net_client::client()
             .put(&url)
             .bearer_auth(bearer)
             .json(&json!({ "phones": phones }))

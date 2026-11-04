@@ -910,11 +910,78 @@ async fn record_delivery_result(
              WHERE id = ?6",
             params![status, response_status, response_body, error, attempts, delivery_id],
         )?;
+        if status == "failed" {
+            disable_if_dead(&conn, &delivery_id);
+        }
         Ok::<_, rusqlite::Error>(())
     })
     .await
     {
         warn!("failed to record webhook delivery result: {}", e);
+    }
+}
+
+/// Consecutive failed deliveries (most recent settled rows) before a subscription is switched off.
+const DISABLE_AFTER_FAILURES: i64 = 20;
+
+/// After a failed delivery: if the last [`DISABLE_AFTER_FAILURES`] settled deliveries of its
+/// subscription all failed, set `active = 0` and open a `webhook_disabled` attention item.
+/// Never fatal; errors are logged.
+fn disable_if_dead(conn: &rusqlite::Connection, delivery_id: &str) {
+    let run = || -> rusqlite::Result<()> {
+        let (sub_id, org_id, url): (String, String, String) = conn.query_row(
+            "SELECT s.id, s.org_id, s.url FROM webhook_deliveries d
+             JOIN webhook_subscriptions s ON s.id = d.subscription_id WHERE d.id = ?1",
+            params![delivery_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )?;
+        let failed: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM (SELECT status FROM webhook_deliveries
+               WHERE subscription_id = ?1 AND status != 'pending' ORDER BY rowid DESC LIMIT ?2)
+             WHERE status = 'failed'",
+            params![sub_id, DISABLE_AFTER_FAILURES],
+            |r| r.get(0),
+        )?;
+        if failed < DISABLE_AFTER_FAILURES {
+            return Ok(());
+        }
+        let changed = conn.execute(
+            "UPDATE webhook_subscriptions SET active = 0 WHERE id = ?1 AND active = 1",
+            params![sub_id],
+        )?;
+        if changed > 0 {
+            warn!(subscription = %sub_id, "webhook disabled after {DISABLE_AFTER_FAILURES} consecutive failed deliveries");
+            // Attention items belong to a user: tell the org's owner (else an admin).
+            let owner: Option<String> = conn
+                .query_row(
+                    "SELECT user_id FROM organization_members WHERE organization_id = ?1 AND role IN ('owner', 'admin')
+                     ORDER BY CASE role WHEN 'owner' THEN 0 ELSE 1 END LIMIT 1",
+                    params![org_id],
+                    |r| r.get(0),
+                )
+                .ok();
+            let Some(owner) = owner else {
+                warn!(subscription = %sub_id, org = %org_id, "webhook disabled; org has no owner or admin to alert");
+                return Ok(());
+            };
+            crate::netops::alerts::open(
+                conn,
+                &crate::netops::alerts::Item {
+                    owner,
+                    kind: "webhook_disabled".into(),
+                    severity: "warn".into(),
+                    source: "webhook".into(),
+                    source_id: sub_id.clone(),
+                    summary: format!("Webhook {url} was switched off after {DISABLE_AFTER_FAILURES} failed deliveries in a row."),
+                    detail: serde_json::json!({ "subscriptionId": sub_id, "url": url }),
+                    ..Default::default()
+                },
+            );
+        }
+        Ok(())
+    };
+    if let Err(e) = run() {
+        warn!("webhook auto-disable check failed: {}", e);
     }
 }
 

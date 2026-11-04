@@ -161,7 +161,7 @@ fn not_paired() -> ManagedError {
 impl DeviceCloud {
     fn request(&self, method: reqwest::Method, path: &str) -> Result<reqwest::RequestBuilder, ManagedError> {
         let token = self.secret.device_token().ok_or_else(not_paired)?;
-        let mut req = reqwest::Client::new()
+        let mut req = crate::net_client::client()
             .request(method, format!("{}{path}", self.base))
             .bearer_auth(token)
             .timeout(CLOUD_TIMEOUT);

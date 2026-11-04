@@ -1426,6 +1426,12 @@ struct SendBody {
 /// Send one SMS from a bot's number. Refused (403) when the number's SMS isn't active, the
 /// recipient opted out, or the recipient never texted first and has no consent record.
 pub async fn send_sms(db: &PgPool, carrier: &dyn Carrier, user: &str, number_id: &str, to: &str, text: &str) -> PResult<Value> {
+    send_sms_idem(db, carrier, user, number_id, to, text, None).await
+}
+
+/// `send_sms` with an optional idempotency key: a retry with the same key returns the stored
+/// result (`replay: true`) instead of texting again; an in-flight duplicate gets 409.
+pub async fn send_sms_idem(db: &PgPool, carrier: &dyn Carrier, user: &str, number_id: &str, to: &str, text: &str, idem: Option<&str>) -> PResult<Value> {
     if !carriers::is_e164(to) {
         return Err(PhoneError::BadRequest("to must be an E.164 number".into()));
     }
@@ -1449,14 +1455,53 @@ pub async fn send_sms(db: &PgPool, carrier: &dyn Carrier, user: &str, number_id:
     if sent_today >= env_i64("ALLTERNIT_SMS_DAILY_CAP", DEFAULT_DAILY_CAP) {
         return Err(PhoneError::TooMany("daily_limit"));
     }
-    let sent = carrier.send_sms(&number.e164, to, text, number.messaging_ref.as_deref()).await?;
-    sqlx::query("INSERT INTO sms_outbound_log (number_id, to_e164, carrier_message_id, chars) VALUES ($1, $2, $3, $4)")
-        .bind(&number.id)
-        .bind(to)
-        .bind(&sent.id)
-        .bind(text.chars().count() as i32)
-        .execute(db)
-        .await?;
+    let chars = text.chars().count() as i32;
+    if let Some(key) = idem {
+        let claimed = sqlx::query("INSERT INTO sms_outbound_log (number_id, to_e164, chars, idempotency_key, state) VALUES ($1, $2, $3, $4, 'sending') ON CONFLICT DO NOTHING")
+            .bind(&number.id)
+            .bind(to)
+            .bind(chars)
+            .bind(key)
+            .execute(db)
+            .await?
+            .rows_affected();
+        if claimed == 0 {
+            let prior: Option<(String, Option<String>)> = sqlx::query_as("SELECT state, carrier_message_id FROM sms_outbound_log WHERE number_id = $1 AND idempotency_key = $2")
+                .bind(&number.id)
+                .bind(key)
+                .fetch_optional(db)
+                .await?;
+            return match prior {
+                Some((state, Some(id))) if state == "sent" => Ok(json!({ "ok": true, "messageId": id, "replay": true })),
+                _ => Err(PhoneError::Conflict("send_in_progress")),
+            };
+        }
+    }
+    let sent = match carrier.send_sms(&number.e164, to, text, number.messaging_ref.as_deref()).await {
+        Ok(s) => s,
+        Err(e) => {
+            if let Some(key) = idem {
+                let _ = sqlx::query("DELETE FROM sms_outbound_log WHERE number_id = $1 AND idempotency_key = $2 AND state = 'sending'").bind(&number.id).bind(key).execute(db).await;
+            }
+            return Err(e.into());
+        }
+    };
+    if let Some(key) = idem {
+        sqlx::query("UPDATE sms_outbound_log SET state = 'sent', carrier_message_id = $3 WHERE number_id = $1 AND idempotency_key = $2")
+            .bind(&number.id)
+            .bind(key)
+            .bind(&sent.id)
+            .execute(db)
+            .await?;
+    } else {
+        sqlx::query("INSERT INTO sms_outbound_log (number_id, to_e164, carrier_message_id, chars) VALUES ($1, $2, $3, $4)")
+            .bind(&number.id)
+            .bind(to)
+            .bind(&sent.id)
+            .bind(chars)
+            .execute(db)
+            .await?;
+    }
     Ok(json!({ "ok": true, "messageId": sent.id, "parts": sent.parts }))
 }
 
@@ -1465,7 +1510,8 @@ async fn sms_send_route(State(state): State<Arc<ApiState>>, headers: HeaderMap, 
         let caller = caller(&state.db, &headers).await?;
         caller.own(&state.db, &body.number_id).await?;
         let carrier = carrier()?;
-        let out = send_sms(&state.db, carrier.as_ref(), &caller.user, &body.number_id, &body.to, &body.text).await?;
+        let idem = headers.get("idempotency-key").and_then(|v| v.to_str().ok()).map(str::trim).filter(|v| !v.is_empty() && v.len() <= 200);
+        let out = send_sms_idem(&state.db, carrier.as_ref(), &caller.user, &body.number_id, &body.to, &body.text, idem).await?;
         Ok::<_, PhoneError>(Json(out).into_response())
     };
     run.await.unwrap_or_else(IntoResponse::into_response)
@@ -1822,7 +1868,7 @@ mod tests {
     /// A schema-per-test pool with the real 020 (relay) and 024 (phone) migrations.
     async fn pool() -> PgPool {
         let db = test_pool().await;
-        for sql in [include_str!("../../migrations_pg/003_api_keys.sql"), include_str!("../../migrations_pg/020_channel_inbound_queue.sql"), include_str!("../../migrations_pg/024_phone_numbers.sql"), include_str!("../../migrations_pg/050_platform_api_foundation.sql"), include_str!("../../migrations_pg/051_platform_numbers_messaging.sql"), include_str!("../../migrations_pg/057_allternit_events_backbone.sql")] {
+        for sql in [include_str!("../../migrations_pg/003_api_keys.sql"), include_str!("../../migrations_pg/020_channel_inbound_queue.sql"), include_str!("../../migrations_pg/024_phone_numbers.sql"), include_str!("../../migrations_pg/050_platform_api_foundation.sql"), include_str!("../../migrations_pg/051_platform_numbers_messaging.sql"), include_str!("../../migrations_pg/057_allternit_events_backbone.sql"), include_str!("../../migrations_pg/118_sms_idempotency.sql")] {
             sqlx::raw_sql(&sql.replace("public.", "")).execute(&db).await.unwrap();
         }
         seed_runtime_device(&db, "rt1", USER).await;
@@ -2041,6 +2087,25 @@ mod tests {
         let capped = send("one more").await;
         std::env::remove_var("ALLTERNIT_SMS_DAILY_CAP");
         assert!(matches!(capped, Err(PhoneError::TooMany("daily_limit"))));
+    }
+
+    #[tokio::test]
+    async fn a_retried_send_with_the_same_key_texts_once() {
+        let db = pool().await;
+        let c = FakeCarrier::default();
+        let n = buy(&db, &c, &e164(41)).await.unwrap();
+        activate(&db, &n.id).await;
+        let n = number_for_user(&db, USER, &n.id).await.unwrap();
+        let to = "+15550005555";
+        assert!(matches!(deliver(&db, &c, &n, "k0", to, "hi").await, Edge::Deliver { .. }));
+        let before = c.sent.lock().unwrap().len();
+        let first = send_sms_idem(&db, &c, USER, &n.id, to, "your table is ready", Some("k-1")).await.unwrap();
+        let retry = send_sms_idem(&db, &c, USER, &n.id, to, "your table is ready", Some("k-1")).await.unwrap();
+        assert_eq!(c.sent.lock().unwrap().len(), before + 1, "the retry must not text again");
+        assert_eq!(retry["messageId"], first["messageId"]);
+        assert_eq!(retry["replay"], true);
+        send_sms_idem(&db, &c, USER, &n.id, to, "your table is ready", Some("k-2")).await.unwrap();
+        assert_eq!(c.sent.lock().unwrap().len(), before + 2, "a new key is a new text");
     }
 
     #[tokio::test]

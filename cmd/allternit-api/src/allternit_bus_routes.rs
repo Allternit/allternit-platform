@@ -342,7 +342,7 @@ pub async fn send_photon_outbound_message(
     to_phone: &str,
     body: &str,
 ) -> Result<Value, String> {
-    let client = reqwest::Client::new();
+    let client = crate::net_client::client();
     let url = "https://api.photon.codes/v1/messages";
     let resp = client
         .post(url)
@@ -788,7 +788,7 @@ pub(crate) async fn provision_email_brokered(
     let bearer = crate::phone_sync::runtime_bearer()
         .ok_or_else(|| err(StatusCode::CONFLICT, "runtime_not_paired", "Sign this computer in to your Allternit account to give bots email."))?;
     let request = |reissue: bool| {
-        reqwest::Client::new()
+        crate::net_client::client()
             .post(format!("{}/api/v1/runtime-devices/me/bot-email/mailboxes", crate::phone_sync::cloud_base().trim_end_matches('/')))
             .bearer_auth(&bearer)
             .timeout(std::time::Duration::from_secs(30))

@@ -302,6 +302,8 @@ async fn main() {
     // Memory-plane index: background embedding backfill / re-embed (WP-M1a).
     allternit_api::memory_index::spawn_indexer(db.clone());
 
+    allternit_api::llm_gateway::failover::install_alert_sink(db.clone());
+
     // Shared gateway state (P2.9): with GATEWAY_SHARED_STATE=sqlite, failover
     // cooldowns and gateway rate-limit counters live in SQLite so multiple
     // replicas steer/throttle identically. Default off: in-memory behavior.

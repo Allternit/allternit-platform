@@ -181,7 +181,7 @@ pub fn sync_targets(db: &DbHandle) -> Vec<Target> {
 /// Forward a server's `/agent-sessions/sync` events (already in the app's
 /// shape) until the client goes away or the server stream ends.
 pub async fn relay_sync(target: Target, tx: tokio::sync::mpsc::Sender<axum::response::sse::Event>) {
-    let mut req = reqwest::Client::new()
+    let mut req = crate::net_client::client()
         .get(format!("{}/api/v1/agent-sessions/sync", target.gateway_url))
         .header(reqwest::header::ACCEPT, "text/event-stream");
     if let Some(t) = &target.token {

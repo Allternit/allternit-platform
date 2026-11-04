@@ -384,7 +384,7 @@ pub(crate) async fn verify_runtime_device_token(
         "{}/api/v1/runtime-devices/verify-token",
         base.trim_end_matches('/')
     );
-    let resp = match reqwest::Client::new()
+    let resp = match crate::net_client::client()
         .post(&url)
         .bearer_auth(token)
         .timeout(std::time::Duration::from_secs(5))
@@ -3074,7 +3074,7 @@ async fn execute_connector(
         );
     }
 
-    let client = reqwest::Client::new();
+    let client = crate::net_client::client();
     let tool = body.tool.clone().unwrap_or_default();
     let input = body.input.clone().unwrap_or_else(|| json!({}));
 
@@ -3887,7 +3887,7 @@ async fn oauth_callback(
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
 
-    let client = reqwest::Client::new();
+    let client = crate::net_client::client();
     let mut form: Vec<(&str, String)> = vec![
         ("grant_type", "authorization_code".to_string()),
         ("code", code),
@@ -3994,7 +3994,7 @@ async fn connect_device(
         .unwrap_or("")
         .to_string();
     let scopes = scopes_of(m);
-    let client = reqwest::Client::new();
+    let client = crate::net_client::client();
     let mut form: Vec<(&str, String)> = vec![("client_id", client_id.clone())];
     if !scopes.is_empty() {
         form.push(("scope", scopes.join(" ")));
@@ -4126,7 +4126,7 @@ async fn poll_device(
         .unwrap_or("")
         .to_string();
 
-    let client = reqwest::Client::new();
+    let client = crate::net_client::client();
     let form: Vec<(&str, String)> = vec![
         ("client_id", client_id),
         ("device_code", device_code),

@@ -106,13 +106,15 @@ async fn insert(db: &PgPool, m: &Message, project_id: &str, carrier_id: Option<&
 async fn send_message(
     State(state): State<Arc<ApiState>>,
     caller: PlatformCaller,
+    headers: axum::http::HeaderMap,
     ApiJson(body): ApiJson<SendBody>,
 ) -> Result<(StatusCode, Json<Message>), PlatformError> {
     caller.require("messaging")?;
     let number = api_number(&state.db, &caller, &body.number_id).await?;
     let text = body.body;
     let carrier = if number.simulated { None } else { Some(phone::carrier().map_err(phone_error)?) };
-    send_inner(&state.db, &caller, &number, &body.to, &text, carrier.as_deref()).await.map(|m| (StatusCode::CREATED, Json(m)))
+    let idem = headers.get("idempotency-key").and_then(|v| v.to_str().ok()).map(str::trim).filter(|v| !v.is_empty() && v.len() <= 200);
+    send_inner(&state.db, &caller, &number, &body.to, &text, carrier.as_deref(), idem).await.map(|m| (StatusCode::CREATED, Json(m)))
 }
 
 /// Send and record one text. `carrier` is `None` for a simulated number.
@@ -123,6 +125,7 @@ pub async fn send_inner(
     to: &str,
     text: &str,
     carrier: Option<&dyn crate::carriers::Carrier>,
+    idem: Option<&str>,
 ) -> Result<Message, PlatformError> {
     // Card on file for every project (sandbox too: no free usage); a real text
     // is billable, so it is also refused once the project hit its spend cap.
@@ -130,7 +133,21 @@ pub async fn send_inner(
     let (status, carrier_id, parts) = match carrier {
         Some(carrier) => {
             super::spend_allowed(db, &caller.project_id).await?;
-            let out = phone::send_sms(db, carrier, &caller.owner_user_id, &number.id, to, text).await.map_err(phone_error)?;
+            let out = phone::send_sms_idem(db, carrier, &caller.owner_user_id, &number.id, to, text, idem).await.map_err(phone_error)?;
+            if out["replay"].as_bool() == Some(true) {
+                // Retry of an earlier send: return that message, send and record nothing new.
+                if let Some(cid) = out["messageId"].as_str() {
+                    let prior = sqlx::query_as::<_, Message>(&format!("SELECT {COLUMNS} FROM platform_messages WHERE carrier_message_id = $1 AND project_id = $2 AND number_id = $3"))
+                        .bind(cid)
+                        .bind(&caller.project_id)
+                        .bind(&number.id)
+                        .fetch_optional(db)
+                        .await?;
+                    if let Some(m) = prior {
+                        return Ok(m);
+                    }
+                }
+            }
             let parts = out["parts"].as_i64().map(|p| p as i32).unwrap_or_else(|| segments(text));
             ("sent", out["messageId"].as_str().map(str::to_string), parts)
         }

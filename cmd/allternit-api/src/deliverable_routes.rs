@@ -151,7 +151,7 @@ async fn create_deliverable(
     let title = req.title.clone().unwrap_or_else(|| req.name.clone());
 
     // Render through the office engine (the artifact pipeline round-trip).
-    let render = reqwest::Client::new()
+    let render = crate::net_client::client()
         .post(format!("{}/deliverable/render", office_engine_url()))
         .json(&json!({
             "template": req.template,

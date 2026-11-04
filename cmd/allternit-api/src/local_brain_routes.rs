@@ -103,7 +103,7 @@ async fn local_brain_probe(headers: HeaderMap, ollama_url: String) -> Response {
         None => return unauthorized(),
     };
 
-    let client = reqwest::Client::new();
+    let client = crate::net_client::client();
 
     let tags_response = match client
         .get(format!("{}/api/tags", ollama_url.trim_end_matches('/')))
@@ -383,7 +383,7 @@ async fn pull_custom_model(
 /// re-emitting each JSON progress line Ollama sends. Shared by the fixed
 /// Local Brain download and arbitrary Hugging Face installs.
 async fn stream_ollama_pull(ollama_url: String, model_tag: String) -> Response {
-    let client = reqwest::Client::new();
+    let client = crate::net_client::client();
     let tags_url = format!("{}/api/tags", ollama_url.trim_end_matches('/'));
     let pull_url = format!("{}/api/pull", ollama_url.trim_end_matches('/'));
 
@@ -504,7 +504,7 @@ async fn brain_status(
     let ollama_url = state.config.ollama_url();
     let embedding_url = state.config.embedding_url();
 
-    let client = reqwest::Client::new();
+    let client = crate::net_client::client();
 
     let ollama_available = client
         .get(format!("{}/api/tags", ollama_url.trim_end_matches('/')))

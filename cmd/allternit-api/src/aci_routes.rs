@@ -743,7 +743,7 @@ async fn aci_run(
         },
     });
 
-    let client = reqwest::Client::new();
+    let client = crate::net_client::client();
     let resp = match client
         .post(format!("{}/v1/computer-use/execute?stream=true", acu))
         .json(&payload)
@@ -931,7 +931,7 @@ async fn aci_stream(State(state): State<Arc<AppState>>, Path(id): Path<String>) 
 /// single-consumer) — first attached client wins.
 async fn aci_stream_passthrough(state: Arc<AppState>, id: String) -> Response {
     let acu = acu_base(&state);
-    let client = reqwest::Client::new();
+    let client = crate::net_client::client();
     let resp = match client
         .get(format!("{}/v1/computer-use/runs/{}/events", acu, id))
         .header("Accept", "text/event-stream")
@@ -1005,7 +1005,7 @@ async fn aci_stop(State(state): State<Arc<AppState>>, Path(id): Path<String>) ->
         }
     }
     let acu = acu_base(&state);
-    let client = reqwest::Client::new();
+    let client = crate::net_client::client();
     match client
         .post(format!("{}/v1/computer-use/runs/{}/cancel", acu, id))
         .send()
@@ -1038,7 +1038,7 @@ async fn aci_approve(
         "approve"
     };
     let acu = acu_base(&state);
-    let client = reqwest::Client::new();
+    let client = crate::net_client::client();
     match client
         .post(format!("{}/v1/computer-use/runs/{}/approve", acu, id))
         .json(&json!({ "decision": decision, "comment": "" }))
@@ -1152,7 +1152,7 @@ async fn aci_approval_status(
 
     // 3. Proxied Python approval_future: the id is an ACU run id.
     let acu = acu_base(&state);
-    let client = reqwest::Client::new();
+    let client = crate::net_client::client();
     match client
         .get(format!("{}/v1/computer-use/runs/{}", acu, id))
         .send()
