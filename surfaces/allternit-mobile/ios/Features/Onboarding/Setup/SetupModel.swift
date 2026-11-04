@@ -225,8 +225,9 @@ enum SetupAction: Sendable {
     case chooseWhere(WhereChoice, RippleOrigin?)
     case chooseStyle(StyleChoice, RippleOrigin?)
     case chooseAI(BrainChoice, RippleOrigin?)
-    /// Picks a brain without a ripple (a cancelled connect falls back).
-    case setAIQuietly(BrainChoice)
+    /// Sets the brain without a ripple; `nil` clears it (a cancelled connect
+    /// leaves no brain chosen — there is no default to fall back to).
+    case setAIQuietly(BrainChoice?)
     case outcome(SetupField, StepOutcome)
     case mainBot(String?)
     case next, back, skip

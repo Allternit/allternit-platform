@@ -377,14 +377,25 @@ async fn handle_message_event(state: &Arc<AppState>, event: &Value) -> Result<()
             return Ok(());
         }
         let turn = format!("[slack from <@{from}>] {text}");
-        let reply = crate::agent_session_routes::send_bot_turn(&state.db, &session, &bot_id, &turn).await?;
+        // A bot with no brain answers the thread with "Pick a brain for <bot>."
+        // instead of failing silently in the background.
+        let reply = match crate::agent_session_routes::send_bot_turn(&state.db, &session, &bot_id, &turn).await {
+            Ok(reply) => reply,
+            Err(err) if err.starts_with("Pick a brain") => err,
+            Err(err) => return Err(err),
+        };
         return match gw {
             Some((b, _)) => crate::channel_gateway::post_reply(&state.db, &tx, &b, &thread_ts, &reply).await,
             None => post_slack_message(&channel, &thread_ts, &reply).await,
         };
     }
 
-    let session_id = get_or_create_session(state, &channel, &thread_ts).await?;
+    // The shared default agent runs on the explicit default brain only.
+    let (provider_id, model_id) = AppConfig::load().default_model();
+    if crate::config::is_no_brain(&provider_id, &model_id) {
+        return post_slack_message(&channel, &thread_ts, crate::config::NO_BRAIN_MESSAGE).await;
+    }
+    let session_id = get_or_create_session(state, &channel, &thread_ts, &provider_id, &model_id).await?;
     info!(channel = %channel, session_id = %session_id, "routing Slack message to agent session");
 
     let client = gizzi_client(&HeaderMap::new());
@@ -412,6 +423,8 @@ async fn get_or_create_session(
     state: &Arc<AppState>,
     channel: &str,
     thread_ts: &str,
+    provider_id: &str,
+    model_id: &str,
 ) -> Result<String, String> {
     {
         let conn = state.db.connect().map_err(|e| e.to_string())?;
@@ -429,7 +442,6 @@ async fn get_or_create_session(
     }
 
     let client = gizzi_client(&HeaderMap::new());
-    let (provider_id, model_id) = AppConfig::load().default_model();
     let create_payload = json!({
         "title": format!("Slack: {channel}"),
         "surface": "slack",

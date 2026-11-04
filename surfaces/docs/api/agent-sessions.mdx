@@ -103,7 +103,7 @@ curl -H "Authorization: Bearer $TOKEN" \
 POST /api/v1/agent-sessions
 ```
 
-Creates a new Gizzi session. The gateway stamps the default model, resolves the agent harness config, and records the original surface so it can be restored later.
+Creates a new Gizzi session. The gateway stamps the model (the request's `model`, else the bound agent's saved brain, else the user's chosen default), resolves the agent harness config, and records the original surface so it can be restored later. There is no default model: when none of these is set the session is created without one, and its first turn answers `409 no_brain`.
 
 #### Request body
 
@@ -292,6 +292,8 @@ Sends a message to the session. `role: "user"` messages are forwarded to the run
 | `noReply` | boolean | No | Record the message without starting a model turn. |
 | `source` | string | No | Where the text was typed (for example `aci`); stored on the text part's metadata. |
 
+The turn runs on `metadata.model`, else the user's chosen default, else (in a bot's thread) the thread's or the bot's saved brain. With none of these, the call returns `409 {"error":"no_brain","message":"Pick a brain first."}` and nothing is sent. A `noReply` message needs no brain.
+
 #### Example request
 
 ```bash
@@ -470,6 +472,7 @@ These routes are registered by the same router on the Allternit API node. See th
 | `401` | Unauthorized. |
 | `403` | Forbidden — agent not enabled for the requested surface. |
 | `404` | Session not found. |
+| `409` | `no_brain` — no model named and no brain chosen. Body: `{"error":"no_brain","message":"Pick a brain first."}`. |
 | `502` | Bad gateway — Gizzi runtime error. |
 | `500` | Internal server error. |
 

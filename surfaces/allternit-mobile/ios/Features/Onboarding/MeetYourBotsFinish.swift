@@ -308,11 +308,12 @@ enum MeetMainBot {
 @MainActor
 enum MeetTemplateCreate {
     /// The model a template bot starts on: the app's current model, like the
-    /// web's `templateModel()` (runtime id "provider/model"); the web's
-    /// default when none is picked yet.
-    static func currentModel() -> (model: String, provider: String) {
+    /// web's `templateModel()` (runtime id "provider/model"). `nil` when the
+    /// user has not picked one: the bot is created with no brain (there is no
+    /// default) and asks for one on its first turn.
+    static func currentModel() -> (model: String, provider: String)? {
         guard let id = ModelStore.shared.selectedModelId?.trimmingCharacters(in: .whitespaces), !id.isEmpty else {
-            return ("kimi/kimi-for-coding", "custom")
+            return nil
         }
         guard let slash = id.firstIndex(of: "/"), slash != id.startIndex else { return (id, "allternit") }
         return (String(id[id.index(after: slash)...]), String(id[..<slash]))
@@ -320,7 +321,7 @@ enum MeetTemplateCreate {
 
     /// Creates the bot from the template's web create body; returns its id.
     static func create(_ template: MeetBotTemplate, name: String? = nil, makeMain: Bool) async throws -> String {
-        guard case .object(var body)? = template.createBody.map({ fill($0, currentModel()) }) else {
+        guard case .object(var body)? = template.createBody.map({ fill($0, currentModel() ?? (model: "", provider: "")) }) else {
             throw MeetFinishError("This bot template can’t be created on this device.")
         }
         if let name, name != template.name {

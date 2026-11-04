@@ -266,6 +266,12 @@ struct ChatContentView: View {
         .onChange(of: scenePhase) { _, newPhase in
             viewModel.handleScenePhase(newPhase)
         }
+        .onChange(of: viewModel.needsBrainPick) { _, needs in
+            // A send answered no_brain: the draft is back; pick a brain.
+            guard needs else { return }
+            viewModel.needsBrainPick = false
+            isModelPickerPresented = true
+        }
         .onChange(of: viewModel.draftToRestore) { _, draft in
             // A send that never landed hands its text back so the user can
             // retry without retyping.
@@ -464,6 +470,9 @@ struct ChatContentView: View {
             isUsageLocked: usageStore.isAtLimit,
             isVoiceModeEnabled: !viewModel.isStreaming && !usageStore.isAtLimit,
             deck: deck,
+            // A plain chat with no model picked opens the picker instead of
+            // sending (there is no default brain); a bot chat runs on the bot's.
+            requiresModelPick: sessionContext.agentId == nil && (modelStore.selectedModelId ?? "").isEmpty,
             onSend: { attachments in
                 if let editingMessageId {
                     self.editingMessageId = nil

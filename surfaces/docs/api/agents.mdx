@@ -421,7 +421,7 @@ curl -X POST https://api.allternit.com/api/agents/agent_018f3a7c.../subagents \
 POST /api/agents/companion/ensure
 ```
 
-Idempotently ensures the user has a primary "Allternit Companion" agent. If one already exists, the existing agent is returned; otherwise a new orchestrator is created with a runnable local model. If the user's configured default is empty or an unconfigured fallback, the Companion uses `ollama` / `qwen2.5:0.5b` so it runs out of the box.
+Idempotently ensures the user has a primary "Allternit Companion" agent. If one already exists, the existing agent is returned; otherwise a new orchestrator is created on the user's chosen default model. There is no default model: when the user has not chosen one, no Companion is created and the call returns `409 {"error":"no_brain","message":"Pick a brain first."}`.
 
 #### Example response (created)
 
@@ -491,7 +491,7 @@ Returns all agent templates, built-ins first.
 POST /api/agents/from-template
 ```
 
-Creates a live orchestrator and its subagents from a template. The model can be overridden with `brain`; otherwise the user's default model is used, falling back to a local Ollama model.
+Creates a live orchestrator and its subagents from a template. The model can be set with `brain`; otherwise the user's chosen default model is used. With neither, the call returns `409 {"error":"no_brain","message":"Pick a brain first."}`.
 
 #### Request body
 

@@ -139,6 +139,8 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
     /// Failed-send draft handed back to the composer (the message never
     /// reached the backend); ChatView restores it into `inputText`.
     @Published var draftToRestore: String? = nil
+    /// Set when a send came back `no_brain`: ChatView opens the model picker.
+    @Published var needsBrainPick: Bool = false
 
     private let chatClient: AgentChatClient
 
@@ -604,7 +606,13 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
                     // back to the composer, and surface one banner.
                     self.messages.removeAll { $0.id == assistantId || $0.id == userMessageId }
                     self.draftToRestore = ToolOptionsStore.shared.strippedText(trimmed)
-                    self.transientError = "Couldn't send the message: \(FriendlyErrorMessage.from(error.localizedDescription))"
+                    if let chatError = error as? AgentChatClientError, case .noBrain = chatError {
+                        // No brain chosen: keep the draft and open the picker.
+                        self.transientError = AgentChatClientError.noBrainMessage
+                        self.needsBrainPick = true
+                    } else {
+                        self.transientError = "Couldn't send the message: \(FriendlyErrorMessage.from(error.localizedDescription))"
+                    }
                     self.finishStreaming(messageId: assistantId)
                     let generator = UINotificationFeedbackGenerator()
                     generator.notificationOccurred(.error)
@@ -693,8 +701,10 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
 
         case .streamError(let reason):
             flushPendingDeltas()
+            // The API's streamed no_brain error carries its fixed message.
+            let name: String? = reason == AgentChatClientError.noBrainMessage ? "no_brain" : nil
             updateMessage(messageId) { message in
-                message.error = ChatError(name: nil, message: reason, raw: reason)
+                message.error = ChatError(name: name, message: reason, raw: reason)
             }
             return true
 

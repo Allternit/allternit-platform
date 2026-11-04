@@ -245,18 +245,20 @@ struct FirstRunSetupView: View {
         }
         let authed = signals.authed
         func brain(_ ids: [String]) -> (String, Bool) { ids.contains(where: authed.contains) ? ("Connected", true) : ("Connect", false) }
-        var tiles: [Tile] = BrainChoice.subscriptions.enumerated().map { i, b in
+        // Allternit Cloud is listed first but never preselected: no brain is
+        // chosen until the user picks one (there is no default model).
+        var tiles: [Tile] = [Tile(id: BrainChoice.allternit.rawValue, group: "Run on Allternit", mono: "A", name: "Allternit Cloud",
+                                  tag: signals.brainsLoading ? "Checking…" : signals.catalog.isEmpty ? "Unavailable" : "\(signals.catalog.count) models",
+                                  tagOk: !signals.catalog.isEmpty)]
+        tiles += BrainChoice.subscriptions.enumerated().map { i, b in
             let st = signals.subscriptionState(b.subscriptionProvider ?? "")
             return Tile(id: b.rawValue, group: i == 0 ? "Use your subscription" : nil, mono: String(b.shortName.prefix(1)),
                         logo: Self.logo[b.subscriptionProvider ?? ""], name: b.shortName, tag: subsTag(st), tagOk: st == .ready)
         }
         tiles.append(Tile(id: BrainChoice.phoneApps.rawValue, group: "Use the apps on your devices", mono: "",
                           icon: "iphone", name: "Apps on your phone", tag: "From Desktop"))
-        tiles.append(Tile(id: BrainChoice.allternit.rawValue, group: "Or connect another way", mono: "A", name: "Allternit Cloud",
-                          tag: signals.brainsLoading ? "Checking…" : signals.catalog.isEmpty ? "Unavailable" : "\(signals.catalog.count) models",
-                          tagOk: !signals.catalog.isEmpty))
         let claude = brain(["anthropic", "claude-cli"]), gpt = brain(["openai", "codex-cli"]), gem = brain(["google", "antigravity"])
-        tiles.append(Tile(id: BrainChoice.claude.rawValue, mono: "C", name: "Claude", tag: claude.0, tagOk: claude.1))
+        tiles.append(Tile(id: BrainChoice.claude.rawValue, group: "Or connect another way", mono: "C", name: "Claude", tag: claude.0, tagOk: claude.1))
         tiles.append(Tile(id: BrainChoice.chatgpt.rawValue, mono: "G", name: "ChatGPT", tag: gpt.0, tagOk: gpt.1))
         tiles.append(Tile(id: BrainChoice.gemini.rawValue, mono: "G", name: "Gemini", tag: gem.0, tagOk: gem.1))
         tiles.append(Tile(id: BrainChoice.local.rawValue, mono: "L", name: "Local model", tag: "From Desktop"))
@@ -537,7 +539,11 @@ struct FirstRunSetupView: View {
             SetupPanel(title: "Connect \(brain.shortName) subscription") {
                 SetupSubscriptionConnect(brain: brain, signals: signals,
                                          onReady: { makeSubscriptionDefault(brain) },
-                                         onCancel: { dispatch(.setAIQuietly(.allternit)) })
+                                         onCancel: {
+                                             data.defaultProvider = nil
+                                             data.defaultModelId = nil
+                                             dispatch(.setAIQuietly(nil))
+                                         })
             }
         }
     }
@@ -590,7 +596,15 @@ struct FirstRunSetupView: View {
             Button("Back") { dispatch(.back) }
                 .buttonStyle(SetupGhostButtonStyle())
                 .disabled(state.step == .where)
-            Button("Skip") { dispatch(.skip) }
+            Button("Skip") {
+                // Skipping Your AI saves no brain unless one really connected
+                // (its connect already saved it); the apps ask on first send.
+                if state.step == .ai, state.outcomes[.ai]?.status.isFinished != true {
+                    data.defaultProvider = nil
+                    data.defaultModelId = nil
+                }
+                dispatch(.skip)
+            }
                 .buttonStyle(SetupGhostButtonStyle())
             Button(state.nextIsConnected ? "See it all" : "Next") { dispatch(.next) }
                 .buttonStyle(SetupPrimaryButtonStyle())

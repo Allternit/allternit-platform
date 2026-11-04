@@ -60,7 +60,8 @@ final class BotFormModel: ObservableObject {
     // Computer & runtime
     @Published var desktopEnabled = true
     @Published var desktopPresetId = "small"
-    @Published var brainMode = "allternit_cloud"
+    /// Empty until the user picks one: there is no default brain.
+    @Published var brainMode = ""
     @Published var harnessId = "codex"
     @Published var nativeSessionId = ""
     @Published var uhpHarnessId = ""
@@ -102,9 +103,10 @@ final class BotFormModel: ObservableObject {
         // Edit reads the bot first, so the Look editor opens on what it has saved.
         loading = mode != .create
         if mode == .create {
-            let model = MeetTemplateCreate.currentModel()
-            modelId = model.model
-            provider = model.provider
+            if let model = MeetTemplateCreate.currentModel() {
+                modelId = model.model
+                provider = model.provider
+            }
             look.configure(avatar: nil, accent: accent, displayName: "", vendorId: nil)
         }
     }
@@ -112,7 +114,13 @@ final class BotFormModel: ObservableObject {
     var isEditing: Bool { mode != .create }
     var nameValid: Bool { displayName.trimmingCharacters(in: .whitespacesAndNewlines).count >= 2 }
     var derivedHandle: String { Self.deriveHandle(displayName) }
-    var canSave: Bool { nameValid && !saving && !look.busy && !look.blocked && !loading && loadError == nil }
+    var canSave: Bool {
+        nameValid && !saving && !look.busy && !look.blocked && !loading && loadError == nil && (isEditing || !brainMissing)
+    }
+    /// Create asks the user to pick a brain: a mode, and for Allternit cloud a model.
+    var brainMissing: Bool {
+        brainMode.isEmpty || (brainMode == "allternit_cloud" && modelId.trimmingCharacters(in: .whitespaces).isEmpty)
+    }
     /// Name — Role is the only thing the form requires; a UHP brain needs its id too (BotBrainBindFields).
     var uhpMissing: Bool { brainMode == "uhp_harness" && uhpHarnessId.trimmingCharacters(in: .whitespaces).isEmpty }
 
@@ -546,6 +554,7 @@ final class BotFormModel: ObservableObject {
     func create() async -> BotSetupOutcome? {
         guard canSave, !uhpMissing else {
             if uhpMissing { error = "Add the UHP harness id, or pick another brain." }
+            else if brainMissing { error = "Pick a brain first." }
             return nil
         }
         saving = true

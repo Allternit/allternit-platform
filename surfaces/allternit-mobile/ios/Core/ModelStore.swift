@@ -55,9 +55,9 @@ final class ModelStore: ObservableObject {
     /// Composer pill label: the selected model's short name (derived from
     /// the persisted id, so it renders before the catalog loads) plus the
     /// effort when the model supports it ("claude-sonnet-4-6 Medium"),
-    /// or the default marker.
+    /// or "Pick a brain" when none is chosen (there is no default model).
     var pillLabel: String {
-        guard let selectedModelId, !selectedModelId.isEmpty else { return "Default Model" }
+        guard let selectedModelId, !selectedModelId.isEmpty else { return "Pick a brain" }
         let short = selectedModelId.split(separator: "/", maxSplits: 1).last.map(String.init) ?? selectedModelId
         guard let thinking = models.first(where: { $0.id == selectedModelId })?.effectiveThinking else { return short }
         return "\(short) \(thinking.label(thinking.level(selectedEffort)))"
@@ -143,18 +143,15 @@ final class ModelStore: ObservableObject {
                 self.loadError = error.localizedDescription
                 return
             }
-            // Never leave the selection on a dead end once the catalog is
-            // known: a nil selection sends no runtimeModelId, and a backend
-            // without a configured default fails the send outright
-            // (ProviderModelNotFoundError) — as does a persisted id the
-            // catalog no longer lists (e.g. a bare id from before the
-            // catalog carried provider-prefixed ids). First catalog entry
-            // wins; the "Default Model" row still lets the user opt back
-            // into nil explicitly.
+            // Never pick a model for the user (there is no default brain).
+            // A persisted id the catalog no longer lists (e.g. a bare id from
+            // before the catalog carried provider-prefixed ids) is a dead end:
+            // clear it so the composer shows "Pick a brain" and the next send
+            // opens the picker.
             let selectionIsStale = self.selectedModelId != nil
                 && !self.models.contains(where: { $0.id == self.selectedModelId })
-            if let first = self.models.first, self.selectedModelId == nil || selectionIsStale {
-                self.selectedModelId = first.id
+            if selectionIsStale, !self.models.isEmpty {
+                self.selectedModelId = nil
             }
         }
     }

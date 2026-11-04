@@ -714,7 +714,9 @@ fn normalize_surface_for_gizzi(surface: &str) -> &str {
     }
 }
 
-fn select_model(metadata: Option<&serde_json::Value>) -> serde_json::Value {
+/// The model a request names, else the explicit platform default. `None` =
+/// no brain was chosen anywhere; callers answer `no_brain`, never guess.
+fn select_model(metadata: Option<&serde_json::Value>) -> Option<serde_json::Value> {
     if let Some(model) = metadata
         .and_then(|value| value.get("model"))
         .and_then(|value| value.as_object())
@@ -723,14 +725,14 @@ fn select_model(metadata: Option<&serde_json::Value>) -> serde_json::Value {
             model.get("providerID").and_then(|value| value.as_str()),
             model.get("modelID").and_then(|value| value.as_str()),
         ) {
-            return json!(GizziModelRef::new(
+            return Some(json!(GizziModelRef::new(
                 provider_id.to_string(),
                 model_id.to_string(),
                 model
                     .get("authProfileId")
                     .and_then(|value| value.as_str())
                     .map(|s| s.to_string()),
-            ));
+            )));
         }
     }
 
@@ -744,11 +746,50 @@ fn select_model(metadata: Option<&serde_json::Value>) -> serde_json::Value {
                 .map(|s| s.to_string()),
         ))
     }) {
-        return json!(GizziModelRef::new(provider_id.to_string(), model_id.to_string(), auth_profile_id));
+        return Some(json!(GizziModelRef::new(provider_id.to_string(), model_id.to_string(), auth_profile_id)));
     }
 
+    default_model_ref()
+}
+
+/// The explicit platform default as a gizzi model ref; `None` when the user
+/// never chose a brain (there is no fallback model).
+fn default_model_ref() -> Option<serde_json::Value> {
     let (provider_id, model_id) = AppConfig::load().default_model();
-    json!(GizziModelRef::new(provider_id, model_id, None))
+    if crate::config::is_no_brain(&provider_id, &model_id) {
+        return None;
+    }
+    Some(json!(GizziModelRef::new(provider_id, model_id, None)))
+}
+
+/// A bot's own saved brain (`agents.provider/model`), when it has one.
+fn agent_saved_model(db: &DbHandle, agent_id: &str) -> Option<serde_json::Value> {
+    let (provider_id, model_id) = db
+        .connect()
+        .ok()?
+        .query_row(
+            "SELECT provider, model FROM agents WHERE id = ?1",
+            params![agent_id],
+            |row| Ok((row.get::<_, Option<String>>(0)?, row.get::<_, Option<String>>(1)?)),
+        )
+        .ok()?;
+    let (provider_id, model_id) = (provider_id?, model_id?);
+    if provider_id.is_empty() || model_id.is_empty() {
+        return None;
+    }
+    Some(json!(GizziModelRef::new(provider_id, model_id, None)))
+}
+
+/// The failure text a server-started bot turn reports when no brain was
+/// chosen: "Pick a brain for <bot>." (shown in the bot's Needs-fixing list).
+pub(crate) fn no_brain_turn_error(db: &DbHandle, bot_id: &str) -> String {
+    let name: Option<String> = db.connect().ok().and_then(|conn| {
+        conn.query_row("SELECT name FROM agents WHERE id = ?1", params![bot_id], |r| r.get(0)).ok()
+    });
+    match name.map(|n| n.trim().to_string()).filter(|n| !n.is_empty()) {
+        Some(name) => format!("Pick a brain for {name}."),
+        None => crate::config::NO_BRAIN_MESSAGE.to_string(),
+    }
 }
 
 async fn gizzi_json<T: serde::de::DeserializeOwned>(
@@ -1075,13 +1116,17 @@ async fn create_session(
                 v.as_bool().unwrap_or(false) || v.as_str() == Some("true")
             });
 
-    // Use the client-supplied model if present; otherwise fall back to the
-    // platform default so Gizzi sessions always know which brain to use.
-    let model_ref = body.model.map(GizziModelRef::normalized).unwrap_or_else(|| {
-        let (default_provider, default_model_id) = AppConfig::load().default_model();
-        GizziModelRef::new(default_provider, default_model_id, None)
-    });
-    payload.insert("model".to_string(), json!(model_ref));
+    // The client's model, else the explicit platform default, else the bound
+    // bot's saved brain. None chosen → the session is created without a
+    // model (gizzi accepts that) and the first turn answers `no_brain`.
+    let model_ref = body
+        .model
+        .map(|m| json!(GizziModelRef::normalized(m)))
+        .or_else(default_model_ref)
+        .or_else(|| body.agent_id.as_deref().and_then(|id| agent_saved_model(&state.db, id)));
+    if let Some(model_ref) = model_ref {
+        payload.insert("model".to_string(), model_ref);
+    }
 
     // Resolve platform agent harness config and forward it into the gizzi session.
     if let Some(ref agent_id) = body.agent_id {
@@ -1340,6 +1385,15 @@ async fn send_message(
     let client = gizzi_client(&headers);
     let path = format!("/v1/session/{}/message", urlencoding::encode(&session_id));
     let mut payload = send_message_payload(&body);
+    // No model named and no platform default: a bot thread runs on what the
+    // thread/bot saved; otherwise the user has to pick a brain first. A
+    // no-reply note starts no turn, so it needs no brain.
+    if payload.get("model").is_none() && body.no_reply != Some(true) {
+        match session_bot_id(&state.db, &session_id).and_then(|bot| stored_turn_model(&state.db, &session_id, &bot)) {
+            Some(model) => payload["model"] = model,
+            None => return crate::config::no_brain_error().into_response(),
+        }
+    }
     // A bot's session: the turn runs as the bot (see `bot_turn_marker`).
     if let Some(bot) = session_bot_marker(&state.db, &session_id) {
         payload["bot"] = bot;
@@ -1545,10 +1599,10 @@ fn send_message_payload(body: &SendMessageBody) -> serde_json::Value {
     if let Some(source) = body.source.as_deref().filter(|s| !s.is_empty()) {
         part["metadata"] = json!({ "source": source });
     }
-    let mut payload = json!({
-        "parts": [part],
-        "model": select_model(body.metadata.as_ref()),
-    });
+    let mut payload = json!({ "parts": [part] });
+    if let Some(model) = select_model(body.metadata.as_ref()) {
+        payload["model"] = model;
+    }
     if body.no_reply == Some(true) {
         payload["noReply"] = json!(true);
     }
@@ -2767,14 +2821,20 @@ async fn get_native_origin(headers: HeaderMap, Path(id): Path<String>) -> Respon
 
 /// Model for a server-initiated turn: the thread's stored model (what the
 /// user picked), else the bot's own `agents.provider/model`, else the
-/// platform default — a routine never silently changes the bot's brain.
-pub(crate) fn bot_turn_model(db: &DbHandle, session_id: &str, bot_id: &str) -> serde_json::Value {
+/// explicit platform default — a routine never silently changes the bot's
+/// brain. `None` = no brain chosen anywhere (see [`no_brain_turn_error`]).
+pub(crate) fn bot_turn_model(db: &DbHandle, session_id: &str, bot_id: &str) -> Option<serde_json::Value> {
+    stored_turn_model(db, session_id, bot_id).or_else(default_model_ref)
+}
+
+/// The thread's stored model, else the bot's saved brain — no default.
+fn stored_turn_model(db: &DbHandle, session_id: &str, bot_id: &str) -> Option<serde_json::Value> {
     let stored = db.get_session_metadata(session_id).ok().flatten();
     if let Some(pick) = stored.as_ref().and_then(|bag| bag.get("projectModel")) {
         if let (Some(provider), Some(model)) = (pick["providerId"].as_str(), pick["modelId"].as_str()) {
             if !provider.is_empty() && !model.is_empty() {
                 let model = model.strip_prefix(&format!("{provider}/")).unwrap_or(model);
-                return json!(GizziModelRef::new(provider.to_string(), model.to_string(), None));
+                return Some(json!(GizziModelRef::new(provider.to_string(), model.to_string(), None)));
             }
         }
     }
@@ -2784,20 +2844,7 @@ pub(crate) fn bot_turn_model(db: &DbHandle, session_id: &str, bot_id: &str) -> s
     if has_model {
         return select_model(stored.as_ref());
     }
-    let agent_model = db.connect().ok().and_then(|conn| {
-        conn.query_row(
-            "SELECT provider, model FROM agents WHERE id = ?1",
-            params![bot_id],
-            |row| Ok((row.get::<_, Option<String>>(0)?, row.get::<_, Option<String>>(1)?)),
-        )
-        .ok()
-    });
-    if let Some((Some(provider_id), Some(model_id))) = agent_model {
-        if !provider_id.is_empty() && !model_id.is_empty() {
-            return json!(GizziModelRef::new(provider_id, model_id, None));
-        }
-    }
-    select_model(None)
+    agent_saved_model(db, bot_id)
 }
 
 /// The bot an A:// target principal names, when it is one of `user_id`'s
@@ -2953,15 +3000,20 @@ pub(crate) fn bot_account_fields(config: &serde_json::Value, marker: &mut serde_
 /// The bot marker for a session the app tagged as a bot's (`isBot` with its
 /// `agentId` / `botCanonicalFor` / `botThreadOf`), or `None`.
 pub(crate) fn session_bot_marker(db: &DbHandle, session_id: &str) -> Option<serde_json::Value> {
+    let agent_id = session_bot_id(db, session_id)?;
+    bot_turn_marker(db, &agent_id, Some(session_id))
+}
+
+/// The bot a session belongs to, from its stored metadata bag.
+fn session_bot_id(db: &DbHandle, session_id: &str) -> Option<String> {
     let bag = db.get_session_metadata(session_id).ok().flatten()?;
     if bag.get("isBot").and_then(serde_json::Value::as_bool) != Some(true) {
         return None;
     }
-    let agent_id = ["agentId", "botCanonicalFor", "botThreadOf"]
+    ["agentId", "botCanonicalFor", "botThreadOf"]
         .iter()
-        .find_map(|key| bag.get(*key).and_then(serde_json::Value::as_str).filter(|v| !v.is_empty()))?
-        .to_string();
-    bot_turn_marker(db, &agent_id, Some(session_id))
+        .find_map(|key| bag.get(*key).and_then(serde_json::Value::as_str).filter(|v| !v.is_empty()))
+        .map(str::to_string)
 }
 
 /// Budget for saved bot memory in a server-started turn's instructions.
@@ -3082,12 +3134,15 @@ pub(crate) async fn create_bot_thread_session(
         if let Ok(value) = axum::http::HeaderValue::from_str(&directory) { headers.insert("x-gizzi-directory", value); }
     }
     let client = gizzi_client(&headers);
-    let (provider_id, model_id) = AppConfig::load().default_model();
     let mut payload = serde_json::Map::new();
     payload.insert("title".to_string(), json!(title));
     payload.insert("surface".to_string(), json!(normalize_surface_for_gizzi("chat")));
     payload.insert("agentID".to_string(), json!(bot_id));
-    payload.insert("model".to_string(), json!(GizziModelRef::new(provider_id, model_id, None)));
+    // The explicit default, else the bot's saved brain; a bot with no brain
+    // still gets its thread — its first turn asks the user to pick one.
+    if let Some(model) = default_model_ref().or_else(|| agent_saved_model(db, bot_id)) {
+        payload.insert("model".to_string(), model);
+    }
     if let Some(harness) = resolve_agent_harness(db, bot_id).await {
         payload.insert("harness".to_string(), harness);
     }
@@ -3109,6 +3164,14 @@ pub(crate) async fn create_bot_thread_session(
 /// the streaming phone-call turn so both keep the same session directory,
 /// project permission mode, model and bot identity/memory.
 pub(crate) async fn native_turn_request(db: &DbHandle, session_id: &str, bot_id: &str, text: &str) -> Result<(Client, String, serde_json::Value), String> {
+    native_turn_request_on(db, session_id, bot_id, text, None).await
+}
+
+/// [`native_turn_request`] on `model` instead of the bot's own brain.
+async fn native_turn_request_on(db: &DbHandle, session_id: &str, bot_id: &str, text: &str, model: Option<serde_json::Value>) -> Result<(Client, String, serde_json::Value), String> {
+    let model = model
+        .or_else(|| bot_turn_model(db, session_id, bot_id))
+        .ok_or_else(|| no_brain_turn_error(db, bot_id))?;
     let mut headers = HeaderMap::new();
     if let Some(directory) = db.get_session_metadata(session_id).ok().flatten().and_then(|bag| bag["directory"].as_str().map(str::to_owned)) {
         if let Ok(value) = axum::http::HeaderValue::from_str(&directory) { headers.insert("x-gizzi-directory", value); }
@@ -3122,7 +3185,7 @@ pub(crate) async fn native_turn_request(db: &DbHandle, session_id: &str, bot_id:
     let path = format!("/v1/session/{}/message", urlencoding::encode(session_id));
     let mut payload = json!({
         "parts": [{ "type": "text", "text": text }],
-        "model": bot_turn_model(db, session_id, bot_id),
+        "model": model,
     });
     // A bot running its own thread is still itself (P4.1): its standing
     // instructions and saved memory ride on every server-started turn.
@@ -3180,7 +3243,8 @@ async fn bot_turn_with_brain(db: &DbHandle, session_id: &str, bot_id: &str, text
 async fn native_turn_on(db: &DbHandle, session_id: &str, bot_id: &str, text: &str, brain: Option<&str>) -> Result<String, String> {
     let brain_ref = brain.and_then(|b| b.split_once('/')).map(|(p, m)| json!(GizziModelRef::new(p.to_string(), m.to_string(), None)));
     if let Some(target) = crate::placement::session_target(db, session_id) {
-        let mut body = json!({ "text": text, "metadata": { "model": brain_ref.clone().unwrap_or_else(|| bot_turn_model(db, session_id, bot_id)) } });
+        let model = brain_ref.clone().or_else(|| bot_turn_model(db, session_id, bot_id)).ok_or_else(|| no_brain_turn_error(db, bot_id))?;
+        let mut body = json!({ "text": text, "metadata": { "model": model } });
         if let Some(system) = bot_turn_system(db, session_id, bot_id) {
             body["system"] = json!(format!("+{system}"));
         }
@@ -3188,10 +3252,7 @@ async fn native_turn_on(db: &DbHandle, session_id: &str, bot_id: &str, text: &st
         let reply = crate::placement::call(&target, reqwest::Method::POST, &path, Some(body)).await?;
         return placed_turn_report(&reply);
     }
-    let (client, path, mut payload) = native_turn_request(db, session_id, bot_id, text).await?;
-    if let Some(m) = brain_ref {
-        payload["model"] = m;
-    }
+    let (client, path, payload) = native_turn_request_on(db, session_id, bot_id, text, brain_ref).await?;
     match gizzi_json::<GizziMessage>(&client, reqwest::Method::POST, &path, Some(payload)).await {
         Ok(message) => {
             if let Some(error) = message.info.error.as_ref().and_then(|e| e.message.clone()) {
@@ -3922,7 +3983,7 @@ mod tests {
         assert_eq!(r.model_id, "openai/gpt-5");
         let r = GizziModelRef::new("claude-cli".into(), "claude-opus-5".into(), None);
         assert_eq!(r.model_id, "claude-opus-5");
-        let v = select_model(Some(&json!({ "model": { "providerID": "kimi-cli", "modelID": "kimi-cli/kimi-k3" } })));
+        let v = select_model(Some(&json!({ "model": { "providerID": "kimi-cli", "modelID": "kimi-cli/kimi-k3" } }))).unwrap();
         assert_eq!(v["modelID"], "kimi-k3");
     }
 

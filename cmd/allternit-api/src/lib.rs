@@ -757,8 +757,8 @@ pub struct AppState {
 
 /// Return the default LLM provider/model pair used when a request does not
 /// specify one. Reads from the unified app config (file + env overrides).
-/// Returns empty strings when nothing is configured; callers fall back to the
-/// local Ollama brain rather than a hardcoded provider.
+/// Returns empty strings when no brain was chosen; callers then answer with
+/// `config::no_brain_error` (or skip background work) — never a fallback model.
 pub fn default_model() -> (String, String) {
     APP_CONFIG
         .get()

@@ -18,7 +18,7 @@ What a worker bot gets:
 | Name | What you and your bots call it. |
 | Purpose | One or two sentences on what it is for. Without one, Allternit writes "Worker bot that owns ..." from its list. |
 | Owns | The kinds of tasks it owns, as short phrases. Up to 20, duplicates dropped. |
-| Brain | Optional. A vendor from the CLI catalog (Claude Code, Codex, Grok, OpenCode and others) and a model. Without one it follows your default model. If that vendor isn't connected yet, the bot offers to [connect it](/guides/connect-vendor-from-chat). |
+| Brain | Optional. A vendor from the CLI catalog (Claude Code, Codex, Grok, OpenCode and others) and a model. Without one it uses the brain you picked in the app; with none picked, it asks you to pick one (there is no default brain). If that vendor isn't connected yet, the bot offers to [connect it](/guides/connect-vendor-from-chat). |
 | Computer | Optional: your cloud computer, this computer, or a computer you name. |
 
 Change what a bot owns later in its settings, or through the API (`owns` on `PATCH /agents/:id`).

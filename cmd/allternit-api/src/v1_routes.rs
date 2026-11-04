@@ -1773,24 +1773,29 @@ async fn agent_chat_bridge(
 
     // Parse model from runtimeModelId or modelId — strip provider prefix if present.
     // Client-sent model ids always win; without one, fall back to the agent's
-    // provider/model, then to the environment-configurable default so the
-    // packaged app can target any Gizzi provider/model without recompiling.
+    // provider/model, then to the explicit default (env or the user's saved
+    // pick). No choice anywhere → 409 no_brain; the apps ask the user to pick.
     let (default_provider, default_model_id) = default_model();
-    let default_label = format!("{}/{}", default_provider, default_model_id);
+    let default_label = (!crate::config::is_no_brain(&default_provider, &default_model_id))
+        .then(|| format!("{}/{}", default_provider, default_model_id));
     let agent_model_label = if agent.provider.trim().is_empty() || agent.model.trim().is_empty() {
         None
     } else {
         Some(format!("{}/{}", agent.provider, agent.model))
     };
-    let raw_model = body_json
+    let Some(raw_model) = body_json
         .get("runtimeModelId")
         .or_else(|| body_json.get("modelId"))
         .and_then(|v| v.as_str())
+        .filter(|v| !v.trim().is_empty())
         .or(agent_model_label.as_deref())
-        .unwrap_or(&default_label)
+        .or(default_label.as_deref())
         // Frontend model ids use the `provider::model` convention; the runtime
         // expects `provider/model`. Normalize so both forms route.
-        .replace("::", "/");
+        .map(|raw| raw.replace("::", "/"))
+    else {
+        return crate::config::no_brain_error().into_response();
+    };
 
     let (provider_id, model_id) = if let Some((p, m)) = raw_model.split_once('/') {
         (p.to_string(), m.to_string())

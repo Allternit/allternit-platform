@@ -75,11 +75,19 @@ private struct SessionSyncFrame: Decodable {
 enum AgentChatClientError: Error, LocalizedError {
     /// No gizzi-code/Fabric node is currently reachable.
     case noReachableNode
+    /// The API answered 409 `{"error":"no_brain"}`: no model was named and
+    /// the user never chose a default brain (there is no fallback model).
+    case noBrain
+
+    /// The API's fixed `no_brain` message (also the streamed error text).
+    static let noBrainMessage = "Pick a brain first."
 
     var errorDescription: String? {
         switch self {
         case .noReachableNode:
             return "No reachable harness. Make sure Allternit Desktop is running or a runtime backend is paired."
+        case .noBrain:
+            return Self.noBrainMessage
         }
     }
 }
@@ -305,6 +313,11 @@ final class AgentChatClient: ObservableObject, @unchecked Sendable {
                     let (bytes, response) = try await InstanceConnection.bytes(for: request)
                     guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
                     guard (200...299).contains(http.statusCode) else {
+                        if http.statusCode == 409 {
+                            var body = ""
+                            for try await line in bytes.lines where body.count < 4096 { body += line }
+                            if body.contains("\"no_brain\"") { throw AgentChatClientError.noBrain }
+                        }
                         throw APIError.httpError(statusCode: http.statusCode, message: nil)
                     }
 
