@@ -12,6 +12,10 @@
 //!   `x-allternit-mcp-client` names the OAuth client (for the keys page and the
 //!   revoke check).
 //! * `POST /webhooks/mcp-edge/server` — the read-only agents server.
+//! * `POST /webhooks/mcp-edge/connectors` — the owner's connectors as one MCP
+//!   server (`mcp.allternit.com/mcp/connectors`): the same tool union a chat turn
+//!   gets from `mcp_user_proxy`. An outside app can't answer Allternit's approval
+//!   prompt, so a tool that needs confirmation is refused, never auto-confirmed.
 //!
 //! A vendor bot this runtime doesn't hold answers 404 `{"error":"not_found"}`;
 //! the cloud then tries the owner's next runtime.
@@ -31,6 +35,7 @@ use crate::AppState;
 
 pub const BOTS_PATH_PREFIX: &str = "/webhooks/mcp-edge/bots";
 pub const SERVER_PATH: &str = "/webhooks/mcp-edge/server";
+pub const CONNECTORS_PATH: &str = "/webhooks/mcp-edge/connectors";
 /// Header cloud-api sets to the OAuth client behind the call.
 pub const CLIENT_HEADER: &str = "x-allternit-mcp-client";
 
@@ -42,6 +47,7 @@ pub fn mcp_edge_router_with(secret: Arc<dyn RelaySecret>) -> Router<Arc<AppState
     Router::new()
         .route("/webhooks/mcp-edge/bots/:vendor_bot_id", post(bot_rpc))
         .route(SERVER_PATH, post(agents_rpc))
+        .route(CONNECTORS_PATH, post(connectors_rpc))
         .layer(secret_layer(secret))
 }
 
@@ -56,6 +62,19 @@ async fn bot_rpc(State(state): State<Arc<AppState>>, Path(vendor_bot_id): Path<S
 
 async fn agents_rpc(State(state): State<Arc<AppState>>, auth: RelayedAuth) -> Response {
     crate::mcp_server_routes::relayed_agents_rpc(&state, &auth.owner, &auth.body).await
+}
+
+async fn connectors_rpc(State(state): State<Arc<AppState>>, auth: RelayedAuth) -> Response {
+    use axum::response::IntoResponse;
+    let req = match auth.json::<serde_json::Value>() {
+        Ok(req) => req,
+        Err(resp) => return resp,
+    };
+    let allow_private = crate::mcp_apps::allow_private_hosts();
+    match crate::mcp_user_proxy::dispatch_rpc(&state, &auth.owner, crate::mcp_user_proxy::RpcCaller::Edge, &req, allow_private).await {
+        Some(payload) => crate::mcp_server_routes::rpc_response(req["method"].as_str().unwrap_or_default(), &req["params"], payload),
+        None => axum::http::StatusCode::ACCEPTED.into_response(),
+    }
 }
 
 #[cfg(test)]
@@ -96,6 +115,12 @@ mod tests {
         assert_eq!(call(&app, path, &list(), Some(("other-token", "user-a")), None).await.0, StatusCode::UNAUTHORIZED);
         // Signed by this runtime's key but for a different owner than it is paired as.
         assert_eq!(call(&app, path, &list(), Some((TOKEN, "user-b")), None).await.0, StatusCode::UNAUTHORIZED);
+        // The connectors union behind mcp.allternit.com/mcp/connectors is behind the same signature.
+        assert_eq!(call(&app, CONNECTORS_PATH, &list(), None, None).await.0, StatusCode::UNAUTHORIZED);
+        assert_eq!(call(&app, CONNECTORS_PATH, &list(), Some((TOKEN, "user-b")), None).await.0, StatusCode::UNAUTHORIZED);
+        let (status, body) = call(&app, CONNECTORS_PATH, &list(), Some((TOKEN, "user-a")), None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body["result"]["tools"].is_array(), "{body}");
     }
 
     #[tokio::test]

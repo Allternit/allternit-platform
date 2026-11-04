@@ -270,22 +270,87 @@ pub async fn clerk_org_memberships(clerk_user_id: &str) -> Vec<OrgMembership> {
 }
 
 pub async fn org_memberships_with(config: &TrustConfig, clerk_user_id: &str) -> Vec<OrgMembership> {
+    org_memberships_checked_with(config, clerk_user_id).await.unwrap_or_default()
+}
+
+/// Like [`clerk_org_memberships`], but `None` when Clerk could not answer, so
+/// a caller that grants access can fail closed instead of reading "no orgs".
+pub async fn clerk_org_memberships_checked(clerk_user_id: &str) -> Option<Vec<OrgMembership>> {
+    org_memberships_checked_with(&TrustConfig::from_env(), clerk_user_id).await
+}
+
+pub async fn org_memberships_checked_with(config: &TrustConfig, clerk_user_id: &str) -> Option<Vec<OrgMembership>> {
     let cache_key = format!("{}|{clerk_user_id}", config.clerk_api_base);
     if let Ok(cache) = membership_cache().lock() {
         if let Some((fetched_at, memberships)) = cache.get(&cache_key) {
             if fetched_at.elapsed() < ORG_MEMBERSHIP_CACHE_TTL {
-                return memberships.clone();
+                return Some(memberships.clone());
             }
         }
     }
-    let Some(memberships) = fetch_org_memberships(config, clerk_user_id).await else {
-        return Vec::new();
-    };
+    let memberships = fetch_org_memberships(config, clerk_user_id).await?;
     if let Ok(mut cache) = membership_cache().lock() {
         cache.retain(|_, (fetched_at, _)| fetched_at.elapsed() < ORG_MEMBERSHIP_CACHE_TTL);
         cache.insert(cache_key, (std::time::Instant::now(), memberships.clone()));
     }
-    memberships
+    Some(memberships)
+}
+
+async fn clerk_get(config: &TrustConfig, path_and_query: &str) -> Option<serde_json::Value> {
+    let secret = config.clerk_secret_key.as_deref().filter(|s| !s.is_empty())?;
+    let client = reqwest::Client::builder().timeout(CLERK_REQUEST_TIMEOUT).build().ok()?;
+    let url = format!("{}{path_and_query}", config.clerk_api_base.trim_end_matches('/'));
+    match client.get(&url).bearer_auth(secret).send().await {
+        Ok(response) if response.status().is_success() => response.json().await.ok(),
+        Ok(response) => {
+            tracing::warn!(status = %response.status(), "Clerk lookup answered non-success");
+            None
+        }
+        Err(error) => {
+            tracing::warn!("Clerk lookup failed: {error}");
+            None
+        }
+    }
+}
+
+/// The user's primary email address and whether Clerk marks it verified.
+/// `Ok(None)` = the user has no primary email; `Err(())` = Clerk could not
+/// answer (callers fail closed).
+pub async fn clerk_primary_email_status(clerk_user_id: &str) -> Result<Option<(String, bool)>, ()> {
+    let body = clerk_get(&TrustConfig::from_env(), &format!("/v1/users/{}", urlencoding::encode(clerk_user_id))).await.ok_or(())?;
+    Ok(primary_email_status(&body))
+}
+
+fn primary_email_status(user: &serde_json::Value) -> Option<(String, bool)> {
+    let primary = user.get("primary_email_address_id")?.as_str()?;
+    let address = user.get("email_addresses")?.as_array()?.iter().find(|a| a.get("id").and_then(|id| id.as_str()) == Some(primary))?;
+    let email = address.get("email_address")?.as_str().filter(|e| !e.is_empty())?;
+    let verified = address.pointer("/verification/status").and_then(|s| s.as_str()) == Some("verified");
+    Some((email.to_string(), verified))
+}
+
+/// Clerk users holding `email` as a **verified** address (any of their
+/// addresses, compared case-insensitively). `Err(())` = Clerk could not answer.
+pub async fn clerk_users_with_verified_email(email: &str) -> Result<Vec<String>, ()> {
+    let body = clerk_get(&TrustConfig::from_env(), &format!("/v1/users?email_address={}&limit=20", urlencoding::encode(email))).await.ok_or(())?;
+    Ok(users_with_verified_email(&body, email))
+}
+
+fn users_with_verified_email(body: &serde_json::Value, email: &str) -> Vec<String> {
+    let users = body.as_array().or_else(|| body.get("data").and_then(|d| d.as_array()));
+    users
+        .into_iter()
+        .flatten()
+        .filter(|user| {
+            user.get("email_addresses").and_then(|a| a.as_array()).is_some_and(|addresses| {
+                addresses.iter().any(|a| {
+                    a.get("email_address").and_then(|e| e.as_str()).is_some_and(|e| e.eq_ignore_ascii_case(email))
+                        && a.pointer("/verification/status").and_then(|s| s.as_str()) == Some("verified")
+                })
+            })
+        })
+        .filter_map(|user| user.get("id").and_then(|id| id.as_str()).map(str::to_string))
+        .collect()
 }
 
 async fn fetch_org_memberships(
@@ -648,5 +713,20 @@ mod tests {
         assert_eq!(clerk_primary_email(&config, "user_broken").await, None);
         let no_key = TrustConfig { clerk_secret_key: None, ..config };
         assert_eq!(clerk_primary_email(&no_key, "user_two").await, None);
+    }
+
+    #[test]
+    fn only_users_holding_the_email_as_a_verified_address_map_and_the_primary_status_is_read() {
+        let users = serde_json::json!([
+            { "id": "user_ok", "email_addresses": [{ "email_address": "Ann@Acme.com", "verification": { "status": "verified" } }] },
+            { "id": "user_unverified", "email_addresses": [{ "email_address": "ann@acme.com", "verification": { "status": "unverified" } }] },
+            { "id": "user_other", "email_addresses": [{ "email_address": "bob@acme.com", "verification": { "status": "verified" } }] }
+        ]);
+        assert_eq!(users_with_verified_email(&users, "ann@acme.com"), ["user_ok"]);
+        let user = serde_json::json!({ "primary_email_address_id": "e2", "email_addresses": [
+            { "id": "e1", "email_address": "old@acme.com", "verification": { "status": "verified" } },
+            { "id": "e2", "email_address": "new@acme.com", "verification": null }
+        ] });
+        assert_eq!(primary_email_status(&user), Some(("new@acme.com".to_string(), false)), "a verified secondary does not verify the primary");
     }
 }

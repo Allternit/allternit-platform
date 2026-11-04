@@ -6,6 +6,7 @@
 pub mod clerk;
 pub mod dataplane_jwt;
 pub mod dev_token;
+pub mod es256;
 pub mod middleware;
 pub mod models;
 pub mod permissions;

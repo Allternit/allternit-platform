@@ -141,6 +141,8 @@
               "guides/bot-voice-on-linked-phone",
               "guides/customize",
               "guides/connectors",
+              "guides/connectors-in-other-apps",
+              "guides/managed-authorization",
               "guides/vendor-bots-on-the-phone",
               "guides/bot-phone",
               "guides/people",
@@ -473,7 +475,9 @@
               "security/permission-policies",
               "security/dlp",
               "security/prompt-leak-detection",
-              "security/inference-hooks"
+              "security/inference-hooks",
+              "security/allternit-idjag-issuer",
+              "security/trusting-outside-issuers"
             ],
             "icon": "/icons/shield.svg"
           },
