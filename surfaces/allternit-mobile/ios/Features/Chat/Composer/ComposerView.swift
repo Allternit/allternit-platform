@@ -307,7 +307,7 @@ struct ComposerView: View {
     /// tell an open game the reply is ready.
     private var sendSlot: some View {
         HStack(spacing: 8) {
-            WaitingGamesPlayButton(busy: isStreaming, anytime: playGamesAnytime)
+            WaitingGamesPlayButton(busy: isStreaming, anytime: playGamesAnytime, hidden: hasDraft)
             sendButton
         }
     }

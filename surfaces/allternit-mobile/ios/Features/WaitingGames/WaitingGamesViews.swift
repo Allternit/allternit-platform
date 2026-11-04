@@ -67,6 +67,9 @@ final class WaitingGamesStore: ObservableObject {
 struct WaitingGamesPlayButton: View {
     let busy: Bool
     var anytime: Bool = false
+    /// The person is typing: the button steps aside (it stays mounted, so it
+    /// still tells an open game when the reply is ready).
+    var hidden: Bool = false
     /// Work shorter than this never shows the button, so quick replies stay calm.
     private static let showAfter: UInt64 = 5_000_000_000
 
@@ -79,7 +82,7 @@ struct WaitingGamesPlayButton: View {
 
     var body: some View {
         Group {
-            if enabled && !playing && (anytime || (busy && shown)) {
+            if enabled && !playing && !hidden && (anytime || (busy && shown)) {
                 Button { store.openFor(owner, busy: busy) } label: {
                     Image(systemName: "gamecontroller.fill")
                         .font(.system(size: 14))
@@ -102,6 +105,7 @@ struct WaitingGamesPlayButton: View {
             try? await Task.sleep(nanoseconds: Self.showAfter)
             if !Task.isCancelled { withAnimation(.easeOut(duration: 0.2)) { shown = true } }
         }
+        .animation(.easeOut(duration: 0.16), value: hidden)
         .onDisappear { store.report(owner, busy: nil) }
     }
 }

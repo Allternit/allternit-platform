@@ -36,6 +36,11 @@ packages:
   # commit in Packages/VoiceRingKit (see its Package.swift).
   VoiceRingKit:
     path: Packages/VoiceRingKit
+  # SVG pack avatars (clawd-crew, duet-carry, gizzi-youtube): UIImage can't
+  # decode SVG, so BotAvatarView draws them with SwiftDraw (MIT, pure Swift).
+  SwiftDraw:
+    url: https://github.com/swhitty/SwiftDraw
+    exactVersion: "0.29.0"
 targets:
   Allternit:
     type: application
@@ -159,6 +164,8 @@ targets:
       - package: VoiceRingKit
       - package: SwiftTerm
         product: SwiftTerm
+      - package: SwiftDraw
+        product: SwiftDraw
       - target: AllternitWidgets
         embed: true
       - target: AllternitScreen

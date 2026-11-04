@@ -64,6 +64,21 @@ struct CodeOverviewSheet: View {
                 .padding(.horizontal, 12)
                 .padding(.bottom, 4)
             }
+            if kind == .threads, layout == "deck", !filtered.isEmpty {
+                // Deck (SessionOverview deck, phone): tall 226-wide cards the
+                // full height, in a sideways row that snaps card by card.
+                GeometryReader { geo in
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        LazyHStack(spacing: 12) {
+                            ForEach(filtered) { card($0).frame(width: OverviewDeck.width, height: max(240, geo.size.height - 104)) }
+                        }
+                        .padding(.horizontal, 24)
+                        .padding(.top, 8)
+                        .scrollTargetLayout()
+                    }
+                    .scrollTargetBehavior(.viewAligned)
+                }
+            } else {
             ScrollView {
                 if kind == .terminals {
                     terminalCards
@@ -74,15 +89,6 @@ struct CodeOverviewSheet: View {
                         .frame(maxWidth: .infinity)
                         .padding(.top, 40)
                         .padding(.horizontal, 24)
-                } else if layout == "deck" {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        LazyHStack(spacing: 12) {
-                            ForEach(filtered) { card($0).frame(width: OverviewDeck.width, height: OverviewDeck.height, alignment: .top) }
-                        }
-                        .padding(.horizontal, 12)
-                        .padding(.top, 8)
-                    }
-                    .padding(.bottom, 96)
                 } else if layout == "grid" {
                     LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
                         ForEach(filtered) { card($0) }
@@ -98,6 +104,7 @@ struct CodeOverviewSheet: View {
                     .padding(.top, 8)
                     .padding(.bottom, 96)
                 }
+            }
             }
         }
         .background(Color("BgPrimary"))
@@ -146,6 +153,7 @@ struct CodeOverviewSheet: View {
     /// and its age.
     private func card(_ session: AgentSession) -> some View {
         let title = session.name ?? "Untitled Session"
+        let tall = layout == "deck"
         return Button(action: {
             dismiss()
             onOpenSession(session)
@@ -153,7 +161,7 @@ struct CodeOverviewSheet: View {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 4) {
                     Text(title)
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.system(size: tall ? 15.5 : 13, weight: .semibold))
                         .foregroundColor(Color("TextPrimary"))
                         .lineLimit(1)
                     Spacer(minLength: 4)
@@ -180,7 +188,7 @@ struct CodeOverviewSheet: View {
                     .accessibilityLabel("Close \(title)")
                 }
                 preview(for: session)
-                    .frame(maxWidth: .infinity, minHeight: layout == "list" ? 0 : 100, alignment: .topLeading)
+                    .frame(maxWidth: .infinity, minHeight: layout == "list" ? 0 : 100, maxHeight: tall ? .infinity : nil, alignment: .topLeading)
                 HStack {
                     Spacer()
                     Text(CodeSessionDates.age(session))
@@ -188,10 +196,13 @@ struct CodeOverviewSheet: View {
                         .foregroundColor(Color("BrandAccent"))
                 }
             }
-            .padding(10)
+            .padding(tall ? 14 : 10)
+            .frame(maxHeight: tall ? .infinity : nil, alignment: .top)
             .background(Color("BgPanel"))
             .clipShape(RoundedRectangle(cornerRadius: 14))
             .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color("BorderSubtle"), lineWidth: 1))
+            // Deck cards lift off the page (0 10px 30px rgba(0,0,0,.10)).
+            .shadow(color: .black.opacity(tall ? 0.10 : 0), radius: 15, y: 10)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -207,7 +218,7 @@ struct CodeOverviewSheet: View {
                     HStack {
                         Spacer(minLength: 16)
                         Text(line.text)
-                            .font(.system(size: 10))
+                            .font(.system(size: layout == "deck" ? 12 : 10))
                             .foregroundColor(Color("TextPrimary"))
                             .lineLimit(2)
                             .padding(.horizontal, 8)
@@ -217,9 +228,9 @@ struct CodeOverviewSheet: View {
                     }
                 } else {
                     Text(line.text)
-                        .font(.system(size: 10))
+                        .font(.system(size: layout == "deck" ? 13 : 10))
                         .foregroundColor(Color("TextSecondary"))
-                        .lineLimit(layout == "list" ? 2 : (layout == "deck" ? 12 : 5))
+                        .lineLimit(layout == "list" ? 2 : (layout == "deck" ? nil : 5))
                 }
             }
         }

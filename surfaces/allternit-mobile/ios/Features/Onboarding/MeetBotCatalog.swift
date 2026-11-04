@@ -178,7 +178,7 @@ struct MeetTemplateTile: View {
             RoundedRectangle(cornerRadius: size * 0.28, style: .continuous)
                 .fill(Color(hex: color))
             if let spriteURL {
-                SpriteAvatar(url: spriteURL, size: size * 0.92, live: live)
+                SpriteAvatar(url: spriteURL, size: size, live: live)
             } else {
                 AgentIdenticonView(seed: label.isEmpty ? color : label, size: size * 0.6)
             }
