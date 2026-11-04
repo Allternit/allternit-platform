@@ -52,9 +52,8 @@ First release of Allternit for iPhone.
 
 ## App Review information
 
-- **Sign-in:** demo account — Eoj to create (email + password, no 2FA). Fill here before submit:
-  - User name: `<demo email>`
-  - Password: `<demo password>`
+- **Contact:** support@allternit.com (forwards to allternitpbc@gmail.com through Cloudflare Email Routing; checked live 2026-11-04).
+- **Sign-in:** demo account `appreview@allternit.com`; the password is in `~/.appstoreconnect/demo-account.txt` and in App Store Connect. Never write it here.
 - **Demo computer:** a computer paired to the demo account that stays online during review (Eoj: cloud computer on standby). Without it, Code and Automation show "Connect a computer", which is the correct state but hides those features from review.
 - **Notes for the reviewer:**
 
@@ -68,13 +67,19 @@ First release of Allternit for iPhone.
 >
 > Background audio: bots can call the person in the app (voice over LiveKit). The audio background mode keeps an answered call going when the person leaves the app. It is not used for anything else.
 >
+> Remote computers: Code and Computers connect to a computer on the person's own account: Allternit Desktop on their Mac or PC, or a cloud computer they added. It shows that whole computer's desktop; it does not stream a single app or game.
+>
 > Screen sharing: Settings → Computers → Let your bots use this iPhone pairs the app with the person's own Allternit Desktop. A broadcast starts only from the system picker (RPSystemBroadcastPickerView, limited to the com.allternit.mobile.screen extension); a bot can only ask the app to show the picker. While it runs, the app shows "Your bot can see this screen" with Stop, and iOS shows its recording indicator. While a bot uses the app's browser, it shows "Bot is using the browser" with Stop.
 >
-> Encryption: the app uses standard HTTPS and a WireGuard-based network connection to the person's own computers.
+> What a bot can do on this iPhone: see the screen while the person broadcasts, and use the app's own browser. It can't tap, type in or open other apps; the app uses only public APIs (ReplayKit, WebKit). Testing this needs a paired Allternit Desktop, so a screen recording of the whole flow is attached.
+>
+> Encryption: the app uses HTTPS, a WireGuard connection to the person's own computers, and OpenSSL with libssh2 inside libgit2 for git over HTTPS and SSH. All are standard algorithms in a mass-market app (ECCN 5D992).
 
 ## Export compliance
 
-The app uses WireGuard (via the Allternit mesh) in addition to HTTPS, only to reach the person's own computers. That is mass-market encryption under the Cryptography Note (Note 3 to Category 5, Part 2), ECCN 5D992. Eoj answered "uses encryption, exempt" for build 6, and `ITSAppUsesNonExemptEncryption = NO` is set in Info.plist (platform #2013), so App Store Connect no longer asks for each build.
+The app ships its own encryption code besides Apple's: WireGuard (wireguard-go inside Mesh.xcframework, the Allternit mesh to the person's own computers) and OpenSSL with libssh2 (inside libgit2.xcframework, for git over HTTPS and SSH). Under US law that is mass-market encryption under the Cryptography Note (Note 3 to Category 5, Part 2), ECCN 5D992, so no export license is needed.
+
+App Store Connect asks a narrower question: does the app implement encryption algorithms "instead of, or in addition to" Apple's? Because of WireGuard and OpenSSL the honest answer is "Standard encryption algorithms", not "None". Builds 6–20 set `ITSAppUsesNonExemptEncryption = NO` (platform #2013), which told Apple "None". From build 21 it is YES and the answer is "Standard". Distributing in France needs a French encryption declaration (ANSSI), so France is left out of the storefronts for now.
 
 No year-end self-classification report is needed. 15 CFR 740.17(e)(3) requires it only for mass-market encryption components, "executable software" taken from hardware components, and non-mass-market items (5A002, 5B002, 5D002). Its note excludes "complete binary images of the software running on an end item", which is what an App Store app is. Checked against the eCFR text on 2026-11-01. If the app ever ships its own crypto library to other developers (an SDK or toolkit), check this again.
 
@@ -91,9 +96,13 @@ No tracking. No third-party advertising.
 
 ## Before submit (checklist)
 
-- [ ] Privacy policy at allternit.com/privacy covers the iPhone app, push tokens and account deletion (the page renders client-side; read it in a browser).
+- [x] Privacy policy at allternit.com/privacy covers the iPhone app, push tokens, screen sharing and account deletion (websites PR, 2026-11-04).
+- [x] allternit.com/support exists (websites PR, 2026-11-04) and support@/privacy@ forward to allternitpbc@gmail.com.
+- [x] Export compliance (Eoj, 2026-11-04): "Standard encryption algorithms", France left out of the storefronts (add it later with an ANSSI declaration). `ITSAppUsesNonExemptEncryption = YES`, so each build asks the encryption questions: answer Standard algorithms, France no.
+- [ ] Attach the screen-sharing screen recording in App Review → Attachments.
+- [ ] Select the newest build (21+, bigger A icon) on version 1.0; it's on build 14.
 - [ ] Clerk: Sign in with Apple on; users can delete their own account.
 - [ ] Server decision on what deletion does (today: account closed, data kept until privacy@ request; paid plans not cancelled) — the delete screen says this plainly.
-- [ ] Screenshots: 6.9" (1320×2868) and 6.5" (1284×2778), 3–5 each: Home chat, Bots, Inbox/Decisions, computer screen, Settings.
-- [ ] Demo account + demo computer online.
+- [x] Screenshots: 6 uploaded at 6.7" in App Store Connect.
+- [ ] Demo account signs in and its computer is online (fresh accounts get PRECONDITION_REQUIRED without one).
 - [ ] Apple Developer: if the App Store team is not the personal team MQ85968PQP, delete the identifier `com.allternit.mobile.screen` registered on MQ85968PQP during a device test (identifiers are unique across Apple), then register the app IDs on the paid team.
