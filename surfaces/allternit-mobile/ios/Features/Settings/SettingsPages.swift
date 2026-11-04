@@ -486,6 +486,9 @@ struct VoiceSettingsPage: View {
                                   action: { settings.listening = .allternit })
             }
 
+            ReplyVoiceSection()
+                .padding(.top, 16)
+
             LiveModeLookSection(inset: 0)
                 .padding(.top, 16)
 
