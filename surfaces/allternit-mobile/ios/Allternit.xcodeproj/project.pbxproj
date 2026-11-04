@@ -704,6 +704,7 @@
 		FC968DAFF1558F8F269CEB4B /* SubagentsSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B39AAE7FBCFE14C0E9A6D418 /* SubagentsSettingsView.swift */; };
 		FD8EDC6D571088159DE61BE9 /* BotActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6705087F95CB65F4CAFDBB53 /* BotActivityAttributes.swift */; };
 		FDA3FE969C5ED9A7445AF1B9 /* DevPreviewClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E8CB0BD0F5ECDD86A8F010D /* DevPreviewClient.swift */; };
+		FDE5709F65A8E4390CEB925B /* ByokVoice.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FAB7261305AF6B2F5601DFF /* ByokVoice.swift */; };
 		FE8B6D34018BE9584D17E531 /* BotProjectPanes.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8FD1CB110D3F95E09D3D165 /* BotProjectPanes.swift */; };
 		FEA213F071503B7A07B32330 /* RuntimeOperationsModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E309E127E42B78330B54B0E /* RuntimeOperationsModels.swift */; };
 		FEB8E6984D1F9B73C03B7BBD /* WidgetFace.swift in Sources */ = {isa = PBXBuildFile; fileRef = 97212F4BDDE5652FF47596FD /* WidgetFace.swift */; };
@@ -1131,6 +1132,7 @@
 		8E94E901486FE16F1874839C /* Secrets.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Secrets.xcconfig; sourceTree = "<group>"; };
 		8EA82180F7A2046DAEA52E6F /* ChatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatView.swift; sourceTree = "<group>"; };
 		8F1773539996DD0C8EB6E726 /* SherpaOnnx.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SherpaOnnx.swift; sourceTree = "<group>"; };
+		8FAB7261305AF6B2F5601DFF /* ByokVoice.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ByokVoice.swift; sourceTree = "<group>"; };
 		90CF477027052D37D783286C /* CodeOverviewSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodeOverviewSheet.swift; sourceTree = "<group>"; };
 		914FE83348400D7577B8EB07 /* PrewarmManagerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrewarmManagerView.swift; sourceTree = "<group>"; };
 		91572463CAB3A25D69FEABED /* BotHomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotHomeView.swift; sourceTree = "<group>"; };
@@ -1690,6 +1692,7 @@
 		36ACD8B5EE96431E93AF2A6D /* Voice */ = {
 			isa = PBXGroup;
 			children = (
+				8FAB7261305AF6B2F5601DFF /* ByokVoice.swift */,
 				03A5F3D7BDB50F7FF2388D3F /* Bz2Tar.swift */,
 				E056E8E54B52FF70C59DE250 /* KokoroSpeech.swift */,
 				27522796D66DD8598AF0E758 /* LocalVoiceBackends.swift */,
@@ -3418,6 +3421,7 @@
 				F7B19CC042E5B3F179191EE8 /* BrainsClient.swift in Sources */,
 				A076803F5886FF12CF36A054 /* BrowserChatView.swift in Sources */,
 				C230ADFADE88022662D3F365 /* BudgetDashboardView.swift in Sources */,
+				FDE5709F65A8E4390CEB925B /* ByokVoice.swift in Sources */,
 				021521EDBDEF3B9033EBD5A1 /* Bz2Tar.swift in Sources */,
 				35FFBD20A864D0ADCA415580 /* CallAudio.swift in Sources */,
 				5DC5E2B00685DA941532809A /* CanvasClient.swift in Sources */,
