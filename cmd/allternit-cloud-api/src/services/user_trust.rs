@@ -250,6 +250,7 @@ pub struct OrgMembership {
 }
 
 const ORG_MEMBERSHIP_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(300);
+const ORG_MEMBERSHIP_MISS_REFRESH: std::time::Duration = std::time::Duration::from_secs(30);
 
 type MembershipCache =
     std::collections::HashMap<String, (std::time::Instant, Vec<OrgMembership>)>;
@@ -277,6 +278,26 @@ pub async fn org_memberships_with(config: &TrustConfig, clerk_user_id: &str) -> 
 /// a caller that grants access can fail closed instead of reading "no orgs".
 pub async fn clerk_org_memberships_checked(clerk_user_id: &str) -> Option<Vec<OrgMembership>> {
     org_memberships_checked_with(&TrustConfig::from_env(), clerk_user_id).await
+}
+
+/// Memberships, refetched when `org` is missing from a cached list older than
+/// [`ORG_MEMBERSHIP_MISS_REFRESH`]: a member of an org created or joined a moment
+/// ago is seen in seconds, not after the full cache TTL (live test 2026-11-04),
+/// while repeated lookups of an org the user is not in stay cached.
+pub async fn clerk_org_memberships_for(clerk_user_id: &str, org: &str) -> Option<Vec<OrgMembership>> {
+    let config = TrustConfig::from_env();
+    let cache_key = format!("{}|{clerk_user_id}", config.clerk_api_base);
+    let stale_miss = membership_cache().lock().ok().and_then(|cache| {
+        cache.get(&cache_key).map(|(fetched_at, memberships)| {
+            !memberships.iter().any(|m| m.id == org) && fetched_at.elapsed() >= ORG_MEMBERSHIP_MISS_REFRESH
+        })
+    });
+    if stale_miss == Some(true) {
+        if let Ok(mut cache) = membership_cache().lock() {
+            cache.remove(&cache_key);
+        }
+    }
+    org_memberships_checked_with(&config, clerk_user_id).await
 }
 
 pub async fn org_memberships_checked_with(config: &TrustConfig, clerk_user_id: &str) -> Option<Vec<OrgMembership>> {
