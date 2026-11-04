@@ -903,7 +903,7 @@
       "label": "MCP Apps and events",
       "product": "product:mcp-apps",
       "status": "live",
-      "description": "Interactive MCP apps run inside the workspace. Event automations have owner instructions, approval-gated durable runs, batching, limits, history and subscription-scoped replay.",
+      "description": "Interactive MCP apps run inside the workspace. Event automations have owner instructions, approval-gated durable runs, batching, limits, history and subscription-scoped replay. About 800 connectors have an app screen: designed ones for the top apps and automatic ones built from each connector's tools; a standard connect screen, a welcome moment after sign-in, hover previews on Discover cards, an About tab, chat cards and deep views (search, detail, compose, overview) for top apps.",
       "touches": [
         "allternit-ai/src/views/mini-apps",
         "allternit-ai/src/components/mcp",
@@ -921,7 +921,9 @@
         "allternit/cmd/allternit-cloud-api/src/routes/platform_v1/events.rs",
         "allternit/cmd/allternit-api/src/agent_session_routes.rs",
         "allternit/cmd/allternit-api/src/mcp_event_automations.rs",
-        "allternit/cmd/allternit-api/src/runtime_events.rs"
+        "allternit/cmd/allternit-api/src/runtime_events.rs",
+        "allternit-ai/src/lib/app-screens",
+        "allternit-ai/src/components/app-screens"
       ],
       "decisions": [
         {
@@ -939,11 +941,24 @@
         {
           "on": "2026-11-04",
           "note": "Vendor MCP Apps UI: show a vendor's own View wherever its server ships one; expand to full screen (desktop) or sheet (phone/PWA); ui/message and model context reach the chat; links and downloads ask first; VendorAppUI for app pages."
+        },
+        {
+          "on": "2026-11-04",
+          "note": "Eoj: every connector gets an app screen. Top apps get designed screens researched from each vendor's real UI (screen packs: data, not code); the rest get automatic screens generated from their tools, and new connectors get one automatically."
+        },
+        {
+          "on": "2026-11-04",
+          "note": "Eoj: a standard Allternit-to-app connect screen; after sign-in the app's logo, a check and a welcome line, then the screen. Discover drops the category pills and the 'Has a screen' shelf; app screens get a branded header and an About tab with the version."
+        },
+        {
+          "on": "2026-11-04",
+          "note": "Eoj picked all three deep-experience steps: host vendors' own MCP Apps UI, chat cards drawn from the screen catalog, and search/detail/compose/overview views for the top 50-100 apps."
         }
       ],
       "evidence": [
         "allternit/surfaces/docs/guides/mcp-events.mdx",
-        "allternit/surfaces/docs/guides/mcp-apps-status.mdx"
+        "allternit/surfaces/docs/guides/mcp-apps-status.mdx",
+        "allternit/surfaces/docs/guides/app-screens.mdx"
       ]
     },
     {
