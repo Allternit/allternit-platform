@@ -29,6 +29,10 @@ Scope `messaging`.
 
 `429 daily_limit` means the number reached its daily sending cap. `402 spend_cap_reached` means the project reached its monthly [spend cap](/api/platform/billing); simulated (sandbox) texts are free and never refused for it.
 
+## Retrying a send safely
+
+Send an `Idempotency-Key` header (any unique string up to 200 characters) with `POST /v1/messages`. If the request is retried with the same key on the same number, the original message comes back and no second text goes out. A retry that arrives while the first is still in flight returns `409` with `send_in_progress`; try again shortly. If the carrier rejects the first attempt, the key is released and a retry sends normally.
+
 ## Receiving texts
 
 Texts that arrive on your numbers are kept and sent to your [webhooks](/api/platform/webhooks) as `message.received`. `STOP`, `START` and `HELP` are answered for you and never reach you as messages; a STOP also means future sends to that person are refused.

@@ -148,7 +148,7 @@ pub struct OtlpJsonExporter {
 impl OtlpJsonExporter {
     pub fn new(traces_url: String, service_name: &str) -> Self {
         Self {
-            client: ReqwestHttpClient(reqwest::Client::new()),
+            client: ReqwestHttpClient(crate::net_client::client()),
             traces_url,
             service_name: service_name.to_string(),
         }

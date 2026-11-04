@@ -1348,7 +1348,7 @@ async fn notify_cloud_paired(st: &Arc<AppState>, notify: PairingNotify) {
         base.trim_end_matches('/'),
         notify.onboarding_id
     );
-    let _ = reqwest::Client::new()
+    let _ = crate::net_client::client()
         .post(&url)
         .json(&json!({ "pairNonce": notify.pair_nonce }))
         .timeout(std::time::Duration::from_secs(10))

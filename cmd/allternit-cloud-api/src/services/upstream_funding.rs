@@ -456,7 +456,7 @@ pub async fn refresh_all(db: &PgPool, http: &reqwest::Client) {
 /// Start the 10-minute funding poller. Never panics or exits on errors.
 pub fn start_upstream_funding_task(db: PgPool) {
     tokio::spawn(async move {
-        let http = reqwest::Client::new();
+        let http = crate::net_client::client();
         let mut interval = tokio::time::interval(REFRESH_EVERY);
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {

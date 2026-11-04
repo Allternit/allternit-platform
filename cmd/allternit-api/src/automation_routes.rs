@@ -74,9 +74,18 @@ fn check_agent(conn: &rusqlite::Connection, agent_id: Option<&str>) -> Result<Op
     Ok(Some(id.to_string()))
 }
 
+/// `cloud` asks for an always-on computer. On an Allternit cloud computer this
+/// API already is one, so the routine is kept on its own local scheduler (the
+/// one with skipped-run rows, Stop, live runs and "Something needs fixing"),
+/// not handed to the gizzi cron daemon. Clients that talk to a cloud computer
+/// show its routines as running in the cloud.
 fn normalize_execution_domain(domain: Option<String>) -> String {
+    normalize_execution_domain_on(domain, crate::cloud_computer_peer::running_on_cloud_computer())
+}
+
+fn normalize_execution_domain_on(domain: Option<String>, on_cloud_computer: bool) -> String {
     match domain.as_deref() {
-        Some("cloud") | Some("hybrid") => "cloud".to_string(),
+        Some("cloud") | Some("hybrid") if !on_cloud_computer => "cloud".to_string(),
         _ => "local".to_string(),
     }
 }
@@ -1223,12 +1232,17 @@ async fn create_routine(
             None
         };
         let daemon_job = build_daemon_job_from_routine(&routine, &job_type, harness_config);
-        let client = reqwest::Client::new();
+        let client = crate::net_client::client();
         match cron_daemon_create_job(&client, daemon_job).await {
             Ok(res) => extract_daemon_job_id(&res),
             Err(e) => {
+                // Saving it anyway would leave a routine that never runs.
                 warn!("failed to create daemon routine job: {}", e);
-                None
+                return Err(RoutineApiError::new(
+                    StatusCode::BAD_GATEWAY,
+                    "cloud_scheduler_unavailable",
+                    "The always-on scheduler isn't answering, so this routine can't run in the cloud. Pick This computer, or try again when your cloud computer is ready.",
+                ));
             }
         }
     } else {
@@ -1433,14 +1447,14 @@ async fn update_routine(
             };
             let gizzi_job =
                 build_daemon_job_from_routine(&updated_routine, &job_type, harness_config);
-            let client = reqwest::Client::new();
+            let client = crate::net_client::client();
             if let Err(e) = cron_daemon_update_job(&client, gizzi_job_id, gizzi_job).await {
                 warn!("failed to update daemon routine job: {}", e);
             }
         }
     } else if old_uses_cloud && !new_uses_cloud {
         if let Some(ref gizzi_job_id) = existing.1 {
-            let client = reqwest::Client::new();
+            let client = crate::net_client::client();
             if let Err(e) = cron_daemon_delete_job(&client, gizzi_job_id).await {
                 warn!(
                     "failed to delete daemon routine job on domain change: {}",
@@ -1463,7 +1477,7 @@ async fn update_routine(
             None
         };
         let daemon_job = build_daemon_job_from_routine(&updated_routine, &job_type, harness_config);
-        let client = reqwest::Client::new();
+        let client = crate::net_client::client();
         let daemon_job_id = match cron_daemon_create_job(&client, daemon_job).await {
             Ok(res) => extract_daemon_job_id(&res),
             Err(e) => {
@@ -1509,7 +1523,7 @@ async fn delete_routine(
         .map_err(|_| StatusCode::NOT_FOUND)?;
 
     if let Some(gizzi_job_id) = gizzi_job_id {
-        let client = reqwest::Client::new();
+        let client = crate::net_client::client();
         if let Err(e) = cron_daemon_delete_job(&client, &gizzi_job_id).await {
             warn!("failed to delete daemon routine job: {}", e);
         }
@@ -1576,7 +1590,7 @@ async fn run_routine(
     }
 
     let gizzi_job_id = gizzi_job_id.ok_or(StatusCode::BAD_REQUEST)?;
-    let client = reqwest::Client::new();
+    let client = crate::net_client::client();
     let run = cron_daemon_run_job(&client, &gizzi_job_id)
         .await
         .map_err(|e| {
@@ -1613,7 +1627,7 @@ async fn list_routine_runs(
     let mut sync = json!({"attempted": false, "synced": 0, "error": serde_json::Value::Null});
     if let Some(ref job_id) = gizzi_job_id {
         sync["attempted"] = json!(true);
-        let client = reqwest::Client::new();
+        let client = crate::net_client::client();
         match cron_daemon_list_runs(&client, job_id).await {
             Ok(runs) => {
                 let n = upsert_routine_runs(&conn, &id, &runs);
@@ -1702,7 +1716,7 @@ async fn cancel_routine_run(
         return Err(RoutineApiError::new(StatusCode::CONFLICT, "not_running", "That run already finished."));
     }
     let job_id = gizzi_job_id.ok_or_else(|| RoutineApiError::new(StatusCode::CONFLICT, "not_running", "That run already finished."))?;
-    match cron_daemon_abort_job(&reqwest::Client::new(), &job_id).await {
+    match cron_daemon_abort_job(&crate::net_client::client(), &job_id).await {
         Ok(true) => Ok(Json(json!({ "status": "stopping", "runId": run_id }))),
         Ok(false) => Err(RoutineApiError::new(StatusCode::CONFLICT, "not_running", "That run already finished.")),
         Err(e) => {
@@ -2042,7 +2056,7 @@ async fn create_loop(
             None
         };
         let daemon_job = build_daemon_job_from_loop(&loop_item, &job_type, harness_config);
-        let client = reqwest::Client::new();
+        let client = crate::net_client::client();
         match cron_daemon_create_job(&client, daemon_job).await {
             Ok(res) => extract_daemon_job_id(&res),
             Err(e) => {
@@ -2241,14 +2255,14 @@ async fn update_loop(
                 None
             };
             let gizzi_job = build_daemon_job_from_loop(&updated_loop, &job_type, harness_config);
-            let client = reqwest::Client::new();
+            let client = crate::net_client::client();
             if let Err(e) = cron_daemon_update_job(&client, gizzi_job_id, gizzi_job).await {
                 warn!("failed to update daemon loop job: {}", e);
             }
         }
     } else if old_uses_cloud && !new_uses_cloud {
         if let Some(ref gizzi_job_id) = existing.1 {
-            let client = reqwest::Client::new();
+            let client = crate::net_client::client();
             if let Err(e) = cron_daemon_delete_job(&client, gizzi_job_id).await {
                 warn!("failed to delete daemon loop job on domain change: {}", e);
             }
@@ -2268,7 +2282,7 @@ async fn update_loop(
             None
         };
         let daemon_job = build_daemon_job_from_loop(&updated_loop, &job_type, harness_config);
-        let client = reqwest::Client::new();
+        let client = crate::net_client::client();
         let daemon_job_id = match cron_daemon_create_job(&client, daemon_job).await {
             Ok(res) => extract_daemon_job_id(&res),
             Err(e) => {
@@ -2311,7 +2325,7 @@ async fn delete_loop(
         .map_err(|_| StatusCode::NOT_FOUND)?;
 
     if let Some(gizzi_job_id) = gizzi_job_id {
-        let client = reqwest::Client::new();
+        let client = crate::net_client::client();
         if let Err(e) = cron_daemon_delete_job(&client, &gizzi_job_id).await {
             warn!("failed to delete daemon loop job: {}", e);
         }
@@ -2382,7 +2396,7 @@ async fn run_loop(
     }
 
     let gizzi_job_id = gizzi_job_id.ok_or(StatusCode::BAD_REQUEST)?;
-    let client = reqwest::Client::new();
+    let client = crate::net_client::client();
     let run = cron_daemon_run_job(&client, &gizzi_job_id)
         .await
         .map_err(|e| {
@@ -2487,6 +2501,16 @@ pub fn automation_router() -> Router<Arc<AppState>> {
 mod tests {
     use super::*;
     use crate::db::DbHandle;
+
+    #[test]
+    fn cloud_routines_stay_on_the_cloud_computers_own_scheduler() {
+        // On a laptop, `cloud` goes to the always-on cron daemon.
+        assert_eq!(normalize_execution_domain_on(Some("cloud".into()), false), "cloud");
+        assert_eq!(normalize_execution_domain_on(Some("hybrid".into()), false), "cloud");
+        // On a cloud computer the local scheduler already is always on.
+        assert_eq!(normalize_execution_domain_on(Some("cloud".into()), true), "local");
+        assert_eq!(normalize_execution_domain_on(None, false), "local");
+    }
 
     fn test_db() -> (String, DbHandle) {
         let id = uuid::Uuid::new_v4().to_string();

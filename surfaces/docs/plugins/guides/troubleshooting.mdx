@@ -59,6 +59,7 @@ The inline frame is sized from the height you report. Send `ui/notifications/siz
 | `404` | The tool is not in your server's `tools/list`, or the connector is missing, disabled, or belongs to another user. | Check the tool name. |
 | `502 connector_unauthorized` | Your server rejected the stored token. | The user should reconnect. Check your token validation. |
 | `502 connector_unreachable`, `504 connector_timeout` | Allternit could not reach your server in time. | Check that it is public and answers within 30 seconds. |
+| `503 connector_unavailable` | Your server failed 3 times in a row, so Allternit stops calling it for 60 seconds. | Fix the server; the next call after 60 seconds tries again, and one success closes the breaker. |
 
 ## The connector will not save or connect
 

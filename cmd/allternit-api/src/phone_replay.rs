@@ -90,7 +90,7 @@ pub async fn call_tool_within(name: &str, args: Value, timeout: Duration) -> Res
         gw.get("url").and_then(Value::as_str).ok_or("phone gateway file has no url")?,
         gw.get("token").and_then(Value::as_str).ok_or("phone gateway file has no token")?,
     );
-    let res = reqwest::Client::new()
+    let res = crate::net_client::client()
         .post(format!("{}/phone/call", url.trim_end_matches('/')))
         .header("x-allternit-phone-token", token)
         .json(&json!({ "name": name, "arguments": args }))

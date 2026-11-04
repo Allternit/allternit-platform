@@ -103,7 +103,7 @@ async fn validate_provider_token(provider: &str, token: &str) -> Result<(), Stri
         }
     };
 
-    let client = reqwest::Client::new();
+    let client = crate::net_client::client();
     let response = client
         .get(url)
         .bearer_auth(token)

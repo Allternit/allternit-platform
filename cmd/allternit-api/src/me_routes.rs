@@ -198,7 +198,7 @@ async fn fetch_cloud_billing_usage(
     base_url: &str,
     authorization: Option<&str>,
 ) -> Option<CloudUsageResponse> {
-    let client = reqwest::Client::new();
+    let client = crate::net_client::client();
     let origin = base_url.trim_end_matches('/');
     let mut sub_req = client.get(format!("{origin}/api/v1/billing/subscription"));
     let mut cred_req = client.get(format!("{origin}/api/v1/billing/credits"));
@@ -289,7 +289,7 @@ async fn get_my_usage(
     };
 
     let url = format!("{}/api/v1/me/usage", base_url.trim_end_matches('/'));
-    let mut request = reqwest::Client::new()
+    let mut request = crate::net_client::client()
         .get(&url)
         .header("x-allternit-user-id", &user.user_id);
     // Forward the caller's Bearer so the cloud API resolves the same user.

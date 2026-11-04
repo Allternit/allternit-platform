@@ -732,7 +732,7 @@ async fn proxy_voice_stream(service_path: &str, body: Body) -> Response {
 
     // No overall timeout on purpose — these streams are long-lived (same
     // reasoning as the gizzi event-stream client above).
-    let upstream = match reqwest::Client::new()
+    let upstream = match crate::net_client::client()
         .post(format!("{}/v1/{}", voice_base(), service_path))
         .header("Content-Type", "application/json")
         .body(body_bytes)
@@ -2970,7 +2970,7 @@ mod tests {
     #[tokio::test]
     async fn resume_seed_replays_every_page_after_the_cursor() {
         let gizzi = fake_gizzi(true).await;
-        let client = reqwest::Client::new();
+        let client = crate::net_client::client();
         let seed = super::fetch_resume_seed(&client, &gizzi, "ses_1", 10).await;
         assert_eq!(seed.replayed_through, 12);
         assert!(seed.busy);
@@ -2989,7 +2989,7 @@ mod tests {
     #[tokio::test]
     async fn resume_seed_reports_a_turn_that_already_ended() {
         let gizzi = fake_gizzi(false).await;
-        let seed = super::fetch_resume_seed(&reqwest::Client::new(), &gizzi, "ses_1", 12).await;
+        let seed = super::fetch_resume_seed(&crate::net_client::client(), &gizzi, "ses_1", 12).await;
         assert!(!seed.busy);
         assert!(seed.blocks.is_empty());
         assert_eq!(seed.replayed_through, 12);

@@ -139,12 +139,12 @@ pub(crate) struct ReqwestTeamsHttp;
 #[async_trait]
 impl TeamsHttp for ReqwestTeamsHttp {
     async fn get_json(&self, url: &str) -> Result<(u16, Value), String> {
-        let resp = reqwest::Client::new().get(url).timeout(Duration::from_secs(15)).send().await.map_err(|e| e.to_string())?;
+        let resp = crate::net_client::client().get(url).timeout(Duration::from_secs(15)).send().await.map_err(|e| e.to_string())?;
         let status = resp.status().as_u16();
         Ok((status, resp.json::<Value>().await.unwrap_or(Value::Null)))
     }
     async fn post_json(&self, url: &str, headers: &[(&str, &str)], body: &Value) -> Result<(u16, Value), String> {
-        let mut r = reqwest::Client::new().post(url).timeout(Duration::from_secs(15)).json(body);
+        let mut r = crate::net_client::client().post(url).timeout(Duration::from_secs(15)).json(body);
         for (k, v) in headers {
             r = r.header(*k, *v);
         }
@@ -153,12 +153,12 @@ impl TeamsHttp for ReqwestTeamsHttp {
         Ok((status, resp.json::<Value>().await.unwrap_or(Value::Null)))
     }
     async fn post_form(&self, url: &str, form: &[(&str, &str)]) -> Result<(u16, Value), String> {
-        let resp = reqwest::Client::new().post(url).timeout(Duration::from_secs(15)).form(form).send().await.map_err(|e| e.to_string())?;
+        let resp = crate::net_client::client().post(url).timeout(Duration::from_secs(15)).form(form).send().await.map_err(|e| e.to_string())?;
         let status = resp.status().as_u16();
         Ok((status, resp.json::<Value>().await.unwrap_or(Value::Null)))
     }
     async fn post_bytes(&self, url: &str, headers: &[(&str, &str)], body: &[u8]) -> Result<(u16, Value), String> {
-        let mut r = reqwest::Client::new().post(url).timeout(Duration::from_secs(30)).body(body.to_vec());
+        let mut r = crate::net_client::client().post(url).timeout(Duration::from_secs(30)).body(body.to_vec());
         for (k, v) in headers {
             r = r.header(*k, *v);
         }

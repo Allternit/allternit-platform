@@ -7,6 +7,8 @@ pub mod artifacts;
 #[path = "../../allternit-api/src/answer_contract.rs"]
 pub mod answer_contract;
 pub mod auth;
+#[path = "../../allternit-api/src/net_client.rs"]
+pub mod net_client;
 pub mod carriers;
 pub mod channels;
 pub mod db;

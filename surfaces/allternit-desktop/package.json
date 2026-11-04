@@ -1,7 +1,7 @@
 {
   "name": "@allternit/desktop",
   "version": "1.1.13",
-  "description": "Allternit Desktop — Electron shell loading the Allternit platform with local VM management via Apple Virtualization.framework.",
+  "description": "Allternit Desktop: your bots, chats, projects and code, with this computer paired to your Allternit account.",
   "main": "dist/main/unified-main.js",
   "type": "module",
   "packageManager": "pnpm@10.28.0",
@@ -86,7 +86,8 @@
   "engines": {
     "node": ">=20.0.0"
   },
-  "author": "Allternit",
+  "author": "Allternit LLC",
+  "homepage": "https://allternit.com",
   "license": "UNLICENSED",
   "repository": {
     "type": "git",
@@ -106,7 +107,7 @@
     ],
     "npmRebuild": false,
     "nodeGypRebuild": false,
-    "copyright": "Copyright © 2026 Allternit",
+    "copyright": "Copyright © 2026 Allternit LLC",
     "directories": {
       "output": "release",
       "buildResources": "build"
@@ -318,7 +319,7 @@
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.plist",
       "icon": "build/icon.icns",
-      "category": "public.app-category.developer-tools",
+      "category": "public.app-category.productivity",
       "darkModeSupport": true,
       "identity": "-",
       "binaries": [
@@ -422,10 +423,10 @@
         "deb"
       ],
       "icon": "build/icon.png",
-      "category": "Development",
+      "category": "Utility",
       "executableName": "allternit",
-      "synopsis": "Your AI Platform",
-      "description": "Allternit Desktop — fully offline AI platform with local VM execution.",
+      "synopsis": "Your bots, chats and computers",
+      "description": "Allternit Desktop: your bots, chats, projects and code, with this computer paired to your Allternit account. Needs an Allternit account.",
       "maintainer": "Allternit <support@allternit.com>",
       "vendor": "Allternit",
       "syncDesktopName": true,

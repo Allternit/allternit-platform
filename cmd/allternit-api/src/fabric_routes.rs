@@ -541,7 +541,10 @@ async fn invoke_via_gizzi_sessions(
                 headers,
                 reqwest::Method::POST,
                 &format!("/v1/question/{id}/reply"),
-                Some(json!({ "answers": inputs.get("answers") })),
+                Some(match crate::agent_session_routes::question_plan(inputs) {
+                    Some(plan) => json!({ "answers": inputs.get("answers"), "plan": plan }),
+                    None => json!({ "answers": inputs.get("answers") }),
+                }),
             )
             .await
         }

@@ -275,7 +275,7 @@ async fn post_cloud(secret: &dyn RelaySecret, cloud: &str, body: &Value) -> Resu
         return Err("runtime_not_paired".into());
     };
     let bytes = serde_json::to_vec(body).map_err(|e| e.to_string())?;
-    let mut req = reqwest::Client::new().post(format!("{cloud}{PUSH_PATH}")).timeout(Duration::from_secs(20)).header("content-type", "application/json");
+    let mut req = crate::net_client::client().post(format!("{cloud}{PUSH_PATH}")).timeout(Duration::from_secs(20)).header("content-type", "application/json");
     for (k, v) in crate::relay_auth::signed_headers(&token, &owner, "POST", PUSH_PATH, &bytes) {
         req = req.header(k, v);
     }

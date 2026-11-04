@@ -126,7 +126,7 @@ pub struct ReqwestKeyValidator;
 #[async_trait::async_trait]
 impl KeyValidator for ReqwestKeyValidator {
     async fn validate(&self, base_url: &str, api_key: &str) -> Result<(), ApiError> {
-        let response = reqwest::Client::new()
+        let response = crate::net_client::client()
             .get(format!("{}/models", base_url.trim_end_matches('/')))
             .bearer_auth(api_key)
             .timeout(Duration::from_secs(5))

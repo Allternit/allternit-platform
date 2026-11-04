@@ -302,6 +302,8 @@ async fn main() {
     // Memory-plane index: background embedding backfill / re-embed (WP-M1a).
     allternit_api::memory_index::spawn_indexer(db.clone());
 
+    allternit_api::llm_gateway::failover::install_alert_sink(db.clone());
+
     // Shared gateway state (P2.9): with GATEWAY_SHARED_STATE=sqlite, failover
     // cooldowns and gateway rate-limit counters live in SQLite so multiple
     // replicas steer/throttle identically. Default off: in-memory behavior.
@@ -1035,6 +1037,7 @@ async fn main() {
         .merge(allternit_api::phone_seen_routes::phone_seen_router())
         .merge(agent_preferences_router())
         .merge(agent_workspace_router())
+        .merge(allternit_api::agent_package_routes::agent_package_router())
         .merge(allternit_api::bot_hub_routes::bot_hub_router())
         .merge(allternit_api::memory_map_routes::memory_map_router())
         // A thread placed on another Allternit (P4.2): its session's calls
@@ -1130,6 +1133,7 @@ async fn main() {
         .merge(allternit_api::coordinator_routes::coordinator_router())
         .merge(allternit_api::delegate_routes::delegate_router())
         .merge(allternit_api::morning_brief::brief_router())
+        .merge(allternit_api::main_bot_reach_out::reach_out_router())
         .merge(allternit_api::slack_webhook_routes::slack_binding_router())
         .merge(model_training_router())
         .merge(photon_router())

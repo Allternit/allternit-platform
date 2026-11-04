@@ -236,9 +236,14 @@
         "allternit-ai/src/views/automation",
         "allternit-ai/src/views/tasks",
         "allternit/cmd/allternit-api",
-        "allternit/cmd/gizzi-code"
+        "allternit/cmd/gizzi-code",
+        "allternit/surfaces/allternit-mobile/ios/Features/Onboarding"
       ],
       "decisions": [
+        {
+          "on": "2026-11-03",
+          "note": "The main bot reaches out first: POST /bots/:id/reach-out posts a hello + 2-3 offers (bot_suggestions, no model call) once per bot, pushes bot.message.posted (quiet hours apply), and adds a 9:00 Morning check-in routine (metadata.checkIn pushes after a good run). Web main-bot.ts and iOS MeetMainBot/BotFormModel call it."
+        },
         {
           "on": "2026-09-28",
           "note": "Bot templates shipped and the old Bot Hub was removed (ai #209, #210)."
@@ -865,7 +870,10 @@
         "allternit-ai/src/lib/skills/skill-catalog-install.ts",
         "allternit-ai/src/plugins/catalog/native-plugins.ts",
         "allternit-ai/src/lib/webhook-api.ts",
-        "allternit/cmd/gizzi-code/src/runtime/context/config/config.ts"
+        "allternit/cmd/gizzi-code/src/runtime/context/config/config.ts",
+        "allternit-ai/src/views/customize/section-directory.ts",
+        "allternit-ai/src/components/webhooks",
+        "allternit-ai/src/lib/webhooks"
       ],
       "decisions": [
         {
@@ -875,6 +883,10 @@
         {
           "on": "2026-11-03",
           "note": "Eoj: item pages before install; official skills are the repo's own (.agents/skills: docx, powerpoint, clone-website, mobile-app-design, agent-orchestrator, steer-parallel-agent); fix the More sections' Add paths so added items run, then give them official shelves."
+        },
+        {
+          "on": "2026-11-03",
+          "note": "Eoj: Messaging channels are connector cards with their own page; plugin covers fill the card; Discover catalogs for MCP servers (15, each connected in gizzi), commands (12) and CLI tools (the coding-CLI catalog with install and sign-in); one shared capability scan per page. MCP Apps: own look, full list with 'Has a screen' first; Allternit draws screens for apps that ship none (vendor look packs + per-tool screen maps), depth pending Eoj's pick."
         }
       ],
       "evidence": [
@@ -1043,9 +1055,17 @@
         "allternit-ai/src/views/tasks",
         "allternit-ai/src/views/bots",
         "allternit/cmd/allternit-api/src/routine_*",
-        "allternit/cmd/allternit-api/src/automation_*"
+        "allternit/cmd/allternit-api/src/automation_*",
+        "allternit/cmd/allternit-api/src/webhook_trigger_routes.rs",
+        "allternit/cmd/allternit-cloud-api/src/routes/channel_inbound.rs",
+        "allternit-ai/src/components/webhooks",
+        "allternit-ai/src/lib/webhook-api.ts"
       ],
       "decisions": [
+        {
+          "on": "2026-11-03",
+          "note": "Cloud by default: new routines run on the account cloud computer when one exists (web cloud-default.ts picks the first wakeable runtime; Runs on picker; Run in the cloud for local routines), the main bot is Always on by default unless the user chose (availability.userSet), and the bot is copied first via GET/PUT /agents/:id/package (agent_package_routes.rs; no secrets, channels or availability). A cloud routine that no scheduler takes now fails 502 instead of saving."
+        },
         {
           "on": "2026-10-24",
           "note": "Eoj: BoardUI look pass \u2014 calendar month chips with time and type tint (goals blue, routines green, loops purple, heartbeats amber), +N more day list, block names and times in Week/Day, and an anchored TaskDetailsCard on Automation Tasks with Run now / Edit / Pause; phones keep dots plus a day list and the same card as a sheet (ai #806)."
@@ -1057,6 +1077,10 @@
         {
           "on": "2026-10-27",
           "note": "Routine rows expose exact next-run time in the saved timezone, bot and execution location, explicit last result, failed-run review and Run history. Scheduler mutations are serialized and disable conflicting controls. Shared row covers Desktop, web phone and PWA."
+        },
+        {
+          "on": "2026-11-03",
+          "note": "Eoj: webhooks must work end to end. Triggers get a public address (cloud-api channel route provider webhook_trigger, relayed signed to /webhooks/relayed/<route>), the runtime checks GitHub, Stripe, Linear, Shopify or Allternit signatures with a stored secret, filters events, and starts the bot on a task thread (tools ask). One guided setup (components/webhooks) replaced three forms that all returned 422."
         }
       ],
       "evidence": [
@@ -3183,6 +3207,36 @@
         "allternit/surfaces/docs/guides/decisions.mdx",
         "allternit-ai/src/components/agent-elements/question/decision-tree.tsx",
         "allternit-ai/src/components/decisions/DecisionsDeck.tsx"
+      ]
+    },
+    {
+      "id": "feature:plan-approval-card",
+      "label": "Editable plan card (approve an agent's plan, then watch it run)",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "gizzi's plan_exit takes steps [{title, detail?}] (else reads the plan file's top-level numbered items, or bullets); its Build Agent question carries plan.steps. Every question host (composer stack, inline card, native dock, Tasks Decisions) draws PlanApproval: edit, add, remove and reorder steps, then Approve / Approve + allow sends / Keep planning. The reply's plan (max 50 steps, 500 chars) goes through allternit-api (agent_session_routes question_plan, fabric harness reply) to gizzi, which writes the approved steps as the session to-do list (todo.updated -> the chat's live plan frame) and tells the build agent to run the edited list. Terminal UI, iOS and bot channels answer the same question with plain options. Plan pages (answer-me) are a second view of the same plan: the gizzi plugin passes plan.steps to the page's step editor, replies with the edited steps, and links the page to the card (POST /question/:id/plan-page -> plan.page, shown as Open full plan). Inside Desktop the page does not open a browser tab.",
+      "touches": [
+        "allternit-ai/src/components",
+        "allternit-ai/src/lib/agents",
+        "allternit/cmd/allternit-api/src",
+        "allternit/cmd/gizzi-code/src/runtime/integrations",
+        "allternit/cmd/gizzi-code/src/runtime/tools",
+        "allternit/cmd/gizzi-code/src/runtime/server"
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/plan-approval.mdx",
+        "allternit-ai/src/components/agent-elements/question/plan-approval.tsx",
+        "allternit/cmd/gizzi-code/src/runtime/tools/builtins/plan.ts"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-04",
+          "note": "Eoj asked for an editable action-plan card like the one in the generative-UI post (pitus_ #7). Built on gizzi's plan_exit question rather than the Operator runner's PlanPreview (its backend is not deployed). The live progress is the existing to-do plan frame, seeded with the approved steps."
+        },
+        {
+          "on": "2026-11-04",
+          "note": "Eoj: integrate the card with answer-me plan pages (all 4 parts): the page edits the same steps, the plugin replies with them, the card links to the page (Open full plan), Desktop opens no extra browser tab, and Claude Code plan pages get the step editor too."
+        }
       ]
     },
     {

@@ -443,7 +443,7 @@ async fn discord_connect_h(
     use axum::{http::StatusCode, response::IntoResponse, Json};
     let base = crate::phone_sync::cloud_base();
     // Ask the cloud which servers this user added the shared app to (the bot token never reaches a runtime).
-    let mut req = reqwest::Client::new()
+    let mut req = crate::net_client::client()
         .get(format!("{}/api/v1/channels/discord/installs", base.trim_end_matches('/')))
         .timeout(std::time::Duration::from_secs(10));
     if let Some(auth) = headers.get("authorization").and_then(|v| v.to_str().ok()) {

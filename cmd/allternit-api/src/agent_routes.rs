@@ -13,7 +13,6 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use reqwest::Client;
 use rusqlite::params;
 use rusqlite::OptionalExtension;
 use serde::{Deserialize, Serialize};
@@ -2982,7 +2981,7 @@ async fn provision_agent_wallet(
     }
 
     let etrid_url = state.config.etrid_url();
-    let client = Client::new();
+    let client = crate::net_client::client();
     let kind = body.kind.unwrap_or_else(|| "identity".to_string());
     let request_body = json!({
         "agent_id": agent_id,
