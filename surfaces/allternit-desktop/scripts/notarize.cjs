@@ -50,6 +50,10 @@ module.exports = async function notarizing(context) {
     // an unnotarized build must be VISIBLE in the logs, never silent.
     // Re-arm the hard fail by restoring the throw below once
     // APPLE_ID / APPLE_ID_PASSWORD / APPLE_TEAM_ID secrets are set.
+    if (!process.env.CI) {
+      console.log('[notarize] Local build: not notarized (build-desktop.sh --release or ALLTERNIT_NOTARIZE=1 notarizes).');
+      return;
+    }
     console.warn(
       `[notarize] CI build WITHOUT Apple credentials (missing: ${missing}). ` +
         'Skipping notarization — the DMG is UNSIGNED/UNNOTARIZED and will be ' +

@@ -87,7 +87,10 @@ if (
 }
 
 let command = process.execPath;
-// A Developer ID in the keychain signs and notarizes this build. Without one, a
+// A Developer ID in the keychain signs this build. Only a release build
+// (build-desktop.sh --release) or ALLTERNIT_NOTARIZE=1 also notarizes it:
+// Gatekeeper checks only downloaded apps, and a slow Apple notary queue
+// failed every local build in its afterSign hook (2026-11-04). Without one, a
 // local build uses an Apple Development cert: a stable team ID means the Keychain
 // keeps "Always Allow" across builds on this Mac (it won't open on other Macs).
 // With neither, or on CI, the package.json identity "-" (ad-hoc) stands.
@@ -97,8 +100,12 @@ if (process.platform === 'darwin' && !process.env.CSC_IDENTITY_AUTO_DISCOVERY) {
   const developerId = identities.match(/"Developer ID Application: ([^"]+)"/);
   if (developerId) {
     extraArgs.push(`-c.mac.identity=${developerId[1]}`);
-    process.env.APPLE_KEYCHAIN_PROFILE = process.env.APPLE_KEYCHAIN_PROFILE || 'allternit';
-    console.log(`[build-local] Signing with Developer ID: ${developerId[1]}`);
+    const notarizeThis = process.env.ALLTERNIT_HOST_ONLY !== '1' || process.env.ALLTERNIT_NOTARIZE === '1';
+    if (notarizeThis) process.env.APPLE_KEYCHAIN_PROFILE = process.env.APPLE_KEYCHAIN_PROFILE || 'allternit';
+    console.log(
+      `[build-local] Signing with Developer ID: ${developerId[1]}` +
+        (notarizeThis ? ' (notarizing)' : ' (local build: not notarized; ALLTERNIT_NOTARIZE=1 to notarize)'),
+    );
   } else if (!process.env.CI) {
     const appleDevelopment = identities.match(/"Apple Development: ([^"]+)"/);
     if (appleDevelopment) {
