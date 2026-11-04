@@ -36,8 +36,11 @@ export const PINNED_ANDROID_MANIFESTS: Record<string, string> = {
   // 0.3.4: shell-server KEY/SMS/DIAL/SMSREAD/A11YON — keys, texts, calls and
   // text reads on linked phones, accessibility re-enabled over Wi-Fi.
   '0.3.4': '926a3c04993660ad7e739c0f37cb4e326eaff9cc9285bbb8d924650fad42dc7b',
+  // 0.4.0: app ID com.allternit.app (manifest packageName). Setup removes the
+  // old com.allternit.phonelink app first; same release key (cert 3f8a3951…).
+  '0.4.0': '23fe9197436f6273a50c01c0f7ec0b4b46d7aeb18c5b04174bf754bb88a70b27',
 };
-export const ANDROID_HELPER_VERSION: string | null = '0.3.4';
+export const ANDROID_HELPER_VERSION: string | null = '0.4.0';
 
 export interface AndroidHelperManifest {
   version: string;
