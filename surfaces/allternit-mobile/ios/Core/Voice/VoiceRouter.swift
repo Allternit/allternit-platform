@@ -1,9 +1,8 @@
 import Foundation
 
-/// An engine a voice conversation can run on.
+/// An engine a voice conversation can run on. Allternit hosts no voice
+/// (Eoj, 2026-11-04): every engine here runs on the phone.
 enum VoiceRoute: Equatable, Sendable {
-    /// Allternit Cloud Voice (WebSocket, ticket from cloud-api).
-    case cloud
     /// In-process engine: Silero VAD + Moonshine on this phone.
     case device
     /// The pre-session path: Apple's on-device recognizer + system voice,
@@ -19,20 +18,13 @@ enum VoiceRouter {
         // engines (continuous VAD) don't have — it stays on the system path.
         if pushToTalk { return [.legacy] }
         switch preference {
-        case .automatic: return [.cloud, .device, .legacy]
-        case .device: return [.device, .legacy]
-        // Cloud is an explicit choice: failing loudly beats silently
-        // sending the user's audio somewhere else, or nowhere.
-        case .cloud: return [.cloud]
+        case .automatic, .device: return [.device, .legacy]
         }
     }
 
-    /// User-facing line for why Cloud Voice was skipped in Automatic.
+    /// User-facing line when the on-device engine can't start and the
+    /// system voice takes over. Points to Settings › Voice, never to minutes.
     static func fallbackNotice(for error: Error) -> String {
-        switch error {
-        case VoiceCloudError.noCloudMinutes: return "No Cloud Voice minutes left — using this device."
-        case VoiceCloudError.signedOut: return "Signed out — using this device."
-        default: return "Cloud Voice isn't available — using this device."
-        }
+        "\(error.localizedDescription) Using the iPhone's built-in voice for now; Settings › Voice can download on-device voice."
     }
 }

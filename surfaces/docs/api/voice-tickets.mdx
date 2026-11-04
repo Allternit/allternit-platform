@@ -3,6 +3,10 @@ title: 'Voice Tickets and Usage API'
 description: 'Cloud Voice tickets, single-use redemption, and voice minutes metering in the Allternit cloud API.'
 ---
 
+<Warning>
+The Allternit apps no longer use this API (Eoj, 2026-11-04). Allternit hosts no voice for users: voice runs on the device, or on the user's own OpenAI or ElevenLabs key. See [Talk to your bots](/guides/voice#where-voice-runs). The server routes below are unchanged until cloud-api removes them.
+</Warning>
+
 ## Overview
 
 Allternit Cloud Voice runs on Allternit servers. The app asks the cloud API for a short-lived signed **ticket**, then opens the voice session WebSocket with it. The voice service redeems the ticket (single use) and reports the session's seconds when it ends. The cloud API only meters and exposes usage: it does not charge anyone or write to Stripe.

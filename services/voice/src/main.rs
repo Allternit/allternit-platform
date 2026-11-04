@@ -49,7 +49,17 @@ async fn main() -> anyhow::Result<()> {
             info!("warm-up done in {} ms", t.elapsed().as_millis());
         });
     }
-    let app = create_router(state);
+    // The Desktop app's UI (http://127.0.0.1:8013) reads /v1/models and
+    // /v1/voices straight from here. Without CORS the browser blocks those
+    // reads, so Settings and live mode said "voice engine not installed"
+    // while every pack was ready. Only loopback pages may read.
+    let cors = tower_http::cors::CorsLayer::new()
+        .allow_origin(tower_http::cors::AllowOrigin::predicate(|origin, _| {
+            origin.to_str().ok().is_some_and(is_loopback_origin)
+        }))
+        .allow_methods(tower_http::cors::Any)
+        .allow_headers(tower_http::cors::Any);
+    let app = create_router(state).layer(cors);
 
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
     info!("Voice API Service listening on {}", addr);
@@ -123,5 +133,29 @@ mod no_espeak {
             unsafe { *textptr = std::ptr::null() };
         }
         std::ptr::null()
+    }
+}
+
+/// `http://127.0.0.1:<port>`, `http://localhost:<port>` or `http://[::1]:<port>`.
+fn is_loopback_origin(origin: &str) -> bool {
+    let Some(rest) = origin.strip_prefix("http://") else { return false };
+    let host = rest.rsplit_once(':').map_or(rest, |(h, port)| {
+        if port.chars().all(|c| c.is_ascii_digit()) { h } else { rest }
+    });
+    matches!(host, "127.0.0.1" | "localhost" | "[::1]")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_loopback_origin;
+
+    #[test]
+    fn only_loopback_origins_read() {
+        assert!(is_loopback_origin("http://127.0.0.1:8013"));
+        assert!(is_loopback_origin("http://localhost:5173"));
+        assert!(is_loopback_origin("http://[::1]:8013"));
+        assert!(!is_loopback_origin("https://evil.example"));
+        assert!(!is_loopback_origin("http://127.0.0.1.evil.example:80"));
+        assert!(!is_loopback_origin("http://localhost.evil.example"));
     }
 }

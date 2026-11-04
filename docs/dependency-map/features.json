@@ -655,6 +655,10 @@
         {
           "on": "2026-11-03",
           "note": "Live mode speaker: the bot's avatar at full size inside a voice-reactive look (voice-ring 0.1.2 Motion set + Blocks/ASCII/Glow/Still), picked in Settings > Voice or per bot (Look on the stage), with a ring colour (Bot's colour default) and caption size. Wide screens show the transcript beside the bot; phones and the docked bar get TV-style captions. Replaces the dark avatar tile (VoiceBotAvatar)."
+        },
+        {
+          "on": "2026-11-04",
+          "note": "No hosted Cloud Voice minutes: Automatic = the device engine on web, PWA, Desktop and iOS; no cloud fallback. Optional BYOK in Settings > Voice (web/PWA/Desktop): your own OpenAI (Realtime transcription + speech) or ElevenLabs (TTS, listening on device), key kept on the device and sent only to the vendor (allternit-ai src/lib/voice/byok). iOS BYOK not built yet."
         }
       ],
       "evidence": [

@@ -18,6 +18,7 @@ import {
   desktopCapturer,
   screen,
   shell,
+  systemPreferences,
   type DesktopCapturerSource,
   type DisplayMediaRequestHandlerHandlerRequest,
   type IpcMainEvent,
@@ -178,8 +179,18 @@ export function installSessionSecurityHandlers(session: Session): void {
     const granted = (permission === 'media' || permission === 'display-capture' || permission === 'geolocation') && isTrustedAppUrl(requestingUrl);
     if (!granted) {
       log.warn(`[Security] Denied permission "${permission}" for ${requestingUrl || '(unknown origin)'}`);
+      callback(false);
+      return;
     }
-    callback(granted);
+    // macOS gives a silent microphone until the app is allowed in Privacy &
+    // Security. A new signing identity resets that, so ask on first use and
+    // let a denial reach the page as "blocked" instead of a silent stream.
+    const wantsMic = permission === 'media' && (details as { mediaTypes?: string[] }).mediaTypes?.includes('audio');
+    if (process.platform === 'darwin' && wantsMic) {
+      void macMicrophoneAllowed().then(callback, () => callback(false));
+      return;
+    }
+    callback(true);
   });
 
   session.setPermissionCheckHandler((_webContents, permission, requestingOrigin) => {
@@ -264,4 +275,13 @@ function buildContentSecurityPolicy(): string {
   return Object.entries(directives)
     .map(([name, values]) => `${name} ${[...new Set(values)].join(' ')}`)
     .join('; ');
+}
+
+/** Asks macOS for the microphone once (the system prompt), then remembers its answer. */
+async function macMicrophoneAllowed(): Promise<boolean> {
+  const status = systemPreferences.getMediaAccessStatus('microphone');
+  if (status === 'granted') return true;
+  if (status === 'not-determined') return systemPreferences.askForMediaAccess('microphone');
+  log.warn(`[Security] Microphone is ${status} for Allternit in System Settings › Privacy & Security`);
+  return false;
 }
