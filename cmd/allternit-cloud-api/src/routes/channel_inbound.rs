@@ -77,9 +77,15 @@ pub fn target_path(provider: &str) -> Option<&'static str> {
         // MCP Events from a user's connected app, verified by cloud-api
         // (routes::mcp_event_callbacks) and relayed as a signed envelope.
         MCP_EVENTS_PROVIDER => Some(MCP_EVENTS_RUNTIME_PATH),
+        // A bot's inbound webhook trigger (allternit-api webhook_trigger_routes):
+        // relayed to /webhooks/relayed/<route id>, signed with the device token.
+        WEBHOOK_TRIGGER_PROVIDER => Some(WEBHOOK_TRIGGER_RUNTIME_PATH),
         _ => None,
     }
 }
+
+pub const WEBHOOK_TRIGGER_PROVIDER: &str = "webhook_trigger";
+const WEBHOOK_TRIGGER_RUNTIME_PATH: &str = "/webhooks/relayed";
 
 /// Headers a platform signs or the runtime needs to verify it. Everything else
 /// a public caller sends is dropped. One list for both storing a queued event
@@ -103,6 +109,16 @@ const CHANNEL_HEADERS: &[&str] = &[
     // Email: mailflare's HMAC of the webhook body (same name the runtime's
     // verify_mailflare_signature checks).
     "x-email-platform-signature",
+    // Webhook triggers: each sender's own signature and event name, checked by
+    // the runtime (GitHub's x-hub-signature-256 is listed above).
+    "x-github-event",
+    "x-github-delivery",
+    "stripe-signature",
+    "linear-signature",
+    "x-shopify-hmac-sha256",
+    "x-shopify-topic",
+    "x-allternit-signature",
+    "x-allternit-event",
 ];
 
 /// The [`CHANNEL_HEADERS`] a caller sent, lowercased.
@@ -327,9 +343,11 @@ async fn route_for_key(state: &ApiState, key: &str) -> Result<Option<Route>, Api
     Ok(row.map(|(id, user_id, runtime_id, provider)| Route { id, user_id, runtime_id, provider }))
 }
 
-fn relay_path(provider: &str, query: &str) -> Option<String> {
-    let path = target_path(provider)?;
-    Some(if query.is_empty() { path.to_string() } else { format!("{path}?{query}") })
+fn relay_path(provider: &str, route_id: &str, query: &str) -> Option<String> {
+    let base = target_path(provider)?;
+    // A webhook trigger's runtime path names its route, which the trigger stores.
+    let path = if provider == WEBHOOK_TRIGGER_PROVIDER { format!("{base}/{route_id}") } else { base.to_string() };
+    Some(if query.is_empty() { path } else { format!("{path}?{query}") })
 }
 
 async fn relay(
@@ -341,7 +359,7 @@ async fn relay(
     body: &[u8],
     queued_at: Option<i64>,
 ) -> Result<Response, ApiError> {
-    let path = relay_path(&route.provider, query)
+    let path = relay_path(&route.provider, &route.id, query)
         .ok_or_else(|| ApiError::BadRequest("Unsupported channel provider".to_string()))?;
     let mut trusted = HashMap::new();
     if let Some(at) = queued_at {
@@ -388,7 +406,9 @@ async fn relay(
 /// already checked). Their relays are signed with the runtime's device-token
 /// key; the runtime verifies with `relay_auth::RelayedAuth`.
 pub fn is_trusted_envelope(provider: &str) -> bool {
-    matches!(provider, "discord_app" | "email" | "sms" | MCP_EVENTS_PROVIDER)
+    // Webhook triggers: the relay signature is how the runtime knows the
+    // delivery came through the trigger's private address.
+    matches!(provider, "discord_app" | "email" | "sms" | MCP_EVENTS_PROVIDER | WEBHOOK_TRIGGER_PROVIDER)
 }
 
 fn base64_encode(body: &[u8]) -> String {
@@ -433,6 +453,10 @@ async fn inbound_inner(
         .bind(&route.id)
         .execute(&state.db)
         .await;
+    // Webhook triggers only take POSTs; anything else would be queued and retried for nothing.
+    if route.provider == WEBHOOK_TRIGGER_PROVIDER && method != Method::POST {
+        return Ok(StatusCode::METHOD_NOT_ALLOWED.into_response());
+    }
     let mut forwarded = channel_headers(headers);
     let mut body = body;
     // SMS: the cloud verifies the carrier signature, dedupes and handles STOP/HELP/START
@@ -743,7 +767,10 @@ mod tests {
         assert_eq!(target_path("sms"), Some("/webhooks/channels/sms"));
         assert_eq!(target_path("email"), Some("/api/v1/agent-email/inbound"));
         assert_eq!(target_path("photon"), None);
-        assert_eq!(relay_path("whatsapp", "hub.mode=subscribe"), Some("/webhooks/channels/whatsapp?hub.mode=subscribe".into()));
+        assert_eq!(relay_path("whatsapp", "r1", "hub.mode=subscribe"), Some("/webhooks/channels/whatsapp?hub.mode=subscribe".into()));
+        // A webhook trigger's route is named in its path; the runtime finds the trigger by it.
+        assert_eq!(relay_path(WEBHOOK_TRIGGER_PROVIDER, "route-9", ""), Some("/webhooks/relayed/route-9".into()));
+        assert!(is_trusted_envelope(WEBHOOK_TRIGGER_PROVIDER));
     }
 
     #[test]
