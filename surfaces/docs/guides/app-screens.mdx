@@ -1,0 +1,79 @@
+---
+title: App screens
+description: Open a connected app as its own screen in Allternit, in the app's own look, with your real data.
+---
+
+An **app screen** shows a connected app's data the way the app itself shows it: Linear issues on a board, your Gmail inbox, this week in Google Calendar, Stripe customers in a ledger. The screen uses the app's colours, type and status names, and reads your data through the same connector your chats and bots use.
+
+There are two kinds:
+
+- **Designed for Allternit**: about 190 of the most used apps. Each screen is made from research on the vendor's real product.
+- **Automatic screen**: about 600 more apps. Allternit builds the screen from the app's own tools: the layout, the fields and the brand colour. Before you connect, these say **Automatic screen · sample layout**.
+
+Apps whose tools cannot list anything without an id or search text keep their connector page and tools.
+
+## Where you see them
+
+- **MCP Apps › Discover** (in ACI): the page opens with the Apps hero, then the top apps and a section per category, each with **Show all**. **All sources** at the right filters by who publishes the app. A card shows the app's logo. Point at the card (or move to it with the keyboard) and the logo gives way to the app's screen. The screen loads the first time you point at a card.
+- **The app's page** (in MCP Apps and in **Customize › Connectors**): a **Screens** section shows the live screen and a strip with one picture per screen. Press a picture to show that screen. Press **Open** to open the app full size.
+- Before you connect, every screen shows sample data and says **Preview · sample data**.
+
+## Connect
+
+Press **Add** or **Connect** on an app. The connect screen shows Allternit and the app side by side and lists what Allternit will be able to do:
+
+| Line | Means |
+|---|---|
+| See your … | The app's tools that only read data. |
+| Make changes you approve | The app's tools that change data. Each change asks you first. |
+| Sign in safely | Where you sign in: the app's own sign-in page, an API key kept in your vault, or a CLI already signed in on your computer. |
+
+Press **Continue to** the app and sign in. While you sign in, the page waits and updates by itself. If you closed the sign-in window, press **Open the sign-in again**.
+
+When the sign-in finishes, the two logos lock together with a check. If the app has a screen, it then opens: the app's logo, a green check, **Welcome, *your name*** and **Connected to *app***, then the screen. It plays once, about a second and a half, and waits until your data has loaded. With **Reduce motion** on, it shows the last frame and fades.
+
+## Use a screen
+
+- The header shows the app's logo, "*App* for Allternit" and the account you are signed in with. The tabs under it are the app's screens, plus **About**.
+- Press an item to open it. Some items open another screen (a channel opens its messages, a database opens its rows); **Back** returns to the list.
+- Buttons such as **Merge**, **Archive** or **Reply** change data in the app. Each one shows what it will do and asks **Allow once** or **Deny**. Buttons that ask for text (a comment, a reply) show a box for it first.
+- On a phone, the screen fills the width and the calendar shows as an agenda.
+
+## About
+
+The **About** tab shows:
+
+- the screen's version and when its design was last checked;
+- how you are connected, who makes the app and its category;
+- the number of screens and actions, and the app's read and change tools;
+- the connector id and the vendor pages the design came from;
+- what happens to your data: the screen reads it through your connector, on request, and Allternit does not keep a copy.
+
+**Disconnect** (when connected) signs the app out of Allternit.
+
+## For developers
+
+An app screen is a **screen pack**: one JSON file per app in allternit-ai `src/lib/app-screens/packs/<connector id>.json`. The file name is the catalog connector id exactly (`googledrive` and `google_drive` are different connectors). The format is the zod schema in `src/lib/app-screens/schema.ts`:
+
+| Field | Holds |
+|---|---|
+| `connector`, `name`, `release` | The connector id, the app name and the pack's version (semver, shown in About). |
+| `look` | Font, brand and surface colours, radius, density, header style (`light`, `brand`, `dark`) and status pill style. |
+| `statuses` | Each status value the screens show, with the vendor's wording and colour. |
+| `words` | The app's own nouns ("issues", "messages"). |
+| `screens` | 1 to 6 screens. Each has a read `tool`, `args`, a `layout`, the `items` path in the tool result, `fields` or `columns`, optional `actions`, `opens` (an item opens another screen) and a `sample`. |
+| `research` | The vendor pages used for the look and the date they were checked. |
+
+Layouts: `board`, `list`, `table`, `ledger`, `calendar`, `record`, `feed`, `files`, `metrics`, `gallery`. Screen args can use date tokens: `{{today}}`, `{{now}}`, `{{weekStart}}`, `{{weekEnd}}`, `{{daysAgo:N}}` and `{{daysAhead:N}}`, each with `|date` or `|unix`. Action args use `{{path}}` for the item's fields and `{{input:key}}` for text the person types.
+
+Screens run tools through `POST /api/v1/connectors/mcp` with the tool name `<connector>__<action>` (`src/lib/app-screens/client.ts`), so a screen sees exactly what a chat would. `src/components/app-screens/AppScreen.tsx` draws a pack, `AppHandshake.tsx` is the connect screen, and `ScreenPreview.tsx` has the card and page previews.
+
+Automatic packs live in `src/lib/app-screens/auto/<connector id>.json`, made by `scripts/app-screens/auto.ts` from the connector catalog (every action's input and output schema). A designed pack always replaces the automatic one. `pnpm app-screens:auto [providers.json | url]` regenerates them (with no argument it reads the local connector service) and removes packs that a designed pack replaced. `scripts/gen-store-icons.mjs` runs it after it refreshes brand colours, so a new connector gets its screen with the next catalog refresh. `pnpm app-screens:coverage` fails when a connector that can have a screen has none.
+
+Check a pack against the connector's real tools before you ship it:
+
+```bash
+node scripts/app-screens/check.ts <actions-dir> src/lib/app-screens/packs/<id>.json
+```
+
+`<actions-dir>` holds one `<connector>.json` per app with the connector's actions and output schemas, from the connector service's `/api/providers`. The checker fails when a tool does not exist or does not read, when a field path is not in the tool's output schema or the sample, or when a sample has fewer than 2 items.
