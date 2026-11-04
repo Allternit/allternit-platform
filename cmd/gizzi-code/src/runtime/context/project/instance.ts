@@ -27,6 +27,14 @@ const disposal = {
   all: undefined as Promise<void> | undefined,
 }
 
+// Work a reload would destroy: an agent turn running, a question waiting for its answer. The modules that own that
+// state register a check; it runs inside the instance. disposeAll (a settings save) leaves a busy instance alone and
+// reloads it once it is idle, so saving settings never stops a running agent or drops a waiting question.
+const busyChecks = new Set<() => boolean | Promise<boolean>>()
+const deferred = new Set<string>()
+const IDLE_POLL_MS = 2_000
+const MAX_DEFER_MS = 2 * 60 * 60 * 1000
+
 export const Instance = {
   async provide<R>(input: { directory: string; init?: () => Promise<any>; fn: () => R }): Promise<R> {
     let existing = cache.get(input.directory)
@@ -135,6 +143,26 @@ export const Instance = {
       },
     })
   },
+  /** Registers a "this instance is busy" check (see disposeAll). Returns a function that removes it. */
+  registerBusyCheck(check: () => boolean | Promise<boolean>) {
+    busyChecks.add(check)
+    return () => void busyChecks.delete(check)
+  },
+  /** Whether a registered check says this instance has a running turn or a waiting question. */
+  async busy() {
+    for (const check of busyChecks) {
+      try {
+        if (await check()) return true
+      } catch {
+        // A failing check doesn't keep the instance from reloading.
+      }
+    }
+    return false
+  },
+  /**
+   * Reloads every instance (after a global settings change). A busy instance
+   * reloads when it next goes idle, checked every 2 seconds for up to 2 hours.
+   */
   async disposeAll() {
     if (disposal.all) return disposal.all
 
@@ -156,6 +184,10 @@ export const Instance = {
 
         if (cache.get(key) !== value) continue
 
+        if (await context.provide(ctx, () => Instance.busy())) {
+          deferDispose(key, value, ctx)
+          continue
+        }
         await context.provide(ctx, async () => {
           await Instance.dispose()
         })
@@ -166,4 +198,26 @@ export const Instance = {
 
     return disposal.all
   },
+}
+
+function deferDispose(key: string, value: Promise<Context>, ctx: Context) {
+  if (deferred.has(key)) return
+  deferred.add(key)
+  Log.Default.info("instance busy, reload waits until idle", { directory: key })
+  const started = Date.now()
+  const tick = async () => {
+    // Reloaded or replaced meanwhile: nothing left to do.
+    if (cache.get(key) !== value) return void deferred.delete(key)
+    const busy = await context.provide(ctx, () => Instance.busy()).catch(() => false)
+    if (busy && Date.now() - started < MAX_DEFER_MS) {
+      setTimeout(tick, IDLE_POLL_MS).unref?.()
+      return
+    }
+    deferred.delete(key)
+    if (cache.get(key) !== value) return
+    await context
+      .provide(ctx, () => Instance.dispose())
+      .catch((error) => Log.Default.warn("deferred instance dispose failed", { key, error }))
+  }
+  setTimeout(tick, IDLE_POLL_MS).unref?.()
 }

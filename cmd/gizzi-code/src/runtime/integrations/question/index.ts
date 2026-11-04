@@ -153,6 +153,9 @@ export namespace Question {
     }
   })
 
+  // A question waiting for its answer keeps a settings reload from wiping it (Instance.disposeAll).
+  Instance.registerBusyCheck(async () => Object.keys((await state()).pending).length > 0)
+
   export async function ask(input: {
     sessionID: string
     questions: Info[]
