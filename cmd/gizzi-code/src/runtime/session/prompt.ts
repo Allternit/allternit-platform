@@ -128,6 +128,9 @@ export namespace SessionPrompt {
     },
   )
 
+  // A running turn keeps a settings reload from aborting it (Instance.disposeAll).
+  Instance.registerBusyCheck(() => Object.keys(state()).length > 0)
+
   export function assertNotBusy(sessionID: string) {
     const match = state()[sessionID]
     if (match) throw new Session.BusyError(sessionID)

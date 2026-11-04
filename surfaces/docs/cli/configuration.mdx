@@ -11,6 +11,10 @@ Gizzi Code reads configuration from three sources, in order of precedence:
 2. **Environment variables** — e.g. `ALLTERNIT_API_KEY`
 3. **`config.toml`** — `~/.config/gizzi-code/config.toml`
 
+### When a change takes effect
+
+A settings change saved while Gizzi is running (from the app, or `PATCH /config/global`) reloads each open project with the new settings. A project that is busy reloads when it is next idle. Busy means an agent turn is running, or a question is waiting for your answer. A running agent is not stopped, and a waiting question stays open. A project that stays busy for 2 hours reloads anyway.
+
 ## config.toml reference
 
 ```toml
