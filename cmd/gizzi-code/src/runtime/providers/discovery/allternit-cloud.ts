@@ -34,10 +34,33 @@ export function isPaidAllternitPlan(plan: AllternitPlan | null | undefined): boo
   return true
 }
 
+/**
+ * Allternit Cloud's origin. Desktop sets ALLTERNIT_API_URL to the LOCAL
+ * allternit-api (http://127.0.0.1:8013) for gizzi's local calls; using it
+ * here sent Cloud discovery to the local API, which answered 401, and
+ * Allternit Cloud vanished from every Desktop picker. A loopback URL is
+ * never the Cloud. ALLTERNIT_CLOUD_URL overrides explicitly.
+ */
 export function cloudOrigin(): string {
-  const explicit = (process.env.ALLTERNIT_API_URL || process.env.ALLTERNIT_API_BASE_URL || "").trim()
-  if (explicit) return explicit.replace(/\/+$/, "")
+  const candidates = [
+    process.env.ALLTERNIT_CLOUD_URL,
+    process.env.ALLTERNIT_API_URL,
+    process.env.ALLTERNIT_API_BASE_URL,
+  ]
+  for (const raw of candidates) {
+    const value = (raw || "").trim().replace(/\/+$/, "")
+    if (value && !isLoopback(value)) return value
+  }
   return CLOUD_URLS.api
+}
+
+function isLoopback(url: string): boolean {
+  try {
+    const host = new URL(url).hostname.replace(/^\[|\]$/g, "")
+    return host === "localhost" || host === "::1" || host.startsWith("127.") || host === "0.0.0.0"
+  } catch {
+    return false
+  }
 }
 
 export function cloudAuthToken(): string | undefined {
