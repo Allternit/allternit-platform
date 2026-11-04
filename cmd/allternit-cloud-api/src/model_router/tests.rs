@@ -363,3 +363,26 @@ fn messages_accept_openai_content_parts_and_keep_tool_fields() {
     assert_eq!(out["messages"][3]["tool_call_id"], "call_1");
     assert_eq!(out["tools"][0]["function"]["name"], "media_generate");
 }
+
+#[test]
+fn out_of_credits_provider_is_hidden_and_reported_clearly() {
+    use crate::services::upstream_funding::{mark_out_of_credits, provider_out_of_credits};
+    // A provider id used only by this test, so parallel tests are unaffected.
+    let provider = "test-unfunded-provider";
+    assert!(!provider_out_of_credits(provider));
+    mark_out_of_credits(provider);
+    assert!(provider_out_of_credits(provider));
+
+    let err: crate::ApiError = super::ModelRouterError::ModelUnavailable {
+        model: "Claude Sonnet 4.6".to_string(),
+    }
+    .into();
+    assert!(matches!(err, crate::ApiError::ServiceUnavailable(ref m) if m.starts_with("Claude Sonnet 4.6 is unavailable")));
+
+    let upstream_402: crate::ApiError = super::ModelRouterError::UpstreamError {
+        status: 402,
+        message: "{\"error\":\"Insufficient credits\"}".to_string(),
+    }
+    .into();
+    assert!(matches!(upstream_402, crate::ApiError::ServiceUnavailable(ref m) if !m.contains("credits")));
+}
