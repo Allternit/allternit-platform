@@ -457,7 +457,7 @@ private struct BotFormSheet: View {
     /// ComputerRuntimeStep: Intelligence (BotBrainBindFields, knowledge brain, model, provider, harness).
     private var intelligenceSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            sectionTitle("Intelligence", "Pre-selected with sensible defaults — change anything here, or leave it as is.")
+            sectionTitle("Intelligence", "Pick how this bot runs and the model it uses.")
             label("Brain")
             note("How this bot runs. Separate from the Gizzi knowledge brain.")
             VStack(spacing: 6) {
@@ -480,6 +480,11 @@ private struct BotFormSheet: View {
                     .buttonStyle(.plain)
                     .accessibilityAddTraits(on ? .isSelected : [])
                 }
+            }
+            if !model.isEditing && model.brainMissing {
+                Text(model.brainMode.isEmpty ? "Pick a brain to create this bot" : "Pick a model below to create this bot")
+                    .font(.system(size: 12))
+                    .foregroundColor(Theme.statusError)
             }
             if model.brainMode == "native_harness" {
                 label("Native harness")
@@ -553,6 +558,7 @@ private struct BotFormSheet: View {
     }
 
     private var modelLabel: String {
+        if model.modelId.isEmpty { return "Pick a brain" }
         let id = "\(model.provider)/\(model.modelId)"
         return models.models.first { $0.id == id || $0.id == model.modelId }?.name ?? model.modelId
     }

@@ -855,9 +855,10 @@ fn validate_agent_against_checklist(body: &CreateAgentBody) -> Result<(), String
     if body.agent_type.as_deref().unwrap_or("").trim().is_empty() {
         return Err("Agent type is required".to_string());
     }
-    // A bot may leave both empty: it follows the platform default model
-    // (`bot_turn_model` and turn sends fall back to it). Terminal bots
-    // registered without a model pin rely on this.
+    // A bot may leave both empty: it follows the user's chosen default model
+    // (`bot_turn_model` and turn sends fall back to it); with none chosen its
+    // turns answer "Pick a brain for <bot>". Terminal bots registered without
+    // a model pin, and bots created before the user picks a brain, rely on this.
     let follows_default = body.is_bot == Some(true)
         && body.model.trim().is_empty()
         && body.provider.trim().is_empty();
@@ -1430,16 +1431,12 @@ async fn ensure_companion(
     let db = state.db.clone();
     let user_id = user.user_id;
 
-    // Pick a runnable brain: the user's configured default, unless it is the
-    // unconfigured kimi fallback — then use the local Ollama brain so the
-    // Companion actually runs out of the box.
-    let (mut provider, mut model) = state.config.default_model();
-    if provider.is_empty() || provider == "kimi-for-coding" || provider == "kimi-cli" || provider == "echo" {
-        provider = "ollama".to_string();
-        model = "qwen2.5:0.5b".to_string();
-    }
+    // The Companion runs on the brain the user chose. No choice → an existing
+    // Companion is still returned, but a new one is not created on a guess.
+    let (provider, model) = state.config.default_model();
+    let no_brain = crate::config::is_no_brain(&provider, &model);
 
-    let result = tokio::task::spawn_blocking(move || -> Result<serde_json::Value, rusqlite::Error> {
+    let result = tokio::task::spawn_blocking(move || -> Result<Option<serde_json::Value>, rusqlite::Error> {
         let conn = db.connect()?;
         if let Ok((id, name, model, provider)) = conn.query_row(
             "SELECT id, name, model, provider FROM agents WHERE user_id = ?1 AND is_primary = 1 LIMIT 1",
@@ -1451,11 +1448,14 @@ async fn ensure_companion(
                 row.get::<_, String>(3)?,
             )),
         ) {
-            return Ok(json!({
+            return Ok(Some(json!({
                 "agent": { "id": id, "name": name, "model": model, "provider": provider,
                            "mode": "orchestrator", "is_primary": true },
                 "created": false,
-            }));
+            })));
+        }
+        if no_brain {
+            return Ok(None);
         }
 
         let id = uuid::Uuid::new_v4().to_string();
@@ -1475,16 +1475,17 @@ async fn ensure_companion(
                 "orchestrator", 1,
             ],
         )?;
-        Ok(json!({
+        Ok(Some(json!({
             "agent": { "id": id, "name": "Allternit Companion", "model": model, "provider": provider,
                        "mode": "orchestrator", "is_primary": true },
             "created": true,
-        }))
+        })))
     })
     .await;
 
     match result {
-        Ok(Ok(v)) => (StatusCode::OK, Json(v)).into_response(),
+        Ok(Ok(Some(v))) => (StatusCode::OK, Json(v)).into_response(),
+        Ok(Ok(None)) => crate::config::no_brain_error().into_response(),
         Ok(Err(e)) => {
             warn!("DB error ensuring companion: {}", e);
             (
@@ -1756,7 +1757,7 @@ async fn list_templates(
 }
 
 /// Instantiate a persisted pattern template into a live, runnable agent crew.
-/// Resolves the brain (request override → user default → local Ollama fallback),
+/// Resolves the brain (request override → user default; none → 409 no_brain),
 /// injects it into every node, validates each node against the creation checklist,
 /// then persists the orchestrator and its subagents through the canonical path.
 async fn instantiate_template(
@@ -1768,15 +1769,14 @@ async fn instantiate_template(
     let db = state.db.clone();
     let user_id = user.user_id;
 
-    // Resolve the brain the same way the Companion does so template crews run
-    // out of the box without a configured provider.
-    let (mut provider, mut model) = match body.brain {
-        Some(b) => (b.provider, b.model),
-        None => state.config.default_model(),
+    // Resolve the brain the same way the Companion does: an explicit choice or
+    // nothing — never a silent fallback.
+    let (provider, model) = match body.brain {
+        Some(b) if !crate::config::is_no_brain(&b.provider, &b.model) => (b.provider, b.model),
+        _ => state.config.default_model(),
     };
-    if provider.is_empty() || provider == "kimi-for-coding" || provider == "kimi-cli" || provider == "echo" {
-        provider = "ollama".to_string();
-        model = "qwen2.5:0.5b".to_string();
+    if crate::config::is_no_brain(&provider, &model) {
+        return crate::config::no_brain_error().into_response();
     }
     let template_id = body.template_id.clone();
     let name_override = body.name_override.clone();

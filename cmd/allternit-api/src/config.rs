@@ -253,10 +253,6 @@ pub struct AppConfig {
     pub user: UserConfig,
 }
 
-/// Replacement for a stale local-provider default model: the desktop's
-/// flagship lane, matching the frontend fallback constant.
-pub(crate) const DESKTOP_FLAGSHIP_DEFAULT_MODEL: &str = "claude-cli/claude-sonnet-4-6";
-
 /// A saved default model pointing at a local-provider lane (`ollama/`,
 /// `lmstudio/`) is treated as stale: those entries are unservable through the
 /// cowork bridge and every session dies with ProviderModelNotFoundError.
@@ -268,10 +264,11 @@ fn is_stale_local_default_model(model: &str) -> bool {
 impl AppConfig {
     /// Load company + user config from disk and apply env overrides.
     /// If the user config has no default model but the Gizzi runtime config
-    /// does, mirror it so the UI and API agree on which brain to use. A saved
+    /// has one the user chose (its `model` key, written by Connect/onboarding),
+    /// mirror it so the UI and API agree on which brain to use. A saved
     /// default model on a local-provider lane (ollama/lmstudio) is stale — it
-    /// is replaced with the desktop flagship lane and persisted so the file
-    /// stops lying.
+    /// is cleared (never replaced with a guess) and persisted, so the apps ask
+    /// the user to pick a brain.
     pub fn load() -> Self {
         // One-time migration: if a brain was saved to the legacy (wrong) gizzi
         // config path, copy it to the file the gizzi runtime actually reads so
@@ -285,17 +282,16 @@ impl AppConfig {
             Some(model) if is_stale_local_default_model(model) => {
                 warn!(
                     stale_model = %model,
-                    replacement = %DESKTOP_FLAGSHIP_DEFAULT_MODEL,
-                    "Replacing stale local-provider default model"
+                    "Clearing stale local-provider default model; user must pick a brain"
                 );
-                user.default_model = Some(DESKTOP_FLAGSHIP_DEFAULT_MODEL.to_string());
+                user.default_model = None;
                 if let Err(err) = save_user_config(&user) {
-                    warn!(error = %err, "Failed to persist repaired default model");
+                    warn!(error = %err, "Failed to persist cleared default model");
                 }
             }
             Some(_) => {}
             None => {
-                if let Some(model) = read_gizzi_default_model() {
+                if let Some(model) = read_gizzi_default_model().filter(|m| !is_stale_local_default_model(m)) {
                     info!(model = %model, "Mirroring Gizzi default model into user config");
                     user.default_model = Some(model);
                 }
@@ -385,27 +381,15 @@ impl AppConfig {
     }
 
     /// Default LLM provider/model when a request does not specify one.
-    /// When nothing is configured, falls back to the first entry of the model
-    /// catalog so the agent-chat bridge never forwards an empty provider/model
-    /// to the runtime (which rejects it with ProviderModelNotFoundError).
+    /// Only an explicit choice counts: the operator's `ALLTERNIT_DEFAULT_MODEL`
+    /// or the user's saved `default_model`. There is no catalog fallback —
+    /// when nothing was chosen this returns empty strings and callers answer
+    /// with [`no_brain_error`] so the apps ask the user to pick a brain.
     pub fn default_model(&self) -> (String, String) {
-        let raw = std::env::var("ALLTERNIT_DEFAULT_MODEL")
-            .ok()
-            .filter(|s| !s.is_empty())
-            .or_else(|| self.user.default_model.clone())
-            .or_else(|| {
-                crate::provider_routes::available_model_catalog()
-                    .first()
-                    .and_then(|m| m.get("id").and_then(|v| v.as_str()))
-                    .map(str::to_string)
-            })
-            .unwrap_or_default();
-
-        if let Some((provider, model)) = raw.split_once('/') {
-            (provider.trim().to_string(), model.trim().to_string())
-        } else {
-            (String::new(), raw.trim().to_string())
-        }
+        resolve_default_model(
+            std::env::var("ALLTERNIT_DEFAULT_MODEL").ok().as_deref(),
+            self.user.default_model.as_deref(),
+        )
     }
 
     /// Clerk JWKS URL used to verify JWT signatures.
@@ -1116,32 +1100,56 @@ impl From<SaveUserConfigPayload> for UserConfig {
 }
 
 /// Best-effort read of the default model from the Gizzi runtime user config.
-/// This lets the Allternit UI reflect a brain that was already configured
-/// directly in Gizzi without requiring the user to re-run the wizard.
-/// Falls back to the first provider/model entry when no explicit default is set.
+/// This lets the Allternit UI reflect a brain that was already chosen
+/// directly in Gizzi without requiring the user to re-run the wizard. Only the
+/// explicit `model` key counts; a configured provider is not a choice of brain.
 fn read_gizzi_default_model() -> Option<String> {
     let path = gizzi_user_config_path();
     let text = std::fs::read_to_string(&path).ok()?;
     let value: serde_json::Value = serde_json::from_str(&text).ok()?;
-
-    if let Some(model) = value.get("model").and_then(|v| v.as_str()) {
-        return Some(model.to_string());
-    }
-
-    // Infer default from the first provider's first model.
     value
-        .get("provider")?
-        .as_object()?
-        .iter()
-        .next()
-        .and_then(|(provider_id, provider)| {
-            let model_id = provider
-                .get("models")
-                .and_then(|m| m.as_object())
-                .and_then(|m| m.keys().next())
-                .cloned()?;
-            Some(format!("{}/{}", provider_id, model_id))
-        })
+        .get("model")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|m| !m.is_empty())
+        .map(str::to_string)
+}
+
+/// Split an explicit default model (`provider/model`) from env or user config.
+/// Env wins; blank values are ignored; nothing chosen → empty strings.
+fn resolve_default_model(env: Option<&str>, user: Option<&str>) -> (String, String) {
+    let raw = env
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .or_else(|| user.map(str::trim).filter(|s| !s.is_empty()))
+        .unwrap_or_default();
+    if let Some((provider, model)) = raw.split_once('/') {
+        (provider.trim().to_string(), model.trim().to_string())
+    } else {
+        (String::new(), raw.to_string())
+    }
+}
+
+/// Error code every route returns when no brain was chosen.
+pub const NO_BRAIN_CODE: &str = "no_brain";
+/// User-facing message paired with [`NO_BRAIN_CODE`].
+pub const NO_BRAIN_MESSAGE: &str = "Pick a brain first.";
+
+/// True when a resolved `(provider, model)` pair names no brain at all.
+pub fn is_no_brain(provider: &str, model: &str) -> bool {
+    provider.trim().is_empty() && model.trim().is_empty()
+}
+
+/// The shared "no brain chosen" response: HTTP 409 with
+/// `{"error":"no_brain","message":"Pick a brain first."}`.
+pub fn no_brain_error() -> (axum::http::StatusCode, axum::Json<serde_json::Value>) {
+    (
+        axum::http::StatusCode::CONFLICT,
+        axum::Json(serde_json::json!({
+            "error": NO_BRAIN_CODE,
+            "message": NO_BRAIN_MESSAGE,
+        })),
+    )
 }
 
 /// Convenience builder that looks up a provider by id from the Gizzi runtime
@@ -1336,4 +1344,31 @@ fn factory_env(new: &str, old: &str) -> Option<String> {
         }
     }
     Some(v)
+}
+
+#[cfg(test)]
+mod no_brain_tests {
+    use super::*;
+
+    #[test]
+    fn default_model_is_only_an_explicit_choice() {
+        assert_eq!(resolve_default_model(None, None), (String::new(), String::new()));
+        assert_eq!(resolve_default_model(Some(" "), Some("")), (String::new(), String::new()));
+        assert_eq!(
+            resolve_default_model(None, Some("claude-cli/claude-opus-5")),
+            ("claude-cli".to_string(), "claude-opus-5".to_string())
+        );
+        assert_eq!(
+            resolve_default_model(Some("zai/glm-5"), Some("claude-cli/claude-opus-5")),
+            ("zai".to_string(), "glm-5".to_string())
+        );
+        assert!(is_no_brain(&resolve_default_model(None, None).0, &resolve_default_model(None, None).1));
+    }
+
+    #[test]
+    fn no_brain_error_is_409_with_code_and_message() {
+        let (status, axum::Json(body)) = no_brain_error();
+        assert_eq!(status, axum::http::StatusCode::CONFLICT);
+        assert_eq!(body, serde_json::json!({ "error": "no_brain", "message": "Pick a brain first." }));
+    }
 }

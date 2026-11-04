@@ -43,6 +43,9 @@ struct ComposerView: View {
     /// Bot composers: Play shows from the moment the session opens.
     var playGamesAnytime: Bool = false
     var deck: ComposerDeckVariant = .none
+    /// No brain picked for this send: Send opens the model picker and keeps
+    /// the draft instead of sending.
+    var requiresModelPick: Bool = false
     /// Send tapped; carries the composer's staged attachments (empty when
     /// none) alongside the bound inputText.
     let onSend: ([StagedAttachment]) -> Void
@@ -423,6 +426,10 @@ struct ComposerView: View {
 
     private func sendTapped() {
         guard canSend else { return }
+        if requiresModelPick {
+            isModelPickerPresented = true
+            return
+        }
         onSend(attachmentStore.attachments)
         attachmentStore.clear()
     }
@@ -477,7 +484,7 @@ struct ComposerView: View {
 enum ComposerModelLabel {
     @MainActor
     static func label(_ store: ModelStore) -> String {
-        guard let id = store.selectedModelId, !id.isEmpty else { return "Default Model" }
+        guard let id = store.selectedModelId, !id.isEmpty else { return "Pick a brain" }
         if let name = store.selectedModel?.name, !name.isEmpty {
             let trimmed = name.replacingOccurrences(of: #"\s*\([^)]*\)\s*$"#, with: "", options: .regularExpression)
             return trimmed.isEmpty ? name : trimmed

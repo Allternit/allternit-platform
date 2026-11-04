@@ -294,7 +294,8 @@ struct GizziSummarizer;
 #[async_trait]
 impl CallSummarizer for GizziSummarizer {
     async fn summarize(&self, db: &DbHandle, session_id: &str, bot_id: &str, prompt: &str) -> Result<Value, String> {
-        let model = crate::agent_session_routes::bot_turn_model(db, session_id, bot_id);
+        let model = crate::agent_session_routes::bot_turn_model(db, session_id, bot_id)
+            .ok_or_else(|| crate::agent_session_routes::no_brain_turn_error(db, bot_id))?;
         let pair = match (model["providerID"].as_str(), model["modelID"].as_str()) {
             (Some(p), Some(m)) => Some((p.to_string(), m.to_string())),
             _ => None,

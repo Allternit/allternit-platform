@@ -117,7 +117,9 @@ pub fn account_owner(owner: &str, account: &str) -> String {
     format!("{owner}/{account}")
 }
 
-/// `provider/model` → (provider, model); `allternit` or anything else → the runtime default.
+/// `provider/model` → (provider, model); `allternit` or anything else → the
+/// runtime's explicit default, or empty (a bot with no brain; its turns fail
+/// with "Pick a brain") when the runtime has none.
 pub fn model_ref(model: &str) -> (String, String) {
     match model.split_once('/') {
         Some((p, m)) if !p.is_empty() && !m.is_empty() => (p.to_string(), m.to_string()),

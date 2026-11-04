@@ -64,23 +64,22 @@ impl MemoryOp {
     }
 }
 
-/// The `gen.small` lane (O1): fact text is easy generation, so extraction
-/// defaults to a small model. Harness adapter default; the capability-class
-/// router (WP-R1) will own this once it is on the path.
-const DEFAULT_SMALL_MODEL: (&str, &str) = ("claude-cli", "claude-haiku-4-5");
-
 fn parse_model(raw: &str) -> Option<(String, String)> {
     raw.trim().split_once('/').filter(|(p, m)| !p.is_empty() && !m.is_empty()).map(|(p, m)| (p.to_string(), m.to_string()))
 }
 
 /// The model used for extraction: `ALLTERNIT_MEMORY_MODEL` ("provider/model"),
-/// else the shared small lane `ALLTERNIT_GEN_SMALL_MODEL`, else the built-in
-/// small default.
-pub fn extraction_model() -> (String, String) {
+/// else the shared small lane `ALLTERNIT_GEN_SMALL_MODEL`, else the user's
+/// explicit default brain. `None` = no brain chosen: model work is skipped
+/// (never run on a model nobody picked).
+pub fn extraction_model() -> Option<(String, String)> {
     ["ALLTERNIT_MEMORY_MODEL", "ALLTERNIT_GEN_SMALL_MODEL"]
         .iter()
         .find_map(|k| std::env::var(k).ok().as_deref().and_then(parse_model))
-        .unwrap_or_else(|| (DEFAULT_SMALL_MODEL.0.to_string(), DEFAULT_SMALL_MODEL.1.to_string()))
+        .or_else(|| {
+            let (provider, model) = crate::default_model();
+            (!crate::config::is_no_brain(&provider, &model)).then_some((provider, model))
+        })
 }
 
 /// JSON schema of the extraction reply (O10). Sent as gizzi's json_schema
@@ -525,17 +524,25 @@ pub async fn extract_and_reconcile(
             .unwrap_or_default()
     };
 
-    let model = extraction_model();
-    let reply = crate::usage_ledger::scope(
-        crate::usage_ledger::LedgerCtx::surface("memory").tenant(None, Some(&user_id)),
-        crate::gizzi_completion::complete_ephemeral_structured(
-            &build_prompt(&message, &shown),
-            Some(SYSTEM_PROMPT),
-            Some(&model),
-            &reply_schema(),
-        ),
-    )
-    .await;
+    // No brain chosen: skip the model call; the rule-based path below runs.
+    let reply = match extraction_model() {
+        Some(model) => {
+            crate::usage_ledger::scope(
+                crate::usage_ledger::LedgerCtx::surface("memory").tenant(None, Some(&user_id)),
+                crate::gizzi_completion::complete_ephemeral_structured(
+                    &build_prompt(&message, &shown),
+                    Some(SYSTEM_PROMPT),
+                    Some(&model),
+                    &reply_schema(),
+                ),
+            )
+            .await
+        }
+        None => {
+            debug!("no brain chosen; skipping model memory extraction");
+            None
+        }
+    };
     let ops = reply.as_deref().and_then(parse_ops);
 
     // Candidates are read before the ops apply (an update retires its target).
@@ -638,9 +645,6 @@ mod tests {
         assert_eq!(parse_model("prov/small-1"), Some(("prov".into(), "small-1".into())));
         assert_eq!(parse_model("noslash"), None);
         assert_eq!(parse_model("/m"), None);
-        if std::env::var("ALLTERNIT_MEMORY_MODEL").is_err() && std::env::var("ALLTERNIT_GEN_SMALL_MODEL").is_err() {
-            assert_eq!(extraction_model(), (DEFAULT_SMALL_MODEL.0.to_string(), DEFAULT_SMALL_MODEL.1.to_string()));
-        }
     }
 
     #[test]

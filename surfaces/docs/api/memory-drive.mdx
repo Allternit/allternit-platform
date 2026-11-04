@@ -166,10 +166,11 @@ the next run. The commit goes to `imports/<source>.md`.
 ### `GET /memory/drive/find-memories`
 
 The model that reads exported chats and the request limits:
-`{ model: "provider/model", max_conversations, max_conversation_chars, max_batch_chars }`
+`{ model: "provider/model" | null, max_conversations, max_conversation_chars, max_batch_chars }`
 (today 20 conversations, 8,000 characters each, 80,000 per request). The model is
-`ALLTERNIT_MEMORY_MODEL`, else `ALLTERNIT_GEN_SMALL_MODEL`, else the built-in small default, the same
-one that saves memories from chats. Older computers answer 404.
+`ALLTERNIT_MEMORY_MODEL`, else `ALLTERNIT_GEN_SMALL_MODEL`, else the user's chosen default brain, the
+same one that saves memories from chats. There is no built-in model: `model` is `null` until a brain
+is chosen, and chat memory saving then uses only the rule-based extractor. Older computers answer 404.
 
 ### `POST /memory/drive/find-memories`
 
@@ -177,7 +178,8 @@ Body `{ from, conversations: [{ id, title?, date?, text }] }`, where `text` is t
 messages from one conversation. The app reads the export (ChatGPT or Claude `conversations.json`,
 Gemini's Takeout `MyActivity`, the Grok archive) in the browser and sends only this. Returns
 `{ memories: [{ text, conversation }] }` and saves nothing. Requests run two at a time per computer;
-when the model doesn't answer, the reply is `503`.
+when the model doesn't answer, the reply is `503`. With no brain chosen it is
+`409 {"error":"no_brain","message":"Pick a brain first."}`.
 
 ### `POST /memory/drive/import-chats`
 

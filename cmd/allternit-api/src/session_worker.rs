@@ -769,6 +769,13 @@ async fn execute_task(state: &Arc<AppState>, config: &WorkerConfig, task: TaskRo
         Ok(turn) => turn,
         Err(failure) => return fail(state, config, &task, Some(&ctx), failure).await,
     };
+    // No brain saved on the agent: fail visibly instead of sending gizzi an
+    // empty model (there is no default brain to fall back to).
+    let (provider, model) = model_ref(&ctx.agent);
+    if crate::config::is_no_brain(&provider, &model) {
+        let failure = Failure::new(crate::config::NO_BRAIN_CODE, format!("Pick a brain for {}.", ctx.agent.name), false);
+        return fail(state, config, &task, Some(&ctx), failure).await;
+    }
     let body = message_payload(&ctx, &task.payload, &text, &extra_system);
     let client = match reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(5))

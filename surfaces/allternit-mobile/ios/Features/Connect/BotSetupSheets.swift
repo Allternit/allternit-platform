@@ -25,7 +25,9 @@ enum BotSetupMaker {
     @MainActor
     static func plainBody(name: String, description: String, systemPrompt: String, tagline: String,
                           welcome: String, color: String, avatar: JSONValue?, makeMain: Bool) -> [String: JSONValue] {
-        let model = MeetTemplateCreate.currentModel()
+        // No brain picked yet → an empty model/provider (the API allows it for
+        // bots); the bot asks the user to pick one on its first turn.
+        let model = MeetTemplateCreate.currentModel() ?? (model: "", provider: "")
         var handle = BotModeStore.slugify(name)
         if handle.count < 3 { handle = "\(handle.isEmpty ? "my" : handle)-bot" }
         var profile: [String: JSONValue] = [

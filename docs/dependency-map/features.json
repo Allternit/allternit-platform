@@ -2539,6 +2539,10 @@
       ],
       "decisions": [
         {
+          "on": "2026-11-04",
+          "note": "No default brain in production (Eoj, 2026-11-03): only an explicit pick counts (operator ALLTERNIT_DEFAULT_MODEL, the user's saved default, a bot's own brain, a request's model). API default_model() has no catalog fallback; routes answer 409 {error:no_brain}. Web, phone, PWA and iOS show Pick a brain and open the picker on send. Setup lists Allternit Cloud first, not preselected; Desktop shows the local download tile; Skip saves nothing."
+        },
+        {
           "on": "2026-10-16",
           "note": "Eoj approved the Main.dc.html setup prototype: graph field left, Gizzi + A:// rail right, OpenUI result cards per step, block ripple only on a choice, connected view at the end. Built on the existing wizard logic; welcome screen dropped (signed-in users go straight to setup)."
         },

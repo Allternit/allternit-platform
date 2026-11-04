@@ -31,32 +31,36 @@ fn is_retired_default_model(provider: &str, model: &str) -> bool {
 
 /// Parse a frontend model reference into a Gizzi `{ providerID, modelID }`
 /// object. Accepts `provider/model`, `provider::model`, or a bare model id.
-/// Falls back to the agent's configured provider/model when available.
+/// Falls back to the agent's configured provider/model, then the explicit
+/// platform default. `None` = no brain chosen anywhere (no silent fallback).
 fn parse_model_ref(
     raw: Option<&str>,
     agent_provider: Option<&str>,
     agent_model: Option<&str>,
-) -> serde_json::Value {
+) -> Option<serde_json::Value> {
     let raw = raw.unwrap_or_default().trim();
     if !raw.is_empty() {
         let normalized = raw.replace("::", "/");
         if let Some((provider, model)) = normalized.rsplit_once('/') {
-            return json!({ "providerID": provider, "modelID": model });
+            return Some(json!({ "providerID": provider, "modelID": model }));
         }
         // Bare model id — try to inherit the agent/default provider.
         let default_provider = crate::default_model().0;
         let provider = agent_provider.unwrap_or(default_provider.as_str());
-        return json!({ "providerID": provider, "modelID": normalized });
+        return Some(json!({ "providerID": provider, "modelID": normalized }));
     }
 
     if let (Some(provider), Some(model)) = (agent_provider, agent_model) {
-        if !is_retired_default_model(provider, model) {
-            return json!({ "providerID": provider, "modelID": model });
+        if !provider.is_empty() && !model.is_empty() && !is_retired_default_model(provider, model) {
+            return Some(json!({ "providerID": provider, "modelID": model }));
         }
     }
 
     let (provider, model) = crate::default_model();
-    json!({ "providerID": provider, "modelID": model })
+    if crate::config::is_no_brain(&provider, &model) {
+        return None;
+    }
+    Some(json!({ "providerID": provider, "modelID": model }))
 }
 
 /// Outcome of a gizzi-backed chat turn. Idle-with-no-output used to be
@@ -461,15 +465,20 @@ pub async fn stream_chat_through_gizzi(
         .into_response();
     }
 
-    let model = parse_model_ref(runtime_model_id, agent_provider, agent_model);
+    let Some(model) = parse_model_ref(runtime_model_id, agent_provider, agent_model) else {
+        return stream_error_coded(
+            format!("msg_{}", uuid::Uuid::new_v4().simple()),
+            String::new(),
+            crate::config::NO_BRAIN_MESSAGE.to_string(),
+            Some(crate::config::NO_BRAIN_CODE),
+        )
+        .into_response();
+    };
     let model_id = model
         .get("modelID")
         .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| {
-            let (_, m) = crate::default_model();
-            m
-        });
+        .unwrap_or_default()
+        .to_string();
 
     // For non-cloud harness modes, push credentials/config to Gizzi first.
     configure_harness_on_gizzi(&client, base, harness, &model).await;
@@ -596,6 +605,17 @@ fn stream_error(
     model_id: String,
     error_text: String,
 ) -> Sse<impl futures::Stream<Item = Result<Event, Infallible>>> {
+    stream_error_coded(message_id, model_id, error_text, None)
+}
+
+/// [`stream_error`] whose error event also carries a machine `code`
+/// (e.g. `no_brain`), so clients can open the brain picker.
+fn stream_error_coded(
+    message_id: String,
+    model_id: String,
+    error_text: String,
+    code: Option<&'static str>,
+) -> Sse<impl futures::Stream<Item = Result<Event, Infallible>>> {
     let stream = async_stream::stream! {
         yield Ok(Event::default().data(json!({
             "type": "message_start",
@@ -604,11 +624,15 @@ fn stream_error(
             "runtimeModelId": model_id,
         }).to_string()));
 
-        yield Ok(Event::default().data(json!({
+        let mut error_event = json!({
             "type": "error",
             "messageId": message_id,
             "error": error_text,
-        }).to_string()));
+        });
+        if let Some(code) = code {
+            error_event["code"] = json!(code);
+        }
+        yield Ok(Event::default().data(error_event.to_string()));
 
         yield Ok(Event::default().data(json!({
             "type": "finish",
@@ -628,12 +652,13 @@ mod tests {
     #[test]
     fn retired_row_default_falls_back_to_platform_default() {
         let (provider, model) = crate::default_model();
-        let expected = json!({ "providerID": provider, "modelID": model });
+        let expected = (!crate::config::is_no_brain(&provider, &model))
+            .then(|| json!({ "providerID": provider, "modelID": model }));
         assert_eq!(parse_model_ref(None, Some("openai"), Some("openai/gpt-5-mini")), expected);
         assert_eq!(parse_model_ref(None, Some("openai"), Some("gpt-5-mini")), expected);
         assert_eq!(
             parse_model_ref(None, Some("openai"), Some("gpt-4o")),
-            json!({ "providerID": "openai", "modelID": "gpt-4o" })
+            Some(json!({ "providerID": "openai", "modelID": "gpt-4o" }))
         );
     }
 
