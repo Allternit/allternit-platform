@@ -4,6 +4,7 @@
 
 pub mod aci_approvals;
 pub mod aci_batch;
+pub mod net_client;
 #[cfg(test)]
 mod aci_batch_adversarial;
 pub mod aci_code;

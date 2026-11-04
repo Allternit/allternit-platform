@@ -66,7 +66,7 @@ async fn cloud_rows(state: &AppState, headers: &HeaderMap) -> Vec<Value> {
         return cloud_placeholders("This backend is not connected to the Allternit cloud, so these could not be checked.");
     };
     let url = format!("{}/api/v1/setup/checks", base.trim_end_matches('/'));
-    let mut request = reqwest::Client::new().get(&url).timeout(CLOUD_TIMEOUT);
+    let mut request = crate::net_client::client().get(&url).timeout(CLOUD_TIMEOUT);
     if let Some(authorization) = headers.get(axum::http::header::AUTHORIZATION).and_then(|v| v.to_str().ok()) {
         request = request.header(axum::http::header::AUTHORIZATION, authorization);
     }

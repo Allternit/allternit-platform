@@ -1091,7 +1091,7 @@ async fn list_ollama_models(
 
     let ollama_url = state.config.ollama_url();
 
-    let client = reqwest::Client::new();
+    let client = crate::net_client::client();
     match client
         .get(format!("{}/api/tags", ollama_url.trim_end_matches('/')))
         .timeout(std::time::Duration::from_secs(5))
@@ -2662,7 +2662,7 @@ async fn search_huggingface(
     let search_term = query.q.unwrap_or_default();
     let limit = query.limit.unwrap_or(20).min(50);
 
-    let client = reqwest::Client::new();
+    let client = crate::net_client::client();
     let response = client
         .get("https://huggingface.co/api/models")
         .query(&[

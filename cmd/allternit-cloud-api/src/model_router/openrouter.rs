@@ -115,7 +115,7 @@ impl OpenRouterProvider {
     pub fn new(config: OpenRouterConfig) -> Arc<Self> {
         Arc::new(Self {
             config,
-            client: reqwest::Client::new(),
+            client: crate::net_client::client(),
             cache: RwLock::new(None),
         })
     }

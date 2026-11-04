@@ -2597,7 +2597,7 @@ mod permission_reply_tests {
         let temp = std::env::temp_dir().join(format!("prompt-sync-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&temp).unwrap();
         let db = crate::db::DbHandle::new(temp.join("test.db")).expect("test db");
-        let client = reqwest::Client::new();
+        let client = crate::net_client::client();
         for (gizzi, ours) in [
             ("permission.replied", "permission_replied"),
             ("question.replied", "question_replied"),

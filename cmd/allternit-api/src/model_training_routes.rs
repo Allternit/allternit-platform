@@ -48,7 +48,7 @@ async fn proxy_to_model_lab(
 
     let base = service_url(state).trim_end_matches('/').to_string();
     let url = format!("{}/{}", base, path.trim_start_matches('/'));
-    let client = reqwest::Client::new();
+    let client = crate::net_client::client();
     let mut req = client.request(method, &url);
     if let Some(q) = query {
         req = req.query(&q);
@@ -141,7 +141,7 @@ async fn upload_dataset(
     };
 
     let base = service_url(&state).trim_end_matches('/').to_string();
-    let client = reqwest::Client::new();
+    let client = crate::net_client::client();
     let mut req = client
         .post(format!("{}/datasets", base))
         .header(

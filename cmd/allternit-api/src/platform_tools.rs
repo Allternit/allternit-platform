@@ -90,7 +90,7 @@ impl CloudTools for ProdCloud {
             urlencoding::encode(agent_id),
             urlencoding::encode(tool)
         );
-        let res = reqwest::Client::new()
+        let res = crate::net_client::client()
             .post(url)
             .bearer_auth(bearer)
             .timeout(std::time::Duration::from_secs(30))

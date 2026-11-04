@@ -503,7 +503,7 @@ pub async fn fetch_recipient(user_id: &str) -> Option<Recipient> {
     let config = super::user_trust::TrustConfig::from_env();
     let secret = config.clerk_secret_key.as_deref()?;
     let url = format!("{}/v1/users/{}", config.clerk_api_base.trim_end_matches('/'), user_id);
-    let user: serde_json::Value = reqwest::Client::new()
+    let user: serde_json::Value = crate::net_client::client()
         .get(url)
         .bearer_auth(secret)
         .timeout(std::time::Duration::from_secs(10))

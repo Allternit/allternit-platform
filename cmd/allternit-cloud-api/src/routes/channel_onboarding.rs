@@ -122,7 +122,7 @@ impl TelegramApi {
 
     async fn call(&self, method: &str, body: Value) -> Result<Value, String> {
         let url = format!("{}/bot{}/{method}", self.base, self.token);
-        let response = reqwest::Client::new()
+        let response = crate::net_client::client()
             .post(&url)
             .timeout(std::time::Duration::from_secs(15))
             .json(&body)

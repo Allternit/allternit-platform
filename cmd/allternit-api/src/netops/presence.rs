@@ -71,7 +71,7 @@ pub async fn live_sessions(runtime_id: &str) -> Value {
     let person = allternit_factory_engine::agents::live_sessions::default_person();
     let url = format!("{}/api/factory/sessions?person={}", crate::factory_proxy::engine_url(), urlencoding::encode(&person));
     let fetched = async {
-        let res = reqwest::Client::new().get(url).timeout(Duration::from_secs(3)).send().await.ok()?;
+        let res = crate::net_client::client().get(url).timeout(Duration::from_secs(3)).send().await.ok()?;
         res.status().is_success().then_some(())?;
         res.json::<Vec<Value>>().await.ok()
     }
@@ -200,7 +200,7 @@ async fn live_sessions_route(Extension(user): Extension<AuthUser>) -> Response {
         .map(str::to_string)
         .unwrap_or_else(allternit_factory_engine::agents::live_sessions::default_person);
     let url = format!("{}/api/factory/sessions?person={}", crate::factory_proxy::engine_url(), urlencoding::encode(&person));
-    match reqwest::Client::new().get(url).timeout(Duration::from_secs(10)).send().await {
+    match crate::net_client::client().get(url).timeout(Duration::from_secs(10)).send().await {
         Ok(r) if r.status().is_success() => match r.json::<Value>().await {
             Ok(v) => Json(v).into_response(),
             Err(e) => (StatusCode::BAD_GATEWAY, Json(json!({ "error": { "code": "transport", "fact": format!("the Factory engine's reply was not JSON: {e}"), "action": "Update Allternit and retry." } }))).into_response(),
@@ -265,7 +265,7 @@ async fn beat_and_reconcile(state: &AppState, cloud: &str) -> Result<bool, Strin
     body["sessions"] = live_sessions(&runtime_id).await;
     body["runtimeId"] = json!(runtime_id);
     let bytes = serde_json::to_vec(&body).map_err(|e| e.to_string())?;
-    let mut req = reqwest::Client::new().post(format!("{cloud}{HEARTBEAT_PATH}")).timeout(Duration::from_secs(20)).header("content-type", "application/json");
+    let mut req = crate::net_client::client().post(format!("{cloud}{HEARTBEAT_PATH}")).timeout(Duration::from_secs(20)).header("content-type", "application/json");
     for (k, v) in sign(&token, &owner, &runtime_id, &bytes) {
         req = req.header(k, v);
     }

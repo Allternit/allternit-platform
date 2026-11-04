@@ -238,7 +238,7 @@ pub struct HttpSink;
 #[async_trait]
 impl EventSink for HttpSink {
     async fn post(&self, url: &str, headers: Vec<(String, String)>, body: Vec<u8>) -> Result<u16, String> {
-        let mut req = reqwest::Client::new().post(url).timeout(Duration::from_secs(20)).header("content-type", "application/json");
+        let mut req = crate::net_client::client().post(url).timeout(Duration::from_secs(20)).header("content-type", "application/json");
         for (k, v) in headers {
             req = req.header(k, v);
         }

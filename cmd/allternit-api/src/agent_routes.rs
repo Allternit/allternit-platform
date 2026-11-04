@@ -2982,7 +2982,7 @@ async fn provision_agent_wallet(
     }
 
     let etrid_url = state.config.etrid_url();
-    let client = Client::new();
+    let client = crate::net_client::client();
     let kind = body.kind.unwrap_or_else(|| "identity".to_string());
     let request_body = json!({
         "agent_id": agent_id,

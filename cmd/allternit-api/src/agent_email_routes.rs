@@ -85,7 +85,7 @@ async fn email_domain_call(method: reqwest::Method, domain: Option<&str>) -> Res
         Some(d) => format!("{}/api/v1/runtime-devices/me/bot-email/domains/{}", base.trim_end_matches('/'), urlencoding::encode(d)),
         None => format!("{}/api/v1/runtime-devices/me/bot-email/domains", base.trim_end_matches('/')),
     };
-    match reqwest::Client::new().request(method, url).bearer_auth(bearer).timeout(std::time::Duration::from_secs(45)).send().await {
+    match crate::net_client::client().request(method, url).bearer_auth(bearer).timeout(std::time::Duration::from_secs(45)).send().await {
         Ok(r) => {
             let status = StatusCode::from_u16(r.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
             let body: Value = r.json().await.unwrap_or(Value::Null);
@@ -1850,7 +1850,7 @@ pub async fn revoke_agent_mailbox(agent_id: &str, db: &crate::db::DbHandle) -> b
         // its webhook and the relay route.
         if let Some(bearer) = crate::phone_sync::runtime_bearer() {
             let url = format!("{}/api/v1/runtime-devices/me/bot-email/mailboxes/{}", crate::phone_sync::cloud_base().trim_end_matches('/'), mailbox_id);
-            match reqwest::Client::new().delete(url).bearer_auth(bearer).timeout(std::time::Duration::from_secs(20)).send().await {
+            match crate::net_client::client().delete(url).bearer_auth(bearer).timeout(std::time::Duration::from_secs(20)).send().await {
                 Ok(r) if r.status().is_success() || r.status() == StatusCode::NOT_FOUND => {
                     info!(agent_id = %agent_id, mailbox_id = %mailbox_id, "agent-email: mailbox removed through the cloud");
                     return true;

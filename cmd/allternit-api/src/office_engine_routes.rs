@@ -188,7 +188,7 @@ async fn proxy_office_engine(
         upstream_path,
     );
 
-    let client = reqwest::Client::new();
+    let client = crate::net_client::client();
     let mut request = client.post(&target);
     if let Some(content_type) = headers
         .get(header::CONTENT_TYPE)

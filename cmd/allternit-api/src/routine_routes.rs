@@ -140,7 +140,7 @@ async fn create_routine(
                 "ALLTERNIT_CONTINUATION_TOKEN is not set",
             )
         })?;
-        let client = reqwest::Client::new();
+        let client = crate::net_client::client();
         let url = format!("{}/api/v1/cowork/routines", target.trim_end_matches('/'));
         let res = client
             .post(&url)

@@ -104,7 +104,7 @@ fn client() -> &'static reqwest::Client {
         reqwest::Client::builder()
             .timeout(UPSTREAM_TIMEOUT)
             .build()
-            .unwrap_or_else(|_| reqwest::Client::new())
+            .unwrap_or_else(|_| crate::net_client::client())
     })
 }
 

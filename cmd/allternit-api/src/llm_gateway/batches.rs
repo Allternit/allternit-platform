@@ -635,7 +635,7 @@ pub struct HttpBatchProvider {
 impl HttpBatchProvider {
     pub fn new(base_url: String, api_key: Option<String>) -> Self {
         Self {
-            client: reqwest::Client::new(),
+            client: crate::net_client::client(),
             base_url: base_url.trim_end_matches('/').to_string(),
             api_key,
         }
@@ -1018,7 +1018,7 @@ pub struct NativeBatchProvider {
 impl NativeBatchProvider {
     pub fn new(base_url: String, api_key: Option<String>) -> Self {
         Self {
-            client: reqwest::Client::new(),
+            client: crate::net_client::client(),
             base_url: base_url.trim_end_matches('/').to_string(),
             api_key,
         }

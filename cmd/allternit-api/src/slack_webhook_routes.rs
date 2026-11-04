@@ -507,7 +507,7 @@ async fn post_slack_message(channel: &str, thread_ts: &str, text: &str) -> Resul
         .slack_bot_token()
         .ok_or("ALLTERNIT_SLACK_BOT_TOKEN is not configured")?;
 
-    let client = reqwest::Client::new();
+    let client = crate::net_client::client();
     let resp = client
         .post("https://slack.com/api/chat.postMessage")
         .bearer_auth(token)
