@@ -295,6 +295,8 @@ pub mod mcp_directory_routes;
 pub mod studio_apps_routes;
 pub mod mcp_routes;
 pub mod oauth_result_page;
+pub mod oauth_return;
+pub mod official_mcp;
 pub mod mcp_agents;
 pub mod mcp_vendor_bots;
 pub mod mcp_vendor_cards;

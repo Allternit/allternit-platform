@@ -1475,6 +1475,8 @@ fn is_allowed_runtime_path(path: &str) -> bool {
         "/panes",
         "/status",
         "/health",
+        // The connector sidecar's OAuth callback (reached by routes::connect_return).
+        "/oauth/callback",
         // gizzi-code mirrors its entire route surface under /v1/*, so this one
         // prefix covers BYO-VPS boxes (pty, sessions, events, instance, ...).
         "/v1",

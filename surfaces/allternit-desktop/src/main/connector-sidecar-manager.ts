@@ -31,10 +31,42 @@
 import { app } from 'electron';
 import { ChildProcess } from 'child_process';
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import log from 'electron-log';
 import { URLS } from './config.js';
 import { spawnSidecar } from './process-lifeline.js';
+
+/**
+ * Origin the sidecar builds its OAuth redirect from (`{origin}/oauth/callback`).
+ * A paired Desktop returns sign-ins through api.allternit.com
+ * (`/connect/return/sidecar/oauth/callback`, relayed back to this computer by
+ * cloud-api), so a sign-in started from the phone or the web can finish; allternit-api
+ * tags the sidecar's OAuth state with this runtime (cmd/allternit-api/src/oauth_return.rs).
+ * Unpaired, or with an explicit ALLTERNIT_PUBLIC_BASE_URL, it stays this computer's API.
+ * Read at each start: a Desktop paired after the sidecar started switches on next launch.
+ */
+export function sidecarOAuthOrigin(
+  identityPath = path.join(os.homedir(), '.config', 'allternit', 'runtime-identity.json'),
+  env: NodeJS.ProcessEnv = process.env,
+  now = Date.now(),
+): string {
+  if (env.ALLTERNIT_PUBLIC_BASE_URL?.trim()) return env.ALLTERNIT_PUBLIC_BASE_URL.trim().replace(/\/+$/, '');
+  try {
+    const id = JSON.parse(fs.readFileSync(identityPath, 'utf8')) as Record<string, unknown>;
+    const runtimeId = typeof id.runtimeId === 'string' ? id.runtimeId.trim() : '';
+    const token = typeof id.deviceToken === 'string' ? id.deviceToken : '';
+    const userId = typeof id.userId === 'string' ? id.userId : '';
+    const expires = typeof id.expiresAt === 'string' && id.expiresAt ? Date.parse(id.expiresAt) : Infinity;
+    if (/^[A-Za-z0-9_-]{1,80}$/.test(runtimeId) && token && userId && expires > now) {
+      const cloud = (env.ALLTERNIT_CLOUD_API_URL || URLS.CLOUD_API).replace(/\/+$/, '');
+      return `${cloud}/connect/return/sidecar`;
+    }
+  } catch {
+    // No identity yet: not paired.
+  }
+  return URLS.API;
+}
 
 const ANNOUNCE_TIMEOUT_MS = 25_000;
 const HEALTH_TIMEOUT_MS = 15_000;
@@ -125,7 +157,7 @@ export class ConnectorSidecarManager {
       PORT: '0',
       HOST: '127.0.0.1',
       OOMOL_CONNECT_ANNOUNCE_PORT: '1',
-      OOMOL_CONNECT_ORIGIN: URLS.API,
+      OOMOL_CONNECT_ORIGIN: sidecarOAuthOrigin(),
       OOMOL_CONNECT_DATA_DIR: dataDir,
       OOMOL_CONNECT_CATALOG_DIR: catalogDir,
       OOMOL_CONNECT_MIGRATIONS_DIR: migrationsDir,

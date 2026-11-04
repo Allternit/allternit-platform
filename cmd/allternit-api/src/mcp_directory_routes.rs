@@ -44,6 +44,7 @@ use crate::mcp_directory_held::{
     ReviewState,
 };
 use crate::rbac::is_admin_role;
+use crate::oauth_return::{ReturnPlan, Target};
 use crate::token_crypto;
 use crate::AppState;
 
@@ -914,6 +915,32 @@ pub fn is_unreachable_cimd_client(client_id: &str) -> bool {
     client_id.ends_with("/oauth/client.json") && client_id.starts_with("http") && !cimd_reachable(client_id)
 }
 
+/// One of our own CIMD document URLs (this API's or the cloud's).
+pub fn is_own_cimd_url(client_id: &str) -> bool {
+    client_id.starts_with("http") && (client_id.ends_with("/oauth/client.json") || client_id.ends_with("/connect/client.json"))
+}
+
+/// For a DCR-issued `client_id`, the redirect it was registered with. Sessions from
+/// before the redirect was recorded registered this API's own callback.
+pub fn dcr_registered_redirect(conn: &Connection, connector_id: &str, client_id: &str) -> Option<String> {
+    if !is_dcr_client(conn, connector_id, client_id) {
+        return None;
+    }
+    let recorded: Option<String> = conn
+        .query_row(
+            "SELECT json_extract(client_info, '$.redirectUri') FROM mcp_oauth_sessions WHERE mcp_connector_id = ?1
+               AND json_extract(client_info, '$.clientId') = ?2 AND json_extract(client_info, '$.dcr') = 1
+             ORDER BY created_at DESC LIMIT 1",
+            params![connector_id, client_id],
+            |r| r.get(0),
+        )
+        .optional()
+        .ok()
+        .flatten()
+        .flatten();
+    Some(recorded.unwrap_or_else(|| oauth_redirect_uri(&public_base())))
+}
+
 pub fn client_metadata_url(base: &str) -> String {
     format!("{}/oauth/client.json", base.trim_end_matches('/'))
 }
@@ -1082,11 +1109,11 @@ impl std::fmt::Debug for DcrClient {
 
 const DCR_MAX_RESPONSE: usize = 64 * 1024;
 
-pub fn dcr_request_body(base: &str) -> Value {
+pub fn dcr_request_body(plan: &ReturnPlan) -> Value {
     json!({
-        "redirect_uris": [oauth_redirect_uri(base)],
+        "redirect_uris": [plan.redirect_uri(Target::Mcp)],
         "client_name": "Allternit",
-        "client_uri": base.trim_end_matches('/'),
+        "client_uri": plan.base,
         "grant_types": ["authorization_code", "refresh_token"],
         "response_types": ["code"],
         "token_endpoint_auth_method": "none",
@@ -1096,9 +1123,9 @@ pub fn dcr_request_body(base: &str) -> Value {
 
 /// Register Allternit with the auth server. The endpoint is re-validated and
 /// the POST goes through the same SSRF-guarded, redirect-free transport as discovery.
-pub async fn register_client<T: Transport>(t: &T, registration_endpoint: &str, base: &str) -> Result<DcrClient, String> {
+pub async fn register_client<T: Transport>(t: &T, registration_endpoint: &str, plan: &ReturnPlan) -> Result<DcrClient, String> {
     let target = parse_guarded_url(registration_endpoint).map_err(|e| format!("Registration endpoint rejected: {e}"))?;
-    let res = guarded_post_json(t, &target, &dcr_request_body(base).to_string(), DCR_MAX_RESPONSE)
+    let res = guarded_post_json(t, &target, &dcr_request_body(plan).to_string(), DCR_MAX_RESPONSE)
         .await
         .map_err(|e| format!("Client registration failed: {e}"))?;
     if !matches!(res.status, 200 | 201) {
@@ -1190,9 +1217,9 @@ pub fn persist_oauth_start(
     discovery: &Discovery,
     configured_client_id: Option<&str>,
     registered: Option<&DcrClient>,
-    base: &str,
+    plan: &ReturnPlan,
 ) -> Result<String, DirError> {
-    let cimd = client_metadata_url(base);
+    let cimd = plan.cimd_url();
     let configured = configured_client_id.filter(|s| !s.is_empty());
     let mut dcr: Option<DcrClient> = None;
     let client_id = match configured {
@@ -1229,14 +1256,17 @@ pub fn persist_oauth_start(
         _ => (false, None),
     };
     let verifier = random_b64url(32);
-    let state = random_b64url(32);
-    let redirect = oauth_redirect_uri(base);
+    // Tagged with this runtime when sign-ins return through api.allternit.com.
+    let state = plan.wrap_state(&random_b64url(32));
+    let redirect = plan.redirect_uri(Target::Mcp);
     let url = build_authorize_url(&discovery.authorization_endpoint, &client_id, &redirect, &state, &pkce_challenge(&verifier), connector_url)
         .map_err(DirError::Upstream)?;
     let mut client_info = json!({"clientId": client_id, "cimd": client_id == cimd});
     if dcr_marked {
         client_info["dcr"] = json!(true);
         client_info["authMethod"] = json!(auth_method.unwrap_or_else(|| "none".into()));
+        // The redirect this DCR client is registered for; a start with another one re-registers.
+        client_info["redirectUri"] = json!(redirect);
     }
     let tx = conn.unchecked_transaction()?;
     tx.execute(
@@ -1294,25 +1324,57 @@ pub async fn start_connector_oauth(
     Path(id): Path<String>,
     Query(q): Query<OAuthStartQuery>,
 ) -> Result<Response, DirError> {
-    let (uid, cid) = (user.user_id.clone(), id.clone());
+    match start_oauth(&state, &user.user_id, &id, q.via.as_deref() == Some("oauth2")).await? {
+        OAuthStart::Authorize(url) => Ok(Json(json!({ "authorize_url": url })).into_response()),
+        OAuthStart::Done(response) => Ok(response),
+    }
+}
+
+/// What an MCP connector sign-in start produced.
+pub(crate) enum OAuthStart {
+    /// Send the browser here.
+    Authorize(String),
+    /// Finished without a browser (managed sign-in), or refused: the response as is.
+    Done(Response),
+}
+
+/// The start behind `POST /mcp/connectors/:id/oauth/start`, for `user_id`'s connector
+/// `id`. `browser_only` skips managed sign-in (`?via=oauth2`).
+pub(crate) async fn start_oauth(state: &Arc<AppState>, user_id: &str, id: &str, browser_only: bool) -> Result<OAuthStart, DirError> {
+    let (uid, cid) = (user_id.to_string(), id.to_string());
     let connector = blocking(state.db.clone(), move |c| load_connector(c, &uid, &cid)).await?;
     // "Custom MCP server" under managed authorization: when the user's org manages
     // this server's URL, sign in with an ID-JAG instead of a browser. A failure is a
     // plain error offering the normal sign-in (`?via=oauth2`), never a silent fallback.
-    if q.via.as_deref() != Some("oauth2") {
+    if !browser_only {
         let cloud = crate::managed_auth::cloud();
-        if let Some(cfg) = crate::managed_auth::applicable_for_server(cloud.as_ref(), &user.user_id, &connector.url).await {
-            return Ok(managed_server_sign_in(&state, &user.user_id, &id, &connector.url, cfg).await);
+        if let Some(cfg) = crate::managed_auth::applicable_for_server(cloud.as_ref(), user_id, &connector.url).await {
+            return Ok(OAuthStart::Done(managed_server_sign_in(state, user_id, id, &connector.url, cfg).await));
         }
     }
+    let id = id.to_string();
     let mut discovery = discover_authorization(&ReqwestTransport, &connector.url).await.map_err(DirError::Upstream)?;
-    let base = public_base();
+    // Paired runtimes return through api.allternit.com (`oauth_return`), whose CIMD
+    // document lists that redirect; others keep this API's own origin.
+    let plan = ReturnPlan::current();
     // Our CIMD only works where the authorization server can fetch it.
-    discovery.cimd_supported &= cimd_reachable(&base);
-    // Drop a loopback CIMD client id an earlier start saved: it can never authenticate.
+    discovery.cimd_supported &= cimd_reachable(&plan.cimd_url());
+    // Drop a client an earlier start saved that can't sign in with this redirect: a
+    // loopback CIMD id, our CIMD id for another origin, or a DCR client registered for
+    // another redirect (e.g. before this computer was paired).
     let mut connector = connector;
-    if let Some(stale) = connector.oauth_client_id.clone().filter(|id| is_unreachable_cimd_client(id)) {
-        let (uid, cid) = (user.user_id.clone(), id.clone());
+    let current_cimd = plan.cimd_url();
+    let current_redirect = plan.redirect_uri(Target::Mcp);
+    let saved = connector.oauth_client_id.clone();
+    let (cid2, saved2) = (id.clone(), saved.clone());
+    let dcr_redirect = blocking(state.db.clone(), move |c| Ok(saved2.and_then(|s| dcr_registered_redirect(c, &cid2, &s)))).await?;
+    let stale_client = saved.filter(|cid| {
+        is_unreachable_cimd_client(cid)
+            || (is_own_cimd_url(cid) && cid != &current_cimd)
+            || dcr_redirect.as_deref().is_some_and(|r| r != current_redirect)
+    });
+    if let Some(stale) = stale_client {
+        let (uid, cid) = (user_id.to_string(), id.clone());
         blocking(state.db.clone(), move |c| {
             c.execute(
                 "UPDATE mcp_connectors SET oauth_client_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?1 AND user_id = ?2 AND oauth_client_id = ?3",
@@ -1325,24 +1387,25 @@ pub async fn start_connector_oauth(
     }
     let registered = if needs_registration(connector.oauth_client_id.as_deref(), &discovery) {
         let endpoint = discovery.registration_endpoint.clone().unwrap_or_default();
-        Some(register_client(&ReqwestTransport, &endpoint, &base).await.map_err(DirError::Upstream)?)
+        Some(register_client(&ReqwestTransport, &endpoint, &plan).await.map_err(DirError::Upstream)?)
     } else {
         None
     };
+    let uid = user_id.to_string();
     let url = blocking(state.db.clone(), move |c| {
         persist_oauth_start(
             c,
-            &user.user_id,
+            &uid,
             &id,
             &connector.url,
             &discovery,
             connector.oauth_client_id.as_deref(),
             registered.as_ref(),
-            &base,
+            &plan,
         )
     })
     .await?;
-    Ok(Json(json!({ "authorize_url": url })).into_response())
+    Ok(OAuthStart::Authorize(url))
 }
 
 async fn managed_server_sign_in(state: &Arc<AppState>, user_id: &str, id: &str, url: &str, cfg: crate::managed_auth::ManagedConfig) -> Response {
@@ -1833,7 +1896,7 @@ mod tests {
         connector(&c, "conn-a", "alice");
         let disc = Discovery { authorization_endpoint: "https://auth.example.com/authorize".into(), cimd_supported: true, token_endpoint: Some("https://auth.example.com/token".into()), registration_endpoint: None };
         let base = "https://api.allternit.com";
-        let url = persist_oauth_start(&c, "alice", "conn-a", "https://mcp.example.com/mcp", &disc, None, None, base).unwrap();
+        let url = persist_oauth_start(&c, "alice", "conn-a", "https://mcp.example.com/mcp", &disc, None, None, &ReturnPlan::at(base)).unwrap();
         let q: HashMap<_, _> = Url::parse(&url).unwrap().query_pairs().into_owned().collect();
         assert_eq!(q["client_id"], "https://api.allternit.com/oauth/client.json");
         assert_eq!(q["redirect_uri"], "https://api.allternit.com/mcp/oauth/callback");
@@ -1860,7 +1923,7 @@ mod tests {
         assert_eq!(cid.as_deref(), Some("https://api.allternit.com/oauth/client.json"));
 
         // Two starts never share state or verifier.
-        let url2 = persist_oauth_start(&c, "alice", "conn-a", "https://mcp.example.com/mcp", &disc, cid.as_deref(), None, base).unwrap();
+        let url2 = persist_oauth_start(&c, "alice", "conn-a", "https://mcp.example.com/mcp", &disc, cid.as_deref(), None, &ReturnPlan::at(base)).unwrap();
         assert_ne!(url, url2);
     }
 
@@ -1871,12 +1934,12 @@ mod tests {
         let no_cimd = Discovery { authorization_endpoint: "https://auth.example.com/authorize".into(), cimd_supported: false, token_endpoint: None, registration_endpoint: None };
         let base = "https://api.allternit.com";
         assert!(matches!(
-            persist_oauth_start(&c, "alice", "conn-a", "https://mcp.example.com/mcp", &no_cimd, None, None, base),
+            persist_oauth_start(&c, "alice", "conn-a", "https://mcp.example.com/mcp", &no_cimd, None, None, &ReturnPlan::at(base)),
             Err(DirError::Conflict(_))
         ));
         let n: i64 = c.query_row("SELECT COUNT(*) FROM mcp_oauth_sessions", [], |r| r.get(0)).unwrap();
         assert_eq!(n, 0);
-        let url = persist_oauth_start(&c, "alice", "conn-a", "https://mcp.example.com/mcp", &no_cimd, Some("preregistered"), None, base).unwrap();
+        let url = persist_oauth_start(&c, "alice", "conn-a", "https://mcp.example.com/mcp", &no_cimd, Some("preregistered"), None, &ReturnPlan::at(base)).unwrap();
         assert!(url.contains("client_id=preregistered"));
         let cid: Option<String> = c.query_row("SELECT oauth_client_id FROM mcp_connectors WHERE id='conn-a'", [], |r| r.get(0)).unwrap();
         assert_eq!(cid, None, "a configured client is never overwritten or invented");
@@ -1953,7 +2016,7 @@ mod tests {
     #[tokio::test]
     async fn registration_posts_the_spec_body_and_requires_a_client_id() {
         let t = DcrServer::new(json!({"client_id": "abc123"}));
-        let c = register_client(&t, "https://auth.example.com/register", BASE).await.unwrap();
+        let c = register_client(&t, "https://auth.example.com/register", &ReturnPlan::at(BASE)).await.unwrap();
         assert_eq!(c, DcrClient { client_id: "abc123".into(), client_secret: None, auth_method: "none".into() });
         let (url, body) = t.posts.lock().unwrap()[0].clone();
         assert_eq!(url, "https://auth.example.com/register");
@@ -1967,18 +2030,18 @@ mod tests {
         assert_eq!(body["application_type"], "web");
 
         for reply in [json!({}), json!({"client_id": ""}), json!({"client_id": 7})] {
-            assert!(register_client(&DcrServer::new(reply), "https://auth.example.com/register", BASE).await.is_err());
+            assert!(register_client(&DcrServer::new(reply), "https://auth.example.com/register", &ReturnPlan::at(BASE)).await.is_err());
         }
         let mut refused = DcrServer::new(json!({"error": "invalid_redirect_uri"}));
         refused.reply.status = 400;
-        assert!(register_client(&refused, "https://auth.example.com/register", BASE).await.is_err());
+        assert!(register_client(&refused, "https://auth.example.com/register", &ReturnPlan::at(BASE)).await.is_err());
     }
 
     #[tokio::test]
     async fn registration_refuses_unsafe_endpoints_and_never_posts() {
         let t = DcrServer::new(json!({"client_id": "x"}));
         for bad in ["http://auth.example.com/register", "https://127.0.0.1/register", "https://auth.example.com:8443/register"] {
-            assert!(register_client(&t, bad, BASE).await.is_err(), "{bad}");
+            assert!(register_client(&t, bad, &ReturnPlan::at(BASE)).await.is_err(), "{bad}");
         }
         assert_eq!(t.count(), 0);
         // A private resolution is refused by the guard before any POST.
@@ -1994,21 +2057,21 @@ mod tests {
                 panic!("must not connect")
             }
         }
-        assert!(register_client(&Private, "https://auth.example.com/register", BASE).await.is_err());
+        assert!(register_client(&Private, "https://auth.example.com/register", &ReturnPlan::at(BASE)).await.is_err());
     }
 
     #[tokio::test]
     async fn registration_accepts_a_server_issued_secret_and_method() {
         let t = DcrServer::new(json!({"client_id": "c", "client_secret": "s3", "token_endpoint_auth_method": "client_secret_post"}));
-        let c = register_client(&t, "https://auth.example.com/register", BASE).await.unwrap();
+        let c = register_client(&t, "https://auth.example.com/register", &ReturnPlan::at(BASE)).await.unwrap();
         assert_eq!((c.client_secret.as_deref(), c.auth_method.as_str()), (Some("s3"), "client_secret_post"));
         let t = DcrServer::new(json!({"client_id": "c", "client_secret": "s3"}));
-        assert_eq!(register_client(&t, "https://auth.example.com/register", BASE).await.unwrap().auth_method, "client_secret_basic");
+        assert_eq!(register_client(&t, "https://auth.example.com/register", &ReturnPlan::at(BASE)).await.unwrap().auth_method, "client_secret_basic");
         for bad in [
             json!({"client_id": "c", "token_endpoint_auth_method": "private_key_jwt"}),
             json!({"client_id": "c", "token_endpoint_auth_method": "client_secret_basic"}),
         ] {
-            assert!(register_client(&DcrServer::new(bad), "https://auth.example.com/register", BASE).await.is_err());
+            assert!(register_client(&DcrServer::new(bad), "https://auth.example.com/register", &ReturnPlan::at(BASE)).await.is_err());
         }
         assert!(!format!("{c:?}").contains("s3"));
     }
@@ -2018,13 +2081,40 @@ mod tests {
     }
 
     #[test]
+    fn paired_start_returns_through_the_cloud_and_records_the_dcr_redirect() {
+        let c = db();
+        connector(&c, "conn-a", "alice");
+        let cloud = ReturnPlan::from_parts(None, Some("rt_abc".into()), "https://api.allternit.com");
+        // CIMD: the cloud's document and redirect; the state names this runtime.
+        let cimd = Discovery { authorization_endpoint: "https://auth.example.com/authorize".into(), cimd_supported: true, token_endpoint: None, registration_endpoint: None };
+        let url = persist_oauth_start(&c, "alice", "conn-a", MCP, &cimd, None, None, &cloud).unwrap();
+        let q: HashMap<_, _> = Url::parse(&url).unwrap().query_pairs().into_owned().collect();
+        assert_eq!(q["client_id"], "https://api.allternit.com/connect/client.json");
+        assert_eq!(q["redirect_uri"], "https://api.allternit.com/connect/return/mcp");
+        assert_eq!(crate::oauth_return::parse_state(&q["state"]).map(|(rt, _)| rt), Some("rt_abc"));
+        // The callback finds the session by the state the browser brings back, tag included.
+        let n: i64 = c.query_row("SELECT COUNT(*) FROM mcp_oauth_sessions WHERE state = ?1", [&q["state"]], |r| r.get(0)).unwrap();
+        assert_eq!(n, 1);
+
+        // DCR before pairing registers the loopback redirect; after pairing it no longer matches.
+        connector(&c, "conn-b", "alice");
+        let issued = DcrClient { client_id: "dcr-1".into(), client_secret: None, auth_method: "none".into() };
+        let local = ReturnPlan::at("http://127.0.0.1:8013");
+        persist_oauth_start(&c, "alice", "conn-b", MCP, &dcr_discovery(), None, Some(&issued), &local).unwrap();
+        assert_eq!(dcr_registered_redirect(&c, "conn-b", "dcr-1").as_deref(), Some("http://127.0.0.1:8013/mcp/oauth/callback"));
+        assert_ne!(dcr_registered_redirect(&c, "conn-b", "dcr-1").unwrap(), cloud.redirect_uri(Target::Mcp));
+        // Not a DCR client: nothing to compare.
+        assert_eq!(dcr_registered_redirect(&c, "conn-a", "https://api.allternit.com/connect/client.json"), None);
+    }
+
+    #[test]
     fn dcr_start_persists_the_client_sealed_and_reuses_it() {
         let c = db();
         connector(&c, "conn-a", "alice");
         let disc = dcr_discovery();
         assert!(needs_registration(None, &disc));
         let issued = DcrClient { client_id: "dcr-1".into(), client_secret: Some("hush".into()), auth_method: "client_secret_basic".into() };
-        let url = persist_oauth_start(&c, "alice", "conn-a", MCP, &disc, None, Some(&issued), BASE).unwrap();
+        let url = persist_oauth_start(&c, "alice", "conn-a", MCP, &disc, None, Some(&issued), &ReturnPlan::at(BASE)).unwrap();
         assert!(url.contains("client_id=dcr-1"));
 
         let (id, secret) = stored(&c, "conn-a");
@@ -2039,7 +2129,7 @@ mod tests {
 
         // Second start: the stored client is used, nothing is registered again, the marker carries over.
         assert!(!needs_registration(id.as_deref(), &disc));
-        let url2 = persist_oauth_start(&c, "alice", "conn-a", MCP, &disc, id.as_deref(), None, BASE).unwrap();
+        let url2 = persist_oauth_start(&c, "alice", "conn-a", MCP, &disc, id.as_deref(), None, &ReturnPlan::at(BASE)).unwrap();
         assert!(url2.contains("client_id=dcr-1"));
         assert!(is_dcr_client(&c, "conn-a", "dcr-1"));
         assert_eq!(stored(&c, "conn-a").0.as_deref(), Some("dcr-1"));
@@ -2056,15 +2146,15 @@ mod tests {
         connector(&c, "conn-b", "bob");
         let disc = dcr_discovery();
         let alice = DcrClient { client_id: "alice-client".into(), client_secret: None, auth_method: "none".into() };
-        persist_oauth_start(&c, "alice", "conn-a", MCP, &disc, None, Some(&alice), BASE).unwrap();
+        persist_oauth_start(&c, "alice", "conn-a", MCP, &disc, None, Some(&alice), &ReturnPlan::at(BASE)).unwrap();
         // Bob's connector has no client of its own, so it needs its own registration.
         let (bob_id, _) = stored(&c, "conn-b");
         assert_eq!(bob_id, None);
         assert!(needs_registration(bob_id.as_deref(), &disc));
-        assert!(matches!(persist_oauth_start(&c, "bob", "conn-b", MCP, &disc, None, None, BASE), Err(DirError::Conflict(_))));
+        assert!(matches!(persist_oauth_start(&c, "bob", "conn-b", MCP, &disc, None, None, &ReturnPlan::at(BASE)), Err(DirError::Conflict(_))));
         assert!(!is_dcr_client(&c, "conn-b", "alice-client"));
         // A client registered for alice's row cannot be written onto bob's.
-        persist_oauth_start(&c, "alice", "conn-b", MCP, &disc, None, Some(&alice), BASE).unwrap();
+        persist_oauth_start(&c, "alice", "conn-b", MCP, &disc, None, Some(&alice), &ReturnPlan::at(BASE)).unwrap();
         assert_eq!(stored(&c, "conn-b").0, None);
     }
 
@@ -2077,24 +2167,24 @@ mod tests {
         let cid = |url: &str| Url::parse(url).unwrap().query_pairs().find(|(k, _)| k == "client_id").unwrap().1.into_owned();
 
         connector(&c, "c1", "alice");
-        let u = persist_oauth_start(&c, "alice", "c1", MCP, &both, Some("mine"), Some(&issued), BASE).unwrap();
+        let u = persist_oauth_start(&c, "alice", "c1", MCP, &both, Some("mine"), Some(&issued), &ReturnPlan::at(BASE)).unwrap();
         assert_eq!(cid(&u), "mine");
         assert!(!needs_registration(Some("mine"), &both));
 
         connector(&c, "c2", "alice");
         assert!(!needs_registration(None, &both), "CIMD wins over DCR");
-        let u = persist_oauth_start(&c, "alice", "c2", MCP, &both, None, Some(&issued), BASE).unwrap();
+        let u = persist_oauth_start(&c, "alice", "c2", MCP, &both, None, Some(&issued), &ReturnPlan::at(BASE)).unwrap();
         assert_eq!(cid(&u), client_metadata_url(BASE));
 
         connector(&c, "c3", "alice");
-        let u = persist_oauth_start(&c, "alice", "c3", MCP, &dcr_discovery(), None, Some(&issued), BASE).unwrap();
+        let u = persist_oauth_start(&c, "alice", "c3", MCP, &dcr_discovery(), None, Some(&issued), &ReturnPlan::at(BASE)).unwrap();
         assert_eq!(cid(&u), "dcr");
 
         connector(&c, "c4", "alice");
         let mut none = dcr_discovery();
         none.registration_endpoint = None;
         assert!(!needs_registration(None, &none));
-        assert!(matches!(persist_oauth_start(&c, "alice", "c4", MCP, &none, None, Some(&issued), BASE), Err(DirError::Conflict(_))));
+        assert!(matches!(persist_oauth_start(&c, "alice", "c4", MCP, &none, None, Some(&issued), &ReturnPlan::at(BASE)), Err(DirError::Conflict(_))));
     }
 
     #[test]
@@ -2103,14 +2193,14 @@ mod tests {
         connector(&c, "conn-a", "alice");
         let disc = dcr_discovery();
         let issued = DcrClient { client_id: "dcr-1".into(), client_secret: Some("hush".into()), auth_method: "client_secret_basic".into() };
-        persist_oauth_start(&c, "alice", "conn-a", MCP, &disc, None, Some(&issued), BASE).unwrap();
+        persist_oauth_start(&c, "alice", "conn-a", MCP, &disc, None, Some(&issued), &ReturnPlan::at(BASE)).unwrap();
         assert!(clear_dcr_client(&c, "conn-a", "dcr-1"));
         assert_eq!(stored(&c, "conn-a"), (None, None));
         assert!(needs_registration(None, &disc), "next start re-registers");
 
         // A user-configured client is never cleared, even on invalid_client.
         c.execute("UPDATE mcp_connectors SET oauth_client_id = 'mine', oauth_client_secret = 'x' WHERE id = 'conn-a'", []).unwrap();
-        persist_oauth_start(&c, "alice", "conn-a", MCP, &disc, Some("mine"), None, BASE).unwrap();
+        persist_oauth_start(&c, "alice", "conn-a", MCP, &disc, Some("mine"), None, &ReturnPlan::at(BASE)).unwrap();
         assert!(!clear_dcr_client(&c, "conn-a", "mine"));
         assert_eq!(stored(&c, "conn-a").0.as_deref(), Some("mine"));
 
