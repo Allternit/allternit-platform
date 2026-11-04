@@ -54,9 +54,11 @@ const JSON_COLUMNS: [&str; 11] = [
 /// Config keys that hold credentials or per-computer bindings (inbound email,
 /// numbers, chat channels, signed-in sessions). Matched case-insensitively
 /// as substrings.
-const PRIVATE_CONFIG_MARKERS: [&str; 14] = [
+const PRIVATE_CONFIG_MARKERS: [&str; 15] = [
     "secret", "token", "password", "credential", "apikey", "api_key", "phone", "email",
     "channel", "binding", "messaging", "webhook", "vmoperator", "session",
+    // Always on / failover is about the home computer; on the cloud copy it would point at itself.
+    "availability",
 ];
 
 /// The config with credentials and per-computer bindings removed (top level).
@@ -346,6 +348,6 @@ mod tests {
             "messagingConfig": {}, "identityChannels": [], "connectorBindings": [], "secretRefs": [],
             "emailAddress": "a@b", "phoneNumber": "+1", "token": "t"
         }));
-        assert_eq!(c, json!({"botBrain": "claude", "availability": {"alwaysOn": true}, "isBot": true}));
+        assert_eq!(c, json!({"botBrain": "claude", "isBot": true}));
     }
 }

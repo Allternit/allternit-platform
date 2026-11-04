@@ -352,7 +352,7 @@ GET /api/v1/agents/:id/package
 PUT /api/v1/agents/:id/package
 ```
 
-`GET` returns `{id, agent, files, version}`. `agent` holds the bot's row fields: name, description, type, brain (`provider`, `model`), system prompt, tools, skills, `owns`, avatar, character, tags, modes and `config` (including `botBrain` and `availability`). `files` maps workspace paths to text: `SOUL.md`, `USER.md`, `AGENTS.md`, `TOOLS.md`, `HEARTBEAT.md`, `MEMORY.md`, `memory/MEMORY.md`, `GIZZI.md`, `.claude/CLAUDE.md`, `SYSTEM_LAW.md` and `.md`/`.json`/`.txt` files in `.allternit/bot/` (1 MB per file, 64 files).
+`GET` returns `{id, agent, files, version}`. `agent` holds the bot's row fields: name, description, type, brain (`provider`, `model`), system prompt, tools, skills, `owns`, avatar, character, tags, modes and `config` (including `botBrain`; not `availability`, since Always on belongs to the home computer). `files` maps workspace paths to text: `SOUL.md`, `USER.md`, `AGENTS.md`, `TOOLS.md`, `HEARTBEAT.md`, `MEMORY.md`, `memory/MEMORY.md`, `GIZZI.md`, `.claude/CLAUDE.md`, `SYSTEM_LAW.md` and `.md`/`.json`/`.txt` files in `.allternit/bot/` (1 MB per file, 64 files).
 
 Never in a package: credentials, the identity key, inbound email addresses, phone numbers, channel and connector bindings, and sign-ins. Config keys that name any of these (`secret`, `token`, `password`, `credential`, `api_key`, `phone`, `email`, `channel`, `binding`, `messaging`, `webhook`, `vmOperator`, `session`) are removed. They stay on the home computer.
 
