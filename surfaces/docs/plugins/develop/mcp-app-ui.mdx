@@ -66,18 +66,19 @@ The host waits up to 20 seconds for the View to initialize. After that it shows 
 | `ui/notifications/initialized` | notification | Marks the View ready. |
 | `ui/notifications/size-changed` | notification | Resizes the inline frame to the reported `height`. Ignored in fullscreen. |
 | `ui/notifications/request-teardown` | notification | Dismisses the View. |
-| `ui/open-link` | request | Opens `url` in the browser. |
-| `ui/message` | request | Adds a message to the chat thread from the app. |
-| `ui/update-model-context` | request | Updates context the model sees on its next turn. |
+| `ui/open-link` | request | Opens `url` in Allternit's browser. See [Links](#links). |
+| `ui/message` | request | Sends the text blocks as the user's next message in the chat the View is in, and the model answers it. Fails with `isError` while a reply is still streaming, or when there is no text. |
+| `ui/update-model-context` | request | Replaces this View's context for the chat. The model gets it with the next turn. See [State guidance](#state-guidance). |
 | `ui/request-display-mode` | request | Switches between `inline` and `fullscreen`. The host replies with the mode it applied. |
+| `ui/download-file` | request | Saves embedded resources (`text` or base64 `blob`) to the user's device after the user approves. `https` resource links open in the browser instead. |
 | `tools/call` | request | Forwarded to your server. See [Requests the host makes for a View](/plugins/develop/mcp-server#requests-the-host-makes-for-a-view). |
 | `resources/list`, `resources/read`, `resources/templates/list` | request | Forwarded to your server. |
 | `notifications/message` | notification | Logged by the host at debug level. |
 | `x-allternit/*` | request | Optional Allternit extensions. See [window.allternit extensions](/plugins/reference/window-allternit). |
 
-Any other method is rejected with JSON-RPC error `-32601`. `ui/download-file` is not implemented.
+Any other method is rejected with JSON-RPC error `-32601`.
 
-The host advertises these capabilities at initialize: `openLinks`, `serverTools`, `serverResources`, `logging`, and `x-allternit`. It also advertises `sandbox` with the `csp` and `permissions` your resource declared.
+The host advertises these capabilities at initialize: `openLinks`, `downloadFile`, `message` (text), `updateModelContext` (text and structured content), `serverTools`, `serverResources`, `logging`, and `x-allternit`. It also advertises `sandbox` with the `csp` and `permissions` your resource declared.
 
 ### Handling a tool call from the View
 
@@ -90,6 +91,16 @@ const result = await request("tools/call", {
 
 The call goes through the host to your server with the user's own OAuth token. The View never sees the token.
 
+The host asks the user first, in a sheet that names your app, the tool and its arguments, with **Deny** and **Allow once**, when the user's permission mode for your app requires it. The mode is set per app in MCP Apps; the default asks before any tool that is not marked `readOnlyHint: true`. The tool's annotations come from your server's own `tools/list`, never from the View's request, and a tool the host cannot find is treated as destructive. A declined call fails with a JSON-RPC error. Mark read-only tools with `readOnlyHint: true` so they run without a prompt.
+
+### Links
+
+`ui/open-link` follows these rules:
+
+- `https` links on a host your resource declared in `csp.connectDomains`, `csp.resourceDomains` or `domain` open straight away. `https://*.example.com` covers `example.com` and its subdomains. A declared public suffix such as `*.com` is ignored.
+- Any other `http`, `https` or `mailto` link, or a link with a user name or password in it, opens only after the user approves a sheet that shows the full address.
+- Other schemes (`javascript:`, `data:`, `file:` and so on) are refused with `isError`.
+
 ## Host context
 
 `hostContext` is sent in the `ui/initialize` result and again in `ui/notifications/host-context-changed`.
@@ -100,10 +111,10 @@ The call goes through the host to your server with the user's own OAuth token. T
 | `styles.variables` | CSS variables for the current theme. See [Theming](#theming). |
 | `displayMode` | `"inline"` or `"fullscreen"`. |
 | `availableDisplayModes` | `["inline", "fullscreen"]`. |
-| `containerDimensions` | `maxWidth` and `height` inline; `maxWidth` and `maxHeight` in fullscreen. |
+| `containerDimensions` | `maxWidth` and `height` inline. In fullscreen, the exact `width` and `height` the View has, updated when the window resizes. |
 | `toolInfo` | The tool call's id and its tool definition. |
 | `locale`, `timeZone`, `userAgent` | From the user's browser. |
-| `platform` | `"web"` or `"mobile"`. |
+| `platform` | `"web"`, or `"mobile"` on phones (the ai.allternit.com phone layout and the m.allternit.com app). |
 | `deviceCapabilities` | `touch` and `hover`. |
 | `x-allternit` | The extension advertisement. See [feature detection](/plugins/reference/window-allternit#feature-detection). |
 
@@ -116,6 +127,15 @@ const { mode } = await request("ui/request-display-mode", { mode: "fullscreen" }
 ```
 
 Only `inline` and `fullscreen` exist. Picture-in-picture is not supported. Any other requested mode resolves to `inline`. The View is not reloaded when the mode changes. Handle `host-context-changed` to adapt the layout.
+
+The user can switch modes too. Every View's header has an expand button, and fullscreen has a button to go back to the chat. Escape and a click outside the panel also go back. Your View gets `host-context-changed` with the new `displayMode` either way.
+
+| Where | Inline | Fullscreen |
+|-------|--------|------------|
+| Desktop and ai.allternit.com on a computer | A card in the conversation, 320–720 px high, sized by your `size-changed` reports. | A panel over the chat, up to 1152 px wide. |
+| Phones (ai.allternit.com phone layout, m.allternit.com) | A card 240–520 px high, and never more than 60% of the screen height. The conversation owns vertical scrolling. | A full-height sheet from the bottom of the screen, with safe-area padding. |
+
+A carousel is not a host display mode. To show a list of items, render the carousel inside your inline View. Keep inline Views short, with at most two actions, and move browsing and editing to fullscreen.
 
 ## Theming
 
@@ -226,5 +246,6 @@ Because the View has no storage, treat it as a pure function of what the host gi
 - Render from `tool-input` and `tool-result`. Do not assume they arrive before your first paint; render a placeholder first.
 - Keep durable state on your server. Save it with a tool that has `visibility: ["app"]` and read it back with `tools/call` on load.
 - Keep model-relevant state out of the View. Use `ui/update-model-context` to tell the model what matters (for example, which row the user selected) and `ui/message` to add a message to the conversation.
+- Each `ui/update-model-context` replaces your View's earlier context in that chat. Text blocks and `structuredContent` (as JSON) are kept, up to 4,000 characters per View and 12,000 per chat; longer context is cut, with a note saying how much. The model gets it with the next turn, labelled as written by the app and not by the user. Send an empty update to clear it. Nothing is shown in the transcript.
 - Expect the View to be torn down and re-created when the conversation is reloaded. Rebuild it from the tool result.
 - Report your content height with `ui/notifications/size-changed` after every layout change, or the inline frame will not fit your content.
