@@ -179,6 +179,9 @@ struct OAuthMaterial {
     /// Recorded by the OAuth start from the auth server's metadata.
     token_endpoint: Option<String>,
     resource: Option<String>,
+    /// `(user_id, config)` when the session came from managed sign-in
+    /// (`managed_auth`): renewal is a new ID-JAG + grant, not a refresh token.
+    managed: Option<(String, crate::managed_auth::ManagedConfig)>,
 }
 
 impl std::fmt::Debug for Connector {
@@ -293,6 +296,10 @@ fn read_connector(conn: &rusqlite::Connection, row: ConnectorRow) -> rusqlite::R
         oauth.client_auth_method = crate::mcp_directory_routes::dcr_auth_method(client_info.as_deref());
         oauth.token_endpoint = crate::mcp_routes::session_meta_str(metadata.as_deref(), "tokenEndpoint");
         oauth.resource = crate::mcp_routes::session_meta_str(metadata.as_deref(), "resource");
+        oauth.managed = metadata
+            .as_deref()
+            .and_then(|m| serde_json::from_str::<Value>(m).ok())
+            .and_then(|m| crate::managed_auth::config_from_session(&m));
         // Sealed rows open; legacy plaintext rows pass through unchanged.
         let tokens_json = crate::token_crypto::open(&stored);
         token = access_token_of(&tokens_json);
@@ -327,6 +334,10 @@ const REFRESH_SKEW_SECS: i64 = 60;
 async fn refresh_if_needed(state: &Arc<AppState>, connector: &mut Connector, allow_private: bool) {
     let Some(expires_at) = connector.oauth.expires_at else { return };
     if chrono::Utc::now().timestamp() + REFRESH_SKEW_SECS < expires_at {
+        return;
+    }
+    if connector.oauth.managed.is_some() {
+        regrant_managed(state, connector, allow_private).await;
         return;
     }
     let Some(refresh_token) = connector.oauth.refresh_token.clone() else {
@@ -378,6 +389,32 @@ async fn refresh_if_needed(state: &Arc<AppState>, connector: &mut Connector, all
                     .await;
                 }
             }
+        }
+    }
+}
+
+impl Connector {
+    /// Signed in through managed sign-in (renewable with no UI).
+    pub(crate) fn is_managed(&self) -> bool {
+        self.oauth.managed.is_some()
+    }
+}
+
+/// A managed session's renewal: new ID-JAG from cloud-api, new JWT-bearer grant.
+/// Failure marks the connector unauthorized (the dead token is never sent).
+pub(crate) async fn regrant_managed(state: &Arc<AppState>, connector: &mut Connector, allow_private: bool) {
+    let Some((user_id, cfg)) = connector.oauth.managed.clone() else { return };
+    let cloud = crate::managed_auth::cloud();
+    match crate::managed_auth::regrant(state, cloud.as_ref(), &user_id, Some(&connector.id), &connector.name, &cfg, allow_private).await {
+        Ok(tokens) => {
+            connector.token = access_token_of(&tokens.to_string());
+            connector.oauth.expires_at = token_expiry(&tokens, None);
+            connector.oauth.tokens = Some(tokens);
+            connector.auth_failed = connector.token.is_none();
+        }
+        Err(e) => {
+            warn!(connector_id = %connector.id, code = %e.code, "mcp connector: managed re-grant failed");
+            connector.auth_failed = true;
         }
     }
 }

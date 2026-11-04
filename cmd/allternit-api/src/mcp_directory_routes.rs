@@ -1282,13 +1282,29 @@ pub fn persist_oauth_start(
 }
 
 /// `POST /mcp/connectors/:id/oauth/start` → `{ "authorize_url": … }`.
+#[derive(Debug, Default, Deserialize)]
+pub struct OAuthStartQuery {
+    /// `oauth2`: the user chose "Connect with sign-in instead"; skip managed sign-in.
+    via: Option<String>,
+}
+
 pub async fn start_connector_oauth(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
     Path(id): Path<String>,
-) -> Res<Value> {
+    Query(q): Query<OAuthStartQuery>,
+) -> Result<Response, DirError> {
     let (uid, cid) = (user.user_id.clone(), id.clone());
     let connector = blocking(state.db.clone(), move |c| load_connector(c, &uid, &cid)).await?;
+    // "Custom MCP server" under managed authorization: when the user's org manages
+    // this server's URL, sign in with an ID-JAG instead of a browser. A failure is a
+    // plain error offering the normal sign-in (`?via=oauth2`), never a silent fallback.
+    if q.via.as_deref() != Some("oauth2") {
+        let cloud = crate::managed_auth::cloud();
+        if let Some(cfg) = crate::managed_auth::applicable_for_server(cloud.as_ref(), &user.user_id, &connector.url).await {
+            return Ok(managed_server_sign_in(&state, &user.user_id, &id, &connector.url, cfg).await);
+        }
+    }
     let mut discovery = discover_authorization(&ReqwestTransport, &connector.url).await.map_err(DirError::Upstream)?;
     let base = public_base();
     // Our CIMD only works where the authorization server can fetch it.
@@ -1326,7 +1342,23 @@ pub async fn start_connector_oauth(
         )
     })
     .await?;
-    Ok(Json(json!({ "authorize_url": url })))
+    Ok(Json(json!({ "authorize_url": url })).into_response())
+}
+
+async fn managed_server_sign_in(state: &Arc<AppState>, user_id: &str, id: &str, url: &str, cfg: crate::managed_auth::ManagedConfig) -> Response {
+    let cloud = crate::managed_auth::cloud();
+    let tokens = match crate::managed_auth::grant(cloud.as_ref(), user_id, &cfg, crate::mcp_apps::allow_private_hosts()).await {
+        Ok(t) => t,
+        Err(e) => {
+            tracing::warn!(mcp_connector_id = id, code = %e.code, "managed sign-in for MCP server refused");
+            return (StatusCode::CONFLICT, Json(e.to_json(id, true))).into_response();
+        }
+    };
+    let (uid, mcp_id, name, cfg2) = (user_id.to_string(), id.to_string(), url.to_string(), cfg.clone());
+    match blocking(state.db.clone(), move |c| crate::managed_auth::store_for(c, &uid, Some(&mcp_id), &name, &cfg2, &tokens).map_err(DirError::from)).await {
+        Ok(_) => Json(json!({ "status": "connected", "auth_type": "managed", "org_id": cfg.org_id })).into_response(),
+        Err(e) => e.into_response(),
+    }
 }
 
 // ─── Tests ──────────────────────────────────────────────────────────────────

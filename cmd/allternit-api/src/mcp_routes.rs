@@ -573,6 +573,11 @@ pub(crate) async fn delete_connector_with(
         let conn = db.connect()?;
         let tx = conn.unchecked_transaction()?;
         tx.execute("DELETE FROM mcp_oauth_sessions WHERE mcp_connector_id = ?1", params![cid])?;
+        // A managed sign-in's index row points at this server; it goes with it.
+        tx.execute(
+            "DELETE FROM connector_connections WHERE user_id = ?1 AND auth_type = 'managed' AND json_extract(metadata, '$.managed.mcp_connector_id') = ?2",
+            params![uid, cid],
+        )?;
         // Unbind it from this user's agents (`mcp_connector_ids` is a JSON array of ids).
         let bound: Vec<(String, String)> = {
             let mut stmt = tx.prepare("SELECT id, mcp_connector_ids FROM agents WHERE user_id = ?1 AND mcp_connector_ids LIKE '%' || ?2 || '%'")?;

@@ -40,7 +40,7 @@ See [Authentication](/api/authentication).
 | `name` | string | Human-readable name. |
 | `category` | string | Connector category. |
 | `provider` | string | Always `"allternit"` for owned connectors. |
-| `auth_type` | string | `local_cli`, `api_key`, `oauth2`, `device_flow`, `no_auth`, or `unknown`. |
+| `auth_type` | string | `local_cli`, `api_key`, `oauth2`, `device_flow`, `no_auth`, or `unknown`. A connected account may also be `managed` (org sign-in). |
 | `connectable` | boolean | Whether the connector can be connected in the current environment. |
 | `executable` | boolean | Whether the connector has executable actions. |
 | `tier` | integer | Connector tier. |
@@ -119,7 +119,7 @@ Starts a connection flow. The request body and response shape depend on the conn
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `via` | string | No | Force an auth type (`local_cli`, `api_key`, `oauth2`, `device_flow`, `no_auth`). |
+| `via` | string | No | Force an auth type (`local_cli`, `api_key`, `oauth2`, `device_flow`, `no_auth`, `managed`). With no `via`, an enabled [managed authorization](/security/allternit-idjag-issuer#the-managed-connector-auth-kind) config for the connector wins. |
 | `api_key` | string | No | API key for `api_key` connectors. |
 | `add` | boolean | No | `true` adds a new account (a new pending row). Without it, a connector that already has an account reconnects its default. |
 
@@ -157,6 +157,34 @@ curl -X POST http://127.0.0.1:8013/api/v1/connectors/some-oauth/connect \
   "redirect_uri": "http://127.0.0.1:8013/api/v1/connectors/oauth/callback",
   "state": "...",
   "instructions": "Open authorize_url, approve Allternit..."
+}
+```
+
+### Managed example
+
+When the caller's org turned on managed authorization for the connector, connect finishes with no browser:
+
+```json
+{
+  "status": "connected",
+  "connector": "linear",
+  "auth_type": "managed",
+  "owned": true,
+  "org_id": "org_2abc",
+  "mcp_connector_id": "6f1c..."
+}
+```
+
+A refusal is `409` with a plain message and, when the connector has a normal sign-in, the button to offer:
+
+```json
+{
+  "error": "managed_auth_failed",
+  "code": "role_not_allowed",
+  "message": "Your role in the organization isn't allowed to use managed sign-in for this connector. Ask an org admin to add your role.",
+  "connector": "linear",
+  "auth_type": "managed",
+  "fallback": { "via": "oauth2", "label": "Connect with sign-in instead" }
 }
 ```
 
@@ -310,6 +338,8 @@ curl -X POST http://127.0.0.1:8013/api/v1/connectors/mcp \
 | `404 Not Found` | `account_not_found` | `connection_id` or `account` matches none of the caller's accounts; the body lists them. |
 | `409 Conflict` | `not_connected` | Execute or refresh called before connect. |
 | `409 Conflict` | `duplicate_name` | Server-side naming conflict. |
+| `409 Conflict` | `managed_auth_failed` | Managed sign-in was refused; `code` and `message` say why. |
+| `409 Conflict` | `managed_use_mcp` | Execute on a managed connection whose tools run through its MCP server. |
 | `502 Bad Gateway` | `sidecar_unavailable` | The open-connector sidecar is unreachable. |
 | `502 Bad Gateway` | `provider_request_failed` | Upstream provider request failed. |
 
