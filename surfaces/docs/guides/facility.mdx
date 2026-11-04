@@ -23,7 +23,7 @@ A toon character is one [VRM](https://vrm.dev/en/) file (VRM 1.0 or 0.x), drawn 
 2. Put the file in `public/3d/campus/vrm/` and, optionally, a card image beside it.
 3. Add an entry to `VRM_CHARACTERS` in `src/campus/sims/vrm-characters.ts` (`id`, `name`, `file`, `thumb`).
 
-The shared walk, jog, run, strafe and turn clips (`clips.glb`, Mixamo bone names) are mapped onto the VRM's humanoid bones when the character loads, and stride speed scales with hip height so the feet stay planted. The outline width is replaced with one house width, a share of screen height, so edges stay solid at campus distances. Local test models go in `public/3d/campus/vrm/_dev/` (ignored by git) with `dev: true`, and show only in `vite dev`.
+The shared walk, jog, run, strafe and turn clips (`clips.glb`, Mixamo bone names) are mapped onto the VRM's humanoid bones when the character loads, and stride speed scales with hip height so the feet stay planted. Outlines are drawn at a share of screen height, so edges stay solid at campus distances. The widest outline in the file gets the house width, and thinner ones, such as hair strands, keep their share of it. Set each outline color in the file, a dark tone of the material, not black. Local test models go in `public/3d/campus/vrm/_dev/` (ignored by git) with `dev: true`, and show only in `vite dev`.
 
 ## Find a room
 
