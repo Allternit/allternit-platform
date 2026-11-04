@@ -1130,6 +1130,7 @@ async fn main() {
         .merge(allternit_api::coordinator_routes::coordinator_router())
         .merge(allternit_api::delegate_routes::delegate_router())
         .merge(allternit_api::morning_brief::brief_router())
+        .merge(allternit_api::main_bot_reach_out::reach_out_router())
         .merge(allternit_api::slack_webhook_routes::slack_binding_router())
         .merge(model_training_router())
         .merge(photon_router())

@@ -117,6 +117,12 @@ On a bot's own page, the Automation Tasks list under its Routines keeps its rout
 | `allternit-ai/src/views/tasks/AutomationTasksView.tsx` | Passes `onEdit`, `onToggleActive` and `runningId` to the calendar. |
 | `allternit-ai/src/components/bots/schedule/RoutineScheduler.test.ts`, `allternit-ai/src/views/tasks/AutomationSchedule.test.ts` | Unit tests for month chip order and split, time labels, `fmtClock`, `scheduleWords`. |
 
+## The main bot's morning check-in
+
+When a bot first becomes your main bot, it gets one routine: **Morning check-in**, every day at 9:00 in your time zone. Each run asks the bot to look over your open tasks, threads and Inbox and offer one to three pieces of work as suggested tasks (**Go ahead** / **Not now**, nothing starts on its own). When a run works, you get a "(bot name) sent you a message" notification; quiet hours hold it like any message.
+
+It is an ordinary routine: change its time, edit what it says, pause it or delete it on the Routines tab. It is created once and never comes back after you delete it. If the bot has no working brain, the run fails like any routine: **Inbox → Needs fixing** shows why, with **Retry**.
+
 ## When a routine fails
 
 Every failed run is recorded and reported, whether or not the routine has a bot, and whether or not an Allternit window is open. You are told in four places:

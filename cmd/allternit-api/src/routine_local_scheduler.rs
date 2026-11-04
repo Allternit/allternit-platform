@@ -1282,6 +1282,11 @@ pub async fn execute<D: RoutineDriver>(db: &DbHandle, driver: &D, r: &LocalRouti
             if let Err(e) = append_event(db, agent_id, &event, &finished.to_rfc3339()) {
                 warn!(routine = %r.id, error = %e, "failed to ledger routine run");
             }
+            // The main bot's morning check-in posted its offers: tell the person (push, quiet hours apply).
+            // A failed run goes the usual way (alert_for_outcome → Inbox "Needs fixing").
+            if outcome.status == "succeeded" && r.metadata["checkIn"].as_bool() == Some(true) {
+                crate::main_bot_reach_out::notify_check_in(db, agent_id, &bot.name, outcome.session_id.as_deref(), &format!("{}:{}", r.id, started.timestamp_millis()));
+            }
             if outcome.auto_paused {
                 let paused = AppendEventBody {
                     event_type: "routine.paused".to_string(),
