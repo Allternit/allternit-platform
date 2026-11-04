@@ -26,7 +26,11 @@
   <key>com.apple.security.automation.apple-events</key>
   <true/>
 
-  <!-- Native dictation in call mode. -->
+  <!-- Microphone (live mode, dictation, calls). Hardened-runtime apps need
+       audio-input; without it macOS denies the mic with no prompt and the
+       app records silence. device.microphone is the App Sandbox key. -->
+  <key>com.apple.security.device.audio-input</key>
+  <true/>
   <key>com.apple.security.device.microphone</key>
   <true/>
   <key>com.apple.security.personal-information.speech-recognition</key>
