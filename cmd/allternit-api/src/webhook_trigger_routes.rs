@@ -1061,7 +1061,11 @@ async fn run_trigger_bot(state: &Arc<AppState>, trigger: &WebhookTrigger, delive
     );
     set_thread_status(state, &thread.id, "working").await;
     match crate::agent_session_routes::send_bot_turn(&state.db, &session, &trigger.target_agent_id, &text).await {
-        Ok(_) => Ok(()),
+        // The turn has finished: the owner's to look at, not still "working".
+        Ok(_) => {
+            set_thread_status(state, &thread.id, "review").await;
+            Ok(())
+        }
         Err(e) => {
             // The thread shows what happened instead of sitting in "working".
             set_thread_status(state, &thread.id, "failed").await;
