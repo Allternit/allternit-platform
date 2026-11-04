@@ -34,6 +34,9 @@ pub enum ModelRouterError {
     #[error("Upstream returned error {status}: {message}")]
     UpstreamError { status: u16, message: String },
 
+    #[error("{model} is unavailable right now. Pick another model.")]
+    ModelUnavailable { model: String },
+
     #[error("Streaming not supported by provider {0}")]
     StreamingNotSupported(String),
 
@@ -55,7 +58,13 @@ impl From<ModelRouterError> for crate::ApiError {
             ModelRouterError::UpstreamRequestFailed(msg) => crate::ApiError::ServiceUnavailable(msg),
             ModelRouterError::UpstreamError { status, message } => {
                 let code = StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY);
-                if code == StatusCode::UNAUTHORIZED || code == StatusCode::FORBIDDEN {
+                if code == StatusCode::PAYMENT_REQUIRED {
+                    // The upstream account is out of credits: never a client
+                    // error, and its raw body names the vendor.
+                    crate::ApiError::ServiceUnavailable(
+                        "This model is unavailable right now. Pick another model.".to_string(),
+                    )
+                } else if code == StatusCode::UNAUTHORIZED || code == StatusCode::FORBIDDEN {
                     crate::ApiError::Unauthorized(message)
                 } else if code == StatusCode::TOO_MANY_REQUESTS {
                     crate::ApiError::ServiceUnavailable(message)
@@ -65,6 +74,9 @@ impl From<ModelRouterError> for crate::ApiError {
                     crate::ApiError::BadRequest(message)
                 }
             }
+            ModelRouterError::ModelUnavailable { model } => crate::ApiError::ServiceUnavailable(
+                format!("{model} is unavailable right now. Pick another model."),
+            ),
             ModelRouterError::StreamingNotSupported(msg) => crate::ApiError::BadRequest(msg),
             ModelRouterError::InvalidRequest(msg) => crate::ApiError::BadRequest(msg),
             ModelRouterError::Internal(msg) => crate::ApiError::Internal(msg),
@@ -278,6 +290,10 @@ impl ModelRouter {
             if catalog::is_open_lane(entry) && !self.providers.contains_key(&entry.provider) {
                 continue;
             }
+            // A model whose provider is out of credits would only fail.
+            if crate::services::upstream_funding::provider_out_of_credits(&entry.provider) {
+                continue;
+            }
             let mut info = ModelInfo {
                 id: entry.alias.clone(),
                 object: "model".to_string(),
@@ -411,8 +427,9 @@ impl ModelRouter {
     /// model only one provider serves is never refused for funding).
     pub fn funded_alternative(&self, alias: &str) -> Option<String> {
         use crate::services::upstream_funding::{provider_below_floor, same_model_key};
+        use crate::services::upstream_funding::provider_out_of_credits;
         let entry = self.alias_map.resolve(alias)?;
-        if !provider_below_floor(&entry.provider) {
+        if !provider_below_floor(&entry.provider) && !provider_out_of_credits(&entry.provider) {
             return None;
         }
         let key = same_model_key(&entry.upstream_id);
@@ -423,6 +440,7 @@ impl ModelRouter {
                 other.provider != entry.provider
                     && self.providers.contains_key(&other.provider)
                     && !provider_below_floor(&other.provider)
+                    && !provider_out_of_credits(&other.provider)
                     && same_model_key(&other.upstream_id) == key
             })
             .map(|other| other.alias.clone())
@@ -458,10 +476,21 @@ impl ModelRouter {
                 .or_insert_with(|| serde_json::json!({ "include_usage": true }));
         }
 
+        use crate::services::upstream_funding::{mark_out_of_credits, provider_out_of_credits};
+        if provider_out_of_credits(&entry.provider) {
+            return Err(ModelRouterError::ModelUnavailable { model: entry.name.clone() });
+        }
+
         // Rewrite the model field to the upstream id before dispatching.
         request.model = entry.upstream_id.clone();
 
-        provider.chat_completions(request).await
+        match provider.chat_completions(request).await {
+            Err(ModelRouterError::UpstreamError { status: 402, .. }) => {
+                mark_out_of_credits(&entry.provider);
+                Err(ModelRouterError::ModelUnavailable { model: entry.name.clone() })
+            }
+            other => other,
+        }
     }
 
     /// Resolve the retail prices (per 1M tokens, USD) for a model alias.

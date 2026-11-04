@@ -79,6 +79,41 @@ fn set_below_floor(provider: &str, below: bool) {
     }
 }
 
+/// How long an upstream "out of credits" answer (HTTP 402) keeps a
+/// provider's models out of the catalog before the router tries it again.
+const OUT_OF_CREDITS_RETRY: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+
+fn out_of_credits_state() -> &'static RwLock<(HashSet<String>, std::collections::HashMap<String, std::time::Instant>)> {
+    static STATE: OnceLock<RwLock<(HashSet<String>, std::collections::HashMap<String, std::time::Instant>)>> = OnceLock::new();
+    STATE.get_or_init(|| RwLock::new((HashSet::new(), std::collections::HashMap::new())))
+}
+
+/// Whether `provider` cannot serve requests for lack of credits: its last
+/// known balance is zero or less, or it answered 402 in the last 15 minutes.
+/// The router hides its models and answers requests for them with a clear
+/// "unavailable" instead of forwarding a request that will fail.
+pub fn provider_out_of_credits(provider: &str) -> bool {
+    let state = out_of_credits_state().read().unwrap_or_else(|p| p.into_inner());
+    state.0.contains(provider)
+        || state.1.get(provider).is_some_and(|at| at.elapsed() < OUT_OF_CREDITS_RETRY)
+}
+
+/// Record an upstream 402 ("insufficient credits") from `provider`.
+pub fn mark_out_of_credits(provider: &str) {
+    let mut state = out_of_credits_state().write().unwrap_or_else(|p| p.into_inner());
+    state.1.insert(provider.to_string(), std::time::Instant::now());
+}
+
+fn set_balance_empty(provider: &str, empty: bool) {
+    let mut state = out_of_credits_state().write().unwrap_or_else(|p| p.into_inner());
+    if empty {
+        state.0.insert(provider.to_string());
+    } else {
+        state.0.remove(provider);
+        state.1.remove(provider);
+    }
+}
+
 /// Key under which two catalog entries count as "the same model" across
 /// providers: the upstream id's last path segment, lowercased, with `-` and
 /// `_` dropped. `meta-llama/Llama-3.3-70B-Instruct-Turbo` (Together) and the
@@ -355,6 +390,10 @@ pub async fn refresh_provider(
 
     let short = shortfall(balance, burn_24h, row.reserve_days, row.floor_usd);
     set_below_floor(provider, matches!(short, Some(Shortfall::BelowFloor { .. })));
+    // A known balance decides; an unknown one leaves any recent 402 in place.
+    if let Some(balance) = balance {
+        set_balance_empty(provider, balance <= 0.0);
+    }
     if let Some(short) = &short {
         alert_short(provider, short, burn_24h);
     }
