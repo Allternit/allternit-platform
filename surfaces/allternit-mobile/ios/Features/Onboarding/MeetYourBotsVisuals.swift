@@ -57,7 +57,7 @@ struct MeetLookTile: View {
                     Image(vendor.art).resizable().interpolation(.high).scaledToFit()
                         .frame(width: size * 0.8, height: size * 0.8).offset(y: size * 0.05)
                 } else if let url = MeetBotCatalog.spriteURL(for: id) {
-                    SpriteAvatar(url: url, size: size * 0.92, live: live)
+                    SpriteAvatar(url: url, size: size, live: live)
                 }
             }
         }

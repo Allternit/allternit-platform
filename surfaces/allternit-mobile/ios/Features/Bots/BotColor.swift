@@ -79,8 +79,9 @@ final class BotColorStore: ObservableObject {
 
     /// Draws the art (a sprite's first frame) at 48×48 and reads its colour.
     nonisolated private static func artColor(url: URL, sprite: Bool) async -> String? {
-        guard let (data, _) = try? await URLSession.shared.data(from: url),
-              var image = UIImage(data: data)?.cgImage else { return nil }
+        // AvatarArt reads SVG pack art too (UIImage returns nil for it).
+        guard let data = await AvatarArt.data(url),
+              var image = AvatarArt.decode(data, url: url, svgPixels: 256) else { return nil }
         if sprite {
             let width = image.width / 8, height = image.height / 9
             guard width > 0, height > 0,

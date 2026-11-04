@@ -109,7 +109,7 @@ struct ToolCallsRail: View {
         HStack(spacing: 6) {
             Group {
                 if isStreaming {
-                    ThinkingOrb(state: .forToolName(visibleCalls.last?.toolName ?? ""), size: .inline)
+                    WorkingMark(state: WorkingMark.state(forTool: visibleCalls.last?.toolName), size: 16)
                 } else {
                     Image(systemName: "wrench.and.screwdriver")
                         .font(.caption)

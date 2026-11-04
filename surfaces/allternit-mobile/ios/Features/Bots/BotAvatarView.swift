@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import SwiftDraw
 
 /// A bot's avatar, resolved the way the web's `BotAvatar` does
 /// (allternit-ai src/views/bots/BotAvatar.tsx + lib/agents/bot-avatar-config.ts):
@@ -9,8 +10,13 @@ import UIKit
 /// - `pet.spriteUrl`: a Codex-style sprite sheet (192×208 frames, 8×9);
 ///   the first row plays as the "living" idle loop (static under Reduce Motion).
 /// - `type: "image"` with `uri`, or `data.url`: an uploaded / photo avatar.
-/// - anything else: the existing `AgentAvatarView` (emoji / grid identicon),
-///   or the identicon when the avatar is an object we don't draw natively.
+/// - an emoji avatar: `AgentAvatarView`.
+/// - anything else, or nothing saved: the Gizzi mascot (the web's fallback).
+///
+/// Pack art is often SVG (clawd-crew, duet-carry, gizzi-youtube), which
+/// UIImage can't decode, so `AvatarArt` draws SVG with SwiftDraw. Every look
+/// is trimmed to its drawn pixels and fitted at 88% of the box, the web's
+/// avatar-framing, so no face is cropped and every bot reads the same size.
 struct BotAvatarView: View {
     let bot: AgentRecord
     var size: CGFloat = 40
@@ -44,27 +50,12 @@ struct BotAvatarView: View {
                 .frame(width: size, height: size)
                 .accessibilityLabel("\(bot.botDisplayName) avatar")
         case .image(let url):
-            AsyncImage(url: url) { phase in
-                if let image = phase.image {
-                    image.resizable().scaledToFill()
-                } else {
-                    AgentIdenticonView(seed: bot.id, size: size * 0.62)
-                }
-            }
-            .frame(width: size, height: size)
-            .clipShape(RoundedRectangle(cornerRadius: size * 0.3, style: .continuous))
-            .accessibilityLabel("\(bot.botDisplayName) avatar")
+            PortraitAvatar(url: url, size: size)
+                .accessibilityLabel("\(bot.botDisplayName) avatar")
         case .gizzi:
             SetupGizzi(size: size * 0.86, emotion: live ? .pleased : .focused)
                 .frame(width: size, height: size)
                 .accessibilityLabel("\(bot.botDisplayName) avatar")
-        case .identicon:
-            ZStack {
-                RoundedRectangle(cornerRadius: size * 0.325, style: .continuous)
-                    .fill(Color("BgSecondary"))
-                AgentIdenticonView(seed: bot.id, size: size * 0.62)
-            }
-            .frame(width: size, height: size)
         case .legacy:
             AgentAvatarView(agent: bot, size: size)
         }
@@ -79,8 +70,7 @@ struct BotStatusAvatar: View {
     var working = false
     var waiting = false
     var live = false
-    /// Every bot the same size: sprite art (which has empty margins) is
-    /// drawn larger so it fills its frame like a photo does.
+    /// Kept for call sites; every look is now framed the same way.
     var tiled = false
 
     var body: some View {
@@ -98,14 +88,10 @@ struct BotStatusAvatar: View {
 
     @ViewBuilder
     private var face: some View {
-        if tiled {
-            let sprite: Bool = { if case .sprite = BotAvatarSource.resolve(bot) { return true }; return false }()
-            // No bubble: sprite art is drawn larger so it fills the frame.
-            BotAvatarView(bot: bot, size: size * (sprite ? 1.25 : 1), live: live, working: working)
-                .frame(width: size, height: size)
-        } else {
-            BotAvatarView(bot: bot, size: size, live: live, working: working)
-        }
+        // Every look is trimmed to its drawn pixels and fitted the same way
+        // (web avatar-framing), so no kind of art is drawn larger than its frame.
+        BotAvatarView(bot: bot, size: size, live: live, working: working)
+            .frame(width: size, height: size)
     }
 }
 
@@ -124,7 +110,7 @@ enum BotAvatarSource: Equatable {
     case image(URL)
     /// The Gizzi mascot (web BotAvatar's GizziMascot), every new bot's default look.
     case gizzi
-    case identicon
+    /// A plain emoji / text avatar (AgentAvatarView draws it).
     case legacy
 
     static func resolve(_ bot: AgentRecord) -> BotAvatarSource {
@@ -157,14 +143,20 @@ enum BotAvatarSource: Equatable {
                     if let portrait = art.portrait, let url = webAssetURL(portrait) { return .image(url) }
                 }
             }
-            // An avatar object we don't draw natively (geometric, pet vector):
-            // never show its JSON as text.
-            return .identicon
+            // Any other look (colour/initials, vector pets): the web's LegacyBotAvatar
+            // fallback is Gizzi, never a generated pattern.
+            return .gizzi
         }
-        if let avatar = bot.avatar, avatar.hasPrefix("http"), let url = URL(string: avatar) {
-            return .image(url)
+        if let avatar = bot.avatar?.trimmingCharacters(in: .whitespaces), !avatar.isEmpty {
+            if avatar.hasPrefix("http") || avatar.hasPrefix("/avatar-packs/") || avatar.hasPrefix("data:image"),
+               let url = webAssetURL(avatar) {
+                return .image(url)
+            }
+            // An emoji or short glyph the person chose.
+            if AgentAvatarView.gridSeed(avatar) == nil, !avatar.hasPrefix("{") { return .legacy }
         }
-        return .legacy
+        // No look saved: every bot shares Gizzi (web BotAvatar fallback).
+        return .gizzi
     }
 
     /// Pack sprites are stored as web paths ("/avatar-packs/…"), served by
@@ -219,80 +211,152 @@ enum BotAvatarSource: Equatable {
     }
 }
 
-/// CGImage crosses the detached decode task; it is immutable.
+/// Avatar art decoding and framing, shared by portraits, sprites and the
+/// colour sampler (allternit-ai src/views/bots/avatar-framing.ts).
+enum AvatarArt {
+    /// Fetches a web asset, an https URL or a data: URL.
+    nonisolated static func data(_ url: URL) async -> Data? {
+        guard let (data, response) = try? await URLSession.shared.data(from: url) else { return nil }
+        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) { return nil }
+        return data
+    }
+
+    /// Bitmaps through ImageIO; SVG drawn with SwiftDraw, its long side `svgPixels`.
+    nonisolated static func decode(_ data: Data, url: URL, svgPixels: CGFloat = 1024) -> CGImage? {
+        if isSVG(data, url: url) {
+            guard let svg = SVG(data: data), svg.size.width > 0, svg.size.height > 0 else { return nil }
+            let k = svgPixels / max(svg.size.width, svg.size.height)
+            let size = CGSize(width: (svg.size.width * k).rounded(), height: (svg.size.height * k).rounded())
+            return svg.rasterize(size: size, scale: 1).cgImage
+        }
+        return UIImage(data: data)?.cgImage
+    }
+
+    nonisolated static func isSVG(_ data: Data, url: URL) -> Bool {
+        if url.pathExtension.lowercased() == "svg" { return true }
+        if url.scheme == "data", url.absoluteString.hasPrefix("data:image/svg") { return true }
+        let head = String(decoding: data.prefix(512), as: UTF8.self).lowercased()
+        return head.contains("<svg")
+    }
+
+    /// RGBA pixels of a region, unpremultiplied enough for the content test.
+    nonisolated private static func pixels(_ image: CGImage, _ rect: CGRect) -> [UInt8]? {
+        let w = Int(rect.width), h = Int(rect.height)
+        guard w > 0, h > 0, let region = image.cropping(to: rect) else { return nil }
+        var buffer = [UInt8](repeating: 0, count: w * h * 4)
+        let drawn = buffer.withUnsafeMutableBytes { raw -> Bool in
+            guard let context = CGContext(data: raw.baseAddress, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
+                                          space: CGColorSpaceCreateDeviceRGB(),
+                                          bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
+            context.draw(region, in: CGRect(x: 0, y: 0, width: w, height: h))
+            return true
+        }
+        return drawn ? buffer : nil
+    }
+
+    /// web avatarContentBounds: the box of the drawn pixels, ignoring transparent
+    /// padding and light neutral paper, plus 1.5% padding. In image space
+    /// (top-left origin), relative to `rect`.
+    nonisolated static func contentBounds(_ image: CGImage, in rect: CGRect? = nil) -> CGRect {
+        let area = rect ?? CGRect(x: 0, y: 0, width: image.width, height: image.height)
+        let w = Int(area.width), h = Int(area.height)
+        let whole = CGRect(x: 0, y: 0, width: area.width, height: area.height)
+        guard let px = pixels(image, area) else { return whole }
+        var left = w, top = h, right = -1, bottom = -1
+        for y in 0..<h {
+            // A bitmap context's memory starts at the image's top row.
+            let row = y * w * 4
+            for x in 0..<w {
+                let i = row + x * 4
+                let a = Int(px[i + 3])
+                if a < 40 { continue }
+                let r = Int(px[i]) * 255 / a, g = Int(px[i + 1]) * 255 / a, b = Int(px[i + 2]) * 255 / a
+                let lo = min(r, g, b), hi = max(r, g, b)
+                if lo > 205 && hi - lo < 28 { continue }
+                left = min(left, x); right = max(right, x)
+                top = min(top, y); bottom = max(bottom, y)
+            }
+        }
+        guard right >= left, bottom >= top else { return whole }
+        let pad = Int((Double(max(w, h)) * 0.015).rounded(.up))
+        left = max(0, left - pad); top = max(0, top - pad)
+        right = min(w - 1, right + pad); bottom = min(h - 1, bottom + pad)
+        return CGRect(x: left, y: top, width: right - left + 1, height: bottom - top + 1)
+    }
+
+    /// A crop with its own pixels, so the full sheet or raster can be freed.
+    nonisolated static func copy(_ image: CGImage, _ rect: CGRect) -> CGImage? {
+        guard let region = image.cropping(to: rect.integral) else { return nil }
+        let w = region.width, h = region.height
+        guard let context = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
+                                      space: CGColorSpaceCreateDeviceRGB(),
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        context.draw(region, in: CGRect(x: 0, y: 0, width: w, height: h))
+        return context.makeImage()
+    }
+}
+
+/// CGImages cross the detached decode task; they are immutable.
 private struct SpriteFrames: @unchecked Sendable {
     let images: [CGImage]
+    /// The resting frame's drawn box inside the frames (web spriteDestination
+    /// `neutral`), which sets the character's size and position.
+    let neutral: CGRect
 }
 
 /// Frames of a sprite sheet, cached per URL.
 @MainActor
 private final class SpriteFrameCache {
     static let shared = SpriteFrameCache()
-    private var frames: [URL: [CGImage]] = [:]
+    private var frames: [URL: SpriteFrames] = [:]
     private var loading: [URL: Task<SpriteFrames, Never>] = [:]
 
     /// The idle loop of a pet sheet, cut like the web's AnimatedBotSprite:
     /// cells are 192×208 (×k on a 2× sheet; sheets have 9 or more rows, so
     /// the height is never divided by a row count), row 0 is idle, blank
-    /// cells at the row's end are skipped (they flashed as a blink), and
-    /// every frame is cropped to the union of the drawn pixels so the
-    /// character fills its frame.
-    nonisolated static func idleFrames(of image: CGImage) -> [CGImage] {
+    /// cells at the row's end are skipped (they flashed as a blink). Every
+    /// frame is cut to the union of the row's drawn boxes, so a raised arm
+    /// is drawn instead of cropped, and the resting frame's box is kept to
+    /// size and place the character (web spriteDestination).
+    nonisolated static func idleFrames(of image: CGImage) -> SpriteFrames {
+        let empty = SpriteFrames(images: [], neutral: .zero)
         let columns = 8
         let k = max(1, image.width / (columns * 192))
         let cellW = 192 * k, cellH = 208 * k
-        guard image.width >= cellW * columns, image.height >= cellH else { return [] }
-        // Row 0's alpha, to find drawn cells and their bounds.
-        let rowW = cellW * columns
-        var alpha = [UInt8](repeating: 0, count: rowW * cellH)
-        guard let row = image.cropping(to: CGRect(x: 0, y: 0, width: rowW, height: cellH)),
-              let context = CGContext(data: &alpha, width: rowW, height: cellH, bitsPerComponent: 8,
-                                      bytesPerRow: rowW, space: CGColorSpaceCreateDeviceGray(),
-                                      bitmapInfo: CGImageAlphaInfo.alphaOnly.rawValue) else { return [] }
-        context.draw(row, in: CGRect(x: 0, y: 0, width: rowW, height: cellH))
-        var minX = Int.max, minY = Int.max, maxX = -1, maxY = -1
-        var drawn: [Int] = []
+        guard image.width >= cellW * columns, image.height >= cellH else { return empty }
+        let cell = CGRect(x: 0, y: 0, width: cellW, height: cellH)
+        var boxes: [(column: Int, box: CGRect)] = []
         for column in 0..<columns {
-            var any = false
-            for y in stride(from: 0, to: cellH, by: 2) {
-                let base = y * rowW + column * cellW
-                for x in stride(from: 0, to: cellW, by: 2) where alpha[base + x] > 16 {
-                    any = true
-                    minX = min(minX, x); maxX = max(maxX, x)
-                    minY = min(minY, y); maxY = max(maxY, y)
-                }
-            }
-            if any { drawn.append(column) }
+            let rect = cell.offsetBy(dx: CGFloat(column * cellW), dy: 0)
+            let box = AvatarArt.contentBounds(image, in: rect)
+            // A blank cell measures as the whole cell.
+            if box.size != cell.size { boxes.append((column, box)) }
         }
-        guard !drawn.isEmpty, maxX >= minX, maxY >= minY else { return [] }
-        // The bitmap's rows run bottom-up from CGContext; flip to image space.
-        let top = cellH - 1 - maxY, bottom = cellH - 1 - minY
-        let pad = 2 * k
-        let box = CGRect(x: max(0, minX - pad), y: max(0, top - pad),
-                         width: min(cellW, maxX + pad + 2) - max(0, minX - pad),
-                         height: min(cellH, bottom + pad + 2) - max(0, top - pad))
-        return drawn.compactMap { column in
-            image.cropping(to: box.offsetBy(dx: CGFloat(column * cellW), dy: 0))
-        }
+        guard let first = boxes.first else { return empty }
+        let union = boxes.dropFirst().reduce(first.box) { $0.union($1.box) }
+        let images = boxes.compactMap { AvatarArt.copy(image, union.offsetBy(dx: CGFloat($0.column * cellW), dy: 0)) }
+        let neutral = first.box.offsetBy(dx: -union.minX, dy: -union.minY)
+        return SpriteFrames(images: images, neutral: neutral)
     }
 
     /// Frames already loaded, so a redrawn avatar starts on its face
     /// instead of blank (it blinked on every parent refresh).
-    func cached(_ url: URL) -> [CGImage] { frames[url] ?? [] }
+    fileprivate func cached(_ url: URL) -> SpriteFrames? { frames[url] }
 
-    func frames(for url: URL) async -> [CGImage] {
+    fileprivate func frames(for url: URL) async -> SpriteFrames? {
         if let cached = frames[url] { return cached }
-        if let running = loading[url] { return await running.value.images }
+        if let running = loading[url] { let result = await running.value; return result.images.isEmpty ? nil : result }
         let task = Task.detached(priority: .utility) { () -> SpriteFrames in
-            guard let result = try? await URLSession.shared.data(from: url),
-                  let image = UIImage(data: result.0)?.cgImage else { return SpriteFrames(images: []) }
-            return SpriteFrames(images: SpriteFrameCache.idleFrames(of: image))
+            guard let data = await AvatarArt.data(url),
+                  let image = AvatarArt.decode(data, url: url) else { return SpriteFrames(images: [], neutral: .zero) }
+            return SpriteFrameCache.idleFrames(of: image)
         }
         loading[url] = task
-        let result = await task.value.images
+        let result = await task.value
         loading[url] = nil
         // A failed load isn't kept, so the next appearance tries again.
-        if !result.isEmpty { frames[url] = result }
+        guard !result.images.isEmpty else { return nil }
+        frames[url] = result
         return result
     }
 }
@@ -303,40 +367,124 @@ struct SpriteAvatar: View {
     let url: URL
     let size: CGFloat
     let live: Bool
-    @State private var frames: [CGImage] = []
+    @State private var sprite: SpriteFrames?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     init(url: URL, size: CGFloat, live: Bool) {
         self.url = url
         self.size = size
         self.live = live
-        _frames = State(initialValue: SpriteFrameCache.shared.cached(url))
+        _sprite = State(initialValue: SpriteFrameCache.shared.cached(url))
     }
 
     var body: some View {
         Group {
-            if frames.isEmpty {
-                Color.clear
-            } else if live && !reduceMotion && frames.count > 1 {
-                TimelineView(.periodic(from: .now, by: 0.12)) { context in
-                    let index = Int(context.date.timeIntervalSinceReferenceDate / 0.12) % frames.count
-                    frame(frames[index])
+            if let sprite, !sprite.images.isEmpty {
+                let frames = sprite.images
+                if live && !reduceMotion && frames.count > 1 {
+                    TimelineView(.periodic(from: .now, by: 0.12)) { context in
+                        let index = Int(context.date.timeIntervalSinceReferenceDate / 0.12) % frames.count
+                        placed(frames[index], neutral: sprite.neutral)
+                    }
+                } else {
+                    placed(frames[0], neutral: sprite.neutral)
                 }
             } else {
-                frame(frames[0])
+                Color.clear
             }
         }
+        .frame(width: size, height: size)
         .task(id: url) {
-            let loaded = await SpriteFrameCache.shared.frames(for: url)
-            if !loaded.isEmpty { frames = loaded }
+            if let loaded = await SpriteFrameCache.shared.frames(for: url) { sprite = loaded }
         }
     }
 
-    private func frame(_ image: CGImage) -> some View {
-        Image(decorative: image, scale: 1)
+    /// web spriteDestination: the resting frame fills 88% of the box, centred;
+    /// the row is drawn around it, shrunk only if it would leave the box.
+    private func placed(_ image: CGImage, neutral: CGRect) -> some View {
+        let rowW = CGFloat(image.width), rowH = CGFloat(image.height)
+        let base = size * 0.88 / max(neutral.width, neutral.height, 1)
+        let scale = min(base, size / max(rowW, 1), size / max(rowH, 1))
+        let width = rowW * scale, height = rowH * scale
+        let nx = (size - neutral.width * scale) / 2, ny = (size - neutral.height * scale) / 2
+        let x = min(max(nx - neutral.minX * scale, 0), size - width)
+        let y = min(max(ny - neutral.minY * scale, 0), size - height)
+        return Image(decorative: image, scale: 1)
             .resizable()
-            .interpolation(.none)
-            .scaledToFit()
-            .frame(width: size, height: size)
+            .interpolation(.high)
+            .frame(width: width, height: height)
+            .offset(x: x, y: y)
+            .frame(width: size, height: size, alignment: .topLeading)
+    }
+}
+
+/// Trimmed portrait art, cached per URL.
+@MainActor
+private final class PortraitCache {
+    static let shared = PortraitCache()
+    /// nil: the art failed to load or decode.
+    private var images: [URL: CGImage?] = [:]
+    private var loading: [URL: Task<PortraitImage, Never>] = [:]
+
+    fileprivate func cached(_ url: URL) -> CGImage?? { images[url] }
+
+    fileprivate func image(for url: URL) async -> CGImage? {
+        if let cached = images[url] { return cached }
+        if let running = loading[url] { return await running.value.image }
+        let task = Task.detached(priority: .utility) { () -> PortraitImage in
+            guard let data = await AvatarArt.data(url), let image = AvatarArt.decode(data, url: url) else {
+                return PortraitImage(image: nil, failed: true)
+            }
+            let box = AvatarArt.contentBounds(image)
+            return PortraitImage(image: AvatarArt.copy(image, box) ?? image, failed: false)
+        }
+        loading[url] = task
+        let result = await task.value
+        loading[url] = nil
+        // Network failures retry on the next appearance; undecodable art stays failed.
+        if result.image != nil { images[url] = .some(result.image) }
+        return result.image
+    }
+}
+
+private struct PortraitImage: @unchecked Sendable {
+    let image: CGImage?
+    let failed: Bool
+}
+
+/// A pack portrait, upload or photo sprite (web AvatarPortraitCanvas): SVG or
+/// bitmap, trimmed to its drawn pixels and fitted at 88% of the box, never
+/// cropped. Gizzi stands in only when the art can't be loaded.
+struct PortraitAvatar: View {
+    let url: URL
+    let size: CGFloat
+    @State private var image: CGImage?
+    @State private var failed = false
+
+    init(url: URL, size: CGFloat) {
+        self.url = url
+        self.size = size
+        _image = State(initialValue: PortraitCache.shared.cached(url) ?? nil)
+    }
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(decorative: image, scale: 1)
+                    .resizable()
+                    .interpolation(.high)
+                    .scaledToFit()
+                    .frame(width: size * 0.88, height: size * 0.88)
+            } else if failed {
+                SetupGizzi(size: size * 0.86, emotion: .focused)
+            } else {
+                Color.clear
+            }
+        }
+        .frame(width: size, height: size)
+        .task(id: url) {
+            failed = false
+            if let loaded = await PortraitCache.shared.image(for: url) { image = loaded } else { failed = true }
+        }
     }
 }

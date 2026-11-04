@@ -212,19 +212,26 @@ struct MessageRow: View {
                 .contextMenu { bubbleContextMenu }
         } else if message.isStreaming, message.content.isEmpty, message.reasoning.isEmpty,
                   message.toolCalls.isEmpty, message.toolStatus == nil {
-            // Waiting on the first words: the thinking orb.
+            // Waiting on the first words: the working mark (web LiveStatusRow).
             HStack(spacing: 8) {
-                ThinkingOrb(state: .breathing, size: .inline)
+                WorkingMark(state: .thinking, size: 16)
                 Text("Working…")
                     .font(.system(size: 13))
                     .foregroundColor(Color("TextSecondary"))
             }
             .accessibilityElement(children: .combine)
         } else {
-            AssistantMarkdown(content: message.content, isStreaming: message.isStreaming)
-                .font(.system(size: 15))
-                .foregroundColor(Color("TextPrimary"))
-                .contextMenu { bubbleContextMenu }
+            VStack(alignment: .leading, spacing: 10) {
+                AssistantMarkdown(content: message.content, isStreaming: message.isStreaming)
+                    .font(.system(size: 15))
+                    .foregroundColor(Color("TextPrimary"))
+                    .contextMenu { bubbleContextMenu }
+                // Still writing: the orb (or the bot) writes under the reply (web StreamingBubble).
+                if message.role == "assistant", message.isStreaming {
+                    WorkingMark(state: .writing, size: 16)
+                        .frame(height: 20)
+                }
+            }
         }
     }
 
@@ -285,7 +292,7 @@ struct MessageRow: View {
             Group {
                 switch status.state {
                 case .running:
-                    ThinkingOrb(state: .forToolName(status.toolName), size: .inline)
+                    WorkingMark(state: WorkingMark.state(forTool: status.toolName), size: 16)
                 case .done:
                     Image(systemName: "checkmark.circle.fill")
                         .foregroundColor(Color("AccentPrimary"))
@@ -425,5 +432,34 @@ private struct ChatFontModifier: ViewModifier {
         let base = UIFont.preferredFont(forTextStyle: style)
         guard let descriptor = base.fontDescriptor.withDesign(.serif) else { return base }
         return UIFont(descriptor: descriptor, size: base.pointSize)
+    }
+}
+
+
+/// The "agent is doing X" mark in a transcript (allternit-ai
+/// src/components/brand/WorkingMark.tsx): the A:// orb, or, in a bot's chat,
+/// that bot's avatar playing the same state. Used on the live status line,
+/// running tool rows and under a reply while it streams.
+struct WorkingMark: View {
+    let state: AllternitOrbState
+    var size: CGFloat = 16
+    @Environment(\.chatBot) private var bot
+
+    var body: some View {
+        if let bot, !bot.isPrimaryTemplateBot {
+            BotAvatarView(bot: bot, size: size, live: state != .idle, working: state != .idle)
+                .accessibilityHidden(true)
+        } else {
+            AllternitOrbView(state: state, size: size)
+                .accessibilityHidden(true)
+        }
+    }
+
+    /// web orbStateForTool: search-like tools search, writes write, the rest work.
+    static func state(forTool toolName: String?) -> AllternitOrbState {
+        let name = (toolName ?? "").lowercased().replacingOccurrences(of: #"[_\-\s]"#, with: "", options: .regularExpression)
+        if name.range(of: "search|grep|glob|find|fetch|browse|lookup", options: .regularExpression) != nil { return .searching }
+        if name.range(of: "write|edit|create|replace|notebook", options: .regularExpression) != nil { return .writing }
+        return .working
     }
 }

@@ -1,5 +1,4 @@
 {
-  "originHash" : "4867b95707a5b21cf2943f8183427541a1ba2773c4c85af93bc877372cd09a73",
   "pins" : [
     {
       "identity" : "clerk-ios",
@@ -110,6 +109,15 @@
       }
     },
     {
+      "identity" : "swiftdraw",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/swhitty/SwiftDraw",
+      "state" : {
+        "revision" : "82699f4bdf2f075793cfa0d392eb27c59b41a3fe",
+        "version" : "0.29.0"
+      }
+    },
+    {
       "identity" : "swiftmath",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/mgriebling/SwiftMath.git",
@@ -155,5 +163,5 @@
       }
     }
   ],
-  "version" : 3
+  "version" : 2
 }

@@ -100,7 +100,8 @@ struct CodeLaunchComposer: View {
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel(dictation.isRecording ? "Stop voice input" : "Start voice mode")
-                    WaitingGamesPlayButton(busy: isRunning, anytime: true)
+                    // Play shows before typing starts and while a turn runs, never over a draft.
+                    WaitingGamesPlayButton(busy: isRunning, anytime: true, hidden: !trimmed.isEmpty)
                     if isRunning, trimmed.isEmpty, let onStop {
                         Button(action: onStop) {
                             Image(systemName: "stop.fill")
@@ -112,9 +113,10 @@ struct CodeLaunchComposer: View {
                         .buttonStyle(.plain)
                         .accessibilityLabel("Stop")
                     } else if !trimmed.isEmpty {
+                        // A terminal runs on Enter: the run key is the Return key (web title "Run (Enter)").
                         Button(action: send) {
-                            Image(systemName: "arrow.up")
-                                .font(.system(size: 14, weight: .bold))
+                            Image(systemName: "return")
+                                .font(.system(size: 15, weight: .bold))
                                 .foregroundColor(.white)
                                 .frame(width: 40, height: 40)
                                 .background(GizziCodeWordmark.coral, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
