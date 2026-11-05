@@ -48,6 +48,6 @@ let package = Package(
             .product(name: "MLXFFT", package: "mlx-swift"),
             "MisakiSwift",
             "MLXUtilsLibrary",
-        ], resources: [.copy("Resources")]),
+        ], resources: [.copy("KokoroConfig")]),
     ]
 )
