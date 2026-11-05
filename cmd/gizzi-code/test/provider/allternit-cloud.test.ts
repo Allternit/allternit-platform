@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import {
+  cloudInferenceToken,
   discoverAllternitCloud,
   getCachedAllternitPlan,
   isPaidAllternitPlan,
@@ -72,5 +73,21 @@ describe("isPaidAllternitPlan", () => {
     expect(isPaidAllternitPlan({ id: "plus", label: "Plus", plan_tier: "pro", status: "active" })).toBe(true)
     expect(isPaidAllternitPlan({ id: "free", label: "Free", plan_tier: "free", status: "none" })).toBe(false)
     expect(isPaidAllternitPlan({ id: "plus", label: "Plus", plan_tier: "pro", status: "canceled" })).toBe(false)
+  })
+})
+
+describe("cloudInferenceToken", () => {
+  // Regression: Desktop and cloud computers pass the device token as
+  // ALLTERNIT_API_TOKEN; the chat provider read only ALLTERNIT_API_KEY, so
+  // every Allternit Cloud chat there went out unsigned ("Unauthorized").
+  test("uses the device token Desktop passes as ALLTERNIT_API_TOKEN", async () => {
+    process.env.ALLTERNIT_API_TOKEN = "allternit_runtime_device"
+    expect(await cloudInferenceToken()).toBe("allternit_runtime_device")
+  })
+
+  test("prefers an explicit ALLTERNIT_API_KEY", async () => {
+    process.env.ALLTERNIT_API_KEY = "alt_key"
+    process.env.ALLTERNIT_API_TOKEN = "allternit_runtime_device"
+    expect(await cloudInferenceToken()).toBe("alt_key")
   })
 })

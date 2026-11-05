@@ -212,6 +212,11 @@ where
 }
 
 /// Simple auth middleware function for use with axum::middleware::from_fn
+/// Routes a runtime device credential may call: Cloud chat completions only.
+pub(crate) fn is_device_inference_path(path: &str) -> bool {
+    path == "/v1/chat/completions"
+}
+
 pub async fn auth_middleware(
     State(state): State<Arc<ApiState>>,
     request: Request<Body>,
@@ -239,6 +244,35 @@ pub async fn auth_middleware(
                 None
             }
         });
+
+    // A paired computer's own device credential (`allternit_runtime_…`) may
+    // run Cloud inference as the computer's owner, billed to the owner's
+    // credits. Desktop and every cloud computer hand the runtime exactly this
+    // credential; without it their Allternit Cloud chats all failed with
+    // "Unauthorized". Scoped to the chat route: elsewhere device tokens keep
+    // only the narrow routes that already accept them.
+    if let Some(device_token) = token
+        .as_deref()
+        .filter(|t| t.starts_with(crate::routes::runtime_pairing::DEVICE_TOKEN_PREFIX))
+    {
+        if is_device_inference_path(request.uri().path()) {
+            return match crate::routes::runtime_pairing::runtime_device_for_token(&state.db, device_token, None).await {
+                Ok(device) => {
+                    let mut request = request;
+                    request.extensions_mut().insert(AuthContext {
+                        user: AuthenticatedUser {
+                            user_id: device.user_id,
+                            token_id: device.id,
+                            permissions: vec!["inference".to_string()],
+                        },
+                        is_development: false,
+                    });
+                    next.run(request).await
+                }
+                Err(_) => unauthorized_response("Invalid or expired token"),
+            };
+        }
+    }
 
     match token {
         Some(token) => {
@@ -784,5 +818,64 @@ mod tests {
         std::env::remove_var("ALLTERNIT_DEV_MODE");
         std::env::remove_var("ALLTERNIT_DEV_BEARER");
         std::env::remove_var("ENVIRONMENT");
+    }
+}
+
+#[cfg(test)]
+mod device_inference_tests {
+    use super::*;
+    use crate::routes::test_support::{test_state, MockGateway};
+    use axum::{body::Body, extract::Extension, http::Request, routing::post, Router};
+    use tower::ServiceExt;
+
+    const DEVICE_TOKEN: &str = "allternit_runtime_device_inference_test_token";
+
+    async fn app() -> Router {
+        let state = test_state(Arc::new(MockGateway::new(None, vec![]))).await;
+        sqlx::query(
+            "INSERT INTO runtime_devices (id, user_id, name, capabilities, status, credential_expires_at, credential_hash) \
+             VALUES ('rt_cloud', 'user_owner', 'Allternit cloud computer', '[]', 'online', '2999-01-01', $1)",
+        )
+        .bind(crate::routes::runtime_pairing::sha256_hex(DEVICE_TOKEN.as_bytes()))
+        .execute(&state.db)
+        .await
+        .unwrap();
+        let who = |Extension(auth): Extension<AuthContext>| async move {
+            format!("{} {}", auth.user.user_id, auth.user.permissions.join(","))
+        };
+        Router::new()
+            .route("/v1/chat/completions", post(who))
+            .route("/api/v1/deployments", post(who))
+            .layer(axum::middleware::from_fn_with_state(state.clone(), auth_middleware))
+            .with_state(state)
+    }
+
+    async fn call(app: Router, path: &str, token: &str) -> (StatusCode, String) {
+        let res = app
+            .oneshot(Request::post(path).header("authorization", format!("Bearer {token}")).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let status = res.status();
+        let body = axum::body::to_bytes(res.into_body(), 1 << 16).await.unwrap();
+        (status, String::from_utf8_lossy(&body).to_string())
+    }
+
+    #[tokio::test]
+    async fn a_paired_computer_runs_cloud_chat_as_its_owner() {
+        let (status, body) = call(app().await, "/v1/chat/completions", DEVICE_TOKEN).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, "user_owner inference");
+    }
+
+    #[tokio::test]
+    async fn a_device_token_still_cannot_reach_other_protected_routes() {
+        let (status, _) = call(app().await, "/api/v1/deployments", DEVICE_TOKEN).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn an_unknown_device_token_is_refused_for_chat() {
+        let (status, _) = call(app().await, "/v1/chat/completions", "allternit_runtime_not_paired").await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
     }
 }

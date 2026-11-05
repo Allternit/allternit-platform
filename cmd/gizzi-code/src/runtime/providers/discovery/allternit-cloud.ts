@@ -71,6 +71,22 @@ export function cloudAuthToken(): string | undefined {
   )
 }
 
+/**
+ * The credential for Cloud chat: ALLTERNIT_API_KEY, then ALLTERNIT_API_TOKEN
+ * (Desktop and every cloud computer pass the computer's device token here),
+ * then this runtime's own `gizzi login` / `gizzi pair` device token. Cloud
+ * accepts a device token for chat as the computer's owner. Reading only
+ * ALLTERNIT_API_KEY sent every Desktop and cloud-computer chat unsigned.
+ */
+export async function cloudInferenceToken(): Promise<string | undefined> {
+  const env = cloudAuthToken()
+  if (env) return env
+  // Loaded on demand: only a runtime with no env credential reads its pairing.
+  const { Pairing } = await import("@/runtime/services/pairing/pairing")
+  const stored = await Pairing.load().catch(() => undefined)
+  return Pairing.tokenUsable(stored) ? stored.deviceToken : undefined
+}
+
 function authHeaders(): Record<string, string> {
   const token = cloudAuthToken()
   return token ? { Authorization: `Bearer ${token}` } : {}

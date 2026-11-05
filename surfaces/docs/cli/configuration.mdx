@@ -123,7 +123,8 @@ While a `/goal` runs, each round ends with the project's checks and a review: `g
 
 | Variable | Purpose |
 |----------|---------|
-| `ALLTERNIT_API_KEY` | API key for the LLM gateway |
+| `ALLTERNIT_API_KEY` | API key for the LLM gateway. Allternit Cloud chat uses it first |
+| `ALLTERNIT_API_TOKEN` | The device token Allternit Desktop passes to its runtime. Allternit Cloud chat uses it when `ALLTERNIT_API_KEY` isn't set |
 | `ALLTERNIT_ENDPOINT` | Override the default API endpoint |
 | `GIZZI_CONFIG_PATH` | Override the `config.toml` location |
 | `GIZZI_CREDENTIAL_STORE` | Override `auth.credential_store` |
