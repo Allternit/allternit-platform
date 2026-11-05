@@ -170,7 +170,8 @@ gizzi counts checks per session and artifact. A check makes progress when the li
 ### Limits
 
 - Kinds: `page` (HTML; not a published link or Markdown) and `design` (canvas or HTML). Other kinds return a message that says they can't be checked yet.
-- The session must be open in an Allternit app (Desktop, ai.allternit.com or the m.allternit.com PWA). Otherwise the check times out after 120 s and says so. It is only offered to app, Desktop and CLI clients, like `media_generate`.
+- The session must be open in an Allternit app (Desktop, ai.allternit.com, the m.allternit.com PWA or the iPhone app). Otherwise the check times out after 120 s and says so. It is only offered to app, Desktop and CLI clients, like `media_generate`.
+- The iPhone app renders in an off-screen web view the way its own preview shows the page (CDN libraries and fonts load) and takes the picture with a native snapshot (`Features/Media/NativePaneRenderer.swift`). It draws HTML designs; a canvas design gets a message to check it from Desktop or the web.
 - During a check, a page's runtime calls (`window.allternit` storage, AI and connectors) get no answer.
 - On ai.allternit.com and the PWA, the check uses a `srcdoc` frame, which inherits the app's CSP. CDN libraries and web fonts load only on Desktop, which matches what the preview shows on each surface.
 - The likeness is advisory: it compares colour and layout, not text. The model is told to look at the pictures too.

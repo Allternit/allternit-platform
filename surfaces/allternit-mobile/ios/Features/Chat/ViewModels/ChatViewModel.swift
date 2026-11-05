@@ -335,14 +335,18 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
     /// Matches gizzi's PaneArtifact.TIMEOUT_MS: older requests have already failed there.
     private static let paneArtifactTimeout: TimeInterval = 120
 
-    /// Runs the session agent's pane_artifact requests through `run` and sends
-    /// each answer back, until the task is cancelled. Same contract as the web's
-    /// pane-artifact-bridge: a request runs at most once, and never once the
-    /// agent has stopped waiting. `onProblem` is told what the model can't tell
-    /// the person itself, when the answer can't get back or the stream is down.
+    /// Runs the session agent's requests for this screen and sends each
+    /// answer back, until the task is cancelled: pane_artifact requests
+    /// through `run` (only where an editor is open), and pane_render requests
+    /// (media_generate images and videos, artifact_check) through
+    /// NativePaneRenderer on every chat screen. Same contract as the web's
+    /// pane-artifact and pane-render bridges: a request runs at most once, and
+    /// never once the agent has stopped waiting. `onProblem` is told what the
+    /// model can't tell the person itself, when the answer can't get back or
+    /// the stream is down.
     func servePaneArtifactRequests(
         sessionId: String,
-        run: @escaping @MainActor (PaneArtifactRequest) async -> PaneArtifactResult,
+        run: (@MainActor (PaneArtifactRequest) async -> PaneArtifactResult)?,
         onProblem: @escaping @MainActor (String) -> Void
     ) async {
         var sessions: Set<String> = [sessionId]
@@ -361,8 +365,16 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
                         cursor = id
                     case .handedOff(let from, let to):
                         if sessions.contains(from) { sessions.insert(to) }
+                    case .paneRender(let request):
+                        guard sessions.contains(request.sessionId), NativePaneRenderer.shared.take(request.requestId) else { continue }
+                        let limit = (request.timeoutMs ?? 60_000) / 1000
+                        if let time = request.time, Date().timeIntervalSince1970 - time / 1000 > limit { continue }
+                        Task { [chatClient] in
+                            let result = await NativePaneRenderer.shared.run(request, client: chatClient)
+                            await Self.sendPaneRenderReply(request, result: result, client: chatClient, onProblem: onProblem)
+                        }
                     case .paneArtifact(let request):
-                        guard sessions.contains(request.sessionId), handled.insert(request.requestId).inserted else { continue }
+                        guard let run, sessions.contains(request.sessionId), handled.insert(request.requestId).inserted else { continue }
                         if let time = request.time, Date().timeIntervalSince1970 - time / 1000 > Self.paneArtifactTimeout { continue }
                         Task { [chatClient] in
                             let result = await run(request)
@@ -384,6 +396,26 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
                 }
             }
             try? await Task.sleep(for: .seconds(min(2 * (failures + 1), 15)))
+        }
+    }
+
+    private static func sendPaneRenderReply(
+        _ request: PaneRenderRequest,
+        result: PaneRenderResult,
+        client: AgentChatClient,
+        onProblem: @MainActor (String) -> Void
+    ) async {
+        for attempt in 1...3 {
+            do {
+                try await client.replyPaneRender(requestId: request.requestId, result: result)
+                return
+            } catch {
+                if attempt == 3 {
+                    onProblem("The agent didn't get the render: \(FriendlyErrorMessage.from(error.localizedDescription))")
+                    return
+                }
+                try? await Task.sleep(for: .seconds(attempt))
+            }
         }
     }
 

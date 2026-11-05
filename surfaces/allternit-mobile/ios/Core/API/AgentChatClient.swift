@@ -53,6 +53,8 @@ enum SessionSyncEvent: Sendable {
     /// The stream's position, to resume from after a reconnect.
     case cursor(String)
     case paneArtifact(PaneArtifactRequest)
+    /// A media_generate render or an artifact_check for this phone to run.
+    case paneRender(PaneRenderRequest)
     /// The conversation moved to a fresh session (context handoff).
     case handedOff(from: String, to: String)
 }
@@ -396,15 +398,18 @@ final class AgentChatClient: ObservableObject, @unchecked Sendable {
                             continue
                         }
                         // Most of this stream is every session's reply text;
-                        // only these two frames get decoded.
+                        // only these frames get decoded.
                         guard line.hasPrefix("data:"),
-                              line.contains("pane_artifact_requested") || line.contains("handed_off") else { continue }
+                              line.contains("pane_artifact_requested") || line.contains("pane_render_requested") || line.contains("handed_off") else { continue }
                         let payload = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
                         guard let frame = try? decoder.decode(SessionSyncFrame.self, from: Data(payload.utf8)) else { continue }
                         switch frame.type {
                         case "pane_artifact_requested":
                             guard let requestId = frame.requestId, let sessionId = frame.sessionId else { continue }
                             continuation.yield(.paneArtifact(PaneArtifactRequest(requestId: requestId, sessionId: sessionId, time: frame.time, payload: payload)))
+                        case "pane_render_requested":
+                            guard let request = PaneRenderRequest(payload: payload) else { continue }
+                            continuation.yield(.paneRender(request))
                         case "handed_off":
                             guard let sessionId = frame.sessionId, let to = frame.to else { continue }
                             continuation.yield(.handedOff(from: sessionId, to: to))
@@ -448,6 +453,60 @@ final class AgentChatClient: ObservableObject, @unchecked Sendable {
             }
         }
         return false
+    }
+
+    /// Answers a pane_render request (media_generate, artifact_check) on the
+    /// computer that asked; same two routes as `replyPaneArtifact`.
+    @discardableResult
+    func replyPaneRender(requestId: String, result: PaneRenderResult) async throws -> Bool {
+        guard let resolved = await InstanceConnection.resolve() else {
+            throw AgentChatClientError.noReachableNode
+        }
+        let paths = ["api/v1/pane-render/\(requestId)/reply", "v1/pane-render/\(requestId)/reply"]
+        for path in resolved.isRelay ? paths : paths.reversed() {
+            var request = URLRequest(url: resolved.baseURL.appendingPathComponent(path))
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            if let token = try await AuthManager.shared.getToken(), !token.isEmpty {
+                request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            }
+            request.httpBody = try JSONEncoder().encode(result)
+            let (_, response) = try await InstanceConnection.data(for: request)
+            guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
+            if (200...299).contains(http.statusCode) { return true }
+            if http.statusCode != 404 {
+                throw APIError.httpError(statusCode: http.statusCode, message: nil)
+            }
+        }
+        return false
+    }
+
+    /// Stores a rendered file (a native video's MP4) on the computer the chat
+    /// runs on and returns its API path, like the web's mediaArtifactsApi.
+    func uploadMediaArtifact(_ data: Data, mime: String) async throws -> String {
+        guard let resolved = await InstanceConnection.resolve() else {
+            throw AgentChatClientError.noReachableNode
+        }
+        let paths = ["api/v1/media/artifacts", "v1/media/artifacts"]
+        for path in resolved.isRelay ? paths : paths.reversed() {
+            var request = URLRequest(url: resolved.baseURL.appendingPathComponent(path))
+            request.httpMethod = "POST"
+            request.setValue(mime, forHTTPHeaderField: "Content-Type")
+            if let token = try await AuthManager.shared.getToken(), !token.isEmpty {
+                request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            }
+            request.httpBody = data
+            request.timeoutInterval = 300
+            let (body, response) = try await InstanceConnection.data(for: request)
+            guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
+            if http.statusCode == 404 { continue }
+            guard (200...299).contains(http.statusCode) else {
+                throw APIError.httpError(statusCode: http.statusCode, message: String(data: body, encoding: .utf8))
+            }
+            struct Stored: Decodable { let artifact_url: String }
+            return try JSONDecoder().decode(Stored.self, from: body).artifact_url
+        }
+        throw APIError.httpError(statusCode: 404, message: "This computer can't store rendered files.")
     }
 
     /// Web uses `encodeURIComponent` on session ids (ses_* ids are already

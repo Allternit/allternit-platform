@@ -9,4 +9,4 @@ Use it after artifact_create or artifact_update on a page or design, before you 
 
 The check stops you when refining stops helping: after 3 checks in a row with no better likeness and no fewer problems, or after 8 checks of one artifact in this session. Then tell the user what still doesn't match and ask how to go on.
 
-This chat must be open in an Allternit app (Desktop, ai.allternit.com or the m.allternit.com app) for the check to run: the app does the rendering.
+This chat must be open in an Allternit app (Desktop, ai.allternit.com, the m.allternit.com app or the iPhone app) for the check to run: the app does the rendering.
