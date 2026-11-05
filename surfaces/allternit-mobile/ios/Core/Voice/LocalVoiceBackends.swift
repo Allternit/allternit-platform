@@ -48,10 +48,8 @@ final class SherpaMoonshineRecognizer: LocalRecognizer {
     }
 }
 
-/// Replies on "This device" are read in the system voice
-/// (AVSpeechSynthesizer): sherpa's Kokoro for iOS needs espeak-ng (GPL-3),
-/// which an App Store build can't carry, so the neural voices are Cloud
-/// Voice only. Audio is captured with `write(_:toBufferCallback:)` and played
+/// The system voice (AVSpeechSynthesizer): replies on iOS 17, and any
+/// sentence Kokoro (KokoroSpeech.swift, iOS 18+) can't speak. Audio is captured with `write(_:toBufferCallback:)` and played
 /// through the session's own engine so the OS echo canceller hears it
 /// (barge-in works on the speaker).
 /// Per-utterance state handed to AVSpeechSynthesizer's callback queue; only
@@ -128,7 +126,10 @@ final class SystemSpeechSynthesizer: LocalSynthesizer, @unchecked Sendable {
 
 /// Builds the on-device engine from an installed pack.
 enum LocalVoiceEngineFactory {
-    static func make(paths: VoicePackPaths, listening: ListeningPreference = .automatic) -> LocalVoiceEngine {
+    /// `kokoroVoice` is a Kokoro voice id (`KokoroVoices.resolve`); replies
+    /// use it on iOS 18+ devices, the system voice elsewhere.
+    static func make(paths: VoicePackPaths, listening: ListeningPreference = .automatic,
+                     kokoroVoice: String = KokoroVoices.defaultId, speed: Double = 1) -> LocalVoiceEngine {
         let moonshine = { SherpaMoonshineRecognizer(paths: paths) as LocalRecognizer }
         let recognizer: LocalRecognizer = switch listening {
         case .automatic: SystemFirstRecognizer(native: AppleSpeech.makeTranscriber(), moonshine: moonshine)
@@ -137,7 +138,17 @@ enum LocalVoiceEngineFactory {
         return LocalVoiceEngine(
             detector: SherpaSpeechDetector(modelPath: paths.vad),
             recognizer: recognizer,
-            synthesizer: SystemSpeechSynthesizer())
+            synthesizer: synthesizer(kokoroVoice: kokoroVoice, speed: speed))
+    }
+
+    static func synthesizer(kokoroVoice: String, speed: Double) -> LocalSynthesizer {
+        guard KokoroVoices.deviceSupported else {
+            Logger(subsystem: "com.allternit.app", category: "voice-tts")
+                .info("Kokoro needs iOS 18 on a device; replies use the system voice")
+            return SystemSpeechSynthesizer()
+        }
+        return KokoroSpeechSynthesizer(voice: kokoroVoice, speed: speed,
+                                       root: VoicePackManager.defaultRoot(.kokoro), fallback: SystemSpeechSynthesizer())
     }
 }
 

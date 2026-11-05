@@ -75,6 +75,9 @@ final class VoiceModeViewModel: ObservableObject {
     /// MainActor-only everywhere else and deinit has exclusive access).
     nonisolated(unsafe) private var interruptionObserver: NSObjectProtocol? = nil
 
+    /// The bot's own Kokoro voice id, when it has one (replies on iOS 18+).
+    var botVoice: String?
+
     init(chatViewModel: ChatViewModel, runtimeModelId: String? = nil, effort: String? = nil) {
         self.chatViewModel = chatViewModel
         self.runtimeModelId = runtimeModelId
@@ -186,7 +189,15 @@ final class VoiceModeViewModel: ObservableObject {
                 throw VoiceClientError.server(code: "pack", message: "The on-device voice model isn't installed.")
             }
             options.voice = SettingsStore.shared.voiceIdentifier
-            let engine = LocalVoiceEngineFactory.make(paths: paths, listening: SettingsStore.shared.listening)
+            if KokoroVoices.deviceSupported, !VoicePackManager.kokoro.isReady {
+                // Replies use the system voice until the Kokoro pack lands;
+                // the first session fetches it on Wi-Fi in the background.
+                Task { await VoicePackManager.kokoro.install(cellular: false) }
+            }
+            let engine = LocalVoiceEngineFactory.make(
+                paths: paths, listening: SettingsStore.shared.listening,
+                kokoroVoice: KokoroVoices.resolve(bot: botVoice),
+                speed: SettingsStore.shared.speechSpeed)
             factory = { engine }
             engineLabel = "On this device"
         case .legacy:

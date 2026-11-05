@@ -121,6 +121,20 @@ struct AgentRecord: Decodable, Sendable, Identifiable, Equatable, Hashable {
         return configValue(for: "harness")
     }
 
+    /// The bot's Kokoro voice id (`config.voice.voice_id`, `config.voice_id`
+    /// or `config.voice` as a string), read by on-device voice replies.
+    var kokoroVoiceId: String? {
+        switch config?["voice"] {
+        case .object(let voice)?:
+            if case .string(let id)? = voice["voice_id"] { return id }
+        case .string(let id)?:
+            return id
+        default: break
+        }
+        if case .string(let id)? = config?["voice_id"] { return id }
+        return nil
+    }
+
     /// True for packaged bots (openmausbot / Bot Home parity). Mirrors web
     /// `isBot`: an agent is treated as a bot when it has a bot profile or
     /// explicit `isBot` flag in config.

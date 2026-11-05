@@ -229,6 +229,8 @@ for (const mdxPath of collectMdxFiles(DOCS_DIR)) {
       if (['api/platform/sdks/claude-code-codex.mdx', 'api/mcp-servers.mdx'].some((p) => mdxPath.endsWith(p))) continue;
       // The chat bridge reads `.claude/CLAUDE.md` by name; the Skills note names Claude CLI brains and their own skills.
       if (['api/bot-hub.mdx', 'guides/memory-and-learning.mdx'].some((p) => mdxPath.endsWith(p))) continue;
+      // Voice: bring-your-own-key voice names the two providers whose keys people paste (OpenAI, ElevenLabs).
+      if (['guides/voice.mdx', 'surfaces/voice.mdx', 'api/voice-tickets.mdx'].some((p) => mdxPath.endsWith(p))) continue;
       // Managed connector auth: the connector gateway guide gives each AI app's setup steps, and the managed-auth pages name the outside issuers (Claude orgs) people trust.
       if (['guides/connectors-in-other-apps.mdx', 'guides/connectors.mdx', 'guides/managed-authorization.mdx', 'security/allternit-idjag-issuer.mdx', 'security/trusting-outside-issuers.mdx'].some((p) => mdxPath.endsWith(p))) continue;
       fail(

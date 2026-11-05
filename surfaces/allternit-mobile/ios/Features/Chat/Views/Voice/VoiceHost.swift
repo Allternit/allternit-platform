@@ -22,9 +22,11 @@ final class VoiceHost: ObservableObject {
 
     /// Starts a voice conversation in `presentation` (no-op if one is live —
     /// it just changes presentation).
-    func start(chat: ChatViewModel, runtimeModelId: String?, effort: String?, presentation: Presentation = .bar) {
+    func start(chat: ChatViewModel, runtimeModelId: String?, effort: String?, bot: AgentRecord? = nil,
+               presentation: Presentation = .bar) {
         if viewModel == nil {
             let model = VoiceModeViewModel(chatViewModel: chat, runtimeModelId: runtimeModelId, effort: effort)
+            model.botVoice = bot?.kokoroVoiceId
             viewModel = model
             model.begin(dictation: dictation, speaker: speaker)
         }

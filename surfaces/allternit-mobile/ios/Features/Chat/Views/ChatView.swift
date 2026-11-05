@@ -240,7 +240,7 @@ struct ChatContentView: View {
             // `-open-voice-mode` (DEBUG only): presents voice mode (idle).
             if launchArgumentEnabled("open-voice-mode") || launchArgumentEnabled("open-voice-settings") {
                 voiceHost.start(chat: viewModel, runtimeModelId: modelStore.selectedModelId,
-                                effort: modelStore.effortForSend, presentation: .full)
+                                effort: modelStore.effortForSend, bot: chatBot, presentation: .full)
             }
             // `-voice-summary <seconds>` (DEBUG only): files a "Voice chat
             // ended · Ns" card into the feed.
@@ -500,7 +500,7 @@ struct ChatContentView: View {
             },
             onVoiceMode: {
                 voiceHost.start(chat: viewModel, runtimeModelId: modelStore.selectedModelId,
-                                effort: modelStore.effortForSend, presentation: .bar)
+                                effort: modelStore.effortForSend, bot: chatBot, presentation: .bar)
             },
             onAgentModeChanged: { isOn in
                 if isOn, viewModel.currentSessionId == nil, viewModel.messages.isEmpty {

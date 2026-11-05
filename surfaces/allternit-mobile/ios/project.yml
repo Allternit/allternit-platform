@@ -36,6 +36,11 @@ packages:
   # commit in Packages/VoiceRingKit (see its Package.swift).
   VoiceRingKit:
     path: Packages/VoiceRingKit
+  # Kokoro reply voice on iOS 18+ (MLX, no espeak-ng/GPL): kokoro-ios +
+  # MisakiSwift + MLXUtilsLibrary vendored at pinned tags in
+  # Packages/KokoroKit (see its Package.swift); models download on first use.
+  KokoroKit:
+    path: Packages/KokoroKit
   # SVG pack avatars (clawd-crew, duet-carry, gizzi-youtube): UIImage can't
   # decode SVG, so BotAvatarView draws them with SwiftDraw (MIT, pure Swift).
   SwiftDraw:
@@ -123,7 +128,8 @@ targets:
       # Voice: sherpa-onnx 1.13.8 (same version as the native engine,
       # services/voice) — Silero VAD + Moonshine STT run on-device. Dynamic
       # framework with onnxruntime statically inside; fetch via
-      # Frameworks/fetch-sherpa-onnx.sh. No espeak-ng/Kokoro on iOS (GPL-3).
+      # Frameworks/fetch-sherpa-onnx.sh. No sherpa Kokoro on iOS: it needs
+      # espeak-ng (GPL-3); replies use KokoroKit (MLX + Misaki) instead.
       - framework: Frameworks/SherpaOnnxC.xcframework
         embed: true
       # bzip2 for unpacking `.tar.bz2` voice model packs (Core/Voice/Bz2Tar).
@@ -162,6 +168,8 @@ targets:
       - package: TreeSitterLanguages
         product: TreeSitterSwiftRunestone
       - package: VoiceRingKit
+      - package: KokoroKit
+        product: KokoroSwift
       - package: SwiftTerm
         product: SwiftTerm
       - package: SwiftDraw

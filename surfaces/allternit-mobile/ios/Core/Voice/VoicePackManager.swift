@@ -11,8 +11,36 @@ struct VoicePackFile: Sendable {
     let asset: String
     let sha256: String
     let size: Int64
+    /// Where the file lands under the pack folder (default: its file name).
+    var installPath: String? = nil
     var isArchive: Bool { asset.hasSuffix(".tar.bz2") }
     var fileName: String { String(asset.split(separator: "/").last ?? "") }
+    var installName: String { installPath ?? fileName }
+}
+
+/// A downloadable pack: its folder under Application Support/voice, its
+/// files, the files that must exist once installed, and where it downloads
+/// from.
+struct VoicePack: Sendable {
+    let dir: String
+    let files: [VoicePackFile]
+    let required: [String]
+    /// Release-asset base when `ALLTERNIT_VOICE_MODEL_BASE` isn't set.
+    let defaultBase: String
+    /// Path prefix appended to the `ALLTERNIT_VOICE_MODEL_BASE` override.
+    let overridePrefix: String
+    var totalBytes: Int64 { files.reduce(0) { $0 + $1.size } }
+
+    /// Listening: Silero VAD + Moonshine.
+    static let listening = VoicePack(
+        dir: "small", files: VoicePackSpec.files,
+        required: ["silero_vad.onnx"] + ["encoder_model.ort", "decoder_model_merged.ort", "tokens.txt"]
+            .map { "\(VoicePackSpec.moonshineDir)/\($0)" },
+        defaultBase: VoicePackSpec.defaultBase, overridePrefix: "")
+    /// Replies: Kokoro-82M + voices + Misaki G2P data (KokoroPackSpec).
+    static let kokoro = VoicePack(
+        dir: "kokoro-v1", files: KokoroPackSpec.files, required: KokoroPackSpec.files.map(\.installName),
+        defaultBase: KokoroPackSpec.defaultBase, overridePrefix: "/voice-models/ios/v1")
 }
 
 enum VoicePackSpec {
@@ -52,17 +80,25 @@ struct VoicePackPaths: Sendable, Equatable {
 @MainActor
 final class VoicePackManager: ObservableObject {
     static let shared = VoicePackManager()
+    /// The Kokoro reply voice (~190 MB), iOS 18+ only.
+    static let kokoro = VoicePackManager(pack: .kokoro)
 
     @Published private(set) var state: VoicePackState = .missing
 
-    private let root: URL
+    let pack: VoicePack
+    let root: URL
     private var downloadTask: Task<Void, Never>?
 
-    init(root: URL? = nil) {
-        self.root = root ?? FileManager.default
+    init(pack: VoicePack = .listening, root: URL? = nil) {
+        self.pack = pack
+        self.root = root ?? Self.defaultRoot(pack)
+        state = Self.isInstalled(pack, at: self.root) ? .ready : .missing
+    }
+
+    nonisolated static func defaultRoot(_ pack: VoicePack) -> URL {
+        FileManager.default
             .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("voice/small", isDirectory: true)
-        state = Self.isInstalled(at: self.root) ? .ready : .missing
+            .appendingPathComponent("voice/\(pack.dir)", isDirectory: true)
     }
 
     var isReady: Bool { state == .ready }
@@ -71,7 +107,7 @@ final class VoicePackManager: ObservableObject {
     var paths: VoicePackPaths? { Self.paths(at: root) }
 
     nonisolated static func paths(at root: URL) -> VoicePackPaths? {
-        guard isInstalled(at: root) else { return nil }
+        guard isInstalled(.listening, at: root) else { return nil }
         let model = root.appendingPathComponent(VoicePackSpec.moonshineDir)
         return VoicePackPaths(
             vad: root.appendingPathComponent("silero_vad.onnx").path,
@@ -80,27 +116,28 @@ final class VoicePackManager: ObservableObject {
             tokens: model.appendingPathComponent("tokens.txt").path)
     }
 
-    nonisolated static func isInstalled(at root: URL) -> Bool {
-        let fm = FileManager.default
-        let model = root.appendingPathComponent(VoicePackSpec.moonshineDir)
-        return fm.fileExists(atPath: root.appendingPathComponent(".ready").path)
-            && fm.fileExists(atPath: root.appendingPathComponent("silero_vad.onnx").path)
-            && fm.fileExists(atPath: model.appendingPathComponent("encoder_model.ort").path)
-            && fm.fileExists(atPath: model.appendingPathComponent("decoder_model_merged.ort").path)
-            && fm.fileExists(atPath: model.appendingPathComponent("tokens.txt").path)
+    nonisolated static func isInstalled(_ pack: VoicePack, at root: URL) -> Bool {
+        FileManager.default.fileExists(atPath: root.appendingPathComponent(".ready").path)
+            && hasFiles(pack, at: root)
+    }
+
+    private nonisolated static func hasFiles(_ pack: VoicePack, at root: URL) -> Bool {
+        pack.required.allSatisfy { FileManager.default.fileExists(atPath: root.appendingPathComponent($0).path) }
     }
 
     /// Downloads and installs the pack. Idempotent: a second call while one
-    /// is running awaits the same download.
-    func install() async {
+    /// is running awaits the same download. `cellular: false` waits for
+    /// Wi-Fi (no expensive or Low Data network) instead of using the plan.
+    func install(cellular: Bool = true) async {
         if isReady { return }
         if downloadTask == nil {
             state = .downloading(progress: 0)
             let root = self.root
+            let pack = self.pack
             downloadTask = Task { [weak self] in
                 let weakSelf = self
                 do {
-                    try await Self.download(into: root) { progress in
+                    try await Self.download(pack, into: root, cellular: cellular) { progress in
                         Task { @MainActor in weakSelf?.state = .downloading(progress: progress) }
                     }
                     self?.state = .ready
@@ -126,15 +163,26 @@ final class VoicePackManager: ObservableObject {
 
     // MARK: - Download
 
-    private static func baseURL() -> String {
+    private static func baseURL(_ pack: VoicePack) -> String {
         if let override = Bundle.main.object(forInfoDictionaryKey: "ALLTERNIT_VOICE_MODEL_BASE") as? String,
            !override.isEmpty, !override.hasPrefix("$(") {
-            return override.hasSuffix("/") ? String(override.dropLast()) : override
+            return (override.hasSuffix("/") ? String(override.dropLast()) : override) + pack.overridePrefix
         }
-        return VoicePackSpec.defaultBase
+        return pack.defaultBase
     }
 
-    private static func download(into root: URL, progress: @escaping @Sendable (Double) -> Void) async throws {
+    private static func download(_ pack: VoicePack, into root: URL, cellular: Bool,
+                                 progress: @escaping @Sendable (Double) -> Void) async throws {
+        let session: URLSession
+        if cellular {
+            session = .shared
+        } else {
+            let config = URLSessionConfiguration.default
+            config.allowsExpensiveNetworkAccess = false
+            config.allowsConstrainedNetworkAccess = false
+            config.waitsForConnectivity = true
+            session = URLSession(configuration: config)
+        }
         let fm = FileManager.default
         try fm.createDirectory(at: root, withIntermediateDirectories: true)
         var excluded = root
@@ -144,15 +192,24 @@ final class VoicePackManager: ObservableObject {
         try? fm.removeItem(at: root.appendingPathComponent(".ready"))
 
         var finishedBytes: Int64 = 0
-        let total = VoicePackSpec.totalBytes
-        for file in VoicePackSpec.files {
+        let total = pack.totalBytes
+        for file in pack.files {
             try Task.checkCancellation()
-            guard let url = URL(string: "\(baseURL())/\(file.asset)") else { throw VoicePackError.badURL }
+            let target = root.appendingPathComponent(file.installName)
+            // Resume a pack that was cut off: keep files already verified.
+            if !file.isArchive, fm.fileExists(atPath: target.path),
+               (try? fm.attributesOfItem(atPath: target.path)[.size] as? Int64) == file.size,
+               (try? sha256(of: target)) == file.sha256 {
+                finishedBytes += file.size
+                progress(min(1, Double(finishedBytes) / Double(total)))
+                continue
+            }
+            guard let url = URL(string: "\(baseURL(pack))/\(file.asset)") else { throw VoicePackError.badURL }
             let base = finishedBytes
             let delegate = ProgressDelegate { written in
                 progress(min(1, Double(base + written) / Double(total)))
             }
-            let (tmp, response) = try await URLSession.shared.download(from: url, delegate: delegate)
+            let (tmp, response) = try await session.download(from: url, delegate: delegate)
             guard (response as? HTTPURLResponse)?.statusCode == 200 else {
                 try? fm.removeItem(at: tmp)
                 throw VoicePackError.http((response as? HTTPURLResponse)?.statusCode ?? 0)
@@ -171,24 +228,15 @@ final class VoicePackManager: ObservableObject {
                 try fm.moveItem(at: staging.appendingPathComponent(VoicePackSpec.moonshineDir), to: target)
                 try? fm.removeItem(at: staging)
             } else {
-                let target = root.appendingPathComponent(file.fileName)
+                try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
                 try? fm.removeItem(at: target)
                 try fm.moveItem(at: tmp, to: target)
             }
             finishedBytes += file.size
             progress(min(1, Double(finishedBytes) / Double(total)))
         }
-        guard Self.paths(atUnmarked: root) else { throw VoicePackError.incomplete }
+        guard hasFiles(pack, at: root) else { throw VoicePackError.incomplete }
         fm.createFile(atPath: root.appendingPathComponent(".ready").path, contents: Data())
-    }
-
-    private nonisolated static func paths(atUnmarked root: URL) -> Bool {
-        let fm = FileManager.default
-        let model = root.appendingPathComponent(VoicePackSpec.moonshineDir)
-        return fm.fileExists(atPath: root.appendingPathComponent("silero_vad.onnx").path)
-            && fm.fileExists(atPath: model.appendingPathComponent("encoder_model.ort").path)
-            && fm.fileExists(atPath: model.appendingPathComponent("decoder_model_merged.ort").path)
-            && fm.fileExists(atPath: model.appendingPathComponent("tokens.txt").path)
     }
 
     nonisolated static func sha256(of url: URL) throws -> String {
