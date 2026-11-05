@@ -21,7 +21,7 @@ fn starter_catalog_resolves_known_aliases() {
     assert!(catalog.resolve("deepseek-v4-flash-fireworks").is_none());
     assert!(catalog.resolve("qwen-2.5-72b").is_some());
     assert!(catalog.resolve("mistral-large").is_some());
-    assert!(catalog.resolve("qwen3.6-27b-groq").is_some());
+    assert!(catalog.resolve("qwen3.8-27b-groq").is_some());
     assert!(catalog.resolve("gpt-oss-120b-groq").is_some());
 }
 
@@ -35,9 +35,9 @@ fn unknown_model_returns_none() {
 fn catalog_entries_are_primary_aliases_only() {
     let catalog = starter_catalog();
     // Primary models only (one per model, not per alias):
-    // 8 OpenRouter + 6 Together AI + 4 Fireworks + 3 DeepInfra + 4 Groq
-    // + 2 open lane = 27.
-    assert_eq!(catalog.entries().len(), 27);
+    // 8 OpenRouter + 2 Together AI + 4 Fireworks + 3 DeepInfra + 3 Groq
+    // + 2 open lane = 22.
+    assert_eq!(catalog.entries().len(), 22);
     let open: Vec<_> = catalog
         .entries()
         .iter()
@@ -81,9 +81,9 @@ fn disabled_router_reports_not_enabled() {
 async fn disabled_router_list_models_returns_static_catalog() {
     let router = ModelRouter::disabled(starter_catalog());
     let models = router.list_models().await;
-    // 27 catalog entries minus the 2 open-lane models, hidden while the
+    // 22 catalog entries minus the 2 open-lane models, hidden while the
     // open-lane provider is unset.
-    assert_eq!(models.len(), 25);
+    assert_eq!(models.len(), 20);
     assert!(models.iter().any(|m| m.id == "llama-3.1-8b"));
     assert!(!models.iter().any(|m| m.id.ends_with("-open")));
 
@@ -385,4 +385,28 @@ fn out_of_credits_provider_is_hidden_and_reported_clearly() {
     }
     .into();
     assert!(matches!(upstream_402, crate::ApiError::ServiceUnavailable(ref m) if !m.contains("credits")));
+}
+
+#[test]
+fn retired_together_dedicated_only_models_are_not_offered() {
+    let catalog = starter_catalog();
+    for alias in ["llama-3.3-70b-turbo", "llama-3.3-70b", "qwen2.5-72b-together", "qwen2.5-72b-t"] {
+        assert!(catalog.resolve(alias).is_none(), "retired model still offered: {alias}");
+    }
+}
+
+#[test]
+fn unavailable_routes_are_removed_and_saved_kimi_chats_use_live_host() {
+    let catalog = starter_catalog();
+    for alias in ["qwen3.6-27b-groq", "deepseek-v4-pro-fireworks", "qwen3.8-2.4t-a95b", "qwen3.8-2.4t"] {
+        assert!(catalog.resolve(alias).is_none(), "unavailable route still offered: {alias}");
+    }
+    // Runtime discovery lists primary ids, not alternate aliases. Both ids
+    // must stay in the list so existing app brains still resolve locally.
+    for id in ["kimi-k3", "kimi-k3-fireworks"] {
+        assert!(catalog.entries().iter().any(|entry| entry.alias == id));
+    }
+    let kimi = catalog.resolve("kimi-k3").unwrap();
+    assert_eq!(kimi.provider, "fireworks");
+    assert_eq!(kimi.upstream_id, "accounts/fireworks/models/kimi-k3");
 }

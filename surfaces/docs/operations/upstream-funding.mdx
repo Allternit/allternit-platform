@@ -34,6 +34,14 @@ Code: `cmd/allternit-cloud-api/src/services/upstream_funding.rs` (poller, math, 
 
 A catalog model is tied to one provider. When that provider's balance is under its floor, the router looks for another catalog entry of the same model on a different provider (same upstream model name, ignoring case, dashes and the vendor prefix) whose provider is configured and not under its floor. If it finds one, the request runs there, and the price, pool and usage row follow that provider. If no other provider serves the model, the request goes to the original provider anyway: funding never refuses a request by itself. BYOK requests are never rerouted.
 
+## Model availability and provider request options
+
+Cloud omits providers that have no credits from `/v1/models`. A provider below its funding floor can still serve requests; the router first looks for a funded route to the same model. An HTTP 402 hides that provider's models for 15 minutes before retrying. This applies to the shared catalog used by Desktop, the web workspace, the phone PWA and iPhone.
+
+Together's dedicated-only Llama 3.3 70B Turbo and Qwen 2.5 72B routes are removed from the starter catalog. They cannot run on the shared serverless key. Removing those routes also keeps funding fallback from selecting them. The retired Groq Qwen 3.6, unlisted Together Qwen3.8 2.4T and undeployed Fireworks DeepSeek V4 Pro routes are also removed. Saved `kimi-k3` chats use the same Kimi K3 model on Fireworks because Together's endpoint repeatedly returned capacity errors.
+
+Groq does not accept the AI SDK's `prompt_cache_key`. Cloud strips that field only for Groq, for both streaming and buffered chat. Tool definitions and streaming usage options still pass through. Other providers retain their request options.
+
 ## Admin routes
 
 Both routes need a Clerk session for a user listed in `ALLTERNIT_ADMIN_USER_IDS`; everyone else gets 403.

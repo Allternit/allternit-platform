@@ -59,6 +59,8 @@ First release of Allternit for iPhone.
 
 > Allternit is a workspace for AI agents ("bots"). Sign in with the demo account above. Home is a chat. The drawer (☰, top left) has Inbox, Projects, Artifacts, Automation, Decisions and Settings; the dial next to it switches between Home, Bots, Code and ACI. The demo account has a cloud computer attached, so Code and Automation work.
 >
+> First chat: choose a brain when prompted. For plain chat, pick **GLM 5.3 (Allternit Cloud)**. The demo bots use their configured Codex brains.
+>
 > Account deletion: Settings → Account → Delete account (type DELETE to confirm).
 >
 > Sign in with Apple is offered on the sign-in screen next to email sign-in, because the account also supports Google sign-in.

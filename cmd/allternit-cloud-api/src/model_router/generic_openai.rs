@@ -413,6 +413,13 @@ impl UpstreamProvider for GenericOpenAiProvider {
         &self,
         request: ChatCompletionRequest,
     ) -> Result<Response<Body>, ModelRouterError> {
+        // The AI SDK supplies this OpenAI cache-routing hint on agent turns.
+        // Groq rejects it instead of ignoring it; keep all other options and
+        // other providers untouched, for both buffered and streaming chat.
+        let mut request = request;
+        if self.config.provider_id == "groq" {
+            request.extra.remove("prompt_cache_key");
+        }
         if request.is_streaming() {
             self.chat_completions_streaming(request).await
         } else {
@@ -431,6 +438,53 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Regression: the AI SDK sends prompt_cache_key, which Groq rejects.
+    // Exercise the real HTTP adapter for streaming and buffered requests.
+    #[tokio::test]
+    async fn groq_accepts_sdk_requests_without_unsupported_cache_key() {
+        use axum::{routing::post, Json, Router};
+        async fn upstream(Json(body): Json<serde_json::Value>) -> (StatusCode, String) {
+            if body.get("prompt_cache_key").is_some() {
+                return (StatusCode::BAD_REQUEST, "prompt_cache_key is unsupported".into());
+            }
+            assert_eq!(body["tools"][0]["function"]["name"], "lookup");
+            assert_eq!(body["stream_options"]["include_usage"], true);
+            if body["stream"] == true {
+                return (StatusCode::OK, "data: [DONE]\n\n".into());
+            }
+            (StatusCode::OK, serde_json::json!({
+                "id": "test", "object": "chat.completion", "created": 0,
+                "model": "test", "choices": [{"index": 0,
+                    "message": {"role": "assistant", "content": "OK"},
+                    "finish_reason": "stop"}]
+            }).to_string())
+        }
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, Router::new().route("/chat/completions", post(upstream))).await.unwrap();
+        });
+        let provider = GenericOpenAiProvider::new(GenericOpenAiConfig {
+            provider_id: "groq".into(), base_url: format!("http://{addr}"),
+            api_key: "test".into(), model_list_cache_ttl: Duration::from_secs(1),
+        });
+        for streaming in [false, true] {
+            let request = serde_json::from_value(serde_json::json!({
+                "model": "test", "messages": [{"role": "user", "content": "hello"}],
+                "stream": streaming, "prompt_cache_key": "session-1",
+                "stream_options": {"include_usage": true},
+                "tools": [{"type": "function", "function": {"name": "lookup", "parameters": {"type": "object"}}}]
+            })).unwrap();
+            let result = provider.chat_completions(request).await;
+            assert!(result.is_ok(), "Groq request failed: {result:?}");
+            let response = result.unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let body = axum::body::to_bytes(response.into_body(), 8192).await.unwrap();
+            assert!(!body.is_empty());
+        }
+        server.abort();
+    }
 
     /// Regression: generic OpenAI hosts quote pricing per 1M tokens; the
     /// extras convention (and `ModelRouter::retail_prices`) is per token.
