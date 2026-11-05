@@ -40,7 +40,7 @@ Cloud omits providers that have no credits from `/v1/models`. A provider below i
 
 Together's dedicated-only Llama 3.3 70B Turbo and Qwen 2.5 72B routes are removed from the starter catalog. They cannot run on the shared serverless key. Removing those routes also keeps funding fallback from selecting them. The retired Groq Qwen 3.6, unlisted Together Qwen3.8 2.4T and undeployed Fireworks DeepSeek V4 Pro routes are also removed. Saved `kimi-k3` chats use the same Kimi K3 model on Fireworks because Together's endpoint repeatedly returned capacity errors.
 
-Groq does not accept the AI SDK's `prompt_cache_key`. Cloud strips that field only for Groq, for both streaming and buffered chat. Tool definitions and streaming usage options still pass through. Other providers retain their request options.
+Groq does not accept the AI SDK's `prompt_cache_key`. Cloud strips OpenAI-only cache and safety hints for non-OpenAI upstreams, for both streaming and buffered chat (#2119). Tool definitions and streaming usage options still pass through. Real OpenAI upstreams retain those hints.
 
 ## Admin routes
 

@@ -157,9 +157,24 @@ pub struct ChatCompletionRequest {
     pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
+/// Request fields only OpenAI's own API accepts. OpenAI-compatible clients
+/// (gizzi's `allternit` provider among them) send `prompt_cache_key` on every
+/// turn; Groq, Fireworks and others answer 400 "property is unsupported".
+pub const OPENAI_ONLY_FIELDS: [&str; 3] = ["prompt_cache_key", "prompt_cache_retention", "safety_identifier"];
+
 impl ChatCompletionRequest {
     pub fn is_streaming(&self) -> bool {
         self.stream == Some(true)
+    }
+
+    /// Drop the OpenAI-only fields before sending to any other upstream.
+    pub fn strip_openai_only_fields(&mut self, provider_id: &str) {
+        if provider_id.eq_ignore_ascii_case("openai") {
+            return;
+        }
+        for field in OPENAI_ONLY_FIELDS {
+            self.extra.remove(field);
+        }
     }
 }
 

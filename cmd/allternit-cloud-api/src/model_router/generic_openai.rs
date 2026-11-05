@@ -411,15 +411,9 @@ impl UpstreamProvider for GenericOpenAiProvider {
 
     async fn chat_completions(
         &self,
-        request: ChatCompletionRequest,
+        mut request: ChatCompletionRequest,
     ) -> Result<Response<Body>, ModelRouterError> {
-        // The AI SDK supplies this OpenAI cache-routing hint on agent turns.
-        // Groq rejects it instead of ignoring it; keep all other options and
-        // other providers untouched, for both buffered and streaming chat.
-        let mut request = request;
-        if self.config.provider_id == "groq" {
-            request.extra.remove("prompt_cache_key");
-        }
+        request.strip_openai_only_fields(&self.config.provider_id);
         if request.is_streaming() {
             self.chat_completions_streaming(request).await
         } else {
