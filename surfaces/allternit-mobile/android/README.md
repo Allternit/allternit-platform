@@ -221,9 +221,9 @@ What had to adapt:
 
 The launcher icon, labelled **Allternit**, opens m.allternit.com full-screen as a Trusted Web Activity. One install gives the Allternit phone UI and Phone Link.
 - The launcher is `com.google.androidbrowserhelper.trusted.LauncherActivity`, from `androidbrowserhelper` 2.5.0 (Apache-2.0). Without a TWA-capable browser it opens a Custom Tab, which shows the URL bar.
-- `https://m.allternit.com/.well-known/assetlinks.json` (allternit-ai `public/.well-known/`) names `com.allternit.app` and the release cert `3F:8A:39:51:…:E0:67`. The app's `asset_statements` string points back at the site. The VIEW filter for `https://m.allternit.com` has `autoVerify`, so links to the site open in the app.
+- `https://m.allternit.com/.well-known/assetlinks.json` (allternit-ai `public/.well-known/`) names `com.allternit.app`, the release cert `3F:8A:39:51:…:E0:67`, and the Google Play app-signing cert `8D:4C:4F:BE:…:F9:4B`. The app's `asset_statements` string points back at the site. The VIEW filter for `https://m.allternit.com` has `autoVerify`, so links to the site open in the app.
 - This status screen (`MainActivity`) is no longer a launcher entry. It opens from the Phone Link notification and from the icon's long-press **Phone Link** shortcut (`res/xml/shortcuts.xml`).
-- Only the release key passes the asset-links check. A debug-signed build shows the URL bar.
+- Only the release key and the Play app-signing key pass the asset-links check. A debug-signed build shows the URL bar.
 
 ## Live conformance
 

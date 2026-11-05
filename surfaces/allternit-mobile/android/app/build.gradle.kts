@@ -5,15 +5,15 @@ plugins {
 
 android {
     namespace = "com.allternit.phonelink"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         // Since 0.4.0. The Kotlin namespace above keeps the old name so no classes move.
         applicationId = "com.allternit.app"
         minSdk = 26
-        targetSdk = 35
-        versionCode = 10
-        versionName = "0.5.0"
+        targetSdk = 36
+        versionCode = 11
+        versionName = "0.5.1"
     }
 
     buildTypes {
