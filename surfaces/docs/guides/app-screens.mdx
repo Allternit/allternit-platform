@@ -36,6 +36,8 @@ When the sign-in finishes, the two logos lock together with a check. If the app 
 
 - The header shows the app's logo, "*App* for Allternit" and the account you are signed in with. The tabs under it are the app's screens, plus **About**.
 - Press an item to open it. Some items open another screen (a channel opens its messages, a database opens its rows); **Back** returns to the list.
+- When an item opened another screen, **Details** in the header opens the item's own record (the channel's topic and members, the project's lead and dates).
+- People show by name and picture where the app's tools only return an id (Slack messages show who wrote them, not `U04JD2K7Q1M`).
 - Buttons such as **Merge**, **Archive** or **Reply** change data in the app. Each one shows what it will do and asks **Allow once** or **Deny**. Buttons that ask for text (a comment, a reply) show a box for it first.
 - On a phone, the screen fills the width and the calendar shows as an agenda.
 
@@ -62,7 +64,13 @@ An app screen is a **screen pack**: one JSON file per app in allternit-ai `src/l
 | `statuses` | Each status value the screens show, with the vendor's wording and colour. |
 | `words` | The app's own nouns ("issues", "messages"). |
 | `screens` | 1 to 6 screens. Each has a read `tool`, `args`, a `layout`, the `items` path in the tool result, `fields` or `columns`, optional `actions`, `opens` (an item opens another screen) and a `sample`. |
+| `people` | Optional. A read tool that lists the app's people (`slack.list_users`) with the `id`, `name` and `avatar` paths. It runs once per connector, and every person field whose value is an id in it shows the name instead. |
 | `research` | The vendor pages used for the look and the date they were checked. |
+
+Two screen options cover APIs that need a value first or can't filter:
+
+- `resolve`: up to 3 read steps that run before the screen's tool. Each puts the value at its `path` into `{{as}}` for later steps and the screen's args; a `*` segment collects a list. YouTube's Content screen uses it: `list_channels mine:true` gives the uploads playlist, `list_playlist_items` gives `playlistItems.*.contentDetails.videoId`, and `list_videos` gets `ids: "{{video_ids}}"`. An empty list shows an empty screen, not an error. Preview skips the steps.
+- `opens.keep`: `{ "path": "department_id", "equals": "{{id}}" }` keeps only the opened list's items whose value matches the clicked item, for APIs whose list tool can't filter by the parent (Rippling workers by department).
 
 Layouts: `board`, `list`, `table`, `ledger`, `calendar`, `record`, `feed`, `files`, `metrics`, `gallery`. Screen args can use date tokens: `{{today}}`, `{{now}}`, `{{weekStart}}`, `{{weekEnd}}`, `{{daysAgo:N}}` and `{{daysAhead:N}}`, each with `|date` or `|unix`. Action args use `{{path}}` for the item's fields and `{{input:key}}` for text the person types.
 
@@ -76,4 +84,4 @@ Check a pack against the connector's real tools before you ship it:
 node scripts/app-screens/check.ts <actions-dir> src/lib/app-screens/packs/<id>.json
 ```
 
-`<actions-dir>` holds one `<connector>.json` per app with the connector's actions and output schemas, from the connector service's `/api/providers`. The checker fails when a tool does not exist or does not read, when a field path is not in the tool's output schema or the sample, or when a sample has fewer than 2 items.
+`<actions-dir>` holds one `<connector>.json` per app with the connector's actions and output schemas, from the connector service's `/api/providers`. The checker fails when a tool does not exist or does not read (including `resolve` and `people` tools), when a field path is not in the tool's output schema or the sample, or when a sample has fewer than 2 items.
