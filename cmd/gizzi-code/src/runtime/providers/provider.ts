@@ -26,6 +26,7 @@ import { BUNDLED_PROVIDERS, NoSuchModelError, type SDK, type LanguageModelV2 } f
 import { CUSTOM_LOADERS } from "@/runtime/providers/adapters/loaders"
 import type { CustomModelLoader } from "@/runtime/providers/types"
 import { Discovery, type DiscoveredProvider } from "@/runtime/providers/discovery"
+import { cloudInferenceToken } from "@/runtime/providers/discovery/allternit-cloud"
 import { SubprocessLanguageModel } from "@/runtime/providers/adapters/loaders/subprocess"
 import { SubscriptionFabricLanguageModel } from "@/runtime/providers/fabric/language-model"
 import { fabricConfigured, isFabricProviderID } from "@/runtime/providers/fabric/client"
@@ -536,7 +537,7 @@ export namespace Provider {
         name: dp.name,
         source: "custom",
         env: dp.id === "allternit" ? ["ALLTERNIT_API_KEY"] : [],
-        key: dp.id === "allternit" ? process.env.ALLTERNIT_API_KEY : undefined,
+        key: dp.id === "allternit" ? await cloudInferenceToken() : undefined,
         auth_type: dp.auth_type,
         subprocess_cmd: dp.subprocess_cmd,
         options: { ...(dp.base_url ? { baseURL: dp.base_url } : {}), ...(dp.options ?? {}) },
