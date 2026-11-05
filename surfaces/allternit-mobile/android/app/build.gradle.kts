@@ -4,16 +4,33 @@ plugins {
 }
 
 android {
-    namespace = "com.allternit.phonelink"
-    compileSdk = 35
+    namespace = "com.allternit.app"
+    compileSdk = 36
 
     defaultConfig {
-        // Since 0.4.0. The Kotlin namespace above keeps the old name so no classes move.
+        // Since 0.4.0. Phone Link Kotlin classes keep the com.allternit.phonelink package (src/phonelink).
         applicationId = "com.allternit.app"
         minSdk = 26
-        targetSdk = 35
-        versionCode = 10
-        versionName = "0.5.0"
+        targetSdk = 36
+        versionCode = 12
+        versionName = "0.5.2"
+    }
+
+    // Two builds of the same app ID:
+    //  - phonelink: the sideloaded APK Allternit Desktop installs (allternit.com/android).
+    //    The Allternit app plus Phone Link (src/phonelink: code, mesh library,
+    //    accessibility service, services, receivers, permissions).
+    //  - play: the Google Play bundle. Only the Allternit app (src/main). No
+    //    Phone Link code, library or permission is packaged.
+    flavorDimensions += "dist"
+    productFlavors {
+        create("phonelink") {
+            dimension = "dist"
+            isDefault = true
+        }
+        create("play") {
+            dimension = "dist"
+        }
     }
 
     buildTypes {
@@ -56,7 +73,7 @@ dependencies {
     // infrastructure/mesh/tsnet-ios — build it first:
     //   infrastructure/mesh/tsnet-ios/build-android.sh   (output: Mesh.aar,
     //   copied to app/libs/, gitignored; ARM only (arm64-v8a, armeabi-v7a), stripped, ~15 MB)
-    implementation(files("libs/Mesh.aar"))
+    "phonelinkImplementation"(files("libs/Mesh.aar"))
     // The Allternit app as a Trusted Web Activity around m.allternit.com
     // (LauncherActivity, Custom Tab fallback). Apache-2.0, Google.
     implementation("com.google.androidbrowserhelper:androidbrowserhelper:2.5.0")

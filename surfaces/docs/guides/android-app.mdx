@@ -5,7 +5,7 @@ description: "Install the Allternit app on an Android phone from allternit.com/a
 
 Allternit for Android is the app version of [m.allternit.com](https://m.allternit.com). It uses the same account as ai.allternit.com, Allternit Desktop and the iPhone app, so your chats, bots, projects and settings are the same everywhere. It needs Android 8 or later and Chrome, or another browser that supports Trusted Web Activities.
 
-The app is not on Google Play. You install it straight from Allternit.
+The app is not on Google Play yet. It is in internal testing there. For now, you install it straight from Allternit.
 
 ## Install
 
@@ -17,7 +17,7 @@ The app opens your workspace full-screen, with no address bar. Links to m.allter
 
 ## Phone Link
 
-The same app is the Phone Link helper. Phone Link lets your bots use the apps that are signed in on this phone. To turn it on, connect the phone to your computer with a USB cable and follow **Link a phone** in Allternit Desktop. See [Phone Link](/guides/phone-link).
+The version from allternit.com/android is also the Phone Link helper. The Google Play version doesn't include Phone Link. Phone Link lets your bots use the apps that are signed in on this phone. To turn it on, connect the phone to your computer with a USB cable and follow **Link a phone** in Allternit Desktop. If the phone has the Google Play version, Desktop replaces it with the Phone Link version. You stay signed in. See [Phone Link](/guides/phone-link).
 
 To see Phone Link's status (paired computers, **Stop** and **Start**, **Revoke**), tap its notification. You can also long-press the Allternit icon and tap **Phone Link**.
 
@@ -32,5 +32,5 @@ Phone Link before version 0.4.0 was a separate app called **Allternit Phone Link
 ## For developers
 
 - App ID `com.allternit.app`. The Kotlin classes keep the `com.allternit.phonelink` package. Source: `surfaces/allternit-mobile/android`.
-- The launcher is `LauncherActivity` from `androidbrowserhelper` (a Trusted Web Activity around `https://m.allternit.com/`). Its asset links are served from allternit-ai `public/.well-known/assetlinks.json`, with release cert `3F:8A:39:51:…:E0:67`.
+- The launcher is `LauncherActivity` from `androidbrowserhelper` (a Trusted Web Activity around `https://m.allternit.com/`). Its asset links are served from allternit-ai `public/.well-known/assetlinks.json`, with the release cert `3F:8A:39:51:…:E0:67` (sideloaded builds) and the Google Play app-signing cert `8D:4C:4F:BE:…:F9:4B` (Play installs).
 - Each build is published under `runtime.allternit.com/phone-link/android/<version>/` and pinned in Desktop's `phone-android-helper.ts`. The `/android` redirect in the www site's `public/_redirects` points at the current build. Move it with every new pin.

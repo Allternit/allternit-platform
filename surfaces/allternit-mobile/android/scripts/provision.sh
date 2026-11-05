@@ -2,7 +2,7 @@
 # One-time cable setup of Allternit Phone Link on an Android phone (Android 8+;
 # written against Android 14). Mirrors what Allternit Desktop runs over adb.
 #
-#   scripts/provision.sh [-s SERIAL] [--apk path/to/app-debug.apk] [--name "Joe's moto"] [--local-only] [--port 8200] [--forward 52100] \
+#   scripts/provision.sh [-s SERIAL] [--apk path/to/app-phonelink-debug.apk] [--name "Joe's moto"] [--local-only] [--port 8200] [--forward 52100] \
 #     [--mesh-url https://headscale.example:8444] [--mesh-key <preauth-key>]
 #
 # Every command here is allowed for the adb `shell` user; see README "Provisioning".
