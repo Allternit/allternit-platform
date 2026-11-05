@@ -134,6 +134,10 @@ struct ACITabView: View {
             if launchArgumentEnabled("open-browser-chat") {
                 destination = .chat(sessionId: nil)
             }
+            // `-open-mcp-app <id>` (DEBUG only): MCP Apps, with that app's page (ACIMcpAppsView).
+            if UserDefaults.standard.string(forKey: "open-mcp-app") != nil {
+                nav.open(.apps)
+            }
             #endif
         }
         .onChange(of: bridge.requestedURL) { _, _ in

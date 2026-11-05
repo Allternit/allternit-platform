@@ -110,6 +110,13 @@ struct ACIMcpAppsView: View {
             }
             connect.onChanged = { [model] in await model.refresh() }
             await model.refresh()
+            #if DEBUG
+            // `-open-mcp-app <id>` (DEBUG only): Discover with that app's page open, for screenshots.
+            if let id = UserDefaults.standard.string(forKey: "open-mcp-app"), detail == nil {
+                tab = .discover
+                detail = directory.first { $0.id == id || $0.id == "mcp:\(id)" }
+            }
+            #endif
         }
         .sheet(isPresented: $isAddOpen) {
             ACIAddByURLSheet { url in
@@ -124,7 +131,15 @@ struct ACIMcpAppsView: View {
         .sheet(isPresented: $isConnectorsOpen, onDismiss: { Task { await model.refresh() } }) {
             ConnectorsListView()
         }
-        .modifier(DirectoryFlow(selected: $detail, model: connect, onAddByURL: { isAddOpen = true }))
+        .modifier(DirectoryFlow(selected: $detail, model: connect, onAddByURL: { isAddOpen = true }, installFor: { entry in
+            // McpAppsDirectory's currentInstall: the connected install whose app id is this entry's.
+            let id = entry.id.hasPrefix("mcp:") ? String(entry.id.dropFirst(4)) : entry.id
+            return model.apps.first { app in
+                guard app.connected, !app.readOnly else { return false }
+                let bare = app.appId.replacingOccurrences(of: "^(connector:|mcp:)", with: "", options: .regularExpression)
+                return [app.appId, bare].contains(entry.id) || [app.appId, bare].contains(id)
+            }?.connectorId
+        }))
     }
 
     private func go(_ next: Tab) {
@@ -900,6 +915,13 @@ private struct ACIInstalledAppSheet: View {
                         permission
                         toolList
                     }
+                    // The same screen Desktop and the web show, plus the vendor's own views (AppScreenWebView).
+                    AppScreenSection(target: AppScreenTarget(
+                        app: (current.logoKey ?? current.appId).replacingOccurrences(of: "^(connector:|mcp:)", with: "", options: .regularExpression),
+                        name: current.name,
+                        connected: current.connected,
+                        install: current.readOnly ? nil : current.connectorId
+                    ))
                 }
                 .padding(20)
             }

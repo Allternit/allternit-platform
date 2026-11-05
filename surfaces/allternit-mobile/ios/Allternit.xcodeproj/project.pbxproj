@@ -292,6 +292,7 @@
 		87500E6DD24BB08CCBC9EA33 /* LocalVoiceBackends.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27522796D66DD8598AF0E758 /* LocalVoiceBackends.swift */; };
 		8824F1594A6579EAABDCD2F1 /* CoworkTasksStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F81685E9D60F3C21A678501 /* CoworkTasksStore.swift */; };
 		8826956213E279959229323B /* CronClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2FFB7D184254156867F9470D /* CronClient.swift */; };
+		88363ADE14288B48016A27F9 /* AppScreenWebView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B729BBF0B7272114720AFFA1 /* AppScreenWebView.swift */; };
 		885E1657F838D9E721003731 /* LoopsListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BBBF352C41F4185192ED4DF8 /* LoopsListView.swift */; };
 		88C96F35F966D09069C1D0C3 /* RailPinsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C9D69DFAC994C67DD7F1066 /* RailPinsStore.swift */; };
 		892DA6A2F941F492EE25253F /* BenchmarkModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3DB0FED148D7FDF145A81C0D /* BenchmarkModels.swift */; };
@@ -987,6 +988,7 @@
 		B4324D337FA91AD9A498EDE7 /* BotProjectFactoryPanes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotProjectFactoryPanes.swift; sourceTree = "<group>"; };
 		B4FF0B496D38903A463A4B81 /* NativePaneRendererTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativePaneRendererTests.swift; sourceTree = "<group>"; };
 		B66D8B75F9E05EC31D8C93D5 /* ScheduledTaskSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScheduledTaskSheet.swift; sourceTree = "<group>"; };
+		B729BBF0B7272114720AFFA1 /* AppScreenWebView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppScreenWebView.swift; sourceTree = "<group>"; };
 		B7F3B173705B7F5941BDC4FE /* SafariView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SafariView.swift; sourceTree = "<group>"; };
 		B85F6678BE960D0995556FE6 /* MeshEnrollClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeshEnrollClient.swift; sourceTree = "<group>"; };
 		B88709AC7BC1F72F5AB364B7 /* BotHomeTabsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotHomeTabsView.swift; sourceTree = "<group>"; };
@@ -1451,6 +1453,7 @@
 				10FBC416BB357D8C57841986 /* ACIPhoneChrome.swift */,
 				880590A0CE7FD850A74E8947 /* ACITabView.swift */,
 				2E44F010D96E6FC76D3CE571 /* ACIWebBrowserView.swift */,
+				B729BBF0B7272114720AFFA1 /* AppScreenWebView.swift */,
 				15E60D739E1ED3BAF445214F /* BrowserChatView.swift */,
 				C50BA8075C4FBCA27CA52761 /* McpDirectory.swift */,
 				E6C7EB2085F5640346E6BE42 /* McpOfficialServers.swift */,
@@ -2710,6 +2713,7 @@
 				E4AEBE90630485303FB72175 /* AppPhoneLink.swift in Sources */,
 				E6FB9F0438B921E5F149E2E7 /* AppPhoneService.swift in Sources */,
 				E6FFCF674BCC929F2C6AC832 /* AppPhonesSettingsView.swift in Sources */,
+				88363ADE14288B48016A27F9 /* AppScreenWebView.swift in Sources */,
 				3B25F364D69DEE67AA42BB42 /* AppearanceAndNotifications.swift in Sources */,
 				01ACEB8024C097E740FB8A90 /* ArtifactBodyDecoder.swift in Sources */,
 				D0F0ADDB8B1F6CEA3CE24439 /* ArtifactBodyEditing.swift in Sources */,
@@ -3254,7 +3258,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 24;
+				CURRENT_PROJECT_VERSION = 25;
 				DEVELOPMENT_TEAM = MQ85968PQP;
 				INFOPLIST_FILE = AllternitWidgets/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -3278,7 +3282,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 24;
+				CURRENT_PROJECT_VERSION = 25;
 				DEVELOPMENT_TEAM = MQ85968PQP;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -3302,7 +3306,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = AllternitScreen/AllternitScreen.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 24;
+				CURRENT_PROJECT_VERSION = 25;
 				DEVELOPMENT_TEAM = MQ85968PQP;
 				INFOPLIST_FILE = AllternitScreen/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -3326,7 +3330,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = AllternitScreen/AllternitScreen.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 24;
+				CURRENT_PROJECT_VERSION = 25;
 				DEVELOPMENT_TEAM = MQ85968PQP;
 				INFOPLIST_FILE = AllternitScreen/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -3357,7 +3361,7 @@
 				CODE_SIGN_ENTITLEMENTS = Allternit.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 24;
+				CURRENT_PROJECT_VERSION = 25;
 				DEVELOPMENT_TEAM = MQ85968PQP;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
@@ -3386,7 +3390,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 24;
+				CURRENT_PROJECT_VERSION = 25;
 				DEVELOPMENT_TEAM = MQ85968PQP;
 				INFOPLIST_FILE = AllternitWidgets/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -3417,7 +3421,7 @@
 				CODE_SIGN_ENTITLEMENTS = Allternit.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 24;
+				CURRENT_PROJECT_VERSION = 25;
 				DEVELOPMENT_TEAM = MQ85968PQP;
 				ENABLE_DEBUG_DYLIB = NO;
 				FRAMEWORK_SEARCH_PATHS = (
@@ -3448,7 +3452,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 24;
+				CURRENT_PROJECT_VERSION = 25;
 				DEVELOPMENT_TEAM = MQ85968PQP;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
