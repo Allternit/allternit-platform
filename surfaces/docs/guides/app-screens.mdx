@@ -70,6 +70,8 @@ An app screen is a **screen pack**: one JSON file per app in allternit-ai `src/l
 Two screen options cover APIs that need a value first or can't filter:
 
 - `resolve`: up to 3 read steps that run before the screen's tool. Each puts the value at its `path` into `{{as}}` for later steps and the screen's args; a `*` segment collects a list. YouTube's Content screen uses it: `list_channels mine:true` gives the uploads playlist, `list_playlist_items` gives `playlistItems.*.contentDetails.videoId`, and `list_videos` gets `ids: "{{video_ids}}"`. An empty list shows an empty screen, not an error. Preview skips the steps.
+- `more`: `{ "arg": "cursor", "next": "next_link", "max": 10 }` follows the tool's pages (a cursor, or a link whose `arg` query value is the cursor) and draws every page's items. Use it with `opens.keep`, so a filter isn't cut off at page one.
+- `people` on a screen: `{ "items": "includes.users", "id": "id", "name": "name" }` reads names from the screen's own result, for tools that return people beside the items (X with `expansions=author_id`).
 - `opens.keep`: `{ "path": "department_id", "equals": "{{id}}" }` keeps only the opened list's items whose value matches the clicked item, for APIs whose list tool can't filter by the parent (Rippling workers by department).
 
 Layouts: `board`, `list`, `table`, `ledger`, `calendar`, `record`, `feed`, `files`, `metrics`, `gallery`. Screen args can use date tokens: `{{today}}`, `{{now}}`, `{{weekStart}}`, `{{weekEnd}}`, `{{daysAgo:N}}` and `{{daysAhead:N}}`, each with `|date` or `|unix`. Action args use `{{path}}` for the item's fields and `{{input:key}}` for text the person types.

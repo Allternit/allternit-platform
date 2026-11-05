@@ -24,6 +24,24 @@ export const mattermostActions: ProviderActionDefinition[] = [
     }),
   }),
   defineProviderAction(service, {
+    name: "list_users",
+    description: "List Mattermost users (names and usernames), optionally only those in one team or channel.",
+    inputSchema: s.object(
+      "Query parameters for listing Mattermost users.",
+      {
+        inTeam: s.string("Only users in this team ID.", { minLength: 1 }),
+        inChannel: s.string("Only users in this channel ID.", { minLength: 1 }),
+        page: pageSchema,
+        perPage: s.integer("The number of users per page (Mattermost allows up to 200).", { minimum: 1, maximum: 200 }),
+      },
+      { optional: ["inTeam", "inChannel", "page", "perPage"] },
+    ),
+    outputSchema: s.object("Output payload for Mattermost users.", {
+      users: s.array("Mattermost users returned by the API.", entitySchema),
+      raw: rawResponseSchema,
+    }),
+  }),
+  defineProviderAction(service, {
     name: "list_user_teams",
     description: "List Mattermost teams visible to the current user.",
     inputSchema: emptyInputSchema,

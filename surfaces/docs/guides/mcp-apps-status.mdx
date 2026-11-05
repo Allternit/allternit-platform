@@ -11,19 +11,20 @@ MCP tools are documented in the [MCP guide](/tools/mcp). **MCP Apps** is the ope
 - **Expand.** The expand button in the card's header opens the app full screen. On a phone (the ai.allternit.com phone layout and m.allternit.com) it opens as a full-height sheet from the bottom of the screen. **Back to chat**, the close button, Escape or a tap outside returns it to the card without reloading it.
 - **Changes ask first.** If the app's UI tries to run a tool that changes data, Allternit shows a sheet naming the app, the tool and what it sends, with **Deny** and **Allow once**. Which tools ask follows the app's permission mode in MCP Apps; by default, every tool not marked read-only asks.
 - **Links and files ask first.** A link to a site the app did not declare as its own, or a file the app wants to save to your device, is shown to you before it opens or saves.
+- **On the app's page.** A connected app whose server ships its own screens (Asana, Figma, Slack, Canva, Box, monday.com, Hex and others) gets a **From *app*** section on its page in MCP Apps › Discover and in Installed. It lists the screens that open without input; pick one to open it in the same frame chat uses. Nothing runs until you pick one, and changes still ask first. Screens that need input (a file, a search) open from chat, where the model fills them in.
 - **The app can talk to the chat.** An app can send a message to the chat as you (for example "Show me the overdue tasks"), and it can tell the model what you are looking at, such as which row you selected. That context reaches the model with your next message and is not shown in the transcript.
 
-## Status (November 4, 2026)
+## Status (November 5, 2026)
 
 | Part | Status |
 | --- | --- |
 | Views from your connectors in chat (server: `allternit-api` `mcp_apps.rs`, sandbox proxy on its own origin) | Live |
 | Theme passed to the View (Allternit's light and dark tokens as `hostContext.styles`) | Live |
 | Tool calls from a View through your own connector credentials, app-only tools hidden from the model | Live |
-| Expand to full screen (desktop) and sheet (phone and PWA) | In review: allternit-ai `feat/vendor-mcp-apps-ui` |
-| `ui/message` and `ui/update-model-context` reaching the chat and the model | In review: same branch. Before it, both were accepted and dropped. |
-| Ask before links to undeclared sites, and `ui/download-file` | In review: same branch |
-| A vendor's View on the app's own page in MCP Apps (`VendorAppUI`) | Component ready in the same branch; the app page wiring is pending |
+| Expand to full screen (desktop) and sheet (phone and PWA) | Live (allternit-ai #977) |
+| `ui/message` and `ui/update-model-context` reaching the chat and the model | Live (#977) |
+| Ask before links to undeclared sites, and `ui/download-file` | Live (#977) |
+| A vendor's View on the app's own page in MCP Apps (**From *app***, `VendorUiSection`) | allternit-ai #983 |
 | Picture-in-picture display mode | Not supported |
 
 Checked against Excalidraw's public MCP server (`https://mcp.excalidraw.com/mcp`, no sign-in): its diagram View renders inline and full screen, its export button asks before running the app-only `export_to_excalidraw` tool, and its menu links ask before opening. Apps that need sign-in (Asana, Figma and the rest) use the same path once connected; they have not been checked with a live account yet.
