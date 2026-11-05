@@ -440,7 +440,7 @@ export const trelloActionHandlers: Record<string, TrelloActionHandler> = {
     };
   },
   async search(input, context) {
-    const payload = await trelloRequest<unknown[]>({
+    const payload = await trelloRequest<unknown>({
       credential: context,
       fetcher: context.fetcher,
       path: "/search",
@@ -453,12 +453,7 @@ export const trelloActionHandlers: Record<string, TrelloActionHandler> = {
       ],
       phase: "execute",
     });
-    if (!Array.isArray(payload)) {
-      throw new ProviderRequestError(502, "Trello search response was not an array");
-    }
-    return {
-      results: payload.map((result) => asObjectPayload(result)),
-    };
+    return { results: searchResults(payload) };
   },
 };
 
@@ -673,6 +668,28 @@ function normalizeCard(payload: Record<string, unknown>) {
     due: payload.due === null ? null : readOptionalString(payload.due),
     dueComplete: optionalBoolean(payload.dueComplete),
   });
+}
+
+/**
+ * Trello's GET /search answers with one object per model type
+ * (`{ options, cards: [...], boards: [...], members: [...] }`), not an array.
+ * Results come back as one list, each tagged with its `modelType`, cards and
+ * boards in the same shape as the list tools.
+ */
+function searchResults(payload: unknown): Record<string, unknown>[] {
+  if (Array.isArray(payload)) return payload.map((result) => asObjectPayload(result));
+  if (!payload || typeof payload !== "object") {
+    throw new ProviderRequestError(502, "Trello search response was not an object");
+  }
+  const body = payload as Record<string, unknown>;
+  const list = (key: string) => (Array.isArray(body[key]) ? (body[key] as unknown[]) : []);
+  return [
+    ...list("cards").map((x) => ({ modelType: "card", ...normalizeCard(asObjectPayload(x)) })),
+    ...list("boards").map((x) => ({ modelType: "board", ...normalizeBoard(asObjectPayload(x)) })),
+    ...list("members").map((x) => ({ modelType: "member", ...normalizeMember(asObjectPayload(x)) })),
+    ...list("organizations").map((x) => ({ modelType: "organization", ...asObjectPayload(x) })),
+    ...list("actions").map((x) => ({ modelType: "action", ...normalizeAction(asObjectPayload(x)) })),
+  ];
 }
 
 function normalizeAction(payload: Record<string, unknown>) {
