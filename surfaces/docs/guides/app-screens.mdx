@@ -16,6 +16,7 @@ Apps whose tools cannot list anything without an id or search text keep their co
 
 - **MCP Apps › Discover** (in ACI): the page opens with the Apps hero, then the top apps and a section per category, each with **Show all**. **All sources** at the right filters by who publishes the app. A card shows the app's logo. Point at the card (or move to it with the keyboard) and the logo gives way to the app's screen. The screen loads the first time you point at a card.
 - **The app's page** (in MCP Apps and in **Customize › Connectors**): a **Screens** section shows the live screen and a strip with one picture per screen. Press a picture to show that screen. Press **Open** to open the app full size.
+- **The iPhone app** (ACI › MCP Apps, an app's page in Discover, Installed and Customize › Connectors): the same **Screens** section and, for a connected app, **From *app***. They are the same screens, drawn by the same code, so they look and work the same as on Desktop and the web. **Open** shows the screen full screen.
 - Before you connect, every screen shows sample data and says **Preview · sample data**.
 
 ## Connect
@@ -75,6 +76,8 @@ Two screen options cover APIs that need a value first or can't filter:
 - `opens.keep`: `{ "path": "department_id", "equals": "{{id}}" }` keeps only the opened list's items whose value matches the clicked item, for APIs whose list tool can't filter by the parent (Rippling workers by department).
 
 Layouts: `board`, `list`, `table`, `ledger`, `calendar`, `record`, `feed`, `files`, `metrics`, `gallery`. Screen args can use date tokens: `{{today}}`, `{{now}}`, `{{weekStart}}`, `{{weekEnd}}`, `{{daysAgo:N}}` and `{{daysAhead:N}}`, each with `|date` or `|unix`. Action args use `{{path}}` for the item's fields and `{{input:key}}` for text the person types.
+
+The iPhone app shows a pack through `/editor/app-screen?app=<id>` (allternit-ai `src/pages/AppScreenEmbedPage.tsx`) in a signed-in web view (`AppScreenWebView.swift`), with `connected`, `account`, `install` (the MCP connector for vendor views), `theme` and `view=full`. The page posts `ready`, `height`, `openFull`, `connect` and `close` to the `allternitAppScreen` handler; the native page draws everything around it. There is no Swift copy of the renderer: a pack or renderer change reaches the iPhone with the web deploy.
 
 Screens run tools through `POST /api/v1/connectors/mcp` with the tool name `<connector>__<action>` (`src/lib/app-screens/client.ts`), so a screen sees exactly what a chat would. `src/components/app-screens/AppScreen.tsx` draws a pack, `AppHandshake.tsx` is the connect screen, and `ScreenPreview.tsx` has the card and page previews.
 

@@ -250,6 +250,8 @@ struct DirectoryFlow: ViewModifier {
     @ObservedObject var model: DirectoryConnectModel
     /// MCP Apps offers "Add by URL" for guides.
     var onAddByURL: (() -> Void)? = nil
+    /// The installed MCP connector behind a connected app (MCP Apps), for its vendor's own views.
+    var installFor: ((DirectoryEntry) -> String?)? = nil
 
     @State private var pendingConnect: DirectoryEntry? = nil
     @State private var pendingDisconnect: DirectoryEntry? = nil
@@ -263,7 +265,8 @@ struct DirectoryFlow: ViewModifier {
                     entry: entry,
                     onConnect: { pendingConnect = entry; selected = nil },
                     onDisconnect: { pendingDisconnect = entry; selected = nil },
-                    onAddByURL: onAddByURL == nil ? nil : { pendingAddByURL = true; selected = nil }
+                    onAddByURL: onAddByURL == nil ? nil : { pendingAddByURL = true; selected = nil },
+                    install: installFor?(entry)
                 )
             }
             .sheet(item: $model.signIn, onDismiss: { Task { await model.onChanged?() } }) { target in
@@ -611,6 +614,8 @@ struct DirectoryDetailSheet: View {
     let onConnect: () -> Void
     let onDisconnect: () -> Void
     var onAddByURL: (() -> Void)? = nil
+    /// The installed MCP connector (connected MCP apps), for "From <app>".
+    var install: String? = nil
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
@@ -646,6 +651,12 @@ struct DirectoryDetailSheet: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     if let setup = entry.setupMessage { guideNote(setup) }
+                    // The same screen Desktop and the web show, in the vendor's look (AppScreenWebView).
+                    AppScreenSection(
+                        target: AppScreenTarget(app: entry.id, name: entry.name, connected: entry.connected,
+                                                account: entry.account, install: entry.connected ? install : nil),
+                        onConnect: entry.connected || !entry.connectable ? nil : onConnect
+                    )
                     if !entry.toolNames.isEmpty { tools }
                     links
                     if entry.official {
