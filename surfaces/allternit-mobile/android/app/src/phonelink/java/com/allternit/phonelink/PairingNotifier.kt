@@ -1,5 +1,6 @@
 package com.allternit.phonelink
 
+import com.allternit.app.R
 import android.app.Notification
 import android.app.NotificationManager
 import android.app.PendingIntent

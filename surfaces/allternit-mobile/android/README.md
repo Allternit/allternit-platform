@@ -56,8 +56,10 @@ Then:
 cd surfaces/allternit-mobile/android
 export JAVA_HOME=/path/to/jdk-17
 export ANDROID_HOME=$HOME/Library/Android/sdk     # or write sdk.dir in local.properties
-./gradlew :app:testDebugUnitTest :app:assembleDebug
-# APK: app/build/outputs/apk/debug/app-debug.apk
+./gradlew :app:testPhonelinkDebugUnitTest :app:assemblePhonelinkDebug
+# APK: app/build/outputs/apk/phonelink/debug/app-phonelink-debug.apk
+# Google Play bundle (no Phone Link): ./gradlew :app:bundlePlayRelease
+# -> app/build/outputs/bundle/playRelease/app-play-release.aab
 ```
 
 Toolchain: AGP 8.7.3, Kotlin 2.0.21, Gradle 8.10.2, minSdk 26, target/compileSdk 35.
@@ -87,7 +89,7 @@ Allternit Desktop runs the steps below over adb. `scripts/provision.sh` does the
 PKG=com.allternit.app
 CLS=com.allternit.phonelink   # the classes keep the old Kotlin package
 # 1. install (adb install => PACKAGE_SOURCE_UNSPECIFIED: not a "restricted settings" app)
-adb install -r -g app-debug.apk
+adb install -r -g app-phonelink-debug.apk
 # 2. only needed if the APK was ever opened from a file manager/browser (see below); harmless otherwise
 adb shell appops set $PKG ACCESS_RESTRICTED_SETTINGS allow
 # 3. enable the accessibility service (append to any already enabled, colon-separated)
@@ -216,6 +218,12 @@ What had to adapt:
 - The phone's own UI tree is reported in pixels of the current rotation. Re-read `device_info` after rotating.
 - Some OEMs (Samsung, Xiaomi) add their own background killers on top of Doze. The `deviceidle` exemption covers stock Android and Motorola. Others may need their battery setting changed by hand.
 - QUICKBOOT_POWERON isn't a protected broadcast, so any app can send it. The worst it does is start the server on a phone that is already provisioned.
+
+## Build flavors (0.5.2+)
+
+- `phonelink` (the default) is the sideloaded APK Allternit Desktop installs. It is `src/main` plus `src/phonelink`: all Phone Link code, `Mesh.aar`, the accessibility service, services, receivers, permissions and the **Phone Link** shortcut. Tests live in `src/testPhonelink`.
+- `play` is the Google Play bundle. It is `src/main` only: the Trusted Web Activity, with just the `INTERNET` permission. Nothing from Phone Link is packaged.
+- The module namespace is `com.allternit.app`, so the generated `R` class carries no Phone Link name. Phone Link classes keep the `com.allternit.phonelink` package, and `src/phonelink/AndroidManifest.xml` names them in full.
 
 ## The Allternit app (Trusted Web Activity, 0.5.0+)
 

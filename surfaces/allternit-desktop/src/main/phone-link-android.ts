@@ -97,6 +97,11 @@ export function parseAdbDevices(stdout: string): AdbDeviceLine[] {
 }
 
 /** versionCode of an installed package from `dumpsys package`, null when absent. */
+/** True when `pm list packages -i <id>` says Google Play installed the app (the Play build, without Phone Link). */
+export function installedFromPlay(pmListOutput: string, appId: string): boolean {
+  return pmListOutput.split('\n').some((line) => line.trim().startsWith(`package:${appId} `) && /installer=com\.android\.vending\b/.test(line));
+}
+
 export function parsePackageVersionCode(stdout: string): number | null {
   const match = /(?:^|\s)versionCode=(\d+)/.exec(stdout);
   return match ? Number(match[1]) : null;
@@ -336,7 +341,15 @@ export class AndroidDriver implements PhoneLinkDriver {
       await adb(['uninstall', LEGACY_PHONE_LINK_PACKAGE], { serial }).catch(() => {});
       this.check(ctx);
     }
-    const installedCode = parsePackageVersionCode((await adb(['shell', 'dumpsys', 'package', appId], { serial })).stdout);
+    let installedCode = parsePackageVersionCode((await adb(['shell', 'dumpsys', 'package', appId], { serial })).stdout);
+    // The Google Play build of Allternit has no Phone Link and is signed by Google, so the helper can't
+    // install over it. Replace it. The user's sign-in is kept: the app shows m.allternit.com in Chrome.
+    if (installedCode !== null && installedFromPlay((await adb(['shell', 'pm', 'list', 'packages', '-i', appId], { serial })).stdout, appId)) {
+      this.set(ctx, 'installing', 'Replacing the Google Play version of Allternit with the one that has Phone Link…', { progress: 0.1 });
+      await adb(['uninstall', appId], { serial }).catch(() => {});
+      this.check(ctx);
+      installedCode = null;
+    }
     if (!(helper.manifest && installedCode !== null && installedCode >= helper.manifest.versionCode)) {
       const install = await adb(['install', '-r', '-g', helper.apk], { serial });
       this.check(ctx);

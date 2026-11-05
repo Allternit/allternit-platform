@@ -30,6 +30,7 @@ interface World {
   unauthorizedFirst: boolean;
   installedVersionCode: number | null;
   legacyInstalled: boolean;
+  playInstalled: boolean;
   installShouldFail: boolean;
   existingAccessibility: string;
   accessibilityBinds: boolean;
@@ -55,6 +56,7 @@ function world(over: Partial<World> = {}): World {
     unauthorizedFirst: false,
     installedVersionCode: null,
     legacyInstalled: false,
+    playInstalled: false,
     installShouldFail: false,
     existingAccessibility: 'null',
     accessibilityBinds: true,
@@ -97,6 +99,14 @@ function fakeAdb(w: World): AdbCall {
     }
     if (inner.startsWith('dumpsys package')) {
       return out(w.installedVersionCode === null ? '' : `Packages:\n  Package [${PKG}] (abc):\n    versionCode=${w.installedVersionCode} minSdk=26\n`);
+    }
+    if (inner === `pm list packages -i ${PKG}`) {
+      return out(w.installedVersionCode === null ? '' : `package:${PKG}  installer=${w.playInstalled ? 'com.android.vending' : 'com.android.packageinstaller'}\n`);
+    }
+    if (cmd === `uninstall ${PKG}`) {
+      w.installedVersionCode = null;
+      w.playInstalled = false;
+      return out('Success\n');
     }
     if (cmd === `uninstall ${LEGACY_PKG}`) {
       w.legacyInstalled = false;
@@ -215,6 +225,22 @@ describe('Android Phone Link', () => {
     expect(uninstall).toBeGreaterThan(-1);
     expect(install).toBeGreaterThan(uninstall);
     expect(w.legacyInstalled).toBe(false);
+  });
+
+  it('replaces the Google Play build (no Phone Link) with the helper, even when Play has a newer version', async () => {
+    const w = world({ installedVersionCode: 12, playInstalled: true });
+    await waitFor(start(w), 'ready_wifi');
+    const uninstall = w.ran.indexOf(`uninstall ${PKG}`);
+    const install = w.ran.findIndex((c) => c.startsWith('install -r -g'));
+    expect(uninstall).toBeGreaterThan(-1);
+    expect(install).toBeGreaterThan(uninstall);
+  });
+
+  it('keeps a sideloaded com.allternit.app that is already up to date', async () => {
+    const w = world({ installedVersionCode: 7 });
+    await waitFor(start(w), 'ready_wifi');
+    expect(w.ran.some((c) => c.startsWith('uninstall'))).toBe(false);
+    expect(w.ran.some((c) => c.startsWith('install -r -g'))).toBe(false);
   });
 
   it('keeps com.allternit.phonelink while the pinned helper is a pre-0.4.0 APK', async () => {
