@@ -386,3 +386,19 @@ fn out_of_credits_provider_is_hidden_and_reported_clearly() {
     .into();
     assert!(matches!(upstream_402, crate::ApiError::ServiceUnavailable(ref m) if !m.contains("credits")));
 }
+
+/// Regression (2026-11-05): gizzi sends `prompt_cache_key`; Groq answered 400
+/// "property 'prompt_cache_key' is unsupported", so every Cloud chat failed.
+#[test]
+fn openai_only_fields_are_dropped_for_other_upstreams() {
+    let body = r#"{"model":"allternit/gpt-oss-120b-groq","messages":[{"role":"user","content":"hi"}],"prompt_cache_key":"ses_1","tools":[]}"#;
+    let mut groq: ChatCompletionRequest = serde_json::from_str(body).unwrap();
+    groq.strip_openai_only_fields("groq");
+    let sent = serde_json::to_value(&groq).unwrap();
+    assert!(sent.get("prompt_cache_key").is_none());
+    assert!(sent.get("tools").is_some(), "other extra fields still go upstream");
+
+    let mut openai: ChatCompletionRequest = serde_json::from_str(body).unwrap();
+    openai.strip_openai_only_fields("openai");
+    assert_eq!(serde_json::to_value(&openai).unwrap()["prompt_cache_key"], "ses_1");
+}

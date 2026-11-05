@@ -347,6 +347,7 @@ impl UpstreamProvider for OpenRouterProvider {
         if no_retention_enabled() {
             enforce_no_retention(&mut request);
         }
+        request.strip_openai_only_fields("openrouter");
         if request.is_streaming() {
             self.chat_completions_streaming(request).await
         } else {
