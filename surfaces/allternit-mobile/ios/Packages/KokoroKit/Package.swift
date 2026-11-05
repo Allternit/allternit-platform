@@ -16,6 +16,8 @@ import PackageDescription
 //     `MisakiResources.directory` (downloaded voice pack), not the bundle.
 //   - KokoroSwift: WeightLoader upcasts fp16 weights to fp32.
 //   - KokoroSwift: eSpeakNGG2PProcessor.swift removed.
+//   - MLXSimulatorShims (ours): two Metal error-domain symbols the
+//     simulator SDK lacks, so simulator builds link.
 //   - MLXUtilsLibrary: NpyzReader removed (voices ship as safetensors), so
 //     no ZIPFoundation.
 // To update: copy the three Sources folders from newer tags, reapply the
@@ -31,7 +33,9 @@ let package = Package(
         .package(url: "https://github.com/ml-explore/mlx-swift", exact: "0.30.2"),
     ],
     targets: [
-        .target(name: "MLXUtilsLibrary", dependencies: [.product(name: "MLX", package: "mlx-swift")]),
+        // Simulator-only link shims for two Metal symbols (see shims.m).
+        .target(name: "MLXSimulatorShims"),
+        .target(name: "MLXUtilsLibrary", dependencies: [.product(name: "MLX", package: "mlx-swift"), "MLXSimulatorShims"]),
         .target(name: "MisakiSwift", dependencies: [
             .product(name: "MLX", package: "mlx-swift"),
             .product(name: "MLXNN", package: "mlx-swift"),

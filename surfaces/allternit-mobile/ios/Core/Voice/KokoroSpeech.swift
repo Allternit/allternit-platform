@@ -96,7 +96,8 @@ private final class KokoroRuntime: @unchecked Sendable {
     private init() {
         let center = NotificationCenter.default
         center.addObserver(forName: UIApplication.didReceiveMemoryWarningNotification, object: nil, queue: nil) { [weak self] _ in
-            self?.queue.async { self?.unload() }
+            guard let self else { return }
+            self.queue.async { self.unload() }
         }
         center.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: nil) { [weak self] _ in
             self?.stateLock.withLock { self?.backgrounded = true }
