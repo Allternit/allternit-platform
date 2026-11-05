@@ -411,8 +411,9 @@ impl UpstreamProvider for GenericOpenAiProvider {
 
     async fn chat_completions(
         &self,
-        request: ChatCompletionRequest,
+        mut request: ChatCompletionRequest,
     ) -> Result<Response<Body>, ModelRouterError> {
+        request.strip_openai_only_fields(&self.config.provider_id);
         if request.is_streaming() {
             self.chat_completions_streaming(request).await
         } else {
