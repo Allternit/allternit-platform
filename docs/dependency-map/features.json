@@ -909,6 +909,7 @@
         "allternit-ai/src/components/mcp",
         "allternit-ai/src/components/ai-elements/McpAppFrame.tsx",
         "allternit-ai/src/components/ai-elements/VendorAppUI.tsx",
+        "allternit-ai/src/components/mcp/VendorUiSection.tsx",
         "allternit-ai/src/lib/ai/mcp",
         "allternit/cmd/allternit-api/src/mcp_*",
         "allternit/cmd/allternit-api/src/events_*",
