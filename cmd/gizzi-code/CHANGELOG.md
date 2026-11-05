@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Added
+- `artifact_check`: the model looks at a page or design at phone, tablet and laptop widths (the app renders it) and gets pictures, sideways scroll, script errors and blank screens; with a reference picture, a likeness and the regions that differ. It says stop after 3 checks without progress.
+
+### Fixed
+- `pane_render` sync events now carry a native video's duration, fps, motion blur, audio and timeout; without them the app dropped the request.
+
 ## 2.2.15 (2026-10-27)
 
 ### Added

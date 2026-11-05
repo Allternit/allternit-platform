@@ -339,6 +339,17 @@ export const AgentCompatRoutes = () =>
               width: props.width ?? null,
               height: props.height ?? null,
               title: props.title ?? null,
+              // Video (media_generate) and artifact_check fields: the app's
+              // parser rejects a video without duration and fps.
+              duration: props.duration ?? null,
+              fps: props.fps ?? null,
+              motionBlur: props.motionBlur ?? null,
+              audio: props.audio ?? null,
+              timeoutMs: props.timeoutMs ?? null,
+              artifactKind: props.artifactKind ?? null,
+              bodyFormat: props.bodyFormat ?? null,
+              widths: props.widths ?? null,
+              reference: props.reference ?? null,
               time: props.time ?? null,
             }
           case "pane_artifact.requested":

@@ -198,6 +198,19 @@ struct ChatContentView: View {
         .sheet(item: $activeArtifact) { artifact in
             ArtifactDetailsView(artifact: artifact)
         }
+        // The agent's renders (media_generate images and videos,
+        // artifact_check) run on this phone while its chat is open, like the
+        // web's usePaneRender. An artifact studio runs the same loop itself,
+        // with its editor's requests, so it isn't started twice.
+        .task(id: artifactStudio == nil ? (viewModel.currentSessionId ?? sessionId ?? "") : "") {
+            guard artifactStudio == nil, !SampleWorkspace.isEnabled,
+                  let id = viewModel.currentSessionId ?? sessionId, !id.isEmpty else { return }
+            await viewModel.servePaneArtifactRequests(
+                sessionId: id,
+                run: nil,
+                onProblem: { viewModel.transientError = $0 }
+            )
+        }
         .sheet(isPresented: $isModelPickerPresented) {
             ModelPickerSheet(modelStore: modelStore)
         }

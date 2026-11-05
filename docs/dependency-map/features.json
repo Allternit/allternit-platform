@@ -1725,21 +1725,28 @@
       "label": "Artifact tools for every model (Artifacts v2)",
       "product": "product:gizzi-code",
       "status": "building",
-      "description": "artifact_create / artifact_update / artifact_read (plus artifact_suggest, list, comment, share, delete, storage) built into gizzi-code for every model, and for CLI agents over the session MCP bridge. They save to cloud-api /api/v2/artifacts with the session's credential; without one, the result carries the full payload with persisted:false and the app saves it under the same id.",
+      "description": "artifact_create / artifact_update / artifact_read (plus artifact_suggest, list, comment, share, delete, storage) built into gizzi-code for every model, and for CLI agents over the session MCP bridge. They save to cloud-api /api/v2/artifacts with the session's credential; without one, the result carries the full payload with persisted:false and the app saves it under the same id. artifact_check has the app render a page or design at each width (pane_render kind check, allternit-ai src/lib/artifacts/check.ts) and returns pictures, problems and a likeness to a reference, and says stop when refining stalls.",
       "touches": [
         "allternit/cmd/gizzi-code/src/runtime/tools",
         "allternit/cmd/gizzi-code/src/runtime/integrations",
-        "allternit/cmd/allternit-cloud-api/src/routes/mod_*"
+        "allternit/cmd/allternit-cloud-api/src/routes/mod_*",
+        "allternit-ai/src/lib/artifacts",
+        "allternit-ai/src/lib/agents"
       ],
       "decisions": [
         {
           "on": "2026-10-08",
           "note": "Contract docs/design/artifacts-v2.md section 5: create an artifact when content is substantial (~15+ lines), self-contained, likely edited or reused, or asked for. gizzi mints art_+ULID ids; 409 stale_version makes the model read, merge and retry."
+        },
+        {
+          "on": "2026-11-04",
+          "note": "Eoj: borrow Craft Anything's check-and-refine loop. artifact_check renders at 390/768/1440 in the app (same path as the preview), compares with a reference picture (advisory grid likeness) and stops the model after 3 checks without progress or 8 checks per artifact per session."
         }
       ],
       "evidence": [
         "allternit/docs/design/artifacts-v2.md",
-        "allternit/surfaces/docs/tools/artifact-tools.mdx"
+        "allternit/surfaces/docs/tools/artifact-tools.mdx",
+        "allternit/cmd/gizzi-code/src/runtime/tools/builtins/artifact-check.ts"
       ]
     },
     {
