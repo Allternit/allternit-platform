@@ -1,6 +1,6 @@
 ---
 title: 'Artifact Tools'
-description: 'The artifact_create, artifact_update, artifact_suggest, artifact_claim, artifact_read and related tools gizzi gives every model for Artifacts v2'
+description: 'The artifact_create, artifact_update, artifact_suggest, artifact_claim, artifact_read, artifact_check and related tools gizzi gives every model for Artifacts v2'
 ---
 
 ## Overview
@@ -20,6 +20,7 @@ gizzi-code gives every model built-in tools for **Artifacts v2**: one account-le
 | `artifact_share` | `{id, visibility?, people?}` | the sharing settings (the user approves a change) |
 | `artifact_delete` | `{id}` | confirmation (the user approves each delete) |
 | `artifact_storage` | `{id, action, scope, key?, value?, prefix?}` | a page artifact's saved data |
+| `artifact_check` | `{id, version?, widths?, reference?}` | a picture of the first screen at each width, problems found, and a likeness to the reference |
 
 `artifact_create`, `artifact_update` and `artifact_read` work without a signed-in account (see below). The others need the user's Allternit account.
 
@@ -148,6 +149,32 @@ To ask the user about one frame, the model calls `artifact_comment` with `body` 
 
 `artifact_update` replaces the whole canvas, including frames other agents are changing. Its description says so, and it refuses a design that has pending `artboard` suggestions from other sessions, naming them ("Ash on Pricing") and pointing at claim, suggest and release. Pending changes from the same session don't block it.
 
+## Looking at an artifact: artifact_check
+
+`artifact_check` lets the model see a page or design the way a viewer does, then fix what is wrong. It follows the study, build, check and refine loop of Craft Anything's website rebuilds.
+
+1. gizzi reads the artifact (the same lookup as `artifact_read`) and sends its body to the app that shows the session. This uses the `pane_render` request with `kind: "check"`, the bridge `media_generate` uses.
+2. The app renders the artifact at each width (default 390, 768 and 1440 px; window heights 844, 1024 and 900). It uses the same path as the artifact's own preview: the Desktop preview host, or a sandboxed `srcdoc` frame with the preview CSP. The app's light or dark theme variables are applied as in the preview.
+3. A probe script runs ahead of the page's own scripts. It records script errors, failed loads and `console.error` lines. It waits for fonts, then 1.2 s more, and measures sideways scroll (`scrollWidth` beyond the window). It takes a JPEG of the first screen inside the frame with modern-screenshot.
+4. The app marks a width blank when the picture is one flat colour (brightness spread under 2.5).
+5. With a `reference` picture, the app compares the width whose shape is closest to the picture. Both are squeezed to a 48 px wide grid. The likeness is 1 minus the mean colour difference. Each of the 9 regions (top left to bottom right) that differs by more than 18% is listed as lighter, darker, or different.
+
+`reference` takes `"attachment"` (the latest picture the user attached in the chat), an `https` link to a picture, or a picture file path on the gizzi machine (png, jpg, webp or gif, up to 8 MB). To match a live website, the model takes a `pane_browser` screenshot first and passes the saved file.
+
+The result carries one line per width ("390×844: scrolls sideways by 120px; error: …"), the pictures as attachments, and `metadata` with `problems`, `similarity` and per-width `checks`. The title reads like "Check: Landing — 2 problems · 84% like the reference".
+
+### When the check says stop
+
+gizzi counts checks per session and artifact. A check makes progress when the likeness rises by more than 1 point or there are fewer problems than the best so far. After 3 checks in a row without progress, or 8 checks of one artifact in a session, the result tells the model to stop refining. The model then tells the user what still doesn't match and asks how to go on. A result with no problems and at least 90% likeness never gets the stop line.
+
+### Limits
+
+- Kinds: `page` (HTML; not a published link or Markdown) and `design` (canvas or HTML). Other kinds return a message that says they can't be checked yet.
+- The session must be open in an Allternit app (Desktop, ai.allternit.com or the m.allternit.com PWA). Otherwise the check times out after 120 s and says so. It is only offered to app, Desktop and CLI clients, like `media_generate`.
+- During a check, a page's runtime calls (`window.allternit` storage, AI and connectors) get no answer.
+- On ai.allternit.com and the PWA, the check uses a `srcdoc` frame, which inherits the app's CSP. CDN libraries and web fonts load only on Desktop, which matches what the preview shows on each surface.
+- The likeness is advisory: it compares colour and layout, not text. The model is told to look at the pictures too.
+
 ## Agent presence and the task input
 
 `artifact_read`, `artifact_update`, `artifact_suggest` and `artifact_comment` each send a presence heartbeat for the agent (`POST /api/v2/artifacts/:id/presence` with `agent: {name, session_id, task, anchor, cost_usd}`), so the user sees the agent in the artifact header and its cursor at the spot it works on.
@@ -240,5 +267,6 @@ The text the model sees starts with the same fields as a JSON line, without the 
 ## Source
 
 - Tools: `cmd/gizzi-code/src/runtime/tools/builtins/artifact.ts` (descriptions in `artifact-create.txt`, `artifact-update.txt`, `artifact-suggest.txt`, `artifact-claim.txt`, `artifact-release.txt`, `artifact-read.txt`)
+- `artifact_check`: `cmd/gizzi-code/src/runtime/tools/builtins/artifact-check.ts` (description in `artifact-check.txt`); the app side is `src/lib/artifacts/check.ts` in allternit-ai
 - Store client: `cmd/gizzi-code/src/runtime/integrations/artifacts/index.ts`
-- Tests: `cmd/gizzi-code/test/tool/artifact.test.ts`
+- Tests: `cmd/gizzi-code/test/tool/artifact.test.ts`, `cmd/gizzi-code/test/tool/artifact-check.test.ts`

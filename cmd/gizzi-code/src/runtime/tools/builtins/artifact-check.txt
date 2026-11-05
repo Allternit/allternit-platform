@@ -1,0 +1,12 @@
+Look at an artifact the way a viewer sees it. The user's Allternit app renders the artifact (a page or a design) at each width, waits for it to settle, and sends back a picture of the first screen at each width, plus what went wrong: a blank screen, sideways scroll on a narrow screen, and script or loading errors.
+
+Use it after artifact_create or artifact_update on a page or design, before you tell the user it is done. Fix what the check finds with artifact_update, then check again.
+
+- widths: window widths in px (default 390, 768, 1440: a phone, a tablet, a laptop). Up to 4.
+- reference: what the result should look like. One of: "attachment" (the latest picture the user attached in this chat), an https link to a picture, or a path to a picture file on this computer. The width closest in shape to the picture is compared with it: you get a likeness from 0 to 100% and the parts of the screen that differ. To match a live website, take a screenshot of it first (pane_browser screenshot), save it, and pass that file.
+- The likeness compares colours and layout in small grids. Use it to see if a change helped, not as proof. Look at the pictures too.
+- Make your own original version from a reference: its layout, colours and spacing. Never copy its logos, photos or text unless the user owns them or has permission.
+
+The check stops you when refining stops helping: after 3 checks in a row with no better likeness and no fewer problems, or after 8 checks of one artifact in this session. Then tell the user what still doesn't match and ask how to go on.
+
+This chat must be open in an Allternit app (Desktop, ai.allternit.com or the m.allternit.com app) for the check to run: the app does the rendering.

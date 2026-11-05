@@ -2,6 +2,7 @@ import { QuestionTool } from "@/runtime/tools/builtins/question"
 import { PaneBrowserTool } from "@/runtime/tools/builtins/pane-browser"
 import { PaneArtifactTool } from "@/runtime/tools/builtins/pane-artifact"
 import { MediaGenerateTool } from "@/runtime/tools/builtins/media-generate"
+import { ArtifactCheckTool } from "@/runtime/tools/builtins/artifact-check"
 import { ARTIFACT_TOOLS } from "@/runtime/tools/builtins/artifact"
 import { VerifyTool } from "@/runtime/tools/builtins/verify"
 import { BashTool } from "@/runtime/tools/builtins/bash"
@@ -155,6 +156,8 @@ export namespace ToolRegistry {
       ...(question ? [PaneArtifactTool] : []),
       // Images (native lane renders in the app); needs an app client.
       ...(question ? [MediaGenerateTool] : []),
+      // Looks at an artifact at each width (the app renders it); needs an app client.
+      ...(question && !Flag.GIZZI_DISABLE_ARTIFACT_TOOLS ? [ArtifactCheckTool] : []),
       // Artifacts v2 (artifact_create/update/read): every client. They save to
       // the cloud store when this process has a credential; otherwise the
       // result carries the full payload and the app persists it.

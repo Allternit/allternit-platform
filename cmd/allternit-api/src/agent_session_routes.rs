@@ -2267,6 +2267,17 @@ async fn transform_bus_event(
             "width": props.get("width"),
             "height": props.get("height"),
             "title": props.get("title"),
+            // Video (media_generate) and artifact_check fields: the app's
+            // parser rejects a video without duration and fps.
+            "duration": props.get("duration"),
+            "fps": props.get("fps"),
+            "motionBlur": props.get("motionBlur"),
+            "audio": props.get("audio"),
+            "timeoutMs": props.get("timeoutMs"),
+            "artifactKind": props.get("artifactKind"),
+            "bodyFormat": props.get("bodyFormat"),
+            "widths": props.get("widths"),
+            "reference": props.get("reference"),
             "time": props.get("time"),
         })),
         "pane_artifact.requested" => Some(json!({
