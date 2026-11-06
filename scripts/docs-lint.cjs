@@ -179,6 +179,8 @@ for (const mdxPath of collectMdxFiles(DOCS_DIR)) {
       // The providers API reference uses provider routing ids (claude-cli, codex-cli) and shows
       // each CLI's real sign-in output for one-click install and sign-in.
       if (mdxPath.endsWith('api/providers.mdx')) continue;
+      // Funding operations documents the actual upstream providers, model ids and request options.
+      if (mdxPath.endsWith('operations/upstream-funding.mdx')) continue;
       // Vendor-bot pages must name the vendors whose bots and connectors they cover.
       if (['guides/bot-phone.mdx', 'guides/keep-vendor-bots-online.mdx', 'guides/vendor-bots-on-the-phone.mdx', 'guides/vendor-bots-use-your-phone.mdx', 'guides/how-vendor-bots-connect.mdx', 'guides/allternit-bot-cli.mdx'].some((p) => mdxPath.endsWith(p))) continue;
       if (mdxPath.endsWith('guides/platform-workflows.mdx')) continue;
