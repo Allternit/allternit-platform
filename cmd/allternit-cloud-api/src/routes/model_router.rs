@@ -45,7 +45,17 @@ pub struct ModelListResponse {
 /// Public endpoint listing all models Allternit can route. Returns a static
 /// catalog enriched with live upstream metadata when providers are healthy.
 pub async fn list_models(State(state): State<Arc<ApiState>>) -> Result<Json<ModelListResponse>, ApiError> {
-    let models = state.model_router.list_models().await;
+    let mut models = state.model_router.list_models().await;
+    // A disabled shared pool is refused by chat_completions. Do not offer its
+    // models in the apps' picker either. Unseeded providers keep the existing
+    // catalog behavior; this only honors an explicit operator disable.
+    let disabled: Vec<String> = sqlx::query_scalar(
+        "SELECT provider_id FROM inference_pools WHERE enabled = FALSE",
+    )
+    .fetch_all(&state.db)
+    .await
+    .map_err(ApiError::DatabaseError)?;
+    models.retain(|model| !disabled.iter().any(|id| model.provider.as_ref() == Some(id)));
 
     Ok(Json(ModelListResponse {
         object: "list".to_string(),
@@ -354,6 +364,34 @@ async fn byok_chat_completions(
 mod tests {
     use super::*;
     use crate::auth::AuthenticatedUser;
+
+    // Regression: a disabled pool rejected every chat but stayed selectable
+    // in the public model list. Exercise the actual GET route and Postgres.
+    #[tokio::test]
+    async fn disabled_pool_models_are_hidden_until_pool_is_reenabled() {
+        use axum::{body::{to_bytes, Body}, http::Request, routing::get, Router};
+        use tower::ServiceExt;
+        use crate::routes::test_support::{test_state, MockGateway};
+        let state = test_state(Arc::new(MockGateway::new(None, vec![]))).await;
+        sqlx::query("CREATE TABLE inference_pools (provider_id TEXT PRIMARY KEY, enabled BOOLEAN NOT NULL)")
+            .execute(&state.db).await.unwrap();
+        sqlx::query("INSERT INTO inference_pools VALUES ('groq', FALSE), ('fireworks', TRUE)")
+            .execute(&state.db).await.unwrap();
+        let app = Router::new().route("/v1/models", get(list_models)).with_state(state.clone());
+        let get_models = |app: Router| async move {
+            let response = app.oneshot(Request::builder().uri("/v1/models").body(Body::empty()).unwrap()).await.unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let body = to_bytes(response.into_body(), 1_000_000).await.unwrap();
+            serde_json::from_slice::<serde_json::Value>(&body).unwrap()["data"].as_array().unwrap().clone()
+        };
+        let models = get_models(app.clone()).await;
+        assert!(!models.iter().any(|model| model["provider"] == "groq"));
+        assert!(models.iter().any(|model| model["id"] == "glm-5.3-fireworks"));
+        sqlx::query("UPDATE inference_pools SET enabled = TRUE WHERE provider_id = 'groq'")
+            .execute(&state.db).await.unwrap();
+        let models = get_models(app).await;
+        assert!(models.iter().any(|model| model["id"] == "gpt-oss-20b-groq"));
+    }
 
     fn key_user(scopes: Vec<String>) -> AuthenticatedUser {
         // Mirrors `auth::middleware`: an `alt_` key authenticates with its

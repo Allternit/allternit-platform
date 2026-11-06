@@ -36,6 +36,10 @@ A catalog model is tied to one provider. When that provider's balance is under i
 
 ## Model availability and provider request options
 
+The public model list also honors `inference_pools.enabled = FALSE`. Disabling a shared pool removes its models from the app pickers as well as refusing shared-credit chat. Re-enabling the pool restores them without a code deploy. BYOK dispatch still runs before the shared-pool gate.
+
+For the 2026-11-05 review preparation, the shared Groq pool is disabled: its current account tier permits 8,000 tokens per minute, while a normal app turn sent about 41,000 tokens of instructions and tools. Short API probes passed but the app chat failed. Re-enable only after the account limit can serve a real app turn and that turn passes. No credits or billing settings were changed.
+
 Cloud omits providers that have no credits from `/v1/models`. A provider below its funding floor can still serve requests; the router first looks for a funded route to the same model. An HTTP 402 hides that provider's models for 15 minutes before retrying. This applies to the shared catalog used by Desktop, the web workspace, the phone PWA and iPhone.
 
 Together's dedicated-only Llama 3.3 70B Turbo and Qwen 2.5 72B routes are removed from the starter catalog. They cannot run on the shared serverless key. Removing those routes also keeps funding fallback from selecting them. The retired Groq Qwen 3.6, unlisted Together Qwen3.8 2.4T and undeployed Fireworks DeepSeek V4 Pro routes are also removed. Saved `kimi-k3` chats use the same Kimi K3 model on Fireworks because Together's endpoint repeatedly returned capacity errors.
