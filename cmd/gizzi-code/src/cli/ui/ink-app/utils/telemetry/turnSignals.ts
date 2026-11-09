@@ -74,3 +74,52 @@ export function reasoningTokensFromMessages(messages: Message[]): number {
   }
   return 0
 }
+
+export type TurnFileChange = { path: string; added: number; removed: number }
+
+/**
+ * How the turn ended, for the closing line: failed (the last assistant
+ * message is an API error), empty (no text and no tool call), and the files
+ * changed by Edit/Write results (path + lines added/removed).
+ */
+export function turnOutcome(
+  messages: Message[],
+  fromIndex: number,
+  cwd: string = process.cwd(),
+): { failed: boolean; empty: boolean; cause?: string; files: TurnFileChange[] } {
+  let lastAssistant: Message | undefined
+  let produced = false
+  const files: TurnFileChange[] = []
+  for (let i = Math.max(0, fromIndex); i < messages.length; i++) {
+    const m = messages[i] as any
+    if (!m) continue
+    if (m.type === 'assistant') {
+      lastAssistant = m
+      if (m.isApiErrorMessage) continue
+      const content = Array.isArray(m.message?.content) ? m.message.content : []
+      if (content.some((b: any) => (b?.type === 'text' && String(b.text ?? '').trim()) || b?.type === 'tool_use')) produced = true
+      continue
+    }
+    const r = m.type === 'user' ? m.toolUseResult : undefined
+    if (!r || typeof r !== 'object' || typeof r.filePath !== 'string') continue
+    const patch = Array.isArray(r.structuredPatch) ? r.structuredPatch : null
+    if (!patch) continue
+    let added = 0
+    let removed = 0
+    for (const h of patch) for (const l of h?.lines ?? []) {
+      if (typeof l !== 'string') continue
+      if (l.startsWith('+')) added++
+      else if (l.startsWith('-')) removed++
+    }
+    if (patch.length === 0 && typeof r.content === 'string') added = r.content.replace(/\n$/, '').split('\n').length
+    const rel = r.filePath.startsWith(cwd + '/') ? r.filePath.slice(cwd.length + 1) : r.filePath
+    files.push({ path: rel, added, removed })
+  }
+  const failed = (lastAssistant as any)?.isApiErrorMessage === true
+  let cause: string | undefined
+  if (failed) {
+    const content = (lastAssistant as any).message?.content
+    cause = Array.isArray(content) ? content.find((b: any) => b?.type === 'text')?.text : undefined
+  }
+  return { failed, empty: !failed && !produced, cause, files }
+}

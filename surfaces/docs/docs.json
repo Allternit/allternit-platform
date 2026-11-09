@@ -403,6 +403,7 @@
               "cli/configuration",
               "cli/authentication",
               "cli/headless-execution",
+              "cli/output",
               "cli/permission-profiles",
               "cli/skills",
               "cli/mcp",
