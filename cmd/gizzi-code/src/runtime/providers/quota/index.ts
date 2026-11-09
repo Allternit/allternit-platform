@@ -544,7 +544,13 @@ const allternit: Fetcher = async () => {
         const payload = await res.json().catch(() => undefined)
         const windows = parse(payload)
         if (windows.length > 0) {
-          const plan = typeof payload?.plan === "string" && payload.plan ? titleCase(payload.plan) : undefined
+          // The server's label names the plan as sold (Free / Plus / Max / Ultra); the Max plan keeps the id `super`.
+          const plan =
+            typeof payload?.label === "string" && payload.label
+              ? payload.label
+              : typeof payload?.plan === "string" && payload.plan
+                ? payload.plan === "super" ? "Max" : titleCase(payload.plan)
+                : undefined
           return { status: "ok", quota: { providerID: "allternit", source: "Allternit Cloud", plan, windows, fetchedAt: Date.now() } }
         }
       }

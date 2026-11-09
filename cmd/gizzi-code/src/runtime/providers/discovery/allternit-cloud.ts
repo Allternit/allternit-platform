@@ -1,6 +1,6 @@
 /**
  * Allternit Cloud discovery — live models from api.allternit.com/v1/models
- * and the caller's Free/Plus/Super/Ultra plan from /api/v1/billing/subscription.
+ * and the caller's Free/Plus/Max/Ultra plan (Max keeps the id `super`) from /api/v1/billing/subscription.
  *
  * Runs as a default Discovery channel. Auth is ALLTERNIT_API_KEY / ALLTERNIT_API_TOKEN
  * when present; the public model catalog still loads without a key.
@@ -116,7 +116,7 @@ export async function refreshAllternitPlan(): Promise<AllternitPlan | null> {
     const id = (json.plan_id || "free").toLowerCase()
     const label =
       json.label ||
-      (id === "plus" ? "Plus" : id === "super" ? "Super" : id === "ultra" ? "Ultra" : "Free")
+      (id === "plus" ? "Plus" : id === "super" ? "Max" : id === "ultra" ? "Ultra" : "Free")
     cachedPlan = {
       id,
       label,

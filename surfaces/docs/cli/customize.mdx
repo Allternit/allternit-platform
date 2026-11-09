@@ -1,0 +1,38 @@
+---
+title: Customize
+description: Browse the Customize catalog in the terminal with /customize, open an item's page and add it, the same way Allternit Desktop does.
+---
+
+`/customize` opens the catalog Allternit Desktop shows under **Customize**, in the terminal. Each section starts with the **A://TERNIT OFFICIAL** shelf (what Allternit makes), then the directory.
+
+| Section | Official shelf | Directory |
+|---------|----------------|-----------|
+| Skills | ALabs Course Pipeline, Codebase To Course, Clone Website, Mobile App Design, Word Documents, PowerPoint Decks, Agent Orchestrator, Steer Parallel Agent | Anthropic's skills (Algorithmic Art, Canvas Design, PDF and more) |
+| MCP servers | Lens Vault | 15 servers: Context7, DeepWiki, GitMCP, Microsoft Learn, Cloudflare Docs, AWS Knowledge, Hugging Face, Playwright, Chrome DevTools, Filesystem, Memory, Sequential Thinking, Fetch, Git, Time |
+| Commands | `/review`, `/handoff`, `/standup`, `/explain` | `/test`, `/fix`, `/commit`, `/pr`, `/plan`, `/refactor`, `/docs`, `/security`, `/debug`, `/changelog`, `/onboard`, `/todo` |
+
+## Keys
+
+| Key | Action |
+|-----|--------|
+| ↑ / ↓ | Move through the shelf |
+| Tab, ← / → | Next or previous section |
+| Enter | Open the item's page: what it is, who makes it, its version, the start of a skill's SKILL.md, and exactly what Add writes |
+| `a` | Add the item (on the list or on its page) |
+| Esc | Back to the list, then close |
+
+Items you already added show **✔ Added**.
+
+## What Add does
+
+Add does the same thing as Desktop's Add:
+
+- **Skill:** installs it into `~/.agents/skills` through Allternit's skill installer and reloads skills. This needs Allternit's local API (it runs with Allternit Desktop) and a sign-in (`gizzi login`).
+- **MCP server:** adds the server to `mcp` in `~/.config/gizzi-code/gizzi.json`, and to this terminal's own MCP list so `/mcp` shows it. Local servers are pinned to a checked version and need Node.js (npx) or uv (uvx); the item's page says which. A `gizzi.json` that isn't plain JSON (for example, one with comments) is never rewritten. Add the server with `gizzi mcp add` instead.
+- **Command:** writes the prompt to `~/.config/gizzi-code/command/<name>.md`. Type `/<name>` in any chat.
+
+`GIZZI_CONFIG_DIR` moves the config folder, as everywhere else in Gizzi Code.
+
+## For developers
+
+The catalog is `src/cli/ui/ink-app/commands/customize/catalog.json` in `cmd/gizzi-code`, generated from allternit-ai's Customize data (`src/views/customize/section-official.ts`, `section-directory.ts` and `src/plugins/catalog/native-plugins.ts`). Regenerate it when those change so the terminal and Desktop list the same items. Skill pages and installs use allternit-api's `GET /api/v1/skills/catalog/installed`, `GET /api/v1/skills/catalog/:id/files` and `POST /api/v1/skills/catalog/install`. See [Customize](/guides/customize) for the Desktop side.

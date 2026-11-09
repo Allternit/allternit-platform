@@ -1,11 +1,13 @@
 ---
 title: Usage
-description: Inspect token usage, context window, and session cost with the /usage command
+description: Your Allternit plan, credits and CLI-brain limits, plus the session's tokens and cost, with /usage
 ---
 
 ## Overview
 
-The `/usage` command is an inline command available inside an interactive Gizzi Code session. It prints a live summary of the current session's consumption, including the active model, context-window utilization, total cost, duration, and token breakdown.
+The `/usage` command is an inline command available inside an interactive Gizzi Code session. It prints your Allternit plan (Free, Plus, Max or Ultra, named as Allternit Desktop names them), your credits and Cloud balance, the plan limits of each CLI brain you are signed in to, and a live summary of the current session: the active model, context-window use, cost, duration and tokens.
+
+The footer shows your credit balance next to the context meter, for example `credits $41.20 · context: 12% (24k/200k)`. It is hidden when you are not signed in. **Settings › Usage** shows the same plan and limits.
 
 Use it when you want to:
 
@@ -22,7 +24,7 @@ Use it when you want to:
 
 | Command | Description |
 |---------|-------------|
-| `/usage` | Show token usage, context window, and session cost inline |
+| `/usage` | Show your Allternit plan, credits and CLI-brain limits, plus this session's tokens and cost |
 
 `/usage` works in both interactive and non-interactive sessions. It does not modify session state and can be run any number of times.
 
@@ -58,6 +60,23 @@ The count includes input tokens, cache-read tokens, and cache-creation tokens.
 | `Duration` | Wall-clock time since the session started |
 | `Tokens` | Total tokens consumed (input + output) |
 | `Cache read / Cache write` | Breakdown of cached input tokens, when applicable |
+
+### Allternit account
+
+Read from Allternit Cloud (`GET /api/v1/me/usage`, the route Desktop's plan meter uses). It costs nothing and runs no model. Gizzi signs in with `ALLTERNIT_API_TOKEN`, `ALLTERNIT_API_KEY`, or the device token from `gizzi login`, in that order.
+
+| Field | Description |
+|-------|-------------|
+| `Plan` | Free, Plus, Max or Ultra |
+| `Credits` | Your Cloud credit balance in USD |
+| `Monthly` / `Free monthly` | Used of the plan's monthly grant (or the free allowance), and when it resets |
+| `This month` | What you spent from credits this month |
+
+Not signed in: the section says so and names `gizzi login`. Nothing is made up.
+
+### CLI brains
+
+The plan limits that Claude Code, Codex and Kimi report for your own subscription (5-hour and weekly windows, with reset times). A CLI you are not signed in to is left out.
 
 ## Usage examples
 

@@ -1,0 +1,888 @@
+{
+  "$comment": "Generated from allternit-ai src/views/customize (section-official.ts, section-directory.ts) and src/plugins/catalog/native-plugins.ts. Regenerate when those change; Desktop and gizzi /customize show the same items and Add writes the same things.",
+  "sections": [
+    {
+      "id": "skills",
+      "title": "Skills",
+      "shelves": [
+        {
+          "title": "A://TERNIT OFFICIAL",
+          "items": [
+            {
+              "id": "allternit-alabs-course-pipeline",
+              "name": "ALabs Course Pipeline",
+              "description": "End-to-end A://Labs course creation pipeline. Creates Canvas courses, generates interactive HTML modules from Allternit packages, syncs quizzes, tracks…",
+              "kind": "Skill",
+              "author": "Allternit",
+              "version": "1.0.0",
+              "add": {
+                "skill": "allternit-alabs-course-pipeline"
+              }
+            },
+            {
+              "id": "allternit-allternit-codebase-to-course",
+              "name": "Allternit Codebase To Course",
+              "description": "Turn any Allternit package or codebase into a beautiful, interactive single-page HTML course module for the A://Labs curriculum. Use this skill whenever…",
+              "kind": "Skill",
+              "author": "Allternit",
+              "version": "1.0.0",
+              "add": {
+                "skill": "allternit-allternit-codebase-to-course"
+              }
+            },
+            {
+              "id": "codex-clone-website",
+              "name": "Clone Website",
+              "description": "Reverse-engineers any public website and rebuilds it as a pixel-accurate React page using the Allternit design system. Extracts computed styles, design tokens,…",
+              "kind": "Skill",
+              "author": "Allternit",
+              "version": "1.0.0",
+              "add": {
+                "skill": "codex-clone-website"
+              }
+            },
+            {
+              "id": "codex-mobile-app-design",
+              "name": "Mobile App Design",
+              "description": "Mobile app UI/UX design skill. Generates frame structures, React Native / Expo component code, asset manifests, and navigation flows. Outputs Figma-compatible…",
+              "kind": "Skill",
+              "author": "Allternit",
+              "version": "1.0.0",
+              "add": {
+                "skill": "codex-mobile-app-design"
+              }
+            },
+            {
+              "id": "allternit-docx",
+              "name": "Word Documents",
+              "description": "Generate Word documents (.docx) from outlines, prompts or structured data: proposals, technical specs, reports and SOPs. Parse, round-trip and extract text.",
+              "kind": "Skill",
+              "author": "Allternit",
+              "version": "1.0.0",
+              "add": {
+                "skill": "allternit-docx"
+              }
+            },
+            {
+              "id": "allternit-powerpoint",
+              "name": "PowerPoint Decks",
+              "description": "Generate PowerPoint presentations (.pptx) from prompts, outlines or Excel summaries: title, bullet and chart slides with speaker notes.",
+              "kind": "Skill",
+              "author": "Allternit",
+              "version": "1.0.0",
+              "add": {
+                "skill": "allternit-powerpoint"
+              }
+            },
+            {
+              "id": "allternit-agent-orchestrator",
+              "name": "Agent Orchestrator",
+              "description": "Hand implementation work to other CLI agents (Claude, Codex, Kimi, Grok, gizzi) as Terminal bots in the Allternit Factory, then scope, monitor and review it.",
+              "kind": "Skill",
+              "author": "Allternit",
+              "version": "1.0.0",
+              "add": {
+                "skill": "allternit-agent-orchestrator"
+              }
+            },
+            {
+              "id": "allternit-steer-parallel-agent",
+              "name": "Steer Parallel Agent",
+              "description": "Redirect another agent session that is already working on the same project, without stopping it or losing its progress.",
+              "kind": "Skill",
+              "author": "Allternit",
+              "version": "1.0.0",
+              "add": {
+                "skill": "allternit-steer-parallel-agent"
+              }
+            }
+          ]
+        },
+        {
+          "title": "More",
+          "items": [
+            {
+              "id": "claude-algorithmic-art",
+              "name": "Algorithmic Art",
+              "description": "Creating algorithmic art using p5.js with seeded randomness and interactive parameter exploration. Use this when users request creating art using code,…",
+              "kind": "Skill",
+              "author": "Anthropic",
+              "version": "1.0.0",
+              "add": {
+                "skill": "claude-algorithmic-art"
+              }
+            },
+            {
+              "id": "claude-brand-guidelines",
+              "name": "Brand Guidelines",
+              "description": "Applies Anthropic's official brand colors and typography to any sort of artifact that may benefit from having Anthropic's look-and-feel. Use it when brand…",
+              "kind": "Skill",
+              "author": "Anthropic",
+              "version": "1.0.0",
+              "add": {
+                "skill": "claude-brand-guidelines"
+              }
+            },
+            {
+              "id": "claude-canvas-design",
+              "name": "Canvas Design",
+              "description": "Create beautiful visual art in .png and .pdf documents using design philosophy. You should use this skill when the user asks to create a poster, piece of art,…",
+              "kind": "Skill",
+              "author": "Anthropic",
+              "version": "1.0.0",
+              "add": {
+                "skill": "claude-canvas-design"
+              }
+            },
+            {
+              "id": "claude-claude-api",
+              "name": "Claude API",
+              "description": "Build, debug, and optimize Claude API / Anthropic SDK apps. Apps built with this skill should include prompt caching. Also handles migrating existing Claude…",
+              "kind": "Skill",
+              "author": "Anthropic",
+              "version": "1.0.0",
+              "add": {
+                "skill": "claude-claude-api"
+              }
+            },
+            {
+              "id": "claude-doc-coauthoring",
+              "name": "Doc Co-Authoring",
+              "description": "Guide users through a structured workflow for co-authoring documentation. Use when user wants to write documentation, proposals, technical specs, decision…",
+              "kind": "Skill",
+              "author": "Anthropic",
+              "version": "1.0.0",
+              "add": {
+                "skill": "claude-doc-coauthoring"
+              }
+            },
+            {
+              "id": "claude-docx",
+              "name": "DOCX",
+              "description": "Use this skill whenever the user wants to create, read, edit, or manipulate Word documents (.docx files). Triggers include: any mention of 'Word doc', 'word…",
+              "kind": "Skill",
+              "author": "Anthropic",
+              "version": "1.0.0",
+              "add": {
+                "skill": "claude-docx"
+              }
+            },
+            {
+              "id": "claude-frontend-design",
+              "name": "Frontend Design",
+              "description": "Create distinctive, production-grade frontend interfaces with high design quality. Use this skill when the user asks to build web components, pages, artifacts,…",
+              "kind": "Skill",
+              "author": "Anthropic",
+              "version": "1.0.0",
+              "add": {
+                "skill": "claude-frontend-design"
+              }
+            },
+            {
+              "id": "claude-internal-comms",
+              "name": "Internal Comms",
+              "description": "A set of resources to help me write all kinds of internal communications, using the formats that my company likes to use. Claude should use this skill whenever…",
+              "kind": "Skill",
+              "author": "Anthropic",
+              "version": "1.0.0",
+              "add": {
+                "skill": "claude-internal-comms"
+              }
+            },
+            {
+              "id": "claude-mcp-builder",
+              "name": "MCP Builder",
+              "description": "Guide for creating high-quality MCP (Model Context Protocol) servers that enable LLMs to interact with external services through well-designed tools. Use when…",
+              "kind": "Skill",
+              "author": "Anthropic",
+              "version": "1.0.0",
+              "add": {
+                "skill": "claude-mcp-builder"
+              }
+            },
+            {
+              "id": "claude-pdf",
+              "name": "PDF",
+              "description": "Use this skill whenever the user wants to do anything with PDF files. This includes reading or extracting text/tables from PDFs, combining or merging multiple…",
+              "kind": "Skill",
+              "author": "Anthropic",
+              "version": "1.0.0",
+              "add": {
+                "skill": "claude-pdf"
+              }
+            },
+            {
+              "id": "claude-pptx",
+              "name": "PPTX",
+              "description": "Use this skill any time a .pptx file is involved in any way — as input, output, or both. This includes: creating slide decks, pitch decks, or presentations;…",
+              "kind": "Skill",
+              "author": "Anthropic",
+              "version": "1.0.0",
+              "add": {
+                "skill": "claude-pptx"
+              }
+            },
+            {
+              "id": "claude-skill-creator",
+              "name": "Skill Creator",
+              "description": "Create new skills, modify and improve existing skills, and measure skill performance. Use when users want to create a skill from scratch, edit, or optimize an…",
+              "kind": "Skill",
+              "author": "Anthropic",
+              "version": "1.0.0",
+              "add": {
+                "skill": "claude-skill-creator"
+              }
+            },
+            {
+              "id": "claude-slack-gif-creator",
+              "name": "Slack GIF Creator",
+              "description": "Knowledge and utilities for creating animated GIFs optimized for Slack. Provides constraints, validation tools, and animation concepts. Use when users request…",
+              "kind": "Skill",
+              "author": "Anthropic",
+              "version": "1.0.0",
+              "add": {
+                "skill": "claude-slack-gif-creator"
+              }
+            },
+            {
+              "id": "claude-theme-factory",
+              "name": "Theme Factory",
+              "description": "Toolkit for styling artifacts with a theme. These artifacts can be slides, docs, reportings, HTML landing pages, etc. There are 10 pre-set themes with…",
+              "kind": "Skill",
+              "author": "Anthropic",
+              "version": "1.0.0",
+              "add": {
+                "skill": "claude-theme-factory"
+              }
+            },
+            {
+              "id": "claude-web-artifacts-builder",
+              "name": "Web Artifacts Builder",
+              "description": "Suite of tools for creating elaborate, multi-component claude.ai HTML artifacts using modern frontend web technologies (React, Tailwind CSS, shadcn/ui). Use…",
+              "kind": "Skill",
+              "author": "Anthropic",
+              "version": "1.0.0",
+              "add": {
+                "skill": "claude-web-artifacts-builder"
+              }
+            },
+            {
+              "id": "claude-webapp-testing",
+              "name": "Web App Testing",
+              "description": "Toolkit for interacting with and testing local web applications using Playwright. Supports verifying frontend functionality, debugging UI behavior, capturing…",
+              "kind": "Skill",
+              "author": "Anthropic",
+              "version": "1.0.0",
+              "add": {
+                "skill": "claude-webapp-testing"
+              }
+            },
+            {
+              "id": "claude-xlsx",
+              "name": "XLSX",
+              "description": "Use this skill any time a spreadsheet file is the primary input or output. This means any task where the user wants to: open, read, edit, or fix an existing…",
+              "kind": "Skill",
+              "author": "Anthropic",
+              "version": "1.0.0",
+              "add": {
+                "skill": "claude-xlsx"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mcps",
+      "title": "MCP servers",
+      "shelves": [
+        {
+          "title": "A://TERNIT OFFICIAL",
+          "items": [
+            {
+              "id": "official-mcp-lens",
+              "name": "Lens Vault",
+              "description": "Search your connected context vault (GitHub, Gmail, Notion and other sources you sync) from any chat: search, recent activity and source profiles. Read-only; restricted notes are never returned.",
+              "kind": "MCP server",
+              "author": "Allternit",
+              "add": {
+                "mcp": {
+                  "key": "lens-vault",
+                  "gizzi": true,
+                  "args": [
+                    "vault",
+                    "mcp-server"
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        {
+          "title": "Directory",
+          "items": [
+            {
+              "id": "dir-mcp-context7",
+              "name": "Context7",
+              "description": "Current documentation and code examples for thousands of libraries, pulled into the chat so answers match the version you use.",
+              "kind": "MCP server",
+              "author": "Upstash",
+              "category": "Docs",
+              "homepage": "https://context7.com",
+              "add": {
+                "mcp": {
+                  "key": "context7",
+                  "entry": {
+                    "type": "remote",
+                    "url": "https://mcp.context7.com/mcp",
+                    "enabled": true
+                  }
+                }
+              }
+            },
+            {
+              "id": "dir-mcp-deepwiki",
+              "name": "DeepWiki",
+              "description": "Ask questions about any public GitHub repository and read its generated wiki: structure, how parts fit, where things live.",
+              "kind": "MCP server",
+              "author": "Cognition",
+              "category": "Code",
+              "homepage": "https://deepwiki.com",
+              "add": {
+                "mcp": {
+                  "key": "deepwiki",
+                  "entry": {
+                    "type": "remote",
+                    "url": "https://mcp.deepwiki.com/mcp",
+                    "enabled": true
+                  }
+                }
+              }
+            },
+            {
+              "id": "dir-mcp-gitmcp",
+              "name": "GitMCP",
+              "description": "Reads a GitHub project's docs and code on demand, so the agent works from the real README and source instead of memory.",
+              "kind": "MCP server",
+              "author": "GitMCP",
+              "category": "Code",
+              "homepage": "https://gitmcp.io",
+              "add": {
+                "mcp": {
+                  "key": "gitmcp",
+                  "entry": {
+                    "type": "remote",
+                    "url": "https://gitmcp.io/docs",
+                    "enabled": true
+                  }
+                }
+              }
+            },
+            {
+              "id": "dir-mcp-microsoft-learn",
+              "name": "Microsoft Learn",
+              "description": "Search and read official Microsoft documentation: Azure, .NET, Microsoft 365, Windows and more, with code samples.",
+              "kind": "MCP server",
+              "author": "Microsoft",
+              "category": "Docs",
+              "homepage": "https://learn.microsoft.com",
+              "add": {
+                "mcp": {
+                  "key": "microsoft-learn",
+                  "entry": {
+                    "type": "remote",
+                    "url": "https://learn.microsoft.com/api/mcp",
+                    "enabled": true
+                  }
+                }
+              }
+            },
+            {
+              "id": "dir-mcp-cloudflare-docs",
+              "name": "Cloudflare Docs",
+              "description": "Search Cloudflare documentation: Workers, Pages, R2, D1, DNS and the rest of the platform.",
+              "kind": "MCP server",
+              "author": "Cloudflare",
+              "category": "Docs",
+              "homepage": "https://developers.cloudflare.com",
+              "add": {
+                "mcp": {
+                  "key": "cloudflare-docs",
+                  "entry": {
+                    "type": "remote",
+                    "url": "https://docs.mcp.cloudflare.com/mcp",
+                    "enabled": true
+                  }
+                }
+              }
+            },
+            {
+              "id": "dir-mcp-aws-knowledge",
+              "name": "AWS Knowledge",
+              "description": "Search AWS documentation, API references, regional availability and architecture guidance.",
+              "kind": "MCP server",
+              "author": "Amazon Web Services",
+              "category": "Docs",
+              "homepage": "https://aws.amazon.com",
+              "add": {
+                "mcp": {
+                  "key": "aws-knowledge",
+                  "entry": {
+                    "type": "remote",
+                    "url": "https://knowledge-mcp.global.api.aws",
+                    "enabled": true
+                  }
+                }
+              }
+            },
+            {
+              "id": "dir-mcp-hugging-face",
+              "name": "Hugging Face",
+              "description": "Search models, datasets, Spaces and papers on the Hugging Face Hub. Works signed out; sign in on huggingface.co/mcp for more.",
+              "kind": "MCP server",
+              "author": "Hugging Face",
+              "category": "AI",
+              "homepage": "https://huggingface.co",
+              "add": {
+                "mcp": {
+                  "key": "hugging-face",
+                  "entry": {
+                    "type": "remote",
+                    "url": "https://huggingface.co/mcp",
+                    "enabled": true
+                  }
+                }
+              }
+            },
+            {
+              "id": "dir-mcp-playwright",
+              "name": "Playwright",
+              "description": "Drive a real browser: open pages, click, type, fill forms and read the page through its accessibility tree.",
+              "kind": "MCP server",
+              "author": "Microsoft",
+              "category": "Browser",
+              "homepage": "https://playwright.dev",
+              "requires": "Node.js 18 or later (npx)",
+              "add": {
+                "mcp": {
+                  "key": "playwright",
+                  "entry": {
+                    "type": "local",
+                    "command": [
+                      "npx",
+                      "-y",
+                      "@playwright/mcp@0.0.84"
+                    ],
+                    "enabled": true
+                  }
+                }
+              }
+            },
+            {
+              "id": "dir-mcp-chrome-devtools",
+              "name": "Chrome DevTools",
+              "description": "Debug a page in Chrome: console, network requests, performance traces and screenshots.",
+              "kind": "MCP server",
+              "author": "Google",
+              "category": "Browser",
+              "homepage": "https://developer.chrome.com",
+              "requires": "Node.js 18 or later (npx) and Google Chrome",
+              "add": {
+                "mcp": {
+                  "key": "chrome-devtools",
+                  "entry": {
+                    "type": "local",
+                    "command": [
+                      "npx",
+                      "-y",
+                      "chrome-devtools-mcp@1.12.0"
+                    ],
+                    "enabled": true
+                  }
+                }
+              }
+            },
+            {
+              "id": "dir-mcp-filesystem",
+              "name": "Filesystem",
+              "description": "Read, write, search and move files inside your home folder, and nowhere else.",
+              "kind": "MCP server",
+              "author": "Model Context Protocol",
+              "category": "Files",
+              "homepage": "https://modelcontextprotocol.io",
+              "requires": "Node.js 18 or later (npx)",
+              "add": {
+                "mcp": {
+                  "key": "filesystem",
+                  "entry": {
+                    "type": "local",
+                    "command": [
+                      "npx",
+                      "-y",
+                      "@modelcontextprotocol/server-filesystem@2.1.0",
+                      "{home}"
+                    ],
+                    "enabled": true
+                  }
+                }
+              }
+            },
+            {
+              "id": "dir-mcp-memory",
+              "name": "Memory",
+              "description": "A local knowledge graph the agent can write to and recall from: people, projects and the facts that link them.",
+              "kind": "MCP server",
+              "author": "Model Context Protocol",
+              "category": "Knowledge",
+              "homepage": "https://modelcontextprotocol.io",
+              "requires": "Node.js 18 or later (npx)",
+              "add": {
+                "mcp": {
+                  "key": "memory",
+                  "entry": {
+                    "type": "local",
+                    "command": [
+                      "npx",
+                      "-y",
+                      "@modelcontextprotocol/server-memory@2.0.1"
+                    ],
+                    "enabled": true
+                  }
+                }
+              }
+            },
+            {
+              "id": "dir-mcp-sequential-thinking",
+              "name": "Sequential Thinking",
+              "description": "Gives the agent a tool for working a hard problem in revisable steps, with branches when an idea does not pan out.",
+              "kind": "MCP server",
+              "author": "Model Context Protocol",
+              "category": "Reasoning",
+              "homepage": "https://modelcontextprotocol.io",
+              "requires": "Node.js 18 or later (npx)",
+              "add": {
+                "mcp": {
+                  "key": "sequential-thinking",
+                  "entry": {
+                    "type": "local",
+                    "command": [
+                      "npx",
+                      "-y",
+                      "@modelcontextprotocol/server-sequential-thinking@2.0.0"
+                    ],
+                    "enabled": true
+                  }
+                }
+              }
+            },
+            {
+              "id": "dir-mcp-fetch",
+              "name": "Fetch",
+              "description": "Fetch a web page and hand it to the agent as clean Markdown, in chunks for long pages.",
+              "kind": "MCP server",
+              "author": "Model Context Protocol",
+              "category": "Web",
+              "homepage": "https://modelcontextprotocol.io",
+              "requires": "uv (uvx)",
+              "add": {
+                "mcp": {
+                  "key": "fetch",
+                  "entry": {
+                    "type": "local",
+                    "command": [
+                      "uvx",
+                      "mcp-server-fetch@2026.10.28"
+                    ],
+                    "enabled": true
+                  }
+                }
+              }
+            },
+            {
+              "id": "dir-mcp-git",
+              "name": "Git",
+              "description": "Read and change local Git repositories: status, diff, log, branches, staging and commits.",
+              "kind": "MCP server",
+              "author": "Model Context Protocol",
+              "category": "Code",
+              "homepage": "https://modelcontextprotocol.io",
+              "requires": "uv (uvx)",
+              "add": {
+                "mcp": {
+                  "key": "git",
+                  "entry": {
+                    "type": "local",
+                    "command": [
+                      "uvx",
+                      "mcp-server-git@2026.10.28"
+                    ],
+                    "enabled": true
+                  }
+                }
+              }
+            },
+            {
+              "id": "dir-mcp-time",
+              "name": "Time",
+              "description": "Current time in any time zone and conversions between them.",
+              "kind": "MCP server",
+              "author": "Model Context Protocol",
+              "category": "Utilities",
+              "homepage": "https://modelcontextprotocol.io",
+              "requires": "uv (uvx)",
+              "add": {
+                "mcp": {
+                  "key": "time",
+                  "entry": {
+                    "type": "local",
+                    "command": [
+                      "uvx",
+                      "mcp-server-time@2026.10.28"
+                    ],
+                    "enabled": true
+                  }
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "commands",
+      "title": "Commands",
+      "shelves": [
+        {
+          "title": "A://TERNIT OFFICIAL",
+          "items": [
+            {
+              "id": "official-command-review",
+              "name": "Review",
+              "description": "Review the current changes for bugs, risky edits and missing tests, most severe first.",
+              "kind": "Command",
+              "author": "Allternit",
+              "add": {
+                "command": {
+                  "name": "review",
+                  "template": "Review the changes in this project that are not committed yet (`git diff` and `git diff --staged`). If there are none, review the last commit.\n\nFor each problem, give the file and line, what goes wrong and for which input, and the smallest fix. Put the most severe first. Check correctness, error handling, security, and tests that would catch a regression.\nDo not list style preferences. If you find nothing real, say so.\n\nFocus: $ARGUMENTS"
+                }
+              }
+            },
+            {
+              "id": "official-command-handoff",
+              "name": "Handoff",
+              "description": "Write a handoff note so another person or session can pick this work up cold.",
+              "kind": "Command",
+              "author": "Allternit",
+              "add": {
+                "command": {
+                  "name": "handoff",
+                  "template": "Write a handoff note for the work in this session so someone with no context can continue it.\n\nInclude: the goal, what is done (with file paths and commit or PR ids), what is not done, every open question or decision, how to run and check it, and the first next step. List open items in full; do not summarise them away.\n\nSave it as HANDOFF.md in the project root unless I say otherwise. $ARGUMENTS"
+                }
+              }
+            },
+            {
+              "id": "official-command-standup",
+              "name": "Standup",
+              "description": "Summarise what changed in this project since yesterday, for a standup or status update.",
+              "kind": "Command",
+              "author": "Allternit",
+              "add": {
+                "command": {
+                  "name": "standup",
+                  "template": "Write a short standup update for this project from its git history since yesterday morning (`git log --since=yesterday --stat`).\n\nThree parts: Done (what shipped, one line each), Next (what the open branches and TODOs point to), Blocked (anything waiting on someone). Plain language, no hype.\n\n$ARGUMENTS"
+                }
+              }
+            },
+            {
+              "id": "official-command-explain",
+              "name": "Explain",
+              "description": "Explain a file, function or folder: what it does, how data moves through it, and what depends on it.",
+              "kind": "Command",
+              "author": "Allternit",
+              "add": {
+                "command": {
+                  "name": "explain",
+                  "template": "Explain $ARGUMENTS to someone new to this codebase.\n\nStart with what it is for in one or two sentences. Then how it works step by step, quoting the real code with file paths and line numbers, what calls it and what it calls, and anything surprising. Say what you did not check."
+                }
+              }
+            }
+          ]
+        },
+        {
+          "title": "Directory",
+          "items": [
+            {
+              "id": "dir-command-test",
+              "name": "Test",
+              "description": "Write tests for a file or change that fail on the bug they guard, using the project's own test setup.",
+              "kind": "Command",
+              "author": "Allternit",
+              "category": "Code",
+              "add": {
+                "command": {
+                  "name": "test",
+                  "template": "Write tests for $ARGUMENTS (if empty: the uncommitted changes).\n\nUse the test framework and folder this project already uses. Test what a caller sees: return values, rendered text, HTTP responses. Mock only the network, the clock and outside services.\nEach test must fail if the behaviour it covers breaks. Run the tests and show the result."
+                }
+              }
+            },
+            {
+              "id": "dir-command-fix",
+              "name": "Fix",
+              "description": "Find why the build, tests or a reported error fail, fix the cause, and show it passing.",
+              "kind": "Command",
+              "author": "Allternit",
+              "category": "Code",
+              "add": {
+                "command": {
+                  "name": "fix",
+                  "template": "Something is failing: $ARGUMENTS (if empty: run the tests and the build and take the first failure).\n\nReproduce it first. Find the cause, not the symptom, and fix it with the smallest change. Run the failing check again and show it passing. Say what you did not check."
+                }
+              }
+            },
+            {
+              "id": "dir-command-commit",
+              "name": "Commit",
+              "description": "Stage the current work and write a commit message that says what changed and why.",
+              "kind": "Command",
+              "author": "Allternit",
+              "category": "Git",
+              "add": {
+                "command": {
+                  "name": "commit",
+                  "template": "Look at `git status` and `git diff`. Group the changes; if they are unrelated, say so and ask before committing them together.\n\nWrite a commit message: a short subject in the imperative, then a body that says why. Do not commit secrets, build output or files listed in .gitignore. Show the message before committing. $ARGUMENTS"
+                }
+              }
+            },
+            {
+              "id": "dir-command-pr",
+              "name": "Pull request",
+              "description": "Write the pull request title and description for this branch from its commits and diff.",
+              "kind": "Command",
+              "author": "Allternit",
+              "category": "Git",
+              "add": {
+                "command": {
+                  "name": "pr",
+                  "template": "Write a pull request for this branch against its base (`git log` and `git diff` from the merge base).\n\nTitle: what it does, under 70 characters. Description: why, what changed (by area), how it was tested, and anything a reviewer should look at first. $ARGUMENTS"
+                }
+              }
+            },
+            {
+              "id": "dir-command-plan",
+              "name": "Plan",
+              "description": "Turn a request into a step-by-step plan with the files to change, risks and how to check each step.",
+              "kind": "Command",
+              "author": "Allternit",
+              "category": "Planning",
+              "add": {
+                "command": {
+                  "name": "plan",
+                  "template": "Make a plan for: $ARGUMENTS\n\nRead the code it touches first. List the steps in order, each with the files it changes and how to check it worked. Name the risks and open questions. Do not change any code yet."
+                }
+              }
+            },
+            {
+              "id": "dir-command-refactor",
+              "name": "Refactor",
+              "description": "Restructure code without changing what it does, with tests run before and after.",
+              "kind": "Command",
+              "author": "Allternit",
+              "category": "Code",
+              "add": {
+                "command": {
+                  "name": "refactor",
+                  "template": "Refactor $ARGUMENTS without changing its behaviour.\n\nRun the tests first and note the result. Make the change in small steps. Run the tests again; they must give the same result. Keep public names unless I ask otherwise."
+                }
+              }
+            },
+            {
+              "id": "dir-command-docs",
+              "name": "Docs",
+              "description": "Update the README and docs to match the code as it is now.",
+              "kind": "Command",
+              "author": "Allternit",
+              "category": "Writing",
+              "add": {
+                "command": {
+                  "name": "docs",
+                  "template": "Update the documentation for $ARGUMENTS (if empty: the uncommitted changes).\n\nFind the docs that describe this code (README, docs folder, comments on public functions). Change only what is now wrong or missing. Use plain language and real examples from the code."
+                }
+              }
+            },
+            {
+              "id": "dir-command-security",
+              "name": "Security review",
+              "description": "Check the current changes for security problems: injection, secrets, auth gaps and unsafe input.",
+              "kind": "Command",
+              "author": "Allternit",
+              "category": "Code",
+              "add": {
+                "command": {
+                  "name": "security",
+                  "template": "Review $ARGUMENTS (if empty: the uncommitted changes) for security problems.\n\nCheck: user input that reaches a shell, SQL, HTML or file path; secrets in code or logs; missing auth or permission checks; unsafe defaults. For each finding give the file and line, how it could be used, and the fix. If nothing is real, say so."
+                }
+              }
+            },
+            {
+              "id": "dir-command-debug",
+              "name": "Debug",
+              "description": "Work out why something behaves wrongly, step by step, with evidence before any fix.",
+              "kind": "Command",
+              "author": "Allternit",
+              "category": "Code",
+              "add": {
+                "command": {
+                  "name": "debug",
+                  "template": "Debug this: $ARGUMENTS\n\nSay what should happen and what happens. Form one hypothesis at a time and test it with logs, a small script or the debugger. Show the evidence for the cause before proposing a fix."
+                }
+              }
+            },
+            {
+              "id": "dir-command-changelog",
+              "name": "Changelog",
+              "description": "Write release notes from the commits since the last tag, grouped for the people who use it.",
+              "kind": "Command",
+              "author": "Allternit",
+              "category": "Writing",
+              "add": {
+                "command": {
+                  "name": "changelog",
+                  "template": "Write release notes from the commits since the last tag (`git describe --tags --abbrev=0`, then `git log`).\n\nGroup them as Added, Changed and Fixed. One line each, written for the people who use the product, not for developers. Leave out internal-only changes. $ARGUMENTS"
+                }
+              }
+            },
+            {
+              "id": "dir-command-onboard",
+              "name": "Onboard",
+              "description": "A tour of this codebase for someone new: what it is, how it runs, and where things live.",
+              "kind": "Command",
+              "author": "Allternit",
+              "category": "Planning",
+              "add": {
+                "command": {
+                  "name": "onboard",
+                  "template": "Give me a tour of this codebase. $ARGUMENTS\n\nCover: what it does, how to run it and its tests, the main folders and what each holds, how a request or action flows through it, and the three files to read first. Quote real paths."
+                }
+              }
+            },
+            {
+              "id": "dir-command-todo",
+              "name": "TODOs",
+              "description": "Collect the TODO, FIXME and HACK notes in the project into one ranked list.",
+              "kind": "Command",
+              "author": "Allternit",
+              "category": "Planning",
+              "add": {
+                "command": {
+                  "name": "todo",
+                  "template": "Find every TODO, FIXME and HACK comment in this project (skip node_modules, build output and vendored code).\n\nList them with file and line, grouped by area, most important first, with one line on what each needs. $ARGUMENTS"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

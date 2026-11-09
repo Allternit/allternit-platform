@@ -4,7 +4,7 @@ export default {
   type: 'local',
   name: 'usage',
   aliases: ['tokens'],
-  description: 'Show token usage, context window, and session cost inline',
+  description: 'Show your Allternit plan, credits and CLI-brain limits, plus this session\'s tokens and cost',
   supportsNonInteractive: true,
   load: () => import('./usage.js'),
 } satisfies Command

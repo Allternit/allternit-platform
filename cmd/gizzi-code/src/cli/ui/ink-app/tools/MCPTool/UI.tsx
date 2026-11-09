@@ -17,6 +17,7 @@ import type { ProgressMessage } from '../../types/message';
 import { formatNumber } from '../../utils/format';
 import { createHyperlink } from '../../utils/hyperlink';
 import { getContentSizeEstimate, type MCPToolResult } from '../../utils/mcpValidation';
+import { appViewFor } from '../../services/mcp/appView';
 import { jsonParse, jsonStringify } from '../../utils/slowOperations';
 import type { inputSchema } from './MCPTool';
 
@@ -364,4 +365,26 @@ export function trySlackSendCompact(output: string | MCPToolResult, input: unkno
     channel: label.startsWith('#') ? label : `#${label}`,
     url
   };
+}
+
+/**
+ * MCP Apps: the normal result, then one line that opens the tool's ui://
+ * app in the browser (services/mcp/appView.ts writes the host page).
+ */
+export function renderToolResultWithAppView(output: string | MCPToolResult, progressMessagesForMessage: ProgressMessage<ToolProgressData>[], options: {
+  verbose: boolean;
+  input?: unknown;
+}): React.ReactNode {
+  const base = renderToolResultMessage(output, progressMessagesForMessage, options);
+  const view = appViewFor(output);
+  if (!view) return base;
+  return <Box flexDirection="column" width="100%">
+      {base}
+      <MessageResponse height={1}>
+        <Text>
+          <Text color="suggestion">⧉ MCP App</Text> · <Ansi>{createHyperlink(view.url, 'View in browser')}</Ansi>
+          <Text dimColor> {view.file}</Text>
+        </Text>
+      </MessageResponse>
+    </Box>;
 }
