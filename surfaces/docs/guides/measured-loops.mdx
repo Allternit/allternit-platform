@@ -13,7 +13,7 @@ Fill in the card before the loop starts. A blank row means you do not have a loo
 
 | Field | Meaning |
 | --- | --- |
-| Command | The step that makes one change. An agent prompt or a script. |
+| Change step command | The shell command that makes one change, for example a `gizzi run` call. Saved as `changeCommand`. |
 | Metric command | Prints the number to move. The last number on stdout is the reading. |
 | Direction | `lower` or `higher` is better. |
 | Keep bar | Fractional gain needed to keep a change, for example `0.05` for 5 percent. |
@@ -36,7 +36,7 @@ Fill in the card before the loop starts. A blank row means you do not have a loo
 | DROP | No gain, or the metric broke. | Reverted. |
 | INCONCLUSIVE | Inside the noise or too few pairs. | Reverted. |
 
-Rejected changes are undone with git, and every attempt, rejects included, is written to the loop's ledger with its change in percent, pair count, noise floor, verdict and reason.
+Kept changes are committed so the next attempt starts from a clean tree. Rejected changes are undone with git: tracked files are restored and only the untracked files the attempt created are removed, never files that were there before. On the platform, a loop with a Loop Card is handed to the gizzi runtime's measuring engine when it runs, and the attempts are written back to the loop so the timeline fills while it runs. A loop with no change step command fails with a clear message instead of running unmeasured. The goal page shows the same timeline for each linked loop. Every attempt, and every attempt, rejects included, is written to the loop's ledger with its change in percent, pair count, noise floor, verdict and reason.
 
 ## Dry run
 

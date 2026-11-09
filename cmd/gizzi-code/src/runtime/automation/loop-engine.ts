@@ -186,6 +186,7 @@ export class LoopEngine {
     for (let iteration = ledger.length + 1; iteration <= maxIterations; iteration++) {
       if (read()?.state !== "running") return
       const head = await this.git("rev-parse HEAD", cwd)
+      const before = await this.untracked(cwd)
       const rejected = ledger.filter((r) => r.verdict !== "KEEP").map((r) => `${r.verdict}: ${r.hypothesis} (${r.why})`)
       const step = await this.runCommandWithEnv(loop.command, cwd, { LOOP_ITERATION: String(iteration), LOOP_REJECTED: JSON.stringify(rejected) })
       const dirty = (await this.git("status --porcelain", cwd)).out
@@ -193,7 +194,7 @@ export class LoopEngine {
       if (step.exitCode !== 0 || (!dirty && !moved)) {
         ledger.push({ iteration, hypothesis: loop.command, delta: null, ci: null, n: 0, noise, verdict: "INCONCLUSIVE", why: step.exitCode !== 0 ? `change step exited ${step.exitCode}` : "the change step changed nothing", outcome: "NOOP", control, treatment: [], timestamp: new Date().toISOString() })
         stalled++
-        await this.revert(head.out, cwd)
+        await this.revert(head.out, before, cwd)
         save({ ledger, last_outcome: "NOOP" })
         if (stalled >= stallLimit) break
         continue
@@ -201,8 +202,11 @@ export class LoopEngine {
       const treatment = await this.rounds(m.command, n, cwd)
       const res = armStats({ control, treatment, direction, keepBar: m.keepBar, noise, minPairs: m.minPairs, seed: iteration })
       const kept = res.verdict === "KEEP"
-      if (!kept) await this.revert(head.out, cwd)
-      else control = treatment
+      if (!kept) await this.revert(head.out, before, cwd)
+      else {
+        control = treatment
+        await this.commitKept(iteration, cwd)
+      }
       stalled = res.delta > noise ? 0 : stalled + 1
       ledger.push({ iteration, hypothesis: loop.command, delta: res.delta, ci: res.ci, n: res.pairs, noise, verdict: res.verdict, why: res.why, outcome: "ACTED", control, treatment, timestamp: new Date().toISOString() })
       save({ ledger, last_outcome: "ACTED" })
@@ -214,12 +218,33 @@ export class LoopEngine {
     }
   }
 
-  /** Undo an attempt: revert commits made since `head`, drop uncommitted edits. */
-  private static async revert(head: string, cwd?: string): Promise<void> {
+  private static async untracked(cwd?: string): Promise<string[]> {
+    const r = await this.git("ls-files --others --exclude-standard", cwd)
+    return r.out ? r.out.split("\n").filter(Boolean) : []
+  }
+
+  /**
+   * Undo an attempt: revert commits made since `head`, restore tracked files,
+   * and remove only the untracked paths the change step created (those not in
+   * `before`). Untracked files that existed before the attempt are never touched.
+   */
+  private static async revert(head: string, before: string[], cwd?: string): Promise<void> {
     await this.git("checkout -- .", cwd)
-    await this.git("clean -fd", cwd)
+    const keep = new Set(before)
+    const created = (await this.untracked(cwd)).filter((f) => !keep.has(f))
+    for (const f of created) {
+      const quoted = "'" + f.replace(/'/g, "'\\''") + "'"
+      await this.git(`clean -fd -- ${quoted}`, cwd)
+    }
     const now = (await this.git("rev-parse HEAD", cwd)).out
     if (head && now !== head) await this.git(`revert --no-edit ${head}..HEAD`, cwd)
+  }
+
+  /** Commit a kept change so the next attempt starts from a clean tree. */
+  private static async commitKept(iteration: number, cwd?: string): Promise<void> {
+    if (!(await this.git("status --porcelain", cwd)).out) return
+    await this.git("add -A", cwd)
+    await this.git(`commit -q -m "loop: keep attempt ${iteration}"`, cwd)
   }
 
   private static runCommandWithEnv(command: string, cwd: string | undefined, env: Record<string, string>) {

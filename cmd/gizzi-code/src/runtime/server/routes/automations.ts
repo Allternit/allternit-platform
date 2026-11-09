@@ -39,8 +39,8 @@ const LoopMetricSchema = z.object({
 })
 
 const LoopCreateSchema = z.object({
-  metric: LoopMetricSchema.optional(),
-  cwd: z.string().optional(),
+  metric: LoopMetricSchema.nullish(),
+  cwd: z.string().nullish(),
   id: z.string().optional(),
   agent_id: z.string().optional(),
   command: z.string(),

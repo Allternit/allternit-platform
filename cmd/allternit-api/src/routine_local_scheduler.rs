@@ -556,6 +556,14 @@ pub trait RoutineDriver: Send + Sync {
         let _ = (r, skill, serial, inputs);
         std::future::ready(Err("phone skills can't run on this driver".to_string()))
     }
+    /// A loop with `config.metric` (a Loop Card) is measured by gizzi's
+    /// LoopEngine: `change_command` makes one change per iteration, the
+    /// metric judges it, and the ledger lands in `config.ledger`. `Ok` is a
+    /// one-line summary of the ledger.
+    fn run_measured(&self, r: &LocalRoutine, change_command: &str, timeout_secs: u64) -> impl Future<Output = Result<String, String>> + Send {
+        let _ = (r, change_command, timeout_secs);
+        std::future::ready(Err("measured loops can't run on this driver".to_string()))
+    }
     /// What the session's newest turn did so far (text, tools, todo steps, brain).
     fn turn_digest(&self, session_id: &str) -> impl Future<Output = Option<TurnDigest>> + Send {
         let _ = session_id;
@@ -606,6 +614,81 @@ impl RoutineDriver for GizziDriver {
             Ok(phone_skill_summary(skill, &report))
         } else {
             Err(report.get("error").and_then(Value::as_str).unwrap_or("the phone skill didn't finish").to_string())
+        }
+    }
+
+    async fn run_measured(&self, r: &LocalRoutine, change_command: &str, timeout_secs: u64) -> Result<String, String> {
+        let client = crate::agent_session_routes::gizzi_client(&axum::http::HeaderMap::new());
+        let base = format!("{}/v1/automations/loops", crate::agent_session_routes::gizzi_base());
+        let body = json!({
+            "command": change_command,
+            "metric": r.config.get("metric"),
+            "cwd": r.config.get("cwd").and_then(Value::as_str),
+            "max_iterations": r.config.get("maxIterations").and_then(Value::as_i64).unwrap_or(10),
+        });
+        let created: Value = client
+            .post(&base)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| format!("the gizzi runtime is not reachable: {e}"))?
+            .error_for_status()
+            .map_err(|e| format!("the gizzi runtime refused the measured loop: {e}"))?
+            .json()
+            .await
+            .map_err(|e| format!("unreadable reply from the gizzi runtime: {e}"))?;
+        let gizzi_id = created.get("id").and_then(Value::as_str).ok_or("the gizzi runtime returned no loop id")?.to_string();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
+        let mut seen = 0usize;
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+            let rows: Value = client
+                .get(&base)
+                .send()
+                .await
+                .map_err(|e| format!("lost the gizzi runtime: {e}"))?
+                .json()
+                .await
+                .map_err(|e| format!("unreadable loop list from the gizzi runtime: {e}"))?;
+            let Some(row) = rows.as_array().and_then(|a| a.iter().find(|l| l.get("id").and_then(Value::as_str) == Some(gizzi_id.as_str()))) else {
+                return Err("the measured loop disappeared from the gizzi runtime".to_string());
+            };
+            let ledger = row.get("ledger").and_then(Value::as_array).cloned().unwrap_or_default();
+            if ledger.len() != seen {
+                seen = ledger.len();
+                // Write the ledger back so the loop's timeline fills while it runs.
+                let trimmed: Vec<Value> = ledger
+                    .iter()
+                    .map(|e| {
+                        let mut e = e.clone();
+                        if let Some(o) = e.as_object_mut() {
+                            o.remove("control");
+                            o.remove("treatment");
+                        }
+                        e
+                    })
+                    .collect();
+                if let Ok(conn) = self.state.db.connect() {
+                    let _ = conn.execute(
+                        "UPDATE loops SET config = json_set(COALESCE(config, '{}'), '$.ledger', json(?2)), updated_at = ?3 WHERE id = ?1",
+                        params![r.id, Value::Array(trimmed).to_string(), Utc::now().to_rfc3339()],
+                    );
+                }
+            }
+            let state = row.get("state").and_then(Value::as_str).unwrap_or("running");
+            if state != "running" {
+                let kept = ledger.iter().filter(|e| e.get("verdict").and_then(Value::as_str) == Some("KEEP")).count();
+                let summary = format!("{} attempts, {} kept, loop {}", ledger.len(), kept, state);
+                if state == "blocked" {
+                    let why = ledger.last().and_then(|e| e.get("why")).and_then(Value::as_str).unwrap_or("blocked");
+                    return Err(format!("measured loop blocked: {why}"));
+                }
+                return Ok(summary);
+            }
+            if std::time::Instant::now() >= deadline {
+                let _ = client.put(format!("{base}/{gizzi_id}")).json(&json!({ "state": "stopped" })).send().await;
+                return Err(format!("measured loop timed out after {timeout_secs} s; it was stopped"));
+            }
         }
     }
 
@@ -1084,6 +1167,17 @@ pub async fn execute<D: RoutineDriver>(db: &DbHandle, driver: &D, r: &LocalRouti
         // A phone skill replays with no model turn and needs no bot thread.
         if let Some((skill, serial, inputs)) = phone_replay_of(&r.config) {
             let out = driver.run_phone_skill(r, &skill, serial.as_deref(), &inputs).await?;
+            return Ok((out, "succeeded"));
+        }
+        // A Loop Card makes this a measured loop: gizzi's engine keeps or reverts each change.
+        if r.kind == TaskKind::Loop && r.config.pointer("/metric/command").and_then(Value::as_str).is_some() {
+            let change = r
+                .config
+                .get("changeCommand")
+                .and_then(Value::as_str)
+                .filter(|c| !c.trim().is_empty())
+                .ok_or("a measured loop needs a change command (config.changeCommand)")?;
+            let out = driver.run_measured(r, change, timeout_secs as u64).await?;
             return Ok((out, "succeeded"));
         }
         let agent_id = r.agent_id.as_deref().ok_or("this routine has no bot; assign it to a bot to run it")?;
