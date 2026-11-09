@@ -2027,7 +2027,9 @@ async function initializeDevelopmentMode(): Promise<void> {
     log.warn('[Main] No adoptable Gizzi runtime in development mode; continuing without brokered AI runtime:', error);
   }
 
-  mainWindow = createMainWindow();
+  // Reuse the window opened above; a second one would be an orphan that the
+  // window registry counts (and it would show tint dots with one window open).
+  if (!mainWindow || mainWindow.isDestroyed()) mainWindow = createMainWindow();
   activePlatformUrl = process.env.ALLTERNIT_PLATFORM_URL || platformUrl;
   log.info(`[Main] Dev mode loading platform URL: ${activePlatformUrl}`);
   mainWindow.loadURL(activePlatformUrl);
