@@ -415,6 +415,7 @@
               "cli/memory",
               "cli/native-sessions",
               "cli/continue-anywhere",
+              "cli/work",
               "cli/tasks",
               "cli/doctor",
               "cli/context",

@@ -36,6 +36,7 @@ import { Config } from "@/runtime/context/config/config"
 import { ToolPrinter, columns } from "@/cli/commands/run-print"
 import { TurnSummary } from "@/shared/util/turn-summary"
 import chalk from "@/shared/util/chalk"
+import { runOnComputer } from "@/cli/commands/computers"
 
 // Gizzi sand through the chalk shim: 256-color terminals get 180, NO_COLOR gets nothing.
 const sand = (s: string) => chalk.rgb(212, 176, 140)(s)
@@ -116,6 +117,10 @@ export const RunCommand = cmd({
       .option("attach", {
         type: "string",
         describe: "attach to a running gizzi server (e.g., http://localhost:4096)",
+      })
+      .option("on", {
+        type: "string",
+        describe: "run this session on a paired computer (name or id from `gizzi computers ls`)",
       })
       .option("dir", {
         type: "string",
@@ -257,6 +262,11 @@ export const RunCommand = cmd({
     let message = [...args.message, ...(args["--"] || [])]
       .map((arg) => (arg.includes(" ") ? `"${arg.replace(/"/g, '\\"')}"` : arg))
       .join(" ")
+
+    if (args.on) {
+      process.exitCode = await runOnComputer(String(args.on), message, args.model, args.title)
+      return
+    }
 
     const directory = (() => {
       if (!args.dir) return undefined

@@ -1,5 +1,6 @@
 import * as React from 'react'
 import { CacheCountdown } from './CacheCountdown'
+import { WorkChips } from './WorkChips'
 import { useSyncExternalStore } from 'react'
 import { getActiveBotChat, onActiveBotChatChange } from '../../bootstrap/state'
 import { Box, Text } from '../../ink'
@@ -50,6 +51,7 @@ export function FooterContextLine({ messages }: { messages: Message[] }): React.
         {effort ? `  effort: ${effort}` : ''}
       </Text>
       <Box flexShrink={0}>
+        <WorkChips />
         <Text dimColor={true}>
           context: {percent}% ({formatTokens(used)}/{formatTokens(total)})
         </Text>
