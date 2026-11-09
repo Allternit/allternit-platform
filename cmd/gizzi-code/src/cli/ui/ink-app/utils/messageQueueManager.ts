@@ -375,6 +375,35 @@ export function isQueuedCommandEditable(cmd: QueuedCommand): boolean {
 }
 
 /**
+ * A message the user queued for after the current turn (tab while the agent
+ * works). Everything else the user types mid-turn is a steer.
+ */
+export function isQueuedForAfterTurn(cmd: QueuedCommand): boolean {
+  return (
+    cmd.priority === 'later' &&
+    isQueuedCommandEditable(cmd) &&
+    cmd.origin === undefined
+  )
+}
+
+/**
+ * Remove the most recent queued-for-after message (esc while the agent
+ * works) and return it, or undefined when there is none.
+ */
+export function removeLastQueuedForAfterTurn(): QueuedCommand | undefined {
+  for (let i = commandQueue.length - 1; i >= 0; i--) {
+    const cmd = commandQueue[i]!
+    if (isQueuedForAfterTurn(cmd)) {
+      commandQueue.splice(i, 1)
+      notifySubscribers()
+      logOperation('remove')
+      return cmd
+    }
+  }
+  return undefined
+}
+
+/**
  * Whether this queued command should render in the queue preview under the
  * prompt. Superset of editable — channel messages show (so the keyboard user
  * sees what arrived) but stay non-editable (raw XML).

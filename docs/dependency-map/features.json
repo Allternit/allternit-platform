@@ -3772,6 +3772,175 @@
         "allternit/surfaces/docs/guides/app-deployments.mdx",
         "allternit/surfaces/docs/api/openship-integration.mdx"
       ]
+    },
+    {
+      "id": "feature:gizzi-live-terminal-sessions",
+      "label": "Live terminal sessions (Remote Control on Allternit sign-in)",
+      "product": "product:gizzi-code",
+      "status": "building",
+      "description": "Every Gizzi TUI session attaches to the local engine as an ordinary engine session (sourceRef.harness gizzi-tui): its transcript, status and approvals stream to Desktop, web, PWA, iOS and Android on the events they already read, and prompts, steers, Stop and approval replies from any surface reach the running terminal through the /v1/terminal inbox. /remote shows a QR code and links; /desktop opens it in Desktop.",
+      "touches": [
+        "allternit/cmd/gizzi-code/src/runtime/session",
+        "allternit/cmd/gizzi-code/src/runtime/server/routes",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app",
+        "allternit/surfaces/allternit-desktop",
+        "allternit/surfaces/allternit-mobile/ios",
+        "allternit-ai/src/components/native-sessions",
+        "allternit-ai/src/lib/agents",
+        "allternit-ai/src/shell/rail",
+        "allternit-ai/src/fabric-session/phone"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-09",
+          "note": "Eoj, 2026-11-09: remote control must work as well as Claude Code Remote Control or better, on Allternit sign-in, with state updating instantly across Desktop, cloud computers, web, PWA and the phone apps. The claude.ai bridge (BRIDGE_MODE) stays compiled out. Contract: surfaces/docs/architecture/live-terminal-sessions.mdx."
+        }
+      ],
+      "evidence": [
+        "surfaces/docs/architecture/live-terminal-sessions.mdx"
+      ]
+    },
+    {
+      "id": "feature:gizzi-tui-header",
+      "label": "Gizzi Code startup header (mascot + wordmark)",
+      "product": "product:gizzi-code",
+      "status": "building",
+      "description": "The TUI's welcome box: the Gizzi mascot (real PNG through iTerm2 OSC 1337 / Kitty graphics in image terminals, an 18x8 half-block pixel mascot elsewhere that idles with a beacon pulse and a blink until the first key press or turn), the braille dot-matrix GIZZI CODE wordmark with the version, a /help hint and Directory / Session / Model rows, in a face-panel brown rounded border. Small terminals get a 3-row mascot and a bold title. headerArt setting / GIZZI_HEADER_ART picks auto, image, blocks or none; reduced motion, CI, NO_COLOR and non-TTY stop the animation.",
+      "touches": [
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/components",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/ink",
+        "allternit/surfaces/docs/cli"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-09",
+          "note": "Eoj picked mascot variant 10 (animated MID16 half blocks) everywhere and 14 (the real image) in image terminals, and wordmark b2: FONT35 braille, coral first G, version on braille row 0. The font, coral G and version row are constants in welcomeArt.ts."
+        }
+      ],
+      "evidence": [
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/components/WelcomeBox.tsx",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/components/welcomeArt.ts",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/components/gizziMascotImage.ts",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/ink/inlineImage.ts",
+        "allternit/surfaces/docs/cli/configuration.mdx"
+      ]
+    },
+    {
+      "id": "feature:gizzi-tui-steer-suggest-recap",
+      "label": "Gizzi Code terminal: steer or queue while the agent works, next-step suggestions, recap on return",
+      "product": "product:gizzi-code",
+      "status": "building",
+      "description": "In the Gizzi Code TUI, while a turn runs: enter steers (queued at 'next', drained into the running turn at the next tool boundary and shown as an amber '\u21b3 steering' line), tab queues for after the turn ('later', skipped by the mid-turn drain, listed under 'queued for after this turn', esc removes the newest), ctrl+x enter stops the turn and sends (forceImmediate). Keys are chat:submit / chat:queueAfter / chat:stopAndSend in ~/.gizzi/keybindings.json, with a live hint line. Next-step prompt suggestions are on (gate tengu_chomp_inflection), run on the session's model, and only on CLI brains, loopback models and Allternit Cloud unless promptSuggestionOnApiKeys. The away recap lists files changed with +/- from edit tool results, what still fails and a Next step that becomes the ghost suggestion. Unfinished slash commands (DAG runtime, cowork, simulated /swarm, stickers) are hidden unless GIZZI_EXPERIMENTAL_COMMANDS=1.",
+      "touches": [
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/keybindings",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/components/PromptInput",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/utils/handlePromptSubmit.ts",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/utils/messageQueueManager.ts",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/query.ts",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/services/PromptSuggestion",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/services/awaySummary.ts",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/hooks/useAwaySummary.ts",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/commands.ts"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-09",
+          "note": "Eoj: the way we can steer messages mid-task needs to be included, and the ctrl+x send, the recaps and suggestions. Suggestions never spend a metered API key silently."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/cli/keyboard-shortcuts.mdx"
+      ]
+    },
+    {
+      "id": "feature:gizzi-swarm-board",
+      "label": "Gizzi swarms and the live Factory board",
+      "product": "product:factory",
+      "status": "building",
+      "description": "`gizzi swarm \"<task>\" --workers N --brain claude-cli/<model>` hands one task (or one --task each) to N Terminal bots, each in its own git worktree and branch, through `agents up` + `orchestration send`. `gizzi board` (and `/board` in the TUI, `b` on the factory floor) shows every running bot with brain, state (working/waiting/done/failed), elapsed time, cost (`plan` for CLI subscriptions) and its pane's last line, fed by the engine's /api/factory/events and per-agent /stream SSE (no polling); done stays visible until landed. Keys: enter attach, s steer (queued steers are drained when the pane frees), x stop, l land. `gizzi swarm wait` blocks until every worker settles; `gizzi swarm land` merges finished branches into the starting branch. The TUI footer shows `\u2699 N bots \u00b7 M waiting` while bots run; `/swarm <task>` is real (it was a simulated visualizer).",
+      "touches": [
+        "allternit/cmd/gizzi-code/src/cli/factory",
+        "allternit/cmd/gizzi-code/src/cli/commands/factory",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/screens/factory-floor",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/commands/swarm",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/commands/board",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/components/PromptInput",
+        "allternit/factory/engine"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-09",
+          "note": "Built as a thin layer over the engine (no second engine, no Rust change): worktree per worker, team file grown one bot per `agents up` so each bot gets its own workdir, board reads the engine's SSE streams. Status glyphs and done-stays-until-seen borrowed from Herdr (factory/pane). Verified with a real 2-worker claude-cli/claude-sonnet-5 swarm on a scratch repo."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/factory/swarms.mdx",
+        "allternit/cmd/gizzi-code/src/cli/factory/swarm.ts",
+        "allternit/cmd/gizzi-code/src/cli/factory/board.ts",
+        "allternit/cmd/gizzi-code/src/cli/factory/live.ts",
+        "allternit/cmd/gizzi-code/src/cli/factory/board-tty.ts",
+        "allternit/cmd/gizzi-code/src/cli/commands/factory/swarm.ts",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/screens/factory-floor/SwarmBoardScreen.tsx",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/components/FactoryBadge.tsx",
+        "allternit/cmd/gizzi-code/test/factory/swarm-board.test.ts"
+      ]
+    },
+    {
+      "id": "feature:gizzi-output-presentation",
+      "label": "Gizzi Code output: tool lines, live command output, highlighting, diffs, done/stopped line",
+      "product": "product:gizzi-code",
+      "status": "building",
+      "description": "Gizzi audit 2026-11-09 wave 1a. One shared highlighter (\u2713 green, \u2715 red, paths cyan + bold, +N \u2212M counts) and one closing-line builder (Done in Ns \u00b7 files +a \u2212r \u00b7 tools \u00b7 model, changed files under it; \u2715 Stopped after Ns \u00b7 nothing changed \u00b7 cause on a failed or empty turn) used by the Ink TUI and gizzi run. gizzi run prints one header per tool call, normalizes CLI-brain tool names and argument keys, streams Bash output live, and renders diffs with line numbers through the color-diff port. The 256-color quantizer keeps hue so diff tints map to 22/88 instead of grey 237 / plum 89.",
+      "touches": [
+        "allternit/cmd/gizzi-code/src/cli/commands/run.ts",
+        "allternit/cmd/gizzi-code/src/cli/commands/run-print.ts",
+        "allternit/cmd/gizzi-code/src/shared/util/highlight.ts",
+        "allternit/cmd/gizzi-code/src/shared/util/turn-summary.ts",
+        "allternit/cmd/gizzi-code/src/shared/util/cli-tools.ts",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/services/api/cliBrain.ts",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/components/messages/ToolUseCard.tsx",
+        "allternit/cmd/gizzi-code/src/shared/util/chalk.ts",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/components/shell",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/components/messages/SystemTextMessage.tsx"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-09",
+          "note": "Eoj: present code, streams, failures, highlights and structure at least as well as Claude Code and Codex CLI; a failed turn gets no done line."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/cli/output.mdx",
+        "allternit/cmd/gizzi-code/test/cli/run-print.test.ts"
+      ]
+    },
+    {
+      "id": "feature:gizzi-tui-models",
+      "label": "Gizzi Code TUI models: CLI brains through the engine driver, Desktop's provider rule, real failure causes",
+      "product": "product:gizzi-code",
+      "status": "building",
+      "description": "The Gizzi TUI runs CLI brains (claude-cli, codex-cli, kimi-cli, added CLIs, subs-*) through the engine's driver with the TUI's own permission prompts, offers the same providers as Desktop's picker (Cloud, subscriptions, connected API keys, local; never OpenRouter standalone) in /model and gizzi models, honours --model at launch, and names the real cause plus a command to run for each failure.",
+      "touches": [
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/services/api",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/utils/model",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/components",
+        "allternit/cmd/gizzi-code/src/runtime/providers",
+        "allternit/cmd/gizzi-code/src/runtime/drivers",
+        "allternit/cmd/gizzi-code/src/cli/commands"
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/cli/models.mdx",
+        "allternit/cmd/gizzi-code/src/runtime/providers/offer.ts",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/services/api/cliBrain.ts",
+        "allternit/cmd/gizzi-code/test/provider/provider-offer.test.ts",
+        "allternit/cmd/gizzi-code/test/services/provider-errors.test.ts"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-09",
+          "note": "Gizzi audit wave 0 (make it run): the TUI sent CLI-brain turns to the Allternit API and failed with 'Not logged in'. One provider rule in runtime/providers/offer.ts mirrors Desktop's isOfferedProvider; Desktop itself is unchanged."
+        }
+      ]
     }
   ],
   "journeys": [

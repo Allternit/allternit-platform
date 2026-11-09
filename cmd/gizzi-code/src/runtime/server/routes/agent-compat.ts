@@ -64,6 +64,10 @@ import { SessionSummary } from "@/runtime/session/summary"
 import { Provider } from "@/runtime/providers/provider"
 import { Bus } from "@/shared/bus"
 import { Log } from "@/shared/util/log"
+import { PermissionNext } from "@/runtime/tools/guard/permission/next"
+import { Question } from "@/runtime/integrations/question"
+import { TerminalLive } from "@/runtime/session/terminal-live"
+import { SessionStatus } from "@/runtime/session/status"
 import { fileFrameForPart, toolFramesForPart, usageFromMessageInfo } from "./tool-frames"
 import { planFrameForTodos, sourceFramesForPart } from "@/runtime/session/response-parts"
 
@@ -123,6 +127,7 @@ function transformSession(info: any) {
       continuesFrom: info.continuesFrom ?? null,
       handoff: info.handoff ?? null,
       paused: info.paused ?? null,
+      sourceRef: info.sourceRef ?? null,
     },
   }
 }
@@ -262,6 +267,7 @@ export const AgentCompatRoutes = () =>
                 continuesFrom: info.continuesFrom ?? null,
                 handoff: info.handoff ?? null,
                 paused: info.paused ?? null,
+                sourceRef: info.sourceRef ?? null,
               },
             }
           }
@@ -431,6 +437,67 @@ export const AgentCompatRoutes = () =>
           })
         })
       })
+    })
+    // Approvals and questions (allternit-api agent_session_routes.rs
+    // list_permissions / reply_permission / list_questions / reply_question),
+    // so a client talking to gizzi directly shows and answers the same cards.
+    .get("/v1/permissions", async (c) => {
+      const sessionId = c.req.query("sessionId")
+      const all = await PermissionNext.list()
+      return c.json({ permissions: all.filter((r) => !sessionId || r.sessionID === sessionId) })
+    })
+    .post("/v1/permissions/:requestID/reply", async (c) => {
+      const body = await c.req.json().catch(() => ({}))
+      const reply = ["once", "always", "task", "reject"].includes(body.reply) ? body.reply : "once"
+      await PermissionNext.reply({
+        requestID: c.req.param("requestID"),
+        reply,
+        ...(typeof body.message === "string" ? { message: body.message } : {}),
+      })
+      return c.json(true)
+    })
+    // The approval cards' decision route (allternit-api cowork_routes.rs
+    // decide_approval): approve answers a gizzi ask once, reject denies it,
+    // dismiss is local to the client.
+    .post("/v1/cowork/approvals", async (c) => {
+      const body = await c.req.json().catch(() => ({}))
+      const id = String(body.actionId ?? body.requestId ?? "")
+      const decision = String(body.decision ?? "").trim().toLowerCase()
+      const reply = ["approved", "approve", "allow", "grant"].includes(decision)
+        ? "once"
+        : ["rejected", "reject", "deny", "denied"].includes(decision)
+          ? "reject"
+          : ["dismissed", "dismiss"].includes(decision)
+            ? undefined
+            : null
+      if (reply === null) return c.json({ error: "invalid decision" }, 400)
+      if (reply && id.startsWith("per")) await PermissionNext.reply({ requestID: id, reply })
+      return c.json({ ok: true, actionId: id, decision })
+    })
+    .get("/v1/questions", async (c) => {
+      const sessionId = c.req.query("sessionId")
+      const all = await Question.list()
+      return c.json({ questions: all.filter((r) => !sessionId || r.sessionID === sessionId) })
+    })
+    .post("/v1/questions/:requestID/reply", async (c) => {
+      const body = await c.req.json().catch(() => ({}))
+      const labels = (v: unknown): string[] =>
+        typeof v === "string" ? [v] : Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []
+      const items: unknown[] = Array.isArray(body.answers) ? body.answers : []
+      const answers: string[][] = []
+      if (items.every(Array.isArray)) items.forEach((item) => answers.push(labels(item)))
+      else
+        items.forEach((item: any, position) => {
+          const index = typeof item?.questionIndex === "number" ? item.questionIndex : position
+          while (answers.length <= index) answers.push([])
+          answers[index] = labels(item?.answer)
+        })
+      await Question.reply({ requestID: c.req.param("requestID"), answers, plan: body.plan })
+      return c.json(true)
+    })
+    .post("/v1/questions/:requestID/reject", async (c) => {
+      await Question.reject(c.req.param("requestID"))
+      return c.json(true)
     })
     .get("/v1/agent-sessions", async (c) => {
       // list_sessions (agent_session_routes.rs:514-613): { sessions, count }
@@ -927,8 +994,19 @@ export const AgentCompatRoutes = () =>
         // The session's working folder (its project's folder), same field
         // allternit-api's bridge forwards.
         const workdir = typeof body.workdir === "string" ? body.workdir : undefined
+        // A live terminal session runs the turn in the terminal: prompt() only
+        // hands it over, so the stream stays open until the terminal goes idle
+        // (the session.status handler above finishes it) — or finishes if the
+        // terminal never starts a turn for it.
+        const terminal = TerminalLive.attached(sessionID)
         const turn = SessionPrompt.prompt({ sessionID, parts, model: modelRef, metadata, workdir, mcpProxy, ...(variant ? { variant } : {}) })
-          .then(() => push(finish("complete")))
+          .then(() => {
+            if (!terminal) return push(finish("complete"))
+            if (SessionStatus.get(sessionID).type === "busy") wasBusy = true
+            setTimeout(() => {
+              if (!wasBusy) push(finish("complete"))
+            }, 15_000)
+          })
           .catch((err: any) => {
             // Pass the engine's structured error through so clients can
             // render targeted UI (e.g. ProviderModelNotFoundError), like the

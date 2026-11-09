@@ -37,6 +37,13 @@ switch (key) {
     // Pass-through: no --json, stdio inherited.
     process.stdout.write(`PASSTHROUGH ${rest.join(" ")} json=${json}\n`)
     process.exit(Number(process.env.FAKE_PASSTHROUGH_EXIT ?? 0))
+  case "workspace campaign":
+    // The floor names the newest campaign before asking for its board.
+    if (rest[2] === "list") {
+      out([{ id: "c-old", createdAt: "2026-10-01T00:00:00Z" }, { id: "c1", createdAt: "2026-10-04T00:00:00Z" }])
+      process.exit(0)
+    }
+    fail(2, "not_found", "workspace campaign is not built yet")
   case "workspace board":
     fail(2, "not_found", "workspace board is not built yet")
   case "workspace approve":

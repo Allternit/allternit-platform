@@ -109,7 +109,7 @@ surfaces/allternit-desktop/resources/bin/*
 services/voice/.packaging-venv/
 
 # repo reorg 2026-07-22: keep accidental/scratch output out of the tree
-Desktop/
+/Desktop/
 output/
 dispatch-screenshots/
 

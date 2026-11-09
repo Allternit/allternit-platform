@@ -1,6 +1,6 @@
 import { describe, test, expect } from "bun:test"
-import { WelcomeBox, welcomeRows } from "../../src/cli/ui/ink-app/components/WelcomeBox"
-import { CORAL, EYE } from "../../src/cli/ui/ink-app/components/welcomeArt"
+import { WelcomeBox, headerArtMode, headerCanAnimate, headerMascotSize, idleFrame, welcomeRows } from "../../src/cli/ui/ink-app/components/WelcomeBox"
+import { CORAL, EYE, FONT35, FONT45, brailleRows, mascotRows, wordmarkRows } from "../../src/cli/ui/ink-app/components/welcomeArt"
 
 describe("WelcomeBox", () => {
   test("exports a component", () => {
@@ -22,30 +22,95 @@ describe("header rows", () => {
   })
 })
 
-describe("header images", () => {
-  test("mark block reserves cols x rows; wordmark one row; nothing without image support", async () => {
-    const { setInlineImageProtocolForTest, inlineImageBlock, inlineImagePlaceholder, inlineImageCellOutput } = await import("../../src/cli/ui/ink-app/ink/inlineImage")
+describe("braille wordmark", () => {
+  test("GIZZI CODE in 2 rows of one-column braille; coral G is its own run", async () => {
+    const { stringWidth } = await import("../../src/cli/ui/ink-app/ink/stringWidth")
+    const rows = wordmarkRows(FONT45, true)
+    expect(rows).toHaveLength(2)
+    expect(rows[0]![0]![1]).toBe(CORAL)
+    for (const row of rows) {
+      const line = row.map(([t]) => t).join("")
+      expect(line).toMatch(/^[\u2800-\u28ff ]+$/)
+      expect(stringWidth(line)).toBe(line.length)
+      expect(line).toHaveLength(rows[0]!.map(([t]) => t).join("").length)
+    }
+    expect(wordmarkRows(FONT35, false)[0]).toHaveLength(1)
+    // FONT45 G: top row .### -> dots in the first two cells' upper rows
+    expect(brailleRows(["##", "#.", "#.", ".#"])).toEqual([String.fromCharCode(0x2800 + 0x01 + 0x02 + 0x04 + 0x08 + 0x80)])
+  })
+})
+
+describe("header modes", () => {
+  test("env beats the setting; junk means auto", () => {
+    expect(headerArtMode({}, undefined)).toBe("auto")
+    expect(headerArtMode({}, "blocks")).toBe("blocks")
+    expect(headerArtMode({ GIZZI_HEADER_ART: "IMAGE" }, "blocks")).toBe("image")
+    expect(headerArtMode({ GIZZI_HEADER_ART: "sparkles" }, undefined)).toBe("auto")
+  })
+
+  test("no animation under reduced motion, CI, NO_COLOR or a non-TTY", () => {
+    expect(headerCanAnimate({}, true, false)).toBe(true)
+    expect(headerCanAnimate({}, false, false)).toBe(false)
+    expect(headerCanAnimate({}, true, true)).toBe(false)
+    expect(headerCanAnimate({ GIZZI_REDUCED_MOTION: "1" }, true, false)).toBe(false)
+    expect(headerCanAnimate({ CI: "true" }, true, false)).toBe(false)
+    expect(headerCanAnimate({ CI: "0" }, true, false)).toBe(true)
+    expect(headerCanAnimate({ NO_COLOR: "" }, true, false)).toBe(false)
+  })
+
+  test("small terminals get the tiny mascot, very narrow ones none", () => {
+    expect(headerMascotSize(120, 40)).toBe("mid")
+    expect(headerMascotSize(59, 40)).toBe("tiny")
+    expect(headerMascotSize(120, 19)).toBe("tiny")
+    expect(headerMascotSize(35, 40)).toBeNull()
+  })
+
+  test("idle: eyes close once every 4 s; the beacon pulse rises and falls", () => {
+    const blinks = Array.from({ length: 40 }, (_, i) => idleFrame(i * 200).blinking).filter(Boolean)
+    expect(blinks).toHaveLength(2)
+    expect(idleFrame(0).pulse).toBe(0)
+    expect(idleFrame(1200).pulse).toBe(1)
+  })
+})
+
+describe("header image", () => {
+  test("8 rows reserved at the mascot's width; nothing without image support unless forced", async () => {
+    const { setInlineImageProtocolForTest, inlineImageBlock, inlineImageCellOutput } = await import("../../src/cli/ui/ink-app/ink/inlineImage")
     const { stringWidth } = await import("../../src/cli/ui/ink-app/ink/stringWidth")
     setInlineImageProtocolForTest("iterm")
-    const block = inlineImageBlock("t-mark", "AAAA", 6, 3)!
-    expect(block).toHaveLength(3)
-    for (const row of block) expect(stringWidth(row)).toBe(6)
-    expect(inlineImageCellOutput(block[0]![0]!)).toContain("width=6;height=3;")
-    expect(inlineImagePlaceholder("t-wm", "AAAA", 20)!).toHaveLength(20)
+    const block = inlineImageBlock("t-mascot", "AAAA", 15, 8)!
+    expect(block).toHaveLength(8)
+    for (const row of block) expect(stringWidth(row)).toBe(15)
+    expect(inlineImageCellOutput(block[0]![0]!)).toContain("width=15;height=8;")
     setInlineImageProtocolForTest(null)
-    expect(inlineImageBlock("t-mark-none", "AAAA", 6, 3)).toBeNull()
+    expect(inlineImageBlock("t-mascot-none", "AAAA", 15, 8)).toBeNull()
     setInlineImageProtocolForTest(undefined)
   })
 })
 
-describe("text-only header mark", () => {
-  test("the mascot in its own colors, 8 wide and 4 rows", async () => {
-    const { textMarkRows } = await import("../../src/cli/ui/ink-app/components/welcomeArt")
-    const rows = textMarkRows()
-    expect(rows).toHaveLength(4)
-    for (const row of rows) expect(row.map(([t]) => t).join("")).toHaveLength(8)
+describe("half-block mascot", () => {
+  const text = (rows: any[]) => rows.map(r => r.map(([t]: any) => t).join(""))
+  test("mid: 18 x 8 half blocks in the four mascot colors, never quarter blocks", () => {
+    const rows = mascotRows("mid")
+    expect(rows).toHaveLength(8)
+    for (const line of text(rows)) {
+      expect(line).toHaveLength(18)
+      expect(line).toMatch(/^[ ▀▄█]+$/)
+    }
     const colors = new Set(rows.flat().flatMap(([, fg, bg]) => [fg, bg]).filter(Boolean))
-    expect([...colors].sort()).toEqual([CORAL, "gizziEye", "gizziSand", "gizziVisor"].sort())
+    expect([...colors].sort()).toEqual([CORAL, EYE, "gizziSand", "gizziVisor"].sort())
+  })
+
+  test("tiny: 10 x 3", () => {
+    const lines = text(mascotRows("tiny"))
+    expect(lines).toHaveLength(3)
+    for (const line of lines) expect(line).toHaveLength(10)
+  })
+
+  test("blink hides the eyes; the pulse recolors the beacon", () => {
+    const has = (rows: any[], c: string) => rows.some(r => r.some(([, fg, bg]: any) => fg === c || bg === c))
+    expect(has(mascotRows("mid", { blinking: true }), EYE)).toBe(false)
+    expect(has(mascotRows("mid", { coral: "gizziShimmer" }), "gizziShimmer")).toBe(true)
   })
 })
 

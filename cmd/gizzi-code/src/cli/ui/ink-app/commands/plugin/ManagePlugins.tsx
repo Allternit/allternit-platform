@@ -42,7 +42,7 @@ import { loadAllPlugins } from '../../utils/plugins/pluginLoader';
 import { loadPluginOptions, type PluginOptionSchema, savePluginOptions } from '../../utils/plugins/pluginOptionsStorage';
 import { isPluginBlockedByPolicy } from '../../utils/plugins/pluginPolicy';
 import { getPluginEditableScopes } from '../../utils/plugins/pluginStartupCheck';
-import { getSettings_DEPRECATED, getSettingsForSource, updateSettingsForSource } from '../../utils/settings/settings';
+import { getRelativeSettingsFilePathForSource, getSettings_DEPRECATED, getSettingsForSource, updateSettingsForSource } from '../../utils/settings/settings';
 import { jsonParse } from '../../utils/slowOperations';
 import { plural } from '../../utils/stringUtils';
 import { formatErrorMessage, getErrorGuidance } from './PluginErrors';
@@ -1524,7 +1524,7 @@ export function ManagePlugins({
         return;
       }
       clearAllCaches();
-      setResult(`✓ Disabled ${selectedPlugin.plugin.name} in .claude/settings.local.json. Run /reload-plugins to apply.`);
+      setResult(`✓ Disabled ${selectedPlugin.plugin.name} in ${getRelativeSettingsFilePathForSource('localSettings')}. Run /reload-plugins to apply.`);
       if (onManageComplete) void onManageComplete();
       setParentViewState({
         type: 'menu'
@@ -1763,11 +1763,11 @@ export function ManagePlugins({
   if (viewState === 'confirm-project-uninstall' && selectedPlugin) {
     return <Box flexDirection="column">
         <Text bold color="warning">
-          {selectedPlugin.plugin.name} is enabled in .claude/settings.json
+          {selectedPlugin.plugin.name} is enabled in {getRelativeSettingsFilePathForSource('projectSettings')}
           (shared with your team)
         </Text>
         <Box marginTop={1} flexDirection="column">
-          <Text>Disable it just for you in .claude/settings.local.json?</Text>
+          <Text>Disable it just for you in {getRelativeSettingsFilePathForSource('localSettings')}?</Text>
           <Text dimColor>
             This has the same effect as uninstalling, without affecting other
             contributors.

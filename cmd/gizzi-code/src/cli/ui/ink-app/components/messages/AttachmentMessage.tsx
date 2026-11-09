@@ -231,6 +231,17 @@ export function AttachmentMessage({
       {
         const text = typeof attachment.prompt === 'string' ? attachment.prompt : getContentText(attachment.prompt) || '';
         const hasImages = attachment.imagePasteIds && attachment.imagePasteIds.length > 0;
+        // A prompt the user typed while the agent worked, drained into the
+        // running turn at a tool boundary: show it as a steer.
+        if (attachment.commandMode === 'prompt' && !attachment.isMeta && attachment.origin === undefined) {
+          return <Box flexDirection="column" marginTop={addMargin ? 1 : 0}>
+            <Box paddingLeft={2}>
+              <Text color="warning">↳ steering: </Text>
+              <Text>"{text}"</Text>
+            </Box>
+            {hasImages && attachment.imagePasteIds?.map(id => <UserImageMessage key={id} imageId={id} />)}
+          </Box>;
+        }
         return <Box flexDirection="column">
           <UserTextMessage addMargin={addMargin} param={{
             text,

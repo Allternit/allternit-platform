@@ -268,7 +268,7 @@ export function MCPListPanel({
 
   const t26 = hasFailedClients && <Text dimColor={true}>{debugMode ? "\u203B Error logs shown inline with --debug" : "\u203B Run claude --debug to see error logs"}</Text>;
 
-  const t27 = <Text dimColor={true}><Link url="https://docs.gizziio.com/mcp">https://docs.gizziio.com/mcp</Link>{" "}for help</Text>;
+  const t27 = <Text dimColor={true}><Link url="https://docs.allternit.com/cli/mcp">https://docs.allternit.com/cli/mcp</Link>{" "}for help</Text>;
 
   const t28 = <Box flexDirection="column">{t26}{t27}</Box>;
 

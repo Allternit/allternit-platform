@@ -1,0 +1,64 @@
+---
+title: Models and providers
+description: Which models Gizzi Code offers, how CLI brains run in the TUI, and what each failure message means
+---
+
+Gizzi Code runs on the same model list as the Allternit app. The `/model` picker in the TUI and `gizzi models` both use one rule, kept in `src/runtime/providers/offer.ts` (the same rule as Desktop's model picker).
+
+## What the picker offers
+
+Sections appear in this order:
+
+| Section | What is in it | When it shows |
+|---|---|---|
+| Allternit Cloud | The Cloud catalog, grouped by vendor ("Kimi · via Allternit Cloud") | Always |
+| Your subscriptions | CLI sign-ins you have installed (`claude-cli`, `codex-cli`, `kimi-cli`, any CLI you added) and Subscription Fabric (`subs-*`) | Always |
+| API keys | Providers in `gizzi.json` with an OpenAI-compatible `baseURL` | Only once a key is on file |
+| Local | Servers on this computer (MLX, llama.cpp, Ollama, LM Studio) | Always |
+
+OpenRouter is never its own section. Allternit Cloud uses it to route, so it is not offered on its own. A model ref that names it still runs when you ask for it by name (`gizzi --model openrouter/…`).
+
+`gizzi models` prints the same list with the same headings. `gizzi models --all` prints every provider in the models.dev catalog, OpenRouter included.
+
+## Pick a model at launch
+
+```bash
+gizzi --model claude-cli/claude-sonnet-5
+gizzi attach http://127.0.0.1:4096 --model claude-cli/claude-sonnet-5
+```
+
+`--model` sets the model for the session, ahead of your settings and `gizzi.json`. `/model` changes it later.
+
+## CLI brains in the TUI
+
+A model under **Your subscriptions** runs in your own signed-in CLI, through the same driver `gizzi run` and Desktop use. It does not use your Allternit Cloud allowance.
+
+- The CLI runs its own tools. Its text, thinking and tool calls (Read, Update, Bash…) show in the TUI as they happen.
+- Permissions still apply. The CLI starts in the TUI's permission mode (default, accept edits, plan or bypass), and each tool it asks to run shows the TUI's normal approval prompt, with the diff for an edit and the command for Bash.
+- Each turn resumes the CLI's own session, so it remembers earlier turns. `/clear` starts a new one.
+- Side tasks (titles, recaps, the auto-mode classifier) run as a text-only CLI turn.
+
+This also works when the TUI is attached to Desktop's server with `gizzi attach`.
+
+## When a turn fails
+
+Each failure names the real cause and one or two commands to run. Examples:
+
+| You see | Cause | Run |
+|---|---|---|
+| Allternit Cloud free allowance ($2.00/month) is used up · resets Dec 1 | The free monthly allowance is spent | `/model claude-cli/claude-sonnet-5` (your Claude plan) or `/usage` |
+| Allternit Cloud plan limit reached for this month | Your plan's monthly limit | `/model …` or `/usage` |
+| Allternit Cloud credits are used up | Prepaid credits ran out | `/usage` to add credits |
+| Allternit Cloud free models need a verified email address | The account's email is not verified | Verify it, then `/login` |
+| OpenRouter rejected the API key (401) | The key in `gizzi.json` or the environment expired or was revoked | `gizzi connect login` to save a new key |
+| Claude Code isn't signed in on this computer | The CLI brain has no sign-in | `claude`, then `/login` in it |
+| Codex isn't installed on this computer | The CLI is missing | Install it, then `gizzi agents harness register` |
+
+The "Not logged in" notice in the prompt footer only appears when the selected model is on Allternit Cloud and no Cloud credential exists: no `ALLTERNIT_API_KEY`, no `ALLTERNIT_API_TOKEN`, and no device token from `gizzi login` or `gizzi pair`.
+
+## For developers
+
+- Provider rule: `cmd/gizzi-code/src/runtime/providers/offer.ts` (`ProviderOffer.kind`, `isOffered`, `isCliBrain`). CLI brains come from the CLI catalog (`cli-catalog.json`) and CLIs the user added, not a fixed list.
+- TUI routing: `services/api/cliBrain.ts` drives `RuntimeDriverFactory.resolveCli` and maps driver events to the TUI's messages. Tool calls the CLI already ran carry `cliObserved`, so `query.ts` shows them without running them again.
+- Approvals: `AgentTask.approveTool` and `permissionMode` (`runtime/runtime-driver.ts`). Claude Code gets `--permission-prompt-tool stdio` and each `can_use_tool` request is answered by the caller; ACP CLIs ask after the spawn gate allows.
+- Error text: `services/api/providerErrors.ts` (`describeProviderError`), used by the Cloud path (`errors.ts`), the OpenAI-compatible path (`localModel.ts`) and CLI brains.

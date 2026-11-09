@@ -654,6 +654,16 @@ struct HistorySidebarView: View {
                         .foregroundColor(Color("TextPrimary"))
                         .lineLimit(1)
                         .frame(maxWidth: .infinity, alignment: .leading)
+                    if session.isTerminal {
+                        // .phone-rail-terminal: a live Gizzi terminal session.
+                        Text("TERMINAL")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(Color("TextSecondary"))
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(RoundedRectangle(cornerRadius: 4).fill(Color("BorderStrong").opacity(0.5)))
+                            .accessibilityLabel("Terminal session")
+                    }
                     if working {
                         // .phone-rail-working: 11.5px/500, coral.
                         Text("Working")

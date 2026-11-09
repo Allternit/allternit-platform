@@ -27,11 +27,16 @@ import {
   killAllRunningAgentTasks,
   markAgentsNotified,
 } from '../tasks/LocalAgentTask/LocalAgentTask.js'
-import type { PromptInputMode, VimMode } from '../types/textInputTypes.js'
+import type {
+  PromptInputMode,
+  QueuedCommand,
+  VimMode,
+} from '../types/textInputTypes.js'
 import {
   clearCommandQueue,
   enqueuePendingNotification,
   hasCommandsInQueue,
+  removeLastQueuedForAfterTurn,
 } from '../utils/messageQueueManager.js'
 import { emitTaskTerminatedSdk } from '../utils/sdkEventQueue.js'
 
@@ -48,6 +53,8 @@ type CancelRequestHandlerProps = {
   screen: Screen
   abortSignal?: AbortSignal
   popCommandFromQueue?: () => void
+  /** Called with the queued-for-after message esc just removed. */
+  onQueuedForAfterRemoved?: (cmd: QueuedCommand) => void
   vimMode?: VimMode
   isLocalJSXCommand?: boolean
   isSearchingHistory?: boolean
@@ -70,6 +77,7 @@ export function CancelRequestHandler(props: CancelRequestHandlerProps): null {
     screen,
     abortSignal,
     popCommandFromQueue,
+    onQueuedForAfterRemoved,
     vimMode,
     isLocalJSXCommand,
     isSearchingHistory,
@@ -94,8 +102,15 @@ export function CancelRequestHandler(props: CancelRequestHandlerProps): null {
     }
 
     // Priority 1: If there's an active task running, cancel it first
-    // This takes precedence over queue management so users can always interrupt Claude
+    // This takes precedence over queue management so users can always interrupt Claude.
+    // Exception: a message queued for after the turn (tab) is removed first,
+    // newest first; the next esc stops the turn.
     if (abortSignal !== undefined && !abortSignal.aborted) {
+      const removed = removeLastQueuedForAfterTurn()
+      if (removed) {
+        onQueuedForAfterRemoved?.(removed)
+        return
+      }
       logEvent('tengu_cancel', cancelProps)
       setToolUseConfirmQueue(() => [])
       onCancel()
@@ -117,6 +132,7 @@ export function CancelRequestHandler(props: CancelRequestHandlerProps): null {
   }, [
     abortSignal,
     popCommandFromQueue,
+    onQueuedForAfterRemoved,
     setToolUseConfirmQueue,
     onCancel,
     streamMode,

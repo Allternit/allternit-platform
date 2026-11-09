@@ -470,6 +470,8 @@ export interface AssistantMessage extends Message {
     role: 'assistant'
     content: string | MessageContent[] | ContentBlock[]
   }
+  /** Tool calls a CLI brain already ran itself: shown, never run again (services/api/cliBrain.ts). */
+  cliObserved?: true
 }
 
 export interface SystemMessage extends Message {
@@ -606,6 +608,10 @@ export interface SystemRunTelemetryMessage extends SystemMessage {
   contextRatio?: number
   contextEstimated?: boolean
   quotaChip?: string
+  /** Files the turn changed, for "Done in … · 3 files +48 −12" and the list under it. */
+  files?: { path: string; added: number; removed: number }[]
+  /** Set when the turn failed or produced nothing: no "Done" line, "✕ Stopped …" instead. */
+  stopped?: { cause?: string }
 }
 
 /**
@@ -638,6 +644,10 @@ export interface SystemAgentsKilledMessage extends SystemMessage {
 export interface SystemAwaySummaryMessage extends SystemMessage {
   subtype: 'away_summary'
   content: string
+  /** Files changed since the previous recap, from edit tool results. */
+  files?: { path: string; added: number; removed: number }[]
+  /** How long the terminal was unfocused when the recap was made. */
+  awayMs?: number
 }
 
 /**

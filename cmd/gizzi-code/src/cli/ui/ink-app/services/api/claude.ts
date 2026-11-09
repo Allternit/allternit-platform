@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { isCliBrainModel, queryCliBrainWithStreaming } from './cliBrain.js'
 import {
   isLocalProviderModel,
   queryLocalModelWithStreaming,
@@ -665,6 +666,10 @@ export function assistantMessageToMessageParam(
 
 export type Options = {
   getToolPermissionContext: () => Promise<ToolPermissionContext>
+  /** A CLI brain's tool approvals go through the TUI's permission prompt (cliBrain.ts). */
+  cliToolApproval?: (
+    request: import('@/runtime/runtime-driver').CliToolApproval,
+  ) => Promise<import('@/runtime/runtime-driver').CliToolVerdict>
   model: string
   toolChoice?: BetaToolChoiceTool | BetaToolChoiceAuto | undefined
   isNonInteractiveSession: boolean
@@ -770,9 +775,11 @@ export async function* queryModelWithStreaming({
 }
 
 /**
- * Models configured as gizzi.json providers ("openrouter/…", "omlx/…") go to
- * that provider's OpenAI-compatible endpoint; everything else to the
- * Anthropic API. Routing here (not only in the main loop's query deps) keeps
+ * CLI brains ("claude-cli/…", "codex-cli/…", any CLI the user added, and
+ * Subscription Fabric "subs-*") run the user's own CLI through the engine's
+ * driver (cliBrain.ts). Models configured as gizzi.json providers
+ * ("openrouter/…", "omlx/…") go to that provider's OpenAI-compatible
+ * endpoint; everything else to the Allternit API. Routing here (not only in the main loop's query deps) keeps
  * side calls — away recap, memory extraction, compaction, companion — working
  * on non-Anthropic setups instead of failing with "Not logged in".
  */
@@ -780,6 +787,10 @@ async function* queryModelRouted(
   ...args: Parameters<typeof queryModel>
 ): ReturnType<typeof queryModel> {
   const [messages, systemPrompt, , tools, signal, options] = args
+  if (isCliBrainModel(options.model)) {
+    yield* queryCliBrainWithStreaming({ messages, signal, options })
+    return
+  }
   if (isLocalProviderModel(options.model)) {
     yield* queryLocalModelWithStreaming({
       messages,

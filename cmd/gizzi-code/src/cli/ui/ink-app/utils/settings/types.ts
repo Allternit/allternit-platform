@@ -762,6 +762,14 @@ export const SettingsSchema = lazySchema(() =>
           'When false, prompt suggestions are disabled. When absent or true, ' +
             'prompt suggestions are enabled.',
         ),
+      promptSuggestionOnApiKeys: z
+        .boolean()
+        .optional()
+        .describe(
+          'When true, prompt suggestions are also generated on metered API-key ' +
+            'models (one extra model call per turn). By default they run only on ' +
+            'CLI brains, local models and Allternit Cloud.',
+        ),
       showClearContextOnPlanAccept: z
         .boolean()
         .optional()
@@ -960,6 +968,12 @@ export const SettingsSchema = lazySchema(() =>
         .optional()
         .describe(
           'Reduce or disable animations for accessibility (spinner shimmer, flash effects, etc.)',
+        ),
+      headerArt: z
+        .enum(['auto', 'image', 'blocks', 'none'])
+        .optional()
+        .describe(
+          'Startup header mascot: auto (the real image in terminals that show images, animated pixel art elsewhere), image, blocks (pixel art), or none. GIZZI_HEADER_ART overrides it.',
         ),
       autoMemoryEnabled: z
         .boolean()

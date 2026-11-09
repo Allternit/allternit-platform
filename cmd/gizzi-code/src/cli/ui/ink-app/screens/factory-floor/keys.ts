@@ -13,6 +13,8 @@ export interface FactoryFloorKeyHandlers {
   approveSelected(): void
   /** w — hand the screen to the engine's live wall. */
   openWall(): void
+  /** b — the live board (swarm workers, last lines, steer/stop/land). */
+  openBoard?(): void
   /** r — reload from the engine. */
   refresh(): void
   /** q / Esc — back to the REPL. */
@@ -57,6 +59,9 @@ export function handleFactoryFloorKey(input: string, key: FactoryFloorKey, h: Fa
       return true
     case "w":
       h.openWall()
+      return true
+    case "b":
+      h.openBoard?.()
       return true
     case "r":
       h.refresh()

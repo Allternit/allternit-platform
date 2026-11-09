@@ -6,11 +6,19 @@ import {
   subscribeTerminalFocus,
 } from '../ink/terminal-focus-state.js'
 import { getFeatureValue_CACHED_MAY_BE_STALE } from '../services/analytics/growthbook.js'
-import { generateAwaySummary } from '../services/awaySummary.js'
+import {
+  generateAwaySummary,
+  getRecapFileChanges,
+} from '../services/awaySummary.js'
+import { useAppStateStore, useSetAppState } from '../state/AppState.js'
 import type { Message } from '../types/message.js'
 import { createAwaySummaryMessage } from '../utils/messages.js'
 
-const BLUR_DELAY_MS = 5 * 60_000
+// GIZZI_AWAY_SUMMARY_DELAY_MS shortens the wait for testing.
+const BLUR_DELAY_MS =
+  Number(process.env.GIZZI_AWAY_SUMMARY_DELAY_MS) > 0
+    ? Number(process.env.GIZZI_AWAY_SUMMARY_DELAY_MS)
+    : 5 * 60_000
 
 type SetMessages = (updater: (prev: Message[]) => Message[]) => void
 
@@ -34,7 +42,13 @@ export function useAwaySummary(
   messages: readonly Message[],
   setMessages: SetMessages,
   isLoading: boolean,
+  sessionModel?: string,
 ): void {
+  const setAppState = useSetAppState()
+  const store = useAppStateStore()
+  const sessionModelRef = useRef(sessionModel)
+  sessionModelRef.current = sessionModel
+  const blurredAtRef = useRef<number | null>(null)
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const abortRef = useRef<AbortController | null>(null)
   const messagesRef = useRef(messages)
@@ -73,12 +87,45 @@ export function useAwaySummary(
       abortInFlight()
       const controller = new AbortController()
       abortRef.current = controller
+      const messagesNow = messagesRef.current
       const text = await generateAwaySummary(
-        messagesRef.current,
+        messagesNow,
         controller.signal,
+        sessionModelRef.current,
       )
       if (controller.signal.aborted || text === null) return
-      setMessages(prev => [...prev, createAwaySummaryMessage(text)])
+      // Files changed since the previous recap, counted from the edit tool
+      // results (not by the model).
+      let since = 0
+      for (let i = messagesNow.length - 1; i >= 0; i--) {
+        const m = messagesNow[i]!
+        if (m.type === 'system' && m.subtype === 'away_summary') {
+          since = i + 1
+          break
+        }
+      }
+      const files = getRecapFileChanges(messagesNow.slice(since))
+      const awayMs =
+        blurredAtRef.current !== null ? Date.now() - blurredAtRef.current : undefined
+      setMessages(prev => [
+        ...prev,
+        createAwaySummaryMessage(text, { files, awayMs }),
+      ])
+      // The recap's "Next:" line becomes the ghost suggestion in the empty
+      // prompt (tab to accept), when suggestions are on.
+      const next = /^Next:\s*(.+)$/im.exec(text)?.[1]?.trim()
+      if (next && store.getState().promptSuggestionEnabled) {
+        setAppState(prev => ({
+          ...prev,
+          promptSuggestion: {
+            text: next,
+            promptId: 'user_intent',
+            shownAt: 0,
+            acceptedAt: 0,
+            generationRequestId: null,
+          },
+        }))
+      }
     }
 
     function onBlurTimerFire(): void {
@@ -93,9 +140,11 @@ export function useAwaySummary(
     function onFocusChange(): void {
       const state = getTerminalFocusState()
       if (state === 'blurred') {
+        if (blurredAtRef.current === null) blurredAtRef.current = Date.now()
         clearTimer()
         timerRef.current = setTimeout(onBlurTimerFire, BLUR_DELAY_MS)
       } else if (state === 'focused') {
+        blurredAtRef.current = null
         clearTimer()
         abortInFlight()
         pendingRef.current = false
@@ -114,7 +163,7 @@ export function useAwaySummary(
       abortInFlight()
       generateRef.current = null
     }
-  }, [gbEnabled, setMessages])
+  }, [gbEnabled, setMessages, setAppState, store])
 
   // Timer fired mid-turn → fire when turn ends (if still blurred)
   useEffect(() => {

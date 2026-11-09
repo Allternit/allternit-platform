@@ -1,0 +1,88 @@
+---
+title: Live terminal sessions
+description: "The contract that makes every Gizzi TUI session an engine session: what the terminal pushes, what surfaces already receive, and how prompts, Stop and approvals reach the terminal."
+---
+
+User guide: [Continue a terminal session anywhere](/cli/continue-anywhere).
+
+## Shape
+
+The Gizzi TUI (`src/cli/ui/ink-app`) runs its own agent loop. It does not hand turns to the engine. Instead it **attaches** to the engine on the same computer (Desktop's on `127.0.0.1:4096`, or `gizzi serve`; `GIZZI_ENGINE_URL` overrides) and mirrors itself into an ordinary engine session:
+
+| Piece | Where |
+|---|---|
+| Engine registry and transcript sync | `cmd/gizzi-code/src/runtime/session/terminal-live.ts` (`TerminalLive`) |
+| Engine routes (called by the TUI only) | `cmd/gizzi-code/src/runtime/server/routes/terminal.ts`, mounted at `/v1/terminal` |
+| TUI side | `src/cli/ui/ink-app/hooks/useLiveSession.ts`, `services/liveSession.ts`, `/remote`, `/desktop` |
+| Prompt and Stop hand-off | `SessionPrompt.prompt` and `SessionPrompt.cancel` (`session/prompt.ts`) |
+| Relayed approvals | `PermissionNext.relay` and `PermissionNext.settle` (`tools/guard/permission/next.ts`) |
+
+Surfaces need **no new client contract**. They keep using the routes and event feeds they already use for engine sessions.
+
+## The session row
+
+`POST /v1/terminal/sessions` creates the row, or adopts the existing one for the same terminal session id (a resumed TUI session keeps its row):
+
+```json
+{ "terminalID": "<TUI session uuid>", "cwd": "/path/to/repo", "title": "first prompt", "transcriptPath": "...jsonl",
+  "model": { "providerID": "claude-cli", "modelID": "claude-sonnet-5" } }
+```
+
+The row is a normal `Session.Info` with:
+
+- `surface: "code"`, so it lists under Code on Desktop and in the phone drawer;
+- `sourceRef.harness: "gizzi-tui"` and `sourceRef.sessionId` set to the TUI session id. **This is the Terminal badge signal**: allternit-api `transform_session` and the engine's `/api/v1/agent-sessions` facade both pass `metadata.sourceRef` through;
+- `directory` set to the terminal's folder, while the row lives in the engine's **default project**, where Desktop, the web app and the phone list and stream sessions. `/v1/session/<id>/…` requests for a terminal row stay in the default instance (`sessionDirectory` in `server.ts`);
+- `defaultModel` set to the terminal's model, used if the engine continues the session later.
+
+## Terminal → engine
+
+| Call | Effect, and the events surfaces already receive |
+|---|---|
+| `POST /v1/terminal/sessions/:id/messages` `{ messages: TerminalMessage[] }` | Upserts messages and parts. Publishes `message.updated` (once, after the message's parts are stored, so it always carries its text) and `message.part.updated` (agent-sessions feed: `message_added`, `part_updated`). The first prompt names an untitled row (`session.updated`). |
+| `POST /v1/terminal/sessions/:id/status` `{ busy }` | `session.status` busy or idle |
+| `POST /v1/terminal/sessions/:id/permission` `{ requestID: "per_…", tool, description, input, callID? }` | `permission.asked`, so every surface shows its approval card |
+| `POST /v1/terminal/permission/:requestID/settle` `{ allow }` | The terminal answered first: `permission.replied` closes the card everywhere |
+| `POST /v1/terminal/sessions/:id/question` `{ requestID: "que_…", questions: Question.Info[], callID? }` | `question.asked`: the agent's question (AskUserQuestion) on every surface |
+| `POST /v1/terminal/question/:requestID/settle` `{ answers?: string[][] }` | The terminal answered first: `question.replied`, or `question.rejected` without answers |
+
+`TerminalMessage` is the transcript already in engine terms. There is one user message per prompt and one assistant message per turn. Tool results are folded into their tool part:
+
+```ts
+{ key: string; role: "user" | "assistant"; time: number; completed?: number;
+  parent?: { key: string; time: number }; providerID?: string; modelID?: string; error?: string;
+  parts: Array<
+    | { kind: "text" | "reasoning"; key: string; text: string }
+    | { kind: "tool"; key: string; callID: string; tool: string; input: object;
+        status: "running" | "completed" | "error"; title?: string; output?: string; start?: number; end?: number }> }
+```
+
+Engine ids come from the terminal keys (`msg_`/`prt_` plus a time prefix and a hash), so re-sending a message updates it in place. The TUI sends only messages whose content changed, debounced by 120 ms.
+
+## Engine → terminal: the inbox
+
+`GET /v1/terminal/sessions/:id/inbox?host=&pid=` is a server-sent event stream. While it is open the session is **live**: `TerminalLive.attached(id)` is true and `session.terminal` `{ sessionID, attached, host, cwd }` is published on attach and detach. `GET /v1/terminal/sessions` lists live terminals.
+
+| Inbox event | Sent when | The terminal does |
+|---|---|---|
+| `{ type: "input", id, text }` | Any prompt route runs `SessionPrompt.prompt` on a live row: `/v1/session/:id/message`, `prompt_async`, `/api/v1/agent-sessions/:id/messages`, `/api/agent-chat`, `/v1/remote-control/sessions/:id/messages` | Queues it like typed input. During a turn it steers the turn. The echo comes back as the stored user message. |
+| `{ type: "stop" }` | `SessionPrompt.cancel`: every abort route | Like Esc: denies any open approval or question (their cards close everywhere), aborts the turn, then reports busy/idle itself. The engine does not mark a live row idle on Stop. |
+| `{ type: "permission", requestID, allow, message? }` | A surface replied through `/v1/permission/:id/reply` | Resolves the waiting tool through the same callbacks the interactive permission dialog races (`replBridgePermissionCallbacks`) |
+| `{ type: "question", requestID, answers? }` | A surface answered (`/v1/question/:id/reply`) or declined (`/reject`) | Answers AskUserQuestion with the labels (a decision tree joins them with " → ", multi-select with ", "); no answers declines it |
+
+On a live row `SessionPrompt.prompt` never starts an engine turn. It returns an unsaved user message right away. A `noReply` note is not forwarded.
+
+When the inbox closes (the terminal exits or loses the engine), the row goes idle and becomes an ordinary engine session. A later prompt runs on the engine with `workdir` set to the terminal's folder.
+
+## Remote surfaces
+
+Nothing new on the backend. The phone, the web app and the PWA reach a computer's sessions through the paired-runtime relay (`/api/v1/runtime-devices/:runtimeId/proxy` → that computer's allternit-api → the engine), and cloud computers run the same engine. `/remote` builds `https://m.allternit.com/?runtime=<runtimeId>&session=<sessionID>` (and the same on ai.allternit.com) from `runtime-device.json` and shows it as a QR code. `/desktop` opens `allternit://session?id=<sessionID>`. Desktop's main process turns that into the app's `allternit:open-session-link` event (`surfaces/allternit-desktop/src/main/unified-main.ts`).
+
+## Surfaces
+
+| Surface | Badge | Open, steer, stop, approve |
+|---|---|---|
+| Desktop | `NativeSourceBadge` on Code rows reads "Terminal"; the session header banner says it runs in a terminal | existing composer, Stop and permission cards |
+| ai.allternit.com + phone layout, m.allternit.com PWA | `.phone-rail-terminal` on the drawer row | same |
+| Android | the PWA in a Trusted Web Activity | same |
+| iOS | `AgentSession.isTerminal` → "TERMINAL" on the recents row | existing chat screen |

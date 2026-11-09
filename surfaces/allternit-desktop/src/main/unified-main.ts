@@ -1727,6 +1727,8 @@ async function initializeBundledMode(): Promise<void> {
       log.info('[Main] Window finished loading');
       mainWindow?.show();
       maybeCloseSplash();
+      sessionLinkReady = true;
+      flushSessionLink();
     });
     mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL) => {
       log.error(`[Main] Window failed to load: ${errorDescription} (${errorCode}) at ${validatedURL}`);
@@ -2424,6 +2426,20 @@ registerProtocolHandler();
 let earlyProtocolUrl: string | null = null;
 let authManagerReady = false;
 
+// A session link that arrived before the window finished loading opens once it has.
+let pendingSessionLink: string | null = null;
+let sessionLinkReady = false;
+function flushSessionLink(): void {
+  const id = pendingSessionLink;
+  if (!id || !mainWindow || !sessionLinkReady) return;
+  pendingSessionLink = null;
+  void mainWindow.webContents
+    .executeJavaScript(
+      `window.dispatchEvent(new CustomEvent('allternit:open-session-link', { detail: { sessionId: ${JSON.stringify(id)} } }))`,
+    )
+    .catch((error) => log.warn('[Main] session link dispatch failed', error));
+}
+
 async function handleProtocolCallback(url: string | null): Promise<void> {
   if (!url) return;
   log.info('[Main] handleProtocolCallback:', url);
@@ -2448,6 +2464,28 @@ async function handleProtocolCallback(url: string | null): Promise<void> {
       prompt = null;
     }
     openDesignStudio(prompt);
+    return;
+  }
+
+  // `/desktop` in a Gizzi terminal: allternit://session?id=ses_… opens that
+  // live terminal session in the main window (the app's session-link event,
+  // same as a `/?session=` link; see allternit-ai src/lib/session-deep-link.ts).
+  if (url.startsWith('allternit://session') || url.startsWith('allternit-dev://session')) {
+    let id: string | null = null;
+    try {
+      id = new URL(url).searchParams.get('id');
+    } catch {
+      id = null;
+    }
+    if (id && /^ses_[A-Za-z0-9]{1,64}$/.test(id)) {
+      pendingSessionLink = id;
+      if (mainWindow) {
+        if (mainWindow.isMinimized()) mainWindow.restore();
+        mainWindow.show();
+        mainWindow.focus();
+      }
+      flushSessionLink();
+    }
     return;
   }
 
