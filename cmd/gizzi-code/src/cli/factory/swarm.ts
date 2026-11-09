@@ -284,7 +284,6 @@ export interface StartOptions {
   workers: number
   brain: string
   cwd: string
-  dryRun?: boolean
   /** Progress lines for the person (not printed with --json). */
   log?: (line: string) => void
   /** Max wait per worker for its pane to be ready before sending the task. */
@@ -365,20 +364,6 @@ export async function startSwarm(opts: StartOptions): Promise<{ record: SwarmRec
   const log = opts.log ?? (() => {})
   const plan = planSwarm(opts)
   if (opts.tasks?.length && !opts.task.trim()) opts = { ...opts, task: plan.workers.map((w) => w.task).join(" | ") }
-  if (opts.dryRun) {
-    const record: SwarmRecord = {
-      id: plan.id,
-      task: opts.task,
-      brain: opts.brain,
-      harness: plan.harness,
-      model: plan.model,
-      root: plan.root,
-      baseBranch: plan.baseBranch,
-      createdAt: Date.now(),
-      workers: [],
-    }
-    return { record, plan }
-  }
 
   const record: SwarmRecord = {
     id: plan.id,
