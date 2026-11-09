@@ -1,0 +1,80 @@
+---
+title: How Gizzi shows work
+description: Tool lines, live command output, colors, diffs and the closing line in the Gizzi TUI and gizzi run
+---
+
+Gizzi Code shows the same things in the same way in the TUI and in `gizzi run`: one line per tool call, command output as it arrives, colored results, diffs with line numbers, and one closing line per turn.
+
+## Tool lines
+
+Each tool call prints one header when it starts. The path is shown relative to the folder you started in, and it is cut in the middle only when it does not fit the terminal width.
+
+```text
+⏺ Read calc.ts
+⏺ Bash bun test
+  │ (pass) add [0.2ms]
+  │ (fail) sub [1.1ms]
+  │  1 pass
+  │  1 fail
+⏺ Edit calc.ts  +1 −1
+     6 - return a + b
+     6 + return a - b
+```
+
+In the TUI, each tool call starts with a colored bar instead of a box: coral while the tool runs, grey when it is done, red if it failed.
+
+Tools that a coding CLI runs itself (`claude-cli`, `codex-cli`, ACP CLIs) are shown with the same names, arguments and diffs as Gizzi's own tools:
+
+| The CLI reports | Gizzi shows |
+|---|---|
+| Claude `Read`, `Edit`, `MultiEdit`, `Write`, `Bash` | Read, Edit with its diff, Write, Bash |
+| Codex `exec_command` (run as `/bin/zsh -lc '…'`) | Bash with the plain command |
+| Codex `apply_patch` / file changes | one Edit (or Write for a new file) per file, with its diff and `+N −M` |
+| Codex web search and fetch | Search, Fetch |
+| ACP `bash`, `read`, `edit`, `write` | Bash, Read, Edit, Write |
+
+Their edits also count toward the closing line's files and `+/−`.
+
+## Live command output
+
+Shell output streams under the tool line while the command runs, with a dim `│` gutter. The TUI keeps the last 5 lines in view. `gizzi run` prints up to 12 lines as they arrive, then the last lines when the command ends. A CLI brain that runs its own shell reports output only when the command ends, so its output appears then.
+
+## Colors
+
+One highlighter colors tool output and summaries in both places:
+
+| What | Color |
+|---|---|
+| `✓`, `PASS`, `(pass)`, `3 passed` lines | green |
+| `✕`, `FAIL`, `(fail)`, `error:` lines, `1 failed` counts | red |
+| `⚠` and `warning:` lines | amber |
+| File paths | cyan, bold |
+| `+6 −1` change counts | green and red |
+
+Output that already has its own colors is left as it is. `NO_COLOR=1` turns all color off. In 256-color terminals (Apple Terminal before macOS 26, tmux), colors map to the nearest palette entry with the same hue, so a colored tint never turns grey.
+
+## Diffs
+
+Edits show a diff with line numbers and syntax color. Added lines have a dark green background and removed lines a dark red one. In 256-color terminals these are palette colors 22 and 88, not the grey of the prompt.
+
+## The closing line
+
+After a turn that worked:
+
+```text
+▞▪▚ Done in 42s · 3 files +48 −12 · 12 tools · claude-sonnet-5
+    src/auth.ts  src/session.ts  test/auth.test.ts
+```
+
+The second line lists the changed files. Token counts, cost and context use follow the model name when they are known.
+
+A turn that failed or produced nothing gets no "Done" line. It gets the cause instead, the same cause the error message above it names:
+
+```text
+✕ Stopped after 1.2s · nothing changed · Not logged in · Please run /login
+```
+
+## Related
+
+- [Headless execution](/cli/headless-execution) for `gizzi run` flags and JSON output
+- [Configuration](/cli/configuration)

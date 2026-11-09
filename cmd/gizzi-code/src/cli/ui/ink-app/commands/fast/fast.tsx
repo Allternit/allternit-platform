@@ -122,7 +122,7 @@ export function FastModePicker(t0) {
             hideTrailingZeros: true
           })}</Text></Box>}</>;
 
-  const t11 = <Text dimColor={true}>Learn more:{" "}<Link url="https://docs.gizziio.com/fast-mode">https://docs.gizziio.com/fast-mode</Link></Text>;
+  const t11 = <Text dimColor={true}>Learn more:{" "}<Link url="https://docs.allternit.com/cli/configuration">https://docs.allternit.com/cli/configuration</Link></Text>;
 
   const t12 = <Dialog title={title} subtitle={`High-speed mode for ${FAST_MODE_MODEL_DISPLAY}. Billed as extra usage at a premium rate. Separate rate limits apply.`} onCancel={handleCancel} color="fastMode" inputGuide={t9}>{t10}{t11}</Dialog>;
 

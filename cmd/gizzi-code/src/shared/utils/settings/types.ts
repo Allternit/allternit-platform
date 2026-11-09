@@ -951,6 +951,12 @@ export const SettingsSchema = lazySchema(() =>
         .describe(
           'Reduce or disable animations for accessibility (spinner shimmer, flash effects, etc.)',
         ),
+      headerArt: z
+        .enum(['auto', 'image', 'blocks', 'none'])
+        .optional()
+        .describe(
+          'Startup header mascot: auto (the real image in terminals that show images, animated pixel art elsewhere), image, blocks (pixel art), or none. GIZZI_HEADER_ART overrides it.',
+        ),
       autoMemoryEnabled: z
         .boolean()
         .optional()

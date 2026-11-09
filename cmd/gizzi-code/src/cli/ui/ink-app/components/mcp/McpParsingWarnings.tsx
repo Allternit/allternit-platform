@@ -81,7 +81,7 @@ export function McpParsingWarnings() {
   }
   const t4 = <Text bold={true}>MCP Config Diagnostics</Text>;
 
-  const t5 = <Box flexDirection="column" marginTop={1} marginBottom={1}>{t4}<Box marginTop={1}><Text dimColor={true}>For help configuring MCP servers, see:{" "}<Link url="https://docs.gizziio.com/mcp">https://docs.gizziio.com/mcp</Link></Text></Box>{scopes.map(_temp5)}</Box>;
+  const t5 = <Box flexDirection="column" marginTop={1} marginBottom={1}>{t4}<Box marginTop={1}><Text dimColor={true}>For help configuring MCP servers, see:{" "}<Link url="https://docs.allternit.com/cli/mcp">https://docs.allternit.com/cli/mcp</Link></Text></Box>{scopes.map(_temp5)}</Box>;
   return t5;
 }
 function _temp5(t0) {

@@ -115,6 +115,7 @@ import { FOOTER_TEMPORARY_STATUS_TIMEOUT, Notifications } from './Notifications'
 import PromptInputFooter from './PromptInputFooter';
 import type { SuggestionItem } from './PromptInputFooterSuggestions';
 import { PromptInputModeIndicator } from './PromptInputModeIndicator';
+import { SteerHint } from './SteerHint';
 import { PromptInputQueuedCommands } from './PromptInputQueuedCommands';
 import { PromptInputStashNotice } from './PromptInputStashNotice';
 import { useMaybeTruncateInput } from './useMaybeTruncateInput';
@@ -982,7 +983,7 @@ function PromptInput({
   const setSuggestionsState = useCallback((updater: typeof suggestionsState | ((prev: typeof suggestionsState) => typeof suggestionsState)) => {
     setSuggestionsStateRaw(prev => typeof updater === 'function' ? updater(prev) : updater);
   }, []);
-  const onSubmit = useCallback(async (inputParam: string, isSubmittingSlashCommand = false, options?: { forceImmediate?: boolean }) => {
+  const onSubmit = useCallback(async (inputParam: string, isSubmittingSlashCommand = false, options?: { forceImmediate?: boolean; queueAfter?: boolean }) => {
     inputParam = inputParam.trimEnd();
 
     // Don't submit if a footer indicator is being opened. Read fresh from
@@ -1643,7 +1644,22 @@ function PromptInput({
   // onHistoryUp/onHistoryDown props to TextInput, so that useTextInput's
   // upOrHistoryUp/downOrHistoryDown can try cursor movement first and only
   // fall through to history when the cursor can't move further.
+  // While the agent works: tab queues the prompt for after the turn,
+  // ctrl+x enter stops the turn and sends it now (enter steers; that is the
+  // default submit path). Return false when they don't apply so tab still
+  // reaches completion / suggestion accept.
+  const canQueueOrStop = isLoading && input.trim() !== '' && (mode === 'prompt' || mode === 'bash') && !viewingAgentTaskId;
+  const handleQueueAfter = useCallback((): false | void => {
+    if (!canQueueOrStop || suggestions.length > 0) return false;
+    void onSubmit(input, false, { queueAfter: true });
+  }, [canQueueOrStop, suggestions.length, onSubmit, input]);
+  const handleStopAndSend = useCallback((): false | void => {
+    if (input.trim() === '') return false;
+    void onSubmit(input, false, { forceImmediate: true });
+  }, [onSubmit, input]);
   const chatHandlers = useMemo(() => ({
+    'chat:queueAfter': handleQueueAfter,
+    'chat:stopAndSend': handleStopAndSend,
     'chat:undo': handleUndo,
     'chat:newline': handleNewline,
     'chat:externalEditor': handleExternalEditor,
@@ -1652,7 +1668,7 @@ function PromptInput({
     'chat:thinkingToggle': handleThinkingToggle,
     'chat:cycleMode': handleCycleMode,
     'chat:imagePaste': handleImagePaste
-  }), [handleUndo, handleNewline, handleExternalEditor, handleStash, handleModelPicker, handleThinkingToggle, handleCycleMode, handleImagePaste]);
+  }), [handleQueueAfter, handleStopAndSend, handleUndo, handleNewline, handleExternalEditor, handleStash, handleModelPicker, handleThinkingToggle, handleCycleMode, handleImagePaste]);
   useKeybindings(chatHandlers, {
     context: 'Chat',
     isActive: !isModalOverlayActive
@@ -1997,7 +2013,9 @@ function PromptInput({
     setCursorOffset(offset);
   }, [input, textInputColumns, isSearchingHistory, cursorOffset, maxVisibleLines]);
   const handleOpenTasksDialog = useCallback((taskId?: string) => setShowBashesDialog(taskId ?? true), [setShowBashesDialog]);
-  const placeholder = showPromptSuggestion && promptSuggestion ? promptSuggestion : defaultPlaceholder;
+  // Ghost next-step suggestion; tab (or →) accepts it, enter sends it. The
+  // hint is display-only: acceptance reads promptSuggestionState.text.
+  const placeholder = showPromptSuggestion && promptSuggestion ? `${promptSuggestion}   ← tab to accept` : defaultPlaceholder;
 
   // Calculate if input has multiple lines
   const isInputWrapped = useMemo(() => input.includes('\n'), [input]);
@@ -2258,6 +2276,7 @@ function PromptInput({
             {textInputElement}
           </Box>
         </Box>}
+      {canQueueOrStop && <SteerHint />}
       <PromptInputFooter apiKeyStatus={apiKeyStatus} debug={debug} exitMessage={exitMessage} vimMode={isVimModeEnabled() ? vimMode : undefined} mode={mode} autoUpdaterResult={autoUpdaterResult} isAutoUpdating={isAutoUpdating} verbose={verbose} onAutoUpdaterResult={onAutoUpdaterResult} onChangeIsUpdating={setIsAutoUpdating} suggestions={suggestions} selectedSuggestion={selectedSuggestion} maxColumnWidth={maxColumnWidth} toolPermissionContext={effectiveToolPermissionContext} helpOpen={helpOpen} suppressHint={input.length > 0} isLoading={isLoading} tasksSelected={tasksSelected} teamsSelected={teamsSelected} bridgeSelected={bridgeSelected} tmuxSelected={tmuxSelected} teammateFooterIndex={teammateFooterIndex} ideSelection={ideSelection} mcpClients={mcpClients} isPasting={isPasting} isInputWrapped={isInputWrapped} messages={messages} isSearching={isSearchingHistory} historyQuery={historyQuery} setHistoryQuery={setHistoryQuery} historyFailedMatch={historyFailedMatch} onOpenTasksDialog={isFullscreenEnvEnabled() ? handleOpenTasksDialog : undefined} />
       {isFullscreenEnvEnabled() ? null : autoModeOptInDialog}
       {isFullscreenEnvEnabled() ?

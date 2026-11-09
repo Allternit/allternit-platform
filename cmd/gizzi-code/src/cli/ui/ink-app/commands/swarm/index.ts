@@ -1,10 +1,15 @@
 import type { Command } from '../../commands.js'
 
+/**
+ * /swarm — real Factory swarms (was a simulated visualizer). Owned by the
+ * factory lane; the logic is cli/factory/swarm.ts, shared with `gizzi swarm`.
+ */
 const swarm = {
   type: 'local-jsx',
   name: 'swarm',
-  aliases: ['swarms', 'agent-swarm'],
-  description: 'Simulate Kimi-style real-time agent swarm execution with visual task tracker',
+  aliases: ['swarms'],
+  description: 'Hand a task to N CLI agents in their own worktrees and watch them on the board',
+  argumentHint: '<task> [-n 2] [--brain claude-cli/claude-sonnet-5]',
   load: () => import('./swarm.js'),
 } satisfies Command
 
