@@ -80,8 +80,8 @@ export class RoutineEngine {
         shell: true,
       })
 
-      child.on("close", (code) => {
-        resolve(code ?? 0)
+      child.on("close", (code, signal) => {
+        resolve(code ?? (signal ? 128 : 1))
       })
     })
   }
