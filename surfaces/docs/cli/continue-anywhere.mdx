@@ -11,8 +11,9 @@ A Gizzi Code session you start in a terminal is a live session everywhere you ar
 - **ai.allternit.com**, the **m.allternit.com** app and the **Android** app show it too, with the same badge. So does the **iPhone** app, in your recent sessions.
 - Open it like any other chat. You see each prompt, answer and tool call as the terminal runs it, usually within a quarter of a second.
 - **Send a message** from any of them. It arrives in the terminal at once, as if you had typed it there. If the agent is working, the message steers the current turn.
-- **Stop** stops the terminal's current turn.
 - **Approve or deny** a tool from any of them. The terminal's own prompt closes when you answer somewhere else, and the other way round.
+- **Answer the agent's questions** (multiple choice) from any of them, the same way.
+- **Stop** from any of them works like Esc in the terminal: an open approval or question is declined and the turn ends.
 
 Nothing to turn on. The terminal connects to the Allternit engine on this computer (Allternit Desktop, or `gizzi serve`). If no engine is running, it keeps trying every 15 seconds and connects when one starts.
 

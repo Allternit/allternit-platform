@@ -39,10 +39,12 @@ The row is a normal `Session.Info` with:
 
 | Call | Effect, and the events surfaces already receive |
 |---|---|
-| `POST /v1/terminal/sessions/:id/messages` `{ messages: TerminalMessage[] }` | Upserts messages and parts. Publishes `message.updated` and `message.part.updated` (agent-sessions feed: `message_added`, `part_updated`). The first prompt names an untitled row (`session.updated`). |
+| `POST /v1/terminal/sessions/:id/messages` `{ messages: TerminalMessage[] }` | Upserts messages and parts. Publishes `message.updated` (once, after the message's parts are stored, so it always carries its text) and `message.part.updated` (agent-sessions feed: `message_added`, `part_updated`). The first prompt names an untitled row (`session.updated`). |
 | `POST /v1/terminal/sessions/:id/status` `{ busy }` | `session.status` busy or idle |
 | `POST /v1/terminal/sessions/:id/permission` `{ requestID: "per_…", tool, description, input, callID? }` | `permission.asked`, so every surface shows its approval card |
 | `POST /v1/terminal/permission/:requestID/settle` `{ allow }` | The terminal answered first: `permission.replied` closes the card everywhere |
+| `POST /v1/terminal/sessions/:id/question` `{ requestID: "que_…", questions: Question.Info[], callID? }` | `question.asked`: the agent's question (AskUserQuestion) on every surface |
+| `POST /v1/terminal/question/:requestID/settle` `{ answers?: string[][] }` | The terminal answered first: `question.replied`, or `question.rejected` without answers |
 
 `TerminalMessage` is the transcript already in engine terms. There is one user message per prompt and one assistant message per turn. Tool results are folded into their tool part:
 
@@ -64,8 +66,9 @@ Engine ids come from the terminal keys (`msg_`/`prt_` plus a time prefix and a h
 | Inbox event | Sent when | The terminal does |
 |---|---|---|
 | `{ type: "input", id, text }` | Any prompt route runs `SessionPrompt.prompt` on a live row: `/v1/session/:id/message`, `prompt_async`, `/api/v1/agent-sessions/:id/messages`, `/api/agent-chat`, `/v1/remote-control/sessions/:id/messages` | Queues it like typed input. During a turn it steers the turn. The echo comes back as the stored user message. |
-| `{ type: "stop" }` | `SessionPrompt.cancel`: every abort route | Aborts the current turn |
+| `{ type: "stop" }` | `SessionPrompt.cancel`: every abort route | Like Esc: denies any open approval or question (their cards close everywhere), aborts the turn, then reports busy/idle itself. The engine does not mark a live row idle on Stop. |
 | `{ type: "permission", requestID, allow, message? }` | A surface replied through `/v1/permission/:id/reply` | Resolves the waiting tool through the same callbacks the interactive permission dialog races (`replBridgePermissionCallbacks`) |
+| `{ type: "question", requestID, answers? }` | A surface answered (`/v1/question/:id/reply`) or declined (`/reject`) | Answers AskUserQuestion with the labels (a decision tree joins them with " → ", multi-select with ", "); no answers declines it |
 
 On a live row `SessionPrompt.prompt` never starts an engine turn. It returns an unsaved user message right away. A `noReply` note is not forwarded.
 
