@@ -180,6 +180,31 @@ export namespace Question {
     })
   }
 
+  /**
+   * A question asked in another process (a live terminal session, see
+   * TerminalLive). Published like any other, so every surface shows it and
+   * answers it through `reply`/`reject`; settles with the answers, or
+   * undefined when it was declined.
+   */
+  export async function relay(info: Request): Promise<Answer[] | undefined> {
+    const s = await state()
+    return new Promise((resolve) => {
+      s.pending[info.id] = { info, resolve: (answers) => resolve(answers), reject: () => resolve(undefined) }
+      Bus.publish(Event.Asked, info)
+    })
+  }
+
+  /** A relayed question answered (or dropped) where it was asked: close it everywhere. */
+  export async function settle(requestID: string, answers: Answer[] | undefined) {
+    const s = await state()
+    const existing = s.pending[requestID]
+    if (!existing) return
+    delete s.pending[requestID]
+    const sessionID = existing.info.sessionID
+    if (answers) Bus.publish(Event.Replied, { sessionID, requestID, answers })
+    else Bus.publish(Event.Rejected, { sessionID, requestID })
+  }
+
   export async function reply(input: { requestID: string; answers: Answer[]; plan?: unknown }): Promise<void> {
     const s = await state()
     const existing = s.pending[input.requestID]

@@ -13,6 +13,7 @@ import color from './commands/color/index.js'
 import commit from './commands/commit.js'
 import copy from './commands/copy/index.js'
 import desktop from './commands/desktop/index.js'
+import remote from './commands/remote/index.js'
 import design from './commands/design/index.js'
 import commitPushPr from './commands/commit-push-pr.js'
 import compact from './commands/compact/index.js'
@@ -331,6 +332,7 @@ const COMMANDS = memoize((): Command[] => [
   config,
   copy,
   desktop,
+  remote,
   design,
   ...UNFINISHED_COMMANDS().map(hideUnlessExperimental),
   context,
