@@ -1,7 +1,7 @@
 {
   "version": 1,
   "generatedFrom": "edcf804f88519fc628fe2e524ff13b26e3636326",
-  "batchCount": 111,
+  "batchCount": 112,
   "stats": {
     "totalNocheck": 584,
     "excludedCompilerArtifacts": 0,
@@ -14,7 +14,7 @@
       "suspect-malformed": 2
     },
     "zeroImporter": 187,
-    "totalAccounted": 1492
+    "totalAccounted": 1493
   },
   "batches": [
     {
@@ -1214,7 +1214,6 @@
         "src/cli/ui/ink-app/components/screens/DiscretionScreen.tsx",
         "src/cli/ui/ink-app/components/TagTabs.tsx",
         "src/cli/ui/ink-app/commands/ontology/ontology.tsx",
-        "src/cli/ui/ink-app/commands/swarm/swarm.tsx",
         "src/cli/ui/ink-app/commands/cowork-project/cowork-project.tsx",
         "src/cli/ui/ink-app/components/CustomSelect/use-select-input.ts",
         "src/cli/ui/ink-app/components/screens/MainScreen.tsx",
@@ -1234,7 +1233,8 @@
         "src/cli/ui/ink-app/utils/statusNoticeDefinitions.tsx",
         "src/cli/ui/ink-app/commands/plugin/AddMarketplace.tsx",
         "src/cli/ui/ink-app/hooks/unifiedSuggestions.ts",
-        "src/cli/ui/ink-app/hooks/toolPermission/handlers/interactiveHandler.ts"
+        "src/cli/ui/ink-app/hooks/toolPermission/handlers/interactiveHandler.ts",
+        "src/cli/ui/ink-app/services/api/cliBrain.ts"
       ],
       "loc": 7398,
       "twins": [],
@@ -1664,6 +1664,16 @@
       "burnedFiles": 2,
       "burnedLoc": 118,
       "note": "gizzi-tui-proportions (2026-09-29): deleted components/PromptInput/FooterStatusBadges.tsx (from b0416) and its only user hooks/useSessionMetrics.ts (from b0431). The prompt footer drops the gizzi-only cwd/model/context block to match Claude Code's single mode line."
+    },
+    {
+      "id": "b446",
+      "loc": 0,
+      "twins": [],
+      "state": "DONE",
+      "burnedFiles": 1,
+      "burnedLoc": 53,
+      "note": "gizzi-factory (2026-11-09, #2140): commands/swarm/swarm.tsx (from b0432) rewritten as the real /swarm (starts a Factory swarm); it typechecks without @ts-nocheck. Same change queued services/api/cliBrain.ts (new in #2138) in b0432: like its siblings claude.ts and localModel.ts it needs the TUI StreamEvent stub fixed first.",
+      "files": []
     }
   ],
   "quarantined": [

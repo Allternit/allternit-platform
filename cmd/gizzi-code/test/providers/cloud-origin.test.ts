@@ -25,4 +25,10 @@ describe("cloudOrigin", () => {
     process.env.ALLTERNIT_CLOUD_URL = "https://cloud.example.com"
     expect(cloudOrigin()).toBe("https://cloud.example.com")
   })
+  test("an explicit ALLTERNIT_CLOUD_URL is honored even on loopback (local cloud-api, fixtures)", () => {
+    for (const k of keys) delete process.env[k]
+    process.env.ALLTERNIT_API_URL = "http://127.0.0.1:8013"
+    process.env.ALLTERNIT_CLOUD_URL = "http://127.0.0.1:4555/"
+    expect(cloudOrigin()).toBe("http://127.0.0.1:4555")
+  })
 })
