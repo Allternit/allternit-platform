@@ -2353,16 +2353,40 @@ async fn delete_loop(
     Ok(StatusCode::NO_CONTENT)
 }
 
+#[derive(Debug, Deserialize)]
+struct RunLoopQuery {
+    #[serde(default)]
+    dry_run: Option<String>,
+}
+
 async fn run_loop(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Path(id): Path<String>,
+    Query(query): Query<RunLoopQuery>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let user = get_user(&headers).ok_or(StatusCode::UNAUTHORIZED)?;
     let conn = state.db.connect().map_err(|e| {
         warn!("db error: {}", e);
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
+
+    // Dry run never starts anything: it reports what a real run would measure.
+    if matches!(query.dry_run.as_deref(), Some("1") | Some("true")) {
+        let config: String = conn
+            .query_row(
+                "SELECT config FROM loops WHERE id = ?1 AND user_id = ?2",
+                [&id, &user.user_id],
+                |row| row.get(0),
+            )
+            .map_err(|_| StatusCode::NOT_FOUND)?;
+        let config: serde_json::Value = serde_json::from_str(&config).unwrap_or(json!({}));
+        let note = match config.get("metric").and_then(|m| m.get("command")).and_then(|c| c.as_str()) {
+            Some(cmd) => format!("a real run would measure `{}` before and after each change", cmd),
+            None => "no Loop Card on this loop; a real run is a plain scheduled run".to_string(),
+        };
+        return Ok(Json(json!({ "dry_run": true, "outcome": "NOOP", "note": note })));
+    }
 
     let (gizzi_job_id, execution_domain): (Option<String>, String) = conn
         .query_row(
