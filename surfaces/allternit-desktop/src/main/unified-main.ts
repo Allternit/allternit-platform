@@ -115,6 +115,7 @@ import {
   stopCaptureSession,
   isCaptureAvailable,
 } from './browser-capture-manager.js';
+import { printHtmlToPdf, type PrintPdfRequest, type PrintWindow } from './print-to-pdf.js';
 import { captureArtifactPreview, type CaptureWindow, type PreviewCaptureRequest } from './artifact-preview-capture.js';
 import { hostPreview, PREVIEW_SCHEME, servePreview } from './artifact-preview-host.js';
 import {
@@ -3280,6 +3281,24 @@ function openPairingApproval(code: string): void {
     account: { email: session?.userEmail },
   }).then((outcome) => log.info(`[Pairing] gizzi login ${code}: ${outcome}`));
 }
+
+// Real PDF export (Chromium printToPDF) of an HTML page: design/dashboard
+// artifacts and the document templates. Hidden window, own in-memory session.
+handleGuarded('shell:print-to-pdf', (_event, req: PrintPdfRequest) =>
+  printHtmlToPdf(req, () =>
+    new BrowserWindow({
+      show: false,
+      width: 816,
+      height: 1056,
+      webPreferences: {
+        sandbox: true,
+        contextIsolation: true,
+        nodeIntegration: false,
+        partition: `print-pdf-${Date.now()}`,
+        backgroundThrottling: false,
+      },
+    }) as unknown as PrintWindow,
+  ));
 
 ipcMain.handle('shell:open-design', () => {
   openDesignStudio();

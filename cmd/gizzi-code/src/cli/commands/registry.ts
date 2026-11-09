@@ -36,6 +36,7 @@ import { MemoryCommand } from "@/cli/commands/memory"
 import { ProductsCommand } from "@/cli/commands/products"
 import { HtmlArtifactCommand } from "@/cli/commands/html-artifact"
 import { ArtifactCommand } from "@/cli/commands/artifact"
+import { PdfCommand } from "@/cli/commands/pdf"
 import { ProgramsCommand } from "@/cli/commands/programs"
 import { OrgCommand } from "@/cli/commands/org"
 import { LabsCommand } from "@/cli/commands/labs"
@@ -129,6 +130,7 @@ export const COMMANDS: RegisteredCommand[] = [
   MemoryCommand,
   HtmlArtifactCommand,
   ArtifactCommand,
+  PdfCommand,
   ProgramsCommand,
   OrgCommand,
   ProductsCommand,
