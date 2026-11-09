@@ -107,6 +107,7 @@
     "@alcalzone/ansi-tokenize": "0.2.5",
     "@allternit/gizzi-util": "workspace:*",
     "@allternit/native-sessions": "workspace:*",
+    "@allternit/pdf-templates": "workspace:*",
     "@allternit/os-contracts": "workspace:*",
     "@allternit/plugin": "workspace:*",
     "@allternit/request-scorer": "workspace:*",
