@@ -28,6 +28,7 @@
 		06823A6D2CACD3A6E45C480B /* TeachView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EB0E0A17C865B6B591899C47 /* TeachView.swift */; };
 		06A33A75EA8BD0E00991B36B /* FileDiffDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4DAD1B8202C54278E2BC799 /* FileDiffDetailView.swift */; };
 		06F602A79C25DD9AD0AEC44C /* AgentClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE61B45DBC74809757BE9AEC /* AgentClient.swift */; };
+		07B3C782180BB43EB3CA2812 /* CustomizeSectionHero.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D2F981BAB8DA4D88E6D557B /* CustomizeSectionHero.swift */; };
 		08B6459B667F19EC706241E2 /* AllternitApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1CF7108EB91B4916B1C1C99E /* AllternitApp.swift */; };
 		08D5B01A6D3A3CC9A5A5AC8C /* BotActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6705087F95CB65F4CAFDBB53 /* BotActivityAttributes.swift */; };
 		08E8641BCCC550BB2D1ADBAE /* VoiceAudioIO.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF03AC0DA5BECC7DCB26E818 /* VoiceAudioIO.swift */; };
@@ -904,6 +905,7 @@
 		8B787AEDAA2A2AB048FFEC40 /* BotProjectFolder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotProjectFolder.swift; sourceTree = "<group>"; };
 		8C8EB27211AA19A3CDE4C975 /* UniformTypeIdentifiers.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = UniformTypeIdentifiers.framework; path = System/Library/Frameworks/UniformTypeIdentifiers.framework; sourceTree = SDKROOT; };
 		8CE87062DF914F64F131FF85 /* PDFSignView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PDFSignView.swift; sourceTree = "<group>"; };
+		8D2F981BAB8DA4D88E6D557B /* CustomizeSectionHero.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CustomizeSectionHero.swift; sourceTree = "<group>"; };
 		8D80E9481A0E05CDE8521745 /* FriendlyStateView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FriendlyStateView.swift; sourceTree = "<group>"; };
 		8DBFFF88C78C5BA8F77511B1 /* BotDesktopClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotDesktopClient.swift; sourceTree = "<group>"; };
 		8E01CE023D9AC41B3CDF4E3F /* AuthManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthManager.swift; sourceTree = "<group>"; };
@@ -2192,6 +2194,7 @@
 			isa = PBXGroup;
 			children = (
 				BA7A05D633BDBBDC4BBE5803 /* CustomizeScreen.swift */,
+				8D2F981BAB8DA4D88E6D557B /* CustomizeSectionHero.swift */,
 				658E02CA129B540E7FB1C35B /* DirectoryPages.swift */,
 				071C1D1CB11C431C8761C4B7 /* FeaturePlugins.swift */,
 				9A74DE104DF5047BE4DB96CD /* SkillCatalog.swift */,
@@ -2895,6 +2898,7 @@
 				1835BCF4D303C85249F87AAB /* CronJob.swift in Sources */,
 				7AE84CEABE55FCAB51EF6257 /* CronJobStore.swift in Sources */,
 				5E95134CE10DBA2F545693AC /* CustomizeScreen.swift in Sources */,
+				07B3C782180BB43EB3CA2812 /* CustomizeSectionHero.swift in Sources */,
 				D088225D9986CDD3881355C4 /* CustomizeViews.swift in Sources */,
 				58F2BAACE73E04941E926B74 /* DayOfWeekSelector.swift in Sources */,
 				47DDAD805E90667EC3C82355 /* DecisionsDeckView.swift in Sources */,

@@ -64,15 +64,6 @@ struct CustomizeScreen: View {
         }
 
         var singular: String { String(label.lowercased().dropLast()) }
-
-        /// HERO_TINT (light); dark mode uses the same hues, quieter.
-        var heroStops: [Color] {
-            switch self {
-            case .skills: return [Color(hex: "#D3DCCB"), Color(hex: "#CDD6C3")]
-            case .plugins: return [Color(hex: "#CFD8E6"), Color(hex: "#C7D1E1")]
-            case .connectors: return [Color(hex: "#D9ECE4"), Color(hex: "#E6F2EC")]
-            }
-        }
     }
 
     /// The "More" group sections iOS has (MCP servers, Webhooks).
@@ -213,6 +204,15 @@ struct CustomizeScreen: View {
         .modifier(DirectoryFlow(selected: $connectorDetail, model: connect))
         .task(id: section) { await load(section, force: false) }
         .task { connect.onChanged = { await load(.connectors, force: true) } }
+        #if DEBUG
+        // `-customize-section <skills|connectors|plugins>` (DEBUG only): land on a section.
+        .onAppear {
+            if let raw = UserDefaults.standard.string(forKey: "customize-section"), let pick = CustomizeSection(rawValue: raw) {
+                section = pick
+            }
+            if launchArgumentEnabled("customize-discover") { scope = .discover }
+        }
+        #endif
     }
 
     private func capabilityDetail(_ item: InstalledCapability) -> some View {
@@ -550,10 +550,19 @@ struct CustomizeScreen: View {
 
     @ViewBuilder
     private func discoverLanding(_ list: [CustomizeItem]) -> some View {
-        // Featured: an Allternit-authored item when there is one, else the first.
-        let hero = list.first { $0.author?.localizedCaseInsensitiveContains("allternit") == true } ?? list[0]
-        let rest = list.filter { $0.id != hero.id }
-        heroCard(hero).padding(.bottom, 32)
+        // Official Allternit items lead the hero (added or not); otherwise the
+        // featured item: an Allternit-authored one when there is one, else the first.
+        let official = (enabled + discoverable).filter { $0.author?.caseInsensitiveCompare("Allternit") == .orderedSame }
+        let featured = list.first { $0.author?.localizedCaseInsensitiveContains("allternit") == true } ?? list[0]
+        let heroItems = official.isEmpty ? [featured] : official
+        let rest = official.isEmpty ? list.filter { $0.id != featured.id } : list
+        CustomizeSectionHero(
+            lockup: section.label,
+            items: heroItems,
+            eyebrow: { item in official.isEmpty ? (item.author.map { "From \($0)" } ?? "Featured \(section.singular)") : "Official \(section.singular)" },
+            actions: { item, palette in heroActions(item, palette: palette) }
+        )
+        .padding(.bottom, 32)
         if !rest.isEmpty {
             landingSection("For you") { cardGrid(Array(rest.prefix(6))) }
         }
@@ -661,71 +670,22 @@ struct CustomizeScreen: View {
         .padding(.bottom, 36)
     }
 
-    @Environment(\.colorScheme) private var colorScheme
-
-    /// DiscoverLanding's hero: the section's tint, the serif name, Add and
-    /// View, and the section's big thin glyph.
-    private func heroCard(_ item: CustomizeItem) -> some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 0) {
-                Text(item.author.map { "From \($0)" } ?? "Featured \(section.singular)")
-                    .font(.system(size: 12))
-                    .foregroundColor(Color("TextSecondary"))
-                Text(item.name)
-                    .font(.system(size: 28, weight: .medium, design: .serif))
-                    .tracking(-0.3)
-                    .foregroundColor(Color("TextPrimary"))
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.top, 6)
-                Text(item.description)
-                    .font(.system(size: 13))
-                    .foregroundColor(Color("TextSecondary"))
-                    .lineLimit(2)
-                    .padding(.top, 6)
-                TeachChipFlow(spacing: 8) {
-                    Button(action: { add(item) }) {
-                        HStack(spacing: 6) {
-                            if pending.contains(item.id) {
-                                ProgressView().controlSize(.mini).tint(Color("BgPrimary"))
-                            } else {
-                                PhIcon(item.enabled ? "check-bold" : "plus-bold", size: 13)
-                            }
-                            Text(pending.contains(item.id) ? "Adding…" : item.enabled ? "Added" : "Add")
-                                .font(.system(size: 13, weight: .medium))
-                        }
-                        .foregroundColor(Color("BgPrimary"))
-                        .padding(.horizontal, 12)
-                        .frame(height: 32)
-                        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color("TextPrimary")))
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(item.enabled || pending.contains(item.id))
-                    if item.capability != nil {
-                        Button("View \(section.singular)") { open(item) }
-                            .font(.system(size: 13))
-                            .foregroundColor(Color("TextPrimary"))
-                            .padding(.horizontal, 12)
-                            .frame(height: 32)
-                            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.white.opacity(colorScheme == .dark ? 0.08 : 0.6)))
-                            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(Color.primary.opacity(0.1), lineWidth: 1))
-                            .buttonStyle(.plain)
-                    }
-                }
-                .padding(.top, 16)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            PhIcon("\(section.icon)-thin", size: 72)
-                .foregroundColor(colorScheme == .dark ? Color("TextSecondary") : Color(hex: "#2B2F2A"))
-                .opacity(0.8)
+    /// The hero's Add (or Added) and View buttons.
+    @ViewBuilder
+    private func heroActions(_ item: CustomizeItem, palette: HeroPalette) -> some View {
+        let busy = pending.contains(item.id)
+        Button(action: { add(item) }) {
+            HeroButtonLabel(title: busy ? "Adding…" : item.enabled ? "Added" : "Add",
+                            icon: item.enabled ? "check-bold" : "plus-bold", busy: busy, palette: palette)
         }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 28)
-        .frame(maxWidth: .infinity, minHeight: 200, alignment: .leading)
-        .background(
-            LinearGradient(colors: section.heroStops.map { $0.opacity(colorScheme == .dark ? 0.18 : 1) },
-                           startPoint: .topLeading, endPoint: .bottomTrailing)
-                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        )
+        .buttonStyle(.plain)
+        .disabled(item.enabled || busy)
+        if item.capability != nil {
+            Button { open(item) } label: {
+                HeroButtonLabel(title: "View \(section.singular)", solid: false, palette: palette)
+            }
+            .buttonStyle(.plain)
+        }
     }
 
     private func cardGrid(_ list: [CustomizeItem]) -> some View {
