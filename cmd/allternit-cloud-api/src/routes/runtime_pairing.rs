@@ -649,7 +649,7 @@ async fn exchange_pairing(
                 r#"
                 UPDATE runtime_devices
                 SET status = 'revoked', revoked_at = CURRENT_TIMESTAMP
-                WHERE user_id = $1 AND revoked_at IS NULL AND runtime_type = $2
+                WHERE user_id = $1 AND revoked_at IS NULL AND name = $2
                   AND (
                     machine_id = $3
                     OR (machine_id IS NULL AND $4::TEXT IS NOT NULL
@@ -658,7 +658,7 @@ async fn exchange_pairing(
                 "#,
             )
             .bind(&user_id)
-            .bind(&pairing.runtime_type)
+            .bind(&pairing.name)
             .bind(machine_id)
             .bind(legacy_key.as_deref())
             .execute(&mut *transaction)
