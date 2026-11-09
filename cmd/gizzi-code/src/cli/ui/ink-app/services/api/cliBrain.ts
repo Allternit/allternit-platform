@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * CLI brains in the TUI: `claude-cli/…`, `codex-cli/…`, `kimi-cli/…`, any CLI
  * the user added, and Subscription Fabric (`subs-*`). These run the user's own
@@ -11,7 +10,7 @@
  * CLI wants approval for goes through the TUI's own permission prompt
  * (AgentTask.approveTool), in the TUI's permission mode.
  */
-import { randomUUID } from 'crypto'
+import { randomUUID, type UUID } from 'crypto'
 import { ProviderOffer } from '@/runtime/providers/offer'
 import { ModelThinking } from '@/runtime/providers/discovery/model-thinking'
 import { findSubprocessSpec } from '@/runtime/providers/discovery/subprocess'
@@ -19,7 +18,7 @@ import type { AgentEvent, AgentTask, CliToolApproval, CliToolVerdict } from '@/r
 import { getSessionId } from '../../bootstrap/state.js'
 import { getCwd } from '../../utils/cwd.js'
 import { logForDebugging } from '../../utils/debug.js'
-import { findToolByName } from '../../Tool.js'
+import { findToolByName, type Tools } from '../../Tool.js'
 import { createAssistantAPIErrorMessage, createAssistantMessage, createUserMessage } from '../../utils/messages.js'
 import type { AssistantMessage, Message, StreamEvent, SystemAPIErrorMessage, UserMessage } from '../../types/message.js'
 import type { Options } from './claude.js'
@@ -173,7 +172,7 @@ export async function approveCliTool(
   toolUseContext: { options: { tools: unknown[] } },
 ): Promise<CliToolVerdict> {
   const name = TOOL_ALIASES[request.name] ?? request.name
-  const tool = findToolByName(toolUseContext.options.tools, name) ?? (await genericTool(request.name))
+  const tool = findToolByName(toolUseContext.options.tools as Tools, name) ?? (await genericTool(request.name))
   const input = tuiToolInput(request.name, request.input)
   const id = request.id ?? `cli-${randomUUID()}`
   const assistantMessage = createAssistantMessage({ content: [{ type: 'tool_use', id, name: tool.name, input }] })
@@ -326,6 +325,10 @@ export async function* queryCliBrainWithStreaming({
     if (usage) m.message.usage = { ...m.message.usage, ...usage }
     return m
   }
+  // The REPL reads raw stream events as { type: 'stream_event', event }; the
+  // TUI's StreamEvent type does not model that shape, so this is the one cast.
+  type Out = StreamEvent | AssistantMessage | SystemAPIErrorMessage | UserMessage
+  const ev = (event: Record<string, unknown>): Out => ({ type: 'stream_event', event }) as unknown as StreamEvent
   let started = false
   let index = 0
   let open: { kind: 'text' | 'thinking'; index: number; text: string } | null = null
@@ -340,51 +343,45 @@ export async function* queryCliBrainWithStreaming({
   const toolMessages = new Map<string, string>()
   const observed = new Map<string, ObservedCall[]>()
 
-  function* start() {
+  function* start(): Generator<Out> {
     if (started) return
     started = true
-    yield { type: 'stream_event', event: { type: 'message_start', message: { usage: { input_tokens: 0, output_tokens: 0 } } } }
+    yield ev({ type: 'message_start', message: { usage: { input_tokens: 0, output_tokens: 0 } } })
   }
-  function* close() {
+  function* close(): Generator<Out> {
     if (!open) return
     const block = open
     open = null
-    yield { type: 'stream_event', event: { type: 'content_block_stop', index: block.index } }
+    yield ev({ type: 'content_block_stop', index: block.index })
     if (block.kind === 'text' && block.text) {
       yield* flush()
       // Held until the next block or the end, so the turn's usage lands on it.
-      pending = stamp(createAssistantMessage({ content: [{ type: 'text', text: block.text }] }))
+      pending = stamp(createAssistantMessage({ content: block.text }))
     }
   }
-  function* flush() {
+  function* flush(): Generator<Out> {
     if (!pending) return
     yieldedAny = true
     yield pending
     pending = null
   }
-  function* delta(kind: 'text' | 'thinking', text: string) {
+  function* delta(kind: 'text' | 'thinking', text: string): Generator<Out> {
     yield* start()
     if (open?.kind !== kind) {
       yield* close()
       open = { kind, index: index++, text: '' }
-      yield {
-        type: 'stream_event',
-        event: {
-          type: 'content_block_start',
-          index: open.index,
-          content_block: kind === 'text' ? { type: 'text', text: '' } : { type: 'thinking', thinking: '' },
-        },
-      }
+      yield ev({
+        type: 'content_block_start',
+        index: open.index,
+        content_block: kind === 'text' ? { type: 'text', text: '' } : { type: 'thinking', thinking: '' },
+      })
     }
     open.text += text
-    yield {
-      type: 'stream_event',
-      event: {
-        type: 'content_block_delta',
-        index: open.index,
-        delta: kind === 'text' ? { type: 'text_delta', text } : { type: 'thinking_delta', thinking: text },
-      },
-    }
+    yield ev({
+      type: 'content_block_delta',
+      index: open.index,
+      delta: kind === 'text' ? { type: 'text_delta', text } : { type: 'thinking_delta', thinking: text },
+    })
   }
 
   try {
@@ -418,7 +415,7 @@ export async function* queryCliBrainWithStreaming({
           yield createUserMessage({
             content: [{ type: 'tool_result', tool_use_id: call.id, content: event.content, is_error: event.isError || undefined }],
             toolUseResult: event.isError ? event.content : edit,
-            sourceToolAssistantUUID: toolMessages.get(call.id),
+            sourceToolAssistantUUID: toolMessages.get(call.id) as UUID | undefined,
           })
         }
         observed.delete(event.id)

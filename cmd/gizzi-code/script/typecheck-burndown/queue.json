@@ -1,7 +1,7 @@
 {
   "version": 1,
   "generatedFrom": "edcf804f88519fc628fe2e524ff13b26e3636326",
-  "batchCount": 112,
+  "batchCount": 113,
   "stats": {
     "totalNocheck": 583,
     "excludedCompilerArtifacts": 0,
@@ -1233,8 +1233,7 @@
         "src/cli/ui/ink-app/utils/statusNoticeDefinitions.tsx",
         "src/cli/ui/ink-app/commands/plugin/AddMarketplace.tsx",
         "src/cli/ui/ink-app/hooks/unifiedSuggestions.ts",
-        "src/cli/ui/ink-app/hooks/toolPermission/handlers/interactiveHandler.ts",
-        "src/cli/ui/ink-app/services/api/cliBrain.ts"
+        "src/cli/ui/ink-app/hooks/toolPermission/handlers/interactiveHandler.ts"
       ],
       "loc": 7398,
       "twins": [],
@@ -1673,6 +1672,16 @@
       "burnedFiles": 1,
       "burnedLoc": 53,
       "note": "gizzi-factory (2026-11-09, #2140): commands/swarm/swarm.tsx (from b0432) rewritten as the real /swarm (starts a Factory swarm); it typechecks without @ts-nocheck. Same change queued services/api/cliBrain.ts (new in #2138) in b0432: like its siblings claude.ts and localModel.ts it needs the TUI StreamEvent stub fixed first.",
+      "files": []
+    },
+    {
+      "id": "b447",
+      "loc": 0,
+      "twins": [],
+      "state": "DONE",
+      "burnedFiles": 1,
+      "burnedLoc": 0,
+      "note": "cliBrain.ts (2026-11-09): typed without @ts-nocheck; one documented cast for the REPL's raw stream_event shape. claude.ts and localModel.ts still need the same StreamEvent stub fix.",
       "files": []
     }
   ],
