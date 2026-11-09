@@ -134,6 +134,8 @@ import {
   broadcastToMainWindows,
   getFocusedMainWindow,
   listMainWindows,
+  mainWindowIdentity,
+  sendMainWindowIdentities,
   noteMainWindowFocused,
   onMainWindowsChanged,
   registerMainWindow,
@@ -2830,6 +2832,7 @@ app.whenReady().then(async () => {
   initializeAppOnce();
   installAppMenu();
   onMainWindowsChanged(installAppMenu);
+  onMainWindowsChanged(sendMainWindowIdentities);
   createTray();
   startExtensionBridge();
   startAcuExtensionRelay();
@@ -4450,6 +4453,8 @@ ipcMain.handle('window:fullscreen', (_event, enabled?: boolean) => {
 ipcMain.handle('window:set-always-on-top', (_event, enabled: boolean) => {
   mainWindow?.setAlwaysOnTop(enabled);
 });
+
+ipcMain.handle('window:get-identity', (event) => mainWindowIdentity(BrowserWindow.fromWebContents(event.sender)));
 
 ipcMain.handle('window:get-state', () => {
   if (!mainWindow) return null;

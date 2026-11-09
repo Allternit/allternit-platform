@@ -86,3 +86,25 @@ export function onMainWindowsChanged(listener: () => void): () => void {
   listeners.add(listener);
   return () => listeners.delete(listener);
 }
+
+/** What a window's renderer shows about itself: its number, its tint slot and how many windows are open. */
+export interface MainWindowIdentity {
+  number: number;
+  /** Index into WINDOW_TINTS; the renderer maps it to a colour. */
+  tintIndex: number;
+  count: number;
+}
+
+export function mainWindowIdentity(window: BrowserWindow | null | undefined): MainWindowIdentity | null {
+  const entry = getMainWindowEntry(window);
+  if (!entry) return null;
+  return { number: entry.number, tintIndex: (entry.number - 1) % WINDOW_TINTS.length, count: listMainWindows().length };
+}
+
+/** Tell every main window its identity, so each can draw its tint dot when more than one is open. */
+export function sendMainWindowIdentities(): void {
+  for (const { window } of listMainWindows()) {
+    if (window.isDestroyed()) continue;
+    window.webContents.send('window:event:identity', mainWindowIdentity(window));
+  }
+}
