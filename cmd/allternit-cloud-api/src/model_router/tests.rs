@@ -20,7 +20,7 @@ fn starter_catalog_resolves_known_aliases() {
     assert!(catalog.resolve("glm-5.3-flash").is_some());
     assert!(catalog.resolve("deepseek-v4-flash-fireworks").is_none());
     assert!(catalog.resolve("qwen-2.5-72b").is_some());
-    assert!(catalog.resolve("mistral-large").is_some());
+    assert!(catalog.resolve("mistral-large").is_none());
     assert!(catalog.resolve("qwen3.8-27b-groq").is_some());
     assert!(catalog.resolve("gpt-oss-120b-groq").is_some());
 }
