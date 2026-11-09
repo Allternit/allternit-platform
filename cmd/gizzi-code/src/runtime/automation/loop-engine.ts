@@ -123,11 +123,12 @@ export class LoopEngine {
         stderr += data.toString()
       })
 
-      child.on("close", (code) => {
+      // A signal kill gives code null: count it as a failure, not success.
+      child.on("close", (code, signal) => {
         resolve({
           stdout,
           stderr,
-          exitCode: code ?? 0,
+          exitCode: code ?? (signal ? 128 : 1),
         })
       })
     })
