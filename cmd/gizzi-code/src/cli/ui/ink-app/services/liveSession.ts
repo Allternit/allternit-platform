@@ -45,6 +45,7 @@ export type LiveInbox =
   | { type: 'input'; id: string; text: string }
   | { type: 'stop' }
   | { type: 'permission'; requestID: string; allow: boolean; message?: string }
+  | { type: 'question'; requestID: string; answers?: string[][] }
 
 type LiveState = { engineURL: string; sessionID?: string; connected: boolean }
 
@@ -77,6 +78,66 @@ export function onLiveSessionChange(listener: () => void): () => void {
 /** Engine permission ids must start with `per`; the terminal's are UUIDs. */
 export function enginePermissionID(requestId: string): string {
   return `per_${requestId.replace(/-/g, '')}`
+}
+
+export function engineQuestionID(requestId: string): string {
+  return `que_${requestId.replace(/-/g, '')}`
+}
+
+// ── AskUserQuestion ⇄ engine questions ────────────────────────────────────
+
+export const ASK_USER_QUESTION = 'AskUserQuestion'
+
+type TerminalQuestion = {
+  question: string
+  header?: string
+  multiSelect?: boolean
+  options?: Array<{ label: string; description?: string; recommended?: boolean; then?: { question: string; options: Array<{ label: string; description?: string }> } }>
+}
+
+function terminalQuestions(input: Record<string, unknown>): TerminalQuestion[] {
+  return Array.isArray(input.questions) ? (input.questions as TerminalQuestion[]) : []
+}
+
+function isTree(q: TerminalQuestion): boolean {
+  return !q.multiSelect && (q.options ?? []).some(o => o.then)
+}
+
+/** The terminal's AskUserQuestion input as engine `Question.Info[]`. */
+export function toEngineQuestions(input: Record<string, unknown>) {
+  return terminalQuestions(input).map(q => ({
+    question: q.question,
+    header: (q.header ?? '').slice(0, 30),
+    multiple: q.multiSelect || undefined,
+    options: (q.options ?? []).map(o => ({
+      label: o.label,
+      description: o.description ?? '',
+      ...(o.recommended ? { recommended: true } : {}),
+      ...(o.then
+        ? { then: { question: o.then.question, options: o.then.options.map(f => ({ label: f.label, description: f.description ?? '' })) } }
+        : {}),
+    })),
+  }))
+}
+
+/** Engine answers (labels per question, in order) as AskUserQuestion's `answers` record. */
+export function toTerminalAnswers(input: Record<string, unknown>, answers: string[][]): Record<string, string> {
+  const out: Record<string, string> = {}
+  terminalQuestions(input).forEach((q, i) => {
+    const picked = answers[i] ?? []
+    if (picked.length) out[q.question] = picked.join(isTree(q) ? ' → ' : ', ')
+  })
+  return out
+}
+
+/** The terminal's own answers, for closing the question everywhere. */
+export function fromTerminalAnswers(input: Record<string, unknown>, updated: Record<string, unknown> | undefined): string[][] {
+  const record = (updated?.answers ?? {}) as Record<string, string>
+  return terminalQuestions(input).map(q => {
+    const value = record[q.question]
+    if (!value) return []
+    return isTree(q) ? value.split(' → ') : q.multiSelect ? value.split(', ') : [value]
+  })
 }
 
 export async function engineFetch(path: string, body?: unknown, signal?: AbortSignal): Promise<Response> {

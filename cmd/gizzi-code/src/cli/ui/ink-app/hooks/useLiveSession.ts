@@ -16,8 +16,13 @@ import { logForDebugging } from '../utils/debug'
 import { enqueue } from '../utils/messageQueueManager'
 import { getTranscriptPath } from '../utils/sessionStorage'
 import {
+  ASK_USER_QUESTION,
   engineFetch,
   enginePermissionID,
+  engineQuestionID,
+  fromTerminalAnswers,
+  toEngineQuestions,
+  toTerminalAnswers,
   getLiveSession,
   liveSessionEnabled,
   setLiveSession,
@@ -71,9 +76,21 @@ export function useLiveSession(
     const sent = new Map<string, string>()
     const handlers = new Map<string, (response: BridgePermissionResponse) => void>()
 
+    // AskUserQuestion requests go out as engine questions (the surfaces' question card), not approvals.
+    const questions = new Map<string, Record<string, unknown>>()
+
     const permissionCallbacks: BridgePermissionCallbacks = {
       sendRequest(requestId, toolName, input, toolUseId, description) {
         if (!sessionID) return
+        if (toolName === ASK_USER_QUESTION) {
+          questions.set(engineQuestionID(requestId), input)
+          void engineFetch(`/sessions/${sessionID}/question`, {
+            requestID: engineQuestionID(requestId),
+            questions: toEngineQuestions(input),
+            callID: toolUseId,
+          }).catch(() => {})
+          return
+        }
         void engineFetch(`/sessions/${sessionID}/permission`, {
           requestID: enginePermissionID(requestId),
           tool: toolName,
@@ -83,17 +100,29 @@ export function useLiveSession(
         }).catch(() => {})
       },
       sendResponse(requestId, response) {
+        const question = questions.get(engineQuestionID(requestId))
+        if (question) {
+          questions.delete(engineQuestionID(requestId))
+          void engineFetch(`/question/${engineQuestionID(requestId)}/settle`, {
+            answers: response.behavior === 'allow' ? fromTerminalAnswers(question, response.updatedInput) : undefined,
+          }).catch(() => {})
+          return
+        }
         void engineFetch(`/permission/${enginePermissionID(requestId)}/settle`, {
           allow: response.behavior === 'allow',
         }).catch(() => {})
       },
       cancelRequest(requestId) {
+        if (questions.delete(engineQuestionID(requestId))) {
+          void engineFetch(`/question/${engineQuestionID(requestId)}/settle`, {}).catch(() => {})
+          return
+        }
         void engineFetch(`/permission/${enginePermissionID(requestId)}/settle`, { allow: false }).catch(() => {})
       },
       onResponse(requestId, handler) {
-        const id = enginePermissionID(requestId)
-        handlers.set(id, handler)
-        return () => handlers.delete(id)
+        const ids = [enginePermissionID(requestId), engineQuestionID(requestId)]
+        for (const id of ids) handlers.set(id, handler)
+        return () => ids.forEach(id => handlers.delete(id))
       },
     }
 
@@ -110,6 +139,19 @@ export function useLiveSession(
           const handler = handlers.get(event.requestID)
           handlers.delete(event.requestID)
           handler?.(event.allow ? { behavior: 'allow' } : { behavior: 'deny', message: event.message })
+          return
+        }
+        case 'question': {
+          const handler = handlers.get(event.requestID)
+          const input = questions.get(event.requestID)
+          handlers.delete(event.requestID)
+          questions.delete(event.requestID)
+          if (!handler || !input) return
+          handler(
+            event.answers
+              ? { behavior: 'allow', updatedInput: { ...input, answers: toTerminalAnswers(input, event.answers) } }
+              : { behavior: 'deny', message: 'The user declined to answer.' },
+          )
           return
         }
       }

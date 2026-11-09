@@ -1127,7 +1127,14 @@ export namespace Session {
     }
   })
 
-  export const updateMessage = fn(MessageV2.Info, async (input) => {
+  export const updateMessage = fn(MessageV2.Info, async (input) => writeMessage(input, true))
+
+  /**
+   * Store a message; publish message.updated only when `publish`. A caller
+   * that stores the parts next (a live terminal's sync) publishes once they
+   * are in, so a surface never reads the message without its text.
+   */
+  export function writeMessage(input: MessageV2.Info, publish: boolean) {
     // Cloud environment secrets never reach storage, the bus or the model.
     const msg = SecretRedactor.deep(input)
     const time_created = msg.time.created
@@ -1142,15 +1149,16 @@ export namespace Session {
         })
         .onConflictDoUpdate({ target: MessageTable.id, set: { data } })
         .run()
-      Database.effect(() =>
-        Bus.publish(MessageV2.Event.Updated, {
-          info: msg,
-        }),
-      )
+      if (publish)
+        Database.effect(() =>
+          Bus.publish(MessageV2.Event.Updated, {
+            info: msg,
+          }),
+        )
     })
     SessionTrace.append({ sessionID, kind: "message.updated", messageID: id, data: msg, time: Date.now() })
     return msg
-  })
+  }
 
   export const removeMessage = fn(
     z.object({

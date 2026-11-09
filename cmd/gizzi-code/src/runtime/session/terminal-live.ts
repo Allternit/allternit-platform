@@ -10,6 +10,7 @@ import { Session } from "@/runtime/session"
 import { MessageV2 } from "@/runtime/session/message-v2"
 import { SessionStatus } from "@/runtime/session/status"
 import { PermissionNext } from "@/runtime/tools/guard/permission/next"
+import { Question } from "@/runtime/integrations/question"
 
 /**
  * Live terminal sessions (Remote Control on Allternit sign-in).
@@ -74,6 +75,8 @@ export namespace TerminalLive {
     | { type: "input"; id: string; text: string }
     | { type: "stop" }
     | { type: "permission"; requestID: string; allow: boolean; message?: string }
+    /** Answers in question order (labels per question); absent when declined. */
+    | { type: "question"; requestID: string; answers?: string[][] }
 
   export const Event = {
     /** A terminal attached to or left a session (drives the live dot on surfaces). */
@@ -260,12 +263,12 @@ export namespace TerminalLive {
               ...(m.completed ? { finish: "stop" } : {}),
             } as MessageV2.Assistant)
       if (m.role === "user") lastUser = id
-      await Session.updateMessage(info)
+      const stored = Session.writeMessage(info, false)
       const parts = m.parts.map((p) => toPart(p, m, id, sessionID))
       for (const part of parts) await Session.updatePart(part)
-      // Again now that its parts are stored: the agent-sessions feed reads a
+      // Published once its parts are stored: the agent-sessions feed reads a
       // message's text from its parts when it maps message.updated.
-      if (parts.length) Bus.publish(MessageV2.Event.Updated, { info })
+      Bus.publish(MessageV2.Event.Updated, { info: stored })
       for (const part of parts) Bus.publish(MessageV2.Event.PartUpdated, { part })
     }
   }
@@ -317,5 +320,28 @@ export namespace TerminalLive {
   /** The terminal answered (or dropped) its own ask: close the card everywhere. */
   export function settle(requestID: string, allow: boolean) {
     return PermissionNext.settle(requestID, allow ? "once" : "reject")
+  }
+
+  /** Publish a terminal question (AskUserQuestion); the first answer from any surface goes back to the terminal. */
+  export function askQuestion(input: {
+    sessionID: string
+    requestID: string
+    questions: Question.Info[]
+    callID?: string
+  }) {
+    const request: Question.Request = {
+      id: input.requestID,
+      sessionID: input.sessionID,
+      questions: input.questions,
+      ...(input.callID ? { tool: { messageID: "", callID: input.callID } } : {}),
+    }
+    void Question.relay(request).then((answers) => {
+      live.get(input.sessionID)?.send({ type: "question", requestID: input.requestID, answers })
+    })
+  }
+
+  /** The terminal answered (or dropped) its own question: close it everywhere. */
+  export function settleQuestion(requestID: string, answers: string[][] | undefined) {
+    return Question.settle(requestID, answers)
   }
 }

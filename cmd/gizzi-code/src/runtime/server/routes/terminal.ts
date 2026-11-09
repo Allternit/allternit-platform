@@ -4,6 +4,7 @@ import z from "zod/v4"
 import { validator } from "@/runtime/server/openapi"
 import { TerminalLive } from "@/runtime/session/terminal-live"
 import { Session } from "@/runtime/session"
+import { Question } from "@/runtime/integrations/question"
 
 /**
  * Live terminal sessions (contract: surfaces/docs/dev/live-terminal-sessions.mdx).
@@ -65,6 +66,29 @@ export const TerminalRoutes = () =>
       await TerminalLive.settle(c.req.param("requestID"), c.req.valid("json").allow)
       return c.json(true)
     })
+    .post(
+      "/sessions/:sessionID/question",
+      validator(
+        "json",
+        z.object({
+          requestID: z.string().startsWith("que"),
+          questions: Question.Info.array(),
+          callID: z.string().optional(),
+        }),
+      ),
+      async (c) => {
+        TerminalLive.askQuestion({ sessionID: c.req.param("sessionID"), ...c.req.valid("json") })
+        return c.json(true)
+      },
+    )
+    .post(
+      "/question/:requestID/settle",
+      validator("json", z.object({ answers: z.array(z.array(z.string())).optional() })),
+      async (c) => {
+        await TerminalLive.settleQuestion(c.req.param("requestID"), c.req.valid("json").answers)
+        return c.json(true)
+      },
+    )
     // The terminal's inbox: prompts, stops and permission answers from every surface.
     // Holding it open is what marks the session live; closing it hands the session back to the engine.
     .get("/sessions/:sessionID/inbox", async (c) => {
