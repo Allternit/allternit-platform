@@ -31,6 +31,11 @@ export interface AppMenuHandlers {
   openUrl: (url: string) => void;
   quickChatAccelerator: string;
   hudAccelerator: string;
+  /** Open another main window (same account, same stores). */
+  newWindow: () => void;
+  /** Open main windows for the Window menu, in open order. */
+  windows: Array<{ id: number; label: string; focused: boolean }>;
+  focusWindow: (id: number) => void;
 }
 
 export function buildAppMenu(h: AppMenuHandlers): Menu {
@@ -63,6 +68,7 @@ export function buildAppMenu(h: AppMenuHandlers): Menu {
       label: 'File',
       submenu: [
         { label: 'New Session', accelerator: 'CommandOrControl+N', click: cmd('new-session') },
+        { label: 'New Window', accelerator: 'CommandOrControl+Shift+N', click: h.newWindow },
         { label: 'Quick Chat', accelerator: h.quickChatAccelerator, ...shown, click: h.quickChat },
         { label: 'Toggle HUD', accelerator: h.hudAccelerator, ...shown, click: h.toggleHud },
         { type: 'separator' },
@@ -110,7 +116,22 @@ export function buildAppMenu(h: AppMenuHandlers): Menu {
         ...(app.isPackaged ? [] : [{ type: 'separator' } as const, { role: 'reload' } as const, { role: 'toggleDevTools' } as const]),
       ],
     },
-    { role: 'windowMenu' },
+    {
+      role: 'window',
+      submenu: [
+        { role: 'minimize' },
+        ...(isMac ? [{ role: 'zoom' } as const] : []),
+        { type: 'separator' },
+        ...h.windows.map((w) => ({
+          label: w.label,
+          type: 'checkbox' as const,
+          checked: w.focused,
+          click: () => h.focusWindow(w.id),
+        })),
+        ...(h.windows.length ? [{ type: 'separator' } as const] : []),
+        ...(isMac ? [{ role: 'front' } as const] : [{ role: 'close' } as const]),
+      ],
+    },
     {
       role: 'help',
       submenu: [
