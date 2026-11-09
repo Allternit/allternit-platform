@@ -3772,6 +3772,31 @@
         "allternit/surfaces/docs/guides/app-deployments.mdx",
         "allternit/surfaces/docs/api/openship-integration.mdx"
       ]
+    },
+    {
+      "id": "feature:gizzi-tui-header",
+      "label": "Gizzi Code startup header (mascot + wordmark)",
+      "product": "product:gizzi-code",
+      "status": "building",
+      "description": "The TUI's welcome box: the Gizzi mascot (real PNG through iTerm2 OSC 1337 / Kitty graphics in image terminals, an 18x8 half-block pixel mascot elsewhere that idles with a beacon pulse and a blink until the first key press or turn), the braille dot-matrix GIZZI CODE wordmark with the version, a /help hint and Directory / Session / Model rows, in a face-panel brown rounded border. Small terminals get a 3-row mascot and a bold title. headerArt setting / GIZZI_HEADER_ART picks auto, image, blocks or none; reduced motion, CI, NO_COLOR and non-TTY stop the animation.",
+      "touches": [
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/components",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/ink",
+        "allternit/surfaces/docs/cli"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-09",
+          "note": "Eoj picked mascot variant 10 (animated MID16 half blocks) everywhere and 14 (the real image) in image terminals, and wordmark b2: FONT35 braille, coral first G, version on braille row 0. The font, coral G and version row are constants in welcomeArt.ts."
+        }
+      ],
+      "evidence": [
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/components/WelcomeBox.tsx",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/components/welcomeArt.ts",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/components/gizziMascotImage.ts",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/ink/inlineImage.ts",
+        "allternit/surfaces/docs/cli/configuration.mdx"
+      ]
     }
   ],
   "journeys": [

@@ -17,6 +17,19 @@ describe("inline image protocol detection", () => {
     expect(detectInlineImageProtocol({ TERM_PROGRAM: "WezTerm" })).toBe("iterm")
     expect(detectInlineImageProtocol({ TERM_PROGRAM: "ghostty" })).toBe("kitty")
     expect(detectInlineImageProtocol({ TERM: "xterm-kitty" })).toBe("kitty")
+    expect(detectInlineImageProtocol({ GHOSTTY_RESOURCES_DIR: "/x" })).toBe("kitty")
+    expect(detectInlineImageProtocol({ WEZTERM_EXECUTABLE: "/x" })).toBe("iterm")
+  })
+  test("tmux: only OSC 1337 through passthrough, from iTerm2/WezTerm or when forced", () => {
+    const on = () => true, off = () => false
+    expect(detectInlineImageProtocol({ TMUX: "/t", LC_TERMINAL: "iTerm2" }, false, on)).toBe("iterm")
+    expect(detectInlineImageProtocol({ TMUX: "/t", LC_TERMINAL: "iTerm2" }, false, off)).toBeNull()
+    expect(detectInlineImageProtocol({ TMUX: "/t", KITTY_WINDOW_ID: "1" }, false, on)).toBeNull()
+    expect(detectInlineImageProtocol({ TMUX: "/t" }, true, on)).toBe("iterm")
+    expect(detectInlineImageProtocol({ TMUX: "/t" }, true, off)).toBeNull()
+  })
+  test("forced image mode assumes OSC 1337 when nothing is detected", () => {
+    expect(detectInlineImageProtocol({ TERM_PROGRAM: "Apple_Terminal" }, true)).toBe("iterm")
   })
   test("no images in Apple Terminal, tmux, or when disabled", () => {
     expect(detectInlineImageProtocol({ TERM_PROGRAM: "Apple_Terminal" })).toBeNull()

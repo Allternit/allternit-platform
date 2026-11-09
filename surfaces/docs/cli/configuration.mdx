@@ -130,6 +130,16 @@ While a `/goal` runs, each round ends with the project's checks and a review: `g
 | `GIZZI_CREDENTIAL_STORE` | Override `auth.credential_store` |
 | `ALLTERNIT_FACTORY_PEER` | Register the session as a peer in the [Allternit Factory](/factory/agents) engine. On by default; set `0` to opt out. Replaces an older variable named on the [migration page](/factory/migration#environment-variables) |
 
+## Startup header
+
+The TUI opens with a box: the Gizzi mascot, the GIZZI CODE wordmark and version, a `/help` hint, and the directory, session and model.
+
+- **Image terminals** (iTerm2, WezTerm, Kitty, Ghostty) show the real mascot image, 8 rows tall. Inside tmux the image needs `set -g allow-passthrough on` and an iTerm2 or WezTerm window; otherwise tmux gets the pixel mascot.
+- **Other terminals** (Apple Terminal, tmux, Linux consoles) show the mascot in pixel blocks. Its beacon pulses and its eyes blink about every 4 seconds until you press a key or a turn starts. It stays still with reduced motion (`prefersReducedMotion` in `~/.gizzi/settings.json`, or `GIZZI_REDUCED_MOTION=1`), in CI, with `NO_COLOR`, and when the output is not a terminal.
+- **Small terminals** (under 60 columns or 20 rows) get a 3-row mascot and a plain "Gizzi Code" title. Under 36 columns the mascot is left out.
+
+To choose the mascot yourself, set `headerArt` in `~/.gizzi/settings.json` or `GIZZI_HEADER_ART` (the variable wins): `auto` (default), `image`, `blocks` or `none`. `GIZZI_INLINE_IMAGES=iterm`, `kitty` or `0` picks or turns off the image protocol for every inline image, including the pet.
+
 ## File permissions
 
 The `config.toml` file is created with `0o600` permissions when auth profiles containing secrets are written.
