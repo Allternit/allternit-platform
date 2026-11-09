@@ -268,6 +268,7 @@ pub fn teleport_router() -> Router<Arc<AppState>> {
         .route("/teleports", post(prepare))
         .route("/teleports/placement", put(set_placement))
         .route("/teleports/placement/:session_id", get(get_placement))
+        .route("/teleports/placements", get(list_placements))
         .route("/teleports/export/:harness/:id", get(export_native))
         .route("/teleports/export/:harness/:id/diff", get(export_diff))
         .route("/teleports/to/:target_id/*rest", axum::routing::any(relay).layer(DefaultBodyLimit::max(MAX_FILE_BYTES as usize + 1024)))
@@ -475,6 +476,30 @@ async fn get_placement(State(state): State<Arc<AppState>>, Path(session_id): Pat
         Some(t) => json!({ "place": "cloud", "targetId": t.id, "label": t.name }),
         None => json!({ "place": "local" }),
     })
+}
+
+/// Every session placed on a connected computer, for list badges (one call, not one per row).
+async fn list_placements(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>) -> Result<Json<Value>, ApiError> {
+    let db = state.db.clone();
+    blocking(move || {
+        let conn = db.connect().map_err(internal)?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT p.session_id, t.id, COALESCE(t.name, 'My server')
+                 FROM session_placements p JOIN remote_backend_targets t ON t.id = p.target_id
+                 WHERE t.user_id = ?1 AND t.status = 'ready'",
+            )
+            .map_err(internal)?;
+        let rows = stmt
+            .query_map(params![user.user_id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)))
+            .map_err(internal)?;
+        let mut out = serde_json::Map::new();
+        for row in rows.flatten() {
+            out.insert(row.0, json!({ "targetId": row.1, "label": row.2 }));
+        }
+        Ok(Json(json!({ "placements": out })))
+    })
+    .await
 }
 
 /// Forward a call to a connected server's `/api/v1/<rest>` with its stored token, so the
