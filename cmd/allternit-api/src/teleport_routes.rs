@@ -330,6 +330,9 @@ async fn prepare(
         }
         let id = format!("tp_{}", uuid::Uuid::new_v4().simple());
         std::fs::create_dir_all(&cwd).map_err(internal)?;
+        // Claude Code names the project folder after the real path (macOS
+        // /tmp is /private/tmp); slug the same path or resume finds nothing.
+        let cwd = std::fs::canonicalize(&cwd).unwrap_or(cwd);
         materialize(&cwd, &manifest)?;
         conn.execute(
             "INSERT INTO teleports (id, user_id, request_id, manifest_hash, manifest_json, cwd) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
