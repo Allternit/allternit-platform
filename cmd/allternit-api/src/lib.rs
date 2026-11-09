@@ -136,6 +136,7 @@ pub mod templates_routes;
 pub mod memory_curation;
 pub mod memory_consolidation;
 pub mod placement;
+pub mod teleport_routes;
 pub mod coordinator_routes;
 pub mod delegate_routes;
 pub mod morning_brief;

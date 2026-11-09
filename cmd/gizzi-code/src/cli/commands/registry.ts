@@ -10,6 +10,7 @@ import { ModelsCommand } from "@/cli/commands/models"
 import { HardwareCommand } from "@/cli/commands/hardware"
 import { ServeCommand } from "@/cli/commands/serve"
 import { PairCommand, LoginCommand } from "@/cli/commands/pair"
+import { TeleportCommand } from "@/cli/commands/teleport"
 import { DebugCommand } from "@/cli/commands/debug"
 import { StatsCommand } from "@/cli/commands/stats"
 import { McpCommand } from "@/cli/commands/mcp"
@@ -104,6 +105,7 @@ export const COMMANDS: RegisteredCommand[] = [
   UninstallCommand,
   ServeCommand,
   PairCommand,
+  TeleportCommand,
   LoginCommand,
   WebCommand,
   ModelsCommand,

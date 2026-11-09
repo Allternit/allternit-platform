@@ -250,6 +250,7 @@ struct SessionOverviewView: View {
                         .lineLimit(1)
                 }
                 statusPill(session)
+                placeBadge(session)
             }
             if editable {
                 // List rows scroll up and down, so they close by the X.
@@ -294,6 +295,7 @@ struct SessionOverviewView: View {
                 }
             }
             statusPill(session)
+            placeBadge(session)
             if let preview = session.description, !preview.isEmpty {
                 Text(preview)
                     .font(.system(size: 13))
@@ -394,6 +396,12 @@ struct SessionOverviewView: View {
         Menu {
             Button { open(session) } label: { Label("Open", systemImage: "arrow.up.right.square") }
             Button { startRename(session) } label: { Label("Rename", systemImage: "pencil") }
+            if ShellSessionsStore.belongs(session, to: .code) {
+                let inCloud = store.cloudPlaces[session.id] != nil
+                Button { teleport(session, toCloud: !inCloud) } label: {
+                    Label(inCloud ? "Bring back to this Mac" : "Teleport to cloud", systemImage: inCloud ? "icloud.and.arrow.down" : "icloud.and.arrow.up")
+                }
+            }
             Button { close(session) } label: { Label("Archive", systemImage: "archivebox") }
         } label: {
             Image(systemName: "ellipsis")
@@ -403,6 +411,26 @@ struct SessionOverviewView: View {
                 .contentShape(Rectangle())
         }
         .accessibilityLabel("More for \(session.name ?? "Untitled")")
+    }
+
+    /// Teleport from ⋯: the session keeps its conversation and resumes on the other computer.
+    private func teleport(_ session: AgentSession, toCloud: Bool) {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        Task {
+            do { try await store.teleport(id: session.id, toCloud: toCloud) }
+            catch { actionError = FriendlyErrorMessage.from(error.localizedDescription) }
+        }
+    }
+
+    /// Local / Cloud badge: where the session runs, same as the web session header.
+    private func placeBadge(_ session: AgentSession) -> some View {
+        let label = store.cloudPlaces[session.id]
+        return HStack(spacing: 4) {
+            Image(systemName: label == nil ? "laptopcomputer" : "cloud").font(.system(size: 10))
+            Text(label == nil ? "Local" : "Cloud").font(.system(size: 11, weight: .medium))
+        }
+        .foregroundColor(Color("TextSecondary"))
+        .accessibilityLabel(label.map { "Running on \($0)" } ?? "Running on this Mac")
     }
 
     /// The X: archives the session.
