@@ -60,8 +60,10 @@ enum SessionWorkerEvent: Decodable, Sendable {
             let error: String?
             let startedAt: Date?
             let finishedAt: Date?
+            /// The tool's result text, when the tool has finished.
+            let output: String?
 
-            private enum CodingKeys: String, CodingKey { case status, input, title, error, time }
+            private enum CodingKeys: String, CodingKey { case status, input, title, error, time, output }
             private struct Time: Decodable { let start: Double?; let end: Double? }
 
             init(from decoder: Decoder) throws {
@@ -69,6 +71,7 @@ enum SessionWorkerEvent: Decodable, Sendable {
                 status = ((try? c.decodeIfPresent(String.self, forKey: .status)) ?? nil) ?? "pending"
                 title = (try? c.decodeIfPresent(String.self, forKey: .title)) ?? nil
                 error = (try? c.decodeIfPresent(String.self, forKey: .error)) ?? nil
+                output = (try? c.decodeIfPresent(String.self, forKey: .output)) ?? nil
                 let raw = (try? c.decodeIfPresent([String: AnyCodable].self, forKey: .input)) ?? nil
                 input = PartState.flatten(raw)
                 let time = (try? c.decodeIfPresent(Time.self, forKey: .time)) ?? nil
@@ -105,7 +108,7 @@ enum SessionWorkerEvent: Decodable, Sendable {
                 error: state.error,
                 startedAt: state.startedAt,
                 finishedAt: state.finishedAt,
-                output: state.output?.value as? String
+                output: state.output
             )
         }
     }
