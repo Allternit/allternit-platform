@@ -40,6 +40,7 @@ Every thread that shows a hand-off between agents draws this as a chip: "Queued"
 
 What keeps a message from getting lost:
 
+- **Confirmations reach the hop.** When the session confirms, gizzi writes a file under `live-acks/`. The engine reports it to the hop through `/bot-routing/hop/advance` with the same link and sign-in as the send: `delivered` when the prompt hook sees the message id or a hook prints it, `read` when `check_inbox` hands it to the model or the session keeps working afterwards. Hops only move forward, and a push that races a confirmation does not bring the pending record back. The engine learns the link from the latest send, so a confirmation that arrives before any send since the engine started is reported with the next one.
 - **Confirm or push again.** An unconfirmed push is kept in `live-pending/` under the Factory home. The engine pushes it again after 5 s, 15 s, 45 s, 2 min and 5 min, and at once when the session comes back online. After the last try the message stays in the inbox for `check_inbox`.
 - **No double messages.** The receiver keeps a log of message ids it has taken (7 days), so a repeated push never shows twice.
 - **Claude token.** Claude Code gives its MCP and hook processes a messaging socket and token. `gizzi team-mcp` and `gizzi hook` register them with the engine so it can push. Nothing else reads them.

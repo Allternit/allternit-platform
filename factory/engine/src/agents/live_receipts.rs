@@ -10,6 +10,8 @@
 //!
 //! Files (all under the factory home):
 //! - `live-pending/<hop>.json`   unconfirmed push (envelope, attempts, next try)
+//! - `live-acks/<hop>.json`      receiver confirmation `{hopId, kind: delivered|read, key, at}`, written by gizzi;
+//!   `<hop>.sent` holds the last state the engine reported to the cloud hop
 //! - `live-seen.ndjson`          `{id, at}` per hop id the receiver has taken
 //! - `live-messaging/<pid>.json` the Claude session's socket + token, written by `gizzi team-mcp`
 
@@ -45,6 +47,9 @@ fn home() -> PathBuf {
 fn pending_dir() -> PathBuf {
     home().join("live-pending")
 }
+fn acks_dir() -> PathBuf {
+    home().join("live-acks")
+}
 fn seen_path() -> PathBuf {
     home().join("live-seen.ndjson")
 }
@@ -64,6 +69,10 @@ pub fn backoff_after(attempts: u32) -> Option<i64> {
 
 /// Remember a push that is not confirmed yet.
 pub fn record_push(hop_id: &str, session: &str, from: &str, envelope: &str) {
+    // A re-push that raced the receiver's confirmation must not bring the record back.
+    if acks_dir().join(format!("{}.json", safe(hop_id))).exists() {
+        return;
+    }
     let _ = std::fs::create_dir_all(pending_dir());
     let path = pending_dir().join(format!("{}.json", safe(hop_id)));
     let prior: Option<Pending> = std::fs::read(&path).ok().and_then(|b| serde_json::from_slice(&b).ok());
@@ -100,12 +109,71 @@ pub fn due(session_back: Option<&str>) -> Vec<Pending> {
     let t = now();
     pending()
         .into_iter()
+        .filter(|p| !acks_dir().join(format!("{}.json", safe(&p.hop_id))).exists())
         .filter(|p| p.attempts < MAX_ATTEMPTS && (p.next_at <= t || session_back.is_some_and(|s| s == p.session)))
         .collect()
 }
 
+// ─── Receiver confirmations → cloud hop state ───────────────────────────────
+
+fn api_slot() -> &'static std::sync::RwLock<Option<crate::send::ApiLink>> {
+    static SLOT: OnceLock<std::sync::RwLock<Option<crate::send::ApiLink>>> = OnceLock::new();
+    SLOT.get_or_init(|| std::sync::RwLock::new(None))
+}
+
+/// Remember how the latest send reached allternit-api (the same link and auth
+/// the send path uses), so the sweeper can report confirmations. Memory only:
+/// the credential is never written to disk.
+pub fn remember_api(api: &crate::send::ApiLink) {
+    if api.base.is_some() {
+        if let Ok(mut g) = api_slot().write() {
+            *g = Some(api.clone());
+        }
+    }
+}
+
+fn rank(state: &str) -> u8 {
+    match state {
+        "delivered" => 1,
+        "read" => 2,
+        _ => 0,
+    }
+}
+
+/// Advance each confirmed hop to `delivered` (or `read`) through
+/// `/bot-routing/hop/advance`. Moves only forward: a state already reported is
+/// never sent again, and the server refuses to go backwards anyway.
+pub async fn report_acks() {
+    let Some(api) = api_slot().read().ok().and_then(|g| g.clone()) else { return };
+    let Ok(rd) = std::fs::read_dir(acks_dir()) else { return };
+    for e in rd.flatten() {
+        let path = e.path();
+        if path.extension().and_then(|x| x.to_str()) != Some("json") {
+            continue;
+        }
+        let Some(v) = std::fs::read(&path).ok().and_then(|b| serde_json::from_slice::<Value>(&b).ok()) else { continue };
+        let (Some(hop), Some(kind)) = (v["hopId"].as_str(), v["kind"].as_str()) else { continue };
+        let sent_path = path.with_extension("sent");
+        let sent = std::fs::read_to_string(&sent_path).unwrap_or_default();
+        if rank(kind) <= rank(sent.trim()) {
+            // Reported long ago: tidy up after a day.
+            let old = e.metadata().and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).is_some_and(|a| a.as_secs() > 86_400);
+            if old {
+                let _ = std::fs::remove_file(&path);
+                let _ = std::fs::remove_file(&sent_path);
+            }
+            continue;
+        }
+        let reason = if kind == "read" { "the session read it" } else { "the session confirmed it" };
+        if crate::send::advance_hop(&api, hop, kind, reason).await {
+            let _ = std::fs::write(&sent_path, kind);
+        }
+    }
+}
+
 /// Re-push everything due; called by the background sweeper.
 pub async fn sweep() {
+    report_acks().await;
     for p in due(None) {
         let Some(s) = super::live_delivery::lookup().and_then(|l| l.list().into_iter().find(|s| s.name == p.session)) else { continue };
         if s.status == "offline" {

@@ -492,6 +492,14 @@ async fn admit_hop(api: &ApiLink, to: &str, req: &SendRequest) -> HopAdmit {
     }
 }
 
+/// Move a hop forward from outside a send (a receiver's confirmation). True when the
+/// answer is final: the API took it, or refused it for good (4xx: no such hop, e.g. a send
+/// that was never recorded). False on a network error or 5xx, so the caller tries again.
+pub async fn advance_hop(api: &ApiLink, hop_id: &str, state: &str, reason: &str) -> bool {
+    let body = json!({ "hopId": hop_id, "state": state, "reason": reason });
+    matches!(api_call(api, reqwest::Method::POST, "/api/v1/bot-routing/hop/advance", Some(body)).await, Ok((200..=499, _)))
+}
+
 /// Set the hop's state and tier once the delivery is known (best effort).
 async fn finish_hop(api: &ApiLink, hop_id: &str, d: &Delivery) {
     let state = match d.state.as_str() {
@@ -536,6 +544,7 @@ async fn deliver_live(ctx: &SendCtx, session: &crate::agents::live_delivery::Liv
         body: &body,
     });
     live::ensure_receipts();
+    crate::agents::live_receipts::remember_api(&ctx.api);
     let deferred = !live::take_rate_slot();
     let outcome = match live::deliver(session, hop_id, &from, &envelope, deferred).await {
         live::Attempt::Done(o) => o,
