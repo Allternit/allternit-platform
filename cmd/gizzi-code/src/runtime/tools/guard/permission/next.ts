@@ -371,6 +371,34 @@ export namespace PermissionNext {
     existing.reject(new RejectedError())
   }
 
+  /**
+   * An ask raised in another process (a live terminal session, see
+   * TerminalLive). It is published like any other ask, so every surface shows
+   * its card and answers it through `reply`; the promise settles with the
+   * person's decision. Policy was already applied where the tool runs.
+   */
+  export async function relay(info: Request): Promise<{ allow: boolean; message?: string }> {
+    const s = await state()
+    return new Promise((resolve) => {
+      s.pending[info.id] = {
+        info,
+        ruleset: [],
+        resolve: () => resolve({ allow: true }),
+        reject: (e: any) => resolve({ allow: false, message: e instanceof CorrectedError ? e.message : undefined }),
+      }
+      Bus.publish(Event.Asked, info)
+    })
+  }
+
+  /** A relayed ask answered where it was raised: close its card everywhere without deciding it again. */
+  export async function settle(requestID: string, reply: Reply) {
+    const s = await state()
+    const existing = s.pending[requestID]
+    if (!existing) return
+    delete s.pending[requestID]
+    Bus.publish(Event.Replied, { sessionID: existing.info.sessionID, requestID, reply })
+  }
+
   export const reply = fn(
     z.object({
       requestID: Identifier.schema("permission"),

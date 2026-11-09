@@ -123,6 +123,7 @@ function transformSession(info: any) {
       continuesFrom: info.continuesFrom ?? null,
       handoff: info.handoff ?? null,
       paused: info.paused ?? null,
+      sourceRef: info.sourceRef ?? null,
     },
   }
 }
@@ -262,6 +263,7 @@ export const AgentCompatRoutes = () =>
                 continuesFrom: info.continuesFrom ?? null,
                 handoff: info.handoff ?? null,
                 paused: info.paused ?? null,
+                sourceRef: info.sourceRef ?? null,
               },
             }
           }

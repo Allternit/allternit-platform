@@ -1,0 +1,53 @@
+---
+title: Continue a terminal session anywhere
+description: "Every Gizzi Code session in a terminal is live on Desktop, the web app, your phone and cloud computers. Watch it, send it a message, approve a tool or stop it from any of them."
+---
+
+## What you get
+
+A Gizzi Code session you start in a terminal is a live session everywhere you are signed in to Allternit:
+
+- **Allternit Desktop** lists it under Code with a **Terminal** badge, as soon as the terminal starts.
+- **ai.allternit.com**, the **m.allternit.com** app and the **Android** app show it too, with the same badge. So does the **iPhone** app, in your recent sessions.
+- Open it like any other chat. You see each prompt, answer and tool call as the terminal runs it, usually within a quarter of a second.
+- **Send a message** from any of them. It arrives in the terminal at once, as if you had typed it there. If the agent is working, the message steers the current turn.
+- **Stop** stops the terminal's current turn.
+- **Approve or deny** a tool from any of them. The terminal's own prompt closes when you answer somewhere else, and the other way round.
+
+Nothing to turn on. The terminal connects to the Allternit engine on this computer (Allternit Desktop, or `gizzi serve`). If no engine is running, it keeps trying every 15 seconds and connects when one starts.
+
+## Open it on your phone or another computer
+
+Type `/remote` in the terminal. It shows:
+
+- a **QR code**. Scan it with your phone camera to open this session in the Allternit app (or m.allternit.com);
+- a **phone link** and a **web link** that open the same session;
+- a reminder that Desktop on this computer already lists it.
+
+The links go through this computer's paired runtime, so they work when your phone is off your home network. You need to be signed in: run `gizzi login` once if `/remote` asks you to.
+
+`/remote-control`, `/continue-on` and `/phone` do the same thing.
+
+## Open it in Desktop
+
+Type `/desktop` (or `/app`). Allternit Desktop comes to the front with this session open. Keep typing in either place: both stay in sync.
+
+## When you close the terminal
+
+The session stays in your list. Its live badge goes away and its status turns idle. If you send it a message later from Desktop, the web app or your phone, the Allternit engine continues the session itself, with its tools in the terminal's folder and on the model the terminal used.
+
+## Cloud computers
+
+A cloud computer runs the same engine. A `gizzi` session you start in its terminal shows up in that computer's session list on every surface, the same way.
+
+## Turn it off
+
+Set `GIZZI_LIVE_SESSIONS=0` before starting `gizzi` to keep a session local to the terminal. `GIZZI_ENGINE_URL` points the terminal at an engine other than `http://127.0.0.1:4096`.
+
+<Note>
+The old Claude Code "Remote Control" (claude.ai sign-in) is not part of Gizzi. Remote control uses your Allternit sign-in and this computer's pairing.
+</Note>
+
+## For developers
+
+The wire contract (routes, events and how prompts, Stop and approvals reach the terminal) is in [Live terminal sessions](/architecture/live-terminal-sessions).

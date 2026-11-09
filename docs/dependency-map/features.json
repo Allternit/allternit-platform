@@ -3772,6 +3772,33 @@
         "allternit/surfaces/docs/guides/app-deployments.mdx",
         "allternit/surfaces/docs/api/openship-integration.mdx"
       ]
+    },
+    {
+      "id": "feature:gizzi-live-terminal-sessions",
+      "label": "Live terminal sessions (Remote Control on Allternit sign-in)",
+      "product": "product:gizzi-code",
+      "status": "building",
+      "description": "Every Gizzi TUI session attaches to the local engine as an ordinary engine session (sourceRef.harness gizzi-tui): its transcript, status and approvals stream to Desktop, web, PWA, iOS and Android on the events they already read, and prompts, steers, Stop and approval replies from any surface reach the running terminal through the /v1/terminal inbox. /remote shows a QR code and links; /desktop opens it in Desktop.",
+      "touches": [
+        "allternit/cmd/gizzi-code/src/runtime/session",
+        "allternit/cmd/gizzi-code/src/runtime/server/routes",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app",
+        "allternit/surfaces/allternit-desktop",
+        "allternit/surfaces/allternit-mobile/ios",
+        "allternit-ai/src/components/native-sessions",
+        "allternit-ai/src/lib/agents",
+        "allternit-ai/src/shell/rail",
+        "allternit-ai/src/fabric-session/phone"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-09",
+          "note": "Eoj, 2026-11-09: remote control must work as well as Claude Code Remote Control or better, on Allternit sign-in, with state updating instantly across Desktop, cloud computers, web, PWA and the phone apps. The claude.ai bridge (BRIDGE_MODE) stays compiled out. Contract: surfaces/docs/architecture/live-terminal-sessions.mdx."
+        }
+      ],
+      "evidence": [
+        "surfaces/docs/architecture/live-terminal-sessions.mdx"
+      ]
     }
   ],
   "journeys": [

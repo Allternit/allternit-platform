@@ -59,6 +59,10 @@ struct AgentSession: Decodable, Sendable, Identifiable {
     /// `metadata.artifactSession.kind` — the session is bound to an artifact
     /// (web artifact-session.ts), so it opens beside its editor, not as a chat.
     let artifactSessionKind: String?
+    /// `metadata.sourceRef.harness == "gizzi-tui"` — a live Gizzi terminal
+    /// session. It runs in the terminal; messages, Stop and approvals sent from
+    /// here reach it at once (docs: Continue a terminal session anywhere).
+    let isTerminal: Bool
     // The rest of `metadata` (directory, version, permission, …) stays
     // skipped — not rendered anywhere on iOS.
 
@@ -83,9 +87,11 @@ struct AgentSession: Decodable, Sendable, Identifiable {
         case agentName
         case archived
         case artifactSession
+        case sourceRef
     }
 
     private struct ArtifactSessionTag: Decodable { let kind: String? }
+    private struct SourceRefTag: Decodable { let harness: String? }
 
     /// Tolerant decode mirroring the web's `normalizeSessionPayload`: only
     /// `id` and `created_at` are required on the wire; everything else falls
@@ -110,6 +116,7 @@ struct AgentSession: Decodable, Sendable, Identifiable {
             agentName = (try? metadata.decodeIfPresent(String.self, forKey: .agentName)) ?? nil
             archived = ((try? metadata.decodeIfPresent(Bool.self, forKey: .archived)) ?? nil) ?? false
             artifactSessionKind = ((try? metadata.decodeIfPresent(ArtifactSessionTag.self, forKey: .artifactSession)) ?? nil)?.kind
+            isTerminal = ((try? metadata.decodeIfPresent(SourceRefTag.self, forKey: .sourceRef)) ?? nil)?.harness == "gizzi-tui"
             // The backend emits a bool; the create path carries the flag as
             // the string "true" inside the metadata bag.
             if let flag = try metadata.decodeIfPresent(Bool.self, forKey: .ephemeral) {
@@ -124,6 +131,7 @@ struct AgentSession: Decodable, Sendable, Identifiable {
             agentName = nil
             archived = false
             artifactSessionKind = nil
+            isTerminal = false
             ephemeral = false
         }
     }

@@ -247,6 +247,31 @@ export namespace SessionPrompt {
   export type PromptInput = z.infer<typeof PromptInput>
 
   export const prompt = fn(PromptInput, async (input) => {
+    // A live terminal session runs its turns in the terminal: hand the text over (TerminalLive).
+    const { TerminalLive } = await import("@/runtime/session/terminal-live")
+    if (TerminalLive.attached(input.sessionID)) {
+      const text = input.parts
+        .filter((part): part is MessageV2.TextPart => part.type === "text" && !(part as MessageV2.TextPart).synthetic)
+        .map((part) => part.text)
+        .join("\n")
+      // The terminal echoes the prompt into its transcript, which syncs back as the stored user message.
+      if (input.noReply !== true) TerminalLive.deliver(input.sessionID, text)
+      const info: MessageV2.User = {
+        id: input.messageID ?? Identifier.ascending("message"),
+        sessionID: input.sessionID,
+        role: "user",
+        time: { created: Date.now() },
+        agent: input.agent ?? "build",
+        model: input.model ?? { providerID: TerminalLive.HARNESS, modelID: "terminal" },
+        metadata: { terminal: "delivered" },
+      }
+      return { info, parts: [] } as unknown as MessageV2.WithParts
+    }
+    // No terminal holds it: the engine continues the session, its tools in the terminal's folder.
+    if (input.workdir === undefined && !workdirs.has(input.sessionID)) {
+      const owner = await Session.get(input.sessionID).catch(() => undefined)
+      if (owner?.sourceRef?.harness === TerminalLive.HARNESS) input.workdir = owner.directory
+    }
     // Context handoff: a prompt to a session that handed off lands on its
     // lineage head, and a switch to a model whose window can't hold this one
     // hands off first. Every entry point (HTTP, CLI, bots, routines) goes
@@ -586,6 +611,8 @@ const message = await createUserMessage(input)
 
   export function cancel(sessionID: string) {
     log.info("cancel", { sessionID })
+    // A live terminal session's turn runs in the terminal: Stop goes there.
+    void import("@/runtime/session/terminal-live").then(({ TerminalLive }) => TerminalLive.stop(sessionID))
     setupAborts.get(sessionID)?.abort()
     const s = state()
     const match = s[sessionID]
@@ -742,7 +769,7 @@ const message = await createUserMessage(input)
       // before tools are built so the skill tool sees it too.
       const botTurn = BotTurn.resolve(sessionID, msgs)
 
-      if (step === 1 && session.sourceRef) {
+      if (step === 1 && session.sourceRef && session.sourceRef.harness !== "gizzi-tui") {
         try {
           const { NativeSource } = await import("@/runtime/session/native-source")
           const originText = await NativeSource.originPromptBlock(sessionID)

@@ -92,6 +92,7 @@ import { PeerRoutes } from "@/runtime/server/routes/peers"
 import { RuntimeHeartbeat } from "@/runtime/runtime-heartbeat"
 import { RuntimeRoutes } from "@/runtime/server/routes/runtime"
 import { RemoteControlRoutes } from "@/runtime/server/routes/remote_control"
+import { TerminalRoutes } from "@/runtime/server/routes/terminal"
 import { AgentCompatRoutes } from "@/runtime/server/routes/agent-compat"
 import { createHash, randomUUID } from "node:crypto"
 
@@ -550,6 +551,7 @@ export namespace Server {
             .route("/acp", AcpRoutes())
             .route("/runtime", RuntimeRoutes())
             .route("/remote-control", RemoteControlRoutes())
+            .route("/terminal", TerminalRoutes())
             .route("/workspace", WorkspaceRoutes()) as unknown as Hono,
         )
         .all("/*", async (c) => {
@@ -854,6 +856,8 @@ async function sessionDirectory(pathname: string): Promise<string | undefined> {
   try {
     const { Session } = await import("@/runtime/session")
     const info = await Session.get(m[1])
+    // A live terminal session lives in the default project, where every surface lists and streams it.
+    if (info.sourceRef?.harness === "gizzi-tui") return undefined
     return info.directory && existsSync(info.directory) ? info.directory : undefined
   } catch {
     return undefined
