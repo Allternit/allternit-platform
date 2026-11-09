@@ -3422,7 +3422,8 @@ export function REPL({
             inputTokens: telemetryBaseline ? Math.max(0, getTotalInputTokens() - telemetryBaseline.inputTokens) : undefined,
             outputTokens: telemetryBaseline ? Math.max(0, getTotalOutputTokens() - telemetryBaseline.outputTokens) : undefined,
             usageEstimated: turnUsageEstimated(messagesRef.current, telemetryBaseline?.messageCount ?? 0),
-            toolCount: getTurnToolCount() > 0 ? getTurnToolCount() : undefined,
+            // CLI brains run their own tools, which the turn counter never sees.
+            toolCount: getTurnToolCount() > 0 ? getTurnToolCount() : outcome.tools > 0 ? outcome.tools : undefined,
             costUSD: telemetryBaseline ? Math.max(0, getTotalCostUSD() - telemetryBaseline.costUSD) : undefined,
             contextRatio: contextRatioFromMessages(messagesRef.current, getContextWindowForModel(mainLoopModelParam, undefined)) ?? undefined
           });

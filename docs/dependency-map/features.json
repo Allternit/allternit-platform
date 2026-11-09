@@ -3235,6 +3235,9 @@
         "allternit/cmd/gizzi-code/src/cli/commands/run-print.ts",
         "allternit/cmd/gizzi-code/src/shared/util/highlight.ts",
         "allternit/cmd/gizzi-code/src/shared/util/turn-summary.ts",
+        "allternit/cmd/gizzi-code/src/shared/util/cli-tools.ts",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/services/api/cliBrain.ts",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/components/messages/ToolUseCard.tsx",
         "allternit/cmd/gizzi-code/src/shared/util/chalk.ts",
         "allternit/cmd/gizzi-code/src/cli/ui/ink-app/components/shell",
         "allternit/cmd/gizzi-code/src/cli/ui/ink-app/components/messages/SystemTextMessage.tsx"

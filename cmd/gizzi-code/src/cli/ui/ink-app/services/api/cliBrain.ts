@@ -25,6 +25,8 @@ import { createAssistantAPIErrorMessage, createAssistantMessage, createUserMessa
 import type { AssistantMessage, Message, StreamEvent, SystemAPIErrorMessage, UserMessage } from '../../types/message.js'
 import type { Options } from './claude.js'
 import { describeProviderError, formatProviderErrorHelp } from './providerErrors.js'
+import { observedEditResult, patchFiles, unwrapShell } from '@/shared/util/cli-tools'
+import { readFileSync } from 'fs'
 
 export type CliBrain = { provider: string; modelId: string; fabric: boolean }
 
@@ -56,6 +58,72 @@ const TOOL_ALIASES: Record<string, string> = {
   exec_command: 'Bash',
   web_search: 'WebSearch',
   web_fetch: 'WebFetch',
+}
+
+/**
+ * Display-only names for tools a CLI ran itself: ACP CLIs report lowercase
+ * kinds (bash, read, edit) and Codex reports exec_command / patch_apply.
+ * Approvals keep TOOL_ALIASES so a gated tool's input is never reshaped.
+ */
+const DISPLAY_ALIASES: Record<string, string> = {
+  ...TOOL_ALIASES,
+  bash: 'Bash',
+  shell: 'Bash',
+  read: 'Read',
+  edit: 'Edit',
+  write: 'Write',
+  grep: 'Grep',
+  glob: 'Glob',
+  MultiEdit: 'Edit',
+}
+
+type ObservedCall = { id: string; name: string; input: Record<string, unknown>; result?: () => Record<string, unknown> | undefined }
+
+function readOr(path: string, fallback: string): string {
+  try {
+    return readFileSync(path, 'utf8')
+  } catch {
+    return fallback
+  }
+}
+
+/**
+ * The TUI tool_use block(s) for one tool call a CLI ran itself. A Codex patch
+ * becomes one Edit / Write per file (so each shows its diff); a shell call
+ * shows the command, not Codex's `/bin/zsh -lc` wrapper; edits get the result
+ * object the TUI's Edit / Write components render.
+ */
+function observedCalls(id: string, rawName: string, args: unknown): ObservedCall[] {
+  const input = tuiToolInput(rawName, args)
+  if (rawName === 'patch_apply' || rawName === 'apply_patch') {
+    const files = patchFiles(input.changes)
+    if (files.length > 0) {
+      return files.map((f, n) => {
+        const callId = files.length === 1 ? id : `${id}#${n}`
+        if (f.kind === 'add') {
+          return { id: callId, name: 'Write', input: { file_path: f.path, content: f.content ?? '' }, result: () => ({ type: 'create', filePath: f.path, content: f.content ?? readOr(f.path, ''), structuredPatch: [], originalFile: null }) }
+        }
+        // Old/new text from the hunks: the Edit card reads "Update" (an empty
+        // old_string reads "Create") and a rejected patch shows real text.
+        const side = (keep: string) => f.hunks.flatMap(h => h.lines.filter(l => l[0] === ' ' || l[0] === keep).map(l => l.slice(1))).join('\n')
+        const oldString = side('-')
+        const newString = side('+')
+        return {
+          id: callId,
+          name: 'Edit',
+          input: { file_path: f.path, old_string: oldString || ' ', new_string: newString },
+          result: () => ({ filePath: f.path, oldString, newString, originalFile: readOr(f.path, ''), structuredPatch: f.hunks, userModified: false, replaceAll: false }),
+        }
+      })
+    }
+  }
+  const name = DISPLAY_ALIASES[rawName] ?? rawName
+  if (name === 'Bash' && input.command !== undefined) input.command = unwrapShell(input.command)
+  if ((name === 'Read' || name === 'Edit' || name === 'Write') && input.file_path === undefined && typeof input.path === 'string') input.file_path = input.path
+  if (rawName === 'MultiEdit' || name === 'Edit' || name === 'Write') {
+    return [{ id, name, input, result: () => observedEditResult(rawName === 'MultiEdit' ? 'MultiEdit' : name, input) }]
+  }
+  return [{ id, name, input }]
 }
 
 function tuiToolInput(name: string, args: unknown): Record<string, unknown> {
@@ -258,6 +326,7 @@ export async function* queryCliBrainWithStreaming({
   let usage: { input_tokens: number; output_tokens: number } | undefined
   let contextUsed: number | undefined
   const toolMessages = new Map<string, string>()
+  const observed = new Map<string, ObservedCall[]>()
 
   function* start() {
     if (started) return
@@ -314,22 +383,29 @@ export async function* queryCliBrainWithStreaming({
         yield* start()
         yield* close()
         yield* flush()
-        const name = TOOL_ALIASES[event.name] ?? event.name
-        const message = stamp(
-          createAssistantMessage({
-            content: [{ type: 'tool_use', id: event.id, name, input: tuiToolInput(event.name, event.arguments) }],
-          }),
-        )
-        message.cliObserved = true
-        toolMessages.set(event.id, message.uuid)
-        yieldedAny = true
-        yield message
+        const calls = observedCalls(event.id, event.name, event.arguments)
+        observed.set(event.id, calls)
+        for (const call of calls) {
+          const message = stamp(
+            createAssistantMessage({
+              content: [{ type: 'tool_use', id: call.id, name: call.name, input: call.input }],
+            }),
+          )
+          message.cliObserved = true
+          toolMessages.set(call.id, message.uuid)
+          yieldedAny = true
+          yield message
+        }
       } else if (event.type === 'tool_result') {
-        yield createUserMessage({
-          content: [{ type: 'tool_result', tool_use_id: event.id, content: event.content, is_error: event.isError || undefined }],
-          toolUseResult: event.isError ? event.content : undefined,
-          sourceToolAssistantUUID: toolMessages.get(event.id),
-        })
+        for (const call of observed.get(event.id) ?? [{ id: event.id, name: '', input: {} }]) {
+          const edit = !event.isError ? call.result?.() : undefined
+          yield createUserMessage({
+            content: [{ type: 'tool_result', tool_use_id: call.id, content: event.content, is_error: event.isError || undefined }],
+            toolUseResult: event.isError ? event.content : edit,
+            sourceToolAssistantUUID: toolMessages.get(call.id),
+          })
+        }
+        observed.delete(event.id)
       } else if (event.type === 'error') {
         failure ??= errorText(event.error)
       } else if (event.type === 'context') {

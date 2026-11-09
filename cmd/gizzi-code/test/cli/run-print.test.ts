@@ -3,6 +3,7 @@ import chalk, { nearestAnsi256 } from "../../src/shared/util/chalk"
 import { ToolPrinter, fitMiddle, normalizeTool, shortPath } from "../../src/cli/commands/run-print"
 import { Highlight } from "../../src/shared/util/highlight"
 import { TurnSummary } from "../../src/shared/util/turn-summary"
+import { patchFiles, unwrapShell } from "../../src/shared/util/cli-tools"
 
 const plain = (s: string) => s.replace(/\u001b\[[0-9;]*m/g, "")
 
@@ -38,6 +39,18 @@ describe("gizzi run tool lines", () => {
   test("names and argument keys from CLI brains map to the engine's", () => {
     expect(normalizeTool("MultiEdit", { file_path: "/a" })).toMatchObject({ name: "edit", input: { filePath: "/a" } })
     expect(normalizeTool("exec_command", { command: ["bun", "test"] })).toMatchObject({ name: "bash", input: { command: "bun test" } })
+  })
+
+  // Codex tools: shell calls arrive wrapped in zsh -lc, edits as fileChange patches.
+  test("codex shell wrapper is removed and a patch prints as an Edit with counts", () => {
+    expect(unwrapShell("/bin/zsh -lc 'cat calc.ts'")).toBe("cat calc.ts")
+    expect(unwrapShell(`/bin/zsh -lc "echo \\"hi\\""`)).toBe('echo "hi"')
+    const changes = [{ path: "calc.ts", kind: { type: "update" }, diff: "@@ -6 +6 @@\n-  return a + b\n+  return a - b\n" }]
+    expect(patchFiles(changes)[0]).toMatchObject({ path: "calc.ts", kind: "update", added: 1, removed: 1 })
+    const lines = capture((p) =>
+      p.update({ id: "p", tool: "patch_apply", state: { status: "completed", input: { changes }, output: "" } }),
+    )
+    expect(lines.filter((l) => l.startsWith("⏺"))).toEqual(["⏺ Edit calc.ts  +1 −1"])
   })
 
   test("paths are cwd-relative and cut in the middle only when too long", () => {

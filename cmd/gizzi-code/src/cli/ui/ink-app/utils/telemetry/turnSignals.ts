@@ -86,9 +86,10 @@ export function turnOutcome(
   messages: Message[],
   fromIndex: number,
   cwd: string = process.cwd(),
-): { failed: boolean; empty: boolean; cause?: string; files: TurnFileChange[] } {
+): { failed: boolean; empty: boolean; cause?: string; files: TurnFileChange[]; tools: number } {
   let lastAssistant: Message | undefined
   let produced = false
+  let tools = 0
   const files: TurnFileChange[] = []
   for (let i = Math.max(0, fromIndex); i < messages.length; i++) {
     const m = messages[i] as any
@@ -98,6 +99,7 @@ export function turnOutcome(
       if (m.isApiErrorMessage) continue
       const content = Array.isArray(m.message?.content) ? m.message.content : []
       if (content.some((b: any) => (b?.type === 'text' && String(b.text ?? '').trim()) || b?.type === 'tool_use')) produced = true
+      tools += content.filter((b: any) => b?.type === 'tool_use').length
       continue
     }
     const r = m.type === 'user' ? m.toolUseResult : undefined
@@ -121,5 +123,5 @@ export function turnOutcome(
     const content = (lastAssistant as any).message?.content
     cause = Array.isArray(content) ? content.find((b: any) => b?.type === 'text')?.text : undefined
   }
-  return { failed, empty: !failed && !produced, cause, files }
+  return { failed, empty: !failed && !produced, cause, files, tools }
 }

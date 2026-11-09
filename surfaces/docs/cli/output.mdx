@@ -21,7 +21,19 @@ Each tool call prints one header when it starts. The path is shown relative to t
      6 + return a - b
 ```
 
-Tools that a coding CLI runs itself (`claude-cli`, `codex-cli`) are shown with the same names and arguments as Gizzi's own tools.
+In the TUI, each tool call starts with a colored bar instead of a box: coral while the tool runs, grey when it is done, red if it failed.
+
+Tools that a coding CLI runs itself (`claude-cli`, `codex-cli`, ACP CLIs) are shown with the same names, arguments and diffs as Gizzi's own tools:
+
+| The CLI reports | Gizzi shows |
+|---|---|
+| Claude `Read`, `Edit`, `MultiEdit`, `Write`, `Bash` | Read, Edit with its diff, Write, Bash |
+| Codex `exec_command` (run as `/bin/zsh -lc '…'`) | Bash with the plain command |
+| Codex `apply_patch` / file changes | one Edit (or Write for a new file) per file, with its diff and `+N −M` |
+| Codex web search and fetch | Search, Fetch |
+| ACP `bash`, `read`, `edit`, `write` | Bash, Read, Edit, Write |
+
+Their edits also count toward the closing line's files and `+/−`.
 
 ## Live command output
 
@@ -56,7 +68,7 @@ After a turn that worked:
 
 The second line lists the changed files. Token counts, cost and context use follow the model name when they are known.
 
-A turn that failed or produced nothing gets no "Done" line. It gets the cause instead:
+A turn that failed or produced nothing gets no "Done" line. It gets the cause instead, the same cause the error message above it names:
 
 ```text
 ✕ Stopped after 1.2s · nothing changed · Not logged in · Please run /login
