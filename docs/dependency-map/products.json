@@ -131,7 +131,9 @@
       "surfaces": [
         "surface:ios"
       ],
-      "components": [],
+      "components": [
+        "allternit/surfaces/allternit-mobile/ios"
+      ],
       "uses": [
         "product:cloud-api",
         "product:allternit-api",
@@ -142,6 +144,27 @@
         "allternit/surfaces/allternit-mobile/ios/Core/API/RuntimeRelayClient.swift",
         "allternit/surfaces/docs/surfaces/mobile.mdx",
         "allternit/surfaces/docs/api/ios-push.mdx"
+      ]
+    },
+    {
+      "id": "product:allternit-android",
+      "label": "Allternit for Android (Google Play)",
+      "line": "line:workspace",
+      "type": "app",
+      "description": "Play app com.allternit.app: m.allternit.com as a Trusted Web Activity, so workspace features ship with the PWA, plus native Phone Link, which lets Allternit bots drive the signed-in AI apps on the user's own phone over iCTRL.",
+      "url": "https://play.google.com/store/apps/details?id=com.allternit.app",
+      "surfaces": [
+        "surface:android"
+      ],
+      "components": [
+        "allternit/surfaces/allternit-mobile/android"
+      ],
+      "uses": [
+        "product:allternit-mobile-pwa"
+      ],
+      "evidence": [
+        "allternit/surfaces/allternit-mobile/android/README.md",
+        "allternit/surfaces/allternit-mobile/android/app/src/main/AndroidManifest.xml"
       ]
     },
     {
