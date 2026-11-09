@@ -52,11 +52,14 @@ import type { JumpHandle } from './VirtualMessageList';
 // doesn't invalidate the logo subtree. LogoV2/StatusNotices internally
 // subscribe to useAppState/useSettings for their own updates.
 const LogoHeader = React.memo(function LogoHeader({
-    agentDefinitions
+    agentDefinitions,
+    animate
 }: {
     agentDefinitions: Props['agentDefinitions'];
+    // The header idles only before the first turn.
+    animate: boolean;
 }) {
-  const t1 = <WelcomeBox />;
+  const t1 = <WelcomeBox animate={animate} />;
 
   const t2 = <OffscreenFreeze><Box flexDirection="column" gap={1}>{t1}<React.Suspense fallback={null}><StatusNotices agentDefinitions={agentDefinitions} /></React.Suspense></Box></OffscreenFreeze>;
 
@@ -692,7 +695,7 @@ const MessagesImpl = ({
   }, [tools, lookups_0]);
   return <>
       {/* Logo */}
-      {!hideLogo && !(renderRange && renderRange[0] > 0) && <LogoHeader agentDefinitions={agentDefinitions} />}
+      {!hideLogo && !(renderRange && renderRange[0] > 0) && <LogoHeader agentDefinitions={agentDefinitions} animate={messages.length === 0 && !isLoading} />}
 
       {/* Truncation indicator */}
       {hasTruncatedMessages_0 && <Divider title={`${toggleShowAllShortcut} to show ${chalk.bold(hiddenMessageCount_0)} previous messages`} width={columns} />}
