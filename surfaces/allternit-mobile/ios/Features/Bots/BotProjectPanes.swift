@@ -203,7 +203,7 @@ struct BotProjectThreadPage: View {
                     }
                     .buttonStyle(.plain)
                 }
-                Text(thread.title)
+                Text(thread.displayTitle)
                     .font(.system(size: 22, design: .serif))
                     .foregroundColor(Color("TextPrimary"))
                     .fixedSize(horizontal: false, vertical: true)
@@ -372,7 +372,7 @@ struct ProjectThreadGraphSheet: View {
         return HStack(spacing: 8) {
             Circle().fill(group.color).frame(width: 8, height: 8)
             VStack(alignment: .leading, spacing: 1) {
-                Text(thread.title)
+                Text(thread.displayTitle)
                     .font(.system(size: 12.5, weight: .semibold))
                     .foregroundColor(Color("TextPrimary"))
                     .lineLimit(1)
@@ -1408,7 +1408,7 @@ struct ProjectNeedsYouSheet: View {
                     HStack(spacing: 10) {
                         if let bot = store.bot(thread.botId) { BotAvatarView(bot: bot, size: 22) }
                         VStack(alignment: .leading, spacing: 1) {
-                            Text(thread.title)
+                            Text(thread.displayTitle)
                                 .font(.system(size: 13))
                                 .foregroundColor(Color("TextPrimary"))
                                 .lineLimit(1)

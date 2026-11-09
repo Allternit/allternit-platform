@@ -289,7 +289,7 @@ struct BotThreadRow: View {
                             .padding(.vertical, 1)
                             .background(RoundedRectangle(cornerRadius: 3).fill(Theme.statusInfo.opacity(0.14)))
                     }
-                    Text(thread.title)
+                    Text(thread.displayTitle)
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundColor(Color("TextPrimary"))
                         .lineLimit(1)
@@ -414,7 +414,7 @@ struct BotThreadTasksView: View {
                 Button { open(thread) } label: {
                     HStack(spacing: 8) {
                         Circle().fill(group.color).frame(width: 7, height: 7)
-                        Text(thread.title)
+                        Text(thread.displayTitle)
                             .font(.system(size: 14, weight: .semibold))
                             .foregroundColor(Color("TextPrimary"))
                             .lineLimit(1)

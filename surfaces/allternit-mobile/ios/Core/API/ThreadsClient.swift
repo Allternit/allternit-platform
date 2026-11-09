@@ -34,6 +34,9 @@ struct BotThread: Decodable, Identifiable, Hashable {
     let id: String
     let botId: String
     let title: String
+    /// The title without a routine run's `[bot:<name>] ` owner tag (web
+    /// chatSessionTitle): lists and headers show this.
+    var displayTitle: String { AutomationScheduleLogic.displayName(title) }
     let kind: String
     let incognito: Bool
     let status: String

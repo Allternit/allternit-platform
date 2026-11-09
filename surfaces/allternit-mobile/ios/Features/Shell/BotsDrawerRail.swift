@@ -442,7 +442,7 @@ struct BotsDrawerRail: View {
         let latest = latestThread(bot.id)
         let waiting = store.waitingCount(for: bot.id) > 0 || BotStatusStore.shared.needsAttention(for: bot.id)
         let working = !waiting && (store.workingCount(for: bot.id) > 0 || BotStatusStore.shared.isWorking(for: bot.id))
-        let line = latest.map { $0.statusLine?.nilIfBlank ?? $0.title } ?? bot.botTagline
+        let line = latest.map { $0.statusLine?.nilIfBlank ?? $0.displayTitle } ?? bot.botTagline
         return Button { onOpenBot(bot.id) } label: {
             HStack(spacing: 12) {
                 LiveBotStatusAvatar(bot: bot, size: 60, tiled: true)
