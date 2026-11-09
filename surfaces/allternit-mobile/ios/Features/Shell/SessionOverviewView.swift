@@ -422,17 +422,15 @@ struct SessionOverviewView: View {
         }
     }
 
-    /// "Cloud" badge for a session teleported to a connected computer; nothing for local ones.
-    @ViewBuilder
+    /// Local / Cloud badge: where the session runs, same as the web session header.
     private func placeBadge(_ session: AgentSession) -> some View {
-        if let label = store.cloudPlaces[session.id] {
-            HStack(spacing: 4) {
-                Image(systemName: "cloud").font(.system(size: 10))
-                Text("Cloud").font(.system(size: 11, weight: .medium))
-            }
-            .foregroundColor(Color("TextSecondary"))
-            .accessibilityLabel("Running on \(label)")
+        let label = store.cloudPlaces[session.id]
+        return HStack(spacing: 4) {
+            Image(systemName: label == nil ? "laptopcomputer" : "cloud").font(.system(size: 10))
+            Text(label == nil ? "Local" : "Cloud").font(.system(size: 11, weight: .medium))
         }
+        .foregroundColor(Color("TextSecondary"))
+        .accessibilityLabel(label.map { "Running on \($0)" } ?? "Running on this Mac")
     }
 
     /// The X: archives the session.
