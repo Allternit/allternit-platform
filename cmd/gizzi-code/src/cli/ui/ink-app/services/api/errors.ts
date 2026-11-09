@@ -3,6 +3,7 @@ import {
   APIConnectionTimeoutError,
   APIError,
 } from '@allternit/gizzi-sdk/providers/allternit'
+import { describeProviderError, formatProviderErrorHelp, subscriptionAlternative } from './providerErrors.js'
 import type {
   BetaMessage,
   BetaStopReason,
@@ -148,6 +149,23 @@ export function isMediaSizeErrorMessage(msg: AssistantMessage): boolean {
   )
 }
 export const CREDIT_BALANCE_TOO_LOW_ERROR_MESSAGE = 'Credit balance is too low'
+/**
+ * The plain cause and what to run for an Allternit Cloud refusal that is not
+ * a sign-in problem (see providerErrors.ts), or undefined for anything else.
+ */
+export function cloudRefusalHelp(status: number | undefined, message: string, now?: Date): string | undefined {
+  if (status !== 402 && status !== 403 && status !== 429) return undefined
+  if (status !== 402 && !/allowance|credits exhausted|plan|monthly limit|verified email/i.test(message)) return undefined
+  const help = describeProviderError({
+    provider: 'allternit',
+    status,
+    text: message,
+    alternative: subscriptionAlternative(),
+    now,
+  })
+  return help ? formatProviderErrorHelp(help) : undefined
+}
+
 export const INVALID_API_KEY_ERROR_MESSAGE = 'Not logged in · Please run /login'
 export const INVALID_API_KEY_ERROR_MESSAGE_EXTERNAL =
   'Invalid API key · Fix external API key'
@@ -803,6 +821,19 @@ export async function getAssistantMessageFromError(
         content: hasStoredOAuth
           ? ORG_DISABLED_ERROR_MESSAGE_ENV_KEY_WITH_OAUTH
           : ORG_DISABLED_ERROR_MESSAGE_ENV_KEY,
+      })
+    }
+  }
+
+  // Allternit Cloud refusals that are not sign-in problems: the free
+  // allowance, credits, the plan's monthly limit, an unverified email. The
+  // 401/403 handlers below would call these "Not logged in".
+  if (error instanceof APIError) {
+    const cloudHelp = cloudRefusalHelp(error.status, error.message)
+    if (cloudHelp) {
+      return createAssistantAPIErrorMessage({
+        error: error.status === 402 || /allowance|credits|limit/i.test(error.message) ? 'billing_error' : 'authentication_failed',
+        content: cloudHelp,
       })
     }
   }

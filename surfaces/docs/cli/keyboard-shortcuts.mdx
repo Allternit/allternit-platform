@@ -1,0 +1,99 @@
+---
+title: Keyboard shortcuts
+description: Keys in the Gizzi Code terminal, steering the agent while it works, next-step suggestions, the recap when you come back, and how to rebind keys
+---
+
+## Send while the agent works
+
+You can type while Gizzi is working. When a turn is running and the prompt has text, a dim line under the prompt shows the three choices:
+
+```text
+enter steer now · tab queue for after · ctrl+x enter stop + send
+```
+
+| Key | What it does |
+|---|---|
+| `enter` | **Steer now.** The message reaches the model at its next tool call, inside the turn that is running. When it arrives, the transcript shows `↳ steering: "your message"` in amber. If the model finishes without another tool call, the message runs as the next turn. |
+| `tab` | **Queue for after.** The message waits until the turn ends, then runs as a new turn. Queued messages show in a dim list above the prompt under "queued for after this turn". |
+| `ctrl+x enter` | **Stop + send.** Stops the turn that is running and sends the message right away. `ctrl+s` does the same. |
+| `esc` | With messages queued for after: removes the newest one (its text goes back into an empty prompt). With none queued: stops the turn. |
+
+`tab` only acts while a turn runs and the prompt has text. At other times it still completes file paths and slash commands, and accepts a next-step suggestion. Codex CLI uses the same `enter` / `tab` pair.
+
+## Next-step suggestions
+
+After a turn, Gizzi can show a dim guess at what you will type next in the empty prompt:
+
+```text
+❯ run the tests   ← tab to accept
+```
+
+Press `tab` or `→` to put it in the prompt, or `enter` to send it as is. Type anything else to ignore it.
+
+Suggestions use the session's current model, with one short extra call after each turn. To keep that call free or on your plan, Gizzi makes it only when the model is:
+
+- a CLI brain on your own subscription (`claude-cli/…`, `codex-cli/…`, `kimi-cli/…`)
+- a model served on this machine (a `gizzi.json` provider on a loopback address)
+- Allternit Cloud (`allternit/…`), which uses your Cloud credits
+
+On a metered API key (Anthropic, OpenRouter and other keys) Gizzi does not make suggestions unless you turn them on there.
+
+| Setting (`~/.gizzi/settings.json`) | Default | Effect |
+|---|---|---|
+| `promptSuggestionEnabled` | on | `false` turns suggestions off. Also in `/config` as "Prompt suggestions". |
+| `promptSuggestionOnApiKeys` | off | `true` also makes suggestions on metered API-key models. |
+
+The environment variable `GIZZI_CODE_ENABLE_PROMPT_SUGGESTION=0` turns them off for one run.
+
+## Recap when you come back
+
+When the terminal has been in the background for 5 minutes and no turn is running, Gizzi adds a recap to the transcript:
+
+```text
+Recap (you were away 12m)
+  • Fixing token refresh in the auth flow; the fix is in, one test still fails.
+  • src/auth.ts +6 −1
+  • 1 still fails: session › refresh
+  Next: fix the failing session test
+```
+
+The changed files and their `+`/`−` line counts come from the edits in the session, not from the model. The "Next" step also becomes the ghost suggestion in the prompt, so `tab` accepts it. The recap uses `small_model` from `gizzi.json` when you set one, and otherwise the session's own model. Your terminal must report focus changes (most do). Run `/recap` for a longer summary at any time.
+
+## Other shortcuts
+
+| Key | What it does |
+|---|---|
+| `shift+tab` | Cycle permission mode (`meta+m` on older Windows terminals) |
+| `meta+p` | Switch model |
+| `meta+t` | Toggle extended thinking |
+| `ctrl+o` | Show the full transcript |
+| `ctrl+t` | Show or hide the task list |
+| `ctrl+r` | Search prompt history |
+| `ctrl+s` | Stash the prompt (empty prompt: bring the stash back) |
+| `ctrl+g` or `ctrl+x ctrl+e` | Edit the prompt in `$EDITOR` |
+| `ctrl+x ctrl+k` | Stop all background agents |
+| `ctrl+x f` | Open the Allternit Factory floor |
+| `ctrl+v` | Paste an image (`alt+v` on Windows) |
+| `ctrl+_` | Undo in the prompt |
+| `ctrl+space` or `f8` | Hold to talk (voice dictation) |
+| `ctrl+c` | Stop the turn; press twice on an empty prompt to exit |
+
+## Rebind keys
+
+Put your bindings in `~/.gizzi/keybindings.json`. Gizzi reloads the file when it changes, and the hint line under the prompt shows your keys. Each block names a context and maps keys to actions. A key you add works alongside the default one.
+
+```json
+{
+  "bindings": [
+    {
+      "context": "Chat",
+      "bindings": {
+        "ctrl+q": "chat:queueAfter",
+        "ctrl+x s": "chat:stopAndSend"
+      }
+    }
+  ]
+}
+```
+
+The steering actions are `chat:submit` (steer, `enter`), `chat:queueAfter` (`tab`) and `chat:stopAndSend` (`ctrl+x enter`). `ctrl+c` and `ctrl+d` cannot be rebound. Run `/doctor` to check the file for mistakes.

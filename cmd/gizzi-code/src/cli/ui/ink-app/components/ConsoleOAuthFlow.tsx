@@ -423,11 +423,11 @@ function OAuthStatusMessage({
 
         const t4 = <Text bold={true}>Documentation:</Text>;
 
-        const t5 = <Text>· Amazon Bedrock:{" "}<Link url="https://docs.gizziio.com/amazon-bedrock">https://docs.gizziio.com/amazon-bedrock</Link></Text>;
+        const t5 = <Text>· Amazon Bedrock:{" "}<Link url="https://docs.allternit.com/cli/authentication#with-a-third-party-provider">https://docs.allternit.com/cli/authentication#with-a-third-party-provider</Link></Text>;
 
-        const t6 = <Text>· Microsoft Foundry:{" "}<Link url="https://docs.gizziio.com/microsoft-foundry">https://docs.gizziio.com/microsoft-foundry</Link></Text>;
+        const t6 = <Text>· Microsoft Foundry:{" "}<Link url="https://docs.allternit.com/cli/authentication#with-a-third-party-provider">https://docs.allternit.com/cli/authentication#with-a-third-party-provider</Link></Text>;
 
-        const t7 = <Box flexDirection="column" marginTop={1}>{t4}{t5}{t6}<Text>· Vertex AI:{" "}<Link url="https://docs.gizziio.com/google-vertex-ai">https://docs.gizziio.com/google-vertex-ai</Link></Text></Box>;
+        const t7 = <Box flexDirection="column" marginTop={1}>{t4}{t5}{t6}<Text>· Vertex AI:{" "}<Link url="https://docs.allternit.com/cli/authentication#with-a-third-party-provider">https://docs.allternit.com/cli/authentication#with-a-third-party-provider</Link></Text></Box>;
 
         const t8 = <Box flexDirection="column" gap={1} marginTop={1}>{t1}<Box flexDirection="column" gap={1}>{t2}{t3}{t7}<Box marginTop={1}><Text dimColor={true}>Press <Text bold={true}>Enter</Text> to go back to login options.</Text></Box></Box></Box>;
 

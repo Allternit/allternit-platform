@@ -134,7 +134,7 @@ import { textForResubmit, handleMessageFromStream, type StreamingToolUse, type S
 import { getContextWindowForModel } from '../utils/context';
 import { renderModelName } from '../utils/model/model';
 import { quotaChipForProvider, resolveQuotaProviderId } from '../utils/telemetry/providerQuota';
-import { contextRatioFromMessages, turnUsageEstimated } from '../utils/telemetry/turnSignals';
+import { contextRatioFromMessages, turnOutcome, turnUsageEstimated } from '../utils/telemetry/turnSignals';
 import { generateSessionTitle } from '../utils/sessionTitle';
 import { BASH_INPUT_TAG, COMMAND_MESSAGE_TAG, COMMAND_NAME_TAG, LOCAL_COMMAND_STDOUT_TAG } from '../constants/xml';
 import { escapeXml } from '../utils/xml';
@@ -1387,7 +1387,7 @@ export function REPL({
   } = useUnseenDivider(messages.length);
   if (feature('AWAY_SUMMARY')) {
     // biome-ignore lint/correctness/useHookAtTopLevel: feature() is a compile-time constant
-    useAwaySummary(messages, setMessages, isLoading);
+    useAwaySummary(messages, setMessages, isLoading, mainLoopModel);
   }
   const [cursor, setCursor] = useState<MessageActionsState | null>(null);
   const cursorNavRef = useRef<MessageActionsNav | null>(null);
@@ -1816,7 +1816,7 @@ export function REPL({
     if (wt.creationDurationMs < 15_000) return;
     worktreeTipShownRef.current = true;
     const secs = Math.round(wt.creationDurationMs / 1000);
-    setMessages(prev => [...prev, createSystemMessage(`Worktree creation took ${secs}s. For large repos, set \`worktree.sparsePaths\` in .claude/settings.json to check out only the directories you need — e.g. \`{"worktree": {"sparsePaths": ["src", "packages/foo"]}}\`.`, 'info')]);
+    setMessages(prev => [...prev, createSystemMessage(`Worktree creation took ${secs}s. For large repos, set \`worktree.sparsePaths\` in .gizzi/settings.json to check out only the directories you need — e.g. \`{"worktree": {"sparsePaths": ["src", "packages/foo"]}}\`.`, 'info')]);
   }, [setMessages]);
 
   // Hide spinner when the only in-progress tool is Sleep
@@ -2290,6 +2290,8 @@ export function REPL({
     if (was !== now) repinScroll();
     prevDialogRef.current = focusedInputDialog;
   }, [focusedInputDialog, repinScroll]);
+  const onCancelRef = useRef<() => void>(() => {});
+  onCancelRef.current = onCancel;
   function onCancel() {
     if (focusedInputDialog === 'elicitation') {
       // Elicitation dialog handles its own Escape, and closing it shouldn't affect any loading state.
@@ -2379,6 +2381,12 @@ export function REPL({
     screen,
     abortSignal: abortController?.signal,
     popCommandFromQueue: handleQueuedCommandOnCancel,
+    // esc while the agent works removes the newest queued-for-after message;
+    // put its text back in an empty prompt so it isn't lost.
+    onQueuedForAfterRemoved: (cmd: QueuedCommand) => {
+      const text = cmd.preExpansionValue ?? cmd.value;
+      if (inputValue === '' && typeof text === 'string') setInputValue(text);
+    },
     vimMode,
     isLocalJSXCommand: toolJSX?.isLocalJSXCommand,
     isSearchingHistory,
@@ -3413,13 +3421,18 @@ export function REPL({
         // Skipped on abort and in loop mode, same as the duration line.
         if (shouldQuery && !abortController.signal.aborted && !proactiveActive && !store.getState().isBriefOnly) {
           const telemetryBaseline = turnTelemetryBaselineRef.current;
+          // A failed or empty turn gets "✕ Stopped after …", never a "Done" line.
+          const outcome = turnOutcome(messagesRef.current, telemetryBaseline?.messageCount ?? 0);
           const telemetryMessage = createRunTelemetryMessage({
+            files: outcome.files,
+            stopped: outcome.failed || outcome.empty ? { cause: outcome.cause ?? (outcome.empty ? 'the model returned nothing' : undefined) } : undefined,
             model: renderModelName(mainLoopModelParam),
             durationMs: turnDurationMs > 0 ? turnDurationMs : undefined,
             inputTokens: telemetryBaseline ? Math.max(0, getTotalInputTokens() - telemetryBaseline.inputTokens) : undefined,
             outputTokens: telemetryBaseline ? Math.max(0, getTotalOutputTokens() - telemetryBaseline.outputTokens) : undefined,
             usageEstimated: turnUsageEstimated(messagesRef.current, telemetryBaseline?.messageCount ?? 0),
-            toolCount: getTurnToolCount() > 0 ? getTurnToolCount() : undefined,
+            // CLI brains run their own tools, which the turn counter never sees.
+            toolCount: getTurnToolCount() > 0 ? getTurnToolCount() : outcome.tools > 0 ? outcome.tools : undefined,
             costUSD: telemetryBaseline ? Math.max(0, getTotalCostUSD() - telemetryBaseline.costUSD) : undefined,
             contextRatio: contextRatioFromMessages(messagesRef.current, getContextWindowForModel(mainLoopModelParam, undefined)) ?? undefined
           });
@@ -3617,10 +3630,18 @@ export function REPL({
   }, options?: {
     fromKeybinding?: boolean;
     forceImmediate?: boolean;
+    queueAfter?: boolean;
   }) => {
     // Re-pin scroll to bottom on submit so the user always sees the new
     // exchange (matches common agent auto-scroll behavior).
     repinScroll();
+
+    // Stop + send (ctrl+x enter, ctrl+s): stop the running turn the same way
+    // esc does, then send below as a fresh turn. abort('interrupt') alone
+    // leaves a running Bash tool going, so the message only queued.
+    if (options?.forceImmediate && isLoading && !activeRemote.isRemoteMode) {
+      onCancelRef.current();
+    }
 
     // Sending a prompt yourself takes over from a limit pause (slash
     // commands like /resume-now handle the pause themselves).
@@ -4033,7 +4054,8 @@ export function REPL({
       // handlePromptSubmit only uses it for debug log + telemetry event.
       streamMode: streamModeRef.current,
       hasInterruptibleToolInProgress: hasInterruptibleToolInProgressRef.current,
-      forceImmediate: options?.forceImmediate
+      forceImmediate: options?.forceImmediate,
+      queueAfter: options?.queueAfter
     });
 
     // Restore stash that was deferred above. Two cases:
