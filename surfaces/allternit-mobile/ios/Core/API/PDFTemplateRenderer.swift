@@ -24,8 +24,10 @@ enum PDFTemplateRenderer {
         }
     }
 
-    /// US Letter, 48 pt margins (the A4 variant is not offered on the phone).
-    private static let paper = CGRect(x: 0, y: 0, width: 612, height: 792)
+    /// US Letter or A4 in points, with 48 pt margins.
+    static func paper(_ pageSize: String) -> CGRect {
+        pageSize == "a4" ? CGRect(x: 0, y: 0, width: 595, height: 842) : CGRect(x: 0, y: 0, width: 612, height: 792)
+    }
     private static let margin: CGFloat = 48
 
     static func html(request: [String: Any]) throws -> String {
@@ -49,8 +51,9 @@ enum PDFTemplateRenderer {
     }
 
     @MainActor
-    static func pdf(html: String) async throws -> Data {
-        let printable = paper.insetBy(dx: margin, dy: margin)
+    static func pdf(html: String, pageSize: String = "letter") async throws -> Data {
+        let sheet = paper(pageSize)
+        let printable = sheet.insetBy(dx: margin, dy: margin)
         let web = WKWebView(frame: CGRect(x: 0, y: 0, width: printable.width, height: printable.height))
         let loader = Loader()
         web.navigationDelegate = loader
@@ -59,11 +62,11 @@ enum PDFTemplateRenderer {
 
         let renderer = UIPrintPageRenderer()
         renderer.addPrintFormatter(web.viewPrintFormatter(), startingAtPageAt: 0)
-        renderer.setValue(NSValue(cgRect: paper), forKey: "paperRect")
+        renderer.setValue(NSValue(cgRect: sheet), forKey: "paperRect")
         renderer.setValue(NSValue(cgRect: printable), forKey: "printableRect")
 
         let data = NSMutableData()
-        UIGraphicsBeginPDFContextToData(data, paper, nil)
+        UIGraphicsBeginPDFContextToData(data, sheet, nil)
         renderer.prepare(forDrawingPages: NSRange(location: 0, length: max(1, renderer.numberOfPages)))
         for page in 0..<max(1, renderer.numberOfPages) {
             UIGraphicsBeginPDFPage()

@@ -12,6 +12,8 @@ struct PDFTemplateSheet: View {
     @State private var template: PDFTemplate = .invoice
     @State private var theme: PDFTheme = .professional
     @State private var variant: String?
+    /// Letter by default in the US region, A4 elsewhere; the same two sizes as web.
+    @State private var pageSize: String = Locale.current.region?.identifier == "US" ? "letter" : "a4"
     @State private var isWorking = false
     @State private var errorText: String?
 
@@ -38,6 +40,11 @@ struct PDFTemplateSheet: View {
                         }
                         .pickerStyle(.segmented)
                     }
+                    Picker("Paper", selection: $pageSize) {
+                        Text("Letter").tag("letter")
+                        Text("A4").tag("a4")
+                    }
+                    .pickerStyle(.segmented)
                 }
                 Section {
                     Text(data == nil
@@ -68,7 +75,7 @@ struct PDFTemplateSheet: View {
         errorText = nil
         defer { isWorking = false }
         do {
-            let pdf = try await PDFTemplateClient.render(template: template, theme: theme, variant: variant, data: data ?? template.sample)
+            let pdf = try await PDFTemplateClient.render(template: template, theme: theme, variant: variant, pageSize: pageSize, data: data ?? template.sample)
             let base = artifactTitle.trimmingCharacters(in: .whitespacesAndNewlines)
             let url = try ArtifactFileShare.write(pdf, suggestedName: "\(base.isEmpty ? template.label : base).pdf", mimeType: "application/pdf")
             dismiss()

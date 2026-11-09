@@ -70,10 +70,10 @@ enum PDFTemplateClient {
     /// No server and no paired computer are involved, so it works signed in
     /// with nothing else connected (and offline).
     @MainActor
-    static func render(template: PDFTemplate, theme: PDFTheme, variant: String?, data: [String: Any]) async throws -> Data {
-        var request: [String: Any] = ["template": template.rawValue, "theme": theme.rawValue, "pageSize": "letter", "data": data]
+    static func render(template: PDFTemplate, theme: PDFTheme, variant: String?, pageSize: String = "letter", data: [String: Any]) async throws -> Data {
+        var request: [String: Any] = ["template": template.rawValue, "theme": theme.rawValue, "pageSize": pageSize, "data": data]
         if let variant { request["variant"] = variant }
         let html = try PDFTemplateRenderer.html(request: request)
-        return try await PDFTemplateRenderer.pdf(html: html)
+        return try await PDFTemplateRenderer.pdf(html: html, pageSize: pageSize)
     }
 }
