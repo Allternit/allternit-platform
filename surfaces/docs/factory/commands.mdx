@@ -122,6 +122,11 @@ The work and its proof. See [Workspace](/factory/workspace).
 | Command | What it does |
 |---|---|
 | `gizzi` | The TUI: one agent plus the factory floor (agents, board, approvals) |
+| `gizzi swarm "<task>" [--workers N] [--task "…"]… [--brain claude-cli/<model>] [--dry-run]` | Start a [swarm](/factory/swarms): one worktree, branch and Terminal bot per worker, each sent the task |
+| `gizzi board [--once]` | The live board of every running bot: state, brain, age, cost, last line. Keys: `⏎` attach, `s` steer, `x` stop, `l` land |
+| `gizzi swarm wait [<swarm>] [--timeout S]` | Block until every worker is done, failed or stopped, then print a summary |
+| `gizzi swarm land [<swarm>] [--worker w1] [--all] [--dry-run]` | Merge finished workers' branches into the branch the swarm started from, then remove their worktrees |
+| `gizzi swarm list` | Every swarm on this computer |
 | `gizzi doctor` | Checks Gizzi, the engine, harnesses, transport and the install, including the one-time move of the old orchestrator's state folder to `~/.allternit/factory/` ([details](/factory/migration#on-disk-state)) |
 | `gizzi serve` | Unchanged: Gizzi's own harness server. The Factory API is the engine's, at `/api/factory` |
 

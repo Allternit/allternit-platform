@@ -261,18 +261,8 @@ export type FactoryEngineCheckDeps = {
   home?: string
 }
 
-/**
- * Ports a Factory engine may serve on, most specific first. An explicit
- * ALLTERNIT_FACTORY_PORT always wins. Otherwise probe both known homes:
- * Allternit Desktop runs the engine on 3018 (PORTS.FACTORY — its extension
- * bridge owns 3011; see allternit-desktop src/main/config.ts), while a
- * CLI/dev `allternit-factory serve` uses the engine default 3011.
- */
-export function factoryEnginePorts(env: NodeJS.ProcessEnv = process.env): number[] {
-  const fromEnv = Number(env.ALLTERNIT_FACTORY_PORT)
-  if (Number.isInteger(fromEnv) && fromEnv > 0) return [fromEnv]
-  return [3018, 3011]
-}
+export { factoryEnginePorts } from "@/cli/factory/engine"
+import { factoryEnginePorts } from "@/cli/factory/engine"
 
 /**
  * `gizzi doctor` — the Allternit Factory engine: found (and where), its

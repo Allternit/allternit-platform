@@ -23,6 +23,7 @@ import dash from './commands/dash/index.js'
 import dashboard from './commands/dashboard/index.js'
 import bots from './commands/bots/index.js'
 import factory from './commands/factory/index.js'
+import board from './commands/board/index.js'
 import diff from './commands/diff/index.js'
 import ctx_viz from './commands/ctx_viz/index.js'
 import doctor from './commands/doctor/index.js'
@@ -290,14 +291,13 @@ export const INTERNAL_ONLY_COMMANDS = [
 ].filter(Boolean)
 
 // Commands that are not finished in Gizzi. They call allternit-api routes
-// without the user's token (401) or routes that do not exist, only simulate
-// work (/swarm; the real one is `gizzi swarm` in the Factory lane), or send
-// people to Claude Code's sticker shop. Hidden and disabled until they work;
+// without the user's token (401) or routes that do not exist, or send
+// people to Claude Code's sticker shop. (/swarm is real now: it starts a
+// Factory swarm, so it stays visible.) Hidden and disabled until they work;
 // GIZZI_EXPERIMENTAL_COMMANDS=1 turns them back on for development.
 const UNFINISHED_COMMANDS = (): Command[] => [
   cowork,
   coworkProject,
-  swarm,
   ontology,
   directive,
   gc,
@@ -340,6 +340,8 @@ const COMMANDS = memoize((): Command[] => [
   dashboard,
   bots,
   factory,
+  board,
+  swarm,
   diff,
   doctor,
   editPrompt,
