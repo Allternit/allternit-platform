@@ -69,6 +69,24 @@ describe("CLI brains", () => {
     expect(text).toStartWith("Codex isn't installed on this computer")
   })
 
+  test("an unknown model gives the CLI's own words as the cause, on one line, with /model", () => {
+    // Claude Code's is_error result for --model claude-nosuch-model-9 (stream-json, 2026-11-09).
+    const said =
+      "There's an issue with the selected model (claude-nosuch-model-9). It may not exist or you may not have access to it. Run --model to pick a different model."
+    const text = cliBrainErrorMessage({ provider: "claude-cli" }, `${said}\n\nstack…`)
+    const [cause, hint] = text.split("\n")
+    expect(cause).toBe(`Claude Code: ${said}`)
+    expect(hint).toContain("`/model`")
+    expect(text).not.toContain("the CLI ended the turn with an error")
+    expect(text).not.toContain("stack")
+  })
+
+  test("an unrecognised CLI error still leads with the CLI's words and a /model hint", () => {
+    const text = cliBrainErrorMessage({ provider: "claude-cli" }, "Something odd happened\nmore")
+    expect(text.split("\n")[0]).toBe("Claude Code: Something odd happened")
+    expect(text).toContain("`/model`")
+  })
+
   test("a usage-limit reply keeps the CLI's words so the limit pause can read them", () => {
     const text = cliBrainErrorMessage({ provider: "claude-cli" }, "You've hit your session limit · resets 7:40pm")
     expect(text).toContain("resets 7:40pm")

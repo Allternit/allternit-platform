@@ -21,8 +21,7 @@ import type {
   SystemAPIErrorMessage,
 } from '../../types/message.js'
 import type { Options } from './claude.js'
-import { describeProviderError, formatProviderErrorHelp } from './providerErrors.js'
-import { subscriptionAlternative } from './cliBrain.js'
+import { describeProviderError, formatProviderErrorHelp, subscriptionAlternative } from './providerErrors.js'
 
 // Stream index for the reasoning block: clear of choice and tool-call indexes.
 const THINKING_BLOCK_INDEX = 1_000_000

@@ -3,8 +3,7 @@ import {
   APIConnectionTimeoutError,
   APIError,
 } from '@allternit/gizzi-sdk/providers/allternit'
-import { describeProviderError, formatProviderErrorHelp } from './providerErrors.js'
-import { subscriptionAlternative } from './cliBrain.js'
+import { describeProviderError, formatProviderErrorHelp, subscriptionAlternative } from './providerErrors.js'
 import type {
   BetaMessage,
   BetaStopReason,

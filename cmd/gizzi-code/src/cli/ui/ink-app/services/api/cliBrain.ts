@@ -20,11 +20,10 @@ import { getSessionId } from '../../bootstrap/state.js'
 import { getCwd } from '../../utils/cwd.js'
 import { logForDebugging } from '../../utils/debug.js'
 import { findToolByName } from '../../Tool.js'
-import { MCPTool } from '../../tools/MCPTool/MCPTool.js'
 import { createAssistantAPIErrorMessage, createAssistantMessage, createUserMessage } from '../../utils/messages.js'
 import type { AssistantMessage, Message, StreamEvent, SystemAPIErrorMessage, UserMessage } from '../../types/message.js'
 import type { Options } from './claude.js'
-import { describeProviderError, formatProviderErrorHelp } from './providerErrors.js'
+import { describeProviderError, formatProviderErrorHelp, subscriptionAlternative } from './providerErrors.js'
 
 export type CliBrain = { provider: string; modelId: string; fabric: boolean }
 
@@ -88,7 +87,10 @@ export function turnText(messages: readonly Message[]): string {
 }
 
 /** A tool the TUI has no component for still gets the generic approval prompt. */
-function genericTool(name: string) {
+async function genericTool(name: string) {
+  // Loaded on use: MCPTool pulls in the tool UI (Markdown, ink), which must
+  // not load with the API layer.
+  const { MCPTool } = await import('../../tools/MCPTool/MCPTool.js')
   return { ...MCPTool, name, isMcp: false, userFacingName: () => name }
 }
 
@@ -103,7 +105,7 @@ export async function approveCliTool(
   toolUseContext: { options: { tools: unknown[] } },
 ): Promise<CliToolVerdict> {
   const name = TOOL_ALIASES[request.name] ?? request.name
-  const tool = findToolByName(toolUseContext.options.tools, name) ?? genericTool(request.name)
+  const tool = findToolByName(toolUseContext.options.tools, name) ?? (await genericTool(request.name))
   const input = tuiToolInput(request.name, request.input)
   const id = request.id ?? `cli-${randomUUID()}`
   const assistantMessage = createAssistantMessage({ content: [{ type: 'tool_use', id, name: tool.name, input }] })
@@ -198,19 +200,26 @@ function errorText(error: unknown): string {
 /** The plain-language failure for a CLI brain turn. */
 export function cliBrainErrorMessage(brain: Pick<CliBrain, 'provider'>, raw: string, now?: Date): string {
   const spec = findSubprocessSpec(brain.provider)
+  const name = spec?.name ?? brain.provider
+  // The CLI's own words, on one line: the cause the Stopped line shows, and
+  // what the REPL's limit pause reads ("resets 7:40pm").
+  const said = oneLine(raw)
   const help = describeProviderError({
     provider: brain.provider,
     providerName: spec?.name,
     cliBin: spec?.bin ?? brain.provider.replace(/-cli$/, ''),
-    text: raw,
+    text: said,
     alternative: subscriptionAlternative(brain.provider),
     now,
-  })
-  // The CLI's own words stay visible: a usage-limit reply ("resets 7:40pm")
-  // is what the REPL's limit pause reads.
-  const detail = raw.trim().slice(0, 400)
-  if (!help) return `${spec?.name ?? brain.provider} failed: ${detail}`
-  return `${formatProviderErrorHelp(help)}\n${spec?.name ?? brain.provider} said: ${detail}`
+  }) ?? { message: `${name}: ${said}`, commands: [{ command: '/model', why: 'pick another model' }] }
+  const out = formatProviderErrorHelp(help)
+  return help.message.includes(said) ? out : `${out}\n${name} said: ${said}`
+}
+
+/** First non-empty line of a CLI's error, trimmed. */
+function oneLine(raw: string): string {
+  const line = raw.split(/\r?\n/).map(l => l.trim()).find(Boolean) ?? raw.trim()
+  return line.length > 240 ? `${line.slice(0, 239)}…` : line
 }
 
 /**
@@ -257,6 +266,9 @@ export async function* queryCliBrainWithStreaming({
   let failure: string | undefined
   let usage: { input_tokens: number; output_tokens: number } | undefined
   let contextUsed: number | undefined
+  // What the CLI wrote since its last tool call: a CLI that fails with no
+  // error event (Claude's is_error result) states the cause there.
+  let sinceTool = ''
   const toolMessages = new Map<string, string>()
 
   function* start() {
@@ -308,12 +320,16 @@ export async function* queryCliBrainWithStreaming({
 
   try {
     for await (const event of events) {
-      if (event.type === 'text_delta') yield* delta('text', event.delta)
+      if (event.type === 'text_delta') {
+        sinceTool += event.delta
+        yield* delta('text', event.delta)
+      }
       else if (event.type === 'reasoning_delta') yield* delta('thinking', event.delta)
       else if (event.type === 'tool_call') {
         yield* start()
         yield* close()
         yield* flush()
+        sinceTool = ''
         const name = TOOL_ALIASES[event.name] ?? event.name
         const message = stamp(
           createAssistantMessage({
@@ -337,9 +353,9 @@ export async function* queryCliBrainWithStreaming({
         contextUsed = event.used
       } else if (event.type === 'finish') {
         if (event.usage) usage = { input_tokens: event.usage.inputTokens, output_tokens: event.usage.outputTokens }
-        if (event.finishReason === 'error') failure ??= 'the CLI ended the turn with an error'
+        if (event.finishReason === 'error') failure ??= sinceTool.trim() || 'the CLI ended the turn with an error'
       } else if (event.type === 'status' && event.status === 'failed') {
-        failure ??= 'the CLI turn failed'
+        failure ??= sinceTool.trim() || 'the CLI turn failed'
       }
     }
   } catch (error) {
@@ -352,6 +368,8 @@ export async function* queryCliBrainWithStreaming({
   }
 
   if (failure) {
+    // The error text the CLI wrote as its reply becomes the cause, not a reply above it.
+    if (pending && failure === sinceTool.trim()) pending = null
     yield* flush()
     logForDebugging(`[CliBrain] ${brain.provider} failed: ${failure}`, { level: 'error' })
     yield createAssistantAPIErrorMessage({
@@ -418,20 +436,3 @@ export async function sideQueryCliBrain(opts: {
   }
 }
 
-/**
- * A model on the user's own subscription to offer when a Cloud or API-key
- * model fails ("/model claude-cli/claude-sonnet-5 (your Claude Code plan)"):
- * the first installed CLI brain, its Sonnet when it has one.
- */
-export function subscriptionAlternative(exclude?: string): { model: string; label: string } | undefined {
-  try {
-    const { Discovery } = require('../../../../../runtime/providers/discovery/index.js') as typeof import('../../../../../runtime/providers/discovery/index.js')
-    const brains = Discovery.last().filter(p => p.source === 'subprocess' && p.id !== exclude && p.models.length > 0)
-    const pick = brains.find(p => p.id === 'claude-cli') ?? brains[0]
-    if (!pick) return undefined
-    const model = pick.models.find(m => /sonnet/i.test(m.id)) ?? pick.models[0]!
-    return { model: `${pick.id}/${model.id}`, label: `your ${pick.name} plan` }
-  } catch {
-    return undefined
-  }
-}
