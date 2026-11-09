@@ -11,6 +11,7 @@
  *              Hosted → its session here in Gizzi, Vendor → thread + tickets
  *   a          approve the selected needs-you node
  *   w          the live wall (engine pane view; Gizzi resumes on exit)
+ *   b          the live board (/board): swarm workers, last lines, steer/stop/land
  *   r          reload        q/Esc  back
  */
 import * as React from 'react'
@@ -21,7 +22,7 @@ import { useKeybinding } from '../../keybindings/useKeybinding'
 import { useSetAppState } from '../../state/AppState'
 import { useRegisterOverlay } from '../../context/overlayContext'
 import { useNotifications } from '../../../../../context/notifications'
-import { FactoryEngineError, passThroughSync } from '@/cli/factory/engine'
+import { FactoryEngineError, attachArgv, passThroughSync } from '@/cli/factory/engine'
 import { renderDocument } from '@/cli/factory/render'
 import { openBotChat } from '../bots-pane/open-bot-chat'
 import { approveNode, loadFactoryFloor, loadVendorThread, openActionFor, type FactoryFloorData, type Section } from './data'
@@ -126,7 +127,7 @@ export function FactoryFloorScreen(): React.ReactNode {
     setStatus(null)
     if (action.kind === 'attach') {
       try {
-        const { exitCode } = handOff(['agents', 'attach', action.address])
+        const { exitCode } = handOff(attachArgv(selectedAgent))
         if (exitCode !== 0) setStatus({ text: `attach ${action.address} exited with code ${exitCode}`, tone: 'error' })
       } catch (err) {
         fail(err)
@@ -187,6 +188,7 @@ export function FactoryFloorScreen(): React.ReactNode {
       },
       approveSelected,
       openWall,
+      openBoard: () => setAppState(prev => ({ ...prev, screen: 'board' })),
       refresh,
       exit,
     })
@@ -304,7 +306,7 @@ export function FactoryFloorScreen(): React.ReactNode {
         ) : null}
         <Box flexDirection="row" justifyContent="space-between">
           <Text dimColor>
-            {busy ?? '↑/↓ select · Tab bots/needs you · Enter open · a approve · w live wall · r reload · q/Esc back'}
+            {busy ?? '↑/↓ select · Tab bots/needs you · Enter open · a approve · w live wall · b board · r reload · q/Esc back'}
           </Text>
           <Text dimColor>/factory</Text>
         </Box>

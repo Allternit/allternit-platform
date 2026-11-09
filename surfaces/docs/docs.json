@@ -52,6 +52,7 @@
               "factory/agents",
               "factory/trees",
               "factory/orchestration",
+              "factory/swarms",
               "factory/workflows",
               "factory/workspace",
               "factory/approvals",

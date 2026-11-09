@@ -398,6 +398,7 @@ import { AlternateScreen } from '../ink/components/AlternateScreen';
 import { DashboardScreen } from './DashboardScreen';
 import { BotsPaneScreen } from './bots-pane/BotsPaneScreen';
 import { FactoryFloorScreen } from './factory-floor/FactoryFloorScreen';
+import { SwarmBoardScreen } from './factory-floor/SwarmBoardScreen';
 import { InProcessDashboardSource } from '../dashboard/InProcessSource';
 import { ScrollKeybindingHandler } from '../components/ScrollKeybindingHandler';
 import { useMessageActions, MessageActionsKeybindings, MessageActionsBar, type MessageActionsState, type MessageActionsNav, type MessageActionCaps } from '../components/messageActions';
@@ -5025,6 +5026,19 @@ export function REPL({
       </KeybindingSetup>;
     return <AlternateScreen mouseTracking={isMouseTrackingEnabled()}>
         {factoryReturn}
+      </AlternateScreen>;
+  }
+
+  if (screen === 'board') {
+    // Full-screen live Factory board (/board, b on the factory floor). Same
+    // shape as the factory branch; the screen exits back to 'prompt' itself.
+    const boardReturn = <KeybindingSetup>
+        <AnimatedTerminalTitle isAnimating={titleIsAnimating} title={terminalTitle} disabled={titleDisabled} noPrefix={showStatusInTerminalTab} />
+        <GlobalKeybindingHandlers {...globalKeybindingProps} />
+        <SwarmBoardScreen />
+      </KeybindingSetup>;
+    return <AlternateScreen mouseTracking={isMouseTrackingEnabled()}>
+        {boardReturn}
       </AlternateScreen>;
   }
 

@@ -3470,6 +3470,39 @@
       ]
     },
     {
+      "id": "feature:gizzi-swarm-board",
+      "label": "Gizzi swarms and the live Factory board",
+      "product": "product:factory",
+      "status": "building",
+      "description": "`gizzi swarm \"<task>\" --workers N --brain claude-cli/<model>` hands one task (or one --task each) to N Terminal bots, each in its own git worktree and branch, through `agents up` + `orchestration send`. `gizzi board` (and `/board` in the TUI, `b` on the factory floor) shows every running bot with brain, state (working/waiting/done/failed), elapsed time, cost (`plan` for CLI subscriptions) and its pane's last line, fed by the engine's /api/factory/events and per-agent /stream SSE (no polling); done stays visible until landed. Keys: enter attach, s steer (queued steers are drained when the pane frees), x stop, l land. `gizzi swarm wait` blocks until every worker settles; `gizzi swarm land` merges finished branches into the starting branch. The TUI footer shows `⚙ N bots · M waiting` while bots run; `/swarm <task>` is real (it was a simulated visualizer).",
+      "touches": [
+        "allternit/cmd/gizzi-code/src/cli/factory",
+        "allternit/cmd/gizzi-code/src/cli/commands/factory",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/screens/factory-floor",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/commands/swarm",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/commands/board",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/components/PromptInput",
+        "allternit/factory/engine"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-09",
+          "note": "Built as a thin layer over the engine (no second engine, no Rust change): worktree per worker, team file grown one bot per `agents up` so each bot gets its own workdir, board reads the engine's SSE streams. Status glyphs and done-stays-until-seen borrowed from Herdr (factory/pane). Verified with a real 2-worker claude-cli/claude-sonnet-5 swarm on a scratch repo."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/factory/swarms.mdx",
+        "allternit/cmd/gizzi-code/src/cli/factory/swarm.ts",
+        "allternit/cmd/gizzi-code/src/cli/factory/board.ts",
+        "allternit/cmd/gizzi-code/src/cli/factory/live.ts",
+        "allternit/cmd/gizzi-code/src/cli/factory/board-tty.ts",
+        "allternit/cmd/gizzi-code/src/cli/commands/factory/swarm.ts",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/screens/factory-floor/SwarmBoardScreen.tsx",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/components/FactoryBadge.tsx",
+        "allternit/cmd/gizzi-code/test/factory/swarm-board.test.ts"
+      ]
+    },
+    {
       "id": "feature:morning-brief",
       "label": "Morning brief and first-day intro",
       "product": "product:ai-allternit",
