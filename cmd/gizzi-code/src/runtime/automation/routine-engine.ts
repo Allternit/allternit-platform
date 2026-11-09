@@ -80,6 +80,7 @@ export class RoutineEngine {
         shell: true,
       })
 
+      // A signal kill gives code null: count it as a failure, not success.
       child.on("close", (code, signal) => {
         resolve(code ?? (signal ? 128 : 1))
       })

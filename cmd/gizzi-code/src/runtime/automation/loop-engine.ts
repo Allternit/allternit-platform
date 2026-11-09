@@ -275,6 +275,7 @@ export class LoopEngine {
         stderr += data.toString()
       })
 
+      // A signal kill gives code null: count it as a failure, not success.
       child.on("close", (code, signal) => {
         resolve({
           stdout,

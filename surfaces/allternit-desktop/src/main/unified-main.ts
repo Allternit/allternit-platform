@@ -4390,6 +4390,12 @@ handleGuarded('auth:forget-account', async (_event, userId: string) => {
 });
 handleGuarded('auth:sign-out', async () => {
   await authManager.signOut();
+  // The mesh node state is enrolled to the signed-out user's mesh identity.
+  // Drop it so the next account enrolls its own node instead of reusing it.
+  await meshManager.stop().catch(() => {});
+  await fs.promises.rm(join(app.getPath('userData'), 'mesh'), { recursive: true, force: true }).catch((error) => {
+    log.warn('[Auth] Could not clear mesh node state on sign-out:', error);
+  });
   app.relaunch();
   app.quit();
 });
