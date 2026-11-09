@@ -23,6 +23,7 @@ import dash from './commands/dash/index.js'
 import dashboard from './commands/dashboard/index.js'
 import bots from './commands/bots/index.js'
 import factory from './commands/factory/index.js'
+import board from './commands/board/index.js'
 import diff from './commands/diff/index.js'
 import ctx_viz from './commands/ctx_viz/index.js'
 import doctor from './commands/doctor/index.js'
@@ -181,6 +182,7 @@ import multiline from './commands/multiline/index.js'
 import cd from './commands/cd/index.js'
 import chrome from './commands/chrome/index.js'
 import stickers from './commands/stickers/index.js'
+import { isEnvTruthy } from './utils/envUtils.js'
 import advisor from './commands/advisor.js'
 import { logError } from './utils/log.js'
 import { toError } from './utils/errors.js'
@@ -288,6 +290,28 @@ export const INTERNAL_ONLY_COMMANDS = [
   autofixPr,
 ].filter(Boolean)
 
+// Commands that are not finished in Gizzi. They call allternit-api routes
+// without the user's token (401) or routes that do not exist, or send
+// people to Claude Code's sticker shop. (/swarm is real now: it starts a
+// Factory swarm, so it stays visible.) Hidden and disabled until they work;
+// GIZZI_EXPERIMENTAL_COMMANDS=1 turns them back on for development.
+const UNFINISHED_COMMANDS = (): Command[] => [
+  cowork,
+  coworkProject,
+  ontology,
+  directive,
+  gc,
+  multimodal,
+  purpose,
+  receipts,
+  security,
+]
+
+function hideUnlessExperimental(cmd: Command): Command {
+  if (isEnvTruthy(process.env.GIZZI_EXPERIMENTAL_COMMANDS)) return cmd
+  return { ...cmd, isHidden: true, isEnabled: () => false }
+}
+
 // Declared as a function so that we don't run this until getCommands is called,
 // since underlying functions read from config, which can't be read at module initialization time
 const COMMANDS = memoize((): Command[] => [
@@ -308,16 +332,7 @@ const COMMANDS = memoize((): Command[] => [
   copy,
   desktop,
   design,
-  cowork,
-  coworkProject,
-  swarm,
-  ontology,
-  directive,
-  gc,
-  multimodal,
-  purpose,
-  receipts,
-  security,
+  ...UNFINISHED_COMMANDS().map(hideUnlessExperimental),
   context,
   contextNonInteractive,
   cost,
@@ -325,6 +340,8 @@ const COMMANDS = memoize((): Command[] => [
   dashboard,
   bots,
   factory,
+  board,
+  swarm,
   diff,
   doctor,
   editPrompt,
@@ -371,7 +388,7 @@ const COMMANDS = memoize((): Command[] => [
   stats,
   status,
   statusline,
-  stickers,
+  hideUnlessExperimental(stickers),
   tag,
   theme,
   timestamps,

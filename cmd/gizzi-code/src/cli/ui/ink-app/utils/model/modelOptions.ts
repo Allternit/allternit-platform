@@ -34,6 +34,8 @@ import {
 import { has1mContext } from '../context.js'
 import { getGlobalConfig } from '../config.js'
 import { readFileSync } from 'fs'
+import { ProviderOffer } from '@/runtime/providers/offer'
+import { getLocalProviderConfig } from '../../services/api/localModel.js'
 import { homedir } from 'os'
 import { join } from 'path'
 
@@ -46,38 +48,83 @@ export type ModelOption = {
   descriptionForModel?: string
 }
 
+type ConfiguredProvider = {
+  id: string
+  name: string
+  kind: ProviderOffer.Kind
+  models: Array<{ value: string; label: string }>
+}
+
 /**
- * Build /model picker entries from gizzi.json's local "provider" section
- * (e.g. ~/.config/gizzi-code/gizzi.json) — same file and read pattern as
- * getRuntimeConfigModel() in model.ts, kept synchronous since this runs in
- * a render path. Covers every model on every locally-configured provider
- * (local-mlx, muse-glimmer, maple-preview, or any future local/custom
- * provider a user adds), not just the currently-active one.
+ * The providers in gizzi.json's "provider" section (e.g.
+ * ~/.config/gizzi-code/gizzi.json) a picker may offer, by the shared rule
+ * (runtime/providers/offer.ts): local and custom servers always, API-key
+ * providers once a key is on file, aggregators (OpenRouter) never. Same file
+ * and read pattern as getRuntimeConfigModel() in model.ts, kept synchronous
+ * since this runs in a render path.
  */
-function getLocalModelOptions(): ModelOption[] {
+function getConfiguredProviders(): ConfiguredProvider[] {
   try {
     const configDir =
       process.env.GIZZI_CONFIG_DIR ?? join(homedir(), '.config', 'gizzi-code')
-    const configPath = join(configDir, 'gizzi.json')
-    const raw = readFileSync(configPath, 'utf-8')
+    const raw = readFileSync(join(configDir, 'gizzi.json'), 'utf-8')
     const parsed = JSON.parse(raw)
-    const options: ModelOption[] = []
+    const out: ConfiguredProvider[] = []
     for (const [providerID, provider] of Object.entries<any>(parsed.provider ?? {})) {
-      if (provider?.auth_type !== 'none') continue // local/custom servers only, not api-key providers
-      for (const [modelKey, model] of Object.entries<any>(provider.models ?? {})) {
-        const value = `${providerID}/${model?.id ?? modelKey}`
-        options.push({
-          value,
-          label: model?.name ?? modelKey,
-          description: `${provider.name ?? providerID} · local`,
-          descriptionForModel: `${model?.name ?? modelKey} — locally hosted via ${provider.name ?? providerID}`,
-        })
+      const options = provider?.options ?? {}
+      const candidate = {
+        id: providerID,
+        auth_type: provider?.auth_type,
+        baseURL: options.baseURL ?? provider?.baseURL,
+        options,
       }
+      const kind = ProviderOffer.kind(candidate)
+      // Cloud and subscriptions come from discovery; the TUI runs API-key and
+      // local providers over their OpenAI-compatible endpoint (localModel.ts).
+      if (kind !== 'api' && kind !== 'local') continue
+      const resolved = getLocalProviderConfig(`${providerID}/_`)
+      if (!resolved) continue
+      const envKeys: string[] = Array.isArray(provider?.env) ? provider.env : []
+      const connected = Boolean(resolved.config.apiKey) || envKeys.some(k => Boolean(process.env[k]))
+      if (!ProviderOffer.isOffered(candidate, { connected })) continue
+      out.push({
+        id: providerID,
+        name: provider.name ?? providerID,
+        kind,
+        models: Object.entries<any>(provider.models ?? {}).map(([modelKey, model]) => ({
+          value: `${providerID}/${model?.id ?? modelKey}`,
+          label: model?.name ?? modelKey,
+        })),
+      })
     }
-    return options
+    return out
   } catch {
     return []
   }
+}
+
+function getConfiguredModelOptions(): ModelOption[] {
+  return getConfiguredProviders()
+    .sort((a, b) => ProviderOffer.ORDER.indexOf(a.kind) - ProviderOffer.ORDER.indexOf(b.kind))
+    .flatMap(p =>
+      p.models.map(m => ({
+        value: m.value,
+        label: m.label,
+        description: `${p.name} · ${p.kind === 'local' ? 'local' : 'API key'}`,
+        descriptionForModel: `${m.label} — ${p.kind === 'local' ? 'locally hosted' : 'API key'} via ${p.name}`,
+      })),
+    )
+}
+
+/** Picker section metadata for gizzi.json providers (API keys, local servers). */
+export function getConfiguredProviderMeta(): Map<string, { providerId: string; providerName: string; source: string; kind: ProviderOffer.Kind }> {
+  const map = new Map<string, { providerId: string; providerName: string; source: string; kind: ProviderOffer.Kind }>()
+  for (const p of getConfiguredProviders()) {
+    for (const m of p.models) {
+      map.set(m.value, { providerId: p.id, providerName: p.name, source: p.kind === 'local' ? 'local' : 'api', kind: p.kind })
+    }
+  }
+  return map
 }
 
 export function getDefaultOptionForUser(fastMode = false): ModelOption {
@@ -501,23 +548,19 @@ function getDiscoveredBrainOptions(): ModelOption[] {
     const { Discovery } = require('../../../../../runtime/providers/discovery/index.js') as typeof import('../../../../../runtime/providers/discovery/index.js')
     Discovery.prefetch()
     const options: ModelOption[] = []
-    const providers = [...Discovery.last()].sort((a, b) => {
-      const rank = (s: string) =>
-        s === 'platform' ? 0 : s === 'subprocess' ? 1 : s === 'local' ? 2 : 3
-      const d = rank(a.source) - rank(b.source)
-      return d !== 0 ? d : a.name.localeCompare(b.name)
-    })
+    // Desktop's order and rule (runtime/providers/offer.ts): Allternit Cloud,
+    // your subscriptions, then local; aggregators never standalone.
+    const providers = [...Discovery.last()]
+      .filter(dp => ProviderOffer.isOffered(dp, { connected: true }))
+      .sort((a, b) => {
+        const d = ProviderOffer.rank(a) - ProviderOffer.rank(b)
+        return d !== 0 ? d : a.name.localeCompare(b.name)
+      })
     for (const dp of providers) {
+      const kind = ProviderOffer.kind(dp)
       const group =
-        dp.source === 'platform'
-          ? 'Allternit Cloud'
-          : dp.source === 'subprocess'
-            ? 'installed CLI'
-            : dp.source === 'local'
-              ? 'local'
-              : dp.source
-      const tag =
-        dp.source === 'platform' ? 'Cloud' : dp.source === 'subprocess' ? 'CLI' : group
+        kind === 'cloud' ? 'Allternit Cloud' : kind === 'subscription' ? 'your subscription' : kind === 'local' ? 'local' : 'API key'
+      const tag = kind === 'cloud' ? 'Cloud' : kind === 'subscription' ? (dp.source === 'subprocess' ? 'CLI' : 'Subscription') : group
       for (const m of dp.models) {
         options.push({
           value: `${dp.id}/${m.id}`,
@@ -534,8 +577,11 @@ function getDiscoveredBrainOptions(): ModelOption[] {
 
 export function getModelOptions(fastMode = false): ModelOption[] {
   // Default brains: live Allternit Cloud catalog + installed CLI subprocesses,
-  // then locally configured servers. Hardcoded Claude picker is not the default.
-  const options = [...getDiscoveredBrainOptions(), ...getLocalModelOptions()]
+  // then connected API keys and local servers. Hardcoded Claude picker is not
+  // the default. Aggregators (OpenRouter) are never offered standalone.
+  const options = [...getDiscoveredBrainOptions(), ...getConfiguredModelOptions()].filter(
+    opt => !opt.value || !ProviderOffer.neverStandalone(opt.value.split('/')[0]!),
+  )
 
   // Add the custom model from the ANTHROPIC_CUSTOM_MODEL_OPTION env var
   const envCustomModel = process.env.ANTHROPIC_CUSTOM_MODEL_OPTION

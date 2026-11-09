@@ -19,6 +19,7 @@
 import type {
   AgentEvent,
   AgentTask,
+  CliToolVerdict,
   ExecutionLog,
   RuntimeDriver,
   TaskHandle,
@@ -184,6 +185,7 @@ export class LocalCliDriver implements RuntimeDriver {
       subagents: task?.subagents,
       model: task?.model,
       effort: task?.effort,
+      approval: task?.approveTool ? { mode: task.permissionMode ?? "default" } : undefined,
     })
 
     // CLIs whose records lack what they send: their provider calls pass through BrainRelay.
@@ -205,6 +207,7 @@ export class LocalCliDriver implements RuntimeDriver {
           bot: task?.bot,
           sessionID: task?.sessionID,
           bridgeName: task?.mcp?.name,
+          approveTool: task?.approveTool,
         })) {
           if (event.type === "error" || (event.type === "finish" && event.finishReason === "error")) failed = true
           yield event
@@ -485,6 +488,8 @@ export class LocalCliDriver implements RuntimeDriver {
       bot?: AgentTask["bot"]
       sessionID?: string
       bridgeName?: string
+      /** The caller asks its own user (AgentTask.approveTool). */
+      approveTool?: AgentTask["approveTool"]
     },
   ): AsyncIterable<AgentEvent> {
     let lastVendorId: string | undefined
@@ -589,6 +594,15 @@ export class LocalCliDriver implements RuntimeDriver {
           })
           if (verdict.allow) writeControlResponse(stdin, requestId, input)
           else writeControlDeny(stdin, requestId, "message" in verdict ? verdict.message : `${toolName} was refused.`)
+          return
+        }
+        if (requestId && options.approveTool && evt.request?.subtype === "can_use_tool") {
+          const toolName = String(evt.request?.tool_name ?? "")
+          const verdict = await options
+            .approveTool({ id: evt.request?.tool_use_id ? String(evt.request.tool_use_id) : undefined, name: toolName, input: input ?? {} })
+            .catch((err): CliToolVerdict => ({ allow: false, message: err instanceof Error ? err.message : String(err) }))
+          if (verdict.allow === true) writeControlResponse(stdin, requestId, verdict.input ?? input)
+          else writeControlDeny(stdin, requestId, verdict.message)
           return
         }
         if (requestId) {
@@ -1186,6 +1200,21 @@ export class LocalCliDriver implements RuntimeDriver {
         })
         {
           log.info("acp gate decision", { taskId: handle.taskId, allow: verdict.allow, fallback: verdict.fallback ?? false, ...("reason" in verdict ? { reason: verdict.reason } : {}) })
+          // An in-process caller (the Gizzi TUI) asks its own user after the gate allows.
+          if (verdict.allow && task?.approveTool) {
+            const call = (request.toolCall ?? {}) as { toolCallId?: unknown; title?: unknown; kind?: unknown; rawInput?: unknown }
+            const asked = await task
+              .approveTool({
+                id: call.toolCallId ? String(call.toolCallId) : undefined,
+                name: String(call.title ?? call.kind ?? "tool"),
+                input: call.rawInput && typeof call.rawInput === "object" ? (call.rawInput as Record<string, unknown>) : {},
+              })
+              .catch((): CliToolVerdict => ({ allow: false, message: "not approved" }))
+            const picked = asked.allow ? pickAllow() : options.find((item) => String(item.kind).includes("reject"))
+            return picked
+              ? { outcome: { outcome: "selected" as const, optionId: picked.optionId } }
+              : { outcome: { outcome: "cancelled" as const } }
+          }
           const chosen = verdict.allow
             ? pickAllow()
             : options.find((item) => String(item.kind).includes("reject"))
@@ -1900,6 +1929,8 @@ interface CliAdapter {
       model?: string
       /** The thinking level, already checked against model-thinking.json. */
       effort?: string
+      /** The caller approves tools itself (AgentTask.approveTool), starting in this permission mode. */
+      approval?: { mode: string }
     },
   ): string[]
 }

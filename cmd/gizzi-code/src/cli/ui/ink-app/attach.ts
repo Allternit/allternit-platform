@@ -31,6 +31,11 @@ export const AttachCommand = cmd({
         type: "boolean",
         describe: "fork the session when continuing (use with --continue or --session)",
       })
+      .option("model", {
+        alias: ["m"],
+        type: "string",
+        describe: "model to use in the format of provider/model",
+      })
       .option("password", {
         alias: ["p"],
         type: "string",
@@ -69,6 +74,7 @@ export const AttachCommand = cmd({
           continue: args.continue,
           sessionID: args.session,
           fork: args.fork,
+          model: args.model,
         },
         directory,
         headers,

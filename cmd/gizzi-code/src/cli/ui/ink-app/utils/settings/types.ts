@@ -762,6 +762,14 @@ export const SettingsSchema = lazySchema(() =>
           'When false, prompt suggestions are disabled. When absent or true, ' +
             'prompt suggestions are enabled.',
         ),
+      promptSuggestionOnApiKeys: z
+        .boolean()
+        .optional()
+        .describe(
+          'When true, prompt suggestions are also generated on metered API-key ' +
+            'models (one extra model call per turn). By default they run only on ' +
+            'CLI brains, local models and Allternit Cloud.',
+        ),
       showClearContextOnPlanAccept: z
         .boolean()
         .optional()

@@ -10,13 +10,38 @@
  */
 import type { Argv } from "yargs"
 import { cmd } from "@/cli/commands/cmd"
-import { engineGroup, engineVerb } from "@/cli/factory/forward"
+import { engineGroup, engineVerb, forwardInteractive } from "@/cli/factory/forward"
+import { attachArgv, runEngine } from "@/cli/factory/engine"
+import type { FactoryAgent } from "@/cli/factory/types"
 import { AgentModesCommand } from "@/cli/commands/agent"
 import { AgentHubCommand } from "@/cli/commands/agent-hub"
 import { RuntimeLocalCommands } from "@/cli/commands/runtime"
 import { BotCommand } from "@/cli/commands/bot"
 
 const P = "agents" as const
+
+/**
+ * `gizzi agents attach <bot@team>`: the pane server attaches by terminal id,
+ * so a local bot is resolved to its pane's terminal first (attachArgv). A
+ * terminal id, or a bot on another computer, goes to the engine as typed.
+ */
+const AttachCommand = cmd({
+  command: "attach <bot>",
+  describe: "drop into a Terminal bot's pane (bot@team, or a terminal id); ctrl+b q detaches",
+  builder: (y: Argv) => y.positional("bot", { type: "string", demandOption: true }),
+  handler: async (args) => {
+    const bot = String(args.bot)
+    let argv = ["agents", "attach", bot]
+    try {
+      const { data } = await runEngine<{ agents?: FactoryAgent[] }>(["agents", "ps"], { timeoutMs: 15000 })
+      const agent = data?.agents?.find((a) => a.address === bot || a.id === bot || a.slug === bot)
+      if (agent) argv = attachArgv(agent)
+    } catch {
+      // the engine call below reports a missing engine or bot
+    }
+    process.exitCode = await forwardInteractive(argv)
+  },
+})
 
 export const AgentsCommand = cmd({
   command: "agents",
@@ -97,7 +122,7 @@ export const AgentsCommand = cmd({
       .command(engineVerb(P, { command: "install <source>", describe: "install a team bundle (path or GitHub URL)", mutation: true }))
       .command(AgentHubCommand)
       .command(engineVerb(P, { command: "wall [team]", describe: "open the live wall of agent terminals", interactive: "always" }))
-      .command(engineVerb(P, { command: "attach <bot>", describe: "drop into a Terminal bot's pane (bot@team)", interactive: "always" }))
+      .command(AttachCommand)
       .command(engineVerb(P, { command: "doctor", describe: "check panes, harnesses and the registry against reality" }))
       .command(
         engineGroup(

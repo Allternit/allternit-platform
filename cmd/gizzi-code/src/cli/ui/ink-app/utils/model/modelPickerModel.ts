@@ -17,8 +17,10 @@ export interface PickerOption {
 export interface PickerProviderMeta {
   providerId: string
   providerName: string
-  /** Discovery source: 'platform' | 'subprocess' | 'local' | 'subscription' | 'plugin'. */
+  /** Discovery source: 'platform' | 'subprocess' | 'local' | 'subscription' | 'plugin', or 'api' for a gizzi.json key. */
   source: string
+  /** The shared offer rule's kind (runtime/providers/offer.ts), which picks the section. */
+  kind?: 'cloud' | 'subscription' | 'api' | 'local'
   /** Context window in tokens, when discovery reported it. */
   context?: number
   /** Max output tokens, when discovery reported it. */
@@ -190,11 +192,11 @@ function matchesQuery(
 }
 
 /**
- * Group options into sectioned rows: Allternit Cloud split by upstream
- * vendor, then one section per CLI provider, then Local, then Other for
- * anything without provider metadata. Favorites float to the top within
- * their section; section order follows first appearance in `options` (which
- * modelOptions already orders Cloud → CLI → local).
+ * Group options into sectioned rows, in Desktop's order: Allternit Cloud
+ * split by upstream vendor, one section per subscription (CLI sign-ins,
+ * Subscription Fabric), one per connected API key, then Local, then Other
+ * for anything without provider metadata. Favorites float to the top within
+ * their section; sections of the same kind keep their order in `options`.
  */
 export function buildPickerRows(
   options: PickerOption[],
@@ -207,9 +209,19 @@ export function buildPickerRows(
   const favorites = opts.favorites ?? []
   const query = (opts.query ?? '').trim().toLowerCase()
 
-  type Section = { key: string; title: string; providerId?: string; rows: PickerRow[] }
+  // Desktop's section order: Allternit Cloud, your subscriptions, API keys you
+  // connected, local runtimes, then anything without provider metadata.
+  type Section = { key: string; title: string; providerId?: string; rank: number; rows: PickerRow[] }
   const sections: Section[] = []
   const byKey = new Map<string, Section>()
+
+  const kindOf = (meta: PickerProviderMeta | undefined, option: PickerOption) => {
+    if (meta?.kind) return meta.kind
+    if (meta?.source === 'platform') return 'cloud'
+    if (meta?.source === 'local' || /· local$/.test(option.description ?? '')) return 'local'
+    if (meta?.source === 'api') return 'api'
+    return meta ? 'subscription' : undefined
+  }
 
   const sectionFor = (
     option: PickerOption,
@@ -218,29 +230,40 @@ export function buildPickerRows(
     let key: string
     let title: string
     let providerId: string | undefined
-    if (meta?.source === 'platform') {
+    let rank: number
+    const kind = kindOf(meta, option)
+    if (kind === 'cloud') {
       const vendor = inferVendor({ id: modelIdOf(option.value), name: option.label })
       key = `cloud:${vendor}`
       title =
         vendor === 'other'
           ? 'Allternit Cloud'
           : `${vendorDisplayName(vendor)} · via Allternit Cloud`
-      providerId = meta.providerId
-    } else if (meta && meta.source !== 'local') {
-      key = `cli:${meta.providerId}`
-      title = `${meta.providerName} · CLI`
-      providerId = meta.providerId
-    } else if (meta?.source === 'local' || /· local$/.test(option.description ?? '')) {
+      providerId = meta?.providerId
+      rank = 0
+    } else if (kind === 'subscription') {
+      key = `sub:${meta!.providerId}`
+      title = `${meta!.providerName} · your subscription`
+      providerId = meta!.providerId
+      rank = 1
+    } else if (kind === 'api') {
+      key = `api:${meta!.providerId}`
+      title = `${meta!.providerName} · API key`
+      providerId = meta!.providerId
+      rank = 2
+    } else if (kind === 'local') {
       key = 'local'
       title = 'Local'
       providerId = meta?.providerId
+      rank = 3
     } else {
       key = 'other'
       title = 'Other'
+      rank = 4
     }
     let section = byKey.get(key)
     if (!section) {
-      section = { key, title, providerId, rows: [] }
+      section = { key, title, providerId, rank, rows: [] }
       byKey.set(key, section)
       sections.push(section)
     }
@@ -272,6 +295,7 @@ export function buildPickerRows(
 
   // Favorites first within each section, preserving original order otherwise.
   const rows: PickerRow[] = []
+  sections.sort((a, b) => a.rank - b.rank)
   for (const section of sections) {
     section.rows.sort((a, b) => Number(b.kind === 'option' && b.favorite) - Number(a.kind === 'option' && a.favorite))
     rows.push({

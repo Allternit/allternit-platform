@@ -1,6 +1,7 @@
 import React from 'react';
 import stripAnsi from 'strip-ansi';
-import { Box, Text } from '../../ink';
+import { Ansi, Box, Text } from '../../ink';
+import { Highlight } from '@/shared/util/highlight';
 import { formatFileSize } from '../../utils/format';
 import { MessageResponse } from '../MessageResponse';
 import { OffscreenFreeze } from '../OffscreenFreeze';
@@ -49,7 +50,9 @@ export function ShellProgressMessage({
     }
   }
   const t3 = verbose ? undefined : Math.min(5, lines.length);
-  const t4 = <Text dimColor={true}>{displayLines}</Text>;
+  // Live output: a dim gutter per line, ✓/✕ lines and paths highlighted
+  // (shared with `gizzi run`).
+  const t4 = <Box flexDirection="column">{displayLines.split("\n").map((line, i) => <Text key={i}><Text dimColor={true}>{"│ "}</Text><Ansi>{Highlight.line(line)}</Ansi></Text>)}</Box>;
 
   const t5 = <Box height={t3} flexDirection="column" overflow="hidden">{t4}</Box>;
 

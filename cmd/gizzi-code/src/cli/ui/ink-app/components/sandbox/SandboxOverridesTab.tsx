@@ -86,7 +86,7 @@ function OverridesSelect(t0) {
 
   const t12 = <Text dimColor={true}><Text bold={true} dimColor={true}>Strict sandbox mode:</Text>{" "}All bash commands invoked by the model must run in the sandbox unless they are explicitly listed in excludedCommands.</Text>;
 
-  const t13 = <Box flexDirection="column" marginTop={1} gap={1}>{t11}{t12}<Text dimColor={true}>Learn more:{" "}<Link url="https://docs.gizziio.com/sandboxing#configure-sandboxing">docs.gizziio.com/sandboxing#configure-sandboxing</Link></Text></Box>;
+  const t13 = <Box flexDirection="column" marginTop={1} gap={1}>{t11}{t12}<Text dimColor={true}>Learn more:{" "}<Link url="https://docs.allternit.com/cli/permission-profiles">docs.gizziio.com/sandboxing#configure-sandboxing</Link></Text></Box>;
 
   const t14 = <Box flexDirection="column" paddingY={1}>{t8}{t10}{t13}</Box>;
 

@@ -20,7 +20,7 @@ export function LocationStep() {
     };
 
   const t1 = [t0, {
-      label: "Personal (~/.claude/agents/)",
+      label: "Personal (~/.gizzi/agents/)",
       value: "userSettings" as SettingSource
     }];
 
