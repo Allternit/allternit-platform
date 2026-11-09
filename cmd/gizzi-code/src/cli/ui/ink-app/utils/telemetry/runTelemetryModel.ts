@@ -40,6 +40,10 @@ export interface RunTelemetryInput {
   contextEstimated?: boolean
   /** Pre-rendered quota chip (see quotaWindowChip); patched in async. */
   quotaChip?: string
+  /** Files the turn changed (Edit/Write results). */
+  files?: { path: string; added: number; removed: number }[]
+  /** The turn failed or produced nothing; carries the short cause. */
+  stopped?: { cause?: string }
 }
 
 /** 1234 → "1.2k", 1234567 → "1.2M". Ported from the desktop compact(). */

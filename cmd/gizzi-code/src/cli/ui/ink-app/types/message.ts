@@ -608,6 +608,10 @@ export interface SystemRunTelemetryMessage extends SystemMessage {
   contextRatio?: number
   contextEstimated?: boolean
   quotaChip?: string
+  /** Files the turn changed, for "Done in … · 3 files +48 −12" and the list under it. */
+  files?: { path: string; added: number; removed: number }[]
+  /** Set when the turn failed or produced nothing: no "Done" line, "✕ Stopped …" instead. */
+  stopped?: { cause?: string }
 }
 
 /**

@@ -134,7 +134,7 @@ import { textForResubmit, handleMessageFromStream, type StreamingToolUse, type S
 import { getContextWindowForModel } from '../utils/context';
 import { renderModelName } from '../utils/model/model';
 import { quotaChipForProvider, resolveQuotaProviderId } from '../utils/telemetry/providerQuota';
-import { contextRatioFromMessages, turnUsageEstimated } from '../utils/telemetry/turnSignals';
+import { contextRatioFromMessages, turnOutcome, turnUsageEstimated } from '../utils/telemetry/turnSignals';
 import { generateSessionTitle } from '../utils/sessionTitle';
 import { BASH_INPUT_TAG, COMMAND_MESSAGE_TAG, COMMAND_NAME_TAG, LOCAL_COMMAND_STDOUT_TAG } from '../constants/xml';
 import { escapeXml } from '../utils/xml';
@@ -3412,13 +3412,18 @@ export function REPL({
         // Skipped on abort and in loop mode, same as the duration line.
         if (shouldQuery && !abortController.signal.aborted && !proactiveActive && !store.getState().isBriefOnly) {
           const telemetryBaseline = turnTelemetryBaselineRef.current;
+          // A failed or empty turn gets "✕ Stopped after …", never a "Done" line.
+          const outcome = turnOutcome(messagesRef.current, telemetryBaseline?.messageCount ?? 0);
           const telemetryMessage = createRunTelemetryMessage({
+            files: outcome.files,
+            stopped: outcome.failed || outcome.empty ? { cause: outcome.cause ?? (outcome.empty ? 'the model returned nothing' : undefined) } : undefined,
             model: renderModelName(mainLoopModelParam),
             durationMs: turnDurationMs > 0 ? turnDurationMs : undefined,
             inputTokens: telemetryBaseline ? Math.max(0, getTotalInputTokens() - telemetryBaseline.inputTokens) : undefined,
             outputTokens: telemetryBaseline ? Math.max(0, getTotalOutputTokens() - telemetryBaseline.outputTokens) : undefined,
             usageEstimated: turnUsageEstimated(messagesRef.current, telemetryBaseline?.messageCount ?? 0),
-            toolCount: getTurnToolCount() > 0 ? getTurnToolCount() : undefined,
+            // CLI brains run their own tools, which the turn counter never sees.
+            toolCount: getTurnToolCount() > 0 ? getTurnToolCount() : outcome.tools > 0 ? outcome.tools : undefined,
             costUSD: telemetryBaseline ? Math.max(0, getTotalCostUSD() - telemetryBaseline.costUSD) : undefined,
             contextRatio: contextRatioFromMessages(messagesRef.current, getContextWindowForModel(mainLoopModelParam, undefined)) ?? undefined
           });

@@ -3225,6 +3225,35 @@
       ]
     },
     {
+      "id": "feature:gizzi-output-presentation",
+      "label": "Gizzi Code output: tool lines, live command output, highlighting, diffs, done/stopped line",
+      "product": "product:gizzi-code",
+      "status": "building",
+      "description": "Gizzi audit 2026-11-09 wave 1a. One shared highlighter (\u2713 green, \u2715 red, paths cyan + bold, +N \u2212M counts) and one closing-line builder (Done in Ns \u00b7 files +a \u2212r \u00b7 tools \u00b7 model, changed files under it; \u2715 Stopped after Ns \u00b7 nothing changed \u00b7 cause on a failed or empty turn) used by the Ink TUI and gizzi run. gizzi run prints one header per tool call, normalizes CLI-brain tool names and argument keys, streams Bash output live, and renders diffs with line numbers through the color-diff port. The 256-color quantizer keeps hue so diff tints map to 22/88 instead of grey 237 / plum 89.",
+      "touches": [
+        "allternit/cmd/gizzi-code/src/cli/commands/run.ts",
+        "allternit/cmd/gizzi-code/src/cli/commands/run-print.ts",
+        "allternit/cmd/gizzi-code/src/shared/util/highlight.ts",
+        "allternit/cmd/gizzi-code/src/shared/util/turn-summary.ts",
+        "allternit/cmd/gizzi-code/src/shared/util/cli-tools.ts",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/services/api/cliBrain.ts",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/components/messages/ToolUseCard.tsx",
+        "allternit/cmd/gizzi-code/src/shared/util/chalk.ts",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/components/shell",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/components/messages/SystemTextMessage.tsx"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-09",
+          "note": "Eoj: present code, streams, failures, highlights and structure at least as well as Claude Code and Codex CLI; a failed turn gets no done line."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/cli/output.mdx",
+        "allternit/cmd/gizzi-code/test/cli/run-print.test.ts"
+      ]
+    },
+    {
       "id": "feature:decision-trees",
       "label": "Decision trees (branching agent questions + Tasks Decisions deck)",
       "product": "product:ai-allternit",
