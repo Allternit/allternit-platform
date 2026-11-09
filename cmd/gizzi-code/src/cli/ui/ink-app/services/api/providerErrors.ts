@@ -6,6 +6,8 @@
  * Cloud allowance no longer reads "Not logged in".
  *
  * Pure functions: no network, no config reads. Callers pass what they know.
+ * Only subscriptionAlternative reads discovery, loaded on call, so this file
+ * stays a leaf the API layer can import without pulling in the runtime.
  */
 
 export type ProviderFailure = {
@@ -130,6 +132,13 @@ export function describeProviderError(f: ProviderFailure): ProviderErrorHelp | u
   }
 
   // HTTP APIs (API keys, OpenAI-compatible servers, Cloud sign-in).
+  // A model the provider or CLI doesn't know: its own words, then /model.
+  if (/issue with the selected model|model .{0,60}(does not exist|doesn't exist|not found|not available|not supported)|unknown model|invalid model/i.test(text)) {
+    return {
+      message: `${name}: ${text.trim().split(/\r?\n/)[0]}`,
+      commands: [{ command: '/model', why: 'pick a model it serves' }],
+    }
+  }
   if (f.status === 401 || (f.status === 403 && /key|token|auth|unauthori[sz]ed|forbidden/i.test(lower))) {
     if (isCloud(f)) {
       return {
@@ -177,4 +186,22 @@ export function formatProviderErrorHelp(help: ProviderErrorHelp): string {
   if (help.commands.length === 0) return help.message
   const steps = help.commands.map(c => `\`${c.command}\` (${c.why})`).join(' or ')
   return `${help.message}\nRun ${steps}`
+}
+
+/**
+ * A model on the user's own subscription to offer when a Cloud or API-key
+ * model fails ("/model claude-cli/claude-sonnet-5 (your Claude Code plan)"):
+ * the first installed CLI brain, its Sonnet when it has one.
+ */
+export function subscriptionAlternative(exclude?: string): { model: string; label: string } | undefined {
+  try {
+    const { Discovery } = require('../../../../../runtime/providers/discovery/index.js') as typeof import('../../../../../runtime/providers/discovery/index.js')
+    const brains = Discovery.last().filter(p => p.source === 'subprocess' && p.id !== exclude && p.models.length > 0)
+    const pick = brains.find(p => p.id === 'claude-cli') ?? brains[0]
+    if (!pick) return undefined
+    const model = pick.models.find(m => /sonnet/i.test(m.id)) ?? pick.models[0]!
+    return { model: `${pick.id}/${model.id}`, label: `your ${pick.name} plan` }
+  } catch {
+    return undefined
+  }
 }
