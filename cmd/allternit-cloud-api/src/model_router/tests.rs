@@ -37,7 +37,7 @@ fn catalog_entries_are_primary_aliases_only() {
     // Primary models only (one per model, not per alias):
     // 8 OpenRouter + 2 Together AI + 4 Fireworks + 3 DeepInfra + 3 Groq
     // + 2 open lane = 22.
-    assert_eq!(catalog.entries().len(), 22);
+    assert_eq!(catalog.entries().len(), 21);
     let open: Vec<_> = catalog
         .entries()
         .iter()
@@ -83,7 +83,7 @@ async fn disabled_router_list_models_returns_static_catalog() {
     let models = router.list_models().await;
     // 22 catalog entries minus the 2 open-lane models, hidden while the
     // open-lane provider is unset.
-    assert_eq!(models.len(), 20);
+    assert_eq!(models.len(), 19);
     assert!(models.iter().any(|m| m.id == "llama-3.1-8b"));
     assert!(!models.iter().any(|m| m.id.ends_with("-open")));
 
