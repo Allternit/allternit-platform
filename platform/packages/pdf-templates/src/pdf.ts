@@ -1,31 +1,40 @@
-import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from 'pdf-lib';
+import fontkit from '@pdf-lib/fontkit';
+import { PDFDocument, rgb, type PDFFont, type PDFPage } from 'pdf-lib';
 import { PDF_PAGE_POINTS } from './templates';
 import { hexToRgb01 } from './themes';
 import type { PdfBlock, PdfDocModel } from './types';
 
 /**
  * Native PDF writer: draws the same block model the HTML renderer draws, with
- * the built-in Helvetica fonts. No browser is involved, so it runs anywhere
- * Node or Bun runs (cloud computers, Desktop's local API, the gizzi CLI).
- * Limit: Helvetica covers Latin text; other scripts print as "?".
+ * an embedded, subset Noto Sans (regular and bold) covering Latin, Latin
+ * Extended, Vietnamese, Greek and Cyrillic. No browser is involved, so it runs
+ * anywhere Node, Bun or a browser runs. Limit: scripts the font lacks (CJK,
+ * Arabic, Hebrew, Thai, Indic) print as "?" rather than as empty boxes.
  */
 
 const MARGIN = 48;
 
-const REPLACE: Record<string, string> = {
-  '‘': "'", '’': "'", '“': '"', '”': '"', '–': '-', '—': '-', '…': '...', '•': '*', ' ': ' ', '−': '-',
-};
-/** Keep what WinAnsi can draw; swap common punctuation; the rest becomes "?". */
-export function winAnsi(s: string): string {
+const REPLACE: Record<string, string> = { '\u00A0': ' ' };
+/** Glyphs the embedded font has; set at the start of each render. */
+let glyphs: Set<number> | null = null;
+
+/** Keep what the font can draw; the rest becomes "?". Newlines pass through. */
+export function sanitizeText(s: string): string {
   let out = '';
   for (const ch of s) {
     const c = ch.codePointAt(0)!;
     if (REPLACE[ch]) out += REPLACE[ch];
     else if (c === 10) out += '\n';
-    else if ((c >= 0x20 && c <= 0x7e) || (c >= 0xa1 && c <= 0xff) || c === 0x20ac) out += ch;
-    else out += '?';
+    else if (c < 0x20) out += ' ';
+    else out += !glyphs || glyphs.has(c) ? ch : '?';
   }
   return out;
+}
+export const winAnsi = sanitizeText;
+
+export interface PdfFontBytes {
+  regular: Uint8Array;
+  bold: Uint8Array;
 }
 
 interface Ctx {
@@ -274,8 +283,9 @@ function drawBlock(c: Ctx, b: PdfBlock): void {
   }
 }
 
-export async function renderPdf(doc: PdfDocModel): Promise<Uint8Array> {
+export async function renderPdf(doc: PdfDocModel, fontBytes: PdfFontBytes): Promise<Uint8Array> {
   const pdf = await PDFDocument.create();
+  pdf.registerFontkit(fontkit);
   pdf.setTitle(winAnsi(doc.title));
   pdf.setProducer('Allternit');
   pdf.setCreator('Allternit PDF templates');
@@ -283,10 +293,12 @@ export async function renderPdf(doc: PdfDocModel): Promise<Uint8Array> {
   const c: Ctx = {
     pdf, doc, W, H, y: MARGIN,
     page: pdf.addPage([W, H]),
-    reg: await pdf.embedFont(StandardFonts.Helvetica),
-    bold: await pdf.embedFont(StandardFonts.HelveticaBold),
-    mono: await pdf.embedFont(StandardFonts.Courier),
+    reg: await pdf.embedFont(fontBytes.regular, { subset: true }),
+    bold: await pdf.embedFont(fontBytes.bold, { subset: true }),
+    mono: null as unknown as PDFFont,
   };
+  c.mono = c.reg;
+  glyphs = new Set(c.reg.getCharacterSet());
   for (const b of doc.blocks) drawBlock(c, b);
   if (doc.footer) {
     ensure(c, 30);
