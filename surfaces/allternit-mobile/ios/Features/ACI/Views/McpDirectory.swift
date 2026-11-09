@@ -581,61 +581,66 @@ struct DirectoryHero: View {
     }
 
     private func card(_ slide: Slide, palette: HeroPalette, active: Bool) -> some View {
-        ZStack(alignment: .topLeading) {
-            HeroIconDrift(apps: slide.drift, active: active)
-                .opacity(0.35)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
-                .padding(.trailing, 8)
-            LinearGradient(stops: [.init(color: palette.bg, location: 0.62), .init(color: palette.bg.opacity(0), location: 0.9)],
-                           startPoint: .leading, endPoint: .trailing)
-                .allowsHitTesting(false)
-            VStack(alignment: .leading, spacing: 0) {
-                LockupSweep(suffix: lockup, height: 12, ink: palette.fg, active: active)
-                    .padding(.bottom, 20)
-                Text("CURATED BY ALLTERNIT")
-                    .font(.system(size: 11, design: .monospaced))
-                    .tracking(1.3)
-                    .foregroundColor(palette.sub)
-                Text(slide.collection.title)
-                    .font(.system(size: 22, weight: .medium))
-                    .tracking(-0.3)
-                    .foregroundColor(palette.fg)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.top, 4)
-                Text(slide.collection.blurb)
-                    .font(.system(size: 14))
-                    .lineSpacing(3)
-                    .foregroundColor(palette.sub)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.top, 6)
-                HStack(spacing: 10) {
-                    ForEach(slide.members.prefix(6)) { member in
-                        Button { onOpen(member) } label: {
-                            AppLogoView(id: member.id, name: member.name, url: member.site, size: 36)
-                                .shadow(color: .black.opacity(0.2), radius: 4, y: 2)
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel(member.name)
+        // The copy sets the card's height; the drift and its fade sit behind
+        // it, so a long icon column can never stretch the panel.
+        VStack(alignment: .leading, spacing: 0) {
+            LockupSweep(suffix: lockup, height: 12, ink: palette.fg, active: active)
+                .padding(.bottom, 20)
+            Text("CURATED BY ALLTERNIT")
+                .font(.system(size: 11, design: .monospaced))
+                .tracking(1.3)
+                .foregroundColor(palette.sub)
+            Text(slide.collection.title)
+                .font(.system(size: 22, weight: .medium))
+                .tracking(-0.3)
+                .foregroundColor(palette.fg)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 4)
+            Text(slide.collection.blurb)
+                .font(.system(size: 14))
+                .lineSpacing(3)
+                .foregroundColor(palette.sub)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 6)
+            HStack(spacing: 10) {
+                ForEach(slide.members.prefix(6)) { member in
+                    Button { onOpen(member) } label: {
+                        AppLogoView(id: member.id, name: member.name, url: member.site, size: 36)
+                            .shadow(color: .black.opacity(0.2), radius: 4, y: 2)
                     }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(member.name)
                 }
-                .padding(.top, 16)
-                Button { onCollection(slide.collection.id) } label: {
-                    Text("Explore")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(palette.bg)
-                        .padding(.horizontal, 16)
-                        .frame(height: 36)
-                        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(palette.fg))
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Explore \(slide.collection.title)")
-                .padding(.top, 20)
             }
-            .padding(.horizontal, 24)
-            .padding(.top, 28)
-            .padding(.bottom, 40)
+            .padding(.top, 16)
+            Button { onCollection(slide.collection.id) } label: {
+                Text("Explore")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(palette.bg)
+                    .padding(.horizontal, 16)
+                    .frame(height: 36)
+                    .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(palette.fg))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Explore \(slide.collection.title)")
+            .padding(.top, 20)
         }
+        .padding(.horizontal, 24)
+        .padding(.top, 28)
+        .padding(.bottom, 40)
         .frame(maxWidth: .infinity, minHeight: 248, alignment: .topLeading)
+        .background(alignment: .trailing) {
+            ZStack(alignment: .trailing) {
+                // IconDrift keeps to the right 38% of the panel; on a phone
+                // that is two columns.
+                HeroIconDrift(apps: slide.drift, active: active, columns: 2)
+                    .opacity(0.3)
+                    .padding(.trailing, 12)
+                LinearGradient(stops: [.init(color: palette.bg, location: 0.62), .init(color: palette.bg.opacity(0), location: 0.85)],
+                               startPoint: .leading, endPoint: .trailing)
+                    .allowsHitTesting(false)
+            }
+        }
         .clipped()
         .accessibilityElement(children: .contain)
         .accessibilityLabel(slide.collection.title)
@@ -662,6 +667,7 @@ struct HeroPalette {
 struct HeroIconDrift: View {
     let apps: [DirectoryEntry]
     var active = true
+    var columns = 4
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private let size: CGFloat = 44
@@ -669,16 +675,17 @@ struct HeroIconDrift: View {
 
     var body: some View {
         if apps.count >= 4 {
-            let cols = (0..<4).map { c in apps.enumerated().filter { $0.offset % 4 == c }.map(\.element) }
+            let n = max(1, columns)
+            let cols = (0..<n).map { c in apps.enumerated().filter { $0.offset % n == c }.map(\.element) }
             TimelineView(.animation(paused: reduceMotion || !active)) { timeline in
                 let t = timeline.date.timeIntervalSinceReferenceDate
                 HStack(alignment: .top, spacing: gap) {
-                    ForEach(0..<4, id: \.self) { c in
+                    ForEach(0..<n, id: \.self) { c in
                         column(cols[c], index: c, time: t)
                     }
                 }
             }
-            .frame(width: 4 * size + 3 * gap, alignment: .top)
+            .frame(width: CGFloat(n) * size + CGFloat(n - 1) * gap, alignment: .top)
             .frame(maxHeight: .infinity, alignment: .top)
             .clipped()
             .mask(LinearGradient(stops: [.init(color: .clear, location: 0), .init(color: .black, location: 0.18),
