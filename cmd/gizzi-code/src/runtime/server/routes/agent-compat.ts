@@ -66,6 +66,8 @@ import { Bus } from "@/shared/bus"
 import { Log } from "@/shared/util/log"
 import { PermissionNext } from "@/runtime/tools/guard/permission/next"
 import { Question } from "@/runtime/integrations/question"
+import { TerminalLive } from "@/runtime/session/terminal-live"
+import { SessionStatus } from "@/runtime/session/status"
 import { fileFrameForPart, toolFramesForPart, usageFromMessageInfo } from "./tool-frames"
 import { planFrameForTodos, sourceFramesForPart } from "@/runtime/session/response-parts"
 
@@ -974,8 +976,19 @@ export const AgentCompatRoutes = () =>
         // The session's working folder (its project's folder), same field
         // allternit-api's bridge forwards.
         const workdir = typeof body.workdir === "string" ? body.workdir : undefined
+        // A live terminal session runs the turn in the terminal: prompt() only
+        // hands it over, so the stream stays open until the terminal goes idle
+        // (the session.status handler above finishes it) — or finishes if the
+        // terminal never starts a turn for it.
+        const terminal = TerminalLive.attached(sessionID)
         const turn = SessionPrompt.prompt({ sessionID, parts, model: modelRef, metadata, workdir, mcpProxy, ...(variant ? { variant } : {}) })
-          .then(() => push(finish("complete")))
+          .then(() => {
+            if (!terminal) return push(finish("complete"))
+            if (SessionStatus.get(sessionID).type === "busy") wasBusy = true
+            setTimeout(() => {
+              if (!wasBusy) push(finish("complete"))
+            }, 15_000)
+          })
           .catch((err: any) => {
             // Pass the engine's structured error through so clients can
             // render targeted UI (e.g. ProviderModelNotFoundError), like the
