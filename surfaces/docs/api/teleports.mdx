@@ -1,0 +1,65 @@
+---
+title: 'Teleports API'
+description: 'Stage, upload and activate a session transfer between computers, and read where a session runs.'
+---
+
+Teleports move a live Claude or Codex session between computers. The endpoints live in allternit-api and run on the destination computer. All paths are under `/api/v1` and scoped to the signed-in owner.
+
+## Transfer lifecycle
+
+| Call | Purpose |
+|---|---|
+| `POST /teleports` | Stage a transfer from a manifest. Returns `201` with the transfer, or `200` for a repeat of the same `request_id` and manifest. |
+| `PUT /teleports/{id}/files/{index}` | Upload one file as raw bytes. Size and sha256 must match the manifest. |
+| `POST /teleports/{id}/activate` | Install the native file and claim the native session id in one transaction. |
+| `GET /teleports/{id}` | Read the transfer: `state` is `staged`, `active` or `cancelled`. |
+| `POST /teleports/{id}/cancel` | Drop a staged transfer. |
+
+### Manifest
+
+```json
+{
+  "request_id": "tp-ses123-4f2a",
+  "harness": "claude",
+  "native_id": "0a1b2c3d-0000-4000-8000-000000000001",
+  "model": "claude-sonnet-4",
+  "reasoning": "high",
+  "workspace_name": "app",
+  "direction": "local_to_cloud",
+  "files": [{ "name": "0a1b2c3d.jsonl", "size": 48211, "sha256": "..." }],
+  "git_remote": "https://github.com/acme/app.git",
+  "git_base": "9fceb02",
+  "handoff": "This session was moved ...",
+  "queued": []
+}
+```
+
+Exactly one native file is allowed per transfer. `harness` is `claude` or `codex`. Claude files install at `~/.claude/projects/` under the working directory slug, and Codex rollouts under its `sessions` directory.
+
+### Idempotency and conflicts
+
+Retrying with the same `request_id` and the same manifest returns the same transfer. The same `request_id` with a different manifest returns `409 request_conflict`. Activating a native id that another transfer already owns returns `409 teleport_rejected`. Activating twice is safe and returns the active transfer.
+
+## Placement and relay
+
+| Call | Purpose |
+|---|---|
+| `GET /teleports/placement/{sessionId}` | `{ "place": "local" }` or `{ "place": "cloud", "targetId", "label" }`. |
+| `GET /teleports/placements` | Every session placed on a connected computer, for list badges. |
+| `PUT /teleports/placement` | Body `{ "sessionId", "targetId" }`; a null `targetId` marks the session as back on this Mac. |
+| `ANY /teleports/to/{targetId}/teleports...` | Relays a teleport call to a connected computer with its stored token. Only teleport paths pass. |
+
+## Cloud to Mac
+
+| Call | Purpose |
+|---|---|
+| `GET /teleports/export/{harness}/{id}` | The native file as bytes, with an `x-teleport-file` header of `name;sha256`. |
+| `GET /teleports/export/{harness}/{id}/diff?workspace_name=&base=` | The git diff of the cloud workspace since `base`, including new files. |
+
+## App entry point
+
+Apps start a move with `POST /api/v1/native-sessions/teleport` and the body `{ "sessionId", "to": "cloud" or "local", "harness", "targetId", "model", "base" }`. That route resolves the session, builds the manifest on the Mac, and runs the steps above.
+
+## Deploy note
+
+The tables are created on first use, so no migration runs on deploy.

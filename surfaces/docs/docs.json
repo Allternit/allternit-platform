@@ -184,7 +184,8 @@
               "code/terminal-and-prompt",
               "code/on-a-phone",
               "code/cloud-environments",
-              "code/cloud-environment-runtime"
+              "code/cloud-environment-runtime",
+              "code/teleport"
             ]
           },
           {
@@ -831,6 +832,7 @@
               "api/subagent-types",
               "api/cowork-preferences",
               "api/agent-sessions",
+              "api/teleports",
               "api/sessions",
               "api/memory-stores",
               "api/memory",
