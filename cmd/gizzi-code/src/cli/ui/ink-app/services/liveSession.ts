@@ -209,7 +209,8 @@ export function toLiveMessages(messages: readonly Message[], busy: boolean): Liv
         .map(b => b.text as string)
         .join('\n')
         .trim()
-      if (!text) continue
+      // The terminal's own interrupt marker is not a prompt; the turn's error state already shows it.
+      if (!text || text.startsWith('[Request interrupted by user')) continue
       if (turn) turn.completed ??= time(m)
       turn = undefined
       prompt = { key: m.uuid, role: 'user', time: time(m), parts: [{ kind: 'text', key: 'text', text }] }
