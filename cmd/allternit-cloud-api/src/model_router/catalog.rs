@@ -124,17 +124,8 @@ pub fn starter_catalog() -> ModelAliasMap {
             completion_price: 0.40,
             context_length: 128_000,
         },
-        ModelAliasEntry {
-            alias: "mistral-large".to_string(),
-            provider: "openrouter".to_string(),
-            upstream_id: "mistralai/mistral-large".to_string(),
-            aliases: Some(vec!["mistral".to_string()]),
-            created: 1709251200, // 2024-03-01
-            name: "Mistral Large".to_string(),
-            prompt_price: 2.00,
-            completion_price: 6.00,
-            context_length: 128_000,
-        },
+        // Mistral Large removed 2026-11-09: OpenRouter has no zero-data-retention
+        // endpoint for it, and the account requires ZDR, so every request failed.
         // Stock open-weight flash models (OpenRouter lists both, 2026-10-25).
         ModelAliasEntry {
             alias: "deepseek-v4.1-flash".to_string(),
