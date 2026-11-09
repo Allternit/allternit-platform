@@ -407,6 +407,9 @@ interface HudPrefs {
 const shellAPI = {
   openExternal: (url: string): Promise<void> => ipcRenderer.invoke('shell:open-external', url),
   openDesign: (): Promise<void> => ipcRenderer.invoke('shell:open-design'),
+  /** Real PDF of an HTML page via Chromium printToPDF. `pdf` is base64. */
+  printToPdf: (req: { html: string; pageSize?: 'Letter' | 'A4'; landscape?: boolean; printBackground?: boolean }): Promise<{ ok: boolean; pdf?: string; bytes?: number; error?: string }> =>
+    ipcRenderer.invoke('shell:print-to-pdf', req),
   openOfficeWindow: (): Promise<void> => ipcRenderer.invoke('shell:open-office-window'),
   openBotsWindow: (): Promise<void> => ipcRenderer.invoke('shell:open-bots-window'),
   openMainWindow: (): Promise<void> => ipcRenderer.invoke('shell:open-main-window'),
