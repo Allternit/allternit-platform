@@ -414,6 +414,8 @@ struct DirectoryLanding: View {
     let onCollection: (String) -> Void
     var onShowOfficial: (() -> Void)? = nil
     var showCategoryCloud = true
+    /// Word after A://TERNIT in the hero lockup.
+    var lockup = "CONNECTORS"
 
     private struct Section: Identifiable {
         let name: String
@@ -452,7 +454,7 @@ struct DirectoryLanding: View {
     var body: some View {
         let plan = makePlan()
         VStack(alignment: .leading, spacing: 0) {
-            DirectoryHero(pool: pool, onOpen: onOpen, onCollection: onCollection)
+            DirectoryHero(pool: pool, lockup: lockup, onOpen: onOpen, onCollection: onCollection)
                 .padding(.bottom, 32)
             DirectorySectionHead(title: "Top \(noun)", count: total, onShowAll: onShowAll)
                 .padding(.bottom, 10)
@@ -494,94 +496,244 @@ struct DirectoryLanding: View {
     }
 }
 
-/// ConnectorHero: "Curated by Allternit", one swipeable card per collection,
-/// tinted with the collection's accent and carrying its real app logos.
+/// ConnectorHero (views/customize/ConnectorHero.tsx + hero.css): one panel,
+/// ink in light mode and white in dark mode, one slide per curated collection.
+/// Each slide leads with the A://TERNIT lockup (CONNECTORS in Customize, APPS
+/// in MCP Apps) and its sweep, then "Curated by Allternit", the collection,
+/// its real app logos and Explore; real app icons drift in four columns on the
+/// right. Dots switch slides. Reduced motion: no drift, no sweep.
 struct DirectoryHero: View {
     let pool: [DirectoryEntry]
+    var lockup = "CONNECTORS"
     let onOpen: (DirectoryEntry) -> Void
     let onCollection: (String) -> Void
+
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var current: String? = nil
 
     private struct Slide: Identifiable {
         let collection: AppDirectory.Collection
         let members: [DirectoryEntry]
+        var drift: [DirectoryEntry] = []
         var id: String { collection.id }
     }
 
     private func makeSlides() -> [Slide] {
         let byKey = Dictionary(pool.map { (AppDirectory.rankKey($0.id), $0) }, uniquingKeysWith: { first, _ in first })
-        return AppDirectory.collections.compactMap { collection in
+        var slides: [Slide] = AppDirectory.collections.compactMap { collection in
             let members = collection.ids.compactMap { byKey[$0] }
             return members.count >= 3 ? Slide(collection: collection, members: members) : nil
         }
+        // Drift: this collection's apps first, then the others', no repeats.
+        for i in slides.indices {
+            var seen = Set<String>()
+            let order = slides[i].members + slides.enumerated().filter { $0.offset != i }.flatMap { $0.element.members }
+            slides[i].drift = Array(order.filter { seen.insert($0.id).inserted }.prefix(20))
+        }
+        return slides
     }
 
     var body: some View {
         let slides = makeSlides()
         if !slides.isEmpty {
-            ScrollView(.horizontal, showsIndicators: false) {
-                LazyHStack(spacing: 12) {
-                    ForEach(slides) { slide in
-                        card(slide).containerRelativeFrame(.horizontal)
+            let palette = HeroPalette(dark: colorScheme == .dark)
+            let active = current ?? slides[0].id
+            ZStack(alignment: .bottom) {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    LazyHStack(spacing: 0) {
+                        ForEach(slides) { slide in
+                            card(slide, palette: palette, active: slide.id == active)
+                                .containerRelativeFrame(.horizontal)
+                                .id(slide.id)
+                        }
                     }
+                    .scrollTargetLayout()
                 }
-                .scrollTargetLayout()
+                .scrollTargetBehavior(.paging)
+                .scrollPosition(id: $current)
+                if slides.count > 1 {
+                    HStack(spacing: 6) {
+                        ForEach(slides) { slide in
+                            let on = slide.id == active
+                            Button {
+                                withAnimation(.easeOut(duration: 0.3)) { current = slide.id }
+                            } label: {
+                                Capsule()
+                                    .fill(on ? palette.fg : palette.dot)
+                                    .frame(width: on ? 20 : 6, height: 6)
+                                    .frame(minHeight: 24)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel(slide.collection.title)
+                            .accessibilityAddTraits(on ? .isSelected : [])
+                        }
+                    }
+                    .padding(.bottom, 6)
+                }
             }
-            .scrollTargetBehavior(.paging)
+            .background(palette.bg)
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(palette.border, lineWidth: 1))
+            .accessibilityElement(children: .contain)
             .accessibilityLabel("Curated by Allternit")
         }
     }
 
-    private func card(_ slide: Slide) -> some View {
-        let accent = Color(hex: slide.collection.accent)
-        return VStack(alignment: .leading, spacing: 0) {
-            Text("CURATED BY ALLTERNIT")
-                .font(.system(size: 11, weight: .medium))
-                .tracking(0.9)
-                .foregroundColor(Color("TextSecondary"))
-            Text(slide.collection.title)
-                .font(.system(size: 28, weight: .medium, design: .serif))
-                .tracking(-0.3)
-                .foregroundColor(Color("TextPrimary"))
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.top, 6)
-            Text(slide.collection.blurb)
-                .font(.system(size: 14))
-                .lineSpacing(3)
-                .foregroundColor(Color("TextSecondary"))
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.top, 8)
-            HStack(spacing: 10) {
-                ForEach(slide.members.prefix(5)) { member in
-                    Button { onOpen(member) } label: {
-                        AppLogoView(id: member.id, name: member.name, url: member.site, size: 40)
-                            .shadow(color: .black.opacity(0.08), radius: 4, y: 2)
+    private func card(_ slide: Slide, palette: HeroPalette, active: Bool) -> some View {
+        ZStack(alignment: .topLeading) {
+            HeroIconDrift(apps: slide.drift, active: active)
+                .opacity(0.35)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
+                .padding(.trailing, 8)
+            LinearGradient(stops: [.init(color: palette.bg, location: 0.62), .init(color: palette.bg.opacity(0), location: 0.9)],
+                           startPoint: .leading, endPoint: .trailing)
+                .allowsHitTesting(false)
+            VStack(alignment: .leading, spacing: 0) {
+                LockupSweep(suffix: lockup, height: 12, ink: palette.fg, active: active)
+                    .padding(.bottom, 20)
+                Text("CURATED BY ALLTERNIT")
+                    .font(.system(size: 11, design: .monospaced))
+                    .tracking(1.3)
+                    .foregroundColor(palette.sub)
+                Text(slide.collection.title)
+                    .font(.system(size: 22, weight: .medium))
+                    .tracking(-0.3)
+                    .foregroundColor(palette.fg)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 4)
+                Text(slide.collection.blurb)
+                    .font(.system(size: 14))
+                    .lineSpacing(3)
+                    .foregroundColor(palette.sub)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 6)
+                HStack(spacing: 10) {
+                    ForEach(slide.members.prefix(6)) { member in
+                        Button { onOpen(member) } label: {
+                            AppLogoView(id: member.id, name: member.name, url: member.site, size: 36)
+                                .shadow(color: .black.opacity(0.2), radius: 4, y: 2)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(member.name)
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(member.name)
+                }
+                .padding(.top, 16)
+                Button { onCollection(slide.collection.id) } label: {
+                    Text("Explore")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(palette.bg)
+                        .padding(.horizontal, 16)
+                        .frame(height: 36)
+                        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(palette.fg))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Explore \(slide.collection.title)")
+                .padding(.top, 20)
+            }
+            .padding(.horizontal, 24)
+            .padding(.top, 28)
+            .padding(.bottom, 40)
+        }
+        .frame(maxWidth: .infinity, minHeight: 248, alignment: .topLeading)
+        .clipped()
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(slide.collection.title)
+    }
+}
+
+/// hero.css's --hero-* tokens: ink panel and white type in light mode, white
+/// panel and ink type in dark mode.
+struct HeroPalette {
+    let bg: Color, fg: Color, sub: Color, dot: Color, border: Color
+
+    init(dark: Bool) {
+        let ink = Color(hex: "#141413")
+        if dark {
+            bg = .white; fg = ink; sub = ink.opacity(0.62); dot = ink.opacity(0.2); border = ink.opacity(0.08)
+        } else {
+            bg = ink; fg = .white; sub = .white.opacity(0.7); dot = .white.opacity(0.3); border = .clear
+        }
+    }
+}
+
+/// IconDrift: real app icons in four columns, each looping upward or downward
+/// at its own speed, faded at the top and bottom.
+struct HeroIconDrift: View {
+    let apps: [DirectoryEntry]
+    var active = true
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    private let size: CGFloat = 44
+    private let gap: CGFloat = 12
+
+    var body: some View {
+        if apps.count >= 4 {
+            let cols = (0..<4).map { c in apps.enumerated().filter { $0.offset % 4 == c }.map(\.element) }
+            TimelineView(.animation(paused: reduceMotion || !active)) { timeline in
+                let t = timeline.date.timeIntervalSinceReferenceDate
+                HStack(alignment: .top, spacing: gap) {
+                    ForEach(0..<4, id: \.self) { c in
+                        column(cols[c], index: c, time: t)
+                    }
                 }
             }
-            .padding(.top, 16)
-            Button { onCollection(slide.collection.id) } label: {
-                Text("Explore")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(Color("BgPrimary"))
-                    .padding(.horizontal, 14)
-                    .frame(height: 36)
-                    .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color("TextPrimary")))
-            }
-            .buttonStyle(.plain)
-            .padding(.top, 18)
+            .frame(width: 4 * size + 3 * gap, alignment: .top)
+            .frame(maxHeight: .infinity, alignment: .top)
+            .clipped()
+            .mask(LinearGradient(stops: [.init(color: .clear, location: 0), .init(color: .black, location: 0.18),
+                                         .init(color: .black, location: 0.82), .init(color: .clear, location: 1)],
+                                 startPoint: .top, endPoint: .bottom))
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
         }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 28)
-        .frame(maxWidth: .infinity, minHeight: 248, alignment: .leading)
-        .background(
-            ZStack {
-                Color("BgPanel")
-                LinearGradient(colors: [accent.opacity(0.26), accent.opacity(0.09)], startPoint: .topLeading, endPoint: .bottomTrailing)
+    }
+
+    private func column(_ col: [DirectoryEntry], index c: Int, time: TimeInterval) -> some View {
+        let span = CGFloat(col.count) * (size + gap)
+        let period = 26 + Double(c) * 6
+        let phase = reduceMotion ? 0 : CGFloat(time.truncatingRemainder(dividingBy: period) / period)
+        let travel = c % 2 == 0 ? phase : 1 - phase
+        return VStack(spacing: gap) {
+            ForEach(Array((col + col).enumerated()), id: \.offset) { _, app in
+                AppLogoView(id: app.id, name: app.name, url: app.site, size: size)
+                    .shadow(color: .black.opacity(0.25), radius: 9, y: 6)
             }
-            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        )
+        }
+        .offset(y: CGFloat(c) * -22 - travel * span)
+    }
+}
+
+/// LockupSweep: the A://TERNIT lockup; every few seconds a coral light runs
+/// across the blocks. Reduced motion: static.
+struct LockupSweep: View {
+    let suffix: String
+    var height: CGFloat = 12
+    var ink: Color = Color("TextPrimary")
+    var active = true
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var sweep: CGFloat = -0.3
+
+    var body: some View {
+        PixelWordmark(height: height, suffix: suffix, ink: ink)
+            .overlay {
+                GeometryReader { geo in
+                    LinearGradient(colors: [.clear, Color(hex: "#D97757").opacity(0.85), .clear], startPoint: .leading, endPoint: .trailing)
+                        .frame(width: geo.size.width * 0.25)
+                        .offset(x: sweep * geo.size.width)
+                }
+                .mask(PixelWordmark(height: height, suffix: suffix))
+                .allowsHitTesting(false)
+            }
+            .task(id: active && !reduceMotion) {
+                guard active, !reduceMotion else { return }
+                while !Task.isCancelled {
+                    sweep = -0.3
+                    withAnimation(.easeInOut(duration: 0.9)) { sweep = 1.1 }
+                    try? await Task.sleep(for: .seconds(7))
+                }
+            }
     }
 }
 
