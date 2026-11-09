@@ -3772,6 +3772,34 @@
         "allternit/surfaces/docs/guides/app-deployments.mdx",
         "allternit/surfaces/docs/api/openship-integration.mdx"
       ]
+    },
+    {
+      "id": "feature:gizzi-tui-models",
+      "label": "Gizzi Code TUI models: CLI brains through the engine driver, Desktop's provider rule, real failure causes",
+      "product": "product:gizzi-code",
+      "status": "building",
+      "description": "The Gizzi TUI runs CLI brains (claude-cli, codex-cli, kimi-cli, added CLIs, subs-*) through the engine's driver with the TUI's own permission prompts, offers the same providers as Desktop's picker (Cloud, subscriptions, connected API keys, local; never OpenRouter standalone) in /model and gizzi models, honours --model at launch, and names the real cause plus a command to run for each failure.",
+      "touches": [
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/services/api",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/utils/model",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/components",
+        "allternit/cmd/gizzi-code/src/runtime/providers",
+        "allternit/cmd/gizzi-code/src/runtime/drivers",
+        "allternit/cmd/gizzi-code/src/cli/commands"
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/cli/models.mdx",
+        "allternit/cmd/gizzi-code/src/runtime/providers/offer.ts",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/services/api/cliBrain.ts",
+        "allternit/cmd/gizzi-code/test/provider/provider-offer.test.ts",
+        "allternit/cmd/gizzi-code/test/services/provider-errors.test.ts"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-09",
+          "note": "Gizzi audit wave 0 (make it run): the TUI sent CLI-brain turns to the Allternit API and failed with 'Not logged in'. One provider rule in runtime/providers/offer.ts mirrors Desktop's isOfferedProvider; Desktop itself is unchanged."
+        }
+      ]
     }
   ],
   "journeys": [

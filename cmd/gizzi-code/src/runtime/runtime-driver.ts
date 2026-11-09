@@ -70,7 +70,25 @@ export interface AgentTask {
   /** "priority" when the picker's Fast is on (Codex service tier). */
   serviceTier?: string
   cliAccountId?: string
+  /**
+   * An in-process caller that asks its own user before the CLI runs a tool
+   * (the Gizzi TUI's permission prompts). The CLI starts in `permissionMode`
+   * and each tool it wants approval for goes to `approveTool`; unset keeps the
+   * session policy (bots, plan, or autonomous).
+   */
+  permissionMode?: "default" | "acceptEdits" | "plan" | "bypassPermissions"
+  approveTool?: (request: CliToolApproval) => Promise<CliToolVerdict>
 }
+
+/** A tool the CLI wants to run, waiting on the caller's approval. */
+export interface CliToolApproval {
+  /** The tool call's id, when the CLI sends one (Claude's tool_use_id). */
+  id?: string
+  name: string
+  input: Record<string, unknown>
+}
+
+export type CliToolVerdict = { allow: true; input?: Record<string, unknown> } | { allow: false; message: string }
 
 export interface TaskHandle {
   taskId: string

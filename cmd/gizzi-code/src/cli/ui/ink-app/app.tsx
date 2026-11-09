@@ -24,7 +24,7 @@ import {
   bypassRefusedAsRootMessage,
   tuiPermissionModeEnv,
 } from './utils/permissions/tuiPermissionStartup'
-import { setCwdState, setIsInteractive, setOriginalCwd, setSessionTrustAccepted, switchSession } from './bootstrap/state'
+import { setCwdState, setInitialMainLoopModel, setIsInteractive, setMainLoopModelOverride, setOriginalCwd, setSessionTrustAccepted, switchSession } from './bootstrap/state'
 import { asSessionId } from './types/ids'
 import { Log } from '../../../shared/util/log'
 import { registerRailsPeer } from '../../../runtime/gizzi-core/services/railsPeer.js'
@@ -55,6 +55,14 @@ export async function tui(options?: any): Promise<void> {
 
   enableConfigs()
   enableSharedConfigs()
+
+  // `gizzi --model X` picks this session's model, ahead of settings and
+  // gizzi.json (same priority as /model); getDefaultAppState() reads it.
+  if (options?.args?.model) {
+    const launchModel = String(options.args.model)
+    setMainLoopModelOverride(launchModel)
+    setInitialMainLoopModel(launchModel)
+  }
 
   // Resolve the startup permission mode. thread.ts translates
   // --yolo / --dangerously-skip-permissions into env vars; without this
