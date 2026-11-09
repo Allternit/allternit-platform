@@ -312,7 +312,8 @@ struct ACIMcpAppsView: View {
                 onShowAll: { route = .all },
                 onCollection: { route = .collection($0) },
                 onShowOfficial: { route = .official },
-                showCategoryCloud: false
+                showCategoryCloud: false,
+                lockup: "APPS"
             )
         case .landing:
             results(all)
