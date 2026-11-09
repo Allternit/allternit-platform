@@ -281,6 +281,10 @@ export namespace TerminalLive {
 
   /** A prompt from any surface: hand it to the terminal. False when no terminal holds the session. */
   export function deliver(sessionID: string, text: string): boolean {
+    // Chat bridges (allternit-api, /api/agent-chat) wrap the person's text with
+    // the app's own instructions; the terminal gets only what the person typed.
+    const request = /<user-request>\n?([\s\S]*?)\n?<\/user-request>/.exec(text)
+    if (request) text = request[1]
     const entry = live.get(sessionID)
     if (!entry || !text.trim()) return false
     entry.send({ type: "input", id: crypto.randomUUID(), text })
