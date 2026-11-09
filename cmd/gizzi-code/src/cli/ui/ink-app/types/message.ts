@@ -470,6 +470,8 @@ export interface AssistantMessage extends Message {
     role: 'assistant'
     content: string | MessageContent[] | ContentBlock[]
   }
+  /** Tool calls a CLI brain already ran itself: shown, never run again (services/api/cliBrain.ts). */
+  cliObserved?: true
 }
 
 export interface SystemMessage extends Message {

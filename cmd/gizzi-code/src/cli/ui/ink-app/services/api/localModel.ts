@@ -21,6 +21,8 @@ import type {
   SystemAPIErrorMessage,
 } from '../../types/message.js'
 import type { Options } from './claude.js'
+import { describeProviderError, formatProviderErrorHelp } from './providerErrors.js'
+import { subscriptionAlternative } from './cliBrain.js'
 
 // Stream index for the reasoning block: clear of choice and tool-call indexes.
 const THINKING_BLOCK_INDEX = 1_000_000
@@ -100,6 +102,37 @@ export function getLocalProviderConfig(model: string): ResolvedLocalModel | unde
 
 export function isLocalProviderModel(model: string): boolean {
   return getLocalProviderConfig(model) !== undefined
+}
+
+/** A non-2xx reply from a provider's endpoint, kept whole for providerErrorText. */
+class ProviderHttpError extends Error {
+  constructor(readonly status: number, readonly body: string) {
+    super(`HTTP ${status}: ${body.slice(0, 500)}`)
+  }
+}
+
+/**
+ * The real cause of a failed call to a gizzi.json provider (API key or local
+ * server) plus what to run, e.g. an expired OpenRouter key reads "OpenRouter
+ * rejected the API key (401)" with `gizzi connect login`, not "Local model
+ * error".
+ */
+export function providerErrorText(provider: string, baseURL: string, error: unknown, now?: Date): string {
+  const status = error instanceof ProviderHttpError ? error.status : undefined
+  const text = error instanceof ProviderHttpError ? error.body : error instanceof Error ? error.message : String(error)
+  const name = (readGizziConfig()?.provider as Record<string, { name?: string }> | undefined)?.[provider]?.name
+  const help = describeProviderError({
+    provider,
+    providerName: name,
+    status,
+    text,
+    baseURL,
+    alternative: subscriptionAlternative(),
+    now,
+  })
+  const raw = status ? `${status} ${text.slice(0, 300)}` : text.slice(0, 300)
+  return help ? `${formatProviderErrorHelp(help)}
+${name ?? provider} said: ${raw}` : `${name ?? provider} error: ${raw}`
 }
 
 function flattenContentToText(
@@ -468,7 +501,7 @@ export async function* queryLocalModelWithStreaming({
 
     if (!response.ok) {
       const text = await response.text().catch(() => '')
-      throw new Error(`Local model error ${response.status}: ${text}`)
+      throw new ProviderHttpError(response.status, text)
     }
 
     const reader = response.body?.getReader()
@@ -699,7 +732,7 @@ export async function* queryLocalModelWithStreaming({
       { level: 'error' },
     )
     yield createAssistantAPIErrorMessage({
-      content: `Local model error: ${error instanceof Error ? error.message : String(error)}`,
+      content: providerErrorText(provider, baseURL, error),
       apiError: 'local_model_error',
       error: 'local_model_error',
     })
