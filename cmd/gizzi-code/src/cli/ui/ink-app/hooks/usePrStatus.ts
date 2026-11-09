@@ -1,7 +1,7 @@
 // @ts-nocheck
 import { useEffect, useRef, useState } from 'react'
 import { getLastInteractionTime } from '../bootstrap/state.js'
-import { fetchPrStatus, type PrReviewState } from '../utils/ghPrStatus.js'
+import { fetchPrStatus, type PrChecks, type PrReviewState } from '../utils/ghPrStatus.js'
 
 const POLL_INTERVAL_MS = 60_000
 const SLOW_GH_THRESHOLD_MS = 4_000
@@ -11,6 +11,7 @@ export type PrStatusState = {
   number: number | null
   url: string | null
   reviewState: PrReviewState | null
+  checks: PrChecks | null
   lastUpdated: number
 }
 
@@ -18,6 +19,7 @@ const INITIAL_STATE: PrStatusState = {
   number: null,
   url: null,
   reviewState: null,
+  checks: null,
   lastUpdated: 0,
 }
 
@@ -66,13 +68,19 @@ export function usePrStatus(isLoading: boolean, enabled = true): PrStatusState {
       setPrStatus(prev => {
         const newNumber = result?.number ?? null
         const newReviewState = result?.reviewState ?? null
-        if (prev.number === newNumber && prev.reviewState === newReviewState) {
+        const newChecks = result?.checks ?? null
+        if (
+          prev.number === newNumber &&
+          prev.reviewState === newReviewState &&
+          JSON.stringify(prev.checks) === JSON.stringify(newChecks)
+        ) {
           return prev
         }
         return {
           number: newNumber,
           url: result?.url ?? null,
           reviewState: newReviewState,
+          checks: newChecks,
           lastUpdated: Date.now(),
         }
       })

@@ -1,14 +1,12 @@
 import * as React from 'react'
 import { useEffect, useState } from 'react'
-import { getCwdState } from '../../bootstrap/state.js'
 import { Text } from '../../ink'
-import { checkCounts, countDecisions, currentBranchPR, type BranchPR } from '@/cli/work/api'
+import { countDecisions } from '@/cli/work/api'
 
 /**
- * Footer chips for work waiting outside this turn: `⚑ 3` when agents in any
- * session wait on a decision (/decisions), and `PR #123 ✓4 ✗1` for this
- * branch's pull request (/pr). Both stay hidden when there is nothing to show
- * or the source (engine, gh) isn't there.
+ * `⚑ 3` when agents in any session wait on a decision (/decisions); hidden
+ * when nothing waits or the engine isn't there. This branch's PR checks
+ * (`PR #123 ✓4 ✗1`) ride on the existing PR badge (usePrStatus / PrBadge).
  */
 function usePoll<T>(load: () => Promise<T>, ms: number): T | undefined {
   const [value, setValue] = useState<T>()
@@ -32,21 +30,6 @@ function usePoll<T>(load: () => Promise<T>, ms: number): T | undefined {
 
 export function WorkChips(): React.ReactNode {
   const waiting = usePoll(countDecisions, 10_000)
-  const pr = usePoll<BranchPR | null>(() => currentBranchPR(getCwdState()), 60_000)
-  const n = pr ? checkCounts(pr) : undefined
-  if (!waiting && !pr) return null
-  return (
-    <Text>
-      {waiting ? <Text color="warning">⚑ {waiting}  </Text> : null}
-      {pr && n ? (
-        <Text dimColor>
-          PR #{pr.number}
-          {n.pass ? <Text color="success"> ✓{n.pass}</Text> : null}
-          {n.fail ? <Text color="error"> ✗{n.fail}</Text> : null}
-          {n.pending ? <Text color="warning"> ●{n.pending}</Text> : null}
-          {'  '}
-        </Text>
-      ) : null}
-    </Text>
-  )
+  if (!waiting) return null
+  return <Text color="warning">⚑ {waiting}  </Text>
 }
