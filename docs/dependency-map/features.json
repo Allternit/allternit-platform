@@ -3225,6 +3225,33 @@
       ]
     },
     {
+      "id": "feature:gizzi-tui-steer-suggest-recap",
+      "label": "Gizzi Code terminal: steer or queue while the agent works, next-step suggestions, recap on return",
+      "product": "product:gizzi-code",
+      "status": "building",
+      "description": "In the Gizzi Code TUI, while a turn runs: enter steers (queued at 'next', drained into the running turn at the next tool boundary and shown as an amber '\u21b3 steering' line), tab queues for after the turn ('later', skipped by the mid-turn drain, listed under 'queued for after this turn', esc removes the newest), ctrl+x enter stops the turn and sends (forceImmediate). Keys are chat:submit / chat:queueAfter / chat:stopAndSend in ~/.gizzi/keybindings.json, with a live hint line. Next-step prompt suggestions are on (gate tengu_chomp_inflection), run on the session's model, and only on CLI brains, loopback models and Allternit Cloud unless promptSuggestionOnApiKeys. The away recap lists files changed with +/- from edit tool results, what still fails and a Next step that becomes the ghost suggestion. Unfinished slash commands (DAG runtime, cowork, simulated /swarm, stickers) are hidden unless GIZZI_EXPERIMENTAL_COMMANDS=1.",
+      "touches": [
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/keybindings",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/components/PromptInput",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/utils/handlePromptSubmit.ts",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/utils/messageQueueManager.ts",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/query.ts",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/services/PromptSuggestion",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/services/awaySummary.ts",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/hooks/useAwaySummary.ts",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/commands.ts"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-09",
+          "note": "Eoj: the way we can steer messages mid-task needs to be included, and the ctrl+x send, the recaps and suggestions. Suggestions never spend a metered API key silently."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/cli/keyboard-shortcuts.mdx"
+      ]
+    },
+    {
       "id": "feature:decision-trees",
       "label": "Decision trees (branching agent questions + Tasks Decisions deck)",
       "product": "product:ai-allternit",

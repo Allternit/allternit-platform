@@ -33,7 +33,7 @@ Report this verdict to the user as-is, briefly. Do not start fixing anything unl
 
 // Legal wants the explicit surface name plus a docs link visible before the
 // user triggers, so the description carries "gizzi-code on the web" + URL.
-const CCR_TERMS_URL = 'https://docs.gizziio.com/claude-code-on-the-web'
+const CCR_TERMS_URL = 'https://docs.allternit.com/code/cloud-environments'
 
 const LOCAL_REVIEW_PROMPT = (args: string) => `
       You are an expert code reviewer. Follow these steps:

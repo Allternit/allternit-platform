@@ -67,6 +67,7 @@ const jobClassifier = feature('TEMPLATES')
 import {
   remove as removeFromQueue,
   getCommandsByMaxPriority,
+  isQueuedForAfterTurn,
   isSlashCommand,
 } from './utils/messageQueueManager.js'
 import { notifyCommandLifecycle } from './utils/commandLifecycle.js'
@@ -1420,6 +1421,9 @@ async function* queryLoop(
       sleepRan ? 'later' : 'next',
     ).filter(cmd => {
       if (isSlashCommand(cmd)) return false
+      // A prompt the user queued for after the turn (tab) is not a steer:
+      // useQueueProcessor runs it once this turn ends.
+      if (isQueuedForAfterTurn(cmd)) return false
       if (isMainThread) return cmd.agentId === undefined
       // Subagents only drain task-notifications addressed to them — never
       // user prompts, even if someone stamps an agentId on one.

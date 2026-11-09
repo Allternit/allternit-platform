@@ -117,6 +117,13 @@ export type HandlePromptSubmitParams = BaseExecutionParams & {
    */
   skipSlashCommands?: boolean
   forceImmediate?: boolean
+  /**
+   * Queue for after the current turn (tab while the agent works) instead of
+   * steering it. Steers (the default) go in at 'next' priority and reach the
+   * model at the next tool boundary (query.ts mid-turn drain); 'later' user
+   * prompts are skipped by that drain and run when the turn ends.
+   */
+  queueAfter?: boolean
 }
 
 export async function handlePromptSubmit(
@@ -144,6 +151,7 @@ export async function handlePromptSubmit(
     uuid,
     skipSlashCommands,
     forceImmediate,
+    queueAfter,
   } = params
 
   const { setCursorOffset, clearBuffer, resetHistory } = helpers
@@ -324,8 +332,9 @@ export async function handlePromptSubmit(
       }
 
       // Interrupt the current turn when all executing tools have
-      // interruptBehavior 'cancel' (e.g. SleepTool).
-      if (params.hasInterruptibleToolInProgress) {
+      // interruptBehavior 'cancel' (e.g. SleepTool). A queue-for-after
+      // message leaves the turn alone.
+      if (params.hasInterruptibleToolInProgress && !queueAfter) {
         logForDebugging(
           `[interrupt] Aborting current turn: streamMode=${params.streamMode}`,
         )
@@ -347,6 +356,7 @@ export async function handlePromptSubmit(
         pastedContents: hasImages ? pastedContents : undefined,
         skipSlashCommands,
         uuid,
+        ...(queueAfter ? { priority: 'later' as const } : {}),
       })
 
       onInputChange('')

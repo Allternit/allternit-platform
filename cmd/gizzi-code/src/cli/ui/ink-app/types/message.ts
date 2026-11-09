@@ -638,6 +638,10 @@ export interface SystemAgentsKilledMessage extends SystemMessage {
 export interface SystemAwaySummaryMessage extends SystemMessage {
   subtype: 'away_summary'
   content: string
+  /** Files changed since the previous recap, from edit tool results. */
+  files?: { path: string; added: number; removed: number }[]
+  /** How long the terminal was unfocused when the recap was made. */
+  awayMs?: number
 }
 
 /**
