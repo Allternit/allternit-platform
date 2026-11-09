@@ -144,18 +144,26 @@ impl QuotaService {
         let (machines, this_machine_active): (i64, bool) = sqlx::query_as(
             r#"
             SELECT
+                -- A row from a client without machine ids (an older gizzi next
+                -- to a new Desktop) takes the id of a row on the same
+                -- hostname + platform, so one Mac still counts once.
                 COUNT(DISTINCT COALESCE(
-                    'mid:' || machine_id,
-                    REGEXP_REPLACE(LOWER(NULLIF(hostname, '')), '\.local$', '') || '|' || COALESCE(platform, ''),
-                    'device:' || id
+                    'mid:' || d.machine_id,
+                    (SELECT 'mid:' || m.machine_id FROM runtime_devices m
+                     WHERE m.user_id = d.user_id AND m.revoked_at IS NULL AND m.machine_id IS NOT NULL
+                       AND REGEXP_REPLACE(LOWER(NULLIF(m.hostname, '')), '\.local$', '') || '|' || COALESCE(m.platform, '')
+                         = REGEXP_REPLACE(LOWER(NULLIF(d.hostname, '')), '\.local$', '') || '|' || COALESCE(d.platform, '')
+                     ORDER BY m.machine_id LIMIT 1),
+                    REGEXP_REPLACE(LOWER(NULLIF(d.hostname, '')), '\.local$', '') || '|' || COALESCE(d.platform, ''),
+                    'device:' || d.id
                 )),
                 COALESCE(BOOL_OR(
                     ($2::TEXT IS NOT NULL AND 'mid:' || machine_id = $2)
                     OR ($3::TEXT IS NOT NULL AND machine_id IS NULL
                         AND REGEXP_REPLACE(LOWER(NULLIF(hostname, '')), '\.local$', '') || '|' || COALESCE(platform, '') = $3)
                 ), FALSE)
-            FROM runtime_devices
-            WHERE user_id = $1 AND revoked_at IS NULL
+            FROM runtime_devices d
+            WHERE d.user_id = $1 AND d.revoked_at IS NULL
             "#,
         )
         .bind(user_id)
