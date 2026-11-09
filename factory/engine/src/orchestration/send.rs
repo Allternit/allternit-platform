@@ -62,7 +62,8 @@ pub struct Delivery {
 }
 
 impl Delivery {
-    /// C1: `{hopId, state, tier, note}`. `state` is `delivered | queued | held | refused | failed`.
+    /// C1: `{hopId, state, tier, note}`. `state` is `delivered | pushed | queued | held | refused | failed`.
+    /// `pushed` = written to a live session that has not confirmed it yet.
     pub fn c1(&self) -> Value {
         let state = match self.state.as_str() {
             "verified" | "best_effort" => "delivered",
@@ -534,6 +535,7 @@ async fn deliver_live(ctx: &SendCtx, session: &crate::agents::live_delivery::Liv
         person: &person,
         body: &body,
     });
+    live::ensure_receipts();
     let deferred = !live::take_rate_slot();
     let outcome = match live::deliver(session, hop_id, &from, &envelope, deferred).await {
         live::Attempt::Done(o) => o,
@@ -560,7 +562,7 @@ async fn deliver_live(ctx: &SendCtx, session: &crate::agents::live_delivery::Liv
         _ => "live_inbox",
     };
     let state = match outcome.state {
-        "delivered" if outcome.tier == "push" => "verified",
+        "pushed" => "pushed",
         "delivered" => "verified",
         "queued" => "queued",
         _ => "failed",

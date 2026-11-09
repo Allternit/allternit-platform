@@ -868,7 +868,7 @@ async fn hop_advance_route(State(state): State<Arc<AppState>>, Extension(user): 
     if !owned {
         return refuse(RouteError::BadRequest("No such hop.".into()));
     }
-    if !["stored", "delivered", "read", "answered", "held", "refused", "failed"].contains(&body.state.as_str()) {
+    if !["stored", "pushed", "delivered", "read", "answered", "held", "refused", "failed"].contains(&body.state.as_str()) {
         return refuse(RouteError::BadRequest("Unknown hop state.".into()));
     }
     hops::advance(&conn, &body.hop_id, &body.state, body.reason.as_deref(), None, None);
