@@ -11,12 +11,11 @@
  * what printed `Read(Read)` and `Edit(false)`.
  */
 import path from "path"
-import { readFileSync } from "fs"
-import { parsePatch, structuredPatch } from "diff"
 import chalk from "@/shared/util/chalk"
 import { Highlight } from "@/shared/util/highlight"
 import { TurnSummary } from "@/shared/util/turn-summary"
 import { ColorDiff } from "@/vendor/color-diff-napi"
+import { countHunks, hunksFromStrings, hunksFromUnified, patchFiles, unwrapShell, type Hunk } from "@/shared/util/cli-tools"
 
 export type PrintToolPart = {
   id: string
@@ -89,7 +88,7 @@ export function normalizeTool(tool: string, input: Record<string, unknown> | und
   const name = NAME[tool.toLowerCase()] ?? tool
   const out: Record<string, unknown> = {}
   for (const [k, v] of Object.entries(input ?? {})) out[KEY[k] ?? k] = v
-  if (Array.isArray(out.command)) out.command = (out.command as unknown[]).map(String).join(" ")
+  if (out.command !== undefined) out.command = unwrapShell(out.command)
   return { name, label: LABEL[name] ?? titlecase(tool), input: out }
 }
 
@@ -188,8 +187,8 @@ function headerFor(t: NormalTool, part: PrintToolPart): Header {
     case "todowrite":
       return { label: t.label }
     case "patch": {
-      const changes = i.changes && typeof i.changes === "object" ? Object.keys(i.changes as object) : []
-      return { label: t.label, arg: changes.map((p) => shortPath(p)).join(" "), argIsPath: changes.length === 1 }
+      const files = patchFiles(i.changes).map((f) => shortPath(f.path))
+      return { label: t.label, arg: files.join(" "), argIsPath: files.length === 1 }
     }
   }
   // Unknown tool: the first short string argument, never a boolean flag.
@@ -229,38 +228,6 @@ function cleanOutput(output: string | undefined): string {
 
 function outputLines(text: string): string[] {
   return stripAnsi(text).split("\n").map((l) => l.replace(/\r$/, ""))
-}
-
-type Hunk = { oldStart: number; oldLines: number; newStart: number; newLines: number; lines: string[] }
-
-function hunksFromUnified(diff: string): Hunk[] {
-  try {
-    return parsePatch(diff).flatMap((p) => p.hunks as Hunk[])
-  } catch {
-    return []
-  }
-}
-
-/** Hunks for a CLI brain's Edit (old/new strings), placed at their real line numbers. */
-function hunksFromStrings(filePath: string, oldString: string, newString: string): Hunk[] {
-  const patch = structuredPatch(filePath, filePath, oldString, newString, "", "", { context: 0 })
-  let offset = 0
-  try {
-    const now = readFileSync(filePath, "utf8")
-    const at = newString ? now.indexOf(newString) : -1
-    if (at >= 0) offset = now.slice(0, at).split("\n").length - 1
-  } catch {}
-  return (patch.hunks as Hunk[]).map((h) => ({ ...h, oldStart: h.oldStart + offset, newStart: h.newStart + offset }))
-}
-
-function countHunks(hunks: Hunk[]): { added: number; removed: number } {
-  let added = 0
-  let removed = 0
-  for (const h of hunks) for (const l of h.lines) {
-    if (l.startsWith("+")) added++
-    else if (l.startsWith("-")) removed++
-  }
-  return { added, removed }
 }
 
 function renderDiff(hunks: Hunk[], filePath: string, write: Write) {
@@ -422,20 +389,17 @@ export class ToolPrinter {
         return
       }
       case "patch": {
-        const changes = (input.changes ?? {}) as Record<string, Record<string, unknown>>
-        let added = 0
-        let removed = 0
-        for (const [file, change] of Object.entries(changes)) {
-          const body = (change?.update ?? change?.add ?? change?.delete ?? change) as Record<string, unknown>
-          const unified = typeof body?.unified_diff === "string" ? body.unified_diff : undefined
-          const hunks = unified ? hunksFromUnified(unified.includes("@@") && !unified.startsWith("---") ? `--- a\n+++ b\n${unified}` : unified) : []
-          const c = countHunks(hunks)
-          if (!hunks.length && typeof body?.content === "string") c.added = body.content.split("\n").length
-          added += c.added
-          removed += c.removed
-          this.changes.push({ path: shortPath(file), ...c })
+        // One Edit line + diff per file, like Claude's edits.
+        const files = patchFiles(input.changes)
+        for (const [n, f] of files.entries()) {
+          this.changes.push({ path: shortPath(f.path), added: f.added, removed: f.removed })
+          const label = f.kind === "add" ? "Write" : f.kind === "delete" ? "Delete" : "Edit"
+          const fileTracked = n === 0 ? tracked : { ...tracked, printed: false }
+          fileTracked.header = { label, arg: shortPath(f.path), argIsPath: true, note: f.kind === "add" ? "new file" : undefined }
+          this.ensureHeader({ ...part, id: `${part.id}#${n}` }, fileTracked, { counts: f.kind === "delete" ? undefined : Highlight.counts(f.added, f.removed) })
+          if (f.kind === "update") renderDiff(f.hunks, f.path, (line) => this.body(line))
         }
-        this.ensureHeader(part, tracked, { counts: Highlight.counts(added, removed) })
+        if (!files.length) this.ensureHeader(part, tracked)
         return
       }
       case "bash": {
