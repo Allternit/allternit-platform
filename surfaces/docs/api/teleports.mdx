@@ -12,7 +12,7 @@ Teleports move a live Claude or Codex session between computers. The endpoints l
 | `POST /teleports` | Stage a transfer from a manifest. Returns `201` with the transfer, or `200` for a repeat of the same `request_id` and manifest. |
 | `PUT /teleports/{id}/files/{index}` | Upload one file as raw bytes. Size and sha256 must match the manifest. |
 | `POST /teleports/{id}/activate` | Install the native file and claim the native session id in one transaction. |
-| `GET /teleports/{id}` | Read the transfer: `state` is `staged`, `active` or `cancelled`. |
+| `GET /teleports/{id}` | Read the transfer: `state` is `staged`, `resuming`, `active`, `resume_failed` or `cancelled`, with `error` and a `project` report (`patch_conflicts`, `untracked_conflicts`). |
 | `POST /teleports/{id}/cancel` | Drop a staged transfer. |
 
 ### Manifest
@@ -34,11 +34,11 @@ Teleports move a live Claude or Codex session between computers. The endpoints l
 }
 ```
 
-Exactly one native file is allowed per transfer. `harness` is `claude` or `codex`. Claude files install at `~/.claude/projects/` under the working directory slug, and Codex rollouts under its `sessions` directory.
+A transfer carries one `native` file, plus an optional `patch` (git diff from `git_base` to the Mac working tree) and an optional `untracked` tar. Each file has a `kind` and its own sha256. `session_id` names the gizzi session the vendor session id is stored under. `harness` is `claude` or `codex`. Claude files install at `~/.claude/projects/` under the working directory slug, and Codex rollouts under its `sessions` directory.
 
 ### Idempotency and conflicts
 
-Retrying with the same `request_id` and the same manifest returns the same transfer. The same `request_id` with a different manifest returns `409 request_conflict`. Activating a native id that another transfer already owns returns `409 teleport_rejected`. Activating twice is safe and returns the active transfer.
+Retrying with the same `request_id` and the same manifest returns the same transfer. The same `request_id` with a different manifest returns `409 request_conflict`. Activating a native id that another transfer already owns returns `409 teleport_rejected`. Activating twice is safe. Activation installs the file, applies the project files without overwriting cloud content, then asks the local gizzi to resume the session (`--resume`, same model and effort), send the handoff and replay queued prompts. The state is `resuming` until the first new output, then `active`; a failed resume leaves `resume_failed`, and activating again retries it.
 
 ## Placement and relay
 

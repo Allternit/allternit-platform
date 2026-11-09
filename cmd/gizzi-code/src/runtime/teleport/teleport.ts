@@ -13,6 +13,7 @@ import { spawnSync } from "node:child_process"
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs"
 import { basename, dirname, join } from "node:path"
 import { encodeClaudeCwd, getNativeSession, harnessHome, type HarnessId } from "@allternit/native-sessions"
+import { resumeNative } from "@/runtime/teleport/resume"
 import { platformApiBase, platformToken, PlatformApiError, PlatformSignedOutError } from "@/runtime/bots/platform-api"
 
 export type TeleportHarness = "claude" | "codex"
@@ -37,6 +38,8 @@ export interface TeleportResult {
   resume: string
   workspace?: string
   patched?: boolean
+  /** Uncommitted work that did not fit the cloud copy (kept as the cloud had it). */
+  conflicts?: { patch: number; untracked: number }
 }
 
 export interface Manifest {
@@ -47,7 +50,8 @@ export interface Manifest {
   reasoning?: string
   workspace_name: string
   direction: "local_to_cloud" | "cloud_to_local"
-  files: { name: string; size: number; sha256: string }[]
+  session_id?: string
+  files: { name: string; size: number; sha256: string; kind: "native" | "patch" | "untracked" }[]
   git_remote?: string
   git_base?: string
   handoff: string
@@ -75,28 +79,80 @@ export function handoffText(direction: TeleportDirection, from: string): string 
   )
 }
 
+/** The newest commit on this branch that the remote already has, or undefined. */
+export function reachableBase(cwd: string): string | undefined {
+  const reach = spawnSync("git", ["-C", cwd, "ls-remote", "--exit-code", "origin", "HEAD"], { timeout: 15_000 })
+  if (reach.status !== 0) return undefined
+  for (const ref of ["@{u}", "origin/HEAD", "origin/main", "origin/master"]) {
+    const r = git(cwd, ["merge-base", "HEAD", ref])
+    if (r.ok && r.out) return r.out
+  }
+  return undefined
+}
+
+export interface ProjectFiles {
+  /** `git diff --binary <base>`: unpushed commits plus staged and unstaged edits. */
+  patch?: Uint8Array
+  /** tar of untracked files that git does not ignore. */
+  untracked?: Uint8Array
+}
+
+const MAX_UNTRACKED_BYTES = 64 * 1024 * 1024
+
+/** What the Mac has beyond the base commit, so the cloud copy matches the working tree. */
+export function collectProject(cwd: string, base: string): ProjectFiles {
+  const out: ProjectFiles = {}
+  const diff = spawnSync("git", ["-C", cwd, "diff", "--binary", base], { maxBuffer: 256 * 1024 * 1024 })
+  if (diff.status === 0 && diff.stdout.byteLength > 0) out.patch = new Uint8Array(diff.stdout)
+  const names = spawnSync("git", ["-C", cwd, "ls-files", "--others", "--exclude-standard", "-z"], { maxBuffer: 64 * 1024 * 1024 })
+  if (names.status === 0 && names.stdout.byteLength > 0) {
+    const tar = spawnSync("tar", ["-cf", "-", "--null", "-T", "-"], { cwd, input: names.stdout, maxBuffer: 256 * 1024 * 1024 })
+    if (tar.status !== 0) throw new Error("Could not pack the untracked files.")
+    if (tar.stdout.byteLength > MAX_UNTRACKED_BYTES) throw new Error("Untracked files are over 64 MB. Commit them or add them to .gitignore, then retry.")
+    out.untracked = new Uint8Array(tar.stdout)
+  }
+  return out
+}
+
 /**
- * The manifest for a Mac -> cloud move. `request_id` is derived from the session
- * and file content, so a retry of the same move is the same transfer, and a move
- * after the conversation grew is a new one.
+ * The manifest for a Mac -> cloud move, and the bytes of each file in manifest order.
+ * `request_id` is derived from the session and the content, so a retry of the same move is
+ * the same transfer, and a move after the conversation or the code changed is a new one.
  */
-export function buildManifest(input: TeleportInput, file: { name: string; bytes: Uint8Array }): Manifest {
-  const digest = sha256(file.bytes)
+export function buildManifest(
+  input: TeleportInput,
+  file: { name: string; bytes: Uint8Array },
+  base: string,
+  project: ProjectFiles = {},
+): { manifest: Manifest; payloads: Uint8Array[] } {
+  const entries: Manifest["files"] = []
+  const payloads: Uint8Array[] = []
+  const add = (name: string, bytes: Uint8Array, kind: Manifest["files"][number]["kind"]) => {
+    entries.push({ name, size: bytes.byteLength, sha256: sha256(bytes), kind })
+    payloads.push(bytes)
+  }
+  add(file.name, file.bytes, "native")
+  if (project.patch) add("project.patch", project.patch, "patch")
+  if (project.untracked) add("untracked.tar", project.untracked, "untracked")
+  const all = sha256(Buffer.from(entries.map((e) => e.sha256).join(":")))
   const remote = git(input.cwd, ["remote", "get-url", "origin"])
-  const head = git(input.cwd, ["rev-parse", "HEAD"])
   return {
-    request_id: `tp-${input.sessionID.replace(/[^A-Za-z0-9_-]/g, "").slice(-24)}-${digest.slice(0, 16)}`,
-    harness: input.harness,
-    native_id: input.nativeId,
-    model: input.model,
-    reasoning: input.reasoning,
-    workspace_name: workspaceName(input.cwd),
-    direction: "local_to_cloud",
-    files: [{ name: file.name, size: file.bytes.byteLength, sha256: digest }],
-    git_remote: remote.ok && remote.out ? remote.out : undefined,
-    git_base: head.ok ? head.out : undefined,
-    handoff: handoffText("cloud", "the user's Mac"),
-    queued: input.queued ?? [],
+    manifest: {
+      request_id: `tp-${input.sessionID.replace(/[^A-Za-z0-9_-]/g, "").slice(-24)}-${all.slice(0, 16)}`,
+      harness: input.harness,
+      native_id: input.nativeId,
+      session_id: input.sessionID,
+      model: input.model,
+      reasoning: input.reasoning,
+      workspace_name: workspaceName(input.cwd),
+      direction: "local_to_cloud",
+      files: entries,
+      git_remote: remote.ok && remote.out ? remote.out : undefined,
+      git_base: base,
+      handoff: handoffText("cloud", "the user's Mac"),
+      queued: input.queued ?? [],
+    },
+    payloads,
   }
 }
 
@@ -138,15 +194,34 @@ async function setPlacement(sessionID: string, targetId: string | null) {
   await call("PUT", `${platformApiBase()}/api/v1/teleports/placement`, { sessionId: sessionID, targetId })
 }
 
-/** Mac -> cloud: stage, upload, activate, then flip placement so the apps follow the session. */
+/** Wait for the cloud to resume the session: `active` means it produced new output. */
+async function waitActive(targetId: string, id: string, timeoutMs = 180_000): Promise<void> {
+  const until = Date.now() + timeoutMs
+  while (Date.now() < until) {
+    const t = (await (await call("GET", relay(targetId, `teleports/${id}`))).json()) as { state: string; error?: string }
+    if (t.state === "active") return
+    if (t.state === "resume_failed") throw new Error(`The cloud copy was installed but could not resume: ${t.error ?? "unknown error"}. Run the teleport again to retry the resume.`)
+    await new Promise((r) => setTimeout(r, 1500))
+  }
+  throw new Error("The cloud copy was installed but has not produced output yet. Check it with the same command; placement was not changed.")
+}
+
+/**
+ * Mac -> cloud: stage, upload, activate (the cloud installs the file, applies the code and
+ * resumes the session), and only then flip placement so the apps follow the session.
+ */
 export async function teleportToCloud(input: TeleportInput): Promise<TeleportResult> {
   const path = localNativePath(input.harness, input.nativeId, input.cwd)
   if (!path || !existsSync(path)) throw new Error(`No ${input.harness} session file for ${input.nativeId} on this Mac.`)
-  if (git(input.cwd, ["status", "--porcelain"]).out) {
-    throw new Error("The workspace has uncommitted changes. Commit and push them first: Teleport moves the conversation, git moves the code.")
+  // The cloud gets the code by cloning, so it needs a commit the remote has. Whatever the Mac has
+  // beyond that commit (unpushed commits, edits, new files) travels as a patch and a tar.
+  const base = reachableBase(input.cwd)
+  if (!base) {
+    throw new Error("This workspace has no reachable git remote with your current branch on it. Push it (or add an origin) so the cloud computer can clone it, then retry.")
   }
+  const project = collectProject(input.cwd, base)
   const bytes = readFileSync(path) // frozen here: the manifest hash covers exactly what is sent
-  const manifest = buildManifest(input, { name: basename(path), bytes })
+  const { manifest, payloads } = buildManifest(input, { name: basename(path), bytes }, base, project)
   const staged = (await (await call("POST", relay(input.targetId, "teleports"), manifest)).json()) as {
     id: string
     state: string
@@ -155,12 +230,23 @@ export async function teleportToCloud(input: TeleportInput): Promise<TeleportRes
   }
   if (staged.state === "staged") {
     for (const index of staged.files_pending) {
-      await call("PUT", relay(input.targetId, `teleports/${staged.id}/files/${index}`), bytes)
+      await call("PUT", relay(input.targetId, `teleports/${staged.id}/files/${index}`), payloads[index]!)
     }
-    await call("POST", relay(input.targetId, `teleports/${staged.id}/activate`), {})
   }
+  const activated = (await (await call("POST", relay(input.targetId, `teleports/${staged.id}/activate`), {})).json()) as {
+    project?: { patch_conflicts?: number; untracked_conflicts?: number } | null
+  }
+  await waitActive(input.targetId, staged.id)
   await setPlacement(input.sessionID, input.targetId)
-  return { direction: "cloud", nativeId: input.nativeId, resume: resumeHint(input.harness, input.nativeId), workspace: staged.workspace }
+  const pc = activated.project?.patch_conflicts ?? 0
+  const uc = activated.project?.untracked_conflicts ?? 0
+  return {
+    direction: "cloud",
+    nativeId: input.nativeId,
+    resume: resumeHint(input.harness, input.nativeId),
+    workspace: staged.workspace,
+    conflicts: pc || uc ? { patch: pc, untracked: uc } : undefined,
+  }
 }
 
 export function resumeHint(harness: TeleportHarness, nativeId: string): string {
@@ -193,15 +279,31 @@ export async function teleportToLocal(input: TeleportInput & { gitBase?: string 
   renameSync(tmp, target)
 
   let patched = false
-  if (input.gitBase) {
-    const q = new URLSearchParams({ workspace_name: workspaceName(input.cwd), base: input.gitBase })
+  // The cloud diffs against its own snapshot taken after it applied the Mac's work, so only
+  // what happened in the cloud comes back; `base` is the fallback for sessions born there.
+  const gitBase = input.gitBase ?? reachableBase(input.cwd)
+  if (gitBase) {
+    const q = new URLSearchParams({ workspace_name: workspaceName(input.cwd), base: gitBase })
     const diff = new Uint8Array(await (await call("GET", relay(input.targetId, `teleports/export/${input.harness}/${encodeURIComponent(input.nativeId)}/diff?${q}`))).arrayBuffer())
     if (diff.byteLength > 0) {
-      const r = spawnSync("git", ["-C", input.cwd, "apply", "--binary", "--index", "-"], { input: Buffer.from(diff) })
+      const r = spawnSync("git", ["-C", input.cwd, "apply", "--binary", "-"], { input: Buffer.from(diff) })
       if (r.status !== 0) throw new Error(`The conversation came back, but its code changes did not apply cleanly: ${r.stderr?.toString().trim()}`)
       patched = true
     }
   }
+  // Mirror of activation: resume natively here, handoff first, and flip placement only after the
+  // first new output.
+  const started = await resumeNative({
+    sessionID: input.sessionID,
+    harness: input.harness,
+    nativeId: input.nativeId,
+    cwd: input.cwd,
+    model: input.model,
+    effort: input.reasoning,
+    handoff: handoffText("local", "the cloud computer"),
+    queued: input.queued ?? [],
+  })
+  started.done.catch(() => {})
   await setPlacement(input.sessionID, null)
   return { direction: "local", nativeId: input.nativeId, resume: resumeHint(input.harness, input.nativeId), patched }
 }

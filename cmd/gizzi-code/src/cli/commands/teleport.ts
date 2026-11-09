@@ -32,6 +32,7 @@ export const TeleportCommand = cmd({
         })
         UI.println(UI.Style.TEXT_SUCCESS_BOLD + `Teleported to ${result.direction === "cloud" ? "the cloud" : "this Mac"}.` + UI.Style.TEXT_NORMAL)
         UI.println(`Resume with: ${result.resume}`)
+        if (result.conflicts) UI.println(`Some uncommitted work did not fit the cloud copy and was left as the cloud had it: ${result.conflicts.patch} patch conflict(s), ${result.conflicts.untracked} existing untracked file(s).`)
         if (result.patched) UI.println("Code changes from the cloud were applied to your working tree (staged).")
       } catch (e) {
         UI.error(e instanceof Error ? e.message : String(e))

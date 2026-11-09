@@ -9,15 +9,19 @@ description: 'Move a live Code session between your Mac and your cloud computer 
 
 - **The conversation.** The session's own file, byte for byte. Allternit checks its checksum on arrival.
 - **The model and effort.** The session keeps the model and reasoning effort it was using.
-- **The code, through git.** Teleport does not copy your working folder. The cloud computer clones the repo at the commit your Mac was on, and when you bring the session back, Allternit applies the changes made in the cloud as a patch.
+- **The code.** The cloud computer clones your repo at the newest commit your remote already has. Anything beyond that, such as unpushed commits, edits and new untracked files, travels with the session as a patch and an archive, and is applied on top of the clone. If a change does not fit what the cloud already has, the cloud's version stays and the command reports how many conflicts there were. Bringing the session back works the same way in reverse: only what changed in the cloud is applied to your Mac.
 
-Commit and push your work first. Teleport to the cloud stops with a clear message if the working tree has uncommitted changes.
+Teleport to the cloud stops with a clear message only when the workspace has no reachable git remote to clone from.
+
+## What happens on arrival
+
+The cloud computer installs the conversation, applies your code, and resumes the session with the same model and effort. It sends a short handoff note first, then replays any prompts you had queued, in order. The transfer only counts as done once the resumed session produces its first new output; until then the badge stays Local. If the resume fails, nothing is lost: run the same teleport again to retry the resume.
 
 ## Teleport from the app
 
 In a Code session, open the session menu (the title at the top, or the three dots on a phone or in a session row) and choose **Teleport to cloud**. The header badge changes from **Local** to **Cloud** once the session is running there. Choose **Bring back to this Mac** to return it.
 
-On the phone and the m.allternit.com app the same action is in the session menu, and sessions running in the cloud show a **Cloud** badge. On iPhone, open the session overview, tap the three dots on a Code session, and choose Teleport to cloud.
+On the phone and the m.allternit.com app the same action is in the session menu, and the session bar shows a **Local** or **Cloud** chip. On iPhone, open the session overview, tap the three dots on a Code session, and choose Teleport to cloud.
 
 Teleport needs a Mac running Allternit Desktop (or a phone paired to one) and a connected cloud computer. On plain web with no Mac behind it, the action is hidden.
 

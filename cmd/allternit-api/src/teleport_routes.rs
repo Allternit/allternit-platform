@@ -49,6 +49,14 @@ pub struct FileEntry {
     pub name: String,
     pub size: u64,
     pub sha256: String,
+    /// `native` (the session file), `patch` (git diff --binary from the base commit to the
+    /// Mac's working tree) or `untracked` (a tar of untracked, non-ignored files).
+    #[serde(default = "native_kind")]
+    pub kind: String,
+}
+
+fn native_kind() -> String {
+    "native".into()
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -62,6 +70,9 @@ pub struct Manifest {
     pub reasoning: Option<String>,
     /// Folder name for the workspace on this computer.
     pub workspace_name: String,
+    /// The gizzi session the vendor session id is recorded under after the move.
+    #[serde(default)]
+    pub session_id: Option<String>,
     /// `local_to_cloud` or `cloud_to_local`; informational, kept in the record.
     #[serde(default)]
     pub direction: Option<String>,
@@ -104,12 +115,18 @@ pub fn validate(m: &Manifest) -> Result<(), String> {
     if !valid_token(&m.workspace_name) {
         return Err("workspace_name must be 1-64 letters, digits, - or _".into());
     }
-    if m.files.len() != 1 || m.files.len() > MAX_FILES {
-        return Err("a teleport carries exactly one native session file".into());
+    let count = |k: &str| m.files.iter().filter(|f| f.kind == k).count();
+    if count("native") != 1 || count("patch") > 1 || count("untracked") > 1 || m.files.len() != count("native") + count("patch") + count("untracked") || m.files.len() > MAX_FILES {
+        return Err("a teleport carries one native session file, plus at most one patch and one untracked tar".into());
     }
     for f in &m.files {
-        if !valid_file_name(&f.name) || !f.name.ends_with(".jsonl") {
-            return Err("file name must be a plain .jsonl name".into());
+        let ext = match f.kind.as_str() {
+            "native" => ".jsonl",
+            "patch" => ".patch",
+            _ => ".tar",
+        };
+        if !valid_file_name(&f.name) || !f.name.ends_with(ext) {
+            return Err(format!("a {} file must be a plain {ext} name", f.kind));
         }
         if f.size == 0 || f.size > MAX_FILE_BYTES {
             return Err("file size is out of range".into());
@@ -149,6 +166,8 @@ fn ensure_tables(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
              state TEXT NOT NULL DEFAULT 'staged',
              uploaded TEXT NOT NULL DEFAULT '[]',
              cwd TEXT,
+             last_error TEXT,
+             project_report TEXT,
              created_at TEXT NOT NULL DEFAULT (datetime('now')),
              activated_at TEXT,
              UNIQUE (user_id, request_id)
@@ -167,19 +186,21 @@ struct Row {
     state: String,
     uploaded: Vec<usize>,
     cwd: Option<String>,
+    error: Option<String>,
+    report: Option<Value>,
 }
 
 fn load(conn: &rusqlite::Connection, user: &str, where_col: &str, key: &str) -> Result<Option<Row>, ApiError> {
     let sql = format!(
-        "SELECT id, manifest_hash, manifest_json, state, uploaded, cwd FROM teleports WHERE user_id = ?1 AND {where_col} = ?2"
+        "SELECT id, manifest_hash, manifest_json, state, uploaded, cwd, last_error, project_report FROM teleports WHERE user_id = ?1 AND {where_col} = ?2"
     );
     let raw = conn
         .query_row(&sql, params![user, key], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?, r.get::<_, String>(4)?, r.get::<_, Option<String>>(5)?))
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?, r.get::<_, String>(4)?, r.get::<_, Option<String>>(5)?, r.get::<_, Option<String>>(6)?, r.get::<_, Option<String>>(7)?))
         })
         .optional()
         .map_err(internal)?;
-    let Some((id, hash, mj, state, up, cwd)) = raw else { return Ok(None) };
+    let Some((id, hash, mj, state, up, cwd, error, report)) = raw else { return Ok(None) };
     Ok(Some(Row {
         id,
         hash,
@@ -187,6 +208,8 @@ fn load(conn: &rusqlite::Connection, user: &str, where_col: &str, key: &str) -> 
         state,
         uploaded: serde_json::from_str(&up).unwrap_or_default(),
         cwd,
+        error,
+        report: report.and_then(|r| serde_json::from_str(&r).ok()),
     }))
 }
 
@@ -201,6 +224,8 @@ fn view(row: &Row) -> Value {
         "workspace": row.cwd,
         "files_pending": pending,
         "ready": row.state == "staged" && pending.is_empty(),
+        "error": row.error,
+        "project": row.report,
         "resume": resume_hint(&row.manifest),
     })
 }
@@ -368,21 +393,28 @@ async fn upload(
 async fn activate(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Path(id): Path<String>) -> Result<Json<Value>, ApiError> {
     let dir = teleport_dir(&state, &id);
     let db = state.db.clone();
-    blocking(move || {
+    let (row, resume) = blocking(move || {
         let mut conn = db.connect().map_err(internal)?;
         ensure_tables(&conn).map_err(internal)?;
         let mut row = load(&conn, &user.user_id, "id", &id)?.ok_or_else(|| err(StatusCode::NOT_FOUND, "not_found", "no such teleport"))?;
         match row.state.as_str() {
-            "active" => return Ok(Json(view(&row))), // retry after success
+            // Retries after success, or while the resume is still running, change nothing.
+            "active" | "resuming" => return Ok((row, false)),
             "cancelled" => return Err(err(StatusCode::CONFLICT, "teleport_cancelled", "this transfer was cancelled")),
+            // Installed already; only the resume failed. Try it again.
+            "resume_failed" => {
+                conn.execute("UPDATE teleports SET state = 'resuming', last_error = NULL WHERE id = ?1", params![id]).map_err(internal)?;
+                row.state = "resuming".into();
+                return Ok((row, true));
+            }
             _ => {}
         }
         if (0..row.manifest.files.len()).any(|i| !row.uploaded.contains(&i)) {
             return Err(err(StatusCode::CONFLICT, "teleport_rejected", "files are still missing"));
         }
         let cwd = row.cwd.clone().ok_or_else(|| internal("transfer has no workspace"))?;
-        let entry = &row.manifest.files[0];
-        let target = native_target(&row.manifest, &cwd, &entry.name);
+        let native_index = row.manifest.files.iter().position(|f| f.kind == "native").ok_or_else(|| internal("no native file"))?;
+        let target = native_target(&row.manifest, &cwd, &row.manifest.files[native_index].name);
         let native_key = format!("{}:{}", row.manifest.harness, row.manifest.native_id);
 
         // One atomic write: the claim on the native id and the state flip commit together,
@@ -397,17 +429,166 @@ async fn activate(State(state): State<Arc<AppState>>, Extension(user): Extension
         if target.exists() {
             return Err(err(StatusCode::CONFLICT, "teleport_rejected", "a native session file already exists at the destination"));
         }
-        install(&dir.join("0.part"), &target)?;
-        tx.execute("UPDATE teleports SET state = 'active', activated_at = datetime('now') WHERE id = ?1", params![id]).map_err(internal)?;
+        install(&dir.join(format!("{native_index}.part")), &target)?;
+        // The transfer is only `active` once the resumed session has produced new output.
+        tx.execute("UPDATE teleports SET state = 'resuming', activated_at = datetime('now') WHERE id = ?1", params![id]).map_err(internal)?;
         if let Err(e) = tx.commit() {
             let _ = std::fs::remove_file(&target);
             return Err(internal(e));
         }
+        // The code the Mac had but git did not: applied on top of the clone, never over cloud edits.
+        let mut report = apply_project(&dir, &row.manifest, FsPath::new(&cwd));
+        report["snapshot"] = json!(snapshot(FsPath::new(&cwd)));
+        let _ = conn.execute("UPDATE teleports SET project_report = ?1 WHERE id = ?2", params![report.to_string(), id]);
+        row.report = Some(report);
         let _ = std::fs::remove_dir_all(&dir);
-        row.state = "active".into();
-        Ok(Json(view(&row)))
+        row.state = "resuming".into();
+        Ok((row, true))
     })
-    .await
+    .await?;
+    if resume {
+        tokio::spawn(run_resume(state.clone(), row.id.clone(), row.manifest.clone(), row.cwd.clone().unwrap_or_default()));
+    }
+    Ok(Json(view(&row)))
+}
+
+/// Ask this computer's gizzi to resume the native session (`--resume`, same model and
+/// effort), send the handoff, then replay the queued prompts. It answers after the first
+/// new output; only then does the transfer become `active`.
+async fn run_resume(state: Arc<AppState>, id: String, m: Manifest, cwd: String) {
+    let body = json!({
+        "sessionId": m.session_id.clone().unwrap_or_else(|| m.native_id.clone()),
+        "harness": m.harness,
+        "nativeId": m.native_id,
+        "cwd": cwd,
+        "model": m.model,
+        "effort": m.reasoning,
+        "handoff": m.handoff,
+        "queued": m.queued,
+    });
+    let client = crate::agent_session_routes::gizzi_client(&axum::http::HeaderMap::new());
+    let url = format!("{}/v1/native-session/teleport-resume?directory={}", crate::agent_session_routes::gizzi_base(), urlencode(&cwd));
+    let result = match client.post(url).json(&body).timeout(std::time::Duration::from_secs(180)).send().await {
+        Ok(res) if res.status().is_success() => Ok(()),
+        Ok(res) => Err(res.text().await.unwrap_or_default().chars().take(400).collect::<String>()),
+        Err(e) => Err(e.to_string()),
+    };
+    let db = state.db.clone();
+    let _ = tokio::task::spawn_blocking(move || {
+        if let Ok(conn) = db.connect() {
+            let _ = match result {
+                Ok(()) => conn.execute("UPDATE teleports SET state = 'active', last_error = NULL WHERE id = ?1", params![id]),
+                Err(msg) => conn.execute("UPDATE teleports SET state = 'resume_failed', last_error = ?2 WHERE id = ?1", params![id, msg]),
+            };
+        }
+    })
+    .await;
+}
+
+fn urlencode(v: &str) -> String {
+    v.bytes().map(|b| if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'/') { (b as char).to_string() } else { format!("%{b:02X}") }).collect()
+}
+
+/// Apply the `patch` and `untracked` files over the fresh clone. A hunk that does not fit and
+/// an untracked file that already exists are conflicts: the cloud original stays, and the
+/// count is reported.
+fn apply_project(dir: &FsPath, m: &Manifest, cwd: &FsPath) -> Value {
+    let (mut patch_conflicts, mut untracked_conflicts, mut applied) = (0u32, 0u32, 0u32);
+    let mut note: Option<String> = None;
+    for (i, f) in m.files.iter().enumerate() {
+        let part = dir.join(format!("{i}.part"));
+        match f.kind.as_str() {
+            "patch" => {
+                let out = std::process::Command::new("git")
+                    .arg("-C").arg(cwd)
+                    .args(["apply", "--reject", "--whitespace=nowarn"])
+                    .arg(&part)
+                    .output();
+                if let Err(e) = &out {
+                    note = Some(e.to_string());
+                }
+                // Rejected hunks land in .rej files: count and remove them, the original stays.
+                patch_conflicts += remove_rejects(cwd);
+                applied += 1;
+            }
+            "untracked" => {
+                let tmp = dir.join(format!("{i}.untracked"));
+                let _ = std::fs::create_dir_all(&tmp);
+                let ok = std::process::Command::new("tar").arg("-xf").arg(&part).arg("-C").arg(&tmp).output().map(|o| o.status.success()).unwrap_or(false);
+                if ok {
+                    untracked_conflicts += copy_new(&tmp, &tmp, cwd);
+                    applied += 1;
+                } else {
+                    note = Some("the untracked-files archive could not be read".into());
+                }
+            }
+            _ => {}
+        }
+    }
+    json!({ "applied": applied, "patch_conflicts": patch_conflicts, "untracked_conflicts": untracked_conflicts, "note": note })
+}
+
+/// A commit object of the workspace as it is now (not on any branch), so the way back can
+/// diff against exactly what the Mac sent.
+fn snapshot(cwd: &FsPath) -> Option<String> {
+    let git = |args: &[&str]| std::process::Command::new("git").arg("-C").arg(cwd).args(args).output().ok().filter(|o| o.status.success());
+    git(&["add", "-A"])?;
+    let tree = String::from_utf8(git(&["write-tree"])?.stdout).ok()?.trim().to_string();
+    let commit = git(&["-c", "user.name=teleport", "-c", "user.email=teleport@localhost", "commit-tree", &tree, "-m", "teleport snapshot"]).and_then(|o| String::from_utf8(o.stdout).ok()).map(|c| c.trim().to_string());
+    let _ = git(&["reset", "-q"]);
+    commit.filter(|c| !c.is_empty())
+}
+
+fn remove_rejects(dir: &FsPath) -> u32 {
+    let mut n = 0;
+    if let Ok(rd) = std::fs::read_dir(dir) {
+        for e in rd.flatten() {
+            let p = e.path();
+            let name = e.file_name().to_string_lossy().to_string();
+            if name == ".git" {
+                continue;
+            }
+            if p.is_dir() {
+                n += remove_rejects(&p);
+            } else if name.ends_with(".rej") && std::fs::remove_file(&p).is_ok() {
+                n += 1;
+            }
+        }
+    }
+    n
+}
+
+/// Copy extracted files into the workspace without overwriting; returns how many already existed.
+fn copy_new(root: &FsPath, dir: &FsPath, cwd: &FsPath) -> u32 {
+    let mut conflicts = 0;
+    let Ok(rd) = std::fs::read_dir(dir) else { return 0 };
+    for e in rd.flatten() {
+        let p = e.path();
+        let Ok(meta) = std::fs::symlink_metadata(&p) else { continue };
+        if meta.file_type().is_symlink() {
+            continue;
+        }
+        if meta.is_dir() {
+            if e.file_name() != ".git" {
+                conflicts += copy_new(root, &p, cwd);
+            }
+            continue;
+        }
+        let Ok(rel) = p.strip_prefix(root) else { continue };
+        if rel.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+            continue;
+        }
+        let dest = cwd.join(rel);
+        if dest.exists() {
+            conflicts += 1;
+        } else {
+            if let Some(parent) = dest.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            let _ = std::fs::copy(&p, &dest);
+        }
+    }
+    conflicts
 }
 
 fn install(part: &FsPath, target: &FsPath) -> Result<(), ApiError> {
@@ -583,14 +764,30 @@ struct DiffQuery {
 /// Cloud -> Mac: what changed in the workspace since the commit the Mac teleported from.
 async fn export_diff(
     State(state): State<Arc<AppState>>,
-    Path((_harness, _id)): Path<(String, String)>,
+    Path((harness, id)): Path<(String, String)>,
     axum::extract::Query(q): axum::extract::Query<DiffQuery>,
 ) -> Result<(StatusCode, Bytes), ApiError> {
     if !valid_token(&q.workspace_name) || q.base.len() < 7 || q.base.len() > 64 || !q.base.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err(err(StatusCode::BAD_REQUEST, "teleport_rejected", "bad workspace_name or base"));
     }
     let cwd = state.data_dir.join("teleport-workspaces").join(&q.workspace_name);
+    let db = state.db.clone();
+    let key = format!("{harness}:{id}");
     blocking(move || {
+        // Prefer the snapshot taken when the Mac's work was applied; fall back to the caller's base.
+        let snap: Option<String> = db.connect().ok().and_then(|conn| {
+            ensure_tables(&conn).ok()?;
+            conn.query_row(
+                "SELECT t.project_report FROM teleports t JOIN teleport_native_owners o ON o.teleport_id = t.id WHERE o.native_key = ?1",
+                params![key],
+                |r| r.get::<_, Option<String>>(0),
+            )
+            .ok()
+            .flatten()
+            .and_then(|r| serde_json::from_str::<Value>(&r).ok())
+            .and_then(|v| v["snapshot"].as_str().map(str::to_string))
+        });
+        let q = DiffQuery { base: snap.unwrap_or(q.base), ..q };
         // Untracked files count: intent-to-add makes them show in the diff.
         let _ = std::process::Command::new("git").arg("-C").arg(&cwd).args(["add", "-N", "."]).output();
         let out = std::process::Command::new("git")
@@ -619,10 +816,11 @@ mod tests {
             model: "claude-sonnet-4".into(),
             reasoning: None,
             workspace_name: "app".into(),
+            session_id: None,
             direction: None,
             git_remote: None,
             git_base: None,
-            files: vec![FileEntry { name: "x.jsonl".into(), size: 10, sha256: "a".repeat(64) }],
+            files: vec![FileEntry { name: "x.jsonl".into(), size: 10, sha256: "a".repeat(64), kind: "native".into() }],
             handoff: "moved".into(),
             queued: vec![],
         }

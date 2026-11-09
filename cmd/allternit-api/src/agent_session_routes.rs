@@ -209,6 +209,7 @@ pub fn agent_session_router() -> Router<Arc<AppState>> {
         .route("/native-sessions", get(list_native_sessions))
         .route("/native-sessions/pickup", post(pickup_native_session))
         .route("/native-sessions/spawn", post(spawn_native_session))
+        .route("/native-sessions/teleport", post(teleport_native_session))
         .route("/native-sessions/:harness/:id", get(show_native_session))
         .route("/agent-sessions/:id/fetch-origin", post(fetch_native_origin))
         .route("/agent-sessions/:id/origin", get(get_native_origin))
@@ -2503,6 +2504,12 @@ async fn proxy_gizzi(
         )
             .into_response(),
     }
+}
+
+/// Teleport (Mac <-> cloud computer): gizzi owns the manifest and the transfer, so 8013 forwards it.
+async fn teleport_native_session(headers: HeaderMap, Json(body): Json<serde_json::Value>) -> Response {
+    let client = gizzi_client(&headers);
+    proxy_gizzi(&client, reqwest::Method::POST, "/v1/native-session/teleport", Some(body)).await
 }
 
 async fn list_native_harnesses(headers: HeaderMap) -> Response {
