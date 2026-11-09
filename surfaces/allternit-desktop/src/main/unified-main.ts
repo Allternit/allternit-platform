@@ -2829,6 +2829,7 @@ app.whenReady().then(async () => {
 
   initializeAppOnce();
   installAppMenu();
+  onMainWindowsChanged(installAppMenu);
   createTray();
   startExtensionBridge();
   startAcuExtensionRelay();
