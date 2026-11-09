@@ -40,6 +40,7 @@ describe("CliBridge MCP server", () => {
       "artifact_share",
       "artifact_comment",
       "artifact_storage",
+      "artifact_check",
       "question",
     ])
     const question = list.result.tools.find((t: any) => t.name === "question")
