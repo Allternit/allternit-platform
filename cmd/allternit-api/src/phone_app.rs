@@ -81,6 +81,9 @@ pub const APP_ROUTE: &str = "iphone-app-store";
 pub const EVENT_PAIR_REQUEST: &str = "phone_app.pair_request";
 pub const EVENT_PAIR_RESOLVED: &str = "phone_app.pair_resolved";
 const VAULT_PROVIDER_PREFIX: &str = "app_phone:";
+/// Vault rows need an agent or a session id (V37 CHECK). An app phone
+/// belongs to the account, so its key is filed under this fixed session id.
+const VAULT_SESSION: &str = "app-phone";
 const HELLO_TIMEOUT: Duration = Duration::from_secs(10);
 const PAIR_DECISION_TIMEOUT: Duration = Duration::from_secs(120);
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
@@ -229,7 +232,7 @@ async fn store_phone(
     let user = user.clone();
     let provider = format!("{VAULT_PROVIDER_PREFIX}{phone_id}");
     let value = json!({ "key": key.to_hex(), "name": name, "model": model }).to_string();
-    match tokio::task::spawn_blocking(move || vault.put(&user, &provider, None, None, &value, None)).await {
+    match tokio::task::spawn_blocking(move || vault.put(&user, &provider, None, Some(VAULT_SESSION), &value, None)).await {
         Ok(Ok(_)) => true,
         Ok(Err(e)) => {
             warn!(error = %e, "app phone key not stored");
@@ -243,7 +246,7 @@ async fn load_phone(state: &AppState, account: &str, phone_id: &str) -> Option<S
     let vault = crate::allternit_vault::AllternitVault::new(state.db.clone());
     let account = account.to_string();
     let provider = format!("{VAULT_PROVIDER_PREFIX}{phone_id}");
-    let raw = tokio::task::spawn_blocking(move || vault.get(&account, &provider, None, None))
+    let raw = tokio::task::spawn_blocking(move || vault.get(&account, &provider, None, Some(VAULT_SESSION)))
         .await
         .ok()?
         .ok()??;
@@ -845,6 +848,39 @@ async fn rpc(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Regression: the vault CHECK needs an agent or a session id, so pairing
+    // used to fail at "app phone key not stored" and the iPhone showed
+    // "The Desktop declined this iPhone".
+    #[tokio::test]
+    async fn a_paired_phone_key_is_stored_and_read_back() {
+        let temp = tempfile::tempdir().unwrap();
+        let state = crate::test_helpers::app_state(temp.path()).await;
+        state
+            .db
+            .connect()
+            .unwrap()
+            .execute("INSERT INTO users (id, email) VALUES ('user-p', 'user-p@test.local')", [])
+            .unwrap();
+        let user = AuthUser {
+            user_id: "user-p".to_string(),
+            email: Some("user-p@test.local".to_string()),
+            name: None,
+            avatar_url: None,
+            tenant_id: None,
+            organization_id: None,
+            organization_role: None,
+            organization_slug: None,
+        };
+        let phone = uuid::Uuid::new_v4().to_string();
+        let key = EnvelopeKey::from_hex(&"ab".repeat(32)).unwrap();
+        let name = Some("iPhone".to_string());
+        let model = Some("iPhone15,4".to_string());
+        assert!(store_phone(&state, &user, &phone, &key, &name, &model).await);
+        let stored = load_phone(&state, "user-p", &phone).await.expect("stored phone");
+        assert_eq!(stored.key.to_hex(), key.to_hex());
+        assert_eq!(stored.model.as_deref(), Some("iPhone15,4"));
+    }
 
     #[test]
     fn viewer_changes_map_to_extension_hints() {
