@@ -645,14 +645,14 @@ struct DirectoryHero: View {
 /// hero.css's --hero-* tokens: ink panel and white type in light mode, white
 /// panel and ink type in dark mode.
 struct HeroPalette {
-    let bg: Color, fg: Color, sub: Color, dot: Color, border: Color
+    let bg: Color, fg: Color, sub: Color, line: Color, dot: Color, border: Color
 
     init(dark: Bool) {
         let ink = Color(hex: "#141413")
         if dark {
-            bg = .white; fg = ink; sub = ink.opacity(0.62); dot = ink.opacity(0.2); border = ink.opacity(0.08)
+            bg = .white; fg = ink; sub = ink.opacity(0.62); line = ink.opacity(0.15); dot = ink.opacity(0.2); border = ink.opacity(0.08)
         } else {
-            bg = ink; fg = .white; sub = .white.opacity(0.7); dot = .white.opacity(0.3); border = .clear
+            bg = ink; fg = .white; sub = .white.opacity(0.7); line = .white.opacity(0.25); dot = .white.opacity(0.3); border = .clear
         }
     }
 }
