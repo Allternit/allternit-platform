@@ -205,7 +205,7 @@ export class LoopEngine {
       if (!kept) await this.revert(head.out, before, cwd)
       else {
         control = treatment
-        await this.commitKept(iteration, cwd)
+        if (!(await this.commitKept(iteration, cwd))) return blocked("could not commit the kept change; stopped so it is not reverted by the next attempt")
       }
       stalled = res.delta > noise ? 0 : stalled + 1
       ledger.push({ iteration, hypothesis: loop.command, delta: res.delta, ci: res.ci, n: res.pairs, noise, verdict: res.verdict, why: res.why, outcome: "ACTED", control, treatment, timestamp: new Date().toISOString() })
@@ -241,10 +241,15 @@ export class LoopEngine {
   }
 
   /** Commit a kept change so the next attempt starts from a clean tree. */
-  private static async commitKept(iteration: number, cwd?: string): Promise<void> {
-    if (!(await this.git("status --porcelain", cwd)).out) return
+  private static async commitKept(iteration: number, cwd?: string): Promise<boolean> {
+    if (!(await this.git("status --porcelain", cwd)).out) return true
     await this.git("add -A", cwd)
-    await this.git(`commit -q -m "loop: keep attempt ${iteration}"`, cwd)
+    // A fresh runtime may have no git identity; without one the commit fails
+    // and the next revert would throw the kept change away.
+    const named = (await this.git("config user.email", cwd)).out
+    const who = named ? "" : `-c user.name="Allternit Loop" -c user.email=loop@allternit.local `
+    const done = await this.git(`${who}commit -q -m "loop: keep attempt ${iteration}"`, cwd)
+    return done.ok
   }
 
   private static runCommandWithEnv(command: string, cwd: string | undefined, env: Record<string, string>) {
