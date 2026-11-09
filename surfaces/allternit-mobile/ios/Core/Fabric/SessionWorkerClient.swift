@@ -104,7 +104,8 @@ enum SessionWorkerEvent: Decodable, Sendable {
                 title: state.title,
                 error: state.error,
                 startedAt: state.startedAt,
-                finishedAt: state.finishedAt
+                finishedAt: state.finishedAt,
+                output: state.output?.value as? String
             )
         }
     }

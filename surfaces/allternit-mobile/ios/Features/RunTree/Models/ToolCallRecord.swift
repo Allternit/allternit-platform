@@ -20,6 +20,8 @@ struct ToolCallRecord: Identifiable, Equatable, Sendable {
     var error: String? = nil
     var startedAt: Date? = nil
     var finishedAt: Date? = nil
+    /// The tool's result text (message_agent: where the delivery receipt comes from).
+    var output: String? = nil
 
     /// How long the call ran; live calls count up to `now`.
     func elapsed(now: Date = Date()) -> TimeInterval? {
@@ -32,6 +34,22 @@ struct ToolCallRecord: Identifiable, Equatable, Sendable {
 
     /// A subagent spawn (Task / Agent / delegate tools) — web `isAgentStep`.
     var isAgentStep: Bool { ToolDescriber.isAgentTool(toolName) }
+
+    /// Delivery receipt for a message_agent call: "Queued", "Queued · Pushed", "Delivered",
+    /// "Read", "Answered", "Held", "Failed". Mirrors the web ReceiptChip (allternit-ai
+    /// ReceiptChip.tsx) so every surface says the same words. Nil for other tools.
+    var receiptLabel: String? {
+        guard ToolDescriber.normalized(toolName) == "messageagent", let text = output, !text.isEmpty else { return nil }
+        if text.hasPrefix("Held:") { return "Held: loop guard" }
+        if text.contains("couldn't finish it") { return "Failed" }
+        if text.contains(" replied (thread") { return "Answered" }
+        if text.contains(" started on it (thread") { return "Delivered · Read" }
+        if text.range(of: #": pushed\b"#, options: .regularExpression) != nil { return "Queued · Pushed" }
+        if text.range(of: #": delivered\b"#, options: .regularExpression) != nil { return "Delivered" }
+        if text.range(of: #": queued\b|^stored in |delivered to .* inbox"#, options: .regularExpression) != nil { return "Queued" }
+        if text.range(of: #": (failed|refused)\b"#, options: .regularExpression) != nil { return "Failed" }
+        return nil
+    }
 
     /// Todo/plan tool calls stay off the rail (Progress lives elsewhere).
     var isTodo: Bool {
@@ -61,7 +79,8 @@ extension ToolCallRecord {
                 title: part.state?.title,
                 error: part.state?.error,
                 startedAt: part.state?.startedAt,
-                finishedAt: part.state?.finishedAt
+                finishedAt: part.state?.finishedAt,
+                output: part.state?.output?.value as? String
             )
         }
     }
@@ -77,6 +96,7 @@ extension MessageRecord {
             call.toolName = name.isEmpty ? call.toolName : name
             call.state = state
             if let detail {
+                if let out = detail.output { call.output = out }
                 if !detail.input.isEmpty { call.input = detail.input }
                 call.title = detail.title ?? call.title
                 call.error = detail.error ?? call.error
