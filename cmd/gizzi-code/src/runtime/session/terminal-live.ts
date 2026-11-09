@@ -104,6 +104,8 @@ export namespace TerminalLive {
   // Module-level, not Instance state: prompts and replies for the session can
   // arrive under any directory (server.ts routes /session/<id> to its stored one).
   const live = new Map<string, Live>()
+  // Text already sent as deltas: session → part → text. Dropped on detach.
+  const streamed = new Map<string, Map<string, string>>()
 
   export function attached(sessionID: string): boolean {
     return live.has(sessionID)
@@ -173,6 +175,7 @@ export namespace TerminalLive {
     return () => {
       if (live.get(input.sessionID) !== entry) return
       live.delete(input.sessionID)
+      streamed.delete(input.sessionID)
       SessionStatus.set(input.sessionID, { type: "idle" })
       Bus.publish(Event.Attached, {
         sessionID: input.sessionID,
@@ -269,7 +272,23 @@ export namespace TerminalLive {
       // Published once its parts are stored: the agent-sessions feed reads a
       // message's text from its parts when it maps message.updated.
       Bus.publish(MessageV2.Event.Updated, { info: stored })
-      for (const part of parts) Bus.publish(MessageV2.Event.PartUpdated, { part })
+      for (const part of parts) {
+        Bus.publish(MessageV2.Event.PartUpdated, { part })
+        // Text as deltas too, so a chat stream waiting on this turn (/api/agent-chat) shows the reply.
+        if (part.type !== "text" && part.type !== "reasoning") continue
+        const sent = streamed.get(sessionID) ?? new Map<string, string>()
+        streamed.set(sessionID, sent)
+        const before = sent.get(part.id) ?? ""
+        if (part.text.length > before.length && part.text.startsWith(before))
+          Bus.publish(MessageV2.Event.PartDelta, {
+            sessionID,
+            messageID: part.messageID,
+            partID: part.id,
+            field: "text",
+            delta: part.text.slice(before.length),
+          })
+        sent.set(part.id, part.text)
+      }
     }
   }
 
