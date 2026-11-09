@@ -1,0 +1,108 @@
+---
+title: PDF from templates
+description: Make an invoice, report, event ticket, meeting minutes or receipt as a real PDF from Desktop, the web, your phone, the CLI or the API.
+---
+
+## What you get
+
+Five document templates, each with three themes, turn plain data into a
+print-ready PDF with real text and clean page breaks:
+
+| Template | Use it for | Header styles |
+|---|---|---|
+| Invoice | Line items, tax, totals | classic, minimal, modern |
+| Report | Headline numbers, then sections with text, bullets and tables | classic, minimal, modern |
+| Event ticket | One admission ticket with a stub code | classic, minimal, modern |
+| Meeting minutes | Attendees, agenda, decisions, action items | classic, minimal |
+| Receipt | Itemized proof of payment | minimal, classic, modern |
+
+Themes are **Professional** (graphite ink, one warm rule), **Minimal**
+(black and white) and **Executive** (navy header band). Paper is Letter or A4.
+
+The ticket shows its code as text. It is not a scannable barcode.
+
+## Make one in the app
+
+On Desktop, ai.allternit.com, the phone layout and the m.allternit.com app,
+open a Doc, Sheet, Ops sheet or Dashboard, open the **Download** menu and choose
+**PDF from template**. Pick a template, a theme and a header style, edit the
+data as JSON, check the page on the right, then choose **Download PDF**. On the
+phone layout the same picker opens as a bottom sheet.
+
+On the iPhone app, open the artifact and tap the **PDF from template** button in
+the top bar. If the artifact's own content is a JSON object, the PDF uses it;
+otherwise the template's sample data is used and the sheet says so. The finished
+PDF opens in the share sheet so you can save it to Files or send it.
+
+### Desktop makes real PDFs of pages and designs
+
+In Allternit Desktop, **PDF** on a Page artifact and **PDF** on a Design artifact
+print the page with Chromium into a real PDF file. Outside Desktop the Design
+export still opens your browser's print dialog, where you choose **Save as PDF**.
+
+## Data shape
+
+Missing fields are left blank. Unknown fields are ignored. Money amounts are
+numbers; dates and times are text you write the way you want them printed.
+
+```json
+{
+  "number": "INV-1042",
+  "issued": "Nov 9, 2026",
+  "due": "Dec 9, 2026",
+  "currency": "USD",
+  "taxRate": 8.25,
+  "from": { "name": "Northwind Studio", "lines": ["410 Market Street"] },
+  "to": { "name": "Harbor Coffee Co." },
+  "items": [{ "description": "Brand audit", "qty": 1, "unitPrice": 1800 }]
+}
+```
+
+Totals are computed for you (subtotal, discount, tax, amount due). The sample
+for every template is in `platform/packages/pdf-templates/src/templates.ts`.
+
+## From the CLI
+
+```bash
+gizzi pdf templates
+gizzi pdf render invoice --data invoice.json --theme executive --variant modern -o invoice.pdf
+gizzi pdf render receipt --sample -o receipt.pdf
+gizzi pdf render report --data report.json --html -o report.html
+```
+
+The CLI draws the PDF itself, so it needs no server and no browser. Use it from
+the quote and client-report skills to turn a draft into a letterhead document.
+
+## From the API
+
+```http
+POST /api/v1/office/engines/pdf/render
+Content-Type: application/json
+
+{ "template": "invoice", "theme": "professional", "variant": "classic", "pageSize": "letter", "data": { } }
+```
+
+The reply is `application/pdf`. A bad request returns JSON with `error` and
+`message`. The route is served by the office engine behind allternit-api, so it
+works on any computer that runs it, including your cloud computer. No headless
+browser is involved.
+
+## Limits
+
+- Fonts are the standard PDF fonts, so text outside Latin characters prints as
+  a question mark in server and CLI PDFs. Desktop's print path uses system fonts.
+- The server PDF and the Desktop print path draw the same layout, but line
+  breaks can differ by a word here and there.
+- Android uses the m.allternit.com app, so it has the same picker.
+
+## For developers
+
+- Shared source: `allternit/platform/packages/pdf-templates` (`templates.ts`
+  builds a list of layout blocks; `html.ts` and `pdf.ts` draw them). The
+  `allternit-ai` copy in `src/lib/pdf-templates` mirrors every file except the
+  PDF writer. Change both together.
+- Desktop: the `shell:print-to-pdf` IPC (`src/main/print-to-pdf.ts`) opens a
+  hidden sandboxed window with its own in-memory session and calls
+  `webContents.printToPDF`. The renderer reaches it as
+  `window.allternit.shell.printToPdf`.
+- iOS: `PDFTemplateClient.swift` and `PDFTemplateSheet.swift`.
