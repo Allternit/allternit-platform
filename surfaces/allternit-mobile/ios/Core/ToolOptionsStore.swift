@@ -117,7 +117,8 @@ final class ToolOptionsStore: ObservableObject {
     /// Undoes `enrichedText` so a failed send hands back what the person typed.
     func strippedText(_ text: String) -> String {
         var body = text
-        let prefixes = ["[web_search_enabled] "] + ComposerResponseStyle.allCases.map(\.promptPrefix)
+        // "[research_enabled] " comes from chats sent on the web (ChatComposer buildEnrichedInput).
+        let prefixes = ["[web_search_enabled] ", "[research_enabled] "] + ComposerResponseStyle.allCases.map(\.promptPrefix)
         var changed = true
         while changed {
             changed = false
