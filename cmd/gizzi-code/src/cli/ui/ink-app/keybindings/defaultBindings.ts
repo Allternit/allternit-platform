@@ -81,6 +81,13 @@ export const DEFAULT_BINDINGS: KeybindingBlock[] = [
       'meta+o': 'chat:fastMode',
       'meta+t': 'chat:thinkingToggle',
       enter: 'chat:submit',
+      // While the agent works: enter steers (the message reaches the model at
+      // the next tool call), tab queues it for after the turn, ctrl+x enter
+      // stops the turn and sends it now. Same keys as Codex CLI (enter/tab).
+      // tab only acts when a turn is running and the prompt has text, so
+      // completion and suggestion accept keep tab otherwise.
+      tab: 'chat:queueAfter',
+      'ctrl+x enter': 'chat:stopAndSend',
       up: 'history:previous',
       down: 'history:next',
       // Editing shortcuts (defined here, migration in progress)

@@ -16,7 +16,7 @@ const teamMemSaved = feature('TEAMMEM') ? require('./teamMemSaved.js') as typeof
 /* eslint-enable @typescript-eslint/no-require-imports */
 import { TURN_COMPLETION_VERBS } from '../../constants/turnCompletionVerbs';
 import { useTerminalSize } from '../../hooks/useTerminalSize';
-import type { SystemMessage, SystemStopHookSummaryMessage, SystemBridgeStatusMessage, SystemTurnDurationMessage, SystemThinkingMessage, SystemMemorySavedMessage, SystemMemoryUpdatedMessage, SystemRunTelemetryMessage, SystemAPIErrorMessage as SystemAPIErrorMessageType } from '../../types/message';
+import type { SystemAwaySummaryMessage, SystemMessage, SystemStopHookSummaryMessage, SystemBridgeStatusMessage, SystemTurnDurationMessage, SystemThinkingMessage, SystemMemorySavedMessage, SystemMemoryUpdatedMessage, SystemRunTelemetryMessage, SystemAPIErrorMessage as SystemAPIErrorMessageType } from '../../types/message';
 import { MemoryUpdateNotification } from '../memory/MemoryUpdateNotification';
 import { SystemAPIErrorMessage } from './SystemAPIErrorMessage';
 import { formatDuration, formatNumber, formatSecondsShort } from '../../utils/format';
@@ -29,6 +29,7 @@ import { useAppState, useAppStateStore } from '../../state/AppState';
 import { isBackgroundTask, type TaskState } from '../../tasks/types';
 import { getPillLabel } from '../../tasks/pillLabel';
 import { useSelectedMessageBg } from '../messageActions';
+import { AwayRecap } from './AwayRecap';
 type Props = {
   message: SystemMessage;
   addMargin: boolean;
@@ -72,14 +73,7 @@ export function SystemTextMessage({
     return t4;
   }
   if (message.subtype === "away_summary") {
-    const t1 = addMargin ? 1 : 0;
-    const t2 = <Box minWidth={2}><Text dimColor={true}>{REFERENCE_MARK}</Text></Box>;
-
-    const t3 = <Text dimColor={true}>{message.content}</Text>;
-
-    const t4 = <Box flexDirection="row" marginTop={t1} backgroundColor={bg} width="100%">{t2}{t3}</Box>;
-
-    return t4;
+    return <AwayRecap message={message as SystemAwaySummaryMessage} addMargin={addMargin} bg={bg} />;
   }
   if (message.subtype === "agents_killed") {
     const t1 = addMargin ? 1 : 0;

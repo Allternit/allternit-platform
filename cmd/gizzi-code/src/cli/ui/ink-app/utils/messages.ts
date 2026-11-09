@@ -4447,11 +4447,17 @@ export function createRunTelemetryMessage(
 
 export function createAwaySummaryMessage(
   content: string,
+  extra?: {
+    files?: { path: string; added: number; removed: number }[]
+    awayMs?: number
+  },
 ): SystemAwaySummaryMessage {
   return {
     type: 'system',
     subtype: 'away_summary',
     content,
+    ...(extra?.files?.length ? { files: extra.files } : {}),
+    ...(extra?.awayMs !== undefined ? { awayMs: extra.awayMs } : {}),
     timestamp: new Date().toISOString(),
     uuid: randomUUID(),
     isMeta: false,

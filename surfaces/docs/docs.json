@@ -417,6 +417,7 @@
               "cli/context",
               "cli/code-intelligence",
               "cli/usage",
+              "cli/keyboard-shortcuts",
               "cli/plan",
               "cli/ci-mode",
               "cli/agent-daemon",
