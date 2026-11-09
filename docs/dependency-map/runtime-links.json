@@ -61,6 +61,12 @@
       "path": "allternit/surfaces/allternit-mobile"
     },
     {
+      "id": "surface:android",
+      "label": "Allternit Android app (Google Play)",
+      "kind": "surface",
+      "path": "allternit/surfaces/allternit-mobile/android"
+    },
+    {
       "id": "surface:platform",
       "label": "platform.allternit.com",
       "kind": "surface",
@@ -1243,6 +1249,55 @@
         "allternit/cmd/allternit-api/src/official_mcp.rs",
         "allternit/scripts/gen-official-mcp-servers.mjs",
         "allternit-ai/src/views/mini-apps/official-servers.ts"
+      ]
+    },
+    {
+      "source": "surface:ios",
+      "target": "allternit/surfaces/allternit-mobile/ios",
+      "kind": "ships",
+      "evidence": [
+        "allternit/surfaces/allternit-mobile/ios/project.yml"
+      ]
+    },
+    {
+      "source": "surface:android",
+      "target": "allternit/surfaces/allternit-mobile/android",
+      "kind": "ships",
+      "evidence": [
+        "allternit/surfaces/allternit-mobile/android/app/build.gradle.kts"
+      ]
+    },
+    {
+      "source": "surface:android",
+      "target": "allternit-ai",
+      "kind": "ships m.allternit.com as a Trusted Web Activity (workspace features arrive with the PWA deploy; only Phone Link is native)",
+      "evidence": [
+        "allternit/surfaces/allternit-mobile/android/app/src/main/AndroidManifest.xml"
+      ]
+    },
+    {
+      "source": "allternit/surfaces/allternit-mobile/ios",
+      "target": "allternit/cmd/allternit-cloud-api",
+      "kind": "authenticated HTTP: account, runtime relay to the user's computer, push",
+      "evidence": [
+        "allternit/surfaces/allternit-mobile/ios/Core/API/RuntimeRelayClient.swift"
+      ]
+    },
+    {
+      "source": "allternit/surfaces/allternit-mobile/ios",
+      "target": "allternit/cmd/allternit-api",
+      "kind": "HTTP + SSE through the runtime relay: agent sessions, chat, bots, automation",
+      "evidence": [
+        "allternit/surfaces/allternit-mobile/ios/Core/API/CoworkTasksClient.swift",
+        "allternit/surfaces/allternit-mobile/ios/Core/API/TwinClient.swift"
+      ]
+    },
+    {
+      "source": "allternit/surfaces/allternit-desktop",
+      "target": "allternit/surfaces/allternit-mobile/android",
+      "kind": "iCTRL JSON-RPC over HTTP (port 8200) to Phone Link",
+      "evidence": [
+        "allternit/surfaces/allternit-mobile/android/README.md"
       ]
     }
   ]
