@@ -203,8 +203,9 @@ export const MessageAgentTool = Tool.define("message_agent", {
 
     return {
       title: `Messaged ${target.name}`,
-      output: `delivered to ${target.name}'s inbox; the reply arrives as a background completion`,
-      metadata: { target: target.name, from: sender.name, delivered: true, receipt: { state: "stored" } },
+      // Stored in the target's inbox file only; it is not delivered until the target's next turn picks it up.
+      output: `stored in ${target.name}'s inbox (not delivered yet); it is read when ${target.name} starts its next turn, and the reply arrives as a background completion`,
+      metadata: { target: target.name, from: sender.name, delivered: false, state: "stored", receipt: { state: "stored" } },
     }
   },
 })

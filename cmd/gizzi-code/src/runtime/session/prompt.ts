@@ -293,12 +293,14 @@ export namespace SessionPrompt {
     // attributed messages. Runs before createUserMessage so both the TUI and
     // headless paths (and routine deliveries, which re-enter through prompt)
     // pick up pending mail exactly once per turn.
+    let confirmInbox: () => Promise<void> = async () => {}
     if (input.parts.length > 0) {
-      const inboxMessages = await BotInbox.collectBotInboxMessages(input.sessionID).catch((error) => {
+      const picked = await BotInbox.collectBotInbox(input.sessionID).catch((error) => {
         log.warn("bot inbox pickup failed; continuing without injected mail", { sessionID: input.sessionID, error })
-        return [] as string[]
+        return { texts: [] as string[], confirm: async () => {} }
       })
-      for (const text of inboxMessages) {
+      confirmInbox = picked.confirm
+      for (const text of picked.texts) {
         input.parts.push({ type: "text", text, synthetic: true })
       }
     }
@@ -309,6 +311,8 @@ export namespace SessionPrompt {
     if (input.workdir !== undefined) setWorkdir(input.sessionID, input.workdir)
 
 const message = await createUserMessage(input)
+    // The injected mail is saved with the turn's user message: drop its staged copy.
+    await confirmInbox()
     await Session.touch(input.sessionID)
 
     // this is backwards compatibility for allowing `tools` to be specified when

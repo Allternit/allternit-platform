@@ -10,7 +10,7 @@
  */
 import type { CommandModule } from "yargs"
 import { basename } from "node:path"
-import { markRead, readPending, recordHook, sessionKey, type InboxMessage } from "@/runtime/live/inbox"
+import { ackEnvelopesIn, markRead, readPending, recordHook, registerMessaging, sessionKey, type InboxMessage } from "@/runtime/live/inbox"
 
 type Ev = "start" | "prompt" | "tool" | "stop" | "end" | "doing"
 
@@ -115,6 +115,16 @@ export async function runHook(
     transcript: typeof input.transcript_path === "string" ? input.transcript_path : undefined,
     pid: process.ppid,
   }).catch(() => {})
+  if (harness === "claude" || harness === "claude-code") {
+    // Register the push socket + token (and the folder + permission mode a wake needs).
+    await registerMessaging(process.env, {
+      sessionId,
+      cwd,
+      permissionMode: typeof input.permission_mode === "string" ? input.permission_mode : undefined,
+    }).catch(() => {})
+  }
+  // A pushed message that reached the prompt is confirmed: the engine stops re-pushing it.
+  if (ev === "prompt" && typeof input.prompt === "string") await ackEnvelopesIn(input.prompt).catch(() => {})
   if (!takesMail(harness, event)) return { ids: [] }
   const key = sessionKey(harness, cwd)
   const pending = await readPending(key)
