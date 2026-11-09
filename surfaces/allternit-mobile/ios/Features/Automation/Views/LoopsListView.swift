@@ -142,8 +142,8 @@ struct LoopsListView: View {
             }
         }
         .sheet(isPresented: $isCreateSheetPresented) {
-            CreateLoopSheet { command, exitCondition, maxIterations in
-                createLoop(command: command, exitCondition: exitCondition, maxIterations: maxIterations)
+            CreateLoopSheet { command, exitCondition, maxIterations, metric in
+                createLoop(command: command, exitCondition: exitCondition, maxIterations: maxIterations, metric: metric)
             }
         }
         .task {
@@ -296,10 +296,10 @@ struct LoopsListView: View {
 
     // MARK: - Actions
 
-    private func createLoop(command: String, exitCondition: String?, maxIterations: Int) {
+    private func createLoop(command: String, exitCondition: String?, maxIterations: Int, metric: LoopMetric?) {
         Task {
             do {
-                try await loopStore.createLoop(command: command, exitCondition: exitCondition, maxIterations: maxIterations)
+                try await loopStore.createLoop(command: command, exitCondition: exitCondition, maxIterations: maxIterations, metric: metric)
             } catch {
                 actionError = "Couldn't create the loop: \(error.localizedDescription)"
             }

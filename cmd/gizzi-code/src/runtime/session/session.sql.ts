@@ -237,6 +237,32 @@ export const LoopTable = sqliteTable(
     max_iterations: integer().notNull().default(10),
     iteration_log: text({ mode: "json" }).notNull().$type<Array<{ iteration: number; output: string; exitCode: number; timestamp: string }>>(),
     state: text().notNull().default("running"),
+    /** Loop Card measurement: when set the loop is a measured loop. */
+    metric: text({ mode: "json" }).$type<{
+      command: string
+      direction: "lower" | "higher"
+      keepBar: number
+      noiseRuns: number
+      minPairs: number
+      stallLimit?: number
+    }>(),
+    /** One row per attempt, rejects included. */
+    ledger: text({ mode: "json" }).$type<Array<{
+      iteration: number
+      hypothesis: string
+      delta: number | null
+      ci: [number, number] | null
+      n: number
+      noise: number
+      verdict: string
+      why: string
+      outcome: "ACTED" | "NOOP" | "BLOCKED"
+      control: Array<number | null>
+      treatment: Array<number | null>
+      timestamp: string
+    }>>(),
+    cwd: text(),
+    last_outcome: text(),
     ...Timestamps,
   },
   (table) => [

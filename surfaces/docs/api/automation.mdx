@@ -129,7 +129,7 @@ The local scheduler keeps these keys in `metadata`:
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/api/v1/automation/loops` | List loops. |
-| `POST` | `/api/v1/automation/loops` | Create a loop. |
+| `POST` | `/api/v1/automation/loops` | Create a loop. Optional `metric` (`command`, `direction`, `keepBar`, `noiseRuns`, `minPairs`, `stallLimit`) and `cwd` make it a [measured loop](/guides/measured-loops). |
 | `GET` | `/api/v1/automation/loops/:id` | Get a loop. |
 | `PUT` | `/api/v1/automation/loops/:id` | Update a loop. |
 | `DELETE` | `/api/v1/automation/loops/:id` | Delete a loop. |
