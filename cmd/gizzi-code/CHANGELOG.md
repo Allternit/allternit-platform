@@ -2,11 +2,23 @@
 
 ## Unreleased
 
+## 2.3.0 (2026-11-09)
+
 ### Added
+- **Remote Control:** a terminal session shows up live in Desktop, ai.allternit.com, the phone app and iOS with a Terminal badge. From there you can read it, steer it, answer its approvals and questions, and stop it. `/remote` shows a QR code and links; `/desktop` opens the session in Desktop.
+- **CLI brains in the TUI:** `claude-cli/…` and `codex-cli/…` models run in the terminal app. The model list follows Desktop's rule: Allternit Cloud plus your own signed-in CLIs and keys. `--model` works at launch.
+- **Steer or queue while the agent works:** Enter steers, Tab queues, Ctrl+X Enter stops and sends. Next-step suggestions are on, and a recap shows when you come back.
+- **Output:** one tool line per call with live command output, highlighted code, 256-color diffs, and a done or stopped line with time, files and tools. A failed turn shows its real cause and a command to run.
+- **Swarms and the Factory board:** `gizzi swarm`, `gizzi board`, `/swarm`, `/board` and a footer badge.
+- **New startup header:** an animated pixel Gizzi (the real image in iTerm2, WezTerm, Kitty and Ghostty) and the braille wordmark with the version on the same line. Set `headerArt` to `auto`, `image`, `blocks` or `none`.
 - `artifact_check`: the model looks at a page or design at phone, tablet and laptop widths (the app renders it) and gets pictures, sideways scroll, script errors and blank screens; with a reference picture, a likeness and the regions that differ. It says stop after 3 checks without progress.
+
+### Changed
+- Unfinished commands are hidden unless `GIZZI_EXPERIMENTAL_COMMANDS=1`. Docs links point to docs.allternit.com.
 
 ### Fixed
 - `pane_render` sync events now carry a native video's duration, fps, motion blur, audio and timeout; without them the app dropped the request.
+- Saving settings no longer stops running agents or drops waiting questions.
 
 ## 2.2.15 (2026-10-27)
 
