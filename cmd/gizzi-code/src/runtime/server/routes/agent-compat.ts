@@ -456,6 +456,24 @@ export const AgentCompatRoutes = () =>
       })
       return c.json(true)
     })
+    // The approval cards' decision route (allternit-api cowork_routes.rs
+    // decide_approval): approve answers a gizzi ask once, reject denies it,
+    // dismiss is local to the client.
+    .post("/v1/cowork/approvals", async (c) => {
+      const body = await c.req.json().catch(() => ({}))
+      const id = String(body.actionId ?? body.requestId ?? "")
+      const decision = String(body.decision ?? "").trim().toLowerCase()
+      const reply = ["approved", "approve", "allow", "grant"].includes(decision)
+        ? "once"
+        : ["rejected", "reject", "deny", "denied"].includes(decision)
+          ? "reject"
+          : ["dismissed", "dismiss"].includes(decision)
+            ? undefined
+            : null
+      if (reply === null) return c.json({ error: "invalid decision" }, 400)
+      if (reply && id.startsWith("per")) await PermissionNext.reply({ requestID: id, reply })
+      return c.json({ ok: true, actionId: id, decision })
+    })
     .get("/v1/questions", async (c) => {
       const sessionId = c.req.query("sessionId")
       const all = await Question.list()
