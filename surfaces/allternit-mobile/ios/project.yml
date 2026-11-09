@@ -79,7 +79,7 @@ targets:
         SWIFT_VERSION: "6.0"
         IPHONEOS_DEPLOYMENT_TARGET: "17.0"
         TARGETED_DEVICE_FAMILY: "1"
-        MARKETING_VERSION: "1.0"
+        MARKETING_VERSION: "1.0.1"
         CURRENT_PROJECT_VERSION: "28"
         CODE_SIGN_ENTITLEMENTS: Allternit.entitlements
         SWIFT_OBJC_BRIDGING_HEADER: Core/Voice/Voice-Bridging-Header.h
@@ -209,7 +209,7 @@ targets:
         SWIFT_VERSION: "6.0"
         IPHONEOS_DEPLOYMENT_TARGET: "17.0"
         TARGETED_DEVICE_FAMILY: "1"
-        MARKETING_VERSION: "1.0"
+        MARKETING_VERSION: "1.0.1"
         CURRENT_PROJECT_VERSION: "28"
         # Same placeholder as the main app — set your team for device builds.
         DEVELOPMENT_TEAM: MQ85968PQP
@@ -240,7 +240,7 @@ targets:
         SWIFT_VERSION: "5.0"
         IPHONEOS_DEPLOYMENT_TARGET: "17.0"
         TARGETED_DEVICE_FAMILY: "1"
-        MARKETING_VERSION: "1.0"
+        MARKETING_VERSION: "1.0.1"
         CURRENT_PROJECT_VERSION: "28"
         CODE_SIGN_ENTITLEMENTS: AllternitScreen/AllternitScreen.entitlements
         # Same placeholder as the main app — set your team for device builds.
@@ -263,7 +263,7 @@ targets:
         SWIFT_VERSION: "6.0"
         IPHONEOS_DEPLOYMENT_TARGET: "17.0"
         TARGETED_DEVICE_FAMILY: "1"
-        MARKETING_VERSION: "1.0"
+        MARKETING_VERSION: "1.0.1"
         CURRENT_PROJECT_VERSION: "28"
         DEVELOPMENT_TEAM: MQ85968PQP
         CODE_SIGN_STYLE: Automatic
