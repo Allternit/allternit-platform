@@ -130,24 +130,29 @@ impl QuotaService {
         &self,
         user_id: &str,
         quota: &UserQuota,
+        machine_id: Option<&str>,
         hostname: Option<&str>,
         platform: Option<&str>,
     ) -> Result<(), ApiError> {
         // The cap counts machines, not sign-ins: the CLI and Desktop on the
-        // same Mac are one runtime. A device's machine is its hostname +
-        // platform (both sent by every pairing client); a device without a
-        // hostname counts as its own machine.
-        let machine = machine_key(hostname, platform);
+        // same Mac are one runtime. A device's machine is its machine id when
+        // the client sent one, else its hostname + platform; a device with
+        // neither counts as its own machine. A row from before machine ids
+        // still matches this machine by hostname + platform.
+        let machine = machine_key_for(machine_id, hostname, platform);
+        let legacy = machine_key(hostname, platform);
         let (machines, this_machine_active): (i64, bool) = sqlx::query_as(
             r#"
             SELECT
                 COUNT(DISTINCT COALESCE(
+                    'mid:' || machine_id,
                     REGEXP_REPLACE(LOWER(NULLIF(hostname, '')), '\.local$', '') || '|' || COALESCE(platform, ''),
                     'device:' || id
                 )),
                 COALESCE(BOOL_OR(
-                    $2::TEXT IS NOT NULL
-                    AND REGEXP_REPLACE(LOWER(NULLIF(hostname, '')), '\.local$', '') || '|' || COALESCE(platform, '') = $2
+                    ($2::TEXT IS NOT NULL AND 'mid:' || machine_id = $2)
+                    OR ($3::TEXT IS NOT NULL AND machine_id IS NULL
+                        AND REGEXP_REPLACE(LOWER(NULLIF(hostname, '')), '\.local$', '') || '|' || COALESCE(platform, '') = $3)
                 ), FALSE)
             FROM runtime_devices
             WHERE user_id = $1 AND revoked_at IS NULL
@@ -155,6 +160,7 @@ impl QuotaService {
         )
         .bind(user_id)
         .bind(machine.as_deref())
+        .bind(legacy.as_deref())
         .fetch_one(&self.db)
         .await?;
 
@@ -810,7 +816,7 @@ mod tests {
         let pool = test_pool().await;
         sqlx::query("DROP TABLE IF EXISTS runtime_devices CASCADE").execute(&pool).await.unwrap();
         sqlx::query(
-            "CREATE TABLE runtime_devices (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, hostname TEXT, platform TEXT, revoked_at TIMESTAMPTZ)",
+            "CREATE TABLE runtime_devices (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, machine_id TEXT, hostname TEXT, platform TEXT, revoked_at TIMESTAMPTZ)",
         )
         .execute(&pool)
         .await
@@ -826,7 +832,7 @@ mod tests {
 
         // The CLI on the same Mac is the same machine.
         service
-            .check_active_device_cap("user_1", &quota, Some("joes-macbook"), Some("darwin-arm64"))
+            .check_active_device_cap("user_1", &quota, None, Some("joes-macbook"), Some("darwin-arm64"))
             .await
             .expect("same machine shares the slot");
         sqlx::query("UPDATE runtime_devices SET hostname = 'Joes-MacBook.local' WHERE id = 'rt_desktop'")
@@ -834,16 +840,16 @@ mod tests {
             .await
             .unwrap();
         service
-            .check_active_device_cap("user_1", &quota, Some("Joes-MacBook"), Some("darwin-arm64"))
+            .check_active_device_cap("user_1", &quota, None, Some("Joes-MacBook"), Some("darwin-arm64"))
             .await
             .expect("same machine shares the slot");
         // Another machine is over the cap.
         let other = service
-            .check_active_device_cap("user_1", &quota, Some("vps-1"), Some("linux-x64"))
+            .check_active_device_cap("user_1", &quota, None, Some("vps-1"), Some("linux-x64"))
             .await;
         assert!(matches!(other, Err(ApiError::Forbidden(ref m)) if m.contains("1/1")), "{other:?}");
         // No hostname: its own machine.
-        assert!(service.check_active_device_cap("user_1", &quota, None, None).await.is_err());
+        assert!(service.check_active_device_cap("user_1", &quota, None, None, None).await.is_err());
         // Two sign-ins on one Mac still count once.
         sqlx::query("INSERT INTO runtime_devices (id, user_id, hostname, platform) VALUES ('rt_cli', 'user_1', 'Joes-MacBook', 'darwin-arm64')")
             .execute(&pool)
@@ -851,7 +857,7 @@ mod tests {
             .unwrap();
         quota.max_active_devices = 2;
         service
-            .check_active_device_cap("user_1", &quota, Some("vps-1"), Some("linux-x64"))
+            .check_active_device_cap("user_1", &quota, None, Some("vps-1"), Some("linux-x64"))
             .await
             .expect("second machine fits a 2-machine plan");
     }
@@ -910,6 +916,19 @@ mod tests {
     }
 }
 
+/// The machine key for a pairing: `mid:<machine id>` when the client sent a
+/// machine id, else the hostname + platform key (`machine_key`).
+pub(crate) fn machine_key_for(
+    machine_id: Option<&str>,
+    hostname: Option<&str>,
+    platform: Option<&str>,
+) -> Option<String> {
+    match machine_id.map(str::trim).filter(|m| !m.is_empty()) {
+        Some(id) => Some(format!("mid:{id}")),
+        None => machine_key(hostname, platform),
+    }
+}
+
 /// The machine a pairing comes from, as the cap query keys it
 /// (`lower(hostname)|platform`), or None without a hostname.
 pub(crate) fn machine_key(hostname: Option<&str>, platform: Option<&str>) -> Option<String> {
@@ -923,7 +942,7 @@ pub(crate) fn machine_key(hostname: Option<&str>, platform: Option<&str>) -> Opt
 
 #[cfg(test)]
 mod machine_key_tests {
-    use super::machine_key;
+    use super::{machine_key, machine_key_for};
 
     #[test]
     fn same_mac_is_one_machine_whatever_the_case() {
@@ -931,6 +950,9 @@ mod machine_key_tests {
         assert_ne!(machine_key(Some("a"), Some("darwin-arm64")), machine_key(Some("b"), Some("darwin-arm64")));
         assert_eq!(machine_key(Some("  "), Some("darwin-arm64")), None);
         assert_eq!(machine_key(None, None), None);
+        // A machine id wins over the hostname; without one the hostname key is used.
+        assert_eq!(machine_key_for(Some("abc123"), Some("a"), Some("darwin-arm64")), Some("mid:abc123".to_string()));
+        assert_eq!(machine_key_for(None, Some("a"), Some("darwin-arm64")), machine_key(Some("a"), Some("darwin-arm64")));
         // Desktop paired as the mDNS name, gizzi sends the LocalHostName.
         assert_eq!(machine_key(Some("joes-MacBook-Pro.local"), Some("darwin-arm64")), machine_key(Some("joes-MacBook-Pro"), Some("darwin-arm64")));
     }

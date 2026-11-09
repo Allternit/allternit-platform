@@ -54,6 +54,9 @@ pub struct CreatePairingRequest {
     hostname: Option<String>,
     platform: Option<String>,
     version: Option<String>,
+    /// Stable random id the client keeps for this machine (see migration 119).
+    #[serde(default)]
+    machine_id: Option<String>,
     public_key: String,
     #[serde(default)]
     capabilities: Vec<String>,
@@ -181,6 +184,7 @@ struct PairingRow {
     hostname: Option<String>,
     platform: Option<String>,
     version: Option<String>,
+    machine_id: Option<String>,
     capabilities: String,
     status: String,
     user_id: Option<String>,
@@ -344,8 +348,8 @@ async fn create_pairing(
             public_key_fingerprint, name, runtime_type, hostname, platform,
             version, capabilities, status, user_id, organization_id,
             hosted_instance_id, byo_bootstrap_token_id, provisioned_instance_id,
-            expires_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+            expires_at, machine_id
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
         "#,
     )
     .bind(&pairing_id)
@@ -367,6 +371,7 @@ async fn create_pairing(
     .bind(byo_bootstrap_token_id.as_deref())
     .bind(provisioned_instance_id.as_deref())
     .bind(expires_at)
+    .bind(clean_machine_id(request.machine_id.as_deref()))
     .execute(&state.db)
     .await?;
 
@@ -540,7 +545,7 @@ async fn exchange_pairing(
     let pairing = sqlx::query_as::<_, PairingRow>(
         r#"
         SELECT id, user_code, challenge, public_key, public_key_fingerprint,
-               name, runtime_type, hostname, platform, version, capabilities,
+               name, runtime_type, hostname, platform, version, machine_id, capabilities,
                status, user_id, organization_id, hosted_instance_id,
                byo_bootstrap_token_id, provisioned_instance_id, expires_at
         FROM runtime_pairings
@@ -608,7 +613,13 @@ async fn exchange_pairing(
     if pairing.provisioned_instance_id.is_none() && pairing.hosted_instance_id.is_none() {
         state
             .quota_service
-            .check_active_device_cap(&user_id, &quota, pairing.hostname.as_deref(), pairing.platform.as_deref())
+            .check_active_device_cap(
+                &user_id,
+                &quota,
+                pairing.machine_id.as_deref(),
+                pairing.hostname.as_deref(),
+                pairing.platform.as_deref(),
+            )
             .await?;
     }
     let count_daily_pairing = pairing.hosted_instance_id.is_none()
@@ -625,13 +636,42 @@ async fn exchange_pairing(
     );
 
     let mut transaction = state.db.begin().await?;
+    // Re-pairing the same account on the same machine replaces its row (also an
+    // older row from before machine ids, matched by hostname + platform).
+    // Cloud computers are never replaced this way.
+    if pairing.provisioned_instance_id.is_none() && pairing.hosted_instance_id.is_none() {
+        if let Some(machine_id) = pairing.machine_id.as_deref() {
+            let legacy_key = crate::services::quota_service::machine_key(
+                pairing.hostname.as_deref(),
+                pairing.platform.as_deref(),
+            );
+            sqlx::query(
+                r#"
+                UPDATE runtime_devices
+                SET status = 'revoked', revoked_at = CURRENT_TIMESTAMP
+                WHERE user_id = $1 AND revoked_at IS NULL AND runtime_type = $2
+                  AND (
+                    machine_id = $3
+                    OR (machine_id IS NULL AND $4::TEXT IS NOT NULL
+                        AND REGEXP_REPLACE(LOWER(NULLIF(hostname, '')), '\.local$', '') || '|' || COALESCE(platform, '') = $4)
+                  )
+                "#,
+            )
+            .bind(&user_id)
+            .bind(&pairing.runtime_type)
+            .bind(machine_id)
+            .bind(legacy_key.as_deref())
+            .execute(&mut *transaction)
+            .await?;
+        }
+    }
     sqlx::query(
         r#"
         INSERT INTO runtime_devices (
             id, user_id, organization_id, name, runtime_type, hostname, platform,
             version, capabilities, public_key, public_key_fingerprint,
-            credential_hash, credential_expires_at, status, last_seen_at, kind
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'online', CURRENT_TIMESTAMP, $14)
+            credential_hash, credential_expires_at, status, last_seen_at, kind, machine_id
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'online', CURRENT_TIMESTAMP, $14, $15)
         "#,
     )
     .bind(&runtime_id)
@@ -648,6 +688,7 @@ async fn exchange_pairing(
     .bind(credential_hash)
     .bind(credential_expires_at)
     .bind(kind)
+    .bind(pairing.machine_id.as_deref())
     .execute(&mut *transaction)
     .await?;
     let consumed = sqlx::query(
@@ -1949,4 +1990,14 @@ mod tests {
             .await
             .unwrap();
     }
+}
+
+/// A client-supplied machine id, or None if it is not a plain 16-64 character
+/// token (letters, digits, `-`, `_`). A bad value is ignored, not an error:
+/// the pairing then falls back to hostname + platform.
+fn clean_machine_id(raw: Option<&str>) -> Option<String> {
+    let id = raw?.trim();
+    let ok = (16..=64).contains(&id.len())
+        && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+    ok.then(|| id.to_string())
 }
