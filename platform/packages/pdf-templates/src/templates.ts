@@ -52,8 +52,8 @@ function invoice(d: Rec, variant: PdfVariant): PdfBlock[] {
   const cur = str(d.currency, 'USD');
   const items = arr(d.items).map(rec);
   const rows = items.map((it) => {
-    const qty = num(it.qty, 1);
-    const unit = num(it.unitPrice ?? it.unit);
+    const qty = num(it.qty ?? it.quantity, 1);
+    const unit = num(it.unitPrice ?? it.unit ?? it.price);
     const amount = it.amount != null ? num(it.amount) : qty * unit;
     return { desc: str(it.description ?? it.name), detail: str(it.detail), qty, unit, amount };
   });
@@ -73,7 +73,7 @@ function invoice(d: Rec, variant: PdfVariant): PdfBlock[] {
     },
     cols([
       { label: 'From', lines: party(d.from) },
-      { label: 'Bill to', lines: party(d.to) },
+      { label: 'Bill to', lines: party(d.to ?? d.billTo ?? d.client) },
     ]),
     {
       t: 'table', head: ['Description', 'Qty', 'Unit', 'Amount'], align: ['l', 'r', 'r', 'r'], widths: [0.52, 0.1, 0.18, 0.2],
@@ -171,8 +171,8 @@ function minutes(d: Rec, variant: PdfVariant): PdfBlock[] {
 function receipt(d: Rec, variant: PdfVariant): PdfBlock[] {
   const cur = str(d.currency, 'USD');
   const items = arr(d.items).map(rec).map((it) => {
-    const qty = num(it.qty, 1);
-    const amount = it.amount != null ? num(it.amount) : qty * num(it.unitPrice);
+    const qty = num(it.qty ?? it.quantity, 1);
+    const amount = it.amount != null ? num(it.amount) : qty * num(it.unitPrice ?? it.price);
     return { name: str(it.name ?? it.description), qty, amount };
   });
   const subtotal = items.reduce((s, r) => s + r.amount, 0);
