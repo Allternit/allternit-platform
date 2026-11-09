@@ -26,6 +26,8 @@ import type { Options } from './claude.js'
 import { describeProviderError, formatProviderErrorHelp, subscriptionAlternative } from './providerErrors.js'
 import { observedEditResult, patchFiles, unwrapShell } from '@/shared/util/cli-tools'
 import { readFileSync } from 'fs'
+import { trackEditDiagnostics } from '../lsp/editDiagnostics.js'
+import { COMMAND_NAME_TAG } from '../../constants/xml.js'
 
 export type CliBrain = { provider: string; modelId: string; fabric: boolean }
 
@@ -150,7 +152,21 @@ export function turnText(messages: readonly Message[]): string {
       .map(b => String(b.text ?? ''))
       .join('\n')
   }
-  const own = tail.filter(m => !m.isMeta).map(textOf).filter(Boolean)
+  // A prompt slash command (/review security, /init, a skill) arrives as a
+  // non-meta "<command-name>" line followed by its prompt as a meta message:
+  // the CLI needs the prompt, not the tag line.
+  const own: string[] = []
+  let commandBody = false
+  for (const m of tail) {
+    const text = textOf(m)
+    if (!m.isMeta) {
+      commandBody = text.includes(`<${COMMAND_NAME_TAG}>`)
+      if (!commandBody && text) own.push(text)
+    } else if (commandBody && text) {
+      own.push(text)
+      commandBody = false
+    }
+  }
   return (own.length > 0 ? own : tail.map(textOf).filter(Boolean)).join('\n\n').trim()
 }
 
@@ -415,6 +431,12 @@ export async function* queryCliBrainWithStreaming({
       } else if (event.type === 'tool_result') {
         for (const call of observed.get(event.id) ?? [{ id: event.id, name: '', input: {} }]) {
           const edit = !event.isError ? call.result?.() : undefined
+          // The CLI wrote the file itself; ask our language server about it so
+          // the edit's tool line shows new errors (never waits here).
+          if (edit && typeof edit.filePath === 'string' && (call.name === 'Edit' || call.name === 'Write')) {
+            const lspKey = trackEditDiagnostics(edit.filePath)
+            if (lspKey) edit.lspKey = lspKey
+          }
           yield createUserMessage({
             content: [{ type: 'tool_result', tool_use_id: call.id, content: event.content, is_error: event.isError || undefined }],
             toolUseResult: event.isError ? event.content : edit,

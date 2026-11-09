@@ -4,6 +4,7 @@ import { logForDebugging } from '../../utils/debug.js'
 import { errorMessage, toError } from '../../utils/errors.js'
 import { logError } from '../../utils/log.js'
 import type { ScopedLspServerConfig } from './types.js'
+import { getBuiltinLspServers } from './builtinServers.js'
 
 /**
  * Get all configured LSP servers from plugins.
@@ -78,6 +79,10 @@ export async function getAllLspServers(): Promise<{
 
     logForDebugging(`Error loading LSP servers: ${errorMessage(error)}`)
   }
+
+  // Built-in servers (only ones installed here) go after plugin servers so a
+  // plugin's server for the same extension is picked first.
+  Object.assign(allServers, getBuiltinLspServers())
 
   return {
     servers: allServers,

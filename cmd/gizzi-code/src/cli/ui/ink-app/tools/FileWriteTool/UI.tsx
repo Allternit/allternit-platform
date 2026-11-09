@@ -3,6 +3,7 @@ import type { StructuredPatchHunk } from 'diff';
 import { isAbsolute, relative, resolve } from 'path';
 import * as React from 'react';
 import { Suspense, use, useState } from 'react';
+import { EditDiagnosticsLine } from '../../components/EditDiagnosticsLine';
 import { MessageResponse } from './../../components/MessageResponse.tsx';
 import { extractTag } from './../../utils/extractTag.js';
 import { CtrlOToExpand } from '../../components/CtrlOToExpand';
@@ -254,7 +255,8 @@ export function renderToolResultMessage({
   content,
   structuredPatch,
   type,
-  originalFile
+  originalFile,
+  lspKey
 }: Output, _progressMessagesForMessage: ProgressMessage<ToolProgressData>[], {
   style,
   verbose
@@ -283,12 +285,15 @@ export function renderToolResultMessage({
             <Text bold><FilePathLink filePath={filePath}>{relative(getCwd(), filePath)}</FilePathLink></Text>
           </Text>;
         }
-        return <FileWriteToolCreatedMessage filePath={filePath} content={content} verbose={verbose} />;
+        return <>
+          <FileWriteToolCreatedMessage filePath={filePath} content={content} verbose={verbose} />
+          {lspKey ? <EditDiagnosticsLine lspKey={lspKey} ownRow /> : null}
+        </>;
       }
     case 'update':
       {
         const isPlanFile = filePath.startsWith(getPlansDirectory());
-        return <FileEditToolUpdatedMessage filePath={filePath} structuredPatch={structuredPatch} firstLine={content.split('\n')[0] ?? null} fileContent={originalFile ?? undefined} style={style} verbose={verbose} previewHint={isPlanFile ? '/plan to preview' : undefined} />;
+        return <FileEditToolUpdatedMessage filePath={filePath} structuredPatch={structuredPatch} firstLine={content.split('\n')[0] ?? null} fileContent={originalFile ?? undefined} style={style} verbose={verbose} previewHint={isPlanFile ? '/plan to preview' : undefined} lspKey={lspKey} />;
       }
   }
 }

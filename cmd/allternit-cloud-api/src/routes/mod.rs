@@ -41,6 +41,7 @@ pub mod inference_keys;
 pub mod jobs;
 pub mod livekit_admin;
 pub mod me_flags;
+pub mod web_search;
 pub mod me_usage;
 pub mod setup_checks;
 pub mod a2a_edge;
