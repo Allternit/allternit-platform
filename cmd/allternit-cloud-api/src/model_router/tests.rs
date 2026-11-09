@@ -35,9 +35,9 @@ fn unknown_model_returns_none() {
 fn catalog_entries_are_primary_aliases_only() {
     let catalog = starter_catalog();
     // Primary models only (one per model, not per alias):
-    // 8 OpenRouter + 2 Together AI + 4 Fireworks + 3 DeepInfra + 3 Groq
-    // + 2 open lane = 22.
-    assert_eq!(catalog.entries().len(), 22);
+    // 7 OpenRouter (Mistral Large dropped 2026-11-09, #2127) + 2 Together AI
+    // + 4 Fireworks + 3 DeepInfra + 3 Groq + 2 open lane = 21.
+    assert_eq!(catalog.entries().len(), 21);
     let open: Vec<_> = catalog
         .entries()
         .iter()
@@ -81,9 +81,9 @@ fn disabled_router_reports_not_enabled() {
 async fn disabled_router_list_models_returns_static_catalog() {
     let router = ModelRouter::disabled(starter_catalog());
     let models = router.list_models().await;
-    // 22 catalog entries minus the 2 open-lane models, hidden while the
+    // 21 catalog entries minus the 2 open-lane models, hidden while the
     // open-lane provider is unset.
-    assert_eq!(models.len(), 20);
+    assert_eq!(models.len(), 19);
     assert!(models.iter().any(|m| m.id == "llama-3.1-8b"));
     assert!(!models.iter().any(|m| m.id.ends_with("-open")));
 
