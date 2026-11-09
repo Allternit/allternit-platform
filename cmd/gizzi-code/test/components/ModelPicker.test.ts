@@ -100,13 +100,13 @@ describe("buildPickerRows", () => {
     "local-mlx/qwen3": MLX,
   })
 
-  test("groups Cloud by vendor, then CLI, then Local, then Other", () => {
+  test("groups Cloud by vendor, then subscriptions, then Local, then Other", () => {
     const { rows } = buildPickerRows(options, { metaFor: metas })
     const headers = rows.filter(r => r.kind === "header").map(r => (r as any).title)
     expect(headers).toEqual([
       "Anthropic · via Allternit Cloud",
       "OpenAI · via Allternit Cloud",
-      "Kimi For Coding · CLI",
+      "Kimi For Coding · your subscription",
       "Local",
       "Other",
     ])
@@ -191,7 +191,7 @@ describe("buildPickerRows", () => {
   test("empty sections disappear when filtered out", () => {
     const { rows } = buildPickerRows(options, { metaFor: metas, query: "kimi" })
     const headers = rows.filter(r => r.kind === "header").map(r => (r as any).title)
-    expect(headers).toEqual(["Kimi For Coding · CLI"])
+    expect(headers).toEqual(["Kimi For Coding · your subscription"])
   })
 })
 

@@ -11,7 +11,7 @@ import { useKeybindings } from '../keybindings/useKeybinding';
 import { useAppState, useSetAppState } from '../state/AppState';
 import { convertEffortValueToLevel, type EffortLevel, getDefaultEffortForModel, modelSupportsEffort, modelSupportsMaxEffort, resolvePickerEffortPersistence, toPersistableEffort } from '../utils/effort';
 import { getDefaultMainLoopModel, type ModelSetting, modelDisplayString, parseUserSpecifiedModel } from '../utils/model/model';
-import { getModelOptions } from '../utils/model/modelOptions';
+import { getConfiguredProviderMeta, getModelOptions } from '../utils/model/modelOptions';
 import { buildPickerRows, quotaMarker, selectableValues, toggleFavorite, visibleWindow, type PickerProviderMeta, type PickerQuotaResult, type PickerRow } from '../utils/model/modelPickerModel';
 import { getSettingsForSource, updateSettingsForSource } from '../utils/settings/settings';
 import { ConfigurableShortcutHint } from './ConfigurableShortcutHint';
@@ -49,19 +49,26 @@ function getDiscoveryMeta(): Map<string, PickerProviderMeta> {
   const map = new Map<string, PickerProviderMeta>();
   try {
     const { Discovery } = require('../../../../runtime/providers/discovery/index.js') as typeof import('../../../../runtime/providers/discovery/index.js');
+    const { ProviderOffer } = require('../../../../runtime/providers/offer.js') as typeof import('../../../../runtime/providers/offer.js');
     Discovery.prefetch();
     for (const dp of Discovery.last()) {
+      const kind = ProviderOffer.kind(dp);
       for (const m of dp.models) {
         map.set(`${dp.id}/${m.id}`, {
           providerId: dp.id,
           providerName: dp.name,
           source: dp.source,
+          kind,
           context: m.context,
           output: m.output,
         });
       }
     }
   } catch {}
+  // API keys and local servers from gizzi.json (discovery wins for the same model).
+  for (const [value, meta] of getConfiguredProviderMeta()) {
+    if (!map.has(value)) map.set(value, meta);
+  }
   return map;
 }
 export function ModelPicker({
