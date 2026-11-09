@@ -609,10 +609,15 @@ const message = await createUserMessage(input)
     return s[sessionID].abort.signal
   }
 
+  // Loaded once, off the import graph's critical path (it imports Session).
+  let terminalLive: typeof import("@/runtime/session/terminal-live").TerminalLive | undefined
+  void import("@/runtime/session/terminal-live").then((m) => (terminalLive = m.TerminalLive))
+
   export function cancel(sessionID: string) {
     log.info("cancel", { sessionID })
-    // A live terminal session's turn runs in the terminal: Stop goes there.
-    void import("@/runtime/session/terminal-live").then(({ TerminalLive }) => TerminalLive.stop(sessionID))
+    // A live terminal session's turn runs in the terminal: Stop goes there,
+    // and the terminal reports idle itself once its turn has really stopped.
+    if (terminalLive?.stop(sessionID)) return
     setupAborts.get(sessionID)?.abort()
     const s = state()
     const match = s[sessionID]

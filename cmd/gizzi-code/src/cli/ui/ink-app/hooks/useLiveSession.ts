@@ -133,7 +133,19 @@ export function useLiveSession(
           enqueue({ value: event.text, mode: 'prompt', uuid: event.id as `${string}-${string}-${string}-${string}-${string}`, skipSlashCommands: true, bridgeOrigin: true })
           return
         case 'stop':
+          // Like Esc: close any open approval or question (deny), then end the turn.
+          for (const [id, handler] of [...handlers]) {
+            handlers.delete(id)
+            questions.delete(id)
+            handler({ behavior: 'deny', message: 'Stopped from another device.' })
+            // Answered here, so close its card on the other surfaces too.
+            const kind = id.startsWith('que_') ? 'question' : 'permission'
+            void engineFetch(`/${kind}/${id}/settle`, kind === 'question' ? {} : { allow: false }).catch(() => {})
+          }
           abortControllerRef.current?.abort()
+          // Report the real state again even if it did not change since the last sync.
+          lastBusy = undefined
+          sync()
           return
         case 'permission': {
           const handler = handlers.get(event.requestID)

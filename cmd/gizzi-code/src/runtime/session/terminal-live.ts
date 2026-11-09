@@ -307,7 +307,10 @@ export namespace TerminalLive {
       id: input.requestID,
       sessionID: input.sessionID,
       permission: input.tool,
-      patterns: [input.description || input.tool],
+      // What the card names: the file, command or URL the tool acts on.
+      patterns: [
+        String(input.input.file_path ?? input.input.command ?? input.input.url ?? input.input.pattern ?? (input.description || input.tool)),
+      ],
       metadata: { terminal: true, description: input.description, input: input.input },
       always: [],
       ...(input.callID ? { tool: { messageID: "", callID: input.callID } } : {}),
