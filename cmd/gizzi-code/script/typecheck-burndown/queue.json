@@ -3,10 +3,10 @@
   "generatedFrom": "edcf804f88519fc628fe2e524ff13b26e3636326",
   "batchCount": 111,
   "stats": {
-    "totalNocheck": 584,
+    "totalNocheck": 583,
     "excludedCompilerArtifacts": 0,
     "excludedVendored": 93,
-    "totalQueueFiles": 471,
+    "totalQueueFiles": 470,
     "totalQueueLoc": 198673,
     "quarantined": 20,
     "quarantinedByReason": {
@@ -1214,7 +1214,6 @@
         "src/cli/ui/ink-app/components/screens/DiscretionScreen.tsx",
         "src/cli/ui/ink-app/components/TagTabs.tsx",
         "src/cli/ui/ink-app/commands/ontology/ontology.tsx",
-        "src/cli/ui/ink-app/commands/swarm/swarm.tsx",
         "src/cli/ui/ink-app/commands/cowork-project/cowork-project.tsx",
         "src/cli/ui/ink-app/components/CustomSelect/use-select-input.ts",
         "src/cli/ui/ink-app/components/screens/MainScreen.tsx",
