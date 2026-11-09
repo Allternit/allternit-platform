@@ -176,7 +176,7 @@ async function call(method: string, url: string, body?: unknown | Uint8Array): P
       Authorization: `Bearer ${token}`,
       ...(body === undefined ? {} : { "Content-Type": raw ? "application/octet-stream" : "application/json" }),
     },
-    body: body === undefined ? undefined : raw ? body : JSON.stringify(body),
+    body: body === undefined ? undefined : raw ? (body as Uint8Array<ArrayBuffer>) : JSON.stringify(body),
   })
   if (!res.ok) {
     const text = await res.text().catch(() => "")
