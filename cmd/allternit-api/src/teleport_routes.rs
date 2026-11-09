@@ -267,6 +267,7 @@ pub fn teleport_router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/teleports", post(prepare))
         .route("/teleports/placement", put(set_placement))
+        .route("/teleports/placement/:session_id", get(get_placement))
         .route("/teleports/export/:harness/:id", get(export_native))
         .route("/teleports/export/:harness/:id/diff", get(export_diff))
         .route("/teleports/to/:target_id/*rest", axum::routing::any(relay).layer(DefaultBodyLimit::max(MAX_FILE_BYTES as usize + 1024)))
@@ -465,6 +466,15 @@ async fn set_placement(
         Ok(Json(json!({ "ok": true })))
     })
     .await
+}
+
+/// Where a session runs: `{ "place": "local" }` or `{ "place": "cloud", "targetId", "label" }`.
+/// Drives the Local / Cloud badge on session rows and the Code session header.
+async fn get_placement(State(state): State<Arc<AppState>>, Path(session_id): Path<String>) -> Json<Value> {
+    Json(match crate::placement::session_target(&state.db, &session_id) {
+        Some(t) => json!({ "place": "cloud", "targetId": t.id, "label": t.name }),
+        None => json!({ "place": "local" }),
+    })
 }
 
 /// Forward a call to a connected server's `/api/v1/<rest>` with its stored token, so the

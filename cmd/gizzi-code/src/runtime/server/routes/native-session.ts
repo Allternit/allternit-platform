@@ -5,6 +5,7 @@ import { lazy } from "@/shared/util/lazy"
 import { errors } from "@/runtime/server/error"
 import { NativeSource } from "@/runtime/session/native-source"
 import { Session } from "@/runtime/session"
+import { runTeleport } from "@/runtime/teleport/run"
 
 const Harness = z.string().min(1)
 
@@ -50,6 +51,35 @@ export const NativeSessionRoutes = lazy(() =>
           return c.json({ error: "Native session not found" }, 404)
         }
         return c.json(shown)
+      },
+    )
+    .post(
+      "/teleport",
+      describeRoute({
+        summary: "Move a live Claude or Codex session between this Mac and a connected cloud computer",
+        operationId: "nativeSession.teleport",
+        responses: { 200: { description: "Where the session resumes", content: { "application/json": { schema: resolver(z.any()) } } }, ...errors(400) },
+      }),
+      validator(
+        "json",
+        z.object({
+          sessionId: z.string().min(1),
+          to: z.enum(["cloud", "local"]),
+          harness: z.enum(["claude", "codex"]).default("claude"),
+          targetId: z.string().optional(),
+          model: z.string().optional(),
+          effort: z.string().optional(),
+          base: z.string().optional(),
+        }),
+      ),
+      async (c) => {
+        const body = c.req.valid("json")
+        try {
+          const result = await runTeleport({ session: body.sessionId, to: body.to, harness: body.harness, targetId: body.targetId, model: body.model, effort: body.effort, base: body.base })
+          return c.json(result)
+        } catch (e) {
+          return c.json({ error: e instanceof Error ? e.message : String(e) }, 400)
+        }
       },
     )
     .post(
