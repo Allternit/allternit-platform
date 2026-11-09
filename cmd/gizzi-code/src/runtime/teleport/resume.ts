@@ -16,6 +16,8 @@ export interface ResumeArgs {
   cwd: string
   model: string
   effort?: string
+  /** Claude `--permission-mode` / Codex `-s` sandbox the session last ran with; read from the native file when unset. */
+  permissionMode?: string
   handoff: string
   queued: string[]
 }
@@ -27,7 +29,7 @@ export interface ResumeStarted {
 }
 
 /** argv for one turn on a resumed native session. */
-export function resumeArgv(args: Pick<ResumeArgs, "harness" | "model" | "effort"> & { vendorSessionId: string }, prompt: string): string[] {
+export function resumeArgv(args: Pick<ResumeArgs, "harness" | "model" | "effort" | "permissionMode"> & { vendorSessionId: string }, prompt: string): string[] {
   if (args.harness === "claude") {
     return [
       "claude",
@@ -35,6 +37,7 @@ export function resumeArgv(args: Pick<ResumeArgs, "harness" | "model" | "effort"
       "--model",
       args.model,
       ...(args.effort ? ["--effort", args.effort] : []),
+      ...(args.permissionMode ? ["--permission-mode", args.permissionMode] : []),
       "--output-format",
       "stream-json",
       "--verbose",
@@ -50,6 +53,7 @@ export function resumeArgv(args: Pick<ResumeArgs, "harness" | "model" | "effort"
     "-m",
     args.model,
     ...(args.effort ? ["-c", `model_reasoning_effort="${args.effort}"`] : []),
+    ...(args.permissionMode ? ["-s", args.permissionMode] : []),
     "--json",
     prompt,
   ]
@@ -90,7 +94,32 @@ async function turn(argv: string[], cwd: string, onOutput: () => void): Promise<
  * output, with the vendor session id already stored durably; later prompts keep
  * running in `done`.
  */
+/**
+ * The permission mode (Claude) or sandbox (Codex) the session last ran with, read from
+ * its installed native file. Without it a headless resume runs in the default mode and
+ * stalls on the first tool that needs approval.
+ */
+async function lastPermissionMode(harness: TeleportHarness, nativeId: string): Promise<string | undefined> {
+  const home = process.env.HOME ?? ""
+  const [root, pattern, re] =
+    harness === "claude"
+      ? [`${home}/.claude/projects`, `*/${nativeId}.jsonl`, /"permissionMode":"([a-zA-Z]+)"/g]
+      : [`${home}/.codex/sessions`, `**/*${nativeId}*.jsonl`, /"sandbox_policy":\{"type":"([a-z-]+)"/g]
+  try {
+    for await (const rel of new Bun.Glob(pattern).scan({ cwd: root, onlyFiles: true })) {
+      const text = await Bun.file(`${root}/${rel}`).text()
+      let last: string | undefined
+      for (const m of text.matchAll(re)) last = m[1]
+      return last
+    }
+  } catch {
+    // No native file found: fall back to the CLI default.
+  }
+  return undefined
+}
+
 export async function resumeNative(args: ResumeArgs): Promise<ResumeStarted> {
+  if (!args.permissionMode) args = { ...args, permissionMode: await lastPermissionMode(args.harness, args.nativeId) }
   const prompts = [`[Teleport handoff]\n${args.handoff}`, ...args.queued]
   let vendorSessionId = args.nativeId
   let markFirst: () => void = () => {}
