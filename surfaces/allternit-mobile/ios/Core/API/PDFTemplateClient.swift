@@ -1,9 +1,8 @@
 import Foundation
 
-/// Document templates rendered to a real PDF by the operator API
-/// (`POST /office/engines/pdf/render`, services/office-engine). Same template
-/// ids, themes and header styles as Desktop, the web and `gizzi pdf render`
-/// (platform/packages/pdf-templates).
+/// Document templates rendered to a real PDF on the phone itself (see
+/// PDFTemplateRenderer). Same template ids, themes and header styles as
+/// Desktop, the web and `gizzi pdf render` (platform/packages/pdf-templates).
 enum PDFTemplate: String, CaseIterable, Identifiable, Sendable {
     case invoice, report, ticket, minutes, receipt
 
@@ -59,30 +58,22 @@ enum PDFTheme: String, CaseIterable, Identifiable, Sendable {
 }
 
 enum PDFTemplateClient {
-    enum RenderError: LocalizedError {
-        case notPDF
-        var errorDescription: String? { "The server didn't send back a PDF." }
-    }
-
-    /// Renders the PDF and returns its bytes. `data` is the artifact's own
-    /// JSON object when it has one, otherwise the template's sample.
-    static func render(template: PDFTemplate, theme: PDFTheme, variant: String?, data: [String: Any], client: APIClient = .shared) async throws -> Data {
-        var request = try await client.authorizedRequest(path: "/office/engines/pdf/render", method: "POST")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("application/pdf", forHTTPHeaderField: "Accept")
-        var body: [String: Any] = ["template": template.rawValue, "theme": theme.rawValue, "pageSize": "letter", "data": data]
-        if let variant { body["variant"] = variant }
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
-        let (bytes, response) = try await client.send(request)
-        try client.validate(response, data: bytes)
-        guard bytes.starts(with: Data("%PDF".utf8)) else { throw RenderError.notPDF }
-        return bytes
-    }
-
     /// The artifact body as a JSON object, when it is one.
     static func jsonObject(from body: String) -> [String: Any]? {
         guard let data = body.data(using: .utf8),
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any], !object.isEmpty else { return nil }
         return object
+    }
+
+    /// Makes the PDF on the phone: the shared template layout runs in
+    /// JavaScriptCore, and WebKit turns the page into paginated vector PDF.
+    /// No server and no paired computer are involved, so it works signed in
+    /// with nothing else connected (and offline).
+    @MainActor
+    static func render(template: PDFTemplate, theme: PDFTheme, variant: String?, data: [String: Any]) async throws -> Data {
+        var request: [String: Any] = ["template": template.rawValue, "theme": theme.rawValue, "pageSize": "letter", "data": data]
+        if let variant { request["variant"] = variant }
+        let html = try PDFTemplateRenderer.html(request: request)
+        return try await PDFTemplateRenderer.pdf(html: html)
     }
 }

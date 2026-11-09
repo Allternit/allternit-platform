@@ -31,14 +31,20 @@ phone layout the same picker opens as a bottom sheet.
 
 On the iPhone app, open the artifact and tap the **PDF from template** button in
 the top bar. If the artifact's own content is a JSON object, the PDF uses it;
-otherwise the template's sample data is used and the sheet says so. The finished
-PDF opens in the share sheet so you can save it to Files or send it.
+otherwise the template's sample data is used and the sheet says so. The PDF is
+made on the phone, so it works with no computer connected and offline. It opens
+in the share sheet so you can save it to Files or send it.
 
-### Desktop makes real PDFs of pages and designs
+The web, phone layout and m.allternit.com app also make the PDF in the browser.
+None of these need a paired computer; you only need to be signed in to open the
+artifact.
 
-In Allternit Desktop, **PDF** on a Page artifact and **PDF** on a Design artifact
-print the page with Chromium into a real PDF file. Outside Desktop the Design
-export still opens your browser's print dialog, where you choose **Save as PDF**.
+### Desktop makes real PDFs of pages, designs and dashboards
+
+In Allternit Desktop, **PDF** on a Page, Design or Dashboard artifact prints the
+page with Chromium into a real PDF file. A dashboard that is too large to print
+this way falls back to the print dialog. Outside Desktop, Design and Dashboard
+exports open your browser's print dialog, where you choose **Save as PDF**.
 
 ## Data shape
 
@@ -84,25 +90,34 @@ Content-Type: application/json
 
 The reply is `application/pdf`. A bad request returns JSON with `error` and
 `message`. The route is served by the office engine behind allternit-api, so it
-works on any computer that runs it, including your cloud computer. No headless
-browser is involved.
+needs a computer that runs it (your Desktop or cloud computer); cloud-api only
+relays it there. The apps do not use this route. No headless browser is involved.
 
 ## Limits
 
-- Fonts are the standard PDF fonts, so text outside Latin characters prints as
-  a question mark in server and CLI PDFs. Desktop's print path uses system fonts.
-- The server PDF and the Desktop print path draw the same layout, but line
-  breaks can differ by a word here and there.
+- PDFs made by the CLI, the API and the browser embed Noto Sans (regular and
+  bold), which covers Latin, Latin Extended, Vietnamese, Greek and Cyrillic.
+  Chinese, Japanese, Korean, Arabic, Hebrew, Thai and Indic text prints as a
+  question mark there. Desktop and iPhone use system fonts, which cover them.
+- The browser and server PDFs and the Desktop and iPhone print paths draw the
+  same layout, but line breaks can differ by a word here and there. The iPhone
+  PDF is US Letter.
 - Android uses the m.allternit.com app, so it has the same picker.
 
 ## For developers
 
 - Shared source: `allternit/platform/packages/pdf-templates` (`templates.ts`
-  builds a list of layout blocks; `html.ts` and `pdf.ts` draw them). The
-  `allternit-ai` copy in `src/lib/pdf-templates` mirrors every file except the
-  PDF writer. Change both together.
+  builds a list of layout blocks; `html.ts` and `pdf.ts` draw them; `fonts.ts`
+  holds the base64 Noto Sans subset, about 340 KB of font data, 460 KB as text).
+  `allternit-ai/src/lib/pdf-templates` mirrors every file except `ios-entry.ts`.
+  Change both together.
+- Web and PWA: `render.ts` loads `pdf.ts` and `fonts.ts` on demand, so the
+  weight only lands when someone makes a PDF.
 - Desktop: the `shell:print-to-pdf` IPC (`src/main/print-to-pdf.ts`) opens a
   hidden sandboxed window with its own in-memory session and calls
   `webContents.printToPDF`. The renderer reaches it as
   `window.allternit.shell.printToPdf`.
-- iOS: `PDFTemplateClient.swift` and `PDFTemplateSheet.swift`.
+- iOS: `PDFTemplateRenderer.swift` runs `pdf-templates.js` in JavaScriptCore and
+  prints the HTML with WebKit. Rebuild the bundle with
+  `platform/packages/pdf-templates/scripts/build-ios-bundle.sh` after changing
+  `templates.ts`, `themes.ts` or `html.ts`. `PDFTemplateSheet.swift` is the UI.
