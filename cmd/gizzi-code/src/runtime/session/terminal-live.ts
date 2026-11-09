@@ -275,7 +275,7 @@ export namespace TerminalLive {
       for (const part of parts) {
         Bus.publish(MessageV2.Event.PartUpdated, { part })
         // Text as deltas too, so a chat stream waiting on this turn (/api/agent-chat) shows the reply.
-        if (part.type !== "text" && part.type !== "reasoning") continue
+        if (m.role !== "assistant" || (part.type !== "text" && part.type !== "reasoning")) continue
         const sent = streamed.get(sessionID) ?? new Map<string, string>()
         streamed.set(sessionID, sent)
         const before = sent.get(part.id) ?? ""
