@@ -58,6 +58,29 @@ fn target_row(conn: &rusqlite::Connection, target_id: &str) -> Option<Target> {
     .filter(|t| !t.gateway_url.is_empty())
 }
 
+/// A connected server the user owns and that is ready (Teleport talks to it).
+pub fn owned_target(db: &DbHandle, user_id: &str, target_id: &str) -> Option<Target> {
+    let conn = db.connect().ok()?;
+    let owns: bool = conn
+        .query_row(
+            "SELECT 1 FROM remote_backend_targets WHERE id = ?1 AND user_id = ?2",
+            params![target_id, user_id],
+            |_| Ok(true),
+        )
+        .optional()
+        .ok()
+        .flatten()
+        .unwrap_or(false);
+    if owns { target_row(&conn, target_id) } else { None }
+}
+
+/// Forget where a session lives (it is back on this Mac).
+pub fn clear(db: &DbHandle, session_id: &str) {
+    if let Ok(conn) = db.connect() {
+        let _ = conn.execute("DELETE FROM session_placements WHERE session_id = ?1", params![session_id]);
+    }
+}
+
 /// Where a session lives, when not on this Mac.
 pub fn session_target(db: &DbHandle, session_id: &str) -> Option<Target> {
     let conn = db.connect().ok()?;

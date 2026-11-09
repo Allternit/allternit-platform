@@ -16,7 +16,7 @@
 use axum::{
     body::Bytes,
     extract::{DefaultBodyLimit, Path, State},
-    http::StatusCode,
+    http::{Method, StatusCode},
     routing::{get, post, put},
     Extension, Json, Router,
 };
@@ -66,6 +66,11 @@ pub struct Manifest {
     #[serde(default)]
     pub direction: Option<String>,
     pub files: Vec<FileEntry>,
+    /// Where the cloud computer gets the code: a clone URL and the commit the Mac was on.
+    #[serde(default)]
+    pub git_remote: Option<String>,
+    #[serde(default)]
+    pub git_base: Option<String>,
     /// Text the resumed session reads first, so it knows it moved.
     pub handoff: String,
     #[serde(default)]
@@ -111,6 +116,16 @@ pub fn validate(m: &Manifest) -> Result<(), String> {
         }
         if f.sha256.len() != 64 || !f.sha256.bytes().all(|b| b.is_ascii_hexdigit()) {
             return Err("sha256 must be 64 hex characters".into());
+        }
+    }
+    if let Some(r) = &m.git_remote {
+        if !(r.starts_with("https://") || r.starts_with("git@")) || r.len() > 500 || r.contains(char::is_whitespace) || r.starts_with('-') {
+            return Err("git_remote must be an https or ssh clone URL".into());
+        }
+    }
+    if let Some(b) = &m.git_base {
+        if b.len() < 7 || b.len() > 64 || !b.bytes().all(|c| c.is_ascii_hexdigit()) {
+            return Err("git_base must be a commit hash".into());
         }
     }
     if m.handoff.len() > 64 * 1024 || m.queued.len() > 20 || m.queued.iter().any(|q| q.len() > 64 * 1024) {
@@ -197,6 +212,24 @@ fn resume_hint(m: &Manifest) -> String {
     }
 }
 
+/// Put the code on this computer: clone the remote at the Mac's commit. Skipped when the
+/// folder already holds a checkout (a retry, or a session that came back).
+fn materialize(cwd: &FsPath, m: &Manifest) -> Result<(), ApiError> {
+    let Some(remote) = &m.git_remote else { return Ok(()) };
+    if cwd.join(".git").exists() {
+        return Ok(());
+    }
+    let run = |args: &[&str], dir: &FsPath| -> Result<(), ApiError> {
+        let out = std::process::Command::new("git").args(args).current_dir(dir).output().map_err(internal)?;
+        if out.status.success() { Ok(()) } else { Err(err(StatusCode::UNPROCESSABLE_ENTITY, "workspace_unavailable", String::from_utf8_lossy(&out.stderr))) }
+    };
+    run(&["clone", "--no-tags", "--", remote, "."], cwd)?;
+    if let Some(base) = &m.git_base {
+        run(&["checkout", "--quiet", base], cwd)?;
+    }
+    Ok(())
+}
+
 fn teleport_dir(state: &AppState, id: &str) -> PathBuf {
     state.data_dir.join("teleports").join(id)
 }
@@ -233,6 +266,10 @@ pub fn native_target(m: &Manifest, cwd: &str, name: &str) -> PathBuf {
 pub fn teleport_router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/teleports", post(prepare))
+        .route("/teleports/placement", put(set_placement))
+        .route("/teleports/export/:harness/:id", get(export_native))
+        .route("/teleports/export/:harness/:id/diff", get(export_diff))
+        .route("/teleports/to/:target_id/*rest", axum::routing::any(relay).layer(DefaultBodyLimit::max(MAX_FILE_BYTES as usize + 1024)))
         .route("/teleports/:id", get(status))
         .route("/teleports/:id/cancel", post(cancel))
         .route("/teleports/:id/activate", post(activate))
@@ -266,6 +303,7 @@ async fn prepare(
         }
         let id = format!("tp_{}", uuid::Uuid::new_v4().simple());
         std::fs::create_dir_all(&cwd).map_err(internal)?;
+        materialize(&cwd, &manifest)?;
         conn.execute(
             "INSERT INTO teleports (id, user_id, request_id, manifest_hash, manifest_json, cwd) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![id, user.user_id, manifest.request_id, hash, serde_json::to_string(&manifest).map_err(internal)?, cwd.to_string_lossy()],
@@ -399,6 +437,141 @@ async fn cancel(State(state): State<Arc<AppState>>, Extension(user): Extension<A
     .await
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PlacementBody {
+    session_id: String,
+    /// A connected server's id; null = back on this Mac.
+    target_id: Option<String>,
+}
+
+/// Flip where a session lives once a teleport has activated (or returned).
+async fn set_placement(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Json(body): Json<PlacementBody>,
+) -> Result<Json<Value>, ApiError> {
+    let db = state.db.clone();
+    blocking(move || {
+        match body.target_id.as_deref() {
+            Some(t) => {
+                if crate::placement::owned_target(&db, &user.user_id, t).is_none() {
+                    return Err(err(StatusCode::BAD_REQUEST, "teleport_rejected", "that server isn't connected and ready"));
+                }
+                crate::placement::record(&db, &body.session_id, t);
+            }
+            None => crate::placement::clear(&db, &body.session_id),
+        }
+        Ok(Json(json!({ "ok": true })))
+    })
+    .await
+}
+
+/// Forward a call to a connected server's `/api/v1/<rest>` with its stored token, so the
+/// Mac-side client never holds the server's credentials. Only the teleport paths pass.
+async fn relay(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Path((target_id, rest)): Path<(String, String)>,
+    method: Method,
+    body: Bytes,
+) -> Result<(StatusCode, Bytes), ApiError> {
+    if !rest.starts_with("teleports") || rest.contains("..") {
+        return Err(err(StatusCode::BAD_REQUEST, "teleport_rejected", "only teleport calls can be relayed"));
+    }
+    let db = state.db.clone();
+    let uid = user.user_id.clone();
+    let tid = target_id.clone();
+    let target = blocking(move || Ok(crate::placement::owned_target(&db, &uid, &tid))).await?;
+    let target = target.ok_or_else(|| err(StatusCode::BAD_REQUEST, "teleport_rejected", "that server isn't connected and ready"))?;
+    let mut req = crate::net_client::client()
+        .request(method, format!("{}/api/v1/{rest}", target.gateway_url))
+        .body(body.to_vec());
+    if let Some(t) = &target.token {
+        req = req.bearer_auth(t);
+    }
+    let res = req.header(reqwest::header::CONTENT_TYPE, "application/octet-stream").send().await.map_err(|e| {
+        err(StatusCode::BAD_GATEWAY, "teleport_rejected", format!("{} is unreachable: {e}", target.name))
+    })?;
+    let status = StatusCode::from_u16(res.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
+    Ok((status, res.bytes().await.map_err(internal)?))
+}
+
+/// Find a native session file this computer already has, by harness and id.
+fn find_native(harness: &str, id: &str) -> Option<PathBuf> {
+    if !valid_token(id) {
+        return None;
+    }
+    let (root, flat) = match harness {
+        "claude" => (std::env::var_os("CLAUDE_CONFIG_DIR").map(PathBuf::from).unwrap_or_else(|| home_dir().join(".claude")).join("projects"), true),
+        "codex" => (std::env::var_os("CODEX_HOME").map(PathBuf::from).unwrap_or_else(|| home_dir().join(".codex")).join("sessions"), false),
+        _ => return None,
+    };
+    fn walk(dir: &FsPath, id: &str, flat: bool, depth: u8) -> Option<PathBuf> {
+        for entry in std::fs::read_dir(dir).ok()?.flatten() {
+            let path = entry.path();
+            let name = entry.file_name().to_string_lossy().to_string();
+            if path.is_dir() {
+                if depth < 4 {
+                    if let Some(found) = walk(&path, id, flat, depth + 1) {
+                        return Some(found);
+                    }
+                }
+            } else if name.ends_with(".jsonl") && (if flat { name == format!("{id}.jsonl") } else { name.contains(id) }) {
+                return Some(path);
+            }
+        }
+        None
+    }
+    walk(&root, id, flat, 0)
+}
+
+/// Cloud -> Mac: the native session file, byte for byte.
+async fn export_native(Path((harness, id)): Path<(String, String)>) -> Result<(StatusCode, [(&'static str, String); 2], Bytes), ApiError> {
+    blocking(move || {
+        let path = find_native(&harness, &id).ok_or_else(|| err(StatusCode::NOT_FOUND, "not_found", "no native session file for that id"))?;
+        let bytes = std::fs::read(&path).map_err(internal)?;
+        let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        let sha = hex::encode(Sha256::digest(&bytes));
+        Ok((StatusCode::OK, [("content-type", "application/octet-stream".to_string()), ("x-teleport-file", format!("{name};{sha}"))], Bytes::from(bytes)))
+    })
+    .await
+}
+
+#[derive(Deserialize)]
+struct DiffQuery {
+    /// Workspace folder name (as in the manifest) and the commit the Mac started from.
+    workspace_name: String,
+    base: String,
+}
+
+/// Cloud -> Mac: what changed in the workspace since the commit the Mac teleported from.
+async fn export_diff(
+    State(state): State<Arc<AppState>>,
+    Path((_harness, _id)): Path<(String, String)>,
+    axum::extract::Query(q): axum::extract::Query<DiffQuery>,
+) -> Result<(StatusCode, Bytes), ApiError> {
+    if !valid_token(&q.workspace_name) || q.base.len() < 7 || q.base.len() > 64 || !q.base.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(err(StatusCode::BAD_REQUEST, "teleport_rejected", "bad workspace_name or base"));
+    }
+    let cwd = state.data_dir.join("teleport-workspaces").join(&q.workspace_name);
+    blocking(move || {
+        // Untracked files count: intent-to-add makes them show in the diff.
+        let _ = std::process::Command::new("git").arg("-C").arg(&cwd).args(["add", "-N", "."]).output();
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&cwd)
+            .args(["diff", "--binary", &q.base])
+            .output()
+            .map_err(internal)?;
+        if !out.status.success() {
+            return Err(err(StatusCode::UNPROCESSABLE_ENTITY, "teleport_rejected", String::from_utf8_lossy(&out.stderr)));
+        }
+        Ok((StatusCode::OK, Bytes::from(out.stdout)))
+    })
+    .await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -412,6 +585,8 @@ mod tests {
             reasoning: None,
             workspace_name: "app".into(),
             direction: None,
+            git_remote: None,
+            git_base: None,
             files: vec![FileEntry { name: "x.jsonl".into(), size: 10, sha256: "a".repeat(64) }],
             handoff: "moved".into(),
             queued: vec![],
