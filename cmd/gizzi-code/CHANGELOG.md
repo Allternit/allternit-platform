@@ -5,6 +5,11 @@
 ## 2.3.0 (2026-11-09)
 
 ### Added
+- **PDFs from templates:** `gizzi pdf render <invoice|report|ticket|minutes|receipt> --data x.json -o out.pdf` and `gizzi pdf templates`. Three themes, Letter or A4, `--html` for the page instead.
+- **Measured loops:** a loop can carry a Loop Card (instrument command, better is lower or higher, keep bar, noise runs, pairs). Each attempt is measured against an A/A noise floor, kept and committed or reverted, and written to a ledger, rejects included. `/loop` prints the card.
+- **Teleport:** `gizzi teleport <session> --to cloud|local` moves a live Claude or Codex session, with your uncommitted changes, between this Mac and your cloud computer, and resumes it there.
+- **Message delivery:** messages to agents show Queued, Pushed, Delivered and Read. A closed Claude session is woken with `claude --bg --resume` to take a message; Codex turns are steered or started.
+- One machine id per computer (`~/.allternit/machine-id`), shared with Desktop, so gizzi and Desktop on one Mac count as one machine.
 - **Remote Control:** a terminal session shows up live in Desktop, ai.allternit.com, the phone app and iOS with a Terminal badge. From there you can read it, steer it, answer its approvals and questions, and stop it. `/remote` shows a QR code and links; `/desktop` opens the session in Desktop.
 - **CLI brains in the TUI:** `claude-cli/…` and `codex-cli/…` models run in the terminal app. The model list follows Desktop's rule: Allternit Cloud plus your own signed-in CLIs and keys. `--model` works at launch.
 - **Steer or queue while the agent works:** Enter steers, Tab queues, Ctrl+X Enter stops and sends. Next-step suggestions are on, and a recap shows when you come back.
@@ -17,6 +22,7 @@
 - Unfinished commands are hidden unless `GIZZI_EXPERIMENTAL_COMMANDS=1`. Docs links point to docs.allternit.com.
 
 ### Fixed
+- A loop or routine step killed by a signal now counts as failed, not passed.
 - `pane_render` sync events now carry a native video's duration, fps, motion blur, audio and timeout; without them the app dropped the request.
 - Saving settings no longer stops running agents or drops waiting questions.
 
