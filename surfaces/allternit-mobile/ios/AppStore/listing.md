@@ -55,11 +55,13 @@ First release of Allternit for iPhone.
 - **Contact:** support@allternit.com (forwards to allternitpbc@gmail.com through Cloudflare Email Routing; checked live 2026-11-04).
 - **Sign-in:** demo account `appreview@allternit.com`; the password is in `~/.appstoreconnect/demo-account.txt` and in App Store Connect. Never write it here.
 - **Demo computer:** a computer paired to the demo account that stays online during review (Eoj: cloud computer on standby). Without it, Code and Automation show "Connect a computer", which is the correct state but hides those features from review.
+- **Demo brain and credit (2026-11-09):** Allternit Cloud only, default `allternit/glm-5.3`; Codex is off (it was a personal ChatGPT Plus login with its own quota). $5 Cloud credit. The four bot routines are paused during review so they don't spend it; resume them after approval.
+- **Review video:** `reports/app-review-build27.mp4` in the workspace, attached in App Review Information. Recorded over USB on iPhone (4) with build 27 and the demo account.
 - **Notes for the reviewer:**
 
 > Allternit is a workspace for AI agents ("bots"). Sign in with the demo account above. Home is a chat. The drawer (☰, top left) has Inbox, Projects, Artifacts, Automation, Decisions and Settings; the dial next to it switches between Home, Bots, Code and ACI. The demo account has a cloud computer attached, so Code and Automation work.
 >
-> First chat: the brain is preset to **GLM 5.3 (Allternit Cloud)**. If the app asks you to pick one, choose GLM 5.3. Plain chat and the five demo bots use it. Any of the six Allternit Cloud models in the list will also answer.
+> First chat: a new chat asks you to pick a brain before the first message. Choose **GLM 5.3 (Allternit Cloud)**; it is paid for on the demo account. The five demo bots already use GLM 5.3. The attached video walks through sign-in, chat, a bot, MCP Apps, Billing, account deletion and screen sharing.
 >
 > Account deletion: Settings → Account → Delete account (type DELETE to confirm).
 >
@@ -73,7 +75,7 @@ First release of Allternit for iPhone.
 >
 > Screen sharing: Settings → Computers → Let your bots use this iPhone pairs the app with the person's own Allternit Desktop. A broadcast starts only from the system picker (RPSystemBroadcastPickerView, limited to the com.allternit.mobile.screen extension); a bot can only ask the app to show the picker. While it runs, the app shows "Your bot can see this screen" with Stop, and iOS shows its recording indicator. While a bot uses the app's browser, it shows "Bot is using the browser" with Stop.
 >
-> What a bot can do on this iPhone: see the screen while the person broadcasts, and use the app's own browser. It can't tap, type in or open other apps; the app uses only public APIs (ReplayKit, WebKit). Testing this needs a paired Allternit Desktop; we can send a screen recording of the whole flow on request.
+> What a bot can do on this iPhone: see the screen while the person broadcasts, and use the app's own browser. It can't tap, type in or open other apps; the app uses only public APIs (ReplayKit, WebKit). The demo account has its own cloud computer, so pairing works from Settings → Computers → Let your bots use this iPhone (the computer approves it). The attached video, recorded on an iPhone 15 with this build and the demo account, shows the whole flow: pairing, the system picker, the banner with Stop, the bot using the app's browser, and both Stop buttons.
 >
 > Encryption: the app uses HTTPS, a WireGuard connection to the person's own computers, and OpenSSL with libssh2 inside libgit2 for git over HTTPS and SSH. All are standard algorithms in a mass-market app (ECCN 5D992).
 
