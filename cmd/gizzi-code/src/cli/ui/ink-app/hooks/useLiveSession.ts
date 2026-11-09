@@ -78,46 +78,56 @@ export function useLiveSession(
 
     // AskUserQuestion requests go out as engine questions (the surfaces' question card), not approvals.
     const questions = new Map<string, Record<string, unknown>>()
+    // Open asks by engine id, re-sent when the inbox reconnects (an engine restart forgets them).
+    const open = new Map<string, { path: string; body: unknown }>()
+    const ask = (id: string, path: string, body: unknown) => {
+      open.set(id, { path, body })
+      void engineFetch(path, body).catch(() => {})
+    }
+    const settle = (id: string, path: string, body: unknown) => {
+      open.delete(id)
+      void engineFetch(path, body).catch(() => {})
+    }
 
     const permissionCallbacks: BridgePermissionCallbacks = {
       sendRequest(requestId, toolName, input, toolUseId, description) {
         if (!sessionID) return
         if (toolName === ASK_USER_QUESTION) {
           questions.set(engineQuestionID(requestId), input)
-          void engineFetch(`/sessions/${sessionID}/question`, {
+          ask(engineQuestionID(requestId), `/sessions/${sessionID}/question`, {
             requestID: engineQuestionID(requestId),
             questions: toEngineQuestions(input),
             callID: toolUseId,
-          }).catch(() => {})
+          })
           return
         }
-        void engineFetch(`/sessions/${sessionID}/permission`, {
+        ask(enginePermissionID(requestId), `/sessions/${sessionID}/permission`, {
           requestID: enginePermissionID(requestId),
           tool: toolName,
           description,
           input,
           callID: toolUseId,
-        }).catch(() => {})
+        })
       },
       sendResponse(requestId, response) {
         const question = questions.get(engineQuestionID(requestId))
         if (question) {
           questions.delete(engineQuestionID(requestId))
-          void engineFetch(`/question/${engineQuestionID(requestId)}/settle`, {
+          settle(engineQuestionID(requestId), `/question/${engineQuestionID(requestId)}/settle`, {
             answers: response.behavior === 'allow' ? fromTerminalAnswers(question, response.updatedInput) : undefined,
-          }).catch(() => {})
+          })
           return
         }
-        void engineFetch(`/permission/${enginePermissionID(requestId)}/settle`, {
+        settle(enginePermissionID(requestId), `/permission/${enginePermissionID(requestId)}/settle`, {
           allow: response.behavior === 'allow',
-        }).catch(() => {})
+        })
       },
       cancelRequest(requestId) {
         if (questions.delete(engineQuestionID(requestId))) {
-          void engineFetch(`/question/${engineQuestionID(requestId)}/settle`, {}).catch(() => {})
+          settle(engineQuestionID(requestId), `/question/${engineQuestionID(requestId)}/settle`, {})
           return
         }
-        void engineFetch(`/permission/${enginePermissionID(requestId)}/settle`, { allow: false }).catch(() => {})
+        settle(enginePermissionID(requestId), `/permission/${enginePermissionID(requestId)}/settle`, { allow: false })
       },
       onResponse(requestId, handler) {
         const ids = [enginePermissionID(requestId), engineQuestionID(requestId)]
@@ -140,20 +150,26 @@ export function useLiveSession(
             handler({ behavior: 'deny', message: 'Stopped from another device.' })
             // Answered here, so close its card on the other surfaces too.
             const kind = id.startsWith('que_') ? 'question' : 'permission'
-            void engineFetch(`/${kind}/${id}/settle`, kind === 'question' ? {} : { allow: false }).catch(() => {})
+            if (open.has(id)) settle(id, `/${kind}/${id}/settle`, kind === 'question' ? {} : { allow: false })
           }
           abortControllerRef.current?.abort()
           // Report the real state again even if it did not change since the last sync.
           lastBusy = undefined
           sync()
           return
+        case 'attached':
+          // A restarted engine lost the open asks: show them on the other surfaces again.
+          for (const { path, body } of open.values()) void engineFetch(path, body).catch(() => {})
+          return
         case 'permission': {
+          open.delete(event.requestID)
           const handler = handlers.get(event.requestID)
           handlers.delete(event.requestID)
           handler?.(event.allow ? { behavior: 'allow' } : { behavior: 'deny', message: event.message })
           return
         }
         case 'question': {
+          open.delete(event.requestID)
           const handler = handlers.get(event.requestID)
           const input = questions.get(event.requestID)
           handlers.delete(event.requestID)
