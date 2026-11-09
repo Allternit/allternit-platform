@@ -215,6 +215,9 @@ const windowAPI = {
   setAlwaysOnTop: (enabled: boolean): Promise<void> =>
     ipcRenderer.invoke('window:set-always-on-top', enabled),
   getState: (): Promise<WindowState> => ipcRenderer.invoke('window:get-state'),
+  /** This window's number, tint slot and the open-window count (null outside a main window). */
+  getIdentity: (): Promise<{ number: number; tintIndex: number; count: number } | null> =>
+    ipcRenderer.invoke('window:get-identity'),
   getBounds: (): Promise<WindowBounds> => ipcRenderer.invoke('window:get-bounds'),
   setBounds: (bounds: Partial<WindowBounds>): Promise<void> =>
     ipcRenderer.invoke('window:set-bounds', bounds),
