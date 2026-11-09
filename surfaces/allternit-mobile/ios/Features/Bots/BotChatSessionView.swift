@@ -303,7 +303,7 @@ struct BotChatSessionView: View {
 
     private var deckThreadName: String {
         if isMainChat { return "Main chat" }
-        if let title = thread?.title, !title.isEmpty { return title }
+        if let title = thread?.displayTitle, !title.isEmpty { return title }
         return "Thread"
     }
 

@@ -850,7 +850,7 @@ struct ProjectDecisionCard: View {
             HStack(spacing: 8) {
                 Circle().fill(Theme.statusWarning).frame(width: 7, height: 7)
                 if let bot = store.bot(thread.botId) { BotAvatarView(bot: bot, size: 18) }
-                Text(thread.title)
+                Text(thread.displayTitle)
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(Color("TextPrimary"))
                     .lineLimit(2)

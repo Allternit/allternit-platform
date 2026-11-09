@@ -119,14 +119,14 @@ enum BotStageLiveModel {
         let delta = ms(next.nextRunAt) - now.timeIntervalSince1970 * 1000
         let label: String
         if delta <= 0 {
-            label = "Routine \"\(next.name)\" due"
+            label = "Routine \"\(AutomationScheduleLogic.displayName(next.name))\" due"
         } else {
             let minute = 60_000.0, hour = 60 * minute, day = 24 * hour
             let when = delta < minute ? "in <1m"
                 : delta < hour ? "in \(Int((delta / minute).rounded()))m"
                 : delta < day ? "in \(String(format: "%.1f", delta / hour))h"
                 : "in \(Int((delta / day).rounded()))d"
-            label = "Next routine \"\(next.name)\" \(when)"
+            label = "Next routine \"\(AutomationScheduleLogic.displayName(next.name))\" \(when)"
         }
         return label
     }
@@ -229,7 +229,7 @@ struct StageBriefingCard: View {
             ForEach(briefing.threads) { thread in
                 Button { onOpen(thread) } label: {
                     VStack(alignment: .leading, spacing: 1) {
-                        Text(thread.title).font(.system(size: 13.5, weight: .semibold)).foregroundColor(Color("TextPrimary")).lineLimit(1)
+                        Text(thread.displayTitle).font(.system(size: 13.5, weight: .semibold)).foregroundColor(Color("TextPrimary")).lineLimit(1)
                         Text(thread.statusLine ?? thread.summary ?? thread.status)
                             .font(.system(size: 12)).foregroundColor(Color("TextSecondary")).lineLimit(1)
                     }
