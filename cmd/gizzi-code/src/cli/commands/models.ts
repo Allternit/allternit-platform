@@ -3,6 +3,7 @@ import { Instance } from "@/runtime/context/project/instance"
 import { Provider } from "@/runtime/providers/provider"
 import { ModelsDev } from "@/runtime/providers/adapters/models"
 import { Discovery } from "@/runtime/providers/discovery"
+import { ProviderOffer } from "@/runtime/providers/offer"
 import { cmd } from "@/cli/commands/cmd"
 import { UI } from "@/cli/ui"
 import { EOL } from "os"
@@ -41,9 +42,9 @@ export const ModelsCommand = cmd({
         type: "boolean",
       })
       .option("all", {
-        describe: "show all available providers (not just configured ones)",
+        describe: "show every models.dev provider, aggregators like OpenRouter included (default: what the model picker offers)",
         type: "boolean",
-        default: true,
+        default: false,
       })
       .option("catalog", {
         describe: "show the dynamic Hugging Face catalog from the Local Engine",
@@ -240,30 +241,43 @@ export const ModelsCommand = cmd({
           return
         }
 
-        const sourceRank = (id: string) => {
-          const src = discoveredMap[id]?.source
-          if (src === "platform") return 0
-          if (src === "subprocess") return 1
-          if (src === "local") return 2
-          if (id.startsWith("gizzi")) return 3
-          return 4
+        // The picker's rule (runtime/providers/offer.ts), same as the TUI and
+        // Desktop: Allternit Cloud, your subscriptions, API keys, local;
+        // aggregators (OpenRouter) only with --all or --provider.
+        const candidate = (id: string) => {
+          const dp = discoveredMap[id]
+          const info = configured[id]
+          return {
+            id,
+            source: dp?.source ?? info?.source,
+            auth_type: dp?.auth_type ?? info?.auth_type,
+            baseURL: dp?.base_url ?? (info?.options?.baseURL as string | undefined),
+            options: dp?.options ?? info?.options,
+          }
         }
-        const providerIDs = [...allProviderIDs].sort((a, b) => {
-          const d = sourceRank(a) - sourceRank(b)
-          if (d !== 0) return d
-          return a.localeCompare(b)
-        })
+        // A key or sign-in on file: an env var, `gizzi connect`, or one in gizzi.json.
+        const connected = (id: string) => {
+          if (discoveredMap[id]) return true
+          const info = configured[id]
+          if (!info) return false
+          return (
+            info.source === "env" ||
+            info.source === "api" ||
+            Boolean(info.key || info.token || info.options?.apiKey) ||
+            info.env.some((name) => Boolean(process.env[name]))
+          )
+        }
+        const providerIDs = [...allProviderIDs]
+          .filter((id) => args.all || ProviderOffer.isOffered(candidate(id), { connected: connected(id) }))
+          .sort((a, b) => {
+            const d = ProviderOffer.rank(candidate(a)) - ProviderOffer.rank(candidate(b))
+            if (d !== 0) return d
+            return a.localeCompare(b)
+          })
 
         let lastGroup = ""
         for (const providerID of providerIDs) {
-          const group =
-            discoveredMap[providerID]?.source === "platform"
-              ? "Allternit Cloud"
-              : discoveredMap[providerID]?.source === "subprocess"
-                ? "installed CLI"
-                : discoveredMap[providerID]?.source === "local"
-                  ? "local"
-                  : "other"
+          const group = ProviderOffer.TITLE[ProviderOffer.kind(candidate(providerID))]
           if (group !== lastGroup) {
             UI.println(UI.Style.TEXT_DIM + `# ${group}` + UI.Style.TEXT_NORMAL)
             lastGroup = group

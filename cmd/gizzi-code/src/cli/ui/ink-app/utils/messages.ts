@@ -4422,12 +4422,14 @@ export function createRunTelemetryMessage(
     contextEstimated: input.contextEstimated,
     quotaChip: input.quotaChip,
   })
-  if (!line) return null
+  if (!line && !input.stopped) return null
   return {
     type: 'system',
     subtype: 'run_telemetry',
-    content: line,
+    content: line ?? '',
     modelDisplay: input.model,
+    files: input.files,
+    stopped: input.stopped,
     durationMs: input.durationMs,
     inputTokens: input.inputTokens,
     outputTokens: input.outputTokens,

@@ -1,4 +1,3 @@
-
 import type { Argv } from "yargs"
 import path from "path"
 import { pathToFileURL } from "bun"
@@ -33,197 +32,27 @@ import { ReviewVerdict } from "@/runtime/review/verdict"
 import { Agent } from "@/runtime/loop/agent"
 import { AgentManager } from "@/runtime/loop/manager"
 import { PermissionNext } from "@/runtime/tools/guard/permission/next"
-import { Tool } from "@/runtime/tools/builtins/tool"
-import { GlobTool } from "@/runtime/tools/builtins/glob"
-import { GrepTool } from "@/runtime/tools/builtins/grep"
-import { ListTool } from "@/runtime/tools/builtins/ls"
-import { ReadTool } from "@/runtime/tools/builtins/read"
-import { WebFetchTool } from "@/runtime/tools/builtins/webfetch"
-import { EditTool } from "@/runtime/tools/builtins/edit"
-import { WriteTool } from "@/runtime/tools/builtins/write"
-import { CodeSearchTool } from "@/runtime/tools/builtins/codesearch"
-import { WebSearchTool } from "@/runtime/tools/builtins/websearch"
-import { TaskTool } from "@/runtime/tools/builtins/task"
-import { SkillTool } from "@/runtime/tools/builtins/skill"
-import { BashTool } from "@/runtime/tools/builtins/bash"
-import { TodoWriteTool } from "@/runtime/tools/builtins/todo"
-import { Locale } from "@/shared/util/locale"
 import { Config } from "@/runtime/context/config/config"
+import { ToolPrinter, columns } from "@/cli/commands/run-print"
+import { TurnSummary } from "@/shared/util/turn-summary"
+import chalk from "@/shared/util/chalk"
 
-type ToolProps<T extends Tool.Info> = {
-  input: Tool.InferParameters<T>
-  metadata: Tool.InferMetadata<T>
-  part: ToolPart
-}
-
-function props<T extends Tool.Info>(part: ToolPart): ToolProps<T> {
-  const state = part.state
-  return {
-    input: state.input as Tool.InferParameters<T>,
-    metadata: ("metadata" in state ? state.metadata : {}) as Tool.InferMetadata<T>,
-    part,
-  }
-}
-
-type Inline = {
-  title: string
-  description?: string
-}
-
-const SAND = "\x1b[38;2;212;176;140m"
-const BULLET = `${UI.Style.TEXT_INFO_BOLD}⏺${UI.Style.TEXT_NORMAL}`
-const RESULT_CONNECTOR = `${UI.Style.TEXT_DIM}⎿ ${UI.Style.TEXT_NORMAL}`
-const RESULT_INDENT = "   "
-const BLOCK_PREVIEW_LINES = 10
-
-function inline(info: Inline) {
-  const desc = info.description ? `${UI.Style.TEXT_DIM} ${info.description}${UI.Style.TEXT_NORMAL}` : ""
-  UI.println(`${BULLET} ${UI.Style.TEXT_NORMAL_BOLD}${info.title}${UI.Style.TEXT_NORMAL}${desc}`)
-}
-
-function block(info: Inline, output?: string) {
-  UI.empty()
-  inline(info)
-  if (!output?.trim()) return
-  const lines = output.trim().split("\n")
-  const shown = lines.slice(0, BLOCK_PREVIEW_LINES)
-  const remaining = lines.length - BLOCK_PREVIEW_LINES
-  for (let i = 0; i < shown.length; i++) {
-    const prefix = i === 0 ? `  ${RESULT_CONNECTOR}` : `  ${RESULT_INDENT}`
-    UI.println(`${prefix}${shown[i]!}`)
-  }
-  if (remaining > 0) {
-    UI.println(`  ${RESULT_INDENT}${UI.Style.TEXT_DIM}… +${remaining} lines${UI.Style.TEXT_NORMAL}`)
-  }
-  UI.empty()
-}
+// Gizzi sand through the chalk shim: 256-color terminals get 180, NO_COLOR gets nothing.
+const sand = (s: string) => chalk.rgb(212, 176, 140)(s)
 
 function header(agent: string, modelID: string) {
   const D = UI.Style.TEXT_DIM
   const N = UI.Style.TEXT_NORMAL
   const B = UI.Style.TEXT_NORMAL_BOLD
   UI.empty()
-  UI.println(`${SAND}──${N} ${B}${agent}${N}${D} · ${N}${modelID} ${SAND}──${N}`)
+  UI.println(`${sand("──")} ${B}${agent}${N}${D} · ${N}${modelID} ${sand("──")}`)
   UI.empty()
-}
-
-function runningLine(part: ToolPart) {
-  const D = UI.Style.TEXT_DIM
-  const N = UI.Style.TEXT_NORMAL
-  const toolName = Locale.titlecase(part.tool.replace(/_/g, " "))
-  const input = "input" in part.state ? part.state.input : undefined
-  const args = input && typeof input === "object" && Object.keys(input).length > 0
-    ? String(Object.values(input)[0] ?? "").slice(0, 60)
-    : ""
-  UI.println(`${D}⏺ ${toolName}(${args})  …${N}`)
 }
 
 function fmtNum(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`
   return String(n)
-}
-
-function fallback(part: ToolPart) {
-  const state = part.state
-  const input = "input" in state ? state.input : undefined
-  const args =
-    ("title" in state && state.title ? state.title : undefined) ||
-    (input && typeof input === "object" && Object.keys(input).length > 0 ? JSON.stringify(input) : "")
-  const tool = Locale.titlecase(part.tool.replace(/_/g, " "))
-  inline({ title: `${tool}(${args})` })
-}
-
-function glob(info: ToolProps<typeof GlobTool>) {
-  const root = info.input.path ?? ""
-  const suffix = root ? ` in ${normalizePath(root)}` : ""
-  const num = info.metadata.count
-  const count = num === undefined ? "" : ` · ${num} ${num === 1 ? "match" : "matches"}`
-  inline({ title: `Glob("${info.input.pattern}")`, description: `${suffix}${count}`.trim() || undefined })
-}
-
-function grep(info: ToolProps<typeof GrepTool>) {
-  const root = info.input.path ?? ""
-  const suffix = root ? ` in ${normalizePath(root)}` : ""
-  const num = info.metadata.matches
-  const count = num === undefined ? "" : ` · ${num} ${num === 1 ? "match" : "matches"}`
-  inline({ title: `Grep("${info.input.pattern}")`, description: `${suffix}${count}`.trim() || undefined })
-}
-
-function list(info: ToolProps<typeof ListTool>) {
-  const dir = info.input.path ? normalizePath(info.input.path) : "."
-  inline({ title: `List(${dir})` })
-}
-
-function read(info: ToolProps<typeof ReadTool>) {
-  const file = normalizePath(info.input.filePath)
-  const extras = Object.entries(info.input)
-    .filter(([key, value]) => key !== "filePath" && (typeof value === "string" || typeof value === "number" || typeof value === "boolean"))
-    .map(([key, value]) => `${key}=${value}`)
-    .join(", ")
-  inline({ title: `Read(${file})`, description: extras || undefined })
-}
-
-function write(info: ToolProps<typeof WriteTool>) {
-  block(
-    { title: `Write(${normalizePath(info.input.filePath)})` },
-    info.part.state.status === "completed" ? info.part.state.output : undefined,
-  )
-}
-
-function webfetch(info: ToolProps<typeof WebFetchTool>) {
-  inline({ title: `WebFetch(${info.input.url})` })
-}
-
-function edit(info: ToolProps<typeof EditTool>) {
-  block(
-    { title: `Edit(${normalizePath(info.input.filePath)})` },
-    info.metadata.diff,
-  )
-}
-
-function codesearch(info: ToolProps<typeof CodeSearchTool>) {
-  inline({ title: `CodeSearch("${info.input.query}")` })
-}
-
-function websearch(info: ToolProps<typeof WebSearchTool>) {
-  inline({ title: `WebSearch("${info.input.query}")` })
-}
-
-function task(info: ToolProps<typeof TaskTool>) {
-  const input = info.part.state.input
-  const subagent =
-    typeof input?.subagent_type === "string" && input.subagent_type.trim().length > 0 ? input.subagent_type : "unknown"
-  const agent = Locale.titlecase(subagent)
-  const desc =
-    typeof input?.description === "string" && input.description.trim().length > 0 ? input.description : undefined
-  inline({ title: `Agent(${agent})`, description: desc })
-}
-
-function skill(info: ToolProps<typeof SkillTool>) {
-  inline({ title: `Skill("${info.input.name}")` })
-}
-
-function bash(info: ToolProps<typeof BashTool>) {
-  const output = info.part.state.status === "completed" ? info.part.state.output?.trim() : undefined
-  const desc = info.input.description
-  block(
-    { title: `Bash(${info.input.command})`, description: desc || undefined },
-    output,
-  )
-}
-
-function todo(info: ToolProps<typeof TodoWriteTool>) {
-  block(
-    { title: "TodoWrite" },
-    info.input.todos.map((item) => `${item.status === "completed" ? "[x]" : "[ ]"} ${item.content}`).join("\n"),
-  )
-}
-
-function normalizePath(input?: string) {
-  if (!input) return ""
-  if (path.isAbsolute(input)) return path.relative(process.cwd(), input) || "."
-  return input
 }
 
 export const RunCommand = cmd({
@@ -582,27 +411,6 @@ export const RunCommand = cmd({
     }
 
     async function execute(sdk: Client) {
-      function tool(part: ToolPart) {
-        try {
-          if (part.tool === "bash") return bash(props<typeof BashTool>(part))
-          if (part.tool === "glob") return glob(props<typeof GlobTool>(part))
-          if (part.tool === "grep") return grep(props<typeof GrepTool>(part))
-          if (part.tool === "list") return list(props<typeof ListTool>(part))
-          if (part.tool === "read") return read(props<typeof ReadTool>(part))
-          if (part.tool === "write") return write(props<typeof WriteTool>(part))
-          if (part.tool === "webfetch") return webfetch(props<typeof WebFetchTool>(part))
-          if (part.tool === "edit") return edit(props<typeof EditTool>(part))
-          if (part.tool === "codesearch") return codesearch(props<typeof CodeSearchTool>(part))
-          if (part.tool === "websearch") return websearch(props<typeof WebSearchTool>(part))
-          if (part.tool === "task") return task(props<typeof TaskTool>(part))
-          if (part.tool === "todowrite") return todo(props<typeof TodoWriteTool>(part))
-          if (part.tool === "skill") return skill(props<typeof SkillTool>(part))
-          return fallback(part)
-        } catch {
-          return fallback(part)
-        }
-      }
-
       const printMode = args.print || args.outputFormat === "text"
       const streamJsonMode = args.outputFormat === "stream-json"
       const jsonMode = args.format === "json" || args.outputFormat === "json"
@@ -636,6 +444,12 @@ export const RunCommand = cmd({
         }, remaining)
       }
       let error: string | undefined
+      const printer = new ToolPrinter((line) => UI.println(line))
+      const turnStart = Date.now()
+      let sawText = false
+      let lastText: string | undefined
+      let lastFinishError = false
+      let lastModel: string | undefined
       let totalCost = 0
       let totalTokensIn = 0
       let totalTokensOut = 0
@@ -673,6 +487,7 @@ export const RunCommand = cmd({
             !jsonMode && !streamJsonMode && !printMode
           ) {
             const info = event.properties.info as any
+            if (info.modelID) lastModel = info.modelID
             if (info.id && info.id !== lastMessageHeaderID) {
               lastMessageHeaderID = info.id
               header(info.agent ?? "gizzi", info.modelID ?? "unknown")
@@ -685,7 +500,10 @@ export const RunCommand = cmd({
             event.properties.info.role === "assistant" &&
             event.properties.info.time.completed
           ) {
-            const msg = event.properties.info as { cost?: number; tokens?: { input?: number; output?: number } }
+            const msg = event.properties.info as { cost?: number; tokens?: { input?: number; output?: number }; finish?: string }
+            // A CLI brain reports its own failures (unknown model, quota) as
+            // reply text with finish "error": that turn failed, not "Done".
+            lastFinishError = msg.finish === "error"
             if (msg.cost) totalCost += msg.cost
             if (msg.tokens) {
               totalTokensIn += msg.tokens.input ?? 0
@@ -702,27 +520,25 @@ export const RunCommand = cmd({
             const part = event.properties.part
             if (part.sessionID !== sessionID) continue
 
-            // Running indicator (show once per tool part)
-            if (part.type === "tool" && part.state.status === "running" && args.format !== "json") {
-              if (!toggles.has(part.id)) {
-                toggles.set(part.id, "running")
-                if (!emit("tool_running", { part }) && !printMode) {
-                  runningLine(part)
+            if (part.type === "tool") {
+              if (part.state.status === "running") {
+                if (toggles.has(part.id)) {
+                  // Live output (bash metadata.output) streams in the text format only.
+                  if (!jsonMode && !streamJsonMode && !printMode) printer.update(part as ToolPart)
+                  continue
                 }
-              }
-              continue
-            }
-
-            if (part.type === "tool" && (part.state.status === "completed" || part.state.status === "error")) {
-              toggles.set(part.id, "done")
-              if (emit("tool_use", { part })) continue
-              if (printMode) continue
-              if (part.state.status === "completed") {
-                tool(part)
+                toggles.set(part.id, "running")
+                if (!emit("tool_running", { part }) && !printMode) printer.update(part as ToolPart)
                 continue
               }
-              inline({ title: `${Locale.titlecase(part.tool.replace(/_/g, " "))} failed` })
-              UI.error(part.state.error)
+              if (part.state.status === "completed" || part.state.status === "error") {
+                if (toggles.get(part.id) === "done") continue
+                toggles.set(part.id, "done")
+                if (emit("tool_use", { part })) continue
+                if (printMode) continue
+                printer.update(part as ToolPart)
+                continue
+              }
             }
 
             if (part.type === "step-start") {
@@ -741,11 +557,14 @@ export const RunCommand = cmd({
                 printBuffer.push(text)
                 continue
               }
+              sawText = true
+              lastText = text
               const rendered = process.stderr.isTTY ? UI.markdown(text) : text
               if (!process.stdout.isTTY) {
                 process.stdout.write(rendered + EOL)
                 continue
               }
+              printer.separate()
               UI.empty()
               UI.println(rendered)
               UI.empty()
@@ -800,15 +619,22 @@ export const RunCommand = cmd({
               process.stdout.write(printBuffer.join("\n") + EOL)
               printBuffer.length = 0
             }
-            // Cost + token summary
-            if (!jsonMode && !streamJsonMode && !printMode && (totalCost > 0 || totalTokensIn > 0)) {
-              const D = UI.Style.TEXT_DIM
-              const N = UI.Style.TEXT_NORMAL
-              const parts: string[] = []
-              if (totalCost > 0) parts.push(`$${totalCost.toFixed(4)}`)
-              if (totalTokensIn > 0) parts.push(`${fmtNum(totalTokensIn)} in · ${fmtNum(totalTokensOut)} out`)
+            // Done line, or "Stopped" when the turn failed or produced nothing.
+            if (!jsonMode && !streamJsonMode && !printMode) {
+              const durationMs = Date.now() - turnStart
+              const files = printer.files
               UI.empty()
-              UI.println(`${D}∑  ${parts.join("  ·  ")}${N}`)
+              if (error || lastFinishError || (!sawText && printer.tools === 0)) {
+                const cause = error ?? (lastFinishError ? lastText : undefined) ?? "the model returned nothing"
+                UI.println(TurnSummary.stopped({ durationMs, files, cause, width: columns() }))
+              } else {
+                const extra: string[] = []
+                if (totalTokensIn > 0) extra.push(`${fmtNum(totalTokensIn)} in · ${fmtNum(totalTokensOut)} out`)
+                if (totalCost > 0) extra.push(`$${totalCost.toFixed(4)}`)
+                UI.println(`${sand("▞▪▚")} ` + TurnSummary.done({ durationMs, files, toolCount: printer.tools, model: lastModel, extra }))
+                const list = TurnSummary.fileList(files, columns())
+                if (list) UI.println(list)
+              }
             }
             if (!printMode) {
               if (pendingBackground.size === 0) break

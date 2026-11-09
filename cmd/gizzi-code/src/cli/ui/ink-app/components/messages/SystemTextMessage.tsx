@@ -1,4 +1,5 @@
-import { Box, Text, type TextProps } from '../../ink';
+import { Ansi, Box, Text, type TextProps } from '../../ink';
+import { TurnSummary } from '@/shared/util/turn-summary';
 import { feature } from 'bun:bundle';
 import * as React from 'react';
 import { useState } from 'react';
@@ -309,36 +310,39 @@ function RunTelemetryMessage({
   if (isBriefOnly) {
     return null;
   }
-  // One closing line per turn: the settled orb, "Gizzi forged for 3.5s",
-  // then the run stats. The duration lives here, not on a second line.
-  const [verb] = useState(_temp4);
+  // One closing line per turn (shared with `gizzi run`):
+  //   ▞▪▚ Done in 42s · 3 files +48 −12 · 12 tools · model · tokens · ctx
+  //       src/auth.ts  src/session.ts
+  // A failed or empty turn gets "✕ Stopped after 1s · nothing changed · cause".
   const showTurnDuration = getGlobalConfig().showTurnDuration ?? true;
-  const forged = showTurnDuration && message.durationMs !== undefined && message.durationMs > 0
-    ? `Gizzi ${verb.toLowerCase()} for ${formatDuration(message.durationMs)}`
-    : null;
-  const line = buildRunTelemetryLine({
-    model: message.modelDisplay,
-    durationMs: forged ? undefined : message.durationMs,
+  const { columns } = useTerminalSize();
+  const t1 = addMargin ? 1 : 0;
+  const durationMs = message.durationMs ?? 0;
+  if (message.stopped) {
+    return <Box flexDirection="row" marginTop={t1} backgroundColor={bg} width="100%"><Ansi>{TurnSummary.stopped({ durationMs, files: message.files, cause: message.stopped.cause, width: columns })}</Ansi></Box>;
+  }
+  const extra = buildRunTelemetryLine({
     inputTokens: message.inputTokens,
     outputTokens: message.outputTokens,
     usageEstimated: message.usageEstimated,
-    toolCount: message.toolCount,
     costUSD: message.costUSD,
     contextRatio: message.contextRatio,
     contextEstimated: message.contextEstimated,
     quotaChip: message.quotaChip
   });
-  if (!line && !forged) {
-    return null;
+  if (!showTurnDuration || durationMs <= 0) {
+    const line = buildRunTelemetryLine({ model: message.modelDisplay, toolCount: message.toolCount }) ;
+    const text = [line, extra].filter(Boolean).join(' · ');
+    if (!text) return null;
+    return <Box flexDirection="row" marginTop={t1} backgroundColor={bg} width="100%"><Box minWidth={2} /><Text dimColor={true}>{text}</Text></Box>;
   }
-  const t1 = addMargin ? 1 : 0;
-  const t2 = forged ? <OrbMark /> : <Box minWidth={2} />;
-
-  const t3 = <Text dimColor={true}>{[forged, line].filter(Boolean).join(' · ')}</Text>;
-
-  const t4 = <Box flexDirection="row" marginTop={t1} backgroundColor={bg} width="100%">{t2}{t3}</Box>;
-
-  return t4;
+  const files = TurnSummary.merge(message.files ?? []);
+  const done = TurnSummary.done({ durationMs, files, toolCount: message.toolCount, model: message.modelDisplay, extra: extra ? [extra] : [] });
+  const list = TurnSummary.fileList(files, columns);
+  return <Box flexDirection="column" marginTop={t1} backgroundColor={bg} width="100%">
+      <Box flexDirection="row"><OrbMark /><Ansi>{done}</Ansi></Box>
+      {list ? <Ansi>{list}</Ansi> : null}
+    </Box>;
 }
 function MemorySavedMessage({
     message,

@@ -8,6 +8,7 @@ import {
   isAllternitAuthEnabled,
   isClaudeAISubscriber,
 } from '../utils/auth.js'
+import { cloudAuthToken, cloudInferenceToken } from '../../../../runtime/providers/discovery/allternit-cloud.js'
 
 export type VerificationStatus =
   | 'loading'
@@ -37,7 +38,10 @@ export function useApiKeyVerification(): ApiKeyVerificationResult {
     if (key || source === 'apiKeyHelper') {
       return 'loading'
     }
-    return 'missing'
+    // Allternit Cloud's own credential (ALLTERNIT_API_KEY / the device token
+    // Desktop passes): signed in, even with no Claude-style key on file.
+    if (cloudAuthToken()) return 'valid'
+    return 'loading'
   })
   const [error, setError] = useState<Error | null>(null)
 
@@ -54,6 +58,12 @@ export function useApiKeyVerification(): ApiKeyVerificationResult {
       if (source === 'apiKeyHelper') {
         setStatus('error')
         setError(new Error('API key helper did not return a valid key'))
+        return
+      }
+      // `gizzi login` / `gizzi pair` keep a device token Cloud accepts for
+      // chat: "Not logged in" only when there is truly no credential.
+      if (await cloudInferenceToken().catch(() => undefined)) {
+        setStatus('valid')
         return
       }
       const newStatus = 'missing'
