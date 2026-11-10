@@ -28,7 +28,11 @@ import {
   toolNames,
 } from "@/lib/managed-agents";
 import { fetchConsoleModels, type ConsoleModel } from "@/lib/console-models";
+import { DRAFT_MODEL_CATALOG } from "@/lib/model-catalog";
 import { FormPage } from "@/components/console-ui";
+
+// Cloud default (first listed row), sent when the form leaves the model blank.
+const DEFAULT_MODEL_ID = DRAFT_MODEL_CATALOG[0].id;
 
 const INPUT_CLASS =
   "w-full rounded-lg border border-solid border-[var(--border-subtle)] bg-[var(--bg-secondary)] px-3 py-2 text-[13px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-tertiary)] focus:border-[var(--border-default)]";
@@ -185,7 +189,7 @@ export function AgentFormPage(): React.ReactNode {
         JSON.stringify(
           {
             name: name || "my-agent",
-            model: model || "anthropic/claude-sonnet-4-5",
+            model: model || DEFAULT_MODEL_ID,
             description: description || undefined,
             system_prompt: systemPrompt || undefined,
             temperature: Number(temperature) || 0.7,
@@ -225,7 +229,7 @@ export function AgentFormPage(): React.ReactNode {
     try {
       await createSubagent(id, {
         name: subName.trim(),
-        model: subModel.trim() || model || "anthropic/claude-sonnet-4-5",
+        model: subModel.trim() || model || DEFAULT_MODEL_ID,
         provider: deriveProvider(subModel.trim() || model),
         description: undefined,
         system_prompt: subPrompt.trim() || undefined,
@@ -437,7 +441,7 @@ export function AgentFormPage(): React.ReactNode {
                       type="text"
                       value={model}
                       onChange={(e) => setModel(e.target.value)}
-                      placeholder="provider/model, e.g. anthropic/claude-sonnet-4-5"
+                      placeholder="model id, e.g. kimi-k3"
                       className={INPUT_CLASS}
                     />
                   )}

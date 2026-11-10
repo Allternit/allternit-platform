@@ -151,7 +151,7 @@ export function SessionNewPage(): React.ReactNode {
                         type="text"
                         value={model}
                         onChange={(e) => setModel(e.target.value)}
-                        placeholder="provider/model, e.g. anthropic/claude-sonnet-4-5"
+                        placeholder="model id, e.g. kimi-k3"
                         className={INPUT_CLASS}
                       />
                     </div>

@@ -356,7 +356,7 @@ export function RoutingPolicyPage(): React.ReactNode {
                   onKeyDown={(event) => {
                     if (event.key === "Enter") void handleResolve();
                   }}
-                  placeholder="anthropic/claude-fable-5.1"
+                  placeholder="claude-sonnet-5.5"
                   className={cn(INPUT_CLASS, "font-mono")}
                 />
               </label>
@@ -612,7 +612,7 @@ export function RoutingPolicyPage(): React.ReactNode {
                             onChange={(event) =>
                               updateModelRow(index, { model: event.target.value })
                             }
-                            placeholder="anthropic/claude-fable-5.1"
+                            placeholder="claude-sonnet-5.5"
                             className={cn(INPUT_CLASS, "font-mono text-[12px]")}
                           />
                         </td>

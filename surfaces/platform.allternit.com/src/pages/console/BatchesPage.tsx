@@ -59,7 +59,7 @@ const EMPTY_CURL = `curl ${gatewayBase()}/v1/batches \\
 
 const REQUESTS_PLACEHOLDER = `[
   {
-    "model": "openai/gpt-4o-mini",
+    "model": "kimi-k3",
     "messages": [{ "role": "user", "content": "Hello" }],
     "max_tokens": 100
   }
