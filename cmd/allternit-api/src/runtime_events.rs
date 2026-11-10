@@ -619,6 +619,28 @@ mod tests {
         assert_eq!(a["data"]["decision"], "approved");
     }
 
+    /// Cloud skips its own Web Push for a Factory approval this runtime already pushed, so `surfaces`
+    /// (where `factory_approvals::fan_out` asked) has to reach it.
+    #[test]
+    fn a_factory_approval_forwards_where_it_was_pushed() {
+        let row = LedgerRow {
+            rowid: 2,
+            id: "u-row".into(),
+            event_type: "approval.requested".into(),
+            bot_id: None,
+            bot_name: None,
+            thread_id: None,
+            thread_title: None,
+            payload: json!({ "approvalId": "fa-1", "title": "Deploy", "summary": "Deploy the site", "surfaces": ["app", "push"], "dagId": "d1" }),
+            occurred_at: "2026-11-10T10:00:00Z".into(),
+            bot_avatar: None,
+        };
+        let ev = envelope(SOURCE_USER, &row).unwrap();
+        assert_eq!(ev["id"], "rt:approval:fa-1:requested");
+        assert_eq!(ev["data"]["surfaces"], json!(["app", "push"]));
+        assert!(ev["data"].get("dagId").is_none(), "payload keys are allowlisted");
+    }
+
     #[tokio::test]
     async fn unpaired_runtime_is_a_no_op() {
         let (st, _d) = setup().await;

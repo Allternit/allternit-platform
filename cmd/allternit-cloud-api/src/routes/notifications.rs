@@ -1205,11 +1205,13 @@ impl Outcome {
 type EventRow = (String, String, String, Value, Option<DateTime<Utc>>);
 
 /// A Factory approval whose runtime already sent its own Web Push (`surfaces` holds `"push"`: the
-/// Remote Control push worker delivered it, with its one-time approve code). Cloud then pushes the iPhone
-/// app only. When the runtime's push is not set up or reached no device (no `"push"`), cloud's Web Push is
-/// the only one, so it goes out as usual.
+/// Remote Control push worker delivered it to at least one device, with its one-time approve code). Cloud
+/// then pushes the iPhone app only. When the runtime's push is not set up or reached no device (no
+/// `"push"`), cloud's Web Push is the only one, so it goes out as usual. Only Factory approvals carry
+/// `surfaces` (`factory_approvals::Approval::to_json`), so this holds even when the runtime found no inbox
+/// item for the approval and sent no `inboxKind`.
 pub fn factory_pushed(data: &Value) -> bool {
-    s(data, &["inboxKind"]) == Some("factory_approval") && data.get("surfaces").and_then(Value::as_array).is_some_and(|a| a.iter().any(|v| v == "push"))
+    matches!(s(data, &["inboxKind"]), None | Some("factory_approval")) && data.get("surfaces").and_then(Value::as_array).is_some_and(|a| a.iter().any(|v| v == "push"))
 }
 
 async fn decide_and_send(db: &PgPool, transport: &dyn PushTransport, vapid: &Vapid, row: &EventRow) -> Outcome {
@@ -1911,11 +1913,18 @@ pub(crate) mod tests {
         let mut not_pushed = base.clone();
         not_pushed["approvalId"] = json!("fa2");
         not_pushed["surfaces"] = json!(["app", "telegram"]);
+        // The runtime found no inbox item (no `inboxKind`), but its push still went out.
+        let mut no_item = pushed.clone();
+        no_item["approvalId"] = json!("fa3");
+        no_item.as_object_mut().unwrap().remove("inboxKind");
+        no_item.as_object_mut().unwrap().remove("inboxId");
         let a = emit(&db, "u_f", "approval.requested", pushed).await;
         let b = emit(&db, "u_f", "approval.requested", not_pushed).await;
-        assert_eq!(sink_once(&db, &rec, &vapid).await.unwrap(), 2);
+        let c = emit(&db, "u_f", "approval.requested", no_item).await;
+        assert_eq!(sink_once(&db, &rec, &vapid).await.unwrap(), 3);
         // No iPhone app registered either, so the first reaches nobody from cloud: the runtime's push was it.
         assert_eq!(outcome(&db, &a).await, "unreachable");
+        assert_eq!(outcome(&db, &c).await, "unreachable");
         assert_eq!(outcome(&db, &b).await, "sent");
         assert_eq!(rec.sent.lock().unwrap().len(), 1, "exactly one Web Push from cloud, for the approval the runtime could not push");
     }

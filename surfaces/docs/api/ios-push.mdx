@@ -86,7 +86,7 @@ Server: `cmd/allternit-cloud-api/src/routes/device_read.rs`.
 
 ## Other push types
 
-`apns::send_raw` sends any APNs push type to one token: `background` to a device token, `liveactivity` to an activity token (topic `com.allternit.mobile.push-type.liveactivity`), `widgets` to a widget token (topic `com.allternit.mobile.push-type.widgets`). It uses the same provider token and the same cleanup as alerts: a gone device token also takes that device's activity tokens with it.
+`apns::send_raw` sends any APNs push type to one token: `background` to a device token, `liveactivity` to an activity token (topic `com.allternit.mobile.push-type.liveactivity`), `widgets` to a widget token (topic `com.allternit.mobile.push-type.widgets`). It uses the same provider token and the same cleanup as alerts: a gone device token also takes that device's activity tokens with it. When cloud sends `liveactivity` and `widgets` pushes is in [Live Activity pushes](#live-activity-pushes) and [Widget pushes](#widget-pushes).
 
 ## Payload
 
@@ -125,7 +125,7 @@ Each iPhone gets its own alert. It is built from the same message as the Web Pus
 
 **Coding-session permission asks** (`source: "gizzi-permission"`) come to the iPhone through this path only. Browsers get them from the gizzi remote-control lane.
 
-**Factory approvals** (`inboxKind: "factory_approval"`) that the runtime already pushed itself (`surfaces` holds `"push"`: its Remote Control Web Push, with the one-time approve code, reached a device) get the iPhone app push only from cloud, so a browser never gets two. When the runtime's push isn't set up (no push worker URL, not paired to the owner, no runtime id) or reached no device, `surfaces` has no `"push"` and cloud sends its Web Push as usual.
+**Factory approvals** (`inboxKind: "factory_approval"`, or any `approval.requested` carrying `surfaces`) that the runtime already pushed itself (`surfaces` holds `"push"`: its Remote Control Web Push, with the one-time approve code, reached at least one device) get the iPhone app push only from cloud, so a browser never gets two. When the runtime's push isn't set up (no push worker URL, not paired to the owner, no runtime id) or reached no device, `surfaces` has no `"push"` and cloud sends its Web Push as usual. The two Web Push paths keep separate subscription lists, so a browser subscribed only to cloud's Web Push, while another device took the runtime's push, gets the approval in the app inbox and the iPhone app but no Web Push.
 
 **One notification per iPhone.** A Web Push subscription with `platform: "ios-pwa"` is skipped while the same person has an iPhone registered here. A phone with both the app and the home-screen app gets the app's notification only.
 
