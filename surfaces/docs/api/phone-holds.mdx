@@ -154,7 +154,9 @@ A text or call hold also carries `to`, and a text hold carries `text`, because t
 The hold appears in the owner's "Needs you" list as an inbox item with kind `approval` and `subkind: "phone_action"`.
 
 - It is **Review only**. It has no inline Approve in a notification or on a row. The owner opens it and sees the review image (the screenshot) first.
-- It is `private: true`. The review image and the hold detail are not put in push text.
+- It is `private: true`. The review image and the hold detail are not put in push text, in a Live Activity or in the status snapshot's question.
+- It carries `contentHash` like every approvable item, and `approveInline: false`. An iPhone notification for it shows **Review**, which opens the item, not Approve.
+- The runtime enforces this. `POST /api/v1/inbox/approval:<id>/approve` with `surface` set to `notification`, `live_activity`, `widget`, `control`, `intent`, `siri` or `shortcut` answers `409 {"error":"review_required","code":"REVIEW_REQUIRED","id"}` and approves nothing. Deny (`"decision":"deny"`) is accepted from every surface.
 - Approve and Deny are available on the open item, in Allternit Desktop, ai.allternit.com, the PWA, the iOS app and Gizzi Code.
 
 ## Run report

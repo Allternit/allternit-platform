@@ -75,6 +75,7 @@ Every action is `POST /api/v1/inbox/:id/<action>`; `:id` is URL-encoded (`approv
   - any other kind: `400 {"code":"NOT_APPROVABLE"}`.
   - Optional `contentHash`: the hash the owner saw. When it no longer matches, the route answers `409 {"error":"changed","code":"CHANGED","id","contentHash":"<current>"}` and approves nothing. Show the item again. A request without `contentHash` works as before.
   - Optional `surface` (for example `notification`, `live_activity`, `widget`, `shortcut`): where the owner acted. It is written on the `inbox.changed` event.
+  - A [phone approval hold](/api/phone-holds#the-inbox-item) (`subkind: "phone_action"`) is approved only from the open item. An approve that names a system surface (`notification`, `live_activity`, `widget`, `control`, `intent`, `siri`, `shortcut`) answers `409 {"error":"review_required","code":"REVIEW_REQUIRED","id"}`. Deny works from every surface.
 - `dismiss`: `200 {"id","state":"dismissed"}`. On an `attention` item it also resolves the item as `dismissed`.
 - `retry` (`attention` items only): runs the item's retry now. For a routine that is the same path as **Run now**, and the item resolves as `retried`. `400 {"code":"ATTENTION_ERROR"}` when the item is not an attention item or has no retry, `404 NOT_FOUND` when it is already fixed.
 - `resolve` (`attention` items only): closes the item as fixed. `200 {"id","state":"resolved"}`.
