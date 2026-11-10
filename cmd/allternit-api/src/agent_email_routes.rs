@@ -1257,6 +1257,11 @@ async fn receive_inbound_email(
                         }
                         None => text,
                     };
+                    // Pause all bots: the email is kept in the bot's thread; only the owner's own mail runs.
+                    if !from_owner && crate::bots_pause::is_paused_db(&db, &owner_s) {
+                        tracing::info!(agent = %agent, "bots paused: email kept, no auto-reply");
+                        return;
+                    }
                     match crate::agent_session_routes::send_bot_turn(&db, &session, &agent, &text).await {
                         Ok(reply) => {
                             if let Err(e) = send_reply_for_turn(

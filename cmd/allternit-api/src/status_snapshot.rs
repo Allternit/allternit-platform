@@ -6,7 +6,8 @@
 //!   `activeBots`, `attentionBots`, `pendingApprovals`, `paused`, `focus`,
 //!   `bots` (≤ 20), `needsYou` (every open inbox id, for the revoke diff),
 //!   `needsYouRows` (≤ 4, `line` ≤ 80 characters), `loops` (left out when the
-//!   last poll failed), `lastRoutine`.
+//!   last poll failed), `lastRoutine`. `paused` is the owner's "Pause all bots"
+//!   switch (`bots_pause`); flipping it wakes the producer.
 //! - **Focus bot:** the oldest pending approval, then a bot that needs input,
 //!   then a blocked or failed bot, then the most recently active working bot.
 //!   `focus.private` is true when the item is addressed to another person, so
@@ -183,7 +184,7 @@ pub fn build(conn: &Connection, owner: &str, loops: Option<&[Value]>) -> rusqlit
         "activeBots": active,
         "attentionBots": attention,
         "pendingApprovals": approvals.len(),
-        "paused": false,
+        "paused": crate::bots_pause::is_paused(conn, owner),
         "focus": focus,
         "bots": per_bot,
         "needsYou": items.iter().map(|i| i["id"].clone()).collect::<Vec<_>>(),
@@ -295,7 +296,11 @@ pub async fn run(state: Arc<AppState>) {
     let secret = crate::relay_auth::process_secret();
     let mut p = Producer::default();
     loop {
-        tokio::time::sleep(TICK).await;
+        // The pause switch wakes the producer at once (still at most one send per MIN_GAP).
+        tokio::select! {
+            _ = tokio::time::sleep(TICK) => {}
+            _ = crate::bots_pause::CHANGED.notified() => {}
+        }
         if secret.paired_owner().is_none() {
             continue;
         }

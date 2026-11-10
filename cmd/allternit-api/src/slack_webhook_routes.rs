@@ -376,6 +376,12 @@ async fn handle_message_event(state: &Arc<AppState>, event: &Value) -> Result<()
         if let Some((_, crate::channel_gateway::Recorded::Duplicate)) = &gw {
             return Ok(());
         }
+        // Pause all bots: the message is kept in the thread; no auto-reply.
+        let owner = state.db.connect().ok().and_then(|c| c.query_row("SELECT user_id FROM agents WHERE id = ?1", [&bot_id], |r| r.get::<_, String>(0)).ok());
+        if owner.is_some_and(|o| crate::bots_pause::is_paused_db(&state.db, &o)) {
+            info!(channel = %channel, bot = %bot_id, "bots paused: Slack message kept, no auto-reply");
+            return Ok(());
+        }
         let turn = format!("[slack from <@{from}>] {text}");
         // A bot with no brain answers the thread with "Pick a brain for <bot>."
         // instead of failing silently in the background.

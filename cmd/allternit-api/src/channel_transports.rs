@@ -1109,6 +1109,11 @@ pub async fn accept_events_with<R: crate::thread_routes::ThreadRuntime>(
         // Files kept for a message that was not recorded (a replay) are dropped, not left behind.
         crate::channel_attachments::discard_kept(tx.provider(), &e.remote_id);
         match routed {
+            // Pause all bots: the message is recorded (it shows as unanswered in
+            // Needs you) but no auto-reply starts. The verified owner still gets one.
+            Ok(Routed { binding: Some(_), turn: Some((_, bot, _)), .. }) if !from_owner && crate::bots_pause::is_paused_db(&st.db, &acct.owner) => {
+                tracing::info!(provider = %tx.provider(), bot = %bot, "bots paused: inbound kept, no auto-reply");
+            }
             Ok(Routed { binding: Some(b), turn: Some((session, bot, text)), speaker, person, .. }) => {
                 let t = AcceptedTurn { binding: b, remote_id: e.remote_id.clone(), tx: tx.clone(), session, bot, text, speaker, person };
                 set_turn_state(&st.db, &t.binding.id, &t.remote_id, &turn_json(&t, "queued"));
@@ -2349,6 +2354,29 @@ mod tests {
             .query_row("SELECT pair_nonce FROM provider_account_bindings WHERE id = 'acct-1'", [], |r| r.get(0))
             .unwrap();
         assert_eq!(pending.as_deref(), Some("nonce-1"), "a wrong /start keeps the nonce pending");
+    }
+
+    #[tokio::test]
+    async fn paused_bots_keep_inbound_unanswered_but_still_answer_the_owner() {
+        let (st, acct) = setup("paused", &json!({ "botToken": "t" }).to_string(), "telegram", Some("bot-1")).await;
+        let c = st.db.connect().unwrap();
+        c.execute("UPDATE provider_account_bindings SET tg_owner_user_id = '42', allowed_senders = '[\"77\"]' WHERE id = 'acct-1'", []).unwrap();
+        crate::bots_pause::set(&c, &acct.owner, true, Some("test")).unwrap();
+        let tx = Arc::new(RecordingTelegram::default());
+        // A person writes while paused: recorded, no turn, nothing posted back.
+        let (turns, failed) = accept_events(&st, &acct, tx.clone(), vec![tg(1, 77, "are you there?")], Default::default()).await;
+        assert!(failed.is_none(), "{failed:?}");
+        assert!(turns.is_empty(), "no auto-reply while paused");
+        assert!(tx.posted.lock().unwrap().is_empty());
+        let items = crate::inbox_needs::collect(&c, &acct.owner, 0).unwrap();
+        assert!(items.iter().any(|i| i["kind"] == "unanswered" && i.to_string().contains("are you there?")), "an unanswered Needs-you item: {items:?}");
+        // The owner's own message still runs.
+        let (turns, _) = accept_events(&st, &acct, tx.clone(), vec![tg(2, 42, "owner here")], Default::default()).await;
+        assert_eq!(turns.len(), 1, "the owner's message still starts a turn");
+        // After resume the person's next message is answered again.
+        crate::bots_pause::set(&c, &acct.owner, false, None).unwrap();
+        let (turns, _) = accept_events(&st, &acct, tx.clone(), vec![tg(3, 77, "hello?")], Default::default()).await;
+        assert_eq!(turns.len(), 1);
     }
 
     #[tokio::test]

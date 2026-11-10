@@ -227,7 +227,9 @@ async fn setup_for(db: &DbHandle, user_id: &str, bot_id: &str, bot_email: Option
 /// Post the reach-out once. `Ok(None)` when this bot already reached out.
 pub async fn reach_out(db: &DbHandle, user_id: &str, bot_id: &str, asked_session: Option<&str>) -> Result<Option<(String, Vec<String>)>, (StatusCode, String)> {
     let (name, email, pin) = bot_name(db, user_id, bot_id).ok_or((StatusCode::NOT_FOUND, "bot not found".to_string()))?;
-    if already(db, user_id, bot_id) {
+    // Pause all bots: no proactive message. The marker isn't written, so it can
+    // reach out once bots are resumed.
+    if already(db, user_id, bot_id) || crate::bots_pause::is_paused_db(db, user_id) {
         return Ok(None);
     }
     let session = main_chat(db, bot_id, &name, asked_session, pin.as_deref()).await.map_err(|e| (StatusCode::BAD_GATEWAY, e))?;
