@@ -74,6 +74,11 @@ const RUN_OUTPUT_CAP: usize = 8 * 1024;
 pub const AUTO_PAUSE_AFTER: i64 = 3;
 /// A run that takes longer than this is cut off and fails with `outcome_reason = timeout`.
 pub const DEFAULT_TIMEOUT_SECS: i64 = 1800;
+/// A phone replay that stopped at a hold nobody answered: its error starts with this.
+pub const NEEDS_YOU: &str = "approval_timeout: ";
+/// The output of a scheduled phone replay skipped while its last run waits on
+/// the owner's Retry (it never runs back into the same hold on its own).
+const WAITING_ON_YOU: &str = "waiting for you: the last run stopped at a phone step that needs your approval (use Retry)";
 /// Most `skipped` rows written for the occurrences missed in one gap.
 const MISSED_ROWS_CAP: usize = 30;
 /// Longest a run may start after it was due before it counts as missed.
@@ -608,12 +613,19 @@ impl RoutineDriver for GizziDriver {
     async fn run_phone_skill(&self, r: &LocalRoutine, skill: &str, serial: Option<&str>, inputs: &[(String, String)]) -> Result<String, String> {
         // A moved step re-decides on the routine's bot's brain.
         let model = crate::phone_replay::brain(&self.state.db, r.agent_id.as_deref(), None);
-        let report = crate::phone_replay::run_skill(&self.state.data_dir, skill, serial, inputs, model, "routine", None).await?;
+        // A sensitive step asks the routine's owner (no thread: the guard uses `phone:<serial>`).
+        let ctx = crate::phone_guard::TaskCtx { owner: r.user_id.clone(), bot_id: r.agent_id.clone(), source: "routine".into(), ..Default::default() };
+        let report = crate::phone_replay::run_skill(&self.state.db, &self.state.data_dir, skill, serial, inputs, model, "routine", None, &ctx).await?;
         crate::phone_runs::record_run_completed(&self.state.db, &report, "routine");
         if report.get("ok").and_then(Value::as_bool) == Some(true) {
             Ok(phone_skill_summary(skill, &report))
         } else {
-            Err(report.get("error").and_then(Value::as_str).unwrap_or("the phone skill didn't finish").to_string())
+            let why = report.get("error").and_then(Value::as_str).unwrap_or("the phone skill didn't finish").to_string();
+            if report.get("status").and_then(Value::as_str) == Some("approval_timeout") {
+                Err(format!("{NEEDS_YOU}{why}"))
+            } else {
+                Err(why)
+            }
         }
     }
 
@@ -743,6 +755,25 @@ fn phone_skill_summary(skill: &str, report: &Value) -> String {
         ));
     }
     out
+}
+
+/// An open `routine_failed` item for this routine says its last phone replay
+/// stopped at a hold nobody answered.
+fn waiting_on_owner(db: &DbHandle, r: &LocalRoutine) -> bool {
+    db.connect()
+        .ok()
+        .and_then(|c| {
+            c.query_row(
+                "SELECT 1 FROM attention_items WHERE id = ?1 AND owner = ?2 AND resolved_at IS NULL
+                   AND json_extract(detail_json, '$.reason') = 'approval_timeout'",
+                params![format!("routine_failed:{}", r.id), r.user_id],
+                |_| Ok(()),
+            )
+            .optional()
+            .ok()
+            .flatten()
+        })
+        .is_some()
 }
 
 /// `config.replay` when it names a phone skill: (skill, serial, inputs).
@@ -927,6 +958,9 @@ pub struct RunOutcome {
 
 /// `routine_runs.outcome_reason` for a failed run, from its error text.
 pub fn classify(error: &str) -> &'static str {
+    if error.starts_with(NEEDS_YOU) {
+        return "approval_timeout";
+    }
     let e = error.to_lowercase();
     if e.contains("timed out") {
         "timeout"
@@ -1022,6 +1056,10 @@ fn alert_for_outcome(conn: &rusqlite::Connection, r: &LocalRoutine, outcome: &Ru
         return;
     }
     if outcome.status != "failed" {
+        // A scheduled replay skipped while the owner's Retry is pending keeps the item open.
+        if outcome.output.as_deref() == Some(WAITING_ON_YOU) {
+            return;
+        }
         alerts::resolve_source(conn, &r.user_id, "routine_failed", &r.id, "fixed");
         if r.late_by_ms.is_none() {
             alerts::resolve_source(conn, &r.user_id, "routine_missed", &r.id, "fixed");
@@ -1032,6 +1070,9 @@ fn alert_for_outcome(conn: &rusqlite::Connection, r: &LocalRoutine, outcome: &Ru
     let flagged_critical = r.metadata.get("critical").and_then(Value::as_bool).unwrap_or(false);
     let (severity, summary) = if outcome.auto_paused {
         ("critical", format!("\"{}\" was paused after {AUTO_PAUSE_AFTER} failed runs in a row: {}", r.name, truncate(error, 160)))
+    } else if outcome.reason == Some("approval_timeout") {
+        // A phone step waited on the owner and nobody answered: one item, with Retry.
+        (if flagged_critical { "critical" } else { "warn" }, format!("Routine stopped at a step that needs you: {}", r.name))
     } else {
         (if flagged_critical { "critical" } else { "warn" }, format!("\"{}\" failed: {}", r.name, truncate(error, 160)))
     };
@@ -1163,9 +1204,16 @@ pub async fn execute<D: RoutineDriver>(db: &DbHandle, driver: &D, r: &LocalRouti
     };
 
     let timeout_secs = r.timeout_seconds.filter(|t| *t > 0).unwrap_or(DEFAULT_TIMEOUT_SECS);
+    // A phone replay may wait on the owner: never cut it off inside that wait.
+    let timeout_secs = if phone_replay_of(&r.config).is_some() { timeout_secs.max(crate::phone_guard::WAIT.as_secs() as i64 + 600) } else { timeout_secs };
     let work = async {
         // A phone skill replays with no model turn and needs no bot thread.
         if let Some((skill, serial, inputs)) = phone_replay_of(&r.config) {
+            // After a run stopped at a step that needs the owner, only their
+            // Retry (a manual run) replays it: never back into the hold on a schedule.
+            if !matches!(trigger, Trigger::Manual { .. }) && waiting_on_owner(db, r) {
+                return Ok((WAITING_ON_YOU.to_string(), "skipped"));
+            }
             let out = driver.run_phone_skill(r, &skill, serial.as_deref(), &inputs).await?;
             return Ok((out, "succeeded"));
         }
@@ -2142,5 +2190,93 @@ mod tests {
         let (kind, detail): (String, String) = c.query_row("SELECT kind, detail_json FROM attention_items WHERE kind = 'dead_letter'", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
         assert_eq!(kind, "dead_letter");
         assert!(detail.contains("\"routineId\":\"rd\"") && detail.contains("storeError"), "{detail}");
+    }
+
+    /// The pending phone hold's id, once the replay has made one.
+    async fn pending_hold(state: &AppState) -> String {
+        for _ in 0..200 {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            let id: Option<String> = state.db.connect().unwrap().query_row("SELECT id FROM gateway_approvals WHERE state = 'pending'", [], |r| r.get(0)).optional().unwrap();
+            if let Some(id) = id {
+                return id;
+            }
+        }
+        panic!("the replay never made a hold");
+    }
+
+    fn set_hold(state: &AppState, id: &str, to: &str) {
+        state
+            .db
+            .connect()
+            .unwrap()
+            .execute("UPDATE gateway_approvals SET state = ?2, resolved_at = ?3, actor_type = 'user', actor_id = 'user-a' WHERE id = ?1", params![id, to, Utc::now().to_rfc3339()])
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn an_unanswered_phone_hold_stops_the_routine_once_and_waits_for_retry() {
+        use crate::phone_replay::{Locator, PStep, Skill};
+        let state = setup("phone-hold").await;
+        let now = Utc::now().to_rfc3339();
+        let step = PStep {
+            op: "phone.tap".into(),
+            args: json!({ "x": 50, "y": 25 }),
+            locator: Some(Locator { class: "Button".into(), label: "Delete".into(), resource_id: "del".into(), ..Default::default() }),
+            label: "tap \"Delete\"".into(),
+            ..Default::default()
+        };
+        crate::phone_replay::store(&state.data_dir, &Skill { name: "clear inbox".into(), steps: vec![step], created_at: now.clone(), updated_at: now, ..Default::default() }).unwrap();
+        insert(&state, "rp", "interval", "1h", json!({ "replay": { "kind": "phone", "skill": "clear inbox", "serial": "link:1" } }), Some("bot-1"));
+        let r = get_routine(&state.db, "rp").unwrap().unwrap();
+        let taps = Arc::new(AtomicUsize::new(0));
+        let fake: crate::phone_replay::FakeTool = {
+            let taps = taps.clone();
+            Arc::new(move |name: &str, _args: &Value| match name {
+                "phone.read_ui" => Ok(json!({ "ok": true, "text": "Button \"Delete\" [del] {{0, 0}, {100, 50}}" })),
+                "phone.tap" => {
+                    taps.fetch_add(1, Ordering::SeqCst);
+                    Ok(json!({ "ok": true }))
+                }
+                _ => Err("not on this phone".to_string()),
+            })
+        };
+        let driver = GizziDriver { state: state.clone() };
+        let items = |st: &AppState| -> Vec<(String, Option<String>, Option<String>)> {
+            let c = st.db.connect().unwrap();
+            let mut q = c.prepare("SELECT summary, retry_json, resolved_at FROM attention_items WHERE owner = 'user-a' AND kind = 'routine_failed'").unwrap();
+            q.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap().map(Result::unwrap).collect()
+        };
+        let holds = |st: &AppState| -> i64 { st.db.connect().unwrap().query_row("SELECT COUNT(*) FROM gateway_approvals", [], |r| r.get(0)).unwrap() };
+
+        // Nobody answers: the hold runs out, as the five-minute wait makes it.
+        let expire = async {
+            let id = pending_hold(&state).await;
+            set_hold(&state, &id, "expired");
+        };
+        let (out, ()) = crate::phone_replay::FAKE_TOOL.scope(fake.clone(), async { tokio::join!(execute(&state.db, &driver, &r, Trigger::Schedule), expire) }).await;
+        assert_eq!((out.status, out.reason), ("failed", Some("approval_timeout")));
+        assert_eq!(taps.load(Ordering::SeqCst), 0);
+        let open = items(&state);
+        assert_eq!(open.len(), 1, "exactly one attention item");
+        assert!(open[0].0.starts_with("Routine stopped at a step that needs you"), "{}", open[0].0);
+        assert_eq!((open[0].1.as_deref(), open[0].2.as_deref()), (Some(r#"{"routineId":"rp"}"#), None));
+        assert_eq!(holds(&state), 1);
+
+        // The next scheduled run does not walk back into a hold.
+        let again = crate::phone_replay::FAKE_TOOL.scope(fake.clone(), execute(&state.db, &driver, &r, Trigger::Schedule)).await;
+        assert_eq!(again.status, "skipped");
+        assert_eq!((holds(&state), taps.load(Ordering::SeqCst), items(&state).len()), (1, 0, 1));
+        assert_eq!(items(&state)[0].2, None, "the item stays open until Retry");
+
+        // Retry (a manual run), approved this time: the step acts once and the item closes.
+        let approve = async {
+            let id = pending_hold(&state).await;
+            set_hold(&state, &id, "approved");
+        };
+        let manual = Trigger::Manual { user_id: "user-a".into() };
+        let (out, ()) = crate::phone_replay::FAKE_TOOL.scope(fake, async { tokio::join!(execute(&state.db, &driver, &r, manual), approve) }).await;
+        assert_eq!(out.status, "succeeded", "{:?}", out.error);
+        assert_eq!(taps.load(Ordering::SeqCst), 1);
+        assert!(items(&state)[0].2.is_some(), "a good run resolves the item");
     }
 }

@@ -20,6 +20,12 @@
 //! * **Secrets.** Typed text is never stored: history redacts it, and a type
 //!   step stores only `{{input}}`; the value comes with each run. Skills
 //!   never send texts or place calls.
+//! * **Holds.** Saving marks each step the phone guard classes as sensitive
+//!   (`sensitive`, `effect`; additive, old files load without them). On
+//!   replay every acting step goes through [`phone_guard::gate`] before it
+//!   acts, flagged or not (the flag is a hint, the guard decides): the run
+//!   waits up to five minutes for the owner, the wait is left out of
+//!   `duration_ms`, and the report carries `held_ms` and `holds`.
 use crate::{auth::AuthUser, AppState};
 use axum::{
     extract::{Extension, Path, State},
@@ -38,7 +44,16 @@ use std::{
     time::{Duration, Instant},
 };
 
+use crate::phone_guard::{self, CheckIn, El, Gate, Reread, TaskCtx};
 use crate::phone_runs;
+
+/// Tests answer phone tool calls with this instead of Desktop's gateway.
+#[cfg(test)]
+pub(crate) type FakeTool = Arc<dyn Fn(&str, &Value) -> Result<Value, String> + Send + Sync>;
+#[cfg(test)]
+tokio::task_local! {
+    pub(crate) static FAKE_TOOL: FakeTool;
+}
 
 /// Pixel-hash distance (of 64 bits) that still counts as the same element.
 const CROP_TOLERANCE: u32 = 10;
@@ -81,6 +96,10 @@ pub async fn call_tool(name: &str, args: Value) -> Result<Value, String> {
 
 /// [`call_tool`] with its own time limit (a text or call waits on approval).
 pub async fn call_tool_within(name: &str, args: Value, timeout: Duration) -> Result<Value, String> {
+    #[cfg(test)]
+    if let Ok(r) = FAKE_TOOL.try_with(|f| f(name, &args)) {
+        return r;
+    }
     let file = gateway_file().ok_or("no home directory")?;
     let raw = tokio::fs::read(&file)
         .await
@@ -287,6 +306,13 @@ pub struct PStep {
     /// `{label, gone?}`: what the step changed on screen.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub check: Option<Value>,
+    /// The phone guard classed this step sensitive when it was saved. A hint:
+    /// the guard classifies every step again at run time.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub sensitive: bool,
+    /// The effect behind `sensitive` (`pay`, `delete`, …).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effect: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -347,7 +373,52 @@ pub fn load(data_dir: &FsPath, name: &str) -> Option<Skill> {
     serde_json::from_slice(&std::fs::read(skill_path(data_dir, name)).ok()?).ok()
 }
 
+/// The element a step concerns: a tap's recorded element, a find-and-tap's
+/// match, or (for type and key) the element tapped last.
+fn step_el(step: &PStep, last: Option<&El>) -> Option<El> {
+    match step.op.as_str() {
+        "phone.tap" => step.locator.as_ref().map(|l| El { class: l.class.clone(), label: l.label.clone(), id: l.resource_id.clone() }),
+        "phone.find_and_tap" => {
+            let a = |k: &str| step.args.get(k).and_then(Value::as_str).unwrap_or_default().to_string();
+            Some(El { class: String::new(), label: a("match"), id: a("element_id") })
+        }
+        "phone.type" | "phone.key" => last.cloned(),
+        _ => None,
+    }
+}
+
+/// What the guard's rules say about one step. A find-and-tap is judged by the
+/// label it looks for, like a tap on that element.
+pub fn step_effect(op: &str, args: &Map<String, Value>, el: Option<&El>, app: Option<&str>) -> Option<&'static str> {
+    if op == "phone.find_and_tap" {
+        return el.and_then(phone_guard::label_effect);
+    }
+    phone_guard::rule_effect(&phone_guard::Action { tool: op, args, el, app })
+}
+
+/// Mark every step the guard classes as sensitive (`sensitive`, `effect`).
+/// A flag is never removed here; the guard decides again at run time.
+pub fn mark_sensitive(s: &mut Skill) {
+    let (mut last, mut app): (Option<El>, Option<String>) = (None, None);
+    for step in s.steps.iter_mut() {
+        let el = step_el(step, last.as_ref());
+        let args = step.args.as_object().cloned().unwrap_or_default();
+        if let Some(effect) = step_effect(&step.op, &args, el.as_ref(), app.as_deref()) {
+            step.sensitive = true;
+            step.effect = Some(effect.to_string());
+        }
+        match step.op.as_str() {
+            "phone.tap" | "phone.find_and_tap" => last = el,
+            "phone.open_app" => app = args.get("app").and_then(Value::as_str).map(str::to_string),
+            _ => {}
+        }
+    }
+}
+
 pub fn store(data_dir: &FsPath, s: &Skill) -> Result<(), String> {
+    let mut s = s.clone();
+    mark_sensitive(&mut s);
+    let s = &s;
     let dir = skills_dir(data_dir);
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     #[cfg(unix)]
@@ -499,7 +570,7 @@ pub fn from_run(data_dir: &FsPath, body: &SaveIn) -> Result<Skill, String> {
                 label = format!("tap \"{}\"", l.label);
             }
         }
-        steps.push(PStep { op: s.tool.clone(), args: Value::Object(args), locator, label, check });
+        steps.push(PStep { op: s.tool.clone(), args: Value::Object(args), locator, label, check, ..Default::default() });
     }
     if steps.is_empty() {
         return Err("that run has no successful phone actions to save (reads alone aren't a skill)".into());
@@ -509,7 +580,7 @@ pub fn from_run(data_dir: &FsPath, body: &SaveIn) -> Result<Skill, String> {
     }
     let now = chrono::Utc::now().to_rfc3339();
     let created_at = load(data_dir, &name).map(|s| s.created_at).unwrap_or_else(|| now.clone());
-    Ok(Skill {
+    let mut skill = Skill {
         name,
         description: body.description.clone().unwrap_or_default().chars().take(500).collect(),
         inputs,
@@ -521,7 +592,9 @@ pub fn from_run(data_dir: &FsPath, body: &SaveIn) -> Result<Skill, String> {
         created_at,
         updated_at: now,
         last_used_at: None,
-    })
+    };
+    mark_sensitive(&mut skill);
+    Ok(skill)
 }
 
 // ─── Replay ────────────────────────────────────────────────────────────────
@@ -676,6 +749,11 @@ pub struct RunIn {
     /// Or a brain as `provider/model`.
     #[serde(default)]
     pub brain: Option<String>,
+    /// The conversation the run belongs to (its holds land there).
+    #[serde(default)]
+    pub thread_id: Option<String>,
+    #[serde(default)]
+    pub session_id: Option<String>,
     /// Answer 202 `{run_id, status: "running"}` at once and replay in the
     /// background; the end is the `phone.run.completed` event (the Platform
     /// API uses this: a relayed request can't wait for a whole replay).
@@ -715,9 +793,96 @@ pub fn new_skill_run_id() -> String {
     format!("skill-{}", uuid::Uuid::new_v4().simple())
 }
 
+/// One step of a replay through the phone guard. `flag` is the step's saved
+/// flag (`Some("")` = sensitive with no named effect); the guard's rules run
+/// either way. `Ok` = the args to act with (`_pass`, and `_hold` when a hold
+/// was used); `Err` = `(run status, why)` and the replay stops.
+#[allow(clippy::too_many_arguments)]
+async fn guard_step(
+    db: &crate::db::DbHandle,
+    data_dir: &FsPath,
+    ctx: &TaskCtx,
+    at: (Option<&str>, &str, &str),
+    step: (usize, &str, &str),
+    op: &str,
+    args: &Map<String, Value>,
+    el: Option<&El>,
+    app: Option<&str>,
+    flag: Option<String>,
+    holds: &mut Vec<Value>,
+    held: &mut Duration,
+) -> Result<Map<String, Value>, (&'static str, String)> {
+    let (serial, run_id, source) = at;
+    let (index, label, goal) = step;
+    let flag = step_effect(op, args, el, app).map(str::to_string).or(flag);
+    // The owner sees the screen with the hold; a plain step needs no frame.
+    let shot = match flag {
+        Some(_) => screenshot(serial, run_id, source).await.map(|(_, url)| url),
+        None => None,
+    };
+    let mut req = CheckIn {
+        serial: serial.unwrap_or_default().to_string(),
+        tool: op.to_string(),
+        args: args.clone(),
+        el: el.cloned(),
+        app: app.map(str::to_string),
+        ctx: ctx.clone(),
+        run_id: Some(run_id.to_string()),
+        step: Some(index as u32 + 1),
+        intent: Some(label.to_string()),
+        goal: Some(goal.to_string()),
+        sensitive: flag.as_ref().map(|_| true),
+        effect: flag.filter(|e| !e.is_empty()),
+        screenshot: shot,
+        ..Default::default()
+    };
+    // After Approve: read the screen again and find the tapped element.
+    let reread = move |r: CheckIn| async move {
+        let Some(want) = r.el.clone().filter(|_| r.tool == "phone.tap") else { return Reread::Same };
+        match read_screen(serial, run_id, source).await {
+            Ok(screen) => match screen.els.iter().find(|e| El::from(*e) == want) {
+                Some(e) => {
+                    let (x, y) = e.center();
+                    let mut a = r.args.clone();
+                    a.insert("x".into(), json!(x));
+                    a.insert("y".into(), json!(y));
+                    Reread::Moved(a)
+                }
+                None if screen.els.is_empty() => Reread::Same,
+                None => Reread::Gone,
+            },
+            Err(e) if e.contains("device_locked") => Reread::Locked,
+            Err(_) => Reread::Same,
+        }
+    };
+    match phone_guard::gate(db, Some(data_dir), &mut req, reread, holds, held).await {
+        Gate::Go { hold_id, pass } => {
+            let mut a = req.args;
+            // Desktop's dispatch check honours the pass once; `_hold` is for the run record.
+            a.insert("_pass".into(), json!(pass));
+            if let Some(h) = hold_id {
+                a.insert("_hold".into(), json!(h));
+            }
+            Ok(a)
+        }
+        Gate::Denied(w) => Err(("denied", w)),
+        Gate::Expired(w) => Err(("approval_timeout", w)),
+        Gate::Locked => Err(("phone_locked", "the phone is locked".into())),
+        // Replay has no model to pick again: the recording no longer fits.
+        Gate::Changed(w) => Err(("diverged", w)),
+        Gate::Failed(w) => Err(("failed", w)),
+    }
+}
+
 /// Replay a saved skill on a phone. `Ok` carries the per-step report (also
-/// when the replay diverged); `Err` is a skill that couldn't start.
+/// when the replay diverged or stopped at a hold); `Err` is a skill that
+/// couldn't start. Statuses: `succeeded`, `diverged`, `failed`, `denied`,
+/// `approval_timeout`, `phone_locked` (live: `waiting_approval`, through
+/// [`phone_guard::live_status`]). `ctx` is who the holds ask; with no thread
+/// the guard uses `phone:<serial>`.
+#[allow(clippy::too_many_arguments)]
 pub async fn run_skill(
+    db: &crate::db::DbHandle,
     data_dir: &FsPath,
     name: &str,
     serial: Option<&str>,
@@ -725,6 +890,7 @@ pub async fn run_skill(
     model: Option<(String, String)>,
     source: &str,
     run_id: Option<String>,
+    ctx: &TaskCtx,
 ) -> Result<Value, String> {
     let mut skill = load(data_dir, name).ok_or_else(|| format!("no phone skill named \"{}\"", name.trim()))?;
     let missing: Vec<&String> = skill.inputs.iter().filter(|n| !inputs.iter().any(|(k, _)| k == *n)).collect();
@@ -739,6 +905,9 @@ pub async fn run_skill(
     let mut status = "succeeded";
     let mut error: Option<String> = None;
     let mut dirty = false;
+    let (mut held, mut holds) = (Duration::ZERO, Vec::<Value>::new());
+    let (mut last_el, mut app): (Option<El>, Option<String>) = (None, None);
+    let goal = format!("run the phone skill \"{}\"", skill.name);
 
     for index in 0..skill.steps.len() {
         let step = skill.steps[index].clone();
@@ -746,6 +915,10 @@ pub async fn run_skill(
         let mut args: Map<String, Value> = substitute_json(&step.args, inputs).as_object().cloned().unwrap_or_default();
         let mut via: Option<&'static str> = None;
         let mut op = step.op.clone();
+        // The element the guard judges: the recorded one until the screen says otherwise.
+        let shown = PStep { args: Value::Object(args.clone()), locator: step.locator.clone().map(|l| Locator { label: substitute(&l.label, inputs), ..l }), ..step.clone() };
+        let mut target = step_el(&shown, last_el.as_ref());
+        let flag = step.sensitive.then(|| step.effect.clone().unwrap_or_default());
         // Taps with a locator: find the element again on the current screen.
         if let (Some(loc), true) = (step.locator.as_ref(), op == "phone.tap") {
             let loc = Locator { label: substitute(&loc.label, inputs), ..loc.clone() };
@@ -772,6 +945,7 @@ pub async fn run_skill(
             match (found, last_screen) {
                 (Some((el, how)), Some(screen)) => {
                     via = Some(how.as_str());
+                    target = Some(El::from(&el));
                     let (x, y) = el.center();
                     args.insert("x".into(), json!(x));
                     args.insert("y".into(), json!(y));
@@ -787,6 +961,7 @@ pub async fn run_skill(
                     match redecide(&step, &screen, image.as_deref(), model.as_ref()).await {
                         Ok(Some(el)) => {
                             via = Some("model");
+                            target = Some(El::from(&el));
                             let (x, y) = el.center();
                             args.insert("x".into(), json!(x));
                             args.insert("y".into(), json!(y));
@@ -817,8 +992,21 @@ pub async fn run_skill(
             report.push(json!({ "index": index, "op": op, "label": step.label, "ok": false, "error": error, "duration_ms": t.elapsed().as_millis() as u64 }));
             break;
         }
+        // The phone guard: every acting step, flagged when saved or not.
+        let at = (serial, run_id.as_str(), source);
+        let acting = match guard_step(db, data_dir, ctx, at, (index, step.label.as_str(), goal.as_str()), &op, &args, target.as_ref(), app.as_deref(), flag.clone(), &mut holds, &mut held).await {
+            Ok(a) => a,
+            Err((st, why)) => {
+                status = st;
+                error = Some(format!("step {} ({}): {why}", index + 1, step.label));
+                report.push(json!({ "index": index, "op": op, "label": step.label, "ok": false, "via": via, "error": why, "duration_ms": t.elapsed().as_millis() as u64 }));
+                break;
+            }
+        };
+        let mut hold = acting.get("_hold").cloned();
         // find_and_tap that no longer finds: one re-decision as a tap.
-        let mut outcome = act(&op, args.clone(), serial, &run_id, source).await;
+        let mut outcome = act(&op, acting, serial, &run_id, source).await;
+        let mut stopped: Option<(&'static str, String)> = None;
         if op == "phone.find_and_tap" && outcome.as_ref().err().is_some_and(|e| e.to_lowercase().contains("no element")) {
             if let Ok(screen) = read_screen(serial, &run_id, source).await {
                 model_calls += 1;
@@ -828,22 +1016,40 @@ pub async fn run_skill(
                     let mut tap = Map::new();
                     tap.insert("x".into(), json!(x));
                     tap.insert("y".into(), json!(y));
-                    op = "phone.tap".into();
-                    via = Some("model");
-                    outcome = act(&op, tap, serial, &run_id, source).await;
-                    if outcome.is_ok() && !el.id.is_empty() {
-                        skill.steps[index].args["element_id"] = json!(el.id);
-                        healed += 1;
-                        dirty = true;
+                    target = Some(El::from(&el));
+                    match guard_step(db, data_dir, ctx, at, (index, step.label.as_str(), goal.as_str()), "phone.tap", &tap, target.as_ref(), app.as_deref(), flag.clone(), &mut holds, &mut held).await {
+                        Ok(tap) => {
+                            hold = tap.get("_hold").cloned().or(hold);
+                            op = "phone.tap".into();
+                            via = Some("model");
+                            outcome = act(&op, tap, serial, &run_id, source).await;
+                            if outcome.is_ok() && !el.id.is_empty() {
+                                skill.steps[index].args["element_id"] = json!(el.id);
+                                healed += 1;
+                                dirty = true;
+                            }
+                        }
+                        Err(end) => stopped = Some(end),
                     }
                 }
             }
         }
+        if let Some((st, why)) = stopped {
+            status = st;
+            error = Some(format!("step {} ({}): {why}", index + 1, step.label));
+            report.push(json!({ "index": index, "op": op, "label": step.label, "ok": false, "via": via, "error": why, "duration_ms": t.elapsed().as_millis() as u64 }));
+            break;
+        }
         if let Err(e) = outcome {
-            status = "failed";
+            status = if e.contains("device_locked") { "phone_locked" } else { "failed" };
             error = Some(format!("step {} ({}): {e}", index + 1, step.label));
             report.push(json!({ "index": index, "op": op, "label": step.label, "ok": false, "via": via, "error": e, "duration_ms": t.elapsed().as_millis() as u64 }));
             break;
+        }
+        match op.as_str() {
+            "phone.tap" | "phone.find_and_tap" => last_el = target.clone(),
+            "phone.open_app" => app = args.get("app").and_then(Value::as_str).map(str::to_string),
+            _ => {}
         }
         // The step's check: what it changed on screen.
         let mut checked = None;
@@ -868,12 +1074,13 @@ pub async fn run_skill(
         } else {
             tokio::time::sleep(Duration::from_millis(350)).await;
         }
-        report.push(json!({ "index": index, "op": op, "label": step.label, "ok": checked != Some(false), "via": via, "checked": checked, "duration_ms": t.elapsed().as_millis() as u64 }));
+        report.push(json!({ "index": index, "op": op, "label": step.label, "ok": checked != Some(false), "via": via, "checked": checked, "hold": hold, "duration_ms": t.elapsed().as_millis() as u64 }));
         if status != "succeeded" {
             break;
         }
     }
 
+    phone_guard::set_live(&run_id, None);
     let now = chrono::Utc::now().to_rfc3339();
     skill.last_used_at = Some(now.clone());
     if status == "succeeded" {
@@ -901,7 +1108,10 @@ pub async fn run_skill(
         "healed": healed,
         "steps": report,
         "error": error,
-        "duration_ms": started.elapsed().as_millis() as u64,
+        // The wait on the owner is not phone time.
+        "duration_ms": started.elapsed().saturating_sub(held).as_millis() as u64,
+        "held_ms": held.as_millis() as u64,
+        "holds": holds,
     }))
 }
 
@@ -949,12 +1159,15 @@ async fn delete_skill(State(state): State<Arc<AppState>>, Extension(_user): Exte
 
 async fn run_route(
     State(state): State<Arc<AppState>>,
-    Extension(_user): Extension<AuthUser>,
+    Extension(user): Extension<AuthUser>,
     Path(name): Path<String>,
     Json(body): Json<RunIn>,
 ) -> Response {
     let model = brain(&state.db, body.bot_id.as_deref(), body.brain.as_deref());
     let inputs = inputs_of(&body.inputs);
+    // The signed-in caller owns the run: its holds ask them.
+    let some = |v: &Option<String>| v.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
+    let ctx = TaskCtx { owner: user.user_id.clone(), bot_id: some(&body.bot_id), thread_id: some(&body.thread_id), session_id: some(&body.session_id), source: "skill".into() };
     if body.background {
         let Some(skill) = load(&state.data_dir, &name) else {
             return bad(StatusCode::NOT_FOUND, format!("no phone skill named \"{}\"", name.trim()));
@@ -969,7 +1182,7 @@ async fn run_route(
         let run_id = new_skill_run_id();
         let (st, id, serial) = (state.clone(), run_id.clone(), body.serial.clone());
         tokio::spawn(async move {
-            let report = match run_skill(&st.data_dir, &name, serial.as_deref(), &inputs, model, "skill", Some(id.clone())).await {
+            let report = match run_skill(&st.db, &st.data_dir, &name, serial.as_deref(), &inputs, model, "skill", Some(id.clone()), &ctx).await {
                 Ok(report) => report,
                 Err(e) => json!({ "ok": false, "status": "failed", "skill": name, "serial": serial, "run_id": id, "error": e, "steps": [] }),
             };
@@ -977,7 +1190,7 @@ async fn run_route(
         });
         return (StatusCode::ACCEPTED, Json(json!({ "ok": true, "status": "running", "run_id": run_id, "skill": skill.name, "serial": body.serial }))).into_response();
     }
-    match run_skill(&state.data_dir, &name, body.serial.as_deref(), &inputs, model, "skill", None).await {
+    match run_skill(&state.db, &state.data_dir, &name, body.serial.as_deref(), &inputs, model, "skill", None, &ctx).await {
         Ok(report) => {
             phone_runs::record_run_completed(&state.db, &report, "skill");
             Json(report).into_response()
@@ -1132,5 +1345,133 @@ mod tests {
         assert_eq!(skill.steps[1].args["text"], "{{query}}");
         assert_eq!(skill.steps[0].locator.as_ref().unwrap().label, "Search");
         assert!(!serde_json::to_string(&skill).unwrap().contains("secret words"));
+    }
+
+    // ─── Holds ──────────────────────────────────────────────────────────
+
+    fn tap_step(label: &str, id: &str) -> PStep {
+        PStep {
+            op: "phone.tap".into(),
+            args: json!({ "x": 50, "y": 25 }),
+            locator: Some(Locator { class: "Button".into(), label: label.into(), resource_id: id.into(), ..Default::default() }),
+            label: format!("tap \"{label}\""),
+            ..Default::default()
+        }
+    }
+
+    fn skill_of(name: &str, steps: Vec<PStep>) -> Skill {
+        let now = chrono::Utc::now().to_rfc3339();
+        Skill { name: name.into(), steps, created_at: now.clone(), updated_at: now, ..Default::default() }
+    }
+
+    /// A phone whose screen shows `ui`; every tap is recorded with its args.
+    fn fake_phone(ui: &'static str) -> (FakeTool, Arc<std::sync::Mutex<Vec<Value>>>) {
+        let taps = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen = taps.clone();
+        let fake: FakeTool = Arc::new(move |name: &str, args: &Value| match name {
+            "phone.read_ui" => Ok(json!({ "ok": true, "text": ui })),
+            "phone.tap" => {
+                seen.lock().unwrap().push(args.clone());
+                Ok(json!({ "ok": true }))
+            }
+            _ => Err("not on this phone".to_string()),
+        });
+        (fake, taps)
+    }
+
+    async fn hold_state() -> (Arc<AppState>, TaskCtx) {
+        let dir = std::env::temp_dir().join(format!("phone-replay-hold-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        (crate::test_helpers::app_state(&dir).await, TaskCtx { owner: "user-a".into(), source: "skill".into(), ..Default::default() })
+    }
+
+    /// The one pending hold (fails when there are none, or more than one).
+    async fn the_pending_hold(st: &AppState) -> String {
+        for _ in 0..200 {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            let ids: Vec<String> = {
+                let c = st.db.connect().unwrap();
+                let mut q = c.prepare("SELECT id FROM gateway_approvals WHERE state = 'pending'").unwrap();
+                let ids = q.query_map([], |r| r.get(0)).unwrap().map(Result::unwrap).collect();
+                ids
+            };
+            match ids.len() {
+                0 => continue,
+                1 => return ids[0].clone(),
+                n => panic!("expected one pending hold, found {n}"),
+            }
+        }
+        panic!("the replay never made a hold");
+    }
+
+    fn answer(st: &AppState, id: &str, to: &str) {
+        st.db
+            .connect()
+            .unwrap()
+            .execute("UPDATE gateway_approvals SET state = ?2, resolved_at = ?3, actor_type = 'user', actor_id = 'user-a' WHERE id = ?1", rusqlite::params![id, to, chrono::Utc::now().to_rfc3339()])
+            .unwrap();
+    }
+
+    #[test]
+    fn storing_a_skill_flags_its_delete_step() {
+        let tmp = tempfile::tempdir().unwrap();
+        store(tmp.path(), &skill_of("tidy", vec![tap_step("Search", "s"), tap_step("Delete", "del")])).unwrap();
+        let back = load(tmp.path(), "tidy").unwrap();
+        assert!(!back.steps[0].sensitive && back.steps[0].effect.is_none());
+        assert!(back.steps[1].sensitive);
+        assert_eq!(back.steps[1].effect.as_deref(), Some("delete"));
+        // Additive: a plain step is written without the keys.
+        let raw: Value = serde_json::from_slice(&std::fs::read(skill_path(tmp.path(), "tidy")).unwrap()).unwrap();
+        assert!(raw["steps"][0].get("sensitive").is_none() && raw["steps"][1]["sensitive"] == json!(true));
+    }
+
+    #[tokio::test]
+    async fn replay_waits_on_one_hold_and_acts_once_after_approval() {
+        let (st, ctx) = hold_state().await;
+        store(&st.data_dir, &skill_of("clear inbox", vec![tap_step("Delete", "del")])).unwrap();
+        let (fake, taps) = fake_phone("Button \"Delete\" [del] {{0, 0}, {100, 50}}");
+        let approver = async {
+            let id = the_pending_hold(&st).await;
+            // Nothing acts while the hold waits.
+            assert!(taps.lock().unwrap().is_empty());
+            answer(&st, &id, "approved");
+            id
+        };
+        let run = run_skill(&st.db, &st.data_dir, "clear inbox", Some("link:1"), &[], None, "skill", Some("skill-h1".into()), &ctx);
+        let (report, id) = FAKE_TOOL.scope(fake, async { tokio::join!(run, approver) }).await;
+        let report = report.unwrap();
+        assert_eq!(report["status"], "succeeded", "{report}");
+        let taps = taps.lock().unwrap().clone();
+        assert_eq!(taps.len(), 1, "acts exactly once");
+        assert!(taps[0]["_pass"].as_str().is_some_and(|p| p.starts_with("pass_")), "{}", taps[0]);
+        assert_eq!(taps[0]["_hold"], json!(id));
+        assert_eq!(report["holds"], json!([{ "approvalId": id, "effect": "delete", "state": "approved" }]));
+        assert!(report["held_ms"].as_u64().unwrap() > 0);
+        assert_eq!(report["steps"][0]["hold"], json!(id));
+        assert!(phone_guard::live_status("skill-h1").is_none(), "the live status is cleared at the end");
+    }
+
+    #[tokio::test]
+    async fn an_old_skill_file_without_flags_still_holds_on_pay() {
+        let (st, ctx) = hold_state().await;
+        // Written before flags existed: no `sensitive` key anywhere.
+        let old = json!({
+            "name": "checkout", "inputs": [], "created_at": "2026-10-01T00:00:00Z", "updated_at": "2026-10-01T00:00:00Z",
+            "steps": [{ "op": "phone.tap", "args": { "x": 50, "y": 25 }, "label": "tap \"Pay\"", "locator": { "class": "Button", "label": "Pay", "resource_id": "pay" } }],
+        });
+        std::fs::create_dir_all(skills_dir(&st.data_dir)).unwrap();
+        std::fs::write(skill_path(&st.data_dir, "checkout"), serde_json::to_vec(&old).unwrap()).unwrap();
+        assert!(!load(&st.data_dir, "checkout").unwrap().steps[0].sensitive);
+        let (fake, taps) = fake_phone("Button \"Pay\" [pay] {{0, 0}, {100, 50}}");
+        let denier = async {
+            let id = the_pending_hold(&st).await;
+            answer(&st, &id, "denied");
+        };
+        let run = run_skill(&st.db, &st.data_dir, "checkout", Some("link:1"), &[], None, "skill", None, &ctx);
+        let (report, ()) = FAKE_TOOL.scope(fake, async { tokio::join!(run, denier) }).await;
+        let report = report.unwrap();
+        assert_eq!(report["status"], "denied", "{report}");
+        assert!(taps.lock().unwrap().is_empty());
+        assert_eq!(report["holds"][0]["effect"], "pay");
     }
 }
