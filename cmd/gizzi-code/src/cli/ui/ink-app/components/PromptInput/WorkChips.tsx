@@ -1,7 +1,12 @@
 import * as React from 'react'
 import { useEffect, useState } from 'react'
 import { Text } from '../../ink'
-import { countDecisions } from '@/cli/work/api'
+import { countDecisions, getBotPause } from '@/cli/work/api'
+
+/** True only when the runtime says bots are paused; never throws. */
+async function botsPaused(): Promise<boolean> {
+  return (await getBotPause().catch(() => undefined))?.paused === true
+}
 
 /**
  * `⚑ 3` when agents in any session wait on a decision (/decisions); hidden
@@ -30,6 +35,12 @@ function usePoll<T>(load: () => Promise<T>, ms: number): T | undefined {
 
 export function WorkChips(): React.ReactNode {
   const waiting = usePoll(countDecisions, 10_000)
-  if (!waiting) return null
-  return <Text color="warning">⚑ {waiting}  </Text>
+  const paused = usePoll(botsPaused, 10_000)
+  if (!waiting && !paused) return null
+  return (
+    <>
+      {paused ? <Text color="warning">bots paused  </Text> : null}
+      {waiting ? <Text color="warning">⚑ {waiting}  </Text> : null}
+    </>
+  )
 }
