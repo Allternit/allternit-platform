@@ -737,7 +737,7 @@ struct ProjectConversationView: View {
             if kind == "routed" || kind == "completed" || kind == "blocked",
                let threadId = payload?.threadId,
                kind == "routed" || byId[threadId] != nil {
-                threadPill(title: payload?.threadTitle ?? byId[threadId]?.title ?? "Thread", threadId: threadId)
+                threadPill(title: payload?.threadTitle ?? byId[threadId]?.displayTitle ?? "Thread", threadId: threadId)
             }
         }
     }
@@ -756,7 +756,7 @@ struct ProjectConversationView: View {
             Button { if let thread { onOpenThread(thread) } } label: {
                 HStack(spacing: 8) {
                     Circle().fill(dotColor(thread?.group)).frame(width: 7, height: 7)
-                    Text(thread?.title ?? receipt.title)
+                    Text(thread?.displayTitle ?? receipt.title)
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundColor(Color("TextPrimary"))
                         .lineLimit(1)

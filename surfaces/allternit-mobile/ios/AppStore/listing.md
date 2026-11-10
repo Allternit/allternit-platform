@@ -44,11 +44,23 @@ Allternit needs an Allternit account. Code and automation features need a comput
 
 ## Keywords (100)
 
-ai,agents,bots,assistant,automation,chat,remote desktop,approvals,workflow,code
+ai,agents,bots,assistant,automation,chat,remote desktop,approvals,workflow,code,alternit,gizzi
+
+1.0 shipped without `alternit,gizzi`; they were added for 1.0.1 (2026-11-09) because App Store search treated "allternit" as a misspelling of "alternative".
 
 ## What's New (1.0)
 
 First release of Allternit for iPhone.
+
+## What's New (1.0.1)
+
+Entered in App Store Connect on 2026-11-09 (version 1.0.1, not submitted yet).
+
+- Make a PDF from a template. Pick the template, the look and the paper size.
+- Loops can have a Loop Card. Name the one number to move; each attempt is measured, then kept or reverted.
+- Terminal sessions from Gizzi Code show in your session list with a TERMINAL label.
+- A message sent to another agent shows its delivery result.
+- Bug fixes.
 
 ## App Review information
 

@@ -331,9 +331,9 @@ struct BotLaunchpadView: View {
                 .filter { $0.group == "working" || $0.group == "waiting" }
                 .max { $0.lastActivityAt < $1.lastActivityAt }
             return CardFacts(
-                line: latest.map { $0.statusLine ?? $0.title } ?? bot.botTagline,
+                line: latest.map { $0.statusLine ?? $0.displayTitle } ?? bot.botTagline,
                 when: latest.map { BotTime.short($0.lastActivityAt) } ?? "",
-                task: live.map { $0.title.isEmpty ? ($0.statusLine ?? "") : $0.title }
+                task: live.map { $0.displayTitle.isEmpty ? ($0.statusLine ?? "") : $0.displayTitle }
             )
         case .group(let group, _):
             let last = group.log.last

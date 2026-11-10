@@ -1155,16 +1155,22 @@ struct AgentAvatarEditorSheet: View {
     @State private var variants: [String] = []
     @State private var isSaving = false
     @State private var saveError: String? = nil
+    /// Set once the person picks, types or resets; until then Save leaves
+    /// the stored avatar alone (a bot's JSON look is never overwritten).
+    @State private var edited = false
 
     init(agent: AgentRecord) {
         self.agent = agent
-        _draft = State(initialValue: agent.avatar ?? "")
+        // A bot's JSON look is not a glyph: start the text field empty.
+        _draft = State(initialValue: AgentAvatarView.isLook(agent.avatar) ? "" : (agent.avatar ?? ""))
     }
 
-    /// The tile preview: the draft as the avatar when non-empty, the
-    /// deterministic default otherwise (what Reset produces).
+    /// The tile preview: the agent as saved until the person edits, then
+    /// the draft as the avatar when non-empty, the deterministic default
+    /// otherwise (what Reset produces).
     private var previewAgent: AgentRecord {
-        AgentRecord(
+        if !edited { return agent }
+        return AgentRecord(
             id: agent.id, name: agent.name, description: agent.description,
             type: agent.type, parentAgentId: agent.parentAgentId,
             model: agent.model, provider: agent.provider,
@@ -1228,13 +1234,14 @@ struct AgentAvatarEditorSheet: View {
                                 .stroke(Theme.borderWarmDefault, lineWidth: 1)
                         )
                         .onChange(of: draft) { _, newValue in
+                            edited = true
                             if newValue.count > 4, !newValue.hasPrefix("grid:") {
                                 draft = String(newValue.prefix(4))
                             }
                         }
                         .padding(.horizontal, 20)
 
-                    Button(action: { draft = "" }) {
+                    Button(action: { draft = ""; edited = true }) {
                         Text("Reset to default mark")
                             .font(.subheadline)
                             .foregroundColor(Color("TextSecondary"))
@@ -1277,11 +1284,14 @@ struct AgentAvatarEditorSheet: View {
     /// picked ("" for the deterministic default, "grid:<seed>" for
     /// shuffles).
     private func variantTile(seed: String, storedAs: String) -> some View {
-        let isSelected = draft.trimmingCharacters(in: .whitespacesAndNewlines) == storedAs
+        // A saved bot look is none of these marks until one is picked.
+        let isSelected = (edited || !AgentAvatarView.hasSavedLook(agent))
+            && draft.trimmingCharacters(in: .whitespacesAndNewlines) == storedAs
         return Button(action: {
             let generator = UIImpactFeedbackGenerator(style: .light)
             generator.impactOccurred()
             draft = storedAs
+            edited = true
         }) {
             ZStack {
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -1310,6 +1320,8 @@ struct AgentAvatarEditorSheet: View {
     }
 
     private func save() {
+        // Nothing changed: don't write the avatar (keeps a JSON look intact).
+        guard edited else { dismiss(); return }
         isSaving = true
         saveError = nil
         let avatar = draft.trimmingCharacters(in: .whitespacesAndNewlines)

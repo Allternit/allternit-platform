@@ -168,14 +168,20 @@ final class ACIComputersClient: Sendable {
         return data
     }
 
-    /// Non-2xx → the server's `detail` / `message` / `error`, else the status.
+    /// Non-2xx → the server's `detail` / `message` / `error`, else a plain
+    /// sentence (never a raw status code): a 502/503/504 with no body is the
+    /// computer or relay not answering.
     private static func check(_ response: URLResponse, data: Data) throws {
-        guard let http = response as? HTTPURLResponse else { throw Failure.server("Request failed") }
+        guard let http = response as? HTTPURLResponse else { throw Failure.server("Couldn't load this. Try again.") }
         guard (200...299).contains(http.statusCode) else {
             struct Body: Decodable { let detail: String?; let message: String?; let error: String? }
             let body = try? JSONDecoder().decode(Body.self, from: data)
-            let text = body?.detail ?? body?.message ?? body?.error
-            throw Failure.server(text ?? "Request failed (\(http.statusCode))")
+            if let text = body?.detail ?? body?.message ?? body?.error, !text.isEmpty {
+                throw Failure.server(text)
+            }
+            throw Failure.server((502...504).contains(http.statusCode)
+                ? "This computer isn't responding."
+                : "Couldn't load this. Try again.")
         }
     }
 }

@@ -427,7 +427,7 @@ struct BotHomeView: View {
                     .fill(threadColor(thread.group))
                     .frame(width: 7, height: 7)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(thread.title)
+                    Text(thread.displayTitle)
                         .font(.subheadline)
                         .foregroundColor(Color("TextPrimary"))
                         .lineLimit(1)

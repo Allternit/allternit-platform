@@ -462,7 +462,7 @@ struct ProjectDelegatePane: View {
         // returns only open lane threads).
         for thread in threads where thread.kind == "task" && !inLanes.contains(thread.id) {
             guard let col = Column.of(thread.status), col == .review || col == .done else { continue }
-            out[col, default: []].append(Card(threadId: thread.id, title: thread.title, status: thread.status,
+            out[col, default: []].append(Card(threadId: thread.id, title: thread.displayTitle, status: thread.status,
                                               estimate: nil, botId: thread.botId))
         }
         return out

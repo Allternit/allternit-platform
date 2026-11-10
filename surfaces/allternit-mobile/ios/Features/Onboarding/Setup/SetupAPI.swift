@@ -62,7 +62,7 @@ enum SetupHTTP {
                 : try await APIClient.shared.send(request)
         } catch let error as APIError {
             if case .httpError(let status, let message) = error {
-                throw ConnectError(status: status, code: nil, message: message ?? "Request failed (\(status)).")
+                throw ConnectError(status: status, code: nil, message: message ?? "Something went wrong. Try again.")
             }
             throw ConnectError(status: nil, code: nil, message: FriendlyErrorMessage.from(error.localizedDescription))
         } catch {
@@ -73,7 +73,7 @@ enum SetupHTTP {
         guard (200...299).contains(status) else {
             let code = json.at("code")?.jString ?? json.at("error")?.jString
             let message = json.at("message")?.jString ?? code
-                ?? (status == 401 || status == 403 ? "Sign in again, then try again." : "Request failed (\(status)).")
+                ?? (status == 401 || status == 403 ? "Sign in again, then try again." : "Something went wrong. Try again.")
             throw ConnectError(status: status, code: code, message: message)
         }
         return json

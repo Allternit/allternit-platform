@@ -52,7 +52,7 @@ struct BotThreadsOverview: View {
                 }()
                 return OverviewCardItem(
                     id: thread.id,
-                    title: thread.title,
+                    title: thread.displayTitle,
                     group: botId == nil ? store.bot(thread.botId)?.botDisplayName : nil,
                     status: tone == .idle ? (thread.group == "queued" ? "Queued" : nil) : BotThreadGroup(rawValue: thread.group)?.title,
                     tone: tone,
@@ -430,7 +430,7 @@ struct BotThreadTasksView: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("\(thread.title), \(done) of \(steps.count) done")
+                .accessibilityLabel("\(thread.displayTitle), \(done) of \(steps.count) done")
                 .accessibilityHint("Opens the thread")
             }
             .padding(.trailing, 12)
