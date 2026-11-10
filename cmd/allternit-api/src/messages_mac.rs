@@ -654,6 +654,8 @@ mod tests {
         assert!(search_db(&dir.join("missing.db"), None, None, 7, 5).is_err());
     }
 
+    // Off macOS every route answers 404 (covered by `tools_list_and_routes_follow_platform_and_setting`).
+    #[cfg(target_os = "macos")]
     #[tokio::test]
     async fn settings_gate_the_send_route_and_holds_never_send_twice() {
         let st = state().await;
