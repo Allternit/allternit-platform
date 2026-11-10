@@ -59,6 +59,10 @@ The row is a normal `Session.Info` with:
 
 Engine ids come from the terminal keys (`msg_`/`prt_` plus a time prefix and a hash), so re-sending a message updates it in place. The TUI sends only messages whose content changed, debounced by 120 ms.
 
+What does not sync. Terminal-only local commands (`/remote`, `/model` and the like) and their output (`<local-command-stdout>`, shell escapes, caveats) are never sent, so they cannot become a prompt or the session title. A prompt-type slash command the model runs (`/review diff`) is sent as readable text, `/review diff`, once the model answers it (or at once while the turn is busy). The title comes from the first real prompt.
+
+Re-attach. When the inbox (re)connects, which includes the first connect and a restarted engine, the terminal forgets what it already sent and pushes the whole transcript and the real busy/idle status at once, then the open approvals again. A failed push retries after 2 s without waiting for the next message. If the engine has no row for the session any more (its data was reset), the terminal adopts it again by its terminal id and listens on the new session id.
+
 ## Engine → terminal: the inbox
 
 `GET /v1/terminal/sessions/:id/inbox?host=&pid=` is a server-sent event stream. While it is open the session is **live**: `TerminalLive.attached(id)` is true and `session.terminal` `{ sessionID, attached, host, cwd }` is published on attach and detach. `GET /v1/terminal/sessions` lists live terminals.
@@ -69,6 +73,8 @@ Engine ids come from the terminal keys (`msg_`/`prt_` plus a time prefix and a h
 | `{ type: "stop" }` | `SessionPrompt.cancel`: every abort route | Like Esc: denies any open approval or question (their cards close everywhere), aborts the turn, then reports busy/idle itself. The engine does not mark a live row idle on Stop. |
 | `{ type: "permission", requestID, allow, message? }` | A surface replied through `/v1/permission/:id/reply` | Resolves the waiting tool through the same callbacks the interactive permission dialog races (`replBridgePermissionCallbacks`) |
 | `{ type: "question", requestID, answers? }` | A surface answered (`/v1/question/:id/reply`) or declined (`/reject`) | Answers AskUserQuestion with the labels (a decision tree joins them with " → ", multi-select with ", "); no answers declines it |
+
+A prompt typed on a surface is only the person's text: for a terminal session the web app skips memory recall, project and connector context and the answer manuals (the engine hands the terminal just the text, so building them only added serial round trips before the prompt was posted, which is seconds over the phone relay).
 
 On a live row `SessionPrompt.prompt` never starts an engine turn. It returns an unsaved user message right away. A `noReply` note is not forwarded.
 
@@ -82,7 +88,9 @@ Nothing new on the backend. The phone, the web app and the PWA reach a computer'
 
 | Surface | Badge | Open, steer, stop, approve |
 |---|---|---|
-| Desktop | `NativeSourceBadge` on Code rows reads "Terminal"; the session header banner says it runs in a terminal | existing composer, Stop and permission cards |
+| Desktop | `NativeSourceBadge` on Code rows reads "Terminal"; the session header banner says it runs in a terminal, and the header shows no Local / Cloud chip (the session runs on the paired computer, not on the app's runtime target) | existing composer, Stop and permission cards |
 | ai.allternit.com + phone layout, m.allternit.com PWA | `.phone-rail-terminal` on the drawer row | same |
 | Android | the PWA in a Trusted Web Activity | same |
 | iOS | `AgentSession.isTerminal` → "TERMINAL" on the recents row | existing chat screen |
+
+Approval cards name what the tool acts on: the engine permission carries `patterns` (the file, command or URL) and `metadata.input`; the composer bar on the phone and PWA shows it under "Permission required". A tool that is running or waiting for approval reads as running: the session API reports a message with no completed time as ending when it started, so the web transcript treats a recent unfinished turn with a running or pending tool as still being written. The terminal footer's context meter ignores an all-zero usage record left by a stopped turn and keeps the last real report.

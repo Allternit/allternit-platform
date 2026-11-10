@@ -180,6 +180,17 @@ function resultText(content: unknown): string {
 
 const OUTPUT_LIMIT = 16_000
 
+/** Terminal-only output the model never saw as a prompt: local command results, shell escapes, caveats. */
+const TERMINAL_ONLY = /<(local-command-stdout|local-command-stderr|local-command-caveat|bash-input|bash-stdout|bash-stderr)>/
+
+/** `<command-name>/review</command-name> … <command-args>diff</command-args>` as `/review diff`; undefined when not a command. */
+export function commandPrompt(text: string): string | undefined {
+  const name = /<command-name>\s*([^<]*?)\s*<\/command-name>/.exec(text)?.[1]
+  if (!name) return undefined
+  const args = /<command-args>([\s\S]*?)<\/command-args>/.exec(text)?.[1]?.trim()
+  return `${name.startsWith('/') ? name : `/${name}`}${args ? ` ${args}` : ''}`
+}
+
 /**
  * One engine user message per prompt, one engine assistant message per turn
  * (its text, reasoning and tool calls, tool results folded into their call).
@@ -190,6 +201,17 @@ export function toLiveMessages(messages: readonly Message[], busy: boolean): Liv
   let prompt: LiveMessage | undefined
   const tools = new Map<string, Extract<LivePart, { kind: 'tool' }>>()
   let last = 0
+  // A slash command's own message, held until the model answers it: a local
+  // command (it prints a result and is done) never becomes a prompt.
+  let command: Message | undefined
+  let commandText = ''
+  const flushCommand = () => {
+    if (!command) return
+    turn = undefined
+    prompt = { key: command.uuid, role: 'user', time: time(command), parts: [{ kind: 'text', key: 'text', text: commandText }] }
+    out.push(prompt)
+    command = undefined
+  }
 
   for (const m of messages) {
     if (m.type === 'user' || m.type === 'assistant') last = Math.max(last, time(m))
@@ -211,6 +233,18 @@ export function toLiveMessages(messages: readonly Message[], busy: boolean): Liv
         .trim()
       // The terminal's own interrupt marker is not a prompt; the turn's error state already shows it.
       if (!text || text.startsWith('[Request interrupted by user')) continue
+      if (TERMINAL_ONLY.test(text)) {
+        command = undefined
+        continue
+      }
+      const slash = commandPrompt(text)
+      command = undefined
+      if (slash) {
+        if (turn) turn.completed ??= time(m)
+        command = m
+        commandText = slash
+        continue
+      }
       if (turn) turn.completed ??= time(m)
       turn = undefined
       prompt = { key: m.uuid, role: 'user', time: time(m), parts: [{ kind: 'text', key: 'text', text }] }
@@ -218,6 +252,7 @@ export function toLiveMessages(messages: readonly Message[], busy: boolean): Liv
       continue
     }
     if (m.type !== 'assistant') continue
+    flushCommand()
     if (!turn) {
       turn = {
         key: `${m.uuid}:turn`,
@@ -260,6 +295,7 @@ export function toLiveMessages(messages: readonly Message[], busy: boolean): Liv
       }
     }
   }
+  if (busy) flushCommand()
   if (turn && !busy) turn.completed ??= last
   return out
 }
