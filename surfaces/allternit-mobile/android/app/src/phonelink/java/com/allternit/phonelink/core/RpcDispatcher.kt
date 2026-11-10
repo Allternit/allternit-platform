@@ -48,6 +48,11 @@ interface ServerHooks {
      */
     fun requestMeshRestart(deferred: Boolean): Boolean = false
     /**
+     * `hold_notice`: Desktop is holding a sensitive action for the owner's approval
+     * ([waiting] = true) or the hold is over (false). [timeoutMs] is the safety net.
+     */
+    fun holdNotice(waiting: Boolean, effect: String?, app: String?, timeoutMs: Long) {}
+    /**
      * One shell-server command (ShellServerProtocol: KEY, SMS, DIAL, SMSREAD,
      * A11YON), starting the server first if needed. Returns what follows `OK`;
      * throws RpcException when the server isn't running or refuses.
@@ -164,9 +169,17 @@ class RpcDispatcher(
             "call_dial" -> callDial(params)
             "sms_read" -> smsRead(params)
             "a11y_enable" -> a11yEnable(params)
+            "hold_notice" -> holdNotice(params)
             "stream_ticket" -> throw RpcException(RpcException.METHOD_NOT_FOUND, "Method not found: the Android server has no /stream", "unsupported")
             else -> throw RpcException(RpcException.METHOD_NOT_FOUND, "Method not found", "unknown_method")
         }
+    }
+
+    private fun holdNotice(p: JSONObject): JSONObject {
+        val state = p.optStringOrNull("state")
+        if (state != "waiting" && state != "cleared") throw RpcException.invalid("state must be waiting or cleared")
+        hooks.holdNotice(state == "waiting", p.optStringOrNull("effect"), p.optStringOrNull("app"), HoldNotice.timeoutMs(p.optStringOrNull("expiresAt"), clock()))
+        return JSONObject().put("message", if (state == "waiting") "Notice shown" else "Notice cleared")
     }
 
     private fun dispatchUi(method: String, p: JSONObject, o: DeviceOps): JSONObject = when (method) {
