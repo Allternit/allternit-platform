@@ -14,6 +14,14 @@ final class InboxStore: ObservableObject {
     @Published private(set) var error: String?
     @Published private(set) var failures: [String: String] = [:]
     @Published private(set) var busy: Set<String> = []
+    /// The item a link or notification tap asked for (`allternit://inbox/<id>`).
+    @Published var focusedId: String?
+
+    /// A notification button already answered this item in the background.
+    func removeLocally(_ id: String) {
+        guard !id.isEmpty else { return }
+        items.removeAll { $0.id == id }
+    }
 
     private let client = InboxClient.shared
 
@@ -22,6 +30,7 @@ final class InboxStore: ObservableObject {
             if let list = try await client.list() {
                 items = list
                 isAvailable = true
+                AppGroupStore.hasComputer = true
             } else {
                 items = []
                 isAvailable = false
@@ -32,6 +41,7 @@ final class InboxStore: ObservableObject {
             items = []
             isAvailable = false
             error = nil
+            AppGroupStore.hasComputer = false
         } catch {
             self.error = FriendlyErrorMessage.from(error.localizedDescription)
         }
@@ -76,6 +86,13 @@ struct InboxSheet: View {
                 .background(Color("BgPrimary").ignoresSafeArea())
         }
         .task { await store.refresh() }
+        .onDisappear { store.focusedId = nil }
+    }
+
+    /// The linked item is no longer waiting (answered elsewhere, or gone).
+    private var focusedIsGone: Bool {
+        guard let id = store.focusedId, store.hasLoaded, store.error == nil else { return false }
+        return !store.items.contains { $0.id == id }
     }
 
     @ViewBuilder
@@ -105,15 +122,18 @@ struct InboxSheet: View {
             FriendlyStateView(
                 style: .empty,
                 icon: "bell.slash",
-                title: "You're all caught up",
+                title: focusedIsGone ? NotificationStrings.alreadyHandled : "You're all caught up",
                 message: "Approvals, held messages, missed calls, unanswered people and anything that failed show up here."
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
+            ScrollViewReader { proxy in
             List {
+                if focusedIsGone { alreadyHandledNote }
                 ForEach(store.items) { item in
                     InboxRow(item: item, onOpen: { open(item) })
-                        .listRowBackground(Color("BgPrimary"))
+                        .id(item.id)
+                        .listRowBackground(item.id == store.focusedId ? Color("AccentPrimary").opacity(0.12) : Color("BgPrimary"))
                         .swipeActions(edge: .leading) {
                             Button(item.primary.label) { primary(item) }
                                 .tint(Color("AccentPrimary"))
@@ -132,7 +152,23 @@ struct InboxSheet: View {
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
             .refreshable { await store.refresh() }
+            .onAppear {
+                if let id = store.focusedId, store.items.contains(where: { $0.id == id }) {
+                    proxy.scrollTo(id, anchor: .center)
+                }
+            }
+            }
         }
+    }
+
+    private var alreadyHandledNote: some View {
+        Text(NotificationStrings.alreadyHandled)
+            .font(.footnote)
+            .foregroundColor(Color("TextSecondary"))
+            .frame(maxWidth: .infinity, alignment: .center)
+            .listRowBackground(Color("BgPrimary"))
+            .listRowSeparator(.hidden)
+            .accessibilityLabel("That item was already handled")
     }
 
     private func primary(_ item: InboxItem) {

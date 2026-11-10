@@ -37,6 +37,15 @@ enum DeepLink: Equatable, Sendable {
     case decisions
     /// The "Needs you" inbox across all bots (`/inbox`, `allternit://inbox`).
     case inbox
+    /// The inbox with one item in view (`/inbox/<id>`, a push's `data.inboxId`).
+    case inboxItem(String)
+    /// A bot's chat with `prompt` in the composer, never sent
+    /// (`/bot/<id>/chat?prompt=`).
+    case botChat(botId: String, prompt: String?)
+    /// The main bot (`/call/main`): its chat, where the call button is.
+    case callMain
+    /// A routine's page (`/routine/<id>`).
+    case routine(String)
 
     static let webHosts: Set<String> = ["ai.allternit.com", "m.allternit.com"]
 
@@ -107,7 +116,22 @@ enum DeepLink: Equatable, Sendable {
         case "computers":
             return .computers
         case "inbox":
+            if segments.count >= 2, let id = segments[1].removingPercentEncoding, !id.isEmpty {
+                return .inboxItem(id)
+            }
             return .inbox
+        case "bot":
+            guard segments.count >= 2 else { return nil }
+            if segments.count >= 3, segments[2] == "chat" {
+                return .botChat(botId: segments[1], prompt: query["prompt"])
+            }
+            return .bot(segments[1])
+        case "call":
+            guard segments.count >= 2, segments[1] == "main" else { return nil }
+            return .callMain
+        case "routine":
+            guard segments.count >= 2 else { return nil }
+            return .routine(segments[1])
         default:
             return nil
         }
@@ -149,6 +173,18 @@ final class DeepLinkRouter: ObservableObject {
         lastLink = link
         lastAt = Date()
         pending = link
+    }
+
+    /// Text a `botChat` link puts in the next bot composer that appears.
+    /// Never sent by itself.
+    private(set) var composerPrefill: String?
+
+    func setComposerPrefill(_ text: String?) { composerPrefill = text }
+
+    /// Takes the prefill (the composer calls this when it appears).
+    func takeComposerPrefill() -> String? {
+        defer { composerPrefill = nil }
+        return composerPrefill
     }
 
     /// Takes the pending link (the host calls this once it can act on it).
