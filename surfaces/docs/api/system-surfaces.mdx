@@ -165,9 +165,9 @@ Search results go to the model fenced as outside text, with `provenance {trust, 
 
 A hold made in a turn that read such text stores the lowest trust seen in `detail.provenance`. The inbox shows it.
 
-## Migration 119 (planned)
+## Migration 120 (planned)
 
-File: `migrations_pg/119_ios_system_surfaces.sql`. Take the next free number at merge. The file is additive and idempotent, and is never edited after it ships. Production applies it with `deploy-contabo.sh`, which applies files missing from `public.ops_applied_migrations` before the binary swap.
+File: `migrations_pg/120_ios_system_surfaces.sql`. The file is additive and idempotent, and is never edited after it ships. Production applies it with `deploy-contabo.sh`, which applies files missing from `public.ops_applied_migrations` before the binary swap.
 
 | Table | Change |
 |-------|--------|
