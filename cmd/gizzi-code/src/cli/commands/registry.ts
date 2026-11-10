@@ -11,6 +11,7 @@ import { HardwareCommand } from "@/cli/commands/hardware"
 import { ServeCommand } from "@/cli/commands/serve"
 import { PairCommand, LoginCommand } from "@/cli/commands/pair"
 import { ComputersCommand } from "@/cli/commands/computers"
+import { PhoneCommand } from "@/cli/commands/phone"
 import { TeleportCommand } from "@/cli/commands/teleport"
 import { DebugCommand } from "@/cli/commands/debug"
 import { StatsCommand } from "@/cli/commands/stats"
@@ -112,6 +113,7 @@ export const COMMANDS: RegisteredCommand[] = [
   ServeCommand,
   PairCommand,
   ComputersCommand,
+  PhoneCommand,
   TeleportCommand,
   LoginCommand,
   WebCommand,
