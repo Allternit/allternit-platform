@@ -29,11 +29,12 @@ Subscription routes take a Clerk session or a `compute`-scoped API key.
 ```json
 {
   "deviceId": "d_7f3a…",
-  "subscription": { "endpoint": "https://fcm.googleapis.com/fcm/send/…", "keys": { "p256dh": "B…", "auth": "…" } }
+  "subscription": { "endpoint": "https://fcm.googleapis.com/fcm/send/…", "keys": { "p256dh": "B…", "auth": "…" } },
+  "platform": "ios-pwa"
 }
 ```
 
-returns `201 {"ok": true, "id": "ps_…"}`. `deviceId` is a random id the app keeps in local storage; subscribing again from the same device replaces its row. The endpoint must be a public `https` host. A person may register 10 devices. If someone else signs in on the same browser, the endpoint moves to them. Errors: `400 bad_device_id | bad_endpoint | bad_keys`, `429 too_many_devices`.
+returns `201 {"ok": true, "id": "ps_…"}`. `deviceId` is a random id the app keeps in local storage; subscribing again from the same device replaces its row. The endpoint must be a public `https` host. A person may register 10 devices. If someone else signs in on the same browser, the endpoint moves to them. `platform` is optional: `ios-pwa` (the PWA added to an iPhone home screen), `android` or `desktop`; other values are stored as unknown (migration `120_ios_system_surfaces.sql`). Errors: `400 bad_device_id | bad_endpoint | bad_keys`, `429 too_many_devices`.
 
 - `DELETE /api/v1/push/subscriptions` with `{"deviceId": "d_7f3a…"}` returns `{"ok": true, "removed": true}`. Apps call it on sign-out and when the person turns notifications off.
 

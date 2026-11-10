@@ -5,7 +5,7 @@ description: Native push for the Allternit iPhone app. Device token routes, APNs
 
 The Allternit iPhone app (`com.allternit.mobile`) gets the same notifications as [Web Push](/api/web-push): rings, missed calls, thread messages, channel messages, and every backbone event the person is notified about. cloud-api sends each one to Apple Push Notification service (APNs) as well as to the browser subscriptions. [Notification preferences](/api/notifications), quiet hours, the per-thread collapse and the hourly cap are applied once, before either transport, so the phone and the browser always agree.
 
-It is off until the APNs key below is set. With it unset, the token routes answer `503 {"error":"apns_not_configured"}` and nothing is sent. The push pipeline itself is switched on by the Web Push VAPID keys, so both sets must be present for iPhones to get pushes. Migration `110_apns_device_tokens.sql` adds the token table; the Contabo deploy applies it.
+It is off until the APNs key below is set. With it unset, the token routes answer `503 {"error":"apns_not_configured"}` and nothing is sent. The push pipeline itself is switched on by the Web Push VAPID keys, so both sets must be present for iPhones to get pushes. Migration `111_apns_device_tokens.sql` adds the token table and `120_ios_system_surfaces.sql` adds the device details, activity tokens, the read token and status snapshots. The Contabo deploy (`cmd/allternit-cloud-api/deploy-contabo.sh`) applies each file that is not yet listed in `ops_applied_migrations`, before it swaps the binary.
 
 ## Turn it on
 
@@ -23,19 +23,70 @@ One token-auth key works for every app in the team and for both the sandbox and 
 
 ## Routes
 
-Both take a Clerk session or a `compute`-scoped API key. The app calls cloud-api directly, never through the runtime relay.
+The device token and activity token routes take a Clerk session or a `compute`-scoped API key. The app calls cloud-api directly, never through the runtime relay.
 
 - `POST /api/v1/device-tokens`:
 
 ```json
-{ "token": "a1b2…(hex)", "platform": "ios", "environment": "production", "deviceId": "6F1C…" }
+{ "token": "a1b2…(hex)", "platform": "ios", "environment": "production", "deviceId": "6F1C…",
+  "osVersion": "26.1", "appBuild": "31", "capabilities": ["actions", "nse", "la_push", "widget_push"] }
 ```
 
-returns `201 {"ok": true, "id": "apns_…"}`. `environment` is `sandbox` for debug builds and `production` for TestFlight and App Store builds; the push goes to the matching APNs host. `deviceId` is the app's `identifierForVendor`, so a reinstall replaces the old token. A token belongs to one person: registering it while signed in as someone else moves it. A person may register 10 iPhones. Errors: `400 bad_token | unsupported_platform`, `429 too_many_devices`.
+returns `201 {"ok": true, "id": "apns_…", "readToken": "adr_…"}`. `osVersion`, `appBuild` and `capabilities` are optional; an app that sends none is registered with no capabilities and gets the plain alert. `capabilities` says what this build of the app can handle:
 
-- `DELETE /api/v1/device-tokens` with `{"token": "a1b2…"}` returns `{"ok": true, "removed": true}`. The app calls it on sign-out, before the session ends.
+| Capability | Meaning |
+|---|---|
+| `actions` | It has the notification categories, so a push may carry buttons |
+| `nse` | It has the notification service extension, so a private push may carry a generic body that the extension replaces |
+| `la_push` | It registers Live Activity push tokens |
+| `widget_push` | It registers a widget push token (iOS 26) |
+
+Other values are dropped. `readToken` is new on every registration (the old one stops working) and is shown only once: cloud-api stores only its hash. The app keeps it in the shared keychain for its extensions and uses it on the [device read routes](#device-read-routes) only. `environment` is `sandbox` for debug builds and `production` for TestFlight and App Store builds; the push goes to the matching APNs host. `deviceId` is the app's `identifierForVendor`, so a reinstall replaces the old token. A token belongs to one person: registering it while signed in as someone else moves it. A person may register 10 iPhones. Errors: `400 bad_token | unsupported_platform`, `429 too_many_devices`.
+
+- `DELETE /api/v1/device-tokens` with `{"token": "a1b2…"}` returns `{"ok": true, "removed": true}`. It also removes that device's activity tokens. The app calls it on sign-out, before the session ends.
+
+- `PUT /api/v1/device-tokens/activity` saves a Live Activity or widget push token for a registered device:
+
+```json
+{ "deviceId": "6F1C…", "kind": "la_start", "attributesType": "BotActivityAttributes", "activityKey": null,
+  "token": "…(hex)", "environment": "production" }
+```
+
+returns `201 {"ok": true, "id": "apat_…"}`. `kind` is `la_start` (the push-to-start token for one attributes type), `la_update` (the update token of one running activity, named by `activityKey`) or `widget` (the widget push token). A newer token replaces the older one of the same device and kind (and the same `attributesType` or `activityKey`). Errors: `400 bad_kind | bad_token | device_id_required`, `404 unknown_device` when `deviceId` has no device token for this person, `429 too_many_tokens` (40 per person).
+
+- `DELETE /api/v1/device-tokens/activity` with `{"token": "…"}` returns `{"ok": true, "removed": true}`.
+
+Registering a device token while signed in as someone else removes the previous person's activity tokens for that device.
 
 APNs answering `410`, `BadDeviceToken`, `Unregistered` or `DeviceTokenNotForTopic` deletes the token. Other failures are counted, and a token is removed after 8 in a row. `403 ExpiredProviderToken` makes cloud-api sign a new provider token.
+
+## Device read routes
+
+The notification service extension and the widgets run without the app's Clerk session. They call these two routes with `Authorization: Bearer <readToken>`. Both also take the normal Clerk session. The read token is refused (`401`) on every other route, and it only reads its own person's data.
+
+- `GET /api/v1/status/summary` returns the latest status snapshot of each of the person's computers, newest first, or an empty list:
+
+```json
+{ "snapshots": [ { "runtimeId": "rt_1", "snapshot": { "activeBots": 2, "pendingApprovals": 1, "needsYou": ["approval:ap1"] },
+                   "hash": "…", "updatedAt": "2026-11-09T18:00:00Z" } ] }
+```
+
+- `GET /api/v1/notifications/content/{eventId}` returns the text of one notification, built the same way as the push:
+
+```json
+{ "title": "Approval needed", "body": "Raven wants to: send the weekly report",
+  "sender": { "name": "Raven", "avatarUrl": null }, "communication": false }
+```
+
+It answers `404 not_found` for an unknown id, another person's event, or an event that is never shown as a notification. `sender.avatarUrl` is filled only when the computer's event carries an `https` avatar URL. `communication` is `false` until communication notifications are switched on server-side.
+
+A read token that is malformed, replaced by a newer registration, or belongs to an unregistered device gets `401 {"error":"invalid_read_token"}`.
+
+Server: `cmd/allternit-cloud-api/src/routes/device_read.rs`.
+
+## Other push types
+
+`apns::send_raw` sends any APNs push type to one token: `background` to a device token, `liveactivity` to an activity token (topic `com.allternit.mobile.push-type.liveactivity`), `widgets` to a widget token (topic `com.allternit.mobile.push-type.widgets`). It uses the same provider token and the same cleanup as alerts: a gone device token also takes that device's activity tokens with it.
 
 ## Payload
 
