@@ -14,6 +14,7 @@ import com.allternit.phonelink.core.EncryptedFileSessionStore
 import com.allternit.phonelink.core.HttpServer
 import com.allternit.phonelink.core.MeshKeyBox
 import com.allternit.phonelink.core.PhoneServer
+import com.allternit.phonelink.core.HoldNotice
 import com.allternit.phonelink.core.RpcDispatcher
 import com.allternit.phonelink.core.RpcException
 import com.allternit.phonelink.core.ServerConfig
@@ -244,6 +245,17 @@ object ServerController {
             } catch (e: java.io.IOException) {
                 throw RpcException.typed("shell_failed", e.message ?: "The shell service refused the command.")
             }
+        }
+
+        override fun holdNotice(waiting: Boolean, effect: String?, app: String?, timeoutMs: Long) {
+            if (!waiting) { Notifications.clearHold(this@ServerController.app); return }
+            val label = app?.takeIf { RpcDispatcher.PACKAGE_RE.matches(it) }?.let { pkg ->
+                try {
+                    val pm = this@ServerController.app.packageManager
+                    pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString()
+                } catch (e: Exception) { null }
+            }
+            Notifications.showHold(this@ServerController.app, HoldNotice.body(effect, label), timeoutMs)
         }
 
         override fun requestMeshRestart(deferred: Boolean): Boolean {
