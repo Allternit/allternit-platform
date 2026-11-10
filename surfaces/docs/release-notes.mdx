@@ -5,6 +5,11 @@ description: 'Changelog for the Allternit platform, SDKs, and Gizzi Code CLI'
 
 # Release Notes
 
+## 2026-11-09 — Desktop: New Window, and one machine counts once
+
+- **New Window:** **File › New Window** (`Cmd/Ctrl+Shift+N`) opens another Allternit Desktop window on the same account and sessions. The Window menu lists them with a colour dot. See [Desktop](/surfaces/desktop#new-window).
+- **A machine is one machine:** Desktop and the gizzi CLI now send a stable machine id when they pair, so a renamed Mac or a changed network name no longer counts against your machine limit, and signing in again on the same Mac replaces its old entry instead of adding a second one. Each account still uses its own slot on a shared computer.
+
 ## 2026-11-04 — iPhone: every bot look shows, faces stay whole
 
 - **Pack looks show on iPhone:** bots dressed in drawn pack art (Clawd Crew, Duet Carry, Gizzi YouTube: Clawd, Pinch, Gem and more) showed a placeholder pattern on iPhone, because the phone couldn't read those pictures. They now show the look you picked in Edit bot.

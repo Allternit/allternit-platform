@@ -61,7 +61,7 @@ export interface Delivery {
   id: string
   to: string
   via: string
-  state: "verified" | "queued" | "best_effort" | "read_only" | "failed"
+  state: "verified" | "pushed" | "queued" | "best_effort" | "read_only" | "failed"
   ticket?: string | null
   threadId?: string | null
   nodeId?: string | null

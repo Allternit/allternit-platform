@@ -98,6 +98,8 @@ enum AgentChatEvent: Decodable, Sendable {
         var error: String? = nil
         var startedAt: Date? = nil
         var finishedAt: Date? = nil
+        /// The tool's result text (the message_agent delivery receipt is read from it).
+        var output: String? = nil
     }
 
     struct ToolCall: Sendable {

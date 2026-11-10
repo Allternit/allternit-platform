@@ -32,7 +32,7 @@ jobs:
     concurrency:
       group: deploy-cloud-api-test-${{ github.ref }}
       cancel-in-progress: true
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     services:
       postgres:
         image: postgres:16
@@ -85,7 +85,7 @@ jobs:
       group: deploy-cloud-api-contabo
       cancel-in-progress: false
     if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v4

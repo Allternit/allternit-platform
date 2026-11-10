@@ -61,6 +61,7 @@
 		17D87DFB3EEE39FC4C5A5EA4 /* CodeLanguage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B425580E480D60109FCC8F9 /* CodeLanguage.swift */; };
 		1834CC829C4E4DF29D135C87 /* AgentActivityDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEEC6838A5C637D76EED594C /* AgentActivityDetailView.swift */; };
 		1835BCF4D303C85249F87AAB /* CronJob.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC9B4BA16EDF46885053622B /* CronJob.swift */; };
+		18A6044A2828F53E30CE21C5 /* PDFTemplateSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 97BDAE8A738E43DF48BE1B26 /* PDFTemplateSheet.swift */; };
 		18C9EB8E0CDD8146822E1E05 /* libz.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = 2EA4CD63CB38E3BE58D42166 /* libz.tbd */; };
 		18E5D18CC6278F309A431090 /* McpDirectory.swift in Sources */ = {isa = PBXBuildFile; fileRef = C50BA8075C4FBCA27CA52761 /* McpDirectory.swift */; };
 		191AC8C7EFABC895B86FA079 /* NodeDirectory.swift in Sources */ = {isa = PBXBuildFile; fileRef = BFFE812B71668541B86320E1 /* NodeDirectory.swift */; };
@@ -159,6 +160,7 @@
 		4A2D2E088FA9D26433267C16 /* AutomationHubView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11D0413225BA57CD09BE936E /* AutomationHubView.swift */; };
 		4A4923C4990E8032A0077A23 /* CapabilitiesSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1DA92D45376B4BE6591BCD44 /* CapabilitiesSettingsView.swift */; };
 		4AACE2FD1808211A434428CB /* AgentMarketplace.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4697ED76511B667A26C4A0F /* AgentMarketplace.swift */; };
+		4C1990485C082C353AAFCFB0 /* PDFTemplateRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 77D2052483EF36F831F16799 /* PDFTemplateRenderer.swift */; };
 		4D0FEE872103578BC1DD234B /* CoworkSessionWorkspaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 84FC33C4E8CA18AFE3DD8E0E /* CoworkSessionWorkspaceView.swift */; };
 		4DAB143E8184704E43BE9027 /* WebhookTriggersClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01C2CCA8211E408F571C4FDE /* WebhookTriggersClient.swift */; };
 		4E0B0117142FDF231A79FEBC /* LocalDocumentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2DE4E63DE8400573B029C358 /* LocalDocumentView.swift */; };
@@ -236,6 +238,7 @@
 		6BA73DB3034B421FDAB26296 /* CodePanes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A988DAF0888EF0D3011BBB9 /* CodePanes.swift */; };
 		6BB3705C203B06F92A5468A4 /* IntelliScheduleStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2379C3D1BE4210564BD1A258 /* IntelliScheduleStore.swift */; };
 		6BB4A917B6F16D659FC4505C /* CodeModeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D011B052E3F3ABA469EBA92 /* CodeModeView.swift */; };
+		6C1DE4AF9E06DFE2EF88FC26 /* pdf-templates.js in Resources */ = {isa = PBXBuildFile; fileRef = 6898AC580AE4F2DA70B58BF8 /* pdf-templates.js */; };
 		6C51085C811666862AE4EBC5 /* BotProjectSections.swift in Sources */ = {isa = PBXBuildFile; fileRef = 43BFEA6D9AD0DFA2A813D0C9 /* BotProjectSections.swift */; };
 		6CC103BAFF1EE2DFE5DCC427 /* NewProjectSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6BF08861508C7252E3641B3A /* NewProjectSheet.swift */; };
 		6CF0DADB0D117778311D91AA /* BotLiveStageView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 782BFEC21911C78EC0D20C81 /* BotLiveStageView.swift */; };
@@ -334,6 +337,7 @@
 		9AB12B784214173B2E38DEBB /* AccountProfileView.swift in Sources */ = {isa = PBXBuildFile; fileRef = ECCFD9A14B1F6A5FA4443487 /* AccountProfileView.swift */; };
 		9B6BC60A60A4D81110D5F0B4 /* LoopStaminaRing.swift in Sources */ = {isa = PBXBuildFile; fileRef = A66FADD4CF21FB0C712398C4 /* LoopStaminaRing.swift */; };
 		9B9B6B7FEB6A399693D7624F /* ConnectAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C4E0B35B15807646EB38EB6 /* ConnectAPI.swift */; };
+		9D82B550B9424BBF40459135 /* PDFTemplateClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6E7FBB49427D3DBB2B68F253 /* PDFTemplateClient.swift */; };
 		9E1E174BD9837CB017C3F0A2 /* TreeSitterSwiftRunestone in Frameworks */ = {isa = PBXBuildFile; productRef = B7E1C1CFB727D46A6801CA9E /* TreeSitterSwiftRunestone */; };
 		9E5B4610C820CE11F367EA94 /* PtyClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F872E12909F37FC3EB5C89A /* PtyClient.swift */; };
 		9E98F1BC9EA39287BFD70DCD /* Color+Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = D45673F8E41471638BD2E334 /* Color+Theme.swift */; };
@@ -836,6 +840,7 @@
 		6835A1BA6B53B5D99908A86C /* AutomationTasksPhoneView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutomationTasksPhoneView.swift; sourceTree = "<group>"; };
 		683D928817A8F0D03BBDAB8B /* SampleHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SampleHandler.swift; sourceTree = "<group>"; };
 		6878E4CDD256FFFAF91E6A26 /* LoopActivityAttributes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoopActivityAttributes.swift; sourceTree = "<group>"; };
+		6898AC580AE4F2DA70B58BF8 /* pdf-templates.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = "pdf-templates.js"; sourceTree = "<group>"; };
 		68A7DF64FF7D38E51B509122 /* VideoToolbox.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = VideoToolbox.framework; path = System/Library/Frameworks/VideoToolbox.framework; sourceTree = SDKROOT; };
 		68B1051892B0960972533D49 /* AllternitWidgets.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = AllternitWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		68BF3618C7C2C6ECEA25A40C /* Secrets.xcconfig.example */ = {isa = PBXFileReference; path = Secrets.xcconfig.example; sourceTree = "<group>"; };
@@ -853,6 +858,7 @@
 		6D1CF76A3B4AF38B5A019D23 /* DeepLinkTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeepLinkTests.swift; sourceTree = "<group>"; };
 		6D5F0FBBDFDA61BCA336D35B /* TwinSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TwinSettingsView.swift; sourceTree = "<group>"; };
 		6E79642FCCC464D9E8C120AB /* InfrastructureSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InfrastructureSettingsView.swift; sourceTree = "<group>"; };
+		6E7FBB49427D3DBB2B68F253 /* PDFTemplateClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PDFTemplateClient.swift; sourceTree = "<group>"; };
 		6EAEC6D9AE3CFE074D9C99F6 /* CapabilitiesClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CapabilitiesClient.swift; sourceTree = "<group>"; };
 		6FF93BF3011FB990CFCC5926 /* PreferencesClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreferencesClient.swift; sourceTree = "<group>"; };
 		7033B3B07143C73EBE3EA4EC /* AgentSummary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentSummary.swift; sourceTree = "<group>"; };
@@ -867,6 +873,7 @@
 		76A861B57BA8E35466089E27 /* SetupModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SetupModel.swift; sourceTree = "<group>"; };
 		76B1BBD688D767D465118C6F /* QuickTaskSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickTaskSheet.swift; sourceTree = "<group>"; };
 		76F8E6DFD333634900B538C1 /* AgentAskStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentAskStore.swift; sourceTree = "<group>"; };
+		77D2052483EF36F831F16799 /* PDFTemplateRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PDFTemplateRenderer.swift; sourceTree = "<group>"; };
 		781D0BC4A1B73C4F3B6E657C /* InappCallsClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InappCallsClient.swift; sourceTree = "<group>"; };
 		782BFEC21911C78EC0D20C81 /* BotLiveStageView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotLiveStageView.swift; sourceTree = "<group>"; };
 		789BAD46979B02B1781A9877 /* SketchSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SketchSheet.swift; sourceTree = "<group>"; };
@@ -928,6 +935,7 @@
 		961BB58A20AB9B37F5FF228B /* SettingsLoadFailure.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsLoadFailure.swift; sourceTree = "<group>"; };
 		976C7758D4F8559596C88B1E /* VoiceModeViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceModeViewModel.swift; sourceTree = "<group>"; };
 		97879A6011085454783C2713 /* AgentIdenticonView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentIdenticonView.swift; sourceTree = "<group>"; };
+		97BDAE8A738E43DF48BE1B26 /* PDFTemplateSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PDFTemplateSheet.swift; sourceTree = "<group>"; };
 		97F6D86531D0BE1505D6DB2F /* DevServerPreviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DevServerPreviewView.swift; sourceTree = "<group>"; };
 		983173299444360A8FD01471 /* ProductsSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProductsSettingsView.swift; sourceTree = "<group>"; };
 		99E6C2C13BB04E0A93F2593F /* AgentRuntimeModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentRuntimeModels.swift; sourceTree = "<group>"; };
@@ -1527,6 +1535,8 @@
 				A30ED6FB8687860800A24AA0 /* NodesClient.swift */,
 				0B0D034CA579C089C9E885F9 /* OrganizationClient.swift */,
 				26C1FE61EB3B6564221C4A7F /* PaneRender.swift */,
+				6E7FBB49427D3DBB2B68F253 /* PDFTemplateClient.swift */,
+				77D2052483EF36F831F16799 /* PDFTemplateRenderer.swift */,
 				49B33CE3F3D5FDE0F08BA1DE /* PermissionClient.swift */,
 				6FF93BF3011FB990CFCC5926 /* PreferencesClient.swift */,
 				F7DD389A8BFF1E5E0EF97F81 /* ProjectsClient.swift */,
@@ -1779,6 +1789,14 @@
 			path = Board;
 			sourceTree = "<group>";
 		};
+		71FBAC71A02DB3F3525F61AF /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				6898AC580AE4F2DA70B58BF8 /* pdf-templates.js */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
 		7645B32763124DE8324DD282 /* CodeEditor */ = {
 			isa = PBXGroup;
 			children = (
@@ -1896,6 +1914,7 @@
 				618D8F1B0F9B6750E88250A6 /* ArtifactFileShare.swift */,
 				1484FBF4E7FCFDF0EF1262E1 /* ArtifactLibraryStore.swift */,
 				0CE7FC9A661803D01A04DDA2 /* ArtifactStudio.swift */,
+				71FBAC71A02DB3F3525F61AF /* Resources */,
 				E76542592605709295F5E294 /* Views */,
 			);
 			path = Artifacts;
@@ -2413,6 +2432,7 @@
 				D63FEA2F5A4F240A19DFEA95 /* ArtifactPageWebView.swift */,
 				384E354DC0746B0247176A44 /* ArtifactsLibraryView.swift */,
 				708964A04AD9EA1B5D2AEFE0 /* ArtifactStudioView.swift */,
+				97BDAE8A738E43DF48BE1B26 /* PDFTemplateSheet.swift */,
 				9D306A988D6817A4226CE448 /* SandboxedArtifactWebView.swift */,
 				B9BE54FA8D5553D022653635 /* V2ArtifactEditorView.swift */,
 				14F86E2F82AE9DF183DEC731 /* V2ArtifactView.swift */,
@@ -2613,6 +2633,7 @@
 				ACEBA10DB133793B777D5B2F /* Secrets.xcconfig.example in Resources */,
 				E264A972657C5DCE8EF5153B /* login-arrival.html in Resources */,
 				EC2E5A23445F91AC26F66304 /* meet-team-network.mp4 in Resources */,
+				6C1DE4AF9E06DFE2EF88FC26 /* pdf-templates.js in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -3020,6 +3041,9 @@
 				322C7445E8A92C06DD2058D2 /* OrganizationClient.swift in Sources */,
 				1688A4DEAE6AF0B198BE240F /* OverviewLayoutSwitch.swift in Sources */,
 				E7BFF01538F2745D57A73B9E /* PDFSignView.swift in Sources */,
+				9D82B550B9424BBF40459135 /* PDFTemplateClient.swift in Sources */,
+				4C1990485C082C353AAFCFB0 /* PDFTemplateRenderer.swift in Sources */,
+				18A6044A2828F53E30CE21C5 /* PDFTemplateSheet.swift in Sources */,
 				D41B86E3A8C7EBF626DCFA16 /* PaneRender.swift in Sources */,
 				6895810FE9B0E35D84070E39 /* PermissionAskView.swift in Sources */,
 				3818B5A5569B16A4C0FEE8FE /* PermissionClient.swift in Sources */,
@@ -3276,7 +3300,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 27;
+				CURRENT_PROJECT_VERSION = 28;
 				DEVELOPMENT_TEAM = MQ85968PQP;
 				INFOPLIST_FILE = AllternitWidgets/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -3285,7 +3309,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 1.0.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.allternit.mobile.widgets;
 				PRODUCT_NAME = AllternitWidgets;
 				SDKROOT = iphoneos;
@@ -3300,7 +3324,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 27;
+				CURRENT_PROJECT_VERSION = 28;
 				DEVELOPMENT_TEAM = MQ85968PQP;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -3309,7 +3333,7 @@
 					"@executable_path/Frameworks",
 					"@loader_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 1.0.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.allternit.mobile.tests;
 				PRODUCT_NAME = AllternitTests;
 				SDKROOT = iphoneos;
@@ -3324,7 +3348,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = AllternitScreen/AllternitScreen.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 27;
+				CURRENT_PROJECT_VERSION = 28;
 				DEVELOPMENT_TEAM = MQ85968PQP;
 				INFOPLIST_FILE = AllternitScreen/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -3333,7 +3357,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 1.0.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.allternit.mobile.screen;
 				PRODUCT_NAME = AllternitScreen;
 				SDKROOT = iphoneos;
@@ -3348,7 +3372,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = AllternitScreen/AllternitScreen.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 27;
+				CURRENT_PROJECT_VERSION = 28;
 				DEVELOPMENT_TEAM = MQ85968PQP;
 				INFOPLIST_FILE = AllternitScreen/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -3357,7 +3381,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 1.0.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.allternit.mobile.screen;
 				PRODUCT_NAME = AllternitScreen;
 				SDKROOT = iphoneos;
@@ -3379,7 +3403,7 @@
 				CODE_SIGN_ENTITLEMENTS = Allternit.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 27;
+				CURRENT_PROJECT_VERSION = 28;
 				DEVELOPMENT_TEAM = MQ85968PQP;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
@@ -3394,7 +3418,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 1.0.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.allternit.mobile;
 				PRODUCT_NAME = Allternit;
 				SDKROOT = iphoneos;
@@ -3408,7 +3432,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 27;
+				CURRENT_PROJECT_VERSION = 28;
 				DEVELOPMENT_TEAM = MQ85968PQP;
 				INFOPLIST_FILE = AllternitWidgets/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -3417,7 +3441,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 1.0.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.allternit.mobile.widgets;
 				PRODUCT_NAME = AllternitWidgets;
 				SDKROOT = iphoneos;
@@ -3439,7 +3463,7 @@
 				CODE_SIGN_ENTITLEMENTS = Allternit.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 27;
+				CURRENT_PROJECT_VERSION = 28;
 				DEVELOPMENT_TEAM = MQ85968PQP;
 				ENABLE_DEBUG_DYLIB = NO;
 				FRAMEWORK_SEARCH_PATHS = (
@@ -3455,7 +3479,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 1.0.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.allternit.mobile;
 				PRODUCT_NAME = Allternit;
 				SDKROOT = iphoneos;
@@ -3470,7 +3494,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 27;
+				CURRENT_PROJECT_VERSION = 28;
 				DEVELOPMENT_TEAM = MQ85968PQP;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -3479,7 +3503,7 @@
 					"@executable_path/Frameworks",
 					"@loader_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 1.0.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.allternit.mobile.tests;
 				PRODUCT_NAME = AllternitTests;
 				SDKROOT = iphoneos;

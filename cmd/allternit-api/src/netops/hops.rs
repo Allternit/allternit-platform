@@ -6,7 +6,7 @@
 //! it may go (12 hops per bot pair per 10 minutes, depth 8, no cycle back to an
 //! ancestor with the same text) and records it as `stored`, or as `held` with a
 //! `loop_guard` attention item. [`advance`] moves the receipt
-//! `stored → delivered → read → answered` (or `failed`). A replayed idempotency
+//! `stored → pushed → delivered → read → answered` (or `failed`). A replayed idempotency
 //! key returns the earlier hop. [`timeline`] folds `bot_events` and the hops of a
 //! thread's traces into a span tree; it works with OTel off.
 
@@ -291,9 +291,11 @@ pub fn admit(conn: &Connection, hop: &HopIn) -> Admit {
 fn rank(state: &str) -> i32 {
     match state {
         "stored" => 1,
-        "delivered" => 2,
-        "read" => 3,
-        "answered" => 4,
+        // Written to the session's socket or inbox, not yet confirmed by the receiver.
+        "pushed" => 2,
+        "delivered" => 3,
+        "read" => 4,
+        "answered" => 5,
         _ => 0,
     }
 }
@@ -311,7 +313,9 @@ pub fn advance(conn: &Connection, hop_id: &str, state: &str, reason: Option<&str
         s => !terminal && rank(s) > rank(&cur),
     };
     let ts = now_ts();
-    if ok {
+    if ok && state == "pushed" {
+        let _ = conn.execute("UPDATE agent_hops SET state = ?2, state_reason = ?3 WHERE id = ?1", params![hop_id, state, reason]);
+    } else if ok {
         let col = match state {
             "delivered" => "delivered_at",
             "read" => "read_at",

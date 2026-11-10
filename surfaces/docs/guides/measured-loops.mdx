@@ -1,0 +1,51 @@
+---
+title: 'Measured loops'
+description: 'Loops that measure every attempt, keep what helps, revert what does not, and write every try to a ledger.'
+---
+
+## What a measured loop is
+
+A plain loop runs a command until it exits cleanly. A measured loop is for work where "better" is a number: a build time, a test pass rate, a page weight. Allternit makes one change at a time, measures it, and keeps the change only if the number moved by more than the bar you set and more than the normal run-to-run wobble.
+
+## The Loop Card
+
+Fill in the card before the loop starts. A blank row means you do not have a loop yet.
+
+| Field | Meaning |
+| --- | --- |
+| Change step command | The shell command that makes one change, for example a `gizzi run` call. Saved as `changeCommand`. |
+| Metric command | Prints the number to move. The last number on stdout is the reading. |
+| Direction | `lower` or `higher` is better. |
+| Keep bar | Fractional gain needed to keep a change, for example `0.05` for 5 percent. |
+| Noise runs | How many runs of the unchanged tree to measure the wobble. |
+| Min pairs | How many paired runs per attempt. |
+| Stall limit | Stop after this many attempts in a row that stay inside the noise. Default 3. |
+| Working directory | The git work tree to change. It must be clean when the loop starts. |
+
+## What happens each time
+
+1. Allternit runs the metric on the unchanged tree to find the noise floor, then takes the baseline.
+2. The change step runs. Earlier attempts are passed in as `LOOP_REJECTED` so the same idea is not tried twice.
+3. The metric runs again, once per pair.
+4. The result is one of four verdicts.
+
+| Verdict | Meaning | What happens |
+| --- | --- | --- |
+| KEEP | Won every pair, met the bar, beat the noise floor, and the 95 percent interval is above zero. | The change stays and becomes the new baseline. |
+| MINOR | A real gain that misses the bar. | Reverted. |
+| DROP | No gain, or the metric broke. | Reverted. |
+| INCONCLUSIVE | Inside the noise or too few pairs. | Reverted. |
+
+Kept changes are committed so the next attempt starts from a clean tree. Rejected changes are undone with git: tracked files are restored and only the untracked files the attempt created are removed, never files that were there before. On the platform, a loop with a Loop Card is handed to the gizzi runtime's measuring engine when it runs, and the attempts are written back to the loop so the timeline fills while it runs. A loop with no change step command fails with a clear message instead of running unmeasured. The goal page shows the same timeline for each linked loop. Every attempt, rejects included, is written to the loop's ledger with its change in percent, pair count, noise floor, verdict and reason.
+
+## Dry run
+
+`POST /api/v1/automation/loops/:id/run?dry_run=1` runs only the metric once and reports whether a real run could start. Nothing in the tree or the loop record changes. A run is recorded as ACTED (a change was made and judged), NOOP (nothing changed) or BLOCKED (for example, a dirty work tree).
+
+## Where to see it
+
+- Desktop, ai.allternit.com and the m.allternit.com app: Automation, Loops. The Loop Card is in the create form and the attempts show as a timeline under each loop.
+- iPhone: Automation, Loops. The loop detail shows the card and the attempts.
+- Gizzi Code: `/loop` prints the card; `/loop card` prints it blank.
+
+This is a guide to a method, not a promise of results: a loop with no clear metric should stay a plain loop.

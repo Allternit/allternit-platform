@@ -11,6 +11,7 @@ import { HardwareCommand } from "@/cli/commands/hardware"
 import { ServeCommand } from "@/cli/commands/serve"
 import { PairCommand, LoginCommand } from "@/cli/commands/pair"
 import { ComputersCommand } from "@/cli/commands/computers"
+import { TeleportCommand } from "@/cli/commands/teleport"
 import { DebugCommand } from "@/cli/commands/debug"
 import { StatsCommand } from "@/cli/commands/stats"
 import { McpCommand } from "@/cli/commands/mcp"
@@ -36,6 +37,7 @@ import { MemoryCommand } from "@/cli/commands/memory"
 import { ProductsCommand } from "@/cli/commands/products"
 import { HtmlArtifactCommand } from "@/cli/commands/html-artifact"
 import { ArtifactCommand } from "@/cli/commands/artifact"
+import { PdfCommand } from "@/cli/commands/pdf"
 import { ProgramsCommand } from "@/cli/commands/programs"
 import { OrgCommand } from "@/cli/commands/org"
 import { LabsCommand } from "@/cli/commands/labs"
@@ -106,6 +108,7 @@ export const COMMANDS: RegisteredCommand[] = [
   ServeCommand,
   PairCommand,
   ComputersCommand,
+  TeleportCommand,
   LoginCommand,
   WebCommand,
   ModelsCommand,
@@ -129,6 +132,7 @@ export const COMMANDS: RegisteredCommand[] = [
   MemoryCommand,
   HtmlArtifactCommand,
   ArtifactCommand,
+  PdfCommand,
   ProgramsCommand,
   OrgCommand,
   ProductsCommand,

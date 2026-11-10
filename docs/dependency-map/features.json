@@ -3788,9 +3788,15 @@
         "allternit-ai/src/components/native-sessions",
         "allternit-ai/src/lib/agents",
         "allternit-ai/src/shell/rail",
-        "allternit-ai/src/fabric-session/phone"
+        "allternit-ai/src/fabric-session/phone",
+        "allternit-ai/src/views/chat",
+        "allternit-ai/src/views/code"
       ],
       "decisions": [
+        {
+          "on": "2026-11-09",
+          "note": "Real-iPhone test fixes, 2026-11-09: local slash commands do not sync (prompt commands sync as readable text), re-attach pushes the full transcript, the web skips context building for a terminal session's prompt, approval cards name the target, running tools are not labeled Interrupted, no Local/Cloud chip on a terminal session, the TUI context meter ignores an all-zero usage record."
+        },
         {
           "on": "2026-11-09",
           "note": "Eoj, 2026-11-09: remote control must work as well as Claude Code Remote Control or better, on Allternit sign-in, with state updating instantly across Desktop, cloud computers, web, PWA and the phone apps. The claude.ai bridge (BRIDGE_MODE) stays compiled out. Contract: surfaces/docs/architecture/live-terminal-sessions.mdx."

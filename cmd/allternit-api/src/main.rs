@@ -1048,6 +1048,7 @@ async fn main() {
         )))
         .merge(allternit_api::card_meta::card_meta_router())
         .merge(allternit_api::placement::placement_router())
+        .merge(allternit_api::teleport_routes::teleport_router())
         .merge(beta_session_router())
         .merge(cloud_agents_router())
         .merge(beta_deployment_router())

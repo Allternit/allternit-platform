@@ -11,7 +11,7 @@
  * Free of CLI imports so bun tests can drive `handle` with a stubbed fetch.
  */
 import { platformApiBase, platformToken } from "@/runtime/bots/platform-api"
-import { clearWaiting, markRead, readPending, sessionKey, touchWaiting, unreadNotice } from "@/runtime/live/inbox"
+import { clearWaiting, markRead, registerMessaging, readPending, sessionKey, touchWaiting, unreadNotice } from "@/runtime/live/inbox"
 
 export const MAX_WAIT_SECS = 600
 
@@ -198,6 +198,8 @@ export async function handle(msg: Rpc, env: NodeJS.ProcessEnv = process.env): Pr
 
 /** Serve newline-delimited JSON-RPC on stdio until stdin closes. */
 export async function serveStdio(): Promise<void> {
+  // Claude Code gives its MCP processes the messaging socket + token: tell the engine.
+  await registerMessaging().catch(() => {})
   let buf = ""
   process.stdin.setEncoding("utf8")
   const pending: Promise<void>[] = []

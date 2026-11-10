@@ -43,6 +43,7 @@ struct LoopDetailView: View {
                     interruptBanner
                 }
                 actionRow
+                loopCardSection
                 iterationsSection
             }
             .padding(.horizontal, 20)
@@ -171,6 +172,53 @@ struct LoopDetailView: View {
     }
 
     // MARK: - Iterations
+
+    /// Loop Card and the attempt ledger — only for measured loops.
+    @ViewBuilder
+    private var loopCardSection: some View {
+        if let metric = liveLoop.metric {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Loop Card")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(Color("TextSecondary"))
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("\(metric.direction.capitalized) is better, keep at \(Int((metric.keepBar * 100).rounded()))%, \(metric.minPairs) pairs")
+                        .font(.subheadline)
+                        .foregroundColor(Color("TextPrimary"))
+                    Text(metric.command)
+                        .font(.caption.monospaced())
+                        .foregroundColor(Color("TextSecondary"))
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(12)
+                .background(Color("BgPanel"))
+                .clipShape(RoundedRectangle(cornerRadius: Theme.radiusMD))
+
+                ForEach(liveLoop.ledger ?? [], id: \.iteration) { row in
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack {
+                            Text("#\(row.iteration) \(row.verdict)")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundColor(Color("TextPrimary"))
+                            Spacer()
+                            if let delta = row.delta {
+                                Text(String(format: "%+.1f%% over %d pairs", delta * 100, row.n))
+                                    .font(.caption)
+                                    .foregroundColor(Color("TextSecondary"))
+                            }
+                        }
+                        Text(row.why)
+                            .font(.caption)
+                            .foregroundColor(Color("TextSecondary"))
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(12)
+                    .background(Color("BgPanel"))
+                    .clipShape(RoundedRectangle(cornerRadius: Theme.radiusMD))
+                }
+            }
+        }
+    }
 
     private var iterationsSection: some View {
         VStack(alignment: .leading, spacing: 10) {

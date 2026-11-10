@@ -115,6 +115,7 @@ import {
   stopCaptureSession,
   isCaptureAvailable,
 } from './browser-capture-manager.js';
+import { printHtmlToPdf, type PrintPdfRequest, type PrintWindow } from './print-to-pdf.js';
 import { captureArtifactPreview, type CaptureWindow, type PreviewCaptureRequest } from './artifact-preview-capture.js';
 import { hostPreview, PREVIEW_SCHEME, servePreview } from './artifact-preview-host.js';
 import {
@@ -130,6 +131,17 @@ import { coworkDeviceHeaders, coworkDeviceInfo, isInAppBrowsableUrl } from './co
 import { isProvisionedMode } from './provisioned-bootstrap.js';
 import { startIdleApply } from './provisioned-runtime-apply.js';
 import { buildAppMenu, type AppMenuCommand } from './app-menu.js';
+import {
+  broadcastToMainWindows,
+  getFocusedMainWindow,
+  listMainWindows,
+  mainWindowIdentity,
+  sendMainWindowIdentities,
+  noteMainWindowFocused,
+  onMainWindowsChanged,
+  registerMainWindow,
+  unregisterMainWindow,
+} from './main-windows.js';
 
 // Fix PATH for macOS
 fixPath();
@@ -412,6 +424,12 @@ const isMac = process.platform === 'darwin';
 // State
 // ============================================================================
 
+/**
+ * The main window the user is in (the last one focused), kept in step with the
+ * window registry in main-windows.ts. With one window it is that window, as
+ * before; with several, "act on the main window" means the focused one and
+ * status that every window shows goes through broadcastToMainWindows().
+ */
 let mainWindow: BrowserWindow | null = null;
 let designWindow: BrowserWindow | null = null;
 let officeWindow: BrowserWindow | null = null;
@@ -633,7 +651,7 @@ async function getEngineStatus() {
 async function pushEngineStatus(): Promise<void> {
   const status = await getEngineStatus();
   if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('engines:status', status);
+    broadcastToMainWindows('engines:status', status);
   }
 }
 
@@ -944,7 +962,25 @@ function showOrReopenMainWindow(): void {
   mainWindow.loadURL(activePlatformUrl);
 }
 
-function createMainWindow(): BrowserWindow {
+/**
+ * New Window: another workspace window on the same account and stores. Needs
+ * the UI to be chosen (startup finished); before that it just brings the
+ * startup window forward.
+ */
+function openNewMainWindow(): void {
+  if (!platformUiResolved || listMainWindows().length === 0) {
+    showOrReopenMainWindow();
+    return;
+  }
+  const next = createMainWindow({ secondary: true });
+  mainWindow = next;
+  void next.loadURL(activePlatformUrl);
+  next.show();
+  next.focus();
+}
+
+function createMainWindow(options: { secondary?: boolean } = {}): BrowserWindow {
+  const secondary = options.secondary === true;
   appWindowOpened = true;
   let bounds = store.get('windowBounds');
   
@@ -965,8 +1001,9 @@ function createMainWindow(): BrowserWindow {
   const window = new BrowserWindow({
     width: Math.min(bounds.width, workArea.width),
     height: Math.min(bounds.height, workArea.height),
-    x: bounds.x,
-    y: bounds.y,
+    // A new window steps down and right of the one it came from.
+    x: secondary && bounds.x !== undefined ? bounds.x + 28 * listMainWindows().length : bounds.x,
+    y: secondary && bounds.y !== undefined ? bounds.y + 28 * listMainWindows().length : bounds.y,
     minWidth,
     minHeight,
     title: 'Allternit Desktop',
@@ -1007,6 +1044,13 @@ function createMainWindow(): BrowserWindow {
     desktopCompanion.start();
     agentCursorWindow.start();
   });
+
+  registerMainWindow(window);
+  window.on('focus', () => {
+    mainWindow = window;
+    noteMainWindowFocused(window);
+  });
+  window.webContents.on('page-title-updated', () => installAppMenu());
 
   // Route operator + cloud-api calls through the allternit-api custom protocol.
   // Local `/api/*` gets the paired device token. Cloud host `cloud` is a
@@ -1053,7 +1097,8 @@ function createMainWindow(): BrowserWindow {
 
 
   const saveBounds = () => {
-    if (window && !window.isDestroyed()) {
+    // Only the first window's size is remembered for the next launch.
+    if (!secondary && window && !window.isDestroyed()) {
       store.set('windowBounds', window.getBounds());
     }
   };
@@ -1083,7 +1128,8 @@ function createMainWindow(): BrowserWindow {
   window.on('closed', () => {
     emitWindowEvent('closed', {});
     abortTeach();
-    mainWindow = null;
+    unregisterMainWindow(window);
+    if (mainWindow === window) mainWindow = getFocusedMainWindow();
   });
   
   keepHiddenIfHeadless(window);
@@ -1767,7 +1813,7 @@ async function initializeBundledMode(): Promise<void> {
 
     // Push tunnel state changes to the renderer
     tunnelManager.onStatusChange((state) => {
-      mainWindow?.webContents.send('tunnel:state', state);
+      broadcastToMainWindows('tunnel:state', state);
     });
 
     // Fallback: show window after a timeout even if ready-to-show doesn't fire
@@ -1794,7 +1840,7 @@ async function initializeBundledMode(): Promise<void> {
             onboardingStarted = true;
             try {
               const result = await runPermissionOnboarding((status) => {
-                mainWindow?.webContents.send('permission-guide:status', status);
+                broadcastToMainWindows('permission-guide:status', status);
               });
               store.set('permissions.promptedDuringOnboarding', true);
               store.set('permissions.lastStatus', {
@@ -1984,7 +2030,9 @@ async function initializeDevelopmentMode(): Promise<void> {
     log.warn('[Main] No adoptable Gizzi runtime in development mode; continuing without brokered AI runtime:', error);
   }
 
-  mainWindow = createMainWindow();
+  // Reuse the window opened above; a second one would be an orphan that the
+  // window registry counts (and it would show tint dots with one window open).
+  if (!mainWindow || mainWindow.isDestroyed()) mainWindow = createMainWindow();
   activePlatformUrl = process.env.ALLTERNIT_PLATFORM_URL || platformUrl;
   log.info(`[Main] Dev mode loading platform URL: ${activePlatformUrl}`);
   mainWindow.loadURL(activePlatformUrl);
@@ -2013,7 +2061,7 @@ function startExtensionBridge(): void {
     extensionSockets.add(socket);
 
     // Notify renderer that extension is now connected
-    mainWindow?.webContents.send('extension:status', { connected: true });
+    broadcastToMainWindows('extension:status', { connected: true });
 
     let buffer = '';
     socket.on('data', (data) => {
@@ -2025,7 +2073,7 @@ function startExtensionBridge(): void {
         try {
           const message = JSON.parse(line) as Record<string, unknown>;
           // Forward to renderer
-          mainWindow?.webContents.send('extension:message', message);
+          broadcastToMainWindows('extension:message', message);
           // Resolve any pending ACU relay request waiting on this id
           const id = message['id'] as string | undefined;
           if (id && pendingRelayResponses.has(id)) {
@@ -2041,7 +2089,7 @@ function startExtensionBridge(): void {
     socket.on('close', () => {
       log.info('[ExtensionBridge] Native host disconnected');
       extensionSockets.delete(socket);
-      mainWindow?.webContents.send('extension:status', {
+      broadcastToMainWindows('extension:status', {
         connected: getConnectedExtensionSockets().length > 0,
       });
     });
@@ -2255,6 +2303,23 @@ function installAppMenu(): void {
     openUrl: (url) => openExternalAllowlisted(url),
     quickChatAccelerator: QUICK_CHAT_HOTKEY,
     hudAccelerator: HUD_HOTKEY,
+    newWindow: openNewMainWindow,
+    windows: listMainWindows().map((entry) => {
+      const title = entry.window.webContents.getTitle().trim();
+      const shownTitle = title.length > 40 ? `${title.slice(0, 39)}…` : title;
+      return {
+        id: entry.window.id,
+        label: `${entry.tint} Window ${entry.number}${shownTitle ? ` · ${shownTitle}` : ''}`,
+        focused: entry.window === getFocusedMainWindow(),
+      };
+    }),
+    focusWindow: (id) => {
+      const target = listMainWindows().find((entry) => entry.window.id === id)?.window;
+      if (!target) return;
+      if (target.isMinimized()) target.restore();
+      target.show();
+      target.focus();
+    },
   }));
 }
 
@@ -2322,7 +2387,7 @@ async function updateTrayMenu(): Promise<void> {
       showOrReopenMainWindow();
       const status = await checkPermissions();
       store.set('permissions.lastStatus', { ...status, checkedAt: new Date().toISOString() });
-      mainWindow?.webContents.send('permission-guide:status', status);
+      broadcastToMainWindows('permission-guide:status', status);
       if (status.accessibility === 'denied') {
         await presentGuide('accessibility');
       } else if (status.screenRecording === 'denied') {
@@ -2807,6 +2872,8 @@ app.whenReady().then(async () => {
 
   initializeAppOnce();
   installAppMenu();
+  onMainWindowsChanged(installAppMenu);
+  onMainWindowsChanged(sendMainWindowIdentities);
   createTray();
   startExtensionBridge();
   startAcuExtensionRelay();
@@ -2862,7 +2929,7 @@ app.whenReady().then(async () => {
     const changed = !last || last.accessibility !== status.accessibility || last.screenRecording !== status.screenRecording;
     if (changed) {
       store.set('permissions.lastStatus', { ...status, checkedAt: new Date().toISOString() });
-      mainWindow.webContents.send('permission-guide:status', status);
+      broadcastToMainWindows('permission-guide:status', status);
       log.info('[Main] Permission status changed on activation:', status);
     }
   });
@@ -3281,6 +3348,24 @@ function openPairingApproval(code: string): void {
   }).then((outcome) => log.info(`[Pairing] gizzi login ${code}: ${outcome}`));
 }
 
+// Real PDF export (Chromium printToPDF) of an HTML page: design/dashboard
+// artifacts and the document templates. Hidden window, own in-memory session.
+handleGuarded('shell:print-to-pdf', (_event, req: PrintPdfRequest) =>
+  printHtmlToPdf(req, () =>
+    new BrowserWindow({
+      show: false,
+      width: 816,
+      height: 1056,
+      webPreferences: {
+        sandbox: true,
+        contextIsolation: true,
+        nodeIntegration: false,
+        partition: `print-pdf-${Date.now()}`,
+        backgroundThrottling: false,
+      },
+    }) as unknown as PrintWindow,
+  ));
+
 ipcMain.handle('shell:open-design', () => {
   openDesignStudio();
 });
@@ -3596,7 +3681,7 @@ ipcMain.handle('shell:hud:carry-context', (event) => {
 function pushHudState() {
   const open = isHudAlive() && hudWindow!.isVisible();
   if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('shell:hud:state', { open, sessionId: hudSessionId });
+    broadcastToMainWindows('shell:hud:state', { open, sessionId: hudSessionId });
   }
 }
 
@@ -4390,6 +4475,12 @@ handleGuarded('auth:forget-account', async (_event, userId: string) => {
 });
 handleGuarded('auth:sign-out', async () => {
   await authManager.signOut();
+  // The mesh node state is enrolled to the signed-out user's mesh identity.
+  // Drop it so the next account enrolls its own node instead of reusing it.
+  await meshManager.stop().catch(() => {});
+  await fs.promises.rm(join(app.getPath('userData'), 'mesh'), { recursive: true, force: true }).catch((error) => {
+    log.warn('[Auth] Could not clear mesh node state on sign-out:', error);
+  });
   app.relaunch();
   app.quit();
 });
@@ -4427,6 +4518,8 @@ ipcMain.handle('window:fullscreen', (_event, enabled?: boolean) => {
 ipcMain.handle('window:set-always-on-top', (_event, enabled: boolean) => {
   mainWindow?.setAlwaysOnTop(enabled);
 });
+
+ipcMain.handle('window:get-identity', (event) => mainWindowIdentity(BrowserWindow.fromWebContents(event.sender)));
 
 ipcMain.handle('window:get-state', () => {
   if (!mainWindow) return null;
@@ -4577,7 +4670,7 @@ handleGuarded('connection:set-backend', async (_event, config: { mode: 'bundled'
     activeBackendUrl = URLS.API;
   }
 
-  mainWindow?.webContents.send('connection:state', { mode: nextBackend.mode, url: activeBackendUrl });
+  broadcastToMainWindows('connection:state', { mode: nextBackend.mode, url: activeBackendUrl });
 });
 
 // ============================================================================
@@ -4740,7 +4833,7 @@ ipcMain.handle('permission-guide:request-check', async () => {
   invalidatePermissionCache();
   const status = await checkPermissions();
   store.set('permissions.lastStatus', { ...status, checkedAt: new Date().toISOString() });
-  mainWindow?.webContents.send('permission-guide:status', status);
+  broadcastToMainWindows('permission-guide:status', status);
   return status;
 });
 
@@ -4751,7 +4844,7 @@ ipcMain.handle('permission-guide:ready-for-check', async () => {
   invalidatePermissionCache();
   const status = await checkPermissions();
   store.set('permissions.lastStatus', { ...status, checkedAt: new Date().toISOString() });
-  mainWindow?.webContents.send('permission-guide:status', status);
+  broadcastToMainWindows('permission-guide:status', status);
   // If this is the first launch and onboarding hasn't started yet, kick it off now.
   if (permissionOnboardingResolver) {
     const resolver = permissionOnboardingResolver;
@@ -4850,7 +4943,7 @@ handleGuarded('menuBar:setMode', (_event, enabled: boolean) => {
       app.dock?.show();
     }
   }
-  mainWindow?.webContents.send('menuBar:modeChanged', enabled);
+  broadcastToMainWindows('menuBar:modeChanged', enabled);
   return true;
 });
 

@@ -157,7 +157,13 @@ export function getCurrentUsage(messages: Message[] | null | undefined): {
   for (let i = messages.length - 1; i >= 0; i--) {
     const message = messages[i]
     const usage = message ? getTokenUsage(message) : undefined
-    if (usage) {
+    // A turn stopped before the provider reported anything leaves a partial
+    // message with all-zero usage; the footer would read 0% until the next
+    // reply. The last real report is still the context size.
+    if (
+      usage &&
+      usage.input_tokens + (usage.cache_creation_input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0) > 0
+    ) {
       return {
         input_tokens: usage.input_tokens,
         output_tokens: usage.output_tokens,

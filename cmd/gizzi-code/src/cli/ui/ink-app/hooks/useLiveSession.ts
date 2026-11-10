@@ -72,6 +72,7 @@ export function useLiveSession(
     let inbox: AbortController | undefined
     let retry: ReturnType<typeof setTimeout> | undefined
     let syncTimer: ReturnType<typeof setTimeout> | undefined
+    let retrySync: ReturnType<typeof setTimeout> | undefined
     let lastBusy: boolean | undefined
     const sent = new Map<string, string>()
     const handlers = new Map<string, (response: BridgePermissionResponse) => void>()
@@ -158,7 +159,11 @@ export function useLiveSession(
           sync()
           return
         case 'attached':
-          // A restarted engine lost the open asks: show them on the other surfaces again.
+          // (Re)attached, e.g. after an engine restart: it may have missed turns and lost the
+          // open asks. Push the whole transcript and the real status now, and the asks again.
+          sent.clear()
+          lastBusy = undefined
+          sync()
           for (const { path, body } of open.values()) void engineFetch(path, body).catch(() => {})
           return
         case 'permission': {
@@ -216,6 +221,36 @@ export function useLiveSession(
         }
         setLiveSession({ connected: false })
         if (!disposed) await new Promise(resolve => setTimeout(resolve, RECONNECT_MS))
+        // An engine that lost its data has no row for this session: adopt it again (same terminal id).
+        if (!disposed && sessionID === id && (await readopt(id))) return
+      }
+    }
+
+    /** Adopt again after the engine went away; true when it handed back a different session id (a new listener took over). */
+    async function readopt(id: string): Promise<boolean> {
+      try {
+        const res = await engineFetch('/sessions', adoptBody())
+        const body = (await res.json()) as { sessionID: string }
+        if (body.sessionID === id) return false
+        sessionID = body.sessionID
+        sent.clear()
+        lastBusy = undefined
+        setLiveSession({ sessionID })
+        void listen(body.sessionID)
+        sync()
+        return true
+      } catch {
+        return false
+      }
+    }
+
+    function adoptBody() {
+      return {
+        terminalID,
+        cwd: getCwd(),
+        title: firstPrompt(messagesRef.current),
+        transcriptPath: getTranscriptPath(),
+        model: modelRef(modelRefCurrent.current),
       }
     }
 
@@ -223,13 +258,7 @@ export function useLiveSession(
       if (disposed) return
       terminalID = String(getSessionId())
       try {
-        const res = await engineFetch('/sessions', {
-          terminalID,
-          cwd: getCwd(),
-          title: firstPrompt(messagesRef.current),
-          transcriptPath: getTranscriptPath(),
-          model: modelRef(modelRefCurrent.current),
-        })
+        const res = await engineFetch('/sessions', adoptBody())
         const body = (await res.json()) as { sessionID: string }
         sessionID = body.sessionID
         sent.clear()
@@ -271,7 +300,10 @@ export function useLiveSession(
         }
       } catch (error) {
         for (const m of changed) sent.delete(m.key)
+        lastBusy = undefined
         logForDebugging(`[live] sync failed: ${error}`)
+        // Retry on its own: the engine may be restarting, and nothing else would trigger another push.
+        if (!disposed && !retrySync) retrySync = setTimeout(() => { retrySync = undefined; sync() }, RECONNECT_MS)
       }
     }
 
@@ -290,6 +322,7 @@ export function useLiveSession(
       inbox?.abort()
       if (retry) clearTimeout(retry)
       if (syncTimer) clearTimeout(syncTimer)
+      if (retrySync) clearTimeout(retrySync)
       syncRef.current = () => {}
       store.setState(prev =>
         prev.replBridgePermissionCallbacks === permissionCallbacks

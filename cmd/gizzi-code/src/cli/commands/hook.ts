@@ -10,7 +10,7 @@
  */
 import type { CommandModule } from "yargs"
 import { basename } from "node:path"
-import { markRead, readPending, recordHook, sessionKey, type InboxMessage } from "@/runtime/live/inbox"
+import { ackEnvelopesIn, markDeliveredRead, markRead, readPending, recordHook, registerMessaging, sessionKey, type InboxMessage } from "@/runtime/live/inbox"
 
 type Ev = "start" | "prompt" | "tool" | "stop" | "end" | "doing"
 
@@ -115,6 +115,19 @@ export async function runHook(
     transcript: typeof input.transcript_path === "string" ? input.transcript_path : undefined,
     pid: process.ppid,
   }).catch(() => {})
+  if (harness === "claude" || harness === "claude-code") {
+    // Register the push socket + token (and the folder + permission mode a wake needs).
+    await registerMessaging(process.env, {
+      sessionId,
+      cwd,
+      permissionMode: typeof input.permission_mode === "string" ? input.permission_mode : undefined,
+    }).catch(() => {})
+  }
+  // A pushed message that reached the prompt is confirmed: the engine stops re-pushing it.
+  const ackKey = sessionKey(harness, cwd)
+  if (ev === "prompt" && typeof input.prompt === "string") await ackEnvelopesIn(input.prompt, ackKey).catch(() => {})
+  // The session went on after the message reached it (a tool call or the end of the turn): it was read.
+  if (ev === "tool" || ev === "stop") await markDeliveredRead(ackKey).catch(() => {})
   if (!takesMail(harness, event)) return { ids: [] }
   const key = sessionKey(harness, cwd)
   const pending = await readPending(key)
@@ -143,7 +156,7 @@ export const HookCommand: CommandModule<{}, { harness: string; event: string }> 
       if (out) {
         // Mark read only once the text reached stdout.
         await new Promise<void>((resolve) => process.stdout.write(out + "\n", () => resolve()))
-        if (key) await markRead(key, ids).catch(() => {})
+        if (key) await markRead(key, ids, "delivered").catch(() => {})
       }
     } catch {
       // A hook must never fail the harness.

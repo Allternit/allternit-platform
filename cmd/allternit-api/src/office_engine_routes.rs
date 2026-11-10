@@ -30,6 +30,7 @@ pub fn office_engine_router() -> Router<Arc<AppState>> {
         .route("/office/extract", post(proxy_office_extract))
         .route("/office/markdown", post(proxy_office_markdown))
         .route("/office/markdown-url", post(proxy_office_markdown_url))
+        .route("/office/pdf/render", post(proxy_office_pdf_render))
         .route("/office/xlsx/parse", post(proxy_office_xlsx_parse))
         .route("/office/xlsx/recalc", post(proxy_office_xlsx_recalc))
         .route("/office/xlsx/read", post(proxy_office_xlsx_read))
@@ -52,6 +53,7 @@ pub fn office_engine_v1_router() -> Router<Arc<AppState>> {
         .route("/office/engines/extract", post(proxy_office_extract))
         .route("/office/engines/markdown", post(proxy_office_markdown))
         .route("/office/engines/markdown-url", post(proxy_office_markdown_url))
+        .route("/office/engines/pdf/render", post(proxy_office_pdf_render))
         .route("/office/engines/xlsx/parse", post(proxy_office_xlsx_parse))
         .route("/office/engines/xlsx/recalc", post(proxy_office_xlsx_recalc))
         .route("/office/engines/xlsx/read", post(proxy_office_xlsx_read))
@@ -124,6 +126,17 @@ async fn proxy_office_markdown_url(
     body: Bytes,
 ) -> Response {
     proxy_office_engine(state, "/markdown-url", headers, body).await
+}
+
+/// POST /api/office/pdf/render → POST {OFFICE_ENGINE_URL}/pdf/render
+/// Template + theme + JSON data in, `application/pdf` bytes out (native PDF
+/// writer, no headless browser). Errors come back as JSON from the engine.
+async fn proxy_office_pdf_render(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    proxy_office_engine(state, "/pdf/render", headers, body).await
 }
 
 /// POST /api/office/xlsx/parse → POST {OFFICE_ENGINE_URL}/xlsx/parse
