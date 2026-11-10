@@ -220,7 +220,7 @@ fn map_loop_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<LocalRoutine> {
 }
 
 /// The owner's main bot, else their first: what a loop on the Default Model runs as.
-fn default_bot(conn: &rusqlite::Connection, user_id: &str) -> Option<String> {
+pub(crate) fn default_bot(conn: &rusqlite::Connection, user_id: &str) -> Option<String> {
     const CONFIG: &str = "CASE WHEN json_valid(config) THEN config ELSE '{}' END";
     conn.query_row(
         &format!(

@@ -140,7 +140,7 @@ pub fn collect(conn: &Connection, user_id: &str, unanswered_min: i64) -> rusqlit
             // A phone approval hold: Review only (the owner sees the screen crop first), never in push text.
             if authority == "allternit" && action.starts_with("phone.") && detail["phone"].is_object() {
                 let p = &detail["phone"];
-                let who = if bot_name.is_empty() { "A phone task".to_string() } else { bot_name.clone() };
+                let who = if bot_name.is_empty() || p["botless"].as_bool() == Some(true) { "A phone task".to_string() } else { bot_name.clone() };
                 // A text or call reads as what it does; the message body stays in the detail.
                 let comms = p["to"].as_str().filter(|s| !s.is_empty()).map(|to| if action == "phone.call.dial" { format!("Call {to}") } else { format!("Send a text to {to}") });
                 let what = comms.as_deref().or(p["intent"].as_str().filter(|s| !s.is_empty())).unwrap_or(action.as_str());

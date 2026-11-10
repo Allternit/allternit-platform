@@ -645,7 +645,13 @@ fn create_hold(db: &DbHandle, data_dir: Option<&FsPath>, req: &CheckIn, effect: 
     // gateway_approvals.thread_id and bot_id are NOT NULL: a phone with no thread uses its own.
     let synthetic = format!("phone:{}", if req.serial.trim().is_empty() { "default" } else { req.serial.trim() });
     let thread = ctx.thread().map(str::to_string).unwrap_or_else(|| synthetic.clone());
-    let bot = ctx.bot().map(str::to_string).unwrap_or_else(|| synthetic.clone());
+    // The approval event (and so the owner's notification) needs a real bot row:
+    // a task with no bot is filed under the owner's main bot, marked `botless`.
+    let own_bot = ctx.bot().map(str::to_string);
+    let botless = own_bot.is_none();
+    let bot = own_bot
+        .or_else(|| db.connect().ok().and_then(|c| crate::routine_local_scheduler::default_bot(&c, &ctx.owner)))
+        .unwrap_or_else(|| synthetic.clone());
     let run = run_of(req);
     let step = req.step.unwrap_or(0);
     let tool = norm_tool(&req.tool);
@@ -664,6 +670,7 @@ fn create_hold(db: &DbHandle, data_dir: Option<&FsPath>, req: &CheckIn, effect: 
         "step": step,
         "source": ctx.source,
         "contentHash": hash,
+        "botless": botless,
     });
     if is_type_tool(&tool) {
         phone["typedChars"] = json!(typed_text(&tool, &req.args).chars().count());
@@ -1142,6 +1149,7 @@ mod tests {
     #[tokio::test]
     async fn pay_tap_makes_one_hold_and_one_event() {
         let st = setup("one").await;
+        st.db.connect().unwrap().execute("INSERT INTO agents (id, user_id, name, model, provider, is_bot, config) VALUES ('bot-1','user-a','b','m','p',1,'{}')", []).unwrap();
         let d = check(&st.db, Some(st.data_dir.as_path()), &pay_tap("task-1", "Pay now")).unwrap();
         let id = hold_id(&d);
         // A retry without the id answers the same hold.
@@ -1205,6 +1213,7 @@ mod tests {
     #[tokio::test]
     async fn timeout_expires_the_hold() {
         let st = setup("timeout").await;
+        st.db.connect().unwrap().execute("INSERT INTO agents (id, user_id, name, model, provider, is_bot, config) VALUES ('bot-1','user-a','b','m','p',1,'{}')", []).unwrap();
         let id = hold_id(&check(&st.db, None, &pay_tap("task-5", "Pay now")).unwrap());
         assert_eq!(wait_every(&st.db, &id, Duration::from_millis(40), Duration::from_millis(10)).await, Outcome::Expired);
         assert_eq!(state_of(&st, &id), "expired");
