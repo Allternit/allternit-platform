@@ -14,6 +14,12 @@
 		<string>applinks:m.allternit.com</string>
 		<string>applinks:ai.allternit.com</string>
 	</array>
+	<!-- System surfaces: approval pushes break through Focus, and bot
+	     messages show as communication notifications (sender avatar). -->
+	<key>com.apple.developer.usernotifications.time-sensitive</key>
+	<true/>
+	<key>com.apple.developer.usernotifications.communication</key>
+	<true/>
 	<key>keychain-access-groups</key>
 	<array>
 		<string>$(AppIdentifierPrefix)com.allternit.mobile</string>
@@ -21,7 +27,8 @@
 		     app phone credentials go here, shared with AllternitScreen. -->
 		<string>$(AppIdentifierPrefix)com.allternit.mobile.shared</string>
 	</array>
-	<!-- Broadcast state shared with the AllternitScreen extension. -->
+	<!-- Shared with AllternitScreen (broadcast state) and the widget,
+	     notification and share extensions (SystemSurfaces/AppGroup.swift). -->
 	<key>com.apple.security.application-groups</key>
 	<array>
 		<string>group.com.allternit.mobile</string>

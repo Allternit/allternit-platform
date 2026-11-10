@@ -23,6 +23,7 @@ struct DeepLinkHost: ViewModifier {
     @State private var isSettingsPresented = false
     @State private var isComputersPresented = false
     @State private var isDecisionsPresented = false
+    @State private var isInboxPresented = false
     @State private var inviteURL: IdentifiableURL?
     @State private var linkError: String?
     @State private var isResolving = false
@@ -76,6 +77,9 @@ struct DeepLinkHost: ViewModifier {
             .sheet(isPresented: $isDecisionsPresented) {
                 DecisionsScreen()
             }
+            .sheet(isPresented: $isInboxPresented) {
+                InboxSheet()
+            }
             .sheet(item: $inviteURL) { item in
                 SafariView(url: item.url)
                     .ignoresSafeArea()
@@ -97,6 +101,7 @@ struct DeepLinkHost: ViewModifier {
         isSettingsPresented = false
         isComputersPresented = false
         isDecisionsPresented = false
+        isInboxPresented = false
         inviteURL = nil
         switch link {
         case .session(let id):
@@ -124,6 +129,8 @@ struct DeepLinkHost: ViewModifier {
             isComputersPresented = true
         case .decisions:
             isDecisionsPresented = true
+        case .inbox:
+            isInboxPresented = true
         }
     }
 
