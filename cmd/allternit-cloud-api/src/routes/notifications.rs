@@ -1204,6 +1204,14 @@ impl Outcome {
 
 type EventRow = (String, String, String, Value, Option<DateTime<Utc>>);
 
+/// A Factory approval whose runtime already sent its own Web Push (`surfaces` holds `"push"`: the
+/// Remote Control push worker delivered it, with its one-time approve code). Cloud then pushes the iPhone
+/// app only. When the runtime's push is not set up or reached no device (no `"push"`), cloud's Web Push is
+/// the only one, so it goes out as usual.
+pub fn factory_pushed(data: &Value) -> bool {
+    s(data, &["inboxKind"]) == Some("factory_approval") && data.get("surfaces").and_then(Value::as_array).is_some_and(|a| a.iter().any(|v| v == "push"))
+}
+
 async fn decide_and_send(db: &PgPool, transport: &dyn PushTransport, vapid: &Vapid, row: &EventRow) -> Outcome {
     let (event_id, user, event, data, occurred_at) = row;
     if occurred_at.is_some_and(|t| Utc::now() - t > chrono::Duration::hours(STALE_AFTER_HOURS)) {
@@ -1227,7 +1235,7 @@ async fn decide_and_send(db: &PgPool, transport: &dyn PushTransport, vapid: &Vap
         d.insert("eventId".into(), json!(event_id));
     }
     // Coding-session permission asks: browsers get them from the remote-control lane, so only iPhones here.
-    let apns_only = event == "approval.requested" && s(data, &["source"]) == Some("gizzi-permission");
+    let apns_only = event == "approval.requested" && (s(data, &["source"]) == Some("gizzi-permission") || factory_pushed(data));
     if event == "message.received" {
         // The switch-over from the direct channel push: that push already told them.
         let direct: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM push_log WHERE user_id = $1 AND collapse_key LIKE 'channel-%' AND created_at > now() - make_interval(secs => $2))")
@@ -1887,6 +1895,29 @@ pub(crate) mod tests {
         ingest(&db, "u1", "rt_1", vec![json!({ "id": "e9", "type": "approval.requested", "data": { "approvalId": "ap2", "runtimeId": "spoofed" } })]).await.unwrap();
         let data: Value = sqlx::query_scalar("SELECT data FROM platform_events").fetch_one(&db).await.unwrap();
         assert_eq!(data["runtimeId"], "rt_1");
+    }
+
+    /// A Factory approval the runtime already pushed gets no second Web Push; one it could not push does.
+    #[tokio::test]
+    async fn a_factory_approval_is_web_pushed_once() {
+        let db = test_pool().await;
+        schema(&db).await;
+        let vapid = vapid();
+        device(&db, "u_f").await;
+        let rec = Recorder::default();
+        let base = json!({ "approvalId": "fa1", "title": "Deploy", "summary": "Deploy the site", "inboxId": "factory:fa1", "inboxKind": "factory_approval" });
+        let mut pushed = base.clone();
+        pushed["surfaces"] = json!(["app", "push", "telegram"]);
+        let mut not_pushed = base.clone();
+        not_pushed["approvalId"] = json!("fa2");
+        not_pushed["surfaces"] = json!(["app", "telegram"]);
+        let a = emit(&db, "u_f", "approval.requested", pushed).await;
+        let b = emit(&db, "u_f", "approval.requested", not_pushed).await;
+        assert_eq!(sink_once(&db, &rec, &vapid).await.unwrap(), 2);
+        // No iPhone app registered either, so the first reaches nobody from cloud: the runtime's push was it.
+        assert_eq!(outcome(&db, &a).await, "unreachable");
+        assert_eq!(outcome(&db, &b).await, "sent");
+        assert_eq!(rec.sent.lock().unwrap().len(), 1, "exactly one Web Push from cloud, for the approval the runtime could not push");
     }
 
     /// An iPhone with both the app and the home-screen app gets the app's notification only; once the app's

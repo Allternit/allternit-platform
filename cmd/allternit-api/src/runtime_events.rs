@@ -72,6 +72,9 @@ const DATA_KEYS: &[&str] = &[
     // iPhone system surfaces: which inbox item an approval is, and what the
     // owner needs to approve it from a notification (`inbox_needs::notify_keys`).
     "inboxId", "inboxKind", "sessionId", "contentHash", "approveInline", "senderKind", "to", "toName", "trust",
+    // Factory approvals: where this runtime already asked (`["app","push",…]`). "push" means its own Web Push
+    // (factory_approvals_push) reached a device, so cloud sends the iPhone app only, not a second Web Push.
+    "surfaces",
 ];
 
 /// Extra keys a phone event (`phone.step`, `phone.run.completed`) carries, in
