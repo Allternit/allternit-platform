@@ -4,7 +4,7 @@
  * `GET /v1/models` is served by the Fabric model gateway
  * (`cmd/allternit-api/src/fabric_model_routes.rs`) and authenticates with the
  * Clerk session (unlike the virtual-key `/v1/*` routes). Model ids are full
- * ids in `provider/model` form, e.g. `openai/gpt-4o-mini`.
+ * ids in the form Allternit Cloud lists, e.g. `kimi-k3`.
  *
  * The shape intentionally mirrors the ai surface's ModelGatewayModel so the
  * auto-policy resolver (`lib/model-auto-policy.ts`, ported from the model
