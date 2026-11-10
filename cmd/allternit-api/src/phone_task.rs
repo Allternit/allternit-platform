@@ -210,9 +210,92 @@ fn action_el(tool: &str, pick: &Value, els: &[UiEl], last: Option<&El>) -> Optio
     }
 }
 
-/// [`run_task`] for a caller context. Every acting step runs the phone guard first.
+/// Why a task must not start for this context, if it must not: `(reason, sentence)`.
+/// `paused`: the owner paused their bots. `owner_only`: the thread's latest input did not
+/// come from the owner (a contact, a stranger, a web page or a tool result), so it may not
+/// start a phone action; this is a refusal, never a hold, so a stranger can't fill the
+/// owner's inbox. Only a person's message counts: a web page or tool result the bot read
+/// mid-turn is not an input from another person, and the owner's own app turns record no
+/// label, so "nothing since" counts as the owner's (as in `task_grants`). A task with no thread (the app, the API) is not subject to the second rule.
+pub fn refusal(db: &DbHandle, ctx: &TaskCtx) -> Option<(&'static str, String)> {
+    let conn = db.connect().ok()?;
+    if !ctx.owner.trim().is_empty() && crate::bots_pause::is_paused(&conn, &ctx.owner) {
+        return Some(("paused", "Your bots are paused, so I didn't start this phone task. Resume them and ask again.".into()));
+    }
+    let thread = ctx.thread_id.as_deref().map(str::trim).filter(|t| !t.is_empty())?;
+    let latest: Option<String> = conn
+        .query_row("SELECT trust FROM content_provenance WHERE thread_id = ?1 AND trust NOT IN ('web', 'tool_output') ORDER BY created_at DESC, rowid DESC LIMIT 1", rusqlite::params![thread], |r| r.get(0))
+        .ok();
+    match latest.as_deref() {
+        Some("owner") | None => None,
+        Some(_) => Some(("owner_only", "Only you can start a phone action from a conversation. The latest message here didn't come from you, so I didn't touch the phone.".into())),
+    }
+}
+
+/// The report of a task that was refused before it started.
+pub fn refused_report(run_id: &str, serial: Option<&str>, ctx: &TaskCtx, reason: &str, sentence: &str) -> Value {
+    with_context(
+        json!({
+            "ok": false, "status": "refused", "reason": reason, "result": sentence,
+            "steps": [], "model_calls": 0, "run_id": run_id, "serial": serial, "duration_ms": 0, "held_ms": 0, "holds": [],
+        }),
+        ctx,
+    )
+}
+
+/// The thread fields on a report.
+fn with_context(mut report: Value, ctx: &TaskCtx) -> Value {
+    report["thread_id"] = json!(ctx.thread_id);
+    report["session_id"] = json!(ctx.session_id);
+    report["source"] = json!(ctx.source);
+    report
+}
+
+/// Card status for a report status: the run's own, with the ends that aren't in the card list as `failed`.
+fn card_status(status: &str) -> &'static str {
+    match status {
+        "done" => "done",
+        "denied" => "denied",
+        "approval_timeout" => "approval_timeout",
+        "phone_locked" => "phone_locked",
+        _ => "failed",
+    }
+}
+
+fn close_card(db: &DbHandle, ctx: &TaskCtx, report: &Value, run_id: &str, serial: &str, goal: &str) {
+    let status = report.get("status").and_then(Value::as_str).unwrap_or("failed");
+    let step = report.get("steps").and_then(Value::as_array).map(|s| s.len() as u32).unwrap_or(0);
+    crate::phone_runs::post_task_card(db, ctx, run_id, serial, goal, card_status(status), step, None);
+}
+
+/// [`run_task_loop`] for a caller context, the one entry point other lanes call to
+/// start a task with a [`TaskCtx`] (thread, session, source). Refuses (a paused bot,
+/// a non-owner thread) before touching the phone; a task on a thread posts the
+/// `phone_task` card as `running`, `waiting_approval` and then its final status; the
+/// report carries `thread_id`, `session_id` and `source`.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_task_ctx(
+    db: &DbHandle,
+    data_dir: Option<&FsPath>,
+    ctx: &TaskCtx,
+    run_id: String,
+    serial: Option<&str>,
+    goal: &str,
+    max_steps: u32,
+    model: Option<(String, String)>,
+) -> Value {
+    if let Some((reason, sentence)) = refusal(db, ctx) {
+        return refused_report(&run_id, serial, ctx, reason, &sentence);
+    }
+    let s = serial.unwrap_or_default().to_string();
+    crate::phone_runs::post_task_card(db, ctx, &run_id, &s, goal, "running", 0, None);
+    let report = run_task_loop(db, data_dir, ctx, run_id.clone(), serial, goal, max_steps, model).await;
+    close_card(db, ctx, &report, &run_id, &s, goal);
+    with_context(report, ctx)
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_task_loop(
     db: &DbHandle,
     data_dir: Option<&FsPath>,
     ctx: &TaskCtx,
@@ -508,6 +591,28 @@ pub async fn run_web_task_as(
     on_step: impl Fn(Value),
     cancelled: impl Fn() -> bool,
 ) -> Value {
+    if let Some((reason, sentence)) = refusal(db, ctx) {
+        return refused_report(&run_id, Some(serial), ctx, reason, &sentence);
+    }
+    crate::phone_runs::post_task_card(db, ctx, &run_id, serial, goal, "running", 0, None);
+    let report = run_web_task_loop(db, data_dir, ctx, run_id.clone(), serial, goal, max_steps, model, on_step, cancelled).await;
+    close_card(db, ctx, &report, &run_id, serial, goal);
+    with_context(report, ctx)
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_web_task_loop(
+    db: &DbHandle,
+    data_dir: Option<&FsPath>,
+    ctx: &TaskCtx,
+    run_id: String,
+    serial: &str,
+    goal: &str,
+    max_steps: u32,
+    model: Option<(String, String)>,
+    on_step: impl Fn(Value),
+    cancelled: impl Fn() -> bool,
+) -> Value {
     let started = Instant::now();
     let max = max_steps.clamp(1, MAX_MAX_STEPS);
     let (mut history, mut steps, mut model_calls) = (Vec::<String>::new(), Vec::<Value>::new(), 0u32);
@@ -702,6 +807,9 @@ async fn post_task(
         session_id: some(&body.session_id),
         source: phone_guard::clean_source(body.source.as_deref()),
     };
+    if let Some((reason, sentence)) = refusal(&state.db, &ctx) {
+        return (StatusCode::FORBIDDEN, Json(json!({ "ok": false, "status": "refused", "reason": reason, "message": sentence }))).into_response();
+    }
     if body.background {
         let run_id = new_run_id();
         let (db, dir, id, goal, task_serial) = (state.db.clone(), state.data_dir.clone(), run_id.clone(), goal.to_string(), serial.clone());
@@ -761,5 +869,96 @@ mod tests {
         assert_eq!(to_web_tool(&json!({ "action": "scroll", "dy": 99_999 })).unwrap().1["dy"], json!(20_000));
         assert!(to_web_tool(&json!({ "action": "click", "ref": "  " })).is_err());
         assert!(to_web_tool(&json!({ "action": "eval" })).is_err());
+    }
+
+    async fn state(tag: &str) -> Arc<AppState> {
+        let dir = std::env::temp_dir().join(format!("phone-task-{tag}-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let st = crate::test_helpers::app_state(&dir).await;
+        let c = st.db.connect().unwrap();
+        c.execute("INSERT INTO agents (id, user_id, name, model, provider, is_bot, config) VALUES ('bot-1','user-a','b','m','p',1,'{}')", []).unwrap();
+        c.execute("INSERT INTO bot_threads (id, user_id, bot_id, title, status, last_activity_at, created_at, updated_at) VALUES ('th-1','user-a','bot-1','Plans','idle','t','t','t')", []).unwrap();
+        st
+    }
+
+    fn ctx() -> TaskCtx {
+        TaskCtx { owner: "user-a".into(), bot_id: Some("bot-1".into()), thread_id: Some("th-1".into()), session_id: Some("s-1".into()), source: "chat".into() }
+    }
+
+    fn cards(st: &Arc<AppState>, run: &str) -> Vec<Value> {
+        let c = st.db.connect().unwrap();
+        let mut q = c.prepare("SELECT payload FROM bot_events WHERE thread_id = 'th-1' AND event_type = 'phone_task' ORDER BY rowid").unwrap();
+        let rows: Vec<Value> = q.query_map([], |r| r.get::<_, String>(0)).unwrap().flatten().filter_map(|t| serde_json::from_str(&t).ok()).collect();
+        rows.into_iter().filter(|v| v["runId"] == run).collect()
+    }
+
+    fn provenance(st: &Arc<AppState>, trust: &str, at: &str) {
+        st.db
+            .connect()
+            .unwrap()
+            .execute(
+                "INSERT INTO content_provenance (id, owner, thread_id, bot_id, source_kind, trust, source_ref, score, flags_json, excerpt_hash, created_at) VALUES (?1,'user-a','th-1','bot-1','sms',?2,'x',0,'[]','h',?3)",
+                rusqlite::params![uuid::Uuid::new_v4().to_string(), trust, at],
+            )
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_task_on_a_thread_posts_the_card_and_its_status_follows_the_run() {
+        let st = state("card").await;
+        provenance(&st, "owner", "2026-11-10T10:00:00Z");
+        // No phone gateway runs in the test, so the run ends `failed`; the card must say so.
+        let report = run_task_ctx(&st.db, None, &ctx(), "task-card".into(), Some("link:1"), "open settings", 3, None).await;
+        assert_eq!(report["status"], "failed");
+        assert_eq!((report["thread_id"].as_str(), report["session_id"].as_str(), report["source"].as_str()), (Some("th-1"), Some("s-1"), Some("chat")));
+        let cs = cards(&st, "task-card");
+        let statuses: Vec<&str> = cs.iter().map(|c| c["status"].as_str().unwrap()).collect();
+        assert_eq!(statuses, vec!["running", "failed"]);
+        assert_eq!((cs[0]["type"].as_str(), cs[0]["serial"].as_str(), cs[0]["goal"].as_str()), (Some("phone_task"), Some("link:1"), Some("open settings")));
+        // A waiting card carries the inbox id.
+        assert!(crate::phone_runs::post_task_card(&st.db, &ctx(), "task-card", "link:1", "open settings", "waiting_approval", 2, Some("approval:gap_1")));
+        let last = cards(&st, "task-card").pop().unwrap();
+        assert_eq!((last["status"].as_str(), last["inboxId"].as_str(), last["step"].as_u64()), (Some("waiting_approval"), Some("approval:gap_1"), Some(2)));
+        // A task with no thread posts nothing.
+        let none = TaskCtx { thread_id: None, ..ctx() };
+        assert!(!crate::phone_runs::post_task_card(&st.db, &none, "task-x", "link:1", "g", "running", 0, None));
+    }
+
+    #[tokio::test]
+    async fn a_thread_whose_latest_input_is_not_the_owner_is_refused_and_nothing_runs() {
+        let st = state("owner").await;
+        provenance(&st, "owner", "2026-11-10T10:00:00Z");
+        provenance(&st, "stranger", "2026-11-10T10:05:00Z");
+        let report = run_task_ctx(&st.db, None, &ctx(), "task-no".into(), Some("link:1"), "tap pay", 3, None).await;
+        assert_eq!((report["ok"].as_bool(), report["status"].as_str(), report["reason"].as_str()), (Some(false), Some("refused"), Some("owner_only")));
+        assert!(report["result"].as_str().unwrap().contains("Only you can start a phone action"));
+        assert_eq!(report["steps"], json!([]));
+        assert_eq!(report["model_calls"], 0);
+        assert!(cards(&st, "task-no").is_empty(), "a refused task posts no card and made no phone call");
+        let held: i64 = st.db.connect().unwrap().query_row("SELECT COUNT(*) FROM gateway_approvals", [], |r| r.get(0)).unwrap();
+        assert_eq!(held, 0, "a refusal is not a hold");
+        // The owner writing again lifts it.
+        provenance(&st, "owner", "2026-11-10T10:10:00Z");
+        assert!(refusal(&st.db, &ctx()).is_none());
+        // A web page or tool result read after the owner's message is not another person: still allowed.
+        provenance(&st, "web", "2026-11-10T10:11:00Z");
+        provenance(&st, "tool_output", "2026-11-10T10:12:00Z");
+        assert!(refusal(&st.db, &ctx()).is_none());
+        // But a stranger's text followed by a web read is still refused.
+        provenance(&st, "stranger", "2026-11-10T10:13:00Z");
+        provenance(&st, "web", "2026-11-10T10:14:00Z");
+        assert_eq!(refusal(&st.db, &ctx()).map(|r| r.0), Some("owner_only"));
+    }
+
+    #[tokio::test]
+    async fn a_paused_account_is_refused() {
+        let st = state("paused").await;
+        crate::bots_pause::set(&st.db.connect().unwrap(), "user-a", true, Some("test")).unwrap();
+        let report = run_task_ctx(&st.db, None, &ctx(), "task-p".into(), None, "open settings", 3, None).await;
+        assert_eq!((report["status"].as_str(), report["reason"].as_str()), (Some("refused"), Some("paused")));
+        assert!(report["result"].as_str().unwrap().contains("paused"));
+        assert!(cards(&st, "task-p").is_empty());
+        crate::bots_pause::set(&st.db.connect().unwrap(), "user-a", false, None).unwrap();
+        assert!(refusal(&st.db, &ctx()).is_none());
     }
 }

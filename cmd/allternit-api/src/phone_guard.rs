@@ -892,6 +892,7 @@ where
         }
         if !run.is_empty() {
             set_live(&run, Some(json!({ "status": "waiting_approval", "approvalId": aid, "effect": effect })));
+            crate::phone_runs::post_task_card(db, &req.ctx, &run, &req.serial, req.goal.as_deref().unwrap_or_default(), "waiting_approval", req.step.unwrap_or(0), Some(&format!("approval:{aid}")));
         }
         let t0 = Instant::now();
         let outcome = wait(db, &aid, WAIT).await;
