@@ -40,6 +40,8 @@ export interface SwarmWorker {
   startedAt: number
   taskSentAt?: number
   sawWorking?: boolean
+  /** When the engine first stopped listing this worker's pane (cleared once it is seen again). */
+  offlineSince?: number
   /** The task went to the bot's mailbox, not its pane: finished only once seen working. */
   taskQueued?: boolean
   /** Messages (the task, or a steer) waiting in its mailbox because the pane was busy. */
@@ -165,9 +167,13 @@ export const IDLE_AFTER_SEND_MS = 15000
  * done stays done (until landed): the engine flips back to idle once a
  * harness has finished, and the person still needs to see it finished.
  */
+/** How long a pane can be missing from `agents ps` before its worker counts as gone. */
+export const OFFLINE_GRACE_MS = 30_000
+
 export function observeWorker(w: SwarmWorker, agent: FactoryAgent | undefined, now = Date.now()): SwarmWorker {
   if (w.phase === "landed" || w.phase === "stopped" || w.phase === "failed") return w
   const state = agent?.state ?? "offline"
+  if (state !== "offline" && w.offlineSince) w = { ...w, offlineSince: undefined }
   // A finished worker that starts again (steered, or it picked up a queued
   // message) is working again; it is done again when it goes idle.
   // Once it has picked the task up, the "queued" note is history.
@@ -178,6 +184,11 @@ export function observeWorker(w: SwarmWorker, agent: FactoryAgent | undefined, n
   if (state === "failed") return { ...w, phase: "failed", finishedAt: now, note: "the engine reported the pane failed" }
   if (state === "offline") {
     if (!w.taskSentAt && now - w.startedAt < 60000) return w
+    // One snapshot without the pane is not a dead pane: `agents ps` can miss a
+    // live pane for a moment (the harness restarting after the task paste, the
+    // registry being rewritten). Fail it only after OFFLINE_GRACE_MS unseen.
+    if (!w.offlineSince) return { ...w, offlineSince: now }
+    if (now - w.offlineSince < OFFLINE_GRACE_MS) return w
     return { ...w, phase: "failed", finishedAt: now, note: "its pane is gone" }
   }
   if (!w.taskSentAt) return w
@@ -345,8 +356,17 @@ async function waitReady(agentId: string, address: string, timeoutMs: number): P
   const deadline = Date.now() + timeoutMs
   let last = "offline"
   while (Date.now() < deadline) {
-    const { data } = await runEngine<{ agents?: FactoryAgent[] }>(["agents", "ps"], { timeoutMs: 10000 })
-    const a = data?.agents?.find((x) => x.id === agentId || x.address === address)
+    let agents: FactoryAgent[] | undefined
+    try {
+      const { data } = await runEngine<{ agents?: FactoryAgent[] }>(["agents", "ps"], { timeoutMs: 20000 })
+      agents = data?.agents
+    } catch (err) {
+      // A slow `agents ps` (a busy computer) is not a dead worker: keep
+      // waiting until the ready deadline. Anything else is a real failure.
+      if (!(err instanceof FactoryEngineError && err.code === "timeout") || Date.now() >= deadline) throw err
+      continue
+    }
+    const a = agents?.find((x) => x.id === agentId || x.address === address)
     last = a?.state ?? "offline"
     if (last === "idle" || last === "done") return last
     if (last === "needs_you") return last
@@ -428,6 +448,11 @@ export async function startSwarm(opts: StartOptions): Promise<{ record: SwarmRec
       worker.phase = "failed"
       worker.note = err instanceof FactoryEngineError ? err.fact : (err as Error).message
       log(`✗ ${w.address}  ${worker.note}`)
+      // Take the bot that didn't start back out of the team file: it isn't
+      // live, so the next `up` would plan it as a spawn again, in the next
+      // worker's tree (and refuse two bots on one AGENTS.md).
+      started.pop()
+      fs.writeFileSync(path.join(teamDir, "team.yaml"), teamYaml(record.id, plan.harness, plan.model, started))
     }
     writeSwarm(record)
   }
