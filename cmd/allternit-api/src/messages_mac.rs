@@ -700,7 +700,7 @@ mod tests {
         assert_eq!(send_approved(&st.db, "user-a", &aid, &fake).unwrap().unwrap()["state"], "already_sent");
         assert_eq!(sent.load(Ordering::SeqCst), 1, "a second approve does not send twice");
         let audits: i64 = st.db.connect().unwrap().query_row("SELECT COUNT(*) FROM messages_mac_audit WHERE approval_id = ?1 AND kind = 'send'", params![aid], |r| r.get(0)).unwrap();
-        assert_eq!(audits, 2);
+        assert_eq!(audits, 1, "one audit row for the one send; the refused repeat sends nothing");
 
         // Approving through the real path runs the (test-disabled) sender once, then refuses.
         let (_, v) = call(&app, "POST", "/messages-mac/send", Some(json!({ "to": "ann@example.com", "text": "Hello" }))).await;
