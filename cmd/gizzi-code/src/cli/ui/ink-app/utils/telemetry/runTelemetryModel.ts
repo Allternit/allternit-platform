@@ -21,7 +21,7 @@ export interface TelemetryQuotaWindow {
 
 /** Loose QuotaResult shape — mirrored from src/runtime/providers/quota. */
 export type TelemetryQuotaResult =
-  | { status: 'ok'; quota: { windows: TelemetryQuotaWindow[] } }
+  | { status: 'ok'; quota: { windows: TelemetryQuotaWindow[]; plan?: string } }
   | { status: 'unsupported' }
   | { status: 'signed-out' | 'expired' | 'error'; message: string }
 

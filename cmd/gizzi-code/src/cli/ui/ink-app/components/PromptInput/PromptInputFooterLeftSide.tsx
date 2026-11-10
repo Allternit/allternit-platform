@@ -279,7 +279,7 @@ function ModeIndicator({
   // wrapper (reconciler throws on Box-in-Text).
   // Tmux pill (ant-only) — appears right after tasks in nav order
   // @ts-expect-error TODO(types) verbatim upstream dead code ("external" === 'ant' is always false; TungstenPill is never defined — the branch never renders)
-  ...("external" === 'ant' && hasTmuxSession ? [<TungstenPill key="tmux" selected={tmuxSelected} />] : []), ...(isAgentSwarmsEnabled() && hasTeams ? [<TeamStatus key="teams" teamsSelected={teamsSelected} showHint={showHint && !hasBackgroundTasks} />] : []), ...(shouldShowPrStatus ? [<PrBadge key="pr-status" number={prStatus.number!} url={prStatus.url!} reviewState={prStatus.reviewState!} />] : [])];
+  ...("external" === 'ant' && hasTmuxSession ? [<TungstenPill key="tmux" selected={tmuxSelected} />] : []), ...(isAgentSwarmsEnabled() && hasTeams ? [<TeamStatus key="teams" teamsSelected={teamsSelected} showHint={showHint && !hasBackgroundTasks} />] : []), ...(shouldShowPrStatus ? [<PrBadge key="pr-status" number={prStatus.number!} url={prStatus.url!} reviewState={prStatus.reviewState!} checks={prStatus.checks} />] : [])];
   // Factory bots running (factory lane): "⚙ 3 bots · 1 waiting" while any work or wait.
   if (factoryBadge) parts.push(<Text key="factory" color={factoryBadge.waiting ? 'warning' : 'gizzi'}>{factoryBadge.text}</Text>);
 

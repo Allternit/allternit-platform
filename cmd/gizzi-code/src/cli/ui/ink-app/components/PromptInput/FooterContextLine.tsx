@@ -1,20 +1,23 @@
 import * as React from 'react'
 import { CacheCountdown } from './CacheCountdown'
+import { WorkChips } from './WorkChips'
 import { useSyncExternalStore } from 'react'
 import { getActiveBotChat, onActiveBotChatChange } from '../../bootstrap/state'
+import { creditsChip, getAllternitAccount, onAllternitAccountChange, peekAllternitAccount } from '../../services/allternitAccount'
 import { Box, Text } from '../../ink'
 import { useMainLoopModel } from '../../hooks/useMainLoopModel'
 import { useAppState } from '../../state/AppState'
 import type { Message } from '../../types/message.js'
 import { calculateContextPercentages, getContextWindowForModel } from '../../utils/context.js'
-import { getDisplayedEffortLevel, modelSupportsEffort } from '../../utils/effort.js'
+import { getDisplayedThinkingLabel } from '../../utils/effort.js'
 import { formatTokens } from '../../utils/format.js'
 import { renderModelSetting } from '../../utils/model/model'
 import { getCurrentUsage } from '../../utils/tokens.js'
 
 /**
  * Second footer line, laid out like Kimi Code's: the model and effort on the
- * left, context-window use on the right ("context: 12% (24k/200k)"). It is
+ * left, the Allternit credit balance and context-window use on the right
+ * ("credits $41.20 · context: 12% (24k/200k)"). It is
  * real from the start: 0% before the first reply, then the last reply's
  * input tokens. In a /bots chat the turns run in the bot's platform session,
  * so the line names the bot and its model instead; this terminal's effort and
@@ -30,7 +33,13 @@ export function FooterContextLine({ messages }: { messages: Message[] }): React.
     ? usage.input_tokens + usage.cache_creation_input_tokens + usage.cache_read_input_tokens
     : 0
   const percent = calculateContextPercentages(usage, total).used ?? 0
-  const effort = modelSupportsEffort(model) ? getDisplayedEffortLevel(model, effortValue) : null
+  const effort = getDisplayedThinkingLabel(model, effortValue)
+  // Signed-in Allternit credit balance (read once, cached 60 s); nothing when signed out.
+  const account = useSyncExternalStore(onAllternitAccountChange, peekAllternitAccount)
+  React.useEffect(() => {
+    void getAllternitAccount().catch(() => {})
+  }, [])
+  const credits = creditsChip(account)
 
   if (botChat) {
     return (
@@ -50,8 +59,9 @@ export function FooterContextLine({ messages }: { messages: Message[] }): React.
         {effort ? `  effort: ${effort}` : ''}
       </Text>
       <Box flexShrink={0}>
+        <WorkChips />
         <Text dimColor={true}>
-          context: {percent}% ({formatTokens(used)}/{formatTokens(total)})
+          {credits ? `${credits} · ` : ''}context: {percent}% ({formatTokens(used)}/{formatTokens(total)})
         </Text>
       </Box>
     </Box>

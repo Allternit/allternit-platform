@@ -23,6 +23,7 @@ import cost from './commands/cost/index.js'
 import dash from './commands/dash/index.js'
 import dashboard from './commands/dashboard/index.js'
 import bots from './commands/bots/index.js'
+import customize from './commands/customize/index.js'
 import factory from './commands/factory/index.js'
 import board from './commands/board/index.js'
 import diff from './commands/diff/index.js'
@@ -55,10 +56,9 @@ import share from './commands/share/index.js'
 import skills from './commands/skills/index.js'
 import status from './commands/status/index.js'
 import tasks from './commands/tasks/index.js'
-import teleport from './commands/teleport/index.js'
 import goal from './commands/goal.js'
 import loops from './commands/loops.js'
-import routines from './commands/routines.js'
+import { decisions, pr, projects, routines } from './commands/work/index.js'
 import live from './commands/live/index.js'
 import find from './commands/find/index.js'
 import grep from './commands/grep/index.js'
@@ -281,7 +281,6 @@ export const INTERNAL_ONLY_COMMANDS = [
   onboarding,
   share,
   summary,
-  teleport,
   antTrace,
   perfIssue,
   env,
@@ -341,6 +340,7 @@ const COMMANDS = memoize((): Command[] => [
   dash,
   dashboard,
   bots,
+  customize,
   factory,
   board,
   swarm,
@@ -363,6 +363,9 @@ const COMMANDS = memoize((): Command[] => [
   loops,
   keybindings,
   routines,
+  decisions,
+  pr,
+  projects,
   live,
   installGitHubApp,
   installSlackApp,

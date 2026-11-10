@@ -30,6 +30,25 @@ export namespace ModelThinking {
     return { vendor: hit.vendor as Vendor, levels: hit.levels, default: hit.default, fast: Boolean((hit as { fast?: boolean }).fast) }
   }
 
+  export interface Described {
+    /** The vendor's word for it: Effort, Reasoning, Thinking level… */
+    term: string
+    levels: { id: string; label: string }[]
+    default: string
+  }
+
+  /** Levels with the vendor's own labels, for pickers (same table as Desktop's). */
+  export function describe(modelID: string): Described | undefined {
+    const entry = of(modelID)
+    if (!entry || entry.levels.length === 0) return undefined
+    const vendor = (table.vendors as Record<string, { term?: string; labels?: Record<string, string> }>)[entry.vendor]
+    return {
+      term: vendor?.term ?? "Effort",
+      levels: entry.levels.map((id) => ({ id, label: vendor?.labels?.[id] ?? id })),
+      default: entry.default,
+    }
+  }
+
   /** The level when this model takes it, else undefined (the model's default applies). */
   export function check(modelID: string, level: string | undefined): string | undefined {
     if (!level) return undefined

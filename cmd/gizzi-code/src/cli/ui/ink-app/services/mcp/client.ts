@@ -241,7 +241,9 @@ import { mkdir, readFile, unlink, writeFile } from 'fs/promises'
 import { dirname, join } from 'path'
 import { getGizziConfigHomeDir } from '../../utils/envUtils.js'
 /* eslint-enable @typescript-eslint/no-require-imports */
-import { MCP_APPS_CLIENT_CAPABILITIES, isVisibleToModel } from '../../../../../runtime/tools/mcp/apps.js'
+import { MCP_APPS_CLIENT_CAPABILITIES, isVisibleToModel, mcpAppResourceUri } from '../../../../../runtime/tools/mcp/apps.js'
+import { prepareAppView } from './appView.js'
+import { renderToolResultWithAppView } from '../../tools/MCPTool/UI.js'
 import { jsonParse, jsonStringify } from '../../utils/slowOperations.js'
 
 const MCP_AUTH_CACHE_TTL_MS = 15 * 60 * 1000 // 15 min
@@ -1780,8 +1782,11 @@ export const fetchToolsForClient = memoizeWithLRU(
         await Promise.all(
           toolsToProcess.map(async (tool): Promise<Tool> => {
           const fullyQualifiedName = buildMcpToolName(client.name, tool.name)
+          // MCP Apps: a tool that renders a ui:// resource gets a "View in browser" line.
+          const uiResourceUri = mcpAppResourceUri(tool)
           return {
             ...MCPTool,
+            ...(uiResourceUri && { renderToolResultMessage: renderToolResultWithAppView }),
             // In skip-prefix mode, use the original name for model invocation so MCP tools
             // can override builtins by name. mcpInfo is used for permission checking.
             name: skipPrefix ? tool.name : fullyQualifiedName,
@@ -1909,6 +1914,15 @@ export const fetchToolsForClient = memoizeWithLRU(
                     })
                   }
 
+                  if (uiResourceUri) {
+                    await prepareAppView({
+                      readResource: uri => connectedClient.client.readResource({ uri }),
+                      resourceUri: uiResourceUri,
+                      title: tool.title ?? tool.name,
+                      input: args,
+                      result: mcpResult,
+                    })
+                  }
                   return {
                     data: mcpResult.content,
                     ...((mcpResult._meta || mcpResult.structuredContent) && {

@@ -19,6 +19,7 @@ import { Byline } from './design-system/Byline';
 import { KeyboardShortcutHint } from './design-system/KeyboardShortcutHint';
 import { Pane } from './design-system/Pane';
 import { effortLevelToSymbol } from './EffortIndicator';
+import { ModelThinking } from '@/runtime/providers/discovery/model-thinking';
 export type Props = {
   initial: string | null;
   sessionModel?: ModelSetting;
@@ -91,7 +92,8 @@ export function ModelPicker({
   const isFastMode = useAppState(s => isFastModeEnabled() ? s.fastMode : false);
   const [hasToggledEffort, setHasToggledEffort] = useState(false);
   const effortValue = useAppState(s => s.effortValue);
-  const [effort, setEffort] = useState(effortValue !== undefined ? convertEffortValueToLevel(effortValue) : undefined);
+  // A thinking level id: Claude's low…max, or any level in model-thinking.json (xhigh, minimal, ultra…).
+  const [effort, setEffort] = useState<string | undefined>(effortValue === undefined ? undefined : typeof effortValue === 'string' ? effortValue : convertEffortValueToLevel(effortValue));
   const metaMap = useMemo(() => getDiscoveryMeta(), []);
   const modelOptions = useMemo(() => getModelOptions(isFastMode ?? false), [isFastMode]);
   const optionsWithInitial = useMemo(() => {
@@ -170,8 +172,10 @@ export function ModelPicker({
   const focusedModel = resolveOptionModel(effectiveFocused);
   const focusedSupportsEffort = focusedModel ? modelSupportsEffort(focusedModel) : false;
   const focusedSupportsMax = focusedModel ? modelSupportsMaxEffort(focusedModel) : false;
+  // The shared per-model thinking table (the same one Desktop, web and iOS pick from).
+  const focusedThinking = focusedModel ? ModelThinking.describe(focusedModel) : undefined;
   const focusedDefaultEffort = getDefaultEffortLevelForOption(effectiveFocused);
-  const displayEffort = effort === "max" && !focusedSupportsMax ? "high" : effort;
+  const displayEffort = focusedThinking ? ModelThinking.check(focusedModel!, effort) ?? focusedDefaultEffort : effort === "max" && !focusedSupportsMax ? "high" : effort;
   const handleFocus = (value: string) => {
     setFocusedValue(value);
     if (!hasToggledEffort && effortValue === undefined) {
@@ -188,7 +192,16 @@ export function ModelPicker({
     if (!focusedSupportsEffort) {
       return;
     }
-    setEffort(prev => cycleEffortLevel(prev ?? focusedDefaultEffort, direction, focusedSupportsMax));
+    if (focusedThinking) {
+      const ids = focusedThinking.levels.map(l => l.id);
+      setEffort(prev => {
+        const at = ids.indexOf(ModelThinking.check(focusedModel!, prev) ?? focusedDefaultEffort);
+        const from = at === -1 ? ids.indexOf(focusedThinking.default) : at;
+        return ids[direction === 'right' ? Math.min(ids.length - 1, from + 1) : Math.max(0, from - 1)];
+      });
+    } else {
+      setEffort(prev => cycleEffortLevel((prev ?? focusedDefaultEffort) as EffortLevel, direction, focusedSupportsMax));
+    }
     setHasToggledEffort(true);
   };
   useKeybindings({
@@ -202,7 +215,7 @@ export function ModelPicker({
       effort: effort as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS
     });
     if (!skipSettingsWrite) {
-      const effortLevel = resolvePickerEffortPersistence(effort, getDefaultEffortLevelForOption(value_0), getSettingsForSource("userSettings")?.effortLevel, hasToggledEffort);
+      const effortLevel = resolvePickerEffortPersistence(effort as EffortLevel | undefined, getDefaultEffortLevelForOption(value_0) as EffortLevel, getSettingsForSource("userSettings")?.effortLevel, hasToggledEffort);
       const persistable = toPersistableEffort(effortLevel);
       if (persistable !== undefined) {
         updateSettingsForSource("userSettings", {
@@ -215,7 +228,7 @@ export function ModelPicker({
       }));
     }
     const selectedModel = resolveOptionModel(value_0);
-    const selectedEffort = hasToggledEffort && selectedModel && modelSupportsEffort(selectedModel) ? effort : undefined;
+    const selectedEffort = (hasToggledEffort && selectedModel && modelSupportsEffort(selectedModel) ? effort : undefined) as EffortLevel | undefined;
     if (value_0 === NO_PREFERENCE) {
       onSelect(null, selectedEffort);
       return;
@@ -283,16 +296,20 @@ export function ModelPicker({
       const isFocused = row.value === effectiveFocused;
       const isCurrent = row.value === initialValue;
       const meta = [row.contextLabel, ...row.badges].filter(Boolean).join(' · ');
+      const thinking = thinkingCell(row.value, isFocused ? displayEffort : undefined);
       return <Box key={row.key} flexDirection="row">
               <Text color={isFocused ? "suggestion" : undefined}>{isFocused ? figures.pointer : ' '}{' '}{row.favorite ? '★ ' : ''}{row.label}{isCurrent ? ` ${figures.tick}` : ''}</Text>
               <Box flexGrow={1} />
               {meta !== '' && <Text dimColor={true}>{meta}</Text>}
+              <Box width={THINKING_COLUMN} flexShrink={0} justifyContent="flex-end">
+                <Text color={isFocused && thinking !== '—' ? "suggestion" : undefined} dimColor={!isFocused}>{isFocused && thinking !== '—' ? `‹ ${thinking} ›` : thinking}</Text>
+              </Box>
             </Box>;
     })}
       {showCount && matched > 0 && <Text dimColor={true}>{matched} of {total} models{rows.length > ROW_WINDOW ? ' · ↑/↓ to scroll' : ''}</Text>}
     </Box>;
   const focusedDetail = focusedRow && (focusedRow.description || focusedQuota) ? <Box marginBottom={1}><Text dimColor={true}>{focusedRow.description}{focusedRow.description && focusedQuota ? ' · ' : ''}{focusedQuota ?? ''}</Text></Box> : null;
-  const effortRow = <Box marginBottom={1} flexDirection="column">{focusedSupportsEffort ? <Text dimColor={true}><EffortLevelIndicator effort={displayEffort} />{" "}{capitalize(displayEffort)} effort{displayEffort === focusedDefaultEffort ? " (default)" : ""}{" "}<Text color="subtle">← → to adjust</Text></Text> : <Text color="subtle"><EffortLevelIndicator effort={undefined} /> Effort not supported{focusedModelName ? ` for ${focusedModelName}` : ""}</Text>}</Box>;
+  const effortRow = focusedThinking ? <Box marginBottom={1} flexDirection="column"><Text dimColor={true}><EffortLevelIndicator effort={displayEffort as EffortLevel} />{" "}{focusedThinking.term}:{" "}{focusedThinking.levels.map((l, i) => <Text key={l.id} bold={l.id === displayEffort} dimColor={l.id !== displayEffort}>{i > 0 ? ' · ' : ''}{l.label}{l.id === focusedThinking.default ? '*' : ''}</Text>)}{" "}<Text color="subtle">← → change · * default</Text></Text></Box> : <Box marginBottom={1} flexDirection="column">{focusedSupportsEffort ? <Text dimColor={true}><EffortLevelIndicator effort={displayEffort as EffortLevel} />{" "}{capitalize(displayEffort)} effort{displayEffort === focusedDefaultEffort ? " (default)" : ""}{" "}<Text color="subtle">← → to adjust</Text></Text> : <Text color="subtle"><EffortLevelIndicator effort={undefined} /> Effort not supported{focusedModelName ? ` for ${focusedModelName}` : ""}</Text>}</Box>;
   const header = <Box marginBottom={1} flexDirection="column"><Text color="remember" bold={true}>Select model</Text><Text dimColor={true}>{headerText ?? "Switch models. Applies to this session and future Gizzi Code sessions. For other/previous model names, specify with --model."}</Text>{sessionModel && <Text dimColor={true}>Currently using {modelDisplayString(sessionModel)} for this session (set by plan mode). Selecting a model will undo this.</Text>}<Text dimColor={true}>↑/↓ navigate · Enter select · Tab ★ favorite · type to filter · Esc {filter ? 'clear filter' : 'cancel'}</Text></Box>;
   const fastModeNotice = isFastModeEnabled() ? showFastModeNotice ? <Box marginBottom={1}><Text dimColor={true}>Fast mode is <Text bold={true}>ON</Text> and available with{" "}{FAST_MODE_MODEL_DISPLAY} only (/fast). Switching to other models turn off fast mode.</Text></Box> : isFastModeAvailable() && !isFastModeCooldown() ? <Box marginBottom={1}><Text dimColor={true}>Use <Text bold={true}>/fast</Text> to turn on Fast mode ({FAST_MODE_MODEL_DISPLAY} only).</Text></Box> : null : null;
   const standaloneHints = isStandaloneCommand && <Text dimColor={true} italic={true}>{exitState.pending ? <>Press {exitState.keyName} again to exit</> : <Byline><KeyboardShortcutHint shortcut="Enter" action="confirm" /><ConfigurableShortcutHint action="select:cancel" context="Select" fallback="Esc" description="exit" /></Byline>}</Text>;
@@ -326,8 +343,24 @@ function cycleEffortLevel(current: EffortLevel, direction: 'left' | 'right', inc
     return levels[(currentIndex - 1 + levels.length) % levels.length]!;
   }
 }
-function getDefaultEffortLevelForOption(value?: string): EffortLevel {
+const THINKING_COLUMN = 16;
+
+/**
+ * The thinking column for one row: the focused row's chosen level, else the
+ * model's default, in its vendor's words. "—" when the shared table lists
+ * no levels for the model (it runs at its own default).
+ */
+function thinkingCell(value: string | undefined, chosen: string | undefined): string {
+  const model = resolveOptionModel(value);
+  const described = model ? ModelThinking.describe(model) : undefined;
+  if (!described) return '—';
+  const id = (model && ModelThinking.check(model, chosen)) || described.default;
+  return described.levels.find(l => l.id === id)?.label ?? id;
+}
+function getDefaultEffortLevelForOption(value?: string): string {
   const resolved = resolveOptionModel(value) ?? getDefaultMainLoopModel();
+  const table = ModelThinking.describe(resolved);
+  if (table) return table.default;
   const defaultValue = getDefaultEffortForModel(resolved);
   return defaultValue !== undefined ? convertEffortValueToLevel(defaultValue) : 'high';
 }
