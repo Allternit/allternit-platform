@@ -90,8 +90,10 @@ import {
   type AdbCall,
   type ApprovalGate,
   type ApprovalRequest,
+  type PhoneHoldNotice,
   type RateStore,
 } from './phone-tools.js';
+import { httpPhoneHoldClient, type PhoneHoldClient } from './phone-hold-client.js';
 
 export const APPROVAL_TIMEOUT_MS = 120_000;
 
@@ -134,6 +136,78 @@ export function dialogGate(): ApprovalGate {
       if (outcome === 'timeout') return 'timeout';
       return outcome.response === 0 ? 'approved' : 'denied';
     },
+  };
+}
+
+/** How often an open hold dialog asks the runtime whether the hold was answered elsewhere. */
+export const HOLD_POLL_MS = 3_000;
+
+const EFFECT_TEXT: Record<string, string> = {
+  pay: 'spend money',
+  delete: 'delete something',
+  send: 'send a message',
+  call: 'place a call',
+  credential: 'reveal a password or a code',
+  money_app: 'open a banking or payment app',
+  security_setting: 'change a security setting',
+};
+
+/**
+ * The hold dialog: a view of a runtime hold, not a gate. The tool call has
+ * already returned approval_required; this only offers the owner a quick
+ * answer on this computer. Default Deny. Approve / Deny answer the hold
+ * through the inbox route, so the "Needs you" item closes too. A hold answered
+ * elsewhere (web inbox, iPhone) or expired closes the dialog. Nothing waits on
+ * it: with no window open, the hold is still in "Needs you".
+ */
+export function holdDialog(client: PhoneHoldClient, pollMs = HOLD_POLL_MS): (notice: PhoneHoldNotice) => void {
+  const open = new Set<string>();
+  return (notice) => {
+    // A retry of a hold that is still waiting shows no second dialog.
+    if (open.has(notice.approvalId)) return;
+    open.add(notice.approvalId);
+    const closer = new AbortController();
+    const poll = setInterval(() => {
+      void client.getHold(notice.approvalId).then((hold) => {
+        if (hold && hold.state !== 'requested') closer.abort();
+      });
+    }, pollMs);
+    const left = Date.parse(notice.expiresAt) - Date.now();
+    const expiry = setTimeout(() => closer.abort(), Number.isFinite(left) && left > 0 ? left : APPROVAL_TIMEOUT_MS);
+    const verb = notice.effect === 'send' ? 'Send' : notice.effect === 'call' ? 'Call' : 'Allow';
+    const detail = [
+      notice.summary,
+      '',
+      `Phone: ${notice.phoneName ?? notice.serial}`,
+      ...(notice.app ? [`App: ${notice.app}`] : []),
+      `This would ${EFFECT_TEXT[notice.effect] ?? 'change something on your phone'}.`,
+      '',
+      'You can also answer in Needs you on any of your devices.',
+    ].join('\n');
+    dialog
+      .showMessageBox({
+        type: 'question',
+        title: 'Allow this on your phone?',
+        message: `Your bot wants to ${EFFECT_TEXT[notice.effect] ?? 'act'} on ${notice.phoneName ?? 'your phone'}`,
+        detail,
+        buttons: [verb, 'Deny'],
+        defaultId: 1,
+        cancelId: 1,
+        noLink: true,
+        signal: closer.signal,
+      })
+      .then(async (shown) => {
+        // Closed because the hold was answered elsewhere or expired: nothing to send.
+        if (closer.signal.aborted) return;
+        const ok = await client.resolve(notice.approvalId, shown.response === 0 ? 'approve' : 'deny');
+        if (!ok) log.warn(`[Phone] could not answer hold ${notice.approvalId}; it is still in Needs you`);
+      })
+      .catch((error: unknown) => log.debug(`[Phone] hold dialog: ${error instanceof Error ? error.message : String(error)}`))
+      .finally(() => {
+        clearInterval(poll);
+        clearTimeout(expiry);
+        open.delete(notice.approvalId);
+      });
   };
 }
 
@@ -653,6 +727,14 @@ class PhoneService {
       this.artemis = this.artemis ?? new ArtemisManager(this.dir(), undefined, (serial, running) =>
         this.manager?.noteAgentActivity(serial, running ? 1 : -1));
       const phoneApi = httpPhoneApi(() => URLS.API, () => backendManager.getLocalAuthHeaders());
+      // The approval guard asks as the signed-in person; signed out, acting calls are refused.
+      const holds = httpPhoneHoldClient({
+        base: () => URLS.API,
+        headers: () => {
+          const userId = this.signedInUser();
+          return userId ? backendManager.getLocalAuthHeaders(userId) : null;
+        },
+      });
       const runner = new PhoneToolRunner({
         adb: lazy,
         gate: dialogGate(),
@@ -672,6 +754,8 @@ class PhoneService {
           onError: (error) => log.debug(`[Phone] run history step not recorded: ${error instanceof Error ? error.message : String(error)}`),
         }),
         api: () => phoneApi,
+        guard: () => holds,
+        onHold: holdDialog(holds),
       });
       this.runner = runner;
       const token = newGatewayToken();
