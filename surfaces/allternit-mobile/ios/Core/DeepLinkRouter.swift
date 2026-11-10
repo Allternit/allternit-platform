@@ -6,7 +6,10 @@ import Foundation
 /// - **Universal Links** — `https://ai.allternit.com/...` or
 ///   `https://m.allternit.com/...` (apple-app-site-association in allternit-ai
 ///   `public/.well-known/`): `/b/<botId>`, `/i/<code>`, `/settings[/<section>]`,
-///   and any path with `?session=<id>`.
+///   `/inbox`, and any path with `?session=<id>`.
+/// - **`allternit://` links** — the same paths on the app's own scheme
+///   (`allternit://inbox`, `allternit://b/<botId>`), registered in
+///   Info.plist `CFBundleURLTypes` for widgets, Shortcuts and Spotlight.
 /// - **Push taps** — the cloud's notification `url` is a path on the app's
 ///   own origin, the same one the Web Push service worker opens
 ///   (`/?allternit_thread=…&bot=…`, `/?allternit_call=…`,
@@ -32,6 +35,8 @@ enum DeepLink: Equatable, Sendable {
     case computers
     /// Decisions: questions and approvals waiting on you (approval pushes).
     case decisions
+    /// The "Needs you" inbox across all bots (`/inbox`, `allternit://inbox`).
+    case inbox
 
     static let webHosts: Set<String> = ["ai.allternit.com", "m.allternit.com"]
 
@@ -101,6 +106,8 @@ enum DeepLink: Equatable, Sendable {
             return .settings(segments.count >= 2 ? segments[1] : nil)
         case "computers":
             return .computers
+        case "inbox":
+            return .inbox
         default:
             return nil
         }
