@@ -154,6 +154,19 @@ final class ActivityTokenRegistry {
         await send(upload)
     }
 
+    /// iOS 26 widget push: the widget extension leaves its token (hex) in the
+    /// App Group; send it as `kind: "widget"` when it is new. Called on foreground.
+    func syncWidgetToken() async {
+        guard let hex = AppGroup.defaults?.string(forKey: WidgetPushToken.key), !hex.isEmpty,
+              let deviceId = deviceId() else { return }
+        let upload = ActivityTokenUpload(
+            deviceId: deviceId, kind: ActivityTokenKind.widget.rawValue, attributesType: nil,
+            activityKey: nil, token: hex, environment: environment
+        )
+        latest[upload.slot] = upload
+        if uploaded[upload.slot] != upload { await send(upload) }
+    }
+
     /// The activity behind this slot ended: its update token is dead.
     func remove(kind: ActivityTokenKind, attributesType: String?, activityKey: String?) async {
         let slot = ActivityTokenUpload.slot(kind: kind.rawValue, attributesType: attributesType, activityKey: activityKey)
