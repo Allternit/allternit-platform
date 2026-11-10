@@ -15,11 +15,22 @@
 //! With the key, key id or team id unset, the routes answer 503 `apns_not_configured` and nothing is sent.
 //!
 //! Routes (Clerk session or `compute`-scoped API key):
-//! - `POST   /api/v1/device-tokens` {token, platform:"ios", environment?, deviceId?} → `{ok, id}`
-//! - `DELETE /api/v1/device-tokens` {token}                                         → `{ok, removed}`
+//! - `POST   /api/v1/device-tokens` {token, platform:"ios", environment?, deviceId?, osVersion?, appBuild?,
+//!   capabilities?} → `{ok, id, readToken}`. `capabilities` lists what the app supports ([`KNOWN_CAPABILITIES`]);
+//!   an old app that sends none gets `[]`. `readToken` is new on every registration (only its hash is stored)
+//!   and works on the two device-read routes in [`super::device_read`] only.
+//! - `DELETE /api/v1/device-tokens` {token} → `{ok, removed}`; also removes that device's activity tokens.
+//! - `PUT    /api/v1/device-tokens/activity` {deviceId, kind, attributesType?, activityKey?, token, environment?}
+//!   → `{ok, id}`. `kind` is `la_start` (Live Activity push-to-start), `la_update` (one running activity) or
+//!   `widget` (iOS 26 widget push). The device must already be registered for this person.
+//! - `DELETE /api/v1/device-tokens/activity` {token} → `{ok, removed}`
 //!
 //! The notification carries `{type, url, tag, data}` next to `aps`; the app opens `url` (the same app path
-//! the Web Push service worker opens) when the notification is tapped.
+//! the Web Push service worker opens) when the notification is tapped. `aps` is built per device
+//! ([`payload`]): buttons (`category`) only with the `actions` capability, `mutable-content` and a generic
+//! body for private content only with `nse`, `passive` while the device's Focus filter mutes the alert.
+//! A delivered alert for an inbox item is recorded in `notification_delivered`; [`revoke`] removes it
+//! with a background push when the item leaves "needs you".
 
 use aws_lc_rs::{
     rand::SystemRandom,
@@ -29,7 +40,7 @@ use axum::{
     extract::State,
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
-    routing::post,
+    routing::{post, put},
     Json, Router,
 };
 use base64::{
@@ -39,6 +50,7 @@ use base64::{
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sqlx::PgPool;
+use sha2::{Digest, Sha256};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
@@ -47,13 +59,23 @@ use crate::ApiState;
 
 /// Most iOS devices one person may register.
 const MAX_TOKENS_PER_USER: i64 = 10;
+/// Most activity / widget push tokens one person may hold across devices.
+const MAX_ACTIVITY_TOKENS_PER_USER: i64 = 40;
+/// What an app may say it supports at registration. Anything else is dropped.
+pub const KNOWN_CAPABILITIES: [&str; 4] = ["actions", "nse", "la_push", "widget_push"];
+/// Activity token kinds (`apns_activity_tokens.kind`).
+pub const ACTIVITY_KINDS: [&str; 3] = ["la_start", "la_update", "widget"];
+/// Prefix of a device read token: `adr_<device row id hex>_<secret hex>`.
+pub const READ_TOKEN_PREFIX: &str = "adr_";
 /// Drop a token after this many failures in a row that weren't a clean "gone" answer.
 const MAX_FAILURES: i32 = 8;
 /// Apple accepts a provider token for an hour and rejects refreshing it more than every 20 minutes.
 const JWT_REFRESH_SECS: i64 = 40 * 60;
 
 pub fn routes() -> Router<Arc<ApiState>> {
-    Router::new().route("/api/v1/device-tokens", post(register_route).delete(unregister_route))
+    Router::new()
+        .route("/api/v1/device-tokens", post(register_route).delete(unregister_route))
+        .route("/api/v1/device-tokens/activity", put(activity_put_route).delete(activity_delete_route))
 }
 
 // ---------------------------------------------------------------------------
@@ -154,22 +176,100 @@ fn client() -> &'static reqwest::Client {
 // Payload
 // ---------------------------------------------------------------------------
 
-pub fn payload(msg: &PushMessage) -> Value {
+/// What a phone with the notification extension (`nse`) shows on the Lock Screen for private content until
+/// the extension fetches the text (`GET /api/v1/notifications/content/:eventId`).
+fn generic_body(data: &Value) -> &'static str {
+    let category = data.get("category").and_then(Value::as_str).unwrap_or("");
+    match data.get("event").and_then(Value::as_str).unwrap_or("") {
+        _ if category.starts_with("APPROVAL_") => "A bot is waiting for your OK.",
+        "approval.requested" => "A bot is waiting for your OK.",
+        "message.received" => "New message",
+        "thread.needs_user" => "A bot needs your answer.",
+        _ => "Open Allternit to see it.",
+    }
+}
+
+/// The alert one device gets for `msg`. The copy, link and `data` keys come from the sender
+/// (`notifications::message_for` for backbone events); this adds what depends on the device:
+/// - `category` (notification buttons) only when the app said it has `actions`;
+/// - `mutable-content` and, for private content, a generic body only when it has `nse` (older apps keep the full body);
+/// - `interruption-level`: `passive` with no sound when the device's Focus filter mutes this alert ([`Focus::mutes`]),
+///   otherwise `time-sensitive` at the needs-you level and above (`data.level`);
+/// - `thread-id` per bot, so one bot's notifications group together.
+pub fn payload(msg: &PushMessage, target: &PushTarget) -> Value {
     let clip = |s: &str, n: usize| s.chars().take(n).collect::<String>();
+    let d = &msg.data;
+    let get = |k: &str| d.get(k).and_then(Value::as_str).filter(|v| !v.is_empty());
+    let nse = target.has("nse");
+    let private = d.get("private").and_then(Value::as_bool) == Some(true);
+    let body = if nse && private { generic_body(d).to_string() } else { clip(&msg.body, 400) };
+    let muted = target.focus.as_ref().is_some_and(|f| f.mutes(d));
+    let thread = get("botId").map(|b| format!("bot-{b}")).unwrap_or_else(|| msg.tag.clone());
+    let mut aps = json!({
+        "alert": { "title": clip(&msg.title, 120), "body": body },
+        // The server keeps no unread count; 1 marks "something new" and the app clears it when opened.
+        "badge": 1,
+        "thread-id": clip(&thread, 64),
+    });
+    if !muted {
+        aps["sound"] = json!("default");
+    }
+    if nse {
+        aps["mutable-content"] = json!(1);
+    }
+    if let Some(category) = get("category").filter(|_| target.has("actions")) {
+        aps["category"] = json!(category);
+    }
+    if muted {
+        aps["interruption-level"] = json!("passive");
+    } else if matches!(get("level"), Some("needs_you" | "urgent")) {
+        aps["interruption-level"] = json!("time-sensitive");
+    }
     json!({
-        "aps": {
-            "alert": { "title": clip(&msg.title, 120), "body": clip(&msg.body, 400) },
-            "sound": "default",
-            // The server keeps no unread count; 1 marks "something new" and the app clears it when opened.
-            "badge": 1,
-            "thread-id": clip(&msg.tag, 64),
-            "mutable-content": 1,
-        },
+        "aps": aps,
         "type": msg.kind,
         "url": msg.url,
         "tag": msg.tag,
         "data": msg.data,
     })
+}
+
+/// How long a Focus filter holds after the phone last confirmed it (`PUT /api/v1/notifications/focus`).
+pub const FOCUS_TTL_HOURS: i64 = 24;
+
+/// A device's Focus filter while it is on and fresh. Alerts it mutes still arrive, as `passive` with no sound.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Focus {
+    /// Bots whose alerts keep their normal level. `None` (sent as `null`): no bot does.
+    pub allowed_bot_ids: Option<Vec<String>>,
+    /// Approvals keep their normal level whichever bot asks.
+    pub allow_approvals: bool,
+}
+
+impl Focus {
+    /// The filter stored on a device row (`apns_device_tokens.focus` / `focus_at`), or `None` when it is off
+    /// or was last confirmed more than [`FOCUS_TTL_HOURS`] ago.
+    pub fn from_row(focus: Option<&Value>, at: Option<chrono::DateTime<chrono::Utc>>, now: chrono::DateTime<chrono::Utc>) -> Option<Self> {
+        let f = focus?;
+        if f.get("active").and_then(Value::as_bool) != Some(true) || at.is_none_or(|t| now - t > chrono::Duration::hours(FOCUS_TTL_HOURS)) {
+            return None;
+        }
+        Some(Self {
+            allowed_bot_ids: f.get("allowedBotIds").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect()),
+            allow_approvals: f.get("allowApprovals").and_then(Value::as_bool).unwrap_or(true),
+        })
+    }
+
+    /// True when this alert (its `data`) goes out muted on the filtered device.
+    pub fn mutes(&self, data: &Value) -> bool {
+        let category = data.get("category").and_then(Value::as_str).unwrap_or("");
+        let approval = category.starts_with("APPROVAL_") || data.get("event").and_then(Value::as_str) == Some("approval.requested");
+        if approval && self.allow_approvals {
+            return false;
+        }
+        let bot = data.get("botId").and_then(Value::as_str);
+        !matches!((bot, &self.allowed_bot_ids), (Some(b), Some(list)) if list.iter().any(|x| x == b))
+    }
 }
 
 /// `apns-collapse-id` must be at most 64 bytes.
@@ -188,82 +288,292 @@ fn collapse_id(tag: &str) -> String {
 // Sending
 // ---------------------------------------------------------------------------
 
-#[derive(sqlx::FromRow)]
-struct TokenRow {
-    id: String,
-    token: String,
-    environment: String,
+/// Which table a push target lives in. A "gone" answer or too many failures removes the row from it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TokenTable {
+    Device,
+    Activity,
 }
 
-/// Push `msg` to every iOS device `user` registered. Returns how many APNs accepted. Does nothing, and
-/// costs nothing, when APNs isn't configured.
+impl TokenTable {
+    fn name(self) -> &'static str {
+        match self {
+            TokenTable::Device => "apns_device_tokens",
+            TokenTable::Activity => "apns_activity_tokens",
+        }
+    }
+}
+
+/// One APNs token to push to: a device token (alerts, background) or an activity / widget token.
+#[derive(Clone, Debug)]
+pub struct PushTarget {
+    pub table: TokenTable,
+    pub id: String,
+    pub user_id: String,
+    pub device_id: String,
+    pub token: String,
+    pub environment: String,
+    /// Device tokens: what the app said it supports ([`KNOWN_CAPABILITIES`]). Empty for activity tokens.
+    pub capabilities: Vec<String>,
+    /// Activity tokens: `la_start` / `la_update` / `widget`. `None` for device tokens.
+    pub kind: Option<String>,
+    pub attributes_type: Option<String>,
+    pub activity_key: Option<String>,
+    /// Device tokens: the Focus filter in force now, if any. `None` for activity tokens.
+    pub focus: Option<Focus>,
+}
+
+impl PushTarget {
+    pub fn has(&self, capability: &str) -> bool {
+        self.capabilities.iter().any(|c| c == capability)
+    }
+}
+
+#[derive(sqlx::FromRow)]
+struct DeviceRow {
+    id: String,
+    user_id: String,
+    device_id: String,
+    token: String,
+    environment: String,
+    capabilities: Value,
+    focus: Option<Value>,
+    focus_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+#[derive(sqlx::FromRow)]
+struct ActivityRow {
+    id: String,
+    user_id: String,
+    device_id: String,
+    token: String,
+    environment: String,
+    kind: String,
+    attributes_type: Option<String>,
+    activity_key: Option<String>,
+}
+
+/// Every iOS device `user` registered, with its capabilities.
+pub async fn device_targets(db: &PgPool, user: &str) -> Result<Vec<PushTarget>, sqlx::Error> {
+    let rows: Vec<DeviceRow> = sqlx::query_as("SELECT id, user_id, device_id, token, environment, capabilities, focus, focus_at FROM apns_device_tokens WHERE user_id = $1").bind(user).fetch_all(db).await?;
+    let now = chrono::Utc::now();
+    Ok(rows
+        .into_iter()
+        .map(|r| PushTarget {
+            table: TokenTable::Device,
+            focus: Focus::from_row(r.focus.as_ref(), r.focus_at, now),
+            capabilities: r.capabilities.as_array().map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect()).unwrap_or_default(),
+            id: r.id,
+            user_id: r.user_id,
+            device_id: r.device_id,
+            token: r.token,
+            environment: r.environment,
+            kind: None,
+            attributes_type: None,
+            activity_key: None,
+        })
+        .collect())
+}
+
+/// `user`'s activity / widget tokens of one `kind` (see [`ACTIVITY_KINDS`]).
+pub async fn activity_targets(db: &PgPool, user: &str, kind: &str) -> Result<Vec<PushTarget>, sqlx::Error> {
+    let rows: Vec<ActivityRow> = sqlx::query_as("SELECT id, user_id, device_id, token, environment, kind, attributes_type, activity_key FROM apns_activity_tokens WHERE user_id = $1 AND kind = $2").bind(user).bind(kind).fetch_all(db).await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| PushTarget {
+            table: TokenTable::Activity,
+            id: r.id,
+            user_id: r.user_id,
+            device_id: r.device_id,
+            token: r.token,
+            environment: r.environment,
+            capabilities: Vec::new(),
+            kind: Some(r.kind),
+            attributes_type: r.attributes_type,
+            activity_key: r.activity_key,
+            focus: None,
+        })
+        .collect())
+}
+
+/// Optional headers for [`send_raw`].
+#[derive(Clone, Debug, Default)]
+pub struct RawOptions {
+    /// `apns-collapse-id` (clipped to 64 bytes).
+    pub collapse_id: Option<String>,
+    /// Seconds APNs keeps trying; `None` means one hour.
+    pub ttl_secs: Option<u32>,
+}
+
+/// One push of any type to one token. `push_type` is the `apns-push-type` header (`alert`, `background`,
+/// `liveactivity`, `widgets`), `topic_suffix` is appended to the app's bundle id (`""`,
+/// `".push-type.liveactivity"`, `".push-type.widgets"`), `priority` is `apns-priority` (5 or 10).
+/// Returns true when APNs accepted it. A gone token is deleted from its table (a gone device token takes the
+/// device's activity tokens with it); other failures count up and drop the row after [`MAX_FAILURES`].
+/// Does nothing when APNs isn't configured.
+pub async fn send_raw(db: &PgPool, push_type: &str, topic_suffix: &str, priority: u8, payload: &Value, target: &PushTarget, opts: &RawOptions) -> bool {
+    let Some(apns) = Apns::from_env() else { return false };
+    let expiration = chrono::Utc::now().timestamp() + i64::from(opts.ttl_secs.unwrap_or(3600));
+    deliver(db, &apns, target, push_type, topic_suffix, priority, expiration, opts.collapse_id.as_deref(), payload.to_string()).await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn deliver(db: &PgPool, apns: &Apns, target: &PushTarget, push_type: &str, topic_suffix: &str, priority: u8, expiration: i64, collapse: Option<&str>, body: String) -> bool {
+    let table = target.table.name();
+    let jwt = match apns.provider_token() {
+        Ok(jwt) => jwt,
+        Err(error) => {
+            tracing::warn!("apns: signing provider token failed: {error}");
+            return false;
+        }
+    };
+    let url = format!("{}/3/device/{}", host_for(&target.environment), target.token);
+    let mut req = client()
+        .post(url)
+        .header("authorization", format!("bearer {jwt}"))
+        .header("apns-topic", format!("{}{}", apns.topic, topic_suffix))
+        .header("apns-push-type", push_type)
+        .header("apns-priority", priority.to_string())
+        .header("apns-expiration", expiration.to_string())
+        .header("content-type", "application/json");
+    if let Some(collapse) = collapse.filter(|c| !c.is_empty()) {
+        req = req.header("apns-collapse-id", collapse_id(collapse));
+    }
+    let outcome = match req.body(body).send().await {
+        Ok(resp) => {
+            let status = resp.status().as_u16();
+            let reason = resp.json::<Value>().await.ok().and_then(|v| v.get("reason").and_then(Value::as_str).map(str::to_string)).unwrap_or_default();
+            Ok((status, reason))
+        }
+        Err(error) => Err(error.to_string()),
+    };
+    match outcome {
+        Ok((200, _)) => {
+            let _ = sqlx::query(&format!("UPDATE {table} SET last_ok_at = now(), failures = 0, last_error = NULL WHERE id = $1")).bind(&target.id).execute(db).await;
+            true
+        }
+        Ok((status, reason)) if status == 410 || matches!(reason.as_str(), "BadDeviceToken" | "Unregistered" | "DeviceTokenNotForTopic") => {
+            let _ = sqlx::query(&format!("DELETE FROM {table} WHERE id = $1")).bind(&target.id).execute(db).await;
+            if target.table == TokenTable::Device {
+                forget_device_activity(db, &target.user_id, &target.device_id).await;
+            }
+            false
+        }
+        other => {
+            let error = match other {
+                Ok((status, reason)) => {
+                    if status == 403 && reason == "ExpiredProviderToken" {
+                        forget_provider_token();
+                    }
+                    format!("apns answered {status} {reason}")
+                }
+                Err(e) => e,
+            };
+            tracing::warn!("apns push to {} failed: {error}", target.id);
+            let _ = sqlx::query(&format!("UPDATE {table} SET failures = failures + 1, last_error = $2 WHERE id = $1")).bind(&target.id).bind(&error).execute(db).await;
+            let _ = sqlx::query(&format!("DELETE FROM {table} WHERE id = $1 AND failures >= $2")).bind(&target.id).bind(MAX_FAILURES).execute(db).await;
+            false
+        }
+    }
+}
+
+/// Remove a device's activity / widget tokens (its device token is gone or moved to someone else).
+async fn forget_device_activity(db: &PgPool, user: &str, device_id: &str) {
+    if device_id.is_empty() {
+        return;
+    }
+    if let Err(error) = sqlx::query("DELETE FROM apns_activity_tokens WHERE user_id = $1 AND device_id = $2").bind(user).bind(device_id).execute(db).await {
+        tracing::warn!("apns: removing activity tokens failed: {error}");
+    }
+}
+
+/// Push `msg` to every iOS device `user` registered, each with its own [`payload`]. Returns how many APNs
+/// accepted. When at least one went out and `msg.data.inboxId` is set, records the tag in
+/// `notification_delivered` so the notification can be revoked when the item leaves "needs you"
+/// ([`revoke`]). Does nothing, and costs nothing, when APNs isn't configured.
 pub async fn send_to_user(db: &PgPool, user: &str, msg: &PushMessage) -> usize {
     let Some(apns) = Apns::from_env() else { return 0 };
-    let rows: Vec<TokenRow> = match sqlx::query_as("SELECT id, token, environment FROM apns_device_tokens WHERE user_id = $1").bind(user).fetch_all(db).await {
+    let targets = match device_targets(db, user).await {
         Ok(rows) => rows,
         Err(error) => {
             tracing::warn!("apns: reading tokens failed: {error}");
             return 0;
         }
     };
-    if rows.is_empty() {
+    if targets.is_empty() {
         return 0;
     }
-    let body = payload(msg).to_string();
     let expiration = chrono::Utc::now().timestamp() + i64::from(msg.ttl_secs);
     let mut delivered = 0;
-    for row in rows {
-        let jwt = match apns.provider_token() {
-            Ok(jwt) => jwt,
-            Err(error) => {
-                tracing::warn!("apns: signing provider token failed: {error}");
-                return delivered;
-            }
-        };
-        let url = format!("{}/3/device/{}", host_for(&row.environment), row.token);
-        let req = client()
-            .post(url)
-            .header("authorization", format!("bearer {jwt}"))
-            .header("apns-topic", &apns.topic)
-            .header("apns-push-type", "alert")
-            .header("apns-priority", if msg.high_urgency { "10" } else { "5" })
-            .header("apns-expiration", expiration.to_string())
-            .header("apns-collapse-id", collapse_id(&msg.tag))
-            .header("content-type", "application/json")
-            .body(body.clone());
-        let outcome = match req.send().await {
-            Ok(resp) => {
-                let status = resp.status().as_u16();
-                let reason = resp.json::<Value>().await.ok().and_then(|v| v.get("reason").and_then(Value::as_str).map(str::to_string)).unwrap_or_default();
-                Ok((status, reason))
-            }
-            Err(error) => Err(error.to_string()),
-        };
-        match outcome {
-            Ok((200, _)) => {
-                delivered += 1;
-                let _ = sqlx::query("UPDATE apns_device_tokens SET last_ok_at = now(), failures = 0, last_error = NULL WHERE id = $1").bind(&row.id).execute(db).await;
-            }
-            Ok((status, reason)) if status == 410 || matches!(reason.as_str(), "BadDeviceToken" | "Unregistered" | "DeviceTokenNotForTopic") => {
-                let _ = sqlx::query("DELETE FROM apns_device_tokens WHERE id = $1").bind(&row.id).execute(db).await;
-            }
-            other => {
-                let error = match other {
-                    Ok((status, reason)) => {
-                        if status == 403 && reason == "ExpiredProviderToken" {
-                            forget_provider_token();
-                        }
-                        format!("apns answered {status} {reason}")
-                    }
-                    Err(e) => e,
-                };
-                tracing::warn!("apns push to {} failed: {error}", row.id);
-                let _ = sqlx::query("UPDATE apns_device_tokens SET failures = failures + 1, last_error = $2 WHERE id = $1").bind(&row.id).bind(&error).execute(db).await;
-                let _ = sqlx::query("DELETE FROM apns_device_tokens WHERE id = $1 AND failures >= $2").bind(&row.id).bind(MAX_FAILURES).execute(db).await;
-            }
+    for target in &targets {
+        let body = payload(msg, target);
+        let aps = &body["aps"];
+        // Never the text: the keys that decide how the phone shows it.
+        tracing::info!(
+            "apns alert to {}: event={} category={} interruption-level={} mutable-content={} private={}",
+            target.id,
+            body["data"]["event"].as_str().unwrap_or(msg.kind),
+            aps["category"].as_str().unwrap_or("-"),
+            aps["interruption-level"].as_str().unwrap_or("active"),
+            aps.get("mutable-content").is_some(),
+            body["data"]["private"].as_bool().unwrap_or(false),
+        );
+        let priority = if msg.high_urgency && aps["interruption-level"] != "passive" { 10 } else { 5 };
+        if deliver(db, &apns, target, "alert", "", priority, expiration, Some(&msg.tag), body.to_string()).await {
+            delivered += 1;
+        }
+    }
+    if delivered > 0 {
+        if let Some(inbox) = msg.data.get("inboxId").and_then(Value::as_str).filter(|v| !v.is_empty()) {
+            record_delivered(db, user, inbox, &msg.tag, msg.data.get("eventId").and_then(Value::as_str)).await;
         }
     }
     delivered
+}
+
+/// Remember that the notification `tag` for inbox item `inbox_id` is on `user`'s phones.
+pub async fn record_delivered(db: &PgPool, user: &str, inbox_id: &str, tag: &str, event_id: Option<&str>) {
+    let result = sqlx::query(
+        "INSERT INTO notification_delivered (user_id, inbox_id, tag, event_id) VALUES ($1, $2, $3, $4)
+         ON CONFLICT (user_id, inbox_id, tag) DO UPDATE SET event_id = EXCLUDED.event_id, created_at = now()",
+    )
+    .bind(user)
+    .bind(inbox_id)
+    .bind(tag)
+    .bind(event_id)
+    .execute(db)
+    .await;
+    if let Err(error) = result {
+        tracing::warn!("apns: recording a delivered notification failed: {error}");
+    }
+}
+
+/// The background push that removes delivered notifications `tags` from a phone.
+pub fn revoke_payload(tags: &[String]) -> Value {
+    json!({ "aps": { "content-available": 1 }, "data": { "event": "notification.revoke", "tags": tags } })
+}
+
+/// Send [`revoke_payload`] to every iOS device of `user` (`apns-push-type: background`, priority 5).
+/// Returns how many APNs accepted. Web Push gets no revoke: the page closes its own notifications.
+pub async fn revoke(db: &PgPool, user: &str, tags: &[String]) -> usize {
+    if tags.is_empty() || Apns::from_env().is_none() {
+        return 0;
+    }
+    let targets = match device_targets(db, user).await {
+        Ok(rows) => rows,
+        Err(error) => {
+            tracing::warn!("apns: reading tokens for a revoke failed: {error}");
+            return 0;
+        }
+    };
+    let body = revoke_payload(tags);
+    let mut accepted = 0;
+    for target in &targets {
+        if send_raw(db, "background", "", 5, &body, target, &RawOptions::default()).await {
+            accepted += 1;
+        }
+    }
+    accepted
 }
 
 /// True when APNs is configured and `user` has at least one iOS device registered.
@@ -292,10 +602,67 @@ struct RegisterBody {
     environment: Option<String>,
     #[serde(default)]
     device_id: Option<String>,
+    #[serde(default)]
+    os_version: Option<String>,
+    #[serde(default)]
+    app_build: Option<String>,
+    #[serde(default)]
+    capabilities: Option<Vec<String>>,
+}
+
+/// What the app tells us about the device at registration (all optional for old apps).
+#[derive(Clone, Debug, Default)]
+pub struct DeviceInfo {
+    pub device_id: String,
+    pub os_version: Option<String>,
+    pub app_build: Option<String>,
+    /// Only [`KNOWN_CAPABILITIES`], each once.
+    pub capabilities: Vec<String>,
+}
+
+impl DeviceInfo {
+    fn from_body(body: &RegisterBody) -> Self {
+        let short = |v: &Option<String>| v.as_deref().map(str::trim).filter(|v| !v.is_empty()).map(|v| v.chars().take(40).collect::<String>());
+        let mut capabilities: Vec<String> = Vec::new();
+        for c in body.capabilities.iter().flatten() {
+            let c = c.trim();
+            if KNOWN_CAPABILITIES.contains(&c) && !capabilities.iter().any(|have| have == c) {
+                capabilities.push(c.to_string());
+            }
+        }
+        Self {
+            device_id: body.device_id.as_deref().unwrap_or_default().trim().chars().take(100).collect(),
+            os_version: short(&body.os_version),
+            app_build: short(&body.app_build),
+            capabilities,
+        }
+    }
+}
+
+/// A registration: the row id and the new device read token (shown once; only its hash is stored).
+#[derive(Clone, Debug)]
+pub struct Registered {
+    pub id: String,
+    pub read_token: String,
 }
 
 fn token_ok(token: &str) -> bool {
     (32..=200).contains(&token.len()) && token.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+/// sha256 hex; how a read token's secret is stored.
+pub(crate) fn sha256_hex(data: &[u8]) -> String {
+    hex::encode(Sha256::digest(data))
+}
+
+/// A fresh read token for device row `id`: `adr_<id without "apns_">_<64 hex>`, and the hash to store.
+fn new_read_token(id: &str) -> Result<(String, String), String> {
+    use aws_lc_rs::rand::SecureRandom;
+    let mut secret = [0u8; 32];
+    SystemRandom::new().fill(&mut secret).map_err(|e| format!("{e}"))?;
+    let secret = hex::encode(secret);
+    let row = id.strip_prefix("apns_").unwrap_or(id);
+    Ok((format!("{READ_TOKEN_PREFIX}{row}_{secret}"), sha256_hex(secret.as_bytes())))
 }
 
 async fn register_route(State(state): State<Arc<ApiState>>, headers: HeaderMap, Json(body): Json<RegisterBody>) -> Response {
@@ -312,9 +679,9 @@ async fn register_route(State(state): State<Arc<ApiState>>, headers: HeaderMap, 
         return error(StatusCode::BAD_REQUEST, "bad_token");
     }
     let env = body.environment.as_deref().and_then(normalize_env).unwrap_or(apns.default_env);
-    let device_id: String = body.device_id.unwrap_or_default().trim().chars().take(100).collect();
-    match register(&state.db, &user, &token, env, &device_id).await {
-        Ok(Some(id)) => (StatusCode::CREATED, Json(json!({ "ok": true, "id": id }))).into_response(),
+    let device = DeviceInfo::from_body(&body);
+    match register(&state.db, &user, &token, env, &device).await {
+        Ok(Some(done)) => (StatusCode::CREATED, Json(json!({ "ok": true, "id": done.id, "readToken": done.read_token }))).into_response(),
         Ok(None) => error(StatusCode::TOO_MANY_REQUESTS, "too_many_devices"),
         Err(e) => {
             tracing::error!("apns register: {e}");
@@ -323,33 +690,45 @@ async fn register_route(State(state): State<Arc<ApiState>>, headers: HeaderMap, 
     }
 }
 
-/// Register (or move) one device token. A token belongs to one person: registering it while signed in as
-/// someone else moves it to them. `None` when the person is at the device cap.
-pub async fn register(db: &PgPool, user: &str, token: &str, env: &str, device_id: &str) -> Result<Option<String>, sqlx::Error> {
+/// Register (or move) one device token and issue a new read token for it. A token belongs to one person:
+/// registering it while signed in as someone else moves it to them, and the previous owner's activity
+/// tokens for that device are removed. `None` when the person is at the device cap.
+pub async fn register(db: &PgPool, user: &str, token: &str, env: &str, device: &DeviceInfo) -> Result<Option<Registered>, sqlx::Error> {
     let existing: i64 = sqlx::query_scalar("SELECT count(*) FROM apns_device_tokens WHERE user_id = $1 AND token <> $2").bind(user).bind(token).fetch_one(db).await?;
     if existing >= MAX_TOKENS_PER_USER {
         return Ok(None);
     }
     let mut tx = db.begin().await?;
-    if !device_id.is_empty() {
+    let previous: Option<(String, String)> = sqlx::query_as("SELECT user_id, device_id FROM apns_device_tokens WHERE token = $1").bind(token).fetch_optional(&mut *tx).await?;
+    if let Some((old_user, old_device)) = previous.filter(|(old_user, _)| old_user != user) {
+        if !old_device.is_empty() {
+            sqlx::query("DELETE FROM apns_activity_tokens WHERE user_id = $1 AND device_id = $2").bind(&old_user).bind(&old_device).execute(&mut *tx).await?;
+        }
+    }
+    if !device.device_id.is_empty() {
         // A reinstall hands the same device a new token; keep one row per device.
-        sqlx::query("DELETE FROM apns_device_tokens WHERE user_id = $1 AND device_id = $2 AND token <> $3").bind(user).bind(device_id).bind(token).execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM apns_device_tokens WHERE user_id = $1 AND device_id = $2 AND token <> $3").bind(user).bind(&device.device_id).bind(token).execute(&mut *tx).await?;
     }
     let id = format!("apns_{}", uuid::Uuid::new_v4().simple());
     let id: String = sqlx::query_scalar(
-        "INSERT INTO apns_device_tokens (id, user_id, token, environment, device_id) VALUES ($1, $2, $3, $4, $5)
-         ON CONFLICT (token) DO UPDATE SET user_id = $2, environment = $4, device_id = $5, failures = 0, last_error = NULL
+        "INSERT INTO apns_device_tokens (id, user_id, token, environment, device_id, os_version, app_build, capabilities) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         ON CONFLICT (token) DO UPDATE SET user_id = $2, environment = $4, device_id = $5, os_version = $6, app_build = $7, capabilities = $8, failures = 0, last_error = NULL
          RETURNING id",
     )
     .bind(&id)
     .bind(user)
     .bind(token)
     .bind(env)
-    .bind(device_id)
+    .bind(&device.device_id)
+    .bind(&device.os_version)
+    .bind(&device.app_build)
+    .bind(json!(device.capabilities))
     .fetch_one(&mut *tx)
     .await?;
+    let (read_token, hash) = new_read_token(&id).map_err(|e| sqlx::Error::Protocol(format!("read token: {e}")))?;
+    sqlx::query("UPDATE apns_device_tokens SET read_token_hash = $2 WHERE id = $1").bind(&id).bind(&hash).execute(&mut *tx).await?;
     tx.commit().await?;
-    Ok(Some(id))
+    Ok(Some(Registered { id, read_token }))
 }
 
 #[derive(Deserialize)]
@@ -364,8 +743,14 @@ async fn unregister_route(State(state): State<Arc<ApiState>>, headers: HeaderMap
         Err(e) => return e.into_response(),
     };
     let token = body.token.trim().to_ascii_lowercase();
-    match sqlx::query("DELETE FROM apns_device_tokens WHERE user_id = $1 AND token = $2").bind(&user).bind(&token).execute(&state.db).await {
-        Ok(done) => Json(json!({ "ok": true, "removed": done.rows_affected() > 0 })).into_response(),
+    match sqlx::query_scalar::<_, String>("DELETE FROM apns_device_tokens WHERE user_id = $1 AND token = $2 RETURNING device_id").bind(&user).bind(&token).fetch_optional(&state.db).await {
+        Ok(device_id) => {
+            let removed = device_id.is_some();
+            if let Some(device_id) = device_id {
+                forget_device_activity(&state.db, &user, &device_id).await;
+            }
+            Json(json!({ "ok": true, "removed": removed })).into_response()
+        }
         Err(e) => {
             tracing::error!("apns unregister: {e}");
             error(StatusCode::INTERNAL_SERVER_ERROR, "internal")
@@ -373,12 +758,144 @@ async fn unregister_route(State(state): State<Arc<ApiState>>, headers: HeaderMap
     }
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ActivityBody {
+    device_id: String,
+    kind: String,
+    #[serde(default)]
+    attributes_type: Option<String>,
+    #[serde(default)]
+    activity_key: Option<String>,
+    token: String,
+    #[serde(default)]
+    environment: Option<String>,
+}
+
+/// Live Activity and widget push tokens are longer than device tokens.
+fn activity_token_ok(token: &str) -> bool {
+    (32..=400).contains(&token.len()) && token.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+async fn activity_put_route(State(state): State<Arc<ApiState>>, headers: HeaderMap, Json(body): Json<ActivityBody>) -> Response {
+    let Some(apns) = Apns::from_env() else { return error(StatusCode::SERVICE_UNAVAILABLE, "apns_not_configured") };
+    let user = match crate::auth::resolve_user_scoped(&state.db, &headers, "compute").await {
+        Ok(u) => u.id,
+        Err(e) => return e.into_response(),
+    };
+    let kind = body.kind.trim();
+    if !ACTIVITY_KINDS.contains(&kind) {
+        return error(StatusCode::BAD_REQUEST, "bad_kind");
+    }
+    let token = body.token.trim().to_ascii_lowercase();
+    if !activity_token_ok(&token) {
+        return error(StatusCode::BAD_REQUEST, "bad_token");
+    }
+    let device_id: String = body.device_id.trim().chars().take(100).collect();
+    if device_id.is_empty() {
+        return error(StatusCode::BAD_REQUEST, "device_id_required");
+    }
+    let text = |v: &Option<String>| v.as_deref().map(str::trim).filter(|v| !v.is_empty()).map(|v| v.chars().take(100).collect::<String>());
+    let attributes_type = text(&body.attributes_type);
+    let activity_key = text(&body.activity_key);
+    let env = body.environment.as_deref().and_then(normalize_env).unwrap_or(apns.default_env);
+    match put_activity(&state.db, &user, &device_id, kind, attributes_type.as_deref(), activity_key.as_deref(), &token, env).await {
+        Ok(ActivityPut::Saved(id)) => (StatusCode::CREATED, Json(json!({ "ok": true, "id": id }))).into_response(),
+        Ok(ActivityPut::UnknownDevice) => error(StatusCode::NOT_FOUND, "unknown_device"),
+        Ok(ActivityPut::TooMany) => error(StatusCode::TOO_MANY_REQUESTS, "too_many_tokens"),
+        Err(e) => {
+            tracing::error!("apns activity token: {e}");
+            error(StatusCode::INTERNAL_SERVER_ERROR, "internal")
+        }
+    }
+}
+
+enum ActivityPut {
+    Saved(String),
+    UnknownDevice,
+    TooMany,
+}
+
+/// Save one activity token. One push-to-start token per device and attributes type, one widget token per
+/// device, one update token per running activity (`activity_key`): a newer one replaces the older.
+#[allow(clippy::too_many_arguments)]
+async fn put_activity(db: &PgPool, user: &str, device_id: &str, kind: &str, attributes_type: Option<&str>, activity_key: Option<&str>, token: &str, env: &str) -> Result<ActivityPut, sqlx::Error> {
+    let known: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM apns_device_tokens WHERE user_id = $1 AND device_id = $2)").bind(user).bind(device_id).fetch_one(db).await?;
+    if !known {
+        return Ok(ActivityPut::UnknownDevice);
+    }
+    let held: i64 = sqlx::query_scalar("SELECT count(*) FROM apns_activity_tokens WHERE user_id = $1 AND token <> $2").bind(user).bind(token).fetch_one(db).await?;
+    if held >= MAX_ACTIVITY_TOKENS_PER_USER {
+        return Ok(ActivityPut::TooMany);
+    }
+    let mut tx = db.begin().await?;
+    let replaced = match kind {
+        "la_start" => Some(("attributes_type", attributes_type)),
+        "la_update" => activity_key.map(|k| ("activity_key", Some(k))),
+        _ => None,
+    };
+    match replaced {
+        Some((column, value)) => {
+            sqlx::query(&format!("DELETE FROM apns_activity_tokens WHERE user_id = $1 AND device_id = $2 AND kind = $3 AND {column} IS NOT DISTINCT FROM $4 AND token <> $5"))
+                .bind(user)
+                .bind(device_id)
+                .bind(kind)
+                .bind(value)
+                .bind(token)
+                .execute(&mut *tx)
+                .await?;
+        }
+        None if kind == "widget" => {
+            sqlx::query("DELETE FROM apns_activity_tokens WHERE user_id = $1 AND device_id = $2 AND kind = 'widget' AND token <> $3").bind(user).bind(device_id).bind(token).execute(&mut *tx).await?;
+        }
+        None => {}
+    }
+    let id = format!("apat_{}", uuid::Uuid::new_v4().simple());
+    let id: String = sqlx::query_scalar(
+        "INSERT INTO apns_activity_tokens (id, user_id, device_id, kind, attributes_type, activity_key, token, environment) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         ON CONFLICT (token) DO UPDATE SET user_id = $2, device_id = $3, kind = $4, attributes_type = $5, activity_key = $6, environment = $8, failures = 0, last_error = NULL
+         RETURNING id",
+    )
+    .bind(&id)
+    .bind(user)
+    .bind(device_id)
+    .bind(kind)
+    .bind(attributes_type)
+    .bind(activity_key)
+    .bind(token)
+    .bind(env)
+    .fetch_one(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(ActivityPut::Saved(id))
+}
+
+#[derive(Deserialize)]
+struct ActivityDeleteBody {
+    token: String,
+}
+
+async fn activity_delete_route(State(state): State<Arc<ApiState>>, headers: HeaderMap, Json(body): Json<ActivityDeleteBody>) -> Response {
+    let user = match crate::auth::resolve_user_scoped(&state.db, &headers, "compute").await {
+        Ok(u) => u.id,
+        Err(e) => return e.into_response(),
+    };
+    let token = body.token.trim().to_ascii_lowercase();
+    match sqlx::query("DELETE FROM apns_activity_tokens WHERE user_id = $1 AND token = $2").bind(&user).bind(&token).execute(&state.db).await {
+        Ok(done) => Json(json!({ "ok": true, "removed": done.rows_affected() > 0 })).into_response(),
+        Err(e) => {
+            tracing::error!("apns activity unregister: {e}");
+            error(StatusCode::INTERNAL_SERVER_ERROR, "internal")
+        }
+    }
+}
+
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     /// A throwaway P-256 PKCS#8 key generated for this test only.
-    fn fixture_pem() -> String {
+    pub(crate) fn fixture_pem() -> String {
         let rng = SystemRandom::new();
         let doc = EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &rng).unwrap();
         let b64 = STANDARD.encode(doc.as_ref());
@@ -404,14 +921,71 @@ mod tests {
         assert!(Apns::new("not a key", "K", "T", "com.allternit.mobile", "sandbox").is_err());
     }
 
+    fn device(caps: &[&str], focus: Option<Focus>) -> PushTarget {
+        PushTarget {
+            table: TokenTable::Device,
+            id: "d1".into(),
+            user_id: "u1".into(),
+            device_id: "phone".into(),
+            token: "t".into(),
+            environment: "sandbox".into(),
+            capabilities: caps.iter().map(|c| c.to_string()).collect(),
+            kind: None,
+            attributes_type: None,
+            activity_key: None,
+            focus,
+        }
+    }
+
+    /// The sink's copy of a held send from Raven (`notifications::message_for` builds `data`).
+    fn approval() -> PushMessage {
+        crate::routes::notifications::message_for(
+            "approval.requested",
+            &json!({ "botId": "b1", "botName": "Raven", "approvalId": "ap1", "summary": "send the invoice to Acme", "inboxId": "approval:ap1", "inboxKind": "held_send", "approveInline": true, "contentHash": "ab12", "sessionId": "s1", "runtimeId": "rt_1" }),
+        )
+        .unwrap()
+    }
+
     #[test]
-    fn payload_carries_alert_and_app_url() {
-        let msg = PushMessage { kind: "message", title: "Raven".into(), body: "Done".into(), url: "/b/bot_1".into(), tag: "thread-1".into(), data: json!({"event": "message.received"}), ttl_secs: 60, high_urgency: false };
-        let p = payload(&msg);
-        assert_eq!(p["aps"]["alert"]["title"], "Raven");
-        assert_eq!(p["aps"]["thread-id"], "thread-1");
-        assert_eq!(p["url"], "/b/bot_1");
-        assert_eq!(p["type"], "message");
+    fn payload_per_capability_set() {
+        let msg = approval();
+        // An app from before the system surfaces: today's alert, full text, no buttons, no extension flag.
+        let old = payload(&msg, &device(&[], None));
+        assert_eq!(old["aps"]["alert"]["body"], "Raven wants to: send the invoice to Acme");
+        assert!(old["aps"].get("category").is_none() && old["aps"].get("mutable-content").is_none(), "{old}");
+        assert_eq!(old["aps"]["sound"], "default");
+        assert_eq!(old["aps"]["interruption-level"], "time-sensitive", "approvals are needs-you");
+        assert_eq!(old["aps"]["thread-id"], "bot-b1");
+        assert_eq!((old["tag"].as_str(), old["url"].as_str()), (Some("approval-ap1"), Some("/?allternit_inbox=approval%3Aap1")));
+        for key in ["event", "inboxId", "runtimeId", "botId", "sessionId", "contentHash", "private"] {
+            assert!(!old["data"][key].is_null(), "data.{key} in {old}");
+        }
+        // Buttons only: the category, still the full text.
+        let actions = payload(&msg, &device(&["actions"], None));
+        assert_eq!(actions["aps"]["category"], "APPROVAL_INLINE");
+        assert_eq!(actions["aps"]["alert"]["body"], "Raven wants to: send the invoice to Acme");
+        assert!(actions["aps"].get("mutable-content").is_none());
+        // Buttons and the extension: a generic body the extension replaces.
+        let full = payload(&msg, &device(&["actions", "nse"], None));
+        assert_eq!(full["aps"]["category"], "APPROVAL_INLINE");
+        assert_eq!(full["aps"]["mutable-content"], 1);
+        assert_eq!(full["aps"]["alert"]["body"], "A bot is waiting for your OK.");
+        assert!(!full.to_string().contains("Acme"), "no private text rides in the push: {full}");
+        // Not private: the text stays even with the extension.
+        let mut public = approval();
+        public.data["private"] = json!(false);
+        assert_eq!(payload(&public, &device(&["nse"], None))["aps"]["alert"]["body"], "Raven wants to: send the invoice to Acme");
+        // A normal-level push is not time-sensitive.
+        let reply = crate::routes::notifications::message_for("message.received", &json!({ "botId": "b1", "from": "Raven", "text": "done", "senderKind": "bot" })).unwrap();
+        let p = payload(&reply, &device(&["actions"], None));
+        assert!(p["aps"].get("interruption-level").is_none(), "{p}");
+        assert_eq!((p["aps"]["category"].as_str(), p["aps"]["sound"].as_str()), (Some("BOT_REPLY"), Some("default")));
+    }
+
+    #[test]
+    fn revoke_is_a_silent_push_with_the_tags() {
+        let p = revoke_payload(&["approval-ap1".to_string()]);
+        assert_eq!(p, json!({ "aps": { "content-available": 1 }, "data": { "event": "notification.revoke", "tags": ["approval-ap1"] } }));
     }
 
     #[test]

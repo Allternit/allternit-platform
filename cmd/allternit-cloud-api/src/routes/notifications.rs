@@ -37,8 +37,37 @@
 //!   switch-over never notifies twice.
 //!
 //! Coding-session permission asks (`approval.requested` with
-//! `source = "gizzi-permission"`) are pushed by the remote-control lane
-//! (`services/remote-control-push`) and are not pushed again here.
+//! `source = "gizzi-permission"`) reach browsers through the remote-control lane
+//! (`services/remote-control-push`), so the sink sends them to iPhones (APNs) only,
+//! never as a second Web Push.
+//!
+//! ## What every sink push carries (`data`)
+//!
+//! `event`, `eventId`, `botId`, `threadId`, plus when the event has them `inboxId`, `runtimeId`,
+//! `sessionId`, `contentHash`, `senderKind`, `botAvatar` (https only); always `private` (bool),
+//! `level` (`low | normal | needs_you | urgent`) and, when it has buttons, `category` ([`category`]).
+//! A push for an inbox item uses the item as its tag (`approval:ap1` → `approval-ap1`), and an
+//! approval opens `/?allternit_inbox=<id>`. [`super::apns::payload`] turns these into the per-device
+//! APNs alert; Web Push sends them as they are.
+//!
+//! Finished runs (`agent.run.completed`) push by default only when the run failed or took
+//! [`LONG_RUN_SECS`] or longer ([`run_worth_pushing`]); turned on explicitly, every run pushes;
+//! turned off, none does.
+//!
+//! ## Status snapshots and revoke
+//!
+//! The runtime forwards `status.snapshot` (never a notification). [`ingest_snapshot`] keeps the
+//! latest per runtime in `status_snapshots`; every inbox id that left `needsYou` since the last one
+//! has its delivered notifications (`notification_delivered`) removed from the person's iPhones by a
+//! background push ([`super::apns::revoke`]).
+//!
+//! ## Focus filter
+//!
+//! - `PUT /api/v1/notifications/focus` `{deviceId, active, allowedBotIds: [..] | null, allowApprovals?}` →
+//!   `{ok, deviceId, focus}`. 400 `bad_value`, 404 `unknown_device`. While `active` and confirmed in the
+//!   last 24 hours, alerts to that iPhone from bots not in `allowedBotIds` (`null`: no bot) arrive as
+//!   `passive` with no sound; nothing is dropped. Approvals keep their level when `allowApprovals`
+//!   (default true).
 //!
 //! ## Preferences
 //!
@@ -105,7 +134,8 @@ use crate::ApiState;
 pub const DEFAULTS: &[(&str, bool)] = &[
     ("approval.requested", true),
     ("approval.resolved", false),
-    ("agent.run.completed", false),
+    // Only failed or long runs unless turned on explicitly (see `run_worth_pushing`).
+    ("agent.run.completed", true),
     ("thread.needs_user", true),
     // The app already pushed channel and in-app messages before the sink.
     ("message.received", true),
@@ -165,6 +195,7 @@ pub fn routes() -> Router<Arc<ApiState>> {
         .route("/api/v1/notifications/preferences", get(get_route).put(put_route))
         .route("/api/v1/notifications/quiet-hours", get(get_quiet_route).put(put_quiet_route))
         .route("/api/v1/notifications/ack", axum::routing::post(ack_route))
+        .route("/api/v1/notifications/focus", axum::routing::put(put_focus_route))
 }
 
 /// Event types a person can get pushed: every user-subject event in the registry.
@@ -176,16 +207,33 @@ pub fn default_enabled(event: &str) -> bool {
     DEFAULTS.iter().find(|(n, _)| *n == event).is_some_and(|(_, on)| *on)
 }
 
-/// Whether `user` wants pushes for `event`. A read error falls back to the default.
-pub async fn enabled(db: &PgPool, user: &str, event: &str) -> bool {
+/// The switch `user` set for `event`, or `None` when they never changed it (or it can't be read).
+pub async fn preference(db: &PgPool, user: &str, event: &str) -> Option<bool> {
     match sqlx::query_scalar::<_, bool>("SELECT enabled FROM notification_preferences WHERE user_id = $1 AND event_type = $2").bind(user).bind(event).fetch_optional(db).await {
-        Ok(Some(on)) => on,
-        Ok(None) => default_enabled(event),
+        Ok(on) => on,
         Err(error) => {
             tracing::warn!("notifications: reading preference failed: {error}");
-            default_enabled(event)
+            None
         }
     }
+}
+
+/// Whether `user` wants pushes for `event`. A read error falls back to the default.
+pub async fn enabled(db: &PgPool, user: &str, event: &str) -> bool {
+    preference(db, user, event).await.unwrap_or_else(|| default_enabled(event))
+}
+
+/// A successful run this long or longer is worth a push by default.
+pub const LONG_RUN_SECS: f64 = 120.0;
+
+/// The default rule for `agent.run.completed`: push a failed run, or one that ran [`LONG_RUN_SECS`] or
+/// longer. A short or unmeasured successful run does not push (the Live Activity's end state covers it).
+pub fn run_worth_pushing(data: &Value) -> bool {
+    if matches!(s(data, &["status"]), Some("failed" | "error" | "errored" | "timeout" | "timed_out")) {
+        return true;
+    }
+    let secs = num(data, "durationMs").or(num(data, "duration_ms")).map(|ms| ms / 1000.0).or(num(data, "durationSec")).or(num(data, "duration_s"));
+    secs.is_some_and(|s| s >= LONG_RUN_SECS)
 }
 
 /// The preferences list the app renders as switches, in registry order.
@@ -776,9 +824,6 @@ pub fn message_for(event: &str, data: &Value) -> Option<PushMessage> {
     };
     match event {
         "approval.requested" => {
-            if s(data, &["source"]) == Some("gizzi-permission") {
-                return None;
-            }
             let id = s(data, &["approval_id", "approvalId"]).unwrap_or("approval");
             msg.title = "Approval needed".into();
             msg.body = match s(data, &["summary", "action"]) {
@@ -924,7 +969,187 @@ pub fn message_for(event: &str, data: &Value) -> Option<PushMessage> {
         }
         _ => return None,
     }
+    enrich(&mut msg, event, data);
     Some(msg)
+}
+
+/// Inbox kinds the owner approves or denies (the runtime's `inboxKind`).
+pub const APPROVAL_KINDS: [&str; 5] = ["approval", "held_send", "email_draft", "factory_approval", "gizzi_permission"];
+
+/// The notification buttons for an event (`APPROVAL_INLINE`, `APPROVAL_REVIEW`, `BOT_REPLY`, `RUN_DONE`,
+/// `NEEDS_FIX`; the app registers the same identifiers), chosen from `inboxKind` before the event name so an
+/// email draft that arrives as `thread.needs_user` still gets approval buttons. Inline Approve only when the
+/// runtime says the whole text and recipient fit (`approveInline`) and sent the `contentHash` the approve call
+/// must echo. Approval buttons need an `inboxId` to act on.
+pub fn category(event: &str, data: &Value) -> Option<&'static str> {
+    let inbox = s(data, &["inboxId", "inbox_id"]);
+    let kind = s(data, &["inboxKind", "inbox_kind"]);
+    if kind.is_some_and(|k| APPROVAL_KINDS.contains(&k)) {
+        inbox?;
+        let inline = data.get("approveInline").and_then(Value::as_bool) == Some(true) && s(data, &["contentHash", "content_hash"]).is_some();
+        return Some(if inline { "APPROVAL_INLINE" } else { "APPROVAL_REVIEW" });
+    }
+    match event {
+        "approval.requested" if inbox.is_some() => Some("APPROVAL_REVIEW"),
+        "message.received" if s(data, &["senderKind", "sender_kind"]) == Some("bot") => Some("BOT_REPLY"),
+        "thread.needs_user" if kind.is_none() => Some("BOT_REPLY"),
+        "agent.run.completed" => Some("RUN_DONE"),
+        "attention.opened" => Some("NEEDS_FIX"),
+        _ => None,
+    }
+}
+
+/// The notification tag for an inbox item: every run of characters other than letters, digits, `_` and `-`
+/// becomes one `-` (`approval:ap1` → `approval-ap1`), the same rule as the web worker (allternit-ai
+/// `public/inbox-action-sw.js` `inboxTag`), so its result notification replaces this one.
+pub fn inbox_tag(inbox_id: &str) -> String {
+    let mut out = String::new();
+    for c in inbox_id.chars() {
+        if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+            out.push(c);
+        } else if !out.ends_with('-') {
+            out.push('-');
+        }
+    }
+    clip(&out, 120)
+}
+
+fn level_name(l: Level) -> &'static str {
+    match l {
+        Level::Low => "low",
+        Level::Normal => "normal",
+        Level::NeedsYou => "needs_you",
+        Level::Urgent => "urgent",
+    }
+}
+
+/// The `data` keys every push of a backbone event carries (see the module docs), and the inbox item's tag
+/// and link.
+fn enrich(msg: &mut PushMessage, event: &str, data: &Value) {
+    let mut inbox = s(data, &["inboxId", "inbox_id"]).map(str::to_string);
+    if inbox.is_none() && matches!(event, "attention.opened" | "attention.resolved") {
+        inbox = s(data, &["attention_id", "attentionId"]).map(|id| format!("attention:{id}"));
+    }
+    let category = category(event, data);
+    let private = data.get("private").and_then(Value::as_bool).unwrap_or(matches!(event, "approval.requested" | "message.received" | "thread.needs_user"));
+    let avatar = s(data, &["botAvatar", "botAvatarUrl", "avatarUrl"]).filter(|u| u.starts_with("https://") && !u.contains(['\n', '\r', ' ']));
+    let Some(d) = msg.data.as_object_mut() else { return };
+    for (out, keys) in [("runtimeId", ["runtimeId", "runtime_id"]), ("sessionId", ["sessionId", "session_id"]), ("contentHash", ["contentHash", "content_hash"]), ("senderKind", ["senderKind", "sender_kind"])] {
+        if let Some(v) = s(data, &keys) {
+            d.insert(out.into(), json!(v));
+        }
+    }
+    if let Some(a) = avatar {
+        d.insert("botAvatar".into(), json!(a));
+    }
+    if let Some(c) = category {
+        d.insert("category".into(), json!(c));
+    }
+    d.insert("private".into(), json!(private));
+    d.insert("level".into(), json!(level_name(level(event, data))));
+    if let Some(id) = inbox {
+        d.insert("inboxId".into(), json!(id));
+        msg.tag = inbox_tag(&id);
+        if category.is_some_and(|c| c.starts_with("APPROVAL_")) {
+            msg.url = format!("/?allternit_inbox={}", enc(&id));
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Focus filter
+// ---------------------------------------------------------------------------
+
+/// Most bots one Focus filter may allow.
+const MAX_FOCUS_BOTS: usize = 200;
+
+/// The stored filter for a `PUT /api/v1/notifications/focus` body, or the error code.
+fn focus_from_body(body: &Value) -> Result<(String, Value), &'static str> {
+    let device = body.get("deviceId").and_then(Value::as_str).map(str::trim).filter(|d| !d.is_empty() && d.len() <= 200).ok_or("bad_value")?;
+    let active = body.get("active").and_then(Value::as_bool).ok_or("bad_value")?;
+    let allowed = match body.get("allowedBotIds") {
+        None | Some(Value::Null) => Value::Null,
+        Some(Value::Array(a)) if a.len() <= MAX_FOCUS_BOTS && a.iter().all(|v| v.as_str().is_some_and(|s| !s.is_empty() && s.len() <= 200)) => Value::Array(a.clone()),
+        _ => return Err("bad_value"),
+    };
+    let allow_approvals = match body.get("allowApprovals") {
+        None | Some(Value::Null) => true,
+        Some(Value::Bool(b)) => *b,
+        _ => return Err("bad_value"),
+    };
+    Ok((device.to_string(), json!({ "active": active, "allowedBotIds": allowed, "allowApprovals": allow_approvals })))
+}
+
+/// Store `focus` on `user`'s device `device_id` and stamp it confirmed now. False when no such device.
+pub async fn set_focus(db: &PgPool, user: &str, device_id: &str, focus: &Value) -> Result<bool, sqlx::Error> {
+    let done = sqlx::query("UPDATE apns_device_tokens SET focus = $3, focus_at = now() WHERE user_id = $1 AND device_id = $2").bind(user).bind(device_id).bind(focus).execute(db).await?;
+    Ok(done.rows_affected() > 0)
+}
+
+async fn put_focus_route(State(state): State<Arc<ApiState>>, headers: HeaderMap, body: Option<Json<Value>>) -> Response {
+    let user = match crate::auth::resolve_user_scoped(&state.db, &headers, "compute").await {
+        Ok(u) => u.id,
+        Err(e) => return e.into_response(),
+    };
+    let (device, focus) = match body.as_ref().map(|b| focus_from_body(&b.0)) {
+        Some(Ok(v)) => v,
+        _ => return (StatusCode::BAD_REQUEST, Json(json!({ "error": "bad_value" }))).into_response(),
+    };
+    match set_focus(&state.db, &user, &device, &focus).await {
+        Ok(true) => Json(json!({ "ok": true, "deviceId": device, "focus": focus })).into_response(),
+        Ok(false) => (StatusCode::NOT_FOUND, Json(json!({ "error": "unknown_device" }))).into_response(),
+        Err(e) => internal(&e.to_string()),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Status snapshots and revoke
+// ---------------------------------------------------------------------------
+
+fn needs_you(snapshot: &Value) -> Vec<String> {
+    snapshot.get("needsYou").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect()).unwrap_or_default()
+}
+
+/// What [`ingest_snapshot`] did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SnapshotIngest {
+    /// Same content as the stored one: nothing changed.
+    Unchanged,
+    /// Stored. `revoke` holds the notification tags to remove from the person's iPhones (their
+    /// `notification_delivered` rows are already deleted).
+    Stored { revoke: Vec<String> },
+}
+
+/// Keep `snapshot` as `runtime_id`'s latest for `user`, and work out which delivered notifications to
+/// revoke: those of every inbox id in the previous `needsYou` that is not in this one. Sends nothing;
+/// the caller hands the tags to [`super::apns::revoke`].
+pub async fn ingest_snapshot(db: &PgPool, user: &str, runtime_id: &str, snapshot: &Value) -> Result<SnapshotIngest, sqlx::Error> {
+    let hash = super::apns::sha256_hex(snapshot.to_string().as_bytes());
+    let mut tx = db.begin().await?;
+    let previous: Option<(Value, String)> = sqlx::query_as("SELECT snapshot, hash FROM status_snapshots WHERE user_id = $1 AND runtime_id = $2 FOR UPDATE").bind(user).bind(runtime_id).fetch_optional(&mut *tx).await?;
+    if previous.as_ref().is_some_and(|(_, h)| *h == hash) {
+        return Ok(SnapshotIngest::Unchanged);
+    }
+    sqlx::query(
+        "INSERT INTO status_snapshots (user_id, runtime_id, snapshot, hash, updated_at) VALUES ($1, $2, $3, $4, now())
+         ON CONFLICT (user_id, runtime_id) DO UPDATE SET snapshot = EXCLUDED.snapshot, hash = EXCLUDED.hash, updated_at = now()",
+    )
+    .bind(user)
+    .bind(runtime_id)
+    .bind(snapshot)
+    .bind(&hash)
+    .execute(&mut *tx)
+    .await?;
+    let now = needs_you(snapshot);
+    let left: Vec<String> = previous.map(|(p, _)| needs_you(&p)).unwrap_or_default().into_iter().filter(|id| !now.contains(id)).collect();
+    let mut revoke = Vec::new();
+    if !left.is_empty() {
+        revoke = sqlx::query_scalar("DELETE FROM notification_delivered WHERE user_id = $1 AND inbox_id = ANY($2) RETURNING tag").bind(user).bind(&left).fetch_all(&mut *tx).await?;
+        revoke.sort();
+        revoke.dedup();
+    }
+    tx.commit().await?;
+    Ok(SnapshotIngest::Stored { revoke })
 }
 
 // ---------------------------------------------------------------------------
@@ -988,10 +1213,19 @@ async fn decide_and_send(db: &PgPool, transport: &dyn PushTransport, vapid: &Vap
             let _ = ack_tag(db, user, &m.tag).await;
         }
     }
-    if !enabled(db, user, event).await {
+    let pref = preference(db, user, event).await;
+    if !pref.unwrap_or_else(|| default_enabled(event)) {
         return Outcome::Off;
     }
-    let Some(msg) = message_for(event, data) else { return Outcome::Skipped };
+    if event == "agent.run.completed" && pref.is_none() && !run_worth_pushing(data) {
+        return Outcome::Skipped;
+    }
+    let Some(mut msg) = message_for(event, data) else { return Outcome::Skipped };
+    if let Some(d) = msg.data.as_object_mut() {
+        d.insert("eventId".into(), json!(event_id));
+    }
+    // Coding-session permission asks: browsers get them from the remote-control lane, so only iPhones here.
+    let apns_only = event == "approval.requested" && s(data, &["source"]) == Some("gizzi-permission");
     if event == "message.received" {
         // The switch-over from the direct channel push: that push already told them.
         let direct: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM push_log WHERE user_id = $1 AND collapse_key LIKE 'channel-%' AND created_at > now() - make_interval(secs => $2))")
@@ -1013,7 +1247,8 @@ async fn decide_and_send(db: &PgPool, transport: &dyn PushTransport, vapid: &Vap
     if event == "message.received" && !web_push::allow_message_push(db, user, &msg.tag).await {
         return Outcome::Skipped;
     }
-    if web_push::send_to_user(db, transport, vapid, user, &msg).await > 0 {
+    let sent = if apns_only { super::apns::send_to_user(db, user, &msg).await } else { web_push::send_to_user(db, transport, vapid, user, &msg).await };
+    if sent > 0 {
         Outcome::Sent
     } else {
         Outcome::Unreachable
@@ -1099,7 +1334,7 @@ mod tests {
 
     pub(crate) async fn schema(db: &PgPool) {
         events_backbone_schema(db).await;
-        for sql in [include_str!("../../migrations_pg/039_push_subscriptions.sql"), include_str!("../../migrations_pg/060_notification_preferences.sql"), include_str!("../../migrations_pg/102_notification_quiet_hours.sql"), include_str!("../../migrations_pg/107_quiet_hours_levels.sql")] {
+        for sql in [include_str!("../../migrations_pg/039_push_subscriptions.sql"), include_str!("../../migrations_pg/060_notification_preferences.sql"), include_str!("../../migrations_pg/102_notification_quiet_hours.sql"), include_str!("../../migrations_pg/107_quiet_hours_levels.sql"), include_str!("../../migrations_pg/111_apns_device_tokens.sql"), include_str!("../../migrations_pg/120_ios_system_surfaces.sql")] {
             sqlx::raw_sql(&sql.replace("public.", "")).execute(db).await.expect("migration applies");
         }
     }
@@ -1138,7 +1373,7 @@ mod tests {
         assert!(message_for("message.status", &json!({})).is_none());
         assert!(!pushable().any(|e| e.name == "registration.updated"));
         // Defaults keep what the app did: messages and calls on; finished runs off.
-        for (name, on) in [("approval.requested", true), ("thread.needs_user", true), ("call.ended", true), ("subscription.login_needed", true), ("message.received", true), ("agent.run.completed", false)] {
+        for (name, on) in [("approval.requested", true), ("thread.needs_user", true), ("call.ended", true), ("subscription.login_needed", true), ("message.received", true), ("agent.run.completed", true)] {
             assert_eq!(default_enabled(name), on, "{name}");
         }
     }
@@ -1152,8 +1387,8 @@ mod tests {
         assert!(m.high_urgency);
         let r = message_for("approval.resolved", &json!({ "approvalId": "ap1", "decision": "approved" })).unwrap();
         assert_eq!((r.title.as_str(), r.tag.as_str()), ("Approval approved", "approval-ap1"), "replaces the request");
-        // Coding-session permission asks go through the remote-control lane instead.
-        assert!(message_for("approval.requested", &json!({ "approvalId": "x", "source": "gizzi-permission" })).is_none());
+        // Coding-session permission asks have copy too (the sink sends them to iPhones only).
+        assert_eq!(message_for("approval.requested", &json!({ "approvalId": "x", "source": "gizzi-permission" })).unwrap().tag, "approval-x");
 
         let m = message_for("message.received", &json!({ "channel": "telegram", "from": "Sam", "text": "are you there?" })).unwrap();
         assert_eq!((m.title.as_str(), m.body.as_str(), m.url.as_str(), m.tag.as_str()), ("Sam", "are you there?", "/?allternit_channel=telegram", "channel-telegram"));
@@ -1182,7 +1417,9 @@ mod tests {
         assert_eq!(back.tag, m.tag, "signed in replaces sign-in needed");
 
         let m = message_for("attention.opened", &json!({ "attentionId": "routine_failed:r1", "severity": "warn", "summary": "Morning briefing failed: the bot is signed out.", "actionUrl": "/?bot=b1" })).unwrap();
-        assert_eq!((m.title.as_str(), m.body.as_str(), m.tag.as_str(), m.url.as_str()), ("Something needs fixing", "Morning briefing failed: the bot is signed out.", "attention-routine_failed:r1", "/?bot=b1"));
+        assert_eq!((m.title.as_str(), m.body.as_str(), m.tag.as_str(), m.url.as_str()), ("Something needs fixing", "Morning briefing failed: the bot is signed out.", "attention-routine_failed-r1", "/?bot=b1"));
+        let fixed = message_for("attention.resolved", &json!({ "attentionId": "routine_failed:r1" })).unwrap();
+        assert_eq!(fixed.tag, m.tag, "resolved replaces opened");
         let m = message_for("attention.opened", &json!({ "attention_id": "x", "severity": "critical", "summary": "s", "action_url": "https://evil.example" })).unwrap();
         assert_eq!((m.title.as_str(), m.url.as_str()), ("Needs fixing now", "/"));
         assert!(default_enabled("attention.opened") && !default_enabled("attention.resolved"));
@@ -1412,19 +1649,19 @@ mod tests {
         assert_eq!(list.len(), pushable().count());
         let row = |v: &Value, n: &str| v["preferences"].as_array().unwrap().iter().find(|p| p["event"] == n).unwrap().clone();
         assert_eq!(row(&v, "approval.requested")["title"], "Approval requests");
-        assert_eq!((row(&v, "approval.requested")["enabled"].clone(), row(&v, "agent.run.completed")["enabled"].clone()), (json!(true), json!(false)));
-        let changes = json!({ "approval.requested": false, "agent.run.completed": true });
+        assert_eq!((row(&v, "approval.requested")["enabled"].clone(), row(&v, "inbox.item.created")["enabled"].clone()), (json!(true), json!(false)));
+        let changes = json!({ "approval.requested": false, "inbox.item.created": true });
         set_preferences(&db, "u1", changes.as_object().unwrap()).await.unwrap();
         let v = preferences(&db, "u1").await.unwrap();
         assert_eq!(row(&v, "approval.requested")["enabled"], false);
         assert_eq!(row(&v, "approval.requested")["default"], true);
-        assert_eq!(row(&v, "agent.run.completed")["enabled"], true);
+        assert_eq!(row(&v, "inbox.item.created")["enabled"], true);
         assert!(enabled(&db, "u2", "approval.requested").await, "per user");
         set_preferences(&db, "u1", json!({ "approval.requested": null }).as_object().unwrap()).await.unwrap();
         assert!(enabled(&db, "u1", "approval.requested").await, "null = back to default");
         // All or nothing, registry names only.
-        assert_eq!(set_preferences(&db, "u1", json!({ "agent.run.completed": false, "nope": true }).as_object().unwrap()).await, Err(PrefError::Bad("unknown_event")));
-        assert!(enabled(&db, "u1", "agent.run.completed").await, "the bad batch changed nothing");
+        assert_eq!(set_preferences(&db, "u1", json!({ "inbox.item.created": false, "nope": true }).as_object().unwrap()).await, Err(PrefError::Bad("unknown_event")));
+        assert!(enabled(&db, "u1", "inbox.item.created").await, "the bad batch changed nothing");
         assert_eq!(set_preferences(&db, "u1", json!({ "message.status": true }).as_object().unwrap()).await, Err(PrefError::Bad("unknown_event")));
         assert_eq!(set_preferences(&db, "u1", json!({ "call.ended": "yes" }).as_object().unwrap()).await, Err(PrefError::Bad("bad_value")));
         assert_eq!(set_preferences(&db, "u1", &Map::new()).await, Err(PrefError::Bad("bad_value")));
@@ -1447,7 +1684,7 @@ mod tests {
 
         assert_eq!(sink_once(&db, &rec, &vapid).await.unwrap(), 4);
         assert_eq!(outcome(&db, &wanted).await, "sent");
-        assert_eq!(outcome(&db, &quiet).await, "off", "finished runs are off by default");
+        assert_eq!(outcome(&db, &quiet).await, "skipped", "a short successful run does not push by default");
         assert_eq!(outcome(&db, &theirs_off).await, "off", "u2 turned it off");
         assert_eq!(outcome(&db, &nobody).await, "unreachable", "no device registered");
         {
@@ -1464,7 +1701,25 @@ mod tests {
         assert_eq!(sink_once(&db, &rec, &vapid).await.unwrap(), 0);
         assert_eq!(rec.sent.lock().unwrap().len(), 1);
 
-        // Turning a type on makes the next event of it push.
+        // Failed, or two minutes or longer: pushes by default.
+        let failed = emit(&db, "u1", "agent.run.completed", json!({ "run_id": "r3", "status": "failed", "durationMs": 4000 })).await;
+        let long = emit(&db, "u1", "agent.run.completed", json!({ "run_id": "r4", "status": "completed", "durationMs": 120_000 })).await;
+        let short = emit(&db, "u1", "agent.run.completed", json!({ "run_id": "r5", "status": "completed", "durationMs": 119_000 })).await;
+        sink_once(&db, &rec, &vapid).await.unwrap();
+        assert_eq!((outcome(&db, &failed).await.as_str(), outcome(&db, &long).await.as_str(), outcome(&db, &short).await.as_str()), ("sent", "sent", "skipped"));
+        // Coding-session permission asks: the remote-control lane sends their Web Push, so the sink sends none.
+        let before = rec.sent.lock().unwrap().len();
+        let gizzi = emit(&db, "u1", "approval.requested", json!({ "approvalId": "perm1", "source": "gizzi-permission", "summary": "run tests" })).await;
+        sink_once(&db, &rec, &vapid).await.unwrap();
+        assert_eq!(outcome(&db, &gizzi).await, "unreachable", "no iPhone registered");
+        assert_eq!(rec.sent.lock().unwrap().len(), before, "no second Web Push");
+        // Off wins over the rule.
+        set_preferences(&db, "u2", json!({ "agent.run.completed": false }).as_object().unwrap()).await.unwrap();
+        let u2_failed = emit(&db, "u2", "agent.run.completed", json!({ "status": "failed" })).await;
+        sink_once(&db, &rec, &vapid).await.unwrap();
+        assert_eq!(outcome(&db, &u2_failed).await, "off");
+
+        // Turned on explicitly: every finished run pushes.
         set_preferences(&db, "u1", json!({ "agent.run.completed": true }).as_object().unwrap()).await.unwrap();
         let now_on = emit(&db, "u1", "agent.run.completed", json!({ "run_id": "r2" })).await;
         sink_once(&db, &rec, &vapid).await.unwrap();
@@ -1516,6 +1771,120 @@ mod tests {
         let off = allternit_events::emit_user_event(&db, "u1", "message.received", &json!({ "channel": "telegram" }), None, "runtime:rt-1", Some("rt:be:3")).await.unwrap().unwrap();
         sink_once(&db, &rec, &vapid).await.unwrap();
         assert_eq!(outcome(&db, &off).await, "off");
+    }
+
+    #[test]
+    fn category_comes_from_the_inbox_kind() {
+        let cat = |event: &str, data: Value| message_for(event, &data).unwrap().data["category"].as_str().map(str::to_string);
+        let fits = json!({ "inboxId": "approval:a1", "approveInline": true, "contentHash": "h1" });
+        for kind in APPROVAL_KINDS {
+            let mut d = fits.clone();
+            d["inboxKind"] = json!(kind);
+            assert_eq!(cat("approval.requested", d.clone()).as_deref(), Some("APPROVAL_INLINE"), "{kind}");
+            // An email draft arrives as thread.needs_user and still gets approval buttons.
+            assert_eq!(cat("thread.needs_user", d.clone()).as_deref(), Some("APPROVAL_INLINE"), "{kind} as needs_user");
+            // Too long to show (no approveInline), or no hash to echo: Review.
+            let mut long = d.clone();
+            long["approveInline"] = json!(false);
+            assert_eq!(cat("approval.requested", long).as_deref(), Some("APPROVAL_REVIEW"), "{kind} long");
+            let mut nohash = d.clone();
+            nohash.as_object_mut().unwrap().remove("contentHash");
+            assert_eq!(cat("approval.requested", nohash).as_deref(), Some("APPROVAL_REVIEW"), "{kind} no hash");
+            // Nothing to act on without an inbox id.
+            let mut noid = d.clone();
+            noid.as_object_mut().unwrap().remove("inboxId");
+            assert_eq!(cat("approval.requested", noid), None, "{kind} no id");
+        }
+        // The email draft's link opens the inbox item, and its tag is the item.
+        let m = message_for("thread.needs_user", &json!({ "inboxId": "email:e1", "inboxKind": "email_draft", "botId": "b1", "threadId": "t1" })).unwrap();
+        assert_eq!((m.url.as_str(), m.tag.as_str()), ("/?allternit_inbox=email%3Ae1", "email-e1"));
+        assert_eq!(cat("message.received", json!({ "senderKind": "bot" })).as_deref(), Some("BOT_REPLY"));
+        assert_eq!(cat("message.received", json!({ "senderKind": "person" })), None, "a person's message has no Reply button");
+        assert_eq!(cat("thread.needs_user", json!({})).as_deref(), Some("BOT_REPLY"));
+        assert_eq!(cat("agent.run.completed", json!({ "status": "failed" })).as_deref(), Some("RUN_DONE"));
+        let m = message_for("attention.opened", &json!({ "attentionId": "at9" })).unwrap();
+        assert_eq!((m.data["category"].as_str(), m.data["inboxId"].as_str(), m.tag.as_str()), (Some("NEEDS_FIX"), Some("attention:at9"), "attention-at9"));
+        assert_eq!(cat("usage.threshold", json!({ "meter": "plan" })), None);
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn the_focus_filter_mutes_other_bots_and_lets_approvals_through() {
+        use axum::body::Body;
+        use axum::http::Request;
+        use tower::ServiceExt;
+        use crate::routes::apns::{self, device_targets, payload};
+        std::env::set_var(crate::auth::dev_token::ALLOW_DEV_TOKEN_ENV, "true");
+        std::env::set_var("APNS_KEY_P8", apns::tests::fixture_pem());
+        std::env::set_var("APNS_KEY_ID", "KEY1234567");
+        std::env::set_var("APNS_TEAM_ID", "TEAM123456");
+        let state = crate::routes::test_support::test_state(Arc::new(crate::routes::test_support::MockGateway::new(None, vec![]))).await;
+        let db = state.db.clone();
+        schema(&db).await;
+        let app = Router::new().merge(apns::routes()).merge(routes()).with_state(state);
+        let call = |method: &'static str, path: &'static str, body: Value| {
+            let app = app.clone();
+            async move {
+                let req = Request::builder().method(method).uri(path).header("content-type", "application/json").header("authorization", "Bearer dev-api-token").body(Body::from(body.to_string())).unwrap();
+                app.oneshot(req).await.unwrap().status()
+            }
+        };
+        let token = "f".repeat(64);
+        assert_eq!(call("POST", "/api/v1/device-tokens", json!({ "token": token, "platform": "ios", "deviceId": "phone-1", "capabilities": ["actions", "nse"] })).await, StatusCode::CREATED);
+        assert_eq!(call("PUT", "/api/v1/notifications/focus", json!({ "deviceId": "phone-1", "active": true, "allowedBotIds": ["b-work"], "allowApprovals": true })).await, StatusCode::OK);
+        assert_eq!(call("PUT", "/api/v1/notifications/focus", json!({ "deviceId": "nope", "active": true, "allowedBotIds": null })).await, StatusCode::NOT_FOUND);
+        assert_eq!(call("PUT", "/api/v1/notifications/focus", json!({ "deviceId": "phone-1", "active": "yes" })).await, StatusCode::BAD_REQUEST);
+
+        let target = device_targets(&db, "dev-user").await.unwrap().remove(0);
+        let other = message_for("message.received", &json!({ "botId": "b-home", "from": "Olive", "text": "hi", "senderKind": "bot" })).unwrap();
+        let p = payload(&other, &target);
+        assert_eq!(p["aps"]["interruption-level"], "passive", "another bot's alert is muted, not dropped: {p}");
+        assert!(p["aps"].get("sound").is_none());
+        let allowed = message_for("message.received", &json!({ "botId": "b-work", "from": "Raven", "text": "hi", "senderKind": "bot" })).unwrap();
+        assert!(payload(&allowed, &target)["aps"].get("interruption-level").is_none(), "an allowed bot keeps its level");
+        let ask = message_for("approval.requested", &json!({ "botId": "b-home", "approvalId": "ap1", "inboxId": "approval:ap1", "inboxKind": "approval" })).unwrap();
+        let p = payload(&ask, &target);
+        assert_eq!((p["aps"]["interruption-level"].as_str(), p["aps"]["sound"].as_str()), (Some("time-sensitive"), Some("default")), "approvals pass: {p}");
+
+        // Approvals not allowed: muted too. A filter not confirmed for a day no longer applies.
+        assert_eq!(call("PUT", "/api/v1/notifications/focus", json!({ "deviceId": "phone-1", "active": true, "allowedBotIds": null, "allowApprovals": false })).await, StatusCode::OK);
+        let target = device_targets(&db, "dev-user").await.unwrap().remove(0);
+        assert_eq!(payload(&ask, &target)["aps"]["interruption-level"], "passive");
+        sqlx::query("UPDATE apns_device_tokens SET focus_at = now() - interval '25 hours'").execute(&db).await.unwrap();
+        let target = device_targets(&db, "dev-user").await.unwrap().remove(0);
+        assert_eq!(payload(&other, &target)["aps"]["sound"], "default", "stale filter");
+    }
+
+    #[tokio::test]
+    async fn a_snapshot_revokes_what_left_needs_you() {
+        use crate::routes::runtime_events::ingest;
+        let db = test_pool().await;
+        schema(&db).await;
+        let snap = |id: &str, needs: Value| json!({ "id": id, "type": "status.snapshot", "data": { "pendingApprovals": 2, "needsYou": needs } });
+        let r = ingest(&db, "u1", "rt_1", vec![snap("s1", json!(["approval:ap1", "attention:at9"]))]).await.unwrap();
+        assert_eq!(r["results"][0]["status"], "accepted");
+        // Never a backbone event, so never a notification.
+        assert_eq!(sqlx::query_scalar::<_, i64>("SELECT count(*) FROM platform_events").fetch_one(&db).await.unwrap(), 0);
+        crate::routes::apns::record_delivered(&db, "u1", "approval:ap1", "approval-ap1", Some("e1")).await;
+        crate::routes::apns::record_delivered(&db, "u1", "attention:at9", "attention-at9", Some("e2")).await;
+        crate::routes::apns::record_delivered(&db, "u2", "approval:ap1", "approval-ap1", Some("e3")).await;
+
+        // Same content again: unchanged.
+        let r = ingest(&db, "u1", "rt_1", vec![snap("s2", json!(["approval:ap1", "attention:at9"]))]).await.unwrap();
+        assert_eq!(r["results"][0]["status"], "duplicate");
+        // ap1 was approved on another device: only its tag is revoked, only for this person.
+        assert_eq!(
+            ingest_snapshot(&db, "u1", "rt_1", &json!({ "pendingApprovals": 1, "needsYou": ["attention:at9"] })).await.unwrap(),
+            SnapshotIngest::Stored { revoke: vec!["approval-ap1".into()] }
+        );
+        let left: Vec<(String, String)> = sqlx::query_as("SELECT user_id, inbox_id FROM notification_delivered ORDER BY user_id").fetch_all(&db).await.unwrap();
+        assert_eq!(left, vec![("u1".into(), "attention:at9".into()), ("u2".into(), "approval:ap1".into())]);
+        // Another runtime's snapshot has its own previous state.
+        assert_eq!(ingest_snapshot(&db, "u1", "rt_2", &json!({ "needsYou": [] })).await.unwrap(), SnapshotIngest::Stored { revoke: vec![] });
+        // Every forwarded event carries the runtime cloud authenticated.
+        ingest(&db, "u1", "rt_1", vec![json!({ "id": "e9", "type": "approval.requested", "data": { "approvalId": "ap2", "runtimeId": "spoofed" } })]).await.unwrap();
+        let data: Value = sqlx::query_scalar("SELECT data FROM platform_events").fetch_one(&db).await.unwrap();
+        assert_eq!(data["runtimeId"], "rt_1");
     }
 
     /// The full router builds (no axum route-overlap panic) with these routes in it.
