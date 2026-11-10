@@ -7,7 +7,8 @@ import UIKit
 /// so the app re-sends the stored filter on foreground and background refresh.
 struct FocusFilterClient: Sendable {
     /// The current device id (same value the push-token registration sends).
-    static func currentDeviceId() -> String {
+    /// `UIDevice` is main-actor only, so callers hop to the main actor.
+    @MainActor static func currentDeviceId() -> String {
         UIDevice.current.identifierForVendor?.uuidString ?? ""
     }
 
@@ -34,7 +35,7 @@ struct FocusFilterClient: Sendable {
         guard let saved = FocusFilterStore.load(), saved.request.active,
               Date().timeIntervalSince(saved.at) >= minAge else { return }
         var request = saved.request
-        request.deviceId = currentDeviceId()
+        request.deviceId = await currentDeviceId()
         try? await FocusFilterClient().send(request)
     }
 }

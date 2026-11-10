@@ -44,13 +44,13 @@ struct AskBotControl: ControlWidget {
 struct HandOffTaskControl: ControlWidget {
     var body: some ControlWidgetConfiguration {
         StaticControlConfiguration(kind: "\(controlRoot).handOff") {
-            // There is no hand-off screen route; the main bot's chat is where a task is handed over.
-            ControlWidgetButton(action: OpenAllternitWidgetLinkIntent(urlString: "allternit://bot/main/chat")) {
+            // The bots launchpad composer: a new bot project handed to the team's coordinator.
+            ControlWidgetButton(action: OpenAllternitWidgetLinkIntent(urlString: "allternit://handoff")) {
                 Label("Hand off a task", systemImage: "arrowshape.turn.up.right.fill")
             }
         }
         .displayName("Hand off a task")
-        .description("Opens your main bot so you can hand a task to the team.")
+        .description("Opens the bots launchpad so you can hand a task to the team.")
     }
 }
 

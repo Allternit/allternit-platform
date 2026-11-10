@@ -232,15 +232,22 @@ struct StatusWidget: Widget {
 
 /// Receives the widget push token (iOS 26; confirmed in the WidgetKit
 /// swiftinterface: `WidgetPushHandler.pushTokenDidChange(_:widgets:)`) and
-/// leaves it in the App Group for the app to register with the cloud.
-/// NOT attached to `StatusWidget` yet: attaching needs
-/// `.pushHandler(StatusWidgetPushHandler.self)` behind `#available(iOS 26)`,
-/// and a widget body cannot branch on availability without a build to check.
+/// leaves it in the App Group (`WidgetPushToken.key`); the app uploads it as
+/// `kind: "widget"` on the next foreground (`ActivityTokenRegistry.syncWidgetToken`).
+/// Attached through `StatusWidgetWithPush`, which the iOS 26 bundle uses.
 @available(iOS 26.0, *)
 struct StatusWidgetPushHandler: WidgetPushHandler {
     init() {}
     func pushTokenDidChange(_ pushInfo: WidgetPushInfo, widgets: [WidgetInfo]) {
         let hex = pushInfo.token.map { String(format: "%02x", $0) }.joined()
-        AppGroup.defaults?.set(hex, forKey: "surfaces.widget.pushToken")
+        AppGroup.defaults?.set(hex, forKey: WidgetPushToken.key)
+    }
+}
+
+/// `StatusWidget` with the iOS 26 push handler: same kind, same faces.
+@available(iOS 26.0, *)
+struct StatusWidgetWithPush: Widget {
+    var body: some WidgetConfiguration {
+        StatusWidget().body.pushHandler(StatusWidgetPushHandler.self)
     }
 }

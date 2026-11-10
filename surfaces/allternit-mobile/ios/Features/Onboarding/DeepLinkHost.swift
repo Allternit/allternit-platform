@@ -158,6 +158,10 @@ struct DeepLinkHost: ViewModifier {
             }
         case .routine(let id):
             Task { await openRoutine(id) }
+        case .handoff:
+            // The bots launchpad composer hands a task to the team (a new bot
+            // project + its coordinator), same as HandOffTaskIntent.
+            modeStore.selectBarItem(.agents)
         }
     }
 

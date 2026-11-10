@@ -19,7 +19,9 @@ final class LiveActivityManagerTests: XCTestCase {
             ],
             state: "running",
             timeCreated: 0,
-            timeUpdated: 0
+            timeUpdated: 0,
+            metric: nil,
+            ledger: nil
         )
 
         let state = LoopLiveActivityManager.contentState(for: loop)
@@ -39,7 +41,9 @@ final class LiveActivityManagerTests: XCTestCase {
             iterationLog: [],
             state: "running",
             timeCreated: 0,
-            timeUpdated: 0
+            timeUpdated: 0,
+            metric: nil,
+            ledger: nil
         )
 
         let state = LoopLiveActivityManager.contentState(for: loop)
@@ -202,7 +206,8 @@ final class LiveActivityManagerTests: XCTestCase {
         """)
         XCTAssertFalse(state.showsInlineDecision)
         XCTAssertEqual(state.question, "Needs your approval")
-        XCTAssertEqual(state.inboxURL?.absoluteString, "allternit://inbox/approval:ap1")
+        // Assert where Open lands, not one spelling: ":" may be percent-encoded.
+        XCTAssertEqual(state.inboxURL.flatMap { DeepLink.parse(url: $0) }, .inboxItem("approval:ap1"))
     }
 
     func testMerge_dropsQuestionWhenLocalNoLongerNeedsOwner() throws {

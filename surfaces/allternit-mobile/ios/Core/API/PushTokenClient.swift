@@ -28,7 +28,7 @@ final class PushTokenClient: Sendable {
     /// What this build can do with a push. `la_push`: Live Activity pushes
     /// (plan I3; tokens upload only while the Live Activities switch is on).
     /// `widget_push` joins with plan I6.
-    static let capabilities = ["actions", "nse", "la_push"]
+    static let capabilities = ["actions", "nse", "la_push", "widget_push"]
 
     /// Registers the token; returns the device read token the cloud hands
     /// out once (nil when it already did, or an older server).

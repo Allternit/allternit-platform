@@ -84,6 +84,9 @@ final class NotificationActionsTests: XCTestCase {
 
     func testDeepLinks() {
         XCTAssertEqual(DeepLink.parse(url: URL(string: "allternit://inbox/approval%3Aap1")!), .inboxItem("approval:ap1"))
+        // Hand-off: the control's link, the path, and the web/Android shortcut all open the composer.
+        XCTAssertEqual(DeepLink.parse(url: URL(string: "allternit://handoff")!), .handoff)
+        XCTAssertEqual(DeepLink.parse(url: URL(string: "https://m.allternit.com/?allternit_open=handoff")!), .handoff)
         XCTAssertEqual(DeepLink.parse(url: URL(string: "allternit://bot/b1/chat?prompt=hello%20there")!),
                        .botChat(botId: "b1", prompt: "hello there"))
         XCTAssertEqual(DeepLink.parse(url: URL(string: "allternit://call/main")!), .callMain)

@@ -13,3 +13,9 @@ enum AppGroup {
         UserDefaults(suiteName: identifier)
     }
 }
+
+/// iOS 26 widget push token, hex, written by the widget extension's
+/// `StatusWidgetPushHandler` and uploaded by the app.
+enum WidgetPushToken {
+    static let key = "surfaces.widget.pushToken"
+}

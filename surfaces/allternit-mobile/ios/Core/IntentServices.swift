@@ -422,7 +422,7 @@ extension IntentServices: FocusFilterServicing {
     /// Focus filter: one cloud call; see `FocusFilterClient`.
     func setFocusFilter(_ request: FocusFilterRequest) async throws {
         var r = request
-        r.deviceId = FocusFilterClient.currentDeviceId()
+        r.deviceId = await FocusFilterClient.currentDeviceId()
         try await FocusFilterClient().send(r)
     }
 }
