@@ -46,6 +46,7 @@ struct V2ArtifactView: View {
     @State private var needsSignIn = false
     @State private var isExporting = false
     @State private var sharedFile: SharedArtifactFile?
+    @State private var showingPDFTemplate = false
 
 
     var body: some View {
@@ -75,6 +76,14 @@ struct V2ArtifactView: View {
                 Text(actionError ?? "")
             }
             .sheet(item: $signURL) { item in PDFSignView(sourceURL: item.url) }
+            .sheet(isPresented: $showingPDFTemplate) {
+                if let artifact {
+                    PDFTemplateSheet(artifactTitle: artifact.title, artifactBody: artifact.version.body) { url in
+                        sharedFile = SharedArtifactFile(url: url)
+                    }
+                    .presentationDetents([.medium, .large])
+                }
+            }
             .sheet(item: $sharedFile) { file in
                 ArtifactShareSheet(items: [file.url])
                     .presentationDetents([.medium, .large])
@@ -130,6 +139,12 @@ struct V2ArtifactView: View {
                     } label: { Image(systemName: "square.and.arrow.up") }
                     .disabled(isExporting)
                     .accessibilityLabel("Save or share")
+                }
+                if ["doc", "sheet", "ops", "dashboard"].contains(artifact.kind) {
+                    Button {
+                        showingPDFTemplate = true
+                    } label: { Image(systemName: "doc.richtext") }
+                    .accessibilityLabel("PDF from template")
                 }
                 if let text = copyableText(artifact) {
                     Button {

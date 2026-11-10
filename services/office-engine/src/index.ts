@@ -27,6 +27,7 @@ import { docxToText, parseFileToText, xlsxToText } from '@allternit/office-file-
 import { anydocStatus, convertToMarkdown, MarkdownConversionError } from './markdown'
 import { convertUrlToMarkdown } from './markdown-url'
 import { createXlsxSessionRouter } from './xlsx-sessions'
+import { renderRequestPdf, type PdfRenderRequest } from '@allternit/pdf-templates'
 import { randomUUID } from 'node:crypto'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -248,6 +249,35 @@ app.post('/pptx/roundtrip', async (c) => {
     })
   } catch (err) {
     return c.json({ error: 'roundtrip failed', detail: (err as Error).message }, 422)
+  }
+})
+
+/**
+ * POST /pdf/render
+ * Body: JSON { template, theme?, variant?, pageSize?, data }
+ * Returns: application/pdf bytes. Template names: invoice, report, ticket,
+ * minutes, receipt. Pure-JS writer (pdf-lib), so it runs on any computer.
+ */
+app.post('/pdf/render', async (c) => {
+  let req: PdfRenderRequest
+  try {
+    req = (await c.req.json()) as PdfRenderRequest
+  } catch {
+    return c.json({ error: 'invalid_json', message: 'Body must be JSON.' }, 400)
+  }
+  try {
+    const { bytes, title } = await renderRequestPdf(req)
+    const safe = title.replace(/[^A-Za-z0-9._-]+/g, '-').slice(0, 80) || 'document'
+    return new Response(bytes, {
+      status: 200,
+      headers: {
+        'content-type': 'application/pdf',
+        'content-disposition': `attachment; filename="${safe}.pdf"`,
+        'cache-control': 'no-store',
+      },
+    })
+  } catch (err) {
+    return c.json({ error: 'pdf_render_failed', message: (err as Error).message }, 422)
   }
 })
 

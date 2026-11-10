@@ -11,7 +11,7 @@
  *
  * Free of CLI imports so bun tests can drive it against a temp factory home.
  */
-import { appendFile, mkdir, readFile, rename, stat, utimes, writeFile } from "node:fs/promises"
+import { appendFile, mkdir, readFile, rename, rm, stat, utimes, writeFile } from "node:fs/promises"
 import { homedir } from "node:os"
 import { basename, dirname, join } from "node:path"
 
@@ -93,10 +93,94 @@ export async function readPending(key: string): Promise<InboxMessage[]> {
   return out
 }
 
-export async function markRead(key: string, ids: string[]): Promise<void> {
+export async function markRead(key: string, ids: string[], kind: "delivered" | "read" = "read"): Promise<void> {
   if (!ids.length) return
   await mkdir(inboxDir(), { recursive: true })
   await appendFile(join(inboxDir(), `${key}.read`), ids.join("\n") + "\n")
+  // check_inbox handing the text to the model is the receiver's confirmation and a read; a hook
+  // printing it is a delivery (the next tool call or turn end upgrades it to read).
+  await Promise.all(ids.map((id) => ackHop(id, kind, key)))
+}
+
+function safeId(id: string): string {
+  return id.replace(/[^A-Za-z0-9_-]/g, "-")
+}
+
+/**
+ * The receiver confirmed `hopId`. Stops the engine's re-pushing (removes
+ * `live-pending/<hop>.json`) and leaves `live-acks/<hop>.json`, which the engine
+ * reports to the cloud hop (`delivered`, or `read`). A later `read` upgrades a
+ * `delivered` file; nothing ever downgrades one.
+ */
+export async function ackHop(hopId: string, kind: "delivered" | "read" = "delivered", key = ""): Promise<boolean> {
+  const id = safeId(hopId)
+  const dir = join(factoryHome(), "live-acks")
+  const path = join(dir, `${id}.json`)
+  const prior = JSON.parse(await readFile(path, "utf8").catch(() => "{}")) as { kind?: string; key?: string }
+  const next = prior.kind === "read" ? "read" : kind
+  await mkdir(dir, { recursive: true, mode: 0o700 })
+  await writeFile(path, JSON.stringify({ hopId, kind: next, key: key || prior.key || "", at: new Date().toISOString() }), { mode: 0o600 })
+  return rm(join(factoryHome(), "live-pending", `${id}.json`)).then(
+    () => true,
+    () => false,
+  )
+}
+
+/** Confirm every `<allternit-message id="…">` the text carries (a pushed message reached the prompt): `delivered`. */
+export async function ackEnvelopesIn(text: string, key = ""): Promise<string[]> {
+  const ids = [...text.matchAll(/<allternit-message\b[^>]*?\bid="([^"]+)"/g)].map((m) => m[1])
+  await Promise.all(ids.map((id) => ackHop(id, "delivered", key)))
+  return ids
+}
+
+/**
+ * The session kept working after a hop reached its prompt (next tool call or turn end): the
+ * model has seen it, so every `delivered` hop of this session becomes `read`.
+ */
+export async function markDeliveredRead(key: string): Promise<number> {
+  const dir = join(factoryHome(), "live-acks")
+  const { readdir } = await import("node:fs/promises")
+  let n = 0
+  for (const f of await readdir(dir).catch(() => [] as string[])) {
+    if (!f.endsWith(".json")) continue
+    const row = JSON.parse(await readFile(join(dir, f), "utf8").catch(() => "{}")) as { hopId?: string; kind?: string; key?: string }
+    if (row.kind === "delivered" && row.hopId && row.key === key) {
+      await ackHop(row.hopId, "read", key)
+      n++
+    }
+  }
+  return n
+}
+
+/**
+ * Register this Claude Code process's messaging socket + token with the engine
+ * (`live-messaging/<claude pid>.json`, 0600). Claude hands both to the MCP and
+ * hook processes it starts; the engine needs the token to push, and the folder
+ * + permission mode to wake the session if it closes. Kept after exit on purpose.
+ */
+export async function registerMessaging(
+  env: NodeJS.ProcessEnv = process.env,
+  facts: { sessionId?: string; cwd?: string; permissionMode?: string } = {},
+): Promise<boolean> {
+  const socket = env.CLAUDE_CODE_MESSAGING_SOCKET?.trim()
+  const token = env.CLAUDE_CODE_MESSAGING_TOKEN?.trim()
+  if (!socket || !token) return false
+  const dir = join(factoryHome(), "live-messaging")
+  await mkdir(dir, { recursive: true, mode: 0o700 })
+  const path = join(dir, `${process.ppid}.json`)
+  const prior = JSON.parse(await readFile(path, "utf8").catch(() => "{}")) as Record<string, string>
+  const row = {
+    socket,
+    token,
+    sessionId: facts.sessionId ?? prior.sessionId ?? env.CLAUDE_SESSION_ID ?? "",
+    cwd: facts.cwd ?? prior.cwd ?? process.cwd(),
+    permissionMode: facts.permissionMode ?? prior.permissionMode ?? "",
+    at: new Date().toISOString(),
+  }
+  const tmp = `${path}.${process.pid}.tmp`
+  await writeFile(tmp, JSON.stringify(row), { mode: 0o600 })
+  await rename(tmp, path)
+  return true
 }
 
 /** `N unread from a, b.` or undefined when the inbox is empty. */

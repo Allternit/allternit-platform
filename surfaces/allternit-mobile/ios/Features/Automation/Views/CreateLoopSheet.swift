@@ -11,12 +11,17 @@ struct CreateLoopSheet: View {
     /// Called with the trimmed command, the trimmed exit condition (nil when
     /// left blank — the server defaults to "exit code zero" when absent,
     /// loop-engine.ts:67-69), and the iteration cap.
-    let onCreate: (String, String?, Int) -> Void
+    let onCreate: (String, String?, Int, LoopMetric?) -> Void
 
     @Environment(\.dismiss) private var dismiss
     @State private var command = ""
     @State private var exitCondition = ""
     @State private var maxIterations = 10
+    // Loop Card: a blank instrument keeps this a plain loop.
+    @State private var instrument = ""
+    @State private var lowerIsBetter = true
+    @State private var keepBarPercent = 5
+    @State private var minPairs = 5
     @FocusState private var focusedField: Field?
 
     private enum Field {
@@ -121,6 +126,8 @@ struct CreateLoopSheet: View {
                         )
                     }
 
+                    loopCardSection
+
                     Text("A loop starts running the moment it's created — there's no separate Run step.")
                         .font(.caption2)
                         .foregroundColor(Color("TextSecondary"))
@@ -148,18 +155,64 @@ struct CreateLoopSheet: View {
         .onAppear { focusedField = .command }
     }
 
+    // MARK: - Loop Card
+
+    private var loopCardSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Loop Card (optional)")
+                .font(.caption)
+                .fontWeight(.semibold)
+                .foregroundColor(Color("TextSecondary"))
+            Text("Name the one number to move. Each attempt is measured, kept or reverted, and written to the ledger.")
+                .font(.caption2)
+                .foregroundColor(Color("TextSecondary"))
+            TextField("Instrument command that prints the number", text: $instrument)
+                .font(.subheadline.monospaced())
+                .foregroundColor(Color("TextPrimary"))
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
+                .background(Color("BgPanel"))
+                .clipShape(RoundedRectangle(cornerRadius: Theme.radiusMD))
+            Picker("Better is", selection: $lowerIsBetter) {
+                Text("Lower").tag(true)
+                Text("Higher").tag(false)
+            }
+            .pickerStyle(.segmented)
+            Stepper("Keep bar: \(keepBarPercent)%", value: $keepBarPercent, in: 0...100)
+                .font(.subheadline)
+                .foregroundColor(Color("TextPrimary"))
+            Stepper("Paired runs: \(minPairs)", value: $minPairs, in: 2...50)
+                .font(.subheadline)
+                .foregroundColor(Color("TextPrimary"))
+        }
+        .padding(14)
+        .background(Color("BgPanel"))
+        .clipShape(RoundedRectangle(cornerRadius: Theme.radiusMD))
+    }
+
     // MARK: - Create
 
     private func create() {
         let trimmedCommand = command.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedCommand.isEmpty else { return }
         let trimmedExitCondition = exitCondition.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedInstrument = instrument.trimmingCharacters(in: .whitespacesAndNewlines)
+        let metric: LoopMetric? = trimmedInstrument.isEmpty ? nil : LoopMetric(
+            command: trimmedInstrument,
+            direction: lowerIsBetter ? "lower" : "higher",
+            keepBar: Double(keepBarPercent) / 100,
+            noiseRuns: 5,
+            minPairs: minPairs
+        )
         let generator = UIImpactFeedbackGenerator(style: .light)
         generator.impactOccurred()
         onCreate(
             trimmedCommand,
             trimmedExitCondition.isEmpty ? nil : trimmedExitCondition,
-            maxIterations
+            maxIterations,
+            metric
         )
         dismiss()
     }

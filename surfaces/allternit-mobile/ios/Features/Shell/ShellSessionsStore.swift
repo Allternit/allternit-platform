@@ -23,6 +23,10 @@ final class ShellSessionsStore: ObservableObject {
     /// `unreadCounts`, which iOS can't fill from a live sync of every chat.
     @Published private var seen: [String: Date] = [:]
 
+    /// Sessions running on a connected cloud computer (Teleport), by session id → computer name.
+    /// Everything not listed runs on this Mac.
+    @Published private(set) var cloudPlaces: [String: String] = [:]
+
     private static let seenKey = "allternit-phone-session-seen"
 
     init() {
@@ -45,12 +49,31 @@ final class ShellSessionsStore: ObservableObject {
             }
             saveSeen()
             hasLoaded = true
+            await loadPlaces()
         } catch is CancellationError {
             // View disappeared mid-flight — keep the current state.
         } catch {
             loadError = error.localizedDescription
         }
         isLoading = false
+    }
+
+    /// `GET /api/v1/teleports/placements` → { placements: { sessionId: { targetId, label } } }.
+    /// An older backend has no route; every session then reads as local.
+    func loadPlaces() async {
+        struct Place: Decodable { let label: String }
+        struct Reply: Decodable { let placements: [String: Place] }
+        if let reply: Reply = try? await APIClient.shared.get(path: "teleports/placements") {
+            cloudPlaces = reply.placements.mapValues { $0.label }
+        }
+    }
+
+    /// Move a Code session between this Mac and the connected cloud computer
+    /// (`POST /api/v1/native-sessions/teleport`, the same call the web header makes).
+    func teleport(id: String, toCloud: Bool) async throws {
+        struct Body: Encodable { let sessionId: String; let to: String }
+        try await APIClient.shared.post(path: "native-sessions/teleport", body: Body(sessionId: id, to: toCloud ? "cloud" : "local"))
+        await loadPlaces()
     }
 
     func session(id: String?) -> AgentSession? {

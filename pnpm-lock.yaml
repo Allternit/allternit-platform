@@ -283,6 +283,9 @@ importers:
       '@allternit/os-contracts':
         specifier: workspace:*
         version: link:../../platform/packages/os-contracts
+      '@allternit/pdf-templates':
+        specifier: workspace:*
+        version: link:../../platform/packages/pdf-templates
       '@allternit/plugin':
         specifier: workspace:*
         version: link:packages/plugin
@@ -1934,6 +1937,15 @@ importers:
 
   platform/packages/parallel-run: {}
 
+  platform/packages/pdf-templates:
+    dependencies:
+      '@pdf-lib/fontkit':
+        specifier: ^1.1.1
+        version: 1.1.1
+      pdf-lib:
+        specifier: ^1.17.1
+        version: 1.17.1
+
   platform/packages/plugin-sdk:
     dependencies:
       '@modelcontextprotocol/server':
@@ -2459,6 +2471,9 @@ importers:
       '@allternit/office-xlsx-engine':
         specifier: workspace:*
         version: link:../../platform/packages/office-xlsx-engine
+      '@allternit/pdf-templates':
+        specifier: workspace:*
+        version: link:../../platform/packages/pdf-templates
       '@firecrawl/anydoc':
         specifier: 0.1.6
         version: 0.1.6
@@ -8609,6 +8624,9 @@ packages:
   '@parcel/watcher@2.5.1':
     resolution: {integrity: sha512-dfUnCxiN9H4ap84DvD2ubjw+3vUNpstxa0TneY/Paat8a3R4uQZDLSvWjmznAY/DoahqTHl9V46HF/Zs3F29pg==}
     engines: {node: '>= 10.0.0'}
+
+  '@pdf-lib/fontkit@1.1.1':
+    resolution: {integrity: sha512-KjMd7grNapIWS/Dm0gvfHEilSyAmeLvrEGVcqLGi0VYebuqqzTbgF29efCx7tvx+IEbG3zQciRSWl3GkUSvjZg==}
 
   '@pdf-lib/standard-fonts@1.0.0':
     resolution: {integrity: sha512-hU30BK9IUN/su0Mn9VdlVKsWBS6GyhVfqjwl1FjZN4TxP6cCw0jP2w7V3Hf5uX7M0AZJ16vey9yE0ny7Sa59ZA==}
@@ -29647,6 +29665,10 @@ snapshots:
       '@parcel/watcher-win32-arm64': 2.5.1
       '@parcel/watcher-win32-ia32': 2.5.1
       '@parcel/watcher-win32-x64': 2.5.1
+
+  '@pdf-lib/fontkit@1.1.1':
+    dependencies:
+      pako: 1.0.11
 
   '@pdf-lib/standard-fonts@1.0.0':
     dependencies:

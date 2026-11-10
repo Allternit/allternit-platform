@@ -215,6 +215,9 @@ const windowAPI = {
   setAlwaysOnTop: (enabled: boolean): Promise<void> =>
     ipcRenderer.invoke('window:set-always-on-top', enabled),
   getState: (): Promise<WindowState> => ipcRenderer.invoke('window:get-state'),
+  /** This window's number, tint slot and the open-window count (null outside a main window). */
+  getIdentity: (): Promise<{ number: number; tintIndex: number; count: number } | null> =>
+    ipcRenderer.invoke('window:get-identity'),
   getBounds: (): Promise<WindowBounds> => ipcRenderer.invoke('window:get-bounds'),
   setBounds: (bounds: Partial<WindowBounds>): Promise<void> =>
     ipcRenderer.invoke('window:set-bounds', bounds),
@@ -407,6 +410,9 @@ interface HudPrefs {
 const shellAPI = {
   openExternal: (url: string): Promise<void> => ipcRenderer.invoke('shell:open-external', url),
   openDesign: (): Promise<void> => ipcRenderer.invoke('shell:open-design'),
+  /** Real PDF of an HTML page via Chromium printToPDF. `pdf` is base64. */
+  printToPdf: (req: { html: string; pageSize?: 'Letter' | 'A4'; landscape?: boolean; printBackground?: boolean }): Promise<{ ok: boolean; pdf?: string; bytes?: number; error?: string }> =>
+    ipcRenderer.invoke('shell:print-to-pdf', req),
   openOfficeWindow: (): Promise<void> => ipcRenderer.invoke('shell:open-office-window'),
   openBotsWindow: (): Promise<void> => ipcRenderer.invoke('shell:open-bots-window'),
   openMainWindow: (): Promise<void> => ipcRenderer.invoke('shell:open-main-window'),

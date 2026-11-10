@@ -73,6 +73,7 @@
               "guides/session-overview",
               "guides/system-drawer",
               "guides/office-view",
+              "guides/measured-loops",
               "guides/facility",
               "guides/decisions",
               "guides/plan-approval",
@@ -123,6 +124,7 @@
               "guides/artifact-apps",
               "guides/artifact-editors",
               "guides/pdf-editor",
+              "guides/pdf-templates",
               "guides/artifact-collaboration",
               "guides/design-canvas-agents",
               "reference/artifact-share-ui",
@@ -185,7 +187,8 @@
               "code/terminal-and-prompt",
               "code/on-a-phone",
               "code/cloud-environments",
-              "code/cloud-environment-runtime"
+              "code/cloud-environment-runtime",
+              "code/teleport"
             ]
           },
           {
@@ -837,6 +840,7 @@
               "api/subagent-types",
               "api/cowork-preferences",
               "api/agent-sessions",
+              "api/teleports",
               "api/sessions",
               "api/memory-stores",
               "api/memory",

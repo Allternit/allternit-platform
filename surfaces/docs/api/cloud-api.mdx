@@ -25,7 +25,7 @@ First-party device pairing binds a desktop or VPS runtime to a human account wit
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| POST | `/api/v1/runtime-pairings` | Public | Create a pairing request. |
+| POST | `/api/v1/runtime-pairings` | Public | Create a pairing request. Clients send an optional `machineId` (16 to 64 characters, letters, digits, `-` and `_`): a stable random id for the machine. The active-machine limit counts machines by `machineId` and falls back to hostname plus platform when it is missing. Pairing again from the same account, machine and client name replaces the old device row. |
 | POST | `/api/v1/runtime-pairings/exchange` | Public | Exchange an approved pairing for a device token. |
 | GET | `/api/v1/runtime-pairings/code/:code` | Clerk / device | Inspect a pairing by user code. |
 | POST | `/api/v1/runtime-pairings/code/:code/approve` | Clerk / device | Approve a pairing request. |

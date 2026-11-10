@@ -43,11 +43,12 @@ final class LoopsClient: @unchecked Sendable {
     func createLoop(
         command: String,
         exitCondition: String?,
-        maxIterations: Int
+        maxIterations: Int,
+        metric: LoopMetric? = nil
     ) async throws -> Loop {
         try await client().post(
             path: "v1/automations/loops",
-            body: CreateLoopRequest(command: command, exitCondition: exitCondition, maxIterations: maxIterations)
+            body: CreateLoopRequest(command: command, exitCondition: exitCondition, maxIterations: maxIterations, metric: metric)
         )
     }
 

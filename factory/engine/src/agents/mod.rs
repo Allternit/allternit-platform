@@ -8,6 +8,8 @@ pub mod backend;
 pub mod delivery;
 pub mod http;
 pub mod live_delivery;
+pub mod live_receipts;
+pub mod mailbox_drain;
 pub mod execenv;
 pub mod home_migrate;
 pub mod live_sessions;

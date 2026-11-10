@@ -1,6 +1,6 @@
 {
   "$schema": "https://json.schemastore.org/package.json",
-  "version": "2.3.0",
+  "version": "2.3.1",
   "name": "@allternit/gizzi-code",
   "description": "AI-powered terminal interface for the Allternit ecosystem",
   "type": "module",
@@ -107,6 +107,7 @@
     "@alcalzone/ansi-tokenize": "0.2.5",
     "@allternit/gizzi-util": "workspace:*",
     "@allternit/native-sessions": "workspace:*",
+    "@allternit/pdf-templates": "workspace:*",
     "@allternit/os-contracts": "workspace:*",
     "@allternit/plugin": "workspace:*",
     "@allternit/request-scorer": "workspace:*",

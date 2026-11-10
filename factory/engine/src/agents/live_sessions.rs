@@ -647,12 +647,17 @@ impl Discovered {
             .and_then(|pid| std::fs::read(claude_dir().join("sessions").join(format!("{pid}.json"))).ok())
             .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
             .and_then(|v| v["messagingSocketPath"].as_str().filter(|p| !p.is_empty()).map(str::to_string));
+        // The token `gizzi team-mcp` registered from CLAUDE_CODE_MESSAGING_TOKEN (and the
+        // socket, when the session file lacks it).
+        let registered = (s.harness == "claude").then(|| super::live_receipts::messaging(s.pid, &s.session_id)).flatten();
+        let socket = socket.or_else(|| registered.as_ref().map(|m| m.socket.clone()).filter(|p| !p.is_empty() && s.status != "offline"));
+        let cwd = if s.cwd.is_empty() { registered.as_ref().map(|m| m.cwd.clone()).unwrap_or_default() } else { s.cwd.clone() };
         let waiting = super::live_delivery::is_waiting(&s.name);
         super::live_delivery::LiveSession {
             codex_thread: (s.harness == "codex").then(|| s.session_id.clone()),
             hooks_installed: s.tier == "turn" || read_hooks().iter().any(|h| h.session == s.session_id),
             messaging_socket_path: socket,
-            messaging_token: None,
+            messaging_token: registered.map(|m| m.token).filter(|t| !t.is_empty()),
             waiting_inbox: waiting,
             address: s.address,
             name: s.name,
@@ -663,7 +668,7 @@ impl Discovered {
             session_id: s.session_id,
             pane_id: s.pane_id,
             bot_id: s.bot_id,
-            cwd: s.cwd,
+            cwd,
             repo: s.repo,
             branch: s.branch,
             status: s.status,

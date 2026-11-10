@@ -29,7 +29,18 @@ const RoutineUpdateSchema = z.object({
   state: z.string().optional(),
 })
 
+const LoopMetricSchema = z.object({
+  command: z.string().min(1),
+  direction: z.enum(["lower", "higher"]),
+  keepBar: z.number().min(0).default(0.05),
+  noiseRuns: z.number().int().min(2).max(20).default(5),
+  minPairs: z.number().int().min(2).max(50).default(5),
+  stallLimit: z.number().int().min(1).max(20).optional(),
+})
+
 const LoopCreateSchema = z.object({
+  metric: LoopMetricSchema.nullish(),
+  cwd: z.string().nullish(),
   id: z.string().optional(),
   agent_id: z.string().optional(),
   command: z.string(),
@@ -38,6 +49,8 @@ const LoopCreateSchema = z.object({
 })
 
 const LoopUpdateSchema = z.object({
+  metric: LoopMetricSchema.nullable().optional(),
+  cwd: z.string().nullable().optional(),
   agent_id: z.string().optional(),
   command: z.string().optional(),
   exit_condition: z.string().optional(),
@@ -260,6 +273,10 @@ export const AutomationsRoutes = lazy(() => {
           exit_condition: body.exit_condition || null,
           max_iterations: body.max_iterations,
           iteration_log: [],
+          metric: body.metric ?? null,
+          ledger: [],
+          cwd: body.cwd ?? null,
+          last_outcome: null,
           state: "running",
           time_created: Date.now(),
           time_updated: Date.now(),
@@ -330,6 +347,10 @@ export const AutomationsRoutes = lazy(() => {
       validator("param", IdParamSchema),
       async (c) => {
         const { id } = c.req.valid("param")
+        if (c.req.query("dry_run") === "1" || c.req.query("dry_run") === "true") {
+          // Measures once and reports; the loop record and the tree stay untouched.
+          return c.json({ dry_run: true, ...(await LoopEngine.dryRun(id)) })
+        }
         Database.use((db) =>
           db
             .update(LoopTable)

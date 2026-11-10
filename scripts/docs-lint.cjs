@@ -152,6 +152,12 @@ for (const mdxPath of collectMdxFiles(DOCS_DIR)) {
       // Native session pickup names the other CLIs; that page is the catalog.
       if (mdxPath.endsWith('cli/native-sessions.mdx')) continue;
       if (mdxPath.endsWith('cli/session.mdx')) continue;
+      // Teleport moves a live Claude or Codex session; the guide and API name the harness and its files.
+      if (['code/teleport.mdx', 'api/teleports.mdx'].some((p) => mdxPath.endsWith(p))) continue;
+      // CLI brain pages name the subscription CLIs and their model ids (claude-cli/…, codex-cli/…).
+      if (['cli/models.mdx', 'cli/output.mdx', 'cli/keyboard-shortcuts.mdx', 'cli/continue-anywhere.mdx', 'architecture/live-terminal-sessions.mdx'].some((p) => mdxPath.endsWith(p))) continue;
+      // Factory swarms and commands run named CLI agents as workers.
+      if (['factory/swarms.mdx', 'factory/commands.mdx'].some((p) => mdxPath.endsWith(p))) continue;
       // The chat composer explains which installed CLI brains ask questions with the same card.
       if (mdxPath.endsWith('guides/chat-composer.mdx')) continue;
       // Subscription setup and its workflow index must name the supported providers.

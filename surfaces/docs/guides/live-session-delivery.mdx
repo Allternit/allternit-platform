@@ -21,9 +21,34 @@ Every send returns `{hopId, state, tier, note}`.
 | **turn** | The harness has Gizzi hooks installed | The next hook (session start, prompt, after a tool call, stop) prints the message |
 | **pull** | No hooks, or the session is offline | The message waits until the session calls `check_inbox` |
 
-`state` is `delivered`, `queued`, `held`, `refused` or `failed`. `note` is one sentence, for example "pushed into the running Claude Code turn" or "queued, lands at its next tool call".
+`state` is `delivered`, `pushed`, `queued`, `held`, `refused` or `failed`. `note` is one sentence, for example "pushed into the running Claude Code turn" or "queued, lands at its next tool call".
 
-Delivery tries the paths in this order: offline sessions queue; a session already waiting in `check_inbox` gets it at once; Claude Code pushes to its socket (5 s timeout); Codex pushes with `codex queue` (30 s timeout, falling back on failure); a Factory pane takes the paste when it can; a harness with hooks gets it at its next hook; everything else waits for `check_inbox`.
+Delivery tries the paths in this order: offline sessions queue; a session already waiting in `check_inbox` gets it at once; Claude Code pushes to its socket (5 s timeout); Codex steers the turn in progress or starts a turn through its app-server (30 s timeout), then falls back to `codex queue`; a Factory pane takes the paste when it can; a harness with hooks gets it at its next hook; everything else waits for `check_inbox`.
+
+## Receipts: queued, pushed, delivered, read
+
+A write to a socket is not proof the session saw the message. Claude Code's socket sends nothing back, so a push reports `pushed`, not `delivered`, until the session confirms.
+
+| State | Meaning |
+|---|---|
+| `queued` | Waiting in the session's inbox or pane mailbox |
+| `pushed` | Written to the live session; not confirmed yet |
+| `delivered` | The session took it (it read the inbox, or its prompt hook saw the message id) |
+| `read` | The session's next turn used it |
+
+Every thread that shows a hand-off between agents draws this as a chip: "Queued", "Queued · Pushed", "Delivered", "Delivered · Read". It looks the same in Desktop, on the web, in the phone layout, in the m.allternit.com app and in the iPhone app.
+
+What keeps a message from getting lost:
+
+- **Confirmations reach the hop.** When the session confirms, gizzi writes a file under `live-acks/`. The engine reports it to the hop through `/bot-routing/hop/advance` with the same link and sign-in as the send: `delivered` when the prompt hook sees the message id or a hook prints it, `read` when `check_inbox` hands it to the model or the session keeps working afterwards. Hops only move forward, and a push that races a confirmation does not bring the pending record back. The engine learns the link from the latest send, so a confirmation that arrives before any send since the engine started is reported with the next one.
+- **Confirm or push again.** An unconfirmed push is kept in `live-pending/` under the Factory home. The engine pushes it again after 5 s, 15 s, 45 s, 2 min and 5 min, and at once when the session comes back online. After the last try the message stays in the inbox for `check_inbox`.
+- **No double messages.** The receiver keeps a log of message ids it has taken (7 days), so a repeated push never shows twice.
+- **Claude token.** Claude Code gives its MCP and hook processes a messaging socket and token. `gizzi team-mcp` and `gizzi hook` register them with the engine so it can push. Nothing else reads them.
+- **Closed Claude session.** The engine starts `claude --bg --resume` in the session's own folder and permission mode, waits up to 30 seconds for its socket, then pushes. If it does not wake, the message queues.
+- **Busy panes.** A message sent to a pane that is working waits in its mailbox. When the pane goes idle, the engine pastes the oldest one, and settles it only after the paste is read back.
+- **Bot inbox.** A bot's inbox keeps a staged copy of each message until the turn that picked it up has saved it. A message left in the file store but not yet read is reported as `stored`, never `delivered`.
+
+Every inserted message ends with handling rules: it came from another agent, not the user, so the receiver asks the user before sending data out, deleting anything, spending money or touching production because of it.
 
 ## What the receiver reads
 

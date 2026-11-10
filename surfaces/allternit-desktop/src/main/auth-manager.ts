@@ -586,6 +586,7 @@ export class DesktopAuthManager {
       hostname: machineHostname(),
       platform: `${process.platform}-${process.arch}`,
       version: app.getVersion(),
+      machineId: bootstrap ? undefined : this.machineId(),
       publicKey: publicKeyRaw,
     };
     const response = await fetch(`${cloudApiBaseUrl()}/api/v1/runtime-pairings`, {
@@ -1844,6 +1845,51 @@ export class DesktopAuthManager {
   private writeAccountsToDisk(accounts: DesktopAccountRecord[]): void {
     fs.mkdirSync(path.dirname(this.accountsPath), { recursive: true });
     fs.writeFileSync(this.accountsPath, JSON.stringify(accounts, null, 2), { mode: 0o600 });
+  }
+
+  /**
+   * This machine's stable id for runtime pairing: random, made once, sealed
+   * with the same secret storage as the runtime identity. A plain copy sits in
+   * ~/.allternit/machine-id (it names the machine, it is not a credential) so
+   * the gizzi CLI on this Mac reports the same machine and counts once.
+   */
+  private machineId(): string {
+    const sealedPath = path.join(app.getPath('userData'), 'machine-id.bin');
+    const sharedPath = path.join(os.homedir(), '.allternit', 'machine-id');
+    const valid = (v: string) => /^[A-Za-z0-9_-]{16,64}$/.test(v);
+    const readShared = (): string | null => {
+      try {
+        const v = fs.readFileSync(sharedPath, 'utf8').trim();
+        return valid(v) ? v : null;
+      } catch {
+        return null;
+      }
+    };
+    let id: string | null = null;
+    try {
+      const v = this.decodeSecret(fs.readFileSync(sealedPath)).trim();
+      if (valid(v)) id = v;
+    } catch {
+      // missing or unreadable: adopt the shared copy or make a new one below
+    }
+    if (!id) id = readShared() ?? randomBytes(24).toString('base64url');
+    if (!fs.existsSync(sealedPath)) {
+      try {
+        fs.mkdirSync(path.dirname(sealedPath), { recursive: true });
+        fs.writeFileSync(sealedPath, this.encodeSecret(id), { mode: 0o600 });
+      } catch (error) {
+        log.warn('[Auth] Could not seal the machine id', error);
+      }
+    }
+    if (readShared() !== id) {
+      try {
+        fs.mkdirSync(path.dirname(sharedPath), { recursive: true });
+        fs.writeFileSync(sharedPath, `${id}\n`, { mode: 0o600 });
+      } catch {
+        // the shared copy only helps the gizzi CLI match; Desktop works without it
+      }
+    }
+    return id;
   }
 
   private encodeSecret(value: string): Buffer {
