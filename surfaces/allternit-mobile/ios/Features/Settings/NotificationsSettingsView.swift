@@ -46,7 +46,8 @@ struct NotificationsSettingsView: View {
 
             SettingsSectionHeading(text: "Delivery")
                 .padding(.top, 16)
-            SettingsLabeledRow(title: "iPhone notifications", detail: permissionDetail) {
+            SettingsLabeledRow(title: status == .denied ? "Notifications are off for Allternit" : "iPhone notifications",
+                               detail: permissionDetail) {
                 permissionControl
             }
             SettingsSwitchRow(title: "Sound",
