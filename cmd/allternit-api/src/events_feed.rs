@@ -125,7 +125,8 @@ pub fn classify(event_type: &str, payload: &Value) -> Option<Kind> {
                 || matches!(payload["reason"].as_str(), Some("missed" | "no_answer"));
             Some(Kind::CallEnded { missed })
         }
-        // Includes an outbound email held for human approval (request_review).
+        // An outbound email held for the owner's OK also writes `approval.requested`
+        // (`inbox_needs::record_email_draft`), which carries its inbox id.
         "thread.needs_user" => Some(Kind::NeedsUser),
         "inbox.changed" => Some(Kind::InboxChanged),
         "inbox.item.created" => Some(Kind::InboxItemCreated),
