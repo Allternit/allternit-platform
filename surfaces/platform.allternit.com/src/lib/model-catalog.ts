@@ -8,6 +8,8 @@ export interface CatalogModel {
   inputPrice: string;
   outputPrice: string;
   context: string;
+  /** The recommended Cloud model (`default: true` in `GET /v1/models`). */
+  isDefault?: boolean;
 }
 
 export interface LiveModelInfo {
@@ -24,6 +26,10 @@ export interface LiveModelInfo {
   context_length?: number;
   /** "standard" or "open" (open-weight models with far fewer refusals). */
   lane?: string;
+  /** True on the one recommended model; the API lists it first. */
+  default?: boolean;
+  /** Still routes (saved ids keep working) but is not offered in pickers. */
+  hidden?: boolean;
   extra?: Record<string, unknown>;
 }
 
@@ -92,6 +98,7 @@ export function liveModelToCatalog(model: LiveModelInfo): CatalogModel {
     inputPrice: formatPrice(model.prompt_price ?? model.extra?.prompt_price),
     outputPrice: formatPrice(model.completion_price ?? model.extra?.completion_price),
     context: contextLength(model),
+    isDefault: (model.default ?? model.extra?.default) === true,
   };
 }
 
@@ -110,20 +117,29 @@ export async function fetchLiveModelCatalog(
         `Model catalog request failed (${response.status})`,
     );
   }
-  return response.json();
+  const body = (await response.json()) as LiveModelListResponse;
+  // The console never shows hidden rows (stale or duplicate aliases).
+  return { ...body, data: (body.data ?? []).filter((model) => !isHidden(model)) };
 }
 
+/** A `GET /v1/models` row flagged `hidden: true`. */
+export function isHidden(model: LiveModelInfo): boolean {
+  return (model.hidden ?? model.extra?.hidden) === true;
+}
+
+// Fallback when the live list is unreachable: the listed (non-hidden) rows of
+// `GET /v1/models` as of 2026-11-10, default (kimi-k3) first, then catalog
+// order. Prices are what a request is billed (provider price × the default
+// 1.5 markup), formatted the way `liveModelToCatalog` formats the live list.
+// Keep in step with cmd/allternit-cloud-api/src/model_router/catalog.rs.
 export const DRAFT_MODEL_CATALOG: CatalogModel[] = [
-  { id: "llama-3.1-8b", name: "Llama 3.1 8B", family: "Llama", provider: "local", inputPrice: "$0", outputPrice: "$0", context: "128K" },
-  { id: "llama-3.1-70b", name: "Llama 3.1 70B", family: "Llama", provider: "local", inputPrice: "$0", outputPrice: "$0", context: "128K" },
-  { id: "qwen2.5-7b", name: "Qwen 2.5 7B", family: "Qwen", provider: "local", inputPrice: "$0", outputPrice: "$0", context: "128K" },
-  { id: "qwen2.5-72b", name: "Qwen 2.5 72B", family: "Qwen", provider: "local", inputPrice: "$0", outputPrice: "$0", context: "128K" },
-  { id: "mistral-nemo", name: "Mistral Nemo", family: "Mistral", provider: "local", inputPrice: "$0", outputPrice: "$0", context: "128K" },
-  { id: "mistral-large", name: "Mistral Large 2", family: "Mistral", provider: "cloud", inputPrice: "$2.00", outputPrice: "$6.00", context: "128K" },
-  { id: "claude-3-5-sonnet", name: "Claude 3.5 Sonnet", family: "Claude", provider: "cloud", inputPrice: "$3.00", outputPrice: "$15.00", context: "200K" },
-  { id: "claude-3-opus", name: "Claude 3 Opus", family: "Claude", provider: "cloud", inputPrice: "$15.00", outputPrice: "$75.00", context: "200K" },
-  { id: "gpt-4o", name: "GPT-4o", family: "GPT", provider: "cloud", inputPrice: "$5.00", outputPrice: "$15.00", context: "128K" },
-  { id: "gpt-4o-mini", name: "GPT-4o mini", family: "GPT", provider: "cloud", inputPrice: "$0.15", outputPrice: "$0.60", context: "128K" },
-  { id: "gemini-1.5-pro", name: "Gemini 1.5 Pro", family: "Gemini", provider: "cloud", inputPrice: "$3.50", outputPrice: "$10.50", context: "1M" },
-  { id: "gemini-1.5-flash", name: "Gemini 1.5 Flash", family: "Gemini", provider: "cloud", inputPrice: "$0.35", outputPrice: "$1.05", context: "1M" },
+  { id: "kimi-k3", name: "Kimi K3", family: "Kimi", provider: "cloud", upstreamProvider: "fireworks", inputPrice: "$4.50", outputPrice: "$22.50", context: "1.0M", isDefault: true },
+  { id: "claude-sonnet-5.5", name: "Claude Sonnet 5.5", family: "Claude", provider: "cloud", upstreamProvider: "openrouter", inputPrice: "$3.00", outputPrice: "$15.00", context: "1.0M" },
+  { id: "gpt-6.1-sol", name: "GPT-6.1 Sol", family: "GPT", provider: "cloud", upstreamProvider: "openrouter", inputPrice: "$3.00", outputPrice: "$15.00", context: "1.1M" },
+  { id: "deepseek-v4.1-flash", name: "DeepSeek V4.1 Flash", family: "DeepSeek", provider: "cloud", upstreamProvider: "openrouter", inputPrice: "$0.45", outputPrice: "$1.80", context: "1.0M" },
+  { id: "glm-5.3-flash", name: "GLM 5.3 Flash", family: "GLM", provider: "cloud", upstreamProvider: "openrouter", inputPrice: "$0.06", outputPrice: "$0.12", context: "1.0M" },
+  { id: "deepseek-v4-pro", name: "DeepSeek V4 Pro", family: "DeepSeek", provider: "cloud", upstreamProvider: "together", inputPrice: "$1.98", outputPrice: "$5.94", context: "1.0M" },
+  { id: "glm-5.3", name: "GLM 5.3", family: "GLM", provider: "cloud", upstreamProvider: "together", inputPrice: "$2.10", outputPrice: "$6.60", context: "1.0M" },
+  { id: "kimi-k3.1-pro", name: "Kimi K3.1 Pro", family: "Kimi", provider: "cloud", upstreamProvider: "together", inputPrice: "$3.00", outputPrice: "$15.00", context: "1.0M" },
+  { id: "qwen3.8-max-fireworks", name: "Qwen 3.8 Max (Fireworks)", family: "Qwen", provider: "cloud", upstreamProvider: "fireworks", inputPrice: "$3.00", outputPrice: "$9.00", context: "1.0M" },
 ];

@@ -66,8 +66,8 @@ export function ModelsPage() {
               Model catalog
             </h1>
             <p className="mt-2 max-w-xl text-[15px] leading-relaxed text-[var(--text-secondary)]">
-              Models available through Allternit Cloud. Live cloud models are sourced from
-              upstream providers; local models run on your own hardware.
+              Models available through Allternit Cloud, with the price a request is billed.
+              Each model is served by the upstream provider shown on its card.
             </p>
           </div>
           {auth.isLoaded && auth.isSignedIn && (

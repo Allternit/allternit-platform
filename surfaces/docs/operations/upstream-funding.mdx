@@ -44,6 +44,8 @@ Cloud omits providers that have no credits from `/v1/models`. A provider below i
 
 Together's dedicated-only Llama 3.3 70B Turbo and Qwen 2.5 72B routes are removed from the starter catalog. They cannot run on the shared serverless key. Removing those routes also keeps funding fallback from selecting them. The retired Groq Qwen 3.6, unlisted Together Qwen3.8 2.4T and undeployed Fireworks DeepSeek V4 Pro routes are also removed. Saved `kimi-k3` chats use the same Kimi K3 model on Fireworks because Together's endpoint repeatedly returned capacity errors.
 
+On 2026-11-10 the Cloud list was checked against the real provider accounts. Three rows were added, each checked with a real request first: `claude-sonnet-5.5` and `gpt-6.1-sol` on OpenRouter, and `kimi-k3.1-pro` on Together (Fireworks does not serve it for chat). `claude-sonnet-4.6` is now hidden. It still routes, and saved `claude-sonnet` and `claude-sonnet-4` ids still use it at the same price. Fireworks rows now get the retail markup. Fireworks' model list has no pricing, so these rows used to be billed at Fireworks' own price. Now they are billed at the static catalog price × `INFERENCE_MARKUP`, and the static price is recorded as the wholesale cost. Rows on other providers are unchanged. Because the wholesale cost is now recorded, Fireworks requests also count toward the Fireworks pool's monthly budget (`inference_pools.monthly_budget_usd`); before, they counted as 0.
+
 Groq does not accept the AI SDK's `prompt_cache_key`. Cloud strips OpenAI-only cache and safety hints for non-OpenAI upstreams, for both streaming and buffered chat (#2119). Tool definitions and streaming usage options still pass through. Real OpenAI upstreams retain those hints.
 
 ## Admin routes

@@ -21,12 +21,46 @@ pub struct ModelAliasEntry {
     pub created: u64,
     /// Human-readable model name shown in the catalog.
     pub name: String,
-    /// Input price per 1M tokens (USD). Used when live upstream pricing is unavailable.
+    /// Input price per 1M tokens (USD). Used when live upstream pricing is
+    /// unavailable: billed as is, or × `INFERENCE_MARKUP` when
+    /// `static_price_is_wholesale` is set.
     pub prompt_price: f64,
-    /// Output price per 1M tokens (USD). Used when live upstream pricing is unavailable.
+    /// Output price per 1M tokens (USD). Same fallback rule as `prompt_price`.
     pub completion_price: f64,
     /// Context length in tokens.
     pub context_length: u64,
+    /// Offered in pickers. An unlisted alias is still returned by
+    /// `GET /v1/models` (last, flagged `hidden: true`) and still resolves
+    /// (saved bots, internal fallbacks, billing); clients just don't offer it.
+    pub listed: bool,
+    /// The recommended model: listed first and flagged `default: true`.
+    pub default: bool,
+    /// The static price is the provider's price to us. When live pricing is
+    /// unavailable the retail price is static × `INFERENCE_MARKUP` and the
+    /// static price is recorded as the wholesale cost. Set on providers whose
+    /// model list carries no pricing (Fireworks).
+    pub static_price_is_wholesale: bool,
+}
+
+/// Field defaults for catalog literals (`..Default::default()`): listed, not
+/// the default model, static price is retail.
+impl Default for ModelAliasEntry {
+    fn default() -> Self {
+        Self {
+            alias: String::new(),
+            provider: String::new(),
+            upstream_id: String::new(),
+            aliases: None,
+            created: 0,
+            name: String::new(),
+            prompt_price: 0.0,
+            completion_price: 0.0,
+            context_length: 0,
+            listed: true,
+            default: false,
+            static_price_is_wholesale: false,
+        }
+    }
 }
 
 /// Immutable catalog of model aliases.
@@ -60,11 +94,26 @@ impl ModelAliasMap {
     pub fn entries(&self) -> &[ModelAliasEntry] {
         &self.entries
     }
+
+    /// Every entry in `GET /v1/models` order: the default model first, then
+    /// listed entries, then unlisted (`hidden`) ones, each group in catalog
+    /// order. `resolve` is unaffected.
+    pub fn ordered_entries(&self) -> Vec<&ModelAliasEntry> {
+        let mut ordered: Vec<&ModelAliasEntry> = self.entries.iter().collect();
+        // Stable sort, so catalog order holds inside each group.
+        ordered.sort_by_key(|entry| (!entry.default, !entry.listed));
+        ordered
+    }
 }
 
 /// The production starter catalog. Routes are split across upstream providers.
 /// OpenRouter provides broad coverage; Together AI provides curated open-weight
 /// models with direct pricing and context metadata.
+///
+/// Static prices of OpenRouter, Together and Fireworks rows are the provider's
+/// own price (OpenRouter rows re-read from its public list on 2026-11-10); the
+/// open-lane rows carry retail prices. A static price bills only when live
+/// pricing is missing.
 pub fn starter_catalog() -> ModelAliasMap {
     ModelAliasMap::new(vec![
         ModelAliasEntry {
@@ -74,9 +123,11 @@ pub fn starter_catalog() -> ModelAliasMap {
             aliases: Some(vec!["llama3.1-8b".to_string()]),
             created: 1722470400, // 2024-08-01
             name: "Llama 3.1 8B Instruct".to_string(),
-            prompt_price: 0.10,
-            completion_price: 0.20,
+            prompt_price: 0.02,
+            completion_price: 0.04,
             context_length: 128_000,
+            listed: false,
+            ..Default::default()
         },
         ModelAliasEntry {
             alias: "llama-3.1-70b".to_string(),
@@ -85,12 +136,29 @@ pub fn starter_catalog() -> ModelAliasMap {
             aliases: Some(vec!["llama3.1-70b".to_string()]),
             created: 1722470400,
             name: "Llama 3.1 70B Instruct".to_string(),
-            prompt_price: 0.30,
-            completion_price: 0.40,
+            prompt_price: 0.72,
+            completion_price: 0.72,
             context_length: 128_000,
+            listed: false,
+            ..Default::default()
         },
-        // `anthropic/claude-sonnet-4` was retired on OpenRouter (2026-10).
-        // Bots saved with `claude-sonnet-4` keep working through the alias.
+        // Checked with a real request on the OpenRouter account (2026-11-10).
+        ModelAliasEntry {
+            alias: "claude-sonnet-5.5".to_string(),
+            provider: "openrouter".to_string(),
+            upstream_id: "anthropic/claude-sonnet-5.5".to_string(),
+            aliases: None,
+            created: 1790618686, // 2026-09-28
+            name: "Claude Sonnet 5.5".to_string(),
+            prompt_price: 2.00,
+            completion_price: 10.00,
+            context_length: 1_000_000,
+            ..Default::default()
+        },
+        // Hidden since 2026-11-10 (Claude Sonnet 5.5 is the listed Sonnet),
+        // but it still resolves and keeps its price. `anthropic/claude-sonnet-4`
+        // was retired on OpenRouter (2026-10); bots saved with `claude-sonnet`
+        // or `claude-sonnet-4` keep getting this model through the aliases.
         ModelAliasEntry {
             alias: "claude-sonnet-4.6".to_string(),
             provider: "openrouter".to_string(),
@@ -101,6 +169,21 @@ pub fn starter_catalog() -> ModelAliasMap {
             prompt_price: 3.00,
             completion_price: 15.00,
             context_length: 1_000_000,
+            listed: false,
+            ..Default::default()
+        },
+        // Checked with a real request on the OpenRouter account (2026-11-10).
+        ModelAliasEntry {
+            alias: "gpt-6.1-sol".to_string(),
+            provider: "openrouter".to_string(),
+            upstream_id: "openai/gpt-6.1-sol".to_string(),
+            aliases: None,
+            created: 1790702882, // 2026-09-29
+            name: "GPT-6.1 Sol".to_string(),
+            prompt_price: 2.00,
+            completion_price: 10.00,
+            context_length: 1_050_000,
+            ..Default::default()
         },
         ModelAliasEntry {
             alias: "gpt-4o".to_string(),
@@ -112,6 +195,8 @@ pub fn starter_catalog() -> ModelAliasMap {
             prompt_price: 2.50,
             completion_price: 10.00,
             context_length: 128_000,
+            listed: false,
+            ..Default::default()
         },
         ModelAliasEntry {
             alias: "qwen-2.5-72b".to_string(),
@@ -120,9 +205,11 @@ pub fn starter_catalog() -> ModelAliasMap {
             aliases: Some(vec!["qwen2.5-72b".to_string()]),
             created: 1727740800, // 2024-10-01
             name: "Qwen 2.5 72B Instruct".to_string(),
-            prompt_price: 0.30,
+            prompt_price: 0.36,
             completion_price: 0.40,
             context_length: 128_000,
+            listed: false,
+            ..Default::default()
         },
         // Mistral Large removed 2026-11-09: OpenRouter has no zero-data-retention
         // endpoint for it, and the account requires ZDR, so every request failed.
@@ -134,9 +221,10 @@ pub fn starter_catalog() -> ModelAliasMap {
             aliases: None,
             created: 1760659200, // 2026-10-17
             name: "DeepSeek V4.1 Flash".to_string(),
-            prompt_price: 0.03,
-            completion_price: 1.50,
+            prompt_price: 0.30,
+            completion_price: 1.20,
             context_length: 1_048_576,
+            ..Default::default()
         },
         ModelAliasEntry {
             alias: "glm-5.3-flash".to_string(),
@@ -145,9 +233,10 @@ pub fn starter_catalog() -> ModelAliasMap {
             aliases: None,
             created: 1753929600,
             name: "GLM 5.3 Flash".to_string(),
-            prompt_price: 0.23,
-            completion_price: 0.75,
+            prompt_price: 0.04,
+            completion_price: 0.08,
             context_length: 1_048_576,
+            ..Default::default()
         },
         // Together AI — serverless models only (prices per 1M tokens, USD).
         // Llama 3.3 70B Turbo and Qwen 2.5 72B require dedicated endpoints
@@ -162,6 +251,7 @@ pub fn starter_catalog() -> ModelAliasMap {
             prompt_price: 1.32,
             completion_price: 3.96,
             context_length: 1_048_576,
+            ..Default::default()
         },
         ModelAliasEntry {
             alias: "glm-5.3".to_string(),
@@ -173,10 +263,11 @@ pub fn starter_catalog() -> ModelAliasMap {
             prompt_price: 1.40,
             completion_price: 4.40,
             context_length: 1_048_575,
+            ..Default::default()
         },
         // Keep the existing primary id discoverable for saved app brains.
         // Together repeatedly returned capacity 429s; Fireworks serves the
-        // same Kimi K3 model at the same catalog price.
+        // same Kimi K3 model at the same provider price.
         ModelAliasEntry {
             alias: "kimi-k3".to_string(),
             provider: "fireworks".to_string(),
@@ -187,11 +278,30 @@ pub fn starter_catalog() -> ModelAliasMap {
             prompt_price: 3.00,
             completion_price: 15.00,
             context_length: 1_048_576,
+            default: true,
+            static_price_is_wholesale: true,
+            ..Default::default()
+        },
+        // Served by Together because Fireworks does not serve it for chat (checked 2026-11-10).
+        ModelAliasEntry {
+            alias: "kimi-k3.1-pro".to_string(),
+            provider: "together".to_string(),
+            upstream_id: "moonshotai/Kimi-K3.1-Pro".to_string(),
+            aliases: None,
+            created: 1792778188, // 2026-10-23
+            name: "Kimi K3.1 Pro".to_string(),
+            prompt_price: 2.00,
+            completion_price: 10.00,
+            context_length: 1_048_576,
+            ..Default::default()
         },
         // Fireworks no longer deploys DeepSeek V4 Pro; Together no longer lists
         // Qwen3.8 2.4T. Keep both unavailable routes out of the catalog.
         // Fireworks AI — curated serverless models (prices per 1M tokens, USD,
         // Standard serving path; format is input / cached input / output).
+        // These are Fireworks' prices to us: its model list has no pricing, so
+        // every Fireworks row sets `static_price_is_wholesale` and is billed
+        // at static × `INFERENCE_MARKUP`.
         ModelAliasEntry {
             alias: "kimi-k3-fireworks".to_string(),
             provider: "fireworks".to_string(),
@@ -202,6 +312,9 @@ pub fn starter_catalog() -> ModelAliasMap {
             prompt_price: 3.00,
             completion_price: 15.00,
             context_length: 1_048_576,
+            listed: false,
+            static_price_is_wholesale: true,
+            ..Default::default()
         },
         ModelAliasEntry {
             alias: "glm-5.3-fireworks".to_string(),
@@ -213,6 +326,9 @@ pub fn starter_catalog() -> ModelAliasMap {
             prompt_price: 1.40,
             completion_price: 4.40,
             context_length: 1_048_576,
+            listed: false,
+            static_price_is_wholesale: true,
+            ..Default::default()
         },
         ModelAliasEntry {
             alias: "qwen3.8-max-fireworks".to_string(),
@@ -224,6 +340,8 @@ pub fn starter_catalog() -> ModelAliasMap {
             prompt_price: 2.00,
             completion_price: 6.00,
             context_length: 1_000_000,
+            static_price_is_wholesale: true,
+            ..Default::default()
         },
         // DeepInfra — cost-optimized open-weight inference (prices per 1M tokens, USD).
         ModelAliasEntry {
@@ -236,6 +354,7 @@ pub fn starter_catalog() -> ModelAliasMap {
             prompt_price: 0.49,
             completion_price: 0.73,
             context_length: 131_072,
+            ..Default::default()
         },
         ModelAliasEntry {
             alias: "qwen2.5-72b-deepinfra".to_string(),
@@ -247,6 +366,7 @@ pub fn starter_catalog() -> ModelAliasMap {
             prompt_price: 0.49,
             completion_price: 0.49,
             context_length: 131_072,
+            ..Default::default()
         },
         ModelAliasEntry {
             alias: "deepseek-v3-deepinfra".to_string(),
@@ -258,6 +378,7 @@ pub fn starter_catalog() -> ModelAliasMap {
             prompt_price: 0.99,
             completion_price: 0.99,
             context_length: 64_000,
+            ..Default::default()
         },
         // Groq — ultra-low-latency inference (prices per 1M tokens, USD).
         // Qwen 3.6 is retired; Groq now lists Qwen 3.8 only.
@@ -271,6 +392,7 @@ pub fn starter_catalog() -> ModelAliasMap {
             prompt_price: 0.80,
             completion_price: 4.00,
             context_length: 131_072,
+            ..Default::default()
         },
         ModelAliasEntry {
             alias: "gpt-oss-20b-groq".to_string(),
@@ -282,6 +404,7 @@ pub fn starter_catalog() -> ModelAliasMap {
             prompt_price: 0.075,
             completion_price: 0.30,
             context_length: 131_072,
+            ..Default::default()
         },
         ModelAliasEntry {
             alias: "gpt-oss-120b-groq".to_string(),
@@ -293,6 +416,7 @@ pub fn starter_catalog() -> ModelAliasMap {
             prompt_price: 0.15,
             completion_price: 0.60,
             context_length: 131_072,
+            ..Default::default()
         },
         // Open lane — open-weight models (stock or our own "-open" variants)
         // that answer many requests frontier models refuse. Served by the
@@ -351,5 +475,6 @@ fn open_lane_entry(
         prompt_price,
         completion_price,
         context_length,
+        ..Default::default()
     }
 }

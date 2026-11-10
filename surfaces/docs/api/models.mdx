@@ -12,7 +12,7 @@ There are two model lists:
 
 ## Hosted Cloud API
 
-`GET https://api.allternit.com/v1/models` lists every model you can call with `POST /v1/chat/completions`. It needs no API key.
+`GET https://api.allternit.com/v1/models` lists every model you can call with `POST /v1/chat/completions`. It needs no API key. The recommended model comes first. Retired aliases come last, flagged `hidden`, so saved bots and old clients keep working.
 
 ```bash
 curl https://api.allternit.com/v1/models
@@ -35,7 +35,8 @@ curl https://api.allternit.com/v1/models
       "context_length": 1048576,
       "lane": "standard",
       "prompt_price": 0.00000021,
-      "completion_price": 0.00000063
+      "completion_price": 0.00000063,
+      "default": false
     }
   ]
 }
@@ -53,6 +54,8 @@ curl https://api.allternit.com/v1/models
 | `lane` | string | `standard`, or `open` for open-lane models (see below). |
 | `prompt_price` | number | USD per input token. This is the billed price. |
 | `completion_price` | number | USD per output token. This is the billed price. |
+| `default` | boolean | `true` on the one recommended model, which is listed first. `false` on every other row. |
+| `hidden` | boolean | Present, and `true`, only on retired aliases that still work. Pickers leave these rows out. A request that names one is still served and billed. Listed rows have no `hidden` key. |
 
 A model can carry more metadata from its host, such as `description`, `architecture` and `supported_parameters`. To get a price per 1M tokens, multiply `prompt_price` or `completion_price` by 1,000,000. The Cloud API has no `/v1/models/{id}` or `/v1/pricing` route: use this list.
 

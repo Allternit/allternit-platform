@@ -120,7 +120,7 @@ export function DocsPage() {
   -H "Authorization: Bearer \$ALLTERNIT_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{
-    "model": "llama-3.1-8b",
+    "model": "deepseek-v4.1-flash",
     "messages": [{"role": "user", "content": "Hello, Allternit"}],
     "stream": false
   }'`}</code>
