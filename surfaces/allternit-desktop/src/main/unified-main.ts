@@ -7,7 +7,7 @@
  * - Version-locked: Desktop 1.2.3 = Backend 1.2.3
  */
 
-import { app, autoUpdater, BrowserWindow, desktopCapturer, ipcMain, nativeTheme, Notification, safeStorage, session, Tray, webContents, Menu, dialog, globalShortcut, screen, protocol, nativeImage, type WebContents } from 'electron';
+import { app, shell, autoUpdater, BrowserWindow, desktopCapturer, ipcMain, nativeTheme, Notification, safeStorage, session, Tray, webContents, Menu, dialog, globalShortcut, screen, protocol, nativeImage, type WebContents } from 'electron';
 import { fileURLToPath } from 'node:url';
 import { openPrivacySettings as openPrivacySettingsHelper, messagesAccessHint as messagesAccessHintHelper } from './messages-permissions.js';
 import { dirname, join, resolve, basename } from 'node:path';
