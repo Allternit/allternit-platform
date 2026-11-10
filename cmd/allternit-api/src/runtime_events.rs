@@ -26,6 +26,15 @@
 //!   failed post replays the batch and the cloud drops the duplicates.
 //! - **Start.** A new cursor starts at the ledger's current end: pairing a
 //!   runtime does not replay its history.
+//! - **Approvals.** An `approval.requested` whose inbox item is still open
+//!   carries `inboxId`, `inboxKind`, `sessionId`, `contentHash`,
+//!   `approveInline`, `senderKind`, `to`, `toName`, `trust` and `private`
+//!   (from [`crate::inbox_needs::notify_keys`]), plus `botId`, `botName`,
+//!   `threadId` and `botAvatar` (https only) when the item has a bot. Every
+//!   bot event carries `botId`, `threadId` and `botAvatar` in `data` too. When `approveInline` is true
+//!   `text` is the full text (at most 300 characters), not the preview.
+//! - **Status.** `status.snapshot` is posted by [`crate::status_snapshot`],
+//!   not from a ledger.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -60,6 +69,9 @@ const DATA_KEYS: &[&str] = &[
     "attentionId", "botName",
     // "urgent" when a bot marked it so: it reaches the owner during quiet hours (cloud-api notifications::level).
     "urgency",
+    // iPhone system surfaces: which inbox item an approval is, and what the
+    // owner needs to approve it from a notification (`inbox_needs::notify_keys`).
+    "inboxId", "inboxKind", "sessionId", "contentHash", "approveInline", "senderKind", "to", "toName", "trust",
 ];
 
 /// Extra keys a phone event (`phone.step`, `phone.run.completed`) carries, in
@@ -97,6 +109,13 @@ pub struct LedgerRow {
     pub thread_title: Option<String>,
     pub payload: Value,
     pub occurred_at: String,
+    /// `agents.avatar`; forwarded as `botAvatar` only when it is an https URL.
+    pub bot_avatar: Option<String>,
+}
+
+/// A bot avatar the cloud may put in a push: https URLs only.
+fn https_avatar(a: Option<&str>) -> Option<&str> {
+    a.map(str::trim).filter(|a| a.starts_with("https://") && a.len() <= 2048)
 }
 
 /// The registry envelope for a row, or `None` when the row stays local.
@@ -133,6 +152,16 @@ pub fn envelope(source: &str, row: &LedgerRow) -> Option<Value> {
     if let Some(t) = &row.thread_title {
         data.insert("threadTitle".into(), json!(t));
     }
+    // The cloud reads these from `data` (the top-level `bot_id` / `thread_id` stay).
+    if let Some(b) = row.bot_id.as_deref().filter(|b| !b.is_empty()) {
+        data.insert("botId".into(), json!(b));
+    }
+    if let Some(t) = row.thread_id.as_deref().filter(|t| !t.is_empty()) {
+        data.entry("threadId").or_insert_with(|| json!(t));
+    }
+    if let Some(a) = https_avatar(row.bot_avatar.as_deref()) {
+        data.insert("botAvatar".into(), json!(a));
+    }
     // The cloud takes ids of at most 128 characters.
     let approval = p["approvalId"].as_str().filter(|s| !s.is_empty() && s.len() <= 100);
     let id = match (kind, approval) {
@@ -152,6 +181,41 @@ pub fn envelope(source: &str, row: &LedgerRow) -> Option<Value> {
         ev["thread_id"] = json!(t);
     }
     Some(ev)
+}
+
+/// Add the inbox item's notify keys to an `approval.requested` event. The
+/// inbox is read once per batch, only when the batch has an approval.
+fn attach_inbox(conn: &Connection, owner: &str, ev: &mut Value, payload: &Value, inbox: &mut Option<Vec<Value>>) {
+    if inbox.is_none() {
+        *inbox = Some(crate::inbox_needs::collect(conn, owner, crate::inbox_needs::DEFAULT_UNANSWERED_MINUTES).unwrap_or_default());
+    }
+    let Some(it) = inbox.as_deref().and_then(|items| crate::inbox_needs::item_for_approval(items, payload)) else { return };
+    let data = ev["data"].as_object_mut().expect("envelope data is an object");
+    data.extend(crate::inbox_needs::notify_keys(it));
+    // An owner-ledger approval (a coding-session ask, a Factory node with no
+    // bot row) learns its bot from the inbox item.
+    for (k, src) in [("botId", "botId"), ("botName", "botName"), ("threadId", "threadId")] {
+        if let Some(v) = it[src].as_str().filter(|v| !v.is_empty()) {
+            data.entry(k).or_insert_with(|| json!(v));
+        }
+    }
+    if !data.contains_key("botAvatar") {
+        if let Some(bot) = data.get("botId").and_then(|b| b.as_str()).map(str::to_string) {
+            let avatar: Option<String> = conn.query_row("SELECT avatar FROM agents WHERE id = ?1", params![bot], |r| r.get(0)).optional().ok().flatten().flatten();
+            if let Some(a) = https_avatar(avatar.as_deref()) {
+                data.insert("botAvatar".into(), json!(a));
+            }
+        }
+    }
+    if it["approveInline"] == true {
+        if let Some(t) = it["full"]["text"].as_str() {
+            data.insert("text".into(), json!(t));
+        }
+    } else if !data.contains_key("text") {
+        if let Some(t) = it["full"]["text"].as_str() {
+            data.insert("text".into(), json!(t.chars().take(TEXT_PREVIEW).collect::<String>()));
+        }
+    }
 }
 
 // ---------------------------------------------------------------- cursor + reads
@@ -185,11 +249,11 @@ fn ledger_end(conn: &Connection, account: &str, source: &str) -> rusqlite::Resul
 /// Rows after `after` for `account`: (rows, highest rowid scanned, rows scanned).
 pub fn read_rows(conn: &Connection, account: &str, source: &str, after: i64) -> rusqlite::Result<(Vec<LedgerRow>, i64, i64)> {
     let sql = if source == SOURCE_BOT {
-        "SELECT e.rowid, e.id, e.event_type, e.bot_id, a.name, e.thread_id, t.title, e.payload, e.occurred_at, COALESCE(t.incognito, 0)
+        "SELECT e.rowid, e.id, e.event_type, e.bot_id, a.name, e.thread_id, t.title, e.payload, e.occurred_at, COALESCE(t.incognito, 0), a.avatar
          FROM bot_events e JOIN agents a ON a.id = e.bot_id LEFT JOIN bot_threads t ON t.id = e.thread_id
          WHERE a.user_id = ?1 AND e.rowid > ?2 ORDER BY e.rowid LIMIT ?3"
     } else {
-        "SELECT seq, id, event_type, NULL, NULL, thread_id, NULL, payload, occurred_at, 0
+        "SELECT seq, id, event_type, NULL, NULL, thread_id, NULL, payload, occurred_at, 0, NULL
          FROM runtime_user_events WHERE user_id = ?1 AND seq > ?2 ORDER BY seq LIMIT ?3"
     };
     let mut stmt = conn.prepare(sql)?;
@@ -207,6 +271,7 @@ pub fn read_rows(conn: &Connection, account: &str, source: &str, after: i64) -> 
                 thread_title: r.get(6)?,
                 payload: serde_json::from_str(&r.get::<_, String>(7)?).unwrap_or(Value::Null),
                 occurred_at: r.get(8)?,
+                bot_avatar: r.get(10)?,
             },
             r.get::<_, i64>(9)? != 0,
         ))
@@ -285,7 +350,18 @@ pub async fn forward_once(db: &DbHandle, secret: &dyn RelaySecret, sink: &dyn Ev
             };
             let (rows, last, scanned) = read_rows(&conn, &o, source, after)?;
             let full = scanned >= BATCH;
-            Ok((rows.iter().filter_map(|r| envelope(source, r)).collect(), after, last, full))
+            let mut inbox: Option<Vec<Value>> = None;
+            let events = rows
+                .iter()
+                .filter_map(|r| {
+                    let mut ev = envelope(source, r)?;
+                    if ev["type"] == "approval.requested" {
+                        attach_inbox(&conn, &o, &mut ev, &r.payload, &mut inbox);
+                    }
+                    Some(ev)
+                })
+                .collect();
+            Ok((events, after, last, full))
         })
         .await
         .map_err(|e| e.to_string())?
@@ -345,6 +421,44 @@ pub async fn run(state: Arc<AppState>) {
                 tracing::debug!(retry_in = ?wait, "runtime event forward: {e}");
             }
         }
+    }
+}
+
+/// A paired runtime and a recording cloud, for tests in other modules that
+/// check what the forwarder sends (the cloud is the network edge).
+#[cfg(test)]
+pub(crate) mod testing {
+    use super::*;
+    use std::sync::Mutex;
+
+    pub struct Paired;
+    impl RelaySecret for Paired {
+        fn device_token(&self) -> Option<String> {
+            Some("tok".into())
+        }
+        fn paired_owner(&self) -> Option<String> {
+            Some("user-a".into())
+        }
+        fn runtime_id(&self) -> Option<String> {
+            Some("rt_test".into())
+        }
+    }
+
+    #[derive(Default)]
+    pub struct Cloud(pub Mutex<Vec<Value>>);
+    #[async_trait]
+    impl EventSink for Cloud {
+        async fn post(&self, _url: &str, _h: Vec<(String, String)>, body: Vec<u8>) -> Result<u16, String> {
+            let v: Value = serde_json::from_slice(&body).unwrap();
+            self.0.lock().unwrap().extend(v["events"].as_array().cloned().unwrap_or_default());
+            Ok(202)
+        }
+    }
+
+    /// One forwarder pass; the `approval.requested` events the cloud got so far.
+    pub async fn approvals(db: &DbHandle, cloud: &Cloud) -> Vec<Value> {
+        forward_once(db, &Paired, cloud, "https://cloud").await.unwrap();
+        cloud.0.lock().unwrap().iter().filter(|e| e["type"] == "approval.requested").cloned().collect()
     }
 }
 
@@ -492,6 +606,7 @@ mod tests {
             thread_title: None,
             payload: json!({ "approvalId": "ap-9", "decision": "approved", "secret": "x" }),
             occurred_at: "2026-10-05T10:00:00Z".into(),
+            bot_avatar: None,
         };
         let a = envelope(SOURCE_BOT, &row("b")).unwrap();
         let b = envelope(SOURCE_USER, &row("u")).unwrap();

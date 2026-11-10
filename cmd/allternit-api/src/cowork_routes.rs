@@ -2822,6 +2822,45 @@ async fn decide_approval(
     }
 }
 
+/// The Needs-you inbox's approve/deny for a `gizzi-permission` row
+/// (`inbox_needs`, kind `gizzi_permission`). It runs the same decision as the
+/// ApprovalGate card (`POST /cowork/approvals/decide`), so the row closes once
+/// and gizzi gets the same reply. The caller's headers pass through, so the
+/// person-proof checks are unchanged.
+pub(crate) async fn decide_from_inbox(
+    state: &Arc<AppState>,
+    user: &AuthUser,
+    headers: &HeaderMap,
+    approval_id: &str,
+    approve: bool,
+) -> Result<serde_json::Value, axum::response::Response> {
+    let mut headers = headers.clone();
+    if get_user(&headers).is_none() {
+        // auth_middleware sets this header; the extension is the same identity.
+        if let Ok(v) = axum::http::HeaderValue::from_str(&user.user_id) {
+            headers.insert("x-allternit-user-id", v);
+        }
+    }
+    let body = ApprovalDecisionBody {
+        action_id: Some(approval_id.to_string()),
+        id: None,
+        decision: Some(if approve { "approve" } else { "deny" }.to_string()),
+        action: None,
+        answer: None,
+        scope: None,
+    };
+    let resp = decide_approval(State(state.clone()), Extension(user.clone()), headers, Ok(Json(body))).await.into_response();
+    let status = resp.status();
+    let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20).await.unwrap_or_default();
+    let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+    if status.is_success() {
+        Ok(v)
+    } else {
+        Err((status, Json(v)).into_response())
+    }
+}
+
+
 async fn list_suggestions(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,

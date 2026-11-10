@@ -126,8 +126,14 @@ fn emit(state: &AppState, ty: &str, a: &Approval) {
     // user only their own approvals; it is stripped before reaching clients.
     let evt = json!({ "type": ty, "at": now_rfc3339(), "owner": a.owner, "data": a.to_json() });
     let _ = EVENTS.send(evt);
+    // `approvalId` lets the forwarder send one event per approval and find its inbox item.
+    let mut payload = a.to_json();
+    payload["approvalId"] = json!(a.id);
     if let Some(bot) = a.bot_id.as_deref().filter(|b| !b.is_empty()) {
-        crate::gateway_runner::led(&state.db, bot, "", None, ty, ("user", &a.owner), a.to_json(), Some(format!("factory:{ty}:{}", a.id)));
+        crate::gateway_runner::led(&state.db, bot, "", None, ty, ("user", &a.owner), payload, Some(format!("factory:{ty}:{}", a.id)));
+    } else if let Ok(conn) = state.db.connect() {
+        // No bot: the owner ledger, so the cloud still hears about it.
+        let _ = crate::runtime_events::record_user_event(&conn, &a.owner, ty, None, &payload, Some(&format!("factory:{ty}:{}", a.id)));
     }
 }
 
@@ -1345,6 +1351,24 @@ mod tests {
         let body = crate::factory_approvals_push::notify_body(&a, "rt_1", "ABC234");
         assert_eq!(body["data"]["approvalId"], a.id.as_str());
         assert_eq!(body["runtimeId"], "rt_1");
+    }
+
+    #[tokio::test]
+    async fn a_factory_approval_forwards_one_event_with_its_inbox_keys() {
+        use crate::runtime_events::testing::{approvals, Cloud};
+        let _g = SERIAL.lock().await;
+        let state = setup().await;
+        let cloud = Cloud::default();
+        assert!(approvals(&state.db, &cloud).await.is_empty()); // cursor at the end
+        waiting_node(&state, &[]).await;
+        sync_from_ledger(&state).await.unwrap();
+        let evs = approvals(&state.db, &cloud).await;
+        assert_eq!(evs.len(), 1, "{evs:#?}");
+        let d = &evs[0]["data"];
+        assert_eq!(d["inboxKind"], "factory_approval");
+        assert!(d["inboxId"].as_str().unwrap().starts_with("factory:"));
+        assert_eq!(d["contentHash"].as_str().map(str::len), Some(32));
+        assert_eq!(evs[0]["id"], format!("rt:approval:{}:requested", d["inboxId"].as_str().unwrap().trim_start_matches("factory:")));
     }
 
     #[tokio::test]
