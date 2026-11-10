@@ -92,15 +92,23 @@ The top-left menu bar has the usual Mac menus:
 | Menu | Items |
 |---|---|
 | Allternit Desktop | About, Check for Updates…, Settings… (`Cmd+,`), Hide, Quit |
-| File | New Session (`Cmd+N`), Quick Chat, Toggle HUD, Close Window |
+| File | New Session (`Cmd+N`), New Window (`Cmd+Shift+N`), Quick Chat, Toggle HUD, Close Window |
 | Edit | Undo, Redo, Cut, Copy, Paste, Select All, Find… |
 | View | Home (`Cmd+1`), Bots (`Cmd+2`), Code (`Cmd+3`), ACI (`Cmd+4`), Toggle Sidebar (`Cmd+\`), Bot Activity, zoom, Enter Full Screen |
-| Window | Minimize, Zoom, window list |
+| Window | Minimize, Zoom, the list of open windows, Bring All to Front |
 | Help | Allternit Docs, Keyboard Shortcuts |
 
 New Session does what the sidebar's **New** does in the current mode. Find, Bot Activity, Quick Chat and Toggle HUD show their shortcuts, but the key presses stay with the workspace, so a shortcut you changed in Settings keeps working.
 
 Developer notes: the menu is built in `src/main/app-menu.ts`. Workspace commands go to the main window as the `window:event:menu-command` event with `{ command }`. The renderer handles them in `allternit-ai/src/shell/desktop-menu.ts`, `ShellApp.tsx` (Settings, modes, sidebar, Find, Bot Activity) and `ShellRail.tsx` (New Session). The web and the PWA have no app menu.
+
+### New Window
+
+**File › New Window** (`Cmd/Ctrl+Shift+N`) opens another workspace window. It uses the same account, the same sessions and the same local servers as the first one, so a bot reply or a status change shows in every window. Use one window per task: a Code session in one, Bots in another.
+
+The **Window** menu lists every open window with a colour dot and its page title (for example "Window 2 · Code"). Click a name to bring that window forward. The window you last used is the one menu commands act on (New Session, the modes, Find, the title-bar buttons). Only the first window's size is remembered for the next launch, and a new window opens a little down and to the right of the others. Closing one window leaves the rest open; **Show Window** from the Dock or the tray opens one again when none are left.
+
+Developers: the windows are tracked in `src/main/main-windows.ts`. `getFocusedMainWindow()` is the window to act on; `broadcastToMainWindows()` sends status that every window shows (engine status, tunnel, permissions, connection, extension and menu bar mode). The single-instance lock is unchanged: launching the app a second time focuses the existing app instead of starting another process.
 
 <a id="keyboard-shortcuts"></a>
 

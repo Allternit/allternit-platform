@@ -32,6 +32,34 @@ struct LoopIteration: Decodable, Sendable, Hashable {
     let timestamp: String
 }
 
+/// Loop Card measurement (`metric` column). Present only on measured loops.
+/// Wire keys are already camelCase (`LoopMetricSchema`, automations.ts).
+struct LoopMetric: Codable, Sendable, Hashable {
+    let command: String
+    /// "lower" or "higher" is better.
+    let direction: String
+    /// Fractional gain needed to keep a change (0.05 = 5%).
+    let keepBar: Double
+    let noiseRuns: Int
+    let minPairs: Int
+}
+
+/// One ledger row: an attempt, rejects included (`ledger` column,
+/// loop-engine.ts `runMeasured`). `delta` is the median fractional change,
+/// positive is better; null when the attempt could not be measured.
+struct LoopLedgerRow: Decodable, Sendable, Hashable {
+    let iteration: Int
+    let hypothesis: String
+    let delta: Double?
+    let n: Int
+    let noise: Double
+    /// KEEP, MINOR, DROP or INCONCLUSIVE.
+    let verdict: String
+    let why: String
+    /// ACTED, NOOP or BLOCKED.
+    let outcome: String
+}
+
 /// A loop row (insert shape, automations.ts:257-267). `state` moves
 /// running -> succeeded | max_iterations (loop-engine.ts:72-105), or can be
 /// set to something else entirely by a `PUT` (e.g. a manual "stopped") —
@@ -47,9 +75,11 @@ struct Loop: Decodable, Sendable, Identifiable, Hashable {
     let state: String
     let timeCreated: Double
     let timeUpdated: Double
+    let metric: LoopMetric?
+    let ledger: [LoopLedgerRow]?
 
     private enum CodingKeys: String, CodingKey {
-        case id, command, state
+        case id, command, state, metric, ledger
         case agentId = "agent_id"
         case exitCondition = "exit_condition"
         case maxIterations = "max_iterations"
@@ -68,9 +98,11 @@ struct CreateLoopRequest: Encodable, Sendable {
     let command: String
     let exitCondition: String?
     let maxIterations: Int
+    /// Optional Loop Card; nil makes a plain loop.
+    let metric: LoopMetric?
 
     private enum CodingKeys: String, CodingKey {
-        case command
+        case command, metric
         case exitCondition = "exit_condition"
         case maxIterations = "max_iterations"
     }

@@ -175,6 +175,14 @@ struct ToolCallsRail: View {
                             .font(.caption2.monospacedDigit())
                             .foregroundColor(Color("TextTertiary"))
                     }
+                    if let receipt = call.receiptLabel {
+                        Text(receipt)
+                            .font(.caption2)
+                            .foregroundColor(Color("TextSecondary"))
+                            .padding(.horizontal, 6).padding(.vertical, 2)
+                            .background(Capsule().fill(Color("FillNeutral")))
+                            .accessibilityLabel("Delivery: \(receipt)")
+                    }
                     stateMark(call.state)
                 }
                 .frame(minHeight: 32)

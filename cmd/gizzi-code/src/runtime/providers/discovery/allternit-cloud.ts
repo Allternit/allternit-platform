@@ -39,11 +39,15 @@ export function isPaidAllternitPlan(plan: AllternitPlan | null | undefined): boo
  * allternit-api (http://127.0.0.1:8013) for gizzi's local calls; using it
  * here sent Cloud discovery to the local API, which answered 401, and
  * Allternit Cloud vanished from every Desktop picker. A loopback URL is
- * never the Cloud. ALLTERNIT_CLOUD_URL overrides explicitly.
+ * never taken for the Cloud, except from ALLTERNIT_CLOUD_URL, which names it explicitly.
  */
 export function cloudOrigin(): string {
+  // ALLTERNIT_CLOUD_URL names the cloud on purpose, so a loopback value (a local
+  // cloud-api, a test fixture) is honored. ALLTERNIT_API_URL is often Desktop's
+  // own local allternit-api, which must never be taken for the cloud.
+  const explicit = (process.env.ALLTERNIT_CLOUD_URL || "").trim().replace(/\/+$/, "")
+  if (explicit) return explicit
   const candidates = [
-    process.env.ALLTERNIT_CLOUD_URL,
     process.env.ALLTERNIT_API_URL,
     process.env.ALLTERNIT_API_BASE_URL,
   ]

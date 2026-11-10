@@ -40,8 +40,8 @@ async function run(replies: string[], options: { visuals?: boolean; message?: st
       if (!closed) { controller.enqueue(new TextEncoder().encode(chunks.slice(chunks.indexOf('\n\n') + 2))); controller.close(); }
     }, cancel() { closed = true; } }), { headers: { 'content-type': 'text/event-stream' } });
   } });
-  const savedOrigin = process.env.ALLTERNIT_API_URL, savedKey = process.env.ALLTERNIT_API_KEY;
-  if (handoff) { process.env.ALLTERNIT_API_URL = `http://127.0.0.1:${server.port}`; process.env.ALLTERNIT_API_KEY = 'fixture-handoff'; clearHandoffCache(); }
+  const savedOrigin = process.env.ALLTERNIT_API_URL, savedKey = process.env.ALLTERNIT_API_KEY, savedCloud = process.env.ALLTERNIT_CLOUD_URL;
+  if (handoff) { process.env.ALLTERNIT_API_URL = `http://127.0.0.1:${server.port}`; process.env.ALLTERNIT_CLOUD_URL = `http://127.0.0.1:${server.port}`; process.env.ALLTERNIT_API_KEY = 'fixture-handoff'; clearHandoffCache(); }
   const tmp = await tmpdir({ config: { model: 'answerfixture/fixture', small_model: 'answerfixture/fixture', snapshot: false, ...(hook ? { hooks: { http: [{ url: `http://127.0.0.1:${server.port}/hook`, events: ['Stop'] }] } } : {}), provider: { ...(handoff ? { allternit: { npm: '@ai-sdk/openai-compatible', name: 'Cloud fixture', options: { baseURL: `http://127.0.0.1:${server.port}/v1`, apiKey: 'fixture' }, models: { fixture: { name: 'Fixture', limit: { context: 100000, output: 4096 } } } } } : {}), answerfixture: { npm: '@ai-sdk/openai-compatible', name: 'Fixture', options: { baseURL: `http://127.0.0.1:${server.port}/v1`, apiKey: 'fixture' }, models: { fixture: { name: 'Fixture', limit: { context: 100000, output: 4096 } } } } } } });
   try { return await Instance.provide({ directory: tmp.path, fn: async () => {
     const session = await Session.create({ title: 'Answer contract' });
@@ -51,7 +51,7 @@ async function run(replies: string[], options: { visuals?: boolean; message?: st
       const result = await SessionPrompt.prompt({ sessionID: session.id, agent: 'build', model: { providerID: 'answerfixture', modelID: 'fixture' }, system: visuals ? '+' + ANSWER_TEMPLATE_MANUAL : '+Text only.', parts: [{ type: 'text', text: message }] });
       return { result, session: await Session.get(session.id), trace: SessionTrace.list({ sessionID: session.id, limit: 1000 }), requests, published, delayedPublished };
     } finally { clearInterval(stopPoll); unsub(); }
-  } }); } finally { server.stop(true); if (quota) { ProviderQuotas.clearCache(); SessionPause.clearTimers(); } if (handoff) { if (savedOrigin === undefined) delete process.env.ALLTERNIT_API_URL; else process.env.ALLTERNIT_API_URL = savedOrigin; if (savedKey === undefined) delete process.env.ALLTERNIT_API_KEY; else process.env.ALLTERNIT_API_KEY = savedKey; clearHandoffCache(); } await tmp[Symbol.asyncDispose](); await rm(tmp.path, { recursive: true, force: true }); }
+  } }); } finally { server.stop(true); if (quota) { ProviderQuotas.clearCache(); SessionPause.clearTimers(); } if (handoff) { if (savedCloud === undefined) delete process.env.ALLTERNIT_CLOUD_URL; else process.env.ALLTERNIT_CLOUD_URL = savedCloud; if (savedOrigin === undefined) delete process.env.ALLTERNIT_API_URL; else process.env.ALLTERNIT_API_URL = savedOrigin; if (savedKey === undefined) delete process.env.ALLTERNIT_API_KEY; else process.env.ALLTERNIT_API_KEY = savedKey; clearHandoffCache(); } await tmp[Symbol.asyncDispose](); await rm(tmp.path, { recursive: true, force: true }); }
 }
 describe('runtime answer enforcement', () => {
   test('holds a prose bypass, repairs once and stores the chosen template outcome', async () => {

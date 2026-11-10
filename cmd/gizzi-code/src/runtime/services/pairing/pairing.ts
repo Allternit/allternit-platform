@@ -7,7 +7,7 @@
 //
 // Wire shapes coded against the Rust source:
 //   POST /api/v1/runtime-pairings
-//     req:  { name, runtimeType, hostname?, platform?, version?, publicKey, capabilities[] }
+//     req:  { name, runtimeType, hostname?, platform?, machineId?, version?, publicKey, capabilities[] }
 //     resp: 201 { pairingId, deviceCode, userCode, challenge, verificationUrl, expiresAt, pollIntervalSeconds }
 //   POST /api/v1/runtime-pairings/exchange
 //     req:  { pairingId, deviceCode, signature }
@@ -27,7 +27,8 @@ import path from "path"
 import os from "node:os"
 import { execFileSync } from "node:child_process"
 import fs from "node:fs/promises"
-import { createHash, generateKeyPairSync, createPrivateKey, sign } from "node:crypto"
+import { createHash, generateKeyPairSync, createPrivateKey, sign, randomBytes } from "node:crypto"
+import { readFileSync, mkdirSync, writeFileSync } from "node:fs"
 import open from "open"
 import { Global } from "@/runtime/context/global/index"
 import { Flag } from "@/runtime/context/flag/flag"
@@ -257,12 +258,35 @@ export namespace Pairing {
     return response
   }
 
+  /**
+   * This machine's stable id: random, made once, kept in ~/.allternit/machine-id.
+   * Allternit Desktop reads and writes the same file, so Desktop and gizzi on
+   * one Mac report one machine. A new id is made if the file is missing.
+   */
+  function machineId(): string | undefined {
+    const file = path.join(os.homedir(), ".allternit", "machine-id")
+    const valid = (v: string) => /^[A-Za-z0-9_-]{16,64}$/.test(v)
+    try {
+      const existing = readFileSync(file, "utf8").trim()
+      if (valid(existing)) return existing
+    } catch {}
+    try {
+      const id = randomBytes(24).toString("base64url")
+      mkdirSync(path.dirname(file), { recursive: true })
+      writeFileSync(file, id + "\n", { mode: 0o600 })
+      return id
+    } catch {
+      return undefined // the platform falls back to hostname + platform
+    }
+  }
+
   export async function createPairing(stored: Stored): Promise<Created> {
     const response = await request("/api/v1/runtime-pairings", {
       name: stored.name,
       runtimeType: stored.runtimeType,
       hostname: stored.hostname,
       platform: stored.platform,
+      machineId: machineId(),
       version: Installation.VERSION,
       publicKey: stored.publicKey,
       capabilities: CAPABILITIES,

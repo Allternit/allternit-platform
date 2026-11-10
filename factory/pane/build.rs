@@ -97,6 +97,20 @@ fn main() {
     if let Ok(system_dir) = env::var("LIBGHOSTTY_VT_ZIG_SYSTEM_DIR") {
         command.arg("--system").arg(system_dir);
     }
+    // Allternit: zig 0.15's bundled libc++ does not compile against the macOS 27
+    // SDK (`INFINITY` is undeclared in its <random>), so on macOS zig uses the
+    // Command Line Tools developer dir (macOS 15 SDK) when it is installed.
+    // LIBGHOSTTY_VT_DEVELOPER_DIR overrides; an empty value keeps the default.
+    println!("cargo:rerun-if-env-changed=LIBGHOSTTY_VT_DEVELOPER_DIR");
+    let clt = "/Library/Developer/CommandLineTools";
+    let developer_dir = match env::var("LIBGHOSTTY_VT_DEVELOPER_DIR") {
+        Ok(v) => Some(v).filter(|v| !v.trim().is_empty()),
+        Err(_) if target.contains("apple-darwin") && PathBuf::from(clt).join("SDKs/MacOSX.sdk").exists() => Some(clt.to_string()),
+        Err(_) => None,
+    };
+    if let Some(dir) = developer_dir {
+        command.env("DEVELOPER_DIR", &dir).env_remove("SDKROOT");
+    }
 
     let status = command
         .current_dir(&vendored_dir)
