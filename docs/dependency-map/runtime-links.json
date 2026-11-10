@@ -570,6 +570,66 @@
       "label": "mcp directory routes",
       "kind": "module",
       "path": "allternit/cmd/allternit-api/src/mcp_directory_routes.rs"
+    },
+    {
+      "id": "allternit/cmd/allternit-api/src/status_snapshot.rs",
+      "label": "status snapshot",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-api/src/status_snapshot.rs"
+    },
+    {
+      "id": "allternit/cmd/allternit-cloud-api/src/routes/notifications.rs",
+      "label": "notifications",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-cloud-api/src/routes/notifications.rs"
+    },
+    {
+      "id": "allternit/cmd/allternit-cloud-api/src/routes/apns.rs",
+      "label": "apns",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-cloud-api/src/routes/apns.rs"
+    },
+    {
+      "id": "allternit/surfaces/allternit-mobile/ios/AllternitNotifications",
+      "label": "AllternitNotifications",
+      "kind": "module",
+      "path": "allternit/surfaces/allternit-mobile/ios/AllternitNotifications"
+    },
+    {
+      "id": "allternit/cmd/allternit-cloud-api/src/routes/device_read.rs",
+      "label": "device read",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-cloud-api/src/routes/device_read.rs"
+    },
+    {
+      "id": "allternit/surfaces/allternit-mobile/ios/SystemSurfaces",
+      "label": "SystemSurfaces",
+      "kind": "module",
+      "path": "allternit/surfaces/allternit-mobile/ios/SystemSurfaces"
+    },
+    {
+      "id": "allternit/cmd/allternit-api/src/inbox_needs.rs",
+      "label": "inbox needs",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-api/src/inbox_needs.rs"
+    },
+    {
+      "id": "allternit/cmd/allternit-api/src/bots_pause.rs",
+      "label": "bots pause",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-api/src/bots_pause.rs"
+    },
+    {
+      "id": "allternit/cmd/gizzi-code/src/cli/commands/bot.ts",
+      "label": "bot",
+      "kind": "module",
+      "path": "allternit/cmd/gizzi-code/src/cli/commands/bot.ts"
+    },
+    {
+      "id": "allternit/cmd/allternit-api/src/messages_mac.rs",
+      "label": "messages mac",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-api/src/messages_mac.rs"
     }
   ],
   "edges": [

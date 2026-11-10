@@ -378,7 +378,8 @@ async fn handle_message_event(state: &Arc<AppState>, event: &Value) -> Result<()
         }
         // Pause all bots: the message is kept in the thread; no auto-reply.
         let owner = state.db.connect().ok().and_then(|c| c.query_row("SELECT user_id FROM agents WHERE id = ?1", [&bot_id], |r| r.get::<_, String>(0)).ok());
-        if owner.is_some_and(|o| crate::bots_pause::is_paused_db(&state.db, &o)) {
+        // The owner's own Slack messages still run: the sender is the owner's verified Slack identity.
+        if owner.as_deref().is_some_and(|o| crate::bots_pause::is_paused_db(&state.db, o) && !is_owner_slack_user(&state.db, o, sender)) {
             info!(channel = %channel, bot = %bot_id, "bots paused: Slack message kept, no auto-reply");
             return Ok(());
         }
@@ -586,6 +587,24 @@ async fn fetch_json_array(client: &reqwest::Client, path: &str) -> Result<Vec<Va
         .map_err(|e| format!("Gizzi response parse failed: {e}"))
 }
 
+/// True when `sender` is a Slack user id the owner verified as their own
+/// (`factory_owner_identities`, channel `slack`, any of their Slack connections).
+pub(crate) fn is_owner_slack_user(db: &crate::db::DbHandle, owner: &str, sender: Option<&str>) -> bool {
+    let Some(sender) = sender.map(str::trim).filter(|s| !s.is_empty()) else { return false };
+    db.connect()
+        .ok()
+        .and_then(|c| {
+            c.query_row(
+                "SELECT COUNT(*) FROM factory_owner_identities WHERE channel = 'slack' AND owner = ?1 AND lower(identity) = lower(?2)",
+                rusqlite::params![owner, sender],
+                |r| r.get::<_, i64>(0),
+            )
+            .ok()
+        })
+        .unwrap_or(0)
+        > 0
+}
+
 #[cfg(test)]
 mod binding_tests {
     use super::*;
@@ -691,5 +710,27 @@ mod queued_delivery_tests {
         assert!(verify_slack_signature("s", &signed("s", sent, "{}", Some(sent)), b"{}").is_err(), "older than 24h");
         let t = now() - 600;
         assert!(verify_slack_signature("other", &signed("s", t, "{}", Some(t)), b"{}").is_err(), "wrong secret");
+    }
+}
+
+#[cfg(test)]
+mod paused_owner_tests {
+    use rusqlite::params;
+
+    /// While bots are paused, the owner's verified Slack user still gets answered; nobody else does.
+    #[tokio::test]
+    async fn only_the_owners_verified_slack_user_counts_as_the_owner() {
+        let dir = std::env::temp_dir().join(format!("allternit-slack-owner-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let st = crate::test_helpers::app_state(&dir).await;
+        st.db
+            .connect()
+            .unwrap()
+            .execute("INSERT INTO factory_owner_identities (account_id, channel, owner, identity, verified_at) VALUES ('acct-s', 'slack', 'user-a', 'U0OWNER', '2026-11-10')", params![])
+            .unwrap();
+        assert!(super::is_owner_slack_user(&st.db, "user-a", Some("u0owner")));
+        assert!(!super::is_owner_slack_user(&st.db, "user-a", Some("U0STRANGER")));
+        assert!(!super::is_owner_slack_user(&st.db, "user-b", Some("U0OWNER")), "another owner's identity");
+        assert!(!super::is_owner_slack_user(&st.db, "user-a", None));
     }
 }

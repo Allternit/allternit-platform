@@ -1026,6 +1026,7 @@ async fn main() {
     let v1_routes = provider_router()
         .merge(inbox_router())
         .merge(allternit_api::bots_pause::router())
+        .merge(allternit_api::messages_mac::router())
         .merge(file_router())
         .merge(memory_router())
         .merge(me_router())

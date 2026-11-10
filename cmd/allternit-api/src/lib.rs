@@ -113,6 +113,7 @@ pub mod runtime_events;
 /// `status.snapshot` producer for the iPhone system surfaces.
 pub mod status_snapshot;
 pub mod bots_pause;
+pub mod messages_mac;
 pub mod runtime_viewer;
 pub mod voice_calls;
 pub mod platform_agents;
