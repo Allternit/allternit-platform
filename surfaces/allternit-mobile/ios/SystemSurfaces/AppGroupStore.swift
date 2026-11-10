@@ -93,5 +93,6 @@ enum AppGroupStore {
         for key in defaults.dictionaryRepresentation().keys where key.hasPrefix("surfaces.") && key != Key.cloudBaseURL {
             defaults.removeObject(forKey: key)
         }
+        OutboxStore.clearAll()
     }
 }

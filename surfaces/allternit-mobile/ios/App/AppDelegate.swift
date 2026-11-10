@@ -22,6 +22,8 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
             Task { @MainActor in
                 guard AuthManager.shared.isSignedIn else { return }
                 await NotificationActions.reconcileDelivered()
+                // Send anything the share extension left behind.
+                await ShareOutboxDrainer.shared.drain()
             }
         }
         Task { @MainActor in
