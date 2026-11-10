@@ -676,7 +676,12 @@ struct HistorySidebarView: View {
                             .foregroundColor(Color("TextSecondary"))
                     }
                 }
-                if let preview = session.description?.trimmingCharacters(in: .whitespacesAndNewlines), !preview.isEmpty {
+                if let mission = session.missionLabel {
+                    Text(mission)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(Color("AccentPrimary"))
+                        .lineLimit(1)
+                } else if let preview = session.description?.trimmingCharacters(in: .whitespacesAndNewlines), !preview.isEmpty {
                     Text(preview)
                         .font(.system(size: 13))
                         .foregroundColor(Color("TextSecondary"))

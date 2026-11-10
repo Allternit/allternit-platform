@@ -127,6 +127,8 @@ The work and its proof. See [Workspace](/factory/workspace).
 | `gizzi swarm wait [<swarm>] [--timeout S]` | Block until every worker is done, failed or stopped, then print a summary |
 | `gizzi swarm land [<swarm>] [--worker w1] [--all] [--dry-run]` | Merge finished workers' branches into the branch the swarm started from, then remove their worktrees |
 | `gizzi swarm list` | Every swarm on this computer |
+| `gizzi mission start <goal> [--on <runtime>] [--max-workers N] [--max-hours H] [--max-attempts N] [-m <brain>] [--yes]` | Plan a [mission](/factory/missions): milestones with parallel tracks and a validate command, approve, then run it. `/mission <goal>` in the TUI does the same |
+| `gizzi mission ls\|status [id]\|resume [id] [--max-hours N]\|stop [id]\|land [id] [--merge]` | List missions, show progress, continue after a restart, stop the workers and keep the state, or land a finished mission into the branch it started from |
 | `gizzi doctor` | Checks Gizzi, the engine, harnesses, transport and the install, including the one-time move of the old orchestrator's state folder to `~/.allternit/factory/` ([details](/factory/migration#on-disk-state)) |
 | `gizzi serve` | Unchanged: Gizzi's own harness server. The Factory API is the engine's, at `/api/factory` |
 

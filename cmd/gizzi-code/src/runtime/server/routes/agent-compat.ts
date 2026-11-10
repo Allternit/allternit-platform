@@ -128,6 +128,8 @@ function transformSession(info: any) {
       handoff: info.handoff ?? null,
       paused: info.paused ?? null,
       sourceRef: info.sourceRef ?? null,
+      glance: info.glance ?? null,
+      mission: info.mission ?? null,
     },
   }
 }
@@ -268,6 +270,8 @@ export const AgentCompatRoutes = () =>
                 handoff: info.handoff ?? null,
                 paused: info.paused ?? null,
                 sourceRef: info.sourceRef ?? null,
+                glance: info.glance ?? null,
+                mission: info.mission ?? null,
               },
             }
           }

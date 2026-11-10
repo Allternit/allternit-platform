@@ -63,6 +63,12 @@ struct AgentSession: Decodable, Sendable, Identifiable {
     /// session. It runs in the terminal; messages, Stop and approvals sent from
     /// here reach it at once (docs: Continue a terminal session anywhere).
     let isTerminal: Bool
+    /// `metadata.mission.label` — Gizzi /mission progress, "Mission · M2/5".
+    /// nil when absent or malformed.
+    let missionLabel: String?
+    /// `metadata.glance.text` — a one-line glance summary. nil when absent
+    /// or malformed.
+    let glanceText: String?
     // The rest of `metadata` (directory, version, permission, …) stays
     // skipped — not rendered anywhere on iOS.
 
@@ -88,10 +94,19 @@ struct AgentSession: Decodable, Sendable, Identifiable {
         case archived
         case artifactSession
         case sourceRef
+        case mission
+        case glance
     }
 
     private struct ArtifactSessionTag: Decodable { let kind: String? }
     private struct SourceRefTag: Decodable { let harness: String? }
+    private struct MissionTag: Decodable { let label: String? }
+    private struct GlanceTag: Decodable { let text: String? }
+
+    private static func clean(_ text: String?) -> String? {
+        let t = text?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return (t?.isEmpty ?? true) ? nil : t
+    }
 
     /// Tolerant decode mirroring the web's `normalizeSessionPayload`: only
     /// `id` and `created_at` are required on the wire; everything else falls
@@ -117,6 +132,8 @@ struct AgentSession: Decodable, Sendable, Identifiable {
             archived = ((try? metadata.decodeIfPresent(Bool.self, forKey: .archived)) ?? nil) ?? false
             artifactSessionKind = ((try? metadata.decodeIfPresent(ArtifactSessionTag.self, forKey: .artifactSession)) ?? nil)?.kind
             isTerminal = ((try? metadata.decodeIfPresent(SourceRefTag.self, forKey: .sourceRef)) ?? nil)?.harness == "gizzi-tui"
+            missionLabel = Self.clean(((try? metadata.decodeIfPresent(MissionTag.self, forKey: .mission)) ?? nil)?.label)
+            glanceText = Self.clean(((try? metadata.decodeIfPresent(GlanceTag.self, forKey: .glance)) ?? nil)?.text)
             // The backend emits a bool; the create path carries the flag as
             // the string "true" inside the metadata bag.
             if let flag = try metadata.decodeIfPresent(Bool.self, forKey: .ephemeral) {
@@ -132,6 +149,8 @@ struct AgentSession: Decodable, Sendable, Identifiable {
             archived = false
             artifactSessionKind = nil
             isTerminal = false
+            missionLabel = nil
+            glanceText = nil
             ephemeral = false
         }
     }
