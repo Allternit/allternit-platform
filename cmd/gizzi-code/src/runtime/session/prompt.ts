@@ -1,4 +1,5 @@
 import { runWithStreamContext } from "@/runtime/session/stream-context"
+import { matchReviewPreset, reviewPresetPrompt } from "@/shared/util/review-presets"
 import path from "path"
 import os from "os"
 import fs from "fs/promises"
@@ -2964,11 +2965,15 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     const session = await Session.get(input.sessionID)
     const command = await Command.get(input.command)
     const agentName = command.agent ?? input.agent ?? (await Agent.defaultAgent())
+    // `review security|perf|tests|diff [target]`: a focused preset prompt with
+    // the shared findings format; the rest of the arguments is the target.
+    const preset = input.command === Command.Default.REVIEW ? matchReviewPreset(input.arguments) : undefined
+    if (preset) input = { ...input, arguments: preset.target }
 
     const raw = input.arguments.match(argsRegex) ?? []
     const args = raw.map((arg) => arg.replace(quoteTrimRegex, ""))
 
-    const templateCommand = await command.template
+    const templateCommand = preset ? reviewPresetPrompt(preset.name) : await command.template
 
     const placeholders = templateCommand.match(placeholderRegex) ?? []
     let last = 0

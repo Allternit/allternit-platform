@@ -3235,6 +3235,49 @@
       ]
     },
     {
+      "id": "feature:gizzi-competitive-parity",
+      "label": "Gizzi Code parity: errors after edit, MCP tasks, owned web search, review presets",
+      "product": "product:gizzi-code",
+      "status": "building",
+      "description": "Wave 5 of the Gizzi Code upgrade (audit 2026-11-09 panel C). The TUI starts language servers lazily (built-in TypeScript/Python/Go when installed, plugins win) and shows new errors on each edit's tool line, including CLI-brain edits; long-running MCP tools run as MCP tasks (2025-11-25) with polled status in the tool line and Esc sending tasks/cancel, in the TUI and the engine; WebSearch asks Allternit's own search route (cloud-api POST /api/v1/search/web, Exa on Allternit's key) before public Exa; /review security|perf|tests|diff presets with one findings format, also via gizzi run --command review.",
+      "touches": [
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/services/lsp",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/components/EditDiagnosticsLine.tsx",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/tools/FileEditTool",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/tools/FileWriteTool",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/services/mcp/client.ts",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/tools/WebSearchTool",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/commands/review.ts",
+        "allternit/cmd/gizzi-code/src/shared/util/mcp-tasks.ts",
+        "allternit/cmd/gizzi-code/src/shared/util/review-presets.ts",
+        "allternit/cmd/gizzi-code/src/runtime/tools/builtins/allternit-search.ts",
+        "allternit/cmd/gizzi-code/src/runtime/tools/builtins/websearch.ts",
+        "allternit/cmd/gizzi-code/src/runtime/tools/mcp/index.ts",
+        "allternit/cmd/allternit-cloud-api/src/routes/web_search.rs"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-09",
+          "note": "No Allternit-owned search route existed (Desktop and hosted agents used public Exa through the engine); added cloud-api POST /api/v1/search/web on Allternit's EXA_API_KEY, 503 search_not_configured without it. Not called live from tests (metered); clients fall back to public Exa."
+        },
+        {
+          "on": "2026-11-09",
+          "note": "MCP tasks follow revision 2025-11-25 core tasks; 2026-07-28 moved tasks to an extension (SEP-2663) that @modelcontextprotocol/client 2.3.1 does not drive, so 2026-era peers get plain calls."
+        },
+        {
+          "on": "2026-11-09",
+          "note": "/mission not built: no Desktop mission feature exists to mirror (only a 'Mission control' project-board look); proposal in the lane report."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/cli/code-intelligence.mdx",
+        "allternit/surfaces/docs/cli/mcp.mdx",
+        "allternit/surfaces/docs/cli/models.mdx",
+        "allternit/cmd/gizzi-code/test/mcp/tasks.test.ts",
+        "allternit/cmd/gizzi-code/test/tools/allternit-search.test.ts"
+      ]
+    },
+    {
       "id": "feature:decision-trees",
       "label": "Decision trees (branching agent questions + Tasks Decisions deck)",
       "product": "product:ai-allternit",

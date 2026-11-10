@@ -98,6 +98,7 @@ const fetchMcpSkillsForClient = feature('MCP_SKILLS')
   : null
 
 import { UnauthorizedError } from '@modelcontextprotocol/client'
+import { callToolAsTask, formatTaskUpdate, shouldCallAsTask } from '@/shared/util/mcp-tasks'
 import type { AssistantMessage } from './../../types/message.ts'
 /* eslint-enable @typescript-eslint/no-require-imports */
 import { classifyMcpToolForCollapse } from '../../tools/MCPTool/classifyForCollapse.js'
@@ -1884,6 +1885,7 @@ export const fetchToolsForClient = memoizeWithLRU(
                     tool: tool.name,
                     args,
                     meta,
+                    taskSupport: tool.execution?.taskSupport,
                     signal: context.abortController.signal,
                     setAppState: context.setAppState,
                     onProgress:
@@ -2837,6 +2839,7 @@ export async function callMCPToolWithUrlElicitationRetry({
   signal,
   setAppState,
   onProgress,
+  taskSupport,
   callToolFn = callMCPTool,
   handleElicitation,
 }: {
@@ -2848,6 +2851,8 @@ export async function callMCPToolWithUrlElicitationRetry({
   signal: AbortSignal
   setAppState: (f: (prev: AppState) => AppState) => void
   onProgress?: (data: MCPProgress) => void
+  /** The tool's `execution.taskSupport` (MCP tasks, 2025-11-25). */
+  taskSupport?: string
   /** Injectable for testing. Defaults to callMCPTool. */
   callToolFn?: (opts: {
     client: ConnectedMCPServer
@@ -2856,6 +2861,7 @@ export async function callMCPToolWithUrlElicitationRetry({
     meta?: Record<string, unknown>
     signal: AbortSignal
     onProgress?: (data: MCPProgress) => void
+    taskSupport?: string
   }) => Promise<MCPToolCallResult>
   /** Handler for URL elicitations when no hook handles them.
    * In print/SDK mode, delegates to structuredIO. In REPL, falls back to queue. */
@@ -2875,6 +2881,7 @@ export async function callMCPToolWithUrlElicitationRetry({
         meta,
         signal,
         onProgress,
+        taskSupport,
       })
     } catch (error) {
       // The MCP SDK's Protocol may create a plain ProtocolError (not UrlElicitationRequiredError)
@@ -3051,6 +3058,7 @@ async function callMCPTool({
   meta,
   signal,
   onProgress,
+  taskSupport,
 }: {
   client: ConnectedMCPServer
   tool: string
@@ -3058,6 +3066,7 @@ async function callMCPTool({
   meta?: Record<string, unknown>
   signal: AbortSignal
   onProgress?: (data: MCPProgress) => void
+  taskSupport?: string
 }): Promise<{
   content: MCPToolResult
   _meta?: Record<string, unknown>
@@ -3106,8 +3115,28 @@ async function callMCPTool({
       )
     })
 
+    // Long-running tools the server runs as MCP tasks: poll with the status
+    // in the tool line; Esc aborts `signal`, which sends tasks/cancel.
+    const asTask = shouldCallAsTask(client, taskSupport)
     const result = await Promise.race([
-      client.callTool(
+      asTask
+        ? callToolAsTask({
+            client,
+            name: tool,
+            args,
+            meta,
+            signal,
+            requestTimeoutMs: timeoutMs,
+            onUpdate: update =>
+              onProgress?.({
+                type: 'mcp_progress',
+                status: 'progress',
+                serverName: name,
+                toolName: tool,
+                progressMessage: formatTaskUpdate(update),
+              }),
+          })
+        : client.callTool(
         {
           name: tool,
           arguments: args,

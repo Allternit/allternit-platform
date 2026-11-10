@@ -4,6 +4,7 @@ import type { Command } from '../commands.js'
 import { isUltrareviewEnabled } from './review/ultrareviewEnabled.js'
 import { getDirectConnectServerUrl, getSessionId } from '../bootstrap/state.js'
 import { ReviewVerdict } from '../../../../runtime/review/verdict.js'
+import { matchReviewPreset } from '@/shared/util/review-presets'
 
 function reviewBaseUrl(): string {
   return getDirectConnectServerUrl() ?? 'http://localhost:4096'
@@ -62,13 +63,16 @@ const LOCAL_REVIEW_PROMPT = (args: string) => `
 const review: Command = {
   type: 'prompt',
   name: 'review',
-  description: 'Review local changes (verdict), loop until PASS (/review pass [rounds]), or review a PR (/review <pr>)',
-  argumentHint: '[pass [rounds] | local <what to check> | <pr>]',
+  description: 'Review local changes (verdict), a focused preset (/review security|perf|tests|diff), loop until PASS (/review pass [rounds]), or a PR (/review <pr>)',
+  argumentHint: '[security|perf|tests|diff [target] | pass [rounds] | local <what to check> | <pr>]',
   progressMessage: 'reviewing pull request',
   contentLength: 0,
   source: 'builtin',
   async getPromptForCommand(args): Promise<ContentBlockParam[]> {
     const trimmed = (args ?? '').trim()
+    // Focused presets run in this session with the shared findings format.
+    const preset = matchReviewPreset(trimmed)
+    if (preset) return [{ type: 'text', text: preset.prompt }]
     const pass = /^pass(?:\s+(\d+))?$/i.exec(trimmed)
     const local = /^local(?:\s+([\s\S]+))?$/i.exec(trimmed)
     if (pass) {

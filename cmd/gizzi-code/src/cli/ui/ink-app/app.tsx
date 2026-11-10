@@ -33,6 +33,9 @@ import { TaskMirrorBridge } from './components/TaskMirrorBridge'
 import { RailsDagBridge } from './components/RailsDagBridge'
 import { getSessionId } from './bootstrap/state.js'
 import { routeInternalFetch } from './utils/routeInternalFetch'
+import { initializeLspServerManager, shutdownLspServerManager } from './services/lsp/manager'
+import { lspDiagnosticsEnabled } from './services/lsp/builtinServers'
+import { registerCleanup } from './utils/cleanupRegistry'
 
 export async function tui(options?: any): Promise<void> {
   const currentCwd = process.cwd()
@@ -102,6 +105,14 @@ export async function tui(options?: any): Promise<void> {
 
   if (options?.fetch) {
     globalThis.fetch = routeInternalFetch(options.fetch, options.url, globalThis.fetch)
+  }
+
+  // Language servers for diagnostics after each edit. This only loads configs
+  // (in the background); a server starts the first time a file it handles is
+  // edited. GIZZI_DISABLE_LSP_DIAGNOSTICS=1 turns it off.
+  if (lspDiagnosticsEnabled()) {
+    initializeLspServerManager()
+    registerCleanup(() => shutdownLspServerManager())
   }
 
   Log.Default.info("tui: getting tools and commands")

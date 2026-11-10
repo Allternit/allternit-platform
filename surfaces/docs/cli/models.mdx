@@ -62,6 +62,14 @@ Each failure names the real cause and one or two commands to run. Examples:
 
 The "Not logged in" notice in the prompt footer only appears when the selected model is on Allternit Cloud and no Cloud credential exists: no `ALLTERNIT_API_KEY`, no `ALLTERNIT_API_TOKEN`, and no device token from `gizzi login` or `gizzi pair`.
 
+## Web search on any model
+
+Web search works whatever model you picked. Models with their own search (Claude, ChatGPT, Gemini, CLI brains) use it. Otherwise the `WebSearch` tool in the terminal app and the engine's `websearch` tool ask Allternit's search route (`POST /api/v1/search/web` on api.allternit.com), signed in with your `ALLTERNIT_API_KEY`, `ALLTERNIT_API_TOKEN` or this computer's paired device token. Searches there run on Allternit's search account and return titles, links, dates and a short text for each result, which show as source pills.
+
+If you are signed out, or the route can't answer (not deployed yet, not configured, offline), Gizzi falls back to the public Exa search endpoint as before. Set `GIZZI_DISABLE_ALLTERNIT_SEARCH=1` to skip the route.
+
+Developers: client `src/runtime/tools/builtins/allternit-search.ts` (test `test/tools/allternit-search.test.ts`); route `cmd/allternit-cloud-api/src/routes/web_search.rs`, which needs `EXA_API_KEY` on the server and answers 503 `search_not_configured` without it.
+
 ## For developers
 
 - Provider rule: `cmd/gizzi-code/src/runtime/providers/offer.ts` (`ProviderOffer.kind`, `isOffered`, `isCliBrain`). CLI brains come from the CLI catalog (`cli-catalog.json`) and CLIs the user added, not a fixed list.

@@ -5,6 +5,7 @@ import { Box, Text } from '../ink';
 import { count } from '../utils/array';
 import { MessageResponse } from './MessageResponse';
 import { StructuredDiffList } from './StructuredDiffList';
+import { EditDiagnosticsLine } from './EditDiagnosticsLine';
 type Props = {
   filePath: string;
   structuredPatch: StructuredPatchHunk[];
@@ -13,6 +14,8 @@ type Props = {
   style?: 'condensed';
   verbose: boolean;
   previewHint?: string;
+  /** Language-server errors for this edit (services/lsp/editDiagnostics). */
+  lspKey?: string;
 };
 export function FileEditToolUpdatedMessage({
     filePath,
@@ -21,7 +24,8 @@ export function FileEditToolUpdatedMessage({
     fileContent,
     style,
     verbose,
-    previewHint
+    previewHint,
+    lspKey
 }: Props) {
   const {
     columns
@@ -44,7 +48,7 @@ export function FileEditToolUpdatedMessage({
     }
   } else {
     if (style === "condensed" && !verbose) {
-      return text;
+      return lspKey ? <Box flexDirection="column">{text}<EditDiagnosticsLine lspKey={lspKey} /></Box> : text;
     }
   }
   const t5 = <Text>{text}</Text>;
@@ -52,7 +56,7 @@ export function FileEditToolUpdatedMessage({
   const t6 = columns - 12;
   const t7 = <StructuredDiffList hunks={structuredPatch} dim={false} width={t6} filePath={filePath} firstLine={firstLine} fileContent={fileContent} />;
 
-  const t8 = <MessageResponse><Box flexDirection="column">{t5}{t7}</Box></MessageResponse>;
+  const t8 = <MessageResponse><Box flexDirection="column">{t5}{lspKey ? <EditDiagnosticsLine lspKey={lspKey} /> : null}{t7}</Box></MessageResponse>;
 
   return t8;
 }
