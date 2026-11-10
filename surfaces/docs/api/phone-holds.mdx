@@ -33,20 +33,25 @@ These actions make a hold:
 - `open_app` into a bank, wallet or broker app. One hold covers that app for the rest of the run.
 - A direct tap with no element. The Desktop reads the screen once and hit-tests the point. If it has no screen read, the foreground app decides.
 
-Texts and calls through `phone.sms.send` and `phone.call.dial` use the same hold. `phone.sms.read` does too.
+The label match looks at the first six words of the element's label and at its id. The lexicon is English.
+
+Texts and calls through `phone.sms.send` and `phone.call.dial` use the same hold, as `send` and `call`. `phone.sms.read` holds as `credential`, because texts carry one-time codes. On Desktop, the owner approves SMS read once for each bot and phone, and later reads by that bot on that phone run without a new hold. A caller that has no bot, and every API-key caller, is asked each time.
+
+Desktop checks every acting call before it runs. If the runtime cannot be reached, Desktop fails closed: the call returns `guard_unavailable` and does not act.
 
 ## Hold lifecycle
 
 | State | Meaning |
 |---|---|
-| `requested` | The hold exists and waits for the owner. |
+| `requested` | The hold exists and waits for the owner. The runtime stores this state as `pending`. The API shows `requested`. |
 | `approved` | The owner approved it. It can be used once. |
 | `denied` | The owner denied it. |
-| `expired` | Nobody answered in time. |
+| `expired` | Nobody answered within 5 minutes, or an approved hold was used more than 10 minutes after approval. |
 | `changed` | The owner approved, but the screen no longer matched. The approval is not used. |
 
 - **Re-check after approve.** Before the action runs, the loop reads the screen again. If the element hash differs from the one the hold was made for, the hold becomes `changed` and a new hold is made. If the owner approved on the driven phone itself, the loop first returns to the app.
-- **Use once.** An approved hold covers one action. It is consumed when the guard answers `allow` for it.
+- **Use once.** An approved hold covers one action. It is consumed when the guard answers `allow` for it. A second use of the same hold id makes a new hold.
+- **Use within 10 minutes.** A retry more than 10 minutes after approval is not accepted. The hold becomes `expired` and the guard makes a new hold.
 - **Deny ends the run.** The run finishes as `denied`. The agent does not continue, because it could reach the same effect another way.
 
 ## How each caller sees a hold
@@ -57,7 +62,7 @@ Texts and calls through `phone.sms.send` and `phone.call.dial` use the same hold
 | Direct tool caller (a bot, `/tool`, MCP) | The tool result is `{ "ok": false, "error": "approval_required", "approvalId", "inboxId", "expiresAt" }`. After the owner approves, retry the same call with `_hold` set to the approved hold id, within 10 minutes. |
 | Cloud API | `POST /v1/phones/:serial/tool` answers `409` with code `approval_required`. |
 
-A direct call does not stay open while it waits, because the Desktop's tool call times out at 80 seconds.
+A retry with the id of a hold that was denied answers `denied` (see the check route below). A direct call does not stay open while it waits, because the Desktop's tool call times out at 80 seconds.
 
 ## Runtime routes
 
@@ -87,7 +92,15 @@ It answers one of:
 }
 ```
 
-A `holdId` that is approved, not yet used and for the same element hash answers `allow` and is consumed.
+A `holdId` that is approved, not yet used, used within 10 minutes of approval and for the same element hash answers `allow` and is consumed. A `holdId` of a hold that the owner denied, for the same action, answers:
+
+```json
+{ "decision": "denied", "approvalId": "apr_…" }
+```
+
+A call with no `holdId` that repeats an action which already has an open hold answers with that hold, so the owner sees one item. The route answers an error when the caller has no owner to ask. The owner is always the signed-in caller, never a value in `ctx`.
+
+The runtime's own loops pass the check an internal one-time value, `_pass`, in the tool arguments. The runtime issues it after an approval has been used, and Desktop sends it back once so the same action is not asked about twice. Callers never send it. A wrong, used or expired value is ignored and the normal check runs.
 
 ### Read a hold
 
@@ -96,7 +109,7 @@ GET /api/v1/phones/holds/:id
 GET /api/v1/phones/holds/:id/crop
 ```
 
-The first returns the hold and its state. The second returns the screen crop the hold was made on. Both need the owner's signed-in session. The crop stays on the runtime and loads through the relay.
+The first returns the hold and its state. The second returns the review image for the hold. Despite the route name, the image is the whole screenshot taken for the hold, not a crop of the element. It is kept on the runtime, and the `crop` route serves it as `image/png` or `image/jpeg` with `Cache-Control: private, no-store`. A hold made without a screenshot has no image and the route answers `404`. Both routes need the owner's signed-in session. The image loads through the relay.
 
 ### Start a task
 
@@ -108,7 +121,7 @@ The task route takes three new optional fields: `thread_id`, `session_id` and `s
 
 ## The hold record
 
-A hold is an approval with authority `allternit` and action `phone.<tool>`, for example `phone.tap`. Its correlation id is `phone:<runId>:<step>`. Creating it writes an `approval.requested` event, the same as any other approval. Its `contentHash` covers the serial, app, tool, element, effect and typed text.
+A hold is an approval with authority `allternit` and action `phone.<tool>`, for example `phone.tap`. Its correlation id is `phone:<runId>:<step>`. A direct call has run id `direct`. A hold with no thread uses `phone:<serial>` as its thread id and bot id. Creating it writes an `approval.requested` event, the same as any other approval. Its `contentHash` covers the serial, app, tool, element, effect and typed text.
 
 `detail.phone` holds:
 
@@ -135,8 +148,8 @@ A hold is an approval with authority `allternit` and action `phone.<tool>`, for 
 
 The hold appears in the owner's "Needs you" list as an inbox item with kind `approval` and `subkind: "phone_action"`.
 
-- It is **Review only**. It has no inline Approve in a notification or on a row. The owner opens it and sees the screen crop first.
-- It is `private: true`. The crop and the hold detail are not put in push text.
+- It is **Review only**. It has no inline Approve in a notification or on a row. The owner opens it and sees the review image (the screenshot) first.
+- It is `private: true`. The review image and the hold detail are not put in push text.
 - Approve and Deny are available on the open item, in Allternit Desktop, ai.allternit.com, the PWA, the iOS app and Gizzi Code.
 
 ## Run report
@@ -181,7 +194,7 @@ A routine that replays a saved skill can reach a hold with nobody there. After t
 
 ## What a one-task grant covers
 
-A one-task grant lets an agent act without a hold for the rest of one task. It does not cover `pay`, `delete`, `credential` or `money_app`. Those always hold. `send` and `call` taps accept a live grant.
+A one-task grant lets an agent act without a hold for the rest of one task. It does not cover `pay`, `delete`, `credential` or `money_app`. Those hold even when a grant is live. Only `send` and `call` accept a live grant, and only on a thread. `security_setting` is not covered.
 
 ## Channel threads
 
@@ -190,4 +203,5 @@ Only the owner starts phone actions from a channel. On a thread whose latest inp
 ## Not in this version
 
 - Labels in languages other than English. For other languages, only the model's sensitive flag and the money-app rule catch a sensitive button.
+- Full coverage. An action that no rule recognises, and that the model does not flag, runs without a hold. Do not treat a hold as a promise that every sensitive action is caught.
 - An agent loop that runs on the phone itself. Holds apply to the Desktop-driven loop.
