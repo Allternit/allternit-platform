@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+## 2.4.0 (2026-11-09)
+
+### Added
+- **`/usage`:** your Allternit plan (Free, Plus, Max or Ultra), credits, Cloud balance and the monthly meter, then each signed-in CLI brain's plan limits. A `credits` chip in the footer.
+- **Thinking levels per model in `/model`:** a second column shows each model's level, and ←/→ cycles only the levels that model takes.
+- **`/customize`:** the A://TERNIT OFFICIAL shelves and the directory for skills, MCP servers and commands. Enter opens an item's page; `a` adds it the way Desktop does.
+- **MCP Apps:** a tool result that comes with an app gets a **View in browser** line.
+- **`/decisions`:** every question and approval agents are waiting on, across all sessions, answered from one list, with a `⚑` footer badge.
+- **`gizzi computers ls/start/stop`** and **`gizzi run --on <runtime>`** to run a turn on a paired computer.
+- **`/pr`** with live checks and `✓ ✗ ●` counts on the PR badge, **`/projects`**, **`/routines`** (next runs, pause and resume) and **`gizzi artifact share`**.
+- **Edit a plan before it runs:** press `e` on a plan approval to open it in `$EDITOR`.
+- **Errors after an edit, on by default:** each Edit or Write tool line shows new errors from the file's language server (TypeScript, Python, Go when installed). `GIZZI_DISABLE_LSP_DIAGNOSTICS=1` turns it off.
+- **Long-running MCP tools** run as tasks with status in the tool line; Esc cancels them.
+- **Web search through Allternit's own route** when you're signed in, with the public endpoint only as a fallback.
+- **Review presets:** `/review security|perf|tests|diff`, with one findings format and a verdict line.
+
+### Changed
+- The `/teleport` placeholder is gone; use `gizzi teleport` and `gizzi run --on`.
+
+### Fixed
+- Prompt slash commands reach a CLI brain with their full prompt, not just their name.
+- The Max plan no longer shows as "Super".
+
 ## 2.3.1 (2026-11-09)
 
 ### Fixed
