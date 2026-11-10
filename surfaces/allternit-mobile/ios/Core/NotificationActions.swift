@@ -216,6 +216,10 @@ enum NotificationActions {
         }
         let elapsed = ContinuousClock.now - started
         log.notice("action \(action.rawValue, privacy: .public) result=\(String(describing: result), privacy: .public) credential=\(credential.kind.rawValue, privacy: .public) elapsed_ms=\(elapsed.milliseconds, privacy: .public)")
+        if case .done = result {
+            // The widget's counts changed (approve, deny, snooze, retry).
+            Task { @MainActor in await StatusSnapshotWriter.refreshFromCloud() }
+        }
         return result
     }
 

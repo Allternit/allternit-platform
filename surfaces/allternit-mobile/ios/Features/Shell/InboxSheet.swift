@@ -58,6 +58,7 @@ final class InboxStore: ObservableObject {
         Task {
             do {
                 try await run(client)
+                Task { @MainActor in await StatusSnapshotWriter.refreshFromCloud() }
             } catch {
                 if let index { items.insert(item, at: min(index, items.count)) } else { items.append(item) }
                 failures[item.id] = FriendlyErrorMessage.from(error.localizedDescription)

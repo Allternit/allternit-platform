@@ -15,6 +15,13 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         NotificationCategories.register()
         // App Intents call into the app through this (SystemSurfaces/Intents).
         IntentServiceRegistry.register(IntentServices())
+        // Widget buttons route through the same deep-link router as taps.
+        Task { @MainActor in
+            WidgetLinkOpener.handler = { url in
+                WidgetFlags.pendingLink = nil
+                DeepLinkRouter.shared.open(url: url)
+            }
+        }
         // Extensions cannot import AppConfig; they read the cloud URL here.
         AppGroupStore.cloudBaseURL = AppConfig.cloudAPIBaseURL
         // Every foreground: remove delivered notifications whose item is gone.
@@ -24,6 +31,13 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
             Task { @MainActor in
                 guard AuthManager.shared.isSignedIn else { return }
                 await NotificationActions.reconcileDelivered()
+                // A link a widget or control left for the app, then fresh widget data.
+                if let pending = WidgetFlags.pendingLink, let url = URL(string: pending) {
+                    WidgetFlags.pendingLink = nil
+                    DeepLinkRouter.shared.open(url: url)
+                }
+                await StatusSnapshotWriter.refreshFromCloud()
+                await SpotlightIndexer.refresh()
                 // Send anything the share extension left behind.
                 await ShareOutboxDrainer.shared.drain()
             }

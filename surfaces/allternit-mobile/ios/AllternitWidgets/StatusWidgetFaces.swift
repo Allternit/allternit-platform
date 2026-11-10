@@ -230,7 +230,7 @@ private struct ActionButton: View {
             if #available(iOS 18.0, *) {
                 Button(intent: OpenAllternitURLIntent(urlString: item.url)) { label }
             } else {
-                Button(intent: OpenAllternitLinkIntent(urlString: item.url)) { label }
+                Button(intent: OpenAllternitWidgetLinkIntent(urlString: item.url)) { label }
             }
         }
         .buttonStyle(.plain)

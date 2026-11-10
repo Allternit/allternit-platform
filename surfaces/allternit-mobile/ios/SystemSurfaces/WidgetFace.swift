@@ -84,7 +84,7 @@ struct FlipWidgetIntent: AppIntent {
 /// the small size). Runs in the app process (`openAppWhenRun`): it hands the
 /// URL to `WidgetLinkOpener.handler` when the app has set one and always
 /// leaves it in `WidgetFlags.pendingLink` for the app to take on foreground.
-struct OpenAllternitLinkIntent: AppIntent {
+struct OpenAllternitWidgetLinkIntent: AppIntent {
     static let title: LocalizedStringResource = "Open Allternit"
     static let isDiscoverable = false
     static let openAppWhenRun = true
@@ -102,7 +102,7 @@ struct OpenAllternitLinkIntent: AppIntent {
     }
 }
 
-/// App side hook for `OpenAllternitLinkIntent`: the app sets `handler` at
+/// App side hook for `OpenAllternitWidgetLinkIntent`: the app sets `handler` at
 /// launch to route the URL through `DeepLinkRouter`.
 enum WidgetLinkOpener {
     @MainActor static var handler: (@MainActor (URL) -> Void)?
