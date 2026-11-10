@@ -63,7 +63,7 @@ The agent is told to use `rename` for renames, `symbol_edit` for replacing a who
 
 ## Errors after each edit
 
-In the terminal app (`gizzi`), every edit and write is sent to a language server for that file, and new errors show up under the edit's tool line, for example `✗ 1 new error · L3:7 Type 'string' is not assignable to type 'number'.`. This also covers edits a CLI brain (`claude-cli/…`, `codex-cli/…`) makes itself. The agent also gets the errors at the start of its next step.
+In the terminal app (`gizzi`), every edit and write is sent to a language server for that file, and new errors show up under the edit's tool line, for example `✗ 1 new error · L3:7 Type 'string' is not assignable to type 'number'.`. This also covers edits a CLI brain makes itself. The agent also gets the errors at the start of its next step.
 
 - It is on by default. Set `GIZZI_DISABLE_LSP_DIAGNOSTICS=1` to turn it off.
 - Servers start the first time you edit a file they handle, and never hold up a turn. The line fills in when the server answers; a file no installed server handles shows nothing.
