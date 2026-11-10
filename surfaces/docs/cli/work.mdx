@@ -12,7 +12,9 @@ Two chips show in the footer when there is something to show:
 - `⚑ 3`, next to the context meter, means agents in three places are waiting on you. Open `/decisions`.
 - `PR #123 ✓4 ✗1 ●2`, on the mode line, is this branch's pull request: 4 checks passed, 1 failed, 2 are running. The number's color is the review state. Open `/pr`.
 
-Both stay hidden when nothing is waiting, the branch has no PR, or the source isn't there (Desktop's engine isn't running, `gh` isn't installed or signed in).
+- `bots paused`, left of the others, means all bots are paused (see Pause all bots below).
+
+The chips stay hidden when nothing is waiting, the branch has no PR, or the source isn't there (Desktop's engine isn't running, `gh` isn't installed or signed in).
 
 ## /decisions
 
@@ -78,6 +80,20 @@ gizzi artifact share art_e969… --off    # stop sharing
 ```
 
 Sharing publishes a snapshot of the version, so later edits don't change the shared page until you share again. Artifacts have no comments yet, so there is no comments view.
+
+## Pause all bots
+
+```bash
+gizzi agents bot pause
+gizzi agents bot resume
+gizzi agents bot pause --status
+```
+
+`pause` prints `All bots are paused. Routines and automatic replies are on hold; your own messages still run.` `resume` prints `Bots resumed.` `--status` shows the current state with when it was paused and from which surface. Add `--json` to print the runtime's object, `{"paused": true, "since": 1762700000, "by": "gizzi"}`.
+
+While paused, routines and loops do not start, and bots send no proactive turns or channel auto-replies. Messages that arrive are kept and show as unanswered. Your own direct messages to a bot still run. Resume starts everything again. The switch is shared: pausing from the terminal pauses the same bots in Desktop and the phone apps. `gizzi status` shows a `Bots: paused since ...` line while it is on.
+
+If the runtime on this computer is too old, the command prints `This computer's Allternit runtime is too old for pause. Update it.` and exits with an error.
 
 ## Where the data comes from
 
