@@ -667,3 +667,15 @@ export const BotCommand = cmd({
       .command(BotResumeCommand),
   handler: async () => {},
 })
+
+/**
+ * Hidden top-level `gizzi bot pause|resume|pause --status`: the short form
+ * the docs and phone apps name. Everything else about bots stays under
+ * `gizzi agents bot`.
+ */
+export const BotPauseAliasCommand = cmd({
+  command: "bot",
+  describe: false,
+  builder: (yargs) => yargs.command(BotPauseCommand).command(BotResumeCommand).demandCommand(1),
+  handler: async () => {},
+})

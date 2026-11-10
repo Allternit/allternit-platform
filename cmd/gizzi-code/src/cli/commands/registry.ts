@@ -53,6 +53,7 @@ import { ProfileCommand } from "@/cli/commands/profile"
 import { PermissionProfileCommand } from "@/cli/commands/permission-profile"
 import { RemoteCommand } from "@/cli/commands/remote"
 import { CronLegacyStartCommand } from "@/cli/commands/cron"
+import { BotPauseAliasCommand } from "@/cli/commands/bot"
 import { AgentsCommand } from "@/cli/commands/factory/agents"
 import { TeamCommand } from "@/cli/commands/team"
 import { OrchestrationCommand } from "@/cli/commands/factory/orchestration"
@@ -149,4 +150,6 @@ export const COMMANDS: RegisteredCommand[] = [
   TeamMcpCommand,
   // Hidden: installed cron supervisors still exec `gizzi cron start`.
   CronLegacyStartCommand,
+  // Hidden short form: `gizzi bot pause|resume`.
+  BotPauseAliasCommand,
 ]
