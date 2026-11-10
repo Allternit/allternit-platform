@@ -1273,3 +1273,5 @@ Cross-compiled gizzi-code-win32-x64 from macOS (`bun build --target=win32-x64` �
 - 2026-10-27 · Claude · Dead-test purge + orphaned Rust wiring: merged ai #861, platform #1926 (`10da24dc`) and #1934 (`ac016f5c`); #1934 compiles (9 crates) but its tests are not yet run, and one multimodal-streaming test hangs — run with `timeout`. [Attestation](summaries/2026-10-27-2330-test-cleanup-claude-dead-tests-and-orphans.md).
 
 - 2026-11-03 — [Factory broad-belt Flow source and documentation](summaries/2026-11-03-1035-factory-belt-flow-codex-docs.md): scoped implementation, verification and production-merge handoff.
+
+- 2026-11-10 · Claude · Phone approval hold (Phone and Messages, Wave 1 of 3): merged platform #2196 (`43cc1199d`) and docs #2186 (`9e4f0f0ae`); cloud API, docs, hosted runtime (run 42840905344), cloud computers (run 42846979543), Desktop b7175 and runtime packages for Mac and Linux are live; not checked on a real phone. [Attestation](summaries/2026-11-10-1335-phone-hold-wave1-claude-merge-and-ship.md).
