@@ -1025,6 +1025,7 @@ async fn main() {
     // ── Build V1 API routes (all merged, then nested under /api/v1) ───────────
     let v1_routes = provider_router()
         .merge(inbox_router())
+        .merge(allternit_api::bots_pause::router())
         .merge(file_router())
         .merge(memory_router())
         .merge(me_router())
