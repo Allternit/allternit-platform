@@ -906,7 +906,8 @@ mod tests {
         };
         add("apat_start", "la_start", Some(BOT_ATTRIBUTES), None, "b2".repeat(40)).await;
         add("apat_widget", "widget", None, None, "c3".repeat(40)).await;
-        let now = Utc::now();
+        // Postgres keeps microseconds; Linux clocks give nanoseconds. Cut to what the database returns.
+        let now = chrono::DateTime::from_timestamp_micros(Utc::now().timestamp_micros()).unwrap();
         let ingest = |snap: Value| {
             let db = db.clone();
             async move {
