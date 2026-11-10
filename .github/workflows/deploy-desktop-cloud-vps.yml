@@ -15,9 +15,12 @@ on:
 
 jobs:
   deploy-and-e2e:
-    # Same host as deploy-allternit-api-contabo: one deploy at a time.
+    # Own group: sharing deploy-allternit-api-contabo's group let each workflow
+    # cancel the other's waiting run (2026-11-10). Both install the same
+    # binary; deploy.sh takes the host lock and skips the binary when a newer
+    # commit's build is already live (DEPLOY_SHA / DEPLOY_EPOCH below).
     concurrency:
-      group: deploy-allternit-api-contabo
+      group: deploy-desktop-cloud-vps
       cancel-in-progress: false
     runs-on: ubuntu-24.04
     steps:
@@ -110,7 +113,8 @@ jobs:
             ENGINE_HASH=$(sha256sum office-engine.tar.gz | cut -d' ' -f1)
             ssh vps "echo '$ENGINE_HASH  /opt/allternit-src/infrastructure/vps-desktop-cloud/office-engine.tar.gz' | sha256sum -c -"
           fi
-          ssh vps "chmod +x /opt/allternit-src/infrastructure/vps-desktop-cloud/deploy.sh && cd /opt/allternit-src/infrastructure/vps-desktop-cloud && ./deploy.sh local"
+          DEPLOY_EPOCH="$(git log -1 --format=%ct "$GITHUB_SHA")"
+          ssh vps "chmod +x /opt/allternit-src/infrastructure/vps-desktop-cloud/deploy.sh && cd /opt/allternit-src/infrastructure/vps-desktop-cloud && DEPLOY_SHA='$GITHUB_SHA' DEPLOY_EPOCH='$DEPLOY_EPOCH' ./deploy.sh local"
 
       - name: Extract self-hosted setup token
         if: steps.vps.outputs.present == 'true'

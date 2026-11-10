@@ -19,9 +19,12 @@ jobs:
   # The API is SQLite-based: tests use throwaway sqlite databases
   # (DbHandle::new_memory in src/db.rs), so no postgres service is needed.
   test-and-deploy:
-    # One deploy to Contabo at a time. Never cancel a run mid-test or mid-swap;
-    # GitHub keeps only the newest waiting run, so it carries every merge since
-    # and an older build can never land after a newer one.
+    # One run of this workflow at a time; never cancel one mid-test or mid-swap.
+    # GitHub keeps only the newest waiting run, so it carries every merge since.
+    # deploy-desktop-cloud-vps.yml installs the same binary from its own group
+    # (a shared group let each cancel the other's waiting run, 2026-11-10). The
+    # host serializes the swap with a lock and refuses an older commit:
+    # cmd/allternit-api/deploy-contabo.sh (DEPLOY_SHA / DEPLOY_EPOCH below).
     concurrency:
       group: deploy-allternit-api-contabo
       cancel-in-progress: false
@@ -119,7 +122,9 @@ jobs:
           CONTABO_DEPLOY_HOST: 45.84.138.187
           CONTABO_DEPLOY_USER: root
           CONTABO_SSH_KEY: ${{ secrets.CONTABO_SSH_KEY }}
+          DEPLOY_SHA: ${{ github.sha }}
         run: |
+          export DEPLOY_EPOCH="$(git log -1 --format=%ct "$DEPLOY_SHA")"
           if [ -n "$CONTABO_SSH_KEY" ]; then
             echo "$CONTABO_SSH_KEY" > /tmp/deploy_key
             chmod 600 /tmp/deploy_key
