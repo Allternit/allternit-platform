@@ -39,6 +39,7 @@ struct LoopLiveActivityWidget: Widget {
                 ringView(context: context, diameter: 16)
             }
         }
+        .smallActivityFamilyIfAvailable()
     }
 
     private static func iterationText(context: ActivityViewContext<LoopActivityAttributes>) -> String {

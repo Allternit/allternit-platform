@@ -1,6 +1,54 @@
 <?xml version="1.0" encoding="utf-8"?>
 <shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
     <shortcut
+        android:shortcutId="allternit_ask"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_ask"
+        android:shortcutShortLabel="@string/shortcut_ask_short"
+        android:shortcutLongLabel="@string/shortcut_ask_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:data="https://m.allternit.com/?allternit_open=ask"
+            android:targetPackage="com.allternit.app"
+            android:targetClass="com.google.androidbrowserhelper.trusted.LauncherActivity" />
+    </shortcut>
+    <shortcut
+        android:shortcutId="allternit_handoff"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_handoff"
+        android:shortcutShortLabel="@string/shortcut_handoff_short"
+        android:shortcutLongLabel="@string/shortcut_handoff_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:data="https://m.allternit.com/?allternit_open=handoff"
+            android:targetPackage="com.allternit.app"
+            android:targetClass="com.google.androidbrowserhelper.trusted.LauncherActivity" />
+    </shortcut>
+    <shortcut
+        android:shortcutId="allternit_inbox"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_inbox"
+        android:shortcutShortLabel="@string/shortcut_inbox_short"
+        android:shortcutLongLabel="@string/shortcut_inbox_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:data="https://m.allternit.com/?allternit_open=inbox"
+            android:targetPackage="com.allternit.app"
+            android:targetClass="com.google.androidbrowserhelper.trusted.LauncherActivity" />
+    </shortcut>
+    <shortcut
+        android:shortcutId="allternit_call"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_call"
+        android:shortcutShortLabel="@string/shortcut_call_short"
+        android:shortcutLongLabel="@string/shortcut_call_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:data="https://m.allternit.com/?allternit_open=call"
+            android:targetPackage="com.allternit.app"
+            android:targetClass="com.google.androidbrowserhelper.trusted.LauncherActivity" />
+    </shortcut>
+    <shortcut
         android:shortcutId="phone_link"
         android:enabled="true"
         android:icon="@drawable/ic_stat_link"

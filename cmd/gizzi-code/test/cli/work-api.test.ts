@@ -187,3 +187,30 @@ describe("artifact share", () => {
     expect(calls[0]).toMatchObject({ method: "POST", url: "http://gw.test/api/v1/content-artifacts/art_1/publish", body: { version: 3 } })
   })
 })
+
+describe("bots pause", () => {
+  test("pause and resume PUT the switch as gizzi; get reads it", async () => {
+    reply = (url, init) =>
+      init.method === "PUT"
+        ? json({ paused: JSON.parse(String(init.body)).paused, since: 1762700000, by: "gizzi" })
+        : json({ paused: true, since: 1762700000, by: "gizzi" })
+    const { setBotPause, getBotPause, describeBotPause } = await api()
+    expect((await setBotPause(true)).paused).toBe(true)
+    expect((await setBotPause(false)).paused).toBe(false)
+    expect(calls.map((c) => [c.method, c.url, c.body])).toEqual([
+      ["PUT", "http://gw.test/api/v1/bots/pause", { paused: true, by: "gizzi" }],
+      ["PUT", "http://gw.test/api/v1/bots/pause", { paused: false, by: "gizzi" }],
+    ])
+    const state = await getBotPause()
+    expect(describeBotPause(state)).toContain("All bots are paused since")
+    expect(describeBotPause(state)).toContain("by gizzi")
+    expect(describeBotPause({ paused: false, since: null, by: null })).toBe("Bots are running.")
+  })
+
+  test("an older runtime's 404 becomes the update message", async () => {
+    reply = () => json({}, 404)
+    const { getBotPause, setBotPause } = await api()
+    await expect(getBotPause()).rejects.toThrow("too old for pause. Update it.")
+    await expect(setBotPause(true)).rejects.toThrow("too old for pause. Update it.")
+  })
+})

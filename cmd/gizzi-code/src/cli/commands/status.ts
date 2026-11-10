@@ -61,6 +61,11 @@ export const StatusCommand = cmd({
       process.stdout.write(`  Directory: ${status.directory}\n`)
       process.stdout.write(`  Version:   ${status.version}\n`)
       process.stdout.write(`  Harness:   ${status.harness.mode} (enabled: ${status.harness.enabled})\n`)
+      const pause = await import("@/cli/work/api").then((m) => m.getBotPause()).catch(() => undefined)
+      if (pause?.paused) {
+        const when = pause.since ? ` since ${new Date(pause.since * 1000).toLocaleString()}` : ""
+        process.stdout.write(`  Bots:      paused${when}${pause.by ? ` (by ${pause.by})` : ""}\n`)
+      }
       process.stdout.write(`\nRun with --json for machine-readable output.\n`)
       process.exit(0)
     })

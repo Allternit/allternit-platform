@@ -24,8 +24,12 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
             Task { @MainActor in
                 guard AuthManager.shared.isSignedIn else { return }
                 await NotificationActions.reconcileDelivered()
+                // Send anything the share extension left behind.
+                await ShareOutboxDrainer.shared.drain()
             }
         }
+        // Live Activities: intent registry, adopt running activities, token uploads.
+        Task { @MainActor in BotLiveActivityManager.installAtLaunch() }
         Task { @MainActor in
             await PushNotificationManager.shared.registerIfAuthorized()
         }

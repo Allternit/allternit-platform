@@ -2,4 +2,15 @@
 <resources>
     <string name="app_name">Allternit</string>
     <string name="asset_statements" translatable="false">[{\"relation\": [\"delegate_permission/common.handle_all_urls\"], \"target\": {\"namespace\": \"web\", \"site\": \"https://m.allternit.com\"}}]</string>
+    <string name="shortcut_ask_short">Ask a bot</string>
+    <string name="shortcut_ask_long">Ask a bot</string>
+    <string name="shortcut_handoff_short">Hand off</string>
+    <string name="shortcut_handoff_long">Hand off a task</string>
+    <string name="shortcut_inbox_short">Needs you</string>
+    <string name="shortcut_inbox_long">Needs you</string>
+    <string name="shortcut_call_short">Call main bot</string>
+    <string name="shortcut_call_long">Call main bot</string>
+    <!-- Share target for Android's share sheet (text and links only). title and text map to
+         the /share-target query parameters; a shared link arrives in text. -->
+    <string name="share_target" translatable="false">{"action": "/share-target", "method": "GET", "params": {"title": "title", "text": "text"}}</string>
 </resources>
