@@ -291,6 +291,15 @@ The views draw the same picture for the same input (no random layout), show "—
 
 ## How this relates to the Agency Kernel
 
+## Messages on your Mac: permissions
+
+The "Messages on your Mac" tool lets a bot search your Messages history and prepare a text that is sent only after you approve it. macOS needs two permissions for Allternit Desktop, because the Allternit runtime runs as a child of the app.
+
+1. **Full Disk Access** (to read the Messages database). In Settings, open Messages (Mac) and choose the Full Disk Access row. System Settings opens; turn on Allternit Desktop, adding it with the plus button if it is not listed, then restart the app.
+2. **Automation** (to send through Messages). Choose the Automation row, turn on Messages under Allternit Desktop, or approve the prompt the first time a text is sent.
+
+Both rows show a check mark once macOS has granted access. This is macOS only.
+
 ## Runtime updates
 
 The app itself updates by installing a new version (Homebrew or a download, see [macOS signing](#macos-signing)). The parts inside it (the local API, Gizzi, the factory and the screens) update separately and more often, as a signed **runtime package** from runtime.allternit.com. Desktop checks a minute after it starts, then every 6 hours. **Check for updates** in the app menu also checks the runtime. A downloaded update is installed the next time Desktop starts.

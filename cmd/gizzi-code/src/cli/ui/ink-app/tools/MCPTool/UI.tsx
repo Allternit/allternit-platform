@@ -20,6 +20,7 @@ import { getContentSizeEstimate, type MCPToolResult } from '../../utils/mcpValid
 import { appViewFor } from '../../services/mcp/appView';
 import { jsonParse, jsonStringify } from '../../utils/slowOperations';
 import type { inputSchema } from './MCPTool';
+import { formatMessagesResult } from './messagesResult';
 
 // Threshold for displaying warning about large MCP responses
 const MCP_OUTPUT_WARNING_THRESHOLD_TOKENS = 10_000;
@@ -117,6 +118,14 @@ export function renderToolResultMessage(output: string | MCPToolResult, _progres
           </Text>
         </MessageResponse>;
     }
+  }
+  const messagesView = formatMessagesResult(mcpOutput, input);
+  if (messagesView !== null) {
+    return <MessageResponse>
+        <Box flexDirection="column">
+          {messagesView.lines.map((line, i) => <Text key={i} dimColor={i > 0 && messagesView.kind === 'search'}>{line}</Text>)}
+        </Box>
+      </MessageResponse>;
   }
   const estimatedTokens = getContentSizeEstimate(mcpOutput);
   const showWarning = estimatedTokens > MCP_OUTPUT_WARNING_THRESHOLD_TOKENS;

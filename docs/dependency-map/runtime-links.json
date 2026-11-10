@@ -1299,6 +1299,88 @@
       "evidence": [
         "allternit/surfaces/allternit-mobile/android/README.md"
       ]
+    },
+    {
+      "source": "allternit/cmd/allternit-api/src/status_snapshot.rs",
+      "target": "allternit/cmd/allternit-cloud-api/src/routes/notifications.rs",
+      "kind": "authenticated HTTP (runtime device bearer): status snapshot with bots and focus, ingested to choose push level and the Live Activity bot",
+      "evidence": [
+        "allternit/cmd/allternit-api/src/status_snapshot.rs",
+        "allternit/cmd/allternit-cloud-api/src/routes/notifications.rs"
+      ]
+    },
+    {
+      "source": "allternit/cmd/allternit-api/src/runtime_events.rs",
+      "target": "allternit/cmd/allternit-cloud-api/src/routes/notifications.rs",
+      "kind": "authenticated HTTP: forwarded runtime events (approval, held send, email draft) become pushes carrying inboxId, inboxKind and contentHash",
+      "evidence": [
+        "allternit/cmd/allternit-api/src/runtime_events.rs",
+        "allternit/cmd/allternit-cloud-api/src/routes/notifications.rs"
+      ]
+    },
+    {
+      "source": "allternit/cmd/allternit-cloud-api/src/routes/apns.rs",
+      "target": "allternit/surfaces/allternit-mobile/ios/AllternitNotifications",
+      "kind": "APNs alert and liveactivity pushes: category buttons, generic body for private items, Live Activity start, update and end",
+      "evidence": [
+        "allternit/cmd/allternit-cloud-api/src/routes/apns.rs",
+        "allternit/cmd/allternit-cloud-api/src/routes/live_activity.rs",
+        "allternit/surfaces/allternit-mobile/ios/AllternitNotifications"
+      ]
+    },
+    {
+      "source": "allternit/surfaces/allternit-mobile/ios/AllternitNotifications",
+      "target": "allternit/cmd/allternit-cloud-api/src/routes/device_read.rs",
+      "kind": "HTTP with a device read token: the extension fetches the real text of a private item by event id",
+      "evidence": [
+        "allternit/surfaces/allternit-mobile/ios/AllternitNotifications",
+        "allternit/cmd/allternit-cloud-api/src/routes/device_read.rs"
+      ]
+    },
+    {
+      "source": "allternit/surfaces/allternit-mobile/ios/SystemSurfaces",
+      "target": "allternit/cmd/allternit-api/src/inbox_needs.rs",
+      "kind": "authenticated HTTP via cloud relay: approve, deny, reply and snooze with contentHash (409 changed on a mismatch)",
+      "evidence": [
+        "allternit/surfaces/allternit-mobile/ios/SystemSurfaces",
+        "allternit/cmd/allternit-api/src/inbox_needs.rs"
+      ]
+    },
+    {
+      "source": "allternit/surfaces/allternit-mobile/ios/SystemSurfaces",
+      "target": "allternit/cmd/allternit-api/src/bots_pause.rs",
+      "kind": "authenticated HTTP via cloud relay: GET and PUT /api/v1/bots/pause",
+      "evidence": [
+        "allternit/surfaces/allternit-mobile/ios/SystemSurfaces",
+        "allternit/cmd/allternit-api/src/bots_pause.rs"
+      ]
+    },
+    {
+      "source": "allternit-ai/src/lib/bots",
+      "target": "allternit/cmd/allternit-api/src/bots_pause.rs",
+      "kind": "authenticated HTTP: GET and PUT /api/v1/bots/pause (Bots view header and phone Bots screen)",
+      "evidence": [
+        "allternit-ai/src/lib/bots/bots-pause.ts",
+        "allternit/cmd/allternit-api/src/bots_pause.rs"
+      ]
+    },
+    {
+      "source": "allternit/cmd/gizzi-code/src/cli/commands/bot.ts",
+      "target": "allternit/cmd/allternit-api/src/bots_pause.rs",
+      "kind": "HTTP: gizzi agents bot pause and resume",
+      "evidence": [
+        "allternit/cmd/gizzi-code/src/cli/commands/bot.ts",
+        "allternit/cmd/allternit-api/src/bots_pause.rs"
+      ]
+    },
+    {
+      "source": "allternit-ai/src/components/chat",
+      "target": "allternit/cmd/allternit-api/src/messages_mac.rs",
+      "kind": "authenticated HTTP: Mac Messages settings and held sends; draft card renders the message_draft tool result",
+      "evidence": [
+        "allternit-ai/src/components/chat/MessageDraftCard.tsx",
+        "allternit/cmd/allternit-api/src/messages_mac.rs"
+      ]
     }
   ]
 }

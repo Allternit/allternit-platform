@@ -445,7 +445,8 @@ async fn deliver(db: &PgPool, apns: &Apns, target: &PushTarget, push_type: &str,
             let reason = resp.json::<Value>().await.ok().and_then(|v| v.get("reason").and_then(Value::as_str).map(str::to_string)).unwrap_or_default();
             Ok((status, reason))
         }
-        Err(error) => Err(error.to_string()),
+        // The request URL ends in the device token: keep it out of logs and `last_error`.
+        Err(error) => Err(error.without_url().to_string()),
     };
     match outcome {
         Ok((200, _)) => {

@@ -1116,8 +1116,9 @@ pub enum SnapshotIngest {
     /// Same content as the stored one: nothing changed.
     Unchanged,
     /// Stored. `revoke` holds the notification tags to remove from the person's iPhones (their
-    /// `notification_delivered` rows are already deleted).
-    Stored { revoke: Vec<String> },
+    /// `notification_delivered` rows are already deleted). `previous` is the snapshot it replaced (`None`
+    /// for this runtime's first), which [`super::live_activity`] compares against.
+    Stored { revoke: Vec<String>, previous: Option<Value> },
 }
 
 /// Keep `snapshot` as `runtime_id`'s latest for `user`, and work out which delivered notifications to
@@ -1141,7 +1142,8 @@ pub async fn ingest_snapshot(db: &PgPool, user: &str, runtime_id: &str, snapshot
     .execute(&mut *tx)
     .await?;
     let now = needs_you(snapshot);
-    let left: Vec<String> = previous.map(|(p, _)| needs_you(&p)).unwrap_or_default().into_iter().filter(|id| !now.contains(id)).collect();
+    let previous = previous.map(|(p, _)| p);
+    let left: Vec<String> = previous.as_ref().map(needs_you).unwrap_or_default().into_iter().filter(|id| !now.contains(id)).collect();
     let mut revoke = Vec::new();
     if !left.is_empty() {
         revoke = sqlx::query_scalar("DELETE FROM notification_delivered WHERE user_id = $1 AND inbox_id = ANY($2) RETURNING tag").bind(user).bind(&left).fetch_all(&mut *tx).await?;
@@ -1149,7 +1151,7 @@ pub async fn ingest_snapshot(db: &PgPool, user: &str, runtime_id: &str, snapshot
         revoke.dedup();
     }
     tx.commit().await?;
-    Ok(SnapshotIngest::Stored { revoke })
+    Ok(SnapshotIngest::Stored { revoke, previous })
 }
 
 // ---------------------------------------------------------------------------
@@ -1202,6 +1204,16 @@ impl Outcome {
 
 type EventRow = (String, String, String, Value, Option<DateTime<Utc>>);
 
+/// A Factory approval whose runtime already sent its own Web Push (`surfaces` holds `"push"`: the
+/// Remote Control push worker delivered it to at least one device, with its one-time approve code). Cloud
+/// then pushes the iPhone app only. When the runtime's push is not set up or reached no device (no
+/// `"push"`), cloud's Web Push is the only one, so it goes out as usual. Only Factory approvals carry
+/// `surfaces` (`factory_approvals::Approval::to_json`), so this holds even when the runtime found no inbox
+/// item for the approval and sent no `inboxKind`.
+pub fn factory_pushed(data: &Value) -> bool {
+    matches!(s(data, &["inboxKind"]), None | Some("factory_approval")) && data.get("surfaces").and_then(Value::as_array).is_some_and(|a| a.iter().any(|v| v == "push"))
+}
+
 async fn decide_and_send(db: &PgPool, transport: &dyn PushTransport, vapid: &Vapid, row: &EventRow) -> Outcome {
     let (event_id, user, event, data, occurred_at) = row;
     if occurred_at.is_some_and(|t| Utc::now() - t > chrono::Duration::hours(STALE_AFTER_HOURS)) {
@@ -1225,7 +1237,7 @@ async fn decide_and_send(db: &PgPool, transport: &dyn PushTransport, vapid: &Vap
         d.insert("eventId".into(), json!(event_id));
     }
     // Coding-session permission asks: browsers get them from the remote-control lane, so only iPhones here.
-    let apns_only = event == "approval.requested" && s(data, &["source"]) == Some("gizzi-permission");
+    let apns_only = event == "approval.requested" && (s(data, &["source"]) == Some("gizzi-permission") || factory_pushed(data));
     if event == "message.received" {
         // The switch-over from the direct channel push: that push already told them.
         let direct: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM push_log WHERE user_id = $1 AND collapse_key LIKE 'channel-%' AND created_at > now() - make_interval(secs => $2))")
@@ -1326,7 +1338,7 @@ pub fn spawn_push_sink(db: PgPool) {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::routes::allternit_events;
     use crate::routes::test_support::{events_backbone_schema, test_pool};
@@ -1875,16 +1887,79 @@ mod tests {
         // ap1 was approved on another device: only its tag is revoked, only for this person.
         assert_eq!(
             ingest_snapshot(&db, "u1", "rt_1", &json!({ "pendingApprovals": 1, "needsYou": ["attention:at9"] })).await.unwrap(),
-            SnapshotIngest::Stored { revoke: vec!["approval-ap1".into()] }
+            SnapshotIngest::Stored { revoke: vec!["approval-ap1".into()], previous: Some(json!({ "pendingApprovals": 2, "needsYou": ["approval:ap1", "attention:at9"] })) }
         );
         let left: Vec<(String, String)> = sqlx::query_as("SELECT user_id, inbox_id FROM notification_delivered ORDER BY user_id").fetch_all(&db).await.unwrap();
         assert_eq!(left, vec![("u1".into(), "attention:at9".into()), ("u2".into(), "approval:ap1".into())]);
         // Another runtime's snapshot has its own previous state.
-        assert_eq!(ingest_snapshot(&db, "u1", "rt_2", &json!({ "needsYou": [] })).await.unwrap(), SnapshotIngest::Stored { revoke: vec![] });
+        assert_eq!(ingest_snapshot(&db, "u1", "rt_2", &json!({ "needsYou": [] })).await.unwrap(), SnapshotIngest::Stored { revoke: vec![], previous: None });
         // Every forwarded event carries the runtime cloud authenticated.
         ingest(&db, "u1", "rt_1", vec![json!({ "id": "e9", "type": "approval.requested", "data": { "approvalId": "ap2", "runtimeId": "spoofed" } })]).await.unwrap();
         let data: Value = sqlx::query_scalar("SELECT data FROM platform_events").fetch_one(&db).await.unwrap();
         assert_eq!(data["runtimeId"], "rt_1");
+    }
+
+    /// A Factory approval the runtime already pushed gets no second Web Push; one it could not push does.
+    #[tokio::test]
+    async fn a_factory_approval_is_web_pushed_once() {
+        let db = test_pool().await;
+        schema(&db).await;
+        let vapid = vapid();
+        device(&db, "u_f").await;
+        let rec = Recorder::default();
+        let base = json!({ "approvalId": "fa1", "title": "Deploy", "summary": "Deploy the site", "inboxId": "factory:fa1", "inboxKind": "factory_approval" });
+        let mut pushed = base.clone();
+        pushed["surfaces"] = json!(["app", "push", "telegram"]);
+        let mut not_pushed = base.clone();
+        not_pushed["approvalId"] = json!("fa2");
+        not_pushed["surfaces"] = json!(["app", "telegram"]);
+        // The runtime found no inbox item (no `inboxKind`), but its push still went out.
+        let mut no_item = pushed.clone();
+        no_item["approvalId"] = json!("fa3");
+        no_item.as_object_mut().unwrap().remove("inboxKind");
+        no_item.as_object_mut().unwrap().remove("inboxId");
+        let a = emit(&db, "u_f", "approval.requested", pushed).await;
+        let b = emit(&db, "u_f", "approval.requested", not_pushed).await;
+        let c = emit(&db, "u_f", "approval.requested", no_item).await;
+        assert_eq!(sink_once(&db, &rec, &vapid).await.unwrap(), 3);
+        // No iPhone app registered either, so the first reaches nobody from cloud: the runtime's push was it.
+        assert_eq!(outcome(&db, &a).await, "unreachable");
+        assert_eq!(outcome(&db, &c).await, "unreachable");
+        assert_eq!(outcome(&db, &b).await, "sent");
+        assert_eq!(rec.sent.lock().unwrap().len(), 1, "exactly one Web Push from cloud, for the approval the runtime could not push");
+    }
+
+    /// An iPhone with both the app and the home-screen app gets the app's notification only; once the app's
+    /// token is gone, the home-screen app gets it again.
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn the_home_screen_app_is_skipped_while_the_app_can_be_reached() {
+        std::env::set_var("APNS_KEY_P8", crate::routes::apns::tests::fixture_pem());
+        std::env::set_var("APNS_KEY_ID", "KEY1234567");
+        std::env::set_var("APNS_TEAM_ID", "TEAM123456");
+        let db = test_pool().await;
+        schema(&db).await;
+        let (p256dh, auth, _, _) = browser_sub();
+        let pwa = web_push::subscribe(&db, "u_pwa", "iphone", "https://push.example.com/pwa", &p256dh, &auth, "test").await.unwrap();
+        sqlx::query("UPDATE push_subscriptions SET platform = 'ios-pwa' WHERE id = $1").bind(&pwa).execute(&db).await.unwrap();
+        let desk = web_push::subscribe(&db, "u_pwa", "mac", "https://push.example.com/desk", &p256dh, &auth, "test").await.unwrap();
+        sqlx::query("UPDATE push_subscriptions SET platform = 'desktop' WHERE id = $1").bind(&desk).execute(&db).await.unwrap();
+        let token = "e5".repeat(32);
+        let info = crate::routes::apns::DeviceInfo { device_id: "iphone".into(), os_version: None, app_build: None, capabilities: vec![] };
+        crate::routes::apns::register(&db, "u_pwa", &token, "sandbox", &info).await.unwrap();
+        let msg = message_for("approval.requested", &json!({ "botName": "Raven", "approvalId": "ap1", "summary": "send it" })).unwrap();
+        let sent_to = |r: &Recorder| r.sent.lock().unwrap().iter().map(|(e, _, _)| e.clone()).collect::<Vec<_>>();
+
+        let rec = Recorder::default();
+        assert_eq!(web_push::send_to_user(&db, &rec, &vapid(), "u_pwa", &msg).await, 1);
+        assert_eq!(sent_to(&rec), vec!["https://push.example.com/desk".to_string()]);
+
+        sqlx::query("DELETE FROM apns_device_tokens WHERE user_id = 'u_pwa'").execute(&db).await.unwrap();
+        let rec = Recorder::default();
+        assert_eq!(web_push::send_to_user(&db, &rec, &vapid(), "u_pwa", &msg).await, 2);
+        let mut to = sent_to(&rec);
+        to.sort();
+        assert_eq!(to, vec!["https://push.example.com/desk".to_string(), "https://push.example.com/pwa".to_string()]);
     }
 
     /// The full router builds (no axum route-overlap panic) with these routes in it.
