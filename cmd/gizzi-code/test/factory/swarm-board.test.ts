@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { IDLE_AFTER_SEND_MS, observeWorker, parseBrain, type SwarmRecord, type SwarmWorker } from "../../src/cli/factory/swarm"
+import { IDLE_AFTER_SEND_MS, OFFLINE_GRACE_MS, observeWorker, parseBrain, type SwarmRecord, type SwarmWorker } from "../../src/cli/factory/swarm"
 import { badgeText, buildBoard, allRows } from "../../src/cli/factory/board"
 import { lastMeaningfulLine } from "../../src/cli/factory/live"
 import type { FactoryAgent } from "../../src/cli/factory/types"
@@ -23,6 +23,21 @@ function worker(over: Partial<SwarmWorker> = {}): SwarmWorker {
 const agent = (state: FactoryAgent["state"]): FactoryAgent => ({ id: "local:w1-sw-x", address: "w1@sw-x", state, pane: { id: "w1:p2", attachable: true } })
 
 describe("swarm worker phases", () => {
+  // Regression (mission proof run, 2026-11-10): one `agents ps` snapshot that
+  // missed a live Codex pane right after the task paste failed both workers.
+  test("a pane missing from one snapshot is not gone; missing past the grace period is", () => {
+    let w = worker({ taskSentAt: T0 + 1000 })
+    w = observeWorker(w, undefined, T0 + 2000)
+    expect(w.phase).toBe("starting")
+    w = observeWorker(w, agent("idle"), T0 + 3000)
+    expect(w.offlineSince).toBeUndefined()
+    w = observeWorker(w, undefined, T0 + 4000)
+    expect(observeWorker(w, undefined, T0 + 4000 + OFFLINE_GRACE_MS - 1).phase).toBe("starting")
+    const gone = observeWorker(w, undefined, T0 + 4000 + OFFLINE_GRACE_MS)
+    expect(gone.phase).toBe("failed")
+    expect(gone.note).toBe("its pane is gone")
+  })
+
   test("idle before its task is sent is not done", () => {
     expect(observeWorker(worker(), agent("idle"), T0 + 60_000).phase).toBe("starting")
   })
@@ -53,9 +68,10 @@ describe("swarm worker phases", () => {
     expect(observeWorker(done, agent("needs_you"), T0 + 10).phase).toBe("waiting")
   })
 
-  test("a pane that disappears after its task was sent is failed", () => {
-    const w = observeWorker(worker({ taskSentAt: T0, phase: "working", sawWorking: true }), undefined, T0 + 10)
-    expect(w.phase).toBe("failed")
+  test("a pane that disappears after its task was sent is failed once the grace period passes", () => {
+    const seen = observeWorker(worker({ taskSentAt: T0, phase: "working", sawWorking: true }), undefined, T0 + 10)
+    expect(seen.phase).toBe("working")
+    expect(observeWorker(seen, undefined, T0 + 10 + OFFLINE_GRACE_MS).phase).toBe("failed")
   })
 })
 

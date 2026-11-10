@@ -66,6 +66,7 @@ import cowork from './commands/cowork/index.js'
 import coworkProject from './commands/cowork-project/index.js'
 import artifact from './commands/artifact/index.js'
 import swarm from './commands/swarm/index.js'
+import mission from './commands/mission/index.js'
 import ontology from './commands/ontology/index.js'
 import directive from './commands/directive/index.js'
 import gc from './commands/gc/index.js'
@@ -344,6 +345,7 @@ const COMMANDS = memoize((): Command[] => [
   factory,
   board,
   swarm,
+  mission,
   diff,
   doctor,
   editPrompt,

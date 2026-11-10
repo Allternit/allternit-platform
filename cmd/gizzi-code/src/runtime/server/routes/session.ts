@@ -630,7 +630,7 @@ export const SessionRoutes = lazy(() =>
       "/:sessionID",
       describeRoute({
         summary: "Update session",
-        description: "Update session properties like title.",
+        description: "Update session properties like title, archived, permission, surface, mission (the `gizzi mission` label) and glance.",
         operationId: "session.update",
         responses: {
           200: {
@@ -660,6 +660,14 @@ export const SessionRoutes = lazy(() =>
         }
         if (input.surface !== undefined) {
           await Session.setSurface({ sessionID, surface: input.surface })
+        }
+        // `gizzi mission` labels its orchestrator session ("Mission · M2/5").
+        if (input.mission !== undefined) {
+          await Session.setMission({ sessionID, mission: input.mission === null ? null : Session.Mission.parse(input.mission) })
+        }
+        if (input.glance !== undefined) {
+          const text = typeof input.glance === "string" ? input.glance : input.glance?.text
+          await Session.setGlance({ sessionID, glance: text ? { text: String(text), at: Date.now() } : null })
         }
         const session = await Session.get(sessionID)
         return c.json(session)

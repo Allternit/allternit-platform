@@ -60,6 +60,7 @@ import { OrchestrationCommand } from "@/cli/commands/factory/orchestration"
 import { WorkflowsCommand } from "@/cli/commands/factory/workflows"
 import { WorkspaceCommand } from "@/cli/commands/factory/workspace"
 import { BoardCommand, SwarmCommand } from "@/cli/commands/factory/swarm"
+import { MissionCommand } from "@/cli/commands/mission"
 
 /**
  * Structural shape shared by every module in the registry. Deliberately
@@ -93,6 +94,8 @@ export const COMMANDS: RegisteredCommand[] = [
   // Swarms over the Factory: start, watch, wait, land.
   SwarmCommand,
   BoardCommand,
+  // Missions: a long goal planned into milestones, each run as a swarm, validated and landed.
+  MissionCommand,
   AcpCommand,
   McpCommand,
   TuiThreadCommand,
