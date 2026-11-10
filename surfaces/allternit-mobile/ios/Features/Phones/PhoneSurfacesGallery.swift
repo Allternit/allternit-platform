@@ -5,7 +5,7 @@ import UIKit
 /// Debug only: draws the phone cards with fixtures for screenshots
 /// (`-phone-gallery <page>`, add `-phone-gallery-dark` for dark). Pages:
 /// approval, approval2, status, status2, entry, intents, imessage, imessage2.
-enum PhoneSurfacesGallery {
+@MainActor enum PhoneSurfacesGallery {
     private static var window: UIWindow?
 
     static func installIfRequested() {
