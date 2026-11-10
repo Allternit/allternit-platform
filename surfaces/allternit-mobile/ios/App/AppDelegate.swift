@@ -40,6 +40,8 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
                 await SpotlightIndexer.refresh()
                 // Send anything the share extension left behind.
                 await ShareOutboxDrainer.shared.drain()
+                // The iOS 26 widget push token the widget extension left.
+                await ActivityTokenRegistry.shared.syncWidgetToken()
             }
         }
         // Live Activities: intent registry, adopt running activities, token uploads.

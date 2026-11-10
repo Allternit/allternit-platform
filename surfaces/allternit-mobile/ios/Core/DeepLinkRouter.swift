@@ -46,6 +46,9 @@ enum DeepLink: Equatable, Sendable {
     case callMain
     /// A routine's page (`/routine/<id>`).
     case routine(String)
+    /// The team hand-off composer on the bots launchpad (`allternit://handoff`,
+    /// `/handoff`, or the web shortcut's `?allternit_open=handoff`).
+    case handoff
 
     static let webHosts: Set<String> = ["ai.allternit.com", "m.allternit.com"]
 
@@ -93,6 +96,9 @@ enum DeepLink: Equatable, Sendable {
         if let provider = query["allternit_channel"] {
             return .channel(provider)
         }
+        if query["allternit_open"] == "handoff" {
+            return .handoff
+        }
         if let session = query["session"] {
             return .session(session)
         }
@@ -132,6 +138,8 @@ enum DeepLink: Equatable, Sendable {
         case "routine":
             guard segments.count >= 2 else { return nil }
             return .routine(segments[1])
+        case "handoff":
+            return .handoff
         default:
             return nil
         }
