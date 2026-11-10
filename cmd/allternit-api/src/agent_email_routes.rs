@@ -557,6 +557,8 @@ async fn send_email_inner(
         }
 
         info!(agent_id = %req.agent_id, to = %req.to, "agent-email: outbound pending approval");
+        // One `approval.requested` for the cloud (push with the inbox id).
+        crate::inbox_needs::record_email_draft(&state.db, &req.agent_id, &outbound_id);
         if let Some(e) = autonomy.as_ref().filter(|e| e.held()) {
             let (outcome, reason) = match &e.verdict {
                 crate::autonomy::Verdict::Draft { reason } => ("drafted", reason.clone()),

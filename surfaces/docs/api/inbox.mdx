@@ -34,7 +34,32 @@ The **Needs you** inbox (allternit-api, Clerk session or API key). The list is d
 }
 ```
 
-Newest first. `kind` is `email_draft`, `approval`, `held_send`, `thread`, `missed_call`, `unanswered`, `failed_send`, `vendor_result`, `suggestion` (a task a bot [suggested](/guides/bot-threads#tasks-your-bot-suggests); `threadId` is its thread) or `draft` (a message a bot's [autonomy level](/guides/bot-autonomy) kept as a draft instead of sending; `source` is its channel, `person` who it was for). `id` is stable and prefixed by its source (`email:`, `approval:`, `thread:`, `call:`, `reply:` per thread, `failed:`, `ticket:`, `suggestion:`, `draft:`). `primary.action` is `approve` (run the approval; the client calls `approve`), or `open`, `reply`, `callback` (the client opens the bot's phone). `actions` lists which of the three POST routes apply: `approve` is absent for kinds that can only be opened.
+Newest first. `kind` is `email_draft`, `approval`, `held_send`, `thread`, `missed_call`, `unanswered`, `failed_send`, `vendor_result`, `suggestion` (a task a bot [suggested](/guides/bot-threads#tasks-your-bot-suggests); `threadId` is its thread) `draft` (a message a bot's [autonomy level](/guides/bot-autonomy) kept as a draft instead of sending; `source` is its channel, `person` who it was for), `factory_approval` (a Factory node waiting on you) or `gizzi_permission` (a coding session's tool call parked on your OK; `sessionId` is the session). `id` is stable and prefixed by its source (`email:`, `approval:`, `thread:`, `call:`, `reply:` per thread, `failed:`, `ticket:`, `suggestion:`, `draft:`, `factory:`, `permission:`). `primary.action` is `approve` (run the approval; the client calls `approve`), or `open`, `reply`, `callback` (the client opens the bot's phone). `actions` lists which of the three POST routes apply: `approve` is absent for kinds that can only be opened.
+
+### Fields for approving from a notification
+
+Items you can approve (`approval`, `held_send`, `email_draft`, `factory_approval`, `gizzi_permission`) also carry:
+
+```json
+{
+  "id": "approval:gap_1",
+  "kind": "held_send",
+  "sessionId": "ses_1",
+  "contentHash": "3f9c0a…",
+  "full": { "to": "slack", "toName": "Acme team", "text": "Hi Sam, the invoice is attached." },
+  "approveInline": true,
+  "senderKind": "bot",
+  "trust": "contact"
+}
+```
+
+- `contentHash`: 32 hex characters, a SHA-256 over exactly what you approve. For a held post that is the approval id, the channel, the thread, the full text and the attachment ids. For a tool approval it is the authority, the action and the stored detail. For an email it is the recipient, subject, stored snippet and the send's idempotency key. For a coding-session ask it is the tool, the action type, the target and the summary. It changes when the bot revises the item.
+- `full`: the recipient (`to`, `toName`) and the whole text the owner approves. `to` is set only when the item is addressed to someone (a channel post or an email). Treat that text as private: don't show it in a plain push.
+- `approveInline`: true only when the owner sees everything in the notification: the text is 300 characters or fewer, there are no attachments, the risk is not high and the input did not come from a stranger. An `email_draft` is never inline, because the runtime keeps only a 200-character snippet. A subscription card is never inline, because it needs a person's session.
+- `sessionId`: the coding session behind the item's bot thread (the latest generation), when there is one. Reply with `POST /api/v1/agent-sessions/:id/messages`.
+- `senderKind` is `bot`. `trust` is copied from `provenance.trust` when the input came from outside.
+
+Older clients ignore these keys.
 
 ## Act
 
@@ -45,7 +70,11 @@ Every action is `POST /api/v1/inbox/:id/<action>`; `:id` is URL-encoded (`approv
   - `approval`: answers the gateway approval as the signed-in person (`respond_approval`). `200 {"id","result":{"approvalId","state":"approved"|"denied"}}`.
   - `held_send`: same, and on approve the held text is posted through the channel gateway under the same correlation id: `result.send.state` is `sent`, `unconfirmed`, `rejected`, `channel_offline`, `no_binding`, `not_sent` or `error`.
   - `suggestion`: approve is **Go ahead** (the work starts in the thread), `deny` is **Not now** (the thread resolves as `declined`). `200 {"id","result":{"state":"approved"|"declined","thread"}}`; `409 SUGGESTION` when it was already answered.
+  - `factory_approval`: resolves the Factory approval. `200 {"id","result":{"state","approval"}}`.
+  - `gizzi_permission`: runs the same decision as the approval card in the app (`POST /api/v1/cowork/approvals/decide`): the `cowork_approvals` row closes once and gizzi gets the reply (`once` or `reject`). `200 {"id","result":{"ok":true,"id","decision"}}`. A gizzi that refuses the reply answers `502`. A subscription card decided without a person's session answers `403 person_required`.
   - any other kind: `400 {"code":"NOT_APPROVABLE"}`.
+  - Optional `contentHash`: the hash the owner saw. When it no longer matches, the route answers `409 {"error":"changed","code":"CHANGED","id","contentHash":"<current>"}` and approves nothing. Show the item again. A request without `contentHash` works as before.
+  - Optional `surface` (for example `notification`, `live_activity`, `widget`, `shortcut`): where the owner acted. It is written on the `inbox.changed` event.
 - `dismiss`: `200 {"id","state":"dismissed"}`. On an `attention` item it also resolves the item as `dismissed`.
 - `retry` (`attention` items only): runs the item's retry now. For a routine that is the same path as **Run now**, and the item resolves as `retried`. `400 {"code":"ATTENTION_ERROR"}` when the item is not an attention item or has no retry, `404 NOT_FOUND` when it is already fixed.
 - `resolve` (`attention` items only): closes the item as fixed. `200 {"id","state":"resolved"}`.
