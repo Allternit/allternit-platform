@@ -26,6 +26,8 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
                 await ShareOutboxDrainer.shared.drain()
             }
         }
+        // Live Activities: intent registry, adopt running activities, token uploads.
+        Task { @MainActor in BotLiveActivityManager.installAtLaunch() }
         Task { @MainActor in
             await PushNotificationManager.shared.registerIfAuthorized()
         }
