@@ -235,3 +235,27 @@ enum IntentServiceRegistry {
     static var current: (any IntentServicing)? { box.withLock { $0 } }
     static func register(_ service: any IntentServicing) { box.withLock { $0 = service } }
 }
+
+// MARK: - Status/Control additions
+
+/// A Focus filter confirm (`PUT /api/v1/notifications/focus`).
+struct FocusFilterRequest: Sendable, Equatable, Codable {
+    var deviceId: String
+    var active: Bool
+    /// nil = every bot is allowed (encoded as JSON `null`).
+    var allowedBotIds: [String]?
+    var allowApprovals: Bool
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(deviceId, forKey: .deviceId)
+        try c.encode(active, forKey: .active)
+        if let allowedBotIds { try c.encode(allowedBotIds, forKey: .allowedBotIds) }
+        else { try c.encodeNil(forKey: .allowedBotIds) }
+        try c.encode(allowApprovals, forKey: .allowApprovals)
+    }
+}
+
+protocol FocusFilterServicing: Sendable {
+    func setFocusFilter(_ request: FocusFilterRequest) async throws
+}
