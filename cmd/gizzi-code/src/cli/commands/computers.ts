@@ -8,8 +8,10 @@ import type { Argv } from "yargs"
 import { cmd } from "@/cli/commands/cmd"
 import { UI } from "@/cli/ui"
 import {
+  findRuntime,
   listComputers,
   listRuntimes,
+  modelRef,
   pick,
   runOnRuntime,
   startComputer,
@@ -108,24 +110,19 @@ export async function runOnComputer(key: string, message: string, model?: string
     UI.error("Give the message to run, e.g. gizzi run --on my-cloud \"fix the failing test\"")
     return 1
   }
-  const runtimes = await listRuntimes().catch((e: Error) => e)
-  if (runtimes instanceof Error) {
-    UI.error(`Couldn't list paired runtimes: ${runtimes.message}`)
+  const found = await findRuntime(key)
+  if ("error" in found) {
+    UI.error(found.error)
     return 1
   }
-  const target = pick(runtimes, key)
-  if (!target) {
-    UI.error(`No paired runtime named or with id "${key}". Run \`gizzi computers ls\`.`)
-    return 1
-  }
+  const target = found.runtime
   if (target.status !== "online") {
     process.stderr.write(`${target.name} is ${target.status}; the relay wakes a cloud computer, which can take a minute.\n`)
   }
-  const [providerID, ...rest] = (model ?? "").split("/")
   try {
     const run = await runOnRuntime(target.id, message, {
       title,
-      model: model && rest.length ? { providerID, modelID: rest.join("/") } : undefined,
+      model: modelRef(model),
     })
     process.stdout.write(`Running on ${target.name} · session ${run.sessionID}\n  web:   ${run.web}\n  phone: ${run.phone}\n`)
     return 0

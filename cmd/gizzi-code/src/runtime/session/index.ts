@@ -73,6 +73,7 @@ export namespace Session {
       limit: row.limit_state ?? undefined,
       environment: row.environment ?? undefined,
       glance: row.glance ?? undefined,
+      mission: row.mission ?? undefined,
       title: row.title,
       version: row.version,
       summary,
@@ -123,6 +124,7 @@ export namespace Session {
       limit_state: info.limit ?? null,
       environment: info.environment ?? null,
       glance: info.glance ?? null,
+      mission: info.mission ?? null,
       slug: info.slug,
       directory: info.directory,
       title: info.title,
@@ -168,6 +170,18 @@ export namespace Session {
     }
     return `${title} (fork #1)`
   }
+
+  export const Mission = z.object({
+    id: z.string(),
+    goal: z.string(),
+    /** 1-based milestone being worked on; equals `total` once done. */
+    milestone: z.number(),
+    total: z.number(),
+    status: z.string(),
+    /** "Mission · M2/5" — the label surfaces show. */
+    label: z.string(),
+    at: z.number(),
+  })
 
   export const Info = z
     .object({
@@ -253,6 +267,12 @@ export namespace Session {
           at: z.number(),
         })
         .optional(),
+      /**
+       * Set on a mission's orchestrator session (`gizzi mission`): which
+       * mission it runs and where it stands, so surfaces can label the row
+       * "Mission · M2/5".
+       */
+      mission: Mission.optional(),
       summary: z
         .object({
           additions: z.number(),
@@ -747,6 +767,22 @@ export namespace Session {
       const row = db
         .update(SessionTable)
         .set({ paused: input.paused ?? null, time_updated: Date.now() })
+        .where(eq(SessionTable.id, input.sessionID))
+        .returning()
+        .get()
+      if (!row) throw new NotFoundError({ message: `Session not found: ${input.sessionID}` })
+      const info = fromRow(row)
+      Database.effect(() => Bus.publish(Event.Updated, { info }))
+      return info
+    })
+  }
+
+  /** Set or clear a session's mission label (`gizzi mission`). */
+  export function setMission(input: { sessionID: string; mission: Info["mission"] | null }) {
+    return Database.use((db) => {
+      const row = db
+        .update(SessionTable)
+        .set({ mission: input.mission ?? null, time_updated: Date.now() })
         .where(eq(SessionTable.id, input.sessionID))
         .returning()
         .get()

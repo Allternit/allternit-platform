@@ -3965,6 +3965,49 @@
       ]
     },
     {
+      "id": "feature:gizzi-mission",
+      "label": "Gizzi missions: goal to milestones to swarms to validate",
+      "product": "product:factory",
+      "status": "building",
+      "description": "`/mission <goal>` in the TUI and `gizzi mission start <goal> | ls | status [id] | resume [id] [--max-hours N] | stop [id] | land [id] [--merge]`. Flags: --on <runtime>, --max-workers (3), --max-hours, --max-attempts (2), -m <brain>, --yes; /mission takes the same flags except --yes. An orchestrator session plans 1-5 milestones (parallel tracks plus one validate shell command); the person approves with Enter, edits with e in $EDITOR, or cancels. A detached runner starts one swarm per milestone (fresh-context workers, one git worktree each), merges worker branches into mission/<id>, runs validate, and on failure has the orchestrator plan a fix track up to max-attempts, then stops needing the person. When the last milestone passes it lands into the starting branch if the checkout is clean (else done, ready to land). State lives in .allternit/missions/ (excluded via .git/info/exclude); resume continues after a restart, stop keeps state, --max-hours stops with needs-you. The TUI footer badge is `\u25c6 M2/5`; the orchestrator session shows as Mission \u00b7 M2/5 in Remote Control on Desktop, web, phone and iOS.",
+      "touches": [
+        "allternit/cmd/gizzi-code/src/cli/mission",
+        "allternit/cmd/gizzi-code/src/cli/commands/mission.ts",
+        "allternit/cmd/gizzi-code/src/cli/commands/computers.ts",
+        "allternit/cmd/gizzi-code/src/cli/commands/registry.ts",
+        "allternit/cmd/gizzi-code/src/cli/work/api.ts",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/commands.ts",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/commands/mission",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/components/MissionBadge.tsx",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/components/PromptInput/PromptInputFooterLeftSide.tsx",
+        "allternit-ai/src/lib/agents/session-glance.ts",
+        "allternit-ai/src/lib/agents/session-glance.test.ts",
+        "allternit-ai/src/components/dispatch/RemoteSessionPanel.tsx",
+        "allternit/surfaces/allternit-mobile/ios/Core/API/Models/AgentSession.swift",
+        "allternit/surfaces/allternit-mobile/ios/Features/History/Views/HistorySidebarView.swift",
+        "allternit/cmd/gizzi-code/src/runtime/session/index.ts",
+        "allternit/cmd/gizzi-code/src/runtime/session/session.sql.ts",
+        "allternit/cmd/gizzi-code/src/runtime/server/routes/session.ts",
+        "allternit/cmd/gizzi-code/src/runtime/server/routes/agent-compat.ts",
+        "allternit/cmd/gizzi-code/migration/20261110120000_session_mission/migration.sql",
+        "allternit/cmd/allternit-api/src/agent_session_routes.rs"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-10",
+          "note": "--on <runtime> moves only the orchestrator's plan and fix turns to the paired runtime. Workers, validation and landing stay on the local checkout because they need the local files and git history."
+        },
+        {
+          "on": "2026-11-10",
+          "note": "Landing: when the last milestone passes the mission fast-forwards into the branch it started from, only if the checkout is clean and on that branch; otherwise it is done, ready to land. gizzi mission land [id] [--merge] makes a merge commit. Never force-merges, never runs on a dirty tree. The mission checkout is removed after landing and the mission/<id> branch is kept."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/factory/missions.mdx",
+        "allternit/surfaces/docs/factory/commands.mdx"
+      ]
+    },
+    {
       "id": "feature:gizzi-output-presentation",
       "label": "Gizzi Code output: tool lines, live command output, highlighting, diffs, done/stopped line",
       "product": "product:gizzi-code",

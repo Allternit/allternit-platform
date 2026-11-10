@@ -100,6 +100,16 @@ export const SessionTable = sqliteTable(
     }>(),
     // Glance line (the `glance` tool): one line for the sidebar row.
     glance: text({ mode: "json" }).$type<{ text: string; artifactId?: string; at: number }>(),
+    // Mission label (`gizzi mission`): set on a mission's orchestrator session.
+    mission: text({ mode: "json" }).$type<{
+      id: string
+      goal: string
+      milestone: number
+      total: number
+      status: string
+      label: string
+      at: number
+    }>(),
     ...Timestamps,
     time_compacting: integer(),
     time_archived: integer(),
